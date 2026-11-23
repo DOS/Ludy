@@ -6,7 +6,8 @@
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { migrate } from '@ludy/db/migrate';
+import { createDbClient, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -17,17 +18,18 @@ const suite = ADMIN ? describe : describe.skip;
 suite('prober privileges', () => {
   const dbName = `crove_test_prober_inv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   const clients: pg.Client[] = [];
 
   const loginUrl = (user: string, password: string) => {
     const url = new URL(adminUrl);
-    url.username = user;
+    url.username = dbIds ? dbIds.roleName(user) : user;
     url.password = password;
     return url.toString();
   };
 
   async function connect(url: string): Promise<pg.Client> {
-    const client = new pg.Client({ connectionString: url });
+    const client = createDbClient({ connectionString: url }, dbIds);
     await client.connect();
     clients.push(client);
     return client;
@@ -42,7 +44,8 @@ suite('prober privileges', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw', crove_prober: 'test-prober-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw', crove_prober: 'test-prober-pw' }, dbIds);
   });
 
   afterAll(async () => {
@@ -159,7 +162,7 @@ suite('prober privileges', () => {
     // crove_prober executes no other Crove function.
     const others = await admin.query<{ fn: string }>(
       `SELECT p.oid::regprocedure::text AS fn FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-       WHERE n.nspname LIKE 'crove\\_%' AND n.nspname <> 'crove_jobs'
+       WHERE (n.nspname LIKE 'crove\\_%' OR n.nspname LIKE 'ludy\\_%') AND n.nspname <> 'crove_jobs'
          AND p.oid NOT IN ('crove_kernel.health(integer)'::regprocedure, 'crove_kernel.prober_alert_gate(text,integer)'::regprocedure,
                            COALESCE(to_regprocedure('crove_kernel.archive_health()')::oid, 0),
                            COALESCE(to_regprocedure('crove_kernel.extraction_health(integer)')::oid, 0))
@@ -180,7 +183,7 @@ suite('prober privileges', () => {
     expect(tables.rows).toEqual([]);
     const schemas = await admin.query<{ nspname: string; usage: boolean; create: boolean }>(
       `SELECT nspname, has_schema_privilege('crove_prober', oid, 'USAGE') AS usage, has_schema_privilege('crove_prober', oid, 'CREATE') AS create
-       FROM pg_namespace WHERE nspname LIKE 'crove\\_%' AND (has_schema_privilege('crove_prober', oid, 'USAGE') OR has_schema_privilege('crove_prober', oid, 'CREATE'))
+       FROM pg_namespace WHERE (nspname LIKE 'crove\\_%' OR nspname LIKE 'ludy\\_%') AND (has_schema_privilege('crove_prober', oid, 'USAGE') OR has_schema_privilege('crove_prober', oid, 'CREATE'))
        ORDER BY 1`,
     );
     expect(schemas.rows).toEqual([{ nspname: 'crove_kernel', usage: true, create: false }]);
@@ -236,7 +239,7 @@ suite('prober privileges', () => {
     const table = await admin.query(
       `SELECT c.relrowsecurity AS rls,
               (SELECT count(*)::int FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname = 'org_id' AND NOT a.attisdropped) AS org_id,
-              (SELECT count(*)::int FROM pg_roles r WHERE r.rolname LIKE 'crove\\_%' AND NOT r.rolsuper
+              (SELECT count(*)::int FROM pg_roles r WHERE ((r.rolname LIKE 'crove\\_%' OR r.rolname LIKE 'ludy\\_%') AND r.rolname NOT LIKE '%\\_test\\_%' AND r.rolname NOT LIKE 'crove\\_test%' AND r.rolname NOT LIKE 'ludy\\_test%' AND r.rolname <> 'ludy_migrate_test') AND NOT r.rolsuper
                  AND NOT pg_has_role(r.oid, c.relowner, 'MEMBER')
                  AND (has_table_privilege(r.oid, c.oid, 'SELECT') OR has_table_privilege(r.oid, c.oid, 'INSERT')
                       OR has_table_privilege(r.oid, c.oid, 'UPDATE') OR has_table_privilege(r.oid, c.oid, 'DELETE'))) AS grantees
@@ -254,7 +257,7 @@ suite('prober privileges', () => {
     expect(beats.rows).toEqual([{ instance: 'worker-1' }]);
     const table = await admin.query(
       `SELECT c.relrowsecurity AS rls,
-              (SELECT count(*)::int FROM pg_roles r WHERE r.rolname LIKE 'crove\\_%' AND NOT r.rolsuper
+              (SELECT count(*)::int FROM pg_roles r WHERE ((r.rolname LIKE 'crove\\_%' OR r.rolname LIKE 'ludy\\_%') AND r.rolname NOT LIKE '%\\_test\\_%' AND r.rolname NOT LIKE 'crove\\_test%' AND r.rolname NOT LIKE 'ludy\\_test%' AND r.rolname <> 'ludy_migrate_test') AND NOT r.rolsuper
                  AND NOT pg_has_role(r.oid, c.relowner, 'MEMBER')
                  AND (has_table_privilege(r.oid, c.oid, 'SELECT') OR has_table_privilege(r.oid, c.oid, 'INSERT')
                       OR has_table_privilege(r.oid, c.oid, 'UPDATE') OR has_table_privilege(r.oid, c.oid, 'DELETE'))) AS grantees

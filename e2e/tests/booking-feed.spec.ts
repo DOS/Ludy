@@ -13,6 +13,8 @@ test('recreate and revoke the booking feed address through a dialog that names t
   await page.getByRole('navigation').getByRole('link', { name: 'Engage', exact: true }).click();
   await page.getByRole('navigation').getByRole('link', { name: 'Lịch hẹn' }).click();
 
+  // The feed sits closed under its own heading, after the bookings (#3643): the test opens it first.
+  await page.getByText('Xem lịch trong Google Calendar').click();
   const card = page.getByTestId('booking-feed');
   const live = card.getByText('Bạn đang có một địa chỉ đăng ký lịch hẹn', { exact: false });
   const address = card.getByLabel('Địa chỉ đăng ký lịch hẹn');

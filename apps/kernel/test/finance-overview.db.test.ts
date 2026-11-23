@@ -8,13 +8,13 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import type { z } from 'zod';
-import { zFinancialStatements, type FinanceOverview, type JournalVoucherRequest } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { zFinancialStatements, type FinanceOverview, type JournalVoucherRequest } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -81,9 +81,9 @@ suite('the Kế toán Tổng quan (#2631)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -98,10 +98,10 @@ suite('the Kế toán Tổng quan (#2631)', () => {
       [o.viewer, 'viewer'],
       [second, 'admin'],
     ] as const) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]));
     }
     const party = async (name: string, taxCode: string) =>
-      String((await admin((c) => c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, name, tax_code) VALUES ($1, $2, $3) RETURNING id`, [orgId, name, taxCode]))).rows[0]?.id);
+      String((await admin((c) => c.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, name, tax_code) VALUES ($1, $2, $3) RETURNING id`, [orgId, name, taxCode]))).rows[0]?.id);
     customer = await party('Khách hàng Mẫu', '0101234564');
     vendor = await party('Nhà cung cấp Mẫu', '0301234567');
 
@@ -199,7 +199,7 @@ suite('the Kế toán Tổng quan (#2631)', () => {
       [o.member, 'member'],
       [second, 'admin'],
     ] as const) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]));
     }
     await post('2026-10-20', { account: '112' }, { account: '511' }, '5000000', orgId);
     const cost = await post('2026-10-21', { account: '642' }, { account: '112' }, '400000', orgId);
@@ -220,12 +220,12 @@ suite('the Kế toán Tổng quan (#2631)', () => {
   });
 
   it('answers a member for the entities they see only: another entity is refused as if it did not exist', async () => {
-    const branch = String((await admin((c) => c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [o.orgId, o.owner]))).rows[0]?.id);
-    const defaultEntity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]))).rows[0]?.id);
+    const branch = String((await admin((c) => c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [o.orgId, o.owner]))).rows[0]?.id);
+    const defaultEntity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]))).rows[0]?.id);
     const scoped = await person('scoped');
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [o.orgId, scoped]);
-      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [o.orgId, scoped, defaultEntity, o.owner]);
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [o.orgId, scoped]);
+      await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [o.orgId, scoped, defaultEntity, o.owner]);
     });
     const asScoped = (legalEntityId?: string) =>
       rt.query<FinanceOverview>('finance.overview', { range: 'last_30_days', asOf: TODAY, ...(legalEntityId ? { legalEntityId } : {}) }, { actor: asUser(scoped), orgId: o.orgId });

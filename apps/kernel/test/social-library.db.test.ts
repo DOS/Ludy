@@ -5,11 +5,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, type LibraryItem, type LibraryUse } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, type LibraryItem, type LibraryUse } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -41,14 +41,14 @@ suite('social media library on PostgreSQL (S9)', () => {
     const owner = await person('owner');
     const viewer = await person('viewer');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [orgId, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [orgId, viewer]));
     return { orgId, owner, viewer };
   }
 
   async function connection(o: Org) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         'sandbox',
@@ -66,7 +66,7 @@ suite('social media library on PostgreSQL (S9)', () => {
     const sha = createHash('sha256').update(id).digest('hex');
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, created_at)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, 120000, $8, coalesce($9::timestamptz, now()))`,
         [o.orgId, id, sha, `org/${o.orgId}/${sha}`, `content:${sha}`, filename, options.contentType ?? 'image/jpeg', options.source ?? 'social', options.at ?? null],
       ),
@@ -86,9 +86,9 @@ suite('social media library on PostgreSQL (S9)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -131,7 +131,7 @@ suite('social media library on PostgreSQL (S9)', () => {
     const conn = await connection(o);
     const { postId } = await rt.execute<{ postId: string }>('social.post.create', { body: 'Bài', channels: [{ connectionId: conn }] }, { actor: asUser(o.owner), orgId: o.orgId });
     await admin((c) =>
-      c.query('UPDATE crove_social.post_variant SET media = $2::jsonb WHERE post_id = $1', [postId, JSON.stringify([{ fileId: kept, generation: null, altText: null, mime: 'image/jpeg', sizeBytes: 120000 }])]),
+      c.query('UPDATE ludy_social.post_variant SET media = $2::jsonb WHERE post_id = $1', [postId, JSON.stringify([{ fileId: kept, generation: null, altText: null, mime: 'image/jpeg', sizeBytes: 120000 }])]),
     );
     expect((await list(o)).items.map((i) => i.usedIn)).toEqual([1]);
     expect((await usage(o, kept)).map((u) => u.postId)).toEqual([postId]);

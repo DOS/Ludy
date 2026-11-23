@@ -4,9 +4,9 @@
 // only a mark: it never blocks or moves a schedule.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { SOCIAL_LABEL_COLORS, zId } from '@crove/kernel-contract';
-import type { MemberRole, SocialLabelColor } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { SOCIAL_LABEL_COLORS, zId } from '@ludy/kernel-contract';
+import type { MemberRole, SocialLabelColor } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MEMBERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -66,7 +66,7 @@ export const calendarNoteSave = defineCommand({
     checkRange(input.startsOn, input.endsOn);
     if (input.noteId) {
       const updated = await ctx.trx
-        .updateTable('crove_social.calendar_note')
+        .updateTable('ludy_social.calendar_note')
         .set({ starts_on: input.startsOn, ends_on: input.endsOn, title: input.title, ...(input.color ? { color: input.color } : {}), updated_by: userId, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.noteId)
@@ -76,11 +76,11 @@ export const calendarNoteSave = defineCommand({
       return { noteId: updated.id };
     }
     // One new note at a time per org, so the count below holds.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`crove_social.calendar_note:${ctx.orgId}`}))`.execute(ctx.trx);
-    const count = await ctx.trx.selectFrom('crove_social.calendar_note').select((eb) => eb.fn.countAll<string>().as('n')).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`ludy_social.calendar_note:${ctx.orgId}`}))`.execute(ctx.trx);
+    const count = await ctx.trx.selectFrom('ludy_social.calendar_note').select((eb) => eb.fn.countAll<string>().as('n')).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     if (Number(count.n) >= CALENDAR_NOTES_MAX) throw new DomainError('CALENDAR_NOTE_LIMIT', 409, `Mỗi tổ chức có tối đa ${CALENDAR_NOTES_MAX} ghi chú trên lịch`);
     const row = await ctx.trx
-      .insertInto('crove_social.calendar_note')
+      .insertInto('ludy_social.calendar_note')
       .values({ org_id: ctx.orgId, starts_on: input.startsOn, ends_on: input.endsOn, title: input.title, color: input.color ?? 'blue', created_by: userId, updated_by: userId, created_at: ctx.now, updated_at: ctx.now })
       .returning('id')
       .executeTakeFirstOrThrow();
@@ -96,7 +96,7 @@ export const calendarNoteRemove = defineCommand({
   access: MEMBERS,
   handler: async (ctx, input) => {
     requireUser(ctx);
-    const removed = await ctx.trx.deleteFrom('crove_social.calendar_note').where('org_id', '=', ctx.orgId).where('id', '=', input.noteId).returning('id').executeTakeFirst();
+    const removed = await ctx.trx.deleteFrom('ludy_social.calendar_note').where('org_id', '=', ctx.orgId).where('id', '=', input.noteId).returning('id').executeTakeFirst();
     return { noteId: input.noteId, removed: Boolean(removed) };
   },
 });
@@ -109,7 +109,7 @@ export const calendarNoteList = defineQuery({
   handler: async (ctx, input): Promise<CalendarNote[]> => {
     if (daysBetween(input.from, input.to) < 0 || daysBetween(input.from, input.to) > 400) throw new DomainError('CALENDAR_NOTE_RANGE', 422, 'Khoảng ngày không hợp lệ');
     const rows = await ctx.trx
-      .selectFrom('crove_social.calendar_note')
+      .selectFrom('ludy_social.calendar_note')
       .select(['id', 'starts_on', 'ends_on', 'title', 'color', 'updated_by', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .where('starts_on', '<=', input.to)

@@ -2,12 +2,13 @@ import { useNavigate } from '@tanstack/react-router';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { MfaChallengeForm } from '../components/two-factor.tsx';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { PasswordInput } from '../components/password-input.tsx';
 import { ErrorText, Field, Logo, ScreenTitle, Spinner, focusFirstInvalid, useFieldErrors } from '../components/ui.tsx';
 import { SupportLink } from '../components/support-link.tsx';
-import { auth, authErrorText, authFailure, needsSecondFactor, type AuthFailure } from '../lib/auth.ts';
+import { auth, needsSecondFactor } from '../lib/auth.ts';
+import { screenFailure, screenFailureText, thrownFailure, type ScreenFailure } from '../lib/screen-failure.ts';
 
 export function ResetPasswordPage() {
   const navigate = useNavigate();
@@ -19,7 +20,7 @@ export function ResetPasswordPage() {
   const [repeat, setRepeat] = useState('');
   const [busy, setBusy] = useState(false);
   // A Supabase Auth failure, worded at render (issue #215).
-  const [error, setError] = useState<AuthFailure | null>(null);
+  const [error, setError] = useState<ScreenFailure | null>(null);
   // Each field's own problem sits under it (#1515); a repeat that differs is the repeat field's.
   const fields = useFieldErrors<'password' | 'repeat'>((field) => {
     if (field === 'password') return !password ? t('passwordRequired') : password.length < 8 ? t('passwordShort') : null;
@@ -40,8 +41,11 @@ export function ResetPasswordPage() {
     setError(null);
     try {
       const { error: e } = await auth().updateUser({ password });
-      if (e) return setError(authFailure(e));
+      if (e) return setError(screenFailure(e));
       await navigate({ to: '/' });
+    } catch (thrown) {
+      // A call that threw instead of returning an error (the server did not answer).
+      setError(thrownFailure(thrown));
     } finally {
       setBusy(false);
     }
@@ -66,11 +70,10 @@ export function ResetPasswordPage() {
           </>
         ) : (
           <form className="mt-6 space-y-3" noValidate onSubmit={submit}>
-            <Field label={t('newPassword')} error={fields.of('password')}>
+            <Field label={t('newPassword')} hint={t('passwordHint')} error={fields.of('password')}>
               {(control) => (
-                <Input
+                <PasswordInput
                   {...control}
-                  type="password"
                   required
                   minLength={8}
                   autoComplete="new-password"
@@ -85,9 +88,8 @@ export function ResetPasswordPage() {
             </Field>
             <Field label={t('repeat')} error={fields.of('repeat')}>
               {(control) => (
-                <Input
+                <PasswordInput
                   {...control}
-                  type="password"
                   required
                   minLength={8}
                   autoComplete="new-password"
@@ -100,7 +102,7 @@ export function ResetPasswordPage() {
                 />
               )}
             </Field>
-            {error && <ErrorText>{authErrorText(error, root)}</ErrorText>}
+            {error && <ErrorText>{screenFailureText(error, root)}</ErrorText>}
             <Button type="submit" size="lg" className="w-full" disabled={busy}>
               {busy ? t('saving') : t('save')}
             </Button>

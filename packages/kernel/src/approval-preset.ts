@@ -3,7 +3,7 @@
 // owner switches it, R3 (a second factor, P11), audited with the old and the new preset and the new version. The
 // tenant_approval_policy_guard and tenant_approval_policy_requires_audit triggers refuse any other write of it.
 import { z } from 'zod';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { ledgerApproverCount, orgApprovalPolicy } from './approval.ts';
 
 export const setApprovalPreset = defineCommand({
@@ -15,13 +15,13 @@ export const setApprovalPreset = defineCommand({
   handler: async (ctx, input) => {
     // The tenant row first, so two switches meet on it and each version is used once.
     const before = await ctx.trx
-      .selectFrom('crove_kernel.tenant')
+      .selectFrom('ludy_kernel.tenant')
       .select(['approval_preset', 'approval_policy_version'])
       .where('org_id', '=', ctx.orgId)
       .forUpdate()
       .executeTakeFirstOrThrow();
     const preset = await ctx.trx
-      .selectFrom('crove_kernel.approval_preset')
+      .selectFrom('ludy_kernel.approval_preset')
       .select(['key', 'ledger_chief_accountant_only'])
       .where('key', '=', input.preset)
       .executeTakeFirst();
@@ -34,7 +34,7 @@ export const setApprovalPreset = defineCommand({
       }
       version += 1;
       await ctx.trx
-        .updateTable('crove_kernel.tenant')
+        .updateTable('ludy_kernel.tenant')
         .set({ approval_preset: preset.key, approval_policy_version: version })
         .where('org_id', '=', ctx.orgId)
         .execute();

@@ -1,25 +1,27 @@
 // Compose a post and work on it: shared text, a variant per channel that inherits it or has its own text, live
 // channel rules and a preview, then review (owners and admins decide on what they see), schedule and cancel.
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useIsMutating, useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import { Link, useBlocker, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { Textarea } from '@crove/ui/components/textarea';
-import { cn } from '@crove/ui/lib/utils';
-import { hashtagSuggestions, hashtagsOf, REPOST_HOURS_MAX, REPOST_PROVIDERS, AUTO_REPLY_LIKES_MAX, AUTO_REPLY_RULES, COMMENT_RULES, THREAD_PARTS_MAX, THREAD_RULES, threadPartsOf, COVER_RULES, GBP_CTAS, GBP_LANGUAGES, GBP_TOPICS, gbpOf, POLL_RULES, POST_TYPE_RULES, TOPIC_TAG_RULES, coverKind, coverOf, isProvider, pollDurationOf, pollFlagOf, pollOptionsOf, pollQuestionOf, postTypeOf, REMOVE_READY, sentLink, topicTagOf, utmOf, type Cover, type CoverKind, type Issue, YOUTUBE_CATEGORIES, YOUTUBE_DEFAULT_CATEGORY, YOUTUBE_TAGS_MAX, youtubeTagsLength, YOUTUBE_PLAYLISTS_MAX, youtubePlaylistIdFrom, youtubePlaylistsOf, SENT_TO_APP, TIKTOK_NO_POST_ID, tiktokModeOf, tiktokDisclosureOf, type TikTokDisclosure, TIKTOK_PRIVACY_LEVELS, tiktokCreatorOf, type TikTokInteraction, type TikTokPrivacyLevel, removeAtFit, removeAtOf, WORDPRESS_CATEGORIES_MAX, WORDPRESS_EXCERPT_MAX, WORDPRESS_STATUSES, WORDPRESS_TAGS_MAX, WORDPRESS_DRAFT, WORDPRESS_PENDING, TELEGRAM_PIN_SCOPE, telegramOptionsOf, localTime, REPLY_SETTINGS, replySettingOf, linkedinVisibilities, telegramButtonsOf, TELEGRAM_BUTTON_ROWS_MAX, TELEGRAM_BUTTONS_PER_ROW_MAX, TELEGRAM_BUTTON_TEXT_MAX, isButtonUrl, countText, type TelegramButton, IG_REEL_FEEDS, IG_TRIAL_GRADUATIONS, instagramReelOf, isInstagramReel, variantTexts, wordsForChannel, wordsForChannels, DISCORD_TAGS_MAX, DISCORD_THREAD_NAME_MAX, discordOptionsOf, discordThreadName, isDiscordId, BLUESKY_REPLY_RULES, blueskyQuotesOff, blueskyRepliesOf, type BlueskyReplyRule, DOCUMENT_PROVIDERS, DOCUMENT_TITLE_MAX, documentTitleOf, mediaKindOf, pinterestSectionOf, DUPLICATE_CONTENT, POSSIBLE_DUPLICATE, duplicateText, type DuplicateOf, prefillUtm, signatureText, withChannelSignature, withSignature, editRefusal } from '@crove/mod-social/contract';
-import { LINK_CARD_DESCRIPTION_MAX, LINK_CARD_PROVIDERS, LINK_CARD_THUMB_MAX_BYTES, LINK_CARD_TITLE_MAX, linkCardOf, linkCardSize, type Provider } from '@crove/mod-social/contract';
-import { SOCIAL_RECURRENCE_TIMES_MAX } from '@crove/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { Textarea } from '@ludy/ui/components/textarea';
+import { cn } from '@ludy/ui/lib/utils';
+import { hashtagSuggestions, hashtagsOf, REPOST_HOURS_MAX, REPOST_PROVIDERS, AUTO_REPLY_LIKES_MAX, AUTO_REPLY_RULES, COMMENT_RULES, THREAD_PARTS_MAX, THREAD_RULES, threadPartsOf, COVER_RULES, GBP_CTAS, GBP_LANGUAGES, GBP_TOPICS, gbpOf, POLL_RULES, POST_TYPE_RULES, TOPIC_TAG_RULES, coverKind, coverOf, isProvider, pollDurationOf, pollFlagOf, pollOptionsOf, pollQuestionOf, postTypeOf, REMOVE_READY, sentLink, topicTagOf, utmOf, type Cover, type CoverKind, type Issue, YOUTUBE_CATEGORIES, YOUTUBE_DEFAULT_CATEGORY, YOUTUBE_TAGS_MAX, youtubeTagsLength, YOUTUBE_PLAYLISTS_MAX, youtubePlaylistIdFrom, youtubePlaylistsOf, SENT_TO_APP, TIKTOK_NO_POST_ID, tiktokModeOf, tiktokDisclosureOf, type TikTokDisclosure, TIKTOK_PRIVACY_LEVELS, tiktokCreatorOf, type TikTokInteraction, type TikTokPrivacyLevel, removeAtFit, removeAtOf, WORDPRESS_CATEGORIES_MAX, WORDPRESS_EXCERPT_MAX, WORDPRESS_STATUSES, WORDPRESS_TAGS_MAX, WORDPRESS_DRAFT, WORDPRESS_PENDING, TELEGRAM_PIN_SCOPE, telegramOptionsOf, localTime, REPLY_SETTINGS, replySettingOf, linkedinVisibilities, telegramButtonsOf, TELEGRAM_BUTTON_ROWS_MAX, TELEGRAM_BUTTONS_PER_ROW_MAX, TELEGRAM_BUTTON_TEXT_MAX, isButtonUrl, countText, type TelegramButton, IG_REEL_FEEDS, IG_TRIAL_GRADUATIONS, instagramReelOf, isInstagramReel, variantTexts, wordsForChannel, wordsForChannels, DISCORD_TAGS_MAX, DISCORD_THREAD_NAME_MAX, discordOptionsOf, discordThreadName, isDiscordId, BLUESKY_REPLY_RULES, blueskyQuotesOff, blueskyRepliesOf, type BlueskyReplyRule, DOCUMENT_PROVIDERS, DOCUMENT_TITLE_MAX, documentTitleOf, mediaKindOf, pinterestSectionOf, DUPLICATE_CONTENT, POSSIBLE_DUPLICATE, duplicateText, type DuplicateOf, prefillUtm, signatureText, withChannelSignature, withSignature, editRefusal } from '@ludy/mod-social/contract';
+import { LINK_CARD_DESCRIPTION_MAX, LINK_CARD_PROVIDERS, LINK_CARD_THUMB_MAX_BYTES, LINK_CARD_TITLE_MAX, linkCardOf, linkCardSize, type Provider } from '@ludy/mod-social/contract';
+import { SOCIAL_RECURRENCE_TIMES_MAX } from '@ludy/kernel-contract';
+import { BoostCard } from '../components/ads-boost.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { LeavePageDialog } from '../components/leave-page-dialog.tsx';
 import { DateInput } from '../components/date-input.tsx';
 import { DateTimeInput } from '../components/date-time-input.tsx';
+import { WhenCard } from '../components/social-when-card.tsx';
 import { TimeInput } from '../components/time-input.tsx';
 import { CoverImageField, MediaField, MediaReplace, type MediaItem } from '../components/social-media.tsx';
 import { replaceInChannels, replaceInEditable, replaceMedia } from '../lib/social-image-fix.ts';
@@ -51,6 +53,8 @@ import { TextStyleButtons, TextStyleHint } from '../components/social-text-style
 import { DuplicateNote, ownRewriteId, SHARED_REWRITE_ID } from '../components/social-duplicate.tsx';
 import { SignatureToggle, signatureSettings } from '../components/social-signature.tsx';
 import { ThreadSplitField } from '../components/social-thread-split.tsx';
+import { AdvancedOptions } from '../components/social-advanced-options.tsx';
+import { postStatus } from '../lib/social-post-status.ts';
 import { ProofreadProposal } from '../components/social-proofread.tsx';
 import { TextVariationsCard } from '../components/social-text-variations.tsx';
 import { ErrorText, Notice, PageHeader, Spinner } from '../components/ui.tsx';
@@ -60,6 +64,7 @@ import { getConfig } from '../lib/auth.ts';
 import { clearDraft, loadDraft, saveDraft, type StoredDraft } from '../lib/social-draft.ts';
 import { readShareFragment } from '../lib/social-share.ts';
 import { canMoveToFront } from '../lib/social-queue-order.ts';
+import { dayMonth, defaultPostTime, effectiveWhen, futureInstant, queueReady, type QueueState, type WhenMode } from '../lib/social-when.ts';
 import { reelCounts, STORY_METRICS } from '../lib/social-insights.ts';
 import { WatchTimeItems } from '../components/social-reel-metrics.tsx';
 import { EngagementRateItem } from '../components/social-engagement-rate.tsx';
@@ -69,6 +74,7 @@ import {
   EDITABLE,
   draftIssues,
   fromLocalInput,
+  lastSocialList,
   takesTitle,
   providerName,
   SUBMITTABLE,
@@ -526,7 +532,7 @@ function NamesField({ label, hint, names, max, onChange, disabled }: { label: st
 // A WordPress name as the site compares it (#981): spaces collapsed, case ignored.
 const termKeyOf = (name: string) => name.normalize('NFC').replace(/\s+/g, ' ').trim().toLowerCase();
 // The most options a list keeps and the bytes they may take (CHANNEL_OPTIONS_MAX and CHANNEL_OPTIONS_BYTES_MAX in
-// @crove/channel, which the browser does not import).
+// @ludy/channel, which the browser does not import).
 const CHANNEL_OPTIONS_LISTED_MAX = 500;
 const CHANNEL_OPTIONS_LISTED_BYTES = 131_072;
 // Room for one more option of the longest kind (a 200-character name of 4-byte characters, its id and taxonomy).
@@ -2206,6 +2212,7 @@ function ChannelEditor({
   adding = false,
   signaturesLoading = false,
   suggest = null,
+  settled = false,
 }: {
   provider: string;
   channel: string;
@@ -2236,6 +2243,8 @@ function ChannelEditor({
   signaturesLoading?: boolean;
   // Suggesting an edit of the words selected in the channel's own text (#1236), right under it.
   suggest?: ReactNode;
+  // The channel went out (#3656): its card is what went out, with no disabled fields to scroll past.
+  settled?: boolean;
 }) {
   const t = useTranslations('social');
   const settings = adding ? withChannelSignature(own.settings, channelSignature) : own.settings;
@@ -2299,16 +2308,27 @@ function ChannelEditor({
     // The signature, which the shared text's marks do not cover (#1190).
     ...(!own.custom && signature !== null ? [{ field: 'settings.signature', text: signature }] : []),
   ].filter((x) => x.text !== '');
+  // The channel's optional automations (#3656): one closed group, open when a rule is already set.
+  const hasAdvanced =
+    (isProvider(provider) && REPOST_PROVIDERS.has(provider) && postType !== 'story') ||
+    (isProvider(provider) && REMOVE_READY.has(provider) && postType !== 'story') ||
+    own.settings.removeAt !== undefined ||
+    (isProvider(provider) && Boolean(AUTO_REPLY_RULES[provider]) && postType !== 'story') ||
+    (isProvider(provider) && Boolean(THREAD_RULES[provider]) && postType !== 'story') ||
+    (isProvider(provider) && Boolean(COMMENT_RULES[provider]) && postType !== 'story');
+  const advancedUsed = own.settings.removeAt !== undefined || own.settings.autoReply !== undefined || own.settings.repost !== undefined || typeof own.settings.firstComment === 'string' || Boolean(threadPartsOf(own.settings));
   return (
-    <Card className="block space-y-3 p-4">
+    <Card className="block space-y-3 p-4" data-testid="channel-card">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <Badge variant="outline">{providerName(provider)}</Badge>
           <span className="truncate text-sm font-medium text-foreground">{channel}</span>
           {status && <Badge variant={variantTone({ status, error: statusError ?? null })}>{t(`status.${variantStatusKey({ status, error: statusError ?? null })}`)}</Badge>}
         </div>
-        <Counter provider={provider} body={content.body} linkUrl={content.linkUrl} mediaCount={content.media.length} settings={own.settings} />
+        {!settled && <Counter provider={provider} body={content.body} linkUrl={content.linkUrl} mediaCount={content.media.length} settings={own.settings} />}
       </div>
+      {!settled && (
+        <>
       <PostTypeField provider={provider} settings={own.settings} disabled={disabled} onChange={(settings) => onChange({ ...own, settings })} />
       <PollAndTagField provider={provider} settings={own.settings} disabled={disabled} onChange={(settings) => onChange({ ...own, settings })} />
       <GbpField provider={provider} settings={own.settings} disabled={disabled} onChange={(settings) => onChange({ ...own, settings })} />
@@ -2318,6 +2338,8 @@ function ChannelEditor({
       </label>
       {/* Leaving the signature out of this post (#1190), or putting it back: the channel's as it is now. */}
       <SignatureToggle settings={settings} disabled={disabled} loading={signaturesLoading} onChange={(off) => onChange({ ...own, settings: signatureSettings(own.settings, off, channelSignature) })} />
+        </>
+      )}
       {own.custom && (
         <div className="space-y-2">
           {titled && <Input value={own.title} disabled={disabled} aria-label={t('titleField')} placeholder={base.title || t('titlePlaceholder')} onChange={(e) => onChange({ ...own, title: e.target.value })} />}
@@ -2343,6 +2365,8 @@ function ChannelEditor({
           )}
         </div>
       )}
+      {!settled && (
+        <>
       <label className="flex items-center gap-2 text-sm text-muted-foreground">
         <Checkbox checked={own.customMedia} disabled={disabled} onCheckedChange={(checked) => onChange({ ...own, customMedia: checked === true, media: own.media.length > 0 ? own.media : base.media })} />
         {t('ownMedia')}
@@ -2361,12 +2385,8 @@ function ChannelEditor({
       {isProvider(provider) && LINK_CARD_PROVIDERS.has(provider) && (linkUrl !== '' || own.settings.linkCard !== undefined) && (
         <LinkCardField key={connectionId ?? provider} id={`social-link-card-${connectionId ?? provider}`} provider={provider} linkUrl={linkUrl} settings={own.settings} disabled={disabled} onChange={(settings) => onChange({ ...own, settings })} />
       )}
-      {isProvider(provider) && REPOST_PROVIDERS.has(provider) && postType !== 'story' && <RepostField settings={own.settings} disabled={disabled} onChange={(settings) => onChange({ ...own, settings })} />}
-      {/* A channel Crove cannot take a post down from shows the field only to clear a time set elsewhere (its issue says why). */}
-      {((isProvider(provider) && REMOVE_READY.has(provider) && postType !== 'story') || own.settings.removeAt !== undefined) && (
-        <RemoveAtField settings={own.settings} disabled={disabled} onApplyAll={onRemoveAtAll} onChange={(settings) => onChange({ ...own, settings })} />
+        </>
       )}
-      {isProvider(provider) && AUTO_REPLY_RULES[provider] && postType !== 'story' && <AutoReplyField settings={own.settings} disabled={disabled} onChange={(settings) => onChange({ ...own, settings })} />}
       {/* A text over the channel's limit split into a thread (#1222), and merged back. */}
       {postType !== 'story' && (
         <ThreadSplitField
@@ -2381,6 +2401,23 @@ function ChannelEditor({
           onChange={(next) => onChange({ ...own, ...next })}
         />
       )}
+      {/* A thread that went out, and its first comment, stay readable (#3656) after the fields that set them are gone. */}
+      {settled && Boolean(threadPartsOf(own.settings)) && <ThreadField settings={own.settings} disabled onChange={() => undefined} />}
+      {settled && typeof own.settings.firstComment === 'string' && (
+        <div className="space-y-1">
+          <p className="text-xs font-medium">{t('firstCommentOut')}</p>
+          <p className="text-sm whitespace-pre-wrap text-muted-foreground">{own.settings.firstComment}</p>
+        </div>
+      )}
+      {/* The optional automations in one closed group (#3656); a disabled group with nothing set is not drawn at all. */}
+      {hasAdvanced && (!disabled || advancedUsed) && !settled && (
+        <AdvancedOptions title={t('advanced.title', { channel })} filled={advancedUsed}>
+      {isProvider(provider) && REPOST_PROVIDERS.has(provider) && postType !== 'story' && <RepostField settings={own.settings} disabled={disabled} onChange={(settings) => onChange({ ...own, settings })} />}
+      {/* A channel Crove cannot take a post down from shows the field only to clear a time set elsewhere (its issue says why). */}
+      {((isProvider(provider) && REMOVE_READY.has(provider) && postType !== 'story') || own.settings.removeAt !== undefined) && (
+        <RemoveAtField settings={own.settings} disabled={disabled} onApplyAll={onRemoveAtAll} onChange={(settings) => onChange({ ...own, settings })} />
+      )}
+      {isProvider(provider) && AUTO_REPLY_RULES[provider] && postType !== 'story' && <AutoReplyField settings={own.settings} disabled={disabled} onChange={(settings) => onChange({ ...own, settings })} />}
       {isProvider(provider) && THREAD_RULES[provider] && postType !== 'story' && <ThreadField settings={own.settings} disabled={disabled} onChange={(settings) => onChange({ ...own, settings })} />}
       {isProvider(provider) && COMMENT_RULES[provider] && postType !== 'story' && (!threadPartsOf(own.settings) || typeof own.settings.firstComment === 'string') && (
         <div className="space-y-1">
@@ -2397,6 +2434,8 @@ function ChannelEditor({
           />
         </div>
       )}
+        </AdvancedOptions>
+      )}
       <ProviderSettings
         provider={provider}
         settings={own.settings}
@@ -2411,8 +2450,8 @@ function ChannelEditor({
         videoSeconds={longestVideoSeconds(content.media)}
         onChange={(settings) => onChange({ ...own, settings })}
       />
-      <CoverField provider={provider} media={content.media} settings={own.settings} disabled={disabled} onChange={(settings) => onChange({ ...own, settings })} />
-      <IssueList issues={issues} />
+      {!settled && <CoverField provider={provider} media={content.media} settings={own.settings} disabled={disabled} onChange={(settings) => onChange({ ...own, settings })} />}
+      {!settled && <IssueList issues={issues} />}
       {/* Shown while the text is the one compared: changing a word clears it, and the next save checks again. */}
       {duplicate && duplicateText(content.body) === duplicateText(duplicate.checked) && (
         <DuplicateNote
@@ -2534,6 +2573,8 @@ function SharedFields({
         </div>
         <TextStyleHint text={base.body} providers={providers} />
         <BannedWordHints texts={[{ field: 'body', text: base.body }, ...(needsTitle && base.title ? [{ field: 'title', text: base.title }] : [])]} words={banned} />
+        {/* What Uy is, before the first Uy button (#3657). */}
+        {!disabled && onAiUsed && getConfig().aiEnabled === true && base.body.trim() !== '' && <p className="text-xs text-subtle-foreground">{t('uyGloss')}</p>}
         {!disabled && <HashtagSuggestions text={base.body} connectionId={null} onAiUsed={onAiUsed} onPick={(tag) => onChange({ ...base, body: withHashtag(base.body, tag) })} />}
         {!disabled && onAiUsed && (
           <AiRewrite
@@ -2573,19 +2614,19 @@ const mediaItems = (media: readonly { fileId: string; altText: string | null; mi
 
 // Approves every channel of a post just submitted, as its owner or admin sees it, then schedules the ones that need no
 // other reviewer: at the planned time, or in each channel's queue (#638).
-async function approveAndSchedule(postId: string, plannedAt: string | null): Promise<void> {
+async function approveAndSchedule(postId: string, at: string | null): Promise<void> {
   const post = await client.social.posts.get({ postId });
   const review = post.variants.filter((v) => v.status === 'in_review');
   if (review.length === 0) return;
   const decided = await client.social.variants.decide({ postId, decision: 'approved', variants: review.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
   const ready = decided.variants.filter((id) => !decided.waiting.includes(id));
   if (ready.length === 0) return;
-  const at = plannedAt && Date.parse(plannedAt) > Date.now() ? plannedAt : null;
+  // A time is sent as it is, and the server refuses one that has passed meanwhile: it never falls back to the queue.
   await client.social.variants.schedule({ postId, variantIds: ready, ...(at ? { at } : { queue: true as const }) });
 }
 
 // What the composer keeps of a post not yet created (#634).
-type ComposeDraft = { base: Base; chosen: string[]; own: Record<string, Own>; utm: UtmTags | null; plannedAt: string | null; aiUsed: boolean };
+type ComposeDraft = { base: Base; chosen: string[]; own: Record<string, Own>; utm: UtmTags | null; plannedAt: string | null; aiUsed: boolean; when?: WhenMode | null };
 
 export function SocialComposePage() {
   const { slug } = useParams({ strict: false }) as { slug: string };
@@ -2617,7 +2658,15 @@ export function SocialComposePage() {
   // A post for an occasion of the calendar (#702): named above the form, and the AI brief starts from it.
   const tOcc = useTranslations('social.occasions');
   const occasion = search.occasion && search.on ? { name: tOcc(`names.${search.occasion as 'tet'}`), date: f.date(search.on) } : null;
-  const [plannedAt, setPlannedAt] = useState<string | null>(() => (search.at && Date.parse(search.at) > Date.now() ? search.at : null));
+  // "Khi nào đăng?" (#3653): the time typed (a datetime-local text, "" while a half is missing), which starts from the
+  // calendar's planned time, else from 09:00 tomorrow or today; and the choice between a time, the next free slot and a
+  // draft with no time (null: the default, the next free slot when the channels have one, else a time).
+  const [whenLocal, setWhenLocal] = useState(() => toLocalInput(search.at && Date.parse(search.at) > Date.now() ? search.at : null) || defaultPostTime(new Date()));
+  // A time from the calendar stays the choice, whatever the channels' queues hold.
+  const [whenChoice, setWhenChoice] = useState<WhenMode | null>(() => (search.at && Date.parse(search.at) > Date.now() ? 'time' : null));
+  // The time was typed, or came from the calendar: a draft keeps it. The starting time alone is sent only to publish.
+  const [timeSet, setTimeSet] = useState(() => Boolean(search.at && Date.parse(search.at) > Date.now()));
+  const plannedAt = fromLocalInput(whenLocal);
   // A draft made from an idea (#701): its title and note become the text, its link and media the post's; the saved
   // post names the idea, which then shows as drafted.
   const idea = useQuery({ ...orpc.social.ideas.get.queryOptions({ input: { ideaId: search.idea ?? '' } }), enabled: Boolean(search.idea), staleTime: Infinity });
@@ -2649,19 +2698,34 @@ export function SocialComposePage() {
   const touched = base.body.trim() !== '' || base.title.trim() !== '' || base.linkUrl.trim() !== '' || base.media.length > 0 || Object.values(own).some((o) => o.custom || o.customMedia);
   useEffect(() => {
     if (restore) return;
-    const timer = setTimeout(() => (touched ? saveDraft<ComposeDraft>(slug, 'new', null, { base, chosen, own, utm, plannedAt, aiUsed }) : clearDraft(slug, 'new')), 400);
+    const timer = setTimeout(() => (touched ? saveDraft<ComposeDraft>(slug, 'new', null, { base, chosen, own, utm, plannedAt: timeSet ? plannedAt : null, aiUsed, when: whenChoice }) : clearDraft(slug, 'new')), 400);
     return () => clearTimeout(timer);
-  }, [base, chosen, own, utm, plannedAt, aiUsed, restore, touched, slug]);
+  }, [base, chosen, own, utm, plannedAt, timeSet, aiUsed, whenChoice, restore, touched, slug]);
   const takeDraft = (d: StoredDraft<ComposeDraft>) => {
     setBase(d.data.base);
     setChosen(d.data.chosen);
     setOwn(d.data.own);
     setUtm(d.data.utm);
-    setPlannedAt(d.data.plannedAt);
+    if (d.data.plannedAt) {
+      setWhenLocal(toLocalInput(d.data.plannedAt));
+      setTimeSet(true);
+    }
+    setWhenChoice(d.data.when ?? null);
     setAiUsed(d.data.aiUsed);
     setRestore(null);
   };
   const leave = useBlocker({ shouldBlockFn: () => touched && !leaving.current, enableBeforeUnload: () => touched && !leaving.current, withResolver: true });
+
+  const selected = live.filter((c) => chosen.includes(c.id));
+  // Each chosen channel's queue: "the next free slot" is offered only when every one has slots (a new channel has none,
+  // and its first post would meet "queue is empty", #3653).
+  const queues = useQueries({ queries: selected.map((c) => orpc.social.queues.get.queryOptions({ input: { connectionId: c.id } })) });
+  const queueStates: (QueueState | null)[] = queues.map((q) => (q.data ? { free: q.data.nextFree.length, paused: q.data.paused } : null));
+  const slotsReady = queueReady(queueStates);
+  const when = effectiveWhen(whenChoice, slotsReady);
+  const nowMs = Date.now();
+  // The time sent: only in "a time" mode, and only while it is still ahead.
+  const chosenTime = when === 'time' ? futureInstant(plannedAt, nowMs) : null;
 
   // One key per content: a retry of the same content after a lost answer returns the post the first request created;
   // content edited after a failed attempt is a new request (the server would refuse the old key with other content).
@@ -2672,6 +2736,8 @@ export function SocialComposePage() {
       let mode = asked;
       // The one-step publish rests on the checklist and four-eyes as this page read them: read again first, so a list
       // saved meanwhile sends the post to review instead of leaving it there after a refused approval (#1113).
+      // A time that went by while the page was open is told, never swapped for the queue.
+      if (mode === 'publish' && when === 'time' && !futureInstant(plannedAt, Date.now())) throw new Error(t('whenPast'));
       if (mode === 'publish') {
         const [checks, rules] = await Promise.all([
           queryClient.fetchQuery({ ...orpc.social.reviewChecklist.list.queryOptions({ input: {} }), staleTime: 0 }),
@@ -2688,8 +2754,9 @@ export function SocialComposePage() {
         title: orNull(base.title),
         linkUrl: orNull(base.linkUrl),
         timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        // A planned time that went by while the page was open is dropped.
-        ...(plannedAt && Date.parse(plannedAt) > Date.now() ? { scheduledAt: plannedAt } : {}),
+        // The time the card shows, for a post sent to review or published; a draft keeps only a time the person set. The queue
+        // and "choose later" keep none; a time that went by while the page was open is dropped.
+        ...(when === 'time' && (timeSet || asked !== 'draft') && futureInstant(plannedAt, Date.now()) ? { scheduledAt: plannedAt as string } : {}),
         ...(aiUsed ? { aiAssisted: true as const } : {}),
         ...(ideaId ? { ideaId } : {}),
         media: mediaInput(base.media),
@@ -2712,7 +2779,7 @@ export function SocialComposePage() {
           return false;
         },
       );
-      if (mode === 'publish' && submitted) await approveAndSchedule(created.postId, plannedAt).catch((error: unknown) => setFlash(errorMessage(error)));
+      if (mode === 'publish' && submitted) await approveAndSchedule(created.postId, when === 'time' ? plannedAt : null).catch((error: unknown) => setFlash(errorMessage(error)));
       return created.postId;
     },
     onSuccess: (postId) => {
@@ -2760,7 +2827,6 @@ export function SocialComposePage() {
     },
   });
 
-  const selected = live.filter((c) => chosen.includes(c.id));
   // Each channel's signature (#1190), which the new post's channels take unless left off.
   const signatureRows = useQuery(orpc.social.policies.list.queryOptions({ input: {} }));
   const signatures = new Map((signatureRows.data ?? []).map((p) => [p.connectionId, p.signature]));
@@ -2793,6 +2859,10 @@ export function SocialComposePage() {
     setBase((b) => ({ ...b, media: replaceMedia(b.media, fromFileId, next) }));
     setOwn((o) => replaceInChannels(o, fromFileId, next));
   };
+  // Why a button is off, said where the person looks and tied to the button (#3653).
+  const whyId = 'compose-why';
+  const why = chosen.length === 0 ? t('whyPickChannel') : blocking ? t('whyBlocking') : null;
+  const publishWhy = oneStep && when === 'time' && !chosenTime ? t('whyPickTime') : null;
   if (channels.isLoading || signatureRows.isPending) return <Spinner />;
   return (
     <MediaReplace.Provider value={fixEverywhere}>
@@ -2803,17 +2873,18 @@ export function SocialComposePage() {
         subtitle={t('composeSubtitle')}
         actions={
           <>
-            <Button variant="outline" size="lg" disabled={chosen.length === 0 || create.isPending} onClick={() => create.mutate('draft')}>
+            <Button variant="outline" size="lg" disabled={chosen.length === 0 || create.isPending} aria-describedby={chosen.length === 0 ? whyId : undefined} onClick={() => create.mutate('draft')}>
               {t('saveDraft')}
             </Button>
-            <Button size="lg" variant={oneStep ? 'outline' : 'default'} disabled={chosen.length === 0 || blocking || create.isPending} onClick={() => create.mutate('submit')}>
+            <Button size="lg" variant={oneStep && when !== 'draft' ? 'outline' : 'default'} disabled={chosen.length === 0 || blocking || create.isPending} aria-describedby={why ? whyId : undefined} onClick={() => create.mutate('submit')}>
               {create.isPending && create.variables === 'submit' ? <Spinner className="text-current" /> : null}
               {t('saveAndSubmit')}
             </Button>
-            {oneStep && (
-              <Button size="lg" disabled={chosen.length === 0 || blocking || create.isPending} onClick={() => create.mutate('publish')} title={t('publishNowHint')}>
+            {/* The button names what happens and when (#3653); a draft with no time has no one-step button. */}
+            {oneStep && when !== 'draft' && (
+              <Button size="lg" disabled={chosen.length === 0 || blocking || create.isPending || (when === 'time' && !chosenTime)} aria-describedby={why || publishWhy ? whyId : undefined} onClick={() => create.mutate('publish')} title={t('publishNowHint')}>
                 {create.isPending && create.variables === 'publish' ? <Spinner className="text-current" /> : null}
-                {t('publishNow')}
+                {when === 'queue' ? t('publishInQueue') : chosenTime ? t('publishAt', { time: f.time(chosenTime), date: dayMonth(chosenTime, locale) }) : t('publishNow')}
               </Button>
             )}
           </>
@@ -2871,6 +2942,8 @@ export function SocialComposePage() {
                 </Button>
               )}
             </div>
+            {/* The first Uy button of a shared link: what Uy is comes with it (#3657). */}
+            {shared.link && aiEnabled && <p className="text-xs text-subtle-foreground">{t('uyGloss')}</p>}
             {shared.link && aiEnabled && chosen.length === 0 && <p className="text-xs text-subtle-foreground">{t('share.pickChannelFirst')}</p>}
             {shared.link && aiDraft.error && aiDraft.variables === shared.link && <ErrorText>{errorMessage(aiDraft.error)}</ErrorText>}
           </div>
@@ -2881,33 +2954,13 @@ export function SocialComposePage() {
           <ErrorText>{errorMessage(create.error)}</ErrorText>
         </div>
       )}
-      {plannedAt && (
-        <p className="mb-4 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-          {t('plannedFor', { when: f.dateTime(plannedAt) })}
-          <Button variant="ghost" size="sm" onClick={() => setPlannedAt(null)}>
-            {t('plannedClear')}
-          </Button>
+      {(why ?? publishWhy) && (
+        <p id={whyId} className="mb-4 text-sm text-muted-foreground">
+          {why ?? publishWhy}
         </p>
       )}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="space-y-4">
-          <SharedFields
-            base={base}
-            onChange={setBase}
-            disabled={create.isPending}
-            autoFocus
-            needsTitle={selected.some((c) => takesTitle(c.provider, own[c.id]?.settings, mediaOfOwn(own[c.id] ?? EMPTY_OWN, base)))}
-            onAiUsed={() => setAiUsed(true)}
-            slug={slug}
-            connectionIds={selected.map((c) => c.id)}
-            mediaConnectionIds={selected.filter((c) => !own[c.id]?.customMedia).map((c) => c.id)}
-            providers={selected.map((c) => c.provider)}
-          />
-          {base.linkUrl.trim() && (
-            <Card className="block p-4">
-              <UtmFields utm={utm} onChange={setUtm} disabled={create.isPending} />
-            </Card>
-          )}
           <Card className="block p-4">
             <p className="mb-3 text-sm font-medium text-foreground">{t('pickChannels')}</p>
             <ChannelSetPicker live={live} onPick={setChosen} />
@@ -3010,6 +3063,37 @@ export function SocialComposePage() {
               <p className="text-xs text-subtle-foreground">{t('aiOff')}</p>
             )}
           </Card>
+          <SharedFields
+            base={base}
+            onChange={setBase}
+            disabled={create.isPending}
+            autoFocus
+            needsTitle={selected.some((c) => takesTitle(c.provider, own[c.id]?.settings, mediaOfOwn(own[c.id] ?? EMPTY_OWN, base)))}
+            onAiUsed={() => setAiUsed(true)}
+            slug={slug}
+            connectionIds={selected.map((c) => c.id)}
+            mediaConnectionIds={selected.filter((c) => !own[c.id]?.customMedia).map((c) => c.id)}
+            providers={selected.map((c) => c.provider)}
+          />
+          {base.linkUrl.trim() && (
+            <Card className="block p-4">
+              <UtmFields utm={utm} onChange={setUtm} disabled={create.isPending} />
+            </Card>
+          )}
+          <WhenCard
+            mode={when}
+            onMode={setWhenChoice}
+            queueAvailable={slotsReady}
+            noSlots={selected.length > 0 && queues.every((q) => q.isSuccess) && !slotsReady}
+            value={whenLocal}
+            onValue={(value) => {
+              setWhenLocal(value);
+              setTimeSet(true);
+            }}
+            min={toLocalInput(new Date(nowMs).toISOString())}
+            disabled={create.isPending}
+            timeInPast={when === 'time' && whenLocal !== '' && plannedAt !== null && !chosenTime}
+          />
           <p className="text-xs text-subtle-foreground">{t('shortcutHint')}</p>
         </div>
         <div className="space-y-4">
@@ -3829,6 +3913,78 @@ function VariantMetrics({ row }: { row: { metrics: Record<string, number>; captu
   );
 }
 
+// The result of a published post (#3656), above everything else: each published channel with when it went out, the link to
+// the post on the channel and the latest numbers.
+function PublishedSummary({ post, names, metricsOf }: { post: Post; names: Map<string, string>; metricsOf: Map<string, { metrics: Record<string, number>; capturedAt: string | null }> }) {
+  const t = useTranslations('social');
+  const f = useFormat();
+  const out = post.variants.filter((v) => v.status === 'published');
+  return (
+    <Card className="mb-6 block space-y-3 p-4" data-testid="published-summary">
+      <h2 className="text-sm font-semibold text-foreground">{t('results.title')}</h2>
+      {out.map((v) => {
+        const channel = names.get(v.connectionId) ?? providerName(v.provider);
+        return (
+          <section key={v.id} aria-label={channel} className="space-y-1.5 border-t pt-3 text-xs text-muted-foreground first:border-t-0 first:pt-0">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <Badge variant="outline">{providerName(v.provider)}</Badge>
+              <span className="text-sm font-medium text-foreground">{channel}</span>
+              {v.effectiveAt && <span>{t(NOT_PUBLIC_AT[notPublicKey(v) ?? ''] ?? 'publishedAt', { when: f.dateTime(v.effectiveAt) })}</span>}
+              {v.externalUrl && (
+                <a href={v.externalUrl} target="_blank" rel="noopener noreferrer" className="text-link hover:underline">
+                  {t('openPost')}
+                </a>
+              )}
+            </div>
+            <VariantMetrics row={metricsOf.get(v.id)} />
+          </section>
+        );
+      })}
+    </Card>
+  );
+}
+
+// One choice of how a post comes back by itself (#3656): not at all, on a cycle (every N days from the last publish), or
+// every week on chosen days. The rule that is on opens its own settings, so it is never hidden; leaving it turns it off.
+function AutoRepostPanel({ post, published, onDone }: { post: Post; published: boolean; onDone: () => void }) {
+  const t = useTranslations('social');
+  const id = useId();
+  type Mode = 'none' | 'cycle' | 'weekly';
+  const saved: Mode = post.evergreenDays !== null ? 'cycle' : post.recurrence !== null ? 'weekly' : 'none';
+  const [mode, setMode] = useState<Mode>(saved);
+  // A rule being saved in one of the panels below settles first: a choice made meanwhile would not turn it off.
+  const saving = useIsMutating() > 0;
+  const turnOffCycle = useMutation({ mutationFn: () => client.social.posts.setEvergreen({ postId: post.id, days: null }), onSuccess: onDone });
+  const turnOffWeekly = useMutation({ mutationFn: () => client.social.posts.clearRecurrence({ postId: post.id }), onSuccess: onDone });
+  const choose = (next: Mode) => {
+    setMode(next);
+    // Leaving a rule that is on turns it off, so what is chosen is what runs.
+    if (next !== 'cycle' && post.evergreenDays !== null) turnOffCycle.mutate();
+    if (next !== 'weekly' && post.recurrence !== null) turnOffWeekly.mutate();
+  };
+  const choices: Mode[] = ['none', ...(published || post.evergreenDays !== null ? (['cycle'] as const) : []), 'weekly'];
+  return (
+    <div className="space-y-4" data-testid="auto-repost">
+      <Card className="block space-y-2 p-4">
+        <p id={`${id}-label`} className="text-sm font-medium text-foreground">
+          {t('autoRepost.title')}
+        </p>
+        <div role="radiogroup" aria-labelledby={`${id}-label`} className="flex flex-wrap gap-x-4 gap-y-2">
+          {choices.map((c) => (
+            <label key={c} className="flex min-h-8 items-center gap-2 text-sm text-muted-foreground">
+              <input type="radio" name={`${id}-mode`} checked={mode === c} disabled={saving || turnOffCycle.isPending || turnOffWeekly.isPending} onChange={() => choose(c)} />
+              {t(`autoRepost.${c}`)}
+            </label>
+          ))}
+        </div>
+        {(turnOffCycle.error || turnOffWeekly.error) && <ErrorText>{errorMessage(turnOffCycle.error ?? turnOffWeekly.error)}</ErrorText>}
+      </Card>
+      {mode === 'cycle' && <EvergreenPanel post={post} onDone={onDone} />}
+      {mode === 'weekly' && <RecurrencePanel key={`${JSON.stringify(post.recurrence)}:${post.recurrenceCount}`} post={post} published={published} onDone={onDone} />}
+    </div>
+  );
+}
+
 // Each post gets fresh page state: the route keeps the page mounted when it opens another post (a repost, its source).
 export function SocialPostPage() {
   const { slug, id: postId } = useParams({ strict: false }) as { slug: string; id: string };
@@ -3851,6 +4007,9 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
   // The latest counts of each published channel (#578).
   const metrics = useQuery({ ...orpc.social.metrics.summary.queryOptions({ input: { postId } }), enabled: post.data?.variants.some((v) => v.status === 'published') ?? false });
   const channels = useQuery(orpc.channels.list.queryOptions({ input: { includeRevoked: true } }));
+  // Assignment, versions and suggested edits are for a team (#3656): they show from two members on.
+  const org = useQuery(orpc.org.get.queryOptions());
+  const team = (org.data?.members.length ?? 0) >= 2;
   const names = useMemo(() => new Map((channels.data ?? []).map((c: Channel) => [c.id, c.displayName])), [channels.data]);
   const grants = useMemo(() => new Map((channels.data ?? []).map((c: Channel) => [c.id, c.scopes])), [channels.data]);
   // Each channel's signature as it is now (#1190), for putting one back on a channel that left it off.
@@ -3963,14 +4122,6 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
     onSettled: refresh,
   });
   const submit = useMutation({ mutationFn: () => client.social.posts.submit({ postId }), onSuccess: refresh });
-  // A repost opens as a new draft for the same channels.
-  const repost = useMutation({
-    mutationFn: () => client.social.posts.repost({ postId }),
-    onSuccess: (made) => {
-      refresh();
-      void navigate({ to: '/o/$slug/social/$id', params: { slug, id: made.postId } });
-    },
-  });
   // A copy of the post as a new draft, opened at once.
   const duplicate = useMutation({
     mutationFn: () => client.social.posts.duplicate({ postId }),
@@ -4095,8 +4246,10 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
     }
   };
   const published = p.variants.some((v) => v.status === 'published');
+  // Where the post stands as a whole, in a sentence under the title (#3656).
+  const status = postStatus(p);
   const metricsOf = new Map((metrics.data ?? []).map((r) => [r.variantId, r]));
-  const error = save.error ?? submit.error ?? retryComment.error ?? retryThread.error ?? repost.error ?? duplicate.error ?? archive.error ?? unarchive.error ?? unschedule.error ?? cancel.error ?? retry.error ?? resolve.error;
+  const error = save.error ?? submit.error ?? retryComment.error ?? retryThread.error ?? duplicate.error ?? archive.error ?? unarchive.error ?? unschedule.error ?? cancel.error ?? retry.error ?? resolve.error;
   const reviewable = !dirty && !stale && !archived;
   // The AI rewrite box of the text a channel sends (#1156): its own text's, or the shared text's.
   const rewriteTarget = (v: Variant): string | null =>
@@ -4109,6 +4262,45 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
     setOwn((o) => replaceInEditable(o, Object.fromEntries(p.variants.filter((v) => EDITABLE.includes(v.status)).map((v) => [v.id, o[v.id] ?? ownOf(v)])), fromFileId, next));
   };
 
+  // The label picker and the automatic repost choice, drawn in the page or, once a post is out, folded under "Tùy chọn khác" (#3656).
+  const labelPicker = (
+<LabelPicker
+            slug={slug}
+            postId={p.id}
+            labelIds={p.labelIds}
+            canWrite={canWrite}
+            // A campaign label fills the empty UTM fields (#1169) as an edit like any other: nothing is saved until Save,
+            // and saving changes the channels' settings, their content hash and their approval as any edit does.
+            // Each channel's own empty fields, and none while a save is on its way (it would settle over the fill).
+            onPut={(label) => {
+              if (!editable || !base.linkUrl.trim() || save.isPending) return false;
+              // Called once the label is saved: the edits made since are read from the latest state, never overwritten.
+              const fill = (from: Record<string, Own>) => {
+                const changed = { ...from };
+                let filled = false;
+                for (const v of p.variants) {
+                  if (!EDITABLE.includes(v.status)) continue;
+                  const mine = from[v.id] ?? ownOf(v);
+                  const tags = utmOf(mine.settings);
+                  const next = prefillUtm(tags ? { campaign: tags.campaign, medium: tags.medium ?? 'social' } : null, label);
+                  if (!next) continue;
+                  changed[v.id] = withUtm(mine, next);
+                  filled = true;
+                }
+                return filled ? changed : null;
+              };
+              if (!fill(own)) return false;
+              setOwn((latest) => fill(latest) ?? latest);
+              setUtmState((latest) => {
+                const shown = latest === undefined ? shownUtm : latest;
+                return prefillUtm(shown, label) ?? shown;
+              });
+              return true;
+            }}
+          />
+  );
+  const autoRepost = canWrite && !archived && p.recurrenceSourceId === null ? <AutoRepostPanel post={p} published={published} onDone={refresh} /> : null;
+
   return (
     <MediaReplace.Provider value={fixEverywhere}>
     <LeavePageDialog blocker={leave} />
@@ -4119,10 +4311,11 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
       <PageHeader
         title={t('postTitle')}
         titleId="social-post-title"
-        subtitle={t('postSubtitle', { updated: f.dateTime(p.updatedAt) })}
+        subtitle={`${t(`postStatus.${status.key}`, { when: status.at ? f.dateTime(status.at) : '' })} ${t('postSubtitle', { updated: f.dateTime(p.updatedAt) })}`}
         actions={
           <>
-            <Link to="/o/$slug/social" params={{ slug }} className="inline-flex h-9 items-center px-2.5 text-sm text-muted-foreground hover:text-foreground">
+            {/* The list the person came from, with its tab and filters (#3656). */}
+            <Link to="/o/$slug/social" params={{ slug }} search={lastSocialList(slug)} className="inline-flex h-9 items-center px-2.5 text-sm text-muted-foreground hover:text-foreground">
               {t('back')}
             </Link>
             {editable && (
@@ -4134,12 +4327,6 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
             {canWrite && submittable.length > 0 && (
               <Button size="lg" disabled={dirty || submit.isPending} title={dirty ? t('saveFirst') : undefined} onClick={() => submit.mutate()}>
                 {t('submit')}
-              </Button>
-            )}
-            {canWrite && published && (
-              <Button variant="outline" size="lg" disabled={dirty || repost.isPending} title={t('repostHint')} onClick={() => repost.mutate()}>
-                {repost.isPending ? <Spinner className="text-current" /> : null}
-                {t('repost')}
               </Button>
             )}
             {canWrite && (
@@ -4255,8 +4442,17 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
       )}
       {/* The cards below title their parts with h3: this names the level between them and the page's h1 (#1572). */}
       <h2 className="sr-only">{t('postDetails')}</h2>
+      {/* A published post leads with its result (#3656): when, where, the link and the numbers. */}
+      {published && <PublishedSummary post={p} names={names} metricsOf={metricsOf} />}
+      {/* Boost it with an ad (ads W3, #3834): the action, or where its boost stands; nothing while running ads is off. */}
+      {published && <BoostCard slug={slug} post={p} />}
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="space-y-4">
+          {/* The next step comes first (#3656): the review and the schedule, above the fields. */}
+          {noneLeft && <NoneLeftToReview slug={slug} />}
+          {moveError && <ErrorText>{moveError}</ErrorText>}
+          {canDecide && reviewable && <ReviewPanel post={p} names={names} onDone={refresh} rewriteTarget={rewriteTarget} onApproved={() => void moveOn()} />}
+          {canDecide && reviewable && <SchedulePanel post={p} names={names} onDone={refresh} />}
           <SharedFields
             base={base}
             onChange={setBase}
@@ -4268,51 +4464,14 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
             mediaConnectionIds={p.variants.filter((v) => !(own[v.id]?.customMedia ?? v.ownMedia)).map((v) => v.connectionId)}
             providers={p.variants.map((v) => v.provider)}
             // A member who may comment suggests an edit of words of the saved text (#1236), while a channel can still change.
-            suggest={editable ? <SuggestEdit postId={p.id} targetId="social-body" field="post" saved={origin.body} current={base.body} /> : null}
+            suggest={editable && team ? <SuggestEdit postId={p.id} targetId="social-body" field="post" saved={origin.body} current={base.body} /> : null}
           />
           {base.linkUrl.trim() && editable && (
             <Card className="block p-4">
               <UtmFields utm={shownUtm} onChange={setUtm} disabled={save.isPending} />
             </Card>
           )}
-          {noneLeft && <NoneLeftToReview slug={slug} />}
-          {moveError && <ErrorText>{moveError}</ErrorText>}
-          {canDecide && reviewable && <ReviewPanel post={p} names={names} onDone={refresh} rewriteTarget={rewriteTarget} onApproved={() => void moveOn()} />}
-          {canDecide && reviewable && <SchedulePanel post={p} names={names} onDone={refresh} />}
-          <LabelPicker
-            slug={slug}
-            postId={p.id}
-            labelIds={p.labelIds}
-            canWrite={canWrite}
-            // A campaign label fills the empty UTM fields (#1169) as an edit like any other: nothing is saved until Save,
-            // and saving changes the channels' settings, their content hash and their approval as any edit does.
-            // Each channel's own empty fields, and none while a save is on its way (it would settle over the fill).
-            onPut={(label) => {
-              if (!editable || !base.linkUrl.trim() || save.isPending) return false;
-              // Called once the label is saved: the edits made since are read from the latest state, never overwritten.
-              const fill = (from: Record<string, Own>) => {
-                const changed = { ...from };
-                let filled = false;
-                for (const v of p.variants) {
-                  if (!EDITABLE.includes(v.status)) continue;
-                  const mine = from[v.id] ?? ownOf(v);
-                  const tags = utmOf(mine.settings);
-                  const next = prefillUtm(tags ? { campaign: tags.campaign, medium: tags.medium ?? 'social' } : null, label);
-                  if (!next) continue;
-                  changed[v.id] = withUtm(mine, next);
-                  filled = true;
-                }
-                return filled ? changed : null;
-              };
-              if (!fill(own)) return false;
-              setOwn((latest) => fill(latest) ?? latest);
-              setUtmState((latest) => {
-                const shown = latest === undefined ? shownUtm : latest;
-                return prefillUtm(shown, label) ?? shown;
-              });
-              return true;
-            }}
-          />
+          {published ? <AdvancedOptions title={t('moreOptions')} filled={p.evergreenDays !== null || p.recurrence !== null || p.labelIds.length > 0}>{labelPicker}{autoRepost}</AdvancedOptions> : <>{labelPicker}{autoRepost}</>}
           <CampaignFindings
             labelIds={p.labelIds}
             labels={labelList.data ?? []}
@@ -4322,18 +4481,14 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
               .map((v) => ({ name: names.get(v.connectionId) ?? providerName(v.provider), settings: (own[v.id] ?? ownOf(v)).settings, linkUrl: v.overrides.linkUrl ?? orNull(base.linkUrl), at: v.effectiveAt }))}
             timeZone={p.timeZone}
           />
-          {canWrite && !archived && p.recurrence === null && (published || p.evergreenDays !== null) && <EvergreenPanel post={p} onDone={refresh} />}
-          {/* One kind of repeat per post (#979); a copy of a series repeats with its series post. */}
-          {canWrite && !archived && p.evergreenDays === null && p.recurrenceSourceId === null && (
-            <RecurrencePanel key={`${JSON.stringify(p.recurrence)}:${p.recurrenceCount}`} post={p} published={published} onDone={refresh} />
-          )}
           {/* The texts an evergreen or series post's copies rotate through (#1260); a copy of a series takes its series'. */}
           {canWrite && p.recurrenceSourceId === null && (p.evergreenDays !== null || p.recurrence !== null) && (
             <TextVariationsCard key={`${JSON.stringify(p.textVariations)}:${p.textVariationNext}`} post={p} onDone={refresh} />
           )}
-            <ReviewLinks postId={p.id} canDecide={canDecide} canReply={canWrite} />
-            <AssignCard post={p} canEdit={canDecide || (canWrite && p.authorUserId !== null && p.authorUserId === userId)} />
-          <PostVersions
+          {/* Once every channel is out or dropped there is nothing left to send to a client for approval (#3656): the links still live and the answers stay. */}
+          <ReviewLinks postId={p.id} canDecide={canDecide} canReply={canWrite} canCreate={p.variants.some((v) => !['published', 'removed', 'cancelled'].includes(v.status))} />
+          {team && <AssignCard post={p} canEdit={canDecide || (canWrite && p.authorUserId !== null && p.authorUserId === userId)} />}
+          {team && <PostVersions
             postId={p.id}
             revision={p.revision}
             variantRevisions={Object.fromEntries(p.variants.map((v) => [v.id, v.revision]))}
@@ -4346,7 +4501,7 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
             canWrite={canWrite}
             editing={editing}
             onRestored={() => void settle(false).finally(refresh)}
-          />
+          />}
           {dirty && <p className="text-xs text-subtle-foreground">{t('unsaved')}</p>}
         </div>
         <div className="space-y-4">
@@ -4368,6 +4523,7 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
                 onAiUsed={() => setAiUsed(true)}
                 disabled={frozen || !canWrite || save.isPending}
                 readOnly={frozen || !canWrite}
+                settled={v.status === 'published' || v.status === 'removed'}
                 status={v.status}
                 statusError={v.error}
                 onChange={(next) => setOwn({ ...own, [v.id]: next })}
@@ -4377,7 +4533,7 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
                 signaturesLoading={signatureRows.isPending}
                 // On the channel's own saved text (#1236), while the channel can still change.
                 suggest={
-                  !frozen && canWrite && v.overrides.body !== null && (own[v.id] ?? ownOf(v)).custom ? (
+                  !frozen && canWrite && team && v.overrides.body !== null && (own[v.id] ?? ownOf(v)).custom ? (
                     <SuggestEdit
                       postId={p.id}
                       targetId={`social-own-${v.connectionId}`}
@@ -4390,7 +4546,7 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
                 }
                 footer={
                   <div className="space-y-2 border-t pt-3 text-xs text-muted-foreground">
-                    {v.effectiveAt && ['scheduled', 'paused', 'publishing', 'processing', 'published'].includes(v.status) && (
+                    {v.effectiveAt && ['scheduled', 'paused', 'publishing', 'processing'].includes(v.status) && (
                       <p>{t(NOT_PUBLIC_AT[notPublicKey(v) ?? ''] ?? (v.status === 'published' ? 'publishedAt' : 'goesOutAt'), { when: f.dateTime(v.effectiveAt) })}{v.queueSlotAt && v.status !== 'published' ? ` · ${t('fromQueue')}` : ''}</p>
                     )}
                     {decision && decision.comment && ['changes_requested', 'rejected'].includes(v.status) && <p className="text-warning">{t('reviewerSaid', { comment: decision.comment })}</p>}
@@ -4399,7 +4555,7 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
                     <Outcome variant={v} slug={slug} />
                     <RemovalNote variant={v} />
                     <LiveEditNote variant={v} />
-                    {v.externalUrl && v.status !== 'removed' && (
+                    {v.externalUrl && v.status !== 'removed' && v.status !== 'published' && (
                       <a href={v.externalUrl} target="_blank" rel="noopener noreferrer" className="text-link hover:underline">
                         {t('openPost')}
                       </a>
@@ -4433,7 +4589,6 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
                         )}
                       </div>
                     )}
-                    {v.status === 'published' && <VariantMetrics row={metricsOf.get(v.id)} />}
                     <div className="flex flex-wrap gap-2">
                       {canDecide && (v.status === 'failed' || v.status === 'needs_attention') && (
                         <Button variant="outline" size="sm" disabled={retry.isPending} onClick={() => retry.mutate(v.id)}>

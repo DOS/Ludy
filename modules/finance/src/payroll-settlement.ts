@@ -9,8 +9,8 @@ import {
   zPayrollSettlementRef,
   type PayrollPaymentKind,
   type PayrollSettlement,
-} from '@crove/kernel-contract';
-import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { VOUCHER_SOURCE } from './domain/cash-voucher.ts';
 import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
 import { reversedSource } from './source-entry.ts';
@@ -20,7 +20,7 @@ type Posting = PayrollSettlement['posting'];
 // The open proposals of a command that name this run, newest first: the run id is a field of the request input, compared in lower case as it was typed.
 async function openProposals(ctx: QueryContext, command: string, runId: string): Promise<{ id: string; kind: string | null }[]> {
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.proposal')
+    .selectFrom('ludy_kernel.proposal')
     .select(['id'])
     .select(sql<string | null>`request_input ->> 'kind'`.as('kind'))
     .where('org_id', '=', ctx.orgId)
@@ -36,7 +36,7 @@ async function postingOf(ctx: QueryContext, runId: string): Promise<Posting> {
   // A reversed posting frees the run (#2931): the run is `posted` while any of its posting vouchers stands, `reversed` when all were reversed and nothing new waits, `pending` when a new proposal
   // waits in the Inbox (also after a reversal), `none` when the run was never posted.
   const vouchers = await ctx.trx
-    .selectFrom('crove_finance.journal_voucher as j')
+    .selectFrom('ludy_finance.journal_voucher as j')
     .select(reversedSource('j', JOURNAL_VOUCHER_SOURCE).as('reversed'))
     .where('j.org_id', '=', ctx.orgId)
     .where('j.payroll_run_id', '=', runId)
@@ -55,7 +55,7 @@ export const payrollSettlement = defineQuery({
     const posting = await postingOf(ctx, runId);
     // A payment voucher that was reversed no longer counts as recorded: its kind is free again and the card offers the step (#2854).
     const recorded = await ctx.trx
-      .selectFrom('crove_finance.cash_voucher as v')
+      .selectFrom('ludy_finance.cash_voucher as v')
       .select('v.payroll_payment_kind')
       .where('v.org_id', '=', ctx.orgId)
       .where('v.payroll_run_id', '=', runId)

@@ -10,12 +10,12 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import type { ExtractClient } from '@crove/extract-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -166,7 +166,7 @@ suite('learned account rules with provenance (#1399)', () => {
       (
         await c.query<{ vendor: boolean; match_kind: string; match_text: string; label: string | null; debit_account: string; confirmed_by: string | null; source_document_id: string | null }>(
           `SELECT vendor_party_id IS NOT NULL AS vendor, match_kind, match_text, label, debit_account, confirmed_by, source_document_id
-             FROM crove_finance.categorization_rule WHERE org_id = $1 ORDER BY match_text`,
+             FROM ludy_finance.categorization_rule WHERE org_id = $1 ORDER BY match_text`,
           [org.orgId],
         )
       ).rows,
@@ -182,17 +182,17 @@ suite('learned account rules with provenance (#1399)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     const db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -251,7 +251,7 @@ suite('learned account rules with provenance (#1399)', () => {
     // In the audited command that recorded the invoice.
     const audit = await admin(async (c) =>
       (await c.query<{ detail: { learned_rules: Array<{ lineNo: number; account: string; created: boolean }> } }>(
-        `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.purchase.record' AND outcome = 'ok' AND detail ? 'learned_rules'`,
+        `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.purchase.record' AND outcome = 'ok' AND detail ? 'learned_rules'`,
         [org.orgId],
       )).rows,
     );
@@ -351,7 +351,7 @@ suite('learned account rules with provenance (#1399)', () => {
     expect(await rpc('accountRules/remove', owner, { id: ads?.id })).toMatchObject({ status: 404, body: { code: 'RULE_NOT_FOUND' } });
     const audit = await admin(async (c) =>
       (await c.query<{ detail: Record<string, unknown> }>(
-        `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.categorization_rule.remove' AND outcome = 'ok'`,
+        `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.categorization_rule.remove' AND outcome = 'ok'`,
         [org.orgId],
       )).rows,
     );
@@ -364,19 +364,19 @@ suite('learned account rules with provenance (#1399)', () => {
   it('keeps the rule text in normalized form and the rows inside their org at the database', async () => {
     // The CHECK refuses text that is not normalized, whoever writes it.
     await expect(
-      admin((c) => c.query(`INSERT INTO crove_finance.categorization_rule (org_id, match_kind, match_text, debit_account) VALUES ($1, 'keyword', 'Chiết khấu', '6422')`, [org.orgId])),
+      admin((c) => c.query(`INSERT INTO ludy_finance.categorization_rule (org_id, match_kind, match_text, debit_account) VALUES ($1, 'keyword', 'Chiết khấu', '6422')`, [org.orgId])),
     ).rejects.toThrow(/categorization_rule_match_text_check/);
     // An account outside the chart is refused like every other account reference.
     await expect(
-      admin((c) => c.query(`INSERT INTO crove_finance.categorization_rule (org_id, match_kind, match_text, debit_account) VALUES ($1, 'keyword', 'abc', '9999')`, [org.orgId])),
+      admin((c) => c.query(`INSERT INTO ludy_finance.categorization_rule (org_id, match_kind, match_text, debit_account) VALUES ($1, 'keyword', 'abc', '9999')`, [org.orgId])),
     ).rejects.toThrow(/not in the chart of accounts/);
     // What a rule matches never changes in place for the tenant role.
     const client = new pg.Client({ connectionString: new URL(adminUrl).toString() });
     await client.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SET LOCAL ROLE crove_tenant');
-      await expect(client.query(`UPDATE crove_finance.categorization_rule SET match_text = 'x y'`)).rejects.toThrow(/permission denied/);
+      await client.query('SET LOCAL ROLE ludy_tenant');
+      await expect(client.query(`UPDATE ludy_finance.categorization_rule SET match_text = 'x y'`)).rejects.toThrow(/permission denied/);
     } finally {
       await client.query('ROLLBACK').catch(() => {});
       await client.end();

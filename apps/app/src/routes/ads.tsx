@@ -10,18 +10,21 @@
 // spend sits beside the ledger's advertising expense (components/ads-books-strip.tsx). The server and the row policies
 // decide each rule; the screen only offers what can succeed and shows the server's reason otherwise.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
+import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import { ADS_SANDBOX_CURRENCIES, type AdAccountView, type AdsSummary, type LegalEntity } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { TableCell, TableRow } from '@crove/ui/components/table';
+import { ADS_SANDBOX_CURRENCIES, type AdAccountView, type AdsSummary, type LegalEntity } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button, buttonVariants } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { AdsBooksStrip } from '../components/ads-books-strip.tsx';
+import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { AdsFlagSettingsCard } from '../components/ads-flag-settings.tsx';
+import { AdsRunStatus } from '../components/ads-run-status.tsx';
+import { AdsCommittedStrip } from '../components/ads-committed.tsx';
 import { AdsFlagsCard } from '../components/ads-flags.tsx';
 import { AdsWeeklyNoteCard } from '../components/ads-weekly-note.tsx';
 import { AdsRevokeNotice, AdsWriteCard } from '../components/ads-write.tsx';
@@ -32,6 +35,7 @@ import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import {
   ADS_RANGES,
   DEFAULT_ADS_RANGE,
+  connectionEndsSoon,
   FIRST_SYNC_POLL_LIMIT,
   FIRST_SYNC_POLL_MS,
   REFRESH_POLL_MS,
@@ -62,6 +66,8 @@ import { disconnectConfirmText, hasOpenWriteConnection } from '../lib/ads-write.
 import { getConfig } from '../lib/auth.ts';
 import { monthLabel } from '../lib/period-lock.ts';
 import { toast } from '../lib/toast.ts';
+import { TOUCH_BUTTON } from '../lib/touch.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 type SandboxCurrency = (typeof ADS_SANDBOX_CURRENCIES)[number];
 
@@ -90,7 +96,7 @@ const H2 = 'text-base font-semibold text-foreground';
 // Connecting a test ad account
 
 // Owners and admins only; the caller draws it where the deployment offers the sandbox ad platform (/api/config ads).
-export function ConnectSandboxForm({ entities, onConnected, onCancel }: { entities: readonly LegalEntity[]; onConnected: (adAccountId: string) => void; onCancel?: () => void }) {
+export function ConnectSandboxForm({ entities, onConnected, onCancel, quiet = false }: { entities: readonly LegalEntity[]; onConnected: (adAccountId: string) => void; onCancel?: () => void; quiet?: boolean }) {
   const t = useTranslations('ads');
   const common = useTranslations('common');
   const headingId = useId();
@@ -172,7 +178,7 @@ export function ConnectSandboxForm({ entities, onConnected, onCancel }: { entiti
         )}
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button loading={connect.isPending} type="submit" size="lg">
+        <Button loading={connect.isPending} type="submit" size="lg" variant={quiet ? 'outline' : 'default'}>
           {t('connect')}
         </Button>
         {onCancel && (
@@ -190,7 +196,7 @@ export function ConnectSandboxForm({ entities, onConnected, onCancel }: { entiti
 // which finishes the attempt for the org it was started in. Owners and admins only; the caller draws it where the
 // deployment has its Meta ads app (`meta_ads` among /api/config's channels.oauth). It says in plain words what Ludy asks
 // Meta for: only to read reports. `another` is the short form for an org that already has an ad account.
-export function ConnectMeta({ slug, another = false, reconnect = false }: { slug: string; another?: boolean; reconnect?: boolean }) {
+export function ConnectMeta({ slug, another = false, reconnect = false, quiet = false }: { slug: string; another?: boolean; reconnect?: boolean; quiet?: boolean }) {
   const t = useTranslations('ads');
   const headingId = useId();
   const start = useAdOAuthStart(slug, 'meta_ads');
@@ -204,7 +210,7 @@ export function ConnectMeta({ slug, another = false, reconnect = false }: { slug
       <p className="text-sm text-muted-foreground">{t('connectMeta.note')}</p>
       <p className="text-xs text-subtle-foreground">{t('connectMeta.expiry')}</p>
       <div>
-        <Button loading={start.isPending} type="button" variant={another ? 'outline' : 'default'} size="lg" onClick={() => start.mutate()}>
+        <Button loading={start.isPending} type="button" variant={another || quiet ? 'outline' : 'default'} size="lg" onClick={() => start.mutate()}>
           {reconnect ? t('connectMeta.reconnect') : another ? t('connectMeta.another') : t('connectMeta.action')}
         </Button>
       </div>
@@ -217,7 +223,7 @@ export function ConnectMeta({ slug, another = false, reconnect = false }: { slug
 // Drawn only when the deployment has CHANNEL_GOOGLE_ADS_CLIENT_ID and CHANNEL_GOOGLE_ADS_CLIENT_SECRET configured
 // (`google_ads` among /api/config's channels.oauth). States clearly that Google's single adwords scope grants read and
 // write on Google's side while Ludy calls only the read endpoints.
-export function ConnectGoogle({ slug, another = false, reconnect = false }: { slug: string; another?: boolean; reconnect?: boolean }) {
+export function ConnectGoogle({ slug, another = false, reconnect = false, quiet = false }: { slug: string; another?: boolean; reconnect?: boolean; quiet?: boolean }) {
   const t = useTranslations('ads');
   const headingId = useId();
   const start = useAdOAuthStart(slug, 'google_ads');
@@ -231,7 +237,7 @@ export function ConnectGoogle({ slug, another = false, reconnect = false }: { sl
       <p className="text-sm text-muted-foreground">{t('connectGoogle.note')}</p>
       <p className="text-xs text-subtle-foreground">{t('connectGoogle.expiry')}</p>
       <div>
-        <Button loading={start.isPending} type="button" variant={another ? 'outline' : 'default'} size="lg" onClick={() => start.mutate()}>
+        <Button loading={start.isPending} type="button" variant={another || quiet ? 'outline' : 'default'} size="lg" onClick={() => start.mutate()}>
           {reconnect ? t('connectGoogle.reconnect') : another ? t('connectGoogle.another') : t('connectGoogle.action')}
         </Button>
       </div>
@@ -264,11 +270,15 @@ export function AdsEmpty({
     <div className="space-y-6">
       <Empty title={t('emptyTitle')} hint={t('emptyHint')} />
       {!sandbox && !meta && !google ? (
-        <p className="text-sm text-muted-foreground" role="status">
-          {t('noPlatform')}
-        </p>
+        // Only an owner or an admin can do anything about a deployment with no ad platform; a member is told nothing they cannot act on.
+        canManage && (
+          <p className="text-sm text-muted-foreground" role="status">
+            {t('noPlatform')}
+          </p>
+        )
       ) : canManage ? (
         <div className="space-y-4">
+          {/* One primary action: the first platform the deployment offers; the others are outline buttons (#3640). */}
           {meta && (
             <Card className="block p-4">
               <ConnectMeta slug={meta.slug} />
@@ -276,12 +286,12 @@ export function AdsEmpty({
           )}
           {google && (
             <Card className="block p-4">
-              <ConnectGoogle slug={google.slug} />
+              <ConnectGoogle slug={google.slug} quiet={Boolean(meta)} />
             </Card>
           )}
           {sandbox && (
             <Card className="block p-4">
-              <ConnectSandboxForm entities={entities} onConnected={onConnected} />
+              <ConnectSandboxForm entities={entities} onConnected={onConnected} quiet={Boolean(meta || google)} />
             </Card>
           )}
         </div>
@@ -302,6 +312,7 @@ export function AdsEmpty({
 function SyncStatus({ account }: { account: AdAccountView }) {
   const t = useTranslations('ads');
   const f = useFormat();
+  const nowMs = useNowUntil(0);
   const active = account.connectionStatus === 'active';
   return (
     <div className="mt-3 space-y-1 text-sm">
@@ -315,7 +326,7 @@ function SyncStatus({ account }: { account: AdAccountView }) {
       ) : account.extraScopes.length > 0 ? (
         // The token can do more than read reports (the app was shared with another use that the person granted): say what.
         <p className="text-warning" role="status">
-          {t('extraScopes', { list: account.extraScopes.join(', ') })}
+          {t('extraScopes', { count: account.extraScopes.length })}
         </p>
       ) : account.provider === 'google_ads' ? (
         <p className="text-muted-foreground">{t('googleReadOnly')}</p>
@@ -327,9 +338,14 @@ function SyncStatus({ account }: { account: AdAccountView }) {
           {t('connectionExpiresSoon', { when: f.date(account.connectionExpiresAt) })}
         </p>
       )}
+      {connectionEndsSoon(account, nowMs) && account.connectionExpiresAt && (
+        <p className="text-warning" role="status">
+          {t('connectionEndsSoon', { when: f.date(account.connectionExpiresAt) })}
+        </p>
+      )}
       {account.connectionStatus !== 'active' && (
         <p className={account.connectionStatus === 'revoked' ? 'text-muted-foreground' : 'text-warning'} role="status">
-          {account.pausedReason && account.pausedReason !== 'disconnected' && account.pausedSince ? t(`paused.${account.pausedReason}`, { since: f.date(account.pausedSince) }) : t(`connectionHint.${account.connectionStatus}`)}
+          {account.pausedReason && account.pausedReason !== 'disconnected' && account.pausedSince ? t(`paused.${account.pausedReason}`, { since: f.date(account.pausedSince), provider: adProviderName(account.provider) }) : t(`connectionHint.${account.connectionStatus}`)}
         </p>
       )}
       {active && account.lastErrorKind && (
@@ -394,7 +410,7 @@ export function AccountHeader({ account, canRefresh, onRequested }: { account: A
               // A disconnect the owner chose is a quiet state; an expired connection or one in trouble is a warning.
               <Badge variant={account.connectionStatus === 'revoked' ? 'secondary' : 'warning'}>{t(`connection.${account.connectionStatus}`)}</Badge>
             )}
-            {account.currency !== null && account.timeZone !== null && <span>{t('currencyAndZone', { currency: account.currency, zone: account.timeZone })}</span>}
+            {account.currency !== null && account.timeZone !== null && <span>{t('currencyAndZone', { currency: account.currency, zone: account.timeZone === 'Asia/Ho_Chi_Minh' ? t('zoneVietnam') : t('zoneNamed', { zone: account.timeZone }) })}</span>}
           </p>
         </div>
         {canRefresh && (
@@ -403,6 +419,7 @@ export function AccountHeader({ account, canRefresh, onRequested }: { account: A
               loading={refresh.isPending}
               variant="outline"
               size="lg"
+              className={TOUCH_BUTTON}
               disabled={!active || held}
               aria-describedby={held ? holdId : undefined}
               onClick={() => refresh.mutate({ adAccountId: account.id, idempotencyKey: crypto.randomUUID() })}
@@ -501,7 +518,9 @@ function Stat({ label, note, children }: { label: string; note?: string | undefi
 
 // The period's totals. With no result kind chosen there is nothing to call a result, so the two figures that depend on it
 // give way to a prompt: owners and admins are taken to the setting, the others are told who chooses.
-export function Totals({ summary, currency, canManage }: { summary: AdsSummary; currency: string; canManage: boolean }) {
+// `onChooseResult`: where the prompt takes an owner (the Ads settings, where the result kind is set); without it the field on this screen is focused.
+// `period` names the figures' own period in the heading (#3641): the range, its dates and the currency, so no figure stands without them.
+export function Totals({ summary, currency, canManage, onChooseResult, period }: { summary: AdsSummary; currency: string; canManage: boolean; onChooseResult?: () => void; period?: { kind: AdsRangeKind; from: string; to: string } }) {
   const t = useTranslations('ads');
   const f = useFormat();
   const kindName = useKindName();
@@ -510,7 +529,7 @@ export function Totals({ summary, currency, canManage }: { summary: AdsSummary; 
   return (
     <section aria-labelledby={headingId} className="space-y-3">
       <h2 id={headingId} className={H2}>
-        {t('totalsTitle')}
+        {period ? t('totalsTitleFor', { range: t(`ranges.${period.kind}`), from: f.date(period.from), to: f.date(period.to), currency }) : t('totalsTitle')}
       </h2>
       <Card className="block p-4">
         <dl className="grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-3 lg:grid-cols-5">
@@ -523,7 +542,7 @@ export function Totals({ summary, currency, canManage }: { summary: AdsSummary; 
               <dd className="space-y-2 text-sm text-muted-foreground">
                 <span className="block">{canManage ? t('chooseResultKind') : t('chooseResultKindOther')}</span>
                 {canManage && (
-                  <Button type="button" variant="outline" size="lg" onClick={() => document.getElementById(RESULT_KIND_FIELD)?.focus()}>
+                  <Button type="button" variant="outline" size="lg" onClick={() => (onChooseResult ? onChooseResult() : document.getElementById(RESULT_KIND_FIELD)?.focus())}>
                     {t('chooseResultKindAction')}
                   </Button>
                 )}
@@ -546,18 +565,19 @@ export function Totals({ summary, currency, canManage }: { summary: AdsSummary; 
   );
 }
 
-// The cells of one row of a table of metrics: its first column, then spend, impressions and clicks, and results with
-// their cost where a result kind is chosen.
+// The cells of one row of a table of metrics: its first column, then spend and, where a result kind is chosen, the results
+// with their cost, then impressions and clicks. The figures that matter come first, so on a phone, where the table scrolls
+// sideways, they are not the right-most columns (AD-12, #3659).
 function MetricRow({ cells, metric, currency, withResults }: { cells: ReactNode; metric: AdsSummary['total']; currency: string; withResults: boolean }) {
   const f = useFormat();
   return (
     <>
       <TableCell className="px-4 py-3 text-foreground">{cells}</TableCell>
       <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{f.money(metric.spend, currency)}</TableCell>
-      <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{f.number(metric.impressions)}</TableCell>
-      <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{f.number(metric.clicks)}</TableCell>
       {withResults && <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{metric.results === null ? '-' : f.number(metric.results)}</TableCell>}
       {withResults && <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{metric.costPerResult === null ? '-' : f.money(metric.costPerResult, currency)}</TableCell>}
+      <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{f.number(metric.impressions)}</TableCell>
+      <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{f.number(metric.clicks)}</TableCell>
     </>
   );
 }
@@ -570,7 +590,7 @@ export function Breakdowns({ summary, currency }: { summary: AdsSummary; currenc
   const daysId = useId();
   const withResults = summary.resultKind !== null;
   const results = withResults ? [t('columns.results'), t('columns.costPerResult')] : [];
-  // After the name, spend, impressions and clicks are right-aligned numbers, and so are the results columns where there are any.
+  // After the name every column is a right-aligned number.
   const numeric = withResults ? [1, 2, 3, 4, 5] : [1, 2, 3];
   return (
     <>
@@ -578,7 +598,7 @@ export function Breakdowns({ summary, currency }: { summary: AdsSummary; currenc
         <h2 id={monthsId} className={H2}>
           {t('monthsTitle')}
         </h2>
-        <DataTable head={[t('columns.month'), t('columns.spend'), t('columns.impressions'), t('columns.clicks'), ...results]} numeric={numeric}>
+        <DataTable head={[t('columns.month'), t('columns.spend'), ...results, t('columns.impressions'), t('columns.clicks')]} numeric={numeric}>
           {[...summary.months].reverse().map((m) => (
             <TableRow key={m.month}>
               <MetricRow cells={monthLabel(m.month)} metric={m} currency={currency} withResults={withResults} />
@@ -593,7 +613,7 @@ export function Breakdowns({ summary, currency }: { summary: AdsSummary; currenc
         {summary.campaigns.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t('campaignsEmpty')}</p>
         ) : (
-          <DataTable head={[t('columns.campaign'), t('columns.spend'), t('columns.impressions'), t('columns.clicks'), ...results]} numeric={numeric}>
+          <DataTable head={[t('columns.campaign'), t('columns.spend'), ...results, t('columns.impressions'), t('columns.clicks')]} numeric={numeric}>
             {summary.campaigns.map((c) => (
               <TableRow key={c.externalObjectId}>
                 <MetricRow cells={c.name || c.externalObjectId} metric={c} currency={currency} withResults={withResults} />
@@ -607,7 +627,7 @@ export function Breakdowns({ summary, currency }: { summary: AdsSummary; currenc
           {t('daysTitle')}
         </h2>
         <DataTable
-          head={[t('columns.day'), t('columns.spend'), t('columns.impressions'), t('columns.clicks'), t('columns.reach'), ...results]}
+          head={[t('columns.day'), t('columns.spend'), ...results, t('columns.impressions'), t('columns.clicks'), t('columns.reach')]}
           numeric={[1, 2, 3, 4, ...(withResults ? [5, 6] : [])]}
         >
           {[...summary.days].reverse().map((d) => (
@@ -617,11 +637,11 @@ export function Breakdowns({ summary, currency }: { summary: AdsSummary; currenc
                 {!d.settled && <span className="ml-2 text-xs text-subtle-foreground">{t('notFinal')}</span>}
               </TableCell>
               <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{f.money(d.spend, currency)}</TableCell>
+              {withResults && <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{d.results === null ? '-' : f.number(d.results)}</TableCell>}
+              {withResults && <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{d.costPerResult === null ? '-' : f.money(d.costPerResult, currency)}</TableCell>}
               <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{f.number(d.impressions)}</TableCell>
               <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{f.number(d.clicks)}</TableCell>
               <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{d.reach === null ? '-' : f.number(d.reach)}</TableCell>
-              {withResults && <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{d.results === null ? '-' : f.number(d.results)}</TableCell>}
-              {withResults && <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{d.costPerResult === null ? '-' : f.money(d.costPerResult, currency)}</TableCell>}
             </TableRow>
           ))}
         </DataTable>
@@ -832,9 +852,12 @@ function AccountPanel({
   role,
   entities,
   financeOn,
+  slug,
   reconnect,
   googleReconnect,
   onRequested,
+  section = 'figures',
+  onOpenSettings,
 }: {
   account: AdAccountView;
   range: AdsRangeKind;
@@ -842,15 +865,21 @@ function AccountPanel({
   role: string | undefined;
   entities: readonly LegalEntity[];
   financeOn: boolean;
+  slug: string;
   // Where a paused Meta account is connected again: the org's address, when the deployment has its Meta ads app (#2219).
   reconnect: { slug: string } | undefined;
   // Where a paused Google Ads account is connected again (#2220).
   googleReconnect?: { slug: string } | undefined;
   onRequested: () => void;
+  // The figures (the working screen) or the account's own settings (the Ads settings, #3640); and how an owner gets from the first to the second.
+  section?: 'figures' | 'settings';
+  onOpenSettings?: () => void;
 }) {
   const t = useTranslations('ads');
   const canManage = role === 'owner' || role === 'admin';
   const canRefresh = canManage || role === 'member';
+  // The legal entity chosen in the shell: the bank screen a line of the books strip links to opens on it.
+  const shellEntityId = useChosenEntity().legalEntityId;
   useRefetchOnRun(account);
   const ready = hasFigures(account);
   // The window moves on with the clock, an hour at a time, so a tab left open does not read yesterday's month.
@@ -859,10 +888,15 @@ function AccountPanel({
   const days = adsRange(range, account.timeZone, now);
   const summary = useQuery({ ...orpc.ads.summary.queryOptions({ input: { adAccountId: account.id, from: days.from, to: days.to } }), enabled: ready });
   const currency = account.currency ?? '';
+  // An active connection that ends soon (a Meta token of 60 days): owners and admins reconnect it before it does, as for a paused one.
+  const endsSoon = connectionEndsSoon(account, Date.now());
+  if (section === 'settings') {
+    return canManage ? <AdsSettingsCard key={`${account.id}:${account.resultKind}:${account.expenseAccountCode}:${account.legalEntityId}`} account={account} entities={entities} /> : null;
+  }
   return (
     <div className="space-y-8">
       <AccountHeader account={account} canRefresh={canRefresh} onRequested={onRequested} />
-      {reconnect && canManage && account.provider === 'meta_ads' && account.connectionStatus !== 'active' && account.pausedReason !== 'platform_deletion' && (
+      {reconnect && canManage && account.provider === 'meta_ads' && (account.connectionStatus !== 'active' || endsSoon) && account.pausedReason !== 'platform_deletion' && (
         <Card className="block p-4">
           <ConnectMeta slug={reconnect.slug} another reconnect />
         </Card>
@@ -872,7 +906,7 @@ function AccountPanel({
           <ConnectGoogle slug={googleReconnect.slug} another reconnect />
         </Card>
       )}
-      {account.connectionStatus !== 'active' && !canManage && account.pausedReason !== 'platform_deletion' && (
+      {(account.connectionStatus !== 'active' || endsSoon) && !canManage && account.pausedReason !== 'platform_deletion' && (
         <p className="text-sm text-muted-foreground" role="status">
           {t('paused.noReconnect')}
         </p>
@@ -895,21 +929,19 @@ function AccountPanel({
             </div>
           ) : (
             <>
-              <Totals summary={summary.data} currency={currency} canManage={canManage} />
+              <Totals summary={summary.data} currency={currency} canManage={canManage} period={{ kind: range, from: days.from, to: days.to }} {...(onOpenSettings ? { onChooseResult: onOpenSettings } : {})} />
+              {canManage && <AdsCommittedStrip account={account} month={todayIn(account.timeZone, now).slice(0, 7)} />}
               {summary.data.days.length === 0 ? (
                 <Empty title={t('noSpend')} hint={t('noSpendHint')} />
               ) : (
                 <>
                   <Breakdowns summary={summary.data} currency={currency} />
-                  <AdsBooksStrip account={account} months={summary.data.months} todayMonth={todayIn(account.timeZone, now).slice(0, 7)} financeOn={financeOn} />
+                  <AdsBooksStrip account={account} slug={slug} months={summary.data.months} todayMonth={todayIn(account.timeZone, now).slice(0, 7)} financeOn={financeOn} shellEntityId={shellEntityId} />
                 </>
               )}
             </>
           )}
         </>
-      )}
-      {canManage && (
-        <AdsSettingsCard key={`${account.id}:${account.resultKind}:${account.expenseAccountCode}:${account.legalEntityId}`} account={account} entities={entities} />
       )}
       <SyncRuns account={account} />
     </div>
@@ -928,7 +960,8 @@ export function AdsPage() {
   const metaOffered = readOAuth.includes('meta_ads');
   const googleOffered = readOAuth.includes('google_ads');
   const writeOffer = adWriteOffer(config);
-  const financeOn = config.modules.includes('finance');
+  useModulesVersion(); // the apps of the org can change while this screen is open
+  const financeOn = installedModules().includes('finance');
   const me = useQuery(orpc.me.get.queryOptions());
   const role = me.data?.orgs.find((o) => o.slug === slug)?.role;
   const canManage = role === 'owner' || role === 'admin';
@@ -950,26 +983,43 @@ export function AdsPage() {
   const entities = useQuery({ ...orpc.legalEntities.list.queryOptions(), enabled: canManage });
   const list = accounts.data ?? [];
   const account = list.find((a) => a.id === search.account) ?? list[0];
-  const go = (next: AdsSearch) => void navigate({ to: '/o/$slug/ads', params: { slug }, search: next });
+  // The Ads settings (#3640) are for owners and admins; anyone else asking for them gets the figures.
+  const inSettings = canManage && search.settings === true;
+  const go = (next: AdsSearch) => void navigate({ to: '/o/$slug/ads', params: { slug }, search: { ...(inSettings ? { settings: true as const } : {}), ...next } });
+  // The account and the period travel to the settings and back, so a trip there does not reset the figures the owner was reading.
+  const keep: AdsSearch = { ...(account ? { account: account.id } : {}), ...(search.range ? { range: search.range } : {}) };
+  const openSettings = () => void navigate({ to: '/o/$slug/ads', params: { slug }, search: { settings: true, ...keep } });
   const range = search.range ?? DEFAULT_ADS_RANGE;
   const connected = (adAccountId: string) => {
     setAdding(false);
     go({ account: adAccountId, ...(search.range ? { range: search.range } : {}) });
   };
-  const connectAnother = canManage && sandbox && list.length > 0 && !adding;
+  const connectAnother = inSettings && sandbox && list.length > 0 && !adding;
   return (
     <div>
       <PageHeader
-        title={t('title')}
-        subtitle={t('subtitle')}
+        title={inSettings ? t('adsSettings.title') : t('title')}
+        subtitle={inSettings ? t('adsSettings.subtitle') : t('subtitle')}
         actions={
-          connectAnother ? (
-            <Button variant="outline" size="lg" onClick={() => setAdding(true)}>
-              {t('addAnother')}
-            </Button>
+          inSettings ? (
+            <div className="flex flex-wrap gap-2">
+              {connectAnother && (
+                <Button variant="outline" size="lg" onClick={() => setAdding(true)}>
+                  {t('addAnother')}
+                </Button>
+              )}
+              <Link to="/o/$slug/ads" params={{ slug }} search={keep} className={buttonVariants({ variant: 'outline', size: 'lg' })} data-testid="ads-settings-back">
+                {t('adsSettings.back')}
+              </Link>
+            </div>
+          ) : canManage && list.length > 0 ? (
+            <Link to="/o/$slug/ads" params={{ slug }} search={{ settings: true, ...keep }} className={buttonVariants({ variant: 'outline', size: 'lg' })} data-testid="ads-settings-link">
+              {t('adsSettings.link')}
+            </Link>
           ) : undefined
         }
       />
+      {!inSettings && list.length > 0 && <AdsRunStatus slug={slug} canManage={canManage} />}
       {accounts.error ? (
         <ErrorText>{errorMessage(accounts.error)}</ErrorText>
       ) : !accounts.data || me.isPending ? (
@@ -986,17 +1036,18 @@ export function AdsPage() {
         </div>
       ) : (
         <div className="space-y-8">
-          {adding && (
+          {inSettings && adding && (
             <Card className="block p-4">
               <ConnectSandboxForm entities={entities.data ?? []} onConnected={connected} onCancel={() => setAdding(false)} />
             </Card>
           )}
-          {canManage && metaOffered && <ConnectMeta slug={slug} another />}
-          {canManage && googleOffered && <ConnectGoogle slug={slug} another />}
-          <AdsWeeklyNoteCard />
-          {canManage && <AdsFlagsCard />}
-          {canManage && <AdsFlagSettingsCard />}
-          {canManage && <AdsWriteCard role={role} accounts={list} slug={slug} offer={writeOffer} />}
+          {inSettings && metaOffered && <ConnectMeta slug={slug} another />}
+          {inSettings && googleOffered && <ConnectGoogle slug={slug} another />}
+          {/* The working screen keeps the figures, the flags and the weekly note; the switches and forms are in the Ads settings (#3640). */}
+          {!inSettings && <AdsWeeklyNoteCard />}
+          {!inSettings && canManage && <AdsFlagsCard />}
+          {inSettings && <AdsFlagSettingsCard />}
+          {inSettings && <AdsWriteCard role={role} accounts={list} slug={slug} offer={writeOffer} />}
           {list.length > 1 && (
             <Field label={t('accountLabel')} className="max-w-sm">
               {(control) => (
@@ -1018,9 +1069,12 @@ export function AdsPage() {
             role={role}
             entities={entities.data ?? []}
             financeOn={financeOn}
+            slug={slug}
             reconnect={metaOffered ? { slug } : undefined}
             googleReconnect={googleOffered ? { slug } : undefined}
             onRequested={() => setWatchUntil(Date.now() + REFRESH_WATCH_MS)}
+            section={inSettings ? 'settings' : 'figures'}
+            onOpenSettings={openSettings}
           />
         </div>
       )}

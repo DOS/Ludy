@@ -6,10 +6,10 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, sweepProposalNudges, upsertIdentity, type ProposalPolicy } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, sweepProposalNudges, upsertIdentity, type ProposalPolicy } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -47,7 +47,7 @@ suite('proposal reminders on PostgreSQL (#676)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const adminUser = await person('admin');
     const member = await person('member');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')", [orgId, adminUser, member]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')", [orgId, adminUser, member]));
     return { orgId, owner, admin: adminUser, member };
   }
 
@@ -56,7 +56,7 @@ suite('proposal reminders on PostgreSQL (#676)', () => {
     const id = randomUUID();
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.proposal (org_id, id, kind, command, status, title, payload, eligible_approvers, authors, created_at)
+        `INSERT INTO ludy_kernel.proposal (org_id, id, kind, command, status, title, payload, eligible_approvers, authors, created_at)
          VALUES ($1, $2, 'purchase', 'finance.purchase.record', $3, $4, '{}', $5, $6, now() - make_interval(days => $7))`,
         [o.orgId, id, status, `Hóa đơn ${id.slice(0, 6)}`, [o.owner, o.admin], JSON.stringify(authors), days],
       ),
@@ -69,16 +69,16 @@ suite('proposal reminders on PostgreSQL (#676)', () => {
   async function mails(proposalId: string) {
     return admin(async (c) => {
       const { rows } = await c.query<{ to_address: string; template_key: string; payload: { stage: string; path: string; days: number }; status: string }>(
-        "SELECT to_address, template_key, payload, status FROM crove_kernel.mail_message WHERE source = 'kernel.proposal.remind' AND source_id = $1 ORDER BY to_address",
+        "SELECT to_address, template_key, payload, status FROM ludy_kernel.mail_message WHERE source = 'kernel.proposal.remind' AND source_id = $1 ORDER BY to_address",
         [proposalId],
       );
       return rows;
     });
   }
 
-  const emailOf = (userId: string) => admin(async (c) => (await c.query<{ email: string }>('SELECT email FROM crove_kernel.user_account WHERE id = $1', [userId])).rows[0]?.email);
+  const emailOf = (userId: string) => admin(async (c) => (await c.query<{ email: string }>('SELECT email FROM ludy_kernel.user_account WHERE id = $1', [userId])).rows[0]?.email);
   const stamps = (proposalId: string) =>
-    admin(async (c) => (await c.query<{ reminded_at: Date | null; escalated_at: Date | null }>('SELECT reminded_at, escalated_at FROM crove_kernel.proposal WHERE id = $1', [proposalId])).rows[0]);
+    admin(async (c) => (await c.query<{ reminded_at: Date | null; escalated_at: Date | null }>('SELECT reminded_at, escalated_at FROM ludy_kernel.proposal WHERE id = $1', [proposalId])).rows[0]);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -89,16 +89,16 @@ suite('proposal reminders on PostgreSQL (#676)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: null })] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
     const asWorker = new URL(adminUrl);
-    asWorker.username = 'crove_worker';
+    asWorker.username = 'ludy_worker';
     asWorker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorker.toString(), max: 2 });
     workerDb = createDb(workerPool);
@@ -126,9 +126,9 @@ suite('proposal reminders on PostgreSQL (#676)', () => {
     expect(await save(o, o.admin, { remindAfterDays: 2, escalateAfterDays: 5, expireAfterDays: null })).toEqual({ remindAfterDays: 2, escalateAfterDays: 5, expireAfterDays: null });
     expect(await save(o, o.owner, { remindAfterDays: 3, escalateAfterDays: null, expireAfterDays: null })).toEqual({ remindAfterDays: 3, escalateAfterDays: null, expireAfterDays: null });
     expect(await read(o.member)).toEqual({ remindAfterDays: 3, escalateAfterDays: null, expireAfterDays: null });
-    const rows = await admin(async (c) => (await c.query('SELECT count(*)::int AS n FROM crove_kernel.proposal_policy WHERE org_id = $1', [o.orgId])).rows[0]);
+    const rows = await admin(async (c) => (await c.query('SELECT count(*)::int AS n FROM ludy_kernel.proposal_policy WHERE org_id = $1', [o.orgId])).rows[0]);
     expect(rows).toEqual({ n: 1 });
-    const audit = await admin(async (c) => (await c.query<{ n: number }>("SELECT count(*)::int AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal_policy.save' AND outcome = 'ok'", [o.orgId])).rows[0]);
+    const audit = await admin(async (c) => (await c.query<{ n: number }>("SELECT count(*)::int AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal_policy.save' AND outcome = 'ok'", [o.orgId])).rows[0]);
     expect(audit?.n).toBe(2);
   });
 
@@ -156,14 +156,14 @@ suite('proposal reminders on PostgreSQL (#676)', () => {
     expect(await mails(waiting)).toHaveLength(2);
 
     // Two more days: the owners are told, once.
-    await admin((c) => c.query("UPDATE crove_kernel.proposal SET created_at = created_at - interval '3 days' WHERE id = $1", [waiting]));
+    await admin((c) => c.query("UPDATE ludy_kernel.proposal SET created_at = created_at - interval '3 days' WHERE id = $1", [waiting]));
     await sweep();
     await sweep();
     const all = await mails(waiting);
     expect(all.filter((m) => m.payload.stage === 'escalate').map((m) => m.to_address)).toEqual([await emailOf(o.owner)]);
     expect(all).toHaveLength(3);
     const audit = await admin(async (c) =>
-      (await c.query<{ detail: { stages: string[] } }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.remind' AND outcome = 'ok' ORDER BY occurred_at, id", [o.orgId])).rows,
+      (await c.query<{ detail: { stages: string[] } }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.remind' AND outcome = 'ok' ORDER BY occurred_at, id", [o.orgId])).rows,
     );
     expect(audit.map((a) => a.detail.stages)).toEqual([['remind'], ['escalate']]);
   });
@@ -196,15 +196,15 @@ suite('proposal reminders on PostgreSQL (#676)', () => {
 
   it('lets only the worker run the scan', async () => {
     for (const [role, allowed] of [
-      ['crove_worker', true],
-      ['crove_app', false],
-      ['crove_tenant', false],
-      ['crove_definer_tenant', false],
+      ['ludy_worker', true],
+      ['ludy_app', false],
+      ['ludy_tenant', false],
+      ['ludy_definer_tenant', false],
     ] as const) {
-      const can = await admin(async (c) => (await c.query<{ ok: boolean }>("SELECT has_function_privilege($1, 'crove_kernel.proposal_nudges_due(int)', 'EXECUTE') AS ok", [role])).rows[0]?.ok);
+      const can = await admin(async (c) => (await c.query<{ ok: boolean }>("SELECT has_function_privilege($1, 'ludy_kernel.proposal_nudges_due(int)', 'EXECUTE') AS ok", [role])).rows[0]?.ok);
       expect(can, role).toBe(allowed);
     }
-    await expect(pool.query('SELECT * FROM crove_kernel.proposal_nudges_due(10)')).rejects.toMatchObject({ code: '42501' });
+    await expect(pool.query('SELECT * FROM ludy_kernel.proposal_nudges_due(10)')).rejects.toMatchObject({ code: '42501' });
   });
 
   it('refuses the remind command to people', async () => {

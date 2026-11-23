@@ -11,6 +11,7 @@
 //   `ref:<reference>` stays as ADR-0021 fixed it (so a transaction seen from a feed and in a file is one line, whichever
 //   date format each prints), the amount and date are compared on top of it, and a line that disagrees is stored
 //   keyless and flagged (ambiguous), as a line "to look at" is, instead of being dropped. Statements and feed pulls alike.
+// - finance.bank.platform_lines: the lines of all accounts of an entity whose description names a platform (Ads, slice D2).
 // - finance.bank.lines: the stored lines of one account for a month, quarter or year, each with what became of it
 //   (stage 2a, bank-match.ts: open, proposed as a voucher, or settled by one).
 // - finance.bank.ingest (ADR-0039, #2044): the lines a bank feed reports, sent by the worker, checked and stored on the
@@ -18,24 +19,27 @@
 //   the feed and again in a file is one line. A system command: people import files; only feed jobs send lines.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
+import type { MemberRole } from '@ludy/db';
 import {
+  BANK_PLATFORM_LINES_LIMIT,
   zBankFeedIngest,
   zBankStatementImport,
   type BankFeedIngest,
   zId,
   zLedgerPeriod,
+  zLocalDate,
   type BankImportPreview,
   type BankImportResult,
   type BankLines,
+  type BankPlatformLines,
   type BankStatementImport,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { resolveLegalEntity } from './legal-entity.ts';
-import { Decimal } from '@crove/l10n-vn';
+import { Decimal } from '@ludy/l10n-vn';
 import { chartAccounts } from './accounts.ts';
 import { bankLineStates } from './bank-match.ts';
-import { checkLines, checkStatement, readFeedLines, readStatement, type StatementCheck, type StoredChainLine, type StoredDateAmount, type StoredFacts } from './domain/bank-statement.ts';
+import { checkLines, checkStatement, readFeedLines, readStatement, skipFedLines, type StatementCheck, type StoredChainLine, type StoredDateAmount, type StoredFacts } from './domain/bank-statement.ts';
 import { ledgerPeriod } from './domain/ledger-reports.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -80,7 +84,7 @@ async function storedAround(
     batchKeys.length === 0 && batchRefs.length === 0
       ? []
       : await ctx.trx
-          .selectFrom('crove_finance.bank_line')
+          .selectFrom('ludy_finance.bank_line')
           .select(['dedupe_key', 'bank_ref', 'value_date', 'amount'])
           .where('org_id', '=', ctx.orgId)
           .where('legal_entity_id', '=', legalEntityId)
@@ -104,7 +108,7 @@ async function storedAround(
   let before: StoredChainLine | null = null;
   if (from && to) {
     within = await ctx.trx
-      .selectFrom('crove_finance.bank_line')
+      .selectFrom('ludy_finance.bank_line')
       .select(['value_date as date', 'amount', 'running_balance as balance'])
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', legalEntityId)
@@ -117,7 +121,7 @@ async function storedAround(
       .execute();
     before =
       (await ctx.trx
-        .selectFrom('crove_finance.bank_line')
+        .selectFrom('ludy_finance.bank_line')
         .select(['value_date as date', 'amount', 'running_balance as balance'])
         .where('org_id', '=', ctx.orgId)
         .where('legal_entity_id', '=', legalEntityId)
@@ -142,14 +146,34 @@ async function storedAround(
 async function check(ctx: QueryContext, input: BankStatementImport, legalEntityId: string): Promise<StatementCheck> {
   const { lines, keys } = readStatement(input);
   const { stored, chain } = await storedAround(ctx, legalEntityId, input.bankAccount, lines, keys);
-  return checkStatement(input, stored, chain);
+  const checked = checkStatement(input, stored, chain);
+  // Only once the feed has pulled: before that nothing it supplies is in the books, and its first pull may start later than the day set (the day then moves up), so a file's lines are kept.
+  const cutover = await feedCutover(ctx, legalEntityId, input.bankAccount, true);
+  return cutover ? skipFedLines(checked, cutover) : checked;
+}
+
+// The day a bank feed takes over an account from statement files (#4218): the earliest cut-over of its mappings whose
+// connection is still active, so a feed that stopped (expired or revoked) never leaves lines in neither source. Null when
+// there is none: files and the feed are only deduplicated.
+export async function feedCutover(ctx: QueryContext, legalEntityId: string, bankAccountCode: string, syncedOnly = false): Promise<string | null> {
+  const row = await ctx.trx
+    .selectFrom('ludy_finance.bank_feed_account as a')
+    .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
+    .select((eb) => eb.fn.min('a.feed_from').as('feed_from'))
+    .where('a.org_id', '=', ctx.orgId)
+    .where('a.legal_entity_id', '=', legalEntityId)
+    .where('a.bank_account', '=', bankAccountCode)
+    .where('c.status', '=', 'active')
+    .$if(syncedOnly, (q) => q.where('a.cursor', 'is not', null))
+    .executeTakeFirst();
+  return row?.feed_from ?? null;
 }
 
 // Stores the lines a check found new or ambiguous as one import of the account, under the account's lock (the caller
 // holds it), and returns the import's id. Every source stores through here (ADR-0039).
 async function storeLines(ctx: CommandContext, legalEntityId: string, bankAccountCode: string, lines: StatementCheck['lines']): Promise<string> {
   // Time-ordered and taken under the lock, so ordering by import_id is the order the imports were made in.
-  const { rows: ids } = await sql<{ id: string }>`SELECT crove_kernel.uuid_v7() AS id`.execute(ctx.trx);
+  const { rows: ids } = await sql<{ id: string }>`SELECT ludy_kernel.uuid_v7() AS id`.execute(ctx.trx);
   const importId = ids[0]?.id;
   if (!importId) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
   const actor = ctx.actor.type === 'user' ? ctx.actor.userId : null;
@@ -158,7 +182,7 @@ async function storeLines(ctx: CommandContext, legalEntityId: string, bankAccoun
   for (let i = 0; i < lines.length; i += 500) {
     const chunk = lines.slice(i, i + 500);
     const inserted = await ctx.trx
-      .insertInto('crove_finance.bank_line')
+      .insertInto('ludy_finance.bank_line')
       .values(
         chunk.map((l) => ({
           org_id: ctx.orgId,
@@ -239,6 +263,8 @@ export async function importStatement(ctx: CommandContext, input: BankStatementI
     to: preview.to,
     ...preview.counts,
     breaks: preview.breaks.length,
+    // The lines the feed's cut-over day kept out (#4218), counted among the duplicates above.
+    ...(preview.feed ? { feedFrom: preview.feed.from, feedSkipped: preview.feed.leftOut } : {}),
     ...(fileId ? { fileId, source: 'file' } : {}),
   });
   await ctx.activity(
@@ -319,7 +345,7 @@ export const bankLines = defineQuery({
     // The lines of one legal entity (#1280).
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     const rows = await ctx.trx
-      .selectFrom('crove_finance.bank_line')
+      .selectFrom('ludy_finance.bank_line')
       .select(['id', 'value_date', 'description', 'amount', 'running_balance', 'bank_ref', 'ambiguous', 'import_id'])
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', legalEntityId)
@@ -350,5 +376,48 @@ export const bankLines = defineQuery({
       };
     });
     return { bankAccount: input.bankAccount, from: period.from, to: period.to, lines, moneyIn: moneyIn.toFixed(), moneyOut: moneyOut.toFixed() };
+  },
+});
+
+// The lines of every bank and card account of one legal entity in a range whose description holds one of the terms as
+// whole words, with marks and case set aside as the search folds them (ludy_kernel.search_fold): what Ads lays beside a
+// month's spend (slice D2, plan docs/plan/ads.md section 6). Read only, and the same rows `finance.bank.lines` shows, so
+// the row policy and the legal entity scope decide what is seen.
+export const bankPlatformLines = defineQuery({
+  name: 'finance.bank.platform_lines',
+  input: z.object({ from: zLocalDate, to: zLocalDate, terms: z.array(z.string().min(2).max(60)).min(1).max(8), legalEntityId: zId.optional() }),
+  access: ALL,
+  handler: async (ctx, input): Promise<BankPlatformLines> => {
+    const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
+    // A folded description is words of a-z and 0-9 apart by one space, so padded with spaces a term is found only as whole words.
+    const named = sql<boolean>`pg_catalog.strpos(' ' || ludy_kernel.search_fold(l.description) || ' ', ' ' || ludy_kernel.search_fold(t.term) || ' ') > 0`;
+    const rows = await ctx.trx
+      .selectFrom('ludy_finance.bank_line as l')
+      .select(['l.id', 'l.bank_account', 'l.value_date', 'l.description', 'l.amount'])
+      .where('l.org_id', '=', ctx.orgId)
+      .where('l.legal_entity_id', '=', legalEntityId)
+      .where('l.value_date', '>=', input.from)
+      .where('l.value_date', '<=', input.to)
+      .where(sql<boolean>`EXISTS (SELECT 1 FROM pg_catalog.unnest(${input.terms}::text[]) AS t (term) WHERE ludy_kernel.search_fold(t.term) <> '' AND ${named})`)
+      .orderBy('l.value_date', 'desc')
+      .orderBy('l.import_id')
+      .orderBy('l.position')
+      .limit(BANK_PLATFORM_LINES_LIMIT + 1)
+      .execute();
+    const kept = rows.slice(0, BANK_PLATFORM_LINES_LIMIT);
+    const states = await bankLineStates(ctx, kept.map((r) => r.id));
+    return {
+      from: input.from,
+      to: input.to,
+      lines: kept.map((r) => ({
+        id: r.id,
+        bankAccount: r.bank_account,
+        date: r.value_date,
+        description: r.description,
+        amount: new Decimal(r.amount).toFixed(),
+        state: states.get(r.id) ?? { status: 'open' as const },
+      })),
+      truncated: rows.length > BANK_PLATFORM_LINES_LIMIT,
+    };
   },
 });

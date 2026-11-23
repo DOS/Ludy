@@ -8,13 +8,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import type { ExtractClient } from '@crove/extract-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { computeLineTotals, enterpriseCheckDigit, money, sumLineTotals } from '@crove/l10n-vn';
-import { extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { computeLineTotals, enterpriseCheckDigit, money, sumLineTotals } from '@ludy/l10n-vn';
+import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -150,9 +150,9 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty Đơn Hàng ${randomUUID().slice(0, 6)}`);
     const [adminUser, member, viewer] = await Promise.all([identity('admin'), identity('member'), identity('viewer')]);
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]));
-    if (options.sellerOf) await admin((c) => c.query('UPDATE crove_kernel.tenant SET tax_code = $2 WHERE org_id = $1', [orgId, SELLER_TAX_CODE]));
-    const entity = (await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 ORDER BY created_at LIMIT 1', [orgId]))[0]?.id;
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]));
+    if (options.sellerOf) await admin((c) => c.query('UPDATE ludy_kernel.tenant SET tax_code = $2 WHERE org_id = $1', [orgId, SELLER_TAX_CODE]));
+    const entity = (await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 ORDER BY created_at LIMIT 1', [orgId]))[0]?.id;
     if (!entity) throw new Error('the org has no legal entity');
     return { orgId, owner, admin: adminUser, member, viewer, entity };
   }
@@ -167,11 +167,11 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
   };
   // A series the provider holds, as the sync would add it: the default of the entity.
   const addSeries = (o: Org, symbol = FIXTURE_SYMBOL) =>
-    rows("INSERT INTO crove_finance.einvoice_series (org_id, legal_entity_id, provider, template_no, symbol, is_default) VALUES ($1, $2, 'sandbox', '1', $3, true)", [o.orgId, o.entity, symbol]);
+    rows("INSERT INTO ludy_finance.einvoice_series (org_id, legal_entity_id, provider, template_no, symbol, is_default) VALUES ($1, $2, 'sandbox', '1', $3, true)", [o.orgId, o.entity, symbol]);
   const draftFrom = (o: Org, handoff: Handoff, lineNos?: number[], user = o.owner, key?: string) => execute<Draft>(o, 'finance.einvoice.draft_from_order', { handoff, ...(lineNos ? { lineNos } : {}) }, user, key);
   const drafts = (o: Org) => query<Array<{ id: string }>>(o, 'finance.einvoice_draft.list', {});
   const sources = (o: Org) =>
-    rows<{ source_id: string; source_line_no: number; line_no: number }>('SELECT source_id, source_line_no, line_no FROM crove_finance.einvoice_draft_line WHERE org_id = $1 AND source_kind = $2 ORDER BY source_id, source_line_no', [o.orgId, 'crm.sales_order']);
+    rows<{ source_id: string; source_line_no: number; line_no: number }>('SELECT source_id, source_line_no, line_no FROM ludy_finance.einvoice_draft_line WHERE org_id = $1 AND source_kind = $2 ORDER BY source_id, source_line_no', [o.orgId, 'crm.sales_order']);
   const makeItem = (o: Org, extra: Record<string, unknown> = {}) =>
     execute<{ id: string }>(o, 'finance.stock_item.save', { itemId: null, legalEntityId: null, code: 'QC', name: 'Gói quảng cáo', unit: 'gói', stockAccount: '156', trade: 'goods', ...extra }).then((r) => r.id);
   const teach = (o: Org, itemId: string, key: string) => execute(o, 'finance.stock_alias.teach', { itemId, source: 'text', key, factor: '1' });
@@ -179,7 +179,7 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
     execute<{ status: string; moveId: string | null }>(o, 'finance.stock.move_from_order_line', { handoff, lineNo, date: today(), ...extra }, user, key);
   const moves = (o: Org, itemId: string) => query<Move[]>(o, 'finance.stock_move.list', { itemId });
   const onHand = async (o: Org, itemId: string) => (await query<Array<{ id: string; onHand: string }>>(o, 'finance.stock_item.list', {})).find((i) => i.id === itemId)?.onHand;
-  const orderMoves = (o: Org, orderId: string) => rows<{ id: string }>("SELECT id FROM crove_finance.stock_move WHERE org_id = $1 AND source_type = 'crm_order_line' AND crm_order_id = $2", [o.orgId, orderId]);
+  const orderMoves = (o: Org, orderId: string) => rows<{ id: string }>("SELECT id FROM ludy_finance.stock_move WHERE org_id = $1 AND source_type = 'crm_order_line' AND crm_order_id = $2", [o.orgId, orderId]);
 
   // The issue job moves a draft to issued as a worker login in the org's system context (as finance-einvoice-drafts.db.test.ts does): `submitting` first, with the triggers off.
   async function toSubmitting(o: Org, draftId: string) {
@@ -187,7 +187,7 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
       await c.query('BEGIN');
       try {
         await c.query('SET LOCAL session_replication_role = replica');
-        await c.query("UPDATE crove_finance.einvoice_draft SET state = 'submitting', submitted_at = pg_catalog.now() WHERE org_id = $1 AND id = $2 AND state = 'draft'", [o.orgId, draftId]);
+        await c.query("UPDATE ludy_finance.einvoice_draft SET state = 'submitting', submitted_at = pg_catalog.now() WHERE org_id = $1 AND id = $2 AND state = 'draft'", [o.orgId, draftId]);
         await c.query('COMMIT');
       } catch (error) {
         await c.query('ROLLBACK').catch(() => undefined);
@@ -199,7 +199,7 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
     const c = await workerPool.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [o.orgId]);
+      await c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [o.orgId]);
       for (const [text, params] of statements) await c.query(text, params);
       await c.query('COMMIT');
     } catch (error) {
@@ -211,7 +211,7 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
   }
   async function issue(o: Org, draftId: string, number: string) {
     await toSubmitting(o, draftId);
-    await asJob(o, [["UPDATE crove_finance.einvoice_draft SET state = 'issued', provider_ref = 'sbx-test', issued_number = $3, issued_at = pg_catalog.now() WHERE org_id = $1 AND id = $2", [o.orgId, draftId, number]]]);
+    await asJob(o, [["UPDATE ludy_finance.einvoice_draft SET state = 'issued', provider_ref = 'sbx-test', issued_number = $3, issued_at = pg_catalog.now() WHERE org_id = $1 AND id = $2", [o.orgId, draftId, number]]]);
   }
   const invoice = (number: string) => new TextEncoder().encode(FIXTURE.replace('<SHDon>1234</SHDon>', `<SHDon>${number}</SHDon>`));
   async function ingest(o: Org, bytes: Uint8Array) {
@@ -257,16 +257,16 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 6 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 6 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db) =>
       new Runtime(target, { manifests: TEST_MANIFESTS }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -290,22 +290,23 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
     it('makes a draft from the item lines, computed by the server, with the order line kept on each draft line and no buyer in the audit', async () => {
       const o = await org();
       await addSeries(o);
-      const handoff = handoffOf(o.entity, [{ description: 'Hàng A', quantity: '2', unitPrice: '100000' }, { description: 'Ghi chú giao hàng', kind: 'text' }, { description: 'Hàng B', quantity: '1', unitPrice: '33333', vatRate: '8%' }]);
+      // The second line's 5% is a rate valid on any date: the draft is dated today, and 8% is refused outside its period (#3680).
+      const handoff = handoffOf(o.entity, [{ description: 'Hàng A', quantity: '2', unitPrice: '100000' }, { description: 'Ghi chú giao hàng', kind: 'text' }, { description: 'Hàng B', quantity: '1', unitPrice: '33333', vatRate: '5%' }]);
       const draft = await draftFrom(o, handoff);
       expect(draft.state).toBe('draft');
       expect(draft.seriesId).toEqual(expect.any(String));
       expect(draft.lines.map((l) => [l.lineNo, l.description, l.amount, l.vatAmount, l.vatRate])).toEqual([
         [1, 'Hàng A', '200000', '20000', '10%'],
-        [2, 'Hàng B', '33333', '2667', '8%'],
+        [2, 'Hàng B', '33333', '1667', '5%'],
       ]);
-      expect([draft.subtotal, draft.vatAmount, draft.total]).toEqual(['233333', '22667', '256000']);
+      expect([draft.subtotal, draft.vatAmount, draft.total]).toEqual(['233333', '21667', '255000']);
       expect(draft.issues).toEqual([]);
       // The draft's lines 1 and 2 are the order's lines 1 and 3 (the note is a text line and is not invoiced).
       expect((await sources(o)).map((s) => [s.source_id, s.source_line_no, s.line_no])).toEqual([
         [handoff.orderId, 1, 1],
         [handoff.orderId, 3, 2],
       ]);
-      const audit = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.einvoice.draft_from_order' AND outcome = 'ok'", [o.orgId]);
+      const audit = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.einvoice.draft_from_order' AND outcome = 'ok'", [o.orgId]);
       expect(audit).toHaveLength(1);
       expect(JSON.stringify(audit[0]?.detail)).not.toContain('Công ty Mua Thử');
       expect(JSON.stringify(audit[0]?.detail)).not.toContain(BUYER_TAX_CODE);
@@ -366,8 +367,8 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
       const draft = await draftFrom(o, handoff);
       await toSubmitting(o, draft.id);
       await asJob(o, [
-        ["UPDATE crove_finance.einvoice_draft SET state = 'rejected', provider_ref = 'sbx-r', error_code = 'INVALID_DATA' WHERE org_id = $1 AND id = $2", [o.orgId, draft.id]],
-        ["UPDATE crove_finance.einvoice_draft SET state = 'draft', idempotency_key = pg_catalog.gen_random_uuid(), provider_ref = NULL, submitted_at = NULL, next_check_at = NULL, check_attempts = 0, channel_connection_id = NULL WHERE org_id = $1 AND id = $2", [o.orgId, draft.id]],
+        ["UPDATE ludy_finance.einvoice_draft SET state = 'rejected', provider_ref = 'sbx-r', error_code = 'INVALID_DATA' WHERE org_id = $1 AND id = $2", [o.orgId, draft.id]],
+        ["UPDATE ludy_finance.einvoice_draft SET state = 'draft', idempotency_key = pg_catalog.gen_random_uuid(), provider_ref = NULL, submitted_at = NULL, next_check_at = NULL, check_attempts = 0, channel_connection_id = NULL WHERE org_id = $1 AND id = $2", [o.orgId, draft.id]],
       ]);
       expect((await query<Draft>(o, 'finance.einvoice_draft.get', { draftId: draft.id })).state).toBe('draft');
       await refused(draftFrom(o, handoff, [1]), 'ORDER_LINE_ALREADY_INVOICED');
@@ -439,7 +440,7 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
       expect(b).toEqual(a);
       expect(await onHand(o, item)).toBe('-3');
       expect(await orderMoves(o, handoff.orderId)).toHaveLength(1);
-      const audit = await rows("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.stock.move_from_order_line' AND outcome = 'ok'", [o.orgId]);
+      const audit = await rows("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.stock.move_from_order_line' AND outcome = 'ok'", [o.orgId]);
       expect(JSON.stringify(audit)).not.toContain(LINE_TWO);
     });
 
@@ -494,15 +495,31 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
       expect(await orderMoves(o, handoff.orderId)).toHaveLength(1);
     });
 
+    it('takes the partial returns of a delivery back first when the whole line is returned: the return, then the delivery, and nothing is left on hand', async () => {
+      const o = await org();
+      const item = await makeItem(o);
+      await teach(o, item, LINE_TWO);
+      const handoff = handoffOf(o.entity, [{ description: LINE_TWO, quantity: '2' }]);
+      const delivered = await move(o, handoff, 1);
+      await execute(o, 'finance.stock_move.return', { moveId: delivered.moveId, quantity: '1' });
+      expect(await onHand(o, item)).toBe('-1');
+      const back = await move(o, handoff, 1, { action: 'return' });
+      expect(back.status).toBe('returned');
+      const list = await moves(o, item);
+      expect(list.filter((m) => m.source === 'sale_return').every((m) => m.reversed)).toBe(true);
+      expect(list.find((m) => m.id === delivered.moveId)?.reversed).toBe(true);
+      expect(await onHand(o, item)).toBe('0');
+    });
+
     it('refuses with a bare 409 a delivery of a line whose move sits in an entity the caller cannot see, instead of a 500', async () => {
       const o = await org();
       const branch = (
-        await rows<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Huế', 'branch', $2) RETURNING id", [o.orgId, o.owner])
+        await rows<{ id: string }>("INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Huế', 'branch', $2) RETURNING id", [o.orgId, o.owner])
       )[0]?.id as string;
       const limited = await identity('limited');
       await admin(async (c) => {
-        await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, limited]);
-        await c.query("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [o.orgId, limited, branch, o.owner]);
+        await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, limited]);
+        await c.query("INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [o.orgId, limited, branch, o.owner]);
       });
       const mainItem = await makeItem(o);
       await teach(o, mainItem, LINE_TWO);
@@ -530,7 +547,7 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
       await refused(move(o, handoff, 1, {}, o.viewer), 'FORBIDDEN');
       await move(o, handoff, 1, {}, o.member);
       const insert = (quantity: number, source: string, lineNo: number) =>
-        rows('INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, crm_order_id, crm_order_line_no) VALUES ($1, $2, $3, $4, $5, $6, $7)', [o.orgId, item, '2026-11-06', quantity, source, handoff.orderId, lineNo]);
+        rows('INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type, crm_order_id, crm_order_line_no) VALUES ($1, $2, $3, $4, $5, $6, $7)', [o.orgId, item, '2026-11-06', quantity, source, handoff.orderId, lineNo]);
       await expect(insert(-1, 'crm_order_line', 1)).rejects.toMatchObject({ code: '23505' });
       // A move of that source takes stock out; another source names no order.
       await expect(insert(1, 'crm_order_line', 2)).rejects.toMatchObject({ code: '23514' });
@@ -546,8 +563,8 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
         { description: LINE_TWO, quantity: '2', unitPrice: '500000' },
       ]);
     const documentLines = (o: Org, documentId: string) =>
-      rows<{ line_no: number; source_kind: string | null; source_line_no: number | null; source_id: string | null }>('SELECT line_no, source_kind, source_line_no, source_id FROM crove_finance.purchase_line WHERE org_id = $1 AND document_id = $2 ORDER BY line_no', [o.orgId, documentId]);
-    const documentMoves = (o: Org) => rows("SELECT id FROM crove_finance.stock_move WHERE org_id = $1 AND source_type = 'document_line'", [o.orgId]);
+      rows<{ line_no: number; source_kind: string | null; source_line_no: number | null; source_id: string | null }>('SELECT line_no, source_kind, source_line_no, source_id FROM ludy_finance.purchase_line WHERE org_id = $1 AND document_id = $2 ORDER BY line_no', [o.orgId, documentId]);
+    const documentMoves = (o: Org) => rows("SELECT id FROM ludy_finance.stock_move WHERE org_id = $1 AND source_type = 'document_line'", [o.orgId]);
 
     it('issues, records the invoice, then delivers: the document line moves nothing and is not unassigned, the delivery moves once', async () => {
       const o = await org({ sellerOf: true });
@@ -594,6 +611,104 @@ suite('invoice draft and stock move from a sales order (#2818)', () => {
       const posted = await post(o, invoice('7022'));
       expect(await documentMoves(o)).toHaveLength(1);
       expect((await documentLines(o, posted.documentId)).every((l) => l.source_kind === null)).toBe(true);
+    });
+  });
+  // The order screen's per-line label and cancel hint (#3477): which lines a draft holds, and whether it is issued. A read only, by the tables' own policies.
+  describe('finance.einvoice_draft.order_lines', () => {
+    type States = { orders: Array<{ orderId: string; lines: Array<{ lineNo: number; state: string }> }> };
+    const states = (o: Org, orderIds: string[], user = o.owner) => query<States>(o, 'finance.einvoice_draft.order_lines', { orderIds }, user);
+    const linesOf = (r: States, orderId: string) => r.orders.find((x) => x.orderId === orderId)?.lines.map((l) => [l.lineNo, l.state]);
+
+    it('lists only the lines a draft holds: draft until it is issued, then issued, and an open line is not listed', async () => {
+      const o = await org();
+      await addSeries(o);
+      const handoff = handoffOf(o.entity, [{ description: 'Hàng A' }, { description: 'Hàng B' }, { description: 'Hàng C' }]);
+      expect((await states(o, [handoff.orderId])).orders).toEqual([]);
+      const one = await draftFrom(o, handoff, [1, 2]);
+      expect(linesOf(await states(o, [handoff.orderId]), handoff.orderId)).toEqual([[1, 'draft'], [2, 'draft']]);
+      await issue(o, one.id, '9101');
+      const two = await draftFrom(o, handoff);
+      expect(two.lines.map((l) => l.description)).toEqual(['Hàng C']);
+      expect(linesOf(await states(o, [handoff.orderId]), handoff.orderId)).toEqual([[1, 'issued'], [2, 'issued'], [3, 'draft']]);
+    });
+
+    it('reads submitting, pending and a rejected draft as a draft, a deleted draft frees its lines, and only issued is issued', async () => {
+      const o = await org();
+      await addSeries(o);
+      const handoff = handoffOf(o.entity, [{ description: 'Hàng A' }, { description: 'Hàng B' }, { description: 'Hàng C' }]);
+      const a = await draftFrom(o, handoff, [1]);
+      const b = await draftFrom(o, handoff, [2]);
+      const c = await draftFrom(o, handoff, [3]);
+      await toSubmitting(o, a.id);
+      await asJob(o, [["UPDATE ludy_finance.einvoice_draft SET state = 'pending', provider_ref = 'sbx-p' WHERE org_id = $1 AND id = $2", [o.orgId, a.id]]]);
+      await toSubmitting(o, b.id);
+      await asJob(o, [["UPDATE ludy_finance.einvoice_draft SET state = 'rejected', provider_ref = 'sbx-r', error_code = 'INVALID_DATA' WHERE org_id = $1 AND id = $2", [o.orgId, b.id]]]);
+      expect(linesOf(await states(o, [handoff.orderId]), handoff.orderId)).toEqual([[1, 'draft'], [2, 'draft'], [3, 'draft']]);
+      await execute(o, 'finance.einvoice_draft.delete', { draftId: c.id });
+      expect(linesOf(await states(o, [handoff.orderId]), handoff.orderId)).toEqual([[1, 'draft'], [2, 'draft']]);
+      await asJob(o, [["UPDATE ludy_finance.einvoice_draft SET state = 'issued', issued_number = '9102', issued_at = pg_catalog.now() WHERE org_id = $1 AND id = $2", [o.orgId, a.id]]]);
+      expect(linesOf(await states(o, [handoff.orderId]), handoff.orderId)).toEqual([[1, 'issued'], [2, 'draft']]);
+    });
+
+    it('answers many orders in one read, asks a repeated id once, and lists no order without a draft', async () => {
+      const o = await org();
+      await addSeries(o);
+      const first = handoffOf(o.entity, [{ description: 'Hàng A' }]);
+      const second = handoffOf(o.entity, [{ description: 'Hàng B' }, { description: 'Hàng C' }]);
+      const bare = handoffOf(o.entity, [{ description: 'Hàng D' }]);
+      await draftFrom(o, first);
+      await draftFrom(o, second, [2]);
+      const got = await states(o, [first.orderId, second.orderId, bare.orderId, first.orderId, randomUUID()]);
+      expect(got.orders.map((x) => x.orderId).sort()).toEqual([first.orderId, second.orderId].sort());
+      expect(linesOf(got, first.orderId)).toEqual([[1, 'draft']]);
+      expect(linesOf(got, second.orderId)).toEqual([[2, 'draft']]);
+      // Ids, a line number and a state only: nothing of the draft or the buyer. The keys are checked (a regex over the text could match the digits of a random id).
+      for (const order of got.orders) {
+        expect(Object.keys(order).sort()).toEqual(['lines', 'orderId']);
+        for (const line of order.lines) expect(Object.keys(line).sort()).toEqual(['lineNo', 'state']);
+      }
+      expect(JSON.stringify(got)).not.toMatch(/Công ty Mua Thử|Hàng/);
+    });
+
+    it("never counts another organisation's drafts, even for the same order id", async () => {
+      const a = await org();
+      const b = await org();
+      await addSeries(a);
+      await addSeries(b);
+      const handoff = handoffOf(a.entity, [{ description: 'Hàng A' }]);
+      await draftFrom(a, handoff);
+      expect(linesOf(await states(a, [handoff.orderId]), handoff.orderId)).toEqual([[1, 'draft']]);
+      expect((await states(b, [handoff.orderId])).orders).toEqual([]);
+      // A forged hand-off of the same order id in the other organisation holds its own line, and each side sees only its own.
+      const forged = { ...handoffOf(b.entity, [{ description: 'Hàng X' }, { description: 'Hàng Y' }]), orderId: handoff.orderId };
+      await draftFrom(b, forged);
+      expect(linesOf(await states(a, [handoff.orderId]), handoff.orderId)).toEqual([[1, 'draft']]);
+      expect(linesOf(await states(b, [handoff.orderId]), handoff.orderId)).toEqual([[1, 'draft'], [2, 'draft']]);
+    });
+
+    it("shows a member limited to another legal entity none of this entity's drafts, and every role may read", async () => {
+      const o = await org();
+      await addSeries(o);
+      const branch = (
+        await rows<{ id: string }>("INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh Huế', 'branch', $2) RETURNING id", [o.orgId, o.owner])
+      )[0]?.id as string;
+      const limited = await identity('limited');
+      await admin(async (c) => {
+        await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, limited]);
+        await c.query("INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [o.orgId, limited, branch, o.owner]);
+      });
+      const handoff = handoffOf(o.entity, [{ description: 'Hàng A' }]);
+      await draftFrom(o, handoff);
+      for (const user of [o.owner, o.admin, o.member, o.viewer]) expect(linesOf(await states(o, [handoff.orderId], user), handoff.orderId)).toEqual([[1, 'draft']]);
+      expect((await states(o, [handoff.orderId], limited)).orders).toEqual([]);
+    });
+
+    it('takes 1 to 50 ids, ids only', async () => {
+      const o = await org();
+      await refused(states(o, []), 'VALIDATION');
+      await refused(states(o, Array.from({ length: 51 }, () => randomUUID())), 'VALIDATION');
+      await refused(query(o, 'finance.einvoice_draft.order_lines', { orderIds: ['not-an-id'] }), 'VALIDATION');
+      expect((await states(o, Array.from({ length: 50 }, () => randomUUID()))).orders).toEqual([]);
     });
   });
 });

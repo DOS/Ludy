@@ -11,11 +11,11 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import type { ExtractClient } from '@crove/extract-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
+import { createDb, createPool, type Db } from '@ludy/db';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
 import {
   extractAndPropose,
   financeCommands,
@@ -23,9 +23,9 @@ import {
   goodsPurchaseRows,
   servicePurchaseRows,
   type PurchaseVoucher,
-} from '@crove/mod-finance';
-import { accountParents, type MisaGoodsCode } from '@crove/kernel-contract';
-import { money } from '@crove/l10n-vn';
+} from '@ludy/mod-finance';
+import { accountParents, type MisaGoodsCode } from '@ludy/kernel-contract';
+import { money } from '@ludy/l10n-vn';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -166,7 +166,7 @@ suite('MISA SME goods purchases: codes per stock account and the goods template 
   }
 
   const audits = (command: string) =>
-    admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' ORDER BY occurred_at, id`, [org.orgId, command])).rows.map((r) => r.detail));
+    admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' ORDER BY occurred_at, id`, [org.orgId, command])).rows.map((r) => r.detail));
 
   beforeAll(async () => {
     extract = inProcessExtract();
@@ -178,17 +178,17 @@ suite('MISA SME goods purchases: codes per stock account and the goods template 
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -271,10 +271,10 @@ suite('MISA SME goods purchases: codes per stock account and the goods template 
     expect((await rpc('misaGoodsCodes/remove', member, { accountCode: '156' })).status).toBe(403);
     // The database holds the same formats, whatever writes the row.
     await expect(
-      admin((c) => c.query(`INSERT INTO crove_finance.misa_goods_code (org_id, account_code, item_code) VALUES ($1, '6422', 'X')`, [org.orgId])),
+      admin((c) => c.query(`INSERT INTO ludy_finance.misa_goods_code (org_id, account_code, item_code) VALUES ($1, '6422', 'X')`, [org.orgId])),
     ).rejects.toThrow(/misa_goods_code_account_format/);
     await expect(
-      admin((c) => c.query(`INSERT INTO crove_finance.misa_goods_code (org_id, account_code, item_code) VALUES ($1, '152', '=1+1 ')`, [org.orgId])),
+      admin((c) => c.query(`INSERT INTO ludy_finance.misa_goods_code (org_id, account_code, item_code) VALUES ($1, '152', '=1+1 ')`, [org.orgId])),
     ).rejects.toThrow(/misa_goods_code_item_format/);
   });
 

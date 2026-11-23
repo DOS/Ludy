@@ -19,7 +19,7 @@ function longText(): string {
 }
 
 function channelCard(page: Page, name: string): Locator {
-  return page.locator('[data-slot="card"]').filter({ hasText: name }).filter({ hasText: 'Viết riêng cho kênh này' });
+  return page.getByTestId('channel-card').filter({ hasText: name });
 }
 
 test('splits a 1,200-character text into a thread and posts it on the sandbox (#1222)', async ({ page }) => {
@@ -35,8 +35,8 @@ test('splits a 1,200-character text into a thread and posts it on the sandbox (#
   await page.getByLabel('Tên kênh thử').fill(channel);
   await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
   await expect(page.getByText(channel).first()).toBeVisible();
-  await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('link', { name: 'Soạn bài' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
   await page.getByLabel('Nội dung chung').fill(text);
 
   // Too long for one post: the card says so and previews the thread, each post with its count.
@@ -69,20 +69,20 @@ test('splits a 1,200-character text into a thread and posts it on the sandbox (#
   const posted = channelCard(page, channel);
   await expect(posted.getByText('Đã lên lịch', { exact: true })).toBeVisible();
   const postId = new URL(page.url()).pathname.split('/').pop() ?? '';
-  exec(`UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postId });
+  exec(`UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postId });
   await expect(posted.getByText('Đã đăng', { exact: true })).toBeVisible({ timeout: 45_000 });
 
   // What was stored and sent: the first post as the channel's text, the rest as its one thread part, together the
   // whole text, and the part's call succeeded.
   const [variant] = sql<{ body: string; parts: string[]; id: string }>(
-    `SELECT id, body, settings->'threadParts' AS parts FROM crove_social.post_variant WHERE post_id = :'post'`,
+    `SELECT id, body, settings->'threadParts' AS parts FROM ludy_social.post_variant WHERE post_id = :'post'`,
     { post: postId },
   );
   expect(variant?.parts).toHaveLength(1);
   expect(`${variant?.body} ${variant?.parts[0]}`.replace(/\s+/g, ' ')).toBe(text.replace(/\s+/g, ' '));
   expect([...(variant?.body ?? '')].length).toBeLessThanOrEqual(1000);
   await expect
-    .poll(() => sql<{ step: string; state: string }>(`SELECT step, state FROM crove_kernel.external_call WHERE key LIKE :'prefix' ORDER BY started_at`, { prefix: `%${variant?.id}%:part_%` }), { timeout: 45_000 })
+    .poll(() => sql<{ step: string; state: string }>(`SELECT step, state FROM ludy_kernel.external_call WHERE key LIKE :'prefix' ORDER BY started_at`, { prefix: `%${variant?.id}%:part_%` }), { timeout: 45_000 })
     .toEqual([{ step: 'part_2', state: 'succeeded' }]);
   await page.reload();
   await expect(page.getByText('Chuỗi bài: đã đăng đủ 2 phần')).toBeVisible();

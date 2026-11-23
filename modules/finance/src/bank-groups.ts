@@ -12,10 +12,10 @@
 //   an edit of a posting.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { voucherCode, zAccountCode, zId, zLedgerPeriod, zBankMatchedBy, type BankLookWhy, type BankMatchGroups, type BankMatched, type BankMatchLine, type VoucherType } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { Decimal, type DecimalValue } from '@crove/l10n-vn';
+import { voucherCode, zAccountCode, zId, zLedgerPeriod, zBankMatchedBy, type BankLookWhy, type BankMatchGroups, type BankMatched, type BankMatchLine, type VoucherType } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { Decimal, type DecimalValue } from '@ludy/l10n-vn';
 import { BANK_SUGGESTIONS_MAX, bankLineStates, bankLineView, findBankLines, lineMatchFor, readParties } from './bank-match.ts';
 import { classifyLine, invoiceKey, sharedInvoices, type Classified } from './domain/bank-groups.ts';
 import { VOUCHER_SOURCE } from './domain/cash-voucher.ts';
@@ -34,7 +34,7 @@ export const BANK_MATCHED_MAX = 500;
 async function openBalance(ctx: QueryContext, legalEntityId: string, inflow: boolean, partyId: string): Promise<DecimalValue | null> {
   const side = inflow ? sql<string>`pg_catalog.sum(l.debit) - pg_catalog.sum(l.credit)` : sql<string>`pg_catalog.sum(l.credit) - pg_catalog.sum(l.debit)`;
   const row = await ctx.trx
-    .selectFrom('crove_finance.journal_line as l')
+    .selectFrom('ludy_finance.journal_line as l')
     .select(side.as('balance'))
     .where('l.org_id', '=', ctx.orgId)
     .where('l.legal_entity_id', '=', legalEntityId)
@@ -51,13 +51,13 @@ async function openBalance(ctx: QueryContext, legalEntityId: string, inflow: boo
 async function settledThroughGroup(ctx: QueryContext, partyId: string, invoice: { series: string; number: string }): Promise<boolean> {
   const { rows } = await sql<{ n: string }>`
     SELECT pg_catalog.count(*)::text AS n
-    FROM crove_finance.cash_voucher v
-    JOIN crove_finance.journal_entry j ON j.org_id = v.org_id AND j.source_id = v.id AND j.source_type = ${VOUCHER_SOURCE} AND j.reverses_entry_id IS NULL AND ${latestRevision('j')}
-    JOIN crove_kernel.proposal p ON p.org_id = v.org_id AND p.id = v.proposal_id
+    FROM ludy_finance.cash_voucher v
+    JOIN ludy_finance.journal_entry j ON j.org_id = v.org_id AND j.source_id = v.id AND j.source_type = ${VOUCHER_SOURCE} AND j.reverses_entry_id IS NULL AND ${latestRevision('j')}
+    JOIN ludy_kernel.proposal p ON p.org_id = v.org_id AND p.id = v.proposal_id
     WHERE v.org_id = ${ctx.orgId} AND v.party_id = ${partyId}
       AND p.payload #>> '{matchedBy,invoice,number}' = ${invoice.number}
       AND p.payload #>> '{matchedBy,invoice,series}' = ${invoice.series}
-      AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry r WHERE r.org_id = j.org_id AND r.reverses_entry_id = j.id)`.execute(ctx.trx);
+      AND NOT EXISTS (SELECT 1 FROM ludy_finance.journal_entry r WHERE r.org_id = j.org_id AND r.reverses_entry_id = j.id)`.execute(ctx.trx);
   return Number(rows[0]?.n ?? 0) > 0;
 }
 
@@ -69,7 +69,7 @@ export const bankMatchGroups = defineQuery({
     const period = ledgerPeriod(input.period);
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     const ids = await ctx.trx
-      .selectFrom('crove_finance.bank_line')
+      .selectFrom('ludy_finance.bank_line')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', legalEntityId)
@@ -185,12 +185,12 @@ export const bankMatched = defineQuery({
              v.party_id::text AS party_id, pa.name AS party_name,
              pr.decided_by::text AS decided_by, pr.decided_at, pr.payload -> 'matchedBy' AS matched_by,
              r.id::text AS reversal_id, pg_catalog.to_char(r.entry_date, 'YYYY-MM-DD') AS reversal_date
-      FROM crove_finance.cash_voucher v
-      JOIN crove_finance.bank_line l ON l.org_id = v.org_id AND l.id = v.bank_line_id
-      JOIN crove_finance.journal_entry j ON j.org_id = v.org_id AND j.source_id = v.id AND j.source_type = ${VOUCHER_SOURCE} AND j.reverses_entry_id IS NULL AND ${latestRevision('j')}
-      LEFT JOIN crove_finance.journal_entry r ON r.org_id = j.org_id AND r.reverses_entry_id = j.id
-      LEFT JOIN crove_kernel.party pa ON pa.org_id = v.org_id AND pa.id = v.party_id
-      LEFT JOIN crove_kernel.proposal pr ON pr.org_id = v.org_id AND pr.id = v.proposal_id
+      FROM ludy_finance.cash_voucher v
+      JOIN ludy_finance.bank_line l ON l.org_id = v.org_id AND l.id = v.bank_line_id
+      JOIN ludy_finance.journal_entry j ON j.org_id = v.org_id AND j.source_id = v.id AND j.source_type = ${VOUCHER_SOURCE} AND j.reverses_entry_id IS NULL AND ${latestRevision('j')}
+      LEFT JOIN ludy_finance.journal_entry r ON r.org_id = j.org_id AND r.reverses_entry_id = j.id
+      LEFT JOIN ludy_kernel.party pa ON pa.org_id = v.org_id AND pa.id = v.party_id
+      LEFT JOIN ludy_kernel.proposal pr ON pr.org_id = v.org_id AND pr.id = v.proposal_id
       WHERE v.org_id = ${ctx.orgId}
         AND l.legal_entity_id = ${legalEntityId}
         AND l.value_date >= ${period.from}::date AND l.value_date <= ${period.to}::date
@@ -204,7 +204,7 @@ export const bankMatched = defineQuery({
     const deciders = [...new Set(shown.flatMap((r) => (r.decided_by ? [r.decided_by] : [])))];
     const names = new Map<string, string>();
     if (deciders.length > 0) {
-      const { rows: people } = await sql<{ user_id: string; email: string; display_name: string | null }>`SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${deciders}::uuid[])`.execute(ctx.trx);
+      const { rows: people } = await sql<{ user_id: string; email: string; display_name: string | null }>`SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${deciders}::uuid[])`.execute(ctx.trx);
       for (const p of people) names.set(p.user_id, p.display_name ?? p.email);
     }
     const items: BankMatched['items'] = [];

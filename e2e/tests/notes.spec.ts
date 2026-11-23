@@ -14,7 +14,7 @@ test('a member writes a note on the overview, pins it, and finds it on the notes
   const panel = page.getByRole('region', { name: 'Ghi chú' });
   await test.step('write a note on the overview: shared by default', async () => {
     await page.goto(`/o/${slug}/overview`);
-    await expect(panel.getByText('Ghi lại điều cần nhớ về khách hàng này')).toBeVisible();
+    await expect(panel.getByText('Ghi nhanh một việc cần nhớ')).toBeVisible();
     await panel.getByRole('button', { name: 'Thêm ghi chú' }).click();
     await panel.getByPlaceholder('Tiêu đề ghi chú').fill('Giám đốc chỉ nghe máy sau 15h');
     await panel.getByPlaceholder('Nội dung (không bắt buộc)').fill('Hỏi **kế toán trưởng** trước ngày 5');
@@ -28,13 +28,15 @@ test('a member writes a note on the overview, pins it, and finds it on the notes
     await panel.getByRole('button', { name: 'Ghim ghi chú Giám đốc chỉ nghe máy sau 15h' }).click();
     await expect(panel.getByTestId('note-item').filter({ hasText: 'Giám đốc' }).getByText('Đã ghim')).toBeVisible();
     const rows = sql<{ visibility: string; pinned: boolean }>(
-      `SELECT n.visibility, n.pinned FROM crove_notes.note n JOIN crove_kernel.tenant t ON t.org_id = n.org_id WHERE t.slug = :'slug'`,
+      `SELECT n.visibility, n.pinned FROM ludy_notes.note n JOIN ludy_kernel.tenant t ON t.org_id = n.org_id WHERE t.slug = :'slug'`,
       { slug },
     );
     expect(rows).toEqual([{ visibility: 'org', pinned: true }]);
   });
 
   await test.step('find it on the notes screen by words typed without marks', async () => {
+    // The overview shows no app menu (#3588): switch to Cộng tác first.
+    await page.getByRole('navigation').getByRole('list', { name: 'Ứng dụng' }).getByRole('link', { name: 'Cộng tác', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Ghi chú', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Ghi chú', level: 1 })).toBeVisible();
     await page.getByRole('searchbox', { name: 'Tìm ghi chú' }).fill('giam doc');
@@ -54,7 +56,7 @@ test('a member writes a note on the overview, pins it, and finds it on the notes
     await expect(page.getByText('Ghi chú không phải nơi giữ mật khẩu')).toBeVisible();
     await expect(page.getByRole('status').filter({ hasText: 'Đã lưu' })).toBeVisible({ timeout: 10_000 });
     const rows = sql<{ title: string; visibility: string }>(
-      `SELECT n.title, n.visibility FROM crove_notes.note n JOIN crove_kernel.tenant t ON t.org_id = n.org_id WHERE t.slug = :'slug' AND n.visibility = 'private'`,
+      `SELECT n.title, n.visibility FROM ludy_notes.note n JOIN ludy_kernel.tenant t ON t.org_id = n.org_id WHERE t.slug = :'slug' AND n.visibility = 'private'`,
       { slug },
     );
     expect(rows).toEqual([{ title: 'Mật khẩu cổng ngân hàng', visibility: 'private' }]);
@@ -67,7 +69,7 @@ test('a member writes a note on the overview, pins it, and finds it on the notes
     await done.getByRole('button', { name: 'Hoàn tác' }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Đã đưa ghi chú trở lại' })).toBeVisible();
     const trashed = sql<{ trashed: boolean }>(
-      `SELECT n.deleted_at IS NOT NULL AS trashed FROM crove_notes.note n JOIN crove_kernel.tenant t ON t.org_id = n.org_id
+      `SELECT n.deleted_at IS NOT NULL AS trashed FROM ludy_notes.note n JOIN ludy_kernel.tenant t ON t.org_id = n.org_id
         WHERE t.slug = :'slug' AND n.title = 'Mật khẩu cổng ngân hàng'`,
       { slug },
     );

@@ -32,6 +32,11 @@ describe('the tabs of the reports', () => {
     for (const area of ['', 'Sales', 'money', 'deals', 7, null, undefined, ['sales']]) expect(parseReportsSearch({ area }), String(area)).toEqual({});
     // ?tab= is the social screen's own key: it never opens a report.
     expect(parseReportsSearch({ tab: 'sales' })).toEqual({});
+    // The posts report keeps a label's id (#3658); a bad id, or a label on another tab, is left out.
+    const label = '00000000-0000-4000-8000-000000000001';
+    expect(parseReportsSearch({ area: 'posts', label })).toEqual({ area: 'posts', label });
+    expect(parseReportsSearch({ area: 'posts', label: 'Tết' })).toEqual({ area: 'posts' });
+    expect(parseReportsSearch({ area: 'sales', label })).toEqual({ area: 'sales' });
   });
 
   it('shows the tab asked for when the deployment has it, else the first', () => {

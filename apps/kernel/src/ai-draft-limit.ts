@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // A budget for AI drafting (#386): each draft is a paid model call, and the general /api limit (600 requests a minute
 // per user by default) would let one member start hundreds. A member gets a few drafts a minute and one at a time; an
 // org gets a few more a minute across its members. In this process's memory, as the /api limit is (see
@@ -10,7 +11,9 @@ export interface DraftBudgetOptions {
   now?: () => number;
 }
 
-export type DraftTicket = { allowed: true; release: () => void } | { allowed: false; retryAfterSeconds: number; reason: 'busy' | 'user' | 'org' };
+export type DraftTicket =
+  | { allowed: true; release: () => void; refund?: () => void }
+  | { allowed: false; retryAfterSeconds: number; reason: 'busy' | 'user' | 'org' };
 
 export class DraftBudget {
   private readonly users: RateLimiter;
@@ -23,7 +26,7 @@ export class DraftBudget {
     this.orgs = new RateLimiter({ perMinute: options.perOrgPerMinute ?? 30, now });
   }
 
-  // One draft for this member of this org, or why not. A granted ticket is released when the draft is done.
+  // One draft for this member of this org, or why not. A granted ticket is released when the draft is done, and refunded when deterministic checks skip the model call.
   take(orgId: string, userId: string): DraftTicket {
     const key = `${orgId}:${userId}`;
     if (this.running.has(key)) return { allowed: false, retryAfterSeconds: 5, reason: 'busy' };
@@ -36,11 +39,21 @@ export class DraftBudget {
     const takenUser = this.users.take(key);
     if (!takenUser.allowed) return { allowed: false, retryAfterSeconds: takenUser.retryAfterSeconds, reason: 'user' };
     const takenOrg = this.orgs.take(orgId);
-    if (!takenOrg.allowed) return { allowed: false, retryAfterSeconds: takenOrg.retryAfterSeconds, reason: 'org' };
+    if (!takenOrg.allowed) {
+      this.users.refund(key);
+      return { allowed: false, retryAfterSeconds: takenOrg.retryAfterSeconds, reason: 'org' };
+    }
     this.running.add(key);
     let released = false;
+    let refunded = false;
     return {
       allowed: true,
+      refund: () => {
+        if (refunded) return;
+        refunded = true;
+        this.users.refund(key);
+        this.orgs.refund(orgId);
+      },
       release: () => {
         if (released) return;
         released = true;

@@ -6,11 +6,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, type BioPage } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, type BioPage } from '@ludy/mod-social';
 import { bioGo, bioView, renderBioPage } from '../src/bio-page.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -47,7 +47,7 @@ suite('social link-in-bio page on PostgreSQL (#707)', () => {
     const roles = { admin: await person('admin'), member: await person('member'), other: await person('other'), viewer: await person('viewer') };
     const role = { admin: 'admin', member: 'member', other: 'member', viewer: 'viewer' } as const;
     for (const [key, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
     }
     return { orgId, owner, ...roles };
   }
@@ -56,7 +56,7 @@ suite('social link-in-bio page on PostgreSQL (#707)', () => {
     const id = randomUUID();
     await admin((c) =>
       c.query(
-        'INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
+        'INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
         [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, 'Kênh thử', owner],
       ),
     );
@@ -74,9 +74,9 @@ suite('social link-in-bio page on PostgreSQL (#707)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -97,14 +97,14 @@ suite('social link-in-bio page on PostgreSQL (#707)', () => {
     const id = randomUUID();
     const sha = createHash('sha256').update(id).digest('hex');
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, created_by) VALUES ($1, $2, $3, $4, $5, 'anh.jpg', $6, 1000, 'social', $7)", [orgId, id, sha, `org/${orgId}/${sha}`, `content:${sha}`, type, owner]),
+      c.query("INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, created_by) VALUES ($1, $2, $3, $4, $5, 'anh.jpg', $6, 1000, 'social', $7)", [orgId, id, sha, `org/${orgId}/${sha}`, `content:${sha}`, type, owner]),
     );
     return id;
   }
   const save = (o: Org, user: string, input: Record<string, unknown>) => exec<{ pageId: string; slug: string }>(o, user, 'social.bio.save', input);
   const page = (o: Org, user: string) => rt.query<BioPage | null>('social.bio.get', {}, { actor: asUser(user), orgId: o.orgId });
   // As the API login role, the one the public routes use.
-  const fileOf = async (slug: string, fileId: string) => (await pool.query<{ storage_key: string }>('SELECT storage_key FROM crove_social.bio_page_file($1, $2::uuid)', [slug, fileId])).rows;
+  const fileOf = async (slug: string, fileId: string) => (await pool.query<{ storage_key: string }>('SELECT storage_key FROM ludy_social.bio_page_file($1, $2::uuid)', [slug, fileId])).rows;
 
   it('saves one page per org, shows it only when published, and nothing of it but what it shows', async () => {
     const o = await org();
@@ -137,7 +137,7 @@ suite('social link-in-bio page on PostgreSQL (#707)', () => {
     const other = await socialFile(o.orgId, o.owner);
     const image = await socialFile(o.orgId, o.owner);
     const { postId } = await exec<{ postId: string }>(o, o.owner, 'social.post.create', { body: 'Bánh mới', linkUrl: 'https://tiembanh.example/moi', media: [{ fileId: image }], channels: [{ connectionId: conn }] });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'published', published_at = now(), external_url = 'https://social.example/p/1' WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'published', published_at = now(), external_url = 'https://social.example/p/1' WHERE post_id = $1", [postId]));
     await save(o, o.owner, { slug: 'bio-tiem', title: 'Tiệm', avatarFileId: avatar, buttons: [{ label: 'Website', url: 'https://tiembanh.example/' }], showPosts: true, published: true });
     const view = await bioView(rt, 'bio-tiem');
     expect(view?.posts).toEqual([{ postId, fileId: image, excerpt: 'Bánh mới', linked: true }]);
@@ -163,6 +163,28 @@ suite('social link-in-bio page on PostgreSQL (#707)', () => {
     await save(o, o.owner, { slug: 'bio-tiem', title: 'Tiệm', avatarFileId: avatar, buttons: [], showPosts: false, published: false });
     expect(await fileOf('bio-tiem', avatar)).toEqual([]);
     // The API role cannot write clicks; only the definer does.
-    await expect(pool.query("INSERT INTO crove_social.bio_click (org_id, page_id, target, day) SELECT org_id, id, 'button:0', current_date FROM crove_social.bio_page")).rejects.toMatchObject({ code: '42501' });
+    await expect(pool.query("INSERT INTO ludy_social.bio_click (org_id, page_id, target, day) SELECT org_id, id, 'button:0', current_date FROM ludy_social.bio_page")).rejects.toMatchObject({ code: '42501' });
+  });
+
+  it('answers as an unknown page while Social is off for the org, and as before once it is on (ADR-0053, C2)', async () => {
+    const o = await org();
+    const conn = await connection(o.orgId, o.owner);
+    const image = await socialFile(o.orgId, o.owner);
+    const { postId } = await exec<{ postId: string }>(o, o.owner, 'social.post.create', { body: 'Bánh mới', linkUrl: 'https://tiembanh.example/moi', media: [{ fileId: image }], channels: [{ connectionId: conn }] });
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'published', published_at = now(), external_url = 'https://social.example/p/1' WHERE post_id = $1", [postId]));
+    const avatar = await socialFile(o.orgId, o.owner);
+    await save(o, o.owner, { slug: 'bio-tat', title: 'Tiệm', avatarFileId: avatar, buttons: [{ label: 'Website', url: 'https://tiembanh.example/' }], showPosts: true, published: true });
+    const setApp = (enabled: boolean) => rt.execute('kernel.org.set_app', { module: 'social', enabled }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    expect(await bioView(rt, 'bio-tat')).not.toBeNull();
+    await setApp(false);
+    // The same answers as for a slug that never existed, and no click is counted.
+    expect(await bioView(rt, 'bio-tat')).toEqual(await bioView(rt, 'khong-co-trang-nay'));
+    expect(await bioGo(rt, 'bio-tat', 'button:0', 'Mozilla/5.0')).toBeNull();
+    expect(await fileOf('bio-tat', avatar)).toEqual([]);
+    await setApp(true);
+    expect(await bioView(rt, 'bio-tat')).not.toBeNull();
+    expect(await bioGo(rt, 'bio-tat', 'button:0', 'Mozilla/5.0')).toBe('https://tiembanh.example/');
+    expect((await fileOf('bio-tat', avatar)).length).toBe(1);
+    expect((await page(o, o.viewer))?.clicks).toEqual({ 'button:0': 1 });
   });
 });

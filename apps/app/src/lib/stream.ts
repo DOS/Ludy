@@ -3,7 +3,7 @@
 // authorized calls. While the stream is down the screens poll as before. No browser or API imports, so it is unit
 // tested; stream-hook.ts wires it to EventSource and the query client.
 import type { Query, QueryClient } from '@tanstack/react-query';
-import { STREAM_CLOSE_REASONS, STREAM_HINT_TYPES, type StreamCloseReason, type StreamHint } from '@crove/kernel-contract';
+import { STREAM_CLOSE_REASONS, STREAM_HINT_MANY_ID, STREAM_HINT_TYPES, type StreamCloseReason, type StreamHint } from '@ludy/kernel-contract';
 import { apiUrl } from './api-base.ts';
 
 // oRPC query keys are [path, { type, input }], for example [['inbox', 'get'], { type: 'query', input: { id } }].
@@ -34,7 +34,8 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
   switch (hint.type) {
     case 'proposal':
       // files.batch: the intake list's files whose proposal still waits (#2009), so their chips follow its decision.
-      return path === 'inbox.list' || path === 'today.list' || path === 'files.recent' || path === 'files.batch' || (path === 'inbox.get' && inputId(query) === id);
+      // financeCashForecast: approving a supplier payment (a proposal) moves what the cash forecast counts as going out; financeMonthClose counts the proposals that still wait. A cancelled one is read again by the cards' own 60-second reads.
+      return path === 'inbox.list' || path === 'today.list' || path === 'files.recent' || path === 'files.batch' || (path === 'inbox.get' && inputId(query) === id) || (path === 'financeCashForecast.get' || path === 'financeCashForecast.explain') || path === 'financeMonthClose.get' || path === 'financeMonthClose.explain';
     case 'file':
     case 'extraction':
       // extraction carries the id of the file whose reading changed. files.batch: a re-read of a file the intake list
@@ -54,7 +55,12 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
         path === 'parties.customers' ||
         // The Kế toán overview (#2631) and the coworker's sentence on it read the same entries.
         path === 'financeOverview.get' ||
-        path === 'financeOverview.explain'
+        path === 'financeOverview.explain' ||
+        // The cash forecast reads the same entries (cash, receivables, payables) and the coworker's note on it; the month-close checklist counts bank lines settled by vouchers, settlements and payouts recorded, and the period lock, all of which are entries.
+        path === 'financeCashForecast.get' ||
+        path === 'financeCashForecast.explain' ||
+        path === 'financeMonthClose.get' ||
+        path === 'financeMonthClose.explain'
       )
         return true;
       if (path === 'journal.get') return inputId(query) === id;
@@ -83,9 +89,26 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
     // A member's note (#1671): the notes lists and panels read again, and that note.
     case 'note':
       return path.startsWith('notes.');
-    // A member's own to-do (#1673): their to-do lists read again.
+    // The org's owner switched an app on or off (ADR-0053): the menus and every screen's app list read it again.
+    case 'org_apps':
+      return path === 'org.apps';
+    // A member's own to-do (#1673): their to-do lists and linked record notes panels (#2595) read again.
     case 'todo':
-      return path.startsWith('notes.todos.');
+      return path.startsWith('notes.todos.') || path === 'notes.panel';
+    // A deal created, changed, moved or deleted by anyone in the org (#3293): the deal board and list, the deal of that id, a contact's deals and timeline (the hint does not name
+    // the party, so every contact's panel reads again), the deals' next steps and the contacts list, which counts each contact's open deals.
+    case 'crm_deal': {
+      if (path === 'crm.deals.board' || path === 'crm.deals.list' || path === 'crm.deals.byParty' || path === 'crm.contacts.list' || path === 'parties.timeline' || path.startsWith('crm.nextSteps.')) return true;
+      const options = query.queryKey[1] as { input?: { dealId?: unknown } } | undefined;
+      return path === 'crm.deals.get' && (id === STREAM_HINT_MANY_ID || options?.input?.dealId === id);
+    }
+    // A party's contact details changed (#3293): the contacts list and the contact pickers, the deal cards, list and details, which show the contact's name, and that contact's own panels.
+    // crm.contacts alone is the key of the people of a company and of a person's company suggestions, which sit under the contacts' own key (company-link.tsx).
+    case 'crm_party': {
+      if (path === 'crm.contacts' || path === 'crm.contacts.list' || path === 'crm.parties.search' || path === 'crm.deals.board' || path === 'crm.deals.list' || path === 'crm.deals.get') return true;
+      const options = query.queryKey[1] as { input?: { partyId?: unknown } } | undefined;
+      return (path === 'crm.deals.byParty' || path === 'parties.timeline') && (id === STREAM_HINT_MANY_ID || options?.input?.partyId === id);
+    }
   }
 }
 

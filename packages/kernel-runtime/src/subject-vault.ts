@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Seals one person's personal values under that person's own key (ADR-0017 sections 2 to 4, #2640), so a value can sit in a row that cannot
-// change and still be erased: deleting the subject's key (crove_kernel.subject_key_shred) makes every value sealed under it unreadable.
+// change and still be erased: deleting the subject's key (ludy_kernel.subject_key_shred) makes every value sealed under it unreadable.
 //
 // Three layers, as the credential vault (vault.ts, ADR-0025):
 // - the wrap key: HKDF-SHA256 of the deployment's credential key (the broker derives it, never the database holds it), one per credential key
@@ -94,7 +94,7 @@ export class SubjectVault {
     return this.current.id;
   }
 
-  /** A new data key for a subject, with its wrapped form for crove_kernel.subject_key. The caller wipes `dataKey` when done. */
+  /** A new data key for a subject, with its wrapped form for ludy_kernel.subject_key. The caller wipes `dataKey` when done. */
   newDataKey(orgId: string, subjectId: string): { dataKey: Buffer; keyId: string; wrapped: Buffer } {
     const dataKey = randomBytes(KEY);
     try {

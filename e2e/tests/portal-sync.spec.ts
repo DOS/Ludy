@@ -43,8 +43,9 @@ test('fetch the period purchase list and invoice XML from the tax portal', async
   // The org's own field (a <dd>): the legal entities card shows the default entity's code too (#1278).
   await expect(page.getByRole('definition').getByText(BUYER_TAX_CODE, { exact: true })).toBeVisible();
 
-  await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
-  await nav.getByRole('link', { name: 'Đối chiếu cổng thuế' }).click();
+  await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+  await nav.getByRole('link', { name: 'Thuế', exact: true }).click();
+  await page.getByRole('link', { name: 'Đối chiếu cổng thuế' }).click();
   await choosePeriod(page);
   await page.getByRole('button', { name: 'Lấy danh sách từ cổng thuế' }).click();
   const panel = page.getByRole('region', { name: 'Lấy danh sách từ cổng thuế' });
@@ -78,15 +79,16 @@ test('fetch the period purchase list and invoice XML from the tax portal', async
   });
 
   await test.step('the downloaded invoices wait in the Inbox', async () => {
-    await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     await expect(page.getByRole('row').filter({ has: page.getByRole('link', { name: SELLER }) })).toHaveCount(2, { timeout: 120_000 });
     await expect(page.getByRole('row').filter({ hasText: 'CÔNG TY CỔ PHẦN VẬT TƯ MẪU' })).toHaveCount(1, { timeout: 60_000 });
   });
 
   await test.step('the reconciliation counts them as waiting in the Inbox', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
-    await nav.getByRole('link', { name: 'Đối chiếu cổng thuế' }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: 'Thuế', exact: true }).click();
+    await page.getByRole('link', { name: 'Đối chiếu cổng thuế' }).click();
     // A fresh read: the screen's cached comparison is from before the proposals existed.
     await page.reload();
     await choosePeriod(page);

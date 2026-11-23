@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // "Hôm nay cần bạn" on Home (issue #2383): what needs the member today across the apps. There is no store of its own
 // and nothing is written. Each line exposes one small read that returns TodayItems (`<module>.today`; the shape is
-// @crove/kernel-contract's today.ts), and this query runs the ones that are registered, in the member's own transaction
+// @ludy/kernel-contract's today.ts), and this query runs the ones that are registered, in the member's own transaction
 // and role, so every line's own rules decide what the member sees: the list shows only what they could open on that
 // line's screens. A line whose read is not registered yet (its issue has not landed, or its module is off) adds
 // nothing, so a line joins the list by registering its read, with no change here.
@@ -9,18 +9,22 @@
 // An item that does not match the shape is dropped and counted, never shown. Nothing here approves, sends or changes
 // anything: an item only links to the screen where it is acted on.
 import { z } from 'zod';
-import { TODAY_ITEMS_MAX, sortTodayItems, zTodayItem, type TodayItem, type TodayList } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { TODAY_ITEMS_MAX, sortTodayItems, zTodayItem, type TodayCoworkers, type TodayItem, type TodayList } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { coworkerNames } from './coworker-names.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
-// The reads the lines agreed to expose (issue #2383): Accounting finance.today, Notes and CRM crm.today and
-// kernel.conversation.today, Marketing social.today and ads.today; and the kernel's own cross-app rules (signals.ts, Vy plan C4).
-export const TODAY_READS: readonly string[] = ['finance.today', 'crm.today', 'social.today', 'ads.today', 'kernel.conversation.today', 'kernel.signals.deal_without_invoice', 'kernel.signals.receivable_with_open_deal', 'kernel.signals.supplier_bank_changed'];
+// The reads the lines agreed to expose (issue #2383, #2596, #3813, #3821, #4444): Accounting finance.today, Notes and CRM crm.today and
+// kernel.conversation.today, Projects projects.today, Marketing social.today and ads.today, eSign sign.today and sign.obligations.today,
+// HR hr.today; and the kernel's own cross-app rules (signals.ts, Vy plan C4).
+export const TODAY_READS: readonly string[] = ['finance.today', 'crm.today', 'projects.today', 'social.today', 'ads.today', 'sign.today', 'sign.obligations.today', 'hr.today', 'kernel.conversation.today', 'kernel.wake.today', 'kernel.signals.deal_without_invoice', 'kernel.signals.receivable_with_open_deal', 'kernel.signals.supplier_bank_changed', 'kernel.signals.conversation_unanswered'];
 
-export function todayQuery(options: { reads?: readonly string[] } = {}) {
+// coworkers: how the answer's coworker names are read (the org's agents by default); a unit test of the merge passes a stub.
+export function todayQuery(options: { reads?: readonly string[]; coworkers?: (ctx: QueryContext) => Promise<TodayCoworkers> } = {}) {
   const reads = options.reads ?? TODAY_READS;
+  const coworkers = options.coworkers ?? coworkerNames;
   return defineQuery({
     name: 'kernel.today',
     input: z.object({}),
@@ -65,7 +69,8 @@ export function todayQuery(options: { reads?: readonly string[] } = {}) {
       }
       // At most TODAY_ITEMS_MAX items: the list is sorted most urgent first, so the cut ones are the least urgent.
       const sorted = sortTodayItems(items);
-      return { items: sorted.slice(0, TODAY_ITEMS_MAX), dropped, truncated: Math.max(0, sorted.length - TODAY_ITEMS_MAX), failed };
+      // The coworkers' names now, so Home says which one raised each item (todayCoworkerKey) and who wrote the brief (#3265).
+      return { items: sorted.slice(0, TODAY_ITEMS_MAX), coworkers: await coworkers(ctx), dropped, truncated: Math.max(0, sorted.length - TODAY_ITEMS_MAX), failed };
     },
   });
 }

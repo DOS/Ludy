@@ -9,10 +9,10 @@
 // Nothing a person typed goes into an item: no deal title, no contact's name, no event type's title, no visitor's words. A title is a message key with
 // numbers (days, a clock time), and the screen where the item is acted on is `href`, an in-app path relative to the org's screens (MODULE_SCREENS.crm).
 // The amount is the deal's, a decimal string in VND.
-import { vietnamToday, zTodayItems, type TodayItem } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
+import { vietnamToday, zTodayItems, type TodayItem } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
 import { z } from 'zod';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 import { bookingsOfDay } from './bookings.ts';
 import { countNextSteps, loadNextSteps } from './next-steps.ts';
 
@@ -88,7 +88,7 @@ export const crmToday = defineQuery({
 
     // The member's own open deals that are to close today.
     const closing = await ctx.trx
-      .selectFrom('crove_crm.deal as d')
+      .selectFrom('ludy_crm.deal as d')
       .select(['d.id', 'd.amount'])
       .where('d.org_id', '=', ctx.orgId)
       .where('d.owner_user_id', '=', me)
@@ -112,13 +112,27 @@ export const crmToday = defineQuery({
 
     // The member's own bookings today that have not ended: the types they lead or hold on their calendar.
     const from = new Date(`${today}T00:00:00${VIETNAM_OFFSET}`);
-    const bookings = await bookingsOfDay(ctx, me, from, new Date(from.getTime() + DAY_MS));
+    const to = new Date(from.getTime() + DAY_MS);
+    const bookings = await bookingsOfDay(ctx, me, from, to);
     for (const booking of bookings.slice(0, BOOKING_ITEMS)) {
       items.push({
         kind: 'deadline',
         app: 'crm',
         id: `booking:${booking.id}`,
         title: { key: 'crm.booking', params: { time: clockTime(new Date(booking.startsAt)) } },
+        dueAt: booking.startsAt,
+        href: '/bookings',
+      });
+    }
+    // The member's own bookings tomorrow (Engage's wake rule "a booking tomorrow", #3862: the same rule tells a coworker, with a day's notice).
+    const tomorrowFrom = to;
+    const tomorrow = await bookingsOfDay(ctx, me, tomorrowFrom, new Date(tomorrowFrom.getTime() + DAY_MS));
+    for (const booking of tomorrow.slice(0, BOOKING_ITEMS)) {
+      items.push({
+        kind: 'deadline',
+        app: 'crm',
+        id: `booking-tomorrow:${booking.id}`,
+        title: { key: 'crm.bookingTomorrow', params: { time: clockTime(new Date(booking.startsAt)) } },
         dueAt: booking.startsAt,
         href: '/bookings',
       });

@@ -2,23 +2,23 @@
 // The Inbox's AI suggestions on the API side (CV3, #2306, plan docs/plan/conversations.md section 13): the suggested intent of a conversation and the
 // likely contacts of a customer. The kernel's reads (kernel.conversation.intent_source and kernel.conversation.contact_candidates) run in the member's own
 // transaction and say what they may read; the model call then runs here, outside any transaction, through the AI budget meter (the request's AI scope
-// names the org and the member, so @crove/agent's metered() asks the meter before the call and records what it used).
+// names the org and the member, so @ludy/agent's metered() asks the meter before the call and records what it used).
 //
 // A suggestion is read, never written: nothing here stores an intent, links a contact, assigns, resolves or hides, and it is not a command, so no agent or
 // system actor is involved. The cache below keeps only what the model answered for a thread's newest message for an hour, in this process's memory, so
 // the screen's six-second poll does not pay for the same answer again; it is a convenience, not a record. When the model is off, the AI budget is spent,
 // the member's AI calls are too frequent or the call fails, the answer is no suggestion, with the state named (`ai`), and no error: the Inbox works as it
 // did.
-import { AiBudgetExhaustedError, type InboxReader, type Intent } from '@crove/agent';
-import type { ConversationContactMatched, ConversationIntentSuggested } from '@crove/kernel-contract';
-import type { ContactCandidates, IntentSource } from '@crove/kernel';
-import { CONVERSATION_CONTACT_MATCHES_MAX } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, type InboxReader, type Intent } from '@ludy/agent';
+import type { ConversationContactMatched, ConversationIntentSuggested } from '@ludy/kernel-contract';
+import type { ContactCandidates, IntentSource } from '@ludy/kernel';
+import { CONVERSATION_CONTACT_MATCHES_MAX } from '@ludy/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 // The part of the reader the API uses; tests give a fake.
 // reminderWords (the finance coworker's wording of a payment reminder, #2488) rides on the same reader and is optional, so a reader that has none leaves that screen on its template words.
 // stockMatch and reorderText (the finance coworker on stock, #2514), einvoiceDraft (the finance coworker on a sales e-invoice draft, #2505) and quoteLines (the sales coworker on the lines of a quote, #2698) are optional the same way.
-export type ConversationReader = Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'payrollMatchSentence' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain'>>;
+export type ConversationReader = Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'monthCloseNote' | 'expenseVarianceNotes' | 'cashForecastSentence' | 'vatLateSentence' | 'payrollMatchSentence' | 'marketplaceLineSentence' | 'marketplaceFeeNotes' | 'marketplaceProposalNote' | 'marketplaceColumns' | 'supplierPayableLineSentence' | 'bankCandidatesLineSentence' | 'misaCheckLineSentence' | 'misaAmisBlockerNotes' | 'stockSurplusNote' | 'einvoiceRateExplanation' | 'einvoiceReasonSuggestion' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'projectCycleSummary' | 'roadmapDedupe' | 'roadmapChangelogDraft' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'payrollDiffExplain' | 'laborCheck' | 'recruitingBrief' | 'attendanceAnomalies' | 'cvExtract' | 'hrProbationSummary' | 'signAcceptanceDraft'>>;
 
 // An answered thread is kept for the hour; "no suggestion" (the model said other, left the thread out or gave nothing) only briefly, so a thread the model
 // skipped is asked again soon.

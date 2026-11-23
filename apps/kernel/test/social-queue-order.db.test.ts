@@ -8,11 +8,11 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, type ActivityItem, type PostView } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, type ActivityItem, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -51,7 +51,7 @@ suite('social queue reordering on PostgreSQL (#1020)', () => {
     const { orgId } = await createOrg(api, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const people = { admin: await person('admin'), member: await person('member'), viewer: await person('viewer') };
     for (const [role, id] of Object.entries(people)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
     }
     return { orgId, owner, ...people };
   }
@@ -86,7 +86,7 @@ suite('social queue reordering on PostgreSQL (#1020)', () => {
   }
 
   const rows = (connectionId: string) =>
-    admin(async (c) => (await c.query<Row>('SELECT id, post_id, status, queue_slot_at, scheduled_at, error_retry_at FROM crove_social.post_variant WHERE channel_connection_id = $1 ORDER BY id', [connectionId])).rows);
+    admin(async (c) => (await c.query<Row>('SELECT id, post_id, status, queue_slot_at, scheduled_at, error_retry_at FROM ludy_social.post_variant WHERE channel_connection_id = $1 ORDER BY id', [connectionId])).rows);
   const slots = (list: readonly Row[], ids?: ReadonlySet<string>) =>
     list
       .filter((r) => r.queue_slot_at !== null && (!ids || ids.has(r.id)))
@@ -103,9 +103,9 @@ suite('social queue reordering on PostgreSQL (#1020)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const u = new URL(adminUrl);
-    u.username = 'crove_app';
+    u.username = 'ludy_app';
     u.password = 'test-app-pw';
     appPool = createPool({ connectionString: u.toString(), max: 6 });
     appDb = createDb(appPool);
@@ -140,14 +140,14 @@ suite('social queue reordering on PostgreSQL (#1020)', () => {
     await exec(o, 'social.post.update', { postId: review.postId, revision: reviewPost.revision, body: 'Đang duyệt lại, đã sửa' }, o.member);
     await exec(o, 'social.post.submit', { postId: review.postId }, o.member);
     const limited = await queued(o, conn, 'Chờ hết giới hạn');
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET error_retry_at = now() + interval '30 days', error_kind = 'rate_limited' WHERE id = $1", [limited.variantId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET error_retry_at = now() + interval '30 days', error_kind = 'rate_limited' WHERE id = $1", [limited.variantId]));
     const fixed = await exec<{ postId: string }>(o, 'social.post.create', { body: 'Giờ cố định', channels: [{ connectionId: conn }] }, o.member);
     await exec(o, 'social.post.submit', { postId: fixed.postId }, o.member);
     const fixedView = await get(o, fixed.postId);
     await exec(o, 'social.variant.decide', { postId: fixed.postId, decision: 'approved', variants: fixedView.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
     await exec(o, 'social.variant.schedule', { postId: fixed.postId, at: new Date(Date.now() + 3 * 86_400_000).toISOString() });
     const held = await queued(o, conn, 'Bị giữ lại');
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET queue_slot_at = date_trunc('minute', now()) - interval '10 minutes' WHERE id = $1", [held.variantId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET queue_slot_at = date_trunc('minute', now()) - interval '10 minutes' WHERE id = $1", [held.variantId]));
     await exec(o, 'social.publishing.hold', { reason: 'Ngày quốc tang' });
 
     const before = await rows(conn);

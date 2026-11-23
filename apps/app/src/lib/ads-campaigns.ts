@@ -17,8 +17,10 @@ import {
   type AdsLaunchView,
   type AdsObjective,
   type AdsPlanIssue,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import type { Translate } from '../i18n/runtime.ts';
+import { adProviderName, isSandboxProvider } from './ads.ts';
+import { parseMoneyInput } from './money-input.ts';
 import { fromUnits, toUnits } from './decimal.ts';
 import { monthLabel } from './period-lock.ts';
 
@@ -140,6 +142,10 @@ const validLink = (text: string): boolean => {
 
 // The format problems a save would be refused for (the server's own input check), found before it so each sits under its field. They are not the
 // plan's rules: a budget over a cap or an end date before the start is the server's list of issues.
+// The daily budget as the server takes it: what was typed ("100.000", "100,000") as the canonical decimal string (#3641), or the text as it is when it is not an
+// amount, so the format check says so.
+export const budgetTextOf = (text: string): string => parseMoneyInput(text) ?? text.trim();
+
 export type FormProblem = 'nameNeeded' | 'budgetFormat' | 'locationNeeded' | 'countryFormat' | 'ageFormat' | 'interestsFormat' | 'linkFormat' | 'variantIncomplete';
 export type ProblemField = 'name' | 'dailyBudget' | 'locations' | 'age' | 'interests' | 'linkUrl' | 'variants';
 
@@ -155,7 +161,7 @@ export function badLocationIndex(form: Pick<CampaignForm, 'locations'>): number 
 export function formProblems(form: CampaignForm): Partial<Record<ProblemField, FormProblem>> {
   const out: Partial<Record<ProblemField, FormProblem>> = {};
   if (form.name.trim() === '') out.name = 'nameNeeded';
-  if (form.dailyBudget.trim() !== '' && !zAdsBudget.safeParse(form.dailyBudget.trim()).success) out.dailyBudget = 'budgetFormat';
+  if (form.dailyBudget.trim() !== '' && !zAdsBudget.safeParse(budgetTextOf(form.dailyBudget)).success) out.dailyBudget = 'budgetFormat';
   if (form.locations.every(blankLocation)) out.locations = 'locationNeeded';
   else if (form.locations.some((l) => !blankLocation(l) && !validLocation(l))) out.locations = 'countryFormat';
   if (!validAge(form.ageMin) || !validAge(form.ageMax)) out.age = 'ageFormat';
@@ -182,13 +188,14 @@ export function formToPlan(form: CampaignForm): AdsCampaignPlanDraft {
   return {
     name: form.name.trim(),
     objective: form.objective,
-    dailyBudget: form.dailyBudget.trim() === '' ? null : form.dailyBudget.trim(),
+    dailyBudget: form.dailyBudget.trim() === '' ? null : budgetTextOf(form.dailyBudget),
     startOn: form.startOn === '' ? null : form.startOn,
     endOn: form.endOn === '' ? null : form.endOn,
     targeting,
-    // A link belongs to a Traffic or an Engagement ad and a Page to a Messenger one: the other is not part of the plan, whatever the form still holds.
+    // A link belongs to a Traffic or an Engagement ad, not to a Messenger one (whatever the form still holds). Every ad runs as a Page, so the Page is kept
+    // for every objective (the launch stops a plan without one as page_required).
     linkUrl: form.objective === 'messenger' || form.linkUrl.trim() === '' ? null : form.linkUrl.trim(),
-    pageConnectionId: form.objective !== 'messenger' || form.pageConnectionId === '' ? null : form.pageConnectionId,
+    pageConnectionId: form.pageConnectionId === '' ? null : form.pageConnectionId,
     sourcePostId: form.sourcePostId === '' ? null : form.sourcePostId,
     mediaFileId: form.mediaFileId === '' ? null : form.mediaFileId,
     variants,
@@ -224,7 +231,7 @@ export function flightDays(startOn: string, endOn: string): number | null {
 
 // The daily budget times the days, exactly: the number the approver signs (the server works out the same one). Null while it cannot be told.
 export function maxSpendOf(form: Pick<CampaignForm, 'dailyBudget' | 'startOn' | 'endOn'>): { amount: string; days: number } | null {
-  const budget = form.dailyBudget.trim();
+  const budget = budgetTextOf(form.dailyBudget);
   const days = flightDays(form.startOn, form.endOn);
   if (days === null || days > ADS_PLAN_LIMITS.daysMax || !zAdsBudget.safeParse(budget).success) return null;
   return { amount: fromUnits(toUnits(budget) * BigInt(days)), days };
@@ -233,7 +240,7 @@ export function maxSpendOf(form: Pick<CampaignForm, 'dailyBudget' | 'startOn' | 
 // Why the largest amount cannot be told: the dates and the budget are all given but the flight is backwards or longer than the most ('dates'), or something
 // is still missing ('none').
 export function maxSpendHint(form: Pick<CampaignForm, 'dailyBudget' | 'startOn' | 'endOn'>): 'dates' | 'none' {
-  return form.startOn !== '' && form.endOn !== '' && zAdsBudget.safeParse(form.dailyBudget.trim()).success ? 'dates' : 'none';
+  return form.startOn !== '' && form.endOn !== '' && zAdsBudget.safeParse(budgetTextOf(form.dailyBudget)).success ? 'dates' : 'none';
 }
 
 // ---- Starting from a Social post ----
@@ -500,23 +507,96 @@ export function launchObjectLevelText(level: AdsLaunchObjectLevel, t: Translate)
   }
 }
 
+// The platform's own status of an object (`effective_status`, issue #3301) in words, for the statuses Ludy knows; any other is shown as the text it is. The platform's words
+// are tainted: this returns text and the screen renders it as text, never as markup.
+function platformStatusText(status: string, t: Translate): string {
+  switch (status.toLowerCase()) {
+    case 'active':
+      return t('ads.campaigns.objectStatus.active');
+    case 'paused':
+      return t('ads.campaigns.objectStatus.paused');
+    case 'archived':
+      return t('ads.campaigns.objectStatus.archived');
+    case 'pending_review':
+      return t('ads.campaigns.objectStatus.pending_review');
+    case 'in_process':
+      return t('ads.campaigns.objectStatus.in_process');
+    case 'preapproved':
+      return t('ads.campaigns.objectStatus.preapproved');
+    case 'disapproved':
+      return t('ads.campaigns.objectStatus.disapproved');
+    case 'with_issues':
+      return t('ads.campaigns.objectStatus.with_issues');
+    case 'campaign_paused':
+      return t('ads.campaigns.objectStatus.campaign_paused');
+    case 'adset_paused':
+      return t('ads.campaigns.objectStatus.adset_paused');
+    case 'pending_billing_info':
+      return t('ads.campaigns.objectStatus.pending_billing_info');
+    case 'deleted':
+      return t('ads.campaigns.objectStatus.deleted');
+    default:
+      return status;
+  }
+}
+
+// The reason a review gave, a short code the sync stored (never the platform's sentence): the codes Ludy words, `issue_<n>` (the platform's own issue code) and
+// `feedback_<reason>` (the platform's reason key, with its underscores as spaces) as text, and any other code as it is.
+export function reviewReasonText(reason: string, t: Translate): string {
+  switch (reason) {
+    case 'in_review':
+      return t('ads.campaigns.objectReason.in_review');
+    case 'in_process':
+      return t('ads.campaigns.objectReason.in_process');
+    case 'deleted_at_platform':
+      return t('ads.campaigns.objectReason.deleted_at_platform');
+  }
+  const issue = /^issue_(\d{1,12})$/.exec(reason);
+  if (issue) return t('ads.campaigns.objectReason.issue', { code: issue[1] ?? '' });
+  const feedback = /^feedback_([a-z0-9_]{1,51})$/.exec(reason);
+  if (feedback) return t('ads.campaigns.objectReason.feedback', { reason: (feedback[1] ?? '').replace(/_/g, ' ') });
+  return reason;
+}
+
 // What status to show for a platform object created by a launch: if the platform's own status has been synced (`effectiveStatus`), show that (and any review reason);
 // otherwise derive from the launch state (every object is created paused until the launch is live).
 export function launchObjectStatusText(obj: AdsLaunchObjectView, launch: AdsLaunchView, t: Translate): string {
   if (obj.effectiveStatus !== null) {
-    const low = obj.effectiveStatus.toLowerCase();
-    const base =
-      low === 'active'
-        ? t('ads.campaigns.objectStatus.active')
-        : low === 'paused'
-          ? t('ads.campaigns.objectStatus.paused')
-          : low === 'archived'
-            ? t('ads.campaigns.objectStatus.archived')
-            : obj.effectiveStatus;
-    return obj.reviewReason ? `${base} (${obj.reviewReason})` : base;
+    const base = platformStatusText(obj.effectiveStatus, t);
+    return obj.reviewReason ? `${base} (${reviewReasonText(obj.reviewReason, t)})` : base;
   }
   if (launch.state === 'live' && obj.level !== 'creative') return t('ads.campaigns.objectStatus.active');
   return t('ads.campaigns.objectStatus.paused');
+}
+
+// The colour of that status: green when it delivers, red when the platform refused it or found a problem, amber while a review is open, plain otherwise.
+export function launchObjectStatusVariant(obj: AdsLaunchObjectView, launch: AdsLaunchView): 'success' | 'warning' | 'destructive' | 'outline' {
+  if (obj.effectiveStatus !== null) {
+    switch (obj.effectiveStatus.toLowerCase()) {
+      case 'active':
+        return launch.state === 'live' ? 'success' : 'outline';
+      case 'disapproved':
+      case 'with_issues':
+        return 'destructive';
+      case 'pending_review':
+      case 'in_process':
+      case 'preapproved':
+      case 'pending_billing_info':
+        return 'warning';
+      default:
+        return 'outline';
+    }
+  }
+  return launch.state === 'live' && obj.level !== 'creative' ? 'success' : 'outline';
+}
+
+// The line that says when Ludy last asked the platform about a launch's objects (#3419), and whether that read failed (then the states shown are the last known ones). null for a
+// launch never read: no line at all, never an empty label or an epoch. The platform is named from the account's provider; the sandbox and an unknown provider say "the ad platform".
+export function statesReadNote(launch: AdsLaunchView, t: Translate, dateTime: (value: string) => string): { text: string; failed: boolean } | null {
+  if (launch.statesReadAt === null || launch.statesReadOk === null) return null;
+  const platform = launch.provider === '' || isSandboxProvider(launch.provider) ? t('ads.campaigns.statesReadPlatform') : adProviderName(launch.provider);
+  const values = { platform, time: dateTime(launch.statesReadAt) };
+  return launch.statesReadOk ? { text: t('ads.campaigns.statesReadOk', values), failed: false } : { text: t('ads.campaigns.statesReadFailed', values), failed: true };
 }
 
 export function launchStateBadge(

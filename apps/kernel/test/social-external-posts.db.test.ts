@@ -6,12 +6,12 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
-import { ThreadsPublisher, TikTokPublisher, YouTubePublisher, ZaloOaPublisher, type Fetch, type MetricsInput, type MetricsResult, type Publisher, type PublishResult, type RecentPostsInput, type RecentPostsResult } from '@crove/channel';
-import { socialCommands, socialQueries, sweepExternalPosts, type ExternalPostRow, type MetricsRow } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
+import { ThreadsPublisher, TikTokPublisher, YouTubePublisher, ZaloOaPublisher, type Fetch, type MetricsInput, type MetricsResult, type Publisher, type PublishResult, type RecentPostsInput, type RecentPostsResult } from '@ludy/channel';
+import { socialCommands, socialQueries, sweepExternalPosts, type ExternalPostRow, type MetricsRow } from '@ludy/mod-social';
 import { reportView, type ReportPage } from '../src/report-link.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -78,7 +78,7 @@ suite('social posts published outside Crove (#1054)', () => {
     const owner = await upsertIdentity(appDb, { issuer: 'test', subject: randomUUID(), email: `owner-${randomUUID().slice(0, 8)}@external.test`, name: null });
     const { orgId } = await createOrg(api, asUser(owner), `Cửa hàng ${randomUUID().slice(0, 6)}`);
     const viewer = await upsertIdentity(appDb, { issuer: 'test', subject: randomUUID(), email: `viewer-${randomUUID().slice(0, 8)}@external.test`, name: null });
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [orgId, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [orgId, viewer]));
     return { orgId, owner, viewer };
   }
 
@@ -97,10 +97,10 @@ suite('social posts published outside Crove (#1054)', () => {
     const { postId } = await api.execute<{ postId: string }>('social.post.create', { body: `Bài của Crove ${externalId}`, channels: [{ connectionId: conn }] }, { actor: asUser(o.owner), orgId: o.orgId });
     await admin(async (c) => {
       const { rows } = await c.query<{ id: string }>(
-        "UPDATE crove_social.post_variant SET status = 'published', published_at = now() - make_interval(secs => $2), external_post_id = $3, external_url = $4 WHERE post_id = $1 RETURNING id",
+        "UPDATE ludy_social.post_variant SET status = 'published', published_at = now() - make_interval(secs => $2), external_post_id = $3, external_url = $4 WHERE post_id = $1 RETURNING id",
         [postId, daysAgo * 86_400, externalId, url],
       );
-      await c.query("INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, 'k', $3)", [o.orgId, rows[0]?.id, JSON.stringify(metrics)]);
+      await c.query("INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, 'k', $3)", [o.orgId, rows[0]?.id, JSON.stringify(metrics)]);
     });
     return postId;
   }
@@ -109,7 +109,7 @@ suite('social posts published outside Crove (#1054)', () => {
   async function outside(o: Org, conn: string, externalId: string, daysAgo: number, metrics: Record<string, number>) {
     await admin((c) =>
       c.query(
-        "INSERT INTO crove_social.external_post (org_id, channel_connection_id, external_post_id, excerpt, permalink, published_at, metrics, captured_at) VALUES ($1, $2, $3, $4, $5, now() - make_interval(secs => $6), $7, now())",
+        "INSERT INTO ludy_social.external_post (org_id, channel_connection_id, external_post_id, excerpt, permalink, published_at, metrics, captured_at) VALUES ($1, $2, $3, $4, $5, now() - make_interval(secs => $6), $7, now())",
         [o.orgId, conn, externalId, `Đăng thẳng ${externalId}`, `https://www.facebook.com/${externalId}`, daysAgo * 86_400, JSON.stringify(metrics)],
       ),
     );
@@ -129,15 +129,15 @@ suite('social posts published outside Crove (#1054)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 4 });
     appDb = createDb(appPool);
     workerDb = createDb(workerPool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
@@ -180,13 +180,13 @@ suite('social posts published outside Crove (#1054)', () => {
     expect(Math.abs((platform.listed[0]?.since.getTime() ?? 0) - ago(30).getTime())).toBeLessThan(60_000);
     expect(platform.measured.map((m) => m.externalId).sort()).toEqual(['out-1', 'out-2']);
 
-    const rows = await admin(async (c) => (await c.query<{ external_post_id: string; excerpt: string; permalink: string | null; metrics: Record<string, number>; checked_at: Date | null }>('SELECT external_post_id, excerpt, permalink, metrics, checked_at FROM crove_social.external_post WHERE org_id = $1 ORDER BY external_post_id', [o.orgId])).rows);
+    const rows = await admin(async (c) => (await c.query<{ external_post_id: string; excerpt: string; permalink: string | null; metrics: Record<string, number>; checked_at: Date | null }>('SELECT external_post_id, excerpt, permalink, metrics, checked_at FROM ludy_social.external_post WHERE org_id = $1 ORDER BY external_post_id', [o.orgId])).rows);
     expect(rows.map((r) => r.external_post_id)).toEqual(['out-1', 'out-2']);
     expect(rows[0]).toMatchObject({ excerpt: 'Đăng thẳng trên Facebook abc', permalink: 'https://www.facebook.com/out-1', metrics: { reach: 50, reactions: 5 } });
     expect(rows[1]?.excerpt).toHaveLength(500);
     expect(rows[1]).toMatchObject({ permalink: null, metrics: {} });
     expect(rows.every((r) => r.checked_at !== null)).toBe(true);
-    const run = await admin(async (c) => (await c.query('SELECT found, error FROM crove_social.external_import WHERE channel_connection_id = $1', [conn])).rows);
+    const run = await admin(async (c) => (await c.query('SELECT found, error FROM ludy_social.external_import WHERE channel_connection_id = $1', [conn])).rows);
     expect(run).toEqual([{ found: 3, error: null }]);
 
     // With the switch off, every total and the list are as before.
@@ -216,12 +216,12 @@ suite('social posts published outside Crove (#1054)', () => {
     expect(platform.measured.filter((x) => x.externalId.startsWith('out-'))).toEqual([]);
 
     // A later capture with no answer keeps the last real counts.
-    const out1 = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM crove_social.external_post WHERE external_post_id = 'out-1'")).rows[0]?.id as string);
+    const out1 = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM ludy_social.external_post WHERE external_post_id = 'out-1'")).rows[0]?.id as string);
     await worker.execute('social.external_post.record', { externalId: out1 }, { actor: system, orgId: o.orgId });
     expect((await listed(o))[0]?.metrics).toEqual({ reach: 50, reactions: 5 });
     // A post the platform no longer has is never asked again.
     await worker.execute('social.external_post.record', { externalId: out1, gone: true }, { actor: system, orgId: o.orgId });
-    await admin((c) => c.query("UPDATE crove_social.external_post SET checked_at = now() - interval '7 hours' WHERE org_id = $1", [o.orgId]));
+    await admin((c) => c.query("UPDATE ludy_social.external_post SET checked_at = now() - interval '7 hours' WHERE org_id = $1", [o.orgId]));
     platform.measured = [];
     await sweep(platform);
     expect(platform.measured.map((m) => m.externalId)).toEqual(['out-2']);
@@ -231,15 +231,15 @@ suite('social posts published outside Crove (#1054)', () => {
     const once = await totals(o, { days: 30, includeExternal: true });
     expect(once).toMatchObject({ posts: 3, metrics: { reach: 157, reactions: 15 } });
     expect((await listed(o)).map((r) => r.url)).toEqual(['https://www.facebook.com/out-1']);
-    await admin((c) => c.query("UPDATE crove_social.external_post SET checked_at = now() - interval '7 hours', gone = false WHERE org_id = $1", [o.orgId]));
+    await admin((c) => c.query("UPDATE ludy_social.external_post SET checked_at = now() - interval '7 hours', gone = false WHERE org_id = $1", [o.orgId]));
     platform.measured = [];
     await sweep(platform);
     expect(platform.measured.map((m) => m.externalId)).toEqual(['out-1']);
     // And a new bring-in never adds it again.
-    await admin((c) => c.query("UPDATE crove_social.external_import SET ran_at = now() - interval '7 hours' WHERE channel_connection_id = $1", [conn]));
-    await admin((c) => c.query("DELETE FROM crove_social.external_post WHERE external_post_id = 'out-2'"));
+    await admin((c) => c.query("UPDATE ludy_social.external_import SET ran_at = now() - interval '7 hours' WHERE channel_connection_id = $1", [conn]));
+    await admin((c) => c.query("DELETE FROM ludy_social.external_post WHERE external_post_id = 'out-2'"));
     await sweep(platform);
-    expect((await admin(async (c) => (await c.query("SELECT external_post_id FROM crove_social.external_post WHERE org_id = $1 ORDER BY 1", [o.orgId])).rows)).map((r) => r.external_post_id)).toEqual(['out-1']);
+    expect((await admin(async (c) => (await c.query("SELECT external_post_id FROM ludy_social.external_post WHERE org_id = $1 ORDER BY 1", [o.orgId])).rows)).map((r) => r.external_post_id)).toEqual(['out-1']);
   });
 
   it('moves a channel whose token is refused to reconnect, and keeps why nothing came', async () => {
@@ -252,14 +252,14 @@ suite('social posts published outside Crove (#1054)', () => {
     platform.listings.set('acct-denied', { refused: 'permission' });
     const done = await sweep(platform);
     expect(done.expired).toBe(1);
-    const status = await admin(async (c) => (await c.query<{ id: string; status: string }>('SELECT id, status FROM crove_kernel.channel_connection WHERE org_id = $1', [o.orgId])).rows);
+    const status = await admin(async (c) => (await c.query<{ id: string; status: string }>('SELECT id, status FROM ludy_kernel.channel_connection WHERE org_id = $1', [o.orgId])).rows);
     expect(new Map(status.map((r) => [r.id, r.status]))).toEqual(new Map([[dead, 'expired'], [denied, 'active'], [silent, 'active']]));
-    const events = await admin(async (c) => (await c.query("SELECT payload->>'connection_id' AS id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.channel.expired'", [o.orgId])).rows);
+    const events = await admin(async (c) => (await c.query("SELECT payload->>'connection_id' AS id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.channel.expired'", [o.orgId])).rows);
     expect(events).toEqual([{ id: dead }]);
-    const runs = await admin(async (c) => (await c.query<{ channel_connection_id: string; error: string | null }>('SELECT channel_connection_id, error FROM crove_social.external_import WHERE org_id = $1', [o.orgId])).rows);
+    const runs = await admin(async (c) => (await c.query<{ channel_connection_id: string; error: string | null }>('SELECT channel_connection_id, error FROM ludy_social.external_import WHERE org_id = $1', [o.orgId])).rows);
     expect(new Map(runs.map((r) => [r.channel_connection_id, r.error]))).toEqual(new Map([[dead, 'token_expired'], [denied, 'permission'], [silent, 'no_answer']]));
     // An expired channel is not listed again until it is reconnected.
-    await admin((c) => c.query("UPDATE crove_social.external_import SET ran_at = now() - interval '7 hours' WHERE org_id = $1", [o.orgId]));
+    await admin((c) => c.query("UPDATE ludy_social.external_import SET ran_at = now() - interval '7 hours' WHERE org_id = $1", [o.orgId]));
     platform.listed = [];
     await sweep(platform);
     expect(platform.listed.map((x) => x.externalAccountId).sort()).toEqual(['acct-denied', 'acct-silent']);
@@ -277,7 +277,7 @@ suite('social posts published outside Crove (#1054)', () => {
     expect(await totals(o, { includeExternal: true })).toMatchObject({ posts: 1, metrics: { reach: 40 } });
     // Members never write them, whatever their role.
     await expect(api.execute('social.external_post.import', { connectionId: mine, posts: [] }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
-    const row = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM crove_social.external_post WHERE external_post_id = 'mine-1'")).rows[0]?.id as string);
+    const row = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM ludy_social.external_post WHERE external_post_id = 'mine-1'")).rows[0]?.id as string);
     await expect(api.execute('social.external_post.record', { externalId: row, metrics: { reach: 1 } }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
     // The system writes only within the org it runs in.
     await expect(worker.execute('social.external_post.import', { connectionId: mine, posts: [] }, { actor: system, orgId: stranger.orgId })).rejects.toMatchObject({ code: 'CHANNEL_NOT_FOUND' });
@@ -287,7 +287,7 @@ suite('social posts published outside Crove (#1054)', () => {
     await expect(
       worker.execute('social.external_post.import', { connectionId: mine, posts: [{ externalId: 'p-1', excerpt: '', permalink: 'javascript:alert(1)', publishedAt: new Date().toISOString() }] }, { actor: system, orgId: o.orgId }),
     ).rejects.toMatchObject({ code: 'VALIDATION' });
-    await expect(admin((c) => c.query("UPDATE crove_social.external_post SET permalink = 'http://x.example/' WHERE external_post_id = 'mine-1'"))).rejects.toMatchObject({ code: '23514' });
+    await expect(admin((c) => c.query("UPDATE ludy_social.external_post SET permalink = 'http://x.example/' WHERE external_post_id = 'mine-1'"))).rejects.toMatchObject({ code: '23514' });
     // No control, zero-width or direction marks in an excerpt (U+061C, U+202E), whoever sends it.
     for (const mark of ['\u061C', '\u202E', '\u0007']) {
       await expect(
@@ -296,16 +296,16 @@ suite('social posts published outside Crove (#1054)', () => {
     }
     // Tenant roles change only the text, link and counts, and delete nothing.
     const grants = await admin(async (c) => ({
-      table: (await c.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'external_post' ORDER BY 1")).rows.map((r) => r.privilege_type),
-      update: (await c.query<{ column_name: string }>("SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'external_post' AND privilege_type = 'UPDATE' ORDER BY 1")).rows.map((r) => r.column_name),
-      importTable: (await c.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'external_import' ORDER BY 1")).rows.map((r) => r.privilege_type),
+      table: (await c.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'ludy_tenant' AND table_schema = 'ludy_social' AND table_name = 'external_post' ORDER BY 1")).rows.map((r) => r.privilege_type),
+      update: (await c.query<{ column_name: string }>("SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'ludy_tenant' AND table_schema = 'ludy_social' AND table_name = 'external_post' AND privilege_type = 'UPDATE' ORDER BY 1")).rows.map((r) => r.column_name),
+      importTable: (await c.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'ludy_tenant' AND table_schema = 'ludy_social' AND table_name = 'external_import' ORDER BY 1")).rows.map((r) => r.privilege_type),
     }));
     expect(grants).toEqual({ table: ['INSERT', 'SELECT'], update: ['captured_at', 'checked_at', 'excerpt', 'gone', 'metrics', 'permalink', 'updated_at'], importTable: ['INSERT', 'SELECT'] });
     // The scans are the worker's alone.
-    await expect(appPool.query("SELECT * FROM crove_social.external_import_due(10, ARRAY['sandbox'], 3600)")).rejects.toMatchObject({ code: '42501' });
-    await expect(appPool.query("SELECT * FROM crove_social.external_metrics_due(10, ARRAY['sandbox'], 3600)")).rejects.toMatchObject({ code: '42501' });
+    await expect(appPool.query("SELECT * FROM ludy_social.external_import_due(10, ARRAY['sandbox'], 3600)")).rejects.toMatchObject({ code: '42501' });
+    await expect(appPool.query("SELECT * FROM ludy_social.external_metrics_due(10, ARRAY['sandbox'], 3600)")).rejects.toMatchObject({ code: '42501' });
     // The channel's removal takes its outside posts with it.
-    await admin((c) => c.query('DELETE FROM crove_kernel.channel_connection WHERE id = $1', [theirs]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.channel_connection WHERE id = $1', [theirs]));
     expect(await listed(stranger)).toEqual([]);
   });
 
@@ -317,7 +317,7 @@ suite('social posts published outside Crove (#1054)', () => {
     await published(o, conn, '111_888', 2, { reach: 200 }, 'https://www.facebook.com/reel/888');
     // A variant that failed after an id was noted: not a post Crove counts, so not Crove's here either.
     const failed = await published(o, conn, 'out-failed', 2, { reach: 1 });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'failed' WHERE post_id = $1", [failed]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'failed' WHERE post_id = $1", [failed]));
     const platform = new FakePlatform();
     platform.listings.set('acct-video', {
       posts: [
@@ -329,24 +329,24 @@ suite('social posts published outside Crove (#1054)', () => {
       ],
     });
     await sweep(platform);
-    const kept = await admin(async (c) => (await c.query<{ external_post_id: string }>('SELECT external_post_id FROM crove_social.external_post WHERE org_id = $1 ORDER BY 1', [o.orgId])).rows.map((r) => r.external_post_id));
+    const kept = await admin(async (c) => (await c.query<{ external_post_id: string }>('SELECT external_post_id FROM ludy_social.external_post WHERE org_id = $1 ORDER BY 1', [o.orgId])).rows.map((r) => r.external_post_id));
     expect(kept).toEqual(['111_9003', 'out-failed']);
 
     // One brought in before Crove recorded its own address is left out of every read, and never measured.
     await admin((c) =>
-      c.query("INSERT INTO crove_social.external_post (org_id, channel_connection_id, external_post_id, permalink, published_at, metrics) VALUES ($1, $2, '111_9100', 'https://www.facebook.com/SomePage/videos/777/', now() - interval '2 days', '{\"reach\": 999}')", [o.orgId, conn]),
+      c.query("INSERT INTO ludy_social.external_post (org_id, channel_connection_id, external_post_id, permalink, published_at, metrics) VALUES ($1, $2, '111_9100', 'https://www.facebook.com/SomePage/videos/777/', now() - interval '2 days', '{\"reach\": 999}')", [o.orgId, conn]),
     );
     expect((await listed(o)).map((r) => r.excerpt).sort()).toEqual(['Video đăng thẳng', 'Đăng lại tay']);
     expect(await totals(o, { days: 30, includeExternal: true })).toMatchObject({ posts: 4, metrics: { reach: 500 } });
-    const due = await workerPool.query<{ external_id: string }>("SELECT d.external_id FROM crove_social.external_metrics_due(1000, ARRAY['sandbox'], 3600) d WHERE d.org_id = $1", [o.orgId]);
-    const hidden = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM crove_social.external_post WHERE external_post_id = '111_9100'")).rows[0]?.id);
+    const due = await workerPool.query<{ external_id: string }>("SELECT d.external_id FROM ludy_social.external_metrics_due(1000, ARRAY['sandbox'], 3600) d WHERE d.org_id = $1", [o.orgId]);
+    const hidden = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM ludy_social.external_post WHERE external_post_id = '111_9100'")).rows[0]?.id);
     expect(due.rows.map((r) => r.external_id)).not.toContain(hidden);
     const period = { periodStart: new Date(Date.now() - 30 * DAY).toISOString(), periodEnd: new Date(Date.now() + 60_000).toISOString() };
     const { token } = await api.execute<{ token: string }>('social.report_link.create', { ...period, includeExternal: true }, { actor: asUser(o.owner), orgId: o.orgId });
     expect((await reportView(api, { token })) as ReportPage).toMatchObject({ posts: 4, totals: { reach: 500 } });
 
     // How addresses compare.
-    const key = async (url: string | null) => admin(async (c) => (await c.query<{ k: string | null }>('SELECT crove_social.post_link_key($1) AS k', [url])).rows[0]?.k);
+    const key = async (url: string | null) => admin(async (c) => (await c.query<{ k: string | null }>('SELECT ludy_social.post_link_key($1) AS k', [url])).rows[0]?.k);
     expect(await key('https://www.facebook.com/111/videos/777')).toBe('facebook.com/video/777');
     expect(await key('https://web.facebook.com/SomePage/videos/a-title/777/')).toBe('facebook.com/video/777');
     expect(await key('https://www.facebook.com/reel/888?s=1')).toBe('facebook.com/video/888');
@@ -448,7 +448,7 @@ suite('social posts published outside Crove (#1054)', () => {
     };
     const done = await sweepExternalPosts({ runtime: worker, broker: vault, workerDb, publishers });
     expect(done).toMatchObject({ imported: 3, expired: 0, measured: 4 });
-    const rows = await admin(async (c) => (await c.query<{ external_post_id: string; excerpt: string; permalink: string | null }>('SELECT external_post_id, excerpt, permalink FROM crove_social.external_post WHERE org_id = $1 ORDER BY external_post_id', [o.orgId])).rows);
+    const rows = await admin(async (c) => (await c.query<{ external_post_id: string; excerpt: string; permalink: string | null }>('SELECT external_post_id, excerpt, permalink FROM ludy_social.external_post WHERE org_id = $1 ORDER BY external_post_id', [o.orgId])).rows);
     expect(rows).toEqual([
       { external_post_id: '16ec49edd2a83bf662b', excerpt: 'Zalo 16ec49edd2a83bf662b', permalink: 'https://oa.zalo.me/16ec49edd2a83bf662b' },
       { external_post_id: '18100000000000011', excerpt: 'Threads 18100000000000011', permalink: 'https://www.threads.com/@shop/post/18100000000000011' },
@@ -464,11 +464,11 @@ suite('social posts published outside Crove (#1054)', () => {
 
     // A token Zalo refuses marks that channel expired at the next bring-in; what came before stays.
     zaloExpired = true;
-    await admin((c) => c.query("UPDATE crove_social.external_import SET ran_at = now() - interval '7 hours' WHERE org_id = $1", [o.orgId]));
+    await admin((c) => c.query("UPDATE ludy_social.external_import SET ran_at = now() - interval '7 hours' WHERE org_id = $1", [o.orgId]));
     expect((await sweepExternalPosts({ runtime: worker, broker: vault, workerDb, publishers })).expired).toBe(1);
-    const status = await admin(async (c) => (await c.query<{ id: string; status: string }>('SELECT id, status FROM crove_kernel.channel_connection WHERE org_id = $1', [o.orgId])).rows);
+    const status = await admin(async (c) => (await c.query<{ id: string; status: string }>('SELECT id, status FROM ludy_kernel.channel_connection WHERE org_id = $1', [o.orgId])).rows);
     expect(new Map(status.map((r) => [r.id, r.status]))).toEqual(new Map([[yt, 'active'], [th, 'active'], [za, 'expired']]));
-    expect(await admin(async (c) => (await c.query('SELECT count(*)::int AS n FROM crove_social.external_post WHERE channel_connection_id = $1', [za])).rows[0])).toEqual({ n: 2 });
+    expect(await admin(async (c) => (await c.query('SELECT count(*)::int AS n FROM ludy_social.external_post WHERE channel_connection_id = $1', [za])).rows[0])).toEqual({ n: 2 });
   });
 
   it("brings in TikTok videos where the channel has video.list, never Crove's own, and holds back the ones a Crove post still without its id may be (#1476)", async () => {
@@ -481,7 +481,7 @@ suite('social posts published outside Crove (#1054)', () => {
     await published(o, tt, '7430000000000000100', 2, { views: 100, reactions: 10 });
     // One Crove published half an hour ago, public, still known by its publish_id while TikTok moderates it.
     const pending = await published(o, tt, 'v_pub_file~v2-1.999', 0.02, {});
-    await admin((c) => c.query(`UPDATE crove_social.post_variant SET settings = '{"privacyLevel": "PUBLIC_TO_EVERYONE"}' WHERE post_id = $1`, [pending]));
+    await admin((c) => c.query(`UPDATE ludy_social.post_variant SET settings = '{"privacyLevel": "PUBLIC_TO_EVERYONE"}' WHERE post_id = $1`, [pending]));
     const before = await totals(o, { days: 30 });
     expect(before).toMatchObject({ posts: 2, metrics: { views: 100, reactions: 10 } });
 
@@ -508,19 +508,19 @@ suite('social posts published outside Crove (#1054)', () => {
       return answer('{"error":{"code":"not_found"}}', 404);
     };
     const publishers = { tiktok: new TikTokPublisher({ clientKey: 'awtestclientkey01', clientSecret: 'test-tiktok-secret-not-real', videoList: true }, fetchImpl) };
-    const kept = async () => (await admin(async (c) => (await c.query<{ external_post_id: string }>('SELECT external_post_id FROM crove_social.external_post WHERE org_id = $1 ORDER BY 1', [o.orgId])).rows)).map((r) => r.external_post_id);
+    const kept = async () => (await admin(async (c) => (await c.query<{ external_post_id: string }>('SELECT external_post_id FROM ludy_social.external_post WHERE org_id = $1 ORDER BY 1', [o.orgId])).rows)).map((r) => r.external_post_id);
 
     const done = await sweepExternalPosts({ runtime: worker, broker: vault, workerDb, publishers });
     expect(done).toMatchObject({ imported: 1, expired: 1, measured: 1 });
     // Crove's own video is dropped by its id; the one created since a day before the pending post is held back.
     expect(await kept()).toEqual(['7430000000000000201']);
-    const outsideRow = await admin(async (c) => (await c.query('SELECT excerpt, permalink, metrics FROM crove_social.external_post WHERE external_post_id = $1', ['7430000000000000201'])).rows[0]);
+    const outsideRow = await admin(async (c) => (await c.query('SELECT excerpt, permalink, metrics FROM ludy_social.external_post WHERE external_post_id = $1', ['7430000000000000201'])).rows[0]);
     expect(outsideRow).toEqual({ excerpt: 'Đăng từ app tuần này', permalink: 'https://www.tiktok.com/@shop/video/7430000000000000201', metrics: { views: 50, reactions: 5, comments: 1, shares: 0 } });
     // A channel without video.list is never asked; an expired token marks that channel alone for reconnecting.
     expect(listedBy.sort()).toEqual(['Bearer act.dead', 'Bearer act.listed']);
-    const runs = await admin(async (c) => (await c.query<{ channel_connection_id: string; found: number; error: string | null }>('SELECT channel_connection_id, found, error FROM crove_social.external_import WHERE org_id = $1', [o.orgId])).rows);
+    const runs = await admin(async (c) => (await c.query<{ channel_connection_id: string; found: number; error: string | null }>('SELECT channel_connection_id, found, error FROM ludy_social.external_import WHERE org_id = $1', [o.orgId])).rows);
     expect(new Map(runs.map((r) => [r.channel_connection_id, [r.found, r.error]]))).toEqual(new Map([[tt, [4, null]], [noList, [0, 'permission']], [dead, [0, 'token_expired']]]));
-    const status = await admin(async (c) => (await c.query<{ id: string; status: string }>('SELECT id, status FROM crove_kernel.channel_connection WHERE org_id = $1', [o.orgId])).rows);
+    const status = await admin(async (c) => (await c.query<{ id: string; status: string }>('SELECT id, status FROM ludy_kernel.channel_connection WHERE org_id = $1', [o.orgId])).rows);
     expect(new Map(status.map((r) => [r.id, r.status]))).toEqual(new Map([[tt, 'active'], [noList, 'active'], [dead, 'expired']]));
 
     // Off, the totals are Crove's alone; on, the outside video counts once.
@@ -529,8 +529,8 @@ suite('social posts published outside Crove (#1054)', () => {
 
     // The pending post gets its public id: at the next bring-in its video is Crove's, and the held-back outside one
     // comes in.
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET external_post_id = '7430000000000000300' WHERE post_id = $1", [pending]));
-    await admin((c) => c.query("UPDATE crove_social.external_import SET ran_at = now() - interval '7 hours' WHERE org_id = $1", [o.orgId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET external_post_id = '7430000000000000300' WHERE post_id = $1", [pending]));
+    await admin((c) => c.query("UPDATE ludy_social.external_import SET ran_at = now() - interval '7 hours' WHERE org_id = $1", [o.orgId]));
     await sweepExternalPosts({ runtime: worker, broker: vault, workerDb, publishers });
     expect(await kept()).toEqual(['7430000000000000201', '7430000000000000202']);
     expect(await totals(o, { days: 30, includeExternal: true })).toMatchObject({ posts: 4, metrics: { views: 170, reactions: 20 } });
@@ -540,12 +540,12 @@ suite('social posts published outside Crove (#1054)', () => {
     const late = await connect(o, 'tt-open-late', 'tiktok', { accessToken: 'act.late', refreshToken: 'rft.late' }, granted);
     const old = await published(o, late, 'v_pub_file~v2-1.old', 8, {});
     const privateNow = await published(o, late, 'v_pub_file~v2-1.private', 0.02, {});
-    await admin((c) => c.query(`UPDATE crove_social.post_variant SET settings = '{"privacyLevel": "PUBLIC_TO_EVERYONE"}' WHERE post_id = $1`, [old]));
-    await admin((c) => c.query(`UPDATE crove_social.post_variant SET settings = '{"privacyLevel": "SELF_ONLY"}' WHERE post_id = $1`, [privateNow]));
+    await admin((c) => c.query(`UPDATE ludy_social.post_variant SET settings = '{"privacyLevel": "PUBLIC_TO_EVERYONE"}' WHERE post_id = $1`, [old]));
+    await admin((c) => c.query(`UPDATE ludy_social.post_variant SET settings = '{"privacyLevel": "SELF_ONLY"}' WHERE post_id = $1`, [privateNow]));
     const brought = { externalId: '7430000000000000400', excerpt: 'Mới đăng', permalink: null, publishedAt: new Date(Date.now() - 3_600_000).toISOString() };
     expect(await worker.execute('social.external_post.import', { connectionId: late, posts: [brought] }, { actor: system, orgId: o.orgId })).toEqual({ kept: 1, crove: 0, held: 0 });
     // One on its way to a public post does.
-    await admin((c) => c.query(`UPDATE crove_social.post_variant SET status = 'processing', published_at = NULL, settings = '{"privacyLevel": "PUBLIC_TO_EVERYONE"}' WHERE post_id = $1`, [privateNow]));
+    await admin((c) => c.query(`UPDATE ludy_social.post_variant SET status = 'processing', published_at = NULL, settings = '{"privacyLevel": "PUBLIC_TO_EVERYONE"}' WHERE post_id = $1`, [privateNow]));
     expect(await worker.execute('social.external_post.import', { connectionId: late, posts: [{ ...brought, externalId: '7430000000000000401' }] }, { actor: system, orgId: o.orgId })).toEqual({ kept: 0, crove: 0, held: 1 });
   });
 });

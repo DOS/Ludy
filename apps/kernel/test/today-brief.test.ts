@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The figures of Vy's daily brief (#2383): the Home list reduced to counts, sums per currency and due dates.
 import { describe, expect, it } from 'vitest';
-import { AiBudgetExhaustedError, checkedSentences, templateBrief, type BriefFacts, type BriefResult } from '@crove/agent';
-import { zTodayItem, type TodayItem } from '@crove/kernel-contract';
+import { AiBudgetExhaustedError, checkedSentences, templateBrief, type BriefFacts, type BriefResult } from '@ludy/agent';
+import { zTodayItem, type TodayItem } from '@ludy/kernel-contract';
 import type { DraftTicket } from '../src/ai-draft-limit.ts';
 import { briefAnswer, briefFactsOf, vietnamDay } from '../src/today-brief.ts';
 
@@ -30,6 +30,26 @@ describe('briefFactsOf', () => {
       { currency: 'USD', amount: '10' },
     ]);
     expect(facts.dueDates).toEqual(['2026-11-20']);
+  });
+
+  it('says seven for seven pending invoices that also carry a warning: the flag annotates them and counts nothing (#3591)', () => {
+    // What finance.today returns for seven pending invoices of two vendors, all with a warning: the groups, and the flag over the same seven.
+    const facts = briefFactsOf(
+      [
+        item({ id: 'proposals:a', count: 4 }),
+        item({ id: 'proposals:b', count: 3 }),
+        item({ id: 'checks-warn:e', kind: 'flag', severity: 'warn', count: 7, annotates: 'proposal' }),
+      ],
+      'vi',
+      '2026-11-02',
+    );
+    expect(facts).toMatchObject({ proposals: 7, flags: 0, messages: 0, deadlines: 0 });
+    expect(templateBrief(facts)[0]).toBe('Hôm nay có 7 việc cần bạn: 7 đề xuất chờ duyệt.');
+    // A failed check still reaches the brief as "blocking", a fact about the same seven.
+    expect(briefFactsOf([item({ id: 'p', count: 7 }), item({ id: 'f', kind: 'flag', severity: 'block', count: 2, annotates: 'proposal' })], 'vi', '2026-11-02')).toMatchObject({ proposals: 7, flags: 0, blocking: 2 });
+    // The read flags every pending proposal, some waiting for another approver: never more blocked than the proposals listed.
+    expect(briefFactsOf([item({ id: 'p', count: 2 }), item({ id: 'f', kind: 'flag', severity: 'block', count: 5, annotates: 'proposal' })], 'vi', '2026-11-02')).toMatchObject({ proposals: 2, blocking: 2 });
+    expect(briefFactsOf([item({ id: 'f', kind: 'flag', severity: 'block', count: 5, annotates: 'proposal' })], 'vi', '2026-11-02')).toMatchObject({ proposals: 0, blocking: 0 });
   });
 
   it('names the nearest three due days, in Vietnam time, once each', () => {

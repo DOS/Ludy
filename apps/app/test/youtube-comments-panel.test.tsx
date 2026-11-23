@@ -6,7 +6,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import { YOUTUBE_POLL_BUDGET_UNITS, type YoutubeCommentsStatus } from '@crove/kernel-contract';
+import { YOUTUBE_POLL_BUDGET_UNITS, type YoutubeCommentsStatus } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
@@ -97,7 +97,7 @@ describe('YoutubeCommentsPanel (#3134)', () => {
 
   it('shows the day’s units against the budget, the replies, and when it reads next', () => {
     const html = render([status()]);
-    expect(html).toContain(`Today: reading used 12 of ${YOUTUBE_POLL_BUDGET_UNITS} units; replies used 100 units (50 each)`);
+    expect(html).toContain(`Today: reading used 12 of ${YOUTUBE_POLL_BUDGET_UNITS} units; replies and hides used 100 units (50 each)`);
     expect(html).toContain('Next reading:');
     expect(html).toContain('Last reading:');
     expect(html).toContain('The quota resets:');
@@ -108,7 +108,7 @@ describe('YoutubeCommentsPanel (#3134)', () => {
   it('says why reading stopped: Google’s quota is spent (replies stop too), or this channel’s own budget is used up (replies still go)', () => {
     const blocked = render([status({ blockedUntil: '2026-11-14T08:01:00.000Z', nextPollAt: '2026-11-14T08:01:00.000Z' })]);
     expect(blocked).toContain('data-testid="youtube-quota-blocked"');
-    expect(blocked).toContain('YouTube’s daily quota is spent. Reading and replying resume after');
+    expect(blocked).toContain('YouTube’s daily quota is spent. Reading, replying and hiding resume after');
     expect(blocked).not.toContain('Next reading:');
     const spent = render([status({ pollUnitsUsed: YOUTUBE_POLL_BUDGET_UNITS - 3 })]);
     expect(spent).toContain('data-testid="youtube-quota-budget"');

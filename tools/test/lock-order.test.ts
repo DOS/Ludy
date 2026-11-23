@@ -23,7 +23,7 @@ const MIGRATIONS = join(ROOT, 'supabase', 'migrations');
 
 // Functions allowed to lock a member, assignment or position row after the tenant row, each with its reason.
 const SQL_AFTER_TENANT: Readonly<Record<string, string>> = {
-  'crove_kernel.org_purge':
+  'ludy_kernel.org_purge':
     "locks the tenant row FOR UPDATE, then deletes an offboarding org's chart and members; the keep guard lets every org that is not active through before its lock, so no member change waits on the tenant row there (#1933)",
 };
 
@@ -33,10 +33,14 @@ const TS_TENANT_LOCKS: Readonly<Record<string, string>> = {
     "a change of the default entity locks the tenant row FOR NO KEY UPDATE, then the entity row, and may rename the org (#1317); it locks no member, assignment or position row",
   'packages/kernel/src/approval-preset.ts': 'the preset switch locks the tenant row FOR UPDATE, then only reads the chief accountants (no lock) and updates the tenant row',
   'packages/kernel/src/offboarding.ts': 'offboarding locks and updates the tenant row; it touches no member or position row',
+  'packages/kernel/src/org-apps.ts': "the org's switched-off apps: the set_app command locks the tenant row FOR UPDATE, then runs the app's busy probe (reads only) and updates it; it locks no member, assignment or position row",
+  'packages/kernel-runtime/src/runtime.ts':
+    "the per-org app gate reads the tenant row FOR SHARE, held to commit, before the handler of a command that declares opensBusyWork (ADR-0053); so that command's handler and the commands it runs lock no member, role-assignment or position row, since a membership change takes a member row and then the keep guard's tenant lock, and would deadlock against the share lock. Today meetings.meeting.create, meetings.import.start, ads.launch.begin and ads.activate.begin declare it (C3a; the registry test lists them).",
   'packages/kernel/src/org-address.ts': "the org's address and contact email: an UPDATE of the tenant row only",
   'packages/kernel/src/tax-code.ts': "the org's tax code and VAT filing period: an UPDATE of the tenant row only",
   'modules/finance/src/missing-invoices.ts': "the missing-invoice reminder day: an UPDATE of the tenant row only",
   'modules/meetings/src/retention.ts': "the meeting retention settings (audio, video and text periods): an UPDATE of the tenant row only",
+  'modules/meetings/src/hook.ts': "the owner's switch for members' minutes webhooks: an UPDATE of the tenant row only, then the drop of the org's queued deliveries (delivery rows, no member, assignment or position row)",
   'modules/finance/src/own-tax-code.ts': "a purchase posting and an extraction read the org's and the entities' tax codes FOR SHARE (loadOwnTaxCodes); they write ledger rows, never a member or position row",
   'packages/kernel/src/personal-data.ts': "an erasure clears the org's contact email (a raw UPDATE of the tenant row); its only row lock, the parties FOR UPDATE, comes before, and it touches no member or position row",
 };
@@ -50,14 +54,15 @@ function newestFunctions(files: ReadonlyArray<{ name: string; text: string }>): 
   for (const { name, text } of files) {
     for (const m of text.matchAll(definition)) {
       const args = (m[2] as string).replace(/\s+/g, ' ').trim();
-      out.set(`${m[1] as string}(${args})`, { file: name, body: m[3] as string });
+      const canonicalName = (m[1] as string).replace(/^crove_(kernel|meta|jobs)\./, 'ludy_$1.');
+      out.set(`${canonicalName}(${args})`, { file: name, body: m[3] as string });
     }
   }
   return out;
 }
 
-const TENANT_LOCK = /(?:FROM|JOIN)\s+crove_kernel\.tenant\b(?:(?!;)[\s\S])*?FOR\s+(?:NO\s+KEY\s+UPDATE|UPDATE|SHARE)\b|UPDATE\s+crove_kernel\.tenant\b/gi;
-const MEMBER_TABLES = 'crove_kernel\\.(?:tenant_member|role_assignment|position)\\b';
+const TENANT_LOCK = /(?:FROM|JOIN)\s+(?:crove|ludy)_kernel\.tenant\b(?:(?!;)[\s\S])*?FOR\s+(?:NO\s+KEY\s+UPDATE|UPDATE|SHARE)\b|UPDATE\s+(?:crove|ludy)_kernel\.tenant\b/gi;
+const MEMBER_TABLES = '(?:crove|ludy)_kernel\\.(?:tenant_member|role_assignment|position)\\b';
 const MEMBER_LOCK = new RegExp(
   `(?:FROM|JOIN)\\s+${MEMBER_TABLES}(?:(?!;)[\\s\\S])*?FOR\\s+(?:NO\\s+KEY\\s+UPDATE|UPDATE)\\b|(?:UPDATE|DELETE\\s+FROM)\\s+${MEMBER_TABLES}`,
   'gi',
@@ -77,14 +82,14 @@ function memberLockAfterTenant(body: string): string | null {
 
 // Whether a TypeScript source locks or updates the tenant row, through Kysely (aliased or not) or a raw sql template.
 function locksTenantRow(source: string): boolean {
-  const table = "'crove_kernel\\.tenant(?: as \\w+)?'";
+  const table = "'ludy_kernel\\.tenant(?: as \\w+)?'";
   const update = new RegExp(`updateTable\\(${table}\\)`).test(source);
   const lock = [...source.matchAll(new RegExp(`(?:selectFrom|innerJoin|leftJoin)\\(${table}[\\s\\S]*?\\.execute`, 'g'))].some((m) =>
     /\.for(?:Update|NoKeyUpdate|Share)\(\)/.test(m[0]),
   );
   const raw = [...source.matchAll(/sql(?:<[^>]*>)?`([^`]*)`/g)].some((m) => {
     const text = m[1] as string;
-    return /UPDATE\s+crove_kernel\.tenant\b/i.test(text) || /crove_kernel\.tenant\b[^;]*?FOR\s+(?:NO\s+KEY\s+UPDATE|UPDATE|SHARE)\b/i.test(text);
+    return /UPDATE\s+ludy_kernel\.tenant\b/i.test(text) || /ludy_kernel\.tenant\b[^;]*?FOR\s+(?:NO\s+KEY\s+UPDATE|UPDATE|SHARE)\b/i.test(text);
   });
   return update || lock || raw;
 }
@@ -146,31 +151,31 @@ describe('lock order: member rows, then the tenant row (#1943)', () => {
   });
 
   it('flags a planted function that locks a member row after the tenant row, in either form', () => {
-    expect(memberLockAfterTenant('PERFORM 1 FROM crove_kernel.tenant t WHERE t.org_id = v_org FOR NO KEY UPDATE;\n  PERFORM 1 FROM crove_kernel.tenant_member m WHERE m.org_id = v_org FOR UPDATE;')).toMatch(
+    expect(memberLockAfterTenant('PERFORM 1 FROM ludy_kernel.tenant t WHERE t.org_id = v_org FOR NO KEY UPDATE;\n  PERFORM 1 FROM ludy_kernel.tenant_member m WHERE m.org_id = v_org FOR UPDATE;')).toMatch(
       /tenant_member .* FOR UPDATE/,
     );
-    expect(memberLockAfterTenant("UPDATE crove_kernel.tenant SET name = 'x' WHERE org_id = v_org;\n  DELETE FROM crove_kernel.position p WHERE p.org_id = v_org;")).toBe(
-      'DELETE FROM crove_kernel.position',
+    expect(memberLockAfterTenant("UPDATE ludy_kernel.tenant SET name = 'x' WHERE org_id = v_org;\n  DELETE FROM ludy_kernel.position p WHERE p.org_id = v_org;")).toBe(
+      'DELETE FROM ludy_kernel.position',
     );
     // An assignment, and a tenant row locked through a join.
-    expect(memberLockAfterTenant('PERFORM 1 FROM crove_kernel.party p JOIN crove_kernel.tenant t ON t.org_id = p.org_id FOR UPDATE;\n  DELETE FROM crove_kernel.role_assignment a;')).toBe(
-      'DELETE FROM crove_kernel.role_assignment',
+    expect(memberLockAfterTenant('PERFORM 1 FROM ludy_kernel.party p JOIN ludy_kernel.tenant t ON t.org_id = p.org_id FOR UPDATE;\n  DELETE FROM ludy_kernel.role_assignment a;')).toBe(
+      'DELETE FROM ludy_kernel.role_assignment',
     );
     // FOR SHARE of a member row after the tenant row waits on no reader: the reroute's order, let through.
-    expect(memberLockAfterTenant('PERFORM 1 FROM crove_kernel.tenant t FOR NO KEY UPDATE;\n  PERFORM 1 FROM crove_kernel.tenant_member m FOR SHARE;')).toBeNull();
+    expect(memberLockAfterTenant('PERFORM 1 FROM ludy_kernel.tenant t FOR NO KEY UPDATE;\n  PERFORM 1 FROM ludy_kernel.tenant_member m FOR SHARE;')).toBeNull();
     // The order this test keeps: member rows first.
-    expect(memberLockAfterTenant('PERFORM 1 FROM crove_kernel.tenant_member m WHERE m.org_id = v_org FOR UPDATE;\n  PERFORM 1 FROM crove_kernel.tenant t WHERE t.org_id = v_org FOR NO KEY UPDATE;')).toBeNull();
+    expect(memberLockAfterTenant('PERFORM 1 FROM ludy_kernel.tenant_member m WHERE m.org_id = v_org FOR UPDATE;\n  PERFORM 1 FROM ludy_kernel.tenant t WHERE t.org_id = v_org FOR NO KEY UPDATE;')).toBeNull();
     // A lock in a comment, and a KEY SHARE of the tenant row, which waits on no member change, are no locks here.
-    expect(memberLockAfterTenant('-- UPDATE crove_kernel.tenant\n  PERFORM 1 FROM crove_kernel.tenant t FOR KEY SHARE;\n  DELETE FROM crove_kernel.tenant_member;')).toBeNull();
+    expect(memberLockAfterTenant('-- UPDATE ludy_kernel.tenant\n  PERFORM 1 FROM ludy_kernel.tenant t FOR KEY SHARE;\n  DELETE FROM ludy_kernel.tenant_member;')).toBeNull();
   });
 
   it('flags a planted command source that locks the tenant row', () => {
-    expect(locksTenantRow("await ctx.trx.selectFrom('crove_kernel.tenant').select('x').where('org_id', '=', id).forNoKeyUpdate().executeTakeFirst();")).toBe(true);
-    expect(locksTenantRow("await ctx.trx.updateTable('crove_kernel.tenant').set({ x: 1 }).execute();")).toBe(true);
-    expect(locksTenantRow("await ctx.trx.selectFrom('crove_kernel.tenant as t').select('t.x').forShare().executeTakeFirst();")).toBe(true);
-    expect(locksTenantRow('await sql`UPDATE crove_kernel.tenant t SET x = 1 WHERE t.org_id = ${id}`.execute(ctx.trx);')).toBe(true);
-    expect(locksTenantRow('await sql`SELECT 1 FROM crove_kernel.tenant t WHERE t.org_id = ${id} FOR NO KEY UPDATE`.execute(ctx.trx);')).toBe(true);
-    expect(locksTenantRow("await ctx.trx.selectFrom('crove_kernel.tenant').select('x').executeTakeFirst();")).toBe(false);
-    expect(locksTenantRow('await sql`SELECT 1 FROM crove_kernel.tenant_member m FOR UPDATE`.execute(ctx.trx);')).toBe(false);
+    expect(locksTenantRow("await ctx.trx.selectFrom('ludy_kernel.tenant').select('x').where('org_id', '=', id).forNoKeyUpdate().executeTakeFirst();")).toBe(true);
+    expect(locksTenantRow("await ctx.trx.updateTable('ludy_kernel.tenant').set({ x: 1 }).execute();")).toBe(true);
+    expect(locksTenantRow("await ctx.trx.selectFrom('ludy_kernel.tenant as t').select('t.x').forShare().executeTakeFirst();")).toBe(true);
+    expect(locksTenantRow('await sql`UPDATE ludy_kernel.tenant t SET x = 1 WHERE t.org_id = ${id}`.execute(ctx.trx);')).toBe(true);
+    expect(locksTenantRow('await sql`SELECT 1 FROM ludy_kernel.tenant t WHERE t.org_id = ${id} FOR NO KEY UPDATE`.execute(ctx.trx);')).toBe(true);
+    expect(locksTenantRow("await ctx.trx.selectFrom('ludy_kernel.tenant').select('x').executeTakeFirst();")).toBe(false);
+    expect(locksTenantRow('await sql`SELECT 1 FROM ludy_kernel.tenant_member m FOR UPDATE`.execute(ctx.trx);')).toBe(false);
   });
 });

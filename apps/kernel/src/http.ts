@@ -7,11 +7,12 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { bodyLimit } from 'hono/body-limit';
 import { secureHeaders } from 'hono/secure-headers';
 import type pg from 'pg';
-import { schemaMissing } from '@crove/db/migrate';
+import { schemaMissing } from '@ludy/db/migrate';
 import {
   brandSlug,
   ACCEPTED_ARCHIVE_TYPES,
   ACCEPTED_UPLOAD_TYPES,
+  AGREEMENT_TYPES,
   DIRECT_UPLOAD_MAX_BYTES,
   HR_BANK_FILE_COLUMNS,
   HR_DECLARATION_KINDS,
@@ -22,11 +23,19 @@ import {
   MAX_SOCIAL_VIDEO_MS,
   MAX_UPLOAD_BYTES,
   ORG_HEADER,
+  LEGACY_ORG_HEADER,
+  ROADMAP_VOTER_HEADER,
+  SIGN_DIRECT_PAGE_PATH,
+  SIGN_PAGE_PATH,
+  SIGN_PUBLIC_HUB_PAGE_PREFIX,
   SOCIAL_IMAGE_TYPES,
   DEFAULT_EXTENSION_IDS,
   LIVE_CHUNK_MAX_BYTES,
   LIVE_CHUNK_MAX_COUNT,
   LIVE_CHUNK_MAX_SECONDS,
+  MEETING_PLATFORM_TRANSCRIPT_MAX_BYTES,
+  RECORDING_STOP_REASONS,
+  type RecordingStopReason,
   zExtensionAuthorize,
   XLSX_CONTENT_TYPE,
   accountParents,
@@ -34,12 +43,22 @@ import {
   type HrBankFile,
   type HrDeclarationDocument,
   zHrBankFileQuery,
+  zSupplierPaymentBankFileQuery,
+  type SupplierPaymentBankFile,
   zHrDeclarationDocument,
   type MisaGoodsCode,
+  type HouseholdCnkd,
+  type HouseholdS1a,
+  type HouseholdS2a,
+  type HouseholdS2b,
+  type HouseholdS2c,
+  type HouseholdS2d,
+  type HouseholdS2e,
   type StockCard,
   type StockReportRow,
   type UploadPurpose,
-} from '@crove/kernel-contract';
+  zMeetingTranscriptImport,
+} from '@ludy/kernel-contract';
 import {
   BlobConflictError,
   BlobIntegrityError,
@@ -66,8 +85,8 @@ import {
   type MediaKeyBinding,
   type Runtime,
   type UserActor,
-} from '@crove/kernel-runtime';
-import { ORG_NOT_OFFBOARDING, OWNER_RUN_EXPORT_TABLES, type OrgExportView, type OwnerRunExportTable } from '@crove/kernel';
+} from '@ludy/kernel-runtime';
+import { ORG_NOT_OFFBOARDING, OWNER_RUN_EXPORT_TABLES, type OrgExportView, type OwnerRunExportTable } from '@ludy/kernel';
 import {
   JOURNAL_EXPORT_LIMIT,
   MISA_SME_BANK_CREDIT,
@@ -83,7 +102,15 @@ import {
   buildStatementsHtkkXml,
   buildFixedAssetsWorkbook,
   buildStockWorkbook,
+  buildCnkdWorkbook,
+  buildS1aWorkbook,
+  buildS2aWorkbook,
+  buildS2bWorkbook,
+  buildS2cWorkbook,
+  buildS2dWorkbook,
+  buildS2eWorkbook,
   buildMisaWorkbook,
+  buildSupplierPaymentBankFileWorkbook,
   buildVat01Xml,
   buildVatWorkbook,
   xmlCarryForward,
@@ -101,10 +128,11 @@ import {
   type SalesVoucher,
   type VatDeclaration,
   type VatReport,
-} from '@crove/mod-finance';
-import { readLogoImage, renderQuotePdf, type QuoteDocumentData } from '@crove/mod-crm';
-import { buildBankFileWorkbook, buildDeclarationWorkbook } from '@crove/mod-hr';
+} from '@ludy/mod-finance';
+import { readLogoImage, renderQuotePdf, type QuoteDocumentData } from '@ludy/mod-crm';
+import { buildBankFileWorkbook, buildDeclarationWorkbook } from '@ludy/mod-hr';
 import { readYearArchiveManifest, verifyYearArchive } from './year-archive.ts';
+import { hostedLoginTokenOrigin, hostedLoginView } from './auth-hosted-login.ts';
 import { clientBucket, createDbEmailLimiter, emailSendRequest, type EmailLimiter } from './auth-email-limit.ts';
 import {
   createDbInviteChecks,
@@ -112,6 +140,7 @@ import {
   emailChangeGate,
   emailChangeRefused,
   INVITE_TOKEN_HEADER,
+  LEGACY_INVITE_TOKEN_HEADER,
   limitInviteChecks,
   methodRefused,
   signupAllowed,
@@ -128,6 +157,8 @@ import { actorOf, bearerIssuedToOAuthClient, oauthClientRefused, type Authentica
 import { exchangeExtensionCode, extensionIdOfOrigin, newExtensionCode, refuseOutsideScopes, voidUndeliveredExtensionToken, wellFormedExtensionCode, wellFormedVerifier } from './auth-extension.ts';
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
 import { onepiece, sealMedia, sizeText, streamPieces } from './media-seal.ts';
+import { assembleLivePieces } from './meetings-live-assemble.ts';
+import { extractAudioFromVideo, mediaAudioExtractorFor, type MediaAudioExtractor } from './meetings-extract.ts';
 import { decryptedWindows, mediaMeasurerFor, unavailable as mediaProbeUnavailable, type MediaMeasurer } from './meetings-measure.ts';
 import { MEDIA_TICKET_KEY_LABEL, MEDIA_TICKET_MAX_TTL_SECONDS, MEDIA_TICKET_PURPOSE, peekMediaTicketKeyId, signMediaTicket, verifyMediaTicket, wellFormedMediaTicket } from './media-ticket.ts';
 import { BODY_STALL_TIMEOUT_MS } from './upload-timeouts.ts';
@@ -139,23 +170,117 @@ import { streamedBody } from './owner-run-export.ts';
 import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts';
 import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
-import { FACEBOOK_MAX_NOTICE_BYTES, TELEGRAM_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@crove/channel';
+import { BANK_FEED_HOOKS_PER_MINUTE, MAX_BANK_FEED_HOOK_BYTES, acceptBankFeedHook } from './bank-feed-hook.ts';
+import { MARKETPLACE_PUSHES_PER_MINUTE, MARKETPLACE_PUSH_ADDRESS_PER_MINUTE, MAX_MARKETPLACE_PUSH_BYTES, acceptMarketplacePush, isMarketplaceHookKey } from './marketplace-push-hook.ts';
+import { MAX_MISA_AMIS_CALLBACK_BYTES, acceptMisaAmisCallback } from './misa-amis-callback.ts';
+import type { AmisCallbackKey } from '@ludy/misa-amis';
+import { FACEBOOK_MAX_NOTICE_BYTES, TELEGRAM_MAX_NOTICE_BYTES, WHATSAPP_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@ludy/channel';
 import { ZALO_SIGNATURE_HEADER, ZALO_WEBHOOK_PATH, ZaloReplayCache, acceptZaloWebhook, type ZaloWebhookConfig } from './zalo-webhook.ts';
+import { ZOOM_MAX_NOTICE_BYTES, ZOOM_SIGNATURE_HEADER, ZOOM_TIMESTAMP_HEADER, ZOOM_WEBHOOK_PATH, ZoomReplayCache, acceptZoomWebhook, type ZoomWebhookConfig } from './zoom-webhook.ts';
 import { TELEGRAM_SECRET_HEADER, TELEGRAM_WEBHOOK_PATH, TELEGRAM_UNAUTHORIZED, TelegramReplayCache, acceptTelegramWebhook, telegramWebhookAuthorized, type TelegramWebhookConfig } from './telegram-webhook.ts';
 import { FACEBOOK_SIGNATURE_HEADER, FACEBOOK_WEBHOOK_PATH, FacebookReplayCache, acceptFacebookWebhook, verifyFacebookWebhookChallenge, type FacebookWebhookConfig } from './facebook-webhook.ts';
+import { WHATSAPP_SIGNATURE_HEADER, WHATSAPP_WEBHOOK_PATH, WhatsAppReplayCache, acceptWhatsAppWebhook, verifyWhatsAppWebhookChallenge, type WhatsAppWebhookConfig } from './whatsapp-webhook.ts';
 import { ADS_DELETION_PATH, MAX_ADS_DELETION_BYTES } from './ads-deletion.ts';
 import { acceptMetaDeletion, metaDeletionStatus, renderMetaDeletionStatus } from './meta-deletion.ts';
-import type { BankFeedProvider } from '@crove/bank-feed';
+import type { BankFeedProvider } from '@ludy/bank-feed';
 import { createInviteMailSender } from './invite-mail.ts';
 import { createCredentialBroker } from './credentials.ts';
 import { pgBossSchemaVersion } from './jobs-schema.ts';
 import type { MailProvider } from './mail.ts';
 import { RateLimiter } from './rate-limit.ts';
+import { DraftBudget } from './ai-draft-limit.ts';
 import { mountMcp, mountOauthProvider } from './mcp-endpoint.ts';
 import type { OauthServer } from './oauth-server.ts';
 import { reviewAnswer, reviewFile, reviewMedia, reviewView, REVIEW_ANSWERS_PER_MINUTE, REVIEW_FILES_PER_MINUTE, REVIEW_VIEWS_PER_MINUTE } from './review-link.ts';
 import { quoteLogo, quoteView, readLogoFile, QUOTE_LOGO_READS_MAX, QUOTE_VIEWS_PER_MINUTE } from './quote-link.ts';
 import { reportView, REPORT_VIEWS_PER_MINUTE } from './report-link.ts';
+import {
+  SIGN_DIRECT_EMAIL_OTP_REQUESTS_PER_MINUTE,
+  SIGN_DIRECT_OTP_REQUESTS_PER_MINUTE,
+  SIGN_DIRECT_OTP_VERIFIES_PER_MINUTE,
+  SIGN_DIRECT_PDFS_PER_MINUTE,
+  SIGN_DIRECT_STARTS_PER_MINUTE,
+  SIGN_DIRECT_TOKEN_OTP_REQUESTS_PER_MINUTE,
+  SIGN_DIRECT_TOKEN_OTP_VERIFIES_PER_MINUTE,
+  SIGN_DIRECT_TOKEN_PDFS_PER_MINUTE,
+  SIGN_DIRECT_TOKEN_STARTS_PER_MINUTE,
+  SIGN_DIRECT_TOKEN_VIEWS_PER_MINUTE,
+  SIGN_DIRECT_VIEWS_PER_MINUTE,
+  resolvePublicDirectPdf,
+  runSignDirectOtpRequest,
+  runSignDirectOtpVerify,
+  runSignDirectStart,
+  runSignDirectView,
+} from './sign-direct-link.ts';
+import {
+  SIGN_PUBLIC_HUB_ACTIONS_PER_MINUTE,
+  SIGN_PUBLIC_HUB_EMAIL_OTP_REQUESTS_PER_MINUTE,
+  SIGN_PUBLIC_HUB_LISTS_PER_MINUTE,
+  SIGN_PUBLIC_HUB_TEMPLATE_ACTIONS_PER_MINUTE,
+  resolvePublicHubPdf,
+  runSignPublicHubAction,
+  runSignPublicHubList,
+} from './sign-public-hub.ts';
+import {
+  SIGN_API_V1_IP_PER_MINUTE,
+  SIGN_API_V1_KEY_DRAFT_PER_MINUTE,
+  SIGN_API_V1_KEY_READ_PER_MINUTE,
+  readSignApiV1ArtifactBytes,
+  resolveSignApiV1FileSource,
+  runSignApiV1EnvelopeGet,
+  runSignApiV1EnvelopesList,
+  runSignApiV1FromTemplate,
+  runSignApiV1TemplatesList,
+  type SignApiV1Outcome,
+} from './sign-api-v1.ts';
+import {
+  ROADMAP_PUBLIC_IDEAS_PER_MINUTE,
+  ROADMAP_PUBLIC_OTP_EMAIL_REQUESTS_PER_MINUTE,
+  ROADMAP_PUBLIC_OTP_REQUESTS_PER_MINUTE,
+  ROADMAP_PUBLIC_OTP_VERIFIES_PER_MINUTE,
+  ROADMAP_PUBLIC_VIEWS_PER_MINUTE,
+  ROADMAP_PUBLIC_VOTES_PER_MINUTE,
+  deriveRoadmapClaimKey,
+  matchPublicRoadmapPagePath,
+  resolveRoadmapEmbedFrameAncestors,
+  runPublicRoadmapOtpRequest,
+  runPublicRoadmapOtpVerify,
+  runPublicRoadmapSubmitIdea,
+  runPublicRoadmapView,
+  runPublicRoadmapVote,
+  verifyRoadmapVoterClaim,
+} from './projects-public-roadmap.ts';
+import {
+  SIGN_ATTACHMENT_MAX_BYTES,
+  SIGN_ATTACHMENT_UPLOADS_MAX,
+  SIGN_ATTACHMENTS_PER_MINUTE,
+  SIGN_DELEGATES_PER_MINUTE,
+  SIGN_OTP_REQUESTS_PER_MINUTE,
+  SIGN_OTP_VERIFIES_PER_MINUTE,
+  SIGN_PDF_READS_MAX,
+  SIGN_PDFS_PER_MINUTE,
+  SIGN_SUBMITS_PER_MINUTE,
+  SIGN_TOKEN_ATTACHMENTS_PER_MINUTE,
+  SIGN_TOKEN_DELEGATES_PER_MINUTE,
+  SIGN_TOKEN_OTP_REQUESTS_PER_MINUTE,
+  SIGN_TOKEN_OTP_VERIFIES_PER_MINUTE,
+  SIGN_TOKEN_PDFS_PER_MINUTE,
+  SIGN_TOKEN_SUBMITS_PER_MINUTE,
+  SIGN_TOKEN_VIEWS_PER_MINUTE,
+  SIGN_VERIFY_PER_MINUTE,
+  SIGN_VIEWS_PER_MINUTE,
+  readPublicPdfBytes,
+  resolvePublicPdf,
+  runSignAttachmentUpload,
+  runSignDecline,
+  runSignDelegate,
+  runSignOtpRequest,
+  runSignOtpVerify,
+  runSignSubmit,
+  runSignVerify,
+  runSignView,
+  type SignBilling,
+} from './sign-link.ts';
 import { bookingFeed, renderBookingFeedIcs } from './booking-feed.ts';
 import { CALENDAR_FEED_HITS_PER_MINUTE, calendarFeed, renderIcs } from './calendar-feed.ts';
 import { BIO_HITS_PER_MINUTE, BIO_PAGE_CSP, bioGo, bioImage, bioView, renderBioPage } from './bio-page.ts';
@@ -175,8 +300,10 @@ import { WEB_MANIFEST_PATH, brandedManifest } from './web-manifest.ts';
 import { opsAlert } from './ops-alert.ts';
 import { shortLinkTarget, SHORT_LINK_HITS_PER_MINUTE } from './short-link.ts';
 import { ORG_SLUG, attachmentDisposition } from './attachment.ts';
-import type { AiMeter } from '@crove/agent';
+import { withAiScope, type AiMeter } from '@ludy/agent';
+import { handleHrCvExtractPoll, handleHrCvExtractUpload } from './hr-cv-http.ts';
 import type { ModelPort } from './member-vy-ports.ts';
+import type { SignAi } from './sign-ai.ts';
 import { createRpcHandler, resolveMembership, resolveOrg, type BookingReader, type RpcChannels, type SocialDrafter } from './rpc.ts';
 import type { ConversationReader } from './conversations-ai.ts';
 import type { TaxCodeLookup } from './tax-lookup.ts';
@@ -184,6 +311,8 @@ import type { PortalSync } from './portal-sync.ts';
 import { hasVideoTrack, imageSize, sniffVideo, videoDurationMs, type ImageSize } from './media-probe.ts';
 import { safeFilename, sniffType } from './sniff.ts';
 import { sniffConversationImage } from './conversation-media.ts';
+import { handleNoteAttachmentDownload, handleNoteAttachmentUpload } from './note-attachments.ts';
+import { handleEnexImportUpload, handleTodoistImportUpload } from './note-imports.ts';
 import { directTransferOrigin } from './storage.ts';
 import {
   MAX_BUFFERED_BYTES,
@@ -193,6 +322,7 @@ import {
   StreamConnection,
   newTicket,
   streamScopeOf,
+  STREAM_FILTERED_APPS,
   ticketActor,
   ticketHash,
   wellFormedTicket,
@@ -222,6 +352,8 @@ export interface HttpDeps {
   broker?: CredentialBroker;
   // Measures the length of meeting media in crove-media (#2985). Unset: made from config.MEDIA_URL (none when that is unset too).
   mediaMeasurer?: MediaMeasurer;
+  // Takes the audio out of a video uploaded as a meeting's audio (#3337); none without MEDIA_URL.
+  mediaExtractor?: MediaAudioExtractor;
   authenticate: Authenticate;
   pool: pg.Pool;
   aiEnabled: boolean;
@@ -232,6 +364,19 @@ export interface HttpDeps {
   bankFeedWebhooks?: Readonly<Record<string, BankFeedProvider>>;
   // Notices per minute per client address; one is checked and queued per call.
   bankFeedWebhookLimit?: RateLimiter;
+  // The bank feed adapters whose provider signs notices with each customer's own secret (Tingee, #4203): POST /api/bank-feed/<id>/webhook/<hookKey> exists for these alone, with finance installed. The address carries a key of one
+  // connection (only its SHA-256 is stored); the API stores the raw notice and the worker verifies it with the connection's sealed secret.
+  bankFeedHooks?: Readonly<Record<string, BankFeedProvider>>;
+  // Requests per minute per client address, checked before the body is read, and notices per minute per hook, checked once the hook is found.
+  bankFeedHookLimit?: RateLimiter;
+  bankFeedHookBudget?: RateLimiter;
+  // The marketplaces whose push (webhook) the route takes (TikTok Shop, Shopee, Lazada; #4346, S2 of #4315): POST /api/marketplace/<adapter>/webhook/<hookKey> exists for these alone, with finance installed, and only where
+  // the deployment runs the adapter (MARKETPLACE_PROVIDERS) and holds a credential broker (the worker's relay opens the connection's secret). Unset or empty: the route does not exist.
+  marketplacePush?: { adapters: readonly string[]; limit?: RateLimiter; budget?: RateLimiter };
+  // MISA AMIS's callback with the result of a save (#3903): the route exists only where the deployment holds the ClientID (the HMAC key of the signature); without it the path is not served.
+  // The HMAC keys of the callback's signature: one ClientID (MISA AMIS's), or one per product the deployment holds (MISA AMIS and MISA ASP, #4103), tried all, never told apart.
+  misaAmisCallback?: { clientId: string } | { keys: readonly AmisCallbackKey[] };
+  misaAmisCallbackLimit?: RateLimiter;
   // Zalo OA's webhook for the conversation core (#2304): the app id and the OA secret key that sign its notices. Unset: the route does
   // not exist.
   zaloWebhook?: ZaloWebhookConfig;
@@ -239,6 +384,12 @@ export interface HttpDeps {
   zaloWebhookLimit?: RateLimiter;
   // The events that route has parked lately (replay guard); unset: its own, one per process.
   zaloReplays?: ZaloReplayCache;
+  // Zoom's webhook for the recording import (meetings integrations C3, #3175): the app's secret token that signs its notices. Unset, or the Meetings module off: the route does not exist.
+  zoomWebhook?: ZoomWebhookConfig;
+  // Refused or unsigned requests per minute per client address for that route.
+  zoomWebhookLimit?: RateLimiter;
+  // The notices that route has answered lately (replay guard); unset: its own, one per process.
+  zoomReplays?: ZoomReplayCache;
   // Telegram's webhook for the conversation core (#3132): the keys the per-connection secret is derived from. Unset: the route does not exist.
   telegramWebhook?: TelegramWebhookConfig;
   // Refused requests per minute per client address for that route.
@@ -253,6 +404,12 @@ export interface HttpDeps {
   facebookWebhookLimit?: RateLimiter;
   // The comment events that route has parked lately (replay guard); unset: its own, one per process.
   facebookReplays?: FacebookReplayCache;
+  // WhatsApp Business webhook for the conversation core (#3131): the app secret and verify token of the WhatsApp product's Meta app. Unset: the route does not exist.
+  whatsappWebhook?: WhatsAppWebhookConfig;
+  // Refused requests per minute per client address for that route.
+  whatsappWebhookLimit?: RateLimiter;
+  // The events that route has parked lately (replay guard); unset: its own, one per process.
+  whatsappReplays?: WhatsAppReplayCache;
   // Meta's data deletion callback for the Ads connection (plan section 9, #2219): the app secret that signs the request. Unset
   // (no Meta ads app configured): the route does not exist. With ads installed only.
   adsDeletion?: { appSecret: string };
@@ -281,6 +438,64 @@ export interface HttpDeps {
   quoteLogoLimit?: RateLimiter;
   // How many logo reads (a stored file read whole into memory) run at once in this process, across every client (#2814). Unset: QUOTE_LOGO_READS_MAX.
   quoteLogoReads?: ConcurrencyLimiter;
+  // Plan entitlements lookup used to fail closed on disabled or un-entitled modules on public edge routes (#3324).
+  billing?: SignBilling;
+  // Per-client, per-token-hash, and bounded PDF read concurrency limiters for public eSign routes (#3324).
+  signLimits?: Partial<{
+    views: RateLimiter;
+    tokenViews: RateLimiter;
+    pdfs: RateLimiter;
+    tokenPdfs: RateLimiter;
+    pdfReads: ConcurrencyLimiter;
+    otpRequest: RateLimiter;
+    tokenOtpRequest: RateLimiter;
+    otpVerify: RateLimiter;
+    tokenOtpVerify: RateLimiter;
+    submit: RateLimiter;
+    tokenSubmit: RateLimiter;
+    delegate: RateLimiter;
+    tokenDelegate: RateLimiter;
+    attachment: RateLimiter;
+    tokenAttachment: RateLimiter;
+    attachmentUploads: ConcurrencyLimiter;
+    verify: RateLimiter;
+  }>;
+  // Per-client and per-token/email rate limiters for public direct signing routes (#3551).
+  signDirectLimits?: Partial<{
+    views: RateLimiter;
+    tokenViews: RateLimiter;
+    pdfs: RateLimiter;
+    tokenPdfs: RateLimiter;
+    otpRequest: RateLimiter;
+    tokenOtpRequest: RateLimiter;
+    emailOtpRequest: RateLimiter;
+    otpVerify: RateLimiter;
+    tokenOtpVerify: RateLimiter;
+    start: RateLimiter;
+    tokenStart: RateLimiter;
+  }>;
+  // Per-client and per-template/email rate limiters for the public self-service template hub (#3820).
+  signPublicHubLimits?: Partial<{
+    lists: RateLimiter;
+    actions: RateLimiter;
+    templateActions: RateLimiter;
+    emailOtpRequest: RateLimiter;
+  }>;
+  // Per-client and per-key-hash rate limiters for external /api/v1/sign/* API routes (#4441).
+  signApiV1Limits?: Partial<{
+    ip: RateLimiter;
+    keyRead: RateLimiter;
+    keyDraft: RateLimiter;
+  }>;
+  // Per-client and per-email rate limiters for Projects Public Roadmap public routes (#4399).
+  roadmapLimits?: Partial<{
+    views: RateLimiter;
+    otpRequest: RateLimiter;
+    emailOtpRequest: RateLimiter;
+    otpVerify: RateLimiter;
+    ideas: RateLimiter;
+    votes: RateLimiter;
+  }>;
   // The posting calendar feed's budget per client (#862). Unset: CALENDAR_FEED_HITS_PER_MINUTE.
   calendarFeedLimit?: RateLimiter;
   // The per-client budget of link-in-bio pages, their links and images (#707), replaceable in tests.
@@ -327,12 +542,18 @@ export interface HttpDeps {
   conversationReader?: ConversationReader;
   // The recorder's Vy summarizing a meeting (#2580, M6 part B2); unset: the summary is off.
   summaryModel?: ModelPort | null;
+  // Vy's eSign field placement and risky clause review (#3351); unset: manual signing with AI off.
+  signAi?: SignAi['reader'];
+  // The deployment's AI prices (AI_PRICE_*), for the cost a translation shows before the click (#3184); unset: no figure.
+  aiPrice?: { inputPerMTok: string; outputPerMTok: string };
   // The public tax registry lookup for onboarding (issue #324); unset: off (TAX_CODE_LOOKUP_URL).
   taxLookup?: TaxCodeLookup;
   // The assisted purchase-invoice sync from the tax portal (issue #325); unset: off (TAX_PORTAL_SYNC).
   portalSync?: PortalSync;
   // Realtime invalidation (issue #69). Unset: /api/stream answers 404 and the app keeps polling.
   stream?: StreamDeps;
+  // Optional wait timeout in ms for worker-side CV PDF/DOCX extraction before returning 202 pending (#4446).
+  hrCvWaitMs?: number;
 }
 
 export interface StreamDeps {
@@ -474,7 +695,43 @@ const SPOOFABLE = new Set([
 ]);
 // Dropped from every request the auth proxy forwards: the forwarding headers above, and the invite token a sign-up
 // carries for the sign-up policy (#563), which is the proxy's to read and none of Supabase Auth's business.
-const PROXY_DROPPED = new Set([...SPOOFABLE, INVITE_TOKEN_HEADER]);
+const RECIPIENT_HEADER = 'x-ludy-recipient';
+const LEGACY_RECIPIENT_HEADER = 'x-crove-recipient';
+
+function normalizeHeaderValue(raw: string | undefined): string | null {
+  if (raw === undefined) return null;
+  const trimmed = raw.trim();
+  return trimmed === '' ? null : trimmed;
+}
+
+function readOrgHeader(c: Context): string | null {
+  const primary = normalizeHeaderValue(c.req.header(ORG_HEADER));
+  const legacy = normalizeHeaderValue(c.req.header(LEGACY_ORG_HEADER));
+  if (primary !== null && legacy !== null && primary !== legacy) {
+    throw new DomainError('ORG_HEADER_CONFLICT', 400, 'Conflicting x-ludy-org and x-crove-org headers');
+  }
+  return primary ?? legacy;
+}
+
+function readInviteHeader(c: Context): { ok: true; value: string | undefined } | { ok: false } {
+  const primary = normalizeHeaderValue(c.req.header(INVITE_TOKEN_HEADER));
+  const legacy = normalizeHeaderValue(c.req.header(LEGACY_INVITE_TOKEN_HEADER));
+  if (primary !== null && legacy !== null && primary !== legacy) {
+    return { ok: false };
+  }
+  return { ok: true, value: (primary ?? legacy) ?? undefined };
+}
+
+function readRecipientHeader(c: Context): string | null {
+  const primary = normalizeHeaderValue(c.req.header(RECIPIENT_HEADER));
+  const legacy = normalizeHeaderValue(c.req.header(LEGACY_RECIPIENT_HEADER));
+  if (primary !== null && legacy !== null && primary.toLowerCase() !== legacy.toLowerCase()) {
+    throw new DomainError('RECIPIENT_HEADER_CONFLICT', 400, 'Conflicting x-ludy-recipient and x-crove-recipient headers');
+  }
+  return primary ?? legacy;
+}
+
+const PROXY_DROPPED = new Set([...SPOOFABLE, INVITE_TOKEN_HEADER, LEGACY_INVITE_TOKEN_HEADER]);
 // Public Supabase Auth endpoints the web app needs. Everything else (notably /admin) is not reachable.
 const AUTH_PUBLIC_PATHS =
   /^\/(?:token|signup|verify|recover|user|logout|otp|resend|settings|health|authorize|callback|reauthenticate|factors(?:\/[\w-]+(?:\/(?:challenge|verify))?)?|\.well-known\/jwks\.json)$/;
@@ -484,7 +741,9 @@ const STATUS_CACHE_MS = 5_000;
 const BANK_FEED_WEBHOOKS_PER_MINUTE = 120;
 // Refused requests (a bad signature, a body that is no notice) one address may send a minute; verified notices are not counted.
 const ZALO_WEBHOOKS_PER_MINUTE = 120;
+const ZOOM_WEBHOOKS_PER_MINUTE = 120;
 const FACEBOOK_WEBHOOKS_PER_MINUTE = 120;
+const WHATSAPP_WEBHOOKS_PER_MINUTE = 120;
 const TELEGRAM_WEBHOOKS_PER_MINUTE = 120;
 // Verified updates one hook takes a minute: ten a second, far above what a shop's customers write, so only a flood hits it.
 const TELEGRAM_VERIFIED_PER_HOOK_PER_MINUTE = 600;
@@ -502,7 +761,15 @@ export const EXPORT_BUSY_RETRY_SECONDS = 5;
 export const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
 // apiOrigin is the API's origin when the app is served apart from it (a split deployment), so its media (a meeting's video by
 // ticket) may be played; null when the kernel serves the app itself and 'self' is the API.
-export function contentSecurityPolicy(authUrl: string, storageOrigin: string | null, turnstile = false, apiOrigin: string | null = null): string {
+// connectOrigin: one more origin the app calls (the hosted login's token endpoint, #2704), or null.
+export function contentSecurityPolicy(
+  authUrl: string,
+  storageOrigin: string | null,
+  turnstile = false,
+  apiOrigin: string | null = null,
+  connectOrigin: string | null = null,
+  frameAncestors: readonly string[] | null = null,
+): string {
   // Hosted Supabase Auth lives on another origin; the bundled one is proxied under /auth/v1. With presigned
   // transfers the app also posts uploads to, and fetches downloads from, the bucket's origin.
   const authOrigin = new URL(authUrl, 'http://localhost').origin;
@@ -510,10 +777,10 @@ export function contentSecurityPolicy(authUrl: string, storageOrigin: string | n
   // eval) refuse plain strings, and no policy may be created that would turn one into trusted HTML. The SPA needs
   // none: it renders through React and never sets raw HTML (apps/app/test/trusted-types.test.ts). A sink reached
   // with a string throws instead of running markup an attacker smuggled into the page. One named policy may be created,
-  // once (no 'allow-duplicates'): crove-sw, whose only method gives the service worker's fixed URL to
+  // once (no 'allow-duplicates'): ludy-sw, whose only method gives the service worker's fixed URL to
   // navigator.serviceWorker.register() for browser push (#1238, apps/app/src/lib/push.ts). It has no createHTML or
   // createScript, so the HTML and script sinks still refuse every string. With Turnstile keys set (#1353), the booking
-  // page loads Turnstile's script from its origin through a second fixed-URL policy, crove-turnstile, and the widget
+  // page loads Turnstile's script from its origin through a second fixed-URL policy, ludy-turnstile, and the widget
   // runs in an iframe of that origin; without them, nothing of Cloudflare's is allowed.
   return [
     "default-src 'self'",
@@ -523,14 +790,14 @@ export function contentSecurityPolicy(authUrl: string, storageOrigin: string | n
     // A meeting's audio plays from a blob URL the app makes, and its video from the stream route by ticket (#2703): media-src
     // would otherwise fall back to default-src, which refuses blob: and, apart from the API, the API's origin.
     `media-src 'self' blob:${apiOrigin ? ` ${apiOrigin}` : ''}`,
-    `connect-src 'self' ${authOrigin}${storageOrigin ? ` ${storageOrigin}` : ''}`,
+    `connect-src 'self' ${[...new Set([authOrigin, ...(storageOrigin ? [storageOrigin] : []), ...(connectOrigin ? [connectOrigin] : [])])].join(' ')}`,
     ...(turnstile ? [`frame-src ${TURNSTILE_ORIGIN}`] : []),
     "object-src 'none'",
     "base-uri 'none'",
     "form-action 'self'",
-    "frame-ancestors 'none'",
+    frameAncestors && frameAncestors.length > 0 ? `frame-ancestors ${frameAncestors.join(' ')}` : "frame-ancestors 'none'",
     "require-trusted-types-for 'script'",
-    turnstile ? 'trusted-types crove-sw crove-turnstile' : 'trusted-types crove-sw',
+    turnstile ? 'trusted-types ludy-sw ludy-turnstile' : 'trusted-types ludy-sw',
   ].join('; ');
 }
 
@@ -549,7 +816,9 @@ function clientIp(c: Context, trustedHops: number): string | null {
 export function createHttpApp(deps: HttpDeps) {
   const { config, runtime, store, authenticate } = deps;
   const app = new Hono<{ Variables: { user: AuthUser } }>();
-  const rpc = createRpcHandler(runtime, deps.mailer ? createInviteMailSender(deps.mailer, appUrl(config), {}, config.INBOUND_DOMAIN && config.INBOUND_SECRET ? config.INBOUND_DOMAIN : null, config.BRAND_NAME) : undefined, deps.channels, deps.socialWriter, deps.taxLookup, undefined, undefined, deps.portalSync, deps.bookingReader, deps.aiMeter, deps.aiEnabled, deps.conversationReader, deps.summaryModel ?? null);
+  // One drafts budget (#386) for the API: a person's own drafts and the MCP draft tool of an AI app take their turns from the same counters and the same one-at-a-time rule.
+  const drafts = new DraftBudget();
+  const rpc = createRpcHandler(runtime, deps.mailer ? createInviteMailSender(deps.mailer, appUrl(config), {}, config.INBOUND_DOMAIN && config.INBOUND_SECRET ? config.INBOUND_DOMAIN : null, config.BRAND_NAME) : undefined, deps.channels, deps.socialWriter, deps.taxLookup, drafts, undefined, deps.portalSync, deps.bookingReader, deps.aiMeter, deps.aiEnabled, deps.conversationReader, deps.summaryModel ?? null, deps.aiPrice, deps.signAi ?? null);
   const perMinute = config.API_RATE_LIMIT_PER_MINUTE;
   const limiter = deps.rateLimiter !== undefined ? deps.rateLimiter : perMinute > 0 ? new RateLimiter({ perMinute }) : null;
 
@@ -598,12 +867,12 @@ export function createHttpApp(deps: HttpDeps) {
     try {
       const missing = await schemaMissing(client, config.MIGRATIONS_DIR);
       if (missing.length > 0) return c.json({ ready: false, reason: 'schema' }, 503);
-      // The vendored crove_jobs schema must be the version this pg-boss release expects (External-tenant gate T6).
-      const jobs = await client.query<{ version: number | null }>('SELECT crove_kernel.jobs_schema_version() AS version');
+      // The vendored ludy_jobs schema must be the version this pg-boss release expects (External-tenant gate T6).
+      const jobs = await client.query<{ version: number | null }>('SELECT ludy_kernel.jobs_schema_version() AS version');
       if (jobs.rows[0]?.version !== pgBossSchemaVersion()) return c.json({ ready: false, reason: 'jobs_schema' }, 503);
       // The session check fails closed until it can read Supabase Auth's tables (ADR-0028).
       if (config.AUTH_SESSION_CHECK === 'db') {
-        const { rows } = await client.query<{ ok: boolean }>('SELECT crove_kernel.auth_grants_ready() AS ok');
+        const { rows } = await client.query<{ ok: boolean }>('SELECT ludy_kernel.auth_grants_ready() AS ok');
         if (!rows[0]?.ok) return c.json({ ready: false, reason: 'auth_grants' }, 503);
       }
       // Worker build >= API build (#1952, plan §3.5): the deploy rolls the workers out first and back last, and this API
@@ -611,8 +880,8 @@ export function createHttpApp(deps: HttpDeps) {
       // build time (a release before #1952). Builds are ordered by CROVE_BUILD_TIME, the commit's date; without one
       // (a local build) nothing is compared. No live worker is not a reason: the prober alerts on a missing heartbeat,
       // and readiness must not flap on a worker's restart.
-      if (deps.workerBuildCheck && config.CROVE_BUILD_TIME) {
-        const { rows } = await client.query<{ older: number }>('SELECT older FROM crove_kernel.worker_build_lag($1::timestamptz)', [config.CROVE_BUILD_TIME]);
+      if (deps.workerBuildCheck && config.LUDY_BUILD_TIME) {
+        const { rows } = await client.query<{ older: number }>('SELECT older FROM ludy_kernel.worker_build_lag($1::timestamptz)', [config.LUDY_BUILD_TIME]);
         if ((rows[0]?.older ?? 0) > 0) return c.json({ ready: false, reason: 'worker_build' }, 503);
       }
       return c.json({ ready: true });
@@ -626,7 +895,7 @@ export function createHttpApp(deps: HttpDeps) {
   // The build and the committed migrations missing from the ledger (#892, plan §4.11), for the deploy's smoke test.
   // Public like /readyz: migration names are in the source; nothing about an org.
   app.get('/version', async (c) => {
-    const build = config.CROVE_BUILD ?? 'dev';
+    const build = config.LUDY_BUILD ?? 'dev';
     const client = await deps.pool.connect().catch(() => null);
     if (!client) return c.json({ build, migrationsMissing: null }, 503);
     try {
@@ -647,7 +916,8 @@ export function createHttpApp(deps: HttpDeps) {
       oauth: deps.oauth,
       authenticate,
       clientKey: (c) => clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)),
-      serverVersion: config.CROVE_BUILD ?? 'dev',
+      serverVersion: config.LUDY_BUILD ?? 'dev',
+      draftBudget: drafts,
     });
   }
 
@@ -656,6 +926,10 @@ export function createHttpApp(deps: HttpDeps) {
     c.json({
       authUrl: publicAuthUrl(config),
       authAnonKey: config.PUBLIC_AUTH_ANON_KEY ?? null,
+      // Sign-in buttons besides email and password (AUTH_OAUTH_PROVIDERS, #2704): provider ids of the identity provider.
+      authProviders: config.AUTH_OAUTH_PROVIDERS,
+      // The identity provider's hosted login page and its token endpoint (AUTH_HOSTED_LOGIN_*, #2704); null: none.
+      hostedLogin: hostedLoginView(config),
       aiEnabled: deps.aiEnabled,
       // The MCP endpoint and its authorization server are on (OAUTH_SERVER=on, #2975): Settings then lists the connected AI apps.
       mcpEnabled: deps.oauth !== undefined,
@@ -692,10 +966,10 @@ export function createHttpApp(deps: HttpDeps) {
       // Channels the app may offer to connect without a platform account (ADR-0025).
       // OAuth providers only with a credential key: their tokens could not be sealed otherwise.
       // Bank feeds (ADR-0039): which providers this deployment offers; none hides the feature.
-      bankFeeds: { sandbox: Boolean(deps.channels?.bankFeedSandbox) },
+      bankFeeds: { sandbox: Boolean(deps.channels?.bankFeedSandbox), tingee: Boolean(deps.channels?.bankFeedHosted && Object.hasOwn(deps.channels.bankFeedHosted, 'bank_tingee')) },
       // Ad platforms (ADR-0040): which this deployment offers; none leaves the Ads screen with nothing to connect.
       ads: { sandbox: Object.hasOwn(deps.channels?.adsPlatforms ?? {}, 'sandbox_ads') },
-      channels: { sandbox: Boolean(deps.channels?.sandbox), bluesky: Boolean(deps.channels?.bluesky), telegram: Boolean(deps.channels?.telegram), mastodon: Boolean(deps.channels?.mastodon), discord: Boolean(deps.channels?.discord), wordpress: Boolean(deps.channels?.wordpress), oauth: deps.channels && deps.channels.broker.id !== 'none' ? Object.keys(deps.channels.connectors ?? {}).sort() : [] },
+      channels: { sandbox: Boolean(deps.channels?.sandbox), bluesky: Boolean(deps.channels?.bluesky), telegram: Boolean(deps.channels?.telegram), mastodon: Boolean(deps.channels?.mastodon), discord: Boolean(deps.channels?.discord), wordpress: Boolean(deps.channels?.wordpress), ...(deps.channels?.whatsapp ? { whatsapp: true } : {}), oauth: deps.channels && deps.channels.broker.id !== 'none' ? Object.keys(deps.channels.connectors ?? {}).sort() : [] },
     }),
   );
 
@@ -769,7 +1043,9 @@ export function createHttpApp(deps: HttpDeps) {
       }
       if (gate.kind === 'check') {
         // The invite token the web app sends with a sign-up from an accept link (#563); the header is never forwarded.
-        const token = signupInviteToken(c.req.header(INVITE_TOKEN_HEADER));
+        const inviteHeader = readInviteHeader(c);
+        if (!inviteHeader.ok) return signupRefused();
+        const token = signupInviteToken(inviteHeader.value);
         // Each lookup of whether the address holds an invite takes a refusal slot of the client's IPv4 address or IPv6
         // /48 and of the deployment, given back when the sign-up is admitted (#564 item 1).
         // The refusal cap counts per client address too, so warn about a reverse proxy without TRUSTED_PROXY_HOPS
@@ -842,27 +1118,155 @@ export function createHttpApp(deps: HttpDeps) {
   const bankFeedWebhooks = deps.bankFeedWebhooks;
   if (bankFeedWebhooks && Object.keys(bankFeedWebhooks).length > 0 && runtime.installed('finance')) {
     const noticeLimit = deps.bankFeedWebhookLimit ?? new RateLimiter({ perMinute: BANK_FEED_WEBHOOKS_PER_MINUTE });
-    app.post('/api/bank-feed/:provider/webhook', bodyLimit({ maxSize: MAX_BANK_FEED_WEBHOOK_BYTES }), async (c) => {
-      const name = c.req.param('provider');
-      if (!Object.hasOwn(bankFeedWebhooks, name)) return c.json({ code: 'NOT_FOUND' }, 404);
-      const decision = noticeLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
-      if (!decision.allowed) {
-        warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
-        c.header('retry-after', String(decision.retryAfterSeconds));
-        return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
-      }
-      try {
-        const headers: Record<string, string | undefined> = {};
-        c.req.raw.headers.forEach((value, header) => {
-          headers[header.toLowerCase()] = value;
-        });
-        const outcome = await acceptBankFeedWebhook(runtime, bankFeedWebhooks[name] as BankFeedProvider, { headers, body: await c.req.text() });
-        if (outcome.status === 401 || outcome.status === 400) return c.json({ code: outcome.code }, outcome.status);
-        return c.json({ queued: outcome.queued }, outcome.status);
-      } catch (error) {
-        return problem(c, error);
-      }
-    });
+    // The per-address limit is its own middleware ahead of the cap: bodyLimit reads a body sent without a Content-Length (a chunked one) up to the cap before it calls the next handler,
+    // so a limiter inside the handler would refuse an address only after its body was read (#4047).
+    app.post(
+      '/api/bank-feed/:provider/webhook',
+      async (c, next) => {
+        if (!Object.hasOwn(bankFeedWebhooks, c.req.param('provider'))) return c.json({ code: 'NOT_FOUND' }, 404);
+        const decision = noticeLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+        if (!decision.allowed) {
+          warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+          c.header('retry-after', String(decision.retryAfterSeconds));
+          return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+        }
+        await next();
+      },
+      bodyLimit({ maxSize: MAX_BANK_FEED_WEBHOOK_BYTES }),
+      async (c) => {
+        const name = c.req.param('provider');
+        try {
+          const headers: Record<string, string | undefined> = {};
+          c.req.raw.headers.forEach((value, header) => {
+            headers[header.toLowerCase()] = value;
+          });
+          const outcome = await acceptBankFeedWebhook(runtime, bankFeedWebhooks[name] as BankFeedProvider, { headers, body: await c.req.text() });
+          if (outcome.status === 401 || outcome.status === 400) return c.json({ code: outcome.code }, outcome.status);
+          return c.json({ queued: outcome.queued }, outcome.status);
+        } catch (error) {
+          return problem(c, error);
+        }
+      },
+    );
+  }
+
+  // A bank feed provider's signed notice at the address of one connection (Tingee, #4203, ADR-0039 as amended): public like the route above, but the provider signs with each customer's own secret, which only the worker can open,
+  // so the address carries a hook key of the connection. In order: the per-address limit (its own middleware, ahead of the body cap for the reason given above), the 16 KB cap, then acceptBankFeedHook: the headers and the
+  // timestamp window, the lookup of the key's SHA-256 (the org and the connection come from our own row, never from the body; an unknown key is a 404 and nothing is stored), a budget per hook, and the raw notice
+  // stored for the worker, which verifies the signature. Nothing of the key, the signature or the body is logged or answered.
+  const bankFeedHooks = deps.bankFeedHooks;
+  if (bankFeedHooks && Object.keys(bankFeedHooks).length > 0 && runtime.installed('finance')) {
+    const hookAddressLimit = deps.bankFeedHookLimit ?? new RateLimiter({ perMinute: BANK_FEED_WEBHOOKS_PER_MINUTE });
+    const hookBudget = deps.bankFeedHookBudget ?? new RateLimiter({ perMinute: BANK_FEED_HOOKS_PER_MINUTE });
+    app.post(
+      '/api/bank-feed/:provider/webhook/:hookKey',
+      async (c, next) => {
+        if (!Object.hasOwn(bankFeedHooks, c.req.param('provider'))) return c.json({ code: 'NOT_FOUND' }, 404);
+        const decision = hookAddressLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+        if (!decision.allowed) {
+          warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+          c.header('retry-after', String(decision.retryAfterSeconds));
+          return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+        }
+        await next();
+      },
+      bodyLimit({ maxSize: MAX_BANK_FEED_HOOK_BYTES }),
+      async (c) => {
+        try {
+          const headers: Record<string, string | undefined> = {};
+          c.req.raw.headers.forEach((value, header) => {
+            headers[header.toLowerCase()] = value;
+          });
+          const outcome = await acceptBankFeedHook(runtime, bankFeedHooks[c.req.param('provider')] as BankFeedProvider, { key: c.req.param('hookKey'), headers, body: await c.req.text() }, hookBudget);
+          if (outcome.status === 200) return c.json({ code: '00', message: 'Success' }, 200);
+          if (outcome.status === 404) return c.json({ code: 'NOT_FOUND' }, 404);
+          if (outcome.status === 429) {
+            c.header('retry-after', String(outcome.retryAfterSeconds));
+            return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: outcome.retryAfterSeconds }, 429);
+          }
+          return c.json({ code: outcome.code }, outcome.status);
+        } catch (error) {
+          // Nothing of the error is logged: a database error's DETAIL can quote the notice's body, which is personal data. The line carries the error's name only.
+          console.error('[bank-feed-hook] request failed:', error instanceof Error ? error.name : 'error');
+          return c.json({ code: 'INTERNAL', message: 'Lỗi hệ thống' }, 500);
+        }
+      },
+    );
+  }
+
+  // A marketplace's signed push at the address of one connection (#4346, S2 of #4315; the verifiers and the worker relay are #4344): public like the routes above, and signed with each seller's own app secret that only the worker
+  // can open, so the address carries a hook key of the connection. In order: the adapter must be one the deployment runs (else a 404 and nothing is stored), the per-address limit (ahead of the body cap), the 16 KB cap, then
+  // acceptMarketplacePush: the key's SHA-256 is looked up (the org and the connection come from our own row, never from the body), and the RAW bytes are stored for the worker. Every answer is an empty 2xx or a bare 404, never a 429
+  // (Shopee disables a subscription below 30% success), and nothing of the key, the header, the body or a secret is logged or answered. Shopee's signed address is built from PUBLIC_URL, never from Host or X-Forwarded-*.
+  const marketplacePush = deps.marketplacePush;
+  if (marketplacePush && marketplacePush.adapters.length > 0 && runtime.installed('finance')) {
+    const pushAddressLimit = marketplacePush.limit ?? new RateLimiter({ perMinute: MARKETPLACE_PUSH_ADDRESS_PER_MINUTE });
+    const pushBudget = marketplacePush.budget ?? new RateLimiter({ perMinute: MARKETPLACE_PUSHES_PER_MINUTE });
+    app.post(
+      '/api/marketplace/:adapter/webhook/:hookKey',
+      async (c, next) => {
+        // An adapter this deployment does not run, or a key of the wrong shape, is a 404 before any body is read.
+        if (!marketplacePush.adapters.includes(c.req.param('adapter')) || !isMarketplaceHookKey(c.req.param('hookKey'))) return c.json({ code: 'NOT_FOUND' }, 404);
+        // Over the address limit the push is dropped with an empty success: the periodic poll makes up what it would have said. The proxy warning is the one the other public routes give: behind a proxy that is not counted in
+        // TRUSTED_PROXY_HOPS every platform shares one bucket, and this is where that shows.
+        if (!pushAddressLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS))).allowed) {
+          warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+          return c.body(null, 200);
+        }
+        await next();
+      },
+      bodyLimit({ maxSize: MAX_MARKETPLACE_PUSH_BYTES, onError: (c) => c.body(null, 200) }),
+      async (c) => {
+        try {
+          const outcome = await acceptMarketplacePush(
+            runtime,
+            c.req.param('adapter'),
+            { key: c.req.param('hookKey'), authorization: c.req.header('authorization'), body: new Uint8Array(await c.req.arrayBuffer()) },
+            pushBudget,
+            config.PUBLIC_URL,
+          );
+          return outcome.status === 404 ? c.json({ code: 'NOT_FOUND' }, 404) : c.body(null, 200);
+        } catch (error) {
+          // Nothing of the error is logged: a database error's DETAIL can quote the push's body. The line carries the error's name only.
+          console.error('[marketplace-push] request failed:', error instanceof Error ? error.name : 'error');
+          return c.json({ code: 'INTERNAL' }, 500);
+        }
+      },
+    );
+  }
+
+  // MISA AMIS's callback with the result of a save (#3903, S4 of #3854; MISA ASP posts to it too, #4103): public, checked by the HMAC of its signed `data` before anything else is read, capped in size and rate limited per client
+  // address before the body is read. The signature proves MISA sent it, not for which organisation (one key per product the deployment holds): the organisation is found from our own stored push row, never from the
+  // envelope (misa-amis-callback.ts). A verified message is always answered 200, so the answer says nothing about an org_refid; a refusal is a fixed code, and nothing of the body, the signature,
+  // MISA's text or the ClientID is logged or kept. Without the ClientID the route is not registered: a POST to the path falls through to the session check of /api/* (401) and reaches nothing.
+  const misaAmisCallback = deps.misaAmisCallback;
+  if (misaAmisCallback && runtime.installed('finance')) {
+    const callbackLimit = deps.misaAmisCallbackLimit ?? new RateLimiter({ perMinute: BANK_FEED_WEBHOOKS_PER_MINUTE });
+    // The limit is its own middleware, ahead of the body cap: a chunked body (no Content-Length) is read up to the cap before the cap's own check passes, and that read must not be free for a flooder.
+    app.post(
+      '/api/webhooks/misa-amis',
+      async (c, next) => {
+        const decision = callbackLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+        if (!decision.allowed) {
+          warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+          c.header('retry-after', String(decision.retryAfterSeconds));
+          return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+        }
+        await next();
+      },
+      bodyLimit({ maxSize: MAX_MISA_AMIS_CALLBACK_BYTES }),
+      async (c) => {
+        try {
+          const outcome = await acceptMisaAmisCallback(runtime, 'keys' in misaAmisCallback ? misaAmisCallback.keys : [{ product: 'amis' as const, clientId: misaAmisCallback.clientId }], await c.req.text());
+          if (outcome.status === 401 || outcome.status === 400) return c.json({ code: outcome.code }, outcome.status);
+          return c.json({ ok: true }, 200);
+        } catch {
+          // Not problem(): it logs the error's message, and a database error can quote the row it refused, which holds MISA's own text. This route logs a short code only (the runtime logs its own internal errors, which the enqueue keeps free of MISA's text: it filters before it inserts); MISA retries a 503.
+          console.error('[misa-amis-callback] not recorded: CALLBACK_UNAVAILABLE');
+          return c.json({ code: 'CALLBACK_UNAVAILABLE' }, 503);
+        }
+      },
+    );
   }
 
   // Zalo OA's webhook of customers' messages (conversation core, #2304): the signature is checked before the body is read or kept, the
@@ -890,6 +1294,39 @@ export function createHttpApp(deps: HttpDeps) {
             return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
           }
         }
+        return c.json({ code: outcome.code }, outcome.status);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
+  // Zoom's webhook of finished cloud recordings (meetings integrations C3, #3175), a doorbell and never data: the body is capped before it is read, the signature (x-zm-signature over
+  // `v0:<timestamp>:<body>`, constant time, 5 minute window) is checked before the event is looked at, and a verified notice only asks the sweep to list the host's connections again (a definer clears
+  // their last listing time). The answer is the same whether or not a connection matched. The per-address limit is charged to refused requests and to a URL validation challenge that came unsigned, so
+  // a flood of forged ones only turns into 429s and costs one HMAC each. Nothing of a body is logged.
+  const zoomWebhook = deps.zoomWebhook;
+  if (zoomWebhook && runtime.installed('meetings')) {
+    const zoomLimit = deps.zoomWebhookLimit ?? new RateLimiter({ perMinute: ZOOM_WEBHOOKS_PER_MINUTE });
+    const zoomReplays = deps.zoomReplays ?? new ZoomReplayCache();
+    app.post(ZOOM_WEBHOOK_PATH, bodyLimit({ maxSize: ZOOM_MAX_NOTICE_BYTES }), async (c) => {
+      try {
+        const outcome = await acceptZoomWebhook(
+          runtime,
+          zoomWebhook,
+          { signature: c.req.header(ZOOM_SIGNATURE_HEADER), timestamp: c.req.header(ZOOM_TIMESTAMP_HEADER), body: new Uint8Array(await c.req.arrayBuffer()) },
+          zoomReplays,
+        );
+        const charged = outcome.status !== 200 || outcome.unsigned === true;
+        if (charged) {
+          const decision = zoomLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+          if (!decision.allowed) {
+            warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+            c.header('retry-after', String(decision.retryAfterSeconds));
+            return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+          }
+        }
+        if (outcome.status === 200) return c.json(outcome.body, 200);
         return c.json({ code: outcome.code }, outcome.status);
       } catch (error) {
         return problem(c, error);
@@ -980,6 +1417,47 @@ export function createHttpApp(deps: HttpDeps) {
     });
   }
 
+  // WhatsApp Business (Cloud API) webhook of customers' messages (conversation core, #3131): the same shape as Meta's Page webhook above. GET answers the
+  // verify-token handshake in constant time; POST checks X-Hub-Signature-256 over the raw bytes before anything else, caps the body before reading it, charges
+  // the per-address limit only to REFUSED requests (a verified notice is never refused for rate), and only parks the signed body for the worker, which finds the
+  // org from the stored connection by the phone number id. The route names no org, writes no tenant row and logs nothing of the body.
+  const whatsappWebhook = deps.whatsappWebhook;
+  if (whatsappWebhook) {
+    const whatsappLimit = deps.whatsappWebhookLimit ?? new RateLimiter({ perMinute: WHATSAPP_WEBHOOKS_PER_MINUTE });
+    const whatsappReplays = deps.whatsappReplays ?? new WhatsAppReplayCache();
+    const chargeWhatsAppRefusal = (c: Context): Response | null => {
+      const decision = whatsappLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      if (decision.allowed) return null;
+      warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+      c.header('retry-after', String(decision.retryAfterSeconds));
+      return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+    };
+    app.get(WHATSAPP_WEBHOOK_PATH, (c) => {
+      const outcome = verifyWhatsAppWebhookChallenge(whatsappWebhook, {
+        mode: c.req.query('hub.mode'),
+        verifyToken: c.req.query('hub.verify_token'),
+        challenge: c.req.query('hub.challenge'),
+      });
+      if (outcome.status === 200) return c.text(outcome.challenge, 200);
+      const limited = chargeWhatsAppRefusal(c);
+      if (limited) return limited;
+      return c.json({ code: outcome.code }, outcome.status);
+    });
+    app.post(WHATSAPP_WEBHOOK_PATH, bodyLimit({ maxSize: WHATSAPP_MAX_NOTICE_BYTES }), async (c) => {
+      try {
+        const outcome = await acceptWhatsAppWebhook(runtime, whatsappWebhook, { signature: c.req.header(WHATSAPP_SIGNATURE_HEADER), body: new Uint8Array(await c.req.arrayBuffer()) }, whatsappReplays);
+        if (outcome.status === 200) return c.json({ ok: true }, 200);
+        if (outcome.status === 401 || outcome.status === 400) {
+          const limited = chargeWhatsAppRefusal(c);
+          if (limited) return limited;
+        }
+        return c.json({ code: outcome.code }, outcome.status);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
   // Meta's data deletion callback, the one URL of the deployment's Meta apps (ads plan section 9 #2219, conversations plan CV6
   // #2305). POST is Meta's signed request, checked against every app secret held before anything else, rate limited per client
   // address, stored nowhere and only queued for the worker, which erases the Ads accounts and the conversations of the connections
@@ -1032,7 +1510,7 @@ export function createHttpApp(deps: HttpDeps) {
       try {
         const raw = new Uint8Array(await c.req.arrayBuffer());
         // Stored and queued only; the worker parses it and files the attachments (External-tenant gate T5).
-        const result = await acceptInboundEmail({ runtime, store, domain }, raw, c.req.header('x-crove-recipient') ?? null);
+        const result = await acceptInboundEmail({ runtime, store, domain }, raw, readRecipientHeader(c));
         return c.json(result, 202);
       } catch (error) {
         return problem(c, error);
@@ -1210,6 +1688,773 @@ export function createHttpApp(deps: HttpDeps) {
         return problem(c, error);
       } finally {
         release();
+      }
+    });
+  }
+
+  // Orgless public eSign link endpoints (#3324, docs/plan/esign.md): credentials stay out of query strings,
+  // every answer sets Referrer-Policy: no-referrer and Cache-Control: no-store, disabled/expired/waiting states
+  // return one opaque 404, and rate/concurrency caps apply without any CAPTCHA gate (#203).
+  if (runtime.installed('sign')) {
+    const signBilling: SignBilling = deps.billing ?? { entitlements: async () => ['full'] };
+    const signViewLimit = deps.signLimits?.views ?? new RateLimiter({ perMinute: SIGN_VIEWS_PER_MINUTE });
+    const signTokenViewLimit = deps.signLimits?.tokenViews ?? new RateLimiter({ perMinute: SIGN_TOKEN_VIEWS_PER_MINUTE });
+    const signPdfLimit = deps.signLimits?.pdfs ?? new RateLimiter({ perMinute: SIGN_PDFS_PER_MINUTE });
+    const signTokenPdfLimit = deps.signLimits?.tokenPdfs ?? new RateLimiter({ perMinute: SIGN_TOKEN_PDFS_PER_MINUTE });
+    const signPdfReads = deps.signLimits?.pdfReads ?? new ConcurrencyLimiter({ total: SIGN_PDF_READS_MAX, perKey: SIGN_PDF_READS_MAX });
+    const signOtpReqLimit = deps.signLimits?.otpRequest ?? new RateLimiter({ perMinute: SIGN_OTP_REQUESTS_PER_MINUTE });
+    const signTokenOtpReqLimit = deps.signLimits?.tokenOtpRequest ?? new RateLimiter({ perMinute: SIGN_TOKEN_OTP_REQUESTS_PER_MINUTE });
+    const signOtpVerifyLimit = deps.signLimits?.otpVerify ?? new RateLimiter({ perMinute: SIGN_OTP_VERIFIES_PER_MINUTE });
+    const signTokenOtpVerifyLimit = deps.signLimits?.tokenOtpVerify ?? new RateLimiter({ perMinute: SIGN_TOKEN_OTP_VERIFIES_PER_MINUTE });
+    const signSubmitLimit = deps.signLimits?.submit ?? new RateLimiter({ perMinute: SIGN_SUBMITS_PER_MINUTE });
+    const signTokenSubmitLimit = deps.signLimits?.tokenSubmit ?? new RateLimiter({ perMinute: SIGN_TOKEN_SUBMITS_PER_MINUTE });
+    const signDelegateLimit = deps.signLimits?.delegate ?? new RateLimiter({ perMinute: SIGN_DELEGATES_PER_MINUTE });
+    const signTokenDelegateLimit = deps.signLimits?.tokenDelegate ?? new RateLimiter({ perMinute: SIGN_TOKEN_DELEGATES_PER_MINUTE });
+    const signAttachmentLimit = deps.signLimits?.attachment ?? new RateLimiter({ perMinute: SIGN_ATTACHMENTS_PER_MINUTE });
+    const signTokenAttachmentLimit = deps.signLimits?.tokenAttachment ?? new RateLimiter({ perMinute: SIGN_TOKEN_ATTACHMENTS_PER_MINUTE });
+    const signAttachmentUploads = deps.signLimits?.attachmentUploads ?? new ConcurrencyLimiter({ total: SIGN_ATTACHMENT_UPLOADS_MAX, perKey: SIGN_ATTACHMENT_UPLOADS_MAX });
+    const signVerifyLimit = deps.signLimits?.verify ?? new RateLimiter({ perMinute: SIGN_VERIFY_PER_MINUTE });
+
+    const setSignSecurityHeaders = (c: Context) => {
+      c.header('referrer-policy', 'no-referrer');
+      c.header('cache-control', 'no-store');
+      c.header('x-content-type-options', 'nosniff');
+    };
+
+    const signBodyLimit = (maxSize: number) =>
+      bodyLimit({
+        maxSize,
+        onError: (c) => {
+          setSignSecurityHeaders(c);
+          return c.text('Payload Too Large', 413);
+        },
+      });
+
+    const signEdgeGuard = (ipLimit: RateLimiter): MiddlewareHandler => async (c, next) => {
+      setSignSecurityHeaders(c);
+      if (c.req.query('token') !== undefined) {
+        return c.json({ code: 'SIGN_QUERY_TOKEN_FORBIDDEN', message: 'Signing tokens must be submitted in the request body' }, 400);
+      }
+      const decision = ipLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      if (!decision.allowed) {
+        warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+        c.header('retry-after', String(decision.retryAfterSeconds));
+        return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+      }
+      await next();
+    };
+
+    const signRateLimited = (c: Context, retryAfterSeconds: number) => {
+      c.header('retry-after', String(retryAfterSeconds));
+      return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds }, 429);
+    };
+
+    const signOpaqueNotFound = (c: Context) => c.json({ code: 'NOT_FOUND', message: 'Not found' }, 404);
+    const signMeta = (c: Context) => ({ ip: clientIp(c, config.TRUSTED_PROXY_HOPS), userAgent: c.req.header('user-agent') ?? null });
+
+    app.post('/api/sign/view', signEdgeGuard(signViewLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const res = await runSignView(runtime, signBilling, await c.req.json().catch(() => null), signMeta(c), (hash) => signTokenViewLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        return c.json(res.view);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/pdf', signEdgeGuard(signPdfLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const lookup = await resolvePublicPdf(runtime, signBilling, await c.req.json().catch(() => null), (hash) => signTokenPdfLimit.take(hash));
+        if (lookup.status === 'not_found') return signOpaqueNotFound(c);
+        if (lookup.status === 'rate_limited') return signRateLimited(c, lookup.retryAfterSeconds);
+        if (lookup.status === 'otp_required') {
+          return c.json({ code: 'OTP_REQUIRED', message: 'Email OTP verification is required before viewing document' }, 403);
+        }
+        const release = signPdfReads.tryAcquire('sign-pdf');
+        if (!release) {
+          c.header('retry-after', '2');
+          return c.json({ code: 'SIGN_PDF_BUSY', message: 'Máy chủ đang bận, hãy thử lại sau vài giây' }, 503);
+        }
+        try {
+          const bytes = await readPublicPdfBytes(store, lookup.source);
+          return new Response(body(bytes), {
+            headers: {
+              'content-type': 'application/pdf',
+              'content-disposition': 'inline; filename="document.pdf"',
+              'cache-control': 'no-store',
+              'referrer-policy': 'no-referrer',
+              'x-content-type-options': 'nosniff',
+              'content-security-policy': "default-src 'none'; sandbox",
+            },
+          });
+        } finally {
+          release();
+        }
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/otp/request', signEdgeGuard(signOtpReqLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const res = await runSignOtpRequest(runtime, signBilling, await c.req.json().catch(() => null), (hash) => signTokenOtpReqLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/otp/verify', signEdgeGuard(signOtpVerifyLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const res = await runSignOtpVerify(runtime, signBilling, await c.req.json().catch(() => null), signMeta(c), (hash) => signTokenOtpVerifyLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        if (res.result.ok) return c.json(res.result, 200);
+        if (res.result.locked) return c.json(res.result, 423);
+        return c.json(res.result, 401);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/submit', signEdgeGuard(signSubmitLimit), signBodyLimit(4 * 1024 * 1024), async (c) => {
+      try {
+        const res = await runSignSubmit(runtime, signBilling, await c.req.json().catch(() => null), signMeta(c), (hash) => signTokenSubmitLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'already_used') return c.json({ code: 'SIGN_ALREADY_SUBMITTED', message: 'This signing link has already been used' }, 409);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/decline', signEdgeGuard(signSubmitLimit), signBodyLimit(8 * 1024), async (c) => {
+      try {
+        const res = await runSignDecline(runtime, signBilling, await c.req.json().catch(() => null), signMeta(c), (hash) => signTokenSubmitLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'already_used') return c.json({ code: 'SIGN_ALREADY_SUBMITTED', message: 'This signing link has already been used' }, 409);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/delegate', signEdgeGuard(signDelegateLimit), signBodyLimit(4096), async (c) => {
+      try {
+        const res = await runSignDelegate(runtime, signBilling, await c.req.json().catch(() => null), signMeta(c), (hash) => signTokenDelegateLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'already_used') return c.json({ code: 'SIGN_ALREADY_SUBMITTED', message: 'This signing link has already been used' }, 409);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/attachment', signEdgeGuard(signAttachmentLimit), signBodyLimit(SIGN_ATTACHMENT_MAX_BYTES + 4 * 1024 * 1024), async (c) => {
+      const release = signAttachmentUploads.tryAcquire('sign-attachment');
+      if (!release) {
+        c.header('retry-after', '2');
+        return c.json({ code: 'SIGN_ATTACHMENT_BUSY', message: 'Máy chủ đang xử lý nhiều tệp đính kèm, hãy thử lại sau vài giây' }, 503);
+      }
+      try {
+        const ct = (c.req.header('content-type') ?? '').toLowerCase();
+        let token: unknown = null;
+        let fieldId: unknown = null;
+        let filename: unknown = null;
+        let bytes: Uint8Array | null = null;
+        let oversize = false;
+        let invalidEncoding = false;
+        if (ct.includes('multipart/form-data')) {
+          const form = await c.req.parseBody().catch(() => null);
+          if (!form) return signOpaqueNotFound(c);
+          token = form.token;
+          fieldId = form.fieldId;
+          const file = form.file;
+          if (file instanceof File) {
+            filename = file.name;
+            if (file.size > SIGN_ATTACHMENT_MAX_BYTES) {
+              oversize = true;
+            } else {
+              bytes = new Uint8Array(await file.arrayBuffer());
+            }
+          }
+        } else {
+          const json = await c.req.json().catch(() => null);
+          if (!json || typeof json !== 'object') return signOpaqueNotFound(c);
+          const payload = json as Record<string, unknown>;
+          token = payload.token;
+          fieldId = payload.fieldId;
+          filename = payload.filename;
+          if (typeof payload.contentBase64 === 'string') {
+            const cleanBase64 = payload.contentBase64.replace(/\s+/g, '');
+            const maxBase64Chars = Math.ceil((SIGN_ATTACHMENT_MAX_BYTES * 4) / 3) + 16;
+            if (cleanBase64.length > maxBase64Chars) {
+              oversize = true;
+            } else if (cleanBase64.length > 0) {
+              if (cleanBase64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(cleanBase64)) {
+                invalidEncoding = true;
+              } else {
+                bytes = new Uint8Array(Buffer.from(cleanBase64, 'base64'));
+              }
+            }
+          }
+        }
+        const res = await runSignAttachmentUpload(
+          runtime,
+          store,
+          signBilling,
+          { token, fieldId, filename, bytes, oversize, invalidEncoding },
+          signMeta(c),
+          (hash) => signTokenAttachmentLimit.take(hash),
+        );
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'already_used') return c.json({ code: 'SIGN_ALREADY_SUBMITTED', message: 'This signing link has already been used' }, 409);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      } finally {
+        release();
+      }
+    });
+
+    app.post('/api/sign/verify', signEdgeGuard(signVerifyLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const verified = await runSignVerify(runtime, signBilling, await c.req.json().catch(() => null));
+        return verified ? c.json(verified) : signOpaqueNotFound(c);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    const signDirectViewLimit = deps.signDirectLimits?.views ?? new RateLimiter({ perMinute: SIGN_DIRECT_VIEWS_PER_MINUTE });
+    const signDirectTokenViewLimit = deps.signDirectLimits?.tokenViews ?? new RateLimiter({ perMinute: SIGN_DIRECT_TOKEN_VIEWS_PER_MINUTE });
+    const signDirectPdfLimit = deps.signDirectLimits?.pdfs ?? new RateLimiter({ perMinute: SIGN_DIRECT_PDFS_PER_MINUTE });
+    const signDirectTokenPdfLimit = deps.signDirectLimits?.tokenPdfs ?? new RateLimiter({ perMinute: SIGN_DIRECT_TOKEN_PDFS_PER_MINUTE });
+    const signDirectOtpReqLimit = deps.signDirectLimits?.otpRequest ?? new RateLimiter({ perMinute: SIGN_DIRECT_OTP_REQUESTS_PER_MINUTE });
+    const signDirectTokenOtpReqLimit = deps.signDirectLimits?.tokenOtpRequest ?? new RateLimiter({ perMinute: SIGN_DIRECT_TOKEN_OTP_REQUESTS_PER_MINUTE });
+    const signDirectEmailOtpReqLimit = deps.signDirectLimits?.emailOtpRequest ?? new RateLimiter({ perMinute: SIGN_DIRECT_EMAIL_OTP_REQUESTS_PER_MINUTE });
+    const signDirectOtpVerifyLimit = deps.signDirectLimits?.otpVerify ?? new RateLimiter({ perMinute: SIGN_DIRECT_OTP_VERIFIES_PER_MINUTE });
+    const signDirectTokenOtpVerifyLimit = deps.signDirectLimits?.tokenOtpVerify ?? new RateLimiter({ perMinute: SIGN_DIRECT_TOKEN_OTP_VERIFIES_PER_MINUTE });
+    const signDirectStartLimit = deps.signDirectLimits?.start ?? new RateLimiter({ perMinute: SIGN_DIRECT_STARTS_PER_MINUTE });
+    const signDirectTokenStartLimit = deps.signDirectLimits?.tokenStart ?? new RateLimiter({ perMinute: SIGN_DIRECT_TOKEN_STARTS_PER_MINUTE });
+
+    app.post('/api/sign/direct/view', signEdgeGuard(signDirectViewLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const res = await runSignDirectView(runtime, signBilling, await c.req.json().catch(() => null), (hash) => signDirectTokenViewLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        return c.json(res.view);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/direct/pdf', signEdgeGuard(signDirectPdfLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const lookup = await resolvePublicDirectPdf(runtime, signBilling, await c.req.json().catch(() => null), (hash) => signDirectTokenPdfLimit.take(hash));
+        if (lookup.status === 'not_found') return signOpaqueNotFound(c);
+        if (lookup.status === 'rate_limited') return signRateLimited(c, lookup.retryAfterSeconds);
+        if (lookup.status === 'otp_required') {
+          return c.json({ code: 'OTP_REQUIRED', message: 'Email OTP verification is required before viewing document' }, 403);
+        }
+        const release = signPdfReads.tryAcquire('sign-pdf');
+        if (!release) {
+          c.header('retry-after', '2');
+          return c.json({ code: 'SIGN_PDF_BUSY', message: 'Máy chủ đang bận, hãy thử lại sau vài giây' }, 503);
+        }
+        try {
+          const bytes = await readPublicPdfBytes(store, lookup.source);
+          return new Response(body(bytes), {
+            headers: {
+              'content-type': 'application/pdf',
+              'content-disposition': 'inline; filename="document.pdf"',
+              'cache-control': 'no-store',
+              'referrer-policy': 'no-referrer',
+              'x-content-type-options': 'nosniff',
+              'content-security-policy': "default-src 'none'; sandbox",
+            },
+          });
+        } finally {
+          release();
+        }
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/direct/otp/request', signEdgeGuard(signDirectOtpReqLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const res = await runSignDirectOtpRequest(
+          runtime,
+          signBilling,
+          await c.req.json().catch(() => null),
+          (hash) => signDirectTokenOtpReqLimit.take(hash),
+          (bucket) => signDirectEmailOtpReqLimit.take(bucket),
+        );
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/direct/otp/verify', signEdgeGuard(signDirectOtpVerifyLimit), signBodyLimit(2048), async (c) => {
+      try {
+        const res = await runSignDirectOtpVerify(runtime, signBilling, await c.req.json().catch(() => null), (hash) => signDirectTokenOtpVerifyLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        if (res.result.ok) return c.json(res.result, 200);
+        if (res.result.locked) return c.json(res.result, 423);
+        return c.json(res.result, 401);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/direct/start', signEdgeGuard(signDirectStartLimit), signBodyLimit(4096), async (c) => {
+      try {
+        const res = await runSignDirectStart(runtime, signBilling, await c.req.json().catch(() => null), signMeta(c), (hash) => signDirectTokenStartLimit.take(hash));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    const signPublicHubListLimit = deps.signPublicHubLimits?.lists ?? new RateLimiter({ perMinute: SIGN_PUBLIC_HUB_LISTS_PER_MINUTE });
+    const signPublicHubActionLimit = deps.signPublicHubLimits?.actions ?? new RateLimiter({ perMinute: SIGN_PUBLIC_HUB_ACTIONS_PER_MINUTE });
+    const signPublicHubTemplateLimit = deps.signPublicHubLimits?.templateActions ?? new RateLimiter({ perMinute: SIGN_PUBLIC_HUB_TEMPLATE_ACTIONS_PER_MINUTE });
+    const signPublicHubEmailOtpLimit = deps.signPublicHubLimits?.emailOtpRequest ?? new RateLimiter({ perMinute: SIGN_PUBLIC_HUB_EMAIL_OTP_REQUESTS_PER_MINUTE });
+
+    app.get('/api/sign/public-hub/:orgSlug', signEdgeGuard(signPublicHubListLimit), async (c) => {
+      try {
+        const res = await runSignPublicHubList(runtime, signBilling, c.req.param('orgSlug'));
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        return c.json(res.hub);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/sign/public-hub/:orgSlug', signEdgeGuard(signPublicHubActionLimit), signBodyLimit(4096), async (c) => {
+      try {
+        const orgSlug = c.req.param('orgSlug');
+        const rawBody = await c.req.json().catch(() => null);
+        if (rawBody && typeof rawBody === 'object' && (rawBody as Record<string, unknown>).action === 'pdf') {
+          const lookup = await resolvePublicHubPdf(runtime, signBilling, orgSlug, rawBody, (bucket) => signPublicHubTemplateLimit.take(bucket));
+          if (lookup.status === 'not_found') return signOpaqueNotFound(c);
+          if (lookup.status === 'rate_limited') return signRateLimited(c, lookup.retryAfterSeconds);
+          if (lookup.status === 'otp_required') {
+            return c.json({ code: 'OTP_REQUIRED', message: 'Email OTP verification is required before viewing document' }, 403);
+          }
+          const release = signPdfReads.tryAcquire('sign-pdf');
+          if (!release) {
+            c.header('retry-after', '2');
+            return c.json({ code: 'SIGN_PDF_BUSY', message: 'Máy chủ đang bận, hãy thử lại sau vài giây' }, 503);
+          }
+          try {
+            const bytes = await readPublicPdfBytes(store, lookup.source);
+            return new Response(body(bytes), {
+              headers: {
+                'content-type': 'application/pdf',
+                'content-disposition': 'inline; filename="document.pdf"',
+                'cache-control': 'no-store',
+                'referrer-policy': 'no-referrer',
+                'x-content-type-options': 'nosniff',
+                'content-security-policy': "default-src 'none'; sandbox",
+              },
+            });
+          } finally {
+            release();
+          }
+        }
+
+        const res = await runSignPublicHubAction(runtime, signBilling, orgSlug, rawBody, signMeta(c), {
+          limitTemplate: (bucket) => signPublicHubTemplateLimit.take(bucket),
+          limitEmail: (bucket) => signPublicHubEmailOtpLimit.take(bucket),
+        });
+        if (res.status === 'not_found') return signOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return signRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        if (res.status === 'otp_verify_result') {
+          if (res.result.ok) return c.json(res.result, 200);
+          if (res.result.locked) return c.json(res.result, 423);
+          return c.json(res.result, 401);
+        }
+        return c.json(res.data);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    // Scoped external REST API (/api/v1/sign/*, #4441, eSign Slice 5c):
+    // Bearer ludy_sk_... API key hashed via SHA-256, org_app_on + entitlement opaque 404,
+    // sign:read vs sign:draft scope checks, per-IP + per-key rate limits, Cache-Control: no-store,
+    // strict exclusion of hr_contract and meeting_minutes envelopes, and draft-only template creation.
+    const signApiV1IpLimit = deps.signApiV1Limits?.ip ?? new RateLimiter({ perMinute: SIGN_API_V1_IP_PER_MINUTE });
+    const signApiV1KeyReadLimit = deps.signApiV1Limits?.keyRead ?? new RateLimiter({ perMinute: SIGN_API_V1_KEY_READ_PER_MINUTE });
+    const signApiV1KeyDraftLimit = deps.signApiV1Limits?.keyDraft ?? new RateLimiter({ perMinute: SIGN_API_V1_KEY_DRAFT_PER_MINUTE });
+
+    const signApiV1Guard: MiddlewareHandler = async (c, next) => {
+      setSignSecurityHeaders(c);
+      if (
+        c.req.query('token') !== undefined ||
+        c.req.query('api_key') !== undefined ||
+        c.req.query('apiKey') !== undefined ||
+        c.req.query('access_token') !== undefined ||
+        c.req.query('key') !== undefined
+      ) {
+        return c.json({ code: 'SIGN_QUERY_TOKEN_FORBIDDEN', message: 'API keys must be sent in the Authorization: Bearer header' }, 400);
+      }
+      const decision = signApiV1IpLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      if (!decision.allowed) {
+        warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+        c.header('retry-after', String(decision.retryAfterSeconds));
+        return c.json({ code: 'RATE_LIMITED', message: 'Too many requests, please retry later', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+      }
+      await next();
+    };
+
+    const replySignApiV1NonOk = (c: Context, res: Exclude<SignApiV1Outcome<unknown>, { status: 'ok' }>) => {
+      if (res.status === 'unauthorized') {
+        c.header('www-authenticate', 'Bearer');
+        return c.json({ code: 'UNAUTHENTICATED', message: 'Invalid or expired API key' }, 401);
+      }
+      if (res.status === 'not_found') return signOpaqueNotFound(c);
+      if (res.status === 'forbidden') {
+        return c.json({ code: 'FORBIDDEN', message: `API key requires scope ${res.requiredScope}` }, 403);
+      }
+      return signRateLimited(c, res.retryAfterSeconds);
+    };
+
+    app.get('/api/v1/sign/envelopes', signApiV1Guard, async (c) => {
+      try {
+        const res = await runSignApiV1EnvelopesList(
+          runtime,
+          signBilling,
+          c.req.header('authorization'),
+          { status: c.req.query('status'), limit: c.req.query('limit') },
+          (hash) => signApiV1KeyReadLimit.take(hash),
+        );
+        if (res.status !== 'ok') return replySignApiV1NonOk(c, res);
+        return c.json(res.data);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.get('/api/v1/sign/envelopes/:id', signApiV1Guard, async (c) => {
+      try {
+        const res = await runSignApiV1EnvelopeGet(
+          runtime,
+          signBilling,
+          c.req.header('authorization'),
+          c.req.param('id'),
+          (hash) => signApiV1KeyReadLimit.take(hash),
+        );
+        if (res.status !== 'ok') return replySignApiV1NonOk(c, res);
+        return c.json(res.data);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.get('/api/v1/sign/envelopes/:id/sealed', signApiV1Guard, async (c) => {
+      try {
+        const lookup = await resolveSignApiV1FileSource(
+          runtime,
+          signBilling,
+          c.req.header('authorization'),
+          c.req.param('id'),
+          'sealed',
+          (hash) => signApiV1KeyReadLimit.take(hash),
+        );
+        if (lookup.status !== 'ok') return replySignApiV1NonOk(c, lookup);
+        const release = signPdfReads.tryAcquire('sign-api-v1');
+        if (!release) {
+          c.header('retry-after', '2');
+          return c.json({ code: 'SIGN_PDF_BUSY', message: 'Server is busy, please retry shortly' }, 503);
+        }
+        try {
+          const bytes = await readSignApiV1ArtifactBytes(store, lookup.data);
+          return new Response(body(bytes), {
+            headers: {
+              'content-type': 'application/pdf',
+              'content-disposition': `attachment; filename="sealed-${lookup.data.envelopeId}.pdf"`,
+              'x-content-sha256': lookup.data.sha256,
+              'cache-control': 'no-store',
+              'referrer-policy': 'no-referrer',
+              'x-content-type-options': 'nosniff',
+              'content-security-policy': "default-src 'none'; sandbox",
+            },
+          });
+        } finally {
+          release();
+        }
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.get('/api/v1/sign/envelopes/:id/certificate', signApiV1Guard, async (c) => {
+      try {
+        const lookup = await resolveSignApiV1FileSource(
+          runtime,
+          signBilling,
+          c.req.header('authorization'),
+          c.req.param('id'),
+          'certificate',
+          (hash) => signApiV1KeyReadLimit.take(hash),
+        );
+        if (lookup.status !== 'ok') return replySignApiV1NonOk(c, lookup);
+        const release = signPdfReads.tryAcquire('sign-api-v1');
+        if (!release) {
+          c.header('retry-after', '2');
+          return c.json({ code: 'SIGN_PDF_BUSY', message: 'Server is busy, please retry shortly' }, 503);
+        }
+        try {
+          const bytes = await readSignApiV1ArtifactBytes(store, lookup.data);
+          return new Response(body(bytes), {
+            headers: {
+              'content-type': 'application/json; charset=utf-8',
+              'content-disposition': `attachment; filename="certificate-${lookup.data.envelopeId}.json"`,
+              'x-content-sha256': lookup.data.sha256,
+              'cache-control': 'no-store',
+              'referrer-policy': 'no-referrer',
+              'x-content-type-options': 'nosniff',
+              'content-security-policy': "default-src 'none'; sandbox",
+            },
+          });
+        } finally {
+          release();
+        }
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.get('/api/v1/sign/templates', signApiV1Guard, async (c) => {
+      try {
+        const res = await runSignApiV1TemplatesList(
+          runtime,
+          signBilling,
+          c.req.header('authorization'),
+          { limit: c.req.query('limit') },
+          (hash) => signApiV1KeyReadLimit.take(hash),
+        );
+        if (res.status !== 'ok') return replySignApiV1NonOk(c, res);
+        return c.json(res.data);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/v1/sign/envelopes/from-template', signApiV1Guard, signBodyLimit(32 * 1024), async (c) => {
+      try {
+        const rawBody = await c.req.json().catch(() => null);
+        const res = await runSignApiV1FromTemplate(
+          runtime,
+          signBilling,
+          c.req.header('authorization'),
+          rawBody,
+          appUrl(config),
+          signMeta(c),
+          (hash) => signApiV1KeyDraftLimit.take(hash),
+        );
+        if (res.status !== 'ok') return replySignApiV1NonOk(c, res);
+        return c.json(res.data, 201);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
+  // Orgless public Projects Roadmap routes (#4399, ADR-0057, ADR-0053, #203):
+  // free browsing with no login, 6-digit email OTP verification without CAPTCHA (#203), HMAC voter claim,
+  // opaque 404 across missing/disabled/unentitled orgs and boards, and no-store/no-referrer headers.
+  const roadmapBilling: SignBilling = deps.billing ?? { entitlements: async () => ['full'] };
+  if (runtime.installed('projects')) {
+    const roadmapBroker = deps.broker ?? createCredentialBroker(config);
+    const roadmapClaimKey = deriveRoadmapClaimKey(roadmapBroker, config.AUTH_JWT_SECRET);
+    const roadmapViewLimit = deps.roadmapLimits?.views ?? new RateLimiter({ perMinute: ROADMAP_PUBLIC_VIEWS_PER_MINUTE });
+    const roadmapOtpReqLimit = deps.roadmapLimits?.otpRequest ?? new RateLimiter({ perMinute: ROADMAP_PUBLIC_OTP_REQUESTS_PER_MINUTE });
+    const roadmapOtpEmailLimit = deps.roadmapLimits?.emailOtpRequest ?? new RateLimiter({ perMinute: ROADMAP_PUBLIC_OTP_EMAIL_REQUESTS_PER_MINUTE });
+    const roadmapOtpVerifyLimit = deps.roadmapLimits?.otpVerify ?? new RateLimiter({ perMinute: ROADMAP_PUBLIC_OTP_VERIFIES_PER_MINUTE });
+    const roadmapIdeaLimit = deps.roadmapLimits?.ideas ?? new RateLimiter({ perMinute: ROADMAP_PUBLIC_IDEAS_PER_MINUTE });
+    const roadmapVoteLimit = deps.roadmapLimits?.votes ?? new RateLimiter({ perMinute: ROADMAP_PUBLIC_VOTES_PER_MINUTE });
+
+    const setRoadmapSecurityHeaders = (c: Context) => {
+      c.header('referrer-policy', 'no-referrer');
+      c.header('cache-control', 'no-store');
+      c.header('x-content-type-options', 'nosniff');
+    };
+
+    const roadmapBodyLimit = (maxSize: number) =>
+      bodyLimit({
+        maxSize,
+        onError: (c) => {
+          setRoadmapSecurityHeaders(c);
+          return c.text('Payload Too Large', 413);
+        },
+      });
+
+    const roadmapEdgeGuard = (ipLimit: RateLimiter): MiddlewareHandler => async (c, next) => {
+      setRoadmapSecurityHeaders(c);
+      if (c.req.query('token') !== undefined || c.req.query('voterToken') !== undefined || c.req.query('unsubscribe') !== undefined) {
+        return c.json({ code: 'ROADMAP_QUERY_TOKEN_FORBIDDEN', message: 'Credentials must not be passed in URL query parameters' }, 400);
+      }
+      const decision = ipLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      if (!decision.allowed) {
+        warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+        c.header('retry-after', String(decision.retryAfterSeconds));
+        return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+      }
+      await next();
+    };
+
+    const roadmapOpaqueNotFound = (c: Context) => c.json({ code: 'NOT_FOUND', message: 'Not found' }, 404);
+    const roadmapRateLimited = (c: Context, retryAfterSeconds: number) => {
+      c.header('retry-after', String(retryAfterSeconds));
+      return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds }, 429);
+    };
+
+    const resolveRoadmapCaller = async (
+      c: Context,
+      orgSlug: string,
+      boardSlug: string,
+    ): Promise<{ claimSha256: string | null; voterEmail: string | null; actorUserId: string | null }> => {
+      const voterToken = c.req.header(ROADMAP_VOTER_HEADER);
+      const claim = verifyRoadmapVoterClaim(voterToken, roadmapClaimKey, orgSlug, boardSlug);
+      if (claim) {
+        return { claimSha256: claim.claimSha256, voterEmail: null, actorUserId: null };
+      }
+      const authHeader = c.req.header('authorization');
+      if (authHeader && /^Bearer\s+/i.test(authHeader)) {
+        try {
+          const user = await authenticate(authHeader);
+          if (!user.extension && user.email) {
+            return { claimSha256: null, voterEmail: user.email, actorUserId: user.userId };
+          }
+        } catch {
+          // Invalid/expired bearer stays anonymous on public roadmap routes.
+        }
+      }
+      return { claimSha256: null, voterEmail: null, actorUserId: null };
+    };
+
+    app.get('/api/projects/public-roadmap/:orgSlug/:boardSlug', roadmapEdgeGuard(roadmapViewLimit), async (c) => {
+      try {
+        const orgSlug = c.req.param('orgSlug');
+        const boardSlug = c.req.param('boardSlug');
+        const caller = await resolveRoadmapCaller(c, orgSlug, boardSlug);
+        const res = await runPublicRoadmapView(runtime, roadmapBilling, orgSlug, boardSlug, caller);
+        if (res.status === 'not_found') return roadmapOpaqueNotFound(c);
+        return c.json(res.view);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/projects/public-roadmap/:orgSlug/:boardSlug/otp/request', roadmapEdgeGuard(roadmapOtpReqLimit), roadmapBodyLimit(2048), async (c) => {
+      try {
+        const orgSlug = c.req.param('orgSlug');
+        const boardSlug = c.req.param('boardSlug');
+        const res = await runPublicRoadmapOtpRequest(
+          runtime,
+          roadmapBilling,
+          orgSlug,
+          boardSlug,
+          await c.req.json().catch(() => null),
+          clientIp(c, config.TRUSTED_PROXY_HOPS),
+          (bucket) => roadmapOtpEmailLimit.take(bucket),
+        );
+        if (res.status === 'not_found') return roadmapOpaqueNotFound(c);
+        if (res.status === 'rate_limited') return roadmapRateLimited(c, res.retryAfterSeconds);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/projects/public-roadmap/:orgSlug/:boardSlug/otp/verify', roadmapEdgeGuard(roadmapOtpVerifyLimit), roadmapBodyLimit(2048), async (c) => {
+      try {
+        const orgSlug = c.req.param('orgSlug');
+        const boardSlug = c.req.param('boardSlug');
+        const res = await runPublicRoadmapOtpVerify(
+          runtime,
+          roadmapBilling,
+          roadmapClaimKey,
+          orgSlug,
+          boardSlug,
+          await c.req.json().catch(() => null),
+        );
+        if (res.status === 'not_found') return roadmapOpaqueNotFound(c);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        if (res.result.ok) return c.json(res.result, 200);
+        if (res.result.locked) return c.json(res.result, 423);
+        return c.json(res.result, 401);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/projects/public-roadmap/:orgSlug/:boardSlug/ideas', roadmapEdgeGuard(roadmapIdeaLimit), roadmapBodyLimit(16_384), async (c) => {
+      try {
+        const orgSlug = c.req.param('orgSlug');
+        const boardSlug = c.req.param('boardSlug');
+        const caller = await resolveRoadmapCaller(c, orgSlug, boardSlug);
+        const res = await runPublicRoadmapSubmitIdea(
+          runtime,
+          roadmapBilling,
+          orgSlug,
+          boardSlug,
+          await c.req.json().catch(() => null),
+          caller,
+        );
+        if (res.status === 'not_found') return roadmapOpaqueNotFound(c);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        return c.json(res.result, 201);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/projects/public-roadmap/:orgSlug/:boardSlug/votes', roadmapEdgeGuard(roadmapVoteLimit), roadmapBodyLimit(2048), async (c) => {
+      try {
+        const orgSlug = c.req.param('orgSlug');
+        const boardSlug = c.req.param('boardSlug');
+        const caller = await resolveRoadmapCaller(c, orgSlug, boardSlug);
+        const res = await runPublicRoadmapVote(
+          runtime,
+          roadmapBilling,
+          roadmapBroker,
+          orgSlug,
+          boardSlug,
+          await c.req.json().catch(() => null),
+          caller,
+        );
+        if (res.status === 'not_found') return roadmapOpaqueNotFound(c);
+        if (res.status === 'validation_error') return c.json({ code: 'VALIDATION', message: res.message }, 422);
+        return c.json(res.result);
+      } catch (error) {
+        return problem(c, error);
       }
     });
   }
@@ -1432,7 +2677,22 @@ export function createHttpApp(deps: HttpDeps) {
       // The stream's access line names the org the ticket was issued for (#2175).
       setLogContext({ orgId });
       // The check also answers the legal-entity scope the stream's hints are filtered by (#1692).
-      const check = () => runtime.query(STREAM_CHECK_QUERY, {}, { actor, orgId }).then(streamScopeOf);
+      // And the apps the org has off now (ADR-0053): a stream does not push the hints of an app that is off, and re-reads this on every check. A check that cannot
+      // tell leaves the filter out, as the app's own calls into an off app are refused by the runtime anyway.
+      // The apps off at the last check that could read them: a read that fails keeps that filter in force (it never widens a stream), and logs the error's class.
+      let lastAppsOff: ReadonlySet<string> | null = null;
+      const check = async () => {
+        const scope = streamScopeOf(await runtime.query(STREAM_CHECK_QUERY, {}, { actor, orgId }));
+        const on = await runtime.effectiveModules(orgId).catch((error: unknown) => {
+          console.warn(`[stream] the apps of org ${orgId.slice(0, 8)} could not be read: ${error instanceof Error ? error.name : typeof error}`);
+          return null;
+        });
+        if (on === null) return lastAppsOff && lastAppsOff.size > 0 ? { ...scope, appsOff: lastAppsOff } : scope;
+        // An app this deployment does not run is not "off": nothing writes its rows, and a runtime without it (a kernel-only one) is not filtering.
+        const appsOff = new Set(STREAM_FILTERED_APPS.filter((app) => runtime.installed(app) && !on.includes(app)));
+        lastAppsOff = appsOff;
+        return appsOff.size === 0 ? scope : { ...scope, appsOff };
+      };
       let scope: StreamScope;
       try {
         scope = await check();
@@ -1642,9 +2902,11 @@ export function createHttpApp(deps: HttpDeps) {
       const scopes = done.exchange.scopes.filter((s): s is ExtensionScope => (EXTENSION_SCOPES as readonly string[]).includes(s));
       // The client gets the token only once this row is written. When it fails, the token row already exists and nobody
       // holds it: void it (its own system audit row follows) before answering, so no usable row is left behind (#2740).
+      // Notes-only tokens audit through notes.extension.exchanged because kernel.extension.token.exchanged requires 'meetings' (#3560).
+      const exchangeAuditCommand = scopes.includes('meetings') ? 'kernel.extension.token.exchanged' : 'notes.extension.exchanged';
       try {
         await runtime.execute(
-          'kernel.extension.token.exchanged',
+          exchangeAuditCommand,
           { codeId: done.exchange.codeId },
           { actor: { type: 'user', userId: done.exchange.userId, aal: 'aal1', mfaAt: null, extension: { tokenId: done.exchange.tokenId, scopes } }, orgId: done.exchange.orgId },
         );
@@ -1711,7 +2973,7 @@ export function createHttpApp(deps: HttpDeps) {
         // Fail closed: without the token's exp a stream could outlive the token (jwt mode trusts it until then).
         const tokenExp = user.tokenExp;
         if (tokenExp === undefined) throw new DomainError('STREAM_UNAVAILABLE', 503, 'Kênh cập nhật tạm thời không hoạt động');
-        const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+        const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
         await runtime.query(STREAM_CHECK_QUERY, {}, { actor: actorOf(user), orgId });
         const { ticket, hash } = newTicket();
         const issued = await stream.tickets.issue(hash, {
@@ -1751,7 +3013,7 @@ export function createHttpApp(deps: HttpDeps) {
       const tokenExp = user.tokenExp;
       if (tokenExp === undefined) throw new DomainError('VIDEO_TICKET_UNAVAILABLE', 503, 'Không thể cấp vé xem video lúc này');
       if (tokenExp <= nowSeconds) throw new DomainError('UNAUTHENTICATED', 401, 'Phiên đăng nhập không hợp lệ hoặc đã hết hạn');
-      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
       const meetingId = c.req.param('id');
       const media = await runtime.query<{ fileId: string; keyId: string }>('meetings.meeting.media_meta', { meetingId, kind: 'video' }, { actor: actorOf(user), orgId });
       const key = videoTicketKey(media.keyId);
@@ -1792,7 +3054,11 @@ export function createHttpApp(deps: HttpDeps) {
       if (!allowedExtensionIds.includes(input.extensionId)) throw new DomainError('FORBIDDEN', 403, 'Tiện ích này không được phép kết nối với Ludy', { rule: 'extension_id' });
       // Only features this deployment runs: a scope of a module that is left out is not offered.
       if (input.scopes.includes('meetings') && !runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
-      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      if (input.scopes.includes('notes') && !runtime.installed('notes')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
+      // An org that switched Meetings or Notes off, or does not hold it, is not offered that scope either (ADR-0053).
+      if (input.scopes.includes('meetings') && !(await runtime.appOn(orgId, 'meetings', { fresh: true }).catch(() => true))) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
+      if (input.scopes.includes('notes') && !(await runtime.appOn(orgId, 'notes', { fresh: true }).catch(() => true))) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
       const code = newExtensionCode();
       const issued = await runtime.execute<{ expiresInSeconds: number }>(
         'kernel.extension.code.issue',
@@ -1806,26 +3072,37 @@ export function createHttpApp(deps: HttpDeps) {
   });
 
   // What the extension shell asks right after sign-in: whose token this is and which features this deployment runs.
-  // Answered from the verified token alone, with no tenant data. A browser session has no use for it.
-  app.get('/api/extension/me', (c) => {
+  // Answered from the verified token and the org's app switch, with no tenant data: Meetings is a feature of the extension only while the org has it on
+  // (ADR-0053). A browser session has no use for it.
+  app.get('/api/extension/me', async (c) => {
     c.header('cache-control', 'no-store');
     const { extension } = c.get('user');
     if (!extension) return problem(c, new DomainError('FORBIDDEN', 403, 'Đường này chỉ dành cho tiện ích Ludy', { rule: 'extension_only' }));
+    const meetingsOn = runtime.installed('meetings') && (await runtime.appOn(extension.orgId, 'meetings', { fresh: true }).catch(() => true));
+    const notesOn = runtime.installed('notes') && (await runtime.appOn(extension.orgId, 'notes', { fresh: true }).catch(() => true));
     return c.json({
       tokenId: extension.tokenId,
       orgId: extension.orgId,
       scopes: extension.scopes,
       expiresAt: extension.expiresAt,
-      features: { meetings: extension.scopes.includes('meetings') && runtime.installed('meetings') },
+      features: {
+        meetings: extension.scopes.includes('meetings') && meetingsOn,
+        agenda: extension.scopes.includes('agenda') && meetingsOn,
+        notes: extension.scopes.includes('notes') && notesOn,
+      },
     });
   });
 
   app.all('/api/rpc/*', bodyLimit({ maxSize: 1024 * 1024 }), async (c) => {
-    const { matched, response } = await rpc.handle(c.req.raw, {
-      prefix: '/api/rpc',
-      context: { user: c.get('user'), orgSlug: c.req.header(ORG_HEADER) ?? null },
-    });
-    return matched ? response : c.json({ code: 'NOT_FOUND' }, 404);
+    try {
+      const { matched, response } = await rpc.handle(c.req.raw, {
+        prefix: '/api/rpc',
+        context: { user: c.get('user'), orgSlug: readOrgHeader(c) },
+      });
+      return matched ? response : c.json({ code: 'NOT_FOUND' }, 404);
+    } catch (error) {
+      return problem(c, error);
+    }
   });
 
   // Files are written and recorded the same way on every path: the server computes the sha256 of the bytes it
@@ -1854,6 +3131,15 @@ export function createHttpApp(deps: HttpDeps) {
       if (type !== 'application/zip') throw new DomainError('UNSUPPORTED_TYPE', 415, `${name}: chỉ nhận tệp Excel dạng .xlsx`);
       if (bytes.byteLength > MAX_IMPORT_BYTES) throw new DomainError('TOO_LARGE', 413, `${name} vượt quá 10 MB`);
       type = XLSX_CONTENT_TYPE;
+    } else if (purpose === 'agreement') {
+      // The signed agreement of an invoice correction (#2504): a PDF, or the photo or scan of the signed paper.
+      if (!type || !AGREEMENT_TYPES.includes(type)) throw new DomainError('UNSUPPORTED_TYPE', 415, `${name}: biên bản thỏa thuận chỉ nhận tệp PDF, JPG, PNG hoặc WEBP`);
+      if (bytes.byteLength > MAX_UPLOAD_BYTES) throw new DomainError('TOO_LARGE', 413, `${name} vượt quá 25 MB`);
+    } else if (purpose === 'sign_document') {
+      if (type !== 'application/pdf') {
+        throw new DomainError('UNSUPPORTED_TYPE', 415, `${name}: tài liệu ký điện tử chỉ nhận tệp PDF`);
+      }
+      if (bytes.byteLength > MAX_UPLOAD_BYTES) throw new DomainError('TOO_LARGE', 413, `${name} vượt quá 25 MB`);
     } else if (video) {
       if (bytes.byteLength > MAX_SOCIAL_VIDEO_BYTES) throw new DomainError('TOO_LARGE', 413, `${name} vượt quá 100 MB`);
       const ms = videoDurationMs(bytes);
@@ -1885,7 +3171,7 @@ export function createHttpApp(deps: HttpDeps) {
         sha256,
         storageKey,
         generation,
-        source: purpose === 'social' ? 'social' : purpose === 'import' ? 'import' : 'upload',
+        source: purpose === 'social' ? 'social' : purpose === 'import' ? 'import' : purpose === 'sign_document' ? 'sign_document' : purpose === 'agreement' ? 'agreement' : 'upload',
         ...(durationMs === undefined ? {} : { durationMs }),
         ...(size ? { imageWidth: size.width, imageHeight: size.height } : {}),
         // A document only: the entity it is booked in (#1764), which the command checks the uploader sees.
@@ -1919,11 +3205,29 @@ export function createHttpApp(deps: HttpDeps) {
     if (value === undefined || value === null || value === '' || value === 'document') return 'document';
     if (value === 'social') return 'social';
     if (value === 'import') return 'import';
+    if (value === 'agreement') return 'agreement';
     if (value === 'meeting_audio' || value === 'meeting_video') {
       if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
       return value;
     }
+    if (value === 'sign_document') {
+      if (!runtime.installed('sign')) throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
+      return value;
+    }
     throw new DomainError('INVALID', 400, 'Mục đích tải lên không hợp lệ');
+  }
+
+  // The purpose of an upload, for the org it is for: Meetings and eSign upload purposes belong to their apps, so an org that switched that app off, or does not hold it,
+  // gets the answer of a purpose that is not installed (404, as when the deployment leaves the app out; ADR-0053). The grant an upload needs is a kernel command, which the app gate does not cover.
+  async function uploadPurposeFor(value: unknown, orgId: string): Promise<UploadPurpose> {
+    const purpose = uploadPurpose(value);
+    if ((purpose === 'meeting_audio' || purpose === 'meeting_video') && !(await runtime.appOn(orgId, 'meetings', { fresh: true }).catch(() => true))) {
+      throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
+    }
+    if (purpose === 'sign_document' && !(await runtime.appOn(orgId, 'sign', { fresh: true }).catch(() => true))) {
+      throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
+    }
+    return purpose;
   }
 
   async function uploader(c: Context<{ Variables: { user: AuthUser } }>) {
@@ -1931,7 +3235,7 @@ export function createHttpApp(deps: HttpDeps) {
     // An extension token's one org is its own; its member's role is checked by the command that records the file, and by
     // the token's standing, which the database reads on every request (a viewer's token is void).
     if (user.extension) return { user, orgId: await resolveOrg(runtime, user, null) };
-    const membership = await resolveMembership(runtime, user, c.req.header(ORG_HEADER) ?? null);
+    const membership = await resolveMembership(runtime, user, readOrgHeader(c));
     if (membership.role === 'viewer') throw new DomainError('FORBIDDEN', 403, 'Vai trò chỉ xem không tải được chứng từ');
     return { user, orgId: membership.orgId };
   }
@@ -1969,7 +3273,7 @@ export function createHttpApp(deps: HttpDeps) {
       const { user, orgId } = who;
       const body = await c.req.parseBody({ all: true });
       const files = ([] as unknown[]).concat(body.file ?? []).filter((f): f is File => f instanceof File);
-      const purpose = uploadPurpose(body.purpose);
+      const purpose = await uploadPurposeFor(body.purpose, orgId);
       if (purpose === 'meeting_audio' || purpose === 'meeting_video') {
         throw new DomainError('STAGED_UPLOAD_REQUIRED', 400, 'Tệp phương tiện cuộc họp phải tải lên qua cơ chế phân đoạn (POST /api/files/uploads)');
       }
@@ -2007,12 +3311,12 @@ export function createHttpApp(deps: HttpDeps) {
       if (!direct) throw noDirect();
       const { user, orgId } = await uploader(c);
       const input = (await c.req.json().catch(() => null)) as { purpose?: unknown } | null;
-      const grant = await runtime.execute<{ uploadId: string; stagingKey: string; maxBytes: number }>('kernel.file.upload.begin', { purpose: uploadPurpose(input?.purpose) }, {
+      const purpose = await uploadPurposeFor(input?.purpose, orgId);
+      const grant = await runtime.execute<{ uploadId: string; stagingKey: string; maxBytes: number }>('kernel.file.upload.begin', { purpose }, {
         actor: actorOf(user),
         orgId,
       });
       // A meeting's media grant is no larger than crove-media takes (#2989): a recording over it is refused here, before the browser sends it to the bucket.
-      const purpose = uploadPurpose(input?.purpose);
       const grantBytes = purpose === 'meeting_audio' || purpose === 'meeting_video' ? Math.min(grant.maxBytes, meetingMediaCap(purpose === 'meeting_video' ? 'video' : 'audio')) : grant.maxBytes;
       const form = await direct.presignUpload(grant.stagingKey, grantBytes);
       c.header('cache-control', 'private, no-store');
@@ -2033,7 +3337,7 @@ export function createHttpApp(deps: HttpDeps) {
       if (!direct) throw noDirect();
       const { user, orgId } = await uploader(c);
       const input = (await c.req.json().catch(() => null)) as { filename?: unknown; purpose?: unknown; legalEntityId?: unknown } | null;
-      const purpose = uploadPurpose(input?.purpose);
+      const purpose = await uploadPurposeFor(input?.purpose, orgId);
       const legalEntityId = uploadEntity(input?.legalEntityId);
       const filename = typeof input?.filename === 'string' && input.filename.trim() ? input.filename.slice(0, 255) : 'chung-tu';
       const release = completes.tryAcquire(user.userId);
@@ -2086,7 +3390,7 @@ export function createHttpApp(deps: HttpDeps) {
   app.get('/api/files/:id', async (c) => {
     try {
       const user = c.get('user');
-      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
       const file = await runtime.query<{ filename: string; content_type: string; storage_key: string; generation: string | null; sha256: string; size_bytes: string; source: string }>(
         'kernel.file.get',
         { id: c.req.param('id') },
@@ -2124,11 +3428,16 @@ export function createHttpApp(deps: HttpDeps) {
       }
       // A large body keeps its slot until it is handed to the connection (or the client goes away).
       const payload = releaseLarge ? held(bytes, releaseLarge) : body(bytes);
+      const isSignAttachment = file.source === 'sign_attachment';
       return new Response(payload, {
         headers: {
           'content-type': file.content_type,
-          'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
-          'content-security-policy': "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'",
+          'content-disposition': isSignAttachment
+            ? `attachment; filename*=UTF-8''${encodeURIComponent(file.filename)}`
+            : `inline; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
+          'content-security-policy': isSignAttachment
+            ? "default-src 'none'; sandbox"
+            : "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'",
           'x-content-type-options': 'nosniff',
           'cache-control': 'private, no-store',
         },
@@ -2138,9 +3447,206 @@ export function createHttpApp(deps: HttpDeps) {
     }
   });
 
+  // Isolated note attachments (#3561, docs/plan/notes-v2.md V2-5, owner decision A3, ADR-0037):
+  // never touches ludy_kernel.file, refuses extension tokens (403), checks Origin on POST, streams <= 25 MiB,
+  // and serves downloads with strict sandbox CSP, X-Content-Type-Options: nosniff, and safe Content-Disposition.
+  const assertNoteUploadOrigin = (c: Context) => {
+    const origin = c.req.header('origin');
+    if (origin === undefined) return;
+    const reqOrigin = new URL(c.req.url).origin;
+    const publicOrigin = URL.canParse(config.PUBLIC_URL) ? new URL(config.PUBLIC_URL).origin : null;
+    const appOrigin = config.APP_URL !== undefined && URL.canParse(config.APP_URL) ? new URL(config.APP_URL).origin : null;
+    const permitted =
+      origin === reqOrigin ||
+      origin === publicOrigin ||
+      origin === appOrigin ||
+      config.CORS_ALLOWED_ORIGINS.includes(origin);
+    if (!permitted) {
+      throw new DomainError('FORBIDDEN', 403, 'Nguồn gốc yêu cầu tải lên không hợp lệ');
+    }
+  };
+
+  app.post('/api/notes/:noteId/attachments', uploadSlot, async (c) => {
+    try {
+      const who = uploaders.get(c);
+      if (!who) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      const { user, orgId } = who;
+      if (user.extension) {
+        throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
+      }
+      assertNoteUploadOrigin(c);
+      if (!runtime.installed('notes') || !(await runtime.appOn(orgId, 'notes', { fresh: true }).catch(() => true))) {
+        throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
+      }
+      const attachment = await handleNoteAttachmentUpload({
+        runtime,
+        store,
+        user,
+        orgId,
+        noteId: c.req.param('noteId'),
+        req: c.req.raw,
+      });
+      c.header('cache-control', 'private, no-store');
+      return c.json({ attachment }, 201);
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  app.get('/api/notes/attachments/:id', async (c) => {
+    c.header('cache-control', 'private, no-store');
+    try {
+      const user = c.get('user');
+      if (user.extension) {
+        throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
+      }
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
+      if (!runtime.installed('notes') || !(await runtime.appOn(orgId, 'notes', { fresh: true }).catch(() => true))) {
+        throw new DomainError('NOTE_ATTACHMENT_NOT_FOUND', 404, 'Không tìm thấy tệp đính kèm này');
+      }
+      return await handleNoteAttachmentDownload({
+        runtime,
+        store,
+        user,
+        orgId,
+        attachmentId: c.req.param('id'),
+      });
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  // 1-step Evernote (.enex) and Todoist (.csv) importers (#3564, docs/plan/notes-v2.md V2-9, ADR-0037):
+  // refuses extension tokens (403), enforces Origin check, notes app gate, bounded streaming, and BlobStore rollback.
+  app.post('/api/notes/import/enex', uploadSlot, async (c) => {
+    try {
+      const who = uploaders.get(c);
+      if (!who) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      const { user, orgId } = who;
+      if (user.extension) {
+        throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
+      }
+      assertNoteUploadOrigin(c);
+      if (!runtime.installed('notes') || !(await runtime.appOn(orgId, 'notes', { fresh: true }).catch(() => true))) {
+        throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
+      }
+      const result = await handleEnexImportUpload({
+        runtime,
+        store,
+        user,
+        orgId,
+        req: c.req.raw,
+      });
+      c.header('cache-control', 'private, no-store');
+      return c.json(result, 201);
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  app.post('/api/notes/import/todoist', uploadSlot, async (c) => {
+    try {
+      const who = uploaders.get(c);
+      if (!who) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      const { user, orgId } = who;
+      if (user.extension) {
+        throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
+      }
+      assertNoteUploadOrigin(c);
+      if (!runtime.installed('notes') || !(await runtime.appOn(orgId, 'notes', { fresh: true }).catch(() => true))) {
+        throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
+      }
+      const result = await handleTodoistImportUpload({
+        runtime,
+        user,
+        orgId,
+        req: c.req.raw,
+      });
+      c.header('cache-control', 'private, no-store');
+      return c.json(result, 201);
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  // Sandboxed HR CV PDF/DOCX extraction (#4446 Stage 5D, gate T12):
+  // never parses raw bytes in the API process; stages to tmp/<orgId>/<sha256>, relays via outbox to crove-extract in worker,
+  // and optionally passes extracted plain text to metered Ly draft proposal inside withAiScope.
+  const hrCvAi = {
+    reader: deps.conversationReader?.cvExtract ? { cvExtract: deps.conversationReader.cvExtract.bind(deps.conversationReader) } : null,
+    budget: drafts,
+    aiEnabled: deps.aiEnabled,
+  };
+
+  app.post('/api/hr/recruiting/cv-extract', uploadSlot, async (c) => {
+    c.header('cache-control', 'private, no-store');
+    try {
+      const who = uploaders.get(c);
+      if (!who) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      const { user, orgId } = who;
+      if (user.extension) {
+        throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
+      }
+      assertNoteUploadOrigin(c);
+      if (!runtime.installed('hr') || !(await runtime.appOn(orgId, 'hr', { fresh: true }).catch(() => true))) {
+        throw new DomainError('NOT_FOUND', 404, 'Mô-đun Nhân sự chưa được bật');
+      }
+      const actor = actorOf(user);
+      const res = await handleHrCvExtractUpload({
+        runtime,
+        store,
+        user,
+        orgId,
+        req: c.req.raw,
+        cvAi: hrCvAi,
+        ...(deps.hrCvWaitMs !== undefined ? { waitMs: deps.hrCvWaitMs } : {}),
+        runInAiScope: (fn) => (deps.aiMeter ? withAiScope({ orgId, meter: deps.aiMeter(actor) }, fn) : fn()),
+      });
+      return c.json(res, res.status === 'ready' ? 200 : 202);
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  app.get('/api/hr/recruiting/cv-extract/:jobId', async (c) => {
+    c.header('cache-control', 'private, no-store');
+    try {
+      const user = c.get('user');
+      if (user.extension) {
+        throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
+      }
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
+      if (!runtime.installed('hr') || !(await runtime.appOn(orgId, 'hr', { fresh: true }).catch(() => true))) {
+        throw new DomainError('NOT_FOUND', 404, 'Mô-đun Nhân sự chưa được bật');
+      }
+      const actor = actorOf(user);
+      const openingId = c.req.query('openingId') || undefined;
+      const legalEntityId = c.req.query('legalEntityId') || undefined;
+      const lang = c.req.query('lang') === 'en' ? 'en' : 'vi';
+      const useAi = c.req.query('useAi') !== 'false';
+      const res = await handleHrCvExtractPoll({
+        runtime,
+        store,
+        user,
+        orgId,
+        jobId: c.req.param('jobId'),
+        ...(openingId ? { openingId } : {}),
+        ...(legalEntityId ? { legalEntityId } : {}),
+        lang,
+        useAi,
+        cvAi: hrCvAi,
+        runInAiScope: (fn) => (deps.aiMeter ? withAiScope({ orgId, meter: deps.aiMeter(actor) }, fn) : fn()),
+      });
+      return c.json(res, res.status === 'ready' ? 200 : 202);
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
   // Sensitive-audited playback routes for encrypted meeting audio and video (#2576).
   const MEETING_STREAM_WINDOW_BYTES = 4 * 1024 * 1024;
   const mediaMeasurer = deps.mediaMeasurer ?? mediaMeasurerFor(config.MEDIA_URL, config.MEDIA_CALL_TIMEOUT_MS);
+  const mediaExtractor = deps.mediaExtractor ?? mediaAudioExtractorFor(config.MEDIA_URL, config.MEDIA_CALL_TIMEOUT_MS);
   // The most bytes one meeting recording may have: the plan's limit, or the lower cap of this deployment's crove-media (#2989).
   const meetingMediaCap = (kind: 'audio' | 'video') => Math.min(kind === 'video' ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES, config.MEDIA_MAX_INPUT_BYTES ?? Number.POSITIVE_INFINITY);
   const PLAYBACK_AUDIT_WINDOW_MS = 10 * 60_000;
@@ -2446,7 +3952,7 @@ export function createHttpApp(deps: HttpDeps) {
     const user = c.get('user');
     let orgId: string;
     try {
-      orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      orgId = await resolveOrg(runtime, user, readOrgHeader(c));
     } catch (error) {
       return problem(c, error);
     }
@@ -2471,13 +3977,13 @@ export function createHttpApp(deps: HttpDeps) {
     }
     return runtime.query<{ isRecorder: boolean; keepVideo: boolean; liveNotes: boolean }>('meetings.meeting.get', { meetingId }, { actor: actorOf(user), orgId });
   };
-  const mediaGate: MiddlewareHandler<{ Variables: { user: AuthUser; mediaBodyCap: number } }> = async (c, next) => {
+  const mediaGate: MiddlewareHandler<{ Variables: { user: AuthUser; mediaBodyCap: number; videoSlotHeld: boolean } }> = async (c, next) => {
     let release: (() => void) | null = null;
     let releaseVideo: (() => void) | null = null;
     try {
       if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       const user = c.get('user');
-      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
       const meeting = await meetingFacts(user, orgId, c.req.param('id') ?? '');
       if (!meeting.isRecorder) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may upload media');
       const json = (c.req.header('content-type') ?? '').includes('application/json');
@@ -2486,7 +3992,14 @@ export function createHttpApp(deps: HttpDeps) {
       const hint = c.req.query('kind');
       if (hint !== undefined && hint !== 'audio' && hint !== 'video') throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
       const videoSize = !json && meeting.keepVideo && hint !== 'audio';
-      const cap = json ? META_BODY_MAX_BYTES : meetingMediaCap(videoSize ? 'video' : 'audio') + 1024 * 1024;
+      // `extract=audio` (#3337): the file is a video whose audio alone is kept. It is sized and counted as a video (the video cap, the video transfer slot),
+      // and refused before one byte is read when crove-media is not configured. The JSON shape (a staged upload) is capped by its own grant and takes the slot in the route.
+      const extractFlag = c.req.query('extract');
+      if (extractFlag !== undefined && extractFlag !== 'audio') throw new DomainError('BAD_REQUEST', 400, 'extract must be audio');
+      const extract = extractFlag === 'audio';
+      if (extract && hint === 'video') throw new DomainError('BAD_REQUEST', 400, 'extract=audio is only for kind audio');
+      if (extract && !mediaExtractor.configured) throw mediaProbeUnavailable();
+      const cap = json ? META_BODY_MAX_BYTES : meetingMediaCap(videoSize || extract ? 'video' : 'audio') + 1024 * 1024;
       // The raw body of the file (#2780) is sealed as it streams, so its size is declared up front: a body without a
       // Content-Length, or sent chunked, is refused before it is read (the body limit below would hold a chunked body whole to
       // count it, which is what streaming is for). Browsers send the length of a File they upload.
@@ -2502,10 +4015,12 @@ export function createHttpApp(deps: HttpDeps) {
       c.set('mediaBodyCap', cap);
       release = large.tryAcquire(user.userId);
       if (!release) throw busy(c);
-      if (videoSize) {
+      const takeVideoSlot = videoSize || (extract && !json);
+      if (takeVideoSlot) {
         releaseVideo = videoTransfers.tryAcquire(user.userId);
         if (!releaseVideo) throw busy(c);
       }
+      c.set('videoSlotHeld', takeVideoSlot);
     } catch (error) {
       release?.();
       return problem(c, error);
@@ -2517,33 +4032,58 @@ export function createHttpApp(deps: HttpDeps) {
       releaseVideo?.();
     }
   };
-  const mediaBodyLimit: MiddlewareHandler<{ Variables: { user: AuthUser; mediaBodyCap: number } }> = (c, next) =>
+  const mediaBodyLimit: MiddlewareHandler<{ Variables: { user: AuthUser; mediaBodyCap: number; videoSlotHeld: boolean } }> = (c, next) =>
     bodyLimit({ maxSize: c.get('mediaBodyCap') })(c, next);
+  // Which import route a platform recording belongs to (C2, #3174 follow-up #3923): one with neither an audio nor a video file is the transcript's (POST /api/meetings/:id/transcript-import), every other is the
+  // media route's. A request that names the wrong route is refused BEFORE the claim moves the row, so the row stays staged with its bytes for the right request (the app routes by the same rule). A row that is
+  // not in the member's own list is left to the claim, which answers "not found".
+  const refuseWrongImportRoute = async (user: AuthUser, orgId: string, recordingId: string, route: 'media' | 'transcript'): Promise<void> => {
+    // The row by its id, whatever its age (the list holds only the newest 50, so a scan of it would miss an older row and let the wrong route claim it).
+    const rows = await runtime.query<Array<{ id: string; hasAudio: boolean; hasVideo: boolean }>>('kernel.meeting_platform.recordings', { recordingId }, { actor: actorOf(user), orgId });
+    const row = rows.find((r) => r.id === recordingId);
+    if (!row) return;
+    const transcriptOnly = !row.hasAudio && !row.hasVideo;
+    if (route === 'media' && transcriptOnly) throw new DomainError('BAD_REQUEST', 400, 'Bản ghi này chỉ có bản chép lời, hãy nhập nó bằng bản chép lời');
+    if (route === 'transcript' && !transcriptOnly) throw new DomainError('BAD_REQUEST', 400, 'Bản ghi này có âm thanh hoặc video, không nhập được bằng bản chép lời');
+  };
   app.post('/api/meetings/:id/media', mediaGate, mediaBodyLimit, async (c) => {
     try {
       if (!runtime.installed('meetings')) {
         throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       }
       const user = c.get('user');
-      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
       const meetingId = c.req.param('id');
       const release = completes.tryAcquire(user.userId);
       if (!release) throw busy(c);
+      // `extract=audio` (#3337): the file is a video and only its audio is kept. The gate has checked the flag in the query; a multipart form may carry it as a field.
+      let extract = c.req.query('extract') === 'audio';
 
       // Set by prepareKeys inside the try (a closure, so the compiler cannot see it): typed as what they may hold.
       let dataKey = null as Buffer | null;
       let wrapSubkey = null as Buffer | null;
       let stagingKeyToDelete: string | null = null;
       let releaseJsonVideo: (() => void) | null = null;
+      // The platform recording this request claimed (C1, #3173): any failure after the claim fails that row with a short code.
+      let claimedImportId: string | null = null;
 
       try {
         // The length of the recording is measured in crove-media after sealing, so without it nothing is read or stored (#2985).
         if (!mediaMeasurer.configured) throw mediaProbeUnavailable();
+        if (extract && !mediaExtractor.configured) throw mediaProbeUnavailable();
         const contentTypeHeader = c.req.header('content-type') ?? '';
         let kind: 'audio' | 'video';
         // The plaintext as it arrives, sealed piece by piece below (#2780): never held whole, and its declared length is checked.
         let source: AsyncIterable<Uint8Array>;
         let declaredLength: number;
+        // Why the recording stopped without the recorder's click, when the client says so (A1, #3159): a code from a fixed list in the
+        // JSON body, the form or the query, whichever carries the file. Anything else is refused; absent means the recorder stopped it.
+        let stopReason: RecordingStopReason | undefined;
+        const readStopReason = (value: unknown): RecordingStopReason | undefined => {
+          if (value === undefined || value === null || value === '') return undefined;
+          if (typeof value === 'string' && (RECORDING_STOP_REASONS as readonly string[]).includes(value)) return value as RecordingStopReason;
+          throw new DomainError('BAD_REQUEST', 400, 'stopReason is not a known code');
+        };
 
         const verifyRecorderAndKind = async (mediaKind: 'audio' | 'video') => {
           const meeting = await meetingFacts(user, orgId, meetingId);
@@ -2580,14 +4120,24 @@ export function createHttpApp(deps: HttpDeps) {
         if (contentTypeHeader.includes('application/json')) {
           const body = (await c.req.json().catch(() => null)) as {
             uploadId?: unknown;
+            importId?: unknown;
             kind?: unknown;
             lengthSeconds?: unknown;
+            stopReason?: unknown;
           } | null;
-          if (!body || typeof body.uploadId !== 'string' || (body.kind !== 'audio' && body.kind !== 'video')) {
-            throw new DomainError('BAD_REQUEST', 400, 'uploadId and kind (audio|video) required');
+          // Exactly one of uploadId (a presigned upload) and importId (a recording a meeting platform finished, C1 #3173; audio only).
+          if (!body || (typeof body.uploadId === 'string') === (typeof body.importId === 'string') || (body.kind !== 'audio' && body.kind !== 'video')) {
+            throw new DomainError('BAD_REQUEST', 400, 'Exactly one of uploadId and importId, and kind (audio|video), required');
+          }
+          if (typeof body.importId === 'string' && (body.kind !== 'audio' || !UUID_TEXT.test(body.importId))) {
+            throw new DomainError('BAD_REQUEST', 400, 'importId must be a uuid and kind must be audio');
           }
           kind = body.kind;
-          if (kind === 'video') {
+          stopReason = readStopReason(body.stopReason);
+          if (extract && (kind !== 'audio' || typeof body.importId === 'string')) {
+            throw new DomainError('BAD_REQUEST', 400, 'extract=audio is only for an uploaded file of kind audio, not a platform import');
+          }
+          if (kind === 'video' || extract) {
             // The staged bytes are read whole into memory: one video transfer per process (a multipart one took its slot in the gate).
             releaseJsonVideo = videoTransfers.tryAcquire(user.userId);
             if (!releaseJsonVideo) throw busy(c);
@@ -2601,16 +4151,35 @@ export function createHttpApp(deps: HttpDeps) {
 
           await verifyRecorderAndKind(kind);
 
-          const claim = await runtime.execute<{ stagingKey: string; maxBytes: number; purpose?: string }>(
-            'kernel.file.upload.claim',
-            { uploadId: body.uploadId },
-            { actor: actorOf(user), orgId },
-          );
-          stagingKeyToDelete = claim.stagingKey;
+          let claim: { stagingKey: string; cap: number };
+          if (typeof body.importId === 'string') {
+            await refuseWrongImportRoute(user, orgId, body.importId, 'media');
+            // The worker staged the bytes; this request takes them, then seals and records them like an upload (the row is the member's own: another's is answered as absent).
+            // The claim names this route's meeting, so a recording begun for another meeting is refused before the row moves (it never ends up claimed by a request it cannot serve).
+            const imported = await runtime.execute<{ stagingKey: string; meetingId: string }>(
+              'kernel.meeting_platform.import.claim',
+              { recordingId: body.importId, meetingId },
+              { actor: actorOf(user), orgId },
+            );
+            claimedImportId = body.importId;
+            stagingKeyToDelete = imported.stagingKey;
+            if (imported.meetingId !== meetingId) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy bản ghi này');
+            // The job already held the file to the same audio cap (MEETING_PLATFORM_IMPORT_MAX_BYTES); a later extraction of audio from a video can change its size, so the cap is the upload's own.
+            claim = { stagingKey: imported.stagingKey, cap: meetingMediaCap('audio') };
+          } else {
+            const uploaded = await runtime.execute<{ stagingKey: string; maxBytes: number; purpose?: string }>(
+              'kernel.file.upload.claim',
+              { uploadId: body.uploadId },
+              { actor: actorOf(user), orgId },
+            );
+            stagingKeyToDelete = uploaded.stagingKey;
 
-          const expectedPurpose = kind === 'audio' ? 'meeting_audio' : 'meeting_video';
-          if (claim.purpose !== expectedPurpose) {
-            throw new DomainError('INVALID_PURPOSE', 400, 'Mục đích tệp không khớp với lượt đăng ký tải lên');
+            // A video whose audio is extracted (#3337) is staged for video (the grant of meeting_audio is capped at the audio size, which a video exceeds): either purpose fits there.
+            const purposeFits = extract ? uploaded.purpose === 'meeting_video' || uploaded.purpose === 'meeting_audio' : uploaded.purpose === (kind === 'audio' ? 'meeting_audio' : 'meeting_video');
+            if (!purposeFits) {
+              throw new DomainError('INVALID_PURPOSE', 400, 'Mục đích tệp không khớp với lượt đăng ký tải lên');
+            }
+            claim = { stagingKey: uploaded.stagingKey, cap: Math.min(uploaded.maxBytes, meetingMediaCap(extract ? 'video' : kind)) };
           }
 
           prepareKeys(kind);
@@ -2618,7 +4187,7 @@ export function createHttpApp(deps: HttpDeps) {
             if (error instanceof BlobNotFoundError) throw new DomainError('UPLOAD_MISSING', 409, 'Chưa nhận được tệp cho lượt tải lên này');
             throw error;
           };
-          const cap = Math.min(claim.maxBytes, meetingMediaCap(kind));
+          const cap = claim.cap;
           if (direct?.openStaged) {
             // Streamed from the bucket: the declared size is checked against the cap before a byte is read.
             const opened = await direct.openStaged(claim.stagingKey, cap).catch(missing);
@@ -2637,6 +4206,22 @@ export function createHttpApp(deps: HttpDeps) {
             throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
           }
           kind = kindVal;
+          stopReason = readStopReason(formData.get('stopReason'));
+          const extractField = formData.get('extract');
+          if (extractField !== null && extractField !== '') {
+            if (extractField !== 'audio') throw new DomainError('BAD_REQUEST', 400, 'extract must be audio');
+            extract = true;
+          }
+          if (extract) {
+            if (kind !== 'audio') throw new DomainError('BAD_REQUEST', 400, 'extract=audio is only for kind audio');
+            // A form field is read with the form, so only now: a deployment without crove-media refuses here (the query flag is refused before the body).
+            if (!mediaExtractor.configured) throw mediaProbeUnavailable();
+            // The gate took the slot when the query said so; a form field alone takes it here. A form is held whole by its parser: a large video goes as the raw body.
+            if (!c.get('videoSlotHeld')) {
+              releaseJsonVideo = videoTransfers.tryAcquire(user.userId);
+              if (!releaseJsonVideo) throw busy(c);
+            }
+          }
           const kindHint = c.req.query('kind');
           if (kindHint !== undefined && kindHint !== kind) throw new DomainError('BAD_REQUEST', 400, 'kind does not match the declared kind');
           await verifyRecorderAndKind(kind);
@@ -2645,7 +4230,7 @@ export function createHttpApp(deps: HttpDeps) {
           if (!fileVal || !(fileVal instanceof Blob)) {
             throw new DomainError('NO_FILE', 400, 'Tệp tải lên không hợp lệ');
           }
-          const maxBytes = meetingMediaCap(kind);
+          const maxBytes = meetingMediaCap(extract ? 'video' : kind);
           if (fileVal.size > maxBytes) {
             throw new DomainError('FILE_TOO_LARGE', 413, `Tệp vượt quá giới hạn tối đa (${sizeText(maxBytes)})`);
           }
@@ -2666,6 +4251,8 @@ export function createHttpApp(deps: HttpDeps) {
           const kindVal = c.req.query('kind');
           if (kindVal !== 'audio' && kindVal !== 'video') throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
           kind = kindVal;
+          if (extract && kind !== 'audio') throw new DomainError('BAD_REQUEST', 400, 'extract=audio is only for kind audio');
+          stopReason = readStopReason(c.req.query('stopReason'));
           await verifyRecorderAndKind(kind);
           const lengthVal = c.req.query('lengthSeconds');
           if (lengthVal !== undefined) {
@@ -2688,6 +4275,22 @@ export function createHttpApp(deps: HttpDeps) {
 
         if (!keys || !dataKey) throw new Error('media keys were not prepared');
         const { keyId, wrappedKey, binding } = keys;
+
+        // The video of an `extract=audio` upload is sealed under a throwaway key, streamed to crove-media and deleted; what is sealed below, and recorded,
+        // is only the Opus audio it returned (audio cap, audio container, measured like any audio): the video is never stored (#3337).
+        if (extract) {
+          const extracted = await extractAudioFromVideo({
+            source,
+            expectedLength: declaredLength,
+            maxBytes: meetingMediaCap('video'),
+            store,
+            orgId,
+            meetingId,
+            extractor: mediaExtractor,
+          });
+          source = onepiece(extracted.audio);
+          declaredLength = extracted.audio.length;
+        }
 
         // Sealed as it streams: the container is sniffed from the first bytes, the cap is counted as the bytes arrive, and the
         // ciphertext goes to the store's streamed write, which hashes it and stores it under its content address.
@@ -2731,6 +4334,7 @@ export function createHttpApp(deps: HttpDeps) {
               sha256,
               contentType: sniffedContentType,
               lengthSeconds: measuredSeconds,
+              ...(stopReason !== undefined ? { stopReason } : {}),
             },
             { actor: actorOf(user), orgId },
           );
@@ -2741,6 +4345,16 @@ export function createHttpApp(deps: HttpDeps) {
         }
 
         return c.json(result);
+      } catch (error) {
+        // A claimed platform recording that did not become the meeting's media fails with a short code the member can read (never the error's own text), best effort.
+        if (claimedImportId) {
+          const code = (error as { code?: unknown } | null)?.code;
+          const failure = code === 'FILE_TOO_LARGE' ? 'too_large' : code === 'MEDIA_TOO_LONG' ? 'too_long' : code === 'INVALID_MEDIA_CONTAINER' || code === 'MEDIA_PROBE_FAILED' || code === 'NO_FILE' ? 'invalid_media' : 'claim_failed';
+          await runtime
+            .execute('kernel.meeting_platform.import.claim_failed', { recordingId: claimedImportId, code: failure }, { actor: actorOf(user), orgId })
+            .catch((err) => console.error('[http] meeting import failure not recorded', err));
+        }
+        throw error;
       } finally {
         if (stagingKeyToDelete) {
           await store.delete(stagingKeyToDelete).catch((err) => console.error('[http] meeting staging deletion failed', err));
@@ -2748,6 +4362,75 @@ export function createHttpApp(deps: HttpDeps) {
         releaseJsonVideo?.();
         dataKey?.fill(0);
         wrapSubkey?.fill(0);
+        release();
+      }
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  // The member's request that finishes a TRANSCRIPT-ONLY import (C2, #3174). The worker's job staged the platform's own transcript as JSON under the recording's staging key (meetings-import.ts); this request, like
+  // the media route does for audio, claims the row (the member's own, begun for THIS meeting), reads the staged lines back under a size cap, bounds them again with the command's own schema (the bytes are tainted
+  // input, whoever wrote them) and runs meetings.import.take_transcript as the recorder, which writes them as the recorder's tainted draft labelled with the platform and ends the meeting. The staged bytes are deleted
+  // in every outcome; a failure after the claim fails the row with a short code. No audio is made, no model is called, and only the recorder may do this (as for media).
+  app.post('/api/meetings/:id/transcript-import', bodyLimit({ maxSize: 1024 }), async (c) => {
+    try {
+      if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
+      const user = c.get('user');
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
+      const meetingId = c.req.param('id') ?? '';
+      const body = (await c.req.json().catch(() => null)) as { importId?: unknown } | null;
+      if (!UUID_TEXT.test(meetingId) || !body || typeof body.importId !== 'string' || !UUID_TEXT.test(body.importId)) {
+        throw new DomainError('BAD_REQUEST', 400, 'importId must be a uuid');
+      }
+      const importId = body.importId;
+      const release = completes.tryAcquire(user.userId);
+      if (!release) throw busy(c);
+      let claimedImportId: string | null = null;
+      let stagingKeyToDelete: string | null = null;
+      try {
+        const meeting = await meetingFacts(user, orgId, meetingId);
+        if (!meeting.isRecorder) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may import a transcript');
+        await refuseWrongImportRoute(user, orgId, importId, 'transcript');
+        // The claim names this route's meeting, so a recording begun for another meeting is refused before the row moves.
+        const imported = await runtime.execute<{ stagingKey: string; meetingId: string }>(
+          'kernel.meeting_platform.import.claim',
+          { recordingId: importId, meetingId },
+          { actor: actorOf(user), orgId },
+        );
+        claimedImportId = importId;
+        stagingKeyToDelete = imported.stagingKey;
+        if (imported.meetingId !== meetingId) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy bản ghi này');
+        const missing = (error: unknown): never => {
+          if (error instanceof BlobNotFoundError) throw new DomainError('UPLOAD_MISSING', 409, 'Chưa nhận được tệp cho lượt tải lên này');
+          throw error;
+        };
+        const bytes = direct
+          ? (await direct.readStaged(imported.stagingKey, MEETING_PLATFORM_TRANSCRIPT_MAX_BYTES).catch(missing)).bytes
+          : await store.get(imported.stagingKey, null, MEETING_PLATFORM_TRANSCRIPT_MAX_BYTES).catch(missing);
+        let staged: unknown;
+        try {
+          staged = JSON.parse(new TextDecoder().decode(bytes));
+        } catch {
+          throw new DomainError('BAD_REQUEST', 400, 'Bản chép lời đã lưu không đọc được');
+        }
+        const lines = typeof staged === 'object' && staged !== null ? (staged as { segments?: unknown }).segments : undefined;
+        // The worker's job marks a transcript it had to cut (#3922); only a literal true counts, anything else is a whole transcript.
+        const cut = typeof staged === 'object' && staged !== null && (staged as { truncated?: unknown }).truncated === true;
+        const input = zMeetingTranscriptImport.safeParse({ meetingId, segments: lines, platformCut: cut });
+        if (!input.success) throw new DomainError('BAD_REQUEST', 400, 'Bản chép lời đã lưu không hợp lệ');
+        const result = await runtime.execute('meetings.import.take_transcript', input.data, { actor: actorOf(user), orgId });
+        return c.json(result);
+      } catch (error) {
+        // A claimed recording whose transcript was not taken fails with a short code the member can read (never the error's own text), best effort.
+        if (claimedImportId) {
+          await runtime
+            .execute('kernel.meeting_platform.import.claim_failed', { recordingId: claimedImportId, code: 'claim_failed' }, { actor: actorOf(user), orgId })
+            .catch((err) => console.error('[http] meeting import failure not recorded', err));
+        }
+        throw error;
+      } finally {
+        if (stagingKeyToDelete) await store.delete(stagingKeyToDelete).catch((err) => console.error('[http] meeting staging deletion failed', err));
         release();
       }
     } catch (error) {
@@ -2766,7 +4449,7 @@ export function createHttpApp(deps: HttpDeps) {
     try {
       if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       const user = c.get('user');
-      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
       const meetingId = c.req.param('id') ?? '';
       const meeting = await meetingFacts(user, orgId, meetingId);
       if (!meeting.isRecorder) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may send live notes audio');
@@ -2851,6 +4534,33 @@ export function createHttpApp(deps: HttpDeps) {
     }
   });
 
+  // Join the live pieces of a recording that never finished into its audio (ADR-0052 L4a, #3126): the recorder's own click, after the window of the pieces has passed with no
+  // final upload. The pieces are the recorder's own and are read in their own session (the plan is a query as the recorder; the route decrypts one piece at a time, seals the
+  // join under a fresh audio key, has crove-media measure it, and meetings.live.assemble_record records it and discards the pieces). Not in the extension's routes: the click is the app's.
+  const liveAssembles = new ConcurrencyLimiter({ total: 2, perKey: 1 });
+  app.post('/api/meetings/:id/live-assemble', async (c) => {
+    let release: (() => void) | null = null;
+    try {
+      if (!runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
+      const user = c.get('user');
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
+      const meetingId = c.req.param('id') ?? '';
+      const meeting = await meetingFacts(user, orgId, meetingId);
+      if (!meeting.isRecorder) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can join its live pieces');
+      release = liveAssembles.tryAcquire(user.userId);
+      if (!release) throw busy(c);
+      const result = await assembleLivePieces(
+        { runtime, store, broker: deps.broker ?? createCredentialBroker(config), measurer: mediaMeasurer, maxBytes: meetingMediaCap('audio') },
+        { actor: actorOf(user), orgId, meetingId },
+      );
+      return c.json(result);
+    } catch (error) {
+      return problem(c, error);
+    } finally {
+      release?.();
+    }
+  });
+
   // A customer's image of a conversation message (CV5c, #2357): the bytes of one stored image, to the member who may read its message. The
   // authorization is the database's (kernel.conversation.attachment_get reads under the row policy of the thread, so a member limited to
   // other channels, one without the direct-message permission, and an agent get the same 404 as an id that does not exist). Only an image is
@@ -2859,7 +4569,7 @@ export function createHttpApp(deps: HttpDeps) {
   app.get('/api/conversations/attachments/:id', async (c) => {
     try {
       const user = c.get('user');
-      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
       const file = await runtime.query<{ contentType: string; sizeBytes: number; sha256: string; generation: string; storageKey: string }>(
         'kernel.conversation.attachment_get',
         { attachmentId: c.req.param('id') },
@@ -2904,7 +4614,7 @@ export function createHttpApp(deps: HttpDeps) {
           c.header('retry-after', String(decision.retryAfterSeconds));
           throw new DomainError('RATE_LIMITED', 429, 'Bạn tải quá nhiều bản PDF; hãy thử lại sau ít phút');
         }
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const { logoFile, ...document } = await runtime.query<QuoteDocumentData>('crm.quote.document', { quoteId: c.req.param('id') }, { actor: actorOf(user), orgId });
         // The letterhead's logo (#2814): read from the store and checked, then by the writer's own reader; a logo that cannot be read leaves it out and never fails the document.
@@ -2959,7 +4669,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/journal.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const range = { from: c.req.query('from') || undefined, to: c.req.query('to') || undefined, limit: JOURNAL_EXPORT_LIMIT, ...entityQuery(c) };
         const entries = await runtime.query<JournalEntryView[]>('finance.journal.list', range, {
@@ -2990,7 +4700,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/misa/purchases.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const range = { from: c.req.query('from') || undefined, to: c.req.query('to') || undefined, limit: JOURNAL_EXPORT_LIMIT, ...entityQuery(c) };
         const vouchers = await runtime.query<PurchaseVoucher[]>('finance.vouchers.purchases', range, { actor: actorOf(user), orgId });
@@ -3022,7 +4732,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/misa/goods-purchases.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const range = { from: c.req.query('from') || undefined, to: c.req.query('to') || undefined, limit: JOURNAL_EXPORT_LIMIT, ...entityQuery(c) };
         const vouchers = await runtime.query<PurchaseVoucher[]>('finance.vouchers.purchases', range, { actor: actorOf(user), orgId });
@@ -3056,7 +4766,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/misa/sales.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const range = { from: c.req.query('from') || undefined, to: c.req.query('to') || undefined, limit: JOURNAL_EXPORT_LIMIT, ...entityQuery(c) };
         const vouchers = await runtime.query<SalesVoucher[]>('finance.vouchers.sales', range, { actor: actorOf(user), orgId });
@@ -3094,7 +4804,7 @@ export function createHttpApp(deps: HttpDeps) {
       app.get(cash.path, async (c) => {
         try {
           const user = c.get('user');
-          const orgSlug = c.req.header(ORG_HEADER) ?? null;
+          const orgSlug = readOrgHeader(c);
           const orgId = await resolveOrg(runtime, user, orgSlug);
           const range = { from: c.req.query('from') || undefined, to: c.req.query('to') || undefined, limit: JOURNAL_EXPORT_LIMIT, ...entityQuery(c) };
           const vouchers = await runtime.query<CashVoucher[]>('finance.vouchers.cash', { ...range, type: cash.type }, { actor: actorOf(user), orgId });
@@ -3125,7 +4835,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/vat.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const period = c.req.query('period') ?? '';
         const report = await runtime.query<VatReport>('finance.vat.period', { period, ...entityQuery(c) }, { actor: actorOf(user), orgId });
@@ -3151,7 +4861,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/vat-01gtgt.xml', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const period = c.req.query('period') ?? '';
         // ?deductInput=1 puts [24] in [25] (#692); ?deduct=suggested puts the working's suggestion, [24] minus the VAT
@@ -3199,7 +4909,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/ledger.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const period = c.req.query('period') ?? '';
         const book = await runtime.query<LedgerBook>('finance.ledger.book', { period, ...entityQuery(c) }, { actor: actorOf(user), orgId });
@@ -3223,7 +4933,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/statements.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const period = c.req.query('period') ?? '';
         const statements = await runtime.query<FinancialStatements>('finance.statements.period', { period, ...entityQuery(c) }, { actor: actorOf(user), orgId });
@@ -3246,7 +4956,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/fixed-assets.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const assets = await runtime.query<FixedAsset[]>('finance.fixed_assets.list', entityQuery(c), { actor: actorOf(user), orgId });
         const bytes = await buildFixedAssetsWorkbook(assets, orgSlug ?? '', config.BRAND_NAME);
@@ -3271,7 +4981,7 @@ export function createHttpApp(deps: HttpDeps) {
     app.get('/api/export/stock.xlsx', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const actor = actorOf(user);
         const month = c.req.query('month') ?? '';
@@ -3299,12 +5009,214 @@ export function createHttpApp(deps: HttpDeps) {
       }
     });
 
+    // S1a-HKD, the sales listing of a household business (#2517), ?legalEntityId=<household>&period=2026-09 (a month, a quarter 2026-Q3 or a year). The query checks the period, the roles and that the
+    // entity's profile requires S1a (422 and 403 otherwise), so the file name only holds a valid period. The audit row is recorded before the file is sent.
+    app.get('/api/export/household-s1a.xlsx', async (c) => {
+      try {
+        const user = c.get('user');
+        const orgSlug = readOrgHeader(c);
+        const orgId = await resolveOrg(runtime, user, orgSlug);
+        const actor = actorOf(user);
+        const period = c.req.query('period') ?? '';
+        const legalEntityId = c.req.query('legalEntityId') ?? '';
+        const book = await runtime.query<HouseholdS1a>('finance.household.s1a', { legalEntityId, period }, { actor, orgId });
+        const bytes = await buildS1aWorkbook(book, config.BRAND_NAME);
+        // The export's audit row (the entity, the book, the period and the number of rows). No row, no download.
+        await runtime.execute('finance.household.export', { legalEntityId, book: 'S1a', period, rows: book.rows.length }, { actor, orgId });
+        return new Response(body(bytes), {
+          headers: {
+            'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'so-s1a-hkd', period, ORG_SLUG], 'xlsx'),
+            'cache-control': 'private, no-store',
+          },
+        });
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    // S2a-HKD, the revenue book of a household business on the percentage method (#2517 slice 2a), ?legalEntityId=<household>&period=2026-09 (a month, a quarter 2026-Q3 or a year). The query checks the period,
+    // the roles and that the entity's profile requires S2a (422 and 403 otherwise), so the file name only holds a valid period. The book is given while its rows are `commentary` (the file and the screen
+    // say so, and label every figure that depends on them); part of the revenue with no business line yet shows in its own column and holds the tax total back. The audit row is recorded before the file is sent.
+    app.get('/api/export/household-s2a.xlsx', async (c) => {
+      try {
+        const user = c.get('user');
+        const orgSlug = readOrgHeader(c);
+        const orgId = await resolveOrg(runtime, user, orgSlug);
+        const actor = actorOf(user);
+        const period = c.req.query('period') ?? '';
+        const legalEntityId = c.req.query('legalEntityId') ?? '';
+        // A household with several trades picks the trade that takes the yearly threshold deduction (#3710 slice 3): &deductionTrade=services. The query checks the value.
+        const deductionTrade = c.req.query('deductionTrade');
+        const book = await runtime.query<HouseholdS2a>('finance.household.s2a', { legalEntityId, period, ...(deductionTrade ? { deductionTrade } : {}) }, { actor, orgId });
+        const bytes = await buildS2aWorkbook(book, config.BRAND_NAME);
+        await runtime.execute('finance.household.export', { legalEntityId, book: 'S2a', period, rows: book.rows.length }, { actor, orgId });
+        return new Response(body(bytes), {
+          headers: {
+            'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'so-s2a-hkd', period, ORG_SLUG], 'xlsx'),
+            'cache-control': 'private, no-store',
+          },
+        });
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    // S2b-HKD, the revenue book of a household business on the income method (#2517 slice 2c), ?legalEntityId=<household>&period=2026-09 (a month, a quarter 2026-Q3 or a year). The query checks the period, the
+    // roles and that the entity's profile requires S2b (422 and 403 otherwise), so the file name only holds a valid period. The book is given while its rows are `commentary` (the file and the screen label
+    // every figure that depends on them); part of the revenue with no business line yet shows in its own column and holds the VAT total back. The audit row is recorded before the file is sent.
+    app.get('/api/export/household-s2b.xlsx', async (c) => {
+      try {
+        const user = c.get('user');
+        const orgSlug = readOrgHeader(c);
+        const orgId = await resolveOrg(runtime, user, orgSlug);
+        const actor = actorOf(user);
+        const period = c.req.query('period') ?? '';
+        const legalEntityId = c.req.query('legalEntityId') ?? '';
+        const book = await runtime.query<HouseholdS2b>('finance.household.s2b', { legalEntityId, period }, { actor, orgId });
+        const bytes = await buildS2bWorkbook(book, config.BRAND_NAME);
+        // The file name is built before the audit row: a request that cannot be given a name (no organization slug) fails here, so no audit row is written for a file that is never sent.
+        const disposition = attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'so-s2b-hkd', period, ORG_SLUG], 'xlsx');
+        await runtime.execute('finance.household.export', { legalEntityId, book: 'S2b', period, rows: book.rows.length }, { actor, orgId });
+        return new Response(body(bytes), {
+          headers: {
+            'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'content-disposition': disposition,
+            'cache-control': 'private, no-store',
+          },
+        });
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    // S2c-HKD, the revenue and expense detail of a household business on the income method (#2517 slice 2b), ?legalEntityId=<household>&period=2026-09 (a month, a quarter 2026-Q3 or a year). The query checks the
+    // period, the roles and that the entity's profile requires S2c (422 and 403 otherwise), so the file name only holds a valid period. The book is given while its rows are `commentary` (the file and the screen
+    // label the expense and income figures); an expense account with no group shows apart and leaves the income blank. The audit row is recorded before the file is sent.
+    app.get('/api/export/household-s2c.xlsx', async (c) => {
+      try {
+        const user = c.get('user');
+        const orgSlug = readOrgHeader(c);
+        const orgId = await resolveOrg(runtime, user, orgSlug);
+        const actor = actorOf(user);
+        const period = c.req.query('period') ?? '';
+        const legalEntityId = c.req.query('legalEntityId') ?? '';
+        const book = await runtime.query<HouseholdS2c>('finance.household.s2c', { legalEntityId, period }, { actor, orgId });
+        const bytes = await buildS2cWorkbook(book, config.BRAND_NAME);
+        await runtime.execute('finance.household.export', { legalEntityId, book: 'S2c', period, rows: book.revenueRows.length + book.expenseRows.length }, { actor, orgId });
+        return new Response(body(bytes), {
+          headers: {
+            'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'so-s2c-hkd', period, ORG_SLUG], 'xlsx'),
+            'cache-control': 'private, no-store',
+          },
+        });
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    // S2d-HKD, the goods book of a household business on the income method (#2517 slice 2d), ?legalEntityId=<household>&month=2026-09 (one month: the stock cost is a monthly average). The query checks the month, the roles
+    // and that the entity's profile requires S2d (422 and 403 otherwise). The book is given while the month is open or the layout row is `commentary` (the file and the screen say so). The audit row is recorded before the file is sent.
+    app.get('/api/export/household-s2d.xlsx', async (c) => {
+      try {
+        const user = c.get('user');
+        const orgSlug = readOrgHeader(c);
+        const orgId = await resolveOrg(runtime, user, orgSlug);
+        const actor = actorOf(user);
+        const month = c.req.query('month') ?? '';
+        const legalEntityId = c.req.query('legalEntityId') ?? '';
+        const book = await runtime.query<HouseholdS2d>('finance.household.s2d', { legalEntityId, month }, { actor, orgId });
+        const bytes = await buildS2dWorkbook(book, config.BRAND_NAME);
+        await runtime.execute('finance.household.export', { legalEntityId, book: 'S2d', period: month, rows: book.items.reduce((n, i) => n + i.rows.length, 0) }, { actor, orgId });
+        return new Response(body(bytes), {
+          headers: {
+            'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'so-s2d-hkd', month, ORG_SLUG], 'xlsx'),
+            'cache-control': 'private, no-store',
+          },
+        });
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    // S2e-HKD, the cash and bank book of a household business on the income method (#2517 slice 2e), ?legalEntityId=<household>&period=2026-09 (a month, a quarter 2026-Q3 or a year). The query checks the period, the
+    // roles and that the entity's profile requires S2e (422 and 403 otherwise). The book is given while its layout row is `commentary` (the file and the screen carry the provisional label). The audit row is recorded before the file is sent.
+    app.get('/api/export/household-s2e.xlsx', async (c) => {
+      try {
+        const user = c.get('user');
+        const orgSlug = readOrgHeader(c);
+        const orgId = await resolveOrg(runtime, user, orgSlug);
+        const actor = actorOf(user);
+        const period = c.req.query('period') ?? '';
+        const legalEntityId = c.req.query('legalEntityId') ?? '';
+        const book = await runtime.query<HouseholdS2e>('finance.household.s2e', { legalEntityId, period }, { actor, orgId });
+        const bytes = await buildS2eWorkbook(book, config.BRAND_NAME);
+        await runtime.execute('finance.household.export', { legalEntityId, book: 'S2e', period, rows: book.accounts.reduce((n, a) => n + a.rows.length, 0) }, { actor, orgId });
+        return new Response(body(bytes), {
+          headers: {
+            'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'so-s2e-hkd', period, ORG_SLUG], 'xlsx'),
+            'cache-control': 'private, no-store',
+          },
+        });
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    // The 01/CNKD quarterly return worksheet of a household business (#2518), ?legalEntityId=<household>&year=2026&quarter=3 and, for a household with several trades, &split=goods:1000000,services:600000 (and, from the yearly rule, &splitBefore=... and &deductionTrade=...).
+    // The query checks the year and quarter, the roles, the profile and the split, and refuses (422) while revenue is unassigned (forExport), so the file only ever holds whole figures. While a row
+    // behind the figures is still unconfirmed the file is given and every figure in it carries the provisional label (#2518). The audit row is recorded before the file is sent. A worksheet: Ludy files nothing.
+    app.get('/api/export/household-cnkd.xlsx', async (c) => {
+      try {
+        const user = c.get('user');
+        const orgSlug = readOrgHeader(c);
+        const orgId = await resolveOrg(runtime, user, orgSlug);
+        const actor = actorOf(user);
+        const legalEntityId = c.req.query('legalEntityId') ?? '';
+        const year = Number(c.req.query('year') ?? '');
+        const quarter = Number(c.req.query('quarter') ?? '');
+        const tradeSplit = (text: string) =>
+          text
+            .split(',')
+            .filter((part) => part !== '')
+            .map((part) => {
+              // Everything after the first colon is the amount, so "goods:1:2" fails the amount check instead of being read as 1.
+              const at = part.indexOf(':');
+              return { trade: at < 0 ? part : part.slice(0, at), revenue: at < 0 ? '' : part.slice(at + 1) };
+            });
+        const split = tradeSplit(c.req.query('split') ?? '');
+        // The yearly rule (#3710 slice 3): &splitBefore=goods:600000 is the split of the year's revenue before the quarter, &deductionTrade=services the trade that takes the threshold deduction.
+        const splitBefore = tradeSplit(c.req.query('splitBefore') ?? '');
+        const deductionTrade = c.req.query('deductionTrade');
+        const sheetData = await runtime.query<HouseholdCnkd>(
+          'finance.household.cnkd',
+          { legalEntityId, year, quarter, ...(split.length > 0 ? { split } : {}), ...(splitBefore.length > 0 ? { splitBefore } : {}), ...(deductionTrade ? { deductionTrade } : {}), forExport: true },
+          { actor, orgId },
+        );
+        const bytes = await buildCnkdWorkbook(sheetData, config.BRAND_NAME);
+        await runtime.execute('finance.household.export', { legalEntityId, book: '01/CNKD', period: `${year}-Q${quarter}`, rows: sheetData.lines.length }, { actor, orgId });
+        return new Response(body(bytes), {
+          headers: {
+            'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'to-khai-01-cnkd', `${year}-Q${quarter}`, ORG_SLUG], 'xlsx'),
+            'cache-control': 'private, no-store',
+          },
+        });
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
     // The year-end financial statements as HTKK XML (issue #920), ?year=2026: B01a-DNN, B02-DNN and F01-DNN, form 683.
     // The query checks the year (422 otherwise), the roles and the tax code, so the file name only holds a valid year.
     app.get('/api/export/statements-htkk.xml', async (c) => {
       try {
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         const yearText = c.req.query('year') ?? '';
         const year = /^\d{4}$/.test(yearText) ? Number(yearText) : Number.NaN;
@@ -3334,7 +5246,7 @@ export function createHttpApp(deps: HttpDeps) {
     // served only when the manifest lists it under the package's own prefix, so the request names nothing but a year.
     const recordedArchive = async (c: Context<{ Variables: { user: AuthUser } }>) => {
       const user = c.get('user');
-      const orgSlug = c.req.header(ORG_HEADER) ?? null;
+      const orgSlug = readOrgHeader(c);
       const orgId = await resolveOrg(runtime, user, orgSlug);
       const year = Number(c.req.param('year'));
       if (!Number.isInteger(year) || year < 2000 || year > 2100) throw new DomainError('NOT_FOUND', 404, 'Không có gói lưu trữ của năm này');
@@ -3394,7 +5306,7 @@ export function createHttpApp(deps: HttpDeps) {
         const kind = file.endsWith('.xlsx') ? file.slice(0, -'.xlsx'.length) : asView ? file.slice(0, -'.json'.length) : '';
         if (!(HR_DECLARATION_KINDS as readonly string[]).includes(kind)) throw new DomainError('NOT_FOUND', 404, 'Không có bảng kê này');
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         // Refused before a slot or an audit row: the query checks it again for every caller.
         if (!hasFreshMfa(actorOf(user))) throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để thực hiện việc này');
@@ -3449,7 +5361,7 @@ export function createHttpApp(deps: HttpDeps) {
         const file = c.req.param('file');
         if (!file.endsWith('.xlsx')) throw new DomainError('NOT_FOUND', 404, 'Không có file này');
         const user = c.get('user');
-        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgSlug = readOrgHeader(c);
         const orgId = await resolveOrg(runtime, user, orgSlug);
         // Refused before a slot or an audit row: the query checks it again for every caller.
         if (!hasFreshMfa(actorOf(user))) throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để thực hiện việc này');
@@ -3490,6 +5402,59 @@ export function createHttpApp(deps: HttpDeps) {
     });
   }
 
+  // The bank file of approved supplier payments (#3113 S3b-2, #3700): GET /api/supplier-payment-bank-file/payments.xlsx?ids=<payment ids, comma separated>[&reexport=1]. Ludy never initiates a payment: the file is for
+  // the accountant to upload to the bank. The same rules as the salary file above: built only in the requesting owner's or admin's own context by the sensitive query finance.supplier_payment.bank_file.get (its audit row is
+  // committed before the sealed holder and number are opened), a second factor used in the last 5 minutes, a slot of the export limiter, built whole, `private, no-store`, no HEAD, and no account number in the URL
+  // (only payment ids). Before the bytes are sent the command finance.supplier_payment.bank_file.export writes its audit row and marks each payment (exported_at, exported_by, export_count) in one transaction: no row and no
+  // marker, no download; a payment already marked is refused unless reexport=1 confirms a second file, which the row says. A refusal that belongs to one payment carries its paymentId (and, for a file handed over before, the
+  // time) so the page can say which payment and why; never a holder, a number or an amount.
+  if (runtime.installed('finance')) {
+    app.get('/api/supplier-payment-bank-file/:file', async (c) => {
+      if (c.req.method === 'HEAD') return c.body(null, 405, { allow: 'GET' });
+      try {
+        if (c.req.param('file') !== 'payments.xlsx') throw new DomainError('NOT_FOUND', 404, 'Không có file này');
+        const user = c.get('user');
+        const orgSlug = readOrgHeader(c);
+        const orgId = await resolveOrg(runtime, user, orgSlug);
+        if (!hasFreshMfa(actorOf(user))) throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để thực hiện việc này');
+        const reexport = c.req.query('reexport') === '1';
+        const parsed = zSupplierPaymentBankFileQuery.safeParse({ paymentIds: (c.req.query('ids') ?? '').split(',').filter((id) => id !== ''), ...(reexport ? { reexport: true } : {}) });
+        if (!parsed.success) throw new DomainError('BAD_REQUEST', 400, 'Yêu cầu không hợp lệ: cần danh sách số hiệu khoản chi (ids), tối đa 200');
+        const release = exportSlots.tryAcquire(user.userId);
+        if (!release) {
+          c.header('retry-after', String(EXPORT_BUSY_RETRY_SECONDS));
+          throw new DomainError('EXPORT_BUSY', 503, 'Đang có nhiều lượt xuất; hãy thử lại sau vài giây');
+        }
+        try {
+          const document = await runtime.query<SupplierPaymentBankFile>('finance.supplier_payment.bank_file.get', parsed.data, { actor: actorOf(user), orgId });
+          const bytes = await buildSupplierPaymentBankFileWorkbook(document, config.BRAND_NAME);
+          await runtime.execute(
+            'finance.supplier_payment.bank_file.export',
+            { paymentIds: parsed.data.paymentIds, rows: document.rows.length, currency: document.currency, ...(reexport ? { reexport: true } : {}) },
+            { actor: actorOf(user), orgId },
+          );
+          return new Response(held(new Uint8Array(bytes), release), {
+            headers: {
+              'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'chuyen-khoan-ncc', document.currency.toLowerCase(), ORG_SLUG], 'xlsx'),
+              'x-content-type-options': 'nosniff',
+              'cache-control': 'private, no-store',
+            },
+          });
+        } catch (error) {
+          release();
+          throw error;
+        }
+      } catch (error) {
+        if (error instanceof DomainError && typeof error.details?.paymentId === 'string') {
+          const at = error.details.exportedAt;
+          return c.json({ code: error.code, message: error.message, paymentId: error.details.paymentId, ...(typeof at === 'string' ? { exportedAt: at } : {}) }, error.status);
+        }
+        return problem(c, error);
+      }
+    });
+  }
+
   // The org export (issue #38, streamed since #212), owners only: GET /api/org-export/manifest (JSON) or
   // /api/org-export/<table> (NDJSON, one row per line), from the newest export kernel.org.export.get reports. Every key,
   // version and sha256 comes from that export's audit row, never from the request; each blob is read at its recorded
@@ -3499,7 +5464,7 @@ export function createHttpApp(deps: HttpDeps) {
   app.get('/api/org-export/:part', async (c) => {
     try {
       const user = c.get('user');
-      const orgSlug = c.req.header(ORG_HEADER) ?? null;
+      const orgSlug = readOrgHeader(c);
       const orgId = await resolveOrg(runtime, user, orgSlug);
       const part = c.req.param('part');
       // The tables of the owner-run path (#2676, payroll people and pay runs) are read live by the owner's own session, never by the export job: a
@@ -3510,7 +5475,7 @@ export function createHttpApp(deps: HttpDeps) {
         if (c.req.method === 'HEAD') return c.body(null, 405, { allow: 'GET' });
         const table = part as OwnerRunExportTable;
         const state = await runtime.query<OrgExportView>('kernel.org.export.get', {}, { actor: actorOf(user), orgId });
-        if (state.status !== 'offboarding') throw new DomainError(ORG_NOT_OFFBOARDING, 409, 'Chỉ tải được danh sách nhân sự khi tổ chức đang được đóng');
+        if (state.status !== 'offboarding') throw new DomainError(ORG_NOT_OFFBOARDING, 409, 'Chỉ tải được các tệp này khi tổ chức đang được đóng');
         const release = exportSlots.tryAcquire(user.userId);
         if (!release) {
           c.header('retry-after', String(EXPORT_BUSY_RETRY_SECONDS));
@@ -3608,10 +5573,34 @@ export function createHttpApp(deps: HttpDeps) {
     app.use('/assets/*', serveStatic({ root }));
     app.use('/favicon.svg', serveStatic({ root }));
     const indexPath = join(config.WEB_DIST, 'index.html');
-    const csp = contentSecurityPolicy(publicAuthUrl(config), store.direct ? directTransferOrigin(config) : null, Boolean(config.TURNSTILE_SITE_KEY));
+    const authOriginUrl = publicAuthUrl(config);
+    const directOrigin = store.direct ? directTransferOrigin(config) : null;
+    const hostedOrigin = hostedLoginTokenOrigin(config);
+    const csp = contentSecurityPolicy(authOriginUrl, directOrigin, Boolean(config.TURNSTILE_SITE_KEY), null, hostedOrigin);
+    const signCsp = contentSecurityPolicy(authOriginUrl, directOrigin, false, null, hostedOrigin);
     let indexHtml: string | null = null;
     app.get('*', async (c) => {
-      c.header('content-security-policy', csp);
+      const isSignPage =
+        c.req.path === SIGN_PAGE_PATH ||
+        c.req.path.startsWith(`${SIGN_PAGE_PATH}/`) ||
+        c.req.path === SIGN_DIRECT_PAGE_PATH ||
+        c.req.path.startsWith(`${SIGN_DIRECT_PAGE_PATH}/`) ||
+        c.req.path.startsWith(`${SIGN_PUBLIC_HUB_PAGE_PREFIX}/`);
+      const roadmapRoute = matchPublicRoadmapPagePath(c.req.path);
+      let pageCsp = isSignPage ? signCsp : csp;
+      if (roadmapRoute) {
+        const frameAncestors =
+          c.req.query('embed') === '1'
+            ? await resolveRoadmapEmbedFrameAncestors(runtime, roadmapBilling, roadmapRoute.orgSlug, roadmapRoute.boardSlug)
+            : null;
+        pageCsp = contentSecurityPolicy(authOriginUrl, directOrigin, false, null, hostedOrigin, frameAncestors);
+      }
+      c.header('content-security-policy', pageCsp);
+      if (isSignPage || roadmapRoute) {
+        c.header('referrer-policy', 'no-referrer');
+        c.header('cache-control', 'no-store');
+        c.header('x-content-type-options', 'nosniff');
+      }
       indexHtml ??= await readFile(indexPath, 'utf8');
       return c.html(indexHtml);
     });

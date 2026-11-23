@@ -5,8 +5,8 @@
 // with the versions now under the same keys: the bytes are read back and must match the recorded sha256 first, so
 // the export is exactly the one the owner was given. Run by restore.sh as `main.ts exports-rebind <org id>...` in the
 // worker's image once migrate has run and before the worker starts.
-import { BlobIntegrityError, BlobStoreAccessError, readVerified, sha256Hex, type Actor, type BlobStore, type Runtime } from '@crove/kernel-runtime';
-import type { ExportRecord } from '@crove/kernel';
+import { BlobIntegrityError, BlobStoreAccessError, readVerified, sha256Hex, type Actor, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
+import type { ExportRecord } from '@ludy/kernel';
 
 const RESTORE: Actor = { type: 'system', component: 'restore' };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

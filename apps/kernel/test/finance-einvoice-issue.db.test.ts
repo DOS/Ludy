@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Issuing a sales e-invoice, the person's half (#2502, ADR-0044 points 3 and 4), on PostgreSQL 17: a draft is asked for approval with the hash of everything it is issued from, an owner
-// or an admin approves (never the one who asked when another can), and only that approval moves it to `submitting`, through the definer crove_finance.einvoice_submit, for this draft,
+// or an admin approves (never the one who asked when another can), and only that approval moves it to `submitting`, through the definer ludy_finance.einvoice_submit, for this draft,
 // this content and this total. A direct call, another org's draft, a draft changed after the request, a person's own UPDATE and the job's own move are all refused in SQL.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { enterpriseCheckDigit } from '@crove/l10n-vn';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { enterpriseCheckDigit } from '@ludy/l10n-vn';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -33,11 +33,12 @@ interface Draft {
 const SELLER_TAX_CODE = '0101234564';
 const PREFIX = '010010910';
 const VALID_TAX_CODE = `${PREFIX}${enterpriseCheckDigit(PREFIX)}`;
-const today = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
+// A fixed day inside the 8% period (and in the past), so the 8% line below passes the rate check on any day the suite runs (#3678).
+const IN_PERIOD = '2026-11-03';
 const form = (seriesId: string | null, extra: Record<string, unknown> = {}) => ({
   draftId: null,
   legalEntityId: null,
-  date: today(),
+  date: IN_PERIOD,
   seriesId,
   buyer: { kind: 'business', partyId: null, taxCode: VALID_TAX_CODE, name: 'Công ty Mua Thử', address: '1 Phố Thử, Hà Nội', email: null },
   lines: [
@@ -74,20 +75,20 @@ suite('issuing a sales e-invoice (#2502)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty Phát Hành ${randomUUID().slice(0, 6)}`);
     const member = await identity('member');
     const viewer = await identity('viewer');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
     // The org's tax code is its default entity's, and the entity has a connection to the offline provider under it: what the issue needs before it asks anyone.
     if (options.taxCode !== false) await execute({ orgId, owner }, 'kernel.org.set_tax_code', { taxCode: SELLER_TAX_CODE });
     if (options.connection !== false) {
       const channel = randomUUID();
       await admin(async (c) => {
-        await c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, channel, 'einvoice_sandbox', `acct-${channel.slice(0, 8)}`, 'Hóa đơn thử', owner]);
-        await c.query(`INSERT INTO crove_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', $3)`, [orgId, channel, SELLER_TAX_CODE]);
+        await c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, channel, 'einvoice_sandbox', `acct-${channel.slice(0, 8)}`, 'Hóa đơn thử', owner]);
+        await c.query(`INSERT INTO ludy_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', $3)`, [orgId, channel, SELLER_TAX_CODE]);
       });
     }
     let adminUser: string | null = null;
     if (options.team) {
       adminUser = await identity('admin');
-      await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [orgId, adminUser]));
+      await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [orgId, adminUser]));
     }
     return { orgId, owner, admin: adminUser, member, viewer };
   }
@@ -97,7 +98,7 @@ suite('issuing a sales e-invoice (#2502)', () => {
   const request = (o: Org, draftId: string, user = o.owner) => execute<{ proposalId: string }>(o, 'kernel.proposal.request', { command: 'finance.einvoice.issue', input: { draftId } }, user);
   const approve = (o: Org, proposalId: string, user = o.owner) => execute<{ draftId: string; state: string }>(o, 'kernel.proposal.approve', { id: proposalId, revision: 1 }, user);
   const draftRow = async (o: Org, id: string) =>
-    (await rows<{ state: string; submitted_at: Date | null; error_code: string | null; idempotency_key: string }>('SELECT state, submitted_at, error_code, idempotency_key FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, id]))[0];
+    (await rows<{ state: string; submitted_at: Date | null; error_code: string | null; idempotency_key: string }>('SELECT state, submitted_at, error_code, idempotency_key FROM ludy_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, id]))[0];
   async function inContext<T>(o: Org, who: string, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
     const c = await pool.connect();
     try {
@@ -113,7 +114,7 @@ suite('issuing a sales e-invoice (#2502)', () => {
     const c = await workerPool.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [o.orgId]);
+      await c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [o.orgId]);
       const result = await c.query(sqlText, params);
       await c.query('COMMIT');
       return result;
@@ -134,14 +135,14 @@ suite('issuing a sales e-invoice (#2502)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const worker = new URL(adminUrl);
-    worker.username = 'crove_worker';
+    worker.username = 'ludy_worker';
     worker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: worker.toString(), max: 2 });
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
@@ -167,7 +168,7 @@ suite('issuing a sales e-invoice (#2502)', () => {
     const before = await draftRow(o, draft.id);
     expect(before).toMatchObject({ state: 'draft', submitted_at: null });
     const { proposalId } = await request(o, draft.id);
-    const proposal = (await rows<{ command: string; kind: string; status: string; payload: Record<string, unknown>; legal_entity_id: string }>('SELECT command, kind, status, payload, legal_entity_id FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0];
+    const proposal = (await rows<{ command: string; kind: string; status: string; payload: Record<string, unknown>; legal_entity_id: string }>('SELECT command, kind, status, payload, legal_entity_id FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0];
     expect(proposal).toMatchObject({ command: 'finance.einvoice.issue', kind: 'finance.einvoice_issue', status: 'pending' });
     // The payload names the draft, the hash of what it is issued from, the total and the currency, and carries no buyer data and no entity.
     expect(proposal?.payload).toEqual({ draftId: draft.id, contentHash: expect.stringMatching(/^[0-9a-f]{64}$/), amount: '274000', currency: 'VND', lineCount: 2 });
@@ -177,7 +178,7 @@ suite('issuing a sales e-invoice (#2502)', () => {
     expect(after).toMatchObject({ state: 'submitting', error_code: null, idempotency_key: before?.idempotency_key });
     expect(after?.submitted_at).toBeInstanceOf(Date);
     // Audited with ids and the total, never the buyer.
-    const audit = await rows<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.einvoice.issue' AND outcome = 'ok'`, [o.orgId]);
+    const audit = await rows<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.einvoice.issue' AND outcome = 'ok'`, [o.orgId]);
     expect(audit).toHaveLength(1);
     expect(audit[0]?.detail).toMatchObject({ draftId: draft.id, total: '274000', currency: 'VND' });
     expect(JSON.stringify(audit[0]?.detail)).not.toContain('Công ty Mua Thử');
@@ -286,8 +287,8 @@ suite('issuing a sales e-invoice (#2502)', () => {
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query("UPDATE crove_finance.einvoice_draft_line SET source_kind = 'crm.sales_order', source_id = $3, source_line_no = line_no WHERE org_id = $1 AND draft_id = $2 AND line_no = 1", [o.orgId, made.id, orderB]);
-      await c.query("UPDATE crove_finance.einvoice_draft_line SET source_kind = 'crm.sales_order', source_id = $3, source_line_no = line_no WHERE org_id = $1 AND draft_id = $2 AND line_no = 2", [o.orgId, made.id, orderA]);
+      await c.query("UPDATE ludy_finance.einvoice_draft_line SET source_kind = 'crm.sales_order', source_id = $3, source_line_no = line_no WHERE org_id = $1 AND draft_id = $2 AND line_no = 1", [o.orgId, made.id, orderB]);
+      await c.query("UPDATE ludy_finance.einvoice_draft_line SET source_kind = 'crm.sales_order', source_id = $3, source_line_no = line_no WHERE org_id = $1 AND draft_id = $2 AND line_no = 2", [o.orgId, made.id, orderA]);
       await c.query('COMMIT');
     });
     const { proposalId } = await request(o, made.id);
@@ -297,7 +298,7 @@ suite('issuing a sales e-invoice (#2502)', () => {
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query("UPDATE crove_finance.einvoice_draft_line SET source_kind = 'booking' WHERE org_id = $1 AND draft_id = $2 AND line_no = 1", [o.orgId, made.id]);
+      await c.query("UPDATE ludy_finance.einvoice_draft_line SET source_kind = 'booking' WHERE org_id = $1 AND draft_id = $2 AND line_no = 1", [o.orgId, made.id]);
       await c.query('COMMIT');
     });
     expect((await view(proposalId)).sourceOrderIds).toEqual([orderA]);
@@ -311,10 +312,10 @@ suite('issuing a sales e-invoice (#2502)', () => {
       await admin(async (c) => {
         await c.query('BEGIN');
         await c.query('SET LOCAL session_replication_role = replica');
-        await c.query('UPDATE crove_finance.einvoice_draft SET buyer_name = $3, buyer_address = $4 WHERE org_id = $1 AND id = $2', [o.orgId, draft.id, name, address]);
+        await c.query('UPDATE ludy_finance.einvoice_draft SET buyer_name = $3, buyer_address = $4 WHERE org_id = $1 AND id = $2', [o.orgId, draft.id, name, address]);
         await c.query('COMMIT');
       });
-      return String((await rows<{ h: string }>('SELECT crove_finance.einvoice_content_hash($1, $2) AS h', [o.orgId, draft.id]))[0]?.h);
+      return String((await rows<{ h: string }>('SELECT ludy_finance.einvoice_content_hash($1, $2) AS h', [o.orgId, draft.id]))[0]?.h);
     };
     // The old separator inside a field, and the same characters split across the two fields, are two contents.
     const joined = await hashWith('Công ty A\u001fPhố B', 'Hà Nội');
@@ -329,9 +330,9 @@ suite('issuing a sales e-invoice (#2502)', () => {
     const o = await org({ team: true });
     const series = await sync(o);
     const draft = await save(o, series);
-    const hash = String((await rows<{ h: string }>('SELECT crove_finance.einvoice_content_hash($1, $2) AS h', [o.orgId, draft.id]))[0]?.h);
+    const hash = String((await rows<{ h: string }>('SELECT ludy_finance.einvoice_content_hash($1, $2) AS h', [o.orgId, draft.id]))[0]?.h);
     expect(hash).toMatch(/^[0-9a-f]{64}$/);
-    const submit = (who: string, org_: Org, id: string, h: string) => inContext(org_, who, (c) => c.query('SELECT crove_finance.einvoice_submit($1, $2)', [id, h]));
+    const submit = (who: string, org_: Org, id: string, h: string) => inContext(org_, who, (c) => c.query('SELECT ludy_finance.einvoice_submit($1, $2)', [id, h]));
     // A direct call by an owner, with the right hash, outside any approval.
     await expect(submit(o.owner, o, draft.id, hash)).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('EINVOICE_ISSUE_FORBIDDEN') });
     // Another org's draft, even by that org's owner.
@@ -341,25 +342,25 @@ suite('issuing a sales e-invoice (#2502)', () => {
     await expect(submit(o.member, o, draft.id, hash)).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('EINVOICE_ISSUE_FORBIDDEN') });
     // The function is the API login's alone: the tenant role, the worker login and PUBLIC cannot run it, and nor can they run the approval test it asks.
     const grants = await rows<{ app: boolean; worker: boolean; tenant: boolean; approved_app: boolean; approved_definer: boolean; owner: string }>(
-      `SELECT has_function_privilege('crove_app', 'crove_finance.einvoice_submit(uuid, text)', 'EXECUTE') AS app,
-              has_function_privilege('crove_worker', 'crove_finance.einvoice_submit(uuid, text)', 'EXECUTE') AS worker,
-              has_function_privilege('public', 'crove_finance.einvoice_submit(uuid, text)', 'EXECUTE') AS tenant,
-              has_function_privilege('crove_app', 'crove_finance.approved_execution(text, jsonb, numeric)', 'EXECUTE') AS approved_app,
-              has_function_privilege('crove_definer_einvoice', 'crove_finance.approved_execution(text, jsonb, numeric)', 'EXECUTE') AS approved_definer,
-              (SELECT proowner::regrole::text FROM pg_proc WHERE oid = 'crove_finance.einvoice_submit(uuid, text)'::regprocedure) AS owner`,
+      `SELECT has_function_privilege('ludy_app', 'ludy_finance.einvoice_submit(uuid, text)', 'EXECUTE') AS app,
+              has_function_privilege('ludy_worker', 'ludy_finance.einvoice_submit(uuid, text)', 'EXECUTE') AS worker,
+              has_function_privilege('public', 'ludy_finance.einvoice_submit(uuid, text)', 'EXECUTE') AS tenant,
+              has_function_privilege('ludy_app', 'ludy_finance.approved_execution(text, jsonb, numeric)', 'EXECUTE') AS approved_app,
+              has_function_privilege('ludy_definer_einvoice', 'ludy_finance.approved_execution(text, jsonb, numeric)', 'EXECUTE') AS approved_definer,
+              (SELECT proowner::regrole::text FROM pg_proc WHERE oid = 'ludy_finance.einvoice_submit(uuid, text)'::regprocedure) AS owner`,
     );
-    expect(grants[0]).toEqual({ app: true, worker: false, tenant: false, approved_app: false, approved_definer: true, owner: 'crove_definer_einvoice' });
+    expect(grants[0]).toEqual({ app: true, worker: false, tenant: false, approved_app: false, approved_definer: true, owner: 'ludy_definer_einvoice' });
     const shape = await rows<{ definer: boolean; config: string[]; login: boolean }>(
-      `SELECT p.prosecdef AS definer, p.proconfig AS config, (SELECT rolcanlogin FROM pg_roles WHERE rolname = 'crove_definer_einvoice') AS login
-       FROM pg_proc p WHERE p.oid = 'crove_finance.einvoice_submit(uuid, text)'::regprocedure`,
+      `SELECT p.prosecdef AS definer, p.proconfig AS config, (SELECT rolcanlogin FROM pg_roles WHERE rolname = 'ludy_definer_einvoice') AS login
+       FROM pg_proc p WHERE p.oid = 'ludy_finance.einvoice_submit(uuid, text)'::regprocedure`,
     );
     expect(shape[0]).toEqual({ definer: true, config: ['search_path=pg_catalog, pg_temp'], login: false });
     // A person's own UPDATE: not the state, not the submit time, not any column of the issue, even as an owner.
     for (const sets of ["state = 'submitting'", "state = 'submitting', submitted_at = now()", 'submitted_at = now()', "error_code = 'X_Y'", "issued_number = '1'", 'check_attempts = 1', 'next_check_at = now()']) {
-      await expect(inContext(o, o.owner, (c) => c.query(`UPDATE crove_finance.einvoice_draft SET ${sets} WHERE org_id = $1 AND id = $2`, [o.orgId, draft.id])), sets).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/EINVOICE_(FIELD_LOCKED|STATE)/) });
+      await expect(inContext(o, o.owner, (c) => c.query(`UPDATE ludy_finance.einvoice_draft SET ${sets} WHERE org_id = $1 AND id = $2`, [o.orgId, draft.id])), sets).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/EINVOICE_(FIELD_LOCKED|STATE)/) });
     }
     // The job's own move out of `draft` is refused too: the first step is a person's approved issue.
-    await expect(asJob(o, "UPDATE crove_finance.einvoice_draft SET state = 'submitting', submitted_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, draft.id])).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('EINVOICE_STATE') });
+    await expect(asJob(o, "UPDATE ludy_finance.einvoice_draft SET state = 'submitting', submitted_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, draft.id])).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('EINVOICE_STATE') });
     expect((await draftRow(o, draft.id))?.state).toBe('draft');
   });
 
@@ -370,12 +371,12 @@ suite('issuing a sales e-invoice (#2502)', () => {
     const { proposalId } = await request(o, draft.id);
     await approve(o, proposalId);
     await expect(save(o, series, { draftId: draft.id })).rejects.toMatchObject({ code: expect.stringMatching(/EINVOICE_NOT_DRAFT|NOT_DRAFT/) });
-    await expect(asJob(o, "UPDATE crove_finance.einvoice_draft_line SET description = 'x' WHERE org_id = $1 AND draft_id = $2", [o.orgId, draft.id])).rejects.toMatchObject({ message: expect.stringContaining('EINVOICE_NOT_DRAFT') });
+    await expect(asJob(o, "UPDATE ludy_finance.einvoice_draft_line SET description = 'x' WHERE org_id = $1 AND draft_id = $2", [o.orgId, draft.id])).rejects.toMatchObject({ message: expect.stringContaining('EINVOICE_NOT_DRAFT') });
     // The job's moves from `submitting` carry the new columns: the number, the time and the files come with the state, once; the submit time stays as it was.
-    await asJob(o, "UPDATE crove_finance.einvoice_draft SET state = 'pending', provider_ref = 'sbx-1', next_check_at = now() + interval '1 minute', check_attempts = 1 WHERE org_id = $1 AND id = $2", [o.orgId, draft.id]);
-    await expect(asJob(o, "UPDATE crove_finance.einvoice_draft SET state = 'issued', issued_number = 'C26TAA/7', issued_at = now(), submitted_at = now() + interval '1 hour' WHERE org_id = $1 AND id = $2", [o.orgId, draft.id])).rejects.toMatchObject({ message: expect.stringContaining('EINVOICE_STATE') });
-    await asJob(o, "UPDATE crove_finance.einvoice_draft SET state = 'issued', issued_number = 'C26TAA/7', issued_at = now(), authority_code = 'SBX-AUTH', next_check_at = NULL WHERE org_id = $1 AND id = $2", [o.orgId, draft.id]);
-    await expect(asJob(o, "UPDATE crove_finance.einvoice_draft SET issued_number = 'C26TAA/8' WHERE org_id = $1 AND id = $2", [o.orgId, draft.id])).rejects.toMatchObject({ message: expect.stringContaining('EINVOICE_STATE') });
+    await asJob(o, "UPDATE ludy_finance.einvoice_draft SET state = 'pending', provider_ref = 'sbx-1', next_check_at = now() + interval '1 minute', check_attempts = 1 WHERE org_id = $1 AND id = $2", [o.orgId, draft.id]);
+    await expect(asJob(o, "UPDATE ludy_finance.einvoice_draft SET state = 'issued', issued_number = 'C26TAA/7', issued_at = now(), submitted_at = now() + interval '1 hour' WHERE org_id = $1 AND id = $2", [o.orgId, draft.id])).rejects.toMatchObject({ message: expect.stringContaining('EINVOICE_STATE') });
+    await asJob(o, "UPDATE ludy_finance.einvoice_draft SET state = 'issued', issued_number = 'C26TAA/7', issued_at = now(), authority_code = 'SBX-AUTH', next_check_at = NULL WHERE org_id = $1 AND id = $2", [o.orgId, draft.id]);
+    await expect(asJob(o, "UPDATE ludy_finance.einvoice_draft SET issued_number = 'C26TAA/8' WHERE org_id = $1 AND id = $2", [o.orgId, draft.id])).rejects.toMatchObject({ message: expect.stringContaining('EINVOICE_STATE') });
     expect(await draftRow(o, draft.id)).toMatchObject({ state: 'issued' });
   });
 });

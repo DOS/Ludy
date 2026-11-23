@@ -7,9 +7,9 @@
 // (crm.quote.create_link) when the draft is asked for, so its audit row says who made it; the model is asked outside any transaction, by the API.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, type DealNextStepReason } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { zId, type DealNextStepReason } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 
@@ -35,10 +35,10 @@ export const followupSource = defineQuery({
     const found = await sql<{ id: string; deal_id: string; party_id: string; reason: DealNextStepReason; status: string; party_name: string; party_email: string | null; days: number; org_name: string; closed: boolean }>`
       SELECT n.id, n.deal_id, d.party_id, n.reason, n.status, p.name AS party_name, p.email AS party_email, d.closed_at IS NOT NULL AS closed,
              greatest(((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - n.since_on), 0)::int AS days,
-             (SELECT t.name FROM crove_kernel.tenant t WHERE t.org_id = n.org_id) AS org_name
-      FROM crove_crm.deal_next_step n
-      JOIN crove_crm.deal d ON d.org_id = n.org_id AND d.id = n.deal_id
-      JOIN crove_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
+             (SELECT t.name FROM ludy_kernel.tenant t WHERE t.org_id = n.org_id) AS org_name
+      FROM ludy_crm.deal_next_step n
+      JOIN ludy_crm.deal d ON d.org_id = n.org_id AND d.id = n.deal_id
+      JOIN ludy_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
       WHERE n.org_id = ${ctx.orgId}::uuid AND n.id = ${input.nextStepId}::uuid`.execute(ctx.trx);
     const step = found.rows[0];
     if (!step) throw new DomainError('NEXT_STEP_NOT_FOUND', 404, 'Không tìm thấy việc cần theo dõi này');
@@ -57,7 +57,7 @@ export const followupSource = defineQuery({
       SELECT q.id, q.number, q.revision, q.total::text AS total, q.valid_until::text AS valid_until,
              greatest((q.valid_until - (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date), 0)::int AS left_days,
              greatest(((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - (coalesce(q.sent_at, q.created_at) AT TIME ZONE 'Asia/Ho_Chi_Minh')::date), 0)::int AS sent_days
-      FROM crove_crm.quote q
+      FROM ludy_crm.quote q
       WHERE q.org_id = ${ctx.orgId}::uuid AND q.deal_id = ${step.deal_id}::uuid AND q.party_id = ${step.party_id}::uuid AND q.status = 'sent' AND q.number IS NOT NULL
         AND q.valid_until >= (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date
       ORDER BY ${order}

@@ -2,11 +2,11 @@
 // processes (External-tenant gate T12); these tests call it directly.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { checkInvoice, looksLikeEInvoiceXml, type ParsedInvoice } from '@crove/l10n-vn';
+import { checkInvoice, looksLikeEInvoiceXml, type ParsedInvoice } from '@ludy/l10n-vn';
 import { EInvoiceParseError, parseEInvoiceXml } from '../src/einvoice-xml.ts';
 
 const fixture = readFileSync(new URL('./fixtures/einvoice-basic.xml', import.meta.url));
-// The parsed form @crove/l10n-vn tests its checks and journal against.
+// The parsed form @ludy/l10n-vn tests its checks and journal against.
 const parsed = JSON.parse(readFileSync(new URL('../../../packages/l10n-vn/test/fixtures/einvoice-basic.parsed.json', import.meta.url), 'utf8')) as ParsedInvoice;
 
 describe('e-invoice XML', () => {
@@ -33,7 +33,7 @@ describe('e-invoice XML', () => {
     expect(parseEInvoiceXml(new TextEncoder().encode(xml)).seller.bankAccount).toBe('0011 000 000 000');
   });
 
-  it('produces exactly the parsed fixture that @crove/l10n-vn checks', () => {
+  it('produces exactly the parsed fixture that @ludy/l10n-vn checks', () => {
     expect(parseEInvoiceXml(fixture)).toEqual(parsed);
   });
 

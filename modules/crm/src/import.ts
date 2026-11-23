@@ -2,7 +2,7 @@
 // Contact import (#2229, docs/plan/crm.md §4.4 and §5, step K5). The browser reads a CSV, the person maps its columns and
 // posts the rows (a file with personal data is never stored). crm.import.stage checks every row as kernel.party.update
 // checks a party, classifies it against the org's parties and the rows before it, and keeps the result in
-// crove_crm.import_row; it writes no party. The person reads the preview, then crm.import.commit creates exactly the new
+// ludy_crm.import_row; it writes no party. The person reads the preview, then crm.import.commit creates exactly the new
 // rows (and, if they chose, fills the empty fields of the parties duplicates matched) and deletes the staged rows. Both
 // run as the person's own R1 command; no agent or system actor runs them.
 //
@@ -36,10 +36,10 @@ import {
   type ImportReason,
   type ImportRowInput,
   type ImportStatus,
-} from '@crove/kernel-contract';
-import { checkPartyFields } from '@crove/kernel';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { checkPartyFields } from '@ludy/kernel';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const IMPORTERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -107,11 +107,11 @@ async function existingFor(ctx: Pick<QueryContext, 'trx' | 'orgId'>, rows: reado
   const phones = [...new Set(rows.flatMap((r) => phoneKey(r.phone) ?? []))];
   if (taxCodes.length + emails.length + phones.length === 0) return [];
   const { rows: found } = await sql<Existing>`
-    SELECT id, name, tax_code, email, phone FROM crove_kernel.party
+    SELECT id, name, tax_code, email, phone FROM ludy_kernel.party
     WHERE org_id = ${ctx.orgId}::uuid AND duplicate_of IS NULL AND (
       tax_code = ANY(${taxCodes}::text[])
       OR pg_catalog.lower(email) = ANY(${emails}::text[])
-      OR crove_kernel.phone_key(phone) = ANY(${phones}::text[]))`.execute(ctx.trx);
+      OR ludy_kernel.phone_key(phone) = ANY(${phones}::text[]))`.execute(ctx.trx);
   return found;
 }
 
@@ -198,7 +198,7 @@ function usableCompany(cell: string | null): string | null {
 async function foldAll(ctx: Pick<QueryContext, 'trx'>, texts: readonly string[]): Promise<Map<string, string>> {
   const unique = [...new Set(texts)];
   if (unique.length === 0) return new Map();
-  const { rows } = await sql<{ text: string; key: string }>`SELECT c.text, crove_kernel.search_fold(c.text) AS key FROM pg_catalog.unnest(${unique}::text[]) AS c (text)`.execute(ctx.trx);
+  const { rows } = await sql<{ text: string; key: string }>`SELECT c.text, ludy_kernel.search_fold(c.text) AS key FROM pg_catalog.unnest(${unique}::text[]) AS c (text)`.execute(ctx.trx);
   return new Map(rows.map((r) => [r.text, r.key]));
 }
 
@@ -230,8 +230,8 @@ async function resolveCompanies(ctx: Pick<QueryContext, 'trx' | 'orgId'>, cells:
     const taxes = [...new Set(taxOf.values())];
     const { rows } = await sql<{ tax_code: string; id: string; name: string }>`
       SELECT p.tax_code, coalesce(k.id, p.id) AS id, coalesce(k.name, p.name) AS name
-      FROM crove_kernel.party p
-      LEFT JOIN crove_kernel.party k ON k.org_id = p.org_id AND k.id = p.duplicate_of
+      FROM ludy_kernel.party p
+      LEFT JOIN ludy_kernel.party k ON k.org_id = p.org_id AND k.id = p.duplicate_of
       WHERE p.org_id = ${ctx.orgId}::uuid AND p.kind = 'organization' AND p.tax_code = ANY(${taxes}::text[]) AND coalesce(k.kind, p.kind) = 'organization'`.execute(ctx.trx);
     const byTax = new Map(rows.map((r) => [r.tax_code, r]));
     for (const [cell, tax] of taxOf) {
@@ -246,10 +246,10 @@ async function resolveCompanies(ctx: Pick<QueryContext, 'trx' | 'orgId'>, cells:
     const { rows: found } = keys.length === 0
       ? { rows: [] as { key: string; id: string; name: string }[] }
       : await sql<{ key: string; id: string; name: string }>`
-          SELECT crove_kernel.search_fold(p.name) AS key, coalesce(k.id, p.id) AS id, coalesce(k.name, p.name) AS name
-          FROM crove_kernel.party p
-          LEFT JOIN crove_kernel.party k ON k.org_id = p.org_id AND k.id = p.duplicate_of
-          WHERE p.org_id = ${ctx.orgId}::uuid AND p.kind = 'organization' AND coalesce(k.kind, p.kind) = 'organization' AND crove_kernel.search_fold(p.name) = ANY(${keys}::text[])`.execute(ctx.trx);
+          SELECT ludy_kernel.search_fold(p.name) AS key, coalesce(k.id, p.id) AS id, coalesce(k.name, p.name) AS name
+          FROM ludy_kernel.party p
+          LEFT JOIN ludy_kernel.party k ON k.org_id = p.org_id AND k.id = p.duplicate_of
+          WHERE p.org_id = ${ctx.orgId}::uuid AND p.kind = 'organization' AND coalesce(k.kind, p.kind) = 'organization' AND ludy_kernel.search_fold(p.name) = ANY(${keys}::text[])`.execute(ctx.trx);
     const byKey = new Map<string, Map<string, string>>();
     for (const f of found) byKey.set(f.key, (byKey.get(f.key) ?? new Map<string, string>()).set(f.id, f.name));
     for (const cell of names) {
@@ -322,11 +322,11 @@ async function expireStale(ctx: CommandContext): Promise<void> {
   const cutoff = new Date(ctx.now.getTime() - IMPORT_STAGED_DAYS * 86_400_000);
   // The batch rows are locked first, in id order, before their rows are deleted: the daily sweep (importExpire) takes the same
   // order, so a command and the sweep reaching one stale batch cannot wait on each other.
-  const stale = await ctx.trx.selectFrom('crove_crm.import_batch').select('id').where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('created_at', '<', cutoff).orderBy('id').forUpdate().execute();
+  const stale = await ctx.trx.selectFrom('ludy_crm.import_batch').select('id').where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('created_at', '<', cutoff).orderBy('id').forUpdate().execute();
   if (stale.length === 0) return;
   const ids = stale.map((s) => s.id);
-  await ctx.trx.deleteFrom('crove_crm.import_row').where('org_id', '=', ctx.orgId).where('batch_id', 'in', ids).execute();
-  await ctx.trx.updateTable('crove_crm.import_batch').set({ status: 'expired', decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('id', 'in', ids).execute();
+  await ctx.trx.deleteFrom('ludy_crm.import_row').where('org_id', '=', ctx.orgId).where('batch_id', 'in', ids).execute();
+  await ctx.trx.updateTable('ludy_crm.import_batch').set({ status: 'expired', decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('id', 'in', ids).execute();
 }
 
 // An invalid row is kept as read for the preview, minus the control characters (a NUL cannot be stored) and cut to the column.
@@ -344,11 +344,11 @@ export const importStage = defineCommand({
     // One open batch per person: staging again cancels the one staged before, rows deleted, so staged personal data cannot pile
     // up behind a person who keeps choosing files. Two stagings at once by the same person wait for each other.
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crm.import:${ctx.orgId}:${userId}`}, 0))`.execute(ctx.trx);
-    const replaced = await ctx.trx.selectFrom('crove_crm.import_batch').select('id').where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('created_by', '=', userId).execute();
+    const replaced = await ctx.trx.selectFrom('ludy_crm.import_batch').select('id').where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('created_by', '=', userId).execute();
     if (replaced.length > 0) {
       const old = replaced.map((b) => b.id);
-      await ctx.trx.deleteFrom('crove_crm.import_row').where('org_id', '=', ctx.orgId).where('batch_id', 'in', old).execute();
-      await ctx.trx.updateTable('crove_crm.import_batch').set({ status: 'cancelled', decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', 'in', old).execute();
+      await ctx.trx.deleteFrom('ludy_crm.import_row').where('org_id', '=', ctx.orgId).where('batch_id', 'in', old).execute();
+      await ctx.trx.updateTable('ludy_crm.import_batch').set({ status: 'cancelled', decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', 'in', old).execute();
     }
     // What each row is as a party would store it, or why it cannot be.
     const candidates: Candidate[] = [];
@@ -372,7 +372,7 @@ export const importStage = defineCommand({
     const companies = await resolveCompanies(ctx, candidates.flatMap((c) => (c.company === null ? [] : [c.company])), fileCompanies);
     const companyOf = (c: Candidate): CompanyVerdict => (c.company === null ? NO_COMPANY : (companies.get(c.company) ?? NO_COMPANY));
     const batch = await ctx.trx
-      .insertInto('crove_crm.import_batch')
+      .insertInto('ludy_crm.import_batch')
       .values({ org_id: ctx.orgId, filename: input.filename, created_by: userId, created_at: ctx.now })
       .returning('id')
       .executeTakeFirstOrThrow();
@@ -416,12 +416,12 @@ export const importStage = defineCommand({
         company_party_id: null,
       })),
     ].sort((a, b) => a.row_no - b.row_no);
-    for (let i = 0; i < staged.length; i += CHUNK) await ctx.trx.insertInto('crove_crm.import_row').values(staged.slice(i, i + CHUNK)).execute();
+    for (let i = 0; i < staged.length; i += CHUNK) await ctx.trx.insertInto('ludy_crm.import_row').values(staged.slice(i, i + CHUNK)).execute();
     const count = (o: ImportOutcome) => staged.filter((s) => s.outcome === o).length;
     // The companies a commit could make: one for each name the new rows share (duplicates fill from an existing company only).
     const toMake = new Set(candidates.filter((c) => verdicts.get(c.rowNo)?.outcome === 'new' && companyOf(c).state === 'new').map((c) => companyOf(c).key));
     await ctx.trx
-      .updateTable('crove_crm.import_batch')
+      .updateTable('ludy_crm.import_batch')
       .set({ total_rows: staged.length, new_rows: count('new'), duplicate_rows: count('duplicate'), conflict_rows: count('conflict'), invalid_rows: count('invalid'), new_companies: toMake.size })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', batch.id)
@@ -433,7 +433,7 @@ export const importStage = defineCommand({
 
 async function previewOf(ctx: Pick<QueryContext, 'trx' | 'orgId' | 'actor' | 'role'>, input: { batchId: string; outcome?: ImportOutcome | undefined; after?: number | undefined; limit?: number | undefined }): Promise<ImportPreview> {
   const row = await ctx.trx
-    .selectFrom('crove_crm.import_batch')
+    .selectFrom('ludy_crm.import_batch')
     .select([...BATCH_COLUMNS, 'created_by', sql<boolean>`created_at < now() - ${sql.raw(`interval '${IMPORT_STAGED_DAYS} days'`)}`.as('stale')])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', input.batchId)
@@ -445,9 +445,9 @@ async function previewOf(ctx: Pick<QueryContext, 'trx' | 'orgId' | 'actor' | 'ro
   if (batch.status !== 'staged') return { batch, rows: [], more: false };
   const limit = input.limit ?? IMPORT_PREVIEW_PAGE;
   let q = ctx.trx
-    .selectFrom('crove_crm.import_row as r')
-    .leftJoin('crove_kernel.party as p', (j) => j.onRef('p.org_id', '=', 'r.org_id').onRef('p.id', '=', 'r.match_party_id'))
-    .leftJoin('crove_kernel.party as cp', (j) => j.onRef('cp.org_id', '=', 'r.org_id').onRef('cp.id', '=', 'r.company_party_id'))
+    .selectFrom('ludy_crm.import_row as r')
+    .leftJoin('ludy_kernel.party as p', (j) => j.onRef('p.org_id', '=', 'r.org_id').onRef('p.id', '=', 'r.match_party_id'))
+    .leftJoin('ludy_kernel.party as cp', (j) => j.onRef('cp.org_id', '=', 'r.org_id').onRef('cp.id', '=', 'r.company_party_id'))
     .select(['r.row_no', 'r.kind', 'r.name', 'r.tax_code', 'r.email', 'r.phone', 'r.address', 'r.outcome', 'r.reason', 'r.match_party_id', 'p.name as match_name', 'r.company_name', 'r.company_state', 'r.company_party_id', 'cp.name as company_match_name'])
     .where('r.org_id', '=', ctx.orgId)
     .where('r.batch_id', '=', input.batchId)
@@ -483,7 +483,7 @@ export const importPreview = defineQuery({
 // The batch, locked, for the person who made it or an owner or admin.
 async function lockBatch(ctx: CommandContext, batchId: string): Promise<BatchRow & { created_by: string }> {
   const batch = await ctx.trx
-    .selectFrom('crove_crm.import_batch')
+    .selectFrom('ludy_crm.import_batch')
     .select([...BATCH_COLUMNS, 'created_by'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', batchId)
@@ -507,13 +507,13 @@ export const importCancel = defineCommand({
     await expireStale(ctx);
     const batch = await lockBatch(ctx, input.batchId);
     if (batch.status === 'staged') {
-      await ctx.trx.deleteFrom('crove_crm.import_row').where('org_id', '=', ctx.orgId).where('batch_id', '=', batch.id).execute();
-      await ctx.trx.updateTable('crove_crm.import_batch').set({ status: 'cancelled', decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', batch.id).execute();
+      await ctx.trx.deleteFrom('ludy_crm.import_row').where('org_id', '=', ctx.orgId).where('batch_id', '=', batch.id).execute();
+      await ctx.trx.updateTable('ludy_crm.import_batch').set({ status: 'cancelled', decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', batch.id).execute();
       ctx.audit({ batchId: batch.id, rows: batch.total_rows });
     } else if (batch.status === 'committed') {
       throw new DomainError('IMPORT_NOT_STAGED', 409, 'Lần nhập này đã được thực hiện');
     }
-    const after = await ctx.trx.selectFrom('crove_crm.import_batch').select(BATCH_COLUMNS).where('org_id', '=', ctx.orgId).where('id', '=', batch.id).executeTakeFirstOrThrow();
+    const after = await ctx.trx.selectFrom('ludy_crm.import_batch').select(BATCH_COLUMNS).where('org_id', '=', ctx.orgId).where('id', '=', batch.id).executeTakeFirstOrThrow();
     return batchView(after);
   },
 });
@@ -546,7 +546,7 @@ export const importCommit = defineCommand({
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crm.import-commit:${ctx.orgId}`}, 0))`.execute(ctx.trx);
     const staged = (
       await ctx.trx
-        .selectFrom('crove_crm.import_row')
+        .selectFrom('ludy_crm.import_row')
         .select(['row_no', 'kind', 'name', 'tax_code', 'email', 'phone', 'address', 'outcome', 'reason', 'company_name', 'company_state'])
         .where('org_id', '=', ctx.orgId)
         .where('batch_id', '=', batch.id)
@@ -567,7 +567,7 @@ export const importCommit = defineCommand({
         ? []
         : (
             await ctx.trx
-              .selectFrom('crove_kernel.party')
+              .selectFrom('ludy_kernel.party')
               .select('id')
               .where('org_id', '=', ctx.orgId)
               .where('id', 'in', matchedIds)
@@ -600,7 +600,7 @@ export const importCommit = defineCommand({
       if (made !== undefined) return made;
       const id = randomUUID();
       await ctx.trx
-        .insertInto('crove_kernel.party')
+        .insertInto('ludy_kernel.party')
         .values({ id, org_id: ctx.orgId, kind: 'organization', name: c.company, tax_code: null, address: null, email: null, phone: null, source_trust: 'external', created_at: ctx.now, updated_at: ctx.now })
         .execute();
       madeCompanies.set(verdict.key, id);
@@ -626,7 +626,7 @@ export const importCommit = defineCommand({
         const id = randomUUID();
         // The id is given and nothing returned: a RETURNING check cannot see the entity link the party's trigger adds (#1280).
         const inserted = await ctx.trx
-          .insertInto('crove_kernel.party')
+          .insertInto('ludy_kernel.party')
           .values({ id, org_id: ctx.orgId, kind: c.kind, name: c.name, tax_code: c.taxCode, address: c.address, email: c.email, phone: c.phone, source_trust: 'external', created_at: ctx.now, updated_at: ctx.now })
           .onConflict((oc) => oc.columns(['org_id', 'tax_code']).where('tax_code', 'is not', null).doNothing())
           .executeTakeFirst();
@@ -645,7 +645,7 @@ export const importCommit = defineCommand({
         // transaction, so its version stays 1 (the guard of company_id checks the company).
         const companyId = c.kind === 'person' ? await companyForNewRow(c) : null;
         if (companyId !== null) {
-          await ctx.trx.updateTable('crove_kernel.party').set({ company_id: companyId }).where('org_id', '=', ctx.orgId).where('id', '=', id).execute();
+          await ctx.trx.updateTable('ludy_kernel.party').set({ company_id: companyId }).where('org_id', '=', ctx.orgId).where('id', '=', id).execute();
           linked++;
           await ctx.activity('kernel.party', companyId, 'party.person_linked', 'Có thêm một người liên hệ làm việc tại đây');
         }
@@ -659,7 +659,7 @@ export const importCommit = defineCommand({
         const party = byId.get(v.matchId);
         // Empty fields only, read again under the row lock: a value somebody typed is never replaced.
         const locked = await ctx.trx
-          .selectFrom('crove_kernel.party')
+          .selectFrom('ludy_kernel.party')
           .select(['id', 'kind', 'email', 'phone', 'address', 'company_id', 'version'])
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', v.matchId)
@@ -678,7 +678,7 @@ export const importCommit = defineCommand({
           };
           if (Object.keys(set).length > 0) {
             await ctx.trx
-              .updateTable('crove_kernel.party')
+              .updateTable('ludy_kernel.party')
               // What was written came from a spreadsheet: the party drops to 'external', the lowest trust (external < user <
               // system), so a verified or invoice-sourced party does not keep a higher one. A party left unchanged keeps its trust.
               .set({ ...set, source_trust: 'external', version: locked.version + 1, updated_at: ctx.now })
@@ -708,25 +708,26 @@ export const importCommit = defineCommand({
       skipped.push({ rowNo: c.rowNo, reason: v.reason ?? 'DUPLICATE_IN_FILE' });
     }
     skipped.sort((a, b) => a.rowNo - b.rowNo);
-    await ctx.trx.deleteFrom('crove_crm.import_row').where('org_id', '=', ctx.orgId).where('batch_id', '=', batch.id).execute();
+    await ctx.trx.deleteFrom('ludy_crm.import_row').where('org_id', '=', ctx.orgId).where('batch_id', '=', batch.id).execute();
     await ctx.trx
-      .updateTable('crove_crm.import_batch')
+      .updateTable('ludy_crm.import_batch')
       .set({ status: 'committed', on_duplicate: input.onDuplicate, created_rows: created, updated_rows: updated, created_companies: createdCompanies, linked_rows: linked, decided_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', batch.id)
       .execute();
     // Counts only: the rows held personal data, and audit rows outlive an erasure.
     ctx.audit({ batchId: batch.id, rows: staged.length, created, updated, notImported: skipped.length, onDuplicate: input.onDuplicate, createCompanies: input.createCompanies, createdCompanies, linked, filled });
-    const after = await ctx.trx.selectFrom('crove_crm.import_batch').select(BATCH_COLUMNS).where('org_id', '=', ctx.orgId).where('id', '=', batch.id).executeTakeFirstOrThrow();
+    const after = await ctx.trx.selectFrom('ludy_crm.import_batch').select(BATCH_COLUMNS).where('org_id', '=', ctx.orgId).where('id', '=', batch.id).executeTakeFirstOrThrow();
     return { batch: batchView(after), skipped };
   },
 });
 
 // The daily sweep's part in one org (K5b, #2251): the worker found a staged batch past IMPORT_STAGED_DAYS here (the
-// definer crove_crm.import_expired lists the orgs) and runs this in the org's system context, where the tenant policy shows
+// definer ludy_crm.import_expired lists the orgs) and runs this in the org's system context, where the tenant policy shows
 // this org's rows alone. The rows are deleted and the batches marked expired, counts only in the audit row.
 export const importExpire = defineCommand({
   name: 'crm.import.expire',
+  runsWhenOff: 'expires staged contact imports, which hold customer data, while the app is off',
   input: z.strictObject({}),
   risk: 'R3',
   sideEffect: 'irreversible',
@@ -735,11 +736,11 @@ export const importExpire = defineCommand({
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới thực hiện được việc này');
     const cutoff = new Date(ctx.now.getTime() - IMPORT_STAGED_DAYS * 86_400_000);
     // Locked, so a commit running at this moment finishes first and its batch no longer reads as staged here.
-    const stale = await ctx.trx.selectFrom('crove_crm.import_batch').select('id').where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('created_at', '<', cutoff).orderBy('id').forUpdate().execute();
+    const stale = await ctx.trx.selectFrom('ludy_crm.import_batch').select('id').where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('created_at', '<', cutoff).orderBy('id').forUpdate().execute();
     if (stale.length === 0) return { batches: 0, rows: 0 };
     const ids = stale.map((s) => s.id);
-    const deleted = await ctx.trx.deleteFrom('crove_crm.import_row').where('org_id', '=', ctx.orgId).where('batch_id', 'in', ids).executeTakeFirst();
-    await ctx.trx.updateTable('crove_crm.import_batch').set({ status: 'expired', decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('id', 'in', ids).execute();
+    const deleted = await ctx.trx.deleteFrom('ludy_crm.import_row').where('org_id', '=', ctx.orgId).where('batch_id', 'in', ids).executeTakeFirst();
+    await ctx.trx.updateTable('ludy_crm.import_batch').set({ status: 'expired', decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('id', 'in', ids).execute();
     const rows = Number(deleted.numDeletedRows);
     ctx.audit({ batches: ids.length, rows });
     return { batches: ids.length, rows };

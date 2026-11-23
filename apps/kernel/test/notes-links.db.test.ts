@@ -8,14 +8,14 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { NOTE_LINKS_MAX, type Note, type NoteRecordPanel, type NoteSummary, type NoteWritten } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
-import { crmCommands, crmQueries } from '@crove/mod-crm';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
-import { notesCommands, notesQueries } from '@crove/mod-notes';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { NOTE_LINKS_MAX, type Note, type NoteRecordPanel, type NoteSummary, type NoteWritten } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
+import { crmCommands, crmQueries } from '@ludy/mod-crm';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
+import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -49,19 +49,19 @@ suite('notes linked to documents, vouchers and bookings on PostgreSQL (#1672)', 
       try {
         const doc = (
           await c.query<{ id: string }>(
-            `INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id)
+            `INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id)
              VALUES ($1, $2, '1C26TAA', $3, '2026-09-10', 100, 0, 100, 'sale', $4) RETURNING id`,
             [orgId, party, number, entity],
           )
         ).rows[0]?.id as string;
         const entry = (
           await c.query<{ id: string }>(
-            `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id)
+            `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id)
              VALUES ($1, '2026-09-10', 'bán', 'finance.purchase_document', $2, $3) RETURNING id`,
             [orgId, doc, entity],
           )
         ).rows[0]?.id as string;
-        await c.query(`INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '131', 100, 0), ($1, $2, 2, '5111', 0, 100)`, [
+        await c.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '131', 100, 0), ($1, $2, 2, '5111', 0, 100)`, [
           orgId,
           entry,
         ]);
@@ -86,8 +86,8 @@ suite('notes linked to documents, vouchers and bookings on PostgreSQL (#1672)', 
     const accountantB = await user('accountant-b');
     const { orgId } = await createOrg(app, asUser(owner), `Liên kết ${tag}`);
     const fixtures = await admin(async (c) => {
-      const entityA = (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
-      const entityB = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner]))
+      const entityA = (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
+      const entityB = (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner]))
         .rows[0]?.id as string;
       for (const [u, role] of [
         [author, 'member'],
@@ -95,38 +95,38 @@ suite('notes linked to documents, vouchers and bookings on PostgreSQL (#1672)', 
         [accountantA, 'member'],
         [accountantB, 'member'],
       ] as const) {
-        await c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, u, role]);
+        await c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, u, role]);
       }
       for (const [u, entity] of [
         [accountantA, entityA],
         [accountantB, entityB],
       ] as const) {
-        await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
+        await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
           orgId,
           u,
           entity,
           owner,
         ]);
       }
-      const party = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, name) VALUES ($1, 'Khách hàng') RETURNING id`, [orgId])).rows[0]?.id as string;
+      const party = (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, name) VALUES ($1, 'Khách hàng') RETURNING id`, [orgId])).rows[0]?.id as string;
       const a = await book(c, orgId, party, entityA, '00000001');
       const b = await book(c, orgId, party, entityB, '00000002');
       const type = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_crm.event_type (org_id, slug, title, duration_min, host_user_id, created_by) VALUES ($1, 'tu-van', 'Tư vấn', 30, $2, $2) RETURNING id`,
+          `INSERT INTO ludy_crm.event_type (org_id, slug, title, duration_min, host_user_id, created_by) VALUES ($1, 'tu-van', 'Tư vấn', 30, $2, $2) RETURNING id`,
           [orgId, author],
         )
       ).rows[0]?.id as string;
       const event = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.calendar_event (org_id, user_id, starts_at, ends_at, time_zone, title, kind, created_by)
+          `INSERT INTO ludy_kernel.calendar_event (org_id, user_id, starts_at, ends_at, time_zone, title, kind, created_by)
            VALUES ($1, $2, '2026-12-01T03:00:00Z', '2026-12-01T03:30:00Z', 'Asia/Ho_Chi_Minh', 'Tư vấn', 'booking', $2) RETURNING id`,
           [orgId, author],
         )
       ).rows[0]?.id as string;
       const booking = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_crm.booking (org_id, event_type_id, starts_at, ends_at, status, calendar_event_id, visitor_name, email, time_zone, decided_at)
+          `INSERT INTO ludy_crm.booking (org_id, event_type_id, starts_at, ends_at, status, calendar_event_id, visitor_name, email, time_zone, decided_at)
            VALUES ($1, $2, '2026-12-01T03:00:00Z', '2026-12-01T03:30:00Z', 'confirmed', $3, 'Khách', 'khach@notes-links.test', 'Asia/Ho_Chi_Minh', now()) RETURNING id`,
           [orgId, type, event],
         )
@@ -146,7 +146,7 @@ suite('notes linked to documents, vouchers and bookings on PostgreSQL (#1672)', 
       async (c) =>
         (
           await c.query<{ command: string; detail: Record<string, unknown> }>(
-            `SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.%' AND detail ->> 'noteId' = $2 ORDER BY occurred_at, id`,
+            `SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.%' AND detail ->> 'noteId' = $2 ORDER BY occurred_at, id`,
             [orgId, noteId],
           )
         ).rows,
@@ -161,9 +161,9 @@ suite('notes linked to documents, vouchers and bookings on PostgreSQL (#1672)', 
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     db = createDb(pool);
@@ -242,7 +242,7 @@ suite('notes linked to documents, vouchers and bookings on PostgreSQL (#1672)', 
       expect.objectContaining({ targetType: 'crm.booking', targetId: o.booking }),
     ]);
     // A module record has no column of its own on the link: party_id and file_id stay empty.
-    const rows = await admin((c) => c.query('SELECT target_type, party_id, file_id FROM crove_notes.link WHERE org_id = $1 AND note_id = $2 ORDER BY created_at, id', [o.orgId, noteId]));
+    const rows = await admin((c) => c.query('SELECT target_type, party_id, file_id FROM ludy_notes.link WHERE org_id = $1 AND note_id = $2 ORDER BY created_at, id', [o.orgId, noteId]));
     expect(rows.rows).toEqual(all.map(([t]) => ({ target_type: t, party_id: null, file_id: null })));
   });
 
@@ -273,8 +273,8 @@ suite('notes linked to documents, vouchers and bookings on PostgreSQL (#1672)', 
     expect(await o.links(o.accountantB, noteB)).toEqual([['finance.journal_entry', o.b.entry, true]]);
     // The member of A is moved to B: their note stays theirs, and A's records show as unavailable.
     await admin(async (c) => {
-      await c.query('DELETE FROM crove_kernel.role_assignment WHERE org_id = $1 AND user_id = $2', [o.orgId, o.accountantA]);
-      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
+      await c.query('DELETE FROM ludy_kernel.role_assignment WHERE org_id = $1 AND user_id = $2', [o.orgId, o.accountantA]);
+      await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
         o.orgId,
         o.accountantA,
         o.entityB,
@@ -315,7 +315,7 @@ suite('notes linked to documents, vouchers and bookings on PostgreSQL (#1672)', 
     const parties = await admin(
       async (c) =>
         (
-          await c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, name) SELECT $1, 'Khách ' || g FROM pg_catalog.generate_series(1, $2::int) g RETURNING id`, [
+          await c.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, name) SELECT $1, 'Khách ' || g FROM pg_catalog.generate_series(1, $2::int) g RETURNING id`, [
             o.orgId,
             NOTE_LINKS_MAX,
           ])

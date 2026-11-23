@@ -7,13 +7,13 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { TikTokPublisher, TIKTOK_SCOPES, YOUTUBE_SCOPES, type Fetch, type Publisher } from '@crove/channel';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
-import { CHANNEL_OPTION_FRESH_MS, CHANNEL_OPTION_PER_MINUTE, runChannelOptionJob, socialCommands, socialQueries, type ChannelOptionList } from '@crove/mod-social';
-import { tiktokCreatorOf } from '@crove/mod-social/contract';
+import { TikTokPublisher, TIKTOK_SCOPES, YOUTUBE_SCOPES, type Fetch, type Publisher } from '@ludy/channel';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
+import { CHANNEL_OPTION_FRESH_MS, CHANNEL_OPTION_PER_MINUTE, runChannelOptionJob, socialCommands, socialQueries, type ChannelOptionList } from '@ludy/mod-social';
+import { tiktokCreatorOf } from '@ludy/mod-social/contract';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -65,7 +65,7 @@ suite('TikTok creator options as channel options on PostgreSQL (#1497)', () => {
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const member = await person('member');
-    await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, member, 'member']));
+    await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, member, 'member']));
     return { orgId, owner, member };
   }
   type Org = Awaited<ReturnType<typeof org>>;
@@ -90,13 +90,13 @@ suite('TikTok creator options as channel options on PostgreSQL (#1497)', () => {
   const request = (o: Org, connectionId: string) => rt.execute<ChannelOptionList>('social.channel_option.request', { connectionId }, { actor: asUser(o.member), orgId: o.orgId });
   const get = (o: Org, connectionId: string) => rt.query<ChannelOptionList | null>('social.channel_option.get', { connectionId }, { actor: asUser(o.member), orgId: o.orgId });
   const events = (o: Org) =>
-    admin(async (c) => (await c.query<{ payload: { option_id: string; kind: string } }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.channel_option.requested' ORDER BY created_at, id", [o.orgId])).rows);
+    admin(async (c) => (await c.query<{ payload: { option_id: string; kind: string } }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.channel_option.requested' ORDER BY created_at, id", [o.orgId])).rows);
   const optionId = async (o: Org, connectionId: string) =>
-    admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_social.channel_option WHERE org_id = $1 AND channel_connection_id = $2', [o.orgId, connectionId])).rows[0]?.id as string);
-  const stored = (id: string) => admin(async (c) => (await c.query<{ kind: string; status: string; items: string; error: string | null }>('SELECT kind, status, items::text AS items, error FROM crove_social.channel_option WHERE id = $1', [id])).rows[0]);
+    admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_social.channel_option WHERE org_id = $1 AND channel_connection_id = $2', [o.orgId, connectionId])).rows[0]?.id as string);
+  const stored = (id: string) => admin(async (c) => (await c.query<{ kind: string; status: string; items: string; error: string | null }>('SELECT kind, status, items::text AS items, error FROM ludy_social.channel_option WHERE id = $1', [id])).rows[0]);
   const job = (o: Org, id: string, publishers: Readonly<Record<string, Publisher>>) => runChannelOptionJob({ runtime: worker, broker: vault, publishers }, o.orgId, id);
   // The list's last answer, moved back in time as if it were read that long ago.
-  const age = (id: string, ms: number) => admin((c) => c.query("UPDATE crove_social.channel_option SET fetched_at = fetched_at - ($2 || ' milliseconds')::interval, requested_at = requested_at - ($2 || ' milliseconds')::interval WHERE id = $1", [id, String(ms)]));
+  const age = (id: string, ms: number) => admin((c) => c.query("UPDATE ludy_social.channel_option SET fetched_at = fetched_at - ($2 || ' milliseconds')::interval, requested_at = requested_at - ($2 || ' milliseconds')::interval WHERE id = $1", [id, String(ms)]));
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -107,15 +107,15 @@ suite('TikTok creator options as channel options on PostgreSQL (#1497)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    pool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 2 });
+    pool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 2 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);

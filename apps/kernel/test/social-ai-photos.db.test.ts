@@ -12,13 +12,13 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { AI_DRAFT_IMAGES_MAX, AI_IMAGE_MAX_BYTES } from '@crove/kernel-contract';
-import { socialCommands, socialQueries } from '@crove/mod-social';
-import { CredentialVault, LocalDiskStore, Runtime, fileKey, parseVaultKey, putFile } from '@crove/kernel-runtime';
-import { ALT_TEXT_IMAGE_MAX_BYTES, DRAFT_IMAGES_MAX, SocialWriter, type DraftGenerator } from '@crove/agent';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { AI_DRAFT_IMAGES_MAX, AI_IMAGE_MAX_BYTES } from '@ludy/kernel-contract';
+import { socialCommands, socialQueries } from '@ludy/mod-social';
+import { CredentialVault, LocalDiskStore, Runtime, fileKey, parseVaultKey, putFile } from '@ludy/kernel-runtime';
+import { ALT_TEXT_IMAGE_MAX_BYTES, DRAFT_IMAGES_MAX, SocialWriter, type DraftGenerator } from '@ludy/agent';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -106,7 +106,7 @@ suite('AI drafts from the post photos through the API (#1191)', () => {
     const generation = options.bytes ? await putFile(new LocalDiskStore(dir), key, bytes, options.contentType ?? 'image/jpeg', sha) : `content:${sha}`;
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
          VALUES ($1, $2, $3, $4, $5, 'banh-mi.jpg', $6, $7, $8)`,
         [orgId, id, sha, key, generation, options.contentType ?? 'image/jpeg', options.sizeBytes ?? bytes.byteLength, options.source ?? 'social'],
       ),
@@ -115,7 +115,7 @@ suite('AI drafts from the post photos through the API (#1191)', () => {
   }
 
   async function joinAs(who: Account, role: 'member' | 'viewer') {
-    await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [org.orgId, who.userId, role]));
+    await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [org.orgId, who.userId, role]));
   }
 
   async function newAccount(name: string): Promise<Account> {
@@ -129,7 +129,7 @@ suite('AI drafts from the post photos through the API (#1191)', () => {
   async function snapshot(): Promise<Record<string, string>> {
     return admin(async (c) => {
       const { rows: tables } = await c.query<{ name: string }>(
-        `SELECT format('%I.%I', schemaname, tablename) AS name FROM pg_catalog.pg_tables WHERE schemaname LIKE 'crove\\_%' AND tablename <> 'user_account' ORDER BY 1`,
+        `SELECT format('%I.%I', schemaname, tablename) AS name FROM pg_catalog.pg_tables WHERE (schemaname LIKE 'ludy\\_%' OR schemaname LIKE 'crove\\_%') AND tablename <> 'user_account' ORDER BY 1`,
       );
       const hashes: Record<string, string> = {};
       for (const t of tables) {
@@ -149,9 +149,9 @@ suite('AI drafts from the post photos through the API (#1191)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     db = createDb(pool);
@@ -202,7 +202,7 @@ suite('AI drafts from the post photos through the API (#1191)', () => {
     const connect = async (displayName: string) => String((await rpc('channels/connectSandbox', ownerToken, { displayName, key: randomUUID() })).body?.connectionId);
     channels = { mine: await connect('Trang của bạn'), hidden: await connect('Trang khác') };
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [org.orgId, member.userId, channels.mine, owner.userId]),
+      c.query('INSERT INTO ludy_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [org.orgId, member.userId, channels.mine, owner.userId]),
     );
     files = {
       jpeg: await file(org.orgId, { bytes: jpeg }),
@@ -348,7 +348,7 @@ suite('AI drafts from the post photos through the API (#1191)', () => {
 
   it('counts one call of four photos once against the drafts budget, and refuses once it is spent without asking the model', async () => {
     const who = await newAccount('budget');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [org.orgId, who.userId]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [org.orgId, who.userId]));
     const token = await tokenFor(who);
     const input = { brief: '', connectionIds: [channels.mine], fileIds: [files.jpeg, files.png, files.hiddenShared, files.hiddenOwn] };
     let refused: Awaited<ReturnType<typeof rpc>> | null = null;

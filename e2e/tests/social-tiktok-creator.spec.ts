@@ -25,17 +25,17 @@ test("the TikTok block lists only the account's options and fits 360px", async (
   await page.getByLabel('Tên kênh thử').fill(CHANNEL);
   await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
   await expect(page.getByText(CHANNEL).first()).toBeVisible();
-  const [channel] = sql<{ org: string; id: string }>(`SELECT org_id AS org, id FROM crove_kernel.channel_connection WHERE display_name = :'name'`, { name: CHANNEL });
-  exec(`UPDATE crove_kernel.channel_connection SET provider = 'tiktok' WHERE org_id = :'org' AND id = :'id'`, { org: channel?.org ?? '', id: channel?.id ?? '' });
+  const [channel] = sql<{ org: string; id: string }>(`SELECT org_id AS org, id FROM ludy_kernel.channel_connection WHERE display_name = :'name'`, { name: CHANNEL });
+  exec(`UPDATE ludy_kernel.channel_connection SET provider = 'tiktok' WHERE org_id = :'org' AND id = :'id'`, { org: channel?.org ?? '', id: channel?.id ?? '' });
   exec(
-    `INSERT INTO crove_social.channel_option (org_id, channel_connection_id, kind, status, items, requested_at, fetched_at)
+    `INSERT INTO ludy_social.channel_option (org_id, channel_connection_id, kind, status, items, requested_at, fetched_at)
      VALUES (:'org', :'id', 'tiktok_creator', 'ready', :'items'::jsonb, now(), now())`,
     { org: channel?.org ?? '', id: channel?.id ?? '', items: JSON.stringify(ITEMS) },
   );
 
   await page.goto(`/o/${slug}/social/channels`);
-  await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('link', { name: 'Soạn bài' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
   await page.getByLabel('Nội dung chung').fill('Bánh mới ra lò');
   await expect(page.getByText('Đăng lên TikTok của Tiệm Bánh B')).toBeVisible();
   const privacy = page.locator('select', { has: page.locator('option', { hasText: 'Chọn quyền xem' }) });

@@ -10,15 +10,18 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { sql } from 'kysely';
-import { approvalPolicies, createOrg, decideApproval, kernelCommands, kernelQueries, liveApprovalCommands, upsertIdentity } from '@crove/kernel';
-import { Runtime, defineCommand, type AgentActor, type CommandDef } from '@crove/kernel-runtime';
-import { adsCommands } from '@crove/mod-ads';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { approvalPolicies, createOrg, decideApproval, kernelCommands, kernelQueries, liveApprovalCommands, upsertIdentity } from '@ludy/kernel';
+import { Runtime, defineCommand, type AgentActor, type CommandDef } from '@ludy/kernel-runtime';
+import { adsCommands } from '@ludy/mod-ads';
+import { crmCommands } from '@ludy/mod-crm';
+import { socialCommands } from '@ludy/mod-social';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -52,6 +55,7 @@ const proposal1793 = defineCommand({
 suite('the approval gate in the database (#1793)', () => {
   const dbName = `crove_test_approve_gate_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   const pools: pg.Pool[] = [];
@@ -73,7 +77,7 @@ suite('the approval gate in the database (#1793)', () => {
   const user = (id: string) => ({ type: 'user' as const, id });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -84,7 +88,7 @@ suite('the approval gate in the database (#1793)', () => {
 
   // Runs SQL in a context on a login role, always rolled back.
   async function inContext<T>(url: string, enter: (c: pg.Client) => Promise<unknown>, fn: (c: pg.Client) => Promise<T>) {
-    const c = new pg.Client({ connectionString: url });
+    const c = createDbClient({ connectionString: url }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -126,17 +130,18 @@ suite('the approval gate in the database (#1793)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = user;
+      url.username = dbIds ? dbIds.roleName(user) : user;
       url.password = password;
       return url.toString();
     };
     appUrl = login('crove_app', 'test-app-pw');
     workerUrl = login('crove_worker', 'test-worker-pw');
     const runtimeFor = (url: string) => {
-      const pool = createPool({ connectionString: url, max: 4 });
+      const pool = createDbPool({ connectionString: url, max: 4 }, dbIds);
       pools.push(pool);
       return new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({
         commands: [...kernelCommands, ...financeCommands, prepare1793, proposal1793],
@@ -198,8 +203,8 @@ suite('the approval gate in the database (#1793)', () => {
     expect(policies.length).toBeGreaterThan(0);
     // Every command registered as a proposal command has the same policy on both sides (nobody, when approval.ts lists
     // none), and approval.ts lists no command that is not one: a command added on one side only fails here.
-    // The ads module's proposal commands are listed here although this suite does not run them (running ads, ADR-0043).
-    const registered = [...kernelCommands, ...financeCommands, ...adsCommands, prepare1793, proposal1793]
+    // The ads module's proposal commands are listed here although this suite does not run them (running ads, ADR-0043); so are the CRM's and Social's (the proposal-only twins of the Engage commands, E4 #3863).
+    const registered = [...kernelCommands, ...financeCommands, ...adsCommands, ...crmCommands, ...socialCommands, prepare1793, proposal1793]
       .filter((c) => (c as CommandDef<unknown, unknown>).access === 'proposal')
       .map((c) => c.name);
     expect(registered.length).toBeGreaterThan(policies.length);
@@ -232,7 +237,7 @@ suite('the approval gate in the database (#1793)', () => {
   it('holds the same list of commands judged on the members now as approval.ts (approval_command_live), and no other', async () => {
     const live = liveApprovalCommands().sort();
     expect(live.length).toBeGreaterThan(0);
-    const registered = [...kernelCommands, ...financeCommands, ...adsCommands, prepare1793, proposal1793].filter((c) => (c as CommandDef<unknown, unknown>).access === 'proposal').map((c) => c.name);
+    const registered = [...kernelCommands, ...financeCommands, ...adsCommands, ...crmCommands, ...socialCommands, prepare1793, proposal1793].filter((c) => (c as CommandDef<unknown, unknown>).access === 'proposal').map((c) => c.name);
     const rows = await admin(async (c) => (await c.query<{ command: string; live: boolean }>('SELECT c AS command, crove_kernel.approval_command_live(c) AS live FROM unnest($1::text[]) c', [[...registered, 't1793.unknown', 'ads.pause_all', 'ads.cap.lower']])).rows);
     expect(rows.filter((r) => r.live).map((r) => r.command).sort()).toEqual(live);
   });
@@ -264,7 +269,7 @@ suite('the approval gate in the database (#1793)', () => {
       cases.push({ preset, command: LEDGER_COMMAND, status: 'pending', snapshot: [], authors: [] });
     }
     // One staff connection for the whole table.
-    const a = new pg.Client({ connectionString: adminUrl });
+    const a = createDbClient({ connectionString: adminUrl }, dbIds);
     await a.connect();
     try {
       let checked = 0;

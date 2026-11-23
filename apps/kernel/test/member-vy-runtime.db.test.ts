@@ -8,9 +8,9 @@ import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { z } from "zod";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createDb, createPool } from "@crove/db";
-import { migrate, setRolePasswords } from "@crove/db/migrate";
-import { createOrg, kernelCommands, upsertIdentity } from "@crove/kernel";
+import { createDb, createPool } from "@ludy/db";
+import { migrate, setRolePasswords } from "@ludy/db/migrate";
+import { createOrg, kernelCommands, upsertIdentity } from "@ludy/kernel";
 import {
   Runtime,
   defineCommand,
@@ -18,7 +18,7 @@ import {
   memberVyRuntime,
   type CommandDef,
   type QueryDef,
-} from "@crove/kernel-runtime";
+} from "@ludy/kernel-runtime";
 import { TEST_MANIFESTS } from "./invariant/fixtures/manifests.ts";
 import { contextToken } from "./invariant/fixtures/context-token.ts";
 
@@ -164,17 +164,17 @@ suite("member-scoped agent actor in the runtime", () => {
     try {
       await c.query("BEGIN");
       await c.query(
-        "SELECT crove_kernel.enter_user_context($1::uuid, $2::text)",
+        "SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)",
         [orgId, contextToken(user, orgId)],
       );
       const agentId = randomUUID();
       const runId = randomUUID();
       await c.query(
-        `INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`,
+        `INSERT INTO ludy_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`,
         [orgId, agentId, user],
       );
       await c.query(
-        `INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, feature, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'notes.summary', 'running', true, now(), now() + interval '30 minutes')`,
+        `INSERT INTO ludy_kernel.ai_run (org_id, id, agent_id, module, feature, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'notes.summary', 'running', true, now(), now() + interval '30 minutes')`,
         [orgId, runId, agentId],
       );
       await c.query("COMMIT");
@@ -200,8 +200,8 @@ suite("member-scoped agent actor in the runtime", () => {
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
     await setRolePasswords(adminUrl, {
-      crove_app: "test-app-pw",
-      crove_worker: "test-worker-pw",
+      ludy_app: "test-app-pw",
+      ludy_worker: "test-worker-pw",
     });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
@@ -209,8 +209,8 @@ suite("member-scoped agent actor in the runtime", () => {
       url.password = password;
       return url.toString();
     };
-    appUrl = login("crove_app", "test-app-pw");
-    workerUrl = login("crove_worker", "test-worker-pw");
+    appUrl = login("ludy_app", "test-app-pw");
+    workerUrl = login("ludy_worker", "test-worker-pw");
     const appPool = createPool({ connectionString: appUrl, max: 2 });
     const workerPool = createPool({ connectionString: workerUrl, max: 4 });
     pools.push(appPool, workerPool);
@@ -246,12 +246,12 @@ suite("member-scoped agent actor in the runtime", () => {
     ).orgId;
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')`,
+        `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')`,
         [orgId, users.member, users.viewer],
       );
       // A viewer holds vy.use only through a grant (ADR-0049 decision 10).
       await c.query(
-        `INSERT INTO crove_kernel.member_permission_override (org_id, user_id, permission, allowed, set_by) VALUES ($1, $2, 'vy.use', true, $3)`,
+        `INSERT INTO ludy_kernel.member_permission_override (org_id, user_id, permission, allowed, set_by) VALUES ($1, $2, 'vy.use', true, $3)`,
         [orgId, users.viewer, owner],
       );
     });
@@ -453,7 +453,7 @@ suite("member-scoped agent actor in the runtime", () => {
         actor_id: string;
         detail: Record<string, unknown>;
       }>(
-        `SELECT actor_type, actor_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.member_vy.result.store' AND outcome = 'ok'`,
+        `SELECT actor_type, actor_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.member_vy.result.store' AND outcome = 'ok'`,
         [orgId],
       ),
     );
@@ -468,7 +468,7 @@ suite("member-scoped agent actor in the runtime", () => {
     ).rejects.toBeDefined();
     const text = await admin((c) =>
       c.query(
-        `SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.member_vy.t_audit_text' AND outcome = 'ok'`,
+        `SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.member_vy.t_audit_text' AND outcome = 'ok'`,
         [orgId],
       ),
     );
@@ -503,7 +503,7 @@ suite("member-scoped agent actor in the runtime", () => {
     // A removed member's run enters no more.
     await admin((c) =>
       c.query(
-        `DELETE FROM crove_kernel.member_permission_override WHERE org_id = $1 AND user_id = $2`,
+        `DELETE FROM ludy_kernel.member_permission_override WHERE org_id = $1 AND user_id = $2`,
         [orgId, users.viewer],
       ),
     );
@@ -532,7 +532,7 @@ suite("member-scoped agent actor in the runtime", () => {
       async (c) =>
         (
           await c.query<{ agent_id: string }>(
-            "SELECT agent_id FROM crove_kernel.ai_run WHERE id = $1",
+            "SELECT agent_id FROM ludy_kernel.ai_run WHERE id = $1",
             [started.runId],
           )
         ).rows[0]?.agent_id as string,
@@ -567,19 +567,19 @@ suite("member-scoped agent actor in the runtime", () => {
           tainted: boolean;
           private_read: boolean;
         }>(
-          "SELECT status, tainted, private_read FROM crove_kernel.member_vy_result WHERE id = $1",
+          "SELECT status, tainted, private_read FROM ludy_kernel.member_vy_result WHERE id = $1",
           [started.resultId],
         )
       ).rows[0],
       run: (
         await c.query<{ status: string }>(
-          "SELECT status FROM crove_kernel.ai_run WHERE id = $1",
+          "SELECT status FROM ludy_kernel.ai_run WHERE id = $1",
           [started.runId],
         )
       ).rows[0],
       audit: (
         await c.query<{ actor_type: string; detail: Record<string, unknown> }>(
-          `SELECT actor_type, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.member_vy.result.store' AND outcome = 'ok'`,
+          `SELECT actor_type, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.member_vy.result.store' AND outcome = 'ok'`,
           [orgId],
         )
       ).rows[0],
@@ -605,13 +605,13 @@ suite("member-scoped agent actor in the runtime", () => {
     const closed = await admin(async (c) => {
       await c.query("BEGIN");
       try {
-        await c.query("SELECT crove_kernel.enter_system_context($1::uuid)", [
+        await c.query("SELECT ludy_kernel.enter_system_context($1::uuid)", [
           orgId,
         ]);
-        await c.query("SET LOCAL ROLE crove_worker");
+        await c.query("SET LOCAL ROLE ludy_worker");
         return (
           await c.query<{ r: boolean }>(
-            `SELECT crove_kernel.member_vy_run_finish($1::uuid, 'succeeded', NULL) AS r`,
+            `SELECT ludy_kernel.member_vy_run_finish($1::uuid, 'succeeded', NULL) AS r`,
             [started.runId],
           )
         ).rows[0]?.r;
@@ -636,12 +636,12 @@ suite("member-scoped agent actor in the runtime", () => {
     await listener.connect();
     const heard: string[] = [];
     listener.on("notification", (n) => {
-      if (n.channel === "crove_stream") heard.push(n.payload ?? "");
+      if (n.channel === "ludy_stream") heard.push(n.payload ?? "");
     });
-    await listener.query("LISTEN crove_stream");
+    await listener.query("LISTEN ludy_stream");
     const settle = async () => {
       const marker = `marker ${randomUUID()}`;
-      await admin((c) => c.query("SELECT pg_notify('crove_stream', $1)", [marker]));
+      await admin((c) => c.query("SELECT pg_notify('ludy_stream', $1)", [marker]));
       const deadline = Date.now() + 10_000;
       while (!heard.includes(marker)) {
         if (Date.now() > deadline) throw new Error("the stream marker never arrived");
@@ -661,7 +661,7 @@ suite("member-scoped agent actor in the runtime", () => {
       const agentId = await admin(
         async (c) =>
           (
-            await c.query<{ agent_id: string }>("SELECT agent_id FROM crove_kernel.ai_run WHERE id = $1", [started.runId])
+            await c.query<{ agent_id: string }>("SELECT agent_id FROM ludy_kernel.ai_run WHERE id = $1", [started.runId])
           ).rows[0]?.agent_id as string,
       );
       await settle();
@@ -684,7 +684,7 @@ suite("member-scoped agent actor in the runtime", () => {
       const noteId = randomUUID();
       await admin((c) =>
         c.query(
-          `INSERT INTO crove_notes.note (org_id, id, author_user_id, visibility, title, body, tags) VALUES ($1, $2, $3, 'private', 'Của tôi', 'riêng', '{}')`,
+          `INSERT INTO ludy_notes.note (org_id, id, author_user_id, visibility, title, body, tags) VALUES ($1, $2, $3, 'private', 'Của tôi', 'riêng', '{}')`,
           [orgId, noteId, member],
         ),
       );

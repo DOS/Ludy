@@ -7,13 +7,13 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { CredentialVault, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { enterpriseCheckDigit } from '@crove/l10n-vn';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@ludy/einvoice';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { CredentialVault, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { enterpriseCheckDigit } from '@ludy/l10n-vn';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -129,9 +129,9 @@ suite('e-invoice provider connections (#2501)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     const db = createDb(pool);
@@ -150,7 +150,7 @@ suite('e-invoice provider connections (#2501)', () => {
     tokenApp = createHttpApp({ ...deps, channels: channels({ sandbox: { ...offline, capabilities: { ...offline.capabilities, signing: 'seller_token' } } }) });
     realApp = createHttpApp({ ...deps, channels: channels({ sandbox: { ...offline, hosts: ['einvoice.example.test'], connectFields: ['user', 'password'] } }) });
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = 'ludy_worker';
     workerUrl.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: workerUrl.toString(), max: 2 });
 
@@ -162,7 +162,7 @@ suite('e-invoice provider connections (#2501)', () => {
     const created = await rpc('org/create', await tokenFor(owner), { name: 'Công ty Hóa đơn', idempotencyKey: randomUUID() }, null);
     slug = String(created.body?.slug);
     orgId = String(created.body?.orgId);
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser.userId, member.userId, viewer.userId]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser.userId, member.userId, viewer.userId]);
     const other = await rpc('org/create', await tokenFor(outsider), { name: 'Công ty khác', idempotencyKey: randomUUID() }, null);
     otherSlug = String(other.body?.slug);
   });
@@ -177,7 +177,7 @@ suite('e-invoice provider connections (#2501)', () => {
     await root.end();
   });
 
-  const defaultEntity = async () => String((await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id);
+  const defaultEntity = async () => String((await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id);
 
   it('offers only the providers the deployment turned on, and refuses a connect to any other', async () => {
     expect((await call('providers', member)).body).toEqual([{ id: 'sandbox', offline: true, connectFields: [] }]);
@@ -185,14 +185,14 @@ suite('e-invoice provider connections (#2501)', () => {
     expect(((await call('status', member, undefined, offApp)).body as { sandbox: boolean }).sandbox).toBe(false);
     await expect(call('connections/connect', owner, connectInput({ sellerTaxCode: TAX_CODE }), offApp)).resolves.toMatchObject({ status: 404, body: { code: 'EINVOICE_DISABLED' } });
     expect((await call('connections/connect', owner, connectInput({ provider: 'misa', sellerTaxCode: TAX_CODE }))).body).toMatchObject({ code: 'EINVOICE_DISABLED' });
-    expect(await rows('SELECT 1 FROM crove_kernel.channel_connection WHERE org_id = $1', [orgId])).toEqual([]);
+    expect(await rows('SELECT 1 FROM ludy_kernel.channel_connection WHERE org_id = $1', [orgId])).toEqual([]);
   });
 
   it('refuses a provider whose signature needs the seller\'s own token, before anything is sealed', async () => {
     const refused = await call('connections/connect', owner, connectInput({ sellerTaxCode: TAX_CODE }), tokenApp);
     expect(refused).toMatchObject({ status: 422, body: { code: 'EINVOICE_SIGNING_TOKEN' } });
-    expect(await rows('SELECT 1 FROM crove_kernel.channel_connection WHERE org_id = $1', [orgId])).toEqual([]);
-    expect(await rows('SELECT 1 FROM crove_kernel.credential WHERE org_id = $1', [orgId])).toEqual([]);
+    expect(await rows('SELECT 1 FROM ludy_kernel.channel_connection WHERE org_id = $1', [orgId])).toEqual([]);
+    expect(await rows('SELECT 1 FROM ludy_kernel.credential WHERE org_id = $1', [orgId])).toEqual([]);
   });
 
   it('connects the offline provider for an owner or admin only, under the entity and the tax code it has, once', async () => {
@@ -205,13 +205,13 @@ suite('e-invoice provider connections (#2501)', () => {
     expect((await call('connections/connect', owner, connectInput({ sellerTaxCode: '0123456789' }))).body).toMatchObject({ code: 'EINVOICE_TAX_CODE_MISMATCH' });
     // Fields the provider does not ask for are refused.
     expect((await call('connections/connect', owner, connectInput({ fields: { user: 'x' } }))).body).toMatchObject({ code: 'EINVOICE_FIELDS' });
-    expect(await rows('SELECT 1 FROM crove_kernel.channel_connection WHERE org_id = $1', [orgId])).toEqual([]);
+    expect(await rows('SELECT 1 FROM ludy_kernel.channel_connection WHERE org_id = $1', [orgId])).toEqual([]);
 
     const connected = await call('connections/connect', adminUser, connectInput());
     expect(connected.status).toBe(200);
     const id = String(connected.body.id);
     // One credential row holds the sealed login; it is the connecting admin's.
-    expect(await rows('SELECT provider, connected_by FROM crove_kernel.channel_connection WHERE org_id = $1', [orgId])).toEqual([{ provider: 'einvoice_sandbox', connected_by: adminUser.userId }]);
+    expect(await rows('SELECT provider, connected_by FROM ludy_kernel.channel_connection WHERE org_id = $1', [orgId])).toEqual([{ provider: 'einvoice_sandbox', connected_by: adminUser.userId }]);
     // The same account again is the same connection (and a takeover: the owner who connects it now holds its credential).
     expect((await call('connections/connect', owner, connectInput())).body).toEqual({ id });
     const list = (await call('connections/list', viewer)).body;
@@ -220,10 +220,10 @@ suite('e-invoice provider connections (#2501)', () => {
     ]);
     // Another org sees nothing of it.
     expect((await rpc('einvoice/connections/list', await tokenFor(outsider), undefined, otherSlug)).body).toEqual([]);
-    expect(await rows('SELECT connected_by FROM crove_kernel.channel_connection WHERE org_id = $1', [orgId])).toEqual([{ connected_by: owner.userId }]);
-    expect(Number((await rows<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.credential WHERE org_id = $1', [orgId]))[0]?.n)).toBe(1);
+    expect(await rows('SELECT connected_by FROM ludy_kernel.channel_connection WHERE org_id = $1', [orgId])).toEqual([{ connected_by: owner.userId }]);
+    expect(Number((await rows<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.credential WHERE org_id = $1', [orgId]))[0]?.n)).toBe(1);
     // A second connection for the same entity, provider and tax code cannot exist.
-    expect(await rows('SELECT 1 FROM crove_finance.einvoice_connection WHERE org_id = $1', [orgId])).toHaveLength(1);
+    expect(await rows('SELECT 1 FROM ludy_finance.einvoice_connection WHERE org_id = $1', [orgId])).toHaveLength(1);
   });
 
   it('tests the connection and adds the provider\'s series to the entity, then lets an owner or admin pick the default', async () => {
@@ -246,7 +246,7 @@ suite('e-invoice provider connections (#2501)', () => {
     expect((await call('series/setDefault', owner, { seriesId: randomUUID() })).body).toMatchObject({ code: 'EINVOICE_SERIES_NOT_FOUND' });
     // The audit facts name ids, a state and a count, never the tax code.
     const audits = await rows<{ command: string; detail: Record<string, unknown>; target_id: string | null }>(
-      "SELECT command, detail, target_id FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.einvoice_%' AND outcome = 'ok' ORDER BY occurred_at",
+      "SELECT command, detail, target_id FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.einvoice_%' AND outcome = 'ok' ORDER BY occurred_at",
       [orgId],
     );
     expect(audits.map((a) => a.command)).toEqual(expect.arrayContaining(['finance.einvoice_connection.connect', 'finance.einvoice_connection.record_test', 'finance.einvoice_series.set_default']));
@@ -258,10 +258,10 @@ suite('e-invoice provider connections (#2501)', () => {
     for (const who of [member, viewer]) expect((await call('connections/disconnect', who, { id })).status).toBe(403);
     expect((await call('connections/disconnect', adminUser, { id })).body).toEqual({ removed: true });
     expect((await call('connections/list', owner)).body).toEqual([]);
-    expect(await rows('SELECT status FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [orgId, connectionId])).toEqual([{ status: 'revoked' }]);
-    expect(await rows('SELECT 1 FROM crove_kernel.credential WHERE org_id = $1', [orgId])).toEqual([]);
+    expect(await rows('SELECT status FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [orgId, connectionId])).toEqual([{ status: 'revoked' }]);
+    expect(await rows('SELECT 1 FROM ludy_kernel.credential WHERE org_id = $1', [orgId])).toEqual([]);
     expect((await call('connections/disconnect', owner, { id })).body).toEqual({ removed: false });
-    expect(Number((await rows<{ n: string }>('SELECT count(*) AS n FROM crove_finance.einvoice_series WHERE org_id = $1', [orgId]))[0]?.n)).toBe(2);
+    expect(Number((await rows<{ n: string }>('SELECT count(*) AS n FROM ludy_finance.einvoice_series WHERE org_id = $1', [orgId]))[0]?.n)).toBe(2);
     // Connecting again is a new connection of the same account.
     const again = await call('connections/connect', owner, connectInput());
     expect(again.status).toBe(200);
@@ -276,19 +276,19 @@ suite('e-invoice provider connections (#2501)', () => {
     expect(JSON.stringify(shared.body)).not.toContain('einvoice_');
     expect(JSON.stringify(shared.body)).not.toContain(TAX_CODE);
     // Two connects of one new account at once (a double click, a retry): both answer with the same connection, and neither call revokes what the other returned.
-    const branch = String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by, tax_code) VALUES ($1, 'Chi nhánh song song', 'branch', $2, $3) RETURNING id`, [orgId, owner.userId, `${TAX_CODE}-002`]))[0]?.id);
+    const branch = String((await rows<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by, tax_code) VALUES ($1, 'Chi nhánh song song', 'branch', $2, $3) RETURNING id`, [orgId, owner.userId, `${TAX_CODE}-002`]))[0]?.id);
     const both = await Promise.all([call('connections/connect', owner, connectInput({ legalEntityId: branch })), call('connections/connect', adminUser, connectInput({ legalEntityId: branch }))]);
     expect(both.map((r) => r.status)).toEqual([200, 200]);
     expect(both[0]?.body.id).toBe(both[1]?.body.id);
     const mine = (await call('connections/list', owner)).body.filter((c: { legalEntityId: string }) => c.legalEntityId === branch);
     expect(mine).toHaveLength(1);
     expect(mine[0]).toMatchObject({ status: 'active' });
-    expect(await rows("SELECT status FROM crove_kernel.channel_connection WHERE org_id = $1 AND external_account_id = $2", [orgId, branch])).toEqual([{ status: 'active' }]);
-    expect(Number((await rows<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.credential WHERE org_id = $1 AND connection_id = $2', [orgId, mine[0]?.connectionId]))[0]?.n)).toBe(1);
+    expect(await rows("SELECT status FROM ludy_kernel.channel_connection WHERE org_id = $1 AND external_account_id = $2", [orgId, branch])).toEqual([{ status: 'active' }]);
+    expect(Number((await rows<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.credential WHERE org_id = $1 AND connection_id = $2', [orgId, mine[0]?.connectionId]))[0]?.n)).toBe(1);
     // Closed again, so the tests after this one see the connections they made.
     expect((await call('connections/disconnect', owner, { id: both[0]?.body.id })).body).toEqual({ removed: true });
     // The command itself, from four calls at once: one connection, one row, the same answer to all, none refused for the others' work.
-    const raceEntity = String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by, tax_code) VALUES ($1, 'Chi nhánh đua', 'branch', $2, $3) RETURNING id`, [orgId, owner.userId, `${TAX_CODE}-003`]))[0]?.id);
+    const raceEntity = String((await rows<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by, tax_code) VALUES ($1, 'Chi nhánh đua', 'branch', $2, $3) RETURNING id`, [orgId, owner.userId, `${TAX_CODE}-003`]))[0]?.id);
     const actor = { type: 'user' as const, userId: owner.userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
     const envelope = () => {
       const sealed = vault.seal('sandbox', { orgId, provider: 'einvoice_sandbox', externalAccountId: raceEntity });
@@ -305,17 +305,17 @@ suite('e-invoice provider connections (#2501)', () => {
     );
     expect(new Set(connected.map((l) => l.id)).size).toBe(1);
     expect(connected.filter((l) => !l.existing)).toHaveLength(1);
-    expect(await rows('SELECT 1 FROM crove_finance.einvoice_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, raceEntity])).toHaveLength(1);
-    expect(await rows('SELECT status FROM crove_kernel.channel_connection WHERE org_id = $1 AND external_account_id = $2', [orgId, raceEntity])).toEqual([{ status: 'active' }]);
+    expect(await rows('SELECT 1 FROM ludy_finance.einvoice_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, raceEntity])).toHaveLength(1);
+    expect(await rows('SELECT status FROM ludy_kernel.channel_connection WHERE org_id = $1 AND external_account_id = $2', [orgId, raceEntity])).toEqual([{ status: 'active' }]);
   });
 
   it('does not touch a live connection\'s credential or connector when a connect of it is refused, and rotates them when it is accepted', async () => {
-    const entity = String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh đổi mã', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
+    const entity = String((await rows<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh đổi mã', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
     const P1 = `${PLANTED}-one`;
     const P2 = `${PLANTED}-two`;
     const stored = async () => {
       const [row] = await rows<{ key_id: string; envelope: Buffer; connected_by: string; status: string }>(
-        'SELECT c.key_id, c.envelope, ch.connected_by, ch.status FROM crove_kernel.credential c JOIN crove_kernel.channel_connection ch ON ch.org_id = c.org_id AND ch.id = c.connection_id WHERE c.org_id = $1 AND ch.external_account_id = $2',
+        'SELECT c.key_id, c.envelope, ch.connected_by, ch.status FROM ludy_kernel.credential c JOIN ludy_kernel.channel_connection ch ON ch.org_id = c.org_id AND ch.id = c.connection_id WHERE c.org_id = $1 AND ch.external_account_id = $2',
         [orgId, entity],
       );
       return row as { key_id: string; envelope: Buffer; connected_by: string; status: string };
@@ -347,7 +347,7 @@ suite('e-invoice provider connections (#2501)', () => {
   it('seals what the org types for a provider that has fields, and shows it nowhere: no answer, audit row, queued event or readable table', async () => {
     const entity = await defaultEntity();
     // A second entity, so the account is its own connection beside the offline one.
-    const branch = String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by, tax_code) VALUES ($1, 'Chi nhánh hóa đơn', 'branch', $2, $3) RETURNING id`, [orgId, owner.userId, `${TAX_CODE}-001`]))[0]?.id);
+    const branch = String((await rows<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by, tax_code) VALUES ($1, 'Chi nhánh hóa đơn', 'branch', $2, $3) RETURNING id`, [orgId, owner.userId, `${TAX_CODE}-001`]))[0]?.id);
     // Missing and extra fields are refused, in words.
     expect((await call('connections/connect', owner, connectInput({ legalEntityId: branch, fields: { user: 'u' } }), realApp)).body).toMatchObject({ code: 'EINVOICE_FIELDS' });
     expect((await call('connections/connect', owner, connectInput({ legalEntityId: branch, fields: { user: 'u', password: PLANTED, other: 'x' } }), realApp)).body).toMatchObject({ code: 'EINVOICE_FIELDS' });
@@ -361,28 +361,28 @@ suite('e-invoice provider connections (#2501)', () => {
     expect((await call('connections/test', owner, { id: connected.body.id }, realApp)).body).toMatchObject({ code: 'EINVOICE_PROVIDER_NOT_READY' });
     // Nothing readable holds the secret: every audit row, queued event and stored answer of the org, and every finance and channel row, as text.
     const dump = JSON.stringify({
-      audit: await rows('SELECT * FROM crove_kernel.audit_event WHERE org_id = $1', [orgId]),
-      outbox: await rows('SELECT * FROM crove_kernel.outbox_event WHERE org_id = $1', [orgId]),
-      idempotency: await rows('SELECT * FROM crove_kernel.idempotency_key WHERE org_id = $1', [orgId]),
-      channel: await rows('SELECT * FROM crove_kernel.channel_connection WHERE org_id = $1', [orgId]),
-      activity: await rows('SELECT * FROM crove_kernel.activity WHERE org_id = $1', [orgId]),
-      connection: await rows('SELECT * FROM crove_finance.einvoice_connection WHERE org_id = $1', [orgId]),
+      audit: await rows('SELECT * FROM ludy_kernel.audit_event WHERE org_id = $1', [orgId]),
+      outbox: await rows('SELECT * FROM ludy_kernel.outbox_event WHERE org_id = $1', [orgId]),
+      idempotency: await rows('SELECT * FROM ludy_kernel.idempotency_key WHERE org_id = $1', [orgId]),
+      channel: await rows('SELECT * FROM ludy_kernel.channel_connection WHERE org_id = $1', [orgId]),
+      activity: await rows('SELECT * FROM ludy_kernel.activity WHERE org_id = $1', [orgId]),
+      connection: await rows('SELECT * FROM ludy_finance.einvoice_connection WHERE org_id = $1', [orgId]),
     });
     expect(dump).not.toContain(PLANTED);
     expect(dump).not.toContain('ketoan@ludy.test');
     // The seller's tax code is in the finance row and nowhere that outlives it: not in the channel row (which stays as history after a disconnect), not in an audit row, a queued
     // event, a stored answer or the activity feed.
     const elsewhere = JSON.stringify({
-      audit: await rows('SELECT * FROM crove_kernel.audit_event WHERE org_id = $1', [orgId]),
-      outbox: await rows('SELECT * FROM crove_kernel.outbox_event WHERE org_id = $1', [orgId]),
-      idempotency: await rows('SELECT * FROM crove_kernel.idempotency_key WHERE org_id = $1', [orgId]),
-      channel: await rows('SELECT * FROM crove_kernel.channel_connection WHERE org_id = $1', [orgId]),
-      activity: await rows('SELECT * FROM crove_kernel.activity WHERE org_id = $1', [orgId]),
+      audit: await rows('SELECT * FROM ludy_kernel.audit_event WHERE org_id = $1', [orgId]),
+      outbox: await rows('SELECT * FROM ludy_kernel.outbox_event WHERE org_id = $1', [orgId]),
+      idempotency: await rows('SELECT * FROM ludy_kernel.idempotency_key WHERE org_id = $1', [orgId]),
+      channel: await rows('SELECT * FROM ludy_kernel.channel_connection WHERE org_id = $1', [orgId]),
+      activity: await rows('SELECT * FROM ludy_kernel.activity WHERE org_id = $1', [orgId]),
     });
     expect(elsewhere).not.toContain(TAX_CODE);
     // The sealed envelope holds it, and the vault opens it for the binding it was sealed under, and for no other.
     const [credential] = await rows<{ key_id: string; envelope: Buffer }>(
-      'SELECT c.key_id, c.envelope FROM crove_kernel.credential c WHERE c.org_id = $1 AND c.connection_id = (SELECT channel_connection_id FROM crove_finance.einvoice_connection WHERE org_id = $1 AND legal_entity_id = $2)',
+      'SELECT c.key_id, c.envelope FROM ludy_kernel.credential c WHERE c.org_id = $1 AND c.connection_id = (SELECT channel_connection_id FROM ludy_finance.einvoice_connection WHERE org_id = $1 AND legal_entity_id = $2)',
       [orgId, branch],
     );
     expect(credential?.envelope.includes(Buffer.from(PLANTED))).toBe(false);
@@ -403,28 +403,28 @@ suite('e-invoice provider connections (#2501)', () => {
       const c = await workerPool.connect();
       try {
         await c.query('BEGIN');
-        await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
-        return await c.query('SELECT key_id FROM crove_kernel.credential_get($1::uuid)', [connectionId]);
+        await c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
+        return await c.query('SELECT key_id FROM ludy_kernel.credential_get($1::uuid)', [connectionId]);
       } finally {
         await c.query('ROLLBACK').catch(() => undefined);
         c.release();
       }
     };
     expect((await open()).rowCount).toBe(1);
-    await rows("UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2", [orgId, adminUser.userId]);
+    await rows("UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2", [orgId, adminUser.userId]);
     await expect(open()).rejects.toMatchObject({ message: expect.stringContaining('CHANNEL_OWNER_LEFT') });
-    await rows("UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2", [orgId, adminUser.userId]);
+    await rows("UPDATE ludy_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2", [orgId, adminUser.userId]);
   });
 
   it('does not issue an entity\'s invoices under another entity\'s tax code, nor change the seller of a connected account', async () => {
     const entityA = await defaultEntity();
-    const bare = String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh chưa có mã', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
+    const bare = String((await rows<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh chưa có mã', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
     // The other entity's code is refused for an entity without one, by the command and by the database.
     expect((await call('connections/connect', owner, connectInput({ legalEntityId: bare, sellerTaxCode: TAX_CODE }))).body).toMatchObject({ code: 'EINVOICE_TAX_CODE_MISMATCH' });
-    expect(await rows('SELECT 1 FROM crove_kernel.channel_connection WHERE org_id = $1 AND external_account_id = $2', [orgId, bare])).toEqual([]);
+    expect(await rows('SELECT 1 FROM ludy_kernel.channel_connection WHERE org_id = $1 AND external_account_id = $2', [orgId, bare])).toEqual([]);
     const channelId = randomUUID();
-    await rows(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'einvoice_sandbox', $3, 'Thử', $4)`, [orgId, channelId, `sql-${randomUUID()}`, owner.userId]);
-    await expect(rows('INSERT INTO crove_finance.einvoice_connection (org_id, legal_entity_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, $3, $4, $5)', [orgId, bare, channelId, 'einvoice_sandbox', TAX_CODE])).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('EINVOICE_CONNECTION_TAX_CODE') });
+    await rows(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'einvoice_sandbox', $3, 'Thử', $4)`, [orgId, channelId, `sql-${randomUUID()}`, owner.userId]);
+    await expect(rows('INSERT INTO ludy_finance.einvoice_connection (org_id, legal_entity_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, $3, $4, $5)', [orgId, bare, channelId, 'einvoice_sandbox', TAX_CODE])).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('EINVOICE_CONNECTION_TAX_CODE') });
     expect(entityA).not.toBe(bare);
     // A code of its own is taken, and the same account under another code is refused, leaving the connection as it was.
     const first = await call('connections/connect', owner, connectInput({ legalEntityId: bare, sellerTaxCode: '0123456789' }));
@@ -436,29 +436,29 @@ suite('e-invoice provider connections (#2501)', () => {
   });
 
   it('leaves no channel connection and no credential when the account turns out to be connected already, and removes a row only once the connection is closed', async () => {
-    const entity = String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh đã nối', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
+    const entity = String((await rows<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh đã nối', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
     // The entity already has a connection under this provider and tax code (another channel row), so the new one cannot be filed.
     const existingChannel = randomUUID();
-    await rows(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'einvoice_sandbox', $3, 'Có sẵn', $4)`, [orgId, existingChannel, `pre-${randomUUID()}`, owner.userId]);
-    await rows(`INSERT INTO crove_finance.einvoice_connection (org_id, legal_entity_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, $3, 'einvoice_sandbox', '0123456799')`, [orgId, entity, existingChannel]);
+    await rows(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'einvoice_sandbox', $3, 'Có sẵn', $4)`, [orgId, existingChannel, `pre-${randomUUID()}`, owner.userId]);
+    await rows(`INSERT INTO ludy_finance.einvoice_connection (org_id, legal_entity_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, $3, 'einvoice_sandbox', '0123456799')`, [orgId, entity, existingChannel]);
     const refused = await call('connections/connect', owner, connectInput({ legalEntityId: entity, sellerTaxCode: '0123456799' }));
     expect(refused).toMatchObject({ status: 409, body: { code: 'EINVOICE_CONNECTION_EXISTS' } });
     // The connect is one transaction: nothing of the refused one is left, neither a channel connection nor a credential.
-    expect(await rows('SELECT status FROM crove_kernel.channel_connection WHERE org_id = $1 AND external_account_id = $2', [orgId, entity])).toEqual([]);
-    expect(await rows('SELECT 1 FROM crove_kernel.credential c JOIN crove_kernel.channel_connection ch ON ch.org_id = c.org_id AND ch.id = c.connection_id WHERE c.org_id = $1 AND ch.external_account_id = $2', [orgId, entity])).toEqual([]);
+    expect(await rows('SELECT status FROM ludy_kernel.channel_connection WHERE org_id = $1 AND external_account_id = $2', [orgId, entity])).toEqual([]);
+    expect(await rows('SELECT 1 FROM ludy_kernel.credential c JOIN ludy_kernel.channel_connection ch ON ch.org_id = c.org_id AND ch.id = c.connection_id WHERE c.org_id = $1 AND ch.external_account_id = $2', [orgId, entity])).toEqual([]);
     // A row of a live connection is not removed by the command: the credential would be left without its row.
-    const id = String((await rows<{ id: string }>('SELECT id FROM crove_finance.einvoice_connection WHERE org_id = $1 AND channel_connection_id = $2', [orgId, existingChannel]))[0]?.id);
+    const id = String((await rows<{ id: string }>('SELECT id FROM ludy_finance.einvoice_connection WHERE org_id = $1 AND channel_connection_id = $2', [orgId, existingChannel]))[0]?.id);
     const actor = { type: 'user' as const, userId: owner.userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
     await expect(rt.execute('finance.einvoice_connection.unlink', { id }, { actor, orgId, idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: 'EINVOICE_CONNECTION_LIVE' });
-    await rows("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2", [orgId, existingChannel]);
+    await rows("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2", [orgId, existingChannel]);
     expect(await rt.execute('finance.einvoice_connection.unlink', { id }, { actor, orgId, idempotencyKey: randomUUID() })).toEqual({ removed: true });
   });
 
   it('holds the roles in SQL as the runtime\'s own login: owners and admins write a connection, members and viewers read it, and only the last test can change', async () => {
-    const entity = String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh vai trò', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
+    const entity = String((await rows<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh vai trò', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
     const channel = randomUUID();
-    await rows(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'einvoice_sandbox', $3, 'Vai trò', $4)`, [orgId, channel, `role-${randomUUID()}`, owner.userId]);
-    const insertSql = 'INSERT INTO crove_finance.einvoice_connection (org_id, legal_entity_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, $3, $4, $5) RETURNING id';
+    await rows(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'einvoice_sandbox', $3, 'Vai trò', $4)`, [orgId, channel, `role-${randomUUID()}`, owner.userId]);
+    const insertSql = 'INSERT INTO ludy_finance.einvoice_connection (org_id, legal_entity_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, $3, $4, $5) RETURNING id';
     async function asRole<T>(who: Account, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
       const c = await pool.connect();
       try {
@@ -477,47 +477,47 @@ suite('e-invoice provider connections (#2501)', () => {
     expect(await asRole(adminUser, async (c) => (await c.query(insertSql, [orgId, entity, channel, 'einvoice_sandbox', '0123456798'])).rowCount)).toBe(1);
     // A row of the org: everyone reads it, a member or viewer changes and deletes nothing, an admin changes the last test and nothing else, and may delete it.
     const id = String((await rows<{ id: string }>(insertSql, [orgId, entity, channel, 'einvoice_sandbox', '0123456798']))[0]?.id);
-    for (const who of [member, viewer, adminUser, owner]) expect(await asRole(who, async (c) => (await c.query('SELECT 1 FROM crove_finance.einvoice_connection WHERE org_id = $1 AND id = $2', [orgId, id])).rowCount)).toBe(1);
-    const setState = "UPDATE crove_finance.einvoice_connection SET last_test_state = 'works', last_tested_at = now() WHERE org_id = $1 AND id = $2";
+    for (const who of [member, viewer, adminUser, owner]) expect(await asRole(who, async (c) => (await c.query('SELECT 1 FROM ludy_finance.einvoice_connection WHERE org_id = $1 AND id = $2', [orgId, id])).rowCount)).toBe(1);
+    const setState = "UPDATE ludy_finance.einvoice_connection SET last_test_state = 'works', last_tested_at = now() WHERE org_id = $1 AND id = $2";
     for (const who of [member, viewer]) {
       expect(await asRole(who, async (c) => (await c.query(setState, [orgId, id])).rowCount)).toBe(0);
-      expect(await asRole(who, async (c) => (await c.query('DELETE FROM crove_finance.einvoice_connection WHERE org_id = $1 AND id = $2', [orgId, id])).rowCount)).toBe(0);
+      expect(await asRole(who, async (c) => (await c.query('DELETE FROM ludy_finance.einvoice_connection WHERE org_id = $1 AND id = $2', [orgId, id])).rowCount)).toBe(0);
     }
     for (const who of [adminUser, owner]) {
       expect(await asRole(who, async (c) => (await c.query(setState, [orgId, id])).rowCount)).toBe(1);
       for (const column of ["seller_tax_code = '0123456797'", "provider = 'einvoice_other'", `legal_entity_id = '${randomUUID()}'`, `channel_connection_id = '${randomUUID()}'`, "created_at = now()"]) {
-        await expect(asRole(who, (c) => c.query(`UPDATE crove_finance.einvoice_connection SET ${column} WHERE org_id = $1 AND id = $2`, [orgId, id]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
+        await expect(asRole(who, (c) => c.query(`UPDATE ludy_finance.einvoice_connection SET ${column} WHERE org_id = $1 AND id = $2`, [orgId, id]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
       }
     }
-    expect(await asRole(adminUser, async (c) => (await c.query('DELETE FROM crove_finance.einvoice_connection WHERE org_id = $1 AND id = $2', [orgId, id])).rowCount)).toBe(1);
-    await rows('DELETE FROM crove_finance.einvoice_connection WHERE org_id = $1 AND id = $2', [orgId, id]);
+    expect(await asRole(adminUser, async (c) => (await c.query('DELETE FROM ludy_finance.einvoice_connection WHERE org_id = $1 AND id = $2', [orgId, id])).rowCount)).toBe(1);
+    await rows('DELETE FROM ludy_finance.einvoice_connection WHERE org_id = $1 AND id = $2', [orgId, id]);
   });
 
   it('holds the row rules in SQL: the provider is the channel connection\'s, the tax code the entity\'s, and no tenant role changes the rest', async () => {
     const entity = await defaultEntity();
     const channelId = randomUUID();
     await rows(
-      `INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'einvoice_sandbox', $3, 'Thử', $4)`,
+      `INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'einvoice_sandbox', $3, 'Thử', $4)`,
       [orgId, channelId, `guard-${randomUUID()}`, owner.userId],
     );
     const insert = (provider: string, taxCode: string, entityId = entity) =>
-      rows('INSERT INTO crove_finance.einvoice_connection (org_id, legal_entity_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, $3, $4, $5)', [orgId, entityId, channelId, provider, taxCode]);
+      rows('INSERT INTO ludy_finance.einvoice_connection (org_id, legal_entity_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, $3, $4, $5)', [orgId, entityId, channelId, provider, taxCode]);
     await expect(insert('einvoice_misa', TAX_CODE)).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('EINVOICE_CONNECTION_PROVIDER') });
     await expect(insert('einvoice_sandbox', '0123456789')).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('EINVOICE_CONNECTION_TAX_CODE') });
     await expect(insert('sandbox', TAX_CODE)).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('EINVOICE_CONNECTION_PROVIDER') });
     // An entity with no tax code of its own leaves the shape to the CHECKs.
-    const bare = String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh trống', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
+    const bare = String((await rows<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh trống', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
     await expect(insert('einvoice_sandbox', 'abc', bare)).rejects.toMatchObject({ code: '23514' });
     await insert('einvoice_sandbox', '0123456789', bare);
-    const { id } = only(await rows<{ id: string }>('SELECT id FROM crove_finance.einvoice_connection WHERE org_id = $1 AND channel_connection_id = $2', [orgId, channelId]));
+    const { id } = only(await rows<{ id: string }>('SELECT id FROM ludy_finance.einvoice_connection WHERE org_id = $1 AND channel_connection_id = $2', [orgId, channelId]));
     // One connection per entity, provider and tax code, and one per channel connection.
     const second = randomUUID();
-    await rows(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'einvoice_sandbox', $3, 'Thử hai', $4)`, [orgId, second, `guard-${randomUUID()}`, owner.userId]);
-    await expect(rows('INSERT INTO crove_finance.einvoice_connection (org_id, legal_entity_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, $3, $4, $5)', [orgId, bare, second, 'einvoice_sandbox', '0123456789'])).rejects.toMatchObject({ code: '23505' });
-    await expect(rows('INSERT INTO crove_finance.einvoice_connection (org_id, legal_entity_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, $3, $4, $5)', [orgId, bare, channelId, 'einvoice_sandbox', '0123456780'])).rejects.toMatchObject({ code: '23505' });
+    await rows(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'einvoice_sandbox', $3, 'Thử hai', $4)`, [orgId, second, `guard-${randomUUID()}`, owner.userId]);
+    await expect(rows('INSERT INTO ludy_finance.einvoice_connection (org_id, legal_entity_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, $3, $4, $5)', [orgId, bare, second, 'einvoice_sandbox', '0123456789'])).rejects.toMatchObject({ code: '23505' });
+    await expect(rows('INSERT INTO ludy_finance.einvoice_connection (org_id, legal_entity_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, $3, $4, $5)', [orgId, bare, channelId, 'einvoice_sandbox', '0123456780'])).rejects.toMatchObject({ code: '23505' });
     // The test state and its time go together, from the list of states only.
-    await expect(rows("UPDATE crove_finance.einvoice_connection SET last_test_state = 'works' WHERE org_id = $1 AND id = $2", [orgId, id])).rejects.toMatchObject({ code: '23514' });
-    await expect(rows("UPDATE crove_finance.einvoice_connection SET last_test_state = 'broken', last_tested_at = now() WHERE org_id = $1 AND id = $2", [orgId, id])).rejects.toMatchObject({ code: '23514' });
-    await rows("DELETE FROM crove_finance.einvoice_connection WHERE org_id = $1 AND id = $2", [orgId, id]);
+    await expect(rows("UPDATE ludy_finance.einvoice_connection SET last_test_state = 'works' WHERE org_id = $1 AND id = $2", [orgId, id])).rejects.toMatchObject({ code: '23514' });
+    await expect(rows("UPDATE ludy_finance.einvoice_connection SET last_test_state = 'broken', last_tested_at = now() WHERE org_id = $1 AND id = $2", [orgId, id])).rejects.toMatchObject({ code: '23514' });
+    await rows("DELETE FROM ludy_finance.einvoice_connection WHERE org_id = $1 AND id = $2", [orgId, id]);
   });
 });

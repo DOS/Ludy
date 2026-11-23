@@ -4,11 +4,11 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { Empty, ErrorText, PageHeader, Spinner } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -117,7 +117,7 @@ export function SocialFeedsPage() {
       />
       {canManage && (
         <Card className="block space-y-3 p-4">
-          <h3 className="text-sm font-medium text-foreground">{t('add')}</h3>
+          <h2 className="text-sm font-medium text-foreground">{t('add')}</h2>
           <form
             className="space-y-3"
             onSubmit={(e) => {
@@ -147,7 +147,17 @@ export function SocialFeedsPage() {
       ) : feeds.error ? (
         <ErrorText>{errorMessage(feeds.error)}</ErrorText>
       ) : (feeds.data ?? []).length === 0 ? (
-        <Empty title={t('empty')} hint={t('emptyHint')} />
+        <Empty
+          title={t('empty')}
+          hint={t('emptyHint')}
+          action={
+            canManage ? (
+              <Button size="lg" onClick={() => document.getElementById('feed-url')?.focus()}>
+                {t('add')}
+              </Button>
+            ) : undefined
+          }
+        />
       ) : (
         <div className="space-y-3">
           {(feeds.data ?? []).map((feed) => (

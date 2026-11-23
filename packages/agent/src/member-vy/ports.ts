@@ -36,9 +36,32 @@ export interface KnowledgePassage {
 
 // The model port: one call, a prompt in, text and the tokens out. The built-in implementation is the OpenAI-compatible endpoint of decision D9,
 // reached through metered(); a hosted provider may supply another. The prompt carries untrusted text between fixed delimiters, nothing else.
+// The meter key a model call counts under, when the feature is not the default one of the port (the meeting summary): a translation has a key of its own so it never cuts off a
+// summary, a transcription or live notes (#3029, #3184).
+export type ModelFeature =
+  | 'meetings.summary'
+  | 'meetings.translate'
+  | 'meetings.ask'
+  | 'meetings.brief'
+  | 'meetings.digest'
+  | 'meetings.assignee'
+  | 'meetings.adherence'
+  | 'meetings.chapters'
+  | 'meetings.title'
+  | 'meetings.commitments'
+  | 'meetings.followup_note'
+  | 'projects.tasks_from_note'
+  | 'projects.tasks_from_source'
+  | 'notes.summary'
+  | 'notes.todo_suggest'
+  | 'notes.todo_plan'
+  | 'notes.organize';
 export interface ModelPrompt {
   system: string;
   user: string;
+  feature?: ModelFeature | undefined;
+  // What the call is expected to use, known before it is made (a translation chunk: its size): the meter may admit the call on its projected cost (#2863 item 8, #3185).
+  expected?: { inputTokens: number; outputTokens: number } | undefined;
 }
 export interface ModelAnswer {
   text: string;

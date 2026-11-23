@@ -8,11 +8,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { MAX_VERSIONS_PER_POST, socialCommands, socialQueries, type ActivityItem, type PostView, type VersionView } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { MAX_VERSIONS_PER_POST, socialCommands, socialQueries, type ActivityItem, type PostView, type VersionView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -46,14 +46,14 @@ suite('social post versions on PostgreSQL (#1021)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const member = await person('member');
     const viewer = await person('viewer');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
     return { orgId, owner, member, viewer };
   }
 
   async function connection(o: Org) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         'sandbox',
@@ -71,7 +71,7 @@ suite('social post versions on PostgreSQL (#1021)', () => {
     const sha = createHash('sha256').update(id).digest('hex');
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
          VALUES ($1, $2, $3, $4, $5, 'anh.jpg', 'image/jpeg', 120000, 'social')`,
         [orgId, id, sha, `org/${orgId}/${sha}`, `content:${sha}`],
       ),
@@ -91,7 +91,7 @@ suite('social post versions on PostgreSQL (#1021)', () => {
       ...(variantRevisions ? { variantRevisions } : {}),
     });
   const countVersions = async (o: Org, postId: string) =>
-    Number((await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM crove_social.post_version WHERE org_id = $1 AND post_id = $2', [o.orgId, postId]))).rows[0]?.n);
+    Number((await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_social.post_version WHERE org_id = $1 AND post_id = $2', [o.orgId, postId]))).rows[0]?.n);
   const decide = async (o: Org, postId: string, decision: string) =>
     exec(o, o.owner, 'social.variant.decide', { postId, decision, variants: (await get(o, postId)).variants.filter((v) => v.status === 'in_review').map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
   async function post(o: Org, body: string, connections: string[]) {
@@ -108,9 +108,9 @@ suite('social post versions on PostgreSQL (#1021)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -166,7 +166,7 @@ suite('social post versions on PostgreSQL (#1021)', () => {
     expect(list).toHaveLength(MAX_VERSIONS_PER_POST);
     expect(list[0]).toMatchObject({ number: 61, variants: [{ content: { body: 'Lần 60' } }] });
     expect(list.at(-1)).toMatchObject({ number: 12, variants: [{ content: { body: 'Lần 11' } }] });
-    const { rows } = await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM crove_social.post_version WHERE org_id = $1 AND post_id = $2', [o.orgId, postId]));
+    const { rows } = await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_social.post_version WHERE org_id = $1 AND post_id = $2', [o.orgId, postId]));
     expect(Number(rows[0]?.n)).toBe(MAX_VERSIONS_PER_POST);
     // Another post's history is its own.
     expect((await versions(o, o.member, other)).map((v) => v.number)).toEqual([2, 1]);
@@ -238,7 +238,7 @@ suite('social post versions on PostgreSQL (#1021)', () => {
     const solo = await post(o, 'Bản một', [a]);
     await edit(o, solo, 'Bản đã đăng');
     const soloVariant = (await get(o, solo)).variants[0]?.id as string;
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'published', published_at = now() WHERE id = $1", [soloVariant]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'published', published_at = now() WHERE id = $1", [soloVariant]));
     const first = (await versions(o, o.member, solo)).find((v) => v.number === 1) as VersionView;
     await expect(restore(o, o.member, solo, first.id)).rejects.toMatchObject({ code: 'POST_PUBLISHED', status: 409 });
     expect((await get(o, solo)).variants[0]).toMatchObject({ status: 'published', effective: { body: 'Bản đã đăng' } });
@@ -248,7 +248,7 @@ suite('social post versions on PostgreSQL (#1021)', () => {
     const pair = await post(o, 'Bản một', [a, b]);
     await edit(o, pair, 'Bản hai');
     const [pa, pb] = (await get(o, pair)).variants as [PostView['variants'][number], PostView['variants'][number]];
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'published', published_at = now() WHERE id = $1", [pa.id]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'published', published_at = now() WHERE id = $1", [pa.id]));
     const one = (await versions(o, o.member, pair)).find((v) => v.number === 1) as VersionView;
     const result = await restore(o, o.member, pair, one.id);
     expect(result).toMatchObject({ changedVariants: [pb.id], kept: [pa.id] });
@@ -285,7 +285,7 @@ suite('social post versions on PostgreSQL (#1021)', () => {
     await expect(exec(b, b.owner, 'social.post.restore_version', { postId: postA, versionId: versionA.id, revision: 2 })).rejects.toMatchObject({ code: 'POST_NOT_FOUND' });
     expect((await get(b, postB)).body).toBe('Của B, đã sửa');
     expect((await versions(b, b.owner, postB)).map((v) => v.id)).not.toContain(versionA.id);
-    const { rows } = await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM crove_social.post_version WHERE org_id = $1', [a.orgId]));
+    const { rows } = await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_social.post_version WHERE org_id = $1', [a.orgId]));
     expect(Number(rows[0]?.n)).toBe(2);
   });
 
@@ -302,7 +302,7 @@ suite('social post versions on PostgreSQL (#1021)', () => {
 
     // A channel publishing now: the restore would change its content, so it is refused and nothing is written.
     const flying = (await get(o, one)).variants[0]?.id as string;
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'publishing' WHERE id = $1", [flying]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'publishing' WHERE id = $1", [flying]));
     await expect(restore(o, o.member, one, ofOne.id)).rejects.toMatchObject({ code: 'VARIANT_IN_FLIGHT', status: 409 });
     expect((await get(o, one)).body).toBe('Bài một, đã sửa');
     expect(await countVersions(o, one)).toBe(2);
@@ -325,14 +325,14 @@ suite('social post versions on PostgreSQL (#1021)', () => {
     const { postId } = await exec<{ postId: string }>(o, o.member, 'social.post.create', { body: 'Có ảnh', media: [{ fileId: pic, altText: null }], channels: [{ connectionId: conn }] });
     await exec(o, o.member, 'social.post.update', { postId, revision: 1, body: 'Không ảnh', media: [] });
     const [, withImage] = (await versions(o, o.member, postId)) as [VersionView, VersionView];
-    await admin((c) => c.query('DELETE FROM crove_kernel.file WHERE org_id = $1 AND id = $2', [o.orgId, pic]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.file WHERE org_id = $1 AND id = $2', [o.orgId, pic]));
     await expect(restore(o, o.member, postId, withImage.id)).rejects.toMatchObject({ code: 'MEDIA_NOT_FOUND', status: 404 });
 
     // Rows written past the commands: a link an edit refuses, a channel setting that is not an object.
     const tampered = async (number: number, columns: { link_url?: string; variants?: string }) => {
       const { rows } = await admin((c) =>
         c.query<{ id: string }>(
-          `INSERT INTO crove_social.post_version (org_id, post_id, number, revision, body, link_url, variants, created_by)
+          `INSERT INTO ludy_social.post_version (org_id, post_id, number, revision, body, link_url, variants, created_by)
            VALUES ($1, $2, $3, 1, 'Sửa tay', $4, $5::jsonb, $6) RETURNING id`,
           [o.orgId, postId, number, columns.link_url ?? null, columns.variants ?? '[]', o.member],
         ),
@@ -350,8 +350,8 @@ suite('social post versions on PostgreSQL (#1021)', () => {
     const o = await org();
     const postId = randomUUID();
     await admin(async (c) => {
-      await c.query("INSERT INTO crove_social.post (org_id, id, body, author_user_id) VALUES ($1, $2, 'Bây giờ', $3)", [o.orgId, postId, o.member]);
-      await c.query("INSERT INTO crove_social.post_version (org_id, post_id, number, revision, body, created_by) VALUES ($1, $2, 1, 1, 'Ngày trước', $3)", [o.orgId, postId, o.member]);
+      await c.query("INSERT INTO ludy_social.post (org_id, id, body, author_user_id) VALUES ($1, $2, 'Bây giờ', $3)", [o.orgId, postId, o.member]);
+      await c.query("INSERT INTO ludy_social.post_version (org_id, post_id, number, revision, body, created_by) VALUES ($1, $2, 1, 1, 'Ngày trước', $3)", [o.orgId, postId, o.member]);
     });
     const [saved] = (await versions(o, o.member, postId)) as [VersionView];
     const result = await restore(o, o.member, postId, saved.id);

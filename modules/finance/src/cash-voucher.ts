@@ -20,6 +20,7 @@
 import { z } from 'zod';
 import { sql } from 'kysely';
 import {
+  PAYROLL_PAYMENT_COMMAND,
   VOUCHER_COMMAND,
   VOUCHER_KIND,
   VOUCHER_PAGE_SIZE,
@@ -35,11 +36,12 @@ import {
   type CashVoucherPage,
   type CashVoucherProposal,
   type Check,
+  type PayrollPaymentKind,
   type VoucherType,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
-import { journalIsBalanced } from '@crove/l10n-vn';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
+import { PAYROLL_POSTING_MAPS, journalIsBalanced, type PayrollRegime } from '@ludy/l10n-vn';
 import { assertUsableAccounts } from './accounts.ts';
 import { checkBankLineVoucher, lineMatchFor, lockBankLine, readParties, type StoredBankLine } from './bank-match.ts';
 import {
@@ -52,11 +54,12 @@ import {
   voucherTotal,
   type VoucherProblem,
 } from './domain/cash-voucher.ts';
-import { HISTORY_WINDOW, amountCheck } from './domain/anomaly.ts';
+import { HISTORY_WINDOW, amountCheck, payrollLiabilityCheck } from './domain/anomaly.ts';
 import { learnFromVoucher } from './bank-rules.ts';
 import { postNewEntry } from './ledger.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
-import { latestRevision } from './source-entry.ts';
+import { booksOn } from './payroll-posting.ts';
+import { latestRevision, reversedSource } from './source-entry.ts';
 import type { CashVoucher } from './misa.ts';
 import { JOURNAL_EXPORT_LIMIT } from './queries.ts';
 
@@ -80,7 +83,7 @@ function refuseProblems(type: VoucherType, problems: VoucherProblem[]): void {
 
 // The party as stored, or a refusal. Read FOR SHARE when posting, so it stays as read until commit.
 async function findParty(ctx: QueryContext, partyId: string, lock: boolean) {
-  let query = ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', partyId);
+  let query = ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', partyId);
   if (lock) query = query.forShare();
   const party = await query.executeTakeFirst();
   if (!party) throw new DomainError('PARTY_NOT_FOUND', 422, 'Không tìm thấy đối tượng đã chọn; hãy chọn lại');
@@ -114,27 +117,107 @@ async function verifiedMatch(ctx: CommandContext, line: StoredBankLine, partyId:
 async function paymentHistory(ctx: QueryContext, partyId: string, legalEntityId: string): Promise<string[]> {
   const { rows } = await sql<{ amount: string }>`
     SELECT v.amount::text AS amount
-    FROM crove_finance.cash_voucher v
-    JOIN crove_finance.journal_entry j ON j.org_id = v.org_id AND j.source_id = v.id AND j.source_type = ${VOUCHER_SOURCE} AND j.reverses_entry_id IS NULL AND ${latestRevision('j')}
+    FROM ludy_finance.cash_voucher v
+    JOIN ludy_finance.journal_entry j ON j.org_id = v.org_id AND j.source_id = v.id AND j.source_type = ${VOUCHER_SOURCE} AND j.reverses_entry_id IS NULL AND ${latestRevision('j')}
     WHERE v.org_id = ${ctx.orgId} AND v.legal_entity_id = ${legalEntityId} AND v.party_id = ${partyId} AND v.voucher_type IN ('cash_payment', 'bank_debit')
-      AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry r WHERE r.org_id = j.org_id AND r.reverses_entry_id = j.id)
+      AND NOT EXISTS (SELECT 1 FROM ludy_finance.journal_entry r WHERE r.org_id = j.org_id AND r.reverses_entry_id = j.id)
     ORDER BY v.voucher_date DESC, v.id DESC
     LIMIT ${HISTORY_WINDOW}`.execute(ctx.trx);
   return rows.map((r) => r.amount);
 }
 
-// The warnings of a voucher when it is asked for (#2419): a payment far from what the party is usually paid. A receipt, a
-// voucher with no party and a party with fewer earlier payments than the rule needs raise none. Judged once, when the
-// voucher is asked for: payments posted after that, and payments with no party, are not part of it.
-async function voucherChecks(ctx: QueryContext, type: VoucherType, partyId: string | null, total: string, legalEntityId: string) {
-  if (partyId === null || (type !== 'cash_payment' && type !== 'bank_debit')) return [];
-  const flag = amountCheck(total, await paymentHistory(ctx, partyId, legalEntityId), 'payment');
-  return flag ? [flag] : [];
+const PAYROLL_PAYABLE_PREFIXES = ['334', '3382', '3383', '3384', '3385', '3386', '3335'] as const;
+
+// When a plain payment voucher (finance.voucher.record) debits a payroll payable account of the entity's regime while that
+// entity has a pending or live (unreversed) pay-run payment voucher for the same payroll obligation kind (#2793), raise a
+// warning so the reviewer checks it does not double-pay a pay-run liability. Never run for finance.payroll_payment.prepare.
+async function payrollPayableVoucherCheck(
+  ctx: QueryContext,
+  type: VoucherType,
+  date: string,
+  lines: ReadonlyArray<{ account: string }>,
+  legalEntityId: string,
+): Promise<Check | null> {
+  if (type !== 'cash_payment' && type !== 'bank_debit') return null;
+  if (!lines.some((l) => PAYROLL_PAYABLE_PREFIXES.some((prefix) => l.account.startsWith(prefix)))) return null;
+  const { regime } = await booksOn(ctx, legalEntityId, date);
+  const map = PAYROLL_POSTING_MAPS[regime as PayrollRegime] ?? PAYROLL_POSTING_MAPS.tt133;
+  const rootsByKind: ReadonlyArray<readonly [PayrollPaymentKind, readonly string[]]> = [
+    ['net_pay', [map.wages]],
+    ['insurance', [map.social, map.health, map.unemployment]],
+    ['union', [map.union]],
+    ['tax', [map.pit]],
+  ];
+  const byKind = new Map<PayrollPaymentKind, Set<string>>();
+  for (const line of lines) {
+    for (const [kind, roots] of rootsByKind) {
+      if (roots.some((root) => line.account === root || line.account.startsWith(root))) {
+        const set = byKind.get(kind) ?? new Set<string>();
+        set.add(line.account);
+        byKind.set(kind, set);
+      }
+    }
+  }
+  if (byKind.size === 0) return null;
+  const kinds = [...byKind.keys()];
+  const { rows } = await sql<{ kind: string | null }>`
+    SELECT DISTINCT coalesce(p.payload #>> '{payroll,kind}', p.request_input ->> 'kind') AS kind
+    FROM ludy_kernel.proposal p
+    WHERE p.org_id = ${ctx.orgId}
+      AND p.legal_entity_id = ${legalEntityId}
+      AND p.command = ${PAYROLL_PAYMENT_COMMAND}
+      AND p.status = 'pending'
+      AND coalesce(p.payload #>> '{payroll,kind}', p.request_input ->> 'kind') = ANY(${kinds}::text[])
+    UNION
+    SELECT DISTINCT v.payroll_payment_kind AS kind
+    FROM ludy_finance.cash_voucher v
+    WHERE v.org_id = ${ctx.orgId}
+      AND v.legal_entity_id = ${legalEntityId}
+      AND v.payroll_run_id IS NOT NULL
+      AND v.payroll_payment_kind = ANY(${kinds}::text[])
+      AND NOT ${reversedSource('v', VOUCHER_SOURCE)}`.execute(ctx.trx);
+  const activeAccounts: string[] = [];
+  for (const row of rows) {
+    const matched = row.kind ? byKind.get(row.kind as PayrollPaymentKind) : undefined;
+    if (matched) activeAccounts.push(...matched);
+  }
+  return payrollLiabilityCheck(activeAccounts);
+}
+
+// The warnings of a voucher when it is asked for (#2419, #2793): a payment far from what the party is usually paid, and on
+// a plain voucher a debit to a payroll payable that already has a pending or recorded pay-run payment. Judged once, when
+// the voucher is asked for.
+async function voucherChecks(
+  ctx: QueryContext,
+  type: VoucherType,
+  date: string,
+  partyId: string | null,
+  lines: ReadonlyArray<{ account: string }>,
+  total: string,
+  legalEntityId: string,
+  plainVoucher: boolean,
+): Promise<Check[]> {
+  if (type !== 'cash_payment' && type !== 'bank_debit') return [];
+  const checks: Check[] = [];
+  if (partyId !== null) {
+    const flag = amountCheck(total, await paymentHistory(ctx, partyId, legalEntityId), 'payment');
+    if (flag) checks.push(flag);
+  }
+  if (plainVoucher) {
+    const payrollFlag = await payrollPayableVoucherCheck(ctx, type, date, lines, legalEntityId);
+    if (payrollFlag) checks.push(payrollFlag);
+  }
+  return checks;
 }
 
 // A voucher request checked and built into its proposal: shared by the voucher a person enters (finance.voucher.prepare) and the payment voucher of a pay run
 // (finance.payroll_payment.prepare, payroll-payment.ts), which adds checks of its own.
-export async function buildVoucherProposal(ctx: CommandContext, input: z.infer<typeof zCashVoucherRequest>, extraChecks: readonly Check[] = []) {
+export async function buildVoucherProposal(
+  ctx: CommandContext,
+  input: z.infer<typeof zCashVoucherRequest>,
+  extraChecks: readonly Check[] = [],
+  options: { plainVoucher?: boolean } = {},
+) {
   const partyId = input.partyId ?? null;
   await checkVoucher(ctx, { type: input.type, cashAccount: input.cashAccount, partyId, lines: input.lines });
   // The legal entity whose books the voucher goes to (#1280): a bank line's own, else the one resolved for the caller.
@@ -156,7 +239,8 @@ export async function buildVoucherProposal(ctx: CommandContext, input: z.infer<t
     legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
   }
   const party = partyId ? await findParty(ctx, partyId, false) : null;
-  const checks = [...(await voucherChecks(ctx, input.type, partyId, voucherTotal(input.lines), legalEntityId)), ...extraChecks];
+  const total = voucherTotal(input.lines);
+  const checks = [...(await voucherChecks(ctx, input.type, input.date, partyId, input.lines, total, legalEntityId, options.plainVoucher === true)), ...extraChecks];
   const built: CashVoucherProposal = {
     type: input.type,
     date: input.date,
@@ -192,11 +276,17 @@ export const prepareVoucher = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: REQUESTERS,
-  handler: (ctx, input) => buildVoucherProposal(ctx, input),
+  handler: (ctx, input) => buildVoucherProposal(ctx, input, [], { plainVoucher: true }),
 });
 
-// A stored voucher proposal checked again and posted: shared by finance.voucher.record and finance.payroll_payment.record, which names the pay run and what it pays on the voucher (`payroll`).
-export async function recordVoucherPayload(ctx: CommandContext, payload: CashVoucherProposal, payroll: { runId: string; kind: string } | null = null) {
+// A stored voucher proposal checked again and posted: shared by finance.voucher.record, finance.payroll_payment.record, which names the pay run and what it pays on the voucher (`payroll`), and
+// finance.supplier_payment.settle.record, which names the supplier payment it settles (`supplierPaymentId`).
+export async function recordVoucherPayload(
+  ctx: CommandContext,
+  payload: CashVoucherProposal,
+  payroll: { runId: string; kind: string } | null = null,
+  supplierPaymentId: string | null = null,
+) {
   if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
   const partyId = payload.party?.id ?? null;
   // The stored payload is checked as if new: a sub-account deactivated or a party gone since it was asked for is
@@ -211,6 +301,8 @@ export async function recordVoucherPayload(ctx: CommandContext, payload: CashVou
   // The text of the bank line a person's own choice of party was made from (#2402), kept to teach a rule below.
   let taughtBy: { description: string; counterpartyAccount: string | null } | null = null;
   if (payload.bankLineId) {
+    // Under the line's lock, like the payout's record (#2516): a payout that holds the line commits first, and the check below then sees it; the database's own check sees only bank vouchers.
+    await lockBankLine(ctx, payload.bankLineId);
     const line = await checkBankLineVoucher(
       ctx,
       payload.bankLineId,
@@ -229,7 +321,7 @@ export async function recordVoucherPayload(ctx: CommandContext, payload: CashVou
   if (!journalIsBalanced(journal)) throw new DomainError('UNBALANCED', 422, 'Bút toán không cân');
 
   const voucher = await ctx.trx
-    .insertInto('crove_finance.cash_voucher')
+    .insertInto('ludy_finance.cash_voucher')
     .values({
       org_id: ctx.orgId,
       legal_entity_id: legalEntityId,
@@ -243,18 +335,21 @@ export async function recordVoucherPayload(ctx: CommandContext, payload: CashVou
       proposal_id: ctx.proposalId,
       bank_line_id: payload.bankLineId ?? null,
       ...(payroll ? { payroll_run_id: payroll.runId, payroll_payment_kind: payroll.kind } : {}),
+      ...(supplierPaymentId ? { supplier_payment_id: supplierPaymentId } : {}),
       created_by: ctx.actor.type === 'user' ? ctx.actor.userId : null,
     })
     .returning(['id', 'number'])
     .executeTakeFirstOrThrow()
-    .catch((error: { code?: string; message?: string }) => {
+    .catch((error: { code?: string; constraint?: string; message?: string }) => {
       // A voucher of the same line committed between the check above and this insert (the database's check waits for
       // it under the line's lock, then sees it).
       if (error?.code === '23505' && /is already settled by another cash voucher/.test(error.message ?? '')) {
         throw new DomainError('BANK_LINE_MATCHED', 409, 'Dòng sao kê này vừa được ghi chứng từ khác; hãy tải lại trang ngân hàng');
       }
-      // A payment of the same run and kind committed between the command's check and this insert (the unique index waited for it).
-      if (payroll && error?.code === '23505') throw new DomainError('HR_PAYMENT_DONE', 409, 'Khoản này của bảng lương đã được chi');
+      // A payment of the same run and kind committed between the command's check and this insert (ludy_finance.cash_voucher_payroll_slot waited for it).
+      if (payroll && error?.code === '23505' && error?.constraint === 'cash_voucher_payroll_payment_uq') {
+        throw new DomainError('HR_PAYMENT_DONE', 409, 'Khoản này của bảng lương đã được chi');
+      }
       throw error;
     });
   const code = voucherCode(payload.type, voucher.number);
@@ -309,12 +404,12 @@ export const vouchersList = defineQuery({
     // The vouchers of one legal entity (#1280).
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     let query = ctx.trx
-      .selectFrom('crove_finance.cash_voucher as v')
-      .leftJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.party_id'))
-      .leftJoin('crove_finance.journal_entry as j', (join) =>
+      .selectFrom('ludy_finance.cash_voucher as v')
+      .leftJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.party_id'))
+      .leftJoin('ludy_finance.journal_entry as j', (join) =>
         join.onRef('j.org_id', '=', 'v.org_id').onRef('j.source_id', '=', 'v.id').on('j.source_type', '=', VOUCHER_SOURCE).on('j.reverses_entry_id', 'is', null).on(latestRevision('j')),
       )
-      .leftJoin('crove_finance.journal_entry as r', (join) => join.onRef('r.org_id', '=', 'j.org_id').onRef('r.reverses_entry_id', '=', 'j.id'))
+      .leftJoin('ludy_finance.journal_entry as r', (join) => join.onRef('r.org_id', '=', 'j.org_id').onRef('r.reverses_entry_id', '=', 'j.id'))
       .select([
         'v.id',
         'v.voucher_type',
@@ -379,13 +474,14 @@ export const cashVouchers = defineQuery({
   handler: async (ctx, input): Promise<CashVoucher[]> => {
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     let query = ctx.trx
-      .selectFrom('crove_finance.cash_voucher as v')
-      .innerJoin('crove_finance.journal_entry as j', (join) =>
+      .selectFrom('ludy_finance.cash_voucher as v')
+      .innerJoin('ludy_finance.journal_entry as j', (join) =>
         join.onRef('j.org_id', '=', 'v.org_id').onRef('j.source_id', '=', 'v.id').on('j.source_type', '=', VOUCHER_SOURCE).on('j.reverses_entry_id', 'is', null).on(latestRevision('j')),
       )
-      .leftJoin('crove_finance.journal_entry as r', (join) => join.onRef('r.org_id', '=', 'j.org_id').onRef('r.reverses_entry_id', '=', 'j.id'))
-      .leftJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.party_id'))
+      .leftJoin('ludy_finance.journal_entry as r', (join) => join.onRef('r.org_id', '=', 'j.org_id').onRef('r.reverses_entry_id', '=', 'j.id'))
+      .leftJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.party_id'))
       .select([
+        'v.id as source_id',
         'v.voucher_type',
         'v.number',
         'v.number_period',
@@ -394,6 +490,7 @@ export const cashVouchers = defineQuery({
         'v.person_name',
         'v.description',
         'j.id as entry_id',
+        'p.id as party_id',
         'p.name as party_name',
         'p.tax_code as party_tax_code',
         'p.address as party_address',
@@ -412,7 +509,7 @@ export const cashVouchers = defineQuery({
     const vouchers = await query.execute();
     if (vouchers.length === 0) return [];
     const lines = await ctx.trx
-      .selectFrom('crove_finance.journal_line')
+      .selectFrom('ludy_finance.journal_line')
       .select(['entry_id', 'line_no', 'account_code', 'debit', 'credit', 'memo'])
       .where('org_id', '=', ctx.orgId)
       .where(
@@ -434,12 +531,13 @@ export const cashVouchers = defineQuery({
       byEntry.set(l.entry_id, list);
     }
     return vouchers.map((v) => ({
+      sourceId: v.source_id,
       type: input.type,
       code: voucherCode(v.voucher_type, v.number),
       numberPeriod: v.number_period,
       date: v.voucher_date,
       cashAccount: v.cash_account,
-      party: v.party_name !== null ? { name: v.party_name, taxCode: v.party_tax_code, address: v.party_address } : null,
+      party: v.party_name !== null ? { id: v.party_id, name: v.party_name, taxCode: v.party_tax_code, address: v.party_address } : null,
       personName: v.person_name,
       description: v.description,
       lines: byEntry.get(v.entry_id) ?? [],

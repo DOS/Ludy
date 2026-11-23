@@ -4,7 +4,7 @@
 // do not count, so a backlog that keeps growing is one problem.
 //
 // Two gates with the same rules:
-//   pgAlertGate      the deployment-wide state in crove_kernel.prober_alert_state, through prober_alert_gate(). It
+//   pgAlertGate      the deployment-wide state in ludy_kernel.prober_alert_state, through prober_alert_gate(). It
 //                    survives restarts and is shared by every prober on the database. The row stays locked from the
 //                    decision until settle(): a delivered alert commits, a failed one rolls back (the next probe
 //                    tries again), and a second prober that probes meanwhile is told 'busy' and sends nothing.
@@ -50,7 +50,7 @@ export interface GateState {
 }
 
 /**
- * The decision rules, shared by the memory gate and mirrored by crove_kernel.prober_alert_gate(). repeatSeconds 0
+ * The decision rules, shared by the memory gate and mirrored by ludy_kernel.prober_alert_gate(). repeatSeconds 0
  * never repeats; other values are clamped to 60 s..7 d like the SQL function does.
  */
 export function decideAlert(state: GateState, problem: string | null, now: Date, repeatSeconds: number): { result: GateResult; next: GateState } {
@@ -88,7 +88,7 @@ export function memoryAlertGate(repeatSeconds: number): AlertGate {
 const DECISIONS = new Set<GateDecision>(['healthy', 'new', 'changed', 'repeat', 'resolved', 'suppressed', 'busy']);
 
 /**
- * The deployment-wide gate over PROBER_DATABASE_URL (crove_prober). Its own connection holds one transaction from
+ * The deployment-wide gate over PROBER_DATABASE_URL (ludy_prober). Its own connection holds one transaction from
  * decide() to settle(); the server ends it after 60 s idle, so a prober that hangs mid-delivery cannot keep the row.
  */
 export function pgAlertGate(databaseUrl: string, repeatSeconds: number): AlertGate {
@@ -116,11 +116,11 @@ export function pgAlertGate(databaseUrl: string, repeatSeconds: number): AlertGa
         await c.connect();
         await c.query('BEGIN');
         const { rows } = await c.query<{ decision: string; previous_problem: string | null; problem_since: Date | null; last_notified_at: Date | null }>(
-          'SELECT decision, previous_problem, problem_since, last_notified_at FROM crove_kernel.prober_alert_gate($1::text, $2::int)',
+          'SELECT decision, previous_problem, problem_since, last_notified_at FROM ludy_kernel.prober_alert_gate($1::text, $2::int)',
           [problem, repeatSeconds],
         );
         const row = rows[0];
-        if (!row || !DECISIONS.has(row.decision as GateDecision)) throw new Error('crove_kernel.prober_alert_gate() returned no decision');
+        if (!row || !DECISIONS.has(row.decision as GateDecision)) throw new Error('ludy_kernel.prober_alert_gate() returned no decision');
         return {
           decision: row.decision as GateDecision,
           previousProblem: row.previous_problem,

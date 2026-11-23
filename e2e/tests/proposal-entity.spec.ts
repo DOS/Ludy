@@ -24,6 +24,7 @@ test('an invoice uploaded in an entity stays there and posts in its books', asyn
 
   await test.step('add a second entity and work in it', async () => {
     await nav.getByRole('link', { name: 'Cài đặt' }).click();
+    await page.getByRole('button', { name: 'Thêm pháp nhân' }).click();
     const add = page.getByRole('form', { name: 'Thêm pháp nhân' });
     await add.getByLabel('Tên pháp nhân').fill(BRANCH);
     await add.getByRole('button', { name: 'Thêm', exact: true }).click();
@@ -32,8 +33,8 @@ test('an invoice uploaded in an entity stays there and posts in its books', asyn
   });
 
   await test.step('upload it in the branch, chosen beside the upload button', async () => {
-    await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     // The sidebar's choice carries over; the Inbox shows it where documents are uploaded.
     await expect(page.getByRole('main').getByLabel('Ghi sổ vào').locator('option:checked')).toHaveText(BRANCH);
     await page.locator('input[type=file]').setInputFiles(INVOICE);
@@ -62,14 +63,14 @@ test('an invoice uploaded in an entity stays there and posts in its books', asyn
   await test.step('the entry is in the branch books only', async () => {
     const rows = sql<{ entity: string }>(
       `SELECT e.name AS entity
-       FROM crove_finance.journal_entry j
-       JOIN crove_kernel.tenant t ON t.org_id = j.org_id
-       JOIN crove_kernel.legal_entity e ON e.org_id = j.org_id AND e.id = j.legal_entity_id
+       FROM ludy_finance.journal_entry j
+       JOIN ludy_kernel.tenant t ON t.org_id = j.org_id
+       JOIN ludy_kernel.legal_entity e ON e.org_id = j.org_id AND e.id = j.legal_entity_id
        WHERE t.slug = :'slug'`,
       { slug },
     );
     expect(rows).toEqual([{ entity: BRANCH }]);
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Bút toán' }).click();
     await expect(switcher.locator('option:checked')).toHaveText(BRANCH);
     await expect(page.getByText(SELLER).first()).toBeVisible();

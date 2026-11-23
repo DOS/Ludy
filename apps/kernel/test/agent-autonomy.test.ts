@@ -1,15 +1,15 @@
 // The agent autonomy table (plan §4.7, #1585): docs/generated/agent-autonomy.md lists, from the registered commands,
 // what an AI agent may run by itself and which proposals it may approve. The file is a protected path, so a change to
 // agent access or agent approvers makes its PR protected (security review). This test fails when the file is stale.
-// Regenerate it with: CROVE_UPDATE_AUTONOMY=1 pnpm exec vitest run --project unit apps/kernel/test/agent-autonomy.test.ts
+// Regenerate it with: LUDY_UPDATE_AUTONOMY=1 pnpm exec vitest run --project unit apps/kernel/test/agent-autonomy.test.ts
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { kernelCommands } from '@crove/kernel';
-import type { CommandDef } from '@crove/kernel-runtime';
-import { crmCommands } from '@crove/mod-crm';
-import { financeCommands } from '@crove/mod-finance';
-import { socialCommands } from '@crove/mod-social';
+import { kernelCommands } from '@ludy/kernel';
+import type { CommandDef } from '@ludy/kernel-runtime';
+import { crmCommands } from '@ludy/mod-crm';
+import { financeCommands } from '@ludy/mod-finance';
+import { socialCommands } from '@ludy/mod-social';
 import { orgPurgeCommand } from '../src/org-purge.ts';
 import { numberReseedCommand } from '../src/restore-report.ts';
 
@@ -56,7 +56,7 @@ export function autonomyTable(commands: Array<CommandDef<unknown, unknown>>): st
 describe('agent autonomy table (#1585)', () => {
   it('matches the registered commands', () => {
     const generated = autonomyTable(all());
-    if (process.env.CROVE_UPDATE_AUTONOMY === '1') writeFileSync(FILE, generated);
+    if ((process.env.LUDY_UPDATE_AUTONOMY ?? process.env.CROVE_UPDATE_AUTONOMY) === '1') writeFileSync(FILE, generated);
     const current = (() => {
       try {
         return readFileSync(FILE, 'utf8').replace(/\r\n/g, '\n');
@@ -64,7 +64,7 @@ describe('agent autonomy table (#1585)', () => {
         return '';
       }
     })();
-    expect(current, 'docs/generated/agent-autonomy.md is stale: CROVE_UPDATE_AUTONOMY=1 pnpm exec vitest run --project unit apps/kernel/test/agent-autonomy.test.ts').toBe(generated);
+    expect(current, 'docs/generated/agent-autonomy.md is stale: LUDY_UPDATE_AUTONOMY=1 pnpm exec vitest run --project unit apps/kernel/test/agent-autonomy.test.ts').toBe(generated);
   });
 
   it('lists no agent-run command at R2 or R3', () => {

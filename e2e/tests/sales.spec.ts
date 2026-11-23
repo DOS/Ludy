@@ -38,8 +38,8 @@ test('set the tax code, upload a sales e-invoice, approve it, then find it in th
   });
 
   await test.step('upload the e-invoice the org issued and open the sale proposal', async () => {
-    await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     const proposal = page.getByRole('row').filter({ has: page.getByRole('link', { name: BUYER }) });
     await expect(proposal).toBeVisible({ timeout: 60_000 });
@@ -48,7 +48,9 @@ test('set the tax code, upload a sales e-invoice, approve it, then find it in th
     await expect(page.getByRole('heading', { name: BUYER })).toBeVisible();
     await expect(page.getByText('Hóa đơn bán ra: người bán có mã số thuế của tổ chức.', { exact: false })).toBeVisible();
     await expect(page.getByRole('main').getByText('Khách hàng', { exact: true })).toBeVisible();
-    await expect(page.getByRole('columnheader', { name: 'TK doanh thu' })).toBeVisible();
+    // The revenue account of a line is a select under the line's text, named by its column's words (#3599).
+    await expect(page.getByRole('main').getByText('TK doanh thu', { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole('combobox', { name: /doanh thu/i }).first()).toBeVisible();
   });
 
   await test.step('approve it with a second factor', async () => {
@@ -64,12 +66,13 @@ test('set the tax code, upload a sales e-invoice, approve it, then find it in th
   });
 
   await test.step('the sale in Documents and the journal', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
+    await page.getByRole('link', { name: 'Tất cả chứng từ' }).click();
     const document = page.getByRole('row').filter({ hasText: 'C26TAB-1234' });
     await expect(document.getByRole('cell')).toHaveText(['15/09/2026', 'C26TAB-1234', 'Bán ra', BUYER, /^1\.800\.000/, /^180\.000/, /^1\.980\.000/, 'Đã ghi sổ', 'Ghi chú']);
 
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Bút toán' }).click();
     await expect(page.getByText(MEMO)).toBeVisible();
     const line = (account: string) => page.getByRole('row').filter({ has: page.getByRole('cell', { name: new RegExp(`^${account} `) }) });
@@ -80,7 +83,8 @@ test('set the tax code, upload a sales e-invoice, approve it, then find it in th
 
   await test.step('the MISA sales export', async () => {
     const download = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'Xuất chứng từ bán hàng cho MISA' }).click();
+    await page.getByRole('button', { name: 'Xuất sổ nhật ký' }).click();
+    await page.getByRole('menuitem', { name: 'Xuất chứng từ bán hàng cho MISA' }).click();
     const file = await download;
     expect(file.suggestedFilename()).toBe(`ludy-misa-ban-hang-${slug}.xlsx`);
     const workbook = new ExcelJS.Workbook();
@@ -101,8 +105,8 @@ test('set the tax code, upload a sales e-invoice, approve it, then find it in th
   });
 
   await test.step('the output side of the VAT working for September 2026', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
-    await nav.getByRole('link', { name: 'Tờ khai GTGT' }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: 'Thuế', exact: true }).click();
     await page.getByLabel('Kỳ khai', { exact: true }).selectOption('month');
     await page.getByLabel('Năm', { exact: true }).selectOption('2026');
     await page.getByLabel('Tháng', { exact: true }).selectOption('9');

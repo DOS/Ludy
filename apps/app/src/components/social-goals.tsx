@@ -4,20 +4,20 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useParams } from '@tanstack/react-router';
 import { useState } from 'react';
-import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { GOAL_METRICS, GOAL_TARGET_MAX, type GoalMetric, type GoalProgress, type GoalStatus } from '@crove/mod-social/contract';
-import { cn } from '@crove/ui/lib/utils';
+import { useLocale, useTranslations } from 'use-intl';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { GOAL_METRICS, GOAL_TARGET_MAX, type GoalMetric, type GoalProgress, type GoalStatus } from '@ludy/mod-social/contract';
+import { cn } from '@ludy/ui/lib/utils';
 import { ErrorText } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { shiftMonth } from '../lib/social-goals.ts';
-import { providerName } from '../lib/social.ts';
+import { providerName, zoneLabel } from '../lib/social.ts';
 
 type Goals = Awaited<ReturnType<typeof orpc.social.goals.progress.call>>;
 type Goal = Goals['goals'][number];
@@ -167,6 +167,7 @@ function GoalForm({ goals, channels, onDone }: { goals: Goals; channels: readonl
 
 export function GoalsCard({ channels }: { channels: readonly { id: string; displayName: string; provider: string; status?: string }[] }) {
   const t = useTranslations('social.goals');
+  const locale = useLocale();
   const { slug } = useParams({ strict: false }) as { slug: string };
   const me = useQuery(orpc.me.get.queryOptions());
   const role = me.data?.orgs.find((o) => o.slug === slug)?.role;
@@ -192,7 +193,7 @@ export function GoalsCard({ channels }: { channels: readonly { id: string; displ
           <h3 className="text-sm font-medium text-foreground">{t('title')}</h3>
           <p className="text-xs text-subtle-foreground">
             {t('month', { month: mon ?? '', year: year ?? '' })} · {t('daysLeft', { count: daysLeft })}
-            {data.timeZone ? ` · ${t('zone', { zone: data.timeZone })}` : ''}
+            {data.timeZone ? ` · ${t('zone', { zone: zoneLabel(data.timeZone, locale) })}` : ''}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-1">

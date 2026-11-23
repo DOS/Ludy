@@ -19,10 +19,10 @@ import {
   type BoardColumn,
   type FilterAst,
   type PipelineStage,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
-import { filterCondition } from '@crove/kernel';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
+import { filterCondition } from '@ludy/kernel';
 import { dealFields } from './deal-filter.ts';
 import { base, ensureStages, loadStages, mayDelete, view } from './deals.ts';
 
@@ -41,7 +41,7 @@ async function writePositions(ctx: CommandContext, ids: readonly string[]): Prom
   if (ids.length === 0) return;
   const values = sql.join(ids.map((id, i) => sql`(${id}::uuid, ${i + 1}::smallint)`));
   await sql`
-    UPDATE crove_crm.pipeline_stage s SET position = v.position, updated_at = ${ctx.now}
+    UPDATE ludy_crm.pipeline_stage s SET position = v.position, updated_at = ${ctx.now}
     FROM (VALUES ${values}) AS v(id, position)
     WHERE s.org_id = ${ctx.orgId}::uuid AND s.id = v.id AND s.position IS DISTINCT FROM v.position`.execute(ctx.trx);
 }
@@ -67,7 +67,7 @@ export const stageAdd = defineCommand({
     const open = stages.filter((s) => s.kind === 'open');
     const closing = stages.filter((s) => s.kind !== 'open');
     const inserted = await ctx.trx
-      .insertInto('crove_crm.pipeline_stage')
+      .insertInto('ludy_crm.pipeline_stage')
       .values({ org_id: ctx.orgId, name, kind: 'open', position: stages.length + 1, created_at: ctx.now, updated_at: ctx.now })
       .returning('id')
       .executeTakeFirstOrThrow();
@@ -89,7 +89,7 @@ export const stageRename = defineCommand({
     if (!stages.some((s) => s.id === input.stageId)) throw new DomainError('STAGE_NOT_FOUND', 404, 'Không tìm thấy giai đoạn này');
     const name = oneLine(input.name);
     if (!name) throw new DomainError('INVALID_STAGE_NAME', 422, 'Tên giai đoạn không được để trống');
-    await ctx.trx.updateTable('crove_crm.pipeline_stage').set({ name, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.stageId).execute();
+    await ctx.trx.updateTable('ludy_crm.pipeline_stage').set({ name, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.stageId).execute();
     ctx.audit({ stageId: input.stageId });
     return loadStages(ctx);
   },
@@ -127,9 +127,9 @@ export const stageRemove = defineCommand({
     if (!stage) throw new DomainError('STAGE_NOT_FOUND', 404, 'Không tìm thấy giai đoạn này');
     if (stage.kind !== 'open') throw new DomainError('STAGE_CLOSING', 422, 'Giai đoạn Thắng và Thua không xóa được');
     if (stages.filter((s) => s.kind === 'open').length <= 1) throw new DomainError('LAST_OPEN_STAGE', 422, 'Quy trình cần ít nhất một giai đoạn đang mở');
-    const held = await ctx.trx.selectFrom('crove_crm.deal').select('id').where('org_id', '=', ctx.orgId).where('stage_id', '=', stage.id).limit(1).executeTakeFirst();
+    const held = await ctx.trx.selectFrom('ludy_crm.deal').select('id').where('org_id', '=', ctx.orgId).where('stage_id', '=', stage.id).limit(1).executeTakeFirst();
     if (held) throw new DomainError('STAGE_HAS_DEALS', 409, 'Giai đoạn còn cơ hội; hãy chuyển các cơ hội đi trước khi xóa');
-    await ctx.trx.deleteFrom('crove_crm.pipeline_stage').where('org_id', '=', ctx.orgId).where('id', '=', stage.id).execute();
+    await ctx.trx.deleteFrom('ludy_crm.pipeline_stage').where('org_id', '=', ctx.orgId).where('id', '=', stage.id).execute();
     await writePositions(ctx, stages.filter((s) => s.id !== stage.id).map((s) => s.id));
     ctx.audit({ stageId: stage.id, stages: stages.length - 1 });
     return loadStages(ctx);
@@ -155,9 +155,9 @@ export const dealBoard = defineQuery({
     const window = sql.raw(`now() - interval '${Math.trunc(BOARD_CLOSED_DAYS)} days'`);
     const sums = await sql<{ stage_id: string; n: string; total: string }>`
       SELECT d.stage_id, pg_catalog.count(*)::text AS n, pg_catalog.sum(d.amount)::text AS total
-      FROM crove_crm.deal d
-      JOIN crove_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id
-      JOIN crove_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
+      FROM ludy_crm.deal d
+      JOIN ludy_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id
+      JOIN ludy_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
       WHERE d.org_id = ${ctx.orgId}::uuid AND (s.kind = 'open' OR d.closed_at >= ${window}) AND ${where}
       GROUP BY d.stage_id`.execute(ctx.trx);
     const byStage = new Map(sums.rows.map((r) => [r.stage_id, r]));

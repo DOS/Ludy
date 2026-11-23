@@ -7,10 +7,10 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { applyAuthGrants, migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { applyAuthGrants, migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
@@ -51,7 +51,7 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     await client.connect();
     try {
       await client.query('BEGIN');
-      if (orgId && user) await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(user, orgId)]);
+      if (orgId && user) await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(user, orgId)]);
       return await fn(client);
     } finally {
       await client.query('ROLLBACK').catch(() => {});
@@ -65,8 +65,8 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const o = { orgId, slug: '', owner, admin: await person('admin'), lan: await person('lan'), minh: await person('minh'), viewer: await person('viewer') };
     await admin(async (c) => {
-      await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [orgId, o.admin, o.lan, o.minh, o.viewer]);
-      o.slug = ((await c.query<{ slug: string }>('SELECT slug FROM crove_kernel.tenant WHERE org_id = $1', [orgId])).rows[0] as { slug: string }).slug;
+      await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [orgId, o.admin, o.lan, o.minh, o.viewer]);
+      o.slug = ((await c.query<{ slug: string }>('SELECT slug FROM ludy_kernel.tenant WHERE org_id = $1', [orgId])).rows[0] as { slug: string }).slug;
     });
     return o;
   }
@@ -75,7 +75,7 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
   // Opted in long before the test's days: a new opt-in is first mailed the next morning.
   const optIn = async (o: Org, users: string[]) => {
     for (const u of users) await set(o, u, true);
-    await admin((c) => c.query("UPDATE crove_kernel.today_mail SET created_at = '2026-01-01T00:00:00Z' WHERE org_id = $1", [o.orgId]));
+    await admin((c) => c.query("UPDATE ludy_kernel.today_mail SET created_at = '2026-01-01T00:00:00Z' WHERE org_id = $1", [o.orgId]));
   };
   const get = (o: Org, user: string) => rt.query<{ enabled: boolean }>('kernel.today_mail.get', {}, { actor: asUser(user), orgId: o.orgId });
   const send = (o: Org, upstream = false) =>
@@ -90,16 +90,16 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     }
   };
   const mails = (o: Org) =>
-    admin(async (c) => (await c.query<{ to_address: string; payload: Record<string, unknown>; status: string }>("SELECT to_address, payload, status FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'kernel.today_mail.day' ORDER BY to_address", [o.orgId])).rows);
-  const emailOf = (user: string) => admin(async (c) => ((await c.query<{ email: string }>('SELECT email FROM crove_kernel.user_account WHERE id = $1', [user])).rows[0] as { email: string }).email);
+    admin(async (c) => (await c.query<{ to_address: string; payload: Record<string, unknown>; status: string }>("SELECT to_address, payload, status FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'kernel.today_mail.day' ORDER BY to_address", [o.orgId])).rows);
+  const emailOf = (user: string) => admin(async (c) => ((await c.query<{ email: string }>('SELECT email FROM ludy_kernel.user_account WHERE id = $1', [user])).rows[0] as { email: string }).email);
   const notify = (o: Org, user: string, n: number, kind = 'kernel.original_flagged') =>
     admin(async (c) => {
-      for (let i = 0; i < n; i++) await c.query('INSERT INTO crove_kernel.notification (org_id, user_id, kind, dedupe_key) VALUES ($1, $2, $3, $4)', [o.orgId, user, kind, `k-${randomUUID()}`]);
+      for (let i = 0; i < n; i++) await c.query('INSERT INTO ludy_kernel.notification (org_id, user_id, kind, dedupe_key) VALUES ($1, $2, $3, $4)', [o.orgId, user, kind, `k-${randomUUID()}`]);
     });
   const proposal = (o: Org, approvers: string[], status = 'pending') =>
     admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.proposal (org_id, kind, command, title, payload, eligible_approvers, authors, status)
+        `INSERT INTO ludy_kernel.proposal (org_id, kind, command, title, payload, eligible_approvers, authors, status)
          VALUES ($1, 'finance.purchase', 'finance.purchase.record', 'Mua hàng bí mật 123456789', '{}', $2::uuid[], '[]', $3)`,
         [o.orgId, approvers, status],
       ),
@@ -114,13 +114,13 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     appUrl = app.toString();
     const worker = new URL(adminUrl);
-    worker.username = 'crove_worker';
+    worker.username = 'ludy_worker';
     worker.password = 'test-worker-pw';
     workerUrl = worker.toString();
     pool = createPool({ connectionString: appUrl, max: 4 });
@@ -153,7 +153,7 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     // A viewer may opt in too; nobody else's setting moves.
     expect(await get(o, o.minh)).toEqual({ enabled: false });
     await set(o, o.viewer, true);
-    expect(await admin(async (c) => (await c.query('SELECT user_id FROM crove_kernel.today_mail WHERE org_id = $1 ORDER BY user_id', [o.orgId])).rowCount)).toBe(2);
+    expect(await admin(async (c) => (await c.query('SELECT user_id FROM ludy_kernel.today_mail WHERE org_id = $1 ORDER BY user_id', [o.orgId])).rowCount)).toBe(2);
     expect(await set(o, o.lan, false)).toEqual({ enabled: false });
     expect(await get(o, o.lan)).toEqual({ enabled: false });
     expect(await get(o, o.viewer)).toEqual({ enabled: true });
@@ -164,26 +164,26 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     await set(o, o.lan, true);
     await set(o, o.minh, true);
     // The table's policy: a member sees only their own row, not another's.
-    expect(await asLogin(appUrl, o.orgId, o.lan, async (c) => (await c.query('SELECT user_id FROM crove_kernel.today_mail')).rows.map((r) => r.user_id))).toEqual([o.lan]);
+    expect(await asLogin(appUrl, o.orgId, o.lan, async (c) => (await c.query('SELECT user_id FROM ludy_kernel.today_mail')).rows.map((r) => r.user_id))).toEqual([o.lan]);
     // Nothing is written in another member's name, and a row never arrives with its day set.
-    await expect(asLogin(appUrl, o.orgId, o.viewer, (c) => c.query('INSERT INTO crove_kernel.today_mail (org_id, user_id) VALUES ($1, $2)', [o.orgId, o.admin]))).rejects.toThrow(/row-level security/);
-    await expect(asLogin(appUrl, o.orgId, o.viewer, (c) => c.query("INSERT INTO crove_kernel.today_mail (org_id, user_id, last_sent_day) VALUES ($1, $2, '2026-11-10')", [o.orgId, o.viewer]))).rejects.toThrow(/row-level security/);
+    await expect(asLogin(appUrl, o.orgId, o.viewer, (c) => c.query('INSERT INTO ludy_kernel.today_mail (org_id, user_id) VALUES ($1, $2)', [o.orgId, o.admin]))).rejects.toThrow(/row-level security/);
+    await expect(asLogin(appUrl, o.orgId, o.viewer, (c) => c.query("INSERT INTO ludy_kernel.today_mail (org_id, user_id, last_sent_day) VALUES ($1, $2, '2026-11-10')", [o.orgId, o.viewer]))).rejects.toThrow(/row-level security/);
     // A member cannot move their own day (no mail would then ever be sent, or one sent twice), nor change whose row it is.
-    expect(await asLogin(appUrl, o.orgId, o.lan, async (c) => (await c.query("UPDATE crove_kernel.today_mail SET last_sent_day = '2026-11-10'")).rowCount)).toBe(0);
-    await expect(asLogin(appUrl, o.orgId, o.lan, (c) => c.query('UPDATE crove_kernel.today_mail SET user_id = $1', [o.minh]))).rejects.toThrow(/permission denied/);
+    expect(await asLogin(appUrl, o.orgId, o.lan, async (c) => (await c.query("UPDATE ludy_kernel.today_mail SET last_sent_day = '2026-11-10'")).rowCount)).toBe(0);
+    await expect(asLogin(appUrl, o.orgId, o.lan, (c) => c.query('UPDATE ludy_kernel.today_mail SET user_id = $1', [o.minh]))).rejects.toThrow(/permission denied/);
     // Another member's row is not theirs to delete.
-    expect(await asLogin(appUrl, o.orgId, o.viewer, async (c) => (await c.query('DELETE FROM crove_kernel.today_mail')).rowCount)).toBe(0);
-    expect(await asLogin(appUrl, o.orgId, o.lan, async (c) => (await c.query('DELETE FROM crove_kernel.today_mail')).rowCount)).toBe(1);
+    expect(await asLogin(appUrl, o.orgId, o.viewer, async (c) => (await c.query('DELETE FROM ludy_kernel.today_mail')).rowCount)).toBe(0);
+    expect(await asLogin(appUrl, o.orgId, o.lan, async (c) => (await c.query('DELETE FROM ludy_kernel.today_mail')).rowCount)).toBe(1);
     // Another org's owner reads none of it.
     const other = await org();
-    expect(await asLogin(appUrl, other.orgId, other.owner, async (c) => (await c.query('SELECT 1 FROM crove_kernel.today_mail')).rowCount)).toBe(0);
+    expect(await asLogin(appUrl, other.orgId, other.owner, async (c) => (await c.query('SELECT 1 FROM ludy_kernel.today_mail')).rowCount)).toBe(0);
   });
 
   it('goes with the membership', async () => {
     const o = await org();
     await set(o, o.minh, true);
-    await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.minh]));
-    expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_kernel.today_mail WHERE org_id = $1', [o.orgId])).rowCount)).toBe(0);
+    await admin((c) => c.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.minh]));
+    expect(await admin(async (c) => (await c.query('SELECT 1 FROM ludy_kernel.today_mail WHERE org_id = $1', [o.orgId])).rowCount)).toBe(0);
   });
 
   it('queues counts and links only, once a day, to opted-in members who are owed something', async () => {
@@ -196,7 +196,7 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     await notify(o, o.owner, 2);
     await notify(o, o.owner, 1, 'kernel.approval_waiting');
     await notify(o, o.lan, 3);
-    await admin((c) => c.query("UPDATE crove_kernel.notification SET read_at = now() WHERE org_id = $1 AND user_id = $2 AND dedupe_key = (SELECT dedupe_key FROM crove_kernel.notification WHERE org_id = $1 AND user_id = $2 ORDER BY id LIMIT 1)", [o.orgId, o.lan]));
+    await admin((c) => c.query("UPDATE ludy_kernel.notification SET read_at = now() WHERE org_id = $1 AND user_id = $2 AND dedupe_key = (SELECT dedupe_key FROM ludy_kernel.notification WHERE org_id = $1 AND user_id = $2 ORDER BY id LIMIT 1)", [o.orgId, o.lan]));
 
     // Before 07:30 in Vietnam nothing is due.
     expect(await sendAt(o, EARLY)).toMatchObject({ state: 'not_due', members: 0 });
@@ -225,7 +225,7 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     expect(await sendAt(o, MORNING)).toMatchObject({ state: 'not_due', mails: 0 });
     expect((await mails(o)).length).toBe(2);
     // Every opted-in member holds today's day, those who were sent nothing included.
-    expect(await admin(async (c) => (await c.query("SELECT count(*)::int AS n FROM crove_kernel.today_mail WHERE org_id = $1 AND last_sent_day = '2026-11-10'", [o.orgId])).rows[0].n)).toBe(4);
+    expect(await admin(async (c) => (await c.query("SELECT count(*)::int AS n FROM ludy_kernel.today_mail WHERE org_id = $1 AND last_sent_day = '2026-11-10'", [o.orgId])).rows[0].n)).toBe(4);
 
     // Tomorrow the same members are mailed again; the one who turned it off is not.
     await set(o, o.lan, false);
@@ -239,13 +239,13 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     const other = randomUUID();
     await admin(async (c) => {
       for (const [id, ext] of [[connection, 'ext-a'], [other, 'ext-b']] as const) {
-        await c.query("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh', $4)", [o.orgId, id, ext, o.owner]);
+        await c.query("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh', $4)", [o.orgId, id, ext, o.owner]);
       }
       // lan may use the second channel only.
-      await c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.lan, other, o.owner]);
+      await c.query('INSERT INTO ludy_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.lan, other, o.owner]);
       const thread = (conn: string, kind: string, tag: string, status = 'new') =>
         c.query(
-          `INSERT INTO crove_kernel.conversation (org_id, channel_connection_id, kind, external_thread_id, status, resolved_at) VALUES ($1, $2, $3, $4, $5, CASE WHEN $5 = 'resolved' THEN now() END)`,
+          `INSERT INTO ludy_kernel.conversation (org_id, channel_connection_id, kind, external_thread_id, status, resolved_at) VALUES ($1, $2, $3, $4, $5, CASE WHEN $5 = 'resolved' THEN now() END)`,
           [o.orgId, conn, kind, `t-${tag}`, status],
         );
       await thread(connection, 'comment_thread', '1');
@@ -286,23 +286,37 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     expect((await mails(o)).length).toBe(1);
   });
 
+  // ADR-0053, slice e (#3311): the Inbox does not list the proposals of an app the company switched off, so the morning mail does not count them either.
+  it('leaves the pending proposals of an app the company switched off out of the count', async () => {
+    const o = await org();
+    await optIn(o, [o.owner]);
+    await proposal(o, [o.owner]);
+    await notify(o, o.owner, 1);
+    const mfa = { type: 'user' as const, userId: o.owner, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
+    await rt.execute('kernel.org.set_app', { module: 'finance', enabled: false }, { actor: mfa, orgId: o.orgId, idempotencyKey: randomUUID() });
+    await sendAt(o, MORNING);
+    const queued = await mails(o);
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.payload).toMatchObject({ counts: { proposals: 0, notifications: 1, messages: 0 } });
+  });
+
   it('counts the proposals and notifications of a member limited to one legal entity only for that entity', async () => {
     const o = await org();
     const [home, branch] = await admin(async (c) => {
-      const first = (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 ORDER BY created_at LIMIT 1', [o.orgId])).rows[0]?.id as string;
-      const second = (await c.query<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id", [o.orgId, o.owner])).rows[0]?.id as string;
-      await c.query("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [o.orgId, o.lan, second, o.owner]);
+      const first = (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 ORDER BY created_at LIMIT 1', [o.orgId])).rows[0]?.id as string;
+      const second = (await c.query<{ id: string }>("INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id", [o.orgId, o.owner])).rows[0]?.id as string;
+      await c.query("INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [o.orgId, o.lan, second, o.owner]);
       return [first, second] as const;
     });
     // A proposal and a notification in each entity; lan names both proposals as an approver and holds both notifications.
     await admin(async (c) => {
       for (const entity of [home, branch]) {
         await c.query(
-          `INSERT INTO crove_kernel.proposal (org_id, kind, command, title, payload, eligible_approvers, authors, legal_entity_id)
+          `INSERT INTO ludy_kernel.proposal (org_id, kind, command, title, payload, eligible_approvers, authors, legal_entity_id)
            VALUES ($1, 'finance.purchase', 'finance.purchase.record', 'Hồ sơ', '{}', ARRAY[$2::uuid, $3::uuid], '[]', $4)`,
           [o.orgId, o.lan, o.minh, entity],
         );
-        await c.query("INSERT INTO crove_kernel.notification (org_id, user_id, kind, dedupe_key, legal_entity_id) VALUES ($1, $2, 'kernel.original_flagged', $3, $4), ($1, $5, 'kernel.original_flagged', $6, $4)", [o.orgId, o.lan, `k-${randomUUID()}`, entity, o.minh, `k-${randomUUID()}`]);
+        await c.query("INSERT INTO ludy_kernel.notification (org_id, user_id, kind, dedupe_key, legal_entity_id) VALUES ($1, $2, 'kernel.original_flagged', $3, $4), ($1, $5, 'kernel.original_flagged', $6, $4)", [o.orgId, o.lan, `k-${randomUUID()}`, entity, o.minh, `k-${randomUUID()}`]);
       }
     });
     await optIn(o, [o.lan, o.minh]);
@@ -322,12 +336,12 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     await set(o, o.minh, true, 'en');
     await set(o, o.minh, true, 'vi');
     await set(o, o.minh, true);
-    const stored = await admin(async (c) => (await c.query('SELECT user_id, language FROM crove_kernel.today_mail WHERE org_id = $1', [o.orgId])).rows.map((r) => [r.user_id, r.language]));
+    const stored = await admin(async (c) => (await c.query('SELECT user_id, language FROM ludy_kernel.today_mail WHERE org_id = $1', [o.orgId])).rows.map((r) => [r.user_id, r.language]));
     expect(stored.sort()).toEqual([[o.lan, 'en'], [o.minh, 'vi'], [o.owner, null]].sort());
     // Only the two languages the mail has are accepted, in the command and in the table.
     await expect(rt.execute('kernel.today_mail.set', { enabled: true, language: 'fr' }, { actor: asUser(o.lan), orgId: o.orgId })).rejects.toMatchObject({ code: 'VALIDATION' });
-    await expect(admin((c) => c.query("UPDATE crove_kernel.today_mail SET language = 'fr' WHERE org_id = $1", [o.orgId]))).rejects.toThrow(/check constraint/);
-    await admin((c) => c.query("UPDATE crove_kernel.today_mail SET created_at = '2026-01-01T00:00:00Z' WHERE org_id = $1", [o.orgId]));
+    await expect(admin((c) => c.query("UPDATE ludy_kernel.today_mail SET language = 'fr' WHERE org_id = $1", [o.orgId]))).rejects.toThrow(/check constraint/);
+    await admin((c) => c.query("UPDATE ludy_kernel.today_mail SET created_at = '2026-01-01T00:00:00Z' WHERE org_id = $1", [o.orgId]));
     for (const u of [o.lan, o.minh, o.owner]) await notify(o, u, 1);
     await sendAt(o, MORNING);
     const languages = new Map((await mails(o)).map((m) => [m.to_address, m.payload.language]));
@@ -340,9 +354,9 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     const o = await org();
     await expect(rt.execute('kernel.today_mail.send', {}, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     // The member's API login and the tenant role cannot call the due-orgs function; the worker's login can, and gets ids only.
-    await expect(asLogin(appUrl, null, null, (c) => c.query('SELECT * FROM crove_kernel.today_mail_due(NULL, 10)'))).rejects.toThrow(/permission denied/);
+    await expect(asLogin(appUrl, null, null, (c) => c.query('SELECT * FROM ludy_kernel.today_mail_due(NULL, 10)'))).rejects.toThrow(/permission denied/);
     await set(o, o.lan, true);
-    const rows = await asLogin(workerUrl, null, null, async (c) => (await c.query('SELECT * FROM crove_kernel.today_mail_due(NULL, 500)')).fields.map((f) => f.name));
+    const rows = await asLogin(workerUrl, null, null, async (c) => (await c.query('SELECT * FROM ludy_kernel.today_mail_due(NULL, 500)')).fields.map((f) => f.name));
     expect(rows).toEqual(['org_id']);
   });
 
@@ -351,9 +365,9 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     const b = await org();
     await optIn(a, [a.lan]);
     await optIn(b, [b.lan]);
-    await admin((c) => c.query("UPDATE crove_kernel.today_mail SET last_sent_day = '2026-11-10' WHERE org_id = $1", [b.orgId]));
+    await admin((c) => c.query("UPDATE ludy_kernel.today_mail SET last_sent_day = '2026-11-10' WHERE org_id = $1", [b.orgId]));
     const due = (at: Date, after: string | null = null) =>
-      asLogin(workerUrl, null, null, async (c) => (await c.query<{ org_id: string }>('SELECT org_id FROM crove_kernel.today_mail_due($1::uuid, 500, $2::timestamptz)', [after, at])).rows.map((r) => r.org_id));
+      asLogin(workerUrl, null, null, async (c) => (await c.query<{ org_id: string }>('SELECT org_id FROM ludy_kernel.today_mail_due($1::uuid, 500, $2::timestamptz)', [after, at])).rows.map((r) => r.org_id));
     // At 10:00 on 2026-11-10 in Vietnam: the org with an unsent day is due and the one already sent today is not.
     const morning = await due(MORNING);
     expect(morning).toContain(a.orgId);
@@ -367,7 +381,7 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     // Opted in today (Vietnam time): not due until tomorrow.
     const fresh = await org();
     await set(fresh, fresh.lan, true);
-    const createdDay = await admin(async (c) => (await c.query<{ d: string }>("SELECT to_char(created_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') AS d FROM crove_kernel.today_mail WHERE org_id = $1", [fresh.orgId])).rows[0]?.d as string);
+    const createdDay = await admin(async (c) => (await c.query<{ d: string }>("SELECT to_char(created_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') AS d FROM ludy_kernel.today_mail WHERE org_id = $1", [fresh.orgId])).rows[0]?.d as string);
     const sameDay = new Date(`${createdDay}T09:00:00+07:00`);
     expect(await due(sameDay)).not.toContain(fresh.orgId);
     expect(await due(new Date(sameDay.getTime() + 24 * 3_600_000))).toContain(fresh.orgId);
@@ -398,7 +412,7 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
       const email = `${name}-${randomUUID().slice(0, 8)}@mail.test`;
       await admin((c) => c.query('INSERT INTO auth.users (id, email, email_confirmed_at) VALUES ($1, $2, $3)', [subject, email, confirmed ? new Date() : null]));
       const id = await upsertIdentity(db, { issuer: 'test', subject, email, name: null });
-      await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, id]));
+      await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, id]));
       return { id, email };
     }
     const sure = await authed('confirmed', true);
@@ -413,12 +427,12 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
 
     // The confirmation cannot be read (the grant is gone): fail closed, nobody is mailed in db mode and no day is spent, so the next sweep
     // tries again once the grant is back.
-    await admin((c) => c.query('REVOKE SELECT (email_confirmed_at) ON auth.users FROM crove_auth_reader'));
+    await admin((c) => c.query('REVOKE SELECT (email_confirmed_at) ON auth.users FROM ludy_auth_reader'));
     const later = new Date('2026-11-12T03:00:00Z');
     await expect(sendAt(o, later, true)).rejects.toThrow();
     expect((await mails(o)).length).toBe(4);
-    expect(await admin(async (c) => (await c.query("SELECT count(*)::int AS n FROM crove_kernel.today_mail WHERE org_id = $1 AND last_sent_day = '2026-11-12'", [o.orgId])).rows[0].n)).toBe(0);
-    await admin((c) => c.query('GRANT SELECT (email_confirmed_at) ON auth.users TO crove_auth_reader'));
+    expect(await admin(async (c) => (await c.query("SELECT count(*)::int AS n FROM ludy_kernel.today_mail WHERE org_id = $1 AND last_sent_day = '2026-11-12'", [o.orgId])).rows[0].n)).toBe(0);
+    await admin((c) => c.query('GRANT SELECT (email_confirmed_at) ON auth.users TO ludy_auth_reader'));
     expect(await sendAt(o, later, true)).toMatchObject({ state: 'sent', mails: 1 });
   });
 });

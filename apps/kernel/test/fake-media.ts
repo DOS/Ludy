@@ -2,6 +2,7 @@
 // A stand-in for the crove-media measurer in tests that upload meeting media made of a few fake bytes (#2985): it drains the
 // stream it is given, as the real client does, and answers a fixed length. The real client is tested against the real sandbox
 // in meetings-measure.test.ts and the media package's own tests.
+import type { MediaAudioExtractor } from '../src/meetings-extract.ts';
 import type { MediaMeasurer } from '../src/meetings-measure.ts';
 
 export function fakeMediaMeasurer(seconds = 1800): MediaMeasurer & { calls: number } {
@@ -19,4 +20,23 @@ export function fakeMediaMeasurer(seconds = 1800): MediaMeasurer & { calls: numb
     },
   };
   return measurer;
+}
+
+// A stand-in for the crove-media audio extractor (#3337): it drains the video it is given, as the real client does, keeps what it read, and answers a
+// fixed Opus (or throws the refusal a test asks for).
+export function fakeAudioExtractor(audio: Uint8Array, over: { seconds?: number; fail?: Error } = {}): MediaAudioExtractor & { calls: number; read: Buffer[] } {
+  const extractor = {
+    configured: true as const,
+    calls: 0,
+    read: [] as Buffer[],
+    async extract(source: AsyncIterable<Uint8Array>) {
+      extractor.calls += 1;
+      const pieces: Uint8Array[] = [];
+      for await (const piece of source) pieces.push(piece);
+      extractor.read.push(Buffer.concat(pieces));
+      if (over.fail) throw over.fail;
+      return { audio, durationSeconds: over.seconds ?? 1800 };
+    },
+  };
+  return extractor;
 }

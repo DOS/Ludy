@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// A marketplace order report as .xlsx or CSV (#2515, ADR-0045 points 5 and 7), read in the sandbox through the platform's profile (@crove/l10n-vn, marketplace-orders.ts): the platform is
+// A marketplace order report as .xlsx or CSV (#2515, ADR-0045 points 5 and 7), read in the sandbox through the platform's profile (@ludy/l10n-vn, marketplace-orders.ts): the platform is
 // told by the headers, the lines by the allow-list of columns. A file's other columns, the buyer's name, phone, email and address among them, are never looked at beyond finding the header
 // row: the contract has no field for them, so they cannot leave this process.
 //
 // A file that is no order report of a platform the profiles know (another workbook, a bank statement, a platform whose headers fit two profiles equally) is an answer, not a failure:
 // recognized is false and the worker goes on as it did before. Only a report past the line cap is flagged apart (tooMany).
-import { EXTRACT_LIMITS, type ExtractedMarketplaceOrders } from '@crove/extract-contract';
-import { findOrderColumns, orderLines } from '@crove/l10n-vn';
+import { EXTRACT_LIMITS, type ExtractedMarketplaceOrders } from '@ludy/extract-contract';
+import { findOrderColumns, orderLines, type OrderRead } from '@ludy/l10n-vn';
 import { readSheetGrid } from './bank-statement.ts';
 import { readMarketplaceIncome } from './marketplace-income.ts';
 
@@ -24,7 +24,12 @@ export function readMarketplaceOrders(bytes: Uint8Array): ExtractedMarketplaceOr
   if (read === null) return { ...head, tooMany: true, lines: [], skipped: [], skippedCount: 0, unknownStatuses: [] };
   // A header with nothing under it is no report of any orders.
   if (read.lines.length === 0 && read.skipped.length === 0) return none(bytes);
-  // The list is capped, and a row that stops the file (anything but a row with no order number) must never be cut off behind a thousand totals rows: those come first, in row order.
+  return readToOrders(head, read);
+}
+
+// The answer for a file that was read (lines, or rows skipped): the list of skipped rows is capped, and a row that stops the file (anything but a row with no order number) must never be cut off behind a
+// thousand totals rows: those come first, in row order. Shared with marketplace_columns, which reads the same file through a mapping the person confirmed (#4035).
+export function readToOrders(head: Pick<ExtractedMarketplaceOrders, 'recognized' | 'platform' | 'profile' | 'columns'>, read: OrderRead): ExtractedMarketplaceOrders {
   const skipped = [...read.skipped.filter((s) => s.reason !== 'no_order_no'), ...read.skipped.filter((s) => s.reason === 'no_order_no')];
   return {
     ...head,

@@ -3,7 +3,7 @@
 // credential, and nothing else of the org comes back.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { Runtime } from '@crove/kernel-runtime';
+import type { Runtime } from '@ludy/kernel-runtime';
 
 export const REPORT_VIEWS_PER_MINUTE = 60;
 
@@ -69,7 +69,7 @@ export async function reportView(runtime: Runtime, body: unknown): Promise<Repor
   const input = zView.safeParse(body);
   if (!input.success) return null;
   return runtime.orgless(async (db) => {
-    const { rows } = await sql<{ page: ReportPage | null }>`SELECT crove_social.report_link_view(${input.data.token}) AS page`.execute(db);
+    const { rows } = await sql<{ page: ReportPage | null }>`SELECT ludy_social.report_link_view(${input.data.token}) AS page`.execute(db);
     return rows[0]?.page ?? null;
   });
 }

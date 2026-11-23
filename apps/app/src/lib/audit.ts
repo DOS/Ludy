@@ -1,6 +1,6 @@
 // The audit log screen's filter (#672): the form's text fields as the query's filter, and the cursor of the next page;
 // and the commands' labels (#1654), on the screen and in the exported file.
-import { AUDIT_OUTCOMES, type AuditCursor, type AuditFilter, type AuditOutcome, type AuditPage } from '@crove/kernel-contract';
+import { AUDIT_OUTCOMES, type AuditCursor, type AuditEntry, type AuditFilter, type AuditOutcome, type AuditPage } from '@ludy/kernel-contract';
 
 export interface AuditFilterForm {
   actor: string;
@@ -44,6 +44,8 @@ export interface AuditSearch {
   targetId?: string;
   from?: string;
   to?: string;
+  // "1" opens the log with the system's own rows shown (#3595): the screen starts without them.
+  system?: '1';
 }
 
 export function parseAuditSearch(search: Record<string, unknown>): AuditSearch {
@@ -51,6 +53,7 @@ export function parseAuditSearch(search: Record<string, unknown>): AuditSearch {
   const actor = typeof search.actor === 'string' && (search.actor === 'system' || UUID.test(search.actor)) ? search.actor.toLowerCase() : undefined;
   const outcome = typeof search.outcome === 'string' && (AUDIT_OUTCOMES as readonly string[]).includes(search.outcome) ? (search.outcome as AuditOutcome) : undefined;
   const found: Record<keyof AuditSearch, string | undefined> = {
+    system: search.system === '1' || search.system === 1 || search.system === true ? '1' : undefined,
     actor,
     command: text(search.command, COMMAND),
     outcome,
@@ -140,4 +143,50 @@ export function withCommandLabels(csv: string, label: (command: string) => strin
     return [...cells.slice(0, at + 1), extra, ...cells.slice(at + 1)].join(',');
   });
   return `${bom}${lines.join('\r\n')}\r\n`;
+}
+
+// The system's own rows (#3595): jobs, notifications and event dispatch that nobody did, which the log hides until asked.
+// An AI app's call over MCP is not one of them: it names the app that acted.
+export function isSystemRow(row: Pick<AuditEntry, 'actorType' | 'via'>): boolean {
+  return row.actorType === 'system' && row.via === null;
+}
+
+// A label's first letter in lower case, for a sentence that goes on after "Đã" or "Tried to"; a label that starts with an AI
+// coworker's name, an acronym or a product name ("Vy ...", "AI ...", "Google ...") keeps its capital.
+const KEEP_CAPITAL = /^(Vy|Ly|Dy|Uy|Hy|Google|Zalo|Slack|Teams|Facebook|Instagram|TikTok|YouTube|Meta|Claude|MISA)$/;
+
+export function lowerFirst(label: string): string {
+  const word = /^[^\s,.:;()]+/u.exec(label)?.[0] ?? '';
+  const keep = KEEP_CAPITAL.test(word) || (word.length > 1 && word === word.toUpperCase() && /\p{Lu}/u.test(word));
+  return keep || word === '' ? label : label.charAt(0).toLowerCase() + label.slice(1);
+}
+
+// What the screen's object search offers (#3595): a party, or a document by its series, number or party, each with the id the
+// log filters by. A document that came through a proposal is offered twice: its own rows (what was done to it later) and its
+// approval (the decision and the rows of what it ran, as a link from a proposal shows, #1445); the filter takes one id, so the
+// owner picks which. A journal entry is not offered: its rows name no entry, so the filter would find nothing.
+export interface AuditTargetChoice {
+  key: string;
+  kind: 'party' | 'document' | 'approval';
+  id: string;
+  label: string;
+  hint: string;
+}
+
+export interface AuditSearchFound {
+  parties: readonly { id: string; name: string; taxCode: string | null }[];
+  documents: readonly { id: string; series: string; number: string; partyName: string; proposalId: string | null }[];
+}
+
+export function auditTargetChoices(found: AuditSearchFound): AuditTargetChoice[] {
+  return [
+    ...found.parties.map((p): AuditTargetChoice => ({ key: `party-${p.id}`, kind: 'party', id: p.id, label: p.name, hint: p.taxCode ?? '' })),
+    ...found.documents.flatMap((d): AuditTargetChoice[] => {
+      const label = [d.series, d.number].filter(Boolean).join(' ');
+      return [
+        { key: `document-${d.id}`, kind: 'document', id: d.id, label, hint: d.partyName },
+        ...(d.proposalId ? [{ key: `approval-${d.id}`, kind: 'approval' as const, id: d.proposalId, label, hint: d.partyName }] : []),
+      ];
+    }),
+  ];
 }

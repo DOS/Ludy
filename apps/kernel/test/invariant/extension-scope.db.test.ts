@@ -17,14 +17,16 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { DomainError, EXTENSION_SCOPES, Runtime, fileKey, type UserActor } from '@crove/kernel-runtime';
-import { EXTENSION_SCOPE_IDS } from '@crove/kernel-contract';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
-import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { DomainError, EXTENSION_SCOPES, Runtime, fileKey, type UserActor } from '@ludy/kernel-runtime';
+import { EXTENSION_SCOPE_IDS } from '@ludy/kernel-contract';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
+import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
+import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -38,16 +40,26 @@ const REACHABLE = [
   'meetings.media.record:meetings',
   'meetings.meeting.create:meetings',
   'meetings.meeting.extension_status:meetings',
+  // Landed one step at a time and now all present, so each is pinned exactly like the rest: live notes' pieces (L4a-1, #3109, ADR-0052), the next-meetings read of B2
+  // (#3166, the `agenda` scope), the report that a recording ended with no media (#3196), and Notes v2 E4 (#3560, the `notes` scope, write-only).
+  'meetings.live.chunk:meetings',
+  'meetings.agenda.next:agenda',
+  'meetings.meeting.recording_stopped:meetings',
+  'notes.note.clip:notes',
+  'notes.todo.quick_capture:notes',
+  'notes.extension.exchanged:notes',
 ];
 
-// Reachable only once L4a-1 (#3109, ADR-0052) is on main: the test accepts the command either present or absent, so it holds before and after that change.
-const REACHABLE_WITH_L4A = ['meetings.live.chunk:meetings'];
+// Landing in two steps (ADR-0055 slice 1, issue #4123): this file first lets the pin below accept the heartbeat of a running capture with or without it, so the code that adds the command can be checked by the
+// base copy of the suite. The second step adds the command and moves its entry into REACHABLE, then this list is empty. A command listed here may be missing; any other difference from REACHABLE still fails.
+const REACHABLE_NEXT = ['meetings.capture.heartbeat:meetings'];
 
 const CREATE = { title: 'Họp tuần', consentMethod: 'told_at_start' as const, visibility: 'attendees' as const, language: 'vi' as const, keepVideo: false };
 
 suite('the extension token past the HTTP edge: scope, standing and meetings (#2582, ADR-0047)', () => {
   const dbName = `crove_test_ext_scope_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   const pools: pg.Pool[] = [];
   let runtime: Runtime;
   let orgA = '';
@@ -59,7 +71,7 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
   const ext = (userId: string, tokenId: string, scopes: readonly string[] = ['meetings']): UserActor => ({ type: 'user', userId, aal: 'aal1', mfaAt: null, extension: { tokenId, scopes } });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -68,12 +80,12 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
     }
   }
 
-  async function insertToken(orgId: string, userId: string, id: string, extra = '') {
+  async function insertToken(orgId: string, userId: string, id: string, extra = '', scopes: readonly string[] = ['meetings']) {
     await admin((c) =>
       c.query(
         `INSERT INTO crove_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
-         VALUES ($1, $2, $3, $4, 'Test device', ARRAY['meetings'], now() ${extra}, now() ${extra} + interval '30 days', $3)`,
-        [orgId, id, userId, createHash('sha256').update(randomBytes(32)).digest()],
+         VALUES ($1, $2, $3, $4, 'Test device', $5::text[], now() ${extra}, now() ${extra} + interval '30 days', $3)`,
+        [orgId, id, userId, createHash('sha256').update(randomBytes(32)).digest(), [...scopes]],
       ),
     );
   }
@@ -98,17 +110,18 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     appUrl.password = 'test-app-pw';
-    const pool = createPool({ connectionString: appUrl.toString(), max: 6 });
+    const pool = createDbPool({ connectionString: appUrl.toString(), max: 6 }, dbIds);
     pools.push(pool);
     const db = createDb(pool);
     // No session source: an extension actor's standing is checked whatever the deployment's session mode.
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
-      commands: [...kernelCommands, ...financeCommands, ...meetingsCommands],
-      queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries],
+      commands: [...kernelCommands, ...financeCommands, ...meetingsCommands, ...notesCommands],
+      queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries, ...notesQueries],
     });
     for (const key of Object.keys(users) as Array<keyof typeof users>) {
       users[key] = await upsertIdentity(db, { issuer: 'extension-scope', subject: key, email: `${key}@ext-scope.test`, name: null });
@@ -137,13 +150,24 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
   });
 
   it('pins the commands and queries an extension token may reach, and the scopes the runtime and the database know', () => {
-    const defs = [...kernelCommands, ...financeCommands, ...meetingsCommands, ...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries] as Array<{
+    const defs = [
+      ...kernelCommands,
+      ...financeCommands,
+      ...meetingsCommands,
+      ...notesCommands,
+      ...kernelQueries({ inboundDomain: 'in.test' }),
+      ...financeQueries,
+      ...meetingsQueries,
+      ...notesQueries,
+    ] as Array<{
       name: string;
       extension?: { scope: string };
     }>;
+    expect(new Set(REACHABLE).size).toBe(REACHABLE.length);
+    expect(REACHABLE_NEXT.filter((entry) => REACHABLE.includes(entry))).toEqual([]);
     const reachable = defs.filter((d) => d.extension !== undefined).map((d) => `${d.name}:${d.extension?.scope}`);
-    expect(reachable.filter((name) => !REACHABLE_WITH_L4A.includes(name)).sort()).toEqual([...REACHABLE].sort());
-    expect(reachable.filter((name) => REACHABLE_WITH_L4A.includes(name)).length).toBeLessThanOrEqual(REACHABLE_WITH_L4A.length);
+    for (const next of REACHABLE_NEXT) expect(reachable.filter((entry) => entry === next).length).toBeLessThanOrEqual(1);
+    expect(reachable.filter((entry) => !REACHABLE_NEXT.includes(entry)).sort()).toEqual([...REACHABLE].sort());
     expect([...EXTENSION_SCOPES]).toEqual([...EXTENSION_SCOPE_IDS]);
   });
 
@@ -195,6 +219,14 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
       () => runtime.execute('kernel.extension.code.issue', { codeHash: '0'.repeat(64), codeChallenge: 'A'.repeat(43), scopes: ['meetings'], deviceName: 'x', extensionId: 'a'.repeat(32) }, options),
       () => runtime.execute('kernel.task.create', { title: 'x' }, options),
       () => runtime.execute('kernel.file.ingest', {}, options),
+      () => runtime.query('notes.note.list', { view: 'mine' }, options),
+      () => runtime.query('notes.note.get', { noteId: randomUUID() }, options),
+      () => runtime.query('notes.todo.list', { view: 'open' }, options),
+      () => runtime.execute('notes.note.create', { title: 'x' }, options),
+      () => runtime.execute('notes.todo.create', { title: 'x' }, options),
+      () => runtime.execute('notes.note.clip', { title: 'x' }, options),
+      () => runtime.execute('notes.todo.quick_capture', { title: 'x' }, options),
+      () => runtime.execute('notes.extension.exchanged', { codeId: randomUUID() }, options),
     ];
     for (const attempt of refused) {
       const error = await refusal(attempt());
@@ -209,6 +241,14 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
       () => runtime.execute('meetings.meeting.delete', { meetingId }, options),
       () => runtime.execute('kernel.extension.token.revoke', { tokenId: tokens.member }, options),
       () => runtime.query('kernel.extension.token.list', {}, options),
+      () => runtime.query('notes.note.list', { view: 'mine' }, options),
+      () => runtime.query('notes.note.get', { noteId: randomUUID() }, options),
+      () => runtime.query('notes.todo.list', { view: 'open' }, options),
+      () => runtime.execute('notes.note.create', { title: 'x' }, options),
+      () => runtime.execute('notes.todo.create', { title: 'x' }, options),
+      () => runtime.execute('notes.note.clip', { title: 'x' }, options),
+      () => runtime.execute('notes.todo.quick_capture', { title: 'x' }, options),
+      () => runtime.execute('notes.extension.exchanged', { codeId: randomUUID() }, options),
     ]) {
       const error = await refusal(attempt());
       expect(error.code, error.message).toBe('FORBIDDEN');
@@ -355,5 +395,55 @@ suite('the extension token past the HTTP edge: scope, standing and meetings (#25
     expect((await refusal(runtime.execute('meetings.meeting.create', CREATE, { actor: ext(users.member, tokens.member), orgId: orgA }))).code).toBe('EXTENSION_TOKEN_INVALID');
     // Already revoked: the same single answer.
     expect((await refusal(runtime.execute('kernel.extension.token.revoke', { tokenId: tokens.member }, { actor: browser(users.member), orgId: orgA }))).code).toBe('EXTENSION_TOKEN_NOT_FOUND');
+  });
+
+  it('lets a notes-scoped token write private, tainted clips and quick todos while keeping every read closed (#3560)', async () => {
+    const notesToken = randomUUID();
+    await insertToken(orgA, users.member, notesToken, '', ['notes']);
+    const actor = ext(users.member, notesToken, ['notes']);
+    const options = { actor, orgId: orgA };
+
+    const clipped = await runtime.execute<{ noteId: string; revision: number }>(
+      'notes.note.clip',
+      { title: 'Scoped clip', body: 'Hello world', tags: ['clip'], sourceUrl: 'https://example.com/item' },
+      options,
+    );
+    const todo = await runtime.execute<{ todoId: string; revision: number }>(
+      'notes.todo.quick_capture',
+      { title: 'Scoped todo', details: 'Check contract' },
+      options,
+    );
+
+    const noteRow = await admin(async (c) =>
+      (await c.query<{ visibility: string; tainted: boolean; author_user_id: string }>(
+        'SELECT visibility, tainted, author_user_id FROM crove_notes.note WHERE id = $1',
+        [clipped.noteId],
+      )).rows[0],
+    );
+    expect(noteRow).toEqual({ visibility: 'private', tainted: true, author_user_id: users.member });
+
+    const todoRow = await admin(async (c) =>
+      (await c.query<{ tainted: boolean; owner_user_id: string }>(
+        'SELECT tainted, owner_user_id FROM crove_notes.todo WHERE id = $1',
+        [todo.todoId],
+      )).rows[0],
+    );
+    expect(todoRow).toEqual({ tainted: true, owner_user_id: users.member });
+
+    // Every read and standard note/to-do mutation, as well as meetings/kernel routes, stays closed.
+    for (const attempt of [
+      () => runtime.query('notes.note.list', { view: 'mine' }, options),
+      () => runtime.query('notes.note.get', { noteId: clipped.noteId }, options),
+      () => runtime.query('notes.todo.list', { view: 'open' }, options),
+      () => runtime.query('notes.todo.get', { todoId: todo.todoId }, options),
+      () => runtime.execute('notes.note.create', { title: 'x', visibility: 'org' }, options),
+      () => runtime.execute('notes.todo.create', { title: 'x' }, options),
+      () => runtime.execute('meetings.meeting.create', CREATE, options),
+      () => runtime.execute('kernel.extension.token.exchanged', { codeId: randomUUID() }, options),
+    ]) {
+      const err = await refusal(attempt());
+      expect(err.code).toBe('FORBIDDEN');
+      expect(err.details?.rule).toBe('extension_scope');
+    }
   });
 });

@@ -1,17 +1,17 @@
 // Ledger reports (issue #321): for a month, quarter or year, the trial balance, the general ledger of one account and
 // the receivables and payables per party, from posted entries, with one Excel workbook of all of them. The period
-// lock (#329) sits above the reports. The financial statements tab (issue #154) shows the DRAFT B01-DNN and B02-DNN
+// lock (#329) and the year archive have their own Kết thúc kỳ tab (#3602). The financial statements tab (issue #154) shows the DRAFT B01-DNN and B02-DNN
 // of the same period, with a workbook of its own.
 import { Fragment, useState, type ReactNode } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { Alert } from '@crove/ui/components/alert';
-import { Badge } from '@crove/ui/components/badge';
-import { Button, buttonVariants } from '@crove/ui/components/button';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { TableCell, TableRow } from '@crove/ui/components/table';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
+import { Alert } from '@ludy/ui/components/alert';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button, buttonVariants } from '@ludy/ui/components/button';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { PeriodLockPanel } from '../components/period-lock.tsx';
 import { YearArchivePanel } from '../components/year-archive.tsx';
@@ -648,16 +648,17 @@ export function LedgerPage() {
         <TabsContent value="statements">
           <Statements period={period} />
         </TabsContent>
+        {/* Locking a month and archiving a year are the end of a period, not a report (#3602): their own tab, so a lock is not a card under the trial balance. */}
+        <TabsContent value="closing">
+          <section aria-labelledby="ledger-closing">
+            <h2 id="ledger-closing" className="mb-3 text-sm font-semibold">
+              {t('closingTitle')}
+            </h2>
+            <PeriodLockPanel />
+            <YearArchivePanel />
+          </section>
+        </TabsContent>
       </Tabs>
-      {/* Locking a month and archiving a year come after the reports they close (#1264): the reports are what this
-          screen is opened for, the lock once a month and the archive once a year. */}
-      <section className="mt-10 border-t pt-6" aria-labelledby="ledger-closing">
-        <h2 id="ledger-closing" className="mb-3 text-sm font-semibold">
-          {t('closingTitle')}
-        </h2>
-        <PeriodLockPanel />
-        <YearArchivePanel />
-      </section>
     </>
   );
 }

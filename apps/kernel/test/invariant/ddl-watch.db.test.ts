@@ -10,9 +10,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { installDdlWatch, migrate, setRolePasswords } from '@crove/db/migrate';
+import { createDb, type Db } from '@ludy/db';
+import { installDdlWatch, migrate } from '@ludy/db/migrate';
 import { sweepSecuritySignals } from '../../src/security-signals.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -34,6 +35,7 @@ suite('DDL outside the migration pipeline on PostgreSQL (#1202)', () => {
   // Roles are cluster-wide: this run's own, dropped at the end.
   const probeRole = `t1202_ddl_probe_${runId}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let adminRole = '';
   let appUrl = '';
   let workerUrl = '';
@@ -42,7 +44,7 @@ suite('DDL outside the migration pipeline on PostgreSQL (#1202)', () => {
   let extraDir = '';
 
   async function withClient<T>(url: string, fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: url });
+    const c = createDbClient({ connectionString: url }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -56,7 +58,10 @@ suite('DDL outside the migration pipeline on PostgreSQL (#1202)', () => {
       const { rows } = await c.query<DdlRow>(
         'SELECT session_role, set_role, command_tag, object_type, object_identity FROM crove_kernel.ddl_event ORDER BY id',
       );
-      return rows;
+      return rows.map((r) => ({
+        ...r,
+        object_identity: r.object_identity && dbIds ? dbIds.toCanonicalCatalogText(r.object_identity) : r.object_identity,
+      }));
     });
 
   async function sweep() {
@@ -82,25 +87,27 @@ suite('DDL outside the migration pipeline on PostgreSQL (#1202)', () => {
     adminUrl = base.toString();
     adminRole = decodeURIComponent(base.username);
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const loginUrl = (username: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = username;
+      url.username = dbIds ? dbIds.roleName(username) : username;
       url.password = password;
       return url.toString();
     };
     appUrl = loginUrl('crove_app', 'test-app-pw');
     workerUrl = loginUrl('crove_worker', 'test-worker-pw');
-    workerPool = createPool({ connectionString: workerUrl, max: 2 });
+    workerPool = createDbPool({ connectionString: workerUrl, max: 2 }, dbIds);
     workerDb = createDb(workerPool);
     // Every migration plus one more that changes the schema, applied by the runner after the watch is installed.
     extraDir = mkdtempSync(join(tmpdir(), 'crove-ddlwatch-'));
     cpSync(MIGRATIONS, extraDir, { recursive: true });
+    const probeSchema = dbIds?.schema('kernel') ?? 'crove_kernel';
     writeFileSync(
       join(extraDir, '29991231000000_crove_kernel_ddl_watch_probe.sql'),
-      `CREATE TABLE IF NOT EXISTS crove_kernel.ddl_watch_probe (id integer PRIMARY KEY);
-       COMMENT ON TABLE crove_kernel.ddl_watch_probe IS 'applied by the runner';
-       DROP TABLE crove_kernel.ddl_watch_probe;\n`,
+      `CREATE TABLE IF NOT EXISTS ${probeSchema}.ddl_watch_probe (id integer PRIMARY KEY);
+       COMMENT ON TABLE ${probeSchema}.ddl_watch_probe IS 'applied by the runner';
+       DROP TABLE ${probeSchema}.ddl_watch_probe;\n`,
     );
   });
 
@@ -132,6 +139,7 @@ suite('DDL outside the migration pipeline on PostgreSQL (#1202)', () => {
 
   it('records nothing the migration runner does, and leaves no mark behind', async () => {
     const applied = await migrate({ adminUrl, dir: extraDir });
+    dbIds = await resolveDbIdentifiers(adminUrl);
     expect(applied).toEqual(['29991231000000_crove_kernel_ddl_watch_probe.sql']);
     expect(await records()).toEqual([]);
     const marks = await withClient(adminUrl, (c) => c.query('SELECT * FROM crove_meta.pipeline_session'));
@@ -175,7 +183,7 @@ suite('DDL outside the migration pipeline on PostgreSQL (#1202)', () => {
     expect(first.posted).toHaveLength(1);
     expect(first.posted[0]?.crove).toMatchObject({ kind: 'security', signal: 'out_of_pipeline_ddl', value: 9, orgId: null });
     expect(first.posted[0]?.text).toMatch(
-      new RegExp(`^\\[Crove\\] Security alert from books\\.example\\.test: 9 schema change\\(s\\) outside the migration pipeline, first by ${adminRole}: CREATE TABLE public\\.ddl_probe \\(ddl_event \\d+\\)`),
+      new RegExp(`^\\[(?:Crove|Ludy)\\] Security alert from books\\.example\\.test: 9 schema change\\(s\\) outside the migration pipeline, first by ${adminRole}: CREATE TABLE public\\.ddl_probe \\(ddl_event \\d+\\)`),
     );
     expect(first.lines.filter((l) => l.startsWith('[security] ALERT out_of_pipeline_ddl:'))).toHaveLength(1);
     // Alerted once: the next pass is quiet, and every record carries its alert time.
@@ -191,7 +199,7 @@ suite('DDL outside the migration pipeline on PostgreSQL (#1202)', () => {
       await c.query(`SET SESSION AUTHORIZATION ${probeRole}`);
       await expect(
         c.query(`INSERT INTO crove_meta.pipeline_session (pid, backend_start, step) SELECT pid, backend_start, 'migrate' FROM pg_stat_activity WHERE pid = pg_backend_pid()`),
-      ).rejects.toThrow(/permission denied for schema crove_meta/);
+      ).rejects.toThrow(/permission denied for schema (?:crove|ludy)_meta/);
       await c.query('CREATE TABLE public.ddl_probe_role (id integer)');
       await c.query('DROP TABLE public.ddl_probe_role');
       await c.query('RESET SESSION AUTHORIZATION');
@@ -270,7 +278,7 @@ suite('DDL outside the migration pipeline on PostgreSQL (#1202)', () => {
       await c.query(`ALTER FUNCTION crove_kernel.ddl_watch() OWNER TO ${probeRole}`);
     });
     await expect(installDdlWatch({ adminUrl })).rejects.toThrow(
-      new RegExp(`crove_kernel\\.ddl_watch\\(\\) is owned by ${probeRole}, neither a superuser nor the installing role`),
+      new RegExp(`(?:crove|ludy)_kernel\\.ddl_watch\\(\\) is owned by ${probeRole}, neither a superuser nor the installing role`),
     );
     await withClient(adminUrl, async (c) => {
       await c.query('SET event_triggers = off');
@@ -309,7 +317,7 @@ suite('DDL outside the migration pipeline on PostgreSQL (#1202)', () => {
       await expect(withClient(url, (c) => c.query('UPDATE crove_kernel.ddl_event SET alerted_at = now()'))).rejects.toThrow(/permission denied for table ddl_event/);
       await expect(
         withClient(url, (c) => c.query(`INSERT INTO crove_meta.pipeline_session (pid, backend_start, step) VALUES (pg_backend_pid(), now(), 'migrate')`)),
-      ).rejects.toThrow(/permission denied for (table pipeline_session|schema crove_meta)/);
+      ).rejects.toThrow(/permission denied for (table pipeline_session|schema (?:crove|ludy)_meta)/);
     }
   });
 });

@@ -9,11 +9,11 @@ import { sql } from 'kysely';
 import pg from 'pg';
 import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createMailMessage, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { DomainError, Runtime, defineCommand, type BlobStore, type UserActor } from '@crove/kernel-runtime';
-import { createResendProvider } from '@crove/mail';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createMailMessage, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { DomainError, Runtime, defineCommand, type BlobStore, type UserActor } from '@ludy/kernel-runtime';
+import { createResendProvider } from '@ludy/mail';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -45,7 +45,7 @@ const forgeEvent = defineCommand({
   risk: 'R1',
   access: ['owner', 'admin', 'member', 'viewer'],
   handler: async (ctx, input) => {
-    await sql`INSERT INTO crove_kernel.mail_event (org_id, message_id, provider, provider_event_id, kind, occurred_at)
+    await sql`INSERT INTO ludy_kernel.mail_event (org_id, message_id, provider, provider_event_id, kind, occurred_at)
       VALUES (${ctx.orgId}, ${input.messageId}, 'resend', ${`forged-${randomUUID()}`}, 'bounce_hard', now())`.execute(ctx.trx);
     return {};
   },
@@ -106,10 +106,10 @@ suite('mail delivery events (#539)', () => {
     const response = await app.request(`/webhooks/mail/${provider}`, { method: 'POST', headers, body });
     return { status: response.status, body: (await response.json().catch(() => null)) as Record<string, unknown> | null };
   }
-  const pending = () => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.mail_event_pending')).rows[0]?.n));
+  const pending = () => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.mail_event_pending')).rows[0]?.n));
   // What the worker relay and job do: claim the pending events and record each in its mail's org.
   async function drain() {
-    const rows = (await sql<MailEventRow>`SELECT * FROM crove_kernel.mail_event_claim(100)`.execute(workerDb)).rows;
+    const rows = (await sql<MailEventRow>`SELECT * FROM ludy_kernel.mail_event_claim(100)`.execute(workerDb)).rows;
     return Promise.all(rows.map((row) => processMailEvent({ runtime: workerRuntime, workerDb }, mailEventJob(row))));
   }
   const job = (providerMessageId: string, kind: MailEventJob['kind'], occurredAt = new Date()): MailEventJob => ({
@@ -121,13 +121,13 @@ suite('mail delivery events (#539)', () => {
     detail: {},
   });
   const mailRow = (id: string) =>
-    admin(async (c) => (await c.query<{ status: string; provider: string | null }>('SELECT status, provider FROM crove_kernel.mail_message WHERE id = $1', [id])).rows[0]);
+    admin(async (c) => (await c.query<{ status: string; provider: string | null }>('SELECT status, provider FROM ludy_kernel.mail_message WHERE id = $1', [id])).rows[0]);
   const suppressions = (messageId: string) =>
     admin(
       async (c) =>
         (
           await c.query<{ scope: string; reason: string }>(
-            'SELECT scope, reason FROM crove_kernel.mail_suppression WHERE source_message_id = $1 AND lifted_at IS NULL ORDER BY scope',
+            'SELECT scope, reason FROM ludy_kernel.mail_suppression WHERE source_message_id = $1 AND lifted_at IS NULL ORDER BY scope',
             [messageId],
           )
         ).rows,
@@ -142,15 +142,15 @@ suite('mail delivery events (#539)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     db = createDb(pool);
     workerDb = createDb(workerPool);
     const registry = { commands: [...kernelCommands, sendTest, forgeEvent], queries: kernelQueries({ inboundDomain: null }) };
@@ -163,7 +163,7 @@ suite('mail delivery events (#539)', () => {
     otherOrgId = (await createOrg(runtime, other, 'Công ty Khác')).orgId;
 
     const config = loadConfig({
-      DATABASE_URL: login('crove_app', 'test-app-pw'),
+      DATABASE_URL: login('ludy_app', 'test-app-pw'),
       AUTH_JWT_SECRET: 'test-only-jwt-secret-for-mail-events-0123456789',
       AUTH_ISSUER: 'crove-auth',
       AUTH_SESSION_CHECK: 'off',
@@ -210,7 +210,7 @@ suite('mail delivery events (#539)', () => {
     // Again after the worker ran: queued, and then changes nothing.
     expect(await post(body, headers)).toEqual({ status: 202, body: { queued: 1 } });
     expect(await drain()).toEqual([{ recorded: false, status: 'delivered', suppressed: null }]);
-    const events = await admin(async (c) => (await c.query('SELECT org_id, kind, provider_event_id FROM crove_kernel.mail_event WHERE message_id = $1', [mail.id])).rows);
+    const events = await admin(async (c) => (await c.query('SELECT org_id, kind, provider_event_id FROM ludy_kernel.mail_event WHERE message_id = $1', [mail.id])).rows);
     expect(events).toEqual([{ org_id: orgId, kind: 'delivered', provider_event_id: 'msg_replayed' }]);
     // An event type Crove does not record is acknowledged and dropped.
     const opened = event('email.opened', mail.providerMessageId);
@@ -279,15 +279,15 @@ suite('mail delivery events (#539)', () => {
     expect(await suppressions(mail.id)).toEqual([]);
 
     // The provider and its id are written once.
-    await expect(admin((c) => c.query(`UPDATE crove_kernel.mail_message SET provider_message_id = 'em_other' WHERE id = $1`, [mail.id]))).rejects.toThrow(
+    await expect(admin((c) => c.query(`UPDATE ludy_kernel.mail_message SET provider_message_id = 'em_other' WHERE id = $1`, [mail.id]))).rejects.toThrow(
       /MAIL_MESSAGE_IMMUTABLE/,
     );
-    await expect(admin((c) => c.query(`UPDATE crove_kernel.mail_message SET provider = 'smtp' WHERE id = $1`, [mail.id]))).rejects.toThrow(/MAIL_MESSAGE_IMMUTABLE/);
+    await expect(admin((c) => c.query(`UPDATE ludy_kernel.mail_message SET provider = 'smtp' WHERE id = $1`, [mail.id]))).rejects.toThrow(/MAIL_MESSAGE_IMMUTABLE/);
     // No other mail, in any org, may carry the same provider id.
     await expect(sentMail('copy@mail.test', mail.providerMessageId, other, otherOrgId)).rejects.toMatchObject({ code: 'CONFLICT' });
     // The API role cannot read or claim pending events, nor look a mail up by its provider id.
-    await expect(sql`SELECT * FROM crove_kernel.mail_event_claim(1)`.execute(db)).rejects.toThrow(/permission denied/);
-    await expect(sql`SELECT * FROM crove_kernel.mail_message_by_provider_id('resend', ${mail.providerMessageId})`.execute(db)).rejects.toThrow(/permission denied/);
-    await expect(sql`SELECT * FROM crove_kernel.mail_event_pending`.execute(db)).rejects.toThrow(/permission denied/);
+    await expect(sql`SELECT * FROM ludy_kernel.mail_event_claim(1)`.execute(db)).rejects.toThrow(/permission denied/);
+    await expect(sql`SELECT * FROM ludy_kernel.mail_message_by_provider_id('resend', ${mail.providerMessageId})`.execute(db)).rejects.toThrow(/permission denied/);
+    await expect(sql`SELECT * FROM ludy_kernel.mail_event_pending`.execute(db)).rejects.toThrow(/permission denied/);
   });
 });

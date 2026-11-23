@@ -4,9 +4,9 @@
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import type { EInvoiceIssueView } from '@crove/kernel-contract';
-import { Alert, AlertDescription } from '@crove/ui/components/alert';
-import { Card } from '@crove/ui/components/card';
+import type { EInvoiceIssueView } from '@ludy/kernel-contract';
+import { Alert, AlertDescription } from '@ludy/ui/components/alert';
+import { Card } from '@ludy/ui/components/card';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 import { CardSkeleton, ErrorText } from './ui.tsx';
@@ -60,6 +60,12 @@ export function EInvoiceIssueCard({ view, title, slug, pending }: { view: UseQue
           <p className="text-sm tabular-nums text-muted-foreground" data-testid="einvoice-issue-totals">
             {t('issueTotals', { subtotal: f.money(draft.subtotal, draft.currency), vat: f.money(draft.vatAmount, draft.currency), total: f.money(draft.total, draft.currency) })}
           </p>
+          {draft.saleDate && (
+            <p className="text-sm text-foreground" data-testid="einvoice-issue-late-sale">
+              {t('issueSaleDate', { date: f.date(draft.saleDate) })}
+              {draft.lateReason ? ` · ${t('issueLateReason', { reason: draft.lateReason })}` : ''}
+            </p>
+          )}
           <p className="text-xs text-subtle-foreground">{t('issueIrreversible')}</p>
         </div>
       ) : null}

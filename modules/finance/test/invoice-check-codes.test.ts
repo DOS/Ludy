@@ -3,11 +3,11 @@
 // that list (apps/app/test/invoice-checks.test.ts).
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { INVOICE_CHECK_CODES, zCheck } from '@crove/kernel-contract';
-import { checkInvoice, classificationCheck, enterpriseCheckDigit, SIGNATURE_REASONS, type InvoiceCheck, type ParsedInvoice } from '@crove/l10n-vn';
+import { INVOICE_CHECK_CODES, zCheck } from '@ludy/kernel-contract';
+import { checkInvoice, classificationCheck, enterpriseCheckDigit, SIGNATURE_REASONS, type InvoiceCheck, type ParsedInvoice } from '@ludy/l10n-vn';
 import { relatedCheck } from '../src/extract.ts';
 import { enteredRateCheck } from '../src/record.ts';
-import { anomalyChecks, payrollCashCheck } from '../src/domain/anomaly.ts';
+import { anomalyChecks, payrollCashCheck, payrollLiabilityCheck } from '../src/domain/anomaly.ts';
 
 const parsed = JSON.parse(readFileSync(new URL('../../../packages/l10n-vn/test/fixtures/einvoice-basic.parsed.json', import.meta.url), 'utf8')) as ParsedInvoice;
 // A checksum-valid code for the "valid" outcome, computed here rather than written out, so no valid code sits in a
@@ -95,8 +95,9 @@ describe('invoice check codes', () => {
     // And the account check (#2091): lines no rule matched, and every line with its account.
     ...[[{ lineNo: 1, debitAccount: '000' }], [{ lineNo: 1, debitAccount: '6422' }]].map((lines) => classificationCheck(lines)!),
     // And the anomaly flags (#2380): a bank account the vendor never used, an unusual amount, a unit price that jumped.
-    // And the pay run's cash flag (#2532).
+    // And the pay run's cash flag (#2532) and plain-voucher payroll payable warning (#2793).
     payrollCashCheck(3)!,
+    payrollLiabilityCheck(['334'])!,
     ...anomalyChecks(
       { sellerBankAccount: '0987654321', total: '5000000', lines: [{ description: 'Giấy A4', unitPrice: '90000' }] },
       { totals: ['1000000', '1000000', '1000000', '1000000', '1000000'], prices: [{ description: 'Giấy A4', unitPrice: '60000' }], bankAccounts: ['0011000000000'] },

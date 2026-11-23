@@ -13,6 +13,8 @@ test('a member adds, completes and reorders their own to-dos, which nobody else 
   await signInNewUser(page, email);
   const slug = await createOrg(page, 'Công ty Việc Riêng');
 
+  // A new org opens on the overview, which belongs to no app and shows no app menu (#3588): switch to Cộng tác first.
+  await page.getByRole('navigation').getByRole('list', { name: 'Ứng dụng' }).getByRole('link', { name: 'Cộng tác', exact: true }).click();
   await page.getByRole('navigation').getByRole('link', { name: 'Việc của tôi' }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/my-work$`));
   await expect(page.getByText('Không có việc nào đến hạn')).toBeVisible();
@@ -74,8 +76,8 @@ test('a member adds, completes and reorders their own to-dos, which nobody else 
     await other.goto('/');
     await signInNewUser(other, otherEmail);
     exec(
-      `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
-       SELECT t.org_id, u.id, 'member' FROM crove_kernel.tenant t, crove_kernel.user_account u
+      `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
+       SELECT t.org_id, u.id, 'member' FROM ludy_kernel.tenant t, ludy_kernel.user_account u
         WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       { slug, email: otherEmail },
     );

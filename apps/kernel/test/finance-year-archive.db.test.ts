@@ -8,12 +8,12 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import type { ExtractClient } from '@crove/extract-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { BlobNotFoundError, Runtime, archiveKey, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { BlobNotFoundError, Runtime, archiveKey, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -146,17 +146,17 @@ suite('fiscal year archive packages (#922)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 6 });
     const db: Db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -218,7 +218,7 @@ suite('fiscal year archive packages (#922)', () => {
     expect(asked).toMatchObject({ status: 200, body: { year: 2025, state: 'requested' } });
     // A second request while the first is in progress is refused.
     expect(await build(2025)).toMatchObject({ status: 409, body: { code: 'ARCHIVE_PENDING' } });
-    const event = await admin(async (c) => (await c.query(`SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.archive_requested'`, [org.orgId])).rows);
+    const event = await admin(async (c) => (await c.query(`SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.archive_requested'`, [org.orgId])).rows);
     expect(event).toEqual([{ payload: { year: 2025, requestCommandId: expect.any(String) } }]);
     const requestCommandId = String(event[0]?.payload.requestCommandId);
 
@@ -247,7 +247,7 @@ suite('fiscal year archive packages (#922)', () => {
     expect(kinds.filter((k) => k === 'vat_xml')).toHaveLength(12);
     expect(manifest.documents.map((d) => d.key).sort()).toEqual([...originals].sort());
     // The build's audit row names the manifest and the request.
-    const audit = await admin(async (c) => (await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.archive.record' ORDER BY occurred_at, id`, [org.orgId])).rows);
+    const audit = await admin(async (c) => (await c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.archive.record' ORDER BY occurred_at, id`, [org.orgId])).rows);
     expect(audit).toEqual([{ detail: expect.objectContaining({ year: 2025, manifest_key: built.manifestKey, documents: 2 }) }]);
 
     // A part downloads with the bytes the manifest names.

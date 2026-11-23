@@ -7,10 +7,10 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createMailMessage, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { DomainError, Runtime, defineCommand, type UserActor } from '@crove/kernel-runtime';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createMailMessage, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { DomainError, Runtime, defineCommand, type UserActor } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -73,7 +73,7 @@ suite('outbound mail in the kernel (#538)', () => {
     return 'resolved';
   };
   const hashOf = async (address: string) =>
-    admin(async (c) => (await c.query<{ h: string | null }>('SELECT crove_kernel.mail_address_hash($1) AS h', [address])).rows[0]?.h ?? null);
+    admin(async (c) => (await c.query<{ h: string | null }>('SELECT ludy_kernel.mail_address_hash($1) AS h', [address])).rows[0]?.h ?? null);
 
   beforeAll(async () => {
     const base = new URL(ADMIN as string);
@@ -84,9 +84,9 @@ suite('outbound mail in the kernel (#538)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     db = createDb(pool);
@@ -130,13 +130,13 @@ suite('outbound mail in the kernel (#538)', () => {
     const plain = await admin(async (c) => (await c.query<{ h: string }>("SELECT encode(sha256(convert_to('test_user@gmail.com', 'UTF8')), 'hex') AS h")).rows[0]?.h);
     expect(hash).not.toBe(plain);
     // The tenant role calls the hash; no runtime role reads the key.
-    for (const role of ['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant']) {
+    for (const role of ['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) {
       const can = await admin(
         async (c) =>
           (
             await c.query<{ sel: boolean; upd: boolean }>(
-              `SELECT has_table_privilege($1, 'crove_kernel.mail_hash_key', 'SELECT') AS sel,
-                      has_table_privilege($1, 'crove_kernel.mail_hash_key', 'UPDATE') AS upd`,
+              `SELECT has_table_privilege($1, 'ludy_kernel.mail_hash_key', 'SELECT') AS sel,
+                      has_table_privilege($1, 'ludy_kernel.mail_hash_key', 'UPDATE') AS upd`,
               [role],
             )
           ).rows[0],
@@ -145,12 +145,12 @@ suite('outbound mail in the kernel (#538)', () => {
     }
     expect(
       await admin(
-        async (c) => (await c.query<{ x: boolean }>("SELECT has_function_privilege('crove_tenant', 'crove_kernel.mail_address_hash(text)', 'EXECUTE') AS x")).rows[0]?.x,
+        async (c) => (await c.query<{ x: boolean }>("SELECT has_function_privilege('ludy_tenant', 'ludy_kernel.mail_address_hash(text)', 'EXECUTE') AS x")).rows[0]?.x,
       ),
     ).toBe(true);
     const login = await pool.connect();
     try {
-      await expect(login.query('SELECT * FROM crove_kernel.mail_hash_key')).rejects.toThrow(/permission denied/);
+      await expect(login.query('SELECT * FROM ludy_kernel.mail_hash_key')).rejects.toThrow(/permission denied/);
     } finally {
       login.release();
     }
@@ -179,7 +179,7 @@ suite('outbound mail in the kernel (#538)', () => {
       async (c) =>
         (
           await c.query<{ status: string; to_address: string; to_hash: string; attempts: number; stream: string }>(
-            `SELECT status, to_address, to_hash, attempts, stream FROM crove_kernel.mail_message WHERE org_id = $1 AND to_address = $2 ORDER BY created_at`,
+            `SELECT status, to_address, to_hash, attempts, stream FROM ludy_kernel.mail_message WHERE org_id = $1 AND to_address = $2 ORDER BY created_at`,
             [orgId, address],
           )
         ).rows,
@@ -215,7 +215,7 @@ suite('outbound mail in the kernel (#538)', () => {
       async (c) =>
         (
           await c.query<{ lifted: boolean; lift_reason: string | null; created_by: string; lifted_by: string | null }>(
-            `SELECT lifted_at IS NOT NULL AS lifted, lift_reason, created_by::text, lifted_by::text FROM crove_kernel.mail_suppression
+            `SELECT lifted_at IS NOT NULL AS lifted, lift_reason, created_by::text, lifted_by::text FROM ludy_kernel.mail_suppression
               WHERE org_id = $1 AND to_hash = $2 ORDER BY created_at`,
             [orgId, await hashOf(address)],
           )
@@ -229,7 +229,7 @@ suite('outbound mail in the kernel (#538)', () => {
     // A complaint (written by the bounce handling of step E2) is never lifted by command.
     const complained = `complaint-${randomUUID().slice(0, 6)}@mail.test`;
     await admin((c) =>
-      c.query(`INSERT INTO crove_kernel.mail_suppression (org_id, to_hash, scope, reason) VALUES ($1, crove_kernel.mail_address_hash($2), 'marketing', 'complaint')`, [
+      c.query(`INSERT INTO ludy_kernel.mail_suppression (org_id, to_hash, scope, reason) VALUES ($1, ludy_kernel.mail_address_hash($2), 'marketing', 'complaint')`, [
         orgId,
         complained,
       ]),
@@ -267,7 +267,7 @@ suite('outbound mail in the kernel (#538)', () => {
       async (c) =>
         (
           await c.query<{ status: string; attempts: number; sent: boolean; error_code: string | null }>(
-            'SELECT status, attempts, sent_at IS NOT NULL AS sent, error_code FROM crove_kernel.mail_message WHERE org_id = $1 AND id = $2',
+            'SELECT status, attempts, sent_at IS NOT NULL AS sent, error_code FROM ludy_kernel.mail_message WHERE org_id = $1 AND id = $2',
             [orgId, sent.id],
           )
         ).rows[0],
@@ -290,9 +290,9 @@ suite('outbound mail in the kernel (#538)', () => {
     const late = await run('kernel.mail_test.send', { to: `late-${randomUUID().slice(0, 6)}@mail.test`, stream: 'system' }, users.member);
     await admin(async (c) => {
       await c.query('BEGIN');
-      await c.query('ALTER TABLE crove_kernel.mail_message DISABLE TRIGGER mail_message_guard');
-      await c.query("UPDATE crove_kernel.mail_message SET created_at = now() - interval '11 minutes' WHERE org_id = $1 AND id = $2", [orgId, late.id]);
-      await c.query('ALTER TABLE crove_kernel.mail_message ENABLE TRIGGER mail_message_guard');
+      await c.query('ALTER TABLE ludy_kernel.mail_message DISABLE TRIGGER mail_message_guard');
+      await c.query("UPDATE ludy_kernel.mail_message SET created_at = now() - interval '11 minutes' WHERE org_id = $1 AND id = $2", [orgId, late.id]);
+      await c.query('ALTER TABLE ludy_kernel.mail_message ENABLE TRIGGER mail_message_guard');
       await c.query('COMMIT');
     });
     expect(await refusal(run('kernel.mail.record_direct', { messageId: late.id, outcome: 'sent' }, users.member))).toBe('NOT_FOUND');
@@ -301,7 +301,7 @@ suite('outbound mail in the kernel (#538)', () => {
   it('keeps the identity of a mail and of a suppression fixed, and the status moves legal', async () => {
     const sent = await run('kernel.mail_test.send', { to: `guard-${randomUUID().slice(0, 6)}@mail.test`, stream: 'transactional' }, users.member);
     const update = (set: string) =>
-      admin((c) => c.query(`UPDATE crove_kernel.mail_message SET ${set} WHERE org_id = $1 AND id = $2`, [orgId, sent.id]));
+      admin((c) => c.query(`UPDATE ludy_kernel.mail_message SET ${set} WHERE org_id = $1 AND id = $2`, [orgId, sent.id]));
     await expect(update("status = 'delivered'")).rejects.toThrow(/MAIL_MESSAGE_STATUS/);
     await expect(update("status = 'queued'")).rejects.toThrow(/MAIL_MESSAGE_STATUS/);
     await expect(update("to_address = 'someone@else.test'")).rejects.toThrow(/MAIL_MESSAGE_IMMUTABLE/);
@@ -321,7 +321,7 @@ suite('outbound mail in the kernel (#538)', () => {
     await expect(
       admin((c) =>
         c.query(
-          `INSERT INTO crove_kernel.mail_message (org_id, stream, source, template_key, to_hash, message_id_header, status)
+          `INSERT INTO ludy_kernel.mail_message (org_id, stream, source, template_key, to_hash, message_id_header, status)
            VALUES ($1, 'system', 'kernel.x.y', 'kernel.x', $2, '<a@b.c>', 'sent')`,
           [orgId, '1'.repeat(64)],
         ),
@@ -334,25 +334,25 @@ suite('outbound mail in the kernel (#538)', () => {
       async (c) =>
         (
           await c.query<{ col: string; upd: boolean }>(
-            `SELECT a.attname AS col, has_column_privilege('crove_tenant', 'crove_kernel.mail_message', a.attname, 'UPDATE') AS upd
-               FROM pg_attribute a WHERE a.attrelid = 'crove_kernel.mail_message'::regclass AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attname`,
+            `SELECT a.attname AS col, has_column_privilege('ludy_tenant', 'ludy_kernel.mail_message', a.attname, 'UPDATE') AS upd
+               FROM pg_attribute a WHERE a.attrelid = 'ludy_kernel.mail_message'::regclass AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attname`,
           )
         ).rows,
     );
     expect(privileges.filter((p) => p.upd).map((p) => p.col)).toEqual(['attempts', 'error_code', 'payload', 'provider', 'provider_message_id', 'sent_at', 'status', 'subject', 'to_address', 'updated_at']);
-    expect(await admin(async (c) => (await c.query<{ d: boolean }>("SELECT has_table_privilege('crove_tenant', 'crove_kernel.mail_message', 'DELETE') AS d")).rows[0]?.d)).toBe(false);
+    expect(await admin(async (c) => (await c.query<{ d: boolean }>("SELECT has_table_privilege('ludy_tenant', 'ludy_kernel.mail_message', 'DELETE') AS d")).rows[0]?.d)).toBe(false);
 
     // A suppression: lifted once, then frozen; its identity never changes.
     const address = `frozen-${randomUUID().slice(0, 6)}@mail.test`;
     await run('kernel.mail.suppression.add', { email: address, scope: 'all' }, users.admin);
-    const where = `org_id = '${orgId}' AND to_hash = crove_kernel.mail_address_hash('${address}')`;
-    await expect(admin((c) => c.query(`UPDATE crove_kernel.mail_suppression SET reason = 'complaint' WHERE ${where}`))).rejects.toThrow(/MAIL_SUPPRESSION_IMMUTABLE/);
-    await expect(admin((c) => c.query(`UPDATE crove_kernel.mail_suppression SET scope = 'marketing' WHERE ${where}`))).rejects.toThrow(/MAIL_SUPPRESSION_IMMUTABLE/);
+    const where = `org_id = '${orgId}' AND to_hash = ludy_kernel.mail_address_hash('${address}')`;
+    await expect(admin((c) => c.query(`UPDATE ludy_kernel.mail_suppression SET reason = 'complaint' WHERE ${where}`))).rejects.toThrow(/MAIL_SUPPRESSION_IMMUTABLE/);
+    await expect(admin((c) => c.query(`UPDATE ludy_kernel.mail_suppression SET scope = 'marketing' WHERE ${where}`))).rejects.toThrow(/MAIL_SUPPRESSION_IMMUTABLE/);
     await run('kernel.mail.suppression.lift', { email: address, scope: 'all', reason: 'Đã sửa' }, users.admin);
-    await expect(admin((c) => c.query(`UPDATE crove_kernel.mail_suppression SET lift_reason = 'Khác' WHERE ${where}`))).rejects.toThrow(/MAIL_SUPPRESSION_LIFTED/);
+    await expect(admin((c) => c.query(`UPDATE ludy_kernel.mail_suppression SET lift_reason = 'Khác' WHERE ${where}`))).rejects.toThrow(/MAIL_SUPPRESSION_LIFTED/);
     await expect(
       admin((c) =>
-        c.query(`INSERT INTO crove_kernel.mail_suppression (org_id, to_hash, scope, reason, lifted_at, lifted_by, lift_reason) VALUES ($1, $2, 'all', 'manual', now(), $3, 'x')`, [
+        c.query(`INSERT INTO ludy_kernel.mail_suppression (org_id, to_hash, scope, reason, lifted_at, lifted_by, lift_reason) VALUES ($1, $2, 'all', 'manual', now(), $3, 'x')`, [
           orgId,
           '2'.repeat(64),
           users.admin.userId,

@@ -11,8 +11,8 @@ import pg from 'pg';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import {
   amountCompare,
   createOrg,
@@ -26,15 +26,17 @@ import {
   kernelQueries,
   memberIs,
   sortTerms,
+  taskFields,
+  taskSortColumns,
   textContains,
   upsertIdentity,
   valueIs,
   withinLastDays,
   type FieldCondition,
   type FilterContext,
-} from '@crove/kernel';
-import { SAVED_VIEW_LIMIT, SAVED_VIEW_SCOPES, type FilterAst, type SavedView } from '@crove/kernel-contract';
-import { Runtime, defineQuery } from '@crove/kernel-runtime';
+} from '@ludy/kernel';
+import { SAVED_VIEW_LIMIT, SAVED_VIEW_SCOPES, type FilterAst, type SavedView } from '@ludy/kernel-contract';
+import { Runtime, defineQuery } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
@@ -47,7 +49,7 @@ const rawViews = defineQuery({
   name: 'test.saved_view.raw',
   input: z.object({}),
   access: ['owner', 'admin', 'member', 'viewer'],
-  handler: async (ctx) => (await ctx.trx.selectFrom('crove_kernel.saved_view').select(['id', 'name']).orderBy('name').execute()).map((r) => r.name),
+  handler: async (ctx) => (await ctx.trx.selectFrom('ludy_kernel.saved_view').select(['id', 'name']).orderBy('name').execute()).map((r) => r.name),
 });
 
 // The contacts of the caller's org whose view applies, through the `crm.party` conditions below, under the member's context:
@@ -70,7 +72,7 @@ const viewedParties = defineQuery({
   handler: async (ctx, input) => {
     const me = ctx.actor.type === 'user' ? ctx.actor.userId : null;
     const where = filterCondition('crm.party', input.filters as FilterAst, partyFields(), { me, today: TODAY, now: NOW });
-    const rows = await sql<{ name: string }>`SELECT p.name FROM crove_kernel.party p WHERE ${where} ORDER BY p.name`.execute(ctx.trx);
+    const rows = await sql<{ name: string }>`SELECT p.name FROM ludy_kernel.party p WHERE ${where} ORDER BY p.name`.execute(ctx.trx);
     return rows.rows.map((r) => r.name);
   },
 });
@@ -95,13 +97,13 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
       await client.end();
     }
   }
-  // A statement in a member's context as the API's login (crove_app), always rolled back: the policy, not a command.
+  // A statement in a member's context as the API's login (ludy_app), always rolled back: the policy, not a command.
   async function asApp<T>(orgId: string, user: string, fn: (c: pg.Client) => Promise<T>): Promise<T> {
     const client = new pg.Client({ connectionString: appUrl });
     await client.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(user, orgId)]);
+      await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(user, orgId)]);
       return await fn(client);
     } finally {
       await client.query('ROLLBACK').catch(() => {});
@@ -117,7 +119,7 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const o = { orgId, owner, admin: await person('admin'), lan: await person('lan'), minh: await person('minh'), viewer: await person('viewer') };
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [
         orgId,
         o.admin,
         o.lan,
@@ -143,9 +145,9 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     appUrl = app.toString();
     pool = createPool({ connectionString: app.toString(), max: 4 });
@@ -215,25 +217,25 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
     await expect(exec(o, o.owner, 'kernel.saved_view.set_shared', { viewId: mine.viewId, shared: true })).rejects.toMatchObject({ code: 'SAVED_VIEW_NOT_FOUND' });
     await expect(exec(o, o.owner, 'kernel.saved_view.save', { viewId: mine.viewId, filters: none })).rejects.toMatchObject({ code: 'SAVED_VIEW_NOT_FOUND' });
     await expect(exec(o, o.owner, 'kernel.saved_view.delete', { viewId: mine.viewId })).rejects.toMatchObject({ code: 'SAVED_VIEW_NOT_FOUND' });
-    expect(await asApp(o.orgId, o.owner, async (c) => (await c.query("UPDATE crove_kernel.saved_view SET name = 'x' WHERE id = $1", [mine.viewId])).rowCount)).toBe(0);
-    expect(await asApp(o.orgId, o.owner, async (c) => (await c.query('DELETE FROM crove_kernel.saved_view WHERE id = $1', [mine.viewId])).rowCount)).toBe(0);
+    expect(await asApp(o.orgId, o.owner, async (c) => (await c.query("UPDATE ludy_kernel.saved_view SET name = 'x' WHERE id = $1", [mine.viewId])).rowCount)).toBe(0);
+    expect(await asApp(o.orgId, o.owner, async (c) => (await c.query('DELETE FROM ludy_kernel.saved_view WHERE id = $1', [mine.viewId])).rowCount)).toBe(0);
     // A shared view: another member may not change or delete it, in the command or in the table.
     await expect(exec(o, o.minh, 'kernel.saved_view.rename', { viewId: team.viewId, name: 'Của Minh' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(exec(o, o.minh, 'kernel.saved_view.delete', { viewId: team.viewId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    expect(await asApp(o.orgId, o.minh, async (c) => (await c.query("UPDATE crove_kernel.saved_view SET name = 'x' WHERE id = $1", [team.viewId])).rowCount)).toBe(0);
-    expect(await asApp(o.orgId, o.minh, async (c) => (await c.query('DELETE FROM crove_kernel.saved_view WHERE id = $1', [team.viewId])).rowCount)).toBe(0);
+    expect(await asApp(o.orgId, o.minh, async (c) => (await c.query("UPDATE ludy_kernel.saved_view SET name = 'x' WHERE id = $1", [team.viewId])).rowCount)).toBe(0);
+    expect(await asApp(o.orgId, o.minh, async (c) => (await c.query('DELETE FROM ludy_kernel.saved_view WHERE id = $1', [team.viewId])).rowCount)).toBe(0);
     // Nor write a view in someone else's name.
     await expect(
-      asApp(o.orgId, o.minh, (c) => c.query("INSERT INTO crove_kernel.saved_view (org_id, user_id, scope, name, filters) VALUES ($1, $2, 'crm.deal', 'Giả', '{}')", [o.orgId, o.lan])),
+      asApp(o.orgId, o.minh, (c) => c.query("INSERT INTO ludy_kernel.saved_view (org_id, user_id, scope, name, filters) VALUES ($1, $2, 'crm.deal', 'Giả', '{}')", [o.orgId, o.lan])),
     ).rejects.toThrow(/row-level security/);
     // The scope and the owner of a view never change in place, even for its owner.
-    await expect(asApp(o.orgId, o.lan, (c) => c.query("UPDATE crove_kernel.saved_view SET scope = 'crm.party' WHERE id = $1", [mine.viewId]))).rejects.toThrow(/permission denied/);
-    await expect(asApp(o.orgId, o.lan, (c) => c.query('UPDATE crove_kernel.saved_view SET user_id = $2 WHERE id = $1', [mine.viewId, o.minh]))).rejects.toThrow(/permission denied/);
+    await expect(asApp(o.orgId, o.lan, (c) => c.query("UPDATE ludy_kernel.saved_view SET scope = 'crm.party' WHERE id = $1", [mine.viewId]))).rejects.toThrow(/permission denied/);
+    await expect(asApp(o.orgId, o.lan, (c) => c.query('UPDATE ludy_kernel.saved_view SET user_id = $2 WHERE id = $1', [mine.viewId, o.minh]))).rejects.toThrow(/permission denied/);
     // The admin renames it and replaces its filter, and keeps it shared, but may not make it private in either place.
     await exec(o, o.admin, 'kernel.saved_view.rename', { viewId: team.viewId, name: 'Đang mở (tuần)' });
     await exec(o, o.admin, 'kernel.saved_view.save', { viewId: team.viewId, filters: { v: 1, all: [{ field: 'amount', op: 'gte', value: '1000000' }] }, sort: { field: 'created', dir: 'asc' } });
     await expect(exec(o, o.admin, 'kernel.saved_view.set_shared', { viewId: team.viewId, shared: false })).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    await expect(asApp(o.orgId, o.admin, (c) => c.query('UPDATE crove_kernel.saved_view SET shared = false WHERE id = $1', [team.viewId]))).rejects.toThrow(/row-level security/);
+    await expect(asApp(o.orgId, o.admin, (c) => c.query('UPDATE ludy_kernel.saved_view SET shared = false WHERE id = $1', [team.viewId]))).rejects.toThrow(/row-level security/);
     expect((await list(o, o.lan)).find((v) => v.id === team.viewId)).toMatchObject({
       name: 'Đang mở (tuần)',
       shared: true,
@@ -262,16 +264,16 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
     const priv = await save(o, o.lan, { name: 'Riêng của Lan' });
     const pub = await save(o, o.lan, { name: 'Chung của Lan', shared: true });
     const ids = async (user: string) =>
-      asApp(o.orgId, user, async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.saved_view WHERE org_id = $1 ORDER BY name', [o.orgId])).rows.map((r) => r.id));
+      asApp(o.orgId, user, async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.saved_view WHERE org_id = $1 ORDER BY name', [o.orgId])).rows.map((r) => r.id));
     // Minh, a member of the same org, reads the shared view and not the private one: no SELECT, by id or in a list.
     expect(await ids(o.minh)).toEqual([pub.viewId]);
-    expect(await asApp(o.orgId, o.minh, async (c) => (await c.query('SELECT 1 FROM crove_kernel.saved_view WHERE id = $1', [priv.viewId])).rowCount)).toBe(0);
-    expect(await asApp(o.orgId, o.minh, async (c) => (await c.query('SELECT 1 FROM crove_kernel.saved_view WHERE id = $1', [pub.viewId])).rowCount)).toBe(1);
+    expect(await asApp(o.orgId, o.minh, async (c) => (await c.query('SELECT 1 FROM ludy_kernel.saved_view WHERE id = $1', [priv.viewId])).rowCount)).toBe(0);
+    expect(await asApp(o.orgId, o.minh, async (c) => (await c.query('SELECT 1 FROM ludy_kernel.saved_view WHERE id = $1', [pub.viewId])).rowCount)).toBe(1);
     // He changes and deletes neither: the private one is invisible to him, the shared one is Lan's.
     for (const id of [priv.viewId, pub.viewId]) {
-      expect(await asApp(o.orgId, o.minh, async (c) => (await c.query("UPDATE crove_kernel.saved_view SET name = 'Của Minh' WHERE id = $1", [id])).rowCount)).toBe(0);
-      expect(await asApp(o.orgId, o.minh, async (c) => (await c.query('UPDATE crove_kernel.saved_view SET shared = true WHERE id = $1', [id])).rowCount)).toBe(0);
-      expect(await asApp(o.orgId, o.minh, async (c) => (await c.query('DELETE FROM crove_kernel.saved_view WHERE id = $1', [id])).rowCount)).toBe(0);
+      expect(await asApp(o.orgId, o.minh, async (c) => (await c.query("UPDATE ludy_kernel.saved_view SET name = 'Của Minh' WHERE id = $1", [id])).rowCount)).toBe(0);
+      expect(await asApp(o.orgId, o.minh, async (c) => (await c.query('UPDATE ludy_kernel.saved_view SET shared = true WHERE id = $1', [id])).rowCount)).toBe(0);
+      expect(await asApp(o.orgId, o.minh, async (c) => (await c.query('DELETE FROM ludy_kernel.saved_view WHERE id = $1', [id])).rowCount)).toBe(0);
     }
     // Nothing changed for Lan.
     expect(await ids(o.lan)).toEqual([pub.viewId, priv.viewId]);
@@ -287,7 +289,7 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
     const agent = { type: 'agent' as const, agentId: randomUUID(), runId: randomUUID() };
     await expect(rt.execute('kernel.saved_view.delete', { viewId: view.viewId }, { actor: agent, orgId: o.orgId })).rejects.toBeTruthy();
     await expect(rt.execute('kernel.saved_view.save', { scope: 'crm.deal', name: 'Của máy', filters: none, shared: false }, { actor: agent, orgId: o.orgId })).rejects.toBeTruthy();
-    expect(await admin((c) => c.query('SELECT count(*)::int AS n FROM crove_kernel.saved_view WHERE org_id = $1', [o.orgId])).then((r) => r.rows[0]?.n)).toBe(1);
+    expect(await admin((c) => c.query('SELECT count(*)::int AS n FROM ludy_kernel.saved_view WHERE org_id = $1', [o.orgId])).then((r) => r.rows[0]?.n)).toBe(1);
   });
 
   it('keeps one name per member and scope, at most 30 views per member and scope under a lock, and drops a member’s views with them', async () => {
@@ -306,7 +308,7 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
     expect(both.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
     expect(both.find((r) => r.status === 'rejected')).toMatchObject({ reason: { code: 'SAVED_VIEW_LIMIT' } });
     const count = async (user: string, scope = 'crm.deal') =>
-      (await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.saved_view WHERE org_id = $1 AND user_id = $2 AND scope = $3', [o.orgId, user, scope]))).rows[0]?.n;
+      (await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.saved_view WHERE org_id = $1 AND user_id = $2 AND scope = $3', [o.orgId, user, scope]))).rows[0]?.n;
     expect(await count(o.lan)).toBe(String(SAVED_VIEW_LIMIT));
     // The 31st view of the scope is refused; the limit counts the member's own views of that scope only: Minh's shared
     // view and Lan's contact view did not take one of Lan's places, and a contact view still saves.
@@ -333,19 +335,19 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
     expect(race.find((r) => r.status === 'rejected')).toMatchObject({ reason: { code: 'SAVED_VIEW_NAME_TAKEN' } });
     // The table's own checks hold without the command.
     await expect(
-      admin((c) => c.query("INSERT INTO crove_kernel.saved_view (org_id, user_id, scope, name, filters) VALUES ($1, $2, 'crm.deal', 'Mảng', '[]')", [o.orgId, o.minh])),
+      admin((c) => c.query("INSERT INTO ludy_kernel.saved_view (org_id, user_id, scope, name, filters) VALUES ($1, $2, 'crm.deal', 'Mảng', '[]')", [o.orgId, o.minh])),
     ).rejects.toThrow(/check constraint/);
     await expect(
-      admin((c) => c.query("INSERT INTO crove_kernel.saved_view (org_id, user_id, scope, name, filters) VALUES ($1, $2, 'crm.deal', 'To', $3)", [o.orgId, o.minh, JSON.stringify({ q: 'x'.repeat(5000) })])),
+      admin((c) => c.query("INSERT INTO ludy_kernel.saved_view (org_id, user_id, scope, name, filters) VALUES ($1, $2, 'crm.deal', 'To', $3)", [o.orgId, o.minh, JSON.stringify({ q: 'x'.repeat(5000) })])),
     ).rejects.toThrow(/check constraint/);
     await expect(
-      admin((c) => c.query("INSERT INTO crove_kernel.saved_view (org_id, user_id, scope, name, filters) VALUES ($1, $2, 'Crm Deal', 'Sai', '{}')", [o.orgId, o.minh])),
+      admin((c) => c.query("INSERT INTO ludy_kernel.saved_view (org_id, user_id, scope, name, filters) VALUES ($1, $2, 'Crm Deal', 'Sai', '{}')", [o.orgId, o.minh])),
     ).rejects.toThrow(/check constraint/);
     await expect(
-      admin((c) => c.query("INSERT INTO crove_kernel.saved_view (org_id, user_id, scope, name, filters, sort) VALUES ($1, $2, 'crm.deal', 'Sắp', '{}', '[]')", [o.orgId, o.minh])),
+      admin((c) => c.query("INSERT INTO ludy_kernel.saved_view (org_id, user_id, scope, name, filters, sort) VALUES ($1, $2, 'crm.deal', 'Sắp', '{}', '[]')", [o.orgId, o.minh])),
     ).rejects.toThrow(/check constraint/);
     // A member who leaves takes their views along, shared ones too.
-    await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.minh]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.minh]));
     expect(await count(o.minh)).toBe('0');
     expect((await list(o, o.lan)).every((v) => v.ownerId === o.lan)).toBe(true);
   });
@@ -376,7 +378,7 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
     await expect(exec(o, o.lan, 'kernel.saved_view.save', { viewId: view.viewId, filters: { v: 1, all: [{ field: 'stage', op: 'in', value: [randomUUID()] }] } })).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
     await expect(list(o, o.lan, 'crm.nothing')).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
     // Nothing was stored but the one valid view.
-    expect(await admin((c) => c.query('SELECT count(*)::int AS n FROM crove_kernel.saved_view WHERE org_id = $1', [o.orgId])).then((r) => r.rows[0]?.n)).toBe(1);
+    expect(await admin((c) => c.query('SELECT count(*)::int AS n FROM ludy_kernel.saved_view WHERE org_id = $1', [o.orgId])).then((r) => r.rows[0]?.n)).toBe(1);
     // The widest filter the registry allows fits the stored size.
     const widest: FilterAst = {
       v: 1,
@@ -427,10 +429,27 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
       const r = await sql<{ name: string }>`SELECT p.name FROM sv_party p WHERE ${where} ORDER BY p.name COLLATE "C"`.execute(adminDb);
       return r.rows.map((x) => x.name);
     };
+    let taskOrg!: Org;
+    let POS1 = '';
+    let POS2 = '';
+    const tasks = async (filters: FilterAst, who = ctx, isOwner = false) => {
+      const where = filterCondition('kernel.task', filters, taskFields({ isOwner }), who);
+      const r = await sql<{ title: string }>`SELECT t.title FROM sv_task t WHERE t.org_id = ${taskOrg.orgId}::uuid AND ${where} ORDER BY t.title COLLATE "C"`.execute(adminDb);
+      return r.rows.map((x) => x.title);
+    };
     const all = (...conditions: FilterAst['all']): FilterAst => ({ v: 1, all: conditions });
 
     beforeAll(async () => {
+      taskOrg = await org();
+      POS1 = randomUUID();
+      POS2 = randomUUID();
       await admin(async (c) => {
+        await c.query(
+          `INSERT INTO ludy_kernel.position (org_id, id, title, module, role_key, holder_user_id) VALUES
+            ($1, $2, 'Kế toán trưởng', 'finance', 'lead', $3),
+            ($1, $4, 'Chuyên viên', 'projects', 'member', $5)`,
+          [taskOrg.orgId, POS1, taskOrg.owner, POS2, taskOrg.lan],
+        );
         await c.query(`CREATE TABLE sv_deal (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), title text NOT NULL, stage_id uuid, status text, owner_id uuid, party_id uuid,
           amount numeric(20,2) NOT NULL, expected_close date, created_at timestamptz NOT NULL, closed_at timestamptz)`);
         await c.query(`INSERT INTO sv_deal (title, stage_id, status, owner_id, party_id, amount, expected_close, created_at, closed_at) VALUES
@@ -445,6 +464,14 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
           ('Công ty Nguyễn', 'organization', 'kinhdoanh@example.com', '0912345678', '0101234567', '2026-11-09T00:00:00Z', true),
           ('Trần Văn B', 'person', NULL, '0903 000 000', NULL, '2026-10-01T00:00:00Z', false),
           ('Lê Thị C', 'person', '', '   ', '', '2026-11-10T01:00:00Z', false)`);
+        await c.query(`CREATE TABLE sv_task (org_id uuid NOT NULL, id uuid PRIMARY KEY DEFAULT gen_random_uuid(), title text NOT NULL, description text,
+          status text NOT NULL, assignee_position_id uuid, due timestamptz, tainted boolean NOT NULL, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL)`);
+        await c.query(`INSERT INTO sv_task (org_id, title, description, status, assignee_position_id, due, tainted, created_at, updated_at) VALUES
+          ($1, 'Báo cáo thuế Q4', 'Nộp tờ khai 50%', 'todo', $2, '2026-11-05T10:00:00Z', false, '2026-11-08T05:00:00Z', '2026-11-09T00:00:00Z'),
+          ($1, 'Chốt công nợ Trần', NULL, 'in_progress', $3, '2026-11-12T10:00:00Z', false, '2026-10-01T00:00:00Z', '2026-10-15T00:00:00Z'),
+          ($1, 'Đề xuất AI Nguyễn', 'Tạo bởi Vy', 'todo', NULL, NULL, true, '2026-11-10T04:00:00Z', '2026-11-10T04:30:00Z'),
+          ($1, 'Hoàn tất hóa đơn', NULL, 'done', $2, '2026-11-01T10:00:00Z', false, '2026-09-01T00:00:00Z', '2026-11-01T00:00:00Z'),
+          ($1, 'Đã hủy đơn hàng', NULL, 'cancelled', $3, '2026-12-31T10:00:00Z', true, '2026-08-01T00:00:00Z', '2026-09-01T00:00:00Z')`, [taskOrg.orgId, POS1, POS2]);
       });
     });
 
@@ -531,6 +558,32 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
       expect(await parties(all({ field: 'created', op: 'within_last_days', value: 2 }))).toEqual(['Công ty Nguyễn', 'Lê Thị C']);
     });
 
+    it('matches tasks across every kernel.task operator', async () => {
+      expect(await tasks(all({ field: 'search', op: 'contains', value: '50%' }))).toEqual(['Báo cáo thuế Q4']);
+      expect(await tasks(all({ field: 'search', op: 'contains', value: 'nguyen' }))).toEqual(['Đề xuất AI Nguyễn']);
+      expect(await tasks(all({ field: 'status', op: 'is', value: 'in_progress' }))).toEqual(['Chốt công nợ Trần']);
+      expect(await tasks(all({ field: 'status', op: 'in', value: ['todo', 'cancelled'] }))).toEqual(['Báo cáo thuế Q4', 'Đã hủy đơn hàng', 'Đề xuất AI Nguyễn']);
+      expect(await tasks(all({ field: 'assignee', op: 'is', value: POS1 }))).toEqual(['Báo cáo thuế Q4', 'Hoàn tất hóa đơn']);
+      expect(await tasks(all({ field: 'assignee', op: 'is_me' }), { ...ctx, me: taskOrg.lan }, false)).toEqual(['Chốt công nợ Trần', 'Đã hủy đơn hàng']);
+      expect(await tasks(all({ field: 'assignee', op: 'is_me' }), { ...ctx, me: taskOrg.owner }, true)).toEqual(['Báo cáo thuế Q4', 'Hoàn tất hóa đơn', 'Đề xuất AI Nguyễn']);
+      expect(await tasks(all({ field: 'assignee', op: 'is_empty' }))).toEqual(['Đề xuất AI Nguyễn']);
+      expect(await tasks(all({ field: 'due', op: 'before', value: '2026-11-05' }))).toEqual(['Hoàn tất hóa đơn']);
+      expect(await tasks(all({ field: 'due', op: 'after', value: '2026-11-05' }))).toEqual(['Chốt công nợ Trần', 'Đã hủy đơn hàng']);
+      expect(await tasks(all({ field: 'due', op: 'overdue' }))).toEqual(['Báo cáo thuế Q4']);
+      expect(await tasks(all({ field: 'due', op: 'within_next_days', value: 2 }))).toEqual(['Chốt công nợ Trần']);
+      expect(await tasks(all({ field: 'due', op: 'is_empty' }))).toEqual(['Đề xuất AI Nguyễn']);
+      expect(await tasks(all({ field: 'tainted', op: 'is', value: true }))).toEqual(['Đã hủy đơn hàng', 'Đề xuất AI Nguyễn']);
+      expect(await tasks(all({ field: 'tainted', op: 'is', value: false }))).toEqual(['Báo cáo thuế Q4', 'Chốt công nợ Trần', 'Hoàn tất hóa đơn']);
+      expect(await tasks(all({ field: 'created', op: 'within_last_days', value: 1 }))).toEqual(['Đề xuất AI Nguyễn']);
+      const sortedTasks = async (sort: Parameters<typeof sortTerms>[1]) => {
+        const terms = sortTerms('kernel.task', sort, taskSortColumns(), sql`t.id`, { field: 'created', dir: 'desc' });
+        const r = await sql<{ title: string }>`SELECT t.title FROM sv_task t WHERE t.org_id = ${taskOrg.orgId}::uuid ORDER BY ${sql.join(terms, sql`, `)}`.execute(adminDb);
+        return r.rows.map((x) => x.title);
+      };
+      expect((await sortedTasks({ field: 'due', dir: 'asc' })).at(-1)).toBe('Đề xuất AI Nguyễn');
+      expect((await sortedTasks({ field: 'updated', dir: 'desc' }))[0]).toBe('Đề xuất AI Nguyễn');
+    });
+
     it('runs every operator of the registry in a case above', () => {
       // The cases the tests above run, as scope:field:op. A new operator in the registry fails here until it has a case.
       const covered = new Set([
@@ -541,6 +594,10 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
         'crm.party:has_open_deal:is', 'crm.party:created:within_last_days',
         // The company of a person (#2438) filters through the party's company link, which this fixture has no column for: contacts.db.test.ts runs both.
         'crm.party:company:is', 'crm.party:company:is_empty',
+        'kernel.task:search:contains', 'kernel.task:status:is', 'kernel.task:status:in', 'kernel.task:assignee:is',
+        'kernel.task:assignee:is_me', 'kernel.task:assignee:is_empty', 'kernel.task:due:before', 'kernel.task:due:after',
+        'kernel.task:due:overdue', 'kernel.task:due:within_next_days', 'kernel.task:due:is_empty', 'kernel.task:tainted:is',
+        'kernel.task:created:within_last_days',
       ]);
       const registry = Object.entries(SAVED_VIEW_SCOPES).flatMap(([scope, spec]) =>
         Object.entries(spec.fields).flatMap(([field, f]) => Object.keys(f.ops).map((op) => `${scope}:${field}:${op}`)),
@@ -585,7 +642,7 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
     const b = await org();
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $3, 'Nguyễn của A'), ($2, $4, 'Nguyễn của B'), ($1, $5, 'Trần của A')`,
+        `INSERT INTO ludy_kernel.party (org_id, id, name) VALUES ($1, $3, 'Nguyễn của A'), ($2, $4, 'Nguyễn của B'), ($1, $5, 'Trần của A')`,
         [a.orgId, b.orgId, randomUUID(), randomUUID(), randomUUID()],
       ),
     );
@@ -607,9 +664,9 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
   });
 
   it('is purged with the org: the purge function lists the table among the working rows it deletes before the members', async () => {
-    const { rows } = await admin((c) => c.query<{ src: string }>("SELECT prosrc AS src FROM pg_catalog.pg_proc WHERE oid = 'crove_kernel.org_purge(integer)'::regprocedure"));
+    const { rows } = await admin((c) => c.query<{ src: string }>("SELECT prosrc AS src FROM pg_catalog.pg_proc WHERE oid = 'ludy_kernel.org_purge(integer)'::regprocedure"));
     const src = rows[0]?.src ?? '';
-    expect(src).toContain("'crove_kernel.saved_view'");
-    expect(src.indexOf("'crove_kernel.saved_view'")).toBeLessThan(src.indexOf('DELETE FROM crove_kernel.tenant_member'));
+    expect(src).toContain("'ludy_kernel.saved_view'");
+    expect(src.indexOf("'ludy_kernel.saved_view'")).toBeLessThan(src.indexOf('DELETE FROM ludy_kernel.tenant_member'));
   });
 });

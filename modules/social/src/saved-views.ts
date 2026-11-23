@@ -8,9 +8,9 @@
 // naming a member who left lists nothing but says so (MEMBER_NOT_FOUND).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, zSocialSavedViewSave, zSocialViewFilters } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { zId, zSocialSavedViewSave, zSocialViewFilters } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { membersOutside } from './post-filter.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -55,7 +55,7 @@ function compact(filters: SocialViewFilters): SocialViewFilters {
 // cannot see (another's private one) is not found. Read before it is locked: a lock asks for the update policy, which
 // would hide a shared view from a member who may only read it, and they are told why instead.
 async function changeable(ctx: CommandContext, me: string, viewId: string, verb: 'sửa' | 'xoá') {
-  const of = () => ctx.trx.selectFrom('crove_social.saved_view').select(['id', 'user_id', 'shared']).where('org_id', '=', ctx.orgId).where('id', '=', viewId);
+  const of = () => ctx.trx.selectFrom('ludy_social.saved_view').select(['id', 'user_id', 'shared']).where('org_id', '=', ctx.orgId).where('id', '=', viewId);
   const seen = await of().executeTakeFirst();
   if (!seen) throw new DomainError('SAVED_VIEW_NOT_FOUND', 404, 'Không tìm thấy chế độ xem này');
   if (seen.user_id !== me && !(seen.shared && (ctx.role === 'owner' || ctx.role === 'admin'))) {
@@ -85,18 +85,18 @@ export const savedViewSave = defineCommand({
 
     if (input.viewId === undefined) {
       // One save at a time per member, so the count below holds until the commit.
-      await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_social.saved_view:${ctx.orgId}:${me}`}, 0))`.execute(ctx.trx);
+      await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`ludy_social.saved_view:${ctx.orgId}:${me}`}, 0))`.execute(ctx.trx);
       const count = await ctx.trx
-        .selectFrom('crove_social.saved_view')
+        .selectFrom('ludy_social.saved_view')
         .select((eb) => eb.fn.countAll<string>().as('n'))
         .where('org_id', '=', ctx.orgId)
         .where('user_id', '=', me)
         .executeTakeFirstOrThrow();
       if (Number(count.n) >= SAVED_VIEW_LIMIT) throw new DomainError('SAVED_VIEW_LIMIT', 409, `Mỗi người lưu tối đa ${SAVED_VIEW_LIMIT} chế độ xem`, { limit: String(SAVED_VIEW_LIMIT) });
-      const taken = await ctx.trx.selectFrom('crove_social.saved_view').select('id').where('org_id', '=', ctx.orgId).where('user_id', '=', me).where('name', '=', name).executeTakeFirst();
+      const taken = await ctx.trx.selectFrom('ludy_social.saved_view').select('id').where('org_id', '=', ctx.orgId).where('user_id', '=', me).where('name', '=', name).executeTakeFirst();
       if (taken) throw new DomainError('SAVED_VIEW_NAME_TAKEN', 409, 'Bạn đã có chế độ xem cùng tên', { name });
       const row = await ctx.trx
-        .insertInto('crove_social.saved_view')
+        .insertInto('ludy_social.saved_view')
         .values({ org_id: ctx.orgId, user_id: me, name, filters, shared: input.shared, created_at: ctx.now, updated_at: ctx.now })
         .returning('id')
         .executeTakeFirstOrThrow();
@@ -109,7 +109,7 @@ export const savedViewSave = defineCommand({
     if (view.user_id !== me && !input.shared) throw new DomainError('FORBIDDEN', 403, 'Chỉ người tạo mới chuyển được chế độ xem này về riêng tư');
     // One name per owner, the view's owner whoever renames it.
     const taken = await ctx.trx
-      .selectFrom('crove_social.saved_view')
+      .selectFrom('ludy_social.saved_view')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', view.user_id)
@@ -118,7 +118,7 @@ export const savedViewSave = defineCommand({
       .executeTakeFirst();
     if (taken) throw new DomainError('SAVED_VIEW_NAME_TAKEN', 409, 'Đã có chế độ xem cùng tên', { name });
     await ctx.trx
-      .updateTable('crove_social.saved_view')
+      .updateTable('ludy_social.saved_view')
       .set({ name, filters, shared: input.shared, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', view.id)
@@ -137,7 +137,7 @@ export const savedViewDelete = defineCommand({
   handler: async (ctx, input): Promise<{ viewId: string }> => {
     const me = requireUser(ctx);
     const view = await changeable(ctx, me, input.viewId, 'xoá');
-    await ctx.trx.deleteFrom('crove_social.saved_view').where('org_id', '=', ctx.orgId).where('id', '=', view.id).execute();
+    await ctx.trx.deleteFrom('ludy_social.saved_view').where('org_id', '=', ctx.orgId).where('id', '=', view.id).execute();
     ctx.audit({ view_id: view.id });
     return { viewId: view.id };
   },
@@ -152,7 +152,7 @@ export const savedViewList = defineQuery({
     if (ctx.actor.type !== 'user') return [];
     const me = ctx.actor.userId;
     const rows = await ctx.trx
-      .selectFrom('crove_social.saved_view')
+      .selectFrom('ludy_social.saved_view')
       .select(['id', 'user_id', 'name', 'filters', 'shared', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .where((eb) => eb.or([eb('user_id', '=', me), eb('shared', '=', true)]))

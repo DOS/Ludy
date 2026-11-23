@@ -6,11 +6,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -58,8 +58,8 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty Kho ${randomUUID().slice(0, 6)}`);
     const [member, viewer] = await Promise.all([identity('member'), identity('viewer')]);
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
-    const [entity] = await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]);
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
+    const [entity] = await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]);
     return { orgId, owner, member, viewer, entity: entity?.id ?? '' };
   }
   const execute = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.execute<T>(name, input, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
@@ -67,7 +67,7 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
   const makeItem = (o: Org, code: string, extra: Record<string, unknown> = {}) =>
     execute<{ id: string }>(o, 'finance.stock_item.save', { itemId: null, legalEntityId: null, code, name: `Hàng ${code}`, unit: 'cái', stockAccount: '156', trade: 'goods', ...extra }).then((r) => r.id);
   const party = (o: Org, name: string, email: string | null = null) =>
-    rows<{ id: string }>('INSERT INTO crove_kernel.party (org_id, name, email) VALUES ($1, $2, $3) RETURNING id', [o.orgId, name, email]).then((r) => r[0]?.id as string);
+    rows<{ id: string }>('INSERT INTO ludy_kernel.party (org_id, name, email) VALUES ($1, $2, $3) RETURNING id', [o.orgId, name, email]).then((r) => r[0]?.id as string);
   let serial = 0;
   // A posted document with one goods line and, unless `moved` is false, its move (signed: a sale is negative), dated `daysAgo` days before today.
   async function line(o: Org, item: string | null, partyId: string, direction: 'purchase' | 'sale', daysAgo: number, quantity: string, options: { moved?: boolean; description?: string; unit?: string } = {}) {
@@ -77,21 +77,21 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
       await c.query('SET session_replication_role = replica');
       const doc = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_finance.purchase_document (org_id, legal_entity_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction)
+          `INSERT INTO ludy_finance.purchase_document (org_id, legal_entity_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction)
            VALUES ($1, $2, $3, 'AA', $4, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - $5::int, 100, 0, 100, $6) RETURNING id`,
           [o.orgId, o.entity, partyId, String(serial).padStart(6, '0'), daysAgo, direction],
         )
       ).rows[0];
       const documentId = doc?.id as string;
       await c.query(
-        `INSERT INTO crove_finance.purchase_line (org_id, document_id, line_no, description, unit, quantity, amount, ${direction === 'sale' ? 'credit_account' : 'debit_account'})
+        `INSERT INTO ludy_finance.purchase_line (org_id, document_id, line_no, description, unit, quantity, amount, ${direction === 'sale' ? 'credit_account' : 'debit_account'})
          VALUES ($1, $2, 1, $3, $4, $5, 100, $6)`,
         [o.orgId, documentId, options.description ?? 'Hàng hóa', options.unit ?? 'cái', quantity.replace('-', ''), direction === 'sale' ? '5111' : '156'],
       );
       if (options.moved === false || item === null) return { documentId, moveId: null };
       const move = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt)
+          `INSERT INTO ludy_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt)
            VALUES ($1, $2, $3, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - $4::int, $5, 'document_line', $6, 1, 1) RETURNING id`,
           [o.orgId, o.entity, item, daysAgo, quantity, documentId],
         )
@@ -104,7 +104,7 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
     admin(async (c) => {
       await c.query('SET session_replication_role = replica');
       await c.query(
-        `INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, order_line_id, order_move, order_attempt)
+        `INSERT INTO ludy_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, order_line_id, order_move, order_attempt)
          VALUES ($1, $2, $3, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - $4::int, $5, 'order_line', $6, $7, 1)`,
         [o.orgId, o.entity, item, daysAgo, quantity, lineId, move],
       );
@@ -120,9 +120,9 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     db = createDb(pool);
@@ -149,15 +149,15 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
     await line(o, a as string, supplier, 'purchase', 60, '66');
     sales.first = (await line(o, a as string, customer, 'sale', 20, '-30')).moveId;
     await line(o, a as string, customer, 'sale', 10, '-26');
-    await rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 58, 58, 'manual')", [o.orgId, e]);
+    await rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 58, 58, 'manual')", [o.orgId, e]);
     await line(o, e as string, customer, 'sale', 15, '-56');
     await line(o, b as string, supplier, 'purchase', 60, '200');
     await line(o, b as string, customer, 'sale', 10, '-56');
-    await rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 5, 5, 'manual')", [o.orgId, c]);
-    await rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 30, 80, 'manual')", [o.orgId, d]);
+    await rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 5, 5, 'manual')", [o.orgId, c]);
+    await rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 30, 80, 'manual')", [o.orgId, d]);
     await line(o, d as string, customer, 'sale', 10, '-56');
     await execute(o, 'finance.stock_item.set_active', { itemId: d, active: false });
-    await rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 100, 90, 'manual')", [o.orgId, f]);
+    await rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 100, 90, 'manual')", [o.orgId, f]);
     await line(o, f as string, customer, 'sale', 80, '-60');
     return { o, supplier, customer, items: { a: a as string, e: e as string, b: b as string, c: c as string, d: d as string, f: f as string }, firstSale: sales.first as string };
   }
@@ -189,7 +189,7 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
     const o = await org();
     const customer = await party(o, 'Khách lẻ');
     const item = await makeItem(o, 'M1');
-    await rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 60, 100, 'manual')", [o.orgId, item]);
+    await rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 60, 100, 'manual')", [o.orgId, item]);
     // The window is today and the 55 days before it: a sale 55 days ago counts and one 56 days ago does not.
     await line(o, item, customer, 'sale', 55, '-30');
     await line(o, item, customer, 'sale', 56, '-50');
@@ -256,7 +256,7 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
       const customer = await party(o, 'Người bán');
       const item = await makeItem(o, 'ZZ99', { name: 'Áo thun cổ tròn đen L' });
       await rows(
-        `INSERT INTO crove_finance.stock_item (org_id, legal_entity_id, code, name, unit, stock_account, trade)
+        `INSERT INTO ludy_finance.stock_item (org_id, legal_entity_id, code, name, unit, stock_account, trade)
          SELECT $1, $2, 'K' || lpad(g::text, 3, '0'), 'Mặt hàng ' || g, 'cái', '156', 'goods' FROM generate_series(1, 70) AS g`,
         [o.orgId, o.entity],
       );
@@ -282,7 +282,7 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
       const supplier = await party(o, 'Nhà cung cấp Phương Nam', 'ncc@phuongnam.example');
       const a = await makeItem(o, 'A1', { name: 'Áo thun trắng M' });
       const b = await makeItem(o, 'B1', { name: 'Nước suối 500ml', unit: 'thùng' });
-      const [entityRow] = await rows<{ name: string }>('SELECT name FROM crove_kernel.legal_entity WHERE org_id = $1 AND id = $2', [o.orgId, o.entity]);
+      const [entityRow] = await rows<{ name: string }>('SELECT name FROM ludy_kernel.legal_entity WHERE org_id = $1 AND id = $2', [o.orgId, o.entity]);
       const source = await query<{ orgName: string; supplier: unknown; items: unknown[]; template: string }>(o, 'finance.stock.reorder_source', {
         legalEntityId: o.entity,
         supplierPartyId: supplier,

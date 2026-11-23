@@ -3,7 +3,7 @@
 // date, and per reviewer the decisions they made with the median time from submission to decision; for client review
 // links, the median time to the client's answer. A read only query over what the module already records: the posts,
 // the decision rows (post_approval), the audit rows of social.post.submit, the channels' publish times, the
-// assignments (#640) and the clients' answers (review_feedback). Names come only from crove_kernel.member_profiles,
+// assignments (#640) and the clients' answers (review_feedback). Names come only from ludy_kernel.member_profiles,
 // which answers for members of the org; anyone else who appears (a member who left) is shown as left, without a name.
 //
 // The submission a decision answers is the latest successful social.post.submit of its post at or before it; a post
@@ -16,8 +16,8 @@
 // is not in it (the Metrics tab's card says so). The assignments leave out archived posts that never went out (#1331).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { SOCIAL_REVIEW_LINK_KINDS, type MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { SOCIAL_REVIEW_LINK_KINDS, type MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 import { TEAM_REPORT_DST_SLACK_MS, TEAM_REPORT_MAX_DAYS, medianOrNull, type TeamMemberRow, type TeamReport } from './domain/team-report.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
@@ -46,26 +46,26 @@ export const teamReport = defineQuery({
     const linksFrom = new Date(from.getTime() - REVIEW_LINK_MAX_DAYS * DAY_MS);
     const [created, submitted, approved, published, assigned, decisions, answers, members] = await Promise.all([
       sql<{ user_id: string; n: string }>`
-        SELECT p.author_user_id AS user_id, pg_catalog.count(*) AS n FROM crove_social.post p
+        SELECT p.author_user_id AS user_id, pg_catalog.count(*) AS n FROM ludy_social.post p
         WHERE p.org_id = ${org}::uuid AND p.author_user_id IS NOT NULL AND p.created_at >= ${from} AND p.created_at < ${to}
         GROUP BY p.author_user_id`.execute(ctx.trx),
       // On the org's audit rows of the period (audit_event_time_idx).
       sql<{ user_id: string; n: string }>`
-        SELECT e.actor_id AS user_id, pg_catalog.count(DISTINCT e.target_id) AS n FROM crove_kernel.audit_event e
+        SELECT e.actor_id AS user_id, pg_catalog.count(DISTINCT e.target_id) AS n FROM ludy_kernel.audit_event e
         WHERE e.org_id = ${org}::uuid AND e.occurred_at >= ${from} AND e.occurred_at < ${to}
           AND e.command = 'social.post.submit' AND e.outcome = 'ok' AND e.actor_type = 'user' AND e.actor_id IS NOT NULL
           AND e.target_type = 'social.post'
         GROUP BY e.actor_id`.execute(ctx.trx),
       sql<{ user_id: string; n: string }>`
-        SELECT p.author_user_id AS user_id, pg_catalog.count(DISTINCT a.post_id) AS n FROM crove_social.post_approval a
-        JOIN crove_social.post p ON p.org_id = a.org_id AND p.id = a.post_id
+        SELECT p.author_user_id AS user_id, pg_catalog.count(DISTINCT a.post_id) AS n FROM ludy_social.post_approval a
+        JOIN ludy_social.post p ON p.org_id = a.org_id AND p.id = a.post_id
         WHERE a.org_id = ${org}::uuid AND a.decision = 'approved' AND a.created_at >= ${from} AND a.created_at < ${to}
           AND p.author_user_id IS NOT NULL
         GROUP BY p.author_user_id`.execute(ctx.trx),
       // A channel taken down later (#860) still went out.
       sql<{ user_id: string; n: string }>`
-        SELECT p.author_user_id AS user_id, pg_catalog.count(DISTINCT v.post_id) AS n FROM crove_social.post_variant v
-        JOIN crove_social.post p ON p.org_id = v.org_id AND p.id = v.post_id
+        SELECT p.author_user_id AS user_id, pg_catalog.count(DISTINCT v.post_id) AS n FROM ludy_social.post_variant v
+        JOIN ludy_social.post p ON p.org_id = v.org_id AND p.id = v.post_id
         WHERE v.org_id = ${org}::uuid AND v.status IN ('published', 'removed') AND v.published_at >= ${from} AND v.published_at < ${to}
           AND p.author_user_id IS NOT NULL
         GROUP BY p.author_user_id`.execute(ctx.trx),
@@ -73,15 +73,15 @@ export const teamReport = defineQuery({
       sql<{ user_id: string; assigned: string; overdue: string }>`
         SELECT p.assignee_user_id AS user_id, pg_catalog.count(*) AS assigned,
                pg_catalog.count(*) FILTER (WHERE p.due_at < pg_catalog.now() AND NOT EXISTS (
-                 SELECT 1 FROM crove_social.post_variant v
+                 SELECT 1 FROM ludy_social.post_variant v
                  WHERE v.org_id = p.org_id AND v.post_id = p.id AND v.status IN ('published', 'removed') AND v.published_at <= p.due_at
                )) AS overdue
-        FROM crove_social.post p
+        FROM ludy_social.post p
         WHERE p.org_id = ${org}::uuid AND p.assignee_user_id IS NOT NULL AND p.due_at >= ${from} AND p.due_at < ${to} AND p.status <> 'cancelled'
           -- An archived post (#1299) that never went out is set aside, as a cancelled one; one that went out stays, as
           -- the reports describe what went out (#1331).
           AND (p.archived_at IS NULL OR EXISTS (
-            SELECT 1 FROM crove_social.post_variant v WHERE v.org_id = p.org_id AND v.post_id = p.id AND v.status IN ('published', 'removed')
+            SELECT 1 FROM ludy_social.post_variant v WHERE v.org_id = p.org_id AND v.post_id = p.id AND v.status IN ('published', 'removed')
           ))
         GROUP BY p.assignee_user_id`.execute(ctx.trx),
       // One decision per reviewer, post, verdict and moment: a decision on several channels writes a row per channel in
@@ -89,13 +89,13 @@ export const teamReport = defineQuery({
       // never before the lookback (#1064).
       sql<{ user_id: string; seconds: number }>`
         WITH d AS (
-          SELECT DISTINCT a.decided_by, a.post_id, a.decision, a.created_at FROM crove_social.post_approval a
+          SELECT DISTINCT a.decided_by, a.post_id, a.decision, a.created_at FROM ludy_social.post_approval a
           WHERE a.org_id = ${org}::uuid AND a.created_at >= ${from} AND a.created_at < ${to}
         ), p AS (
-          SELECT p.id, p.created_at FROM crove_social.post p
+          SELECT p.id, p.created_at FROM ludy_social.post p
           WHERE p.org_id = ${org}::uuid AND p.id IN (SELECT d.post_id FROM d)
         ), s AS MATERIALIZED (
-          SELECT e.target_id AS post_id, e.occurred_at FROM crove_kernel.audit_event e
+          SELECT e.target_id AS post_id, e.occurred_at FROM ludy_kernel.audit_event e
           WHERE e.org_id = ${org}::uuid AND e.occurred_at >= GREATEST((SELECT pg_catalog.min(p.created_at) FROM p), ${lookback}::timestamptz) AND e.occurred_at < ${to}
             AND e.command = 'social.post.submit' AND e.outcome = 'ok' AND e.target_type = 'social.post'
             AND e.target_id IN (SELECT p.id FROM p)
@@ -109,17 +109,17 @@ export const teamReport = defineQuery({
       // a link has), their answers by review_feedback_link_idx.
       sql<{ verdict: string; seconds: number }>`
         WITH l AS (
-          SELECT l.id, l.created_at FROM crove_social.review_link l
+          SELECT l.id, l.created_at FROM ludy_social.review_link l
           WHERE l.org_id = ${org}::uuid AND l.kind = ANY (${[...SOCIAL_REVIEW_LINK_KINDS]}::text[]) AND l.created_at >= ${linksFrom} AND l.created_at < ${to}
         ), f AS (
-          SELECT DISTINCT ON (f.link_id, f.post_id) f.link_id, f.verdict, f.created_at FROM crove_social.review_feedback f
+          SELECT DISTINCT ON (f.link_id, f.post_id) f.link_id, f.verdict, f.created_at FROM ludy_social.review_feedback f
           WHERE f.org_id = ${org}::uuid AND f.link_id IN (SELECT l.id FROM l) AND f.verdict IN ('approved', 'changes_requested') AND f.created_at < ${to}
           ORDER BY f.link_id, f.post_id, f.created_at, f.id
         )
         SELECT f.verdict, pg_catalog.date_part('epoch', f.created_at - l.created_at)::float8 AS seconds
         FROM f JOIN l ON l.id = f.link_id
         WHERE f.created_at >= ${from}`.execute(ctx.trx),
-      ctx.trx.selectFrom('crove_kernel.tenant_member').select(['user_id', 'role']).where('org_id', '=', org).execute(),
+      ctx.trx.selectFrom('ludy_kernel.tenant_member').select(['user_id', 'role']).where('org_id', '=', org).execute(),
     ]);
 
     const rows = new Map<string, TeamMemberRow>();
@@ -145,7 +145,7 @@ export const teamReport = defineQuery({
     const ids = [...rows.keys()];
     if (ids.length > 0) {
       const { rows: profiles } = await sql<{ user_id: string; email: string; display_name: string | null }>`
-        SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
+        SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
       for (const p of profiles) Object.assign(row(p.user_id), { name: p.display_name ?? p.email, left: false });
     }
     const list = [...rows.values()].sort((a, b) => Number(a.left) - Number(b.left) || (a.name ?? '').localeCompare(b.name ?? '', 'vi') || (a.userId < b.userId ? -1 : a.userId > b.userId ? 1 : 0));

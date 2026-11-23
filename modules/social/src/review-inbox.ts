@@ -3,8 +3,8 @@
 // not approved this content yet, and is not its author on a channel that wants another person's approval (#740).
 // Members and viewers decide nothing, so they get an empty list.
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { approvalsInRound } from './domain/approval.ts';
 import { decisionsOf, fourEyesOn } from './policy.ts';
 
@@ -39,9 +39,9 @@ export async function reviewWaiting(ctx: Pick<QueryContext, 'trx' | 'orgId' | 'a
   if (ctx.actor.type !== 'user' || (ctx.role !== 'owner' && ctx.role !== 'admin')) return { items: [], total: 0 };
   const userId = ctx.actor.userId;
   const rows = await ctx.trx
-    .selectFrom('crove_social.post_variant as v')
-    .innerJoin('crove_social.post as p', (j) => j.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.post_id'))
-    .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'v.org_id').onRef('c.id', '=', 'v.channel_connection_id'))
+    .selectFrom('ludy_social.post_variant as v')
+    .innerJoin('ludy_social.post as p', (j) => j.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.post_id'))
+    .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'v.org_id').onRef('c.id', '=', 'v.channel_connection_id'))
     .select(['v.id as variant_id', 'v.post_id', 'v.provider', 'v.revision', 'v.content_hash', 'v.channel_connection_id', 'v.scheduled_at', 'v.updated_at', 'v.body as variant_body', 'c.display_name', 'p.body', 'p.title', 'p.scheduled_at as post_scheduled_at', 'p.author_user_id'])
     .where('v.org_id', '=', ctx.orgId)
     .where('v.status', '=', 'in_review')

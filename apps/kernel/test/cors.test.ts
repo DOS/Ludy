@@ -2,9 +2,9 @@
 // The split deployment's CORS (#2261): an exact-origin allowlist, never a wildcard, answered before the session check, and
 // the settings that go with it (APP_URL, CORS_ALLOWED_ORIGINS).
 import { describe, expect, it } from 'vitest';
-import { ORG_HEADER } from '@crove/kernel-contract';
+import { ORG_HEADER } from '@ludy/kernel-contract';
 import type pg from 'pg';
-import { DomainError, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { DomainError, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
 import { appUrl, loadConfig } from '../src/config.ts';
 import { corsMiddleware, parseAllowedOrigins } from '../src/cors.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -113,7 +113,7 @@ describe('corsMiddleware', () => {
     expect(answer.headers.get('access-control-allow-origin')).toBe(APP);
     expect(answer.headers.get('access-control-allow-methods')).toContain('POST');
     const headers = answer.headers.get('access-control-allow-headers') ?? '';
-    for (const name of ['authorization', 'content-type', ORG_HEADER, 'apikey', 'x-crove-invite']) expect(headers).toContain(name);
+    for (const name of ['authorization', 'content-type', ORG_HEADER, 'x-crove-org', 'apikey', 'x-ludy-invite', 'x-crove-invite', 'x-ludy-voter-token']) expect(headers).toContain(name);
     expect(headers).not.toContain('*');
     expect(answer.headers.get('access-control-allow-credentials')).toBeNull();
   });

@@ -10,11 +10,11 @@
 //
 // The honesty rule: a party that is not listed has nothing overdue, so the read REFUSES a caller who cannot see every book. A caller whose legal-entity scope is narrower than the
 // org gets a DomainError with the code SIGNAL_PARTIAL_VIEW, never the part they can see; a caller that is not a user gets FORBIDDEN.
-import { Decimal } from '@crove/l10n-vn';
-import { SIGNAL_PARTIAL_VIEW_CODE, zFinanceOverdueReceivableSignals, zFinanceSalesSignalsInput, type FinanceOverdueReceivableSignal } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
+import { Decimal } from '@ludy/l10n-vn';
+import { SIGNAL_PARTIAL_VIEW_CODE, zFinanceOverdueReceivableSignals, zFinanceSalesSignalsInput, type FinanceOverdueReceivableSignal } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
 import { sql } from 'kysely';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 import { loadCustomers } from './payment-reminders.ts';
 import { databaseToday } from './period-lock.ts';
 
@@ -28,17 +28,17 @@ export const financeOverdueReceivablesSignals = defineQuery({
   mcp: { scope: 'ludy.read' },
   handler: async (ctx, input): Promise<FinanceOverdueReceivableSignal[]> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
-    const { rows: scope } = await sql<{ whole: boolean }>`SELECT coalesce('*' = ANY (crove_kernel.ctx_le_scope()::text[]), false) AS whole`.execute(ctx.trx);
+    const { rows: scope } = await sql<{ whole: boolean }>`SELECT coalesce('*' = ANY (ludy_kernel.ctx_le_scope()::text[]), false) AS whole`.execute(ctx.trx);
     if (scope[0]?.whole !== true) throw new DomainError(SIGNAL_PARTIAL_VIEW_CODE, 403, 'Bạn chỉ xem được một phần sổ sách nên chưa kiểm tra được công nợ quá hạn');
     // The asked ids, each mapped to the kept party of its group (a duplicate and its kept party are one customer).
     const { rows: asked } = await sql<{ id: string; kept: string }>`
       SELECT a.id, coalesce(a.duplicate_of, a.id) AS kept
-      FROM crove_kernel.party a
+      FROM ludy_kernel.party a
       WHERE a.org_id = ${ctx.orgId}::uuid AND a.id IN (${sql.join(input.partyIds.map((id) => sql`${id}::uuid`))})`.execute(ctx.trx);
     if (asked.length === 0) return [];
     const kept = [...new Set(asked.map((r) => r.kept))];
     const today = await databaseToday(ctx.trx);
-    const entities = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).orderBy('id').execute();
+    const entities = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).orderBy('id').execute();
     const byKept = new Map<string, { oldest: string; amount: InstanceType<typeof Decimal>; count: number }>();
     for (const entity of entities) {
       for (const customer of await loadCustomers(ctx, entity.id, today, kept)) {

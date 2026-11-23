@@ -2,15 +2,15 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useRef, useState, type DragEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { JOURNAL_VOUCHER_KIND, type FileStatus } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Label } from '@crove/ui/components/label';
-import { TableCell, TableRow } from '@crove/ui/components/table';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
-import { cn } from '@crove/ui/lib/utils';
+import { JOURNAL_VOUCHER_KIND, type FileStatus } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Label } from '@ludy/ui/components/label';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
+import { cn } from '@ludy/ui/lib/utils';
 import { UploadEntityPicker, useChosenEntity, useLegalEntity } from '../components/entity-switcher.tsx';
 import { AiMeter } from '../components/ai-meter.tsx';
 import { IntakePanel, useIntake } from '../components/intake.tsx';
@@ -18,9 +18,10 @@ import { LookupOriginalCard } from '../components/lookup-original-card.tsx';
 import { ProposalBadges } from '../components/proposal-badges.tsx';
 import { ProposalGroups } from '../components/proposal-groups.tsx';
 import { StagedMarketplace } from '../components/staged-marketplace.tsx';
+import { StagedMarketplaceColumns } from '../components/staged-marketplace-columns.tsx';
 import { StagedMarketplaceIncome } from '../components/staged-marketplace-income.tsx';
 import { StagedStatements } from '../components/staged-statements.tsx';
-import { StepUpPrompt } from '../components/two-factor.tsx';
+import { StepUpPrompt, TwoFactorOffer } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
 import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { listedEntity } from '../lib/legal-entity-choice.ts';
@@ -37,7 +38,10 @@ import { toast } from '../lib/toast.ts';
 import { VOUCHER_KIND } from '../lib/vouchers.ts';
 import {
   INBOX_TABS,
+  allSignaturesUnverified,
+  bulkExclusion,
   bulkSelectable,
+  filesNeedingAttention,
   countUnclassified,
   hasUnclassifiedLines,
   canApproveProposals,
@@ -51,6 +55,7 @@ import {
   type InboxTab,
 } from '../lib/review.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 // What the upload takes, and what a photo of a receipt is taken as.
 const PHOTO_ACCEPT = 'image/jpeg,image/png,image/webp';
@@ -116,6 +121,21 @@ function failedWork(queue: string): FailedWork {
   if (queue.startsWith('crm-booking')) return 'booking';
   if (queue.startsWith('kernel-agent-')) return 'agent';
   return 'other';
+}
+
+// The one line for what waits in an app the company switched off (ADR-0053, slice e): hidden from the list, kept with its own expiry, and not approvable
+// until the app is on again. Shown only when there is something.
+function HiddenByApps() {
+  const t = useTranslations('inbox');
+  const live = useStreamLive();
+  const hidden = useQuery({ ...orpc.inbox.hidden.queryOptions({ input: {} }), refetchInterval: pollEvery(live, 60_000, SAFETY_POLL_MS) });
+  const count = hidden.data?.count ?? 0;
+  if (count === 0) return null;
+  return (
+    <p data-hidden-apps className="text-sm text-muted-foreground">
+      {t('hiddenApps', { count: String(count) })}
+    </p>
+  );
 }
 
 // Background work of the org that failed after its last retry (#1720), for owners and admins (the list is empty for
@@ -283,6 +303,10 @@ export function InboxPage() {
   const setTab = (next: InboxTab) => void navigate({ to: '/o/$slug/inbox', params: { slug }, search: next === 'pending' ? {} : { status: next } });
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Where focus goes once the two-factor offer is gone (#3599).
+  const uploadRef = useRef<HTMLButtonElement>(null);
+  // The upload button, unless an upload or a photo is being prepared and it is disabled; then the page's main area, which the shell makes focusable.
+  const focusAfterOffer = () => (uploadRef.current && !uploadRef.current.disabled ? uploadRef.current : document.getElementById('main-content'));
   const [preparing, setPreparing] = useState(false);
   const config = getConfig();
 
@@ -298,7 +322,8 @@ export function InboxPage() {
   // The "Chưa phân loại" filter (#2091): only the pending proposals with a line no rule matched, with how many there are.
   const [unclassifiedOnly, setUnclassifiedOnly] = useState(false);
   const unclassifiedCount = countUnclassified(items.data ?? []);
-  const unclassifiedFilter = tab === 'pending' && unclassifiedOnly;
+  // The filter is Finance's: with Finance off its buttons are gone, so it must not go on hiding the proposals of the other apps.
+  const unclassifiedFilter = tab === 'pending' && unclassifiedOnly && installedModules().includes('finance');
   const listed = unclassifiedFilter ? (items.data ?? []).filter(hasUnclassifiedLines) : (items.data ?? []);
 
   // Many documents or ZIP archives at once, each file uploaded and followed on its own (#314).
@@ -344,7 +369,8 @@ export function InboxPage() {
     startFiles([...event.dataTransfer.files]);
   }
 
-  const processing = (files.data ?? []).filter((f) => f.status === 'processing').length;
+  const attention = filesNeedingAttention(files.data ?? []);
+  const processing = attention.filter((f) => f.status === 'processing').length;
 
   // Bulk approval (issue #315): owners and admins pick pending purchases and approve them under one step-up. The
   // kernel decides each item as if approved alone and reports the ones it refused.
@@ -354,7 +380,8 @@ export function InboxPage() {
   const selectable = bulkEnabled ? listed.filter((item) => bulkSelectable(item, REVERSAL_KIND)) : [];
   // Clean purchases grouped by vendor and learned rule (#2379), with the rules behind them of the entity chosen in the shell.
   const shellEntity = useChosenEntity();
-  const groupsOn = bulkEnabled && config.modules.includes('finance');
+  useModulesVersion(); // the apps of the org can change while this screen is open
+  const groupsOn = bulkEnabled && installedModules().includes('finance');
   const groups = groupsOn ? cleanGroups(listed, REVERSAL_KIND) : [];
   const groupRules = useQuery({ ...orpc.accountRules.list.queryOptions({ input: { legalEntityId: shellEntity.legalEntityId } }), enabled: groupsOn && groups.length > 0 && shellEntity.ready, staleTime: 30_000 });
   const chosen = selectable.filter((item) => selected.has(item.id));
@@ -446,8 +473,16 @@ export function InboxPage() {
         }
       />
     ) : (
-      <Checkbox checked={false} disabled aria-label={t('bulk.notSelectable')} title={t('bulk.notSelectable')} />
+      <Checkbox checked={false} disabled aria-label={excludedReason(item) ?? undefined} title={excludedReason(item) ?? undefined} />
     );
+  // Why a pending row is left out of the bulk approval (#3598), on the row and in the count above the list.
+  function excludedReason(item: InboxItem): string | null {
+    if (!bulkEnabled || item.status !== 'pending') return null;
+    const why = bulkExclusion(item, REVERSAL_KIND);
+    return why === null ? null : t(`bulk.excluded.${why}`);
+  }
+  const excludedCount = bulkEnabled ? listed.filter((item) => excludedReason(item) !== null).length : 0;
+  const allUnverified = allSignaturesUnverified(listed);
 
   // The browser may refuse the clipboard: say so, and the address stays on screen to select (#1384).
   const copyAddress = (address: string) =>
@@ -472,7 +507,7 @@ export function InboxPage() {
         actions={
           <div className="flex flex-wrap items-center gap-3">
             <UploadEntityPicker slug={slug} />
-            <Button loading={intake.uploading || preparing} size="lg" onClick={() => openPicker(false)}>
+            <Button ref={uploadRef} loading={intake.uploading || preparing} size="lg" onClick={() => openPicker(false)}>
               {t('upload')}
             </Button>
             {/* On a phone this opens the rear camera; a desktop browser ignores `capture` and opens the file picker. A stack
@@ -484,6 +519,8 @@ export function InboxPage() {
         }
       />
       <AiMeter module="finance" className="mb-3" />
+      {/* Two-factor is offered here, before the first approval needs it, to those who may approve (#3599). */}
+      <TwoFactorOffer show={canApproveProposals(org.data?.role, org.data?.permissions)} returnFocus={focusAfterOffer} />
       <input
         ref={inputRef}
         type="file"
@@ -509,7 +546,6 @@ export function InboxPage() {
             {/* A phone has nothing to drag from: it keeps the formats and the header's upload button. */}
             <p className="hidden text-sm text-foreground sm:block">{t('dropHereCompact')}</p>
             <p className="text-xs text-subtle-foreground">{config.aiEnabled ? t('formatsAll') : t('formatsXml')}</p>
-            {!config.aiEnabled && <p className="text-xs text-warning">{t('noAi')}</p>}
           </div>
           {org.data?.inboundAddress && (
             <div className="flex min-w-0 flex-wrap items-center gap-2 sm:ml-auto">
@@ -532,9 +568,6 @@ export function InboxPage() {
           >
             <p className="text-sm font-medium text-foreground">{t('dropHere')}</p>
             <p className="mt-1 text-xs text-subtle-foreground">{config.aiEnabled ? t('formatsAll') : t('formatsXml')}</p>
-            {!config.aiEnabled && (
-              <p className="mt-3 text-xs text-warning">{t('noAi')}</p>
-            )}
             <p className="mt-1 text-xs text-subtle-foreground">{t('formatsZip')}</p>
           </div>
           <Card className="block p-4">
@@ -557,24 +590,27 @@ export function InboxPage() {
         </div>
       )}
 
+      {tab === 'pending' && <HiddenByApps />}
       <IntakePanel intake={intake} />
-      {config.modules.includes('finance') && <StagedMarketplace canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
-      {config.modules.includes('finance') && <StagedMarketplaceIncome canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
-      {config.modules.includes('finance') && <StagedStatements canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
+      {installedModules().includes('finance') && <StagedMarketplace canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
+      {installedModules().includes('finance') && <StagedMarketplaceColumns canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} canSave={org.data?.role === 'owner' || org.data?.role === 'admin'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
+      {installedModules().includes('finance') && <StagedMarketplaceIncome canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
+      {installedModules().includes('finance') && <StagedStatements canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
       {(org.data?.role === 'owner' || org.data?.role === 'admin') && <FailedJobs />}
-      {config.modules.includes('finance') && (org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member') && <OriginalsNeeded />}
-      {config.modules.includes('finance') && <OpenBankLines slug={slug} />}
-      {config.modules.includes('social') && <SocialAttention slug={slug} />}
-      {config.modules.includes('social') && (org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member') && <SocialMails slug={slug} />}
+      {installedModules().includes('finance') && (org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member') && <OriginalsNeeded />}
+      {installedModules().includes('finance') && <OpenBankLines slug={slug} />}
+      {installedModules().includes('social') && <SocialAttention slug={slug} />}
+      {installedModules().includes('social') && (org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member') && <SocialMails slug={slug} />}
 
-      {(files.data?.length ?? 0) > 0 && (
+      {/* Only a file being read or one that failed (#3598): a file read into a proposal is that proposal's row below. */}
+      {attention.length > 0 && (
         <div className="mt-6">
           <p className="mb-2 text-sm font-medium text-muted-foreground">
             {t('recentFiles')}{' '}
             {processing > 0 && <span className="ml-1 text-link normal-case">· {t('readingCount', { count: processing })}</span>}
           </p>
           <div className="flex flex-wrap gap-2">
-            {files.data?.slice(0, 8).map((file) => (
+            {attention.slice(0, 8).map((file) => (
               <span
                 key={file.id}
                 data-testid="recent-file"
@@ -611,8 +647,8 @@ export function InboxPage() {
             ))}
           </div>
           {reextract.error && <p className="mt-2 text-xs text-destructive">{errorMessage(reextract.error)}</p>}
-          {files.data?.find((file) => file.status === 'failed')?.error && (
-            <p className="mt-2 text-xs text-destructive">{files.data.find((file) => file.status === 'failed')?.error}</p>
+          {attention.find((file) => file.status === 'failed')?.error && (
+            <p className="mt-2 text-xs text-destructive">{attention.find((file) => file.status === 'failed')?.error}</p>
           )}
         </div>
       )}
@@ -720,7 +756,13 @@ export function InboxPage() {
             <p className="w-full text-xs text-subtle-foreground">{t('bulk.hint')}</p>
           </div>
         )}
-        {tab === 'pending' && config.modules.includes('finance') && (
+        {excludedCount > 0 && <p className="mb-3 text-xs text-subtle-foreground">{t('bulk.excludedSummary', { count: excludedCount })}</p>}
+        {allUnverified && (
+          <p role="status" className="mb-3 text-sm text-warning">
+            {t('signatureAll', { count: listed.length })}
+          </p>
+        )}
+        {tab === 'pending' && installedModules().includes('finance') && (
           <div className="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label={t('filter.label')}>
             <Button variant={unclassifiedOnly ? 'outline' : 'secondary'} size="sm" aria-pressed={!unclassifiedOnly} onClick={() => setUnclassifiedOnly(false)}>
               {t('filter.all', { count: items.data?.length ?? 0 })}
@@ -744,7 +786,7 @@ export function InboxPage() {
             title={unclassifiedFilter ? t('filter.unclassifiedEmpty') : tab === 'pending' ? t('emptyPending') : t('emptyOther')}
             hint={tab === 'pending' && !unclassifiedFilter ? t('emptyPendingHint') : undefined}
             action={
-              tab === 'pending' && config.modules.includes('finance') ? (
+              tab === 'pending' && installedModules().includes('finance') ? (
                 <Link to="/o/$slug/guide" params={{ slug }} className="text-sm text-link hover:underline">
                   {t('guideLink')}
                 </Link>
@@ -779,6 +821,7 @@ export function InboxPage() {
                       {proposalName(item)}
                     </Link>
                     <p className="text-xs text-subtle-foreground">{item.title}</p>
+                    {excludedReason(item) && <p className="text-xs text-subtle-foreground">{excludedReason(item)}</p>}
                     {item.status === 'expired' && item.expiredAfterDays !== null && (
                       <p className="text-xs text-warning">{t('expiredReason', { days: item.expiredAfterDays })}</p>
                     )}
@@ -787,7 +830,7 @@ export function InboxPage() {
                   <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{f.money(item.total)}</TableCell>
                   {showEntity && <TableCell className="px-4 py-3 text-muted-foreground">{entityOf(item)}</TableCell>}
                   <TableCell className="px-4 py-3">
-                    <ProposalBadges item={item} />
+                    <ProposalBadges item={item} hideSignature={allUnverified} />
                   </TableCell>
                   <TableCell className="px-4 py-3 text-xs text-subtle-foreground">{f.dateTime(item.createdAt)}</TableCell>
                 </TableRow>
@@ -811,7 +854,8 @@ export function InboxPage() {
                     {item.status === 'expired' && item.expiredAfterDays !== null && (
                       <p className="text-xs text-warning">{t('expiredReason', { days: item.expiredAfterDays })}</p>
                     )}
-                    <ProposalBadges item={item} />
+                    {excludedReason(item) && <p className="text-xs text-subtle-foreground">{excludedReason(item)}</p>}
+                    <ProposalBadges item={item} hideSignature={allUnverified} />
                   </div>
                 </li>
               ))}

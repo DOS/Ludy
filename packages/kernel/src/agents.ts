@@ -11,8 +11,23 @@
 import { randomUUID } from 'node:crypto';
 import { sql, type Transaction } from 'kysely';
 import { z } from 'zod';
-import { auditValue, defaultCoworkerName, tableWrite, zCheck, zId, type Check } from '@crove/kernel-contract';
-import type { AgentScope, Database, MemberRole, TaskStatus } from '@crove/db';
+import {
+  auditValue,
+  defaultCoworkerName,
+  parseTaskChecklist,
+  serializeTaskChecklist,
+  tableWrite,
+  vietnamToday,
+  zCheck,
+  zFilterAstShape,
+  zId,
+  zSavedViewSortShape,
+  zTaskChecklist,
+  type Check,
+  type FilterAst,
+  type TaskChecklistStep,
+} from '@ludy/kernel-contract';
+import type { AgentScope, Database, MemberRole, TaskStatus } from '@ludy/db';
 import {
   DomainError,
   defineCommand,
@@ -24,15 +39,18 @@ import {
   agentRuntime,
   type QueryContext,
   type Runtime,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 import { decideAgentApproval, eligibleApprovers, type ActorRef } from './approval.ts';
 import { refuseWhileReextracting } from './extraction.ts';
 import { kernelManifest } from './manifest.ts';
 import { preparedEntity } from './proposal-resubmit.ts';
 import { releaseWaitingFiles } from './ai-budget.ts';
 import { cancelMemberVyRuns } from './member-vy.ts';
+import { offAppsOf } from './org-apps.ts';
 import { memberProfiles } from './profiles.ts';
 import { lockChartChanges, rerouteStrandedTasks } from './task-reroute.ts';
+import { filterCondition, sortTerms } from './saved-view-filter.ts';
+import { taskFields, taskSortColumns } from './task-filter.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MEMBERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -52,12 +70,12 @@ const TASK_TABLES = kernelManifest.tables;
 const LEASE_COLUMNS = ['status', 'checkout_run_id', 'lock_expires_at'] as const;
 const CHILD_TASK_COLUMNS = ['org_id', 'title', 'description', 'kind', 'assignee_position_id', 'parent_task_id', 'source', 'source_ref', 'created_by_type'] as const;
 // requestWakeup's upsert.
-const WAKEUP_WRITE = tableWrite(TASK_TABLES, 'crove_kernel', 'agent_wakeup', ['org_id', 'agent_id', 'reasons', 'request_count', 'tainted', 'request_depth', 'updated_at']);
+const WAKEUP_WRITE = tableWrite(TASK_TABLES, 'ludy_kernel', 'agent_wakeup', ['org_id', 'agent_id', 'reasons', 'request_count', 'tainted', 'request_depth', 'updated_at']);
 // What the taint triggers write (task_before_update, task_comment_before_insert): a write to a task marks the run that
 // claims it tainted, and a comment marks its task tainted (T18, taint both ways). The runtime checks a command's
 // writes per table against its declaration (#1710), so a command that writes a task or a comment declares these too.
-const RUN_TAINT_WRITE = tableWrite(TASK_TABLES, 'crove_kernel', 'ai_run', ['tainted']);
-const TASK_TAINT_WRITE = tableWrite(TASK_TABLES, 'crove_kernel', 'task', ['tainted']);
+const RUN_TAINT_WRITE = tableWrite(TASK_TABLES, 'ludy_kernel', 'ai_run', ['tainted']);
+const TASK_TAINT_WRITE = tableWrite(TASK_TABLES, 'ludy_kernel', 'task', ['tainted']);
 
 const zModule = z.string().regex(/^[a-z][a-z0-9_]*$/).max(50);
 const zRoleKey = z.string().regex(/^[a-z][a-z0-9_.]*$/).max(100);
@@ -84,7 +102,7 @@ function requireAgent(ctx: QueryContext): AgentGrant {
 type Trx = Transaction<Database>;
 
 async function lockPosition(trx: Trx, orgId: string, id: string) {
-  const position = await trx.selectFrom('crove_kernel.position').selectAll().where('org_id', '=', orgId).where('id', '=', id).forUpdate().executeTakeFirst();
+  const position = await trx.selectFrom('ludy_kernel.position').selectAll().where('org_id', '=', orgId).where('id', '=', id).forUpdate().executeTakeFirst();
   if (!position) throw new DomainError('POSITION_NOT_FOUND', 404, 'Không tìm thấy vị trí này');
   return position;
 }
@@ -94,7 +112,7 @@ async function lockPosition(trx: Trx, orgId: string, id: string) {
 async function checkLeScope(trx: Trx, orgId: string, scope: readonly string[]): Promise<string[]> {
   if (scope.length === 1 && scope[0] === '*') return ['*'];
   const ids = [...new Set(scope.map((id) => id.toLowerCase()))];
-  const found = await trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', orgId).where('id', 'in', ids).execute();
+  const found = await trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', orgId).where('id', 'in', ids).execute();
   if (ids.length !== scope.length || found.length !== ids.length) {
     throw new DomainError('POSITION_SCOPE_INVALID', 422, 'Phạm vi pháp nhân của vị trí phải là mọi pháp nhân hoặc các pháp nhân của tổ chức này');
   }
@@ -108,8 +126,8 @@ export function scopeCovers(scope: readonly string[], entityId: string): boolean
 
 async function lockAgent(trx: Trx, orgId: string, id: string) {
   const agent = await trx
-    .selectFrom('crove_kernel.agent as a')
-    .innerJoin('crove_kernel.agent_template as t', 't.key', 'a.template_key')
+    .selectFrom('ludy_kernel.agent as a')
+    .innerJoin('ludy_kernel.agent_template as t', 't.key', 'a.template_key')
     .selectAll('a')
     .select(['t.role_key as template_role_key', 't.module as template_module'])
     .where('a.org_id', '=', orgId)
@@ -126,7 +144,7 @@ async function stopAgentRuns(trx: Trx, orgId: string, agentIds: string[], reason
   // The runs of a member's own Vy are hidden from this context by the run policy: a definer ends them, whoever the agent is.
   const memberRuns = await cancelMemberVyRuns({ trx }, { agentIds }, reason.toUpperCase().replace(/[^A-Z0-9]+/g, '_'));
   const runs = await trx
-    .selectFrom('crove_kernel.ai_run')
+    .selectFrom('ludy_kernel.ai_run')
     .select('id')
     .where('org_id', '=', orgId)
     .where('agent_id', 'in', agentIds)
@@ -135,19 +153,19 @@ async function stopAgentRuns(trx: Trx, orgId: string, agentIds: string[], reason
   const runIds = runs.map((r) => r.id);
   if (runIds.length === 0) return memberRuns;
   await trx
-    .updateTable('crove_kernel.task')
+    .updateTable('ludy_kernel.task')
     .set({ checkout_run_id: null, lock_expires_at: null })
     .where('org_id', '=', orgId)
     .where('checkout_run_id', 'in', runIds)
     .execute();
   await trx
-    .updateTable('crove_kernel.ai_run')
+    .updateTable('ludy_kernel.ai_run')
     .set({ status: 'cancelled', finished_at: now, error: reason })
     .where('org_id', '=', orgId)
     .where('id', 'in', runIds)
     .execute();
   await trx
-    .updateTable('crove_kernel.agent_wakeup')
+    .updateTable('ludy_kernel.agent_wakeup')
     .set({ status: 'done', updated_at: now })
     .where('org_id', '=', orgId)
     .where('run_id', 'in', runIds)
@@ -161,13 +179,14 @@ async function stopAgentRuns(trx: Trx, orgId: string, agentIds: string[], reason
 // one queued and one active job per agent, so repeats cost nothing, and a pending row whose run was refused earlier
 // (daily cap, kill switch, budget) is picked up again. A tainted task makes the wake-up, and so the run that claims
 // it, tainted. An agent of a module this deployment does not enable (CROVE_MODULES) keeps its pending request but is
-// not woken: no run starts until the module is enabled again, when the sweep finds the request.
+// not woken: no run starts until the module is enabled again, when the sweep finds the request. The same for an app the org switched
+// off (ADR-0053, slice e): the task and the pending request are kept, nothing wakes, and no event is lost.
 async function requestWakeup(ctx: CommandContext, positionId: string | null, reason: { taskId: string; why: string }, tainted: boolean, depth: number) {
   if (!positionId) return null;
   const holder = await ctx.trx
-    .selectFrom('crove_kernel.position as p')
-    .innerJoin('crove_kernel.agent as a', (j) => j.onRef('a.org_id', '=', 'p.org_id').onRef('a.id', '=', 'p.holder_agent_id'))
-    .innerJoin('crove_kernel.agent_template as t', 't.key', 'a.template_key')
+    .selectFrom('ludy_kernel.position as p')
+    .innerJoin('ludy_kernel.agent as a', (j) => j.onRef('a.org_id', '=', 'p.org_id').onRef('a.id', '=', 'p.holder_agent_id'))
+    .innerJoin('ludy_kernel.agent_template as t', 't.key', 'a.template_key')
     .select(['a.id', 't.module'])
     .where('p.org_id', '=', ctx.orgId)
     .where('p.id', '=', positionId)
@@ -176,7 +195,7 @@ async function requestWakeup(ctx: CommandContext, positionId: string | null, rea
     .executeTakeFirst();
   if (!holder) return null;
   await sql`
-    INSERT INTO crove_kernel.agent_wakeup AS w (org_id, agent_id, reasons, tainted, request_depth)
+    INSERT INTO ludy_kernel.agent_wakeup AS w (org_id, agent_id, reasons, tainted, request_depth)
     VALUES (${ctx.orgId}::uuid, ${holder.id}::uuid, ${JSON.stringify([reason])}::jsonb, ${tainted}, ${depth})
     ON CONFLICT (org_id, agent_id) WHERE status = 'pending' DO UPDATE SET
       reasons = CASE WHEN pg_catalog.jsonb_array_length(w.reasons) >= ${MAX_WAKE_REASONS} THEN w.reasons ELSE w.reasons || EXCLUDED.reasons END,
@@ -184,7 +203,7 @@ async function requestWakeup(ctx: CommandContext, positionId: string | null, rea
       tainted = w.tainted OR EXCLUDED.tainted,
       request_depth = GREATEST(w.request_depth, EXCLUDED.request_depth),
       updated_at = pg_catalog.now()`.execute(ctx.trx);
-  if (ctx.installed(holder.module)) await ctx.emit('kernel.agent.wakeup_requested', { agentId: holder.id });
+  if (ctx.installed(holder.module) && !(await offAppsOf(ctx.trx, ctx.orgId)).includes(holder.module)) await ctx.emit('kernel.agent.wakeup_requested', { agentId: holder.id });
   return holder.id;
 }
 
@@ -193,15 +212,16 @@ async function requestWakeup(ctx: CommandContext, positionId: string | null, rea
 async function rewakePending(ctx: CommandContext, agentIds?: string[]): Promise<void> {
   if (agentIds && agentIds.length === 0) return;
   let query = ctx.trx
-    .selectFrom('crove_kernel.agent_wakeup as w')
-    .innerJoin('crove_kernel.agent as a', (j) => j.onRef('a.org_id', '=', 'w.org_id').onRef('a.id', '=', 'w.agent_id'))
-    .innerJoin('crove_kernel.agent_template as t', 't.key', 'a.template_key')
+    .selectFrom('ludy_kernel.agent_wakeup as w')
+    .innerJoin('ludy_kernel.agent as a', (j) => j.onRef('a.org_id', '=', 'w.org_id').onRef('a.id', '=', 'w.agent_id'))
+    .innerJoin('ludy_kernel.agent_template as t', 't.key', 'a.template_key')
     .select(['w.agent_id', 't.module'])
     .where('w.org_id', '=', ctx.orgId)
     .where('w.status', '=', 'pending');
   if (agentIds) query = query.where('w.agent_id', 'in', agentIds);
+  const off = await offAppsOf(ctx.trx, ctx.orgId);
   for (const row of await query.execute()) {
-    if (ctx.installed(row.module)) await ctx.emit('kernel.agent.wakeup_requested', { agentId: row.agent_id });
+    if (ctx.installed(row.module) && !off.includes(row.module)) await ctx.emit('kernel.agent.wakeup_requested', { agentId: row.agent_id });
   }
 }
 
@@ -226,7 +246,7 @@ export const createPosition = defineCommand({
     requireUser(ctx);
     if (input.reportsTo) await lockPosition(ctx.trx, ctx.orgId, input.reportsTo);
     const position = await ctx.trx
-      .insertInto('crove_kernel.position')
+      .insertInto('ludy_kernel.position')
       .values({
         org_id: ctx.orgId,
         title: input.title,
@@ -279,7 +299,7 @@ export const updatePosition = defineCommand({
       changed: Object.keys(set),
     });
     if (Object.keys(set).length === 0) return { positionId: input.id };
-    await ctx.trx.updateTable('crove_kernel.position').set(set).where('org_id', '=', ctx.orgId).where('id', '=', input.id).execute();
+    await ctx.trx.updateTable('ludy_kernel.position').set(set).where('org_id', '=', ctx.orgId).where('id', '=', input.id).execute();
     // A narrower seat scope leaves the agent unable to read some of its open tasks: they go up the chart (#1799).
     if (input.leScope !== undefined) await rerouteStrandedTasks(ctx, [input.id]);
     await ctx.activity('kernel.position', input.id, 'position.updated', `Sửa vị trí ${input.title ?? before.title}`);
@@ -308,7 +328,7 @@ export const assignPosition = defineCommand({
     let holderAgent: string | null = null;
     if (input.holder?.type === 'user') {
       const member = await ctx.trx
-        .selectFrom('crove_kernel.tenant_member')
+        .selectFrom('ludy_kernel.tenant_member')
         .select('user_id')
         .where('org_id', '=', ctx.orgId)
         .where('user_id', '=', input.holder.userId)
@@ -322,7 +342,7 @@ export const assignPosition = defineCommand({
         throw new DomainError('AGENT_ROLE_MISMATCH', 422, 'Vai trò của vị trí không khớp với mẫu của tác tử AI');
       }
       const placed = await ctx.trx
-        .selectFrom('crove_kernel.position')
+        .selectFrom('ludy_kernel.position')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('holder_agent_id', '=', agent.id)
@@ -341,7 +361,7 @@ export const assignPosition = defineCommand({
           : null,
     });
     await ctx.trx
-      .updateTable('crove_kernel.position')
+      .updateTable('ludy_kernel.position')
       .set({ holder_user_id: holderUser, holder_agent_id: holderAgent })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', position.id)
@@ -352,7 +372,7 @@ export const assignPosition = defineCommand({
       // One wake-up for the open tasks, as tainted as the most tainted of them, so the run that takes them over can
       // read every one (an untainted run sees only untainted tasks).
       const open = await ctx.trx
-        .selectFrom('crove_kernel.task')
+        .selectFrom('ludy_kernel.task')
         .select((eb) => [
           eb.fn.min<string>(sql`id::text`).as('first_id'),
           eb.fn<boolean>('bool_or', ['tainted']).as('tainted'),
@@ -387,7 +407,7 @@ export const installAgentTemplate = defineCommand({
   access: OWNER,
   handler: async (ctx, input) => {
     const userId = requireUser(ctx);
-    const template = await ctx.trx.selectFrom('crove_kernel.agent_template').selectAll().where('key', '=', input.templateKey).executeTakeFirst();
+    const template = await ctx.trx.selectFrom('ludy_kernel.agent_template').selectAll().where('key', '=', input.templateKey).executeTakeFirst();
     if (!template) throw new DomainError('TEMPLATE_NOT_FOUND', 404, 'Không có mẫu tác tử AI này');
     // The template of a member's own Vy (ADR-0049) is made by that member's first run, never installed into the chart.
     if (template.key === 'kernel.member_vy') throw new DomainError('TEMPLATE_NOT_FOUND', 404, 'Không có mẫu tác tử AI này');
@@ -401,11 +421,11 @@ export const installAgentTemplate = defineCommand({
     let displayName = input.displayName;
     if (displayName === undefined) {
       const coworker = defaultCoworkerName(template.module);
-      const taken = coworker === null ? undefined : await ctx.trx.selectFrom('crove_kernel.agent').select('id').where('org_id', '=', ctx.orgId).where('display_name', '=', coworker).limit(1).executeTakeFirst();
+      const taken = coworker === null ? undefined : await ctx.trx.selectFrom('ludy_kernel.agent').select('id').where('org_id', '=', ctx.orgId).where('display_name', '=', coworker).limit(1).executeTakeFirst();
       displayName = coworker === null ? template.title : taken ? `${coworker} (${template.title})` : coworker;
     }
     const agent = await ctx.trx
-      .insertInto('crove_kernel.agent')
+      .insertInto('ludy_kernel.agent')
       .values({
         org_id: ctx.orgId,
         template_key: template.key,
@@ -417,7 +437,7 @@ export const installAgentTemplate = defineCommand({
       .returning('id')
       .executeTakeFirstOrThrow();
     const position = await ctx.trx
-      .insertInto('crove_kernel.position')
+      .insertInto('ludy_kernel.position')
       .values({
         org_id: ctx.orgId,
         title: template.title,
@@ -473,14 +493,14 @@ export const updateAgent = defineCommand({
     if (stopping) {
       await stopAgentRuns(ctx.trx, ctx.orgId, [agent.id], `agent ${input.status}`, ctx.now);
       const position = await ctx.trx
-        .selectFrom('crove_kernel.position')
+        .selectFrom('ludy_kernel.position')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('holder_agent_id', '=', agent.id)
         .executeTakeFirst();
       if (position) {
         await ctx.trx
-          .updateTable('crove_kernel.task')
+          .updateTable('ludy_kernel.task')
           .set({ status: 'waiting' })
           .where('org_id', '=', ctx.orgId)
           .where('assignee_position_id', '=', position.id)
@@ -488,10 +508,10 @@ export const updateAgent = defineCommand({
           .execute();
       }
     }
-    await ctx.trx.updateTable('crove_kernel.agent').set(set).where('org_id', '=', ctx.orgId).where('id', '=', agent.id).execute();
+    await ctx.trx.updateTable('ludy_kernel.agent').set(set).where('org_id', '=', ctx.orgId).where('id', '=', agent.id).execute();
     if (input.status === 'retired') {
       await ctx.trx
-        .updateTable('crove_kernel.position')
+        .updateTable('ludy_kernel.position')
         .set({ holder_agent_id: null })
         .where('org_id', '=', ctx.orgId)
         .where('holder_agent_id', '=', agent.id)
@@ -511,7 +531,7 @@ async function checkScopeTarget(ctx: CommandContext, scope: AgentScope, target: 
     throw new DomainError('INVALID_TARGET', 422, 'Phạm vi không hợp lệ');
   }
   if (scope !== 'agent') return target;
-  const agent = await ctx.trx.selectFrom('crove_kernel.agent').select('id').where('org_id', '=', ctx.orgId).where('id', '=', target).executeTakeFirst();
+  const agent = await ctx.trx.selectFrom('ludy_kernel.agent').select('id').where('org_id', '=', ctx.orgId).where('id', '=', target).executeTakeFirst();
   if (!agent) throw new DomainError('AGENT_NOT_FOUND', 404, 'Không tìm thấy tác tử AI này');
   return agent.id;
 }
@@ -530,7 +550,7 @@ export const setAgentBudget = defineCommand({
     const userId = requireUser(ctx);
     const target = await checkScopeTarget(ctx, input.scope, input.target);
     const row = await ctx.trx
-      .insertInto('crove_kernel.budget_policy')
+      .insertInto('ludy_kernel.budget_policy')
       .values({
         org_id: ctx.orgId,
         scope: input.scope,
@@ -572,24 +592,24 @@ export const engageKillSwitch = defineCommand({
     const userId = requireUser(ctx);
     const target = await checkScopeTarget(ctx, input.scope, input.target);
     await sql`
-      INSERT INTO crove_kernel.kill_switch (org_id, scope, target, reason, engaged_by)
+      INSERT INTO ludy_kernel.kill_switch (org_id, scope, target, reason, engaged_by)
       VALUES (${ctx.orgId}::uuid, ${input.scope}, ${target}, ${input.reason ?? null}, ${userId}::uuid)
       ON CONFLICT (org_id, scope, target) WHERE released_at IS NULL DO NOTHING`.execute(ctx.trx);
     const active = await ctx.trx
-      .selectFrom('crove_kernel.kill_switch')
+      .selectFrom('ludy_kernel.kill_switch')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('scope', '=', input.scope)
       .where('target', '=', target)
       .where('released_at', 'is', null)
       .executeTakeFirstOrThrow();
-    let covered = ctx.trx.selectFrom('crove_kernel.agent as a').select('a.id').where('a.org_id', '=', ctx.orgId);
+    let covered = ctx.trx.selectFrom('ludy_kernel.agent as a').select('a.id').where('a.org_id', '=', ctx.orgId);
     if (input.scope === 'agent') covered = covered.where('a.id', '=', target);
     if (input.scope === 'module') {
       covered = covered.where((eb) =>
         eb.exists(
           eb
-            .selectFrom('crove_kernel.position as p')
+            .selectFrom('ludy_kernel.position as p')
             .select('p.id')
             .whereRef('p.org_id', '=', 'a.org_id')
             .whereRef('p.holder_agent_id', '=', 'a.id')
@@ -617,7 +637,7 @@ export const releaseKillSwitch = defineCommand({
   handler: async (ctx, input) => {
     const userId = requireUser(ctx);
     const released = await ctx.trx
-      .updateTable('crove_kernel.kill_switch')
+      .updateTable('ludy_kernel.kill_switch')
       .set({ released_at: ctx.now, released_by: userId })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
@@ -641,13 +661,19 @@ const zTaskTitle = z.string().trim().min(1).max(300);
 // A human gives work to a position (or, with no position, to the owner at the root of the chart).
 export const createTask = defineCommand({
   name: 'kernel.task.create',
-  input: z.object({ title: zTaskTitle, description: z.string().max(10000).optional(), assigneePositionId: zId.nullable(), due: z.iso.datetime().optional() }),
+  input: z.object({
+    title: zTaskTitle,
+    description: z.string().max(10000).optional(),
+    assigneePositionId: zId.nullable(),
+    due: z.iso.datetime().optional(),
+    checklist: zTaskChecklist.optional(),
+  }),
   risk: 'R1',
   sideEffect: 'internal',
   access: MEMBERS,
   handler: async (ctx, input) => {
     requireUser(ctx);
-    return insertHumanTask(ctx, { ...input, description: input.description ?? null, due: input.due ?? null, sourceRef: null, tainted: false });
+    return insertHumanTask(ctx, { ...input, description: input.description ?? null, due: input.due ?? null, checklist: input.checklist ?? [], sourceRef: null, tainted: false });
   },
 });
 
@@ -655,14 +681,22 @@ export const createTask = defineCommand({
 // input: kernel.task.get attaches the proposal a `kernel.proposal` reference names, so only kernel code chooses it.
 async function insertHumanTask(
   ctx: CommandContext,
-  input: { title: string; description: string | null; assigneePositionId: string | null; due: string | null; sourceRef: { type: string; id: string } | null; tainted: boolean },
+  input: {
+    title: string;
+    description: string | null;
+    assigneePositionId: string | null;
+    due: string | null;
+    checklist?: readonly TaskChecklistStep[];
+    sourceRef: { type: string; id: string } | null;
+    tainted: boolean;
+  },
 ): Promise<{ taskId: string }> {
   if (input.assigneePositionId) {
     const position = await lockPosition(ctx.trx, ctx.orgId, input.assigneePositionId);
     if (position.status === 'archived') throw new DomainError('POSITION_ARCHIVED', 409, 'Vị trí này đã ngừng sử dụng');
   }
   const task = await ctx.trx
-    .insertInto('crove_kernel.task')
+    .insertInto('ludy_kernel.task')
     .values({
       org_id: ctx.orgId,
       title: input.title,
@@ -672,6 +706,7 @@ async function insertHumanTask(
       source_ref: input.sourceRef === null ? null : JSON.stringify(input.sourceRef),
       created_by_type: 'user',
       due: input.due,
+      checklist: serializeTaskChecklist(input.checklist ?? []),
       tainted: input.tainted,
     })
     .returning(['id', 'tainted', 'request_depth'])
@@ -749,10 +784,199 @@ export const createTaskFromMeeting = defineCommand({
   },
 });
 
+// A task made from a conversation of the Inbox (conversations plan docs/plan/conversations.md section 4 point 2, issue #3295): the conversation core runs this
+// inside its kernel.conversation.follow_up command (ctx.run), after it has read and locked the thread under row-level security, so the task and the thread's
+// audit row commit together. The task takes the title the person typed, the seat they picked (none: the owner at the root of the chart, a one-person
+// company's default), a due date and a `kernel.conversation` source_ref this command sets itself from the thread's id. The description is always empty and
+// the task is not tainted when a person typed the title: a task is read by every member, and neither a customer's words nor a model's text are copied into it by this path.
+// It is tainted when the title came from an AI coworker's proposal a person approved (#4148): the follow-up command says so, and the wake-up of the assignee's agent is then tainted too. No RPC
+// route reaches it.
+export const createTaskFromConversation = defineCommand({
+  name: 'kernel.task.create_from_conversation',
+  input: z.strictObject({
+    conversationId: zId,
+    title: zTaskTitle,
+    positionId: zId.nullable(),
+    due: z.iso.datetime({ offset: true }).nullable(),
+    // Set only by kernel.conversation.follow_up when it runs under an approved proposal (an AI coworker wrote the title, #4148): the task is then tainted, as a task from a note or a meeting is. Absent: false.
+    tainted: z.boolean().optional(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBERS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    // The thread must be one the caller may read (row-level security decides): a task linked to a private thread is listed to its readers.
+    const thread = await ctx.trx.selectFrom('ludy_kernel.conversation').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.conversationId).executeTakeFirst();
+    if (!thread) throw new DomainError('CONVERSATION_NOT_FOUND', 404, 'Không tìm thấy hội thoại này');
+    const created = await insertHumanTask(ctx, {
+      title: input.title,
+      description: null,
+      assigneePositionId: input.positionId,
+      due: input.due,
+      sourceRef: { type: 'kernel.conversation', id: input.conversationId },
+      tainted: input.tainted ?? false,
+    });
+    ctx.audit({ taskId: created.taskId, conversationId: input.conversationId, positionId: input.positionId });
+    return created;
+  },
+});
+
+// Tasks confirmed from Vy's note proposals (projects plan docs/plan/projects.md step P7, #2598): projects module runs
+// this inside its atomic batch confirmation command (ctx.run). Every created task keeps source_ref `notes.note` and
+// stays `tainted: true` because its proposed wording started from a private note and a model run (ADR-0029, ADR-0048).
+// No RPC route exposes this directly.
+export const createTaskFromNote = defineCommand({
+  name: 'kernel.task.create_from_note',
+  input: z.strictObject({
+    noteId: zId,
+    title: zTaskTitle,
+    positionId: zId.nullable(),
+    due: z.iso.datetime({ offset: true }).nullable(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBERS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    const created = await insertHumanTask(ctx, {
+      title: input.title,
+      description: null,
+      assigneePositionId: input.positionId,
+      due: input.due,
+      sourceRef: { type: 'notes.note', id: input.noteId },
+      tainted: true,
+    });
+    ctx.audit({ taskId: created.taskId, noteId: input.noteId, positionId: input.positionId });
+    return created;
+  },
+});
+
+// Tasks confirmed from Vy's note, meeting, or conversation proposals (#2608, ADR-0048, ADR-0049): projects module runs
+// this inside its atomic batch confirmation command (ctx.run). Every created task keeps the validated source_ref and
+// stays `tainted: true` because its proposed wording started from a caller-readable source and a model run.
+// No RPC route exposes this directly.
+export const createTaskFromSource = defineCommand({
+  name: 'kernel.task.create_from_source',
+  input: z.strictObject({
+    sourceType: z.enum(['notes.note', 'meetings.meeting', 'kernel.conversation']),
+    sourceId: zId,
+    title: zTaskTitle,
+    positionId: zId.nullable(),
+    due: z.iso.datetime({ offset: true }).nullable(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBERS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    if (input.sourceType === 'kernel.conversation') {
+      // Re-check conversation RLS so private/direct/restricted threads cannot be linked by a non-reader.
+      const thread = await ctx.trx
+        .selectFrom('ludy_kernel.conversation')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.sourceId)
+        .executeTakeFirst();
+      if (!thread) throw new DomainError('CONVERSATION_NOT_FOUND', 404, 'Không tìm thấy hội thoại này');
+    }
+    const created = await insertHumanTask(ctx, {
+      title: input.title,
+      description: null,
+      assigneePositionId: input.positionId,
+      due: input.due,
+      sourceRef: { type: input.sourceType, id: input.sourceId },
+      tainted: true,
+    });
+    ctx.audit({ taskId: created.taskId, sourceType: input.sourceType, sourceId: input.sourceId, positionId: input.positionId });
+    return created;
+  },
+});
+
+// Tasks instantiated from a project template (#2607): projects module calls this via ctx.run inside
+// projects.project.create_from_template. Preserves `tainted: true` from AI-proposed tasks stored in custom template
+// snapshots while firing the standard kernel.task.created notification. No RPC route exposes this directly.
+export const createTaskFromTemplate = defineCommand({
+  name: 'kernel.task.create_from_template',
+  input: z.strictObject({
+    templateId: zId.nullable(),
+    title: zTaskTitle,
+    description: z.string().max(10000).nullable(),
+    due: z.iso.datetime({ offset: true }).nullable(),
+    tainted: z.boolean(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBERS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    const created = await insertHumanTask(ctx, {
+      title: input.title,
+      description: input.description,
+      assigneePositionId: null,
+      due: input.due,
+      sourceRef: input.templateId ? { type: 'projects.project', id: input.templateId } : null,
+      tainted: input.tainted,
+    });
+    ctx.audit({ taskId: created.taskId, templateId: input.templateId, tainted: input.tainted });
+    return created;
+  },
+});
+
+// Tasks created when a human converts a public roadmap item into an internal project task (#4399, ADR-0057):
+// keeps `tainted: true` and `source_ref` pointing to `projects.roadmap_item`; never copies internal assignees/notes back out.
+export const createTaskFromRoadmap = defineCommand({
+  name: 'kernel.task.create_from_roadmap',
+  input: z.strictObject({
+    itemId: zId,
+    title: zTaskTitle,
+    description: z.string().max(4000).nullable(),
+    positionId: zId.nullable(),
+    tainted: z.boolean().default(true),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBERS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    const created = await insertHumanTask(ctx, {
+      title: input.title,
+      description: input.description,
+      assigneePositionId: input.positionId,
+      due: null,
+      sourceRef: { type: 'projects.roadmap_item', id: input.itemId },
+      tainted: input.tainted,
+    });
+    ctx.audit({ taskId: created.taskId, itemId: input.itemId, positionId: input.positionId, tainted: input.tainted });
+    return created;
+  },
+});
+
+// Nightly keeping duty (#4399, ADR-0053, ADR-0057): prunes expired/invalidated public roadmap OTP challenges via definer even if Projects is switched off.
+export const roadmapOtpCleanup = defineCommand({
+  name: 'kernel.projects_roadmap.otp_cleanup',
+  input: z.strictObject({
+    cutoff: z.iso.datetime({ offset: true }),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  handler: async (ctx, input): Promise<{ deleted: number }> => {
+    if (ctx.actor.type !== 'system') {
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ tác vụ hệ thống mới dọn mã OTP bảng lộ trình');
+    }
+    const { rows } = await sql<{ deleted: number }>`
+      SELECT ludy_projects.cleanup_roadmap_otp_org(${input.cutoff}::timestamptz) AS deleted`.execute(ctx.trx);
+    const deleted = Number(rows[0]?.deleted ?? 0);
+    ctx.audit({ deleted });
+    return { deleted };
+  },
+});
+
 // A person edits a task's title, description, due date or seat (projects plan docs/plan/projects.md step P1, #2588).
 // Refused while an agent's run holds a live lease on the task (TASK_CHECKED_OUT), when the new seat is archived
 // (POSITION_ARCHIVED) or when the new seat's holder cannot read the task's legal entity (OUTSIDE_LEGAL_ENTITY).
-const TASK_TABLE = kernelManifest.tables.crove_kernel.task;
+const TASK_TABLE = kernelManifest.tables.ludy_kernel.task;
 export const updateTask = defineCommand({
   name: 'kernel.task.update',
   input: z.object({
@@ -761,6 +985,7 @@ export const updateTask = defineCommand({
     description: z.string().max(10000).nullable().optional(),
     assigneePositionId: zId.nullable().optional(),
     due: z.iso.datetime().nullable().optional(),
+    checklist: zTaskChecklist.optional(),
   }),
   risk: 'R1',
   sideEffect: 'internal',
@@ -771,7 +996,7 @@ export const updateTask = defineCommand({
     // Serialize with chart and role changes when moving the task to another seat (#1858).
     if (input.assigneePositionId !== undefined) await lockChartChanges(ctx);
     const before = await ctx.trx
-      .selectFrom('crove_kernel.task')
+      .selectFrom('ludy_kernel.task')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
@@ -794,20 +1019,26 @@ export const updateTask = defineCommand({
     const nextDescription = input.description !== undefined ? input.description : before.description;
     const nextDue = input.due !== undefined ? input.due : before.due?.toISOString() ?? null;
     const beforeDue = before.due?.toISOString() ?? null;
+    const beforeChecklist = parseTaskChecklist(before.checklist);
+    const nextChecklist = input.checklist !== undefined ? input.checklist : beforeChecklist;
+    const beforeChecklistJson = serializeTaskChecklist(beforeChecklist);
+    const nextChecklistJson = serializeTaskChecklist(nextChecklist);
     const changed = [
       ...(nextTitle !== before.title ? ['title'] : []),
       ...(nextDescription !== before.description ? ['description'] : []),
       ...(seatChanged ? ['assigneePositionId'] : []),
       ...(nextDue !== beforeDue ? ['due'] : []),
+      ...(beforeChecklistJson !== nextChecklistJson ? ['checklist'] : []),
     ];
     if (changed.length > 0) {
       await ctx.trx
-        .updateTable('crove_kernel.task')
+        .updateTable('ludy_kernel.task')
         .set({
           title: nextTitle,
           description: nextDescription,
           assignee_position_id: nextPositionId,
           due: nextDue,
+          checklist: nextChecklistJson,
           // A stale lease left after its run expired is cleared when the seat moves.
           ...(seatChanged ? { checkout_run_id: null, lock_expires_at: null } : {}),
         })
@@ -827,6 +1058,7 @@ export const updateTask = defineCommand({
       assigneePositionId: nextPositionId,
       previousAssigneePositionId: before.assignee_position_id,
       due: nextDue,
+      checklist: auditValue(TASK_TABLE, 'checklist', nextChecklist.length > 0 ? nextChecklist : null),
     });
     return { taskId: before.id };
   },
@@ -837,7 +1069,7 @@ export const updateTask = defineCommand({
 async function requireLease(ctx: CommandContext, taskId: string, fence: string) {
   const agent = requireAgent(ctx);
   const task = await ctx.trx
-    .selectFrom('crove_kernel.task')
+    .selectFrom('ludy_kernel.task')
     .selectAll()
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', taskId)
@@ -859,17 +1091,17 @@ export const checkoutTask = defineCommand({
   sideEffect: 'internal',
   access: [],
   agent: { roles: 'any', taint: 'propagate' },
-  writes: [tableWrite(TASK_TABLES, 'crove_kernel', 'task', [...LEASE_COLUMNS, 'fence']), RUN_TAINT_WRITE],
+  writes: [tableWrite(TASK_TABLES, 'ludy_kernel', 'task', [...LEASE_COLUMNS, 'fence']), RUN_TAINT_WRITE],
   target: (input) => ({ type: 'kernel.task', id: input.id }),
   handler: async (ctx, input) => {
     const agent = requireAgent(ctx);
     const { rows: runs } = await sql<{ expires_at: Date }>`
-      SELECT expires_at FROM crove_kernel.ai_run WHERE org_id = ${ctx.orgId}::uuid AND id = ${agent.runId}::uuid`.execute(ctx.trx);
+      SELECT expires_at FROM ludy_kernel.ai_run WHERE org_id = ${ctx.orgId}::uuid AND id = ${agent.runId}::uuid`.execute(ctx.trx);
     const runEnds = runs[0]?.expires_at;
     if (!runEnds) throw new DomainError('AGENT_RUN_NOT_LIVE', 403, 'Lượt chạy của tác tử AI đã kết thúc');
     const leaseEnds = new Date(Math.min(runEnds.getTime(), ctx.now.getTime() + LEASE_MINUTES * 60_000));
     const claimed = await ctx.trx
-      .updateTable('crove_kernel.task')
+      .updateTable('ludy_kernel.task')
       .set(() => ({
         checkout_run_id: agent.runId,
         lock_expires_at: leaseEnds,
@@ -885,7 +1117,7 @@ export const checkoutTask = defineCommand({
       .executeTakeFirst();
     if (!claimed) {
       const task = await ctx.trx
-        .selectFrom('crove_kernel.task')
+        .selectFrom('ludy_kernel.task')
         .select(['status', 'checkout_run_id'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.id)
@@ -907,7 +1139,7 @@ export const commentTask = defineCommand({
   sideEffect: 'internal',
   access: MEMBERS,
   agent: { roles: 'any', taint: 'propagate' },
-  writes: [tableWrite(TASK_TABLES, 'crove_kernel', 'task_comment', ['org_id', 'task_id', 'body', 'author_type']), TASK_TAINT_WRITE, RUN_TAINT_WRITE],
+  writes: [tableWrite(TASK_TABLES, 'ludy_kernel', 'task_comment', ['org_id', 'task_id', 'body', 'author_type']), TASK_TAINT_WRITE, RUN_TAINT_WRITE],
   target: (input) => ({ type: 'kernel.task', id: input.id }),
   handler: async (ctx, input) => {
     if (ctx.actor.type === 'agent') {
@@ -915,11 +1147,11 @@ export const commentTask = defineCommand({
       await requireLease(ctx, input.id, input.fence);
     } else {
       requireUser(ctx);
-      const task = await ctx.trx.selectFrom('crove_kernel.task').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
+      const task = await ctx.trx.selectFrom('ludy_kernel.task').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
       if (!task) throw new DomainError('TASK_NOT_FOUND', 404, 'Không tìm thấy việc này');
     }
     const comment = await ctx.trx
-      .insertInto('crove_kernel.task_comment')
+      .insertInto('ludy_kernel.task_comment')
       .values({ org_id: ctx.orgId, task_id: input.id, body: input.body, author_type: ctx.actor.type })
       .returning('id')
       .executeTakeFirstOrThrow();
@@ -937,7 +1169,7 @@ export const setTaskStatus = defineCommand({
   sideEffect: 'internal',
   access: MEMBERS,
   agent: { roles: 'any', taint: 'propagate' },
-  writes: [tableWrite(TASK_TABLES, 'crove_kernel', 'task', LEASE_COLUMNS), WAKEUP_WRITE, RUN_TAINT_WRITE],
+  writes: [tableWrite(TASK_TABLES, 'ludy_kernel', 'task', LEASE_COLUMNS), WAKEUP_WRITE, RUN_TAINT_WRITE],
   target: (input) => ({ type: 'kernel.task', id: input.id }),
   handler: async (ctx, input) => {
     const release = input.status !== 'in_progress';
@@ -949,7 +1181,7 @@ export const setTaskStatus = defineCommand({
       requireUser(ctx);
     }
     const updated = await ctx.trx
-      .updateTable('crove_kernel.task')
+      .updateTable('ludy_kernel.task')
       .set(release ? { status: input.status, checkout_run_id: null, lock_expires_at: null } : { status: input.status })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
@@ -966,17 +1198,17 @@ export const setTaskStatus = defineCommand({
 
 // Whether whoever holds a position reads a legal entity (#1788), so a task of that entity handed to the position can be
 // listed and checked out (the RESTRICTIVE le_scope policy on task, #1762). An org-level task (null) is read by everyone.
-// The rule is the database's (crove_kernel.position_reads_legal_entity, which the task trigger applies too): a person
+// The rule is the database's (ludy_kernel.position_reads_legal_entity, which the task trigger applies too): a person
 // reads what enter_context seals for them, which an agent limited to some entities cannot work out from the role
 // assignments it sees; an agent, and a vacant position, read the position's le_scope.
 async function holderCovers(trx: Trx, orgId: string, positionId: string, entityId: string | null): Promise<boolean> {
   if (entityId === null) return true;
   const { rows } = await sql<{ covers: boolean }>`
-    SELECT crove_kernel.position_reads_legal_entity(${orgId}::uuid, ${positionId}::uuid, ${entityId}::uuid) AS covers`.execute(trx);
+    SELECT ludy_kernel.position_reads_legal_entity(${orgId}::uuid, ${positionId}::uuid, ${entityId}::uuid) AS covers`.execute(trx);
   return rows[0]?.covers === true;
 }
 
-// Same rule as holderCovers for a user command (crove_app): an agent or a vacant seat reads the position's le_scope;
+// Same rule as holderCovers for a user command (ludy_app): an agent or a vacant seat reads the position's le_scope;
 // a member reads the entity when they are an owner or admin, hold an assignment for that entity or the whole org, or
 // hold no assignment at all. Under role_assignment_scope, a caller who can read the task's entity also sees every
 // org-wide assignment and every assignment for that entity, so the only uncomputable case is a member who has no
@@ -994,12 +1226,12 @@ async function userHolderCovers(
     SELECT COALESCE((
       SELECT m.role IN ('owner', 'admin')
           OR EXISTS (
-               SELECT 1 FROM crove_kernel.role_assignment a
+               SELECT 1 FROM ludy_kernel.role_assignment a
                WHERE a.org_id = m.org_id AND a.user_id = m.user_id
                  AND (a.legal_entity_id IS NULL OR a.legal_entity_id = ${entityId}::uuid))
-          OR ('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])
-              AND NOT EXISTS (SELECT 1 FROM crove_kernel.role_assignment a WHERE a.org_id = m.org_id AND a.user_id = m.user_id))
-      FROM crove_kernel.tenant_member m
+          OR ('*' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[])
+              AND NOT EXISTS (SELECT 1 FROM ludy_kernel.role_assignment a WHERE a.org_id = m.org_id AND a.user_id = m.user_id))
+      FROM ludy_kernel.tenant_member m
       WHERE m.org_id = ${orgId}::uuid AND m.user_id = ${position.holder_user_id}::uuid
     ), false) AS covers`.execute(trx);
   return rows[0]?.covers === true;
@@ -1011,16 +1243,16 @@ async function userHolderCovers(
 // (ADR-0029, Phase 1 as built).
 async function escalationTarget(trx: Trx, orgId: string, positionId: string, entityId: string | null): Promise<string | null> {
   const { rows } = await sql<{ id: string | null }>`
-    SELECT crove_kernel.task_escalation_target(${orgId}::uuid, ${positionId}::uuid, ${entityId}::uuid) AS id`.execute(trx);
+    SELECT ludy_kernel.task_escalation_target(${orgId}::uuid, ${positionId}::uuid, ${entityId}::uuid) AS id`.execute(trx);
   return rows[0]?.id ?? null;
 }
 
 async function inSubtree(trx: Trx, orgId: string, root: string, candidate: string): Promise<boolean> {
   const { rows } = await sql<{ found: boolean }>`
     WITH RECURSIVE up (id, depth) AS (
-      SELECT p.reports_to, 1 FROM crove_kernel.position p WHERE p.org_id = ${orgId}::uuid AND p.id = ${candidate}::uuid
+      SELECT p.reports_to, 1 FROM ludy_kernel.position p WHERE p.org_id = ${orgId}::uuid AND p.id = ${candidate}::uuid
       UNION ALL
-      SELECT p.reports_to, up.depth + 1 FROM up JOIN crove_kernel.position p ON p.org_id = ${orgId}::uuid AND p.id = up.id
+      SELECT p.reports_to, up.depth + 1 FROM up JOIN ludy_kernel.position p ON p.org_id = ${orgId}::uuid AND p.id = up.id
       WHERE up.id IS NOT NULL AND up.depth < 100
     )
     SELECT EXISTS (SELECT 1 FROM up WHERE up.id = ${root}::uuid) AS found`.execute(trx);
@@ -1040,7 +1272,7 @@ export const escalateTask = defineCommand({
   access: [],
   agent: { roles: 'any', taint: 'propagate' },
   // The child task and the parent's release.
-  writes: [tableWrite(TASK_TABLES, 'crove_kernel', 'task', [...CHILD_TASK_COLUMNS, ...LEASE_COLUMNS]), WAKEUP_WRITE, RUN_TAINT_WRITE],
+  writes: [tableWrite(TASK_TABLES, 'ludy_kernel', 'task', [...CHILD_TASK_COLUMNS, ...LEASE_COLUMNS]), WAKEUP_WRITE, RUN_TAINT_WRITE],
   target: (input) => ({ type: 'kernel.task', id: input.id }),
   handler: async (ctx, input) => {
     const agent = requireAgent(ctx);
@@ -1048,7 +1280,7 @@ export const escalateTask = defineCommand({
     if (parent.request_depth >= MAX_REQUEST_DEPTH) throw depthLimit();
     const target = await escalationTarget(ctx.trx, ctx.orgId, agent.positionId, parent.legal_entity_id);
     const child = await ctx.trx
-      .insertInto('crove_kernel.task')
+      .insertInto('ludy_kernel.task')
       .values({
         org_id: ctx.orgId,
         title: input.title,
@@ -1063,7 +1295,7 @@ export const escalateTask = defineCommand({
       .returning(['id', 'tainted', 'request_depth'])
       .executeTakeFirstOrThrow();
     await ctx.trx
-      .updateTable('crove_kernel.task')
+      .updateTable('ludy_kernel.task')
       .set({ status: 'waiting', checkout_run_id: null, lock_expires_at: null })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', parent.id)
@@ -1083,7 +1315,7 @@ export const delegateTask = defineCommand({
   sideEffect: 'internal',
   access: [],
   agent: { roles: 'any', taint: 'propagate' },
-  writes: [tableWrite(TASK_TABLES, 'crove_kernel', 'task', CHILD_TASK_COLUMNS), WAKEUP_WRITE, RUN_TAINT_WRITE],
+  writes: [tableWrite(TASK_TABLES, 'ludy_kernel', 'task', CHILD_TASK_COLUMNS), WAKEUP_WRITE, RUN_TAINT_WRITE],
   target: (input) => ({ type: 'kernel.task', id: input.id }),
   handler: async (ctx, input) => {
     const agent = requireAgent(ctx);
@@ -1093,7 +1325,7 @@ export const delegateTask = defineCommand({
     }
     // Read without a row lock: the run already holds the task, and chart commands lock positions before tasks.
     const target = await ctx.trx
-      .selectFrom('crove_kernel.position')
+      .selectFrom('ludy_kernel.position')
       .select('status')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.assigneePositionId)
@@ -1106,7 +1338,7 @@ export const delegateTask = defineCommand({
     }
     if (parent.request_depth >= MAX_REQUEST_DEPTH) throw depthLimit();
     const child = await ctx.trx
-      .insertInto('crove_kernel.task')
+      .insertInto('ludy_kernel.task')
       .values({
         org_id: ctx.orgId,
         title: input.title,
@@ -1151,7 +1383,7 @@ export const dispatchAgentEvent = defineCommand({
   access: 'system',
   handler: async (ctx, input) => {
     const event = await ctx.trx
-      .selectFrom('crove_kernel.outbox_event')
+      .selectFrom('ludy_kernel.outbox_event')
       .select(['id', 'type', 'payload'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.eventId)
@@ -1161,8 +1393,8 @@ export const dispatchAgentEvent = defineCommand({
     const proposalId = z.object({ proposalId: zId }).safeParse(event.payload);
     if (!proposalId.success) return { tasks: 0 };
     const proposal = await ctx.trx
-      .selectFrom('crove_kernel.proposal as p')
-      .leftJoin('crove_kernel.extraction as e', (j) => j.onRef('e.org_id', '=', 'p.org_id').onRef('e.id', '=', 'p.extraction_id'))
+      .selectFrom('ludy_kernel.proposal as p')
+      .leftJoin('ludy_kernel.extraction as e', (j) => j.onRef('e.org_id', '=', 'p.org_id').onRef('e.id', '=', 'p.extraction_id'))
       .select(['p.id', 'p.title', 'p.status', 'p.extraction_id', 'p.requested_by_agent', 'p.tainted as proposal_tainted', 'p.legal_entity_id', 'e.tainted'])
       .where('p.org_id', '=', ctx.orgId)
       .where('p.id', '=', proposalId.data.proposalId)
@@ -1171,9 +1403,9 @@ export const dispatchAgentEvent = defineCommand({
     // Content read from a file is tainted; a missing extraction row is treated as tainted too.
     const tainted = proposal.proposal_tainted || (proposal.extraction_id !== null ? proposal.tainted !== false : false);
     const seats = await ctx.trx
-      .selectFrom('crove_kernel.agent as a')
-      .innerJoin('crove_kernel.agent_template as t', 't.key', 'a.template_key')
-      .innerJoin('crove_kernel.position as p', (j) => j.onRef('p.org_id', '=', 'a.org_id').onRef('p.holder_agent_id', '=', 'a.id'))
+      .selectFrom('ludy_kernel.agent as a')
+      .innerJoin('ludy_kernel.agent_template as t', 't.key', 'a.template_key')
+      .innerJoin('ludy_kernel.position as p', (j) => j.onRef('p.org_id', '=', 'a.org_id').onRef('p.holder_agent_id', '=', 'a.id'))
       .select(['p.id as position_id', 't.module', 'a.id as agent_id', 'p.le_scope'])
       .where('a.org_id', '=', ctx.orgId)
       .where('a.status', '=', 'active')
@@ -1188,7 +1420,7 @@ export const dispatchAgentEvent = defineCommand({
       (s) => ctx.installed(s.module) && s.agent_id !== proposal.requested_by_agent && scopeCovers(s.le_scope, proposal.legal_entity_id),
     )) {
       const task = await ctx.trx
-        .insertInto('crove_kernel.task')
+        .insertInto('ludy_kernel.task')
         .values({
           org_id: ctx.orgId,
           // Not the proposal's title, which names its content (#1538): the task opens the proposal, which le_scope
@@ -1220,9 +1452,9 @@ async function dispatchModuleEvent(ctx: CommandContext, event: { id: string; typ
   const { title, ref } = parsed.data.agent_task;
   const tainted = parsed.data.agent_task.tainted ?? true;
   const seats = await ctx.trx
-    .selectFrom('crove_kernel.agent as a')
-    .innerJoin('crove_kernel.agent_template as t', 't.key', 'a.template_key')
-    .innerJoin('crove_kernel.position as p', (j) => j.onRef('p.org_id', '=', 'a.org_id').onRef('p.holder_agent_id', '=', 'a.id'))
+    .selectFrom('ludy_kernel.agent as a')
+    .innerJoin('ludy_kernel.agent_template as t', 't.key', 'a.template_key')
+    .innerJoin('ludy_kernel.position as p', (j) => j.onRef('p.org_id', '=', 'a.org_id').onRef('p.holder_agent_id', '=', 'a.id'))
     .select(['p.id as position_id', 't.module'])
     .where('a.org_id', '=', ctx.orgId)
     .where('a.status', '=', 'active')
@@ -1234,7 +1466,7 @@ async function dispatchModuleEvent(ctx: CommandContext, event: { id: string; typ
   // The event, too, must be the template's own module's: a template subscribed to another module's event gets nothing.
   for (const seat of seats.filter((s) => ctx.installed(s.module) && ref.type.startsWith(`${s.module}.`) && event.type.startsWith(`${s.module}.`))) {
     const task = await ctx.trx
-      .insertInto('crove_kernel.task')
+      .insertInto('ludy_kernel.task')
       .values({
         org_id: ctx.orgId,
         title,
@@ -1274,7 +1506,7 @@ export const startAgentRun = defineCommand({
   handler: async (ctx, input): Promise<RunStartResult> => {
     const agent = await lockAgent(ctx.trx, ctx.orgId, input.agentId);
     const position = await ctx.trx
-      .selectFrom('crove_kernel.position')
+      .selectFrom('ludy_kernel.position')
       .select(['id', 'module', 'role_key'])
       .where('org_id', '=', ctx.orgId)
       .where('holder_agent_id', '=', agent.id)
@@ -1285,17 +1517,17 @@ export const startAgentRun = defineCommand({
       return { runId: null, reason };
     };
     if (agent.status !== 'active' || !position || position.role_key !== agent.template_role_key) return done('not_runnable');
-    if (!ctx.installed(agent.template_module)) return done('module_disabled');
+    if (!ctx.installed(agent.template_module) || (await offAppsOf(ctx.trx, ctx.orgId)).includes(agent.template_module)) return done('module_disabled');
     const { rows: gates } = await sql<{ killed: boolean; spent: boolean; today: number }>`
       SELECT
-        EXISTS (SELECT 1 FROM crove_kernel.kill_switch k WHERE k.org_id = ${ctx.orgId}::uuid AND k.released_at IS NULL
+        EXISTS (SELECT 1 FROM ludy_kernel.kill_switch k WHERE k.org_id = ${ctx.orgId}::uuid AND k.released_at IS NULL
                 AND (k.scope = 'org' OR (k.scope = 'module' AND k.target = ${position.module}) OR (k.scope = 'agent' AND k.target = ${agent.id})))
-          OR crove_kernel.global_kill_switch_on('ai') AS killed,
-        EXISTS (SELECT 1 FROM crove_kernel.budget_policy b
+          OR ludy_kernel.global_kill_switch_on('ai') AS killed,
+        EXISTS (SELECT 1 FROM ludy_kernel.budget_policy b
                 WHERE b.org_id = ${ctx.orgId}::uuid AND b.hard_stop
                   AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${position.module}) OR (b.scope = 'agent' AND b.target = ${agent.id}))
-                  AND crove_kernel.ai_budget_spent(b.org_id, b.scope, b.target) >= b.monthly_limit) AS spent,
-        (SELECT count(*)::int FROM crove_kernel.ai_run r WHERE r.org_id = ${ctx.orgId}::uuid AND r.agent_id = ${agent.id}::uuid
+                  AND ludy_kernel.ai_budget_spent(b.org_id, b.scope, b.target) >= b.monthly_limit) AS spent,
+        (SELECT count(*)::int FROM ludy_kernel.ai_run r WHERE r.org_id = ${ctx.orgId}::uuid AND r.agent_id = ${agent.id}::uuid
            AND r.started_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Ho_Chi_Minh') AT TIME ZONE 'Asia/Ho_Chi_Minh') AS today`.execute(ctx.trx);
     const gate = gates[0];
     if (gate?.killed) return done('kill_switch');
@@ -1304,7 +1536,7 @@ export const startAgentRun = defineCommand({
 
     // Close runs that outlived their expiry (a crashed worker): release their leases, finish their wake-ups.
     const stale = await ctx.trx
-      .selectFrom('crove_kernel.ai_run')
+      .selectFrom('ludy_kernel.ai_run')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('agent_id', '=', agent.id)
@@ -1313,12 +1545,12 @@ export const startAgentRun = defineCommand({
       .execute();
     if (stale.length > 0) {
       const ids = stale.map((r) => r.id);
-      await ctx.trx.updateTable('crove_kernel.task').set({ checkout_run_id: null, lock_expires_at: null }).where('org_id', '=', ctx.orgId).where('checkout_run_id', 'in', ids).execute();
-      await ctx.trx.updateTable('crove_kernel.ai_run').set({ status: 'expired', finished_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
-      await ctx.trx.updateTable('crove_kernel.agent_wakeup').set({ status: 'done', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('run_id', 'in', ids).where('status', '=', 'claimed').execute();
+      await ctx.trx.updateTable('ludy_kernel.task').set({ checkout_run_id: null, lock_expires_at: null }).where('org_id', '=', ctx.orgId).where('checkout_run_id', 'in', ids).execute();
+      await ctx.trx.updateTable('ludy_kernel.ai_run').set({ status: 'expired', finished_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
+      await ctx.trx.updateTable('ludy_kernel.agent_wakeup').set({ status: 'done', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('run_id', 'in', ids).where('status', '=', 'claimed').execute();
     }
     const live = await ctx.trx
-      .selectFrom('crove_kernel.ai_run')
+      .selectFrom('ludy_kernel.ai_run')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('agent_id', '=', agent.id)
@@ -1326,7 +1558,7 @@ export const startAgentRun = defineCommand({
       .executeTakeFirst();
     if (live) return done('busy');
     const pending = await ctx.trx
-      .selectFrom('crove_kernel.agent_wakeup')
+      .selectFrom('ludy_kernel.agent_wakeup')
       .select(['id', 'tainted', 'request_depth'])
       .where('org_id', '=', ctx.orgId)
       .where('agent_id', '=', agent.id)
@@ -1337,7 +1569,7 @@ export const startAgentRun = defineCommand({
     const tainted = pending.some((w) => w.tainted);
     const depth = Math.max(...pending.map((w) => w.request_depth));
     const run = await ctx.trx
-      .insertInto('crove_kernel.ai_run')
+      .insertInto('ludy_kernel.ai_run')
       .values({
         org_id: ctx.orgId,
         agent_id: agent.id,
@@ -1349,7 +1581,7 @@ export const startAgentRun = defineCommand({
       .returning('id')
       .executeTakeFirstOrThrow();
     await ctx.trx
-      .updateTable('crove_kernel.agent_wakeup')
+      .updateTable('ludy_kernel.agent_wakeup')
       .set({ status: 'claimed', run_id: run.id, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', pending.map((w) => w.id))
@@ -1369,24 +1601,18 @@ export const finishAgentRun = defineCommand({
   target: (input) => ({ type: 'kernel.ai_run', id: input.runId }),
   handler: async (ctx, input) => {
     const run = await ctx.trx
-      .updateTable('crove_kernel.ai_run')
+      .updateTable('ludy_kernel.ai_run')
       .set({ status: input.outcome, finished_at: ctx.now, error: input.error ?? null })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.runId)
       .where('status', '=', 'running')
       .returning('agent_id')
       .executeTakeFirst();
-    await ctx.trx.updateTable('crove_kernel.task').set({ checkout_run_id: null, lock_expires_at: null }).where('org_id', '=', ctx.orgId).where('checkout_run_id', '=', input.runId).execute();
-    await ctx.trx.updateTable('crove_kernel.agent_wakeup').set({ status: 'done', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('run_id', '=', input.runId).where('status', '=', 'claimed').execute();
+    await ctx.trx.updateTable('ludy_kernel.task').set({ checkout_run_id: null, lock_expires_at: null }).where('org_id', '=', ctx.orgId).where('checkout_run_id', '=', input.runId).execute();
+    await ctx.trx.updateTable('ludy_kernel.agent_wakeup').set({ status: 'done', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('run_id', '=', input.runId).where('status', '=', 'claimed').execute();
     if (!run) return { finished: false };
-    const pending = await ctx.trx
-      .selectFrom('crove_kernel.agent_wakeup')
-      .select('id')
-      .where('org_id', '=', ctx.orgId)
-      .where('agent_id', '=', run.agent_id)
-      .where('status', '=', 'pending')
-      .executeTakeFirst();
-    if (pending) await ctx.emit('kernel.agent.wakeup_requested', { agentId: run.agent_id });
+    // A request that came in during the run wakes the agent again, unless its app is off for the org or the deployment (rewakePending).
+    await rewakePending(ctx, [run.agent_id]);
     ctx.audit({ run: input.runId, outcome: input.outcome });
     return { finished: true };
   },
@@ -1432,8 +1658,8 @@ export const chartGet = defineQuery({
   access: ALL,
   handler: async (ctx) => {
     const positions = await ctx.trx
-      .selectFrom('crove_kernel.position as p')
-      .leftJoin('crove_kernel.agent as a', (j) => j.onRef('a.org_id', '=', 'p.org_id').onRef('a.id', '=', 'p.holder_agent_id'))
+      .selectFrom('ludy_kernel.position as p')
+      .leftJoin('ludy_kernel.agent as a', (j) => j.onRef('a.org_id', '=', 'p.org_id').onRef('a.id', '=', 'p.holder_agent_id'))
       .select([
         'p.id',
         'p.title',
@@ -1454,10 +1680,10 @@ export const chartGet = defineQuery({
     // A position's legal entities name only those the reader may see (the legal entities' scope policy keeps the
     // others out of this read), so a member limited to some entities learns no other entity's id (#1763).
     const visible = new Set(
-      (await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).execute()).map((e) => e.id),
+      (await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).execute()).map((e) => e.id),
     );
     const agents = await ctx.trx
-      .selectFrom('crove_kernel.agent')
+      .selectFrom('ludy_kernel.agent')
       .select(['id', 'template_key', 'display_name', 'status', 'max_risk', 'daily_run_cap'])
       .where('org_id', '=', ctx.orgId)
       // A member's own Vy (ADR-0049) is no part of the org's chart or its counts.
@@ -1465,7 +1691,7 @@ export const chartGet = defineQuery({
       .orderBy('created_at')
       .execute();
     const owners = await ctx.trx
-      .selectFrom('crove_kernel.tenant_member')
+      .selectFrom('ludy_kernel.tenant_member')
       .select('user_id')
       .where('org_id', '=', ctx.orgId)
       .where('role', '=', 'owner')
@@ -1474,7 +1700,7 @@ export const chartGet = defineQuery({
     // Names and emails of members come from the control plane through the definer (plan §3.6).
     const profiles = await memberProfiles(ctx.trx, [...owners.map((o) => o.user_id), ...positions.flatMap((p) => (p.holder_user_id ? [p.holder_user_id] : []))]);
     const killSwitches = await ctx.trx
-      .selectFrom('crove_kernel.kill_switch')
+      .selectFrom('ludy_kernel.kill_switch')
       .select(['id', 'scope', 'target', 'reason', 'engaged_at'])
       .where('org_id', '=', ctx.orgId)
       .where('released_at', 'is', null)
@@ -1517,6 +1743,7 @@ function taskView(t: {
   tainted: boolean;
   created_by_type: string;
   due: Date | null;
+  checklist: unknown;
   created_at: Date;
 }) {
   return {
@@ -1532,6 +1759,7 @@ function taskView(t: {
     tainted: t.tainted,
     createdByType: t.created_by_type,
     due: t.due?.toISOString() ?? null,
+    checklist: parseTaskChecklist(t.checklist),
     createdAt: t.created_at.toISOString(),
   };
 }
@@ -1544,38 +1772,59 @@ export const TASK_LIST_LIMIT = 200;
 // the positions the user holds, plus the root tasks for an owner.
 export const taskList = defineQuery({
   name: 'kernel.task.list',
-  input: z.object({ positionId: zId.optional(), mine: z.boolean().optional(), status: z.array(zTaskStatus).max(6).optional() }),
+  input: z.object({
+    positionId: zId.optional(),
+    mine: z.boolean().optional(),
+    status: z.array(zTaskStatus).max(6).optional(),
+    filters: zFilterAstShape.optional(),
+    sort: zSavedViewSortShape.nullable().optional(),
+  }),
   access: ALL,
   agent: { roles: 'any' },
   handler: async (ctx, input) => {
     const order = ctx.agent ? 'asc' : 'desc';
     let query = ctx.trx
-      .selectFrom('crove_kernel.task')
-      .selectAll()
-      .where('org_id', '=', ctx.orgId)
-      .orderBy('created_at', order)
-      .orderBy('id', order)
+      .selectFrom('ludy_kernel.task as t')
+      .selectAll('t')
+      .where('t.org_id', '=', ctx.orgId)
       .limit(TASK_LIST_LIMIT);
     if (ctx.agent) {
-      query = query.where('assignee_position_id', '=', ctx.agent.positionId);
-      if (!ctx.agent.tainted) query = query.where('tainted', '=', false);
+      query = query.where('t.assignee_position_id', '=', ctx.agent.positionId);
+      if (!ctx.agent.tainted) query = query.where('t.tainted', '=', false);
     } else if (input.positionId) {
-      query = query.where('assignee_position_id', '=', input.positionId);
+      query = query.where('t.assignee_position_id', '=', input.positionId);
     } else if (input.mine && ctx.actor.type === 'user') {
       const userId = ctx.actor.userId;
       const isOwner = ctx.role === 'owner';
       query = query.where((eb) =>
         eb.or([
           eb(
-            'assignee_position_id',
+            't.assignee_position_id',
             'in',
-            eb.selectFrom('crove_kernel.position').select('id').where('org_id', '=', ctx.orgId).where('holder_user_id', '=', userId),
+            eb.selectFrom('ludy_kernel.position').select('id').where('org_id', '=', ctx.orgId).where('holder_user_id', '=', userId),
           ),
-          ...(isOwner ? [eb('assignee_position_id', 'is', null)] : []),
+          ...(isOwner ? [eb('t.assignee_position_id', 'is', null)] : []),
         ]),
       );
     }
-    if (input.status && input.status.length > 0) query = query.where('status', 'in', input.status);
+    if (input.status && input.status.length > 0) query = query.where('t.status', 'in', input.status);
+    if (input.filters !== undefined) {
+      const now = new Date();
+      const me = ctx.actor.type === 'user' ? ctx.actor.userId : null;
+      query = query.where(
+        filterCondition('kernel.task', input.filters as FilterAst, taskFields({ isOwner: ctx.role === 'owner' }), {
+          me,
+          today: vietnamToday(now),
+          now,
+        }),
+      );
+    }
+    if (input.sort !== undefined && input.sort !== null) {
+      const terms = sortTerms('kernel.task', input.sort, taskSortColumns(), sql`t.id`, { field: 'created', dir: order });
+      for (const term of terms) query = query.orderBy(term);
+    } else {
+      query = query.orderBy('t.created_at', order).orderBy('t.id', order);
+    }
     return { tasks: (await query.execute()).map(taskView) };
   },
 });
@@ -1588,7 +1837,7 @@ export const taskGet = defineQuery({
   access: ALL,
   agent: { roles: 'any' },
   handler: async (ctx, input) => {
-    let query = ctx.trx.selectFrom('crove_kernel.task').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', input.id);
+    let query = ctx.trx.selectFrom('ludy_kernel.task').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', input.id);
     if (ctx.agent) {
       query = query.where('assignee_position_id', '=', ctx.agent.positionId);
       if (!ctx.agent.tainted) query = query.where('tainted', '=', false);
@@ -1596,7 +1845,7 @@ export const taskGet = defineQuery({
     const task = await query.executeTakeFirst();
     if (!task) throw new DomainError('TASK_NOT_FOUND', 404, 'Không tìm thấy việc này');
     const comments = await ctx.trx
-      .selectFrom('crove_kernel.task_comment')
+      .selectFrom('ludy_kernel.task_comment')
       .select(['id', 'body', 'author_type', 'author_id', 'tainted', 'created_at'])
       .where('org_id', '=', ctx.orgId)
       .where('task_id', '=', task.id)
@@ -1608,7 +1857,7 @@ export const taskGet = defineQuery({
     const ref = zProposalRef.safeParse(task.source_ref);
     if (ref.success) {
       const row = await ctx.trx
-        .selectFrom('crove_kernel.proposal')
+        .selectFrom('ludy_kernel.proposal')
         .select(['id', 'title', 'status', 'payload'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', ref.data.id)
@@ -1634,7 +1883,7 @@ export const templateList = defineQuery({
   access: ALL,
   handler: async (ctx) => {
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.agent_template')
+      .selectFrom('ludy_kernel.agent_template')
       .select(['key', 'module', 'title', 'role_key', 'max_risk', 'daily_run_cap', 'job_description'])
       // The template of a member's own Vy (ADR-0049) is no part of the chart's catalog.
       .where('key', '<>', 'kernel.member_vy')
@@ -1656,7 +1905,7 @@ export const templateList = defineQuery({
 });
 
 // The monthly AI budgets with what this month's model calls they cover cost so far (the month in Asia/Ho_Chi_Minh, read
-// through crove_kernel.ai_budget_spent as the run gate and the meter read it). Amounts are decimal strings. Owners and admins: costs are management data.
+// through ludy_kernel.ai_budget_spent as the run gate and the meter read it). Amounts are decimal strings. Owners and admins: costs are management data.
 export const budgetList = defineQuery({
   name: 'kernel.agent.budgets.list',
   input: z.object({}),
@@ -1673,8 +1922,8 @@ export const budgetList = defineQuery({
       spent: string;
     }>`
       SELECT b.id, b.scope, b.target, b.monthly_limit::text AS monthly_limit, b.warn_percent, b.hard_stop, b.updated_at,
-        crove_kernel.ai_budget_spent(b.org_id, b.scope, b.target)::text AS spent
-      FROM crove_kernel.budget_policy b
+        ludy_kernel.ai_budget_spent(b.org_id, b.scope, b.target)::text AS spent
+      FROM ludy_kernel.budget_policy b
       WHERE b.org_id = ${ctx.orgId}::uuid
       ORDER BY b.scope, b.target`.execute(ctx.trx);
     return {
@@ -1734,7 +1983,7 @@ export const proposeFromTask = defineCommand({
   access: [],
   agent: { roles: 'any', taint: 'propagate' },
   // The preparer it runs declares its own.
-  writes: [tableWrite(TASK_TABLES, 'crove_kernel', 'task', [...LEASE_COLUMNS, 'pending_draft']), RUN_TAINT_WRITE],
+  writes: [tableWrite(TASK_TABLES, 'ludy_kernel', 'task', [...LEASE_COLUMNS, 'pending_draft']), RUN_TAINT_WRITE],
   target: (input) => ({ type: 'kernel.task', id: input.id }),
   handler: async (ctx, input) => {
     const agent = requireAgent(ctx);
@@ -1765,7 +2014,7 @@ export const proposeFromTask = defineCommand({
       ...(entity ? { legalEntityId: entity } : {}),
     } satisfies z.infer<typeof zProposalRequested>);
     await ctx.trx
-      .updateTable('crove_kernel.task')
+      .updateTable('ludy_kernel.task')
       .set({ status: 'waiting', checkout_run_id: null, lock_expires_at: null, pending_draft: JSON.stringify(pending) })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', task.id)
@@ -1786,7 +2035,7 @@ export const approveFromTask = defineCommand({
   sideEffect: 'internal',
   access: [],
   agent: { roles: 'any' },
-  writes: [tableWrite(TASK_TABLES, 'crove_kernel', 'task', LEASE_COLUMNS), RUN_TAINT_WRITE],
+  writes: [tableWrite(TASK_TABLES, 'ludy_kernel', 'task', LEASE_COLUMNS), RUN_TAINT_WRITE],
   target: (input) => ({ type: 'kernel.proposal', id: input.proposalId }),
   handler: async (ctx, input) => {
     const agent = requireAgent(ctx);
@@ -1795,7 +2044,7 @@ export const approveFromTask = defineCommand({
     if (!ref.success || ref.data.id !== input.proposalId || task.kind !== 'proposal_review' || task.created_by_type !== 'system') {
       throw new DomainError('PROPOSAL_NOT_TASK', 422, 'Việc này không phải để duyệt đề xuất đó');
     }
-    const proposal = await ctx.trx.selectFrom('crove_kernel.proposal').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', input.proposalId).executeTakeFirst();
+    const proposal = await ctx.trx.selectFrom('ludy_kernel.proposal').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', input.proposalId).executeTakeFirst();
     if (!proposal) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy đề xuất');
     const decision = await decideAgentApproval(ctx.trx, ctx.orgId, agent, proposal, ctx.command(proposal.command), input.revision);
     if (decision.reason !== 'ok') {
@@ -1809,7 +2058,7 @@ export const approveFromTask = defineCommand({
       revision: input.revision,
     } satisfies z.infer<typeof zProposalApproved>);
     await ctx.trx
-      .updateTable('crove_kernel.task')
+      .updateTable('ludy_kernel.task')
       .set({ status: 'done', checkout_run_id: null, lock_expires_at: null })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', task.id)
@@ -1828,7 +2077,7 @@ interface AgentEvent<T> {
 
 async function outboxEvent<T>(ctx: CommandContext, eventId: string, type: string, schema: z.ZodType<T>): Promise<AgentEvent<T> | null> {
   const event = await ctx.trx
-    .selectFrom('crove_kernel.outbox_event')
+    .selectFrom('ludy_kernel.outbox_event')
     .select(['id', 'type', 'payload', 'command_id', 'created_at'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', eventId)
@@ -1857,8 +2106,8 @@ async function emittedBy(
   // The audit row and the event come from one transaction, so they carry the same now(): the time index finds it.
   const { rows } = await sql<{ bound: boolean }>`
     SELECT EXISTS (
-      SELECT 1 FROM crove_kernel.outbox_event e
-      JOIN crove_kernel.audit_event a ON a.org_id = e.org_id AND a.occurred_at = e.created_at AND a.command_id = e.command_id
+      SELECT 1 FROM ludy_kernel.outbox_event e
+      JOIN ludy_kernel.audit_event a ON a.org_id = e.org_id AND a.occurred_at = e.created_at AND a.command_id = e.command_id
       WHERE e.org_id = ${orgId}::uuid AND e.id = ${event.id}::uuid AND a.command = ${command} AND a.outcome = 'ok'
         AND a.actor_type = 'agent' AND a.actor_id = ${event.data.agentId}::uuid AND a.detail ->> 'agentRun' = ${event.data.runId}
         AND a.target_type = ${target.type} AND a.target_id = ${target.id}::uuid
@@ -1875,10 +2124,10 @@ async function taskChain(trx: Trx, orgId: string, taskId: string): Promise<{ use
   const { rows } = await sql<{ created_by_type: string; created_by_id: string | null; source: string; parent_task_id: string | null }>`
     WITH RECURSIVE chain (id, created_by_type, created_by_id, source, parent_task_id, depth) AS (
       SELECT t.id, t.created_by_type, t.created_by_id, t.source, t.parent_task_id, 0
-      FROM crove_kernel.task t WHERE t.org_id = ${orgId}::uuid AND t.id = ${taskId}::uuid
+      FROM ludy_kernel.task t WHERE t.org_id = ${orgId}::uuid AND t.id = ${taskId}::uuid
       UNION ALL
       SELECT t.id, t.created_by_type, t.created_by_id, t.source, t.parent_task_id, c.depth + 1
-      FROM chain c JOIN crove_kernel.task t ON t.org_id = ${orgId}::uuid AND t.id = c.parent_task_id
+      FROM chain c JOIN ludy_kernel.task t ON t.org_id = ${orgId}::uuid AND t.id = c.parent_task_id
       WHERE c.depth < 20
     )
     SELECT created_by_type, created_by_id, source, parent_task_id FROM chain ORDER BY depth`.execute(trx);
@@ -1921,7 +2170,7 @@ export const createAgentProposal = defineCommand({
     const dropDraft = async () => {
       if (!bound || !draftId) return;
       await ctx.trx
-        .updateTable('crove_kernel.task')
+        .updateTable('ludy_kernel.task')
         .set({ pending_draft: null })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', taskId)
@@ -1931,14 +2180,14 @@ export const createAgentProposal = defineCommand({
     const { rows } = bound
       ? await sql<{ run_tainted: boolean; run_status: string; task_tainted: boolean; agent_name: string; stopped: boolean; le_scope: string[] }>`
           SELECT r.tainted AS run_tainted, r.status AS run_status, t.tainted AS task_tainted, a.display_name AS agent_name, p.le_scope,
-                 EXISTS (SELECT 1 FROM crove_kernel.kill_switch k
+                 EXISTS (SELECT 1 FROM ludy_kernel.kill_switch k
                          WHERE k.org_id = r.org_id AND (k.released_at IS NULL OR k.engaged_at > ${event.createdAt}::timestamptz)
                            AND (k.scope = 'org' OR (k.scope = 'module' AND k.target IN (r.module, p.module))
                                 OR (k.scope = 'agent' AND k.target = r.agent_id::text))) AS stopped
-          FROM crove_kernel.ai_run r
-          JOIN crove_kernel.agent a ON a.org_id = r.org_id AND a.id = r.agent_id
-          JOIN crove_kernel.task t ON t.org_id = r.org_id AND t.id = ${taskId}::uuid
-          JOIN crove_kernel.position p ON p.org_id = t.org_id AND p.id = t.assignee_position_id AND p.holder_agent_id = r.agent_id
+          FROM ludy_kernel.ai_run r
+          JOIN ludy_kernel.agent a ON a.org_id = r.org_id AND a.id = r.agent_id
+          JOIN ludy_kernel.task t ON t.org_id = r.org_id AND t.id = ${taskId}::uuid
+          JOIN ludy_kernel.position p ON p.org_id = t.org_id AND p.id = t.assignee_position_id AND p.holder_agent_id = r.agent_id
           WHERE r.org_id = ${ctx.orgId}::uuid AND r.id = ${runId}::uuid AND r.agent_id = ${agentId}::uuid`.execute(ctx.trx)
       : { rows: [] };
     const facts = rows[0];
@@ -1949,14 +2198,14 @@ export const createAgentProposal = defineCommand({
     }
     // The draft the request names, taken off its task here (#1949). Gone or replaced by a later request on the task, it
     // asks for nothing. A request already answered with a proposal is a duplicate, though its draft has left the task.
-    const existing = await ctx.trx.selectFrom('crove_kernel.proposal').select('id').where('org_id', '=', ctx.orgId).where('request_event_id', '=', event.id).executeTakeFirst();
+    const existing = await ctx.trx.selectFrom('ludy_kernel.proposal').select('id').where('org_id', '=', ctx.orgId).where('request_event_id', '=', event.id).executeTakeFirst();
     if (existing) return { proposalId: null, reason: 'duplicate' as const };
     let draft: z.infer<typeof zPrepared>;
     if ('draft' in event.data) {
       draft = event.data.draft;
     } else {
       const row = await ctx.trx
-        .selectFrom('crove_kernel.task')
+        .selectFrom('ludy_kernel.task')
         .select('pending_draft')
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', taskId)
@@ -1994,7 +2243,7 @@ export const createAgentProposal = defineCommand({
     // the system writes it.
     const entity =
       preparedEntity(draft) ??
-      (await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst())?.id;
+      (await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst())?.id;
     if (!entity || !scopeCovers(facts.le_scope, entity)) {
       ctx.audit({ event: event.id, created: false, reason: 'out_of_scope' });
       return { proposalId: null, reason: 'out_of_scope' as const };
@@ -2011,7 +2260,7 @@ export const createAgentProposal = defineCommand({
     ];
     const authors: ActorRef[] = [{ type: 'agent', id: agentId, run: runId }, ...chain.users.map((id) => ({ type: 'user' as const, id }))];
     const proposal = await ctx.trx
-      .insertInto('crove_kernel.proposal')
+      .insertInto('ludy_kernel.proposal')
       .values({
         org_id: ctx.orgId,
         kind,
@@ -2035,7 +2284,7 @@ export const createAgentProposal = defineCommand({
     if (!proposal) return { proposalId: null, reason: 'duplicate' as const };
     ctx.audit({ event: event.id, proposal_id: proposal.id, proposal_command: draft.command, policy_flags: flags, tainted });
     await ctx.trx
-      .insertInto('crove_kernel.task_comment')
+      .insertInto('ludy_kernel.task_comment')
       // The proposal's kind and id, not its title, so a later change to how titles are built cannot carry a party's name
       // here (#1825); the proposal's page shows the title.
       .values({ org_id: ctx.orgId, task_id: taskId, body: `Đã gửi đề xuất chờ duyệt: ${kind} (mã ${proposal.id})`, author_type: 'system' })
@@ -2073,15 +2322,15 @@ export const executeAgentApproval = defineCommand({
     // 'proposal_review', not a delegated or escalated copy) and belongs to a position the agent holds.
     const { rows: reviews } = await sql<{ source_ref: unknown }>`
       SELECT t.source_ref
-      FROM crove_kernel.task t
-      JOIN crove_kernel.position p ON p.org_id = t.org_id AND p.id = t.assignee_position_id AND p.holder_agent_id = ${agentId}::uuid
+      FROM ludy_kernel.task t
+      JOIN ludy_kernel.position p ON p.org_id = t.org_id AND p.id = t.assignee_position_id AND p.holder_agent_id = ${agentId}::uuid
       WHERE t.org_id = ${ctx.orgId}::uuid AND t.id = ${taskId}::uuid AND t.kind = 'proposal_review' AND t.created_by_type = 'system'`.execute(ctx.trx);
     const ref = zProposalRef.safeParse(reviews[0]?.source_ref);
     if (!ref.success || ref.data.id !== proposalId) {
       ctx.audit({ event: event.id, proposal: proposalId, agent: agentId, run: runId, decision: 'chain_mismatch' });
       return { approved: false, reason: 'chain_mismatch' };
     }
-    const proposal = await ctx.trx.selectFrom('crove_kernel.proposal').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', proposalId).forUpdate().executeTakeFirst();
+    const proposal = await ctx.trx.selectFrom('ludy_kernel.proposal').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', proposalId).forUpdate().executeTakeFirst();
     if (!proposal) return { approved: false, reason: 'not_found' };
     // A re-extraction in flight would replace the content the agent judged (issue #40); the job retries.
     await refuseWhileReextracting(ctx, proposal.source_file_id, proposal.extraction_id);
@@ -2091,14 +2340,14 @@ export const executeAgentApproval = defineCommand({
     ctx.audit({ event: event.id, proposal: proposal.id, agent: agentId, run: runId, decision: decision.reason, rule: decision.rule ?? null });
     if (decision.reason !== 'ok') return { approved: false, reason: decision.reason };
     await ctx.trx
-      .updateTable('crove_kernel.proposal')
+      .updateTable('ludy_kernel.proposal')
       .set({ status: 'approved', decided_by_agent: agentId, decided_at: ctx.now, executed_command_id: ctx.commandId })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', proposal.id)
       .execute();
     const result = await ctx.run<Record<string, unknown>>(proposal.command, { payload: proposal.payload, acceptFailedChecks: false }, { proposalId: proposal.id });
     await ctx.trx
-      .updateTable('crove_kernel.proposal')
+      .updateTable('ludy_kernel.proposal')
       .set({ status: 'executed', result: JSON.stringify(result ?? null) })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', proposal.id)
@@ -2120,6 +2369,12 @@ export const agentCommands = [
   createTask,
   createTaskFromTodo,
   createTaskFromMeeting,
+  createTaskFromConversation,
+  createTaskFromNote,
+  createTaskFromSource,
+  createTaskFromTemplate,
+  createTaskFromRoadmap,
+  roadmapOtpCleanup,
   updateTask,
   checkoutTask,
   commentTask,

@@ -9,14 +9,15 @@ import { sql } from 'kysely';
 import pg from 'pg';
 import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { agentCommands, createOrg, decideApproval, eligibleApprovers, kernelCommands, kernelManifest, kernelQueries, runAgentWake, upsertIdentity } from '@crove/kernel';
-import { tableWrite } from '@crove/kernel-contract';
-import { DomainError, Runtime, defineCommand, defineQuery, type Actor, type AgentActor, type AgentApprovers, type AgentRuntime, type CommandDef, type CommandWrite, type QueryDef, type Risk } from '@crove/kernel-runtime';
-import { financeCommands, financeManifest, financeQueries } from '@crove/mod-finance';
+import { createDb, type Db } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { agentCommands, createOrg, decideApproval, eligibleApprovers, kernelCommands, kernelManifest, kernelQueries, runAgentWake, upsertIdentity } from '@ludy/kernel';
+import { tableWrite } from '@ludy/kernel-contract';
+import { DomainError, Runtime, defineCommand, defineQuery, type Actor, type AgentActor, type AgentApprovers, type AgentRuntime, type CommandDef, type CommandWrite, type QueryDef, type Risk } from '@ludy/kernel-runtime';
+import { financeCommands, financeManifest, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -190,6 +191,7 @@ const AGENT_WRITE_NARROW = ['crove_kernel.agent_wakeup', 'crove_kernel.audit_eve
 suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', () => {
   const dbName = `crove_test_t18_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   const pools: pg.Pool[] = [];
@@ -211,7 +213,7 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
   });
 
   async function withAdmin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -247,7 +249,7 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
 
   // Runs SQL as crove_worker inside the agent's context, always rolled back.
   async function inAgentContext<T>(orgId: string, actor: AgentActor, fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: workerUrl });
+    const c = createDbClient({ connectionString: workerUrl }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -268,17 +270,18 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = user;
+      url.username = dbIds ? dbIds.roleName(user) : user;
       url.password = password;
       return url.toString();
     };
     appUrl = login('crove_app', 'test-app-pw');
     workerUrl = login('crove_worker', 'test-worker-pw');
     const runtimeFor = (url: string) => {
-      const pool = createPool({ connectionString: url, max: 4 });
+      const pool = createDbPool({ connectionString: url, max: 4 }, dbIds);
       pools.push(pool);
       const target = createDb(pool);
       return {
@@ -513,8 +516,8 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
     // Two transactions: S -> T and T -> S at once. The second waits for the per-org lock and sees the first.
     const s = await make('S');
     const t = await make('T');
-    const one = new pg.Client({ connectionString: appUrl });
-    const two = new pg.Client({ connectionString: appUrl });
+    const one = createDbClient({ connectionString: appUrl }, dbIds);
+    const two = createDbClient({ connectionString: appUrl }, dbIds);
     await one.connect();
     await two.connect();
     try {
@@ -898,7 +901,7 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
                             AND t.tgfoid = 'crove_kernel.agent_write_guard()'::regprocedure
                             AND (t.tgtype & 1) = 1 AND (t.tgtype & 2) = 2 AND (t.tgtype & 28) = 28) AS guarded
            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-           WHERE n.nspname LIKE 'crove\\_%' AND n.nspname <> 'crove_meta'
+           WHERE (n.nspname LIKE 'crove\\_%' OR n.nspname LIKE 'ludy\\_%') AND n.nspname <> 'crove_meta'
              AND c.relkind IN ('r', 'p') AND NOT c.relispartition
            ORDER BY 1`,
         )
@@ -1358,9 +1361,22 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
   // #1697: P04 derived from the manifests' column classes. A proposal command declares the tables and columns it
   // writes; an agent's proposal of one that writes a contact or payment column is flagged P04, one that writes neither
   // is not, and a declaration that does not match the classes is refused when the command registers.
-  const CONTACT_1697 = tableWrite(kernelManifest.tables, 'crove_kernel', 'party', ['email']);
-  const PAYMENT_1697 = tableWrite(financeManifest.tables, 'crove_finance', 'bank_line', ['bank_account']);
-  const INTERNAL_1697 = tableWrite(kernelManifest.tables, 'crove_kernel', 'task_comment', ['body']);
+  const kernelTables = kernelManifest.tables as unknown as Record<string, Record<string, Record<string, string>>>;
+  const financeTables = financeManifest.tables as unknown as Record<string, Record<string, Record<string, string>>>;
+  const schemaOf = (tables: Record<string, unknown>, mod: string): string =>
+    Object.keys(tables).find((s) => s === `ludy_${mod}` || s === `crove_${mod}`) ?? `crove_${mod}`;
+  const KERNEL_SCHEMA = schemaOf(kernelTables, 'kernel');
+  const JOBS_SCHEMA = schemaOf(kernelTables, 'jobs');
+  const FINANCE_SCHEMA = schemaOf(financeTables, 'finance');
+  const manifestTableWrite = (
+    tables: Record<string, Record<string, Record<string, string>>>,
+    schema: string,
+    table: string,
+    columns: readonly string[],
+  ) => tableWrite(tables as never, schema as never, table as never, columns as never);
+  const CONTACT_1697 = manifestTableWrite(kernelTables, KERNEL_SCHEMA, 'party', ['email']);
+  const PAYMENT_1697 = manifestTableWrite(financeTables, FINANCE_SCHEMA, 'bank_line', ['bank_account']);
+  const INTERNAL_1697 = manifestTableWrite(kernelTables, KERNEL_SCHEMA, 'task_comment', ['body']);
   const proposal1697 = (name: string, writes: readonly CommandWrite[] | undefined, extra: Partial<CommandDef<unknown, unknown>> = {}) =>
     defineCommand({
       sideEffect: 'none',
@@ -1502,8 +1518,8 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
 
   it('refuses a command that declares a job table when a proposal command declared free of contact and payment writes runs it, and still runs one that declares only queue statistics (#2107)', async () => {
     // A row in a job table starts work later under the job's own declaration, which the proposal's says nothing about.
-    const JOB_2107 = tableWrite(kernelManifest.tables, 'crove_jobs', 'job', ['name']);
-    const STATS_2107 = tableWrite(kernelManifest.tables, 'crove_jobs', 'queue_stats', ['name']);
+    const JOB_2107 = manifestTableWrite(kernelTables, JOBS_SCHEMA, 'job', ['name']);
+    const STATS_2107 = manifestTableWrite(kernelTables, JOBS_SCHEMA, 'queue_stats', ['name']);
     const inner = (name: string, write: CommandWrite) =>
       defineCommand({ sideEffect: 'none', name, input: z.object({}), risk: 'R1', access: 'system', writes: [write], handler: async () => ({ ok: true }) }) as CommandDef<unknown, unknown>;
     const commands = [
@@ -1526,7 +1542,7 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
     try {
       // A bug in the command, so the caller gets INTERNAL (the log names the cause) and nothing commits.
       await expect(approval.execute()).rejects.toMatchObject({ code: 'INTERNAL' });
-      expect(logged.mock.calls.flat().map(String).join('\n')).toContain('command t2107.nests_job: declares no contact or payment write (P04), so it cannot run t2107.job_inner, which declares crove_jobs.job');
+      expect(logged.mock.calls.flat().map(String).join('\n')).toContain(`command t2107.nests_job: declares no contact or payment write (P04), so it cannot run t2107.job_inner, which declares ${JOBS_SCHEMA}.job`);
     } finally {
       logged.mockRestore();
     }
@@ -1540,15 +1556,15 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
   it('refuses declared writes that do not match the column classes, and contact or payment writes by agents (#1697)', () => {
     const register = (def: Partial<CommandDef<unknown, unknown>>) => () =>
       new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [{ sideEffect: 'none', name: 't1697.reg', input: z.object({}), risk: 'R1', access: 'proposal', handler: async () => ({}), ...def } as CommandDef<unknown, unknown>] });
-    const party = kernelManifest.tables.crove_kernel.party;
+    const party = kernelTables[KERNEL_SCHEMA]!.party!;
     // A column the table does not have, a table not named <schema>.<table>, a table twice, no column, an unknown class.
-    expect(register({ writes: [{ table: 'crove_kernel.party', classes: party, columns: ['iban'] }] })).toThrow(/a column its classes do not have/);
+    expect(register({ writes: [{ table: `${KERNEL_SCHEMA}.party`, classes: party, columns: ['iban'] }] })).toThrow(/a column its classes do not have/);
     expect(register({ writes: [{ table: 'party', classes: party, columns: ['email'] }] })).toThrow(/<schema>\.<table>/);
     expect(register({ writes: [CONTACT_1697, CONTACT_1697] })).toThrow(/twice/);
-    expect(register({ writes: [{ table: 'crove_kernel.party', classes: party, columns: [] }] })).toThrow(/name no column/);
-    expect(register({ writes: [{ table: 'crove_kernel.party', classes: party, columns: ['email', 'email'] }] })).toThrow(/twice/);
-    expect(register({ writes: [{ table: 'crove_kernel.party', classes: { ...party, email: 'secret' }, columns: ['email'] }] })).toThrow(/unknown class/);
-    expect(register({ writes: [{ table: 'crove_kernel.party', classes: {}, columns: ['email'] }] })).toThrow(/no column classes/);
+    expect(register({ writes: [{ table: `${KERNEL_SCHEMA}.party`, classes: party, columns: [] }] })).toThrow(/name no column/);
+    expect(register({ writes: [{ table: `${KERNEL_SCHEMA}.party`, classes: party, columns: ['email', 'email'] }] })).toThrow(/twice/);
+    expect(register({ writes: [{ table: `${KERNEL_SCHEMA}.party`, classes: { ...party, email: 'secret' }, columns: ['email'] }] })).toThrow(/unknown class/);
+    expect(register({ writes: [{ table: `${KERNEL_SCHEMA}.party`, classes: {}, columns: ['email'] }] })).toThrow(/no column classes/);
     // Agents never run a command that writes a contact or payment column, and never approve its proposals (P04).
     for (const write of [CONTACT_1697, PAYMENT_1697]) {
       expect(register({ access: [], agent: { roles: 'any' }, writes: [write] })).toThrow(/no agent may run it/);
@@ -1570,11 +1586,11 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
 
   it('fails a command that writes a table it does not declare, the rows the runtime and declared nested commands write aside (#1710)', async () => {
     const suffix = randomUUID().slice(0, 8);
-    const INBOX = tableWrite(kernelManifest.tables, 'crove_kernel', 'inbox_item', ['org_id', 'kind', 'dedupe_key', 'detail', 'raised_at']);
+    const INBOX = manifestTableWrite(kernelTables, KERNEL_SCHEMA, 'inbox_item', ['org_id', 'kind', 'dedupe_key', 'detail', 'raised_at']);
     // Writes an Inbox item straight from the handler.
     const raise = async (ctx: { trx: Parameters<CommandDef<unknown, unknown>['handler']>[0]['trx']; orgId: string; now: Date }, key: string) => {
       await ctx.trx
-        .insertInto('crove_kernel.inbox_item')
+        .insertInto('ludy_kernel.inbox_item')
         .values({ org_id: ctx.orgId, kind: 'kernel.job.dead_lettered', dedupe_key: `t1710:${key}`, detail: JSON.stringify({ queue: 't1710', jobId: randomUUID(), retries: 0 }), raised_at: ctx.now })
         .execute();
     };
@@ -1644,7 +1660,7 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
     try {
       for (const command of [undeclared, empty, viaNested]) {
         await expect(worker.execute(command.name, {}, as), command.name).rejects.toMatchObject({ code: 'INTERNAL' });
-        expect(logged.mock.calls.flat().map(String).join('\n')).toContain(`command ${command.name}: wrote crove_kernel.inbox_item, which it does not declare`);
+        expect(logged.mock.calls.flat().map(String).join('\n')).toContain(`command ${command.name}: wrote ${KERNEL_SCHEMA}.inbox_item, which it does not declare`);
       }
       for (const command of [beside, twoEvents, catches, queryBeside]) {
         await expect(worker.execute(command.name, {}, as), command.name).rejects.toMatchObject({ code: 'INTERNAL' });
@@ -1665,7 +1681,7 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
     const suffix = randomUUID().slice(0, 8);
     const raise = async (ctx: { trx: Parameters<CommandDef<unknown, unknown>['handler']>[0]['trx']; orgId: string; now: Date }, key: string) => {
       await ctx.trx
-        .insertInto('crove_kernel.inbox_item')
+        .insertInto('ludy_kernel.inbox_item')
         .values({ org_id: ctx.orgId, kind: 'kernel.job.dead_lettered', dedupe_key: `t1797:${key}`, detail: JSON.stringify({ queue: 't1797', jobId: randomUUID(), retries: 0 }), raised_at: ctx.now })
         .execute();
     };
@@ -1726,7 +1742,7 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
       },
     });
     const statsDeclared = command('stats_declared', {
-      writes: [tableWrite(kernelManifest.tables, 'crove_jobs', 'queue_stats', ['name'])],
+      writes: [manifestTableWrite(kernelTables, JOBS_SCHEMA, 'queue_stats', ['name'])],
       handler: async (ctx) => {
         await statsRow.execute(ctx.trx);
         return { ok: true };
@@ -1742,11 +1758,11 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       await expect(worker.execute(triesCommitted.name, {}, as)).rejects.toMatchObject({ code: 'INTERNAL' });
-      expect(logged.mock.calls.flat().map(String).join('\n')).toContain(`command ${triesCommitted.name}: wrote crove_kernel.inbox_item, which it does not declare`);
+      expect(logged.mock.calls.flat().map(String).join('\n')).toContain(`command ${triesCommitted.name}: wrote ${KERNEL_SCHEMA}.inbox_item, which it does not declare`);
       await expect(worker.execute(besideTry.name, {}, as)).rejects.toMatchObject({ code: 'INTERNAL' });
       expect(logged.mock.calls.flat().map(String).join('\n')).toContain(`command ${besideTry.name}: its writes cannot be checked`);
       await expect(worker.execute(statsUndeclared.name, {}, as)).rejects.toMatchObject({ code: 'INTERNAL' });
-      expect(logged.mock.calls.flat().map(String).join('\n')).toContain(`command ${statsUndeclared.name}: wrote crove_jobs.queue_stats, which it does not declare`);
+      expect(logged.mock.calls.flat().map(String).join('\n')).toContain(`command ${statsUndeclared.name}: wrote ${JOBS_SCHEMA}.queue_stats, which it does not declare`);
     } finally {
       logged.mockRestore();
     }
@@ -1882,7 +1898,7 @@ suite('agents in the org chart: T18 negative tests on PostgreSQL (ADR-0029)', ()
             new Promise((resolve) => {
               setTimeout(() => {
                 ctx.trx
-                  .insertInto('crove_kernel.inbox_item')
+                  .insertInto('ludy_kernel.inbox_item')
                   .values({ org_id: ctx.orgId, kind: 'kernel.job.dead_lettered', dedupe_key: `t1831:late-${tag}-${suffix}`, detail: JSON.stringify({ queue: 't1831', jobId: randomUUID(), retries: 0 }), raised_at: ctx.now })
                   .execute()
                   .then(

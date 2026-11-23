@@ -22,18 +22,19 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { useEffect, useId, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
-import { occasionsBetween, type Occasion } from '@crove/mod-social/contract';
+import { occasionsBetween, type Occasion } from '@ludy/mod-social/contract';
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { RepeatIcon } from '@crove/ui/components/repeat-icon';
-import { cn } from '@crove/ui/lib/utils';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { RepeatIcon } from '@ludy/ui/components/repeat-icon';
+import { cn } from '@ludy/ui/lib/utils';
 import { DateInput } from './date-input.tsx';
 import { TimeInput } from './time-input.tsx';
+import { UnansweredComments, UnansweredProvider } from './social-unanswered.tsx';
 import { ErrorText, Spinner } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -103,6 +104,9 @@ function channelLabel(item: CalendarItem, names: Map<string, string>): string {
   return name ? `${providerName(item.v.provider)} (${name})` : providerName(item.v.provider);
 }
 
+// No posts yet: a stable empty list, so the provider's read keeps its place while the calendar loads.
+const NO_POSTS: Post[] = [];
+
 const groupText = (group: CalendarGroup, empty: string) => excerpt((group.items[0] as CalendarItem).v.effective.body) || empty;
 
 // One chip per post and minute (#1220): the time, the channel (or how many), the statuses in words and the text.
@@ -110,7 +114,7 @@ const groupText = (group: CalendarGroup, empty: string) => excerpt((group.items[
 // planned drafts by members too); true or false, picking (#1057), where a click ticks or unticks the chip's post for
 // the bulk bar instead. onPlan: the chip's menu, which opens the date editor for a planned draft (#1145) or the open
 // slots (#1158).
-function Chip({
+export function Chip({
   group,
   slug,
   names,
@@ -145,7 +149,8 @@ function Chip({
   // A series post or one of its copies (#979).
   const recurring = group.post.recurrence !== null || group.post.recurrenceSourceId !== null;
   const time = f.time(group.at.toISOString());
-  const channels = group.items.length === 1 ? providerName(first.v.provider) : t('calendar.channels', { count: group.items.length });
+  // A single channel by its name too (#3655): two Pages of one network read alike without it, and a title shows nothing on touch.
+  const channels = group.items.length === 1 ? channelLabel(first, names) : t('calendar.channels', { count: group.items.length });
   const statuses = groupStatuses(group)
     .map((s) => t(`status.${s.key}`))
     .join(', ');
@@ -179,6 +184,9 @@ function Chip({
       </span>
       <span className="block truncate text-subtle-foreground">
         {channels} · {statuses}
+      </span>
+      <span className="block">
+        <UnansweredComments postId={group.post.id} />
       </span>
     </>
   );
@@ -220,7 +228,7 @@ function Chip({
         onClick={onPlan}
         aria-label={t(`calendar.${menu}Of`, { text })}
         title={t(`calendar.${menu}`)}
-        className="inline-flex min-h-6 min-w-6 shrink-0 items-center justify-center rounded px-1 text-xs text-subtle-foreground opacity-0 group-hover/chip:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none max-sm:hidden"
+        className="inline-flex min-h-6 min-w-6 shrink-0 items-center justify-center rounded px-1 text-xs text-subtle-foreground opacity-0 group-hover/chip:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:opacity-100"
       >
         ⋯
       </button>
@@ -716,10 +724,13 @@ export function SocialCalendar({
   // Where the focus goes back when the day's list closes (#1233): its "+N", or the day itself once the "+N" is gone.
   const moreButtons = useRef(new Map<string, HTMLButtonElement>());
   const dayCells = useRef(new Map<string, HTMLDivElement>());
+  // A phone's dots button of a month day (#3655), where the focus goes back when the "+N" is hidden.
+  const dotButtons = useRef(new Map<string, HTMLButtonElement>());
   const keep = <E extends HTMLElement>(map: Map<string, E>, id: string) => (el: E | null) => void (el ? map.set(id, el) : map.delete(id));
   const focusBackTo = (id: string) => () => {
-    const more = moreButtons.current.get(id);
-    return more?.isConnected ? more : (dayCells.current.get(id) ?? null);
+    // A hidden button (the "+N" on a phone, the dots from sm up) cannot take the focus: the visible one does.
+    const shownButton = (el: HTMLButtonElement | undefined) => (el?.isConnected && el.offsetParent !== null ? el : null);
+    return shownButton(moreButtons.current.get(id)) ?? shownButton(dotButtons.current.get(id)) ?? dayCells.current.get(id) ?? null;
   };
   const [over, setOver] = useState<string | null>(null);
   const [dragged, setDragged] = useState<Dragged | null>(null);
@@ -954,6 +965,7 @@ export function SocialCalendar({
   const openGroups = dayOpen ? (byDay.get(dayOpen) ?? []) : [];
 
   return (
+    <UnansweredProvider posts={posts.data ?? NO_POSTS}>
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="outline" size="sm" onClick={() => shift(-1)} aria-label={t('calendar.previous')}>
@@ -1089,7 +1101,7 @@ export function SocialCalendar({
                       title={off ? t('calendar.outsideCampaign') : undefined}
                       data-off-campaign={off || undefined}
                       className={cn(
-                        'group flex min-h-24 flex-col gap-1 bg-background p-1.5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset',
+                        'group flex min-h-24 min-w-0 flex-col gap-1 bg-background p-1.5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset',
                         outside && 'bg-muted/40',
                         off && 'bg-muted/80',
                         over === id && 'ring-2 ring-primary ring-inset',
@@ -1107,7 +1119,7 @@ export function SocialCalendar({
                             type="button"
                             onClick={() => start(d)}
                             aria-label={t('calendar.newOn', { day: f.date(id) })}
-                            className="rounded px-1 text-xs text-subtle-foreground opacity-0 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+                            className="rounded px-1 text-xs text-subtle-foreground opacity-0 group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none max-sm:min-h-8 max-sm:min-w-6 max-sm:text-base max-sm:opacity-100 pointer-coarse:opacity-100"
                           >
                             +
                           </button>
@@ -1119,6 +1131,29 @@ export function SocialCalendar({
                       {(occasionsByDay.get(id) ?? []).map((o) => (
                         <OccasionChip key={o.id} occasion={o} onStart={startFor} />
                       ))}
+                      {/* On a phone a month day is too narrow for chips (#3655): a dot per post (up to three) and the count, a tap
+                          opens the day's list (the same dialog as "+N"); chips return from `sm` up. */}
+                      {view === 'month' && list.length > 0 && (
+                        <button
+                          type="button"
+                          aria-haspopup="dialog"
+                          ref={keep(dotButtons.current, id)}
+                          onClick={() => setDayOpen(id)}
+                          data-testid="calendar-day-dots"
+                          className="flex min-h-8 max-w-full items-center gap-0.5 self-start overflow-hidden rounded px-0.5 sm:hidden focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+                        >
+                          {list.slice(0, 3).map((group) => (
+                            <span key={group.key} aria-hidden="true" className={cn('size-1.5 rounded-full', group.planned ? 'border border-primary' : 'bg-primary')} />
+                          ))}
+                          {list.length > 3 && (
+                            <span aria-hidden="true" className="text-[10px] leading-none text-muted-foreground tabular-nums">
+                              +{list.length - 3}
+                            </span>
+                          )}
+                          <span className="sr-only">{t('calendar.dayPosts', { count: list.length, day: f.date(id) })}</span>
+                        </button>
+                      )}
+                      <div className={cn('contents', view === 'month' && 'max-sm:hidden')}>
                       {list.slice(0, shown).map((group) => {
                         // The menu: a planned draft's date, or (under a channel filter with open slots, for an owner or
                         // admin) a slot of the queue.
@@ -1139,6 +1174,7 @@ export function SocialCalendar({
                           />
                         );
                       })}
+                      </div>
                       {/* The chips past those shown open in the day's full list, by pointer and keyboard (#1220). */}
                       {list.length > shown && (
                         <button
@@ -1147,7 +1183,7 @@ export function SocialCalendar({
                           ref={keep(moreButtons.current, id)}
                           onClick={() => setDayOpen(id)}
                           data-testid="calendar-more"
-                          className="inline-flex min-h-6 self-start items-center rounded px-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+                          className={cn('inline-flex min-h-6 self-start items-center rounded px-1.5 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none', view === 'month' && 'max-sm:hidden')}
                         >
                           {t('calendar.more', { count: list.length - shown })}
                           <span className="sr-only"> {t('calendar.moreOf', { day: f.date(id) })}</span>
@@ -1272,5 +1308,6 @@ export function SocialCalendar({
         </DayDialog>
       )}
     </div>
+    </UnansweredProvider>
   );
 }

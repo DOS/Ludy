@@ -2,7 +2,7 @@
 // A member's own notes and to-dos as Markdown (#1678): each note under its title with its facts and its body as
 // written, each to-do as a checkbox line with its steps.
 import { describe, expect, it } from 'vitest';
-import type { NotesExport } from '@crove/kernel-contract';
+import type { NotesExport } from '@ludy/kernel-contract';
 import { notesMarkdown, type NotesExportWords } from '../src/lib/notes-export.ts';
 
 const WORDS: NotesExportWords = {
@@ -10,9 +10,13 @@ const WORDS: NotesExportWords = {
   exportedAt: 'Tải về lúc',
   notes: 'Ghi chú',
   todos: 'Việc',
+  todoLists: 'Danh sách việc',
   private: 'Ghi chú riêng',
   shared: 'Ghi chú dùng chung',
   tags: 'Nhãn',
+  priority: 'Mức ưu tiên',
+  list: 'Danh sách',
+  sections: 'Các mục',
   pinned: 'Đã ghim',
   archived: 'Lưu trữ lúc',
   trashed: 'Trong thùng rác từ',
@@ -66,6 +70,10 @@ const DATA: NotesExport = {
         { text: 'Ký', done: false },
       ],
       status: 'done',
+      priority: 4,
+      tags: [],
+      listId: null,
+      sectionId: null,
       dueOn: '2026-10-20',
       dueAt: null,
       timeZone: 'Asia/Ho_Chi_Minh',
@@ -76,8 +84,12 @@ const DATA: NotesExport = {
       deletedAt: null,
       sourceNoteId: null,
       taskId: null,
+      recurrence: null,
+      seriesId: null,
+      links: [{ targetType: 'kernel.task', targetId: 'task-1' }],
     },
   ],
+  todoLists: [],
   truncated: false,
 };
 
@@ -118,6 +130,7 @@ describe('notes download as Markdown (#1678)', () => {
         '- Xong lúc: 2026-10-06T00:00:00.000Z',
         '- Tạo lúc: 2026-10-05T00:00:00.000Z',
         '- Sửa lần cuối: 2026-10-06T00:00:00.000Z',
+        '- Gắn với: kernel.task task-1',
         '',
         'Trước ngày 20',
         '',
@@ -142,5 +155,45 @@ describe('notes download as Markdown (#1678)', () => {
 
   it('says when the list was cut', () => {
     expect(notesMarkdown({ ...DATA, notes: [], todos: [], truncated: true }, WORDS)).toContain('> Chỉ có phần mới nhất');
+  });
+
+  it('writes priority, list/section name, tags, and personal to-do lists when present', () => {
+    const withLists: NotesExport = {
+      exportedAt: '2026-10-30T03:00:00.000Z',
+      notes: [],
+      todos: [
+        {
+          ...DATA.todos[0]!,
+          priority: 1,
+          tags: ['thue', 'gap'],
+          listId: 'list-1',
+          sectionId: 'sec-1',
+        },
+      ],
+      todoLists: [
+        {
+          id: 'list-1',
+          name: 'Thuế\n## Fake heading',
+          color: 'emerald',
+          sections: [
+            { id: 'sec-1', name: 'Đầu tháng' },
+            { id: 'sec-2', name: 'Cuối tháng' },
+          ],
+          sortKey: 'a0',
+          createdAt: '2026-10-05T00:00:00.000Z',
+          updatedAt: '2026-10-06T00:00:00.000Z',
+          deletedAt: null,
+        },
+      ],
+      truncated: false,
+    };
+    const md = notesMarkdown(withLists, WORDS);
+    expect(md).toContain('- Mức ưu tiên: P1\n');
+    expect(md).toContain('- Danh sách: Thuế ## Fake heading / Đầu tháng\n');
+    expect(md).toContain('- Nhãn: thue, gap\n');
+    expect(md).toContain('## Danh sách việc (1)\n');
+    expect(md).toContain('### Thuế ## Fake heading\n');
+    expect(md).toContain('- Danh sách: list-1\n');
+    expect(md).toContain('- Các mục: Đầu tháng, Cuối tháng\n');
   });
 });

@@ -7,12 +7,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { vietnamToday, zTodayItems, type Deal, type DealSetting, type NextStepChanged, type NextStepPage, type PipelineStage, type TodayItem } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
-import { crmCommands, crmQueries } from '@crove/mod-crm';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { vietnamToday, zTodayItems, type Deal, type DealSetting, type NextStepChanged, type NextStepPage, type PipelineStage, type TodayItem } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
+import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { raiseCrmNextSteps } from '../src/crm-worker.ts';
 import { contextToken } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -73,7 +73,7 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(user, orgId)]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(user, orgId)]);
       return await fn(c);
     } finally {
       await c.query('ROLLBACK').catch(() => {});
@@ -87,30 +87,30 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const [adm, member, other, viewer] = [await person('admin'), await person('member'), await person('other'), await person('viewer')];
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [orgId, adm, member, other, viewer]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [orgId, adm, member, other, viewer]);
     const exec = <T>(user: string, command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(user), orgId });
     const query = <T>(user: string, command: string, input: unknown) => rt.query<T>(command, input, { actor: asUser(user), orgId });
-    const party = (name: string) => rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
+    const party = (name: string) => rows<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
     const stageNamed = async (name: string) => ((await exec<PipelineStage[]>(owner, 'crm.pipeline.setup', {})).find((s) => s.name === name) as PipelineStage);
     const newDeal = (user: string, partyId: string, over: Record<string, unknown> = {}) =>
       exec<Deal>(user, 'crm.deal.create', { partyId, title: SECRET_TITLE, amount: '15000000', expectedClose: null, ...over });
     // Makes the deal's last change `days` days ago (a superuser's statement: the commands always stamp now).
-    const age = (dealId: string, days: number) => rows('UPDATE crove_crm.deal SET updated_at = now() - make_interval(days => $3) WHERE org_id = $1 AND id = $2', [orgId, dealId, days]);
+    const age = (dealId: string, days: number) => rows('UPDATE ludy_crm.deal SET updated_at = now() - make_interval(days => $3) WHERE org_id = $1 AND id = $2', [orgId, dealId, days]);
     // The Vietnam calendar day of the deal's last change, as the database reads it.
     const changedOn = async (dealId: string) =>
-      (await rows<{ d: string }>("SELECT to_char((updated_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'YYYY-MM-DD') AS d FROM crove_crm.deal WHERE org_id = $1 AND id = $2", [orgId, dealId]))[0]?.d as string;
+      (await rows<{ d: string }>("SELECT to_char((updated_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'YYYY-MM-DD') AS d FROM ludy_crm.deal WHERE org_id = $1 AND id = $2", [orgId, dealId]))[0]?.d as string;
     const raise = () => worker.execute<{ raised: number; closed: number }>('crm.next_step.raise', {}, { actor: SYSTEM, orgId });
     const steps = () =>
       rows<StepRow>(
         `SELECT id, deal_id, reason, assignee_user_id, to_char(since_on, 'YYYY-MM-DD') AS since_on, status, snoozed_until, resolved_at, resolved_by, closed_reason
-         FROM crove_crm.deal_next_step WHERE org_id = $1 ORDER BY raised_at, id`,
+         FROM ludy_crm.deal_next_step WHERE org_id = $1 ORDER BY raised_at, id`,
         [orgId],
       );
     const stepsOf = async (dealId: string) => (await steps()).filter((s) => s.deal_id === dealId);
     const list = (user: string, scope: 'mine' | 'all' = 'mine') => query<NextStepPage>(user, 'crm.next_step.list', { scope });
     const done = (user: string, nextStepIds: string[]) => exec<NextStepChanged>(user, 'crm.next_step.done', { nextStepIds });
     const snooze = (user: string, nextStepIds: string[], days: number) => exec<NextStepChanged>(user, 'crm.next_step.snooze', { nextStepIds, days });
-    const auditOf = (command: string) => rows<{ detail: Record<string, unknown> }>('SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY occurred_at', [orgId, command]);
+    const auditOf = (command: string) => rows<{ detail: Record<string, unknown> }>('SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY occurred_at', [orgId, command]);
     return { orgId, owner, admin: adm, member, other, viewer, exec, query, party, stageNamed, newDeal, age, changedOn, raise, steps, stepsOf, list, done, snooze, auditOf };
   }
 
@@ -123,17 +123,17 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
-    workerUrl = login('crove_worker', 'test-worker-pw');
+    workerUrl = login('ludy_worker', 'test-worker-pw');
     workerPool = createPool({ connectionString: workerUrl, max: 2 });
     workerDb = createDb(workerPool);
     const registered = { commands: [...kernelCommands, ...crmCommands], queries: [...kernelQueries({ inboundDomain: null }), ...crmQueries] };
@@ -236,7 +236,7 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
       expect(await o.stepsOf(quiet.id)).toMatchObject([{ status: 'done', resolved_by: o.other, closed_reason: null, snoozed_until: null }]);
       expect(await o.raise()).toEqual({ raised: 0, closed: 0 });
       // N days after, the deal is still untouched: a new step.
-      await asRestore('UPDATE crove_crm.deal_next_step SET resolved_at = now() - interval \'15 days\' WHERE org_id = $1', [o.orgId]);
+      await asRestore('UPDATE ludy_crm.deal_next_step SET resolved_at = now() - interval \'15 days\' WHERE org_id = $1', [o.orgId]);
       expect(await o.raise()).toEqual({ raised: 1, closed: 0 });
       expect(await o.stepsOf(quiet.id)).toHaveLength(2);
 
@@ -247,7 +247,7 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
       await o.exec(o.member, 'crm.deal.update', { dealId: overdue.id, version: overdue.version, partyId: p, title: 'Đổi', amount: '5', expectedClose: yesterday, ownerUserId: o.member });
       expect(await o.stepsOf(overdue.id)).toMatchObject([{ status: 'closed', closed_reason: 'deal_edited' }]);
       expect(await o.raise()).toEqual({ raised: 0, closed: 0 });
-      await asRestore("UPDATE crove_crm.deal_next_step SET resolved_at = now() - interval '15 days' WHERE org_id = $1 AND deal_id = $2", [o.orgId, overdue.id]);
+      await asRestore("UPDATE ludy_crm.deal_next_step SET resolved_at = now() - interval '15 days' WHERE org_id = $1 AND deal_id = $2", [o.orgId, overdue.id]);
       expect(await o.raise()).toEqual({ raised: 1, closed: 0 });
     });
 
@@ -256,13 +256,13 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
       const p = await o.party('Công ty E2');
       const stage = await o.stageNamed('Mới');
       await rows(
-        `INSERT INTO crove_crm.deal (org_id, party_id, title, stage_id, sort_key, owner_user_id, created_by, updated_at)
+        `INSERT INTO ludy_crm.deal (org_id, party_id, title, stage_id, sort_key, owner_user_id, created_by, updated_at)
          SELECT $1, $2, 'Cơ hội ' || g, $3, 'V', $4, $4, now() - interval '30 days' + g * interval '1 minute' FROM generate_series(1, 501) g`,
         [o.orgId, p, stage.id, o.member],
       );
       expect(await o.raise()).toEqual({ raised: 500, closed: 0 });
       const left = await rows<{ title: string }>(
-        'SELECT d.title FROM crove_crm.deal d WHERE d.org_id = $1 AND NOT EXISTS (SELECT 1 FROM crove_crm.deal_next_step n WHERE n.org_id = d.org_id AND n.deal_id = d.id)',
+        'SELECT d.title FROM ludy_crm.deal d WHERE d.org_id = $1 AND NOT EXISTS (SELECT 1 FROM ludy_crm.deal_next_step n WHERE n.org_id = d.org_id AND n.deal_id = d.id)',
         [o.orgId],
       );
       // The 501st is the least quiet one.
@@ -278,7 +278,7 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
       await o.age(deal.id, 20);
       await o.raise();
       // A close that did not come through the command (a restore): the rule closes the step.
-      await asRestore('UPDATE crove_crm.deal SET closed_at = now() WHERE org_id = $1 AND id = $2', [o.orgId, deal.id]);
+      await asRestore('UPDATE ludy_crm.deal SET closed_at = now() WHERE org_id = $1 AND id = $2', [o.orgId, deal.id]);
       expect(await o.raise()).toEqual({ raised: 0, closed: 1 });
       expect(await o.stepsOf(deal.id)).toMatchObject([{ status: 'closed', closed_reason: 'deal_closed' }]);
     });
@@ -300,13 +300,13 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
       expect(hidden.counts).toEqual({ mine: 0, all: 0 });
       expect((await o.query<Deal>(o.member, 'crm.deal.get', { dealId: deal.id })).followUp).toBeNull();
       const window = await rows<{ ok: boolean }>(
-        "SELECT snoozed_until BETWEEN now() + interval '2 days 20 hours' AND now() + interval '3 days 4 hours' AS ok FROM crove_crm.deal_next_step WHERE org_id = $1 AND id = $2",
+        "SELECT snoozed_until BETWEEN now() + interval '2 days 20 hours' AND now() + interval '3 days 4 hours' AS ok FROM ludy_crm.deal_next_step WHERE org_id = $1 AND id = $2",
         [o.orgId, id],
       );
       expect(window[0]?.ok).toBe(true);
       expect(await o.raise()).toEqual({ raised: 0, closed: 0 });
       // Its time passes: it shows again, still the same step, while the deal is still stale.
-      await asRestore("UPDATE crove_crm.deal_next_step SET snoozed_until = now() - interval '1 minute' WHERE org_id = $1 AND id = $2", [o.orgId, id]);
+      await asRestore("UPDATE ludy_crm.deal_next_step SET snoozed_until = now() - interval '1 minute' WHERE org_id = $1 AND id = $2", [o.orgId, id]);
       expect((await o.list(o.member)).items.map((s) => s.id)).toEqual([id]);
       expect((await o.query<Deal>(o.member, 'crm.deal.get', { dealId: deal.id })).followUp?.id).toBe(id);
       // 14 days is allowed, 5 is not, a viewer snoozes nothing, and a step that is done is skipped.
@@ -345,7 +345,7 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
       const first = (await o.list(o.member, 'all')).items[0];
       expect(first).toMatchObject({ amount: '15000000.00', currency: 'VND', stageName: 'Mới', partyName: 'Công ty G', reason: 'no_activity' });
       // A member who is removed leaves the step unowned (their deal too): owners and admins read it as theirs.
-      await rows('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.other]);
+      await rows('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.other]);
       expect((await stepOf(theirs)).assignee_user_id).toBeNull();
       expect(await ids(o.admin, 'mine')).toEqual([nobody.id, theirs.id].sort());
     });
@@ -396,38 +396,38 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
       const [step, second] = [(await o.stepsOf(deal.id))[0] as StepRow, (await o.stepsOf(stale.id))[0] as StepRow];
       // Only the system context raises one.
       await expect(
-        asMember(o.orgId, o.member, (c) => c.query("INSERT INTO crove_crm.deal_next_step (org_id, deal_id, reason, since_on) VALUES ($1, $2, 'no_activity', '2026-10-01')", [o.orgId, deal.id])),
+        asMember(o.orgId, o.member, (c) => c.query("INSERT INTO ludy_crm.deal_next_step (org_id, deal_id, reason, since_on) VALUES ($1, $2, 'no_activity', '2026-10-01')", [o.orgId, deal.id])),
       ).rejects.toMatchObject({ code: '42501' });
       // A viewer reads, and updates no row: the policy shows it none to change.
-      expect(await asMember(o.orgId, o.viewer, async (c) => (await c.query('SELECT id FROM crove_crm.deal_next_step')).rowCount)).toBe(2);
-      expect(await asMember(o.orgId, o.viewer, async (c) => (await c.query("UPDATE crove_crm.deal_next_step SET status = 'done', resolved_at = now(), resolved_by = $1", [o.viewer])).rowCount)).toBe(0);
+      expect(await asMember(o.orgId, o.viewer, async (c) => (await c.query('SELECT id FROM ludy_crm.deal_next_step')).rowCount)).toBe(2);
+      expect(await asMember(o.orgId, o.viewer, async (c) => (await c.query("UPDATE ludy_crm.deal_next_step SET status = 'done', resolved_at = now(), resolved_by = $1", [o.viewer])).rowCount)).toBe(0);
       // Nobody deletes one through the API's login.
-      for (const user of [o.owner, o.member]) expect(await asMember(o.orgId, user, async (c) => (await c.query('DELETE FROM crove_crm.deal_next_step')).rowCount)).toBe(0);
+      for (const user of [o.owner, o.member]) expect(await asMember(o.orgId, user, async (c) => (await c.query('DELETE FROM ludy_crm.deal_next_step')).rowCount)).toBe(0);
       // A member marks it done in their own name only, and changes none of the step's own facts.
       await expect(
-        asMember(o.orgId, o.member, (c) => c.query("UPDATE crove_crm.deal_next_step SET status = 'done', resolved_at = now(), resolved_by = $1 WHERE id = $2", [o.other, step.id])),
+        asMember(o.orgId, o.member, (c) => c.query("UPDATE ludy_crm.deal_next_step SET status = 'done', resolved_at = now(), resolved_by = $1 WHERE id = $2", [o.other, step.id])),
       ).rejects.toMatchObject({ code: '42501' });
-      await expect(asMember(o.orgId, o.member, (c) => c.query("UPDATE crove_crm.deal_next_step SET reason = 'past_close' WHERE id = $1", [step.id]))).rejects.toMatchObject({ code: '42501' });
-      await expect(asMember(o.orgId, o.member, (c) => c.query('UPDATE crove_crm.deal_next_step SET assignee_user_id = $1 WHERE id = $2', [o.other, step.id]))).rejects.toMatchObject({ code: '42501' });
+      await expect(asMember(o.orgId, o.member, (c) => c.query("UPDATE ludy_crm.deal_next_step SET reason = 'past_close' WHERE id = $1", [step.id]))).rejects.toMatchObject({ code: '42501' });
+      await expect(asMember(o.orgId, o.member, (c) => c.query('UPDATE ludy_crm.deal_next_step SET assignee_user_id = $1 WHERE id = $2', [o.other, step.id]))).rejects.toMatchObject({ code: '42501' });
       // Snoozed, then unsnoozed by a statement: a snooze is a time.
       expect(await o.snooze(o.member, [step.id], 3)).toMatchObject({ changed: [step.id] });
-      await expect(asMember(o.orgId, o.member, (c) => c.query('UPDATE crove_crm.deal_next_step SET snoozed_until = NULL WHERE id = $1', [step.id]))).rejects.toMatchObject({ code: '42501' });
+      await expect(asMember(o.orgId, o.member, (c) => c.query('UPDATE ludy_crm.deal_next_step SET snoozed_until = NULL WHERE id = $1', [step.id]))).rejects.toMatchObject({ code: '42501' });
       // A resolved step is final.
       await o.done(o.member, [second.id]);
-      await expect(asMember(o.orgId, o.member, (c) => c.query("UPDATE crove_crm.deal_next_step SET status = 'open', resolved_at = NULL, resolved_by = NULL WHERE id = $1", [second.id]))).rejects.toMatchObject({ code: '42501' });
+      await expect(asMember(o.orgId, o.member, (c) => c.query("UPDATE ludy_crm.deal_next_step SET status = 'open', resolved_at = NULL, resolved_by = NULL WHERE id = $1", [second.id]))).rejects.toMatchObject({ code: '42501' });
       // Another org's members see none of these rows, and write none.
-      expect(await asMember(other.orgId, other.member, async (c) => (await c.query('SELECT id FROM crove_crm.deal_next_step')).rowCount)).toBe(0);
-      expect(await asMember(other.orgId, other.owner, async (c) => (await c.query("UPDATE crove_crm.deal_next_step SET status = 'done', resolved_at = now(), resolved_by = $1", [other.owner])).rowCount)).toBe(0);
+      expect(await asMember(other.orgId, other.member, async (c) => (await c.query('SELECT id FROM ludy_crm.deal_next_step')).rowCount)).toBe(0);
+      expect(await asMember(other.orgId, other.owner, async (c) => (await c.query("UPDATE ludy_crm.deal_next_step SET status = 'done', resolved_at = now(), resolved_by = $1", [other.owner])).rowCount)).toBe(0);
       expect((await other.list(other.owner, 'all')).items).toEqual([]);
       // A snooze is a time within the next 14 days (a day of slack): the past is an unsnooze and the far future buries the step.
       for (const when of ["now() - interval '1 day'", "now() + interval '30 days'", "'9999-12-31'"]) {
-        await expect(asMember(o.orgId, o.member, (c) => c.query(`UPDATE crove_crm.deal_next_step SET snoozed_until = ${when} WHERE id = $1`, [step.id]))).rejects.toMatchObject({ code: '42501' });
+        await expect(asMember(o.orgId, o.member, (c) => c.query(`UPDATE ludy_crm.deal_next_step SET snoozed_until = ${when} WHERE id = $1`, [step.id]))).rejects.toMatchObject({ code: '42501' });
       }
-      expect(await asMember(o.orgId, o.member, async (c) => (await c.query("UPDATE crove_crm.deal_next_step SET snoozed_until = now() + interval '5 days' WHERE id = $1", [step.id])).rowCount)).toBe(1);
+      expect(await asMember(o.orgId, o.member, async (c) => (await c.query("UPDATE ludy_crm.deal_next_step SET snoozed_until = now() + interval '5 days' WHERE id = $1", [step.id])).rowCount)).toBe(1);
       // Who marked a step done cannot be wiped by a statement of a login; only the foreign key's own action, when that member is removed, clears it.
-      await expect(asMember(o.orgId, o.member, (c) => c.query('UPDATE crove_crm.deal_next_step SET resolved_by = NULL WHERE id = $1', [second.id]))).rejects.toMatchObject({ code: '42501' });
+      await expect(asMember(o.orgId, o.member, (c) => c.query('UPDATE ludy_crm.deal_next_step SET resolved_by = NULL WHERE id = $1', [second.id]))).rejects.toMatchObject({ code: '42501' });
       expect((await o.steps()).find((s) => s.id === second.id)?.resolved_by).toBe(o.member);
-      await rows('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.member]);
+      await rows('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.member]);
       expect((await o.steps()).find((s) => s.id === second.id)).toMatchObject({ status: 'done', resolved_by: null });
     });
 
@@ -448,19 +448,19 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
         await c.connect();
         try {
           await c.query('BEGIN');
-          await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [o.orgId]);
+          await c.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [o.orgId]);
           return await fn(c);
         } finally {
           await c.query('ROLLBACK').catch(() => {});
           await c.end();
         }
       };
-      await expect(asSystem((c) => c.query("UPDATE crove_crm.deal_next_step SET status = 'done', resolved_at = now() WHERE id = $1", [first.id]))).rejects.toMatchObject({ code: '42501' });
-      await expect(asSystem((c) => c.query("UPDATE crove_crm.deal_next_step SET snoozed_until = now() + interval '3 days' WHERE id = $1", [first.id]))).rejects.toMatchObject({ code: '42501' });
+      await expect(asSystem((c) => c.query("UPDATE ludy_crm.deal_next_step SET status = 'done', resolved_at = now() WHERE id = $1", [first.id]))).rejects.toMatchObject({ code: '42501' });
+      await expect(asSystem((c) => c.query("UPDATE ludy_crm.deal_next_step SET snoozed_until = now() + interval '3 days' WHERE id = $1", [first.id]))).rejects.toMatchObject({ code: '42501' });
       await expect(
-        asSystem((c) => c.query("INSERT INTO crove_crm.deal_next_step (org_id, deal_id, reason, since_on, status, resolved_at, closed_reason) VALUES ($1, $2, 'no_activity', '2026-10-01', 'closed', now(), 'deal_edited')", [o.orgId, deal.id])),
+        asSystem((c) => c.query("INSERT INTO ludy_crm.deal_next_step (org_id, deal_id, reason, since_on, status, resolved_at, closed_reason) VALUES ($1, $2, 'no_activity', '2026-10-01', 'closed', now(), 'deal_edited')", [o.orgId, deal.id])),
       ).rejects.toMatchObject({ code: '42501' });
-      expect(await asSystem(async (c) => (await c.query("UPDATE crove_crm.deal_next_step SET status = 'closed', resolved_at = now(), closed_reason = 'deal_closed' WHERE id = $1", [second.id])).rowCount)).toBe(1);
+      expect(await asSystem(async (c) => (await c.query("UPDATE ludy_crm.deal_next_step SET status = 'closed', resolved_at = now(), closed_reason = 'deal_closed' WHERE id = $1", [second.id])).rowCount)).toBe(1);
       // Nothing of that was kept: the transaction rolled back.
       expect((await o.steps()).map((s) => s.status)).toEqual(['open', 'open']);
     });
@@ -495,11 +495,11 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
       expect(await o.raise()).toEqual({ raised: 1, closed: 0 });
       // Set again (an update of the one row), and 60 is the most.
       expect(await o.exec<DealSetting>(o.owner, 'crm.deal_setting.set', { staleDays: 60 })).toEqual({ staleDays: 60, isDefault: false });
-      expect(await rows('SELECT 1 FROM crove_crm.deal_setting WHERE org_id = $1', [o.orgId])).toHaveLength(1);
+      expect(await rows('SELECT 1 FROM ludy_crm.deal_setting WHERE org_id = $1', [o.orgId])).toHaveLength(1);
       expect(JSON.stringify(await o.auditOf('crm.deal_setting.set'))).toContain('60');
       // A member's own statement cannot write it either.
-      await expect(asMember(o.orgId, o.member, (c) => c.query('UPDATE crove_crm.deal_setting SET stale_days = 7'))).resolves.toMatchObject({ rowCount: 0 });
-      await expect(asMember(o.orgId, o.member, (c) => c.query('INSERT INTO crove_crm.deal_setting (org_id, stale_days) VALUES ($1, 7)', [o.orgId]))).rejects.toMatchObject({ code: '42501' });
+      await expect(asMember(o.orgId, o.member, (c) => c.query('UPDATE ludy_crm.deal_setting SET stale_days = 7'))).resolves.toMatchObject({ rowCount: 0 });
+      await expect(asMember(o.orgId, o.member, (c) => c.query('INSERT INTO ludy_crm.deal_setting (org_id, stale_days) VALUES ($1, 7)', [o.orgId]))).rejects.toMatchObject({ code: '42501' });
     });
   });
 
@@ -512,16 +512,16 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
       const stale = await busy.newDeal(busy.member, p);
       await busy.age(stale.id, 20);
       await calm.newDeal(calm.member, q);
-      const { rows: orgs } = await workerPool.query<{ org_id: string }>('SELECT org_id FROM crove_crm.deal_stale_orgs(NULL, 1000)');
+      const { rows: orgs } = await workerPool.query<{ org_id: string }>('SELECT org_id FROM ludy_crm.deal_stale_orgs(NULL, 1000)');
       expect(orgs.map((r) => r.org_id)).toContain(busy.orgId);
       expect(orgs.map((r) => r.org_id)).not.toContain(calm.orgId);
       // The keyset: after the last org of a page, the next page starts past it.
       const sorted = orgs.map((r) => r.org_id).sort();
-      const { rows: after } = await workerPool.query<{ org_id: string }>('SELECT org_id FROM crove_crm.deal_stale_orgs($1::uuid, 1000)', [sorted[0]]);
+      const { rows: after } = await workerPool.query<{ org_id: string }>('SELECT org_id FROM ludy_crm.deal_stale_orgs($1::uuid, 1000)', [sorted[0]]);
       expect(after.map((r) => r.org_id)).not.toContain(sorted[0]);
       // The API's login and a member's context are refused.
-      await expect(pool.query('SELECT * FROM crove_crm.deal_stale_orgs(NULL, 10)')).rejects.toMatchObject({ code: '42501' });
-      await expect(asMember(busy.orgId, busy.owner, (c) => c.query('SELECT * FROM crove_crm.deal_stale_orgs(NULL, 10)'))).rejects.toMatchObject({ code: '42501' });
+      await expect(pool.query('SELECT * FROM ludy_crm.deal_stale_orgs(NULL, 10)')).rejects.toMatchObject({ code: '42501' });
+      await expect(asMember(busy.orgId, busy.owner, (c) => c.query('SELECT * FROM ludy_crm.deal_stale_orgs(NULL, 10)'))).rejects.toMatchObject({ code: '42501' });
       // The worker's pass raises in the busy org, none in the calm one, and again changes nothing.
       const pass = await raiseCrmNextSteps({ runtime: worker, workerDb });
       expect(pass.raised).toBeGreaterThanOrEqual(1);
@@ -529,7 +529,7 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
       expect(await calm.steps()).toEqual([]);
       expect((await raiseCrmNextSteps({ runtime: worker, workerDb })).raised).toBe(0);
       // Handled: an org whose stale deals all have a step is no longer listed, so the next night does not walk it (or audit it) again.
-      const { rows: handled } = await workerPool.query<{ org_id: string }>('SELECT org_id FROM crove_crm.deal_stale_orgs(NULL, 1000)');
+      const { rows: handled } = await workerPool.query<{ org_id: string }>('SELECT org_id FROM ludy_crm.deal_stale_orgs(NULL, 1000)');
       expect(handled.map((r) => r.org_id)).not.toContain(busy.orgId);
       expect((await busy.auditOf('crm.next_step.raise')).length).toBe(1);
       // A person cannot run the rule, and the system actor reaches no other org's rows from here.
@@ -558,11 +558,11 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
         // A minute ago, but never before the start of Vietnam's day (a run just after midnight): the read asks for bookings that start today.
         const starts = new Date(Math.max(Date.now() - 60_000, new Date(`${today}T00:00:01+07:00`).getTime()));
         const ends = new Date(Date.now() + 600_000);
-        await rows('INSERT INTO crove_crm.event_type (org_id, id, slug, title, duration_min, host_user_id, created_by) VALUES ($1, $2, $3, $4, 30, $5, $5)', [o.orgId, type, `t-${type.slice(0, 8)}`, title, host]);
-        await rows("INSERT INTO crove_kernel.calendar_event (org_id, id, user_id, starts_at, ends_at, time_zone, kind, created_by) VALUES ($1, $2, $3, $4, $5, 'Asia/Ho_Chi_Minh', 'booking', $3)", [o.orgId, event, host, starts, ends]);
+        await rows('INSERT INTO ludy_crm.event_type (org_id, id, slug, title, duration_min, host_user_id, created_by) VALUES ($1, $2, $3, $4, 30, $5, $5)', [o.orgId, type, `t-${type.slice(0, 8)}`, title, host]);
+        await rows("INSERT INTO ludy_kernel.calendar_event (org_id, id, user_id, starts_at, ends_at, time_zone, kind, created_by) VALUES ($1, $2, $3, $4, $5, 'Asia/Ho_Chi_Minh', 'booking', $3)", [o.orgId, event, host, starts, ends]);
         const id = randomUUID();
         await rows(
-          "INSERT INTO crove_crm.booking (org_id, id, event_type_id, calendar_event_id, starts_at, ends_at, status, visitor_name, email, time_zone) VALUES ($1, $2, $3, $4, $5, $6, 'confirmed', 'Khách Lê Thị Hoa', 'hoa@khach.test', 'Asia/Ho_Chi_Minh')",
+          "INSERT INTO ludy_crm.booking (org_id, id, event_type_id, calendar_event_id, starts_at, ends_at, status, visitor_name, email, time_zone) VALUES ($1, $2, $3, $4, $5, $6, 'confirmed', 'Khách Lê Thị Hoa', 'hoa@khach.test', 'Asia/Ho_Chi_Minh')",
           [o.orgId, id, type, event, starts, ends],
         );
         return id;

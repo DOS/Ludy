@@ -31,8 +31,8 @@
 // lacks).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { Db } from '@crove/db';
-import { DomainError, defineCommand, type Actor, type CommandDef, type Runtime } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { DomainError, defineCommand, type Actor, type CommandDef, type Runtime } from '@ludy/kernel-runtime';
 import { acknowledgeRestore, restoreReport, type ArchiveStore, type RestoreReport, type RestoreSeries, type UncoveredSeries } from './worm.ts';
 
 export const RESTORE_REPORT_EXIT = { ok: 0, failed: 1, lost: 2, behind: 3 } as const;
@@ -79,7 +79,7 @@ export function numberReseedCommand(): CommandDef<z.infer<typeof zReseed>, Numbe
     handler: async (ctx, input) => {
       const { rows } = await sql<{ series_id: string; previous_next: string | null; next_number: string }>`
         SELECT series_id, previous_next::text AS previous_next, next_number::text AS next_number
-        FROM crove_kernel.number_series_reseed(${input.seriesId}::uuid, ${input.legalEntityId}::uuid, ${input.docType}, ${input.periodKey},
+        FROM ludy_kernel.number_series_reseed(${input.seriesId}::uuid, ${input.legalEntityId}::uuid, ${input.docType}, ${input.periodKey},
           ${input.next}::bigint)`
         .execute(ctx.trx)
         .catch((error: { message?: string }) => {

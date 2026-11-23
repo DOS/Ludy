@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The summary, the decisions and the action items of a meeting (issue #2580, M6 part A, ADR-0047 points 2 and 8, ADR-0049 decision 8, meetings plan sections
 // 5.3 and 8). Everything here is the recorder's own work or a reader's own click, in a signed-in member's context; none of it needs an AI:
-//   meetings.summary.save         the recorder types the summary and the decisions: the draft (a new save replaces it).
+//   meetings.minutes.set_template the recorder picks the minutes template of their meeting (A4, #3162): the code only; text already saved is not touched.
+//   meetings.summary.save         the recorder types the summary (or, on a template, its sections) and the decisions: the draft (a new save replaces it).
 //   meetings.action_item.create / edit / delete   the recorder's draft items. An edit clears the taint of that item; code recomputes its flags.
 //   meetings.result.publish       the recorder's one click (`confirmed: true`): the drafts become published rows, which the meeting's readers read.
 //   meetings.action_item.accept   a person makes a team task from an item with the title they confirmed, the date and the seat they picked: the recorder
@@ -15,22 +16,31 @@
 import { sql } from 'kysely';
 import {
   ITEMS_PER_MEETING_MAX,
+  parseStoredSections,
   zActionItemAccept,
   zActionItemAcceptClean,
   zActionItemCreate,
   zActionItemEdit,
   zActionItemRef,
   zActionItemSource,
+  sectionsToText,
+  templateSections,
   zMeetingRef,
   zMeetingResultSave,
+  zMeetingTemplateSet,
+  zMeetingTemplateSetDone,
+  zMinutesPublishedEvent,
   zResultPublish,
   type ActionItemView,
   type ItemFlag,
   type MeetingResults,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
+import { enqueueMinutesHook } from './hook.ts';
 import { vnDayStart } from './retention.ts';
-import { ROLES, openMeeting, userOf } from './transcript.ts';
+import { suggestAssignee, type Person, type Suggested } from './assignee-match.ts';
+import { attendeeNames, cleanName } from './speaker.ts';
+import { ROLES, missingAnchors, openMeeting, userOf } from './transcript.ts';
 
 // What code finds wrong with an item's text: a link, an email address or a phone number in a title (a task is read by every member, and a title the model
 // wrote from a transcript must not carry a way to reach someone off the page). Fixed words, never the text.
@@ -92,7 +102,7 @@ export async function recorderMeeting(ctx: CommandContext, meetingId: string, wh
 // An attendee the item may name: the recorder or a reader of the meeting.
 async function checkAttendee(trx: Trx, orgId: string, meetingId: string, recorder: string, userId: string | null): Promise<void> {
   if (userId === null || userId === recorder) return;
-  const row = await trx.selectFrom('crove_meetings.meeting_reader').select('id').where('org_id', '=', orgId).where('meeting_id', '=', meetingId).where('user_id', '=', userId).executeTakeFirst();
+  const row = await trx.selectFrom('ludy_meetings.meeting_reader').select('id').where('org_id', '=', orgId).where('meeting_id', '=', meetingId).where('user_id', '=', userId).executeTakeFirst();
   if (!row) throw new DomainError('INVALID_READER', 422, 'An action item can name only the recorder or an attendee of the meeting');
 }
 
@@ -105,14 +115,71 @@ export const meetingSummarySave = defineCommand({
   target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
   handler: async (ctx, input) => {
     await recorderMeeting(ctx, input.meetingId, 'write its summary');
+    // On a template the recorder types its sections and code makes the one summary text from them (the headings are code's); on the general template the recorder types
+    // the summary itself. The two are never mixed, so a result is one text however it was typed.
+    const row = await ctx.trx.selectFrom('ludy_meetings.meeting').select(['summary_template', 'minutes_template_sections']).where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forUpdate().executeTakeFirstOrThrow();
+    // On a custom template (#3578) the sections are the meeting's own copy, so the recorder types under the headings the meeting was given, whatever the org's template says now.
+    const copy = row.minutes_template_sections === null ? null : parseStoredSections(row.minutes_template_sections);
+    const defs = templateSections(row.summary_template, copy);
+    let summary = input.summary;
+    if (defs.length === 0) {
+      if (input.sections.length > 0) throw new DomainError('TEMPLATE_MISMATCH', 422, 'This meeting uses the general summary; it has no sections');
+    } else {
+      if (input.summary !== '') throw new DomainError('TEMPLATE_MISMATCH', 422, 'This meeting uses a template; type its sections');
+      if (input.sections.some((s) => !defs.some((d) => d.key === s.key))) throw new DomainError('TEMPLATE_MISMATCH', 422, 'A section is not one of this template\'s');
+      summary = sectionsToText(row.summary_template, input.sections, copy);
+      if (summary === '') throw new DomainError('SUMMARY_REQUIRED', 422, 'Write at least one section');
+    }
     // A new save replaces the earlier draft; what the recorder typed is the recorder's own text, so it is not tainted.
-    await ctx.trx.deleteFrom('crove_meetings.meeting_result').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').execute();
+    await ctx.trx.deleteFrom('ludy_meetings.meeting_result').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').execute();
     await ctx.trx
-      .insertInto('crove_meetings.meeting_result')
-      .values({ org_id: ctx.orgId, meeting_id: input.meetingId, summary: input.summary, decisions: sql`${JSON.stringify(input.decisions)}::jsonb`, feature: 'manual', stage: 'draft', tainted: false })
+      .insertInto('ludy_meetings.meeting_result')
+      .values({ org_id: ctx.orgId, meeting_id: input.meetingId, summary, decisions: sql`${JSON.stringify(input.decisions)}::jsonb`, feature: 'manual', stage: 'draft', tainted: false })
       .execute();
     ctx.audit({ meetingId: input.meetingId, decisionCount: input.decisions.length });
     return { meetingId: input.meetingId, decisions: input.decisions.length };
+  },
+});
+
+// The recorder picks the minutes template (A4, #3162): a code on the meeting, changed by the recorder only (the database policy says the same). It takes effect for the next
+// summary run and for the headings the recorder types under; a summary already saved or published keeps its text, which the minutes page shows as it is when the headings
+// no longer match.
+export const meetingTemplateSet = defineCommand({
+  name: 'meetings.minutes.set_template',
+  input: zMeetingTemplateSet,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ROLES,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input) => {
+    await recorderMeeting(ctx, input.meetingId, 'pick its minutes template');
+    // A template the org wrote (#3578) is read by (org, id) in the caller's own org, so another org's template is not there to copy (row security) and answers as not found. The meeting keeps
+    // its OWN copy of the name and the sections, with their hash, and never refers back to the template: a later edit or archive changes nothing it was summarized with.
+    let copy: { minutes_template_name: string | null; minutes_template_sections: string | null; minutes_template_hash: ReturnType<typeof sql<string>> | null } = {
+      minutes_template_name: null,
+      minutes_template_sections: null,
+      minutes_template_hash: null,
+    };
+    if (input.summaryTemplate === 'custom') {
+      const template = await ctx.trx
+        .selectFrom('ludy_meetings.minutes_template')
+        .select(['name', 'sections', 'archived_at'])
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.templateId as string)
+        .executeTakeFirst();
+      if (!template) throw new DomainError('MINUTES_TEMPLATE_NOT_FOUND', 404, 'Template not found');
+      if (template.archived_at !== null) throw new DomainError('MINUTES_TEMPLATE_ARCHIVED', 409, 'An archived template cannot be picked');
+      const json = JSON.stringify(parseStoredSections(template.sections));
+      copy = { minutes_template_name: template.name, minutes_template_sections: json, minutes_template_hash: sql<string>`pg_catalog.md5((${json}::jsonb)::text)` };
+    }
+    await ctx.trx
+      .updateTable('ludy_meetings.meeting')
+      .set({ summary_template: input.summaryTemplate, ...copy, updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.meetingId)
+      .execute();
+    ctx.audit({ meetingId: input.meetingId, summaryTemplate: input.summaryTemplate, ...(input.templateId ? { templateId: input.templateId } : {}) });
+    return zMeetingTemplateSetDone.parse({ meetingId: input.meetingId, summaryTemplate: input.summaryTemplate });
   },
 });
 
@@ -126,10 +193,10 @@ export const actionItemCreate = defineCommand({
   handler: async (ctx, input) => {
     const { userId } = await recorderMeeting(ctx, input.meetingId, 'add action items');
     await checkAttendee(ctx.trx, ctx.orgId, input.meetingId, userId, input.whoUserId);
-    const count = await ctx.trx.selectFrom('crove_meetings.action_item').select(sql<string>`count(*)::text`.as('n')).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).executeTakeFirstOrThrow();
+    const count = await ctx.trx.selectFrom('ludy_meetings.action_item').select(sql<string>`count(*)::text`.as('n')).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).executeTakeFirstOrThrow();
     if (Number(count.n) >= ITEMS_PER_MEETING_MAX) throw new DomainError('TOO_MANY_ITEMS', 422, 'A meeting holds at most 100 action items');
     const row = await ctx.trx
-      .insertInto('crove_meetings.action_item')
+      .insertInto('ludy_meetings.action_item')
       .values({
         org_id: ctx.orgId,
         meeting_id: input.meetingId,
@@ -160,7 +227,7 @@ export const actionItemEdit = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     // RLS shows a draft to its recorder only, so any other caller meets the same answer as for an unknown id.
-    const item = await ctx.trx.selectFrom('crove_meetings.action_item').select(['meeting_id', 'title']).where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).where('stage', '=', 'draft').executeTakeFirst();
+    const item = await ctx.trx.selectFrom('ludy_meetings.action_item').select(['meeting_id', 'title']).where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).where('stage', '=', 'draft').executeTakeFirst();
     if (!item) throw itemNotFound();
     const meeting = await openMeeting(ctx.trx, ctx.orgId, item.meeting_id);
     if (meeting.recorder_user_id !== userId) throw itemNotFound();
@@ -168,7 +235,7 @@ export const actionItemEdit = defineCommand({
     const title = input.title ?? item.title;
     // Code looks at the title again on every edit.
     await ctx.trx
-      .updateTable('crove_meetings.action_item')
+      .updateTable('ludy_meetings.action_item')
       .set({
         ...(input.title === undefined ? {} : { title: input.title }),
         ...(input.who === undefined ? {} : { who_drafted: input.who }),
@@ -185,7 +252,7 @@ export const actionItemEdit = defineCommand({
     // Only a changed title is the recorder's own text; fixing a date or an attendee leaves the model's title tainted. The mark is cleared by the recorder's
     // review (a definer: the tenant context cannot change it), here for this one item.
     if (input.title !== undefined && input.title !== item.title) {
-      await sql`SELECT crove_meetings.draft_review(${ctx.orgId}::uuid, ${item.meeting_id}::uuid, ARRAY[${input.itemId}]::uuid[])`.execute(ctx.trx);
+      await sql`SELECT ludy_meetings.draft_review(${ctx.orgId}::uuid, ${item.meeting_id}::uuid, ARRAY[${input.itemId}]::uuid[])`.execute(ctx.trx);
     }
     ctx.audit({ itemId: input.itemId, meetingId: item.meeting_id });
     return { itemId: input.itemId };
@@ -200,15 +267,21 @@ export const actionItemDelete = defineCommand({
   access: ROLES,
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
-    const item = await ctx.trx.selectFrom('crove_meetings.action_item').select('meeting_id').where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).where('stage', '=', 'draft').executeTakeFirst();
+    const item = await ctx.trx.selectFrom('ludy_meetings.action_item').select('meeting_id').where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).where('stage', '=', 'draft').executeTakeFirst();
     if (!item) throw itemNotFound();
     const meeting = await openMeeting(ctx.trx, ctx.orgId, item.meeting_id);
     if (meeting.recorder_user_id !== userId) throw itemNotFound();
-    await ctx.trx.deleteFrom('crove_meetings.action_item').where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).execute();
+    await ctx.trx.deleteFrom('ludy_meetings.action_item').where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).execute();
     ctx.audit({ itemId: input.itemId, meetingId: item.meeting_id });
     return { itemId: input.itemId, deleted: true as const };
   },
 });
+
+// Whether the recorder shared the meeting with the whole company (visibility 'org'): the only meetings whose published minutes wake an agent (#3803). The caller is the recorder, who reads the row.
+async function meetingIsOrgVisible(trx: Trx, orgId: string, meetingId: string): Promise<boolean> {
+  const row = await trx.selectFrom('ludy_meetings.meeting').select('visibility').where('org_id', '=', orgId).where('id', '=', meetingId).executeTakeFirst();
+  return row?.visibility === 'org';
+}
 
 export const resultPublish = defineCommand({
   name: 'meetings.result.publish',
@@ -219,45 +292,91 @@ export const resultPublish = defineCommand({
   target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
   handler: async (ctx, input) => {
     await recorderMeeting(ctx, input.meetingId, 'share its summary');
+    // The meeting row is held first, before any row of it is locked, in the order the personal-data erasure and a meeting's delete take (the meeting, then its rows), so a publish cannot deadlock with
+    // them; meetings.chapters.save holds it too, so a save and this publish are one after the other.
+    await ctx.trx.selectFrom('ludy_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forNoKeyUpdate().execute();
     // Text the model wrote is shared only after the recorder has read it (meetings.draft.review) or rewritten it; the database refuses it too.
     const unread = await ctx.trx
-      .selectFrom('crove_meetings.meeting_result')
+      .selectFrom('ludy_meetings.meeting_result')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
       .where('stage', '=', 'draft')
       .where('tainted', '=', true)
-      .unionAll(ctx.trx.selectFrom('crove_meetings.action_item').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('status', '=', 'suggested').where('tainted', '=', true))
+      .unionAll(ctx.trx.selectFrom('ludy_meetings.action_item').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('status', '=', 'suggested').where('tainted', '=', true))
       .executeTakeFirst();
-    if (unread) throw new DomainError('DRAFT_NOT_REVIEWED', 409, 'Read the draft Vy wrote before sharing it');
+    // The same for the draft chapters (#3844); the database refuses a tainted draft chapter too.
+    const unreadChapter = await ctx.trx.selectFrom('ludy_meetings.meeting_chapter').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('tainted', '=', true).executeTakeFirst();
+    if (unread || unreadChapter) throw new DomainError('DRAFT_NOT_REVIEWED', 409, 'Read the draft Vy wrote before sharing it');
     // The draft is locked first: the nightly expiry (meetings.retention.shred, kind 'draft') then waits for this publish, or has already deleted the draft, in which
     // case none is found here and the summary published before it is not replaced by nothing.
-    const draft = await ctx.trx.selectFrom('crove_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').forUpdate().executeTakeFirst();
+    const draft = await ctx.trx.selectFrom('ludy_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').forUpdate().executeTakeFirst();
     // The draft replaces the summary published before it (one published summary a meeting).
     let results = 0;
+    let published: { summary: string; decisions: unknown; updated_at: Date } | null = null;
     if (draft) {
-      await ctx.trx.deleteFrom('crove_meetings.meeting_result').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'published').execute();
-      await ctx.trx.updateTable('crove_meetings.meeting_result').set({ stage: 'published', updated_at: sql<Date>`pg_catalog.now()` }).where('org_id', '=', ctx.orgId).where('id', '=', draft.id).execute();
+      await ctx.trx.deleteFrom('ludy_meetings.meeting_result').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'published').execute();
+      published =
+        (await ctx.trx
+          .updateTable('ludy_meetings.meeting_result')
+          .set({ stage: 'published', updated_at: sql<Date>`pg_catalog.now()` })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', draft.id)
+          .returning(['summary', 'decisions', 'updated_at'])
+          .executeTakeFirst()) ?? null;
       results = 1;
     }
     const items = await ctx.trx
-      .updateTable('crove_meetings.action_item')
+      .updateTable('ludy_meetings.action_item')
       .set({ stage: 'published', updated_at: sql<Date>`pg_catalog.now()` })
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
       .where('stage', '=', 'draft')
       .where('status', '=', 'suggested')
-      .returning('id')
+      .returning(['id', 'title', 'who_drafted', 'when_parsed'])
       .execute();
-    if (results === 0 && items.length === 0) throw new DomainError('NOTHING_TO_PUBLISH', 409, 'There is no draft to share');
-    ctx.audit({ meetingId: input.meetingId, results, items: items.length });
-    return { meetingId: input.meetingId, results, items: items.length };
+    // The draft chapters (#3844) replace the chapters published before them, as the summary does.
+    const draftChapters = await ctx.trx.selectFrom('ludy_meetings.meeting_chapter').select(['id', 'start_seconds']).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').forUpdate().execute();
+    let chapters = 0;
+    if (draftChapters.length > 0) {
+      // Each chapter must still start at a line of the transcript: a re-transcription since the save may have replaced the lines (#3881). Refused as a whole, and nothing of this publish is kept (the same
+      // transaction), so the recorder saves the chapters again and publishes once.
+      if ((await missingAnchors(ctx, input.meetingId, draftChapters.map((c) => c.start_seconds))).length > 0) {
+        throw new DomainError('CHAPTER_ANCHOR_LOST', 409, 'A chapter no longer starts at a line of the transcript (the transcript changed): save the chapters again, then share');
+      }
+      await ctx.trx.deleteFrom('ludy_meetings.meeting_chapter').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'published').execute();
+      const flipped = await ctx.trx
+        .updateTable('ludy_meetings.meeting_chapter')
+        .set({ stage: 'published', updated_at: sql<Date>`pg_catalog.now()` })
+        .where('org_id', '=', ctx.orgId)
+        .where('meeting_id', '=', input.meetingId)
+        .where('stage', '=', 'draft')
+        .returning('id')
+        .execute();
+      chapters = flipped.length;
+    }
+    if (results === 0 && items.length === 0 && chapters === 0) throw new DomainError('NOTHING_TO_PUBLISH', 409, 'There is no draft to share');
+    // The recorder's own webhook (A6, #3164): when they have one that stands, the event for this publish is stored in this same transaction, and nowhere else. No model, no other reader.
+    await enqueueMinutesHook(ctx, {
+      meetingId: input.meetingId,
+      resultId: draft?.id ?? null,
+      summary: published && published.summary.length > 0 ? published.summary : null,
+      decisions: published && Array.isArray(published.decisions) ? published.decisions.filter((d): d is string => typeof d === 'string') : null,
+      items: items.slice(0, 100).map((i) => ({ title: i.title, whoDrafted: i.who_drafted, whenParsed: i.when_parsed })),
+    });
+    // The wake-up for an agent (#3803): when this call published a result of a meeting the recorder shared with the whole company, one event with the meeting's id and the instant, and no word of the minutes.
+    // A publish of items alone, an attendees-only meeting and a refused publish emit nothing. The same transaction stores it, so a rollback sends nothing.
+    if (published !== null && (await meetingIsOrgVisible(ctx.trx, ctx.orgId, input.meetingId))) {
+      await ctx.emit('meetings.minutes.published', zMinutesPublishedEvent.parse({ meetingId: input.meetingId, publishedAt: published.updated_at.toISOString() }));
+    }
+    ctx.audit({ meetingId: input.meetingId, results, items: items.length, chapters });
+    return { meetingId: input.meetingId, results, items: items.length, chapters };
   },
 });
 
 // Makes the task of one item, and marks the item (once). The caller has read the item under RLS; the database function checks again that they may accept it.
 async function acceptItem(ctx: CommandContext, itemId: string, choice: { title: string; due: string | null; positionId: string }): Promise<string> {
-  const item = await ctx.trx.selectFrom('crove_meetings.action_item').select(['id', 'meeting_id', 'title', 'status', 'tainted']).where('org_id', '=', ctx.orgId).where('id', '=', itemId).executeTakeFirst();
+  const item = await ctx.trx.selectFrom('ludy_meetings.action_item').select(['id', 'meeting_id', 'title', 'status', 'tainted']).where('org_id', '=', ctx.orgId).where('id', '=', itemId).executeTakeFirst();
   if (!item) throw itemNotFound();
   await openMeeting(ctx.trx, ctx.orgId, item.meeting_id); // the text-retention gate, as for every other read and write of a meeting's text
   if (item.status !== 'suggested') throw new DomainError('ACTION_ITEM_ACCEPTED', 409, 'A task was already made from this action item');
@@ -270,7 +389,7 @@ async function acceptItem(ctx: CommandContext, itemId: string, choice: { title: 
     tainted: item.tainted && choice.title === item.title,
   });
   try {
-    await sql`SELECT crove_meetings.action_item_accept(${ctx.orgId}::uuid, ${itemId}::uuid, ${created.taskId}::uuid)`.execute(ctx.trx);
+    await sql`SELECT ludy_meetings.action_item_accept(${ctx.orgId}::uuid, ${itemId}::uuid, ${created.taskId}::uuid)`.execute(ctx.trx);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '';
     if (message.includes('MEETINGS_ITEM_ACCEPTED')) throw new DomainError('ACTION_ITEM_ACCEPTED', 409, 'A task was already made from this action item');
@@ -294,11 +413,23 @@ export const actionItemAccept = defineCommand({
   },
 });
 
+// The people of the org a said name may be matched with when no attendee answers to it (#3921): the members, by the display name the org knows them by (member_profiles answers for members only; a
+// member with no display name has no name to match, and an email address is never one). Above 500 members none are offered: a cut list could make a name that two people share look like it is one person's.
+export async function memberNames(ctx: QueryContext | CommandContext): Promise<Person[]> {
+  const ids = (await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).limit(501).execute()).map((r) => r.user_id);
+  if (ids.length === 0 || ids.length > 500) return [];
+  const { rows } = await sql<{ user_id: string; display_name: string | null }>`SELECT user_id, display_name FROM ludy_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
+  return rows.flatMap((r) => {
+    const name = cleanName(r.display_name);
+    return name === '' ? [] : [{ userId: r.user_id, name }];
+  });
+}
+
 // The seats an attendee holds now: active positions whose holder they are.
-async function seatsOf(trx: Trx, orgId: string, userIds: readonly string[]): Promise<Map<string, Array<{ id: string; title: string }>>> {
+export async function seatsOf(trx: Trx, orgId: string, userIds: readonly string[]): Promise<Map<string, Array<{ id: string; title: string }>>> {
   const seats = new Map<string, Array<{ id: string; title: string }>>();
   if (userIds.length === 0) return seats;
-  const rows = await trx.selectFrom('crove_kernel.position').select(['id', 'title', 'holder_user_id']).where('org_id', '=', orgId).where('status', '=', 'active').where('holder_user_id', 'in', [...userIds]).execute();
+  const rows = await trx.selectFrom('ludy_kernel.position').select(['id', 'title', 'holder_user_id']).where('org_id', '=', orgId).where('status', '=', 'active').where('holder_user_id', 'in', [...userIds]).execute();
   for (const row of rows) if (row.holder_user_id) seats.set(row.holder_user_id, [...(seats.get(row.holder_user_id) ?? []), { id: row.id, title: row.title }]);
   return seats;
 }
@@ -315,7 +446,7 @@ export const actionItemAcceptClean = defineCommand({
     await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     // The items the caller reads and may still accept (RLS: the recorder reads drafts and published, a reader published only).
     const rows = await ctx.trx
-      .selectFrom('crove_meetings.action_item')
+      .selectFrom('ludy_meetings.action_item')
       .select(['id', 'title', 'flags', 'who_parsed', sql<string | null>`when_parsed::text`.as('when_parsed')])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
@@ -355,9 +486,9 @@ export const meetingResultGet = defineQuery({
   handler: async (ctx, input): Promise<MeetingResults> => {
     const userId = userOf(ctx.actor);
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
-    const results = await ctx.trx.selectFrom('crove_meetings.meeting_result').select(['id', 'feature', 'stage', 'summary', 'decisions', 'tainted']).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).execute();
+    const results = await ctx.trx.selectFrom('ludy_meetings.meeting_result').select(['id', 'feature', 'stage', 'summary', 'decisions', 'tainted']).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).execute();
     const items = await ctx.trx
-      .selectFrom('crove_meetings.action_item')
+      .selectFrom('ludy_meetings.action_item')
       .select(['id', 'stage', 'status', 'title', 'who_drafted', 'who_parsed', 'when_drafted', sql<string | null>`when_parsed::text`.as('when_parsed'), 'transcript_seconds', 'flags', 'tainted', 'task_id'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
@@ -365,7 +496,18 @@ export const meetingResultGet = defineQuery({
       .orderBy('created_at')
       .orderBy('id')
       .execute();
-    const seats = await seatsOf(ctx.trx, ctx.orgId, items.flatMap((i) => (i.who_parsed ? [i.who_parsed] : [])));
+    // A suggestion for an open item that names nobody yet (#3921): by code, from the said name; read here and never stored.
+    const unnamed = items.filter((i) => i.status === 'suggested' && i.who_parsed === null && i.who_drafted.trim() !== '');
+    const suggestions = new Map<string, Suggested>();
+    if (unnamed.length > 0) {
+      const attendees = await attendeeNames(ctx, input.meetingId, meeting.recorder_user_id);
+      const members = await memberNames(ctx);
+      for (const i of unnamed) {
+        const found = suggestAssignee(i.who_drafted, attendees, members);
+        if (found) suggestions.set(i.id, found);
+      }
+    }
+    const seats = await seatsOf(ctx.trx, ctx.orgId, [...items.flatMap((i) => (i.who_parsed ? [i.who_parsed] : [])), ...[...suggestions.values()].map((s) => s.userId)]);
     const view = (stage: 'draft' | 'published') => {
       const r = results.find((x) => x.stage === stage);
       return r ? { id: r.id, feature: r.feature as 'manual' | 'meetings.summary', stage, summary: r.summary, decisions: Array.isArray(r.decisions) ? (r.decisions as string[]) : [], tainted: r.tainted } : null;
@@ -393,6 +535,10 @@ export const meetingResultGet = defineQuery({
           taskId: i.task_id,
           positions: held,
           clean: i.status === 'suggested' && itemIsClean({ flags, whoUserId: i.who_parsed, whenDate: i.when_parsed }, held.length),
+          suggestion: ((): ActionItemView['suggestion'] => {
+            const s = suggestions.get(i.id);
+            return s ? { userId: s.userId, name: s.name, source: s.source, positions: seats.get(s.userId) ?? [] } : null;
+          })(),
         };
       }),
     };
@@ -406,12 +552,12 @@ export const actionItemSource = defineQuery({
   input: zActionItemRef,
   access: ['owner', 'admin', 'member', 'viewer'],
   handler: async (ctx, input): Promise<{ meetingId: string }> => {
-    const item = await ctx.trx.selectFrom('crove_meetings.action_item').select('meeting_id').where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).executeTakeFirst();
+    const item = await ctx.trx.selectFrom('ludy_meetings.action_item').select('meeting_id').where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).executeTakeFirst();
     if (!item) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
     await openMeeting(ctx.trx, ctx.orgId, item.meeting_id);
     return zActionItemSource.parse({ meetingId: item.meeting_id });
   },
 });
 
-export const resultCommands = [meetingSummarySave, actionItemCreate, actionItemEdit, actionItemDelete, resultPublish, actionItemAccept, actionItemAcceptClean];
+export const resultCommands = [meetingTemplateSet, meetingSummarySave, actionItemCreate, actionItemEdit, actionItemDelete, resultPublish, actionItemAccept, actionItemAcceptClean];
 export const resultQueries = [meetingResultGet, actionItemSource];

@@ -6,7 +6,7 @@
 //                GOTRUE_DISABLE_SIGNUP, still closes sign-up for everyone). The default, as before this setting.
 //   invite_only  a sign-up goes through only when it carries the token of a valid member invite for exactly its
 //                email (INVITE_TOKEN_HEADER): pending, unexpired, in an active org, from an inviter who may still
-//                grant the role (crove_kernel.signup_invite_token_valid).
+//                grant the role (ludy_kernel.signup_invite_token_valid).
 //   allowlist    a sign-up goes through for an email whose domain is in AUTH_SIGNUP_ALLOWED_DOMAINS (exact domain,
 //                no subdomains) and that holds no valid invite, or with the token of a valid invite for it (an
 //                outside accountant can still be invited).
@@ -114,7 +114,8 @@ export function signupGate(rules: SignupRules, request: SignupRequest): SignupGa
 
 // The request header the web app puts the invite token in when it signs up from an accept link. Read by the proxy
 // and never forwarded.
-export const INVITE_TOKEN_HEADER = 'x-crove-invite';
+export const INVITE_TOKEN_HEADER = 'x-ludy-invite';
+export const LEGACY_INVITE_TOKEN_HEADER = 'x-crove-invite';
 
 // The token of a sign-up request, or null when the header is missing or is not one well-formed token.
 const INVITE_TOKEN = /^[A-Za-z0-9_-]{43}$/;
@@ -262,7 +263,7 @@ export function signupRefusalsLimited(retryAfterSeconds: number): Response {
   });
 }
 
-// Refusal slots on the email budget's sliding-window counter (crove_kernel.auth_email_reserve, #190): the same table,
+// Refusal slots on the email budget's sliding-window counter (ludy_kernel.auth_email_reserve, #190): the same table,
 // advisory locks and hourly sweep, under keys of their own (the SHA-256 of "signup_refusal:" plus the client bucket,
 // or plus "all" for the deployment), so they never mix with email slots. The deployment's slot carries the SHA-256 of
 // "signup_refusal:" plus the address as its target, with an interval of an hour: an address refused within the last
@@ -273,13 +274,13 @@ type ReserveRow = { reserved_id: string | null; rule: string | null; retry_after
 export function createDbRefusalLimiter(pool: pg.Pool, limits: RefusalLimits): RefusalLimiter {
   const reserve = async (client: string, target: string | null, limit: number, intervalSeconds: number): Promise<ReserveRow> => {
     const { rows } = await pool.query<ReserveRow>(
-      'SELECT reserved_id::text, rule, retry_after_seconds FROM crove_kernel.auth_email_reserve($1, $2, $3, $4)',
+      'SELECT reserved_id::text, rule, retry_after_seconds FROM ludy_kernel.auth_email_reserve($1, $2, $3, $4)',
       [client, target, limit, intervalSeconds],
     );
     return rows[0] ?? { reserved_id: null, rule: null, retry_after_seconds: null };
   };
   const release = async (id: string, client: string): Promise<void> => {
-    await pool.query('SELECT crove_kernel.auth_email_release($1, $2)', [id, client]).then(
+    await pool.query('SELECT ludy_kernel.auth_email_release($1, $2)', [id, client]).then(
       () => undefined,
       (error: unknown) => {
         console.error('[auth-proxy] sign-up refusal slot not released:', error instanceof Error ? error.message : error);
@@ -325,11 +326,11 @@ export function createDbRefusalLimiter(pool: pg.Pool, limits: RefusalLimits): Re
 export function createDbInviteChecks(pool: pg.Pool): InviteChecks {
   return {
     held: async (email) => {
-      const { rows } = await pool.query<{ ok: boolean }>('SELECT crove_kernel.signup_invite_valid($1) AS ok', [email]);
+      const { rows } = await pool.query<{ ok: boolean }>('SELECT ludy_kernel.signup_invite_valid($1) AS ok', [email]);
       return rows[0]?.ok === true;
     },
     matches: async (email, token) => {
-      const { rows } = await pool.query<{ ok: boolean }>('SELECT crove_kernel.signup_invite_token_valid($1, $2) AS ok', [email, token]);
+      const { rows } = await pool.query<{ ok: boolean }>('SELECT ludy_kernel.signup_invite_token_valid($1, $2) AS ok', [email, token]);
       return rows[0]?.ok === true;
     },
   };

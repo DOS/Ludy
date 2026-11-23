@@ -15,9 +15,9 @@
 // run one after the other. Each move is written only while the variant still holds the time read under those locks
 // (the expected-time guard of #956, for these commands): anything else refuses the whole command with STALE_REVISION.
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { removeAtFit } from './domain/channels.ts';
 import { moveToFront, shuffleTimes, slotLabel, type Holder } from './domain/queue.ts';
 import { labelsOfPosts } from './labels.ts';
@@ -61,7 +61,7 @@ async function lockHolders(ctx: CommandContext, connectionId: string): Promise<{
   // No new slot holder appears meanwhile: only schedule and social.queue.set assign slots, and both wait for the queue
   // row this command holds.
   const posts = await ctx.trx
-    .selectFrom('crove_social.post_variant')
+    .selectFrom('ludy_social.post_variant')
     .select('post_id')
     .distinct()
     .where('org_id', '=', ctx.orgId)
@@ -72,7 +72,7 @@ async function lockHolders(ctx: CommandContext, connectionId: string): Promise<{
     .execute();
   if (posts.length === 0) return { queue, rows: [] };
   await ctx.trx
-    .selectFrom('crove_social.post')
+    .selectFrom('ludy_social.post')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where(
@@ -84,7 +84,7 @@ async function lockHolders(ctx: CommandContext, connectionId: string): Promise<{
     .forUpdate()
     .execute();
   const rows = await ctx.trx
-    .selectFrom('crove_social.post_variant')
+    .selectFrom('ludy_social.post_variant')
     .select(['id', 'post_id', 'status', 'provider', 'settings', 'queue_slot_at', 'scheduled_at', 'error_retry_at'])
     .where('org_id', '=', ctx.orgId)
     .where('channel_connection_id', '=', connectionId)
@@ -151,7 +151,7 @@ async function applyMoves(ctx: CommandContext, holders: readonly QueueHolder[], 
   const moves = holders.filter((h) => next.get(h.id) !== h.at).map((h) => ({ holder: h, at: next.get(h.id) as number }));
   for (const { holder } of moves) {
     const cleared = await ctx.trx
-      .updateTable('crove_social.post_variant')
+      .updateTable('ludy_social.post_variant')
       .set({ queue_slot_at: null, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', holder.id)
@@ -210,7 +210,7 @@ export const queueMoveToFront = defineCommand({
   target: (input) => ({ type: 'social.post_variant', id: input.variantId }),
   handler: async (ctx, input) => {
     requireUser(ctx);
-    const found = await ctx.trx.selectFrom('crove_social.post_variant').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('id', '=', input.variantId).executeTakeFirst();
+    const found = await ctx.trx.selectFrom('ludy_social.post_variant').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('id', '=', input.variantId).executeTakeFirst();
     if (!found) throw new DomainError('VARIANT_NOT_FOUND', 404, 'Không tìm thấy kênh này của bài đăng');
     await refuseChannels(ctx, [found.channel_connection_id]);
     const { queue, rows } = await lockHolders(ctx, found.channel_connection_id);

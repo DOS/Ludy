@@ -2,10 +2,10 @@
 // The badges on a proposal's row in the Inbox lists (DESIGN.md §4.4): its kind, what its checks found, who asked for it,
 // and, once a reversal voided its posting, that it is no longer in the books (#2054).
 import { useTranslations } from 'use-intl';
-import { JOURNAL_VOUCHER_KIND } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
+import { JOURNAL_VOUCHER_KIND } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
 import { REVERSAL_KIND } from '../lib/reversal.ts';
-import { isAdsProposalKind, showMatched } from '../lib/review.ts';
+import { isAdsProposalKind, isEngageKind, showMatched } from '../lib/review.ts';
 import { VOUCHER_KIND } from '../lib/vouchers.ts';
 
 // What the badges read of a list item (kernel.inbox.list).
@@ -19,11 +19,14 @@ export interface ProposalBadgesItem {
   // Lines of an invoice proposal no rule matched (#2091); absent counts as none.
   unclassifiedLines?: number;
   requestedByAgent: { name: string } | null;
+  requestedByMcp?: { client: string; host: string } | null;
   extracted: boolean;
   voided: boolean;
 }
 
-export function ProposalBadges({ item }: { item: ProposalBadgesItem }) {
+// hideSignature: the list states once that every row's signature is unverified (#3598), so the chip is not repeated on each.
+
+export function ProposalBadges({ item, hideSignature = false }: { item: ProposalBadgesItem; hideSignature?: boolean }) {
   const t = useTranslations('inbox');
   return (
     <div className="flex flex-wrap gap-1">
@@ -36,13 +39,15 @@ export function ProposalBadges({ item }: { item: ProposalBadgesItem }) {
       {item.kind === JOURNAL_VOUCHER_KIND && <Badge variant="secondary">{t('journalVoucherKind')}</Badge>}
       {/* A request to open the way to spend on an ad platform (#2294) posts nothing and ran no check: its kind, no "matched". */}
       {isAdsProposalKind(item.kind) && <Badge variant="secondary">{t('adsKind')}</Badge>}
+      {isEngageKind(item.kind) && <Badge variant="secondary">{t('engageKind')}</Badge>}
       {item.direction === 'sale' && <Badge variant="secondary">{t('saleKind')}</Badge>}
       {item.duplicateOf && <Badge variant="warning">{t('maybeDuplicate')}</Badge>}
-      {item.signatureStatus === 'unverified' && <Badge variant="destructive">{t('signatureUnverified')}</Badge>}
+      {item.signatureStatus === 'unverified' && !hideSignature && <Badge variant="destructive">{t('signatureUnverified')}</Badge>}
       {(item.unclassifiedLines ?? 0) > 0 && <Badge variant="warning">{t('unclassifiedBadge', { count: item.unclassifiedLines ?? 0 })}</Badge>}
       {item.failedChecks > 0 && <Badge variant="destructive">{t('failedChecks', { count: item.failedChecks })}</Badge>}
       {item.warnChecks > 0 && <Badge variant="warning">{t('warnChecks', { count: item.warnChecks })}</Badge>}
       {item.requestedByAgent && <Badge variant="proposal">{t('agentProposed', { name: item.requestedByAgent.name })}</Badge>}
+      {item.requestedByMcp && <Badge variant="proposal">{t('mcpProposed', { client: item.requestedByMcp.client, host: item.requestedByMcp.host })}</Badge>}
       {showMatched(item, REVERSAL_KIND, VOUCHER_KIND, JOURNAL_VOUCHER_KIND) && <Badge variant="success">{t('matched')}</Badge>}
     </div>
   );

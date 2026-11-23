@@ -1,80 +1,102 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Where each platform's money stands in the books, for the Sàn screen (#2516 slice D, plan docs/plan/stock-and-marketplaces.md section 8.4, "The payout"). Read only, from the ledger: the
-// lines on the platform's balance account (131) and on the fees-awaiting-invoice account (1388) that name the platform's party (crove_finance.marketplace_party), per legal entity. Facts only:
+// lines on the platform's balance account (131) and on the platform's payable account (331, where the fees the platform kept wait for their invoice) that name the platform's party (ludy_finance.marketplace_party), per legal entity. Facts only:
 // no model call, nothing written, no order or buyer data. A reversal entry takes back what the entry it reverses posted, so it counts against the same figure, never as a payout.
 // Notes for the posting and payout slices of #2516: `paidOut` is what payouts CLEARED on 131 (the whole credit, which also covers the fees and the tax the platform kept), not the money received on
 // 112; every credit to 131 that is not a reversal counts as a payout, so an entry that credits 131 for another reason (a refund above the sales) would be counted as one and must be handled here
 // first; the lines must name the platform's party (the read matches the party exactly, so a party later merged into another is not folded in).
 import { sql } from 'kysely';
-import { zMarketplaceBalanceInput, type MarketplaceBalance } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { defineQuery } from '@crove/kernel-runtime';
-import { money } from '@crove/l10n-vn';
+import { zMarketplaceBalanceInput, type MarketplaceBalance } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { money } from '@ludy/l10n-vn';
+import { feeAge, type FeeLine } from './domain/marketplace-fee-age.ts';
+import { databaseToday } from './period-lock.ts';
 import { MARKETPLACE_POSTING_MAPS } from './marketplace-posting-map.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
-// The accounts the plan names for the platform's balance and for the fees whose invoice has not come (the TT133 map, the one regime a map exists for); a sub-account extends its parent's code.
+// The accounts the plan names for the platform's balance (131) and for what is owed to it (331; a debit balance is fees kept that no invoice has cleared yet; the TT133 map, the one regime a map exists for); a sub-account extends its parent's code.
 const RECEIVABLE = MARKETPLACE_POSTING_MAPS.tt133?.receivable.code ?? '131';
-const FEES_AWAITING = MARKETPLACE_POSTING_MAPS.tt133?.feeAwaitingInvoice.code ?? '1388';
+const FEES_AWAITING = MARKETPLACE_POSTING_MAPS.tt133?.feePayable.code ?? '331';
+
+// The balance rows of the platforms an entity (or every entity the caller may see) sells on; shared by the screen's read and by the facts the coworker's line is written from (slice E).
+export async function loadMarketplaceBalance(ctx: QueryContext, legalEntityId: string | undefined): Promise<MarketplaceBalance> {
+  let links = ctx.trx
+    .selectFrom('ludy_finance.marketplace_party as mp')
+    .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'mp.org_id').onRef('p.id', '=', 'mp.party_id'))
+    .select(['mp.legal_entity_id', 'mp.platform', 'mp.party_id', 'p.name'])
+    .where('mp.org_id', '=', ctx.orgId);
+  if (legalEntityId !== undefined) links = links.where('mp.legal_entity_id', '=', legalEntityId);
+  const linked = await links.orderBy('mp.platform').orderBy('mp.legal_entity_id').execute();
+  if (linked.length === 0) return { rows: [] };
+  // One read of the platforms' lines: per entity, party, account and whether the entry is a reversal, the sums of debit and credit. The row policies keep it to the entities the caller may see.
+  const sums = await ctx.trx
+    .selectFrom('ludy_finance.journal_line as l')
+    .innerJoin('ludy_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
+    .select(['l.legal_entity_id', 'l.party_id'])
+    .select(sql<string>`CASE WHEN l.account_code LIKE ${`${RECEIVABLE}%`} THEN 'receivable' ELSE 'fees' END`.as('account'))
+    .select(sql<boolean>`j.reverses_entry_id IS NOT NULL`.as('reversal'))
+    .select((eb) => [eb.fn.sum<string>('l.debit').as('debit'), eb.fn.sum<string>('l.credit').as('credit')])
+    .where('l.org_id', '=', ctx.orgId)
+    .where('l.party_id', 'in', linked.map((l) => l.party_id))
+    .where((eb) => eb.or([eb('l.account_code', 'like', `${RECEIVABLE}%`), eb('l.account_code', 'like', `${FEES_AWAITING}%`)]))
+    .groupBy(sql`1, 2, 3, 4`)
+    .execute();
+  // The platforms' lines on 331 with their dates, for the age of the fees nobody has invoiced yet (a reversal counts like any line: it takes back what it reverses, on its own date).
+  const feeLines = await ctx.trx
+    .selectFrom('ludy_finance.journal_line as l')
+    .innerJoin('ludy_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
+    .select(['l.legal_entity_id', 'l.party_id', 'j.entry_date as date', 'l.debit', 'l.credit'])
+    .where('l.org_id', '=', ctx.orgId)
+    .where('l.party_id', 'in', linked.map((l) => l.party_id))
+    .where('l.account_code', 'like', `${FEES_AWAITING}%`)
+    .execute();
+  const today = await databaseToday(ctx.trx);
+  const rows = linked.map((link) => {
+    let sales = money('0');
+    let paid = money('0');
+    let fees = money('0');
+    for (const s of sums) {
+      if (s.legal_entity_id !== link.legal_entity_id || s.party_id !== link.party_id) continue;
+      const debit = money(s.debit);
+      const credit = money(s.credit);
+      if (s.account === 'fees') {
+        fees = fees.plus(debit).minus(credit);
+      } else if (s.reversal) {
+        // A reversal of a settlement entry credits 131 (it takes the sales back), a reversal of a payout debits it (it takes the payout back).
+        sales = sales.minus(credit);
+        paid = paid.minus(debit);
+      } else {
+        sales = sales.plus(debit);
+        paid = paid.plus(credit);
+      }
+    }
+    const mine: FeeLine[] = feeLines
+      .filter((l) => l.legal_entity_id === link.legal_entity_id && l.party_id === link.party_id)
+      .map((l) => ({ date: String(l.date).slice(0, 10), debit: String(l.debit), credit: String(l.credit) }));
+    const age = feeAge(mine, today);
+    return {
+      legalEntityId: link.legal_entity_id,
+      platform: link.platform,
+      platformName: link.name,
+      salesPosted: sales.toFixed(),
+      paidOut: paid.toFixed(),
+      awaitingPayout: sales.minus(paid).toFixed(),
+      feesAwaitingInvoice: fees.toFixed(),
+      oldestFeeDate: age.oldestFeeDate,
+      feesAgeDays: age.feesAgeDays,
+      feesOverdue: age.feesOverdue,
+    };
+  });
+  return { rows };
+}
 
 export const marketplaceBalance = defineQuery({
   name: 'finance.marketplace.balance',
   input: zMarketplaceBalanceInput,
   access: ALL,
-  handler: async (ctx, input): Promise<MarketplaceBalance> => {
-    let links = ctx.trx
-      .selectFrom('crove_finance.marketplace_party as mp')
-      .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'mp.org_id').onRef('p.id', '=', 'mp.party_id'))
-      .select(['mp.legal_entity_id', 'mp.platform', 'mp.party_id', 'p.name'])
-      .where('mp.org_id', '=', ctx.orgId);
-    if (input.legalEntityId !== undefined) links = links.where('mp.legal_entity_id', '=', input.legalEntityId);
-    const linked = await links.orderBy('mp.platform').orderBy('mp.legal_entity_id').execute();
-    if (linked.length === 0) return { rows: [] };
-    // One read of the platforms' lines: per entity, party, account and whether the entry is a reversal, the sums of debit and credit. The row policies keep it to the entities the caller may see.
-    const sums = await ctx.trx
-      .selectFrom('crove_finance.journal_line as l')
-      .innerJoin('crove_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
-      .select(['l.legal_entity_id', 'l.party_id'])
-      .select(sql<string>`CASE WHEN l.account_code LIKE ${`${RECEIVABLE}%`} THEN 'receivable' ELSE 'fees' END`.as('account'))
-      .select(sql<boolean>`j.reverses_entry_id IS NOT NULL`.as('reversal'))
-      .select((eb) => [eb.fn.sum<string>('l.debit').as('debit'), eb.fn.sum<string>('l.credit').as('credit')])
-      .where('l.org_id', '=', ctx.orgId)
-      .where('l.party_id', 'in', linked.map((l) => l.party_id))
-      .where((eb) => eb.or([eb('l.account_code', 'like', `${RECEIVABLE}%`), eb('l.account_code', 'like', `${FEES_AWAITING}%`)]))
-      .groupBy(sql`1, 2, 3, 4`)
-      .execute();
-    const rows = linked.map((link) => {
-      let sales = money('0');
-      let paid = money('0');
-      let fees = money('0');
-      for (const s of sums) {
-        if (s.legal_entity_id !== link.legal_entity_id || s.party_id !== link.party_id) continue;
-        const debit = money(s.debit);
-        const credit = money(s.credit);
-        if (s.account === 'fees') {
-          fees = fees.plus(debit).minus(credit);
-        } else if (s.reversal) {
-          // A reversal of a settlement entry credits 131 (it takes the sales back), a reversal of a payout debits it (it takes the payout back).
-          sales = sales.minus(credit);
-          paid = paid.minus(debit);
-        } else {
-          sales = sales.plus(debit);
-          paid = paid.plus(credit);
-        }
-      }
-      return {
-        legalEntityId: link.legal_entity_id,
-        platform: link.platform,
-        platformName: link.name,
-        salesPosted: sales.toFixed(),
-        paidOut: paid.toFixed(),
-        awaitingPayout: sales.minus(paid).toFixed(),
-        feesAwaitingInvoice: fees.toFixed(),
-      };
-    });
-    return { rows };
-  },
+  handler: (ctx, input): Promise<MarketplaceBalance> => loadMarketplaceBalance(ctx, input.legalEntityId),
 });
 
 export const marketplaceBalanceQueries = [marketplaceBalance];

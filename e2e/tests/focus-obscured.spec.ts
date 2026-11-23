@@ -69,11 +69,13 @@ test('a focused control is never hidden behind a sticky bar, at 360px in light a
   test.setTimeout(240_000);
   await signInNewUser(page, newEmail('focus-obscured'));
   const slug = await createOrg(page, 'Công ty Tiêu điểm');
+  // A new org opens on the overview (#3225); the upload is on the Inbox.
+  await page.goto(page.url().replace(/\/overview$/, '/inbox'));
   // A long list: vendors enough for the table to scroll inside its card.
   exec(
-    `INSERT INTO crove_kernel.party (org_id, name, kind)
+    `INSERT INTO ludy_kernel.party (org_id, name, kind)
      SELECT t.org_id, 'Nhà cung cấp ' || chr(64 + (n / 26) + 1) || chr(65 + n % 26), 'organization'
-     FROM crove_kernel.tenant t, generate_series(0, ${VENDORS - 1}) n WHERE t.slug = :'slug'`,
+     FROM ludy_kernel.tenant t, generate_series(0, ${VENDORS - 1}) n WHERE t.slug = :'slug'`,
     { slug },
   );
   // A pending proposal: its approval bar is fixed to the foot of the screen.
@@ -83,7 +85,7 @@ test('a focused control is never hidden behind a sticky bar, at 360px in light a
 
   const problems: string[] = [];
   for (const theme of ['light', 'dark'] as const) {
-    await page.evaluate((value) => localStorage.setItem('crove-theme', value), theme);
+    await page.evaluate((value) => localStorage.setItem('ludy-theme', value), theme);
     for (const path of [proposal, `/o/${slug}/vendors`]) {
       await page.goto(path);
       await page.waitForLoadState('networkidle');

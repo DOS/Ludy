@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { GetObjectCommand, GetObjectLockConfigurationCommand, ListObjectVersionsCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
 import { Kysely, PostgresAdapter, PostgresIntrospector, PostgresQueryCompiler, type CompiledQuery, type DatabaseConnection, type QueryResult } from 'kysely';
 import { describe, expect, it } from 'vitest';
-import type { Db } from '@crove/db';
+import type { Db } from '@ludy/db';
 import {
   ArchiveObjectExistsError,
   GENESIS_SHA256,
@@ -384,7 +384,7 @@ describe('archive verifier across batch versions (#1624, #1623)', () => {
         }));
       }
       if (query.sql.includes('archive_series_misfits()')) return misfits.map((ref) => ({ ref }));
-      const fn = /crove_kernel\.(archive_\w+_hashes)\(/.exec(query.sql)?.[1];
+      const fn = /ludy_kernel\.(archive_\w+_hashes)\(/.exec(query.sql)?.[1];
       if (fn) {
         const [from, to] = query.parameters as [string, string];
         ranges.push({ fn, from, to });

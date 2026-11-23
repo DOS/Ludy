@@ -8,12 +8,12 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { socialCommands, socialQueries } from '@crove/mod-social';
-import { CredentialVault, Runtime, parseVaultKey, type BlobStore } from '@crove/kernel-runtime';
-import { SocialWriter, type HashtagGenerator, type IdeasGenerator } from '@crove/agent';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { socialCommands, socialQueries } from '@ludy/mod-social';
+import { CredentialVault, Runtime, parseVaultKey, type BlobStore } from '@ludy/kernel-runtime';
+import { SocialWriter, type HashtagGenerator, type IdeasGenerator } from '@ludy/agent';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -101,7 +101,7 @@ suite('AI post ideas through the API (#1181)', () => {
   async function connection(orgId: string, provider: string, by: string, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         orgId,
         id,
         provider,
@@ -113,7 +113,7 @@ suite('AI post ideas through the API (#1181)', () => {
     return id;
   }
 
-  const ideaRows = async () => Number((await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM crove_social.idea WHERE org_id = $1', [org.orgId]))).rows[0]?.n);
+  const ideaRows = async () => Number((await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_social.idea WHERE org_id = $1', [org.orgId]))).rows[0]?.n);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -124,9 +124,9 @@ suite('AI post ideas through the API (#1181)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     db = createDb(pool);
@@ -166,13 +166,13 @@ suite('AI post ideas through the API (#1181)', () => {
     expect(created.status).toBe(200);
     org = { slug: String(created.body?.slug), orgId: String(created.body?.orgId) };
     await admin(async (c) => {
-      await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [org.orgId, viewer.userId]);
-      await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [org.orgId, member.userId]);
+      await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [org.orgId, viewer.userId]);
+      await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [org.orgId, member.userId]);
     });
     channels = { a: await connection(org.orgId, 'facebook_page', owner.userId, 'Trang chính'), b: await connection(org.orgId, 'x', owner.userId, 'Kênh X riêng') };
     // The member may write for channel a only (#1081).
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [org.orgId, member.userId, channels.a, owner.userId]),
+      c.query('INSERT INTO ludy_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [org.orgId, member.userId, channels.a, owner.userId]),
     );
     const owner_ = await tokenFor(owner);
     expect((await rpc('social/brandVoices/save', owner_, { description: 'Ấm áp, xưng "quán"', useWords: ['trà gừng'], avoidWords: [], emoji: true })).status).toBe(200);
@@ -264,14 +264,14 @@ suite('AI post ideas through the API (#1181)', () => {
     expect((await rpc('social/ideas/update', owner_, { ideaId: ai, title: 'Đã sửa' })).status).toBe(200);
     expect((await rpc('social/ideas/get', owner_, { ideaId: ai })).body).toMatchObject({ title: 'Đã sửa', origin: 'ai' });
     // The login role has no UPDATE on the column, whatever the command does.
-    await expect(pool.query("UPDATE crove_social.idea SET origin = 'human' WHERE id = $1", [ai])).rejects.toMatchObject({ code: '42501' });
+    await expect(pool.query("UPDATE ludy_social.idea SET origin = 'human' WHERE id = $1", [ai])).rejects.toMatchObject({ code: '42501' });
     // The database takes only human or ai.
-    await expect(admin((c) => c.query("UPDATE crove_social.idea SET origin = 'robot' WHERE id = $1", [ai]))).rejects.toMatchObject({ code: '23514' });
+    await expect(admin((c) => c.query("UPDATE ludy_social.idea SET origin = 'robot' WHERE id = $1", [ai]))).rejects.toMatchObject({ code: '23514' });
     // A draft of the AI idea is tainted even though the app did not say it was AI-assisted; a person's idea is not.
     const fromAi = await rpc('social/posts/create', owner_, { body: 'Ý tưởng từ AI', channels: [{ connectionId: channels.a }], ideaId: ai, idempotencyKey: randomUUID() });
     const fromHuman = await rpc('social/posts/create', owner_, { body: 'Ý tưởng của quán', channels: [{ connectionId: channels.a }], ideaId: human, idempotencyKey: randomUUID() });
     expect([fromAi.status, fromHuman.status]).toEqual([200, 200]);
-    const tainted = await admin((c) => c.query<{ id: string; tainted: boolean; origin: string }>('SELECT id, tainted, origin FROM crove_social.post WHERE id = ANY($1::uuid[])', [[fromAi.body.postId, fromHuman.body.postId]]));
+    const tainted = await admin((c) => c.query<{ id: string; tainted: boolean; origin: string }>('SELECT id, tainted, origin FROM ludy_social.post WHERE id = ANY($1::uuid[])', [[fromAi.body.postId, fromHuman.body.postId]]));
     const byId = new Map(tainted.rows.map((r) => [r.id, r]));
     expect(byId.get(fromAi.body.postId)).toMatchObject({ tainted: true, origin: 'human' });
     expect(byId.get(fromHuman.body.postId)).toMatchObject({ tainted: false });

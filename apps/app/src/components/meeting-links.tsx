@@ -5,18 +5,18 @@
 import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import type { MeetingLink } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect } from '@crove/ui/components/native-select';
+import type { MeetingLink } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect } from '@ludy/ui/components/native-select';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { getConfig } from '../lib/auth.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 import { ErrorText } from './ui.tsx';
+import { installedModules } from '../lib/org-modules.ts';
 
-const crmInstalled = (): boolean => getConfig().modules.includes('crm');
+const crmInstalled = (): boolean => installedModules().includes('crm');
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.meetings.links.key() });
 
 function DealName({ dealId, fallback }: { dealId: string; fallback: string }) {
@@ -162,7 +162,7 @@ export function MeetingLinks({ meetingId, isRecorder }: { meetingId: string; isR
   return (
     <Card data-testid="meeting-links">
       <CardHeader>
-        <CardTitle className="text-sm font-medium">{t('links.title')}</CardTitle>
+        <CardTitle role="heading" aria-level={2} className="text-sm font-medium">{t('links.title')}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         {links.error && <ErrorText>{errorMessage(links.error)}</ErrorText>}

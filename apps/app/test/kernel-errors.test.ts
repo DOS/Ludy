@@ -12,10 +12,13 @@ const ROOT = fileURLToPath(new URL('../../..', import.meta.url));
 
 // Codes the SPA never receives, so it keeps the kernel's message for them.
 const NOT_SHOWN: Record<string, string> = {
+  // The ads draft an AI app saves over MCP (#3861) is a new draft only: the refusal answers a connected app, and no screen sends that command.
+  ADS_DRAFT_AI_NEW_ONLY: 'mcp ads draft',
+  // The check against the firm's MISA catalogue (#4112): the worker's record of a check, which no screen sends.
+  MISA_AMIS_MATCH_INVALID: 'misa amis match record',
   // Live notes pieces (#3109, ADR-0052 L4a): sent by the recorder's sender in the background, which stops quietly on any of them; the recording and its upload go on and no screen shows them.
   CONSENT_MISSING: 'meetings live notes',
   LIVE_CLOSED: 'meetings live notes',
-  LIVE_FIRST_PIECE_MISSING: 'meetings live notes',
   LIVE_NOTES_NOT_ENABLED: 'meetings live notes',
   // The live pane (#3110) words what it needs itself (its states and the budget and kill switch lines), so the codes of its commands stay the kernel's own text.
   LIVE_NO_AUDIO: 'meetings live notes',
@@ -25,6 +28,12 @@ const NOT_SHOWN: Record<string, string> = {
   LIVE_OTHER_RUNNING: 'meetings live notes',
   LIVE_RESULT_INVALID: 'meetings live notes',
   LIVE_RUNNING: 'meetings live notes',
+  // The chapters card (#3844) words the refusals of its own editor itself (the anchor and the repeated second, beside the title ones it maps by code), so these stay the kernel's own text elsewhere.
+  CHAPTER_NOT_ANCHORED: 'meetings chapters',
+  CHAPTER_DUPLICATE_SECOND: 'meetings chapters',
+  CHAPTERS_ALREADY_COPIED: 'meetings chapters',
+  CHAPTERS_STALE: 'meetings chapters',
+  DRAFT_CHAPTERS_EXIST: 'meetings chapters',
   // AI agents: codes only the worker and agent runs get; the agents screens (issue #258) word the others.
   AGENT_PROGRAM_MISSING: 'agents',
   AGENT_RUN_NOT_LIVE: 'agents',
@@ -53,8 +62,13 @@ const NOT_SHOWN: Record<string, string> = {
   // The revoke at the platform of a closed ads connection's token (#2296, W2-1): the sweep's system commands alone raise these.
   ADS_REVOKE_NOT_FOUND: 'worker',
   ADS_REVOKE_STALE: 'worker',
+  // Managing a running ad (W4, #3835): a resume, a raise and an extension run only from an approved proposal (the commands refuse a direct call). The screen asks through
+  // ads.requestChange, which makes the proposal, so a person never receives it.
+  ADS_ONLY_APPROVED: 'ads manage',
   CHANNEL_NOT_ORPHAN: 'worker',
   // A bank feed's batch (ADR-0039, #2044): finance.bank.ingest is a system command the feed job runs.
+  // MISA AMIS's callback (#3903): answered to MISA's own sender on a public route, never to a screen.
+  CALLBACK_UNAVAILABLE: 'misa amis callback',
   BANK_FEED_INVALID: 'worker',
   // A late sync's page (#2044 part 2b): only the worker's record_pull raises it.
   BANK_FEED_CURSOR_MOVED: 'worker',
@@ -69,6 +83,7 @@ const NOT_SHOWN: Record<string, string> = {
   UNKNOWN_RECIPIENT: 'inbound mail',
   UNREADABLE_MESSAGE: 'inbound mail',
   INBOUND_BLOB_MISMATCH: 'inbound mail',
+  RECIPIENT_HEADER_CONFLICT: 'inbound mail',
   // Bounce reports to a mail's Return-Path (#539), dropped by the worker.
   UNREADABLE_BOUNCE: 'inbound mail',
   UNKNOWN_BOUNCE: 'inbound mail',
@@ -87,6 +102,16 @@ const NOT_SHOWN: Record<string, string> = {
   NOT_STREAMED: 'bug',
   INVALID_STORAGE_KEY: 'bug',
   INVALID_GENERATION: 'bug',
+  IDEMPOTENCY_UNSUPPORTED: 'bug',
+  // The SPA only sends x-ludy-org and never sends conflicting x-ludy-org / x-crove-org headers.
+  ORG_HEADER_CONFLICT: 'bug',
+  // eSign worker (#3323, #3554): system-only seal and CA worker commands/queries.
+  SIGN_INVALID_SEALED_FILE: 'sign worker',
+  SIGN_INVALID_CERTIFICATE_FILE: 'sign worker',
+  SIGN_CA_CONNECTION_DISABLED: 'sign worker',
+  SIGN_CA_CONNECTION_OWNER_LEFT: 'sign worker',
+  SIGN_CA_INVALID_PADES_FILE: 'sign worker',
+  SIGN_CA_REQUEST_NOT_FOUND: 'sign worker',
   // A restore re-recording an export that is not the org's newest one (#1726): only the worker's restore receives it.
   EXPORT_REBIND_MISMATCH: 'bug',
   // An export record racing another of the org (#1867): the worker records again.

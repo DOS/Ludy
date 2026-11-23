@@ -10,12 +10,13 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, DomainError, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, type CommandDef, type QueryDef } from '@crove/kernel-runtime';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CredentialVault, DomainError, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, type CommandDef, type QueryDef } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -30,6 +31,7 @@ const DEFINERS = ['subject_key_ensure(uuid, text, text, bytea)', 'subject_key_wr
 suite('per-subject keys on PostgreSQL (#2640)', () => {
   const dbName = `crove_test_subject_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   let pool: pg.Pool;
@@ -98,7 +100,7 @@ suite('per-subject keys on PostgreSQL (#2640)', () => {
   }) as QueryDef<unknown, unknown>;
 
   async function withAdmin<T>(fn: (admin: pg.Client) => Promise<T>): Promise<T> {
-    const admin = new pg.Client({ connectionString: adminUrl });
+    const admin = createDbClient({ connectionString: adminUrl }, dbIds);
     await admin.connect();
     try {
       return await fn(admin);
@@ -108,7 +110,7 @@ suite('per-subject keys on PostgreSQL (#2640)', () => {
   }
 
   async function connect(url: string): Promise<pg.Client> {
-    const client = new pg.Client({ connectionString: url });
+    const client = createDbClient({ connectionString: url }, dbIds);
     await client.connect();
     clients.push(client);
     return client;
@@ -162,7 +164,7 @@ suite('per-subject keys on PostgreSQL (#2640)', () => {
         await c.query<{ s: string; t: string; c: string; type: string }>(
           `SELECT c.table_schema AS s, c.table_name AS t, c.column_name AS c, c.data_type AS type
            FROM information_schema.columns c JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name AND t.table_type = 'BASE TABLE'
-           WHERE c.table_schema LIKE 'crove\\_%' AND c.data_type IN ('text', 'character varying', 'character', 'jsonb', 'json', 'bytea', 'ARRAY', 'USER-DEFINED')`,
+           WHERE (c.table_schema LIKE 'crove\\_%' OR c.table_schema LIKE 'ludy\\_%') AND c.data_type IN ('text', 'character varying', 'character', 'jsonb', 'json', 'bytea', 'ARRAY', 'USER-DEFINED')`,
         )
       ).rows;
       const hits: string[] = [];
@@ -187,20 +189,21 @@ suite('per-subject keys on PostgreSQL (#2640)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const login = (user_: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = user_;
+      url.username = dbIds ? dbIds.roleName(user_) : user_;
       url.password = password;
       return url.toString();
     };
     appUrl = login('crove_app', 'test-app-pw');
     workerUrl = login('crove_worker', 'test-worker-pw');
-    pool = createPool({ connectionString: appUrl, max: 6 });
+    pool = createDbPool({ connectionString: appUrl, max: 6 }, dbIds);
     const register = (runtime: Runtime) => runtime.register({ commands: [...kernelCommands, SEAL, OPEN_IN_COMMAND], queries: [...kernelQueries({ inboundDomain: null }), OPEN, OPEN_PLAIN] });
     rt = register(new Runtime(createDb(pool), { manifests: TEST_MANIFESTS, subjectVault: vaultOf(rootOld) }));
     keylessRt = register(new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }));
-    workerPool = createPool({ connectionString: workerUrl, max: 2 });
+    workerPool = createDbPool({ connectionString: workerUrl, max: 2 }, dbIds);
     workerRt = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS, subjectVault: vaultOf(rootOld) }).register({ commands: [...kernelCommands, SEAL_AS_SYSTEM], queries: [...kernelQueries({ inboundDomain: null }), OPEN_AS_SYSTEM] });
   }, 120_000);
 

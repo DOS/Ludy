@@ -3,14 +3,15 @@
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import { SOCIAL_IMAGE_TYPES, SOCIAL_VIDEO_TYPES } from '@crove/kernel-contract';
-import { MAX_TAGS_PER_FILE, MEDIA_TAG_MAX_LENGTH, mediaTagKey, splitMediaTags } from '@crove/mod-social/contract';
-import { Button } from '@crove/ui/components/button';
-import { DocumentIcon } from '@crove/ui/components/document-icon';
-import { Input } from '@crove/ui/components/input';
-import { cn } from '@crove/ui/lib/utils';
+import { SOCIAL_IMAGE_TYPES, SOCIAL_VIDEO_TYPES } from '@ludy/kernel-contract';
+import { MAX_TAGS_PER_FILE, MEDIA_TAG_MAX_LENGTH, mediaTagKey, splitMediaTags } from '@ludy/mod-social/contract';
+import { Button } from '@ludy/ui/components/button';
+import { DocumentIcon } from '@ludy/ui/components/document-icon';
+import { Input } from '@ludy/ui/components/input';
+import { cn } from '@ludy/ui/lib/utils';
 import { client, errorMessage, fetchFile, orpc, queryClient, uploadFiles } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
+import { mediaRuleProviders } from '../lib/social.ts';
 import { drawWatermark, watermarkName } from '../lib/social-watermark.ts';
 import { ErrorText, Spinner } from './ui.tsx';
 import { CropPanel } from './social-crop.tsx';
@@ -345,6 +346,8 @@ export function MediaField({
   // query as the composer's channel list, so it is read from the cache.
   const channels = useQuery({ ...orpc.channels.list.queryOptions({ input: {} }), enabled: (connectionIds?.length ?? 0) > 0 });
   const providers = (channels.data ?? []).filter((c) => connectionIds?.includes(c.id)).map((c) => c.provider);
+  // The general limit shows always; a platform's own rule only for a channel the post has (#3657), and a picture a platform
+  // refuses is named in the post's issues.
   const replaceEverywhere = useContext(MediaReplace);
   // The org's logo watermark (#834): drawn on a copy of an image, which takes the image's place; the original stays.
   const watermark = useQuery({ ...orpc.social.watermark.get.queryOptions({ input: {} }), staleTime: 5 * 60_000 });
@@ -497,7 +500,9 @@ export function MediaField({
           }}
         />
       )}
-      <p className="text-xs text-subtle-foreground">{t('imagesHint')}</p>
+      <p className="text-xs text-subtle-foreground">
+        {[t('imagesHint'), ...mediaRuleProviders(providers).map((p) => t(`imagesRule.${p}`))].join(' ')}
+      </p>
       {upload.error && <ErrorText>{errorMessage(upload.error)}</ErrorText>}
       {describe.error && <ErrorText>{errorMessage(describe.error)}</ErrorText>}
       {stamp.error && <ErrorText>{errorMessage(stamp.error)}</ErrorText>}

@@ -13,13 +13,14 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, decideApproval, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, decideApproval, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { sql } from 'kysely';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -29,6 +30,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('four-eyes while an org is offboarding (#2064)', () => {
   const dbName = `crove_test_foureyes_off_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let pool: pg.Pool;
   let runtime: Runtime;
@@ -40,7 +42,7 @@ suite('four-eyes while an org is offboarding (#2064)', () => {
   const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -51,7 +53,7 @@ suite('four-eyes while an org is offboarding (#2064)', () => {
 
   // Runs fn in a user's context on the API login role, rolled back; the error's code and message when refused.
   async function asMember<T>(userId: string, fn: (c: pg.Client) => Promise<T>) {
-    const c = new pg.Client({ connectionString: appUrl });
+    const c = createDbClient({ connectionString: appUrl }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -89,12 +91,13 @@ suite('four-eyes while an org is offboarding (#2064)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     app.password = 'test-app-pw';
     appUrl = app.toString();
-    pool = createPool({ connectionString: appUrl, max: 2 });
+    pool = createDbPool({ connectionString: appUrl, max: 2 }, dbIds);
     const db = createDb(pool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
     owner = await upsertIdentity(db, { issuer: 't2064', subject: randomUUID(), email: 'owner@t2064.test', name: null });

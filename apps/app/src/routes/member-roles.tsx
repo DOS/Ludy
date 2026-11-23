@@ -7,10 +7,10 @@
 import { useMutation } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import type { LegalEntity, MemberRoles, RoleAssignment } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import type { LegalEntity, MemberRoles, RoleAssignment } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { ErrorText } from '../components/ui.tsx';
 import { errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
@@ -51,7 +51,6 @@ function AssignedRole({ assignment, entities, canRevoke, name }: { assignment: R
       {revoke.error &&
         (isStepUpRequired(revoke.error) ? (
           <StepUpPrompt
-            enroll={false}
             action={t('stepUpRevoke', { role: label, name })}
             onVerified={() => revoke.variables && revoke.mutate(revoke.variables)}
             onCancel={() => revoke.reset()}
@@ -170,7 +169,6 @@ function AssignRole({ userId, name, baseRole, catalog, held, entities }: {
       {assign.error &&
         (isStepUpRequired(assign.error) ? (
           <StepUpPrompt
-            enroll={false}
             action={t('stepUpAssign', { role: role ? t(`roles.${role.key}`) : '', name })}
             onVerified={() => assign.variables && assign.mutate(assign.variables)}
             onCancel={() => assign.reset()}

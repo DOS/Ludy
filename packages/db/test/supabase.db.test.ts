@@ -11,7 +11,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { hardeningViolations, migrate, readMigrations } from '../src/migrate.ts';
 
-const URL_ENV = process.env.CROVE_TEST_SUPABASE_URL;
+const URL_ENV = process.env.LUDY_TEST_SUPABASE_URL ?? process.env.CROVE_TEST_SUPABASE_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 
 // Enabled before migrating, so their types, casts, operators and definer functions are in the catalog the guard
@@ -42,8 +42,8 @@ const EXTENSIONS: ReadonlyArray<readonly [string, string | null]> = [
 ];
 
 // The CI job sets CROVE_REQUIRE_SUPABASE_TEST, so losing the URL there fails the job instead of skipping the suite.
-if (process.env.CROVE_REQUIRE_SUPABASE_TEST && !URL_ENV) {
-  throw new Error('CROVE_REQUIRE_SUPABASE_TEST is set but CROVE_TEST_SUPABASE_URL is not');
+if ((process.env.LUDY_REQUIRE_SUPABASE_TEST ?? process.env.CROVE_REQUIRE_SUPABASE_TEST) && !URL_ENV) {
+  throw new Error('LUDY_REQUIRE_SUPABASE_TEST / CROVE_REQUIRE_SUPABASE_TEST is set but LUDY_TEST_SUPABASE_URL / CROVE_TEST_SUPABASE_URL is not');
 }
 const suite = URL_ENV ? describe : describe.skip;
 
@@ -80,7 +80,7 @@ suite('migrations and the hardening guard on the Supabase Postgres image', () =>
     }
     const files = await readMigrations(MIGRATIONS);
     const { rows } = await client.query<{ migrated: boolean }>(
-      "SELECT to_regclass('crove_meta.schema_migrations') IS NOT NULL AS migrated",
+      "SELECT pg_catalog.to_regclass('ludy_meta.schema_migrations') IS NOT NULL OR pg_catalog.to_regclass('crove_meta.schema_migrations') IS NOT NULL AS migrated",
     );
     // A fresh container applies every file; a rerun of the suite against the same container applies none.
     const expected = rows[0]?.migrated ? [] : files.map((f) => f.name);
@@ -89,20 +89,20 @@ suite('migrations and the hardening guard on the Supabase Postgres image', () =>
     expect(await hardeningViolations(client)).toEqual([]);
   }, 120_000);
 
-  // The guard is not vacuous on this image: it still reports an unpinned crove_* function, and an extension's
-  // definer function once a crove_* object reaches it (an extension member is skipped only inside crove_* schemas).
+  // The guard is not vacuous on this image: it still reports an unpinned ludy_* function, and an extension's
+  // definer function once a ludy_* object reaches it (an extension member is skipped only inside ludy_*/crove_* schemas).
   it('still reports planted violations, including a reached extension function', async () => {
     await client.query('BEGIN');
     try {
       await client.query(`
-        CREATE FUNCTION crove_kernel.t179_unpinned() RETURNS int LANGUAGE sql SET search_path = '' AS $$ SELECT 1 $$;
-        CREATE TABLE crove_kernel.t179 (v bigint DEFAULT graphql.get_schema_version());`);
+        CREATE FUNCTION ludy_kernel.t179_unpinned() RETURNS int LANGUAGE sql SET search_path = '' AS $$ SELECT 1 $$;
+        CREATE TABLE ludy_kernel.t179 (v bigint DEFAULT graphql.get_schema_version());`);
       expect(await hardeningViolations(client)).toEqual([
-        'function crove_kernel.t179_unpinned() has settings "search_path=""", expected "search_path=pg_catalog, pg_temp"; ' +
-          'fix in a new migration: ALTER FUNCTION crove_kernel.t179_unpinned() SET search_path = pg_catalog, pg_temp',
-        'function graphql.get_schema_version() is reached from crove_* objects (default value for column v of table crove_kernel.t179) ' +
+        'function ludy_kernel.t179_unpinned() has settings "search_path=""", expected "search_path=pg_catalog, pg_temp"; ' +
+          'fix in a new migration: ALTER FUNCTION ludy_kernel.t179_unpinned() SET search_path = pg_catalog, pg_temp',
+        'function graphql.get_schema_version() is reached from ludy_* objects (default value for column v of table ludy_kernel.t179) ' +
           'and is SECURITY DEFINER with no search_path setting, expected "search_path=pg_catalog, pg_temp"; fix in a new migration as its owner: ' +
-          'ALTER FUNCTION graphql.get_schema_version() SET search_path = pg_catalog, pg_temp, or stop using it from crove_* objects',
+          'ALTER FUNCTION graphql.get_schema_version() SET search_path = pg_catalog, pg_temp, or stop using it from ludy_* objects',
       ]);
     } finally {
       await client.query('ROLLBACK');

@@ -1,13 +1,15 @@
 // Which errors of a nested approval refuse only that item of a bulk approval (issue #315): an explicit list of
 // per-proposal codes, never a status. The database flows are in bulk-approve-api.db.test.ts and the invariant suite.
 import { describe, expect, it } from 'vitest';
-import { BULK_ITEM_REFUSALS, bulkApproveOrder, isBulkItemRefusal } from '@crove/kernel';
-import { DomainError } from '@crove/kernel-runtime';
+import { BULK_ITEM_REFUSALS, VOUCHER_BULK_COMMANDS, bulkApproveOrder, isBulkItemRefusal } from '@ludy/kernel';
+import { PAYROLL_PAYMENT_COMMAND, VOUCHER_COMMAND } from '@ludy/kernel-contract';
+import { DomainError } from '@ludy/kernel-runtime';
 
 describe('bulk approval item refusals', () => {
   it('refuses one item for its proposal, policy or content codes', () => {
     for (const [code, status] of [
       ['NOT_FOUND', 404],
+      ['MODULE_OFF', 404],
       ['PROPOSAL_DECIDED', 409],
       ['PROPOSAL_EXPIRED', 409],
       ['STALE_REVISION', 409],
@@ -72,6 +74,35 @@ describe('bulk approval order (#509)', () => {
     // Two batches that would cross in id order (PT then PC, and PC then PT) both take PT first.
     expect(bulkApproveOrder([item('b'), item('a')], types).map((i) => types.get(i.id))).toEqual(['cash_receipt', 'cash_payment']);
     expect(bulkApproveOrder([item('a'), item('f')], types).map((i) => types.get(i.id))).toEqual(['cash_receipt', 'cash_payment']);
+  });
+
+  it('collects voucher types for both ordinary vouchers and payroll payment vouchers, and normalizes id case (#2793)', () => {
+    expect(VOUCHER_BULK_COMMANDS).toEqual([VOUCHER_COMMAND, PAYROLL_PAYMENT_COMMAND]);
+    // Lowercase ids from Postgres against mixed-case item ids from the client: payroll payment vouchers (cash_payment,
+    // bank_debit) and ordinary vouchers take numbering locks in one shared VOUCHER_TYPES + uuid order.
+    const types = new Map([
+      ['00000000-0000-7000-8000-000000000001', 'bank_debit'], // payroll payment (BN)
+      ['00000000-0000-7000-8000-000000000002', 'cash_payment'], // ordinary voucher (PC)
+      ['00000000-0000-7000-8000-000000000003', 'cash_payment'], // payroll payment (PC)
+      ['00000000-0000-7000-8000-000000000004', 'cash_receipt'], // ordinary voucher (PT)
+      ['00000000-0000-7000-8000-000000000005', 'bank_debit'], // ordinary voucher (BN)
+    ]);
+    const batch = [
+      item('00000000-0000-7000-8000-000000000005'),
+      item('00000000-0000-7000-8000-000000000001'.toUpperCase()),
+      item('00000000-0000-7000-8000-000000000003'),
+      item('00000000-0000-7000-8000-000000000006'), // non-voucher (invoice / journal voucher)
+      item('00000000-0000-7000-8000-000000000002'),
+      item('00000000-0000-7000-8000-000000000004'),
+    ];
+    expect(bulkApproveOrder(batch, types).map((i) => i.id.toLowerCase())).toEqual([
+      '00000000-0000-7000-8000-000000000006', // non-voucher first
+      '00000000-0000-7000-8000-000000000004', // cash_receipt
+      '00000000-0000-7000-8000-000000000002', // cash_payment (0002 < 0003)
+      '00000000-0000-7000-8000-000000000003', // cash_payment (payroll)
+      '00000000-0000-7000-8000-000000000001', // bank_debit (payroll, 0001 < 0005)
+      '00000000-0000-7000-8000-000000000005', // bank_debit (ordinary)
+    ]);
   });
 
   it('does not change the items it is given', () => {

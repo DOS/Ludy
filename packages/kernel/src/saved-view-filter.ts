@@ -2,7 +2,7 @@
 // The Filter AST of a saved view turned into a SQL condition (CRM plan 4.3, step K3, #2227). The AST says what to match;
 // this file says how, once per kind of condition, and the module that owns a list (crm for the deals) says which column
 // or expression each field of its scope means. So the kernel never names a table of a module, a stored view is checked
-// against the registry in @crove/kernel-contract before anything runs (an unknown field or operator is a 422), and every
+// against the registry in @ludy/kernel-contract before anything runs (an unknown field or operator is a 422), and every
 // value reaches the database as a bound parameter, never as SQL text.
 //
 // A view only narrows: the condition is ANDed into the query the caller already runs under row-level security, so it
@@ -16,8 +16,8 @@ import {
   sortIssues,
   type FilterAst,
   type SavedViewSort,
-} from '@crove/kernel-contract';
-import { DomainError } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError } from '@ludy/kernel-runtime';
 
 // What a condition may need beyond its own value: who is asking ("is me"), today in Vietnam ("overdue", "within the next
 // N days") and the clock ("within the last N days"). The caller passes ctx.now and vietnamToday(ctx.now), so one run
@@ -74,21 +74,21 @@ export const sortableFields = (scope: keyof typeof SAVED_VIEW_SCOPES): readonly 
 // LIKE wildcards in a search are matched as themselves.
 const likeTerm = (s: string) => `%${s.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
-// Contains, ignoring case, Vietnamese marks, đ and punctuation (crove_kernel.search_fold, #673): "nguyen" finds "Nguyễn".
+// Contains, ignoring case, Vietnamese marks, đ and punctuation (ludy_kernel.search_fold, #673): "nguyen" finds "Nguyễn".
 // A term with nothing left once folded (emoji, another script) matches the raw texts as typed, case aside. A folded term
 // holds only a-z, 0-9 and single spaces, so it has no LIKE wildcard. Any of `texts` may match.
 export function textContains(texts: ReadonlyArray<Expression<unknown>>): FieldCondition {
   return (_op, value) => {
     const search = String(value);
     const folded = sql.join(
-      texts.map((t) => sql`crove_kernel.search_fold(${t}) LIKE '%' || crove_kernel.search_fold(${search}) || '%'`),
+      texts.map((t) => sql`ludy_kernel.search_fold(${t}) LIKE '%' || ludy_kernel.search_fold(${search}) || '%'`),
       sql` OR `,
     );
     const raw = sql.join(
       texts.map((t) => sql`${t} ILIKE ${likeTerm(search)}`),
       sql` OR `,
     );
-    return sql<boolean>`(CASE WHEN crove_kernel.search_fold(${search}) = '' THEN (${raw}) ELSE (${folded}) END)`;
+    return sql<boolean>`(CASE WHEN ludy_kernel.search_fold(${search}) = '' THEN (${raw}) ELSE (${folded}) END)`;
   };
 }
 
@@ -96,8 +96,9 @@ export function textContains(texts: ReadonlyArray<Expression<unknown>>): FieldCo
 export const idIn = (column: Expression<unknown>): FieldCondition => (_op, value) => sql<boolean>`${column} = ANY (${value as string[]}::uuid[])`;
 export const idIs = (column: Expression<unknown>): FieldCondition => (_op, value) => sql<boolean>`${column} = ${value as string}::uuid`;
 
-// Is this value (a deal's status, a contact's kind), the value being one of the registry's fixed names.
+// Is this value (a deal's status, a contact's kind), or one of a list of fixed text values (task statuses).
 export const valueIs = (column: Expression<unknown>): FieldCondition => (_op, value) => sql<boolean>`${column} = ${value as string}`;
+export const valueIn = (column: Expression<unknown>): FieldCondition => (_op, value) => sql<boolean>`${column} = ANY (${value as string[]}::text[])`;
 
 // A member field: is that member, is the asker ("is me"; nobody when the asker is not a member), or has none.
 export function memberIs(column: Expression<unknown>): FieldCondition {

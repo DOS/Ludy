@@ -1,9 +1,11 @@
 // Shared pieces of the Social screens: status tones, provider names, the effective text of a variant as the composer
 // shows it, and grouping by day for the agenda.
-import { CAPABILITIES, SENT_TO_APP, WORDPRESS_DRAFT, WORDPRESS_PENDING, countText, isDiscordForum, isProvider, mediaKindOf, needsPublicUrls, sentText, validateVariant, type Issue, type Provider } from '@crove/mod-social/contract';
-import { videoTitleRule } from '@crove/mod-social/contract';
-import { SOCIAL_VIEW_TABS } from '@crove/kernel-contract';
+import { CAPABILITIES, SENT_TO_APP, WORDPRESS_DRAFT, WORDPRESS_PENDING, countText, isDiscordForum, isProvider, mediaKindOf, needsPublicUrls, sentText, validateVariant, type Issue, type Provider } from '@ludy/mod-social/contract';
+import { videoTitleRule } from '@ludy/mod-social/contract';
+import { SOCIAL_VIEW_TABS } from '@ludy/kernel-contract';
 import { getConfig } from './auth.ts';
+import { promoteMigratedItem, readLegacyAwareItem, removeMigratedItem, writeMigratedItem } from './storage-migrate.ts';
+import { translator } from '../i18n/runtime.ts';
 
 export type VariantStatus =
   | 'draft'
@@ -63,9 +65,9 @@ export function variantTone(v: { status: VariantStatus; error?: { code: string |
   return notPublicKey(v) ? 'warning' : VARIANT_TONE[v.status];
 }
 
-// Short names of the providers, the same in every language.
-export const PROVIDER_NAMES: Record<Provider, string> = {
-  sandbox: 'Sandbox',
+// Short names of the providers, the same in every language: product names. The test channel is the one exception, it
+// has no product name and is read from the catalog (SO-27, #3659).
+export const PROVIDER_NAMES: Record<Exclude<Provider, 'sandbox'>, string> = {
   facebook_page: 'Facebook',
   instagram: 'Instagram',
   zalo_oa: 'Zalo OA',
@@ -84,8 +86,14 @@ export const PROVIDER_NAMES: Record<Provider, string> = {
   linkedin_page: 'LinkedIn Page',
 };
 
+// The messaging-only channels of the Inbox: they never publish, so they are not a Social Provider, but a screen that lists connections names them.
+const MESSAGING_PROVIDER_NAMES: Readonly<Record<string, string>> = { whatsapp: 'WhatsApp' };
+// A connection of one of these has no queue, voice, signature, review policy or banned words to set: the Channels screen shows its name, state and disconnect only.
+export const isMessagingOnly = (provider: string): boolean => Object.hasOwn(MESSAGING_PROVIDER_NAMES, provider);
+
 export function providerName(provider: string): string {
-  return isProvider(provider) ? PROVIDER_NAMES[provider] : provider;
+  if (provider === 'sandbox') return translator()('social.providerSandbox');
+  return isProvider(provider) && provider !== 'sandbox' ? PROVIDER_NAMES[provider] : (MESSAGING_PROVIDER_NAMES[provider] ?? provider);
 }
 
 // The platforms the channels screen lists to connect, in the order Crove adds them (Social plan §6). A platform the
@@ -95,6 +103,29 @@ const CONNECT_PLATFORMS = ['facebook_page', 'instagram', 'zalo_oa', 'threads', '
 const LISTED_WHEN_OFFERED: readonly string[] = ['linkedin_page'];
 export function connectPlatforms(offered: readonly string[]): (typeof CONNECT_PLATFORMS)[number][] {
   return CONNECT_PLATFORMS.filter((p) => !LISTED_WHEN_OFFERED.includes(p) || offered.includes(p));
+}
+
+// What the connect card offers (#3651): the platforms this server has set up (Facebook and Instagram first, the order of
+// the list), and the rest, which the card folds into "other platforms" instead of listing each with a badge.
+export function connectSplit(offered: readonly string[]): { ready: (typeof CONNECT_PLATFORMS)[number][]; unavailable: (typeof CONNECT_PLATFORMS)[number][] } {
+  const all = connectPlatforms(offered);
+  return { ready: all.filter((p) => offered.includes(p)), unavailable: all.filter((p) => !offered.includes(p)) };
+}
+
+// A time zone for a person, not the IANA name (#3651): "Việt Nam (UTC+7)", or the city and its offset ("Singapore (UTC+8)",
+// "New York (UTC-5)"). The offset is today's, so a zone with daylight saving shows the one in force.
+export function zoneLabel(zone: string, locale: string): string {
+  const offset = (() => {
+    try {
+      const part = new Intl.DateTimeFormat('en', { timeZone: zone, timeZoneName: 'shortOffset' }).formatToParts(new Date()).find((x) => x.type === 'timeZoneName')?.value ?? '';
+      return part === 'GMT' ? 'UTC' : part.replace('GMT', 'UTC');
+    } catch {
+      return '';
+    }
+  })();
+  const name = zone === 'Asia/Ho_Chi_Minh' ? (locale === 'vi' ? 'Việt Nam' : 'Vietnam') : zone === 'UTC' ? '' : (zone.split('/').pop() ?? zone).replace(/_/g, ' ');
+  if (!name) return 'UTC';
+  return offset ? `${name} (${offset})` : name;
 }
 
 // A variant's text against its channel's limit, the way the platform counts, with the link the channel's adapter adds.
@@ -196,6 +227,28 @@ export function takeFlash(): string | null {
 // archived (#1299): the posts taken out of every other list, until they are restored.
 export const SOCIAL_TABS = ['upcoming', 'calendar', 'board', 'review', 'attention', 'drafts', 'done', 'archived', 'metrics', 'library'] as const;
 export type SocialTab = (typeof SOCIAL_TABS)[number];
+// The tabs the Posts screen draws (#3655): the status lists only. The schedule, the calendar and the board are views of
+// the same posts, switched beside them; the figures and the photo library are screens of their own, reached from the
+// tools menu. Every name stays valid in the address, so an old link or a saved view still opens.
+export const SOCIAL_STATUS_TABS = ['upcoming', 'review', 'attention', 'drafts', 'done', 'archived'] as const;
+export type SocialStatusTab = (typeof SOCIAL_STATUS_TABS)[number];
+// The views of the posts: a list (the status tabs), the calendar and the board.
+export const SOCIAL_VIEWS = ['list', 'calendar', 'board'] as const;
+export type SocialView = (typeof SOCIAL_VIEWS)[number];
+export function viewOfTab(tab: SocialTab): SocialView | null {
+  return tab === 'calendar' ? 'calendar' : tab === 'board' ? 'board' : tab === 'metrics' || tab === 'library' ? null : 'list';
+}
+// The tab a view opens: the list keeps the status tab it was on, else the schedule.
+export function tabOfView(view: SocialView, listTab: SocialTab): SocialTab {
+  return view === 'calendar' ? 'calendar' : view === 'board' ? 'board' : (SOCIAL_STATUS_TABS as readonly string[]).includes(listTab) ? listTab : 'upcoming';
+}
+// The two screens that are no list of posts: their own page under the Posts address.
+export const isSocialScreen = (tab: SocialTab): boolean => tab === 'metrics' || tab === 'library';
+// The tab the Posts screen opens on when the address names none (#3654): what waits for a person comes first. Posts in review,
+// then posts that failed or need someone, else the schedule.
+export function defaultSocialTab(counts: { review: number; attention: number }): SocialTab {
+  return counts.review > 0 ? 'review' : counts.attention > 0 ? 'attention' : 'upcoming';
+}
 export interface SocialSearch {
   tab?: SocialTab;
   channel?: string;
@@ -249,7 +302,8 @@ export function parseSocialSearch(search: Record<string, unknown>): SocialSearch
 export type ViewFilters = Omit<SocialSearch, 'date' | 'tab'> & { tab?: (typeof SOCIAL_VIEW_TABS)[number] };
 export function viewFiltersOf(search: SocialSearch): ViewFilters {
   const out = Object.fromEntries(Object.entries(search).filter(([k, v]) => k !== 'date' && k !== 'tab' && v !== undefined && v !== '')) as ViewFilters;
-  if (search.tab && (SOCIAL_VIEW_TABS as readonly string[]).includes(search.tab)) out.tab = search.tab as NonNullable<ViewFilters['tab']>;
+  // The schedule is the default view, so a view of it keeps no tab (the address names it now, #3654).
+  if (search.tab && search.tab !== 'upcoming' && (SOCIAL_VIEW_TABS as readonly string[]).includes(search.tab)) out.tab = search.tab as NonNullable<ViewFilters['tab']>;
   return out;
 }
 
@@ -277,4 +331,40 @@ export function dayRange(from: string | undefined, to: string | undefined): { fr
     out.to = end.toISOString();
   }
   return out;
+}
+// The platforms whose picture rules differ enough to name (#3657): shown only for the channels the post has, in this order.
+export const MEDIA_RULE_PROVIDERS = ['instagram', 'facebook_page', 'zalo_oa'] as const;
+export type MediaRuleProvider = (typeof MEDIA_RULE_PROVIDERS)[number];
+export function mediaRuleProviders(providers: readonly string[]): MediaRuleProvider[] {
+  return MEDIA_RULE_PROVIDERS.filter((p) => providers.includes(p));
+}
+
+// The list the person last looked at in an organization (#3656): its tab and filters, kept for this browser tab, so "Quay lại" on a post or a
+// settings screen returns to it, not to the default tab. Storage may be unavailable (a private window): then none.
+const LIST_KEY = 'ludy:social-list';
+const LEGACY_LIST_KEY = 'crove:social-list';
+export function rememberSocialList(slug: string, search: SocialSearch): void {
+  try {
+    writeMigratedItem(sessionStorage, `${LIST_KEY}:${slug}`, `${LEGACY_LIST_KEY}:${slug}`, JSON.stringify(search));
+  } catch {
+    // Not kept: the way back opens the default list.
+  }
+}
+export function lastSocialList(slug: string): SocialSearch {
+  const key = `${LIST_KEY}:${slug}`;
+  const legacyKey = `${LEGACY_LIST_KEY}:${slug}`;
+  try {
+    const entry = readLegacyAwareItem(sessionStorage, key, legacyKey);
+    if (!entry) return {};
+    const parsed = parseSocialSearch(JSON.parse(entry.value) as Record<string, unknown>);
+    if (entry.fromLegacy) promoteMigratedItem(sessionStorage, key, legacyKey, entry.value);
+    return parsed;
+  } catch {
+    try {
+      removeMigratedItem(sessionStorage, key, legacyKey);
+    } catch {
+      // Ignore unavailable storage.
+    }
+    return {};
+  }
 }

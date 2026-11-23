@@ -1,6 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { PAYROLL_RULES, PayrollRefusedError, calculatePayroll, listRulesUsed, defineRule, type PayrollRule, type PayrollCalculation, type PayrollEmployment, type PayrollMonthInputs } from '../src/index.ts';
+import {
+  PAY_BASES,
+  PAYROLL_RULES,
+  PayrollRefusedError,
+  calculatePayroll,
+  defineRule,
+  evaluateForeignInsuranceEligibility,
+  listRulesUsed,
+  sum,
+  type PayBasis,
+  type PayrollCalculation,
+  type PayrollEmployment,
+  type PayrollMonthInputs,
+  type PayrollRule,
+} from '../src/index.ts';
 
 // Golden tests of the payroll calculator (#2529) from invented people: no real name, amount or identifier. Every figure
 // was worked by hand from the rules of docs/plan/payroll.md section 5 (and the overtime case by a separate script), not
@@ -181,6 +195,18 @@ describe('an unpaid fortnight', () => {
     expect(c.breakdown.insurance.suspended).toBeNull();
     expect(c.employeeInsurance).toBe('1260000');
     expect(c.unionFee).toBe('240000');
+  });
+
+  it('prorates fractional half-day unpaid leave accurately without rounding up to whole days', () => {
+    // 12,000,000 * 25.5 / 26 = 11,769,230.77 -> 11,769,231
+    const half = calculatePayroll(person, month('2026-08', { unpaidLeaveDays: '0.5' }));
+    expect(half.gross).toBe('11769231');
+    expect(half.breakdown.pay.unpaidReduction).toBe('230769');
+
+    // 13.5 unpaid days stays below the 14-day insurance suspension threshold
+    const underThreshold = calculatePayroll(person, month('2026-08', { unpaidLeaveDays: '13.5' }));
+    expect(underThreshold.gross).toBe('5769231');
+    expect(underThreshold.breakdown.insurance.suspended).toBeNull();
   });
 });
 
@@ -398,12 +424,6 @@ describe('refusals', () => {
     throw new Error('expected a refusal');
   };
 
-  it('refuses a non-resident with a message', () => {
-    const error = refusal(() => calculatePayroll(employment({ resident: false }), month('2026-08')));
-    expect(error.code).toBe('non_resident');
-    expect(error.message).toMatch(/non-resident/);
-  });
-
   it('refuses a month before the rules start, and names the missing rule', () => {
     const error = refusal(() => calculatePayroll(employment(), month('2025-12')));
     expect(error.code).toBe('no_rule_in_force');
@@ -419,6 +439,20 @@ describe('refusals', () => {
     expect(refusal(() => calculatePayroll(employment({ baseWage: '' }), month('2026-08'))).code).toBe('invalid_input');
     expect(refusal(() => calculatePayroll(employment(), month('2026-08', { overtime: [{ dayKind: 'constructor' as 'holiday', night: false, hours: '1' }] }))).code).toBe('invalid_input');
     expect(refusal(() => calculatePayroll(employment(), month('2026-08', { deductions: [{ label: 'x', kind: 'toString' as 'other', amount: '1' }] }))).code).toBe('invalid_input');
+    expect(refusal(() => calculatePayroll(employment({ payBasis: 'weekly' as PayBasis }), month('2026-08'))).code).toBe('invalid_input');
+    expect(refusal(() => calculatePayroll(employment({ payBasis: 'hourly', hourlyRate: '0', baseWage: '0' }), month('2026-08'))).code).toBe('invalid_input');
+    expect(refusal(() => calculatePayroll(employment({ payBasis: 'hourly', hourlyRate: '-100' }), month('2026-08'))).code).toBe('invalid_input');
+    expect(refusal(() => calculatePayroll(employment({ payBasis: 'hourly', hourlyRate: '50000' }), month('2026-08', { workedHours: '-1' }))).code).toBe('invalid_input');
+    expect(refusal(() => calculatePayroll(employment({ payBasis: 'piece_rate', pieceRate: '0', baseWage: '0' }), month('2026-08'))).code).toBe('invalid_input');
+    expect(refusal(() => calculatePayroll(employment({ payBasis: 'piece_rate', pieceRate: '10000' }), month('2026-08', { pieceCount: '-2' }))).code).toBe('invalid_input');
+    expect(refusal(() => calculatePayroll(employment(), month('2026-08', { sicknessBhxhDays: '-1' }))).code).toBe('invalid_input');
+    expect(refusal(() => calculatePayroll(employment(), month('2026-08', { maternityBhxhDays: '-0.5' }))).code).toBe('invalid_input');
+    expect(
+      refusal(() =>
+        calculatePayroll(employment(), month('2026-08', { unpaidLeaveDays: '10', daysNotEmployed: '5', sicknessBhxhDays: '8', maternityBhxhDays: '4' })),
+      ).code,
+    ).toBe('invalid_input');
+    expect(refusal(() => calculatePayroll(employment({ resident: false }), month('2025-12'))).code).toBe('no_rule_in_force');
   });
 
   it('keeps money as exact decimals', () => {
@@ -454,4 +488,349 @@ describe('the accountant worked examples (#2535)', () => {
   it.todo('a new hire in the middle of the month');
   it.todo('a bonus');
   it.todo('a payment withheld at 10%');
+});
+
+describe('hourly pay basis (Stage 4B)', () => {
+  it('computes fractional workedHours * hourlyRate, uses hourlyRate for OT/night and minimum_wage.hourly check', () => {
+    expect(PAY_BASES).toEqual(['monthly', 'hourly', 'piece_rate']);
+    // 160.5h * 50,000 = 8,025,000; employee insurance 8% (642,000) + 1.5% (120,375) + 1% (80,250) = 842,625;
+    // employer insurance 14% (1,123,500) + 3% (240,750) + 0.5% (40,125) + 3% (240,750) + 1% (80,250) = 1,725,375; union 2% = 160,500.
+    // Assessable 8,025,000 - 842,625 - 15,500,000 < 0 -> PIT = 0; net = 7,182,375.
+    const c = calculatePayroll(
+      employment({ payBasis: 'hourly', hourlyRate: '50000', baseWage: '0' }),
+      month('2026-08', { workedHours: '160.5' }),
+    );
+    expect(sheet(c)).toEqual({
+      gross: '8025000',
+      employeeInsurance: '842625',
+      employerInsurance: '1725375',
+      unionFee: '160500',
+      pit: '0',
+      net: '7182375',
+      employerCost: '9910875',
+    });
+    expect(c.breakdown.pay).toMatchObject({
+      baseWage: '8025000',
+      hourlyRate: '50000',
+      unpaidReduction: '0',
+      sicknessBhxhReduction: '0',
+      maternityBhxhReduction: '0',
+    });
+    expect(c.breakdown.insurance.insurablePay).toBe('8025000');
+    expect(c.checks).toEqual([{ id: 'minimum_wage', ok: true, actual: '50000', limit: '25500' }]);
+  });
+
+  it('defaults hourlyRate to baseWage when omitted, handles ROUND_HALF_UP and fractional OT/night hours', () => {
+    // Fallback rate 60,000/h * 160h = 9,600,000; 2.5h normal OT at 150% = 225,000 (exempt 75,000);
+    // 4h night work at 30% = 72,000 (exempt 72,000); gross = 9,897,000; taxable = 9,750,000.
+    const otNight = calculatePayroll(
+      employment({ payBasis: 'hourly', baseWage: '60000', insured: false }),
+      month('2026-08', {
+        workedHours: '160',
+        overtime: [{ dayKind: 'normal_day', night: false, hours: '2.5' }],
+        nightHours: '4',
+      }),
+    );
+    expect(otNight.gross).toBe('9897000');
+    expect(otNight.taxableIncome).toBe('9750000');
+    expect(otNight.breakdown.pay.hourlyRate).toBe('60000');
+
+    // 33,333 * 100.5 = 3,349,966.5 -> ROUND_HALF_UP to 3,349,967.
+    const rounded = calculatePayroll(
+      employment({ payBasis: 'hourly', hourlyRate: '33333', baseWage: '0', insured: false }),
+      month('2026-08', { workedHours: '100.5' }),
+    );
+    expect(rounded.gross).toBe('3349967');
+
+    // Minimum wage check compares hourlyRate against minimum_wage[region].hourly (25,000 < 25,500 in region I).
+    const belowMin = calculatePayroll(
+      employment({ payBasis: 'hourly', hourlyRate: '25000', baseWage: '0', insured: false }),
+      month('2026-08', { workedHours: '160' }),
+    );
+    expect(belowMin.checks).toEqual([{ id: 'minimum_wage', ok: false, actual: '25000', limit: '25500' }]);
+  });
+
+  it('does not subtract daily reduction from workedHours * hourlyRate on leave days, while still counting >= 14 days for BHXH suspension', () => {
+    // 80h * 50,000 = 4,000,000; 14 sicknessBhxhDays suspends insurance without shrinking 4,000,000.
+    const suspended = calculatePayroll(
+      employment({ payBasis: 'hourly', hourlyRate: '50000', baseWage: '0' }),
+      month('2026-08', { workedHours: '80', sicknessBhxhDays: '14' }),
+    );
+    expect(suspended.gross).toBe('4000000');
+    expect(suspended.employeeInsurance).toBe('0');
+    expect(suspended.breakdown.insurance.suspended).toBe('sickness_leave');
+    expect(suspended.breakdown.pay).toMatchObject({ unpaidReduction: '0', sicknessBhxhReduction: '0', maternityBhxhReduction: '0' });
+  });
+});
+
+describe('piece-rate pay basis (Stage 4B)', () => {
+  it('computes pieceCount * pieceRate, derives hourlyRate from workedHours when > 0, and checks monthly minimum wage', () => {
+    // 420.5 * 25,000 = 10,512,500; workedHours = 175 -> hourlyRate = 10,512,500 / 175 = 60,071.42857... ('60071.4286').
+    // 5h normal OT at 150%: pay = 5 * (10,512,500 / 175) * 1.5 = 450,535.714... -> 450,536; normal = 300,357; exempt = 150,179.
+    // Gross = 10,512,500 + 450,536 = 10,963,036; insurable = 10,512,500 -> employee insurance = 841,000 + 157,688 + 105,125 = 1,103,813.
+    const c = calculatePayroll(
+      employment({ payBasis: 'piece_rate', pieceRate: '25000', baseWage: '0' }),
+      month('2026-08', {
+        pieceCount: '420.5',
+        workedHours: '175',
+        overtime: [{ dayKind: 'normal_day', night: false, hours: '5' }],
+      }),
+    );
+    expect(c.breakdown.pay.baseWage).toBe('10512500');
+    expect(c.breakdown.pay.hourlyRate).toBe('60071.4286');
+    expect(c.breakdown.pay.overtime).toEqual([
+      { dayKind: 'normal_day', night: false, hours: '5', multiple: '1.5', pay: '450536', exempt: '150179' },
+    ]);
+    expect(c.gross).toBe('10963036');
+    expect(c.employeeInsurance).toBe('1103813');
+    expect(c.checks).toEqual([{ id: 'minimum_wage', ok: true, actual: '10512500', limit: '5310000' }]);
+  });
+
+  it('falls back to baseWage when pieceRate is omitted and derives OT rate from standardHours when workedHours is absent', () => {
+    // 1,040 * 10,000 = 10,400,000; hourlyRate = 10,400,000 / (26 * 8) = 50,000; 4h weekly_rest_day OT (2x) = 400,000.
+    const c = calculatePayroll(
+      employment({ payBasis: 'piece_rate', baseWage: '10000', insured: false }),
+      month('2026-08', {
+        pieceCount: '1040',
+        overtime: [{ dayKind: 'weekly_rest_day', night: false, hours: '4' }],
+      }),
+    );
+    expect(c.breakdown.pay.hourlyRate).toBe('50000');
+    expect(c.gross).toBe('10800000');
+    expect(c.rulesUsed.map((r) => r.id)).toContain('standard_hours.default@2021-01-01');
+  });
+
+  it('checks piece-rate minimum wage against full or pro-rated regional minimum and suspends BHXH on maternity leave', () => {
+    const belowFull = calculatePayroll(
+      employment({ payBasis: 'piece_rate', pieceRate: '20000', baseWage: '0', insured: false }),
+      month('2026-08', { pieceCount: '200' }),
+    );
+    expect(belowFull.checks).toEqual([{ id: 'minimum_wage', ok: false, actual: '4000000', limit: '5310000' }]);
+
+    // 13 unpaid days (13/26 worked): limit pro-rates to 2,655,000; earned 3,000,000 passes.
+    const proRatedPass = calculatePayroll(
+      employment({ payBasis: 'piece_rate', pieceRate: '20000', baseWage: '0', insured: false }),
+      month('2026-08', { pieceCount: '150', unpaidLeaveDays: '13' }),
+    );
+    expect(proRatedPass.checks).toEqual([{ id: 'minimum_wage', ok: true, actual: '3000000', limit: '2655000' }]);
+
+    const matSuspended = calculatePayroll(
+      employment({ payBasis: 'piece_rate', pieceRate: '30000', baseWage: '0' }),
+      month('2026-08', { pieceCount: '150', maternityBhxhDays: '14' }),
+    );
+    expect(matSuspended.gross).toBe('4500000');
+    expect(matSuspended.employeeInsurance).toBe('0');
+    expect(matSuspended.breakdown.insurance.suspended).toBe('maternity_leave');
+    expect(matSuspended.breakdown.pay.maternityBhxhReduction).toBe('0');
+  });
+});
+
+describe('non-resident 20% flat PIT (Stage 4B)', () => {
+  it('applies 20% flat PIT on taxableIncome with zero insurance, personal, dependent, or pension deductions', () => {
+    // 20,000,000 insured non-resident: insurance 2,100,000 is withheld from net, NOT deducted from PIT base.
+    // PIT = 20% * 20,000,000 = 4,000,000; net = 20,000,000 - 2,100,000 - 4,000,000 = 13,900,000.
+    const c = calculatePayroll(
+      employment({ resident: false, insured: true, baseWage: '20000000' }),
+      month('2026-08', { dependents: [{ ownMonthlyIncome: '0' }], voluntaryPension: '3000000' }),
+    );
+    expect(sheet(c)).toEqual({
+      gross: '20000000',
+      employeeInsurance: '2100000',
+      employerInsurance: '4300000',
+      unionFee: '400000',
+      pit: '4000000',
+      net: '13900000',
+      employerCost: '24700000',
+    });
+    expect(c.breakdown.tax).toEqual({
+      mode: 'non_resident_flat',
+      exemptMealCash: '0',
+      exemptOvertime: '0',
+      exemptNightWork: '0',
+      taxableIncome: '20000000',
+      incomeAfterInsurance: '20000000',
+      personalDeduction: '0',
+      dependentsCounted: 0,
+      dependentDeduction: '0',
+      pensionDeduction: '0',
+      assessableIncome: '20000000',
+      slices: [],
+      flatPercent: '20',
+    });
+    expect(c.rulesUsed.map((r) => r.id)).toContain('pit_non_resident.default@2026-01-01');
+    expect(c.rulesUsed.some((r) => r.kind === 'pit_brackets' || r.kind === 'pit_deduction' || r.kind === 'pit_withholding')).toBe(false);
+  });
+
+  it('applies 20% flat PIT even on contract=none with commitment, while preserving meal/OT exemptions', () => {
+    const casualNonRes = calculatePayroll(
+      employment({ resident: false, contract: 'none', insured: false, commitment: true, baseWage: '3000000' }),
+      month('2026-08'),
+    );
+    expect(casualNonRes.breakdown.tax.mode).toBe('non_resident_flat');
+    expect(casualNonRes.pit).toBe('600000');
+
+    // 26,000,000 + 1,500,000 meal cash (1,200,000 exempt) + 10h normal OT at 125,000/h * 1.5 = 1,875,000 (625,000 exempt).
+    // Gross = 29,375,000; taxableIncome = 27,550,000; PIT 20% = 5,510,000.
+    const withExemptions = calculatePayroll(
+      employment({
+        resident: false,
+        insured: false,
+        baseWage: '26000000',
+        allowances: [{ label: 'Meals', amount: '1500000', type: 'meal_cash', namedInContract: false }],
+      }),
+      month('2026-08', { overtime: [{ dayKind: 'normal_day', night: false, hours: '10' }] }),
+    );
+    expect(withExemptions.gross).toBe('29375000');
+    expect(withExemptions.taxableIncome).toBe('27550000');
+    expect(withExemptions.pit).toBe('5510000');
+  });
+});
+
+describe('foreign worker BHXH & eligibility helper (Stage 4B)', () => {
+  it('exempts BHTN (unemployment) for insured foreign workers while computing BHXH, BHYT, and union fee', () => {
+    // 20,000,000 foreign resident: employee 8% (1,600,000) + 1.5% (300,000) = 1,900,000; BHTN = 0.
+    // Employer 14% + 3% + 0.5% + 3% = 20.5% = 4,100,000; union fee 2% = 400,000.
+    // Assessable 20,000,000 - 1,900,000 - 15,500,000 = 2,600,000 -> 5% = 130,000; net = 17,970,000.
+    const c = calculatePayroll(employment({ isForeign: true, baseWage: '20000000' }), month('2026-08'));
+    expect(sheet(c)).toEqual({
+      gross: '20000000',
+      employeeInsurance: '1900000',
+      employerInsurance: '4100000',
+      unionFee: '400000',
+      pit: '130000',
+      net: '17970000',
+      employerCost: '24500000',
+    });
+    expect(fund(c, 'unemployment')).toEqual({ fund: 'unemployment', wage: '0', employee: '0', employer: '0' });
+    expect(c.rulesUsed.map((r) => r.id)).toContain('foreign_insurance.default@2025-07-01');
+    expect(c.rulesUsed.map((r) => r.id)).not.toContain('insurance_rate.unemployment@2026-01-01');
+
+    // Foreign non-resident: insurance 1,900,000 + 20% flat PIT 4,000,000 -> net 14,100,000.
+    const nonRes = calculatePayroll(employment({ isForeign: true, resident: false, baseWage: '20000000' }), month('2026-08'));
+    expect(nonRes.employeeInsurance).toBe('1900000');
+    expect(nonRes.pit).toBe('4000000');
+    expect(nonRes.net).toBe('14100000');
+  });
+
+  it('evaluates statutory foreign insurance eligibility under Decree 143/2018 & Law 41/2024', () => {
+    const base = {
+      hasWorkPermitOrPracticeCert: true,
+      isInternalTransferee: false,
+      atOrAboveRetirementAge: false,
+      contract: 'fixed_term' as const,
+      contractTermMonths: 12,
+    };
+    const eligibleFixed = evaluateForeignInsuranceEligibility(base, '2026-08-01');
+    expect(eligibleFixed).toEqual({
+      bhxhBhtnEligible: false,
+      bhxhBhytEligible: true,
+      exemptReason: null,
+      rulesUsed: [
+        {
+          id: 'foreign_insurance.default@2025-07-01',
+          kind: 'foreign_insurance',
+          key: 'default',
+          effectiveFrom: '2025-07-01',
+          status: 'commentary',
+        },
+      ],
+    });
+    expect(evaluateForeignInsuranceEligibility({ ...base, contract: 'indefinite', contractTermMonths: null }, '2026-08')).toMatchObject({
+      bhxhBhytEligible: true,
+      bhxhBhtnEligible: false,
+      exemptReason: null,
+    });
+
+    expect(evaluateForeignInsuranceEligibility({ ...base, hasWorkPermitOrPracticeCert: false }, '2026-08-01')).toMatchObject({
+      bhxhBhytEligible: false,
+      bhxhBhtnEligible: false,
+      exemptReason: 'no_work_permit_or_practice_cert',
+    });
+    expect(evaluateForeignInsuranceEligibility({ ...base, isInternalTransferee: true }, '2026-08-01')).toMatchObject({
+      bhxhBhytEligible: false,
+      exemptReason: 'internal_transferee',
+    });
+    expect(evaluateForeignInsuranceEligibility({ ...base, atOrAboveRetirementAge: true }, '2026-08-01')).toMatchObject({
+      bhxhBhytEligible: false,
+      exemptReason: 'at_or_above_retirement_age',
+    });
+    expect(evaluateForeignInsuranceEligibility({ ...base, contractTermMonths: 11 }, '2026-08-01')).toMatchObject({
+      bhxhBhytEligible: false,
+      exemptReason: 'contract_below_minimum_term',
+    });
+    expect(evaluateForeignInsuranceEligibility({ ...base, contract: 'none', contractTermMonths: null }, '2026-08-01')).toMatchObject({
+      bhxhBhytEligible: false,
+      exemptReason: 'contract_below_minimum_term',
+    });
+
+    expect(() => evaluateForeignInsuranceEligibility(base, '2025-06-30')).toThrow(PayrollRefusedError);
+    expect(() => evaluateForeignInsuranceEligibility(base, '2026-02-30')).toThrow(PayrollRefusedError);
+  });
+});
+
+describe('sickness and maternity BHXH leave in monthly payroll (Stage 4B)', () => {
+  it('deducts sicknessBhxhDays and maternityBhxhDays from monthly pay and suspends insurance at >= 14 combined days', () => {
+    const sick = calculatePayroll(employment({ baseWage: '26000000' }), month('2026-08', { sicknessBhxhDays: '14' }));
+    expect(sheet(sick)).toEqual({
+      gross: '12000000',
+      employeeInsurance: '0',
+      employerInsurance: '0',
+      unionFee: '0',
+      pit: '0',
+      net: '12000000',
+      employerCost: '12000000',
+    });
+    expect(sick.breakdown.pay).toMatchObject({
+      baseWage: '12000000',
+      unpaidReduction: '0',
+      sicknessBhxhReduction: '14000000',
+      maternityBhxhReduction: '0',
+    });
+    expect(sick.breakdown.insurance.suspended).toBe('sickness_leave');
+    expect(sick.rulesUsed.map((r) => r.id)).toContain('insurance_suspension.sickness_leave@2025-07-01');
+
+    const mat = calculatePayroll(employment({ baseWage: '26000000' }), month('2026-08', { maternityBhxhDays: '14' }));
+    expect(mat.breakdown.pay).toMatchObject({
+      baseWage: '12000000',
+      unpaidReduction: '0',
+      sicknessBhxhReduction: '0',
+      maternityBhxhReduction: '14000000',
+    });
+    expect(mat.breakdown.insurance.suspended).toBe('maternity_leave');
+    expect(mat.rulesUsed.map((r) => r.id)).toContain('insurance_suspension.maternity_leave@2025-07-01');
+
+    // Combined 5 unpaid + 5 sickness + 4 maternity = 14 -> suspended ('sickness_leave'), exact reductions 5M + 5M + 4M.
+    const mixed = calculatePayroll(
+      employment({ baseWage: '26000000' }),
+      month('2026-08', { unpaidLeaveDays: '5', sicknessBhxhDays: '5', maternityBhxhDays: '4' }),
+    );
+    expect(mixed.gross).toBe('12000000');
+    expect(mixed.breakdown.pay).toMatchObject({
+      unpaidReduction: '5000000',
+      sicknessBhxhReduction: '5000000',
+      maternityBhxhReduction: '4000000',
+    });
+    expect(mixed.breakdown.insurance.suspended).toBe('sickness_leave');
+
+    // Fractional 13.5 sickness days: < 14, so insurance stays active! 12,000,000 * 12.5 / 26 = 5,769,231.
+    const underFourteen = calculatePayroll(employment({ baseWage: '12000000' }), month('2026-08', { sicknessBhxhDays: '13.5' }));
+    expect(underFourteen.gross).toBe('5769231');
+    expect(underFourteen.breakdown.pay.sicknessBhxhReduction).toBe('6230769');
+    expect(underFourteen.breakdown.insurance.suspended).toBeNull();
+    expect(underFourteen.employeeInsurance).toBe('1260000');
+
+    // 13.5 sickness + 0.5 maternity = 14 -> suspended ('sickness_leave'), reductions sum to total 6,461,538.
+    const fractionalFourteen = calculatePayroll(
+      employment({ baseWage: '12000000' }),
+      month('2026-08', { sicknessBhxhDays: '13.5', maternityBhxhDays: '0.5' }),
+    );
+    expect(fractionalFourteen.gross).toBe('5538462');
+    expect(fractionalFourteen.breakdown.insurance.suspended).toBe('sickness_leave');
+    expect(
+      sum([
+        fractionalFourteen.breakdown.pay.sicknessBhxhReduction,
+        fractionalFourteen.breakdown.pay.maternityBhxhReduction,
+      ]).toFixed(),
+    ).toBe('6461538');
+  });
 });

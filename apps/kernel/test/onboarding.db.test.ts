@@ -8,11 +8,11 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { DomainError, Runtime, type BlobStore } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { DomainError, Runtime, type BlobStore } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -104,9 +104,9 @@ suite('onboarding by tax code (#324)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     db = createDb(pool);
@@ -160,14 +160,14 @@ suite('onboarding by tax code (#324)', () => {
     expect((await rpc('org/get', await tokenFor(member), undefined)).body).toMatchObject({ address: 'Tầng 2, Số 1 Phố Huế, Hà Nội' });
     const audit = await asAdmin(
       async (c) =>
-        (await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.set_address' AND outcome = 'ok' ORDER BY occurred_at`, [org.orgId]))
+        (await c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.set_address' AND outcome = 'ok' ORDER BY occurred_at`, [org.orgId]))
           .rows,
     );
     expect(audit.map((r) => r.detail)).toEqual([
       { previous: null, address: { redacted: 'contact' }, changed: true },
       { previous: { redacted: 'contact' }, address: { redacted: 'contact' }, changed: true },
     ]);
-    const activity = await asAdmin(async (c) => (await c.query(`SELECT summary FROM crove_kernel.activity WHERE org_id = $1 AND kind = 'org.address_changed'`, [org.orgId])).rows);
+    const activity = await asAdmin(async (c) => (await c.query(`SELECT summary FROM ludy_kernel.activity WHERE org_id = $1 AND kind = 'org.address_changed'`, [org.orgId])).rows);
     // The timeline says what changed, not the address (#1634).
     expect(activity).toEqual([{ summary: 'Cập nhật địa chỉ của tổ chức' }, { summary: 'Cập nhật địa chỉ của tổ chức' }]);
   });
@@ -184,14 +184,14 @@ suite('onboarding by tax code (#324)', () => {
   it('holds the same rules in the column, whoever writes it', async () => {
     for (const value of ['two\nlines', ' padded ', '', 'B'.repeat(501), 'bell\u0007']) {
       await expect(
-        asAdmin((c) => c.query('UPDATE crove_kernel.tenant SET address = $2 WHERE org_id = $1', [org.orgId, value])),
+        asAdmin((c) => c.query('UPDATE ludy_kernel.tenant SET address = $2 WHERE org_id = $1', [org.orgId, value])),
         JSON.stringify(value),
       ).rejects.toThrow(/tenant_address_shape/);
     }
   });
 
   it('looks up a tax code for any signed-in user, with or without an org, and writes nothing', async () => {
-    const before = await asAdmin(async (c) => Number((await c.query('SELECT count(*) AS n FROM crove_kernel.audit_event')).rows[0].n));
+    const before = await asAdmin(async (c) => Number((await c.query('SELECT count(*) AS n FROM ludy_kernel.audit_event')).rows[0].n));
     expect(await rpc('taxRegistry/lookup', await tokenFor(member), { taxCode: ' 0101.234.564 ' }, null)).toMatchObject({
       status: 200,
       body: { taxCode: TAX_CODE, name: 'CÔNG TY TNHH KHÁCH HÀNG MỘT', address: 'Số 1 Phố Huế, Hà Nội' },
@@ -199,7 +199,7 @@ suite('onboarding by tax code (#324)', () => {
     expect(await rpc('taxRegistry/lookup', await tokenFor(member), { taxCode: '0309876546' })).toMatchObject({ status: 404, body: { code: 'TAX_CODE_NOT_FOUND' } });
     expect(lookups).toEqual([' 0101.234.564 '.trim(), '0309876546']);
     expect(await rpc('taxRegistry/lookup', null, { taxCode: TAX_CODE }, null)).toMatchObject({ status: 401 });
-    const after = await asAdmin(async (c) => Number((await c.query('SELECT count(*) AS n FROM crove_kernel.audit_event')).rows[0].n));
+    const after = await asAdmin(async (c) => Number((await c.query('SELECT count(*) AS n FROM ludy_kernel.audit_event')).rows[0].n));
     expect(after).toBe(before);
   });
 

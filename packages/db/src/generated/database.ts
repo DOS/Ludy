@@ -3,257 +3,338 @@
 
 import type { ColumnType, Generated } from 'kysely';
 
-/** Every table of crove_kernel, crove_finance, crove_social, crove_crm, crove_notes, crove_ads, crove_hr, crove_meetings that crove_tenant may read. */
-export type Database = CroveAdsSchema & CroveCrmSchema & CroveFinanceSchema & CroveHrSchema & CroveKernelSchema & CroveMeetingsSchema & CroveNotesSchema & CroveSocialSchema;
+/** Every table of ludy_kernel, ludy_finance, ludy_social, ludy_crm, ludy_notes, ludy_ads, ludy_hr, ludy_meetings, ludy_projects, ludy_sign that ludy_tenant may read. */
+export type Database = LudyAdsSchema & LudyCrmSchema & LudyFinanceSchema & LudyHrSchema & LudyKernelSchema & LudyMeetingsSchema & LudyNotesSchema & LudyProjectsSchema & LudySignSchema & LudySocialSchema;
 
 /**
- * The insert or update type of a column crove_tenant may not insert or update: no value but undefined, which
+ * The insert or update type of a column ludy_tenant may not insert or update: no value but undefined, which
  * Kysely leaves out of the statement, so a write of the column fails typecheck.
  */
 export type NotGranted = undefined;
 
-export interface CroveAdsSchema {
-  'crove_ads.ad_account': AdsAdAccountTable;
-  'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
-  'crove_ads.ad_campaign_request': AdsAdCampaignRequestTable;
-  'crove_ads.ad_flag_setting': AdsAdFlagSettingTable;
-  'crove_ads.ad_launch': AdsAdLaunchTable;
-  'crove_ads.ad_object': AdsAdObjectTable;
-  'crove_ads.ad_org_setting': AdsAdOrgSettingTable;
-  'crove_ads.ad_spend_cap': AdsAdSpendCapTable;
-  'crove_ads.ad_spend_day': AdsAdSpendDayTable;
-  'crove_ads.ad_sync_run': AdsAdSyncRunTable;
-  'crove_ads.ad_token_revoke': AdsAdTokenRevokeTable;
+export interface LudyAdsSchema {
+  'ludy_ads.ad_account': AdsAdAccountTable;
+  'ludy_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
+  'ludy_ads.ad_campaign_request': AdsAdCampaignRequestTable;
+  'ludy_ads.ad_flag_setting': AdsAdFlagSettingTable;
+  'ludy_ads.ad_launch': AdsAdLaunchTable;
+  'ludy_ads.ad_manage_change': AdsAdManageChangeTable;
+  'ludy_ads.ad_object': AdsAdObjectTable;
+  'ludy_ads.ad_org_setting': AdsAdOrgSettingTable;
+  'ludy_ads.ad_spend_cap': AdsAdSpendCapTable;
+  'ludy_ads.ad_spend_day': AdsAdSpendDayTable;
+  'ludy_ads.ad_sync_run': AdsAdSyncRunTable;
+  'ludy_ads.ad_token_revoke': AdsAdTokenRevokeTable;
 }
 
-export interface CroveCrmSchema {
-  'crove_crm.booking': CrmBookingTable;
-  'crove_crm.booking_feed': CrmBookingFeedTable;
-  'crove_crm.deal': CrmDealTable;
-  'crove_crm.deal_next_step': CrmDealNextStepTable;
-  'crove_crm.deal_setting': CrmDealSettingTable;
-  'crove_crm.event_type': CrmEventTypeTable;
-  'crove_crm.import_batch': CrmImportBatchTable;
-  'crove_crm.import_row': CrmImportRowTable;
-  'crove_crm.pipeline_stage': CrmPipelineStageTable;
-  'crove_crm.quote': CrmQuoteTable;
-  'crove_crm.quote_line': CrmQuoteLineTable;
-  'crove_crm.quote_link': CrmQuoteLinkTable;
-  'crove_crm.quote_setting': CrmQuoteSettingTable;
-  'crove_crm.sales_order': CrmSalesOrderTable;
-  'crove_crm.sales_order_delivery': CrmSalesOrderDeliveryTable;
-  'crove_crm.sales_order_line': CrmSalesOrderLineTable;
+export interface LudyCrmSchema {
+  'ludy_crm.booking': CrmBookingTable;
+  'ludy_crm.booking_feed': CrmBookingFeedTable;
+  'ludy_crm.deal': CrmDealTable;
+  'ludy_crm.deal_next_step': CrmDealNextStepTable;
+  'ludy_crm.deal_setting': CrmDealSettingTable;
+  'ludy_crm.event_type': CrmEventTypeTable;
+  'ludy_crm.import_batch': CrmImportBatchTable;
+  'ludy_crm.import_row': CrmImportRowTable;
+  'ludy_crm.pipeline_stage': CrmPipelineStageTable;
+  'ludy_crm.quote': CrmQuoteTable;
+  'ludy_crm.quote_line': CrmQuoteLineTable;
+  'ludy_crm.quote_link': CrmQuoteLinkTable;
+  'ludy_crm.quote_setting': CrmQuoteSettingTable;
+  'ludy_crm.sales_order': CrmSalesOrderTable;
+  'ludy_crm.sales_order_delivery': CrmSalesOrderDeliveryTable;
+  'ludy_crm.sales_order_line': CrmSalesOrderLineTable;
 }
 
-export interface CroveFinanceSchema {
-  'crove_finance.account': FinanceAccountTable;
-  'crove_finance.bank_account_number': FinanceBankAccountNumberTable;
-  'crove_finance.bank_feed_account': FinanceBankFeedAccountTable;
-  'crove_finance.bank_feed_listed_account': FinanceBankFeedListedAccountTable;
-  'crove_finance.bank_line': FinanceBankLineTable;
-  'crove_finance.bank_party_rule': FinanceBankPartyRuleTable;
-  'crove_finance.cash_voucher': FinanceCashVoucherTable;
-  'crove_finance.categorization_rule': FinanceCategorizationRuleTable;
-  'crove_finance.channel_order': FinanceChannelOrderTable;
-  'crove_finance.channel_order_line': FinanceChannelOrderLineTable;
-  'crove_finance.channel_settlement': FinanceChannelSettlementTable;
-  'crove_finance.channel_settlement_line': FinanceChannelSettlementLineTable;
-  'crove_finance.chart': FinanceChartTable;
-  'crove_finance.chart_account': FinanceChartAccountTable;
-  'crove_finance.collection_setting': FinanceCollectionSettingTable;
-  'crove_finance.customer_collection': FinanceCustomerCollectionTable;
-  'crove_finance.depreciation_line': FinanceDepreciationLineTable;
-  'crove_finance.einvoice_connection': FinanceEinvoiceConnectionTable;
-  'crove_finance.einvoice_draft': FinanceEinvoiceDraftTable;
-  'crove_finance.einvoice_draft_line': FinanceEinvoiceDraftLineTable;
-  'crove_finance.einvoice_series': FinanceEinvoiceSeriesTable;
-  'crove_finance.fixed_asset': FinanceFixedAssetTable;
-  'crove_finance.input_vat_check': FinanceInputVatCheckTable;
-  'crove_finance.journal_entry': FinanceJournalEntryTable;
-  'crove_finance.journal_line': FinanceJournalLineTable;
-  'crove_finance.journal_voucher': FinanceJournalVoucherTable;
-  'crove_finance.legal_entity_books': FinanceLegalEntityBooksTable;
-  'crove_finance.marketplace_connection': FinanceMarketplaceConnectionTable;
-  'crove_finance.marketplace_party': FinanceMarketplacePartyTable;
-  'crove_finance.misa_goods_code': FinanceMisaGoodsCodeTable;
-  'crove_finance.org_account': FinanceOrgAccountTable;
-  'crove_finance.period_balance_delta': FinancePeriodBalanceDeltaTable;
-  'crove_finance.period_lock': FinancePeriodLockTable;
-  'crove_finance.portal_invoice_list': FinancePortalInvoiceListTable;
-  'crove_finance.portal_invoice_row': FinancePortalInvoiceRowTable;
-  'crove_finance.purchase_document': FinancePurchaseDocumentTable;
-  'crove_finance.purchase_document_void': FinancePurchaseDocumentVoidTable;
-  'crove_finance.purchase_line': FinancePurchaseLineTable;
-  'crove_finance.purchase_tax_rate': FinancePurchaseTaxRateTable;
-  'crove_finance.stock_alias': FinanceStockAliasTable;
-  'crove_finance.stock_count': FinanceStockCountTable;
-  'crove_finance.stock_count_line': FinanceStockCountLineTable;
-  'crove_finance.stock_item': FinanceStockItemTable;
-  'crove_finance.stock_move': FinanceStockMoveTable;
-  'crove_finance.stock_period': FinanceStockPeriodTable;
-  'crove_finance.stock_period_item': FinanceStockPeriodItemTable;
-  'crove_finance.vat_return_filed': FinanceVatReturnFiledTable;
-  'crove_finance.vendor_account_rule': FinanceVendorAccountRuleTable;
+export interface LudyFinanceSchema {
+  'ludy_finance.account': FinanceAccountTable;
+  'ludy_finance.bank_account_number': FinanceBankAccountNumberTable;
+  'ludy_finance.bank_feed_account': FinanceBankFeedAccountTable;
+  'ludy_finance.bank_feed_listed_account': FinanceBankFeedListedAccountTable;
+  'ludy_finance.bank_line': FinanceBankLineTable;
+  'ludy_finance.bank_party_rule': FinanceBankPartyRuleTable;
+  'ludy_finance.cash_voucher': FinanceCashVoucherTable;
+  'ludy_finance.categorization_rule': FinanceCategorizationRuleTable;
+  'ludy_finance.channel_order': FinanceChannelOrderTable;
+  'ludy_finance.channel_order_line': FinanceChannelOrderLineTable;
+  'ludy_finance.channel_settlement': FinanceChannelSettlementTable;
+  'ludy_finance.channel_settlement_line': FinanceChannelSettlementLineTable;
+  'ludy_finance.chart': FinanceChartTable;
+  'ludy_finance.chart_account': FinanceChartAccountTable;
+  'ludy_finance.collection_setting': FinanceCollectionSettingTable;
+  'ludy_finance.customer_collection': FinanceCustomerCollectionTable;
+  'ludy_finance.depreciation_line': FinanceDepreciationLineTable;
+  'ludy_finance.einvoice_connection': FinanceEinvoiceConnectionTable;
+  'ludy_finance.einvoice_draft': FinanceEinvoiceDraftTable;
+  'ludy_finance.einvoice_draft_line': FinanceEinvoiceDraftLineTable;
+  'ludy_finance.einvoice_notice': FinanceEinvoiceNoticeTable;
+  'ludy_finance.einvoice_series': FinanceEinvoiceSeriesTable;
+  'ludy_finance.fixed_asset': FinanceFixedAssetTable;
+  'ludy_finance.household_expense_group_map': FinanceHouseholdExpenseGroupMapTable;
+  'ludy_finance.household_form_version': FinanceHouseholdFormVersionTable;
+  'ludy_finance.household_profile': FinanceHouseholdProfileTable;
+  'ludy_finance.household_return_form_version': FinanceHouseholdReturnFormVersionTable;
+  'ludy_finance.household_tax_reduction': FinanceHouseholdTaxReductionTable;
+  'ludy_finance.household_threshold': FinanceHouseholdThresholdTable;
+  'ludy_finance.household_trade_rate': FinanceHouseholdTradeRateTable;
+  'ludy_finance.input_vat_check': FinanceInputVatCheckTable;
+  'ludy_finance.journal_entry': FinanceJournalEntryTable;
+  'ludy_finance.journal_line': FinanceJournalLineTable;
+  'ludy_finance.journal_voucher': FinanceJournalVoucherTable;
+  'ludy_finance.legal_entity_books': FinanceLegalEntityBooksTable;
+  'ludy_finance.marketplace_column_check': FinanceMarketplaceColumnCheckTable;
+  'ludy_finance.marketplace_column_profile': FinanceMarketplaceColumnProfileTable;
+  'ludy_finance.marketplace_connection': FinanceMarketplaceConnectionTable;
+  'ludy_finance.marketplace_connection_file': FinanceMarketplaceConnectionFileTable;
+  'ludy_finance.marketplace_party': FinanceMarketplacePartyTable;
+  'ludy_finance.marketplace_vat_rate': FinanceMarketplaceVatRateTable;
+  'ludy_finance.misa_amis_connection': FinanceMisaAmisConnectionTable;
+  'ludy_finance.misa_amis_match': FinanceMisaAmisMatchTable;
+  'ludy_finance.misa_amis_match_check': FinanceMisaAmisMatchCheckTable;
+  'ludy_finance.misa_amis_push': FinanceMisaAmisPushTable;
+  'ludy_finance.misa_goods_code': FinanceMisaGoodsCodeTable;
+  'ludy_finance.org_account': FinanceOrgAccountTable;
+  'ludy_finance.period_balance_delta': FinancePeriodBalanceDeltaTable;
+  'ludy_finance.period_lock': FinancePeriodLockTable;
+  'ludy_finance.portal_invoice_list': FinancePortalInvoiceListTable;
+  'ludy_finance.portal_invoice_row': FinancePortalInvoiceRowTable;
+  'ludy_finance.purchase_document': FinancePurchaseDocumentTable;
+  'ludy_finance.purchase_document_void': FinancePurchaseDocumentVoidTable;
+  'ludy_finance.purchase_line': FinancePurchaseLineTable;
+  'ludy_finance.purchase_tax_rate': FinancePurchaseTaxRateTable;
+  'ludy_finance.stock_alias': FinanceStockAliasTable;
+  'ludy_finance.stock_count': FinanceStockCountTable;
+  'ludy_finance.stock_count_line': FinanceStockCountLineTable;
+  'ludy_finance.stock_item': FinanceStockItemTable;
+  'ludy_finance.stock_move': FinanceStockMoveTable;
+  'ludy_finance.stock_period': FinanceStockPeriodTable;
+  'ludy_finance.stock_period_item': FinanceStockPeriodItemTable;
+  'ludy_finance.supplier_bank_account': FinanceSupplierBankAccountTable;
+  'ludy_finance.supplier_bank_account_change': FinanceSupplierBankAccountChangeTable;
+  'ludy_finance.supplier_payment': FinanceSupplierPaymentTable;
+  'ludy_finance.vat_return_filed': FinanceVatReturnFiledTable;
+  'ludy_finance.vendor_account_rule': FinanceVendorAccountRuleTable;
 }
 
-export interface CroveHrSchema {
-  'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
-  'crove_hr.payroll_dependent': HrPayrollDependentTable;
-  'crove_hr.payroll_employee': HrPayrollEmployeeTable;
-  'crove_hr.payroll_employment': HrPayrollEmploymentTable;
-  'crove_hr.payroll_line': HrPayrollLineTable;
-  'crove_hr.payroll_run': HrPayrollRunTable;
+export interface LudyHrSchema {
+  'ludy_hr.attendance_log': HrAttendanceLogTable;
+  'ludy_hr.attendance_qr_config': HrAttendanceQrConfigTable;
+  'ludy_hr.candidate': HrCandidateTable;
+  'ludy_hr.department': HrDepartmentTable;
+  'ludy_hr.job_opening': HrJobOpeningTable;
+  'ludy_hr.leave_request': HrLeaveRequestTable;
+  'ludy_hr.onboarding_submission': HrOnboardingSubmissionTable;
+  'ludy_hr.overtime_request': HrOvertimeRequestTable;
+  'ludy_hr.payroll_bank_template': HrPayrollBankTemplateTable;
+  'ludy_hr.payroll_dependent': HrPayrollDependentTable;
+  'ludy_hr.payroll_employee': HrPayrollEmployeeTable;
+  'ludy_hr.payroll_employment': HrPayrollEmploymentTable;
+  'ludy_hr.payroll_leave_entry': HrPayrollLeaveEntryTable;
+  'ludy_hr.payroll_line': HrPayrollLineTable;
+  'ludy_hr.payroll_run': HrPayrollRunTable;
+  'ludy_hr.probation_review': HrProbationReviewTable;
 }
 
-export interface CroveKernelSchema {
-  'crove_kernel.activity': KernelActivityTable;
-  'crove_kernel.agent': KernelAgentTable;
-  'crove_kernel.agent_template': KernelAgentTemplateTable;
-  'crove_kernel.agent_wakeup': KernelAgentWakeupTable;
-  'crove_kernel.ai_run': KernelAiRunTable;
-  'crove_kernel.approval_preset': KernelApprovalPresetTable;
-  'crove_kernel.audit_event': KernelAuditEventTable;
-  'crove_kernel.availability_rule': KernelAvailabilityRuleTable;
-  'crove_kernel.budget_policy': KernelBudgetPolicyTable;
-  'crove_kernel.calendar_connection': KernelCalendarConnectionTable;
-  'crove_kernel.calendar_event': KernelCalendarEventTable;
-  'crove_kernel.calendar_event_link': KernelCalendarEventLinkTable;
-  'crove_kernel.channel_access': KernelChannelAccessTable;
-  'crove_kernel.channel_connection': KernelChannelConnectionTable;
-  'crove_kernel.conversation': KernelConversationTable;
-  'crove_kernel.conversation_attachment': KernelConversationAttachmentTable;
-  'crove_kernel.conversation_composing': KernelConversationComposingTable;
-  'crove_kernel.conversation_draft': KernelConversationDraftTable;
-  'crove_kernel.conversation_identity': KernelConversationIdentityTable;
-  'crove_kernel.conversation_message': KernelConversationMessageTable;
-  'crove_kernel.conversation_note': KernelConversationNoteTable;
-  'crove_kernel.conversation_read': KernelConversationReadTable;
-  'crove_kernel.conversation_setting': KernelConversationSettingTable;
-  'crove_kernel.currency': KernelCurrencyTable;
-  'crove_kernel.external_call': KernelExternalCallTable;
-  'crove_kernel.extraction': KernelExtractionTable;
-  'crove_kernel.file': KernelFileTable;
-  'crove_kernel.file_upload': KernelFileUploadTable;
-  'crove_kernel.idempotency_key': KernelIdempotencyKeyTable;
-  'crove_kernel.inbound_message': KernelInboundMessageTable;
-  'crove_kernel.inbox_item': KernelInboxItemTable;
-  'crove_kernel.kill_switch': KernelKillSwitchTable;
-  'crove_kernel.legal_entity': KernelLegalEntityTable;
-  'crove_kernel.mail_event': KernelMailEventTable;
-  'crove_kernel.mail_message': KernelMailMessageTable;
-  'crove_kernel.mail_suppression': KernelMailSuppressionTable;
-  'crove_kernel.mcp_member_table': KernelMcpMemberTableTable;
-  'crove_kernel.member_availability': KernelMemberAvailabilityTable;
-  'crove_kernel.member_invite': KernelMemberInviteTable;
-  'crove_kernel.member_permission_override': KernelMemberPermissionOverrideTable;
-  'crove_kernel.member_vy_memory': KernelMemberVyMemoryTable;
-  'crove_kernel.member_vy_result': KernelMemberVyResultTable;
-  'crove_kernel.member_vy_table': KernelMemberVyTableTable;
-  'crove_kernel.notification': KernelNotificationTable;
-  'crove_kernel.notification_mute': KernelNotificationMuteTable;
-  'crove_kernel.number_allocation': KernelNumberAllocationTable;
-  'crove_kernel.number_series': KernelNumberSeriesTable;
-  'crove_kernel.number_series_policy': KernelNumberSeriesPolicyTable;
-  'crove_kernel.number_void': KernelNumberVoidTable;
-  'crove_kernel.org_usage': KernelOrgUsageTable;
-  'crove_kernel.outbox_event': KernelOutboxEventTable;
-  'crove_kernel.party': KernelPartyTable;
-  'crove_kernel.permission_catalog': KernelPermissionCatalogTable;
-  'crove_kernel.permission_default': KernelPermissionDefaultTable;
-  'crove_kernel.position': KernelPositionTable;
-  'crove_kernel.proposal': KernelProposalTable;
-  'crove_kernel.proposal_policy': KernelProposalPolicyTable;
-  'crove_kernel.record_le': KernelRecordLeTable;
-  'crove_kernel.role': KernelRoleTable;
-  'crove_kernel.role_assignment': KernelRoleAssignmentTable;
-  'crove_kernel.role_permission': KernelRolePermissionTable;
-  'crove_kernel.saved_reply': KernelSavedReplyTable;
-  'crove_kernel.saved_view': KernelSavedViewTable;
-  'crove_kernel.task': KernelTaskTable;
-  'crove_kernel.task_comment': KernelTaskCommentTable;
-  'crove_kernel.tax_obligation_done': KernelTaxObligationDoneTable;
-  'crove_kernel.tax_profile': KernelTaxProfileTable;
-  'crove_kernel.tenant': KernelTenantTable;
-  'crove_kernel.tenant_member': KernelTenantMemberTable;
-  'crove_kernel.today_mail': KernelTodayMailTable;
-  'crove_kernel.usage_deferral': KernelUsageDeferralTable;
+export interface LudyKernelSchema {
+  'ludy_kernel.activity': KernelActivityTable;
+  'ludy_kernel.agent': KernelAgentTable;
+  'ludy_kernel.agent_template': KernelAgentTemplateTable;
+  'ludy_kernel.agent_wakeup': KernelAgentWakeupTable;
+  'ludy_kernel.ai_run': KernelAiRunTable;
+  'ludy_kernel.approval_preset': KernelApprovalPresetTable;
+  'ludy_kernel.audit_event': KernelAuditEventTable;
+  'ludy_kernel.availability_rule': KernelAvailabilityRuleTable;
+  'ludy_kernel.budget_policy': KernelBudgetPolicyTable;
+  'ludy_kernel.calendar_connection': KernelCalendarConnectionTable;
+  'ludy_kernel.calendar_event': KernelCalendarEventTable;
+  'ludy_kernel.calendar_event_link': KernelCalendarEventLinkTable;
+  'ludy_kernel.channel_access': KernelChannelAccessTable;
+  'ludy_kernel.channel_connection': KernelChannelConnectionTable;
+  'ludy_kernel.conversation': KernelConversationTable;
+  'ludy_kernel.conversation_attachment': KernelConversationAttachmentTable;
+  'ludy_kernel.conversation_composing': KernelConversationComposingTable;
+  'ludy_kernel.conversation_draft': KernelConversationDraftTable;
+  'ludy_kernel.conversation_identity': KernelConversationIdentityTable;
+  'ludy_kernel.conversation_message': KernelConversationMessageTable;
+  'ludy_kernel.conversation_note': KernelConversationNoteTable;
+  'ludy_kernel.conversation_read': KernelConversationReadTable;
+  'ludy_kernel.conversation_setting': KernelConversationSettingTable;
+  'ludy_kernel.currency': KernelCurrencyTable;
+  'ludy_kernel.external_call': KernelExternalCallTable;
+  'ludy_kernel.extraction': KernelExtractionTable;
+  'ludy_kernel.file': KernelFileTable;
+  'ludy_kernel.file_upload': KernelFileUploadTable;
+  'ludy_kernel.idempotency_key': KernelIdempotencyKeyTable;
+  'ludy_kernel.inbound_message': KernelInboundMessageTable;
+  'ludy_kernel.inbox_item': KernelInboxItemTable;
+  'ludy_kernel.kill_switch': KernelKillSwitchTable;
+  'ludy_kernel.legal_entity': KernelLegalEntityTable;
+  'ludy_kernel.mail_event': KernelMailEventTable;
+  'ludy_kernel.mail_message': KernelMailMessageTable;
+  'ludy_kernel.mail_suppression': KernelMailSuppressionTable;
+  'ludy_kernel.mcp_member_table': KernelMcpMemberTableTable;
+  'ludy_kernel.mcp_proposal_command': KernelMcpProposalCommandTable;
+  'ludy_kernel.mcp_wake_event_type': KernelMcpWakeEventTypeTable;
+  'ludy_kernel.meeting_platform_connection': KernelMeetingPlatformConnectionTable;
+  'ludy_kernel.meeting_platform_recording': KernelMeetingPlatformRecordingTable;
+  'ludy_kernel.member_availability': KernelMemberAvailabilityTable;
+  'ludy_kernel.member_invite': KernelMemberInviteTable;
+  'ludy_kernel.member_permission_override': KernelMemberPermissionOverrideTable;
+  'ludy_kernel.member_vy_memory': KernelMemberVyMemoryTable;
+  'ludy_kernel.member_vy_result': KernelMemberVyResultTable;
+  'ludy_kernel.member_vy_table': KernelMemberVyTableTable;
+  'ludy_kernel.notification': KernelNotificationTable;
+  'ludy_kernel.notification_mute': KernelNotificationMuteTable;
+  'ludy_kernel.number_allocation': KernelNumberAllocationTable;
+  'ludy_kernel.number_series': KernelNumberSeriesTable;
+  'ludy_kernel.number_series_policy': KernelNumberSeriesPolicyTable;
+  'ludy_kernel.number_void': KernelNumberVoidTable;
+  'ludy_kernel.org_usage': KernelOrgUsageTable;
+  'ludy_kernel.outbox_event': KernelOutboxEventTable;
+  'ludy_kernel.party': KernelPartyTable;
+  'ludy_kernel.permission_catalog': KernelPermissionCatalogTable;
+  'ludy_kernel.permission_default': KernelPermissionDefaultTable;
+  'ludy_kernel.position': KernelPositionTable;
+  'ludy_kernel.proposal': KernelProposalTable;
+  'ludy_kernel.proposal_policy': KernelProposalPolicyTable;
+  'ludy_kernel.record_le': KernelRecordLeTable;
+  'ludy_kernel.role': KernelRoleTable;
+  'ludy_kernel.role_assignment': KernelRoleAssignmentTable;
+  'ludy_kernel.role_permission': KernelRolePermissionTable;
+  'ludy_kernel.saved_reply': KernelSavedReplyTable;
+  'ludy_kernel.saved_view': KernelSavedViewTable;
+  'ludy_kernel.task': KernelTaskTable;
+  'ludy_kernel.task_comment': KernelTaskCommentTable;
+  'ludy_kernel.tax_obligation_done': KernelTaxObligationDoneTable;
+  'ludy_kernel.tax_profile': KernelTaxProfileTable;
+  'ludy_kernel.tenant': KernelTenantTable;
+  'ludy_kernel.tenant_member': KernelTenantMemberTable;
+  'ludy_kernel.today_mail': KernelTodayMailTable;
+  'ludy_kernel.usage_deferral': KernelUsageDeferralTable;
 }
 
-export interface CroveMeetingsSchema {
-  'crove_meetings.action_item': MeetingsActionItemTable;
-  'crove_meetings.audio_segment': MeetingsAudioSegmentTable;
-  'crove_meetings.live_chunk': MeetingsLiveChunkTable;
-  'crove_meetings.live_line': MeetingsLiveLineTable;
-  'crove_meetings.meeting': MeetingsMeetingTable;
-  'crove_meetings.meeting_link': MeetingsMeetingLinkTable;
-  'crove_meetings.meeting_reader': MeetingsMeetingReaderTable;
-  'crove_meetings.meeting_result': MeetingsMeetingResultTable;
-  'crove_meetings.meeting_video': MeetingsMeetingVideoTable;
-  'crove_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
+export interface LudyMeetingsSchema {
+  'ludy_meetings.action_item': MeetingsActionItemTable;
+  'ludy_meetings.audio_segment': MeetingsAudioSegmentTable;
+  'ludy_meetings.calendar_agenda': MeetingsCalendarAgendaTable;
+  'ludy_meetings.capture_session': MeetingsCaptureSessionTable;
+  'ludy_meetings.chat_channel': MeetingsChatChannelTable;
+  'ludy_meetings.chat_post': MeetingsChatPostTable;
+  'ludy_meetings.glossary_term': MeetingsGlossaryTermTable;
+  'ludy_meetings.live_chunk': MeetingsLiveChunkTable;
+  'ludy_meetings.live_line': MeetingsLiveLineTable;
+  'ludy_meetings.meeting': MeetingsMeetingTable;
+  'ludy_meetings.meeting_chapter': MeetingsMeetingChapterTable;
+  'ludy_meetings.meeting_link': MeetingsMeetingLinkTable;
+  'ludy_meetings.meeting_note': MeetingsMeetingNoteTable;
+  'ludy_meetings.meeting_reader': MeetingsMeetingReaderTable;
+  'ludy_meetings.meeting_result': MeetingsMeetingResultTable;
+  'ludy_meetings.meeting_video': MeetingsMeetingVideoTable;
+  'ludy_meetings.minutes_template': MeetingsMinutesTemplateTable;
+  'ludy_meetings.morning_notice': MeetingsMorningNoticeTable;
+  'ludy_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
+  'ludy_meetings.translation': MeetingsTranslationTable;
 }
 
-export interface CroveNotesSchema {
-  'crove_notes.link': NotesLinkTable;
-  'crove_notes.note': NotesNoteTable;
-  'crove_notes.todo': NotesTodoTable;
+export interface LudyNotesSchema {
+  'ludy_notes.attachment': NotesAttachmentTable;
+  'ludy_notes.link': NotesLinkTable;
+  'ludy_notes.note': NotesNoteTable;
+  'ludy_notes.note_template': NotesNoteTemplateTable;
+  'ludy_notes.note_version': NotesNoteVersionTable;
+  'ludy_notes.notebook': NotesNotebookTable;
+  'ludy_notes.todo': NotesTodoTable;
+  'ludy_notes.todo_list': NotesTodoListTable;
 }
 
-export interface CroveSocialSchema {
-  'crove_social.account_snapshot': SocialAccountSnapshotTable;
-  'crove_social.banned_word': SocialBannedWordTable;
-  'crove_social.bio_click': SocialBioClickTable;
-  'crove_social.bio_page': SocialBioPageTable;
-  'crove_social.brand_voice': SocialBrandVoiceTable;
-  'crove_social.calendar_feed': SocialCalendarFeedTable;
-  'crove_social.calendar_note': SocialCalendarNoteTable;
-  'crove_social.channel_option': SocialChannelOptionTable;
-  'crove_social.channel_policy': SocialChannelPolicyTable;
-  'crove_social.channel_set': SocialChannelSetTable;
-  'crove_social.chat_alert': SocialChatAlertTable;
-  'crove_social.digest_week': SocialDigestWeekTable;
-  'crove_social.external_import': SocialExternalImportTable;
-  'crove_social.external_post': SocialExternalPostTable;
-  'crove_social.feed': SocialFeedTable;
-  'crove_social.feed_item': SocialFeedItemTable;
-  'crove_social.goal': SocialGoalTable;
-  'crove_social.idea': SocialIdeaTable;
-  'crove_social.idea_label': SocialIdeaLabelTable;
-  'crove_social.label': SocialLabelTable;
-  'crove_social.link_preview': SocialLinkPreviewTable;
-  'crove_social.media_archive': SocialMediaArchiveTable;
-  'crove_social.media_attribution': SocialMediaAttributionTable;
-  'crove_social.media_tag': SocialMediaTagTable;
-  'crove_social.metric_snapshot': SocialMetricSnapshotTable;
-  'crove_social.notification': SocialNotificationTable;
-  'crove_social.notification_mail_off': SocialNotificationMailOffTable;
-  'crove_social.notification_mute': SocialNotificationMuteTable;
-  'crove_social.post': SocialPostTable;
-  'crove_social.post_approval': SocialPostApprovalTable;
-  'crove_social.post_comment': SocialPostCommentTable;
-  'crove_social.post_label': SocialPostLabelTable;
-  'crove_social.post_media': SocialPostMediaTable;
-  'crove_social.post_variant': SocialPostVariantTable;
-  'crove_social.post_version': SocialPostVersionTable;
-  'crove_social.publish_hold': SocialPublishHoldTable;
-  'crove_social.push_subscription': SocialPushSubscriptionTable;
-  'crove_social.queue': SocialQueueTable;
-  'crove_social.queue_slot': SocialQueueSlotTable;
-  'crove_social.report_branding': SocialReportBrandingTable;
-  'crove_social.report_link': SocialReportLinkTable;
-  'crove_social.report_schedule': SocialReportScheduleTable;
-  'crove_social.report_schedule_run': SocialReportScheduleRunTable;
-  'crove_social.review_check': SocialReviewCheckTable;
-  'crove_social.review_feedback': SocialReviewFeedbackTable;
-  'crove_social.review_link': SocialReviewLinkTable;
-  'crove_social.review_link_post': SocialReviewLinkPostTable;
-  'crove_social.saved_view': SocialSavedViewTable;
-  'crove_social.short_link': SocialShortLinkTable;
-  'crove_social.short_link_click': SocialShortLinkClickTable;
-  'crove_social.snippet': SocialSnippetTable;
-  'crove_social.watermark': SocialWatermarkTable;
+export interface LudyProjectsSchema {
+  'ludy_projects.project': ProjectsProjectTable;
+  'ludy_projects.project_column': ProjectsProjectColumnTable;
+  'ludy_projects.project_cycle': ProjectsProjectCycleTable;
+  'ludy_projects.project_member': ProjectsProjectMemberTable;
+  'ludy_projects.project_task': ProjectsProjectTaskTable;
+  'ludy_projects.roadmap_announcement': ProjectsRoadmapAnnouncementTable;
+  'ludy_projects.roadmap_board': ProjectsRoadmapBoardTable;
+  'ludy_projects.roadmap_item': ProjectsRoadmapItemTable;
+  'ludy_projects.roadmap_vote': ProjectsRoadmapVoteTable;
+  'ludy_projects.task_dependency': ProjectsTaskDependencyTable;
+  'ludy_projects.time_entry': ProjectsTimeEntryTable;
 }
 
-/** crove_ads.ad_account */
+export interface LudySignSchema {
+  'ludy_sign.ai_analysis': SignAiAnalysisTable;
+  'ludy_sign.ca_signing_request': SignCaSigningRequestTable;
+  'ludy_sign.envelope': SignEnvelopeTable;
+  'ludy_sign.envelope_obligation': SignEnvelopeObligationTable;
+  'ludy_sign.field': SignFieldTable;
+  'ludy_sign.kyc_check': SignKycCheckTable;
+  'ludy_sign.member_signature': SignMemberSignatureTable;
+  'ludy_sign.org_stamp': SignOrgStampTable;
+  'ludy_sign.playbook_check': SignPlaybookCheckTable;
+  'ludy_sign.playbook_rule': SignPlaybookRuleTable;
+  'ludy_sign.signer': SignSignerTable;
+  'ludy_sign.signing_event': SignSigningEventTable;
+  'ludy_sign.template': SignTemplateTable;
+  'ludy_sign.template_field': SignTemplateFieldTable;
+  'ludy_sign.template_role': SignTemplateRoleTable;
+}
+
+export interface LudySocialSchema {
+  'ludy_social.account_snapshot': SocialAccountSnapshotTable;
+  'ludy_social.banned_word': SocialBannedWordTable;
+  'ludy_social.bio_click': SocialBioClickTable;
+  'ludy_social.bio_page': SocialBioPageTable;
+  'ludy_social.brand_voice': SocialBrandVoiceTable;
+  'ludy_social.calendar_feed': SocialCalendarFeedTable;
+  'ludy_social.calendar_note': SocialCalendarNoteTable;
+  'ludy_social.channel_option': SocialChannelOptionTable;
+  'ludy_social.channel_policy': SocialChannelPolicyTable;
+  'ludy_social.channel_set': SocialChannelSetTable;
+  'ludy_social.chat_alert': SocialChatAlertTable;
+  'ludy_social.digest_week': SocialDigestWeekTable;
+  'ludy_social.external_import': SocialExternalImportTable;
+  'ludy_social.external_post': SocialExternalPostTable;
+  'ludy_social.feed': SocialFeedTable;
+  'ludy_social.feed_item': SocialFeedItemTable;
+  'ludy_social.goal': SocialGoalTable;
+  'ludy_social.idea': SocialIdeaTable;
+  'ludy_social.idea_label': SocialIdeaLabelTable;
+  'ludy_social.label': SocialLabelTable;
+  'ludy_social.link_preview': SocialLinkPreviewTable;
+  'ludy_social.media_archive': SocialMediaArchiveTable;
+  'ludy_social.media_attribution': SocialMediaAttributionTable;
+  'ludy_social.media_tag': SocialMediaTagTable;
+  'ludy_social.metric_snapshot': SocialMetricSnapshotTable;
+  'ludy_social.notification': SocialNotificationTable;
+  'ludy_social.notification_mail_off': SocialNotificationMailOffTable;
+  'ludy_social.notification_mute': SocialNotificationMuteTable;
+  'ludy_social.post': SocialPostTable;
+  'ludy_social.post_approval': SocialPostApprovalTable;
+  'ludy_social.post_comment': SocialPostCommentTable;
+  'ludy_social.post_label': SocialPostLabelTable;
+  'ludy_social.post_media': SocialPostMediaTable;
+  'ludy_social.post_variant': SocialPostVariantTable;
+  'ludy_social.post_version': SocialPostVersionTable;
+  'ludy_social.publish_hold': SocialPublishHoldTable;
+  'ludy_social.push_subscription': SocialPushSubscriptionTable;
+  'ludy_social.queue': SocialQueueTable;
+  'ludy_social.queue_slot': SocialQueueSlotTable;
+  'ludy_social.report_branding': SocialReportBrandingTable;
+  'ludy_social.report_link': SocialReportLinkTable;
+  'ludy_social.report_schedule': SocialReportScheduleTable;
+  'ludy_social.report_schedule_run': SocialReportScheduleRunTable;
+  'ludy_social.review_check': SocialReviewCheckTable;
+  'ludy_social.review_feedback': SocialReviewFeedbackTable;
+  'ludy_social.review_link': SocialReviewLinkTable;
+  'ludy_social.review_link_post': SocialReviewLinkPostTable;
+  'ludy_social.saved_view': SocialSavedViewTable;
+  'ludy_social.short_link': SocialShortLinkTable;
+  'ludy_social.short_link_click': SocialShortLinkClickTable;
+  'ludy_social.snippet': SocialSnippetTable;
+  'ludy_social.watermark': SocialWatermarkTable;
+}
+
+/** ludy_ads.ad_account */
 export interface AdsAdAccountTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -282,7 +363,7 @@ export interface AdsAdAccountTable {
   write_granted_by_hash: string | null;
 }
 
-/** crove_ads.ad_campaign_draft */
+/** ludy_ads.ad_campaign_draft */
 export interface AdsAdCampaignDraftTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -312,7 +393,7 @@ export interface AdsAdCampaignDraftTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_ads.ad_campaign_request */
+/** ludy_ads.ad_campaign_request */
 export interface AdsAdCampaignRequestTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -329,7 +410,7 @@ export interface AdsAdCampaignRequestTable {
   settled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
-/** crove_ads.ad_flag_setting */
+/** ludy_ads.ad_flag_setting */
 export interface AdsAdFlagSettingTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -342,7 +423,7 @@ export interface AdsAdFlagSettingTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_ads.ad_launch */
+/** ludy_ads.ad_launch */
 export interface AdsAdLaunchTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -376,7 +457,34 @@ export interface AdsAdLaunchTable {
   retry_requested_by: ColumnType<string | null, string | null, NotGranted>;
 }
 
-/** crove_ads.ad_object */
+/** ludy_ads.ad_manage_change */
+export interface AdsAdManageChangeTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  seq: ColumnType<string, never, NotGranted>;
+  ad_account_id: ColumnType<string, string, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  launch_id: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  slot: ColumnType<string, string, NotGranted>;
+  level: ColumnType<string, string, NotGranted>;
+  object_id: ColumnType<string, string, NotGranted>;
+  family: ColumnType<string | null, never, NotGranted>;
+  state: Generated<string>;
+  from_budget: ColumnType<string | null, string | null, NotGranted>;
+  to_budget: ColumnType<string | null, string | null, NotGranted>;
+  from_end_on: ColumnType<string | null, string | null, NotGranted>;
+  to_end_on: ColumnType<string | null, string | null, NotGranted>;
+  proposal_id: ColumnType<string | null, string | null, NotGranted>;
+  code: string | null;
+  settled_on: string | null;
+  requested_by: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  settled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+}
+
+/** ludy_ads.ad_object */
 export interface AdsAdObjectTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -395,7 +503,7 @@ export interface AdsAdObjectTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_ads.ad_org_setting */
+/** ludy_ads.ad_org_setting */
 export interface AdsAdOrgSettingTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -405,7 +513,7 @@ export interface AdsAdOrgSettingTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_ads.ad_spend_cap */
+/** ludy_ads.ad_spend_cap */
 export interface AdsAdSpendCapTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -418,7 +526,7 @@ export interface AdsAdSpendCapTable {
   set_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_ads.ad_spend_day */
+/** ludy_ads.ad_spend_day */
 export interface AdsAdSpendDayTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -438,7 +546,7 @@ export interface AdsAdSpendDayTable {
   settled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
-/** crove_ads.ad_sync_run */
+/** ludy_ads.ad_sync_run */
 export interface AdsAdSyncRunTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -455,7 +563,7 @@ export interface AdsAdSyncRunTable {
   finished_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_ads.ad_token_revoke */
+/** ludy_ads.ad_token_revoke */
 export interface AdsAdTokenRevokeTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -478,7 +586,7 @@ export interface AdsAdTokenRevokeTable {
   settled_at: ColumnType<Date | null, NotGranted, NotGranted>;
 }
 
-/** crove_crm.booking_feed */
+/** ludy_crm.booking_feed */
 export interface CrmBookingFeedTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -488,7 +596,7 @@ export interface CrmBookingFeedTable {
   revoked_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
-/** crove_crm.booking */
+/** ludy_crm.booking */
 export interface CrmBookingTable {
   org_id: string;
   id: Generated<string>;
@@ -520,7 +628,7 @@ export interface CrmBookingTable {
   deal_id: string | null;
 }
 
-/** crove_crm.deal_next_step */
+/** ludy_crm.deal_next_step */
 export interface CrmDealNextStepTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -536,7 +644,7 @@ export interface CrmDealNextStepTable {
   closed_reason: string | null;
 }
 
-/** crove_crm.deal_setting */
+/** ludy_crm.deal_setting */
 export interface CrmDealSettingTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -546,7 +654,7 @@ export interface CrmDealSettingTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_crm.deal */
+/** ludy_crm.deal */
 export interface CrmDealTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -565,9 +673,11 @@ export interface CrmDealTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_by: string | null;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  actor_origin: ColumnType<string, string | undefined, NotGranted>;
+  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
 }
 
-/** crove_crm.event_type */
+/** ludy_crm.event_type */
 export interface CrmEventTypeTable {
   org_id: string;
   id: Generated<string>;
@@ -592,7 +702,7 @@ export interface CrmEventTypeTable {
   co_host_user_ids: Generated<string[]>;
 }
 
-/** crove_crm.import_batch */
+/** ludy_crm.import_batch */
 export interface CrmImportBatchTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -614,7 +724,7 @@ export interface CrmImportBatchTable {
   linked_rows: Generated<number>;
 }
 
-/** crove_crm.import_row */
+/** ludy_crm.import_row */
 export interface CrmImportRowTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -634,7 +744,7 @@ export interface CrmImportRowTable {
   company_party_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
-/** crove_crm.pipeline_stage */
+/** ludy_crm.pipeline_stage */
 export interface CrmPipelineStageTable {
   org_id: string;
   id: Generated<string>;
@@ -645,7 +755,7 @@ export interface CrmPipelineStageTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_crm.quote_line */
+/** ludy_crm.quote_line */
 export interface CrmQuoteLineTable {
   org_id: string;
   id: Generated<string>;
@@ -661,9 +771,11 @@ export interface CrmQuoteLineTable {
   amount: Generated<string>;
   vat_amount: Generated<string>;
   stock_item_id: string | null;
+  actor_origin: Generated<string>;
+  tainted: Generated<boolean>;
 }
 
-/** crove_crm.quote_link */
+/** ludy_crm.quote_link */
 export interface CrmQuoteLinkTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -678,7 +790,7 @@ export interface CrmQuoteLinkTable {
   views: ColumnType<number, number | undefined, NotGranted>;
 }
 
-/** crove_crm.quote_setting */
+/** ludy_crm.quote_setting */
 export interface CrmQuoteSettingTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -694,7 +806,7 @@ export interface CrmQuoteSettingTable {
   logo_file_id: string | null;
 }
 
-/** crove_crm.quote */
+/** ludy_crm.quote */
 export interface CrmQuoteTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -733,9 +845,11 @@ export interface CrmQuoteTable {
   seller_bank_note: string | null;
   seller_logo_file_id: string | null;
   seller_logo_frozen: Generated<boolean>;
+  actor_origin: ColumnType<string, string | undefined, NotGranted>;
+  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
 }
 
-/** crove_crm.sales_order_delivery */
+/** ludy_crm.sales_order_delivery */
 export interface CrmSalesOrderDeliveryTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -749,7 +863,7 @@ export interface CrmSalesOrderDeliveryTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_crm.sales_order_line */
+/** ludy_crm.sales_order_line */
 export interface CrmSalesOrderLineTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -767,7 +881,7 @@ export interface CrmSalesOrderLineTable {
   stock_item_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
-/** crove_crm.sales_order */
+/** ludy_crm.sales_order */
 export interface CrmSalesOrderTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -796,7 +910,7 @@ export interface CrmSalesOrderTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_finance.account */
+/** ludy_finance.account */
 export interface FinanceAccountTable {
   code: ColumnType<string, NotGranted, NotGranted>;
   name: ColumnType<string, NotGranted, NotGranted>;
@@ -804,7 +918,7 @@ export interface FinanceAccountTable {
   standard: ColumnType<string, NotGranted, NotGranted>;
 }
 
-/** crove_finance.bank_account_number */
+/** ludy_finance.bank_account_number */
 export interface FinanceBankAccountNumberTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -815,7 +929,7 @@ export interface FinanceBankAccountNumberTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_finance.bank_feed_account */
+/** ludy_finance.bank_feed_account */
 export interface FinanceBankFeedAccountTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -827,9 +941,13 @@ export interface FinanceBankFeedAccountTable {
   last_synced_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  feed_from: string | null;
+  last_pull_outcome: string | null;
+  last_pull_outcome_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  last_pull_item: number | null;
 }
 
-/** crove_finance.bank_feed_listed_account */
+/** ludy_finance.bank_feed_listed_account */
 export interface FinanceBankFeedListedAccountTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -839,7 +957,7 @@ export interface FinanceBankFeedListedAccountTable {
   listed_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_finance.bank_line */
+/** ludy_finance.bank_line */
 export interface FinanceBankLineTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -859,7 +977,7 @@ export interface FinanceBankLineTable {
   counterparty_account: ColumnType<string | null, string | null, NotGranted>;
 }
 
-/** crove_finance.bank_party_rule */
+/** ludy_finance.bank_party_rule */
 export interface FinanceBankPartyRuleTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -873,7 +991,7 @@ export interface FinanceBankPartyRuleTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_finance.cash_voucher */
+/** ludy_finance.cash_voucher */
 export interface FinanceCashVoucherTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -894,9 +1012,10 @@ export interface FinanceCashVoucherTable {
   number_allocation_id: ColumnType<string | null, string | null, NotGranted>;
   payroll_run_id: ColumnType<string | null, string | null, NotGranted>;
   payroll_payment_kind: ColumnType<string | null, string | null, NotGranted>;
+  supplier_payment_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
-/** crove_finance.categorization_rule */
+/** ludy_finance.categorization_rule */
 export interface FinanceCategorizationRuleTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -912,7 +1031,7 @@ export interface FinanceCategorizationRuleTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
 }
 
-/** crove_finance.channel_order_line */
+/** ludy_finance.channel_order_line */
 export interface FinanceChannelOrderLineTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -931,9 +1050,14 @@ export interface FinanceChannelOrderLineTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   attempt: Generated<number>;
+  delivered_at: string | null;
+  goods_back: string | null;
+  goods_back_attempt: number | null;
+  goods_back_by: string | null;
+  goods_back_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
-/** crove_finance.channel_order */
+/** ludy_finance.channel_order */
 export interface FinanceChannelOrderTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -944,7 +1068,7 @@ export interface FinanceChannelOrderTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_finance.channel_settlement_line */
+/** ludy_finance.channel_settlement_line */
 export interface FinanceChannelSettlementLineTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -967,7 +1091,7 @@ export interface FinanceChannelSettlementLineTable {
   adjustment: ColumnType<boolean, boolean | undefined, NotGranted>;
 }
 
-/** crove_finance.channel_settlement */
+/** ludy_finance.channel_settlement */
 export interface FinanceChannelSettlementTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -982,7 +1106,7 @@ export interface FinanceChannelSettlementTable {
   reversal_of: ColumnType<string | null, string | null, NotGranted>;
 }
 
-/** crove_finance.chart_account */
+/** ludy_finance.chart_account */
 export interface FinanceChartAccountTable {
   regime: ColumnType<string, NotGranted, NotGranted>;
   version: ColumnType<string, NotGranted, NotGranted>;
@@ -991,14 +1115,14 @@ export interface FinanceChartAccountTable {
   parent_code: ColumnType<string | null, NotGranted, NotGranted>;
 }
 
-/** crove_finance.chart */
+/** ludy_finance.chart */
 export interface FinanceChartTable {
   regime: ColumnType<string, NotGranted, NotGranted>;
   version: ColumnType<string, NotGranted, NotGranted>;
   name: ColumnType<string, NotGranted, NotGranted>;
 }
 
-/** crove_finance.collection_setting */
+/** ludy_finance.collection_setting */
 export interface FinanceCollectionSettingTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1009,7 +1133,7 @@ export interface FinanceCollectionSettingTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_finance.customer_collection */
+/** ludy_finance.customer_collection */
 export interface FinanceCustomerCollectionTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1021,7 +1145,7 @@ export interface FinanceCustomerCollectionTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_finance.depreciation_line */
+/** ludy_finance.depreciation_line */
 export interface FinanceDepreciationLineTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1033,7 +1157,7 @@ export interface FinanceDepreciationLineTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
 }
 
-/** crove_finance.einvoice_connection */
+/** ludy_finance.einvoice_connection */
 export interface FinanceEinvoiceConnectionTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1047,7 +1171,7 @@ export interface FinanceEinvoiceConnectionTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_finance.einvoice_draft_line */
+/** ludy_finance.einvoice_draft_line */
 export interface FinanceEinvoiceDraftLineTable {
   org_id: string;
   id: Generated<string>;
@@ -1066,7 +1190,7 @@ export interface FinanceEinvoiceDraftLineTable {
   source_line_no: number | null;
 }
 
-/** crove_finance.einvoice_draft */
+/** ludy_finance.einvoice_draft */
 export interface FinanceEinvoiceDraftTable {
   org_id: string;
   id: Generated<string>;
@@ -1099,9 +1223,35 @@ export interface FinanceEinvoiceDraftTable {
   next_check_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   check_attempts: Generated<number>;
   channel_connection_id: string | null;
+  sale_date: string | null;
+  late_reason: string | null;
+  buyer_identity_kind: string | null;
+  buyer_identity: string | null;
+  correction_kind: string | null;
+  original_draft_id: string | null;
+  reason_code: string | null;
+  agreement_file_id: string | null;
+  buyer_nationality: string | null;
+  correction_rate_basis: string | null;
 }
 
-/** crove_finance.einvoice_series */
+/** ludy_finance.einvoice_notice */
+export interface FinanceEinvoiceNoticeTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  draft_id: ColumnType<string, string, NotGranted>;
+  field: ColumnType<string, string, NotGranted>;
+  correct_text: ColumnType<string, string, NotGranted>;
+  buyer_notice_state: Generated<string>;
+  buyer_notified_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  form_state: Generated<string>;
+  form_filed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** ludy_finance.einvoice_series */
 export interface FinanceEinvoiceSeriesTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1115,7 +1265,7 @@ export interface FinanceEinvoiceSeriesTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_finance.fixed_asset */
+/** ludy_finance.fixed_asset */
 export interface FinanceFixedAssetTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1137,7 +1287,83 @@ export interface FinanceFixedAssetTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
 }
 
-/** crove_finance.input_vat_check */
+/** ludy_finance.household_expense_group_map */
+export interface FinanceHouseholdExpenseGroupMapTable {
+  expense_group: ColumnType<string, NotGranted, NotGranted>;
+  account_prefix: ColumnType<string, NotGranted, NotGranted>;
+  effective_from: ColumnType<string, NotGranted, NotGranted>;
+  source: ColumnType<string, NotGranted, NotGranted>;
+  status: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** ludy_finance.household_form_version */
+export interface FinanceHouseholdFormVersionTable {
+  book: ColumnType<string, NotGranted, NotGranted>;
+  version: ColumnType<string, NotGranted, NotGranted>;
+  effective_from: ColumnType<string, NotGranted, NotGranted>;
+  name: ColumnType<string, NotGranted, NotGranted>;
+  pit_methods: ColumnType<string[], NotGranted, NotGranted>;
+  source: ColumnType<string, NotGranted, NotGranted>;
+  status: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** ludy_finance.household_profile */
+export interface FinanceHouseholdProfileTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  effective_from: ColumnType<string, string, NotGranted>;
+  tax_group: ColumnType<number, number, NotGranted>;
+  pit_method: ColumnType<string | null, string | null, NotGranted>;
+  trades: ColumnType<string[], string[] | undefined, NotGranted>;
+  einvoice_registered: ColumnType<boolean, boolean | undefined, NotGranted>;
+  representative_name: ColumnType<string | null, string | null, NotGranted>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  vat_cut_eligible: ColumnType<string | null, string | null, NotGranted>;
+}
+
+/** ludy_finance.household_return_form_version */
+export interface FinanceHouseholdReturnFormVersionTable {
+  form: ColumnType<string, NotGranted, NotGranted>;
+  version: ColumnType<string, NotGranted, NotGranted>;
+  effective_from: ColumnType<string, NotGranted, NotGranted>;
+  name: ColumnType<string, NotGranted, NotGranted>;
+  pit_methods: ColumnType<string[], NotGranted, NotGranted>;
+  source: ColumnType<string, NotGranted, NotGranted>;
+  status: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** ludy_finance.household_tax_reduction */
+export interface FinanceHouseholdTaxReductionTable {
+  kind: ColumnType<string, NotGranted, NotGranted>;
+  effective_from: ColumnType<string, NotGranted, NotGranted>;
+  cut_percent: ColumnType<string, NotGranted, NotGranted>;
+  revenue_ceiling: ColumnType<string | null, NotGranted, NotGranted>;
+  source: ColumnType<string, NotGranted, NotGranted>;
+  status: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** ludy_finance.household_threshold */
+export interface FinanceHouseholdThresholdTable {
+  code: ColumnType<string, NotGranted, NotGranted>;
+  effective_from: ColumnType<string, NotGranted, NotGranted>;
+  amount: ColumnType<string, NotGranted, NotGranted>;
+  source: ColumnType<string, NotGranted, NotGranted>;
+  status: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** ludy_finance.household_trade_rate */
+export interface FinanceHouseholdTradeRateTable {
+  trade: ColumnType<string, NotGranted, NotGranted>;
+  effective_from: ColumnType<string, NotGranted, NotGranted>;
+  vat_percent: ColumnType<string, NotGranted, NotGranted>;
+  pit_percent: ColumnType<string, NotGranted, NotGranted>;
+  source: ColumnType<string, NotGranted, NotGranted>;
+  status: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** ludy_finance.input_vat_check */
 export interface FinanceInputVatCheckTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1150,7 +1376,7 @@ export interface FinanceInputVatCheckTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
 }
 
-/** crove_finance.journal_entry */
+/** ludy_finance.journal_entry */
 export interface FinanceJournalEntryTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -1169,7 +1395,7 @@ export interface FinanceJournalEntryTable {
   legal_entity_id: ColumnType<string, NotGranted, NotGranted>;
 }
 
-/** crove_finance.journal_line */
+/** ludy_finance.journal_line */
 export interface FinanceJournalLineTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   entry_id: ColumnType<string, NotGranted, NotGranted>;
@@ -1182,7 +1408,7 @@ export interface FinanceJournalLineTable {
   legal_entity_id: ColumnType<string, NotGranted, NotGranted>;
 }
 
-/** crove_finance.journal_voucher */
+/** ludy_finance.journal_voucher */
 export interface FinanceJournalVoucherTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1199,9 +1425,15 @@ export interface FinanceJournalVoucherTable {
   stock_closing_month: ColumnType<string | null, string | null, NotGranted>;
   stock_count_id: ColumnType<string | null, string | null, NotGranted>;
   payroll_run_id: ColumnType<string | null, string | null, NotGranted>;
+  settlement_id: ColumnType<string | null, string | null, NotGranted>;
+  payout_settlement_id: ColumnType<string | null, string | null, NotGranted>;
+  payout_bank_line_id: ColumnType<string | null, string | null, NotGranted>;
+  fee_document_id: ColumnType<string | null, string | null, NotGranted>;
+  settlement_month: ColumnType<string | null, string | null, NotGranted>;
+  surplus_count_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
-/** crove_finance.legal_entity_books */
+/** ludy_finance.legal_entity_books */
 export interface FinanceLegalEntityBooksTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -1213,7 +1445,46 @@ export interface FinanceLegalEntityBooksTable {
   created_at: ColumnType<Date, NotGranted, NotGranted>;
 }
 
-/** crove_finance.marketplace_connection */
+/** ludy_finance.marketplace_column_check */
+export interface FinanceMarketplaceColumnCheckTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  file_id: ColumnType<string, string, NotGranted>;
+  platform: string | null;
+  assignments: ColumnType<unknown, string | undefined, string>;
+  state: Generated<string>;
+  failure: string | null;
+  refusal: string | null;
+  requested_by: string | null;
+  requested_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  finished_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  sheet: ColumnType<unknown, string | null | undefined, string | null>;
+  preview: ColumnType<unknown, string | null | undefined, string | null>;
+}
+
+/** ludy_finance.marketplace_column_profile */
+export interface FinanceMarketplaceColumnProfileTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  platform: ColumnType<string, string, NotGranted>;
+  header_row: ColumnType<number, number, NotGranted>;
+  columns: ColumnType<unknown, string, NotGranted>;
+  header_digest: ColumnType<string, string, NotGranted>;
+  confirmed_by: ColumnType<string | null, string | null, NotGranted>;
+  confirmed_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** ludy_finance.marketplace_connection_file */
+export interface FinanceMarketplaceConnectionFileTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  marketplace_connection_id: ColumnType<string | null, string | null, NotGranted>;
+  file_id: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  disconnected_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+}
+
+/** ludy_finance.marketplace_connection */
 export interface FinanceMarketplaceConnectionTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1229,9 +1500,19 @@ export interface FinanceMarketplaceConnectionTable {
   orders_waiting: ColumnType<number, number | undefined, NotGranted>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  app_key: string | null;
+  authorize_state: string | null;
+  authorize_state_hash: string | null;
+  authorize_expires_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  authorize_by: string | null;
+  authorize_code_key_id: string | null;
+  authorize_code_envelope: string | null;
+  reauthorize_by: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  authorize_pending_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  seller_ref: string | null;
 }
 
-/** crove_finance.marketplace_party */
+/** ludy_finance.marketplace_party */
 export interface FinanceMarketplacePartyTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1242,7 +1523,92 @@ export interface FinanceMarketplacePartyTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_finance.misa_goods_code */
+/** ludy_finance.marketplace_vat_rate */
+export interface FinanceMarketplaceVatRateTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  effective_from: ColumnType<string, string, NotGranted>;
+  method: ColumnType<string, string, NotGranted>;
+  vat_percent: ColumnType<string | null, string | null, NotGranted>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** ludy_finance.misa_amis_connection */
+export interface FinanceMisaAmisConnectionTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  channel_connection_id: ColumnType<string, string, NotGranted>;
+  org_company_code: ColumnType<string, string | undefined, NotGranted>;
+  last_test_state: string | null;
+  last_tested_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  product: ColumnType<string, string | undefined, NotGranted>;
+  default_service_item_code: string | null;
+  default_sales_item_code: string | null;
+  default_sales_stock_code: string | null;
+  unit_aliases: ColumnType<unknown, string | undefined, string>;
+}
+
+/** ludy_finance.misa_amis_match_check */
+export interface FinanceMisaAmisMatchCheckTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  connection_id: ColumnType<string, string, NotGranted>;
+  params: ColumnType<unknown, string | undefined, string>;
+  state: Generated<string>;
+  failure: string | null;
+  requested_by: string | null;
+  requested_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  finished_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+}
+
+/** ludy_finance.misa_amis_match */
+export interface FinanceMisaAmisMatchTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  connection_id: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  match_key: ColumnType<string, string, NotGranted>;
+  state: ColumnType<string, string, NotGranted>;
+  catalogue_code: ColumnType<string | null, string | null, NotGranted>;
+  catalogue_id: ColumnType<string | null, string | null, NotGranted>;
+  checked_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  candidate_name: ColumnType<string | null, string | null, NotGranted>;
+  confirmed_by: ColumnType<string | null, string | null, NotGranted>;
+  confirmed_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+}
+
+/** ludy_finance.misa_amis_push */
+export interface FinanceMisaAmisPushTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  connection_id: ColumnType<string, string, NotGranted>;
+  source_type: ColumnType<string, string, NotGranted>;
+  source_id: ColumnType<string, string, NotGranted>;
+  voucher_type: ColumnType<number, number, NotGranted>;
+  part: ColumnType<number, number | undefined, NotGranted>;
+  org_refid: ColumnType<string, string, NotGranted>;
+  org_refno: ColumnType<string, string, NotGranted>;
+  payload_digest: string;
+  params: ColumnType<unknown, string | undefined, string>;
+  state: Generated<string>;
+  reason: string | null;
+  attempts: Generated<number>;
+  requested_by: string | null;
+  requested_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  sent_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  answered_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_finance.misa_goods_code */
 export interface FinanceMisaGoodsCodeTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1253,7 +1619,7 @@ export interface FinanceMisaGoodsCodeTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_finance.org_account */
+/** ludy_finance.org_account */
 export interface FinanceOrgAccountTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1268,7 +1634,7 @@ export interface FinanceOrgAccountTable {
   updated_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_finance.period_balance_delta */
+/** ludy_finance.period_balance_delta */
 export interface FinancePeriodBalanceDeltaTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -1281,7 +1647,7 @@ export interface FinancePeriodBalanceDeltaTable {
   legal_entity_id: ColumnType<string, NotGranted, NotGranted>;
 }
 
-/** crove_finance.period_lock */
+/** ludy_finance.period_lock */
 export interface FinancePeriodLockTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -1292,7 +1658,7 @@ export interface FinancePeriodLockTable {
   legal_entity_id: ColumnType<string, NotGranted, NotGranted>;
 }
 
-/** crove_finance.portal_invoice_list */
+/** ludy_finance.portal_invoice_list */
 export interface FinancePortalInvoiceListTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1318,7 +1684,7 @@ export interface FinancePortalInvoiceListTable {
   direction: ColumnType<string, string | undefined, NotGranted>;
 }
 
-/** crove_finance.portal_invoice_row */
+/** ludy_finance.portal_invoice_row */
 export interface FinancePortalInvoiceRowTable {
   org_id: ColumnType<string, string, NotGranted>;
   list_id: ColumnType<string, string, NotGranted>;
@@ -1340,7 +1706,7 @@ export interface FinancePortalInvoiceRowTable {
   buyer_tax_code: ColumnType<string | null, string | null, NotGranted>;
 }
 
-/** crove_finance.purchase_document */
+/** ludy_finance.purchase_document */
 export interface FinancePurchaseDocumentTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1374,7 +1740,7 @@ export interface FinancePurchaseDocumentTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
 }
 
-/** crove_finance.purchase_document_void */
+/** ludy_finance.purchase_document_void */
 export interface FinancePurchaseDocumentVoidTable {
   org_id: ColumnType<string, string, NotGranted>;
   document_id: ColumnType<string, string, NotGranted>;
@@ -1385,7 +1751,7 @@ export interface FinancePurchaseDocumentVoidTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
 }
 
-/** crove_finance.purchase_line */
+/** ludy_finance.purchase_line */
 export interface FinancePurchaseLineTable {
   org_id: ColumnType<string, string, NotGranted>;
   document_id: ColumnType<string, string, NotGranted>;
@@ -1405,7 +1771,7 @@ export interface FinancePurchaseLineTable {
   source_line_no: ColumnType<number | null, number | null, NotGranted>;
 }
 
-/** crove_finance.purchase_tax_rate */
+/** ludy_finance.purchase_tax_rate */
 export interface FinancePurchaseTaxRateTable {
   org_id: ColumnType<string, string, NotGranted>;
   document_id: ColumnType<string, string, NotGranted>;
@@ -1416,7 +1782,7 @@ export interface FinancePurchaseTaxRateTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
 }
 
-/** crove_finance.stock_alias */
+/** ludy_finance.stock_alias */
 export interface FinanceStockAliasTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1430,7 +1796,7 @@ export interface FinanceStockAliasTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_finance.stock_count_line */
+/** ludy_finance.stock_count_line */
 export interface FinanceStockCountLineTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1441,7 +1807,7 @@ export interface FinanceStockCountLineTable {
   unit_cost: ColumnType<string | null, string | null, NotGranted>;
 }
 
-/** crove_finance.stock_count */
+/** ludy_finance.stock_count */
 export interface FinanceStockCountTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1457,7 +1823,7 @@ export interface FinanceStockCountTable {
   voucher_id: string | null;
 }
 
-/** crove_finance.stock_item */
+/** ludy_finance.stock_item */
 export interface FinanceStockItemTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1474,7 +1840,7 @@ export interface FinanceStockItemTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_finance.stock_move */
+/** ludy_finance.stock_move */
 export interface FinanceStockMoveTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1496,9 +1862,10 @@ export interface FinanceStockMoveTable {
   amount: ColumnType<string | null, string | null, NotGranted>;
   crm_order_id: ColumnType<string | null, string | null, NotGranted>;
   crm_order_line_no: ColumnType<number | null, number | null, NotGranted>;
+  return_of_move_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
-/** crove_finance.stock_period_item */
+/** ludy_finance.stock_period_item */
 export interface FinanceStockPeriodItemTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1516,7 +1883,7 @@ export interface FinanceStockPeriodItemTable {
   unit_cost: ColumnType<string | null, string | null, NotGranted>;
 }
 
-/** crove_finance.stock_period */
+/** ludy_finance.stock_period */
 export interface FinanceStockPeriodTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1528,7 +1895,72 @@ export interface FinanceStockPeriodTable {
   closed_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_finance.vat_return_filed */
+/** ludy_finance.supplier_bank_account_change */
+export interface FinanceSupplierBankAccountChangeTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  party_id: ColumnType<string, string, NotGranted>;
+  account_id: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  old_number_hash: ColumnType<string | null, string | null, NotGranted>;
+  new_number_hash: ColumnType<string | null, string | null, NotGranted>;
+  changed_by: ColumnType<string | null, string | null, NotGranted>;
+  changed_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  step_up_at: ColumnType<Date, Date | string, NotGranted>;
+}
+
+/** ludy_finance.supplier_bank_account */
+export interface FinanceSupplierBankAccountTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  party_id: ColumnType<string, string, NotGranted>;
+  bank_name: ColumnType<string, string, NotGranted>;
+  account_holder_sealed: ColumnType<string, string, NotGranted>;
+  number_sealed: ColumnType<string, string, NotGranted>;
+  number_hash: ColumnType<string, string, NotGranted>;
+  hash_key_id: ColumnType<string, string, NotGranted>;
+  last4: ColumnType<string, string, NotGranted>;
+  status: Generated<string>;
+  retired_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** ludy_finance.supplier_payment */
+export interface FinanceSupplierPaymentTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  party_id: ColumnType<string, string, NotGranted>;
+  purchase_document_id: ColumnType<string, string, NotGranted>;
+  amount: ColumnType<string, string, NotGranted>;
+  currency: ColumnType<string, string, NotGranted>;
+  bank_account_id: ColumnType<string, string, NotGranted>;
+  number_hash: ColumnType<string, string, NotGranted>;
+  hash_key_id: ColumnType<string, string, NotGranted>;
+  status: Generated<string>;
+  proposal_id: ColumnType<string, string, NotGranted>;
+  approved_by: ColumnType<string | null, string | null, NotGranted>;
+  approved_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  approver_step_up_at: ColumnType<Date, Date | string, NotGranted>;
+  payable_after: ColumnType<Date | null, Date | string | null, NotGranted>;
+  hold_reason: ColumnType<string | null, string | null, NotGranted>;
+  confirmed_by: string | null;
+  confirmed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  confirmed_channel: string | null;
+  stale_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  cancelled_by: string | null;
+  cancelled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  cancel_reason: string | null;
+  paid_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  exported_by: string | null;
+  exported_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  export_count: Generated<number>;
+  first_exported_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+}
+
+/** ludy_finance.vat_return_filed */
 export interface FinanceVatReturnFiledTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1543,7 +1975,7 @@ export interface FinanceVatReturnFiledTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
 }
 
-/** crove_finance.vendor_account_rule */
+/** ludy_finance.vendor_account_rule */
 export interface FinanceVendorAccountRuleTable {
   org_id: string;
   party_id: string;
@@ -1552,7 +1984,177 @@ export interface FinanceVendorAccountRuleTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_hr.payroll_bank_template */
+/** ludy_hr.attendance_log */
+export interface HrAttendanceLogTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  work_date: ColumnType<string, string, NotGranted>;
+  checked_in_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  checked_out_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  check_in_method: Generated<string>;
+  worked_minutes: number | null;
+  status: Generated<string>;
+  note: string | null;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_hr.attendance_qr_config */
+export interface HrAttendanceQrConfigTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  qr_secret_hash: ColumnType<string, string, NotGranted>;
+  active: Generated<boolean>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_hr.candidate */
+export interface HrCandidateTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  opening_id: string | null;
+  display_name: string;
+  email: string | null;
+  phone: string | null;
+  stage: Generated<string>;
+  years_experience: number | null;
+  matched_skills: Generated<string[]>;
+  expected_wage: string | null;
+  agreed_wage: string | null;
+  planned_start_on: string | null;
+  notes: string | null;
+  interview_event_id: string | null;
+  interview_starts_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  interview_ends_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  hired_employee_id: string | null;
+  erased_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  source: Generated<string>;
+  hired_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+}
+
+/** ludy_hr.department */
+export interface HrDepartmentTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  name: string;
+  code: string | null;
+  pay_function: Generated<string>;
+  archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  manager_user_id: string | null;
+}
+
+/** ludy_hr.job_opening */
+export interface HrJobOpeningTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  department_id: string | null;
+  title: string;
+  department_name: string | null;
+  contract_type: Generated<string>;
+  region: Generated<string>;
+  pay_function: Generated<string>;
+  budget_min_wage: string | null;
+  budget_max_wage: string | null;
+  required_skills: Generated<string[]>;
+  status: Generated<string>;
+  closed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_hr.leave_request */
+export interface HrLeaveRequestTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  department_id: ColumnType<string | null, string | null, NotGranted>;
+  month: ColumnType<string, string, NotGranted>;
+  start_on: ColumnType<string, string, NotGranted>;
+  end_on: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  days: ColumnType<string, string, NotGranted>;
+  status: Generated<string>;
+  l1_approver_user_id: string | null;
+  l1_acted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  final_acted_by: string | null;
+  final_acted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  reason: string | null;
+  decision_note: string | null;
+  payroll_leave_entry_id: string | null;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_hr.onboarding_submission */
+export interface HrOnboardingSubmissionTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  status: Generated<string>;
+  contact_confirmed: ColumnType<boolean, boolean | undefined, NotGranted>;
+  id_confirmed: ColumnType<boolean, boolean | undefined, NotGranted>;
+  bank_confirmed: ColumnType<boolean, boolean | undefined, NotGranted>;
+  handbook_confirmed: ColumnType<boolean, boolean | undefined, NotGranted>;
+  address: string | null;
+  birth_date: string | null;
+  national_id_sealed: string | null;
+  bank_code: string | null;
+  bank_account_sealed: string | null;
+  tax_code_sealed: string | null;
+  insurance_number_sealed: string | null;
+  note: string | null;
+  decision_note: string | null;
+  reviewed_by: string | null;
+  reviewed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_hr.overtime_request */
+export interface HrOvertimeRequestTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  department_id: ColumnType<string | null, string | null, NotGranted>;
+  month: ColumnType<string, string, NotGranted>;
+  work_date: ColumnType<string, string, NotGranted>;
+  hours: ColumnType<string, string, NotGranted>;
+  day_type: ColumnType<string, string, NotGranted>;
+  is_night: ColumnType<boolean, boolean | undefined, NotGranted>;
+  status: Generated<string>;
+  l1_approver_user_id: string | null;
+  l1_acted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  final_acted_by: string | null;
+  final_acted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  reason: string | null;
+  decision_note: string | null;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_hr.payroll_bank_template */
 export interface HrPayrollBankTemplateTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1564,7 +2166,7 @@ export interface HrPayrollBankTemplateTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_hr.payroll_dependent */
+/** ludy_hr.payroll_dependent */
 export interface HrPayrollDependentTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1578,7 +2180,7 @@ export interface HrPayrollDependentTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_hr.payroll_employee */
+/** ludy_hr.payroll_employee */
 export interface HrPayrollEmployeeTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1598,9 +2200,16 @@ export interface HrPayrollEmployeeTable {
   insurance_number_sealed: string | null;
   finalization_authorized_years: Generated<number[]>;
   bank_code: string | null;
+  department_id: string | null;
+  job_title: string | null;
+  is_foreign: Generated<boolean>;
+  work_permit_exempt: Generated<boolean>;
+  work_permit_expires_on: string | null;
+  work_permit_number_sealed: string | null;
+  user_id: string | null;
 }
 
-/** crove_hr.payroll_employment */
+/** ludy_hr.payroll_employment */
 export interface HrPayrollEmploymentTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1613,9 +2222,35 @@ export interface HrPayrollEmploymentTable {
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   pay_function: ColumnType<string, string | undefined, NotGranted>;
+  contract_form: ColumnType<string | null, string | null, NotGranted>;
+  term_months: ColumnType<number | null, number | null, NotGranted>;
+  contract_end_on: ColumnType<string | null, string | null, NotGranted>;
+  fixed_term_sequence: ColumnType<number | null, number | null, NotGranted>;
+  probation_role_tier: ColumnType<string | null, string | null, NotGranted>;
+  probation_end_on: ColumnType<string | null, string | null, NotGranted>;
+  probation_wage: ColumnType<string | null, string | null, NotGranted>;
+  pay_basis: ColumnType<string, string | undefined, NotGranted>;
+  hourly_rate: ColumnType<string | null, string | null, NotGranted>;
+  piece_rate: ColumnType<string | null, string | null, NotGranted>;
+  tax_resident: ColumnType<boolean, boolean | undefined, NotGranted>;
 }
 
-/** crove_hr.payroll_line */
+/** ludy_hr.payroll_leave_entry */
+export interface HrPayrollLeaveEntryTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  month: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  days: string;
+  approved: Generated<boolean>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_hr.payroll_line */
 export interface HrPayrollLineTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1645,7 +2280,7 @@ export interface HrPayrollLineTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_hr.payroll_run */
+/** ludy_hr.payroll_run */
 export interface HrPayrollRunTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1661,7 +2296,31 @@ export interface HrPayrollRunTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.activity */
+/** ludy_hr.probation_review */
+export interface HrProbationReviewTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  reviewer_user_id: ColumnType<string | null, string | null, NotGranted>;
+  probation_end_on: string | null;
+  period_start: string;
+  period_end: string;
+  completed_tasks_count: Generated<number>;
+  completed_tasks_snapshot: ColumnType<unknown, string | undefined, string>;
+  projects_available: Generated<boolean>;
+  attendance_snapshot: ColumnType<unknown, string | undefined, string>;
+  decision: string;
+  extended_until: string | null;
+  review_note: string | null;
+  ai_draft_note: string | null;
+  decided_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_kernel.activity */
 export interface KernelActivityTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1673,9 +2332,10 @@ export interface KernelActivityTable {
   occurred_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   agent_id: ColumnType<string | null, string | null, NotGranted>;
   legal_entity_id: ColumnType<string | null, string | null, NotGranted>;
+  actor_origin: ColumnType<string, string | undefined, NotGranted>;
 }
 
-/** crove_kernel.agent */
+/** ludy_kernel.agent */
 export interface KernelAgentTable {
   org_id: string;
   id: Generated<string>;
@@ -1693,7 +2353,7 @@ export interface KernelAgentTable {
   member_user_id: string | null;
 }
 
-/** crove_kernel.agent_template */
+/** ludy_kernel.agent_template */
 export interface KernelAgentTemplateTable {
   key: ColumnType<string, NotGranted, NotGranted>;
   module: ColumnType<string, NotGranted, NotGranted>;
@@ -1705,7 +2365,7 @@ export interface KernelAgentTemplateTable {
   daily_run_cap: ColumnType<number, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.agent_wakeup */
+/** ludy_kernel.agent_wakeup */
 export interface KernelAgentWakeupTable {
   org_id: string;
   id: Generated<string>;
@@ -1720,7 +2380,7 @@ export interface KernelAgentWakeupTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.ai_run */
+/** ludy_kernel.ai_run */
 export interface KernelAiRunTable {
   org_id: string;
   id: Generated<string>;
@@ -1738,13 +2398,13 @@ export interface KernelAiRunTable {
   feature: string | null;
 }
 
-/** crove_kernel.approval_preset */
+/** ludy_kernel.approval_preset */
 export interface KernelApprovalPresetTable {
   key: ColumnType<string, NotGranted, NotGranted>;
   ledger_chief_accountant_only: ColumnType<boolean, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.audit_event */
+/** ludy_kernel.audit_event */
 export interface KernelAuditEventTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1761,7 +2421,7 @@ export interface KernelAuditEventTable {
   detail: ColumnType<unknown, string | null | undefined, NotGranted>;
 }
 
-/** crove_kernel.availability_rule */
+/** ludy_kernel.availability_rule */
 export interface KernelAvailabilityRuleTable {
   org_id: string;
   id: Generated<string>;
@@ -1774,7 +2434,7 @@ export interface KernelAvailabilityRuleTable {
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.budget_policy */
+/** ludy_kernel.budget_policy */
 export interface KernelBudgetPolicyTable {
   org_id: string;
   id: Generated<string>;
@@ -1787,7 +2447,7 @@ export interface KernelBudgetPolicyTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.calendar_connection */
+/** ludy_kernel.calendar_connection */
 export interface KernelCalendarConnectionTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1803,9 +2463,10 @@ export interface KernelCalendarConnectionTable {
   write_back: Generated<boolean>;
   connected_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  read_events: Generated<boolean>;
 }
 
-/** crove_kernel.calendar_event_link */
+/** ludy_kernel.calendar_event_link */
 export interface KernelCalendarEventLinkTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1820,7 +2481,7 @@ export interface KernelCalendarEventLinkTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.calendar_event */
+/** ludy_kernel.calendar_event */
 export interface KernelCalendarEventTable {
   org_id: string;
   id: Generated<string>;
@@ -1840,7 +2501,7 @@ export interface KernelCalendarEventTable {
   conference: Generated<boolean>;
 }
 
-/** crove_kernel.channel_access */
+/** ludy_kernel.channel_access */
 export interface KernelChannelAccessTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1850,7 +2511,7 @@ export interface KernelChannelAccessTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_kernel.channel_connection */
+/** ludy_kernel.channel_connection */
 export interface KernelChannelConnectionTable {
   org_id: string;
   id: Generated<string>;
@@ -1882,9 +2543,10 @@ export interface KernelChannelConnectionTable {
   quota_blocked_until: ColumnType<Date | null, Date | string | null, Date | string | null>;
   history_next_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   history_idle_polls: Generated<number>;
+  chat_business: ColumnType<unknown, string | undefined, string>;
 }
 
-/** crove_kernel.conversation_attachment */
+/** ludy_kernel.conversation_attachment */
 export interface KernelConversationAttachmentTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1904,9 +2566,10 @@ export interface KernelConversationAttachmentTable {
   fetch_attempts: Generated<number>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   stored_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  source_ref: string | null;
 }
 
-/** crove_kernel.conversation_composing */
+/** ludy_kernel.conversation_composing */
 export interface KernelConversationComposingTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1918,7 +2581,7 @@ export interface KernelConversationComposingTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.conversation_draft */
+/** ludy_kernel.conversation_draft */
 export interface KernelConversationDraftTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1939,7 +2602,7 @@ export interface KernelConversationDraftTable {
   decided_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
-/** crove_kernel.conversation_identity */
+/** ludy_kernel.conversation_identity */
 export interface KernelConversationIdentityTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1954,7 +2617,7 @@ export interface KernelConversationIdentityTable {
   profile_requested_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
-/** crove_kernel.conversation_message */
+/** ludy_kernel.conversation_message */
 export interface KernelConversationMessageTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1985,7 +2648,7 @@ export interface KernelConversationMessageTable {
   sender_verified: ColumnType<boolean | null, boolean | null, NotGranted>;
 }
 
-/** crove_kernel.conversation_note */
+/** ludy_kernel.conversation_note */
 export interface KernelConversationNoteTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -1993,9 +2656,11 @@ export interface KernelConversationNoteTable {
   author_user_id: ColumnType<string, string, NotGranted>;
   body: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  actor_origin: ColumnType<string, string | undefined, NotGranted>;
+  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
 }
 
-/** crove_kernel.conversation_read */
+/** ludy_kernel.conversation_read */
 export interface KernelConversationReadTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2005,7 +2670,7 @@ export interface KernelConversationReadTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.conversation_setting */
+/** ludy_kernel.conversation_setting */
 export interface KernelConversationSettingTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2014,9 +2679,12 @@ export interface KernelConversationSettingTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   auto_draft: Generated<boolean>;
+  wake_unanswered_hours: Generated<number>;
+  wake_reply_window_hours: Generated<number>;
+  wake_quote_days: Generated<number>;
 }
 
-/** crove_kernel.conversation */
+/** ludy_kernel.conversation */
 export interface KernelConversationTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2045,13 +2713,13 @@ export interface KernelConversationTable {
   sender_unverified: Generated<boolean>;
 }
 
-/** crove_kernel.currency */
+/** ludy_kernel.currency */
 export interface KernelCurrencyTable {
   code: ColumnType<string, NotGranted, NotGranted>;
   minor_units: ColumnType<number, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.external_call */
+/** ludy_kernel.external_call */
 export interface KernelExternalCallTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2071,7 +2739,7 @@ export interface KernelExternalCallTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.extraction */
+/** ludy_kernel.extraction */
 export interface KernelExtractionTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2092,7 +2760,7 @@ export interface KernelExtractionTable {
   original_differs: ColumnType<boolean | null, boolean | null, NotGranted>;
 }
 
-/** crove_kernel.file */
+/** ludy_kernel.file */
 export interface KernelFileTable {
   org_id: string;
   id: Generated<string>;
@@ -2117,7 +2785,7 @@ export interface KernelFileTable {
   original_deleted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
-/** crove_kernel.file_upload */
+/** ludy_kernel.file_upload */
 export interface KernelFileUploadTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2130,7 +2798,7 @@ export interface KernelFileUploadTable {
   purpose: ColumnType<string, string | undefined, NotGranted>;
 }
 
-/** crove_kernel.idempotency_key */
+/** ludy_kernel.idempotency_key */
 export interface KernelIdempotencyKeyTable {
   org_id: string;
   actor_key: string;
@@ -2141,7 +2809,7 @@ export interface KernelIdempotencyKeyTable {
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.inbound_message */
+/** ludy_kernel.inbound_message */
 export interface KernelInboundMessageTable {
   org_id: string;
   id: Generated<string>;
@@ -2153,7 +2821,7 @@ export interface KernelInboundMessageTable {
   body_text: string | null;
 }
 
-/** crove_kernel.inbox_item */
+/** ludy_kernel.inbox_item */
 export interface KernelInboxItemTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2165,7 +2833,7 @@ export interface KernelInboxItemTable {
   dismissed_by: string | null;
 }
 
-/** crove_kernel.kill_switch */
+/** ludy_kernel.kill_switch */
 export interface KernelKillSwitchTable {
   org_id: string;
   id: Generated<string>;
@@ -2178,7 +2846,7 @@ export interface KernelKillSwitchTable {
   released_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
-/** crove_kernel.legal_entity */
+/** ludy_kernel.legal_entity */
 export interface KernelLegalEntityTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2193,7 +2861,7 @@ export interface KernelLegalEntityTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.mail_event */
+/** ludy_kernel.mail_event */
 export interface KernelMailEventTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2206,7 +2874,7 @@ export interface KernelMailEventTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_kernel.mail_message */
+/** ludy_kernel.mail_message */
 export interface KernelMailMessageTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2231,7 +2899,7 @@ export interface KernelMailMessageTable {
   sent_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
-/** crove_kernel.mail_suppression */
+/** ludy_kernel.mail_suppression */
 export interface KernelMailSuppressionTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2246,14 +2914,70 @@ export interface KernelMailSuppressionTable {
   lift_reason: string | null;
 }
 
-/** crove_kernel.mcp_member_table */
+/** ludy_kernel.mcp_member_table */
 export interface KernelMcpMemberTableTable {
   table_name: ColumnType<string, NotGranted, NotGranted>;
   mode: ColumnType<string, NotGranted, NotGranted>;
   adr: ColumnType<string, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.member_availability */
+/** ludy_kernel.mcp_proposal_command */
+export interface KernelMcpProposalCommandTable {
+  command: ColumnType<string, NotGranted, NotGranted>;
+  scope: ColumnType<string, NotGranted, NotGranted>;
+  kind: ColumnType<string, NotGranted, NotGranted>;
+  adr: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** ludy_kernel.mcp_wake_event_type */
+export interface KernelMcpWakeEventTypeTable {
+  type: ColumnType<string, NotGranted, NotGranted>;
+  scope: ColumnType<string, NotGranted, NotGranted>;
+  fields: ColumnType<unknown, NotGranted, NotGranted>;
+  adr: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** ludy_kernel.meeting_platform_connection */
+export interface KernelMeetingPlatformConnectionTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
+  provider: ColumnType<string, string, NotGranted>;
+  external_account: ColumnType<string, string, NotGranted>;
+  display_name: string;
+  scopes: Generated<string[]>;
+  status: Generated<string>;
+  status_reason: string | null;
+  expires_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  last_synced_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  connected_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_kernel.meeting_platform_recording */
+export interface KernelMeetingPlatformRecordingTable {
+  org_id: ColumnType<string, NotGranted, NotGranted>;
+  id: ColumnType<string, NotGranted, NotGranted>;
+  connection_id: ColumnType<string, NotGranted, NotGranted>;
+  user_id: ColumnType<string, NotGranted, NotGranted>;
+  external_id: ColumnType<string, NotGranted, NotGranted>;
+  title: ColumnType<string, NotGranted, NotGranted>;
+  started_at: ColumnType<Date, NotGranted, NotGranted>;
+  length_seconds: ColumnType<number | null, NotGranted, NotGranted>;
+  size_bytes: ColumnType<string | null, NotGranted, NotGranted>;
+  has_audio: ColumnType<boolean, NotGranted, NotGranted>;
+  has_video: ColumnType<boolean, NotGranted, NotGranted>;
+  has_transcript: ColumnType<boolean, NotGranted, NotGranted>;
+  status: ColumnType<string, NotGranted, NotGranted>;
+  meeting_id: ColumnType<string | null, NotGranted, NotGranted>;
+  staging_key: ColumnType<string | null, NotGranted, NotGranted>;
+  staged_at: ColumnType<Date | null, NotGranted, NotGranted>;
+  error_code: ColumnType<string | null, NotGranted, NotGranted>;
+  created_at: ColumnType<Date, NotGranted, NotGranted>;
+  updated_at: ColumnType<Date, NotGranted, NotGranted>;
+}
+
+/** ludy_kernel.member_availability */
 export interface KernelMemberAvailabilityTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2263,7 +2987,7 @@ export interface KernelMemberAvailabilityTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.member_invite */
+/** ludy_kernel.member_invite */
 export interface KernelMemberInviteTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2283,7 +3007,7 @@ export interface KernelMemberInviteTable {
   role_scope: ColumnType<string | null, never, NotGranted>;
 }
 
-/** crove_kernel.member_permission_override */
+/** ludy_kernel.member_permission_override */
 export interface KernelMemberPermissionOverrideTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -2295,7 +3019,7 @@ export interface KernelMemberPermissionOverrideTable {
   set_at: ColumnType<Date, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.member_vy_memory */
+/** ludy_kernel.member_vy_memory */
 export interface KernelMemberVyMemoryTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2305,7 +3029,7 @@ export interface KernelMemberVyMemoryTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.member_vy_result */
+/** ludy_kernel.member_vy_result */
 export interface KernelMemberVyResultTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2324,14 +3048,14 @@ export interface KernelMemberVyResultTable {
   expires_at: ColumnType<Date, Date | string, NotGranted>;
 }
 
-/** crove_kernel.member_vy_table */
+/** ludy_kernel.member_vy_table */
 export interface KernelMemberVyTableTable {
   table_name: ColumnType<string, NotGranted, NotGranted>;
   mode: ColumnType<string, NotGranted, NotGranted>;
   adr: ColumnType<string, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.notification_mute */
+/** ludy_kernel.notification_mute */
 export interface KernelNotificationMuteTable {
   org_id: ColumnType<string, string, NotGranted>;
   user_id: ColumnType<string, string, NotGranted>;
@@ -2339,7 +3063,7 @@ export interface KernelNotificationMuteTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_kernel.notification */
+/** ludy_kernel.notification */
 export interface KernelNotificationTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2355,7 +3079,7 @@ export interface KernelNotificationTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
 }
 
-/** crove_kernel.number_allocation */
+/** ludy_kernel.number_allocation */
 export interface KernelNumberAllocationTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -2368,7 +3092,7 @@ export interface KernelNumberAllocationTable {
   allocated_at: ColumnType<Date, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.number_series_policy */
+/** ludy_kernel.number_series_policy */
 export interface KernelNumberSeriesPolicyTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -2380,7 +3104,7 @@ export interface KernelNumberSeriesPolicyTable {
   schedule: ColumnType<unknown, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.number_series */
+/** ludy_kernel.number_series */
 export interface KernelNumberSeriesTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -2392,7 +3116,7 @@ export interface KernelNumberSeriesTable {
   last_doc_date: ColumnType<string | null, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.number_void */
+/** ludy_kernel.number_void */
 export interface KernelNumberVoidTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -2403,7 +3127,7 @@ export interface KernelNumberVoidTable {
   voided_at: ColumnType<Date, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.org_usage */
+/** ludy_kernel.org_usage */
 export interface KernelOrgUsageTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2417,7 +3141,7 @@ export interface KernelOrgUsageTable {
   output_tokens: ColumnType<number | null, number | null, NotGranted>;
 }
 
-/** crove_kernel.outbox_event */
+/** ludy_kernel.outbox_event */
 export interface KernelOutboxEventTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -2431,7 +3155,7 @@ export interface KernelOutboxEventTable {
   agent_run: ColumnType<string | null, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.party */
+/** ludy_kernel.party */
 export interface KernelPartyTable {
   org_id: string;
   id: Generated<string>;
@@ -2450,22 +3174,24 @@ export interface KernelPartyTable {
   search: ColumnType<string | null, never, never>;
   duplicate_of: string | null;
   company_id: string | null;
+  actor_origin: Generated<string>;
+  tainted: Generated<boolean>;
 }
 
-/** crove_kernel.permission_catalog */
+/** ludy_kernel.permission_catalog */
 export interface KernelPermissionCatalogTable {
   permission: ColumnType<string, NotGranted, NotGranted>;
   grantable_to_viewer: ColumnType<boolean, NotGranted, NotGranted>;
   entity_roles_count: ColumnType<boolean, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.permission_default */
+/** ludy_kernel.permission_default */
 export interface KernelPermissionDefaultTable {
   base_role: ColumnType<string, NotGranted, NotGranted>;
   permission: ColumnType<string, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.position */
+/** ludy_kernel.position */
 export interface KernelPositionTable {
   org_id: string;
   id: Generated<string>;
@@ -2483,7 +3209,7 @@ export interface KernelPositionTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.proposal_policy */
+/** ludy_kernel.proposal_policy */
 export interface KernelProposalPolicyTable {
   org_id: string;
   id: Generated<string>;
@@ -2495,7 +3221,7 @@ export interface KernelProposalPolicyTable {
   expire_after_days: number | null;
 }
 
-/** crove_kernel.proposal */
+/** ludy_kernel.proposal */
 export interface KernelProposalTable {
   org_id: string;
   id: Generated<string>;
@@ -2529,9 +3255,13 @@ export interface KernelProposalTable {
   resubmitted_from: string | null;
   legal_entity_id: string;
   co_authors: string[] | null;
+  requested_by_grant: string | null;
+  mcp_client_name: string | null;
+  mcp_client_host: string | null;
+  approvers_told_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
-/** crove_kernel.record_le */
+/** ludy_kernel.record_le */
 export interface KernelRecordLeTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2542,7 +3272,7 @@ export interface KernelRecordLeTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_kernel.role_assignment */
+/** ludy_kernel.role_assignment */
 export interface KernelRoleAssignmentTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -2554,20 +3284,20 @@ export interface KernelRoleAssignmentTable {
   granted_at: ColumnType<Date, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.role_permission */
+/** ludy_kernel.role_permission */
 export interface KernelRolePermissionTable {
   role_key: ColumnType<string, NotGranted, NotGranted>;
   permission: ColumnType<string, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.role */
+/** ludy_kernel.role */
 export interface KernelRoleTable {
   key: ColumnType<string, NotGranted, NotGranted>;
   module: ColumnType<string, NotGranted, NotGranted>;
   scope: ColumnType<string, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.saved_reply */
+/** ludy_kernel.saved_reply */
 export interface KernelSavedReplyTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2580,7 +3310,7 @@ export interface KernelSavedReplyTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.saved_view */
+/** ludy_kernel.saved_view */
 export interface KernelSavedViewTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2594,7 +3324,7 @@ export interface KernelSavedViewTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.task_comment */
+/** ludy_kernel.task_comment */
 export interface KernelTaskCommentTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2607,7 +3337,7 @@ export interface KernelTaskCommentTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_kernel.task */
+/** ludy_kernel.task */
 export interface KernelTaskTable {
   org_id: string;
   id: Generated<string>;
@@ -2633,9 +3363,10 @@ export interface KernelTaskTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   legal_entity_id: string | null;
   pending_draft: ColumnType<unknown, string | null | undefined, string | null>;
+  checklist: ColumnType<unknown, string | undefined, string>;
 }
 
-/** crove_kernel.tax_obligation_done */
+/** ludy_kernel.tax_obligation_done */
 export interface KernelTaxObligationDoneTable {
   org_id: string;
   id: Generated<string>;
@@ -2646,7 +3377,7 @@ export interface KernelTaxObligationDoneTable {
   legal_entity_id: string;
 }
 
-/** crove_kernel.tax_profile */
+/** ludy_kernel.tax_profile */
 export interface KernelTaxProfileTable {
   org_id: string;
   id: Generated<string>;
@@ -2658,7 +3389,7 @@ export interface KernelTaxProfileTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_kernel.tenant_member */
+/** ludy_kernel.tenant_member */
 export interface KernelTenantMemberTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   user_id: ColumnType<string, NotGranted, NotGranted>;
@@ -2666,7 +3397,7 @@ export interface KernelTenantMemberTable {
   created_at: ColumnType<Date, NotGranted, NotGranted>;
 }
 
-/** crove_kernel.tenant */
+/** ludy_kernel.tenant */
 export interface KernelTenantTable {
   org_id: Generated<string>;
   slug: string;
@@ -2688,9 +3419,13 @@ export interface KernelTenantTable {
   meeting_video_retention_days: Generated<number>;
   meeting_text_retention_days: Generated<number>;
   mcp_member_grants: Generated<boolean>;
+  meeting_consent_policy: Generated<string>;
+  meeting_hooks: Generated<boolean>;
+  apps_off: Generated<string[]>;
+  apps_version: Generated<number>;
 }
 
-/** crove_kernel.today_mail */
+/** ludy_kernel.today_mail */
 export interface KernelTodayMailTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2700,7 +3435,7 @@ export interface KernelTodayMailTable {
   language: ColumnType<string | null, string | null, NotGranted>;
 }
 
-/** crove_kernel.usage_deferral */
+/** ludy_kernel.usage_deferral */
 export interface KernelUsageDeferralTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2712,7 +3447,7 @@ export interface KernelUsageDeferralTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_meetings.action_item */
+/** ludy_meetings.action_item */
 export interface MeetingsActionItemTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2735,7 +3470,7 @@ export interface MeetingsActionItemTable {
   source_run_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
-/** crove_meetings.audio_segment */
+/** ludy_meetings.audio_segment */
 export interface MeetingsAudioSegmentTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2745,9 +3480,84 @@ export interface MeetingsAudioSegmentTable {
   start_offset_seconds: ColumnType<number, number | undefined, NotGranted>;
   length_seconds: ColumnType<number, number, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  joined_from_pieces: ColumnType<boolean, boolean | undefined, NotGranted>;
 }
 
-/** crove_meetings.live_chunk */
+/** ludy_meetings.calendar_agenda */
+export interface MeetingsCalendarAgendaTable {
+  org_id: ColumnType<string, NotGranted, NotGranted>;
+  id: ColumnType<string, NotGranted, NotGranted>;
+  connection_id: ColumnType<string, NotGranted, NotGranted>;
+  user_id: ColumnType<string, NotGranted, NotGranted>;
+  external_id: ColumnType<string, NotGranted, NotGranted>;
+  title: ColumnType<string, NotGranted, NotGranted>;
+  starts_at: ColumnType<Date, NotGranted, NotGranted>;
+  ends_at: ColumnType<Date, NotGranted, NotGranted>;
+  time_zone: ColumnType<string, NotGranted, NotGranted>;
+  join_url: ColumnType<string | null, NotGranted, NotGranted>;
+  invitee_count: ColumnType<number, NotGranted, NotGranted>;
+  meeting_id: ColumnType<string | null, NotGranted, string | null>;
+  updated_at: ColumnType<Date, NotGranted, NotGranted>;
+  series_id: ColumnType<string | null, NotGranted, NotGranted>;
+}
+
+/** ludy_meetings.capture_session */
+export interface MeetingsCaptureSessionTable {
+  org_id: ColumnType<string, NotGranted, NotGranted>;
+  id: ColumnType<string, NotGranted, NotGranted>;
+  meeting_id: ColumnType<string, NotGranted, NotGranted>;
+  recorder_user_id: ColumnType<string, NotGranted, NotGranted>;
+  kind: ColumnType<string, NotGranted, NotGranted>;
+  agenda_id: ColumnType<string | null, NotGranted, NotGranted>;
+  meeting_key: ColumnType<string | null, NotGranted, NotGranted>;
+  started_at: ColumnType<Date, NotGranted, NotGranted>;
+  last_seen_at: ColumnType<Date, NotGranted, Date | string>;
+  ended_at: ColumnType<Date | null, NotGranted, Date | string | null>;
+  ended_reason: ColumnType<string | null, NotGranted, string | null>;
+}
+
+/** ludy_meetings.chat_channel */
+export interface MeetingsChatChannelTable {
+  org_id: string;
+  id: Generated<string>;
+  kind: string;
+  label: string;
+  host: string;
+  created_by: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_meetings.chat_post */
+export interface MeetingsChatPostTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  channel_id: ColumnType<string, string, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
+  facts_key: ColumnType<string, string, NotGranted>;
+  text_hash: ColumnType<string, string, NotGranted>;
+  state: ColumnType<string, string | undefined, NotGranted>;
+  attempts: ColumnType<number, number | undefined, NotGranted>;
+  http_status: ColumnType<number | null, number | null, NotGranted>;
+  code: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  handed_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  sending_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  settled_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+}
+
+/** ludy_meetings.glossary_term */
+export interface MeetingsGlossaryTermTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  term: string;
+  created_by: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_meetings.live_chunk */
 export interface MeetingsLiveChunkTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2759,7 +3569,7 @@ export interface MeetingsLiveChunkTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_meetings.live_line */
+/** ludy_meetings.live_line */
 export interface MeetingsLiveLineTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2773,7 +3583,22 @@ export interface MeetingsLiveLineTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_meetings.meeting_link */
+/** ludy_meetings.meeting_chapter */
+export interface MeetingsMeetingChapterTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  stage: Generated<string>;
+  position: number;
+  title: string;
+  start_seconds: number;
+  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
+  source_run_id: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_meetings.meeting_link */
 export interface MeetingsMeetingLinkTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2785,7 +3610,17 @@ export interface MeetingsMeetingLinkTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_meetings.meeting_reader */
+/** ludy_meetings.meeting_note */
+export interface MeetingsMeetingNoteTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  body: string;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_meetings.meeting_reader */
 export interface MeetingsMeetingReaderTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2794,7 +3629,7 @@ export interface MeetingsMeetingReaderTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_meetings.meeting_result */
+/** ludy_meetings.meeting_result */
 export interface MeetingsMeetingResultTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2809,7 +3644,7 @@ export interface MeetingsMeetingResultTable {
   source_run_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
-/** crove_meetings.meeting */
+/** ludy_meetings.meeting */
 export interface MeetingsMeetingTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2832,9 +3667,17 @@ export interface MeetingsMeetingTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   extension_token_id: ColumnType<string | null, string | null, NotGranted>;
   live_notes: ColumnType<boolean, boolean | undefined, NotGranted>;
+  recording_stop_reason: string | null;
+  summary_template: Generated<string>;
+  audio_used_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  series_id: string | null;
+  minutes_template_name: string | null;
+  minutes_template_sections: ColumnType<unknown, string | null | undefined, string | null>;
+  minutes_template_hash: string | null;
+  platform_transcript_cut: Generated<boolean>;
 }
 
-/** crove_meetings.meeting_video */
+/** ludy_meetings.meeting_video */
 export interface MeetingsMeetingVideoTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2845,7 +3688,31 @@ export interface MeetingsMeetingVideoTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_meetings.transcript_segment */
+/** ludy_meetings.minutes_template */
+export interface MeetingsMinutesTemplateTable {
+  org_id: string;
+  id: Generated<string>;
+  name: string;
+  sections: ColumnType<unknown, string, string>;
+  archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_meetings.morning_notice */
+export interface MeetingsMorningNoticeTable {
+  org_id: string;
+  id: Generated<string>;
+  user_id: string;
+  send_minute: Generated<number>;
+  time_zone: string;
+  language: Generated<string>;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_meetings.transcript_segment */
 export interface MeetingsTranscriptSegmentTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2861,22 +3728,58 @@ export interface MeetingsTranscriptSegmentTable {
   tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
   source_run_id: ColumnType<string | null, string | null, NotGranted>;
   search: ColumnType<string | null, never, NotGranted>;
+  source: ColumnType<string, string | undefined, NotGranted>;
 }
 
-/** crove_notes.link */
-export interface NotesLinkTable {
+/** ludy_meetings.translation */
+export interface MeetingsTranslationTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  member_user_id: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  target_language: ColumnType<string, string, NotGranted>;
+  source_stage: ColumnType<string, string, NotGranted>;
+  source_hash: ColumnType<string, string, NotGranted>;
+  body: ColumnType<unknown, string, NotGranted>;
+  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
+  source_run_id: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** ludy_notes.attachment */
+export interface NotesAttachmentTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
   note_id: ColumnType<string, string, NotGranted>;
+  author_user_id: ColumnType<string, string, NotGranted>;
+  filename: ColumnType<string, string, NotGranted>;
+  content_type: ColumnType<string, string, NotGranted>;
+  size_bytes: ColumnType<number, number, NotGranted>;
+  sha256: ColumnType<string, string, NotGranted>;
+  storage_key: ColumnType<string, string, NotGranted>;
+  extracted_text: ColumnType<string | null, string | null, NotGranted>;
+  extract_status: ColumnType<string, string | undefined, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  search: ColumnType<string, string | undefined, NotGranted>;
+}
+
+/** ludy_notes.link */
+export interface NotesLinkTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  note_id: ColumnType<string | null, string | null, NotGranted>;
   target_type: ColumnType<string, string, NotGranted>;
   target_id: ColumnType<string, string, NotGranted>;
   party_id: ColumnType<string | null, string | null, NotGranted>;
   file_id: ColumnType<string | null, string | null, NotGranted>;
   created_by: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  todo_id: ColumnType<string | null, string | null, NotGranted>;
+  task_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
-/** crove_notes.note */
+/** ludy_notes.note */
 export interface NotesNoteTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2886,16 +3789,77 @@ export interface NotesNoteTable {
   body: Generated<string>;
   tags: Generated<string[]>;
   pinned: Generated<boolean>;
-  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
+  tainted: Generated<boolean>;
   search: ColumnType<string, string | undefined, NotGranted>;
   revision: Generated<number>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   deleted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  summary_run_ids: Generated<string[]>;
+  notebook_id: string | null;
 }
 
-/** crove_notes.todo */
+/** ludy_notes.note_template */
+export interface NotesNoteTemplateTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  author_user_id: ColumnType<string, string, NotGranted>;
+  visibility: Generated<string>;
+  name: string;
+  title: Generated<string>;
+  body: Generated<string>;
+  tags: Generated<string[]>;
+  revision: Generated<number>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_notes.note_version */
+export interface NotesNoteVersionTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  note_id: ColumnType<string, string, NotGranted>;
+  author_user_id: ColumnType<string, string, NotGranted>;
+  revision: ColumnType<number, number, NotGranted>;
+  title: ColumnType<string, string | undefined, NotGranted>;
+  body: ColumnType<string, string | undefined, NotGranted>;
+  tags: ColumnType<string[], string[] | undefined, NotGranted>;
+  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** ludy_notes.notebook */
+export interface NotesNotebookTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  author_user_id: ColumnType<string, string, NotGranted>;
+  visibility: Generated<string>;
+  name: string;
+  stack_name: string | null;
+  pinned: Generated<boolean>;
+  sort_key: Generated<string>;
+  revision: Generated<number>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_notes.todo_list */
+export interface NotesTodoListTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  owner_user_id: ColumnType<string, string, NotGranted>;
+  name: string;
+  color: string | null;
+  sections: ColumnType<unknown, string | undefined, string>;
+  sort_key: string;
+  revision: Generated<number>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  deleted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+}
+
+/** ludy_notes.todo */
 export interface NotesTodoTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2919,9 +3883,542 @@ export interface NotesTodoTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   done_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   deleted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  source_run_id: ColumnType<string | null, string | null, NotGranted>;
+  source_run_seq: ColumnType<number | null, number | null, NotGranted>;
+  recurrence: ColumnType<unknown, string | null | undefined, string | null>;
+  series_id: string | null;
+  priority: Generated<number>;
+  tags: Generated<string[]>;
+  list_id: string | null;
+  section_id: string | null;
 }
 
-/** crove_social.account_snapshot */
+/** ludy_projects.project_column */
+export interface ProjectsProjectColumnTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  name: string;
+  task_status: string;
+  color: Generated<string>;
+  wip_limit: number | null;
+  sort_key: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_projects.project_cycle */
+export interface ProjectsProjectCycleTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  number: number;
+  name: string;
+  goal: string | null;
+  status: Generated<string>;
+  starts_on: string;
+  ends_on: string;
+  started_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  completed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_projects.project_member */
+export interface ProjectsProjectMemberTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  user_id: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_projects.project */
+export interface ProjectsProjectTable {
+  org_id: string;
+  id: Generated<string>;
+  name: string;
+  description: string | null;
+  owner_user_id: string | null;
+  status: Generated<string>;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  is_template: Generated<boolean>;
+  template_tasks: ColumnType<unknown, string | undefined, string>;
+  cycles_enabled: Generated<boolean>;
+  cycle_duration_weeks: Generated<number>;
+  points_enabled: Generated<boolean>;
+  visibility: Generated<string>;
+}
+
+/** ludy_projects.project_task */
+export interface ProjectsProjectTaskTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  task_id: string;
+  added_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  sort_key: string | null;
+  recurrence: ColumnType<unknown, string | null | undefined, string | null>;
+  recurrence_count: Generated<number>;
+  recurrence_last_due: string | null;
+  recurrence_next_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  recurrence_source_task_id: string | null;
+  column_id: string | null;
+  start_on: string | null;
+  cycle_id: string | null;
+  story_points: number | null;
+}
+
+/** ludy_projects.roadmap_announcement */
+export interface ProjectsRoadmapAnnouncementTable {
+  org_id: string;
+  id: Generated<string>;
+  board_id: string;
+  title: string;
+  body_md: string;
+  status: Generated<string>;
+  published_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  linked_item_ids: Generated<string[]>;
+  notifications_sent_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_projects.roadmap_board */
+export interface ProjectsRoadmapBoardTable {
+  org_id: string;
+  id: Generated<string>;
+  slug: string;
+  title: string;
+  description: string | null;
+  enabled: Generated<boolean>;
+  project_id: string | null;
+  allow_submissions: Generated<boolean>;
+  allow_voting: Generated<boolean>;
+  require_moderation: Generated<boolean>;
+  embed_allowed_origins: Generated<string[]>;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_projects.roadmap_item */
+export interface ProjectsRoadmapItemTable {
+  org_id: string;
+  id: Generated<string>;
+  board_id: string;
+  linked_task_id: string | null;
+  source: string;
+  moderation_status: Generated<string>;
+  merged_into_item_id: string | null;
+  stage: Generated<string>;
+  category: string | null;
+  public_title: string;
+  public_summary: string | null;
+  vote_count: Generated<number>;
+  tainted: Generated<boolean>;
+  submitter_display_name: string | null;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_projects.roadmap_vote */
+export interface ProjectsRoadmapVoteTable {
+  org_id: string;
+  id: Generated<string>;
+  board_id: string;
+  item_id: string;
+  voter_email_hash: string;
+  notify_on_ship: Generated<boolean>;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_projects.task_dependency */
+export interface ProjectsTaskDependencyTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  blocker_task_id: string;
+  blocked_task_id: string;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_projects.time_entry */
+export interface ProjectsTimeEntryTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  task_id: string | null;
+  user_id: string | null;
+  started_at: ColumnType<Date, Date | string, Date | string>;
+  ended_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  duration_minutes: number | null;
+  billable: Generated<boolean>;
+  hourly_rate: string | null;
+  note: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_sign.ai_analysis */
+export interface SignAiAnalysisTable {
+  org_id: string;
+  id: Generated<string>;
+  envelope_id: string;
+  source_sha256: string;
+  status: Generated<string>;
+  proposed_fields_json: ColumnType<unknown, string | undefined, string>;
+  risk_clauses_json: ColumnType<unknown, string | undefined, string>;
+  summary_text: string | null;
+  error_message: string | null;
+  prompt_version: Generated<string>;
+  completed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_sign.ca_signing_request */
+export interface SignCaSigningRequestTable {
+  org_id: string;
+  id: Generated<string>;
+  envelope_id: string;
+  signer_id: string | null;
+  ca_connection_id: string;
+  provider: string;
+  idempotency_key: string;
+  digest_sha256: string;
+  cert_ref: Generated<string>;
+  external_tx_id: string | null;
+  status: Generated<string>;
+  retry_safety: Generated<string>;
+  challenge_code: string | null;
+  error_code: string | null;
+  sub_filter: string | null;
+  pades_file_id: string | null;
+  pades_storage_key: string | null;
+  pades_generation: string | null;
+  pades_sha256: string | null;
+  poll_attempts: Generated<number>;
+  next_poll_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  signed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_sign.envelope_obligation */
+export interface SignEnvelopeObligationTable {
+  org_id: string;
+  id: Generated<string>;
+  envelope_id: string;
+  counterparty_name: string | null;
+  effective_date: string | null;
+  expiry_date: string | null;
+  renewal_notice_days: number | null;
+  auto_renew: Generated<boolean>;
+  contract_value: string | null;
+  currency: Generated<string>;
+  obligations_json: ColumnType<unknown, string | undefined, string>;
+  proposal_json: ColumnType<unknown, string | null | undefined, string | null>;
+  prompt_version: string | null;
+  status: Generated<string>;
+  confirmed_by: string | null;
+  confirmed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_sign.envelope */
+export interface SignEnvelopeTable {
+  org_id: string;
+  id: Generated<string>;
+  title: string;
+  subject: string | null;
+  message: string | null;
+  status: Generated<string>;
+  routing_mode: Generated<string>;
+  source_kind: Generated<string>;
+  source_id: string | null;
+  source_file_id: string;
+  source_storage_key: string;
+  source_generation: string;
+  source_sha256: string;
+  inspect_status: Generated<string>;
+  inspect_error: string | null;
+  page_count: number | null;
+  page_dimensions_json: ColumnType<unknown, string | null | undefined, string | null>;
+  sealed_file_id: string | null;
+  sealed_storage_key: string | null;
+  sealed_generation: string | null;
+  sealed_sha256: string | null;
+  seal_status: string | null;
+  certificate_file_id: string | null;
+  certificate_storage_key: string | null;
+  certificate_generation: string | null;
+  certificate_sha256: string | null;
+  certificate_code: string | null;
+  expires_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  sent_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  completed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  declined_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  voided_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  voided_by: string | null;
+  void_reason: string | null;
+  expired_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  version: Generated<number>;
+  created_by: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  detected_tags_json: ColumnType<unknown, string | null | undefined, string | null>;
+  direct_link_id: string | null;
+  auto_remind_before_expiry: Generated<boolean>;
+  decline_acknowledged_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  decline_acknowledged_by: string | null;
+  share_summary_with_signers: Generated<boolean>;
+  shared_summary_json: ColumnType<unknown, string | null | undefined, string | null>;
+  allow_delegation: Generated<boolean>;
+}
+
+/** ludy_sign.field */
+export interface SignFieldTable {
+  org_id: string;
+  id: Generated<string>;
+  envelope_id: string;
+  signer_id: string;
+  field_type: string;
+  page_number: number;
+  x_norm: string;
+  y_norm: string;
+  w_norm: string;
+  h_norm: string;
+  label: string | null;
+  required: Generated<boolean>;
+  proposed_by_ai: Generated<boolean>;
+  font_size_pt: number | null;
+  value_text: string | null;
+  value_checked: boolean | null;
+  signature_png_base64: string | null;
+  filled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  options_json: ColumnType<unknown, string | null | undefined, string | null>;
+  attachment_file_id: string | null;
+  attachment_filename: string | null;
+  attachment_content_type: string | null;
+  attachment_size_bytes: number | null;
+  attachment_sha256: string | null;
+}
+
+/** ludy_sign.kyc_check */
+export interface SignKycCheckTable {
+  org_id: string;
+  id: Generated<string>;
+  envelope_id: string;
+  field_id: string;
+  file_id: string;
+  file_sha256: string;
+  status: Generated<string>;
+  mode: string;
+  findings_json: ColumnType<unknown, string | undefined, string>;
+  checked_by: string | null;
+  checked_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_sign.member_signature */
+export interface SignMemberSignatureTable {
+  org_id: string;
+  id: Generated<string>;
+  user_id: string;
+  kind: string;
+  signature_kind: string;
+  signature_typed_text: string | null;
+  signature_png_base64: string;
+  image_sha256: string;
+  width_px: number;
+  height_px: number;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_sign.org_stamp */
+export interface SignOrgStampTable {
+  org_id: string;
+  id: Generated<string>;
+  name: string;
+  stamp_kind: Generated<string>;
+  file_id: string | null;
+  stamp_png_base64: string;
+  image_sha256: string;
+  width_px: number;
+  height_px: number;
+  status: Generated<string>;
+  archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  archived_by: string | null;
+  created_by: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_sign.playbook_check */
+export interface SignPlaybookCheckTable {
+  org_id: string;
+  id: Generated<string>;
+  envelope_id: string;
+  source_sha256: string;
+  mode: Generated<string>;
+  findings_json: ColumnType<unknown, string | undefined, string>;
+  prompt_version: string | null;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_sign.playbook_rule */
+export interface SignPlaybookRuleTable {
+  org_id: string;
+  id: Generated<string>;
+  title: string;
+  guidance: string;
+  severity: Generated<string>;
+  match_keywords: Generated<string[]>;
+  active: Generated<boolean>;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_sign.signer */
+export interface SignSignerTable {
+  org_id: string;
+  id: Generated<string>;
+  envelope_id: string;
+  routing_order: Generated<number>;
+  signer_role: Generated<string>;
+  role_label: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  delivery_mode: Generated<string>;
+  require_email_otp: Generated<boolean>;
+  status: Generated<string>;
+  token_last_reminded_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  viewed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  signed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  declined_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  decline_reason: string | null;
+  otp_verified_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  signature_kind: string | null;
+  signature_typed_text: string | null;
+  signer_user_agent: string | null;
+  signer_ip_hash: string | null;
+  consent_accepted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  role_key: string | null;
+  pre_expiry_reminded_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  delegated_from_name: string | null;
+  delegated_from_email: string | null;
+  delegation_reason: string | null;
+  delegation_count: Generated<number>;
+}
+
+/** ludy_sign.signing_event */
+export interface SignSigningEventTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  envelope_id: ColumnType<string, string, NotGranted>;
+  signer_id: ColumnType<string | null, string | null, NotGranted>;
+  seq: ColumnType<number, number, NotGranted>;
+  event_type: ColumnType<string, string, NotGranted>;
+  actor_type: ColumnType<string, string, NotGranted>;
+  actor_id: ColumnType<string | null, string | null, NotGranted>;
+  actor_label: ColumnType<string, string, NotGranted>;
+  document_sha256: ColumnType<string, string, NotGranted>;
+  prev_event_hash: ColumnType<string | null, string | null, NotGranted>;
+  event_hash: ColumnType<string, string, NotGranted>;
+  payload_json: ColumnType<unknown, string | undefined, NotGranted>;
+  ip_hash: ColumnType<string | null, string | null, NotGranted>;
+  user_agent: ColumnType<string | null, string | null, NotGranted>;
+  occurred_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  host_user_id: ColumnType<string | null, string | null, NotGranted>;
+}
+
+/** ludy_sign.template_field */
+export interface SignTemplateFieldTable {
+  org_id: string;
+  id: Generated<string>;
+  template_id: string;
+  template_role_id: string;
+  field_type: string;
+  page_number: number;
+  x_norm: string;
+  y_norm: string;
+  w_norm: string;
+  h_norm: string;
+  label: string | null;
+  required: Generated<boolean>;
+  font_size_pt: number | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  options_json: ColumnType<unknown, string | null | undefined, string | null>;
+}
+
+/** ludy_sign.template_role */
+export interface SignTemplateRoleTable {
+  org_id: string;
+  id: Generated<string>;
+  template_id: string;
+  role_key: string;
+  signer_role: Generated<string>;
+  role_label: string;
+  routing_order: Generated<number>;
+  delivery_mode: Generated<string>;
+  require_email_otp: Generated<boolean>;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_sign.template */
+export interface SignTemplateTable {
+  org_id: string;
+  id: Generated<string>;
+  title: string;
+  description: string | null;
+  routing_mode: Generated<string>;
+  subject: string | null;
+  message: string | null;
+  expires_in_hours: number | null;
+  source_file_id: string;
+  source_storage_key: string;
+  source_generation: string;
+  source_sha256: string;
+  inspect_status: Generated<string>;
+  inspect_error: string | null;
+  page_count: number | null;
+  page_dimensions_json: ColumnType<unknown, string | null | undefined, string | null>;
+  status: Generated<string>;
+  version: Generated<number>;
+  archived_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  archived_by: string | null;
+  created_by: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  detected_tags_json: ColumnType<unknown, string | null | undefined, string | null>;
+  share_summary_with_signers: Generated<boolean>;
+  shared_summary_json: ColumnType<unknown, string | null | undefined, string | null>;
+  allow_delegation: Generated<boolean>;
+}
+
+/** ludy_social.account_snapshot */
 export interface SocialAccountSnapshotTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2935,7 +4432,7 @@ export interface SocialAccountSnapshotTable {
   performance: ColumnType<unknown, string | null | undefined, NotGranted>;
 }
 
-/** crove_social.banned_word */
+/** ludy_social.banned_word */
 export interface SocialBannedWordTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2948,7 +4445,7 @@ export interface SocialBannedWordTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_social.bio_click */
+/** ludy_social.bio_click */
 export interface SocialBioClickTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -2958,7 +4455,7 @@ export interface SocialBioClickTable {
   clicks: ColumnType<string, NotGranted, NotGranted>;
 }
 
-/** crove_social.bio_page */
+/** ludy_social.bio_page */
 export interface SocialBioPageTable {
   org_id: string;
   id: Generated<string>;
@@ -2974,7 +4471,7 @@ export interface SocialBioPageTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_social.brand_voice */
+/** ludy_social.brand_voice */
 export interface SocialBrandVoiceTable {
   org_id: string;
   id: Generated<string>;
@@ -2988,7 +4485,7 @@ export interface SocialBrandVoiceTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_social.calendar_feed */
+/** ludy_social.calendar_feed */
 export interface SocialCalendarFeedTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -2999,7 +4496,7 @@ export interface SocialCalendarFeedTable {
   revoked_by: string | null;
 }
 
-/** crove_social.calendar_note */
+/** ludy_social.calendar_note */
 export interface SocialCalendarNoteTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3013,7 +4510,7 @@ export interface SocialCalendarNoteTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_social.channel_option */
+/** ludy_social.channel_option */
 export interface SocialChannelOptionTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3027,7 +4524,7 @@ export interface SocialChannelOptionTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_social.channel_policy */
+/** ludy_social.channel_policy */
 export interface SocialChannelPolicyTable {
   org_id: string;
   id: Generated<string>;
@@ -3042,7 +4539,7 @@ export interface SocialChannelPolicyTable {
   signature: string | null;
 }
 
-/** crove_social.channel_set */
+/** ludy_social.channel_set */
 export interface SocialChannelSetTable {
   org_id: string;
   id: Generated<string>;
@@ -3053,7 +4550,7 @@ export interface SocialChannelSetTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_social.chat_alert */
+/** ludy_social.chat_alert */
 export interface SocialChatAlertTable {
   org_id: string;
   id: Generated<string>;
@@ -3067,7 +4564,7 @@ export interface SocialChatAlertTable {
   last_test_code: string | null;
 }
 
-/** crove_social.digest_week */
+/** ludy_social.digest_week */
 export interface SocialDigestWeekTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3075,7 +4572,7 @@ export interface SocialDigestWeekTable {
   sent_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_social.external_import */
+/** ludy_social.external_import */
 export interface SocialExternalImportTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3085,7 +4582,7 @@ export interface SocialExternalImportTable {
   error: string | null;
 }
 
-/** crove_social.external_post */
+/** ludy_social.external_post */
 export interface SocialExternalPostTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3102,7 +4599,7 @@ export interface SocialExternalPostTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_social.feed_item */
+/** ludy_social.feed_item */
 export interface SocialFeedItemTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3113,7 +4610,7 @@ export interface SocialFeedItemTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_social.feed */
+/** ludy_social.feed */
 export interface SocialFeedTable {
   org_id: string;
   id: Generated<string>;
@@ -3129,7 +4626,7 @@ export interface SocialFeedTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_social.goal */
+/** ludy_social.goal */
 export interface SocialGoalTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3146,7 +4643,7 @@ export interface SocialGoalTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_social.idea_label */
+/** ludy_social.idea_label */
 export interface SocialIdeaLabelTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3155,7 +4652,7 @@ export interface SocialIdeaLabelTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_social.idea */
+/** ludy_social.idea */
 export interface SocialIdeaTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3171,7 +4668,7 @@ export interface SocialIdeaTable {
   origin: ColumnType<string, string | undefined, NotGranted>;
 }
 
-/** crove_social.label */
+/** ludy_social.label */
 export interface SocialLabelTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3185,7 +4682,7 @@ export interface SocialLabelTable {
   utm_medium: string | null;
 }
 
-/** crove_social.link_preview */
+/** ludy_social.link_preview */
 export interface SocialLinkPreviewTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3202,7 +4699,7 @@ export interface SocialLinkPreviewTable {
   text: string | null;
 }
 
-/** crove_social.media_archive */
+/** ludy_social.media_archive */
 export interface SocialMediaArchiveTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3211,7 +4708,7 @@ export interface SocialMediaArchiveTable {
   archived_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_social.media_attribution */
+/** ludy_social.media_attribution */
 export interface SocialMediaAttributionTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3226,7 +4723,7 @@ export interface SocialMediaAttributionTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_social.media_tag */
+/** ludy_social.media_tag */
 export interface SocialMediaTagTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3236,7 +4733,7 @@ export interface SocialMediaTagTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_social.metric_snapshot */
+/** ludy_social.metric_snapshot */
 export interface SocialMetricSnapshotTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3247,7 +4744,7 @@ export interface SocialMetricSnapshotTable {
   extra: ColumnType<unknown, string | null | undefined, NotGranted>;
 }
 
-/** crove_social.notification_mail_off */
+/** ludy_social.notification_mail_off */
 export interface SocialNotificationMailOffTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3255,7 +4752,7 @@ export interface SocialNotificationMailOffTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_social.notification_mute */
+/** ludy_social.notification_mute */
 export interface SocialNotificationMuteTable {
   org_id: ColumnType<string, string, NotGranted>;
   user_id: ColumnType<string, string, NotGranted>;
@@ -3263,7 +4760,7 @@ export interface SocialNotificationMuteTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_social.notification */
+/** ludy_social.notification */
 export interface SocialNotificationTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3278,7 +4775,7 @@ export interface SocialNotificationTable {
   read_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
-/** crove_social.post_approval */
+/** ludy_social.post_approval */
 export interface SocialPostApprovalTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3295,7 +4792,7 @@ export interface SocialPostApprovalTable {
   checklist: ColumnType<unknown, string | null | undefined, NotGranted>;
 }
 
-/** crove_social.post_comment */
+/** ludy_social.post_comment */
 export interface SocialPostCommentTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3320,7 +4817,7 @@ export interface SocialPostCommentTable {
   suggest_state: string | null;
 }
 
-/** crove_social.post_label */
+/** ludy_social.post_label */
 export interface SocialPostLabelTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3329,7 +4826,7 @@ export interface SocialPostLabelTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_social.post_media */
+/** ludy_social.post_media */
 export interface SocialPostMediaTable {
   org_id: string;
   id: Generated<string>;
@@ -3340,7 +4837,7 @@ export interface SocialPostMediaTable {
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_social.post */
+/** ludy_social.post */
 export interface SocialPostTable {
   org_id: string;
   id: Generated<string>;
@@ -3375,7 +4872,7 @@ export interface SocialPostTable {
   search_text: ColumnType<string | null, never, never>;
 }
 
-/** crove_social.post_variant */
+/** ludy_social.post_variant */
 export interface SocialPostVariantTable {
   org_id: string;
   id: Generated<string>;
@@ -3427,7 +4924,7 @@ export interface SocialPostVariantTable {
   search_text: ColumnType<string | null, never, never>;
 }
 
-/** crove_social.post_version */
+/** ludy_social.post_version */
 export interface SocialPostVersionTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3443,7 +4940,7 @@ export interface SocialPostVersionTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_social.publish_hold */
+/** ludy_social.publish_hold */
 export interface SocialPublishHoldTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3454,7 +4951,7 @@ export interface SocialPublishHoldTable {
   released_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
-/** crove_social.push_subscription */
+/** ludy_social.push_subscription */
 export interface SocialPushSubscriptionTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3468,7 +4965,7 @@ export interface SocialPushSubscriptionTable {
   last_used_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
-/** crove_social.queue_slot */
+/** ludy_social.queue_slot */
 export interface SocialQueueSlotTable {
   org_id: string;
   id: Generated<string>;
@@ -3481,7 +4978,7 @@ export interface SocialQueueSlotTable {
   label_id: string | null;
 }
 
-/** crove_social.queue */
+/** ludy_social.queue */
 export interface SocialQueueTable {
   org_id: string;
   id: Generated<string>;
@@ -3494,7 +4991,7 @@ export interface SocialQueueTable {
   low_alerted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
-/** crove_social.report_branding */
+/** ludy_social.report_branding */
 export interface SocialReportBrandingTable {
   org_id: string;
   id: Generated<string>;
@@ -3507,7 +5004,7 @@ export interface SocialReportBrandingTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_social.report_link */
+/** ludy_social.report_link */
 export interface SocialReportLinkTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3531,7 +5028,7 @@ export interface SocialReportLinkTable {
   top_count: ColumnType<number | null, number | null, NotGranted>;
 }
 
-/** crove_social.report_schedule_run */
+/** ludy_social.report_schedule_run */
 export interface SocialReportScheduleRunTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3545,7 +5042,7 @@ export interface SocialReportScheduleRunTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_social.report_schedule */
+/** ludy_social.report_schedule */
 export interface SocialReportScheduleTable {
   org_id: string;
   id: Generated<string>;
@@ -3571,7 +5068,7 @@ export interface SocialReportScheduleTable {
   include_audience: Generated<boolean>;
 }
 
-/** crove_social.review_check */
+/** ludy_social.review_check */
 export interface SocialReviewCheckTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3582,7 +5079,7 @@ export interface SocialReviewCheckTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_social.review_feedback */
+/** ludy_social.review_feedback */
 export interface SocialReviewFeedbackTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -3598,7 +5095,7 @@ export interface SocialReviewFeedbackTable {
   replied_at: ColumnType<Date | null, NotGranted, Date | string | null>;
 }
 
-/** crove_social.review_link_post */
+/** ludy_social.review_link_post */
 export interface SocialReviewLinkPostTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -3608,7 +5105,7 @@ export interface SocialReviewLinkPostTable {
   content_key: ColumnType<string, NotGranted, NotGranted>;
 }
 
-/** crove_social.review_link */
+/** ludy_social.review_link */
 export interface SocialReviewLinkTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3625,7 +5122,7 @@ export interface SocialReviewLinkTable {
   plan_to: ColumnType<Date | null, Date | string | null, NotGranted>;
 }
 
-/** crove_social.saved_view */
+/** ludy_social.saved_view */
 export interface SocialSavedViewTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3637,7 +5134,7 @@ export interface SocialSavedViewTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_social.short_link_click */
+/** ludy_social.short_link_click */
 export interface SocialShortLinkClickTable {
   org_id: ColumnType<string, NotGranted, NotGranted>;
   id: ColumnType<string, NotGranted, NotGranted>;
@@ -3646,7 +5143,7 @@ export interface SocialShortLinkClickTable {
   clicks: ColumnType<string, NotGranted, NotGranted>;
 }
 
-/** crove_social.short_link */
+/** ludy_social.short_link */
 export interface SocialShortLinkTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3658,7 +5155,7 @@ export interface SocialShortLinkTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_social.snippet */
+/** ludy_social.snippet */
 export interface SocialSnippetTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
@@ -3671,7 +5168,7 @@ export interface SocialSnippetTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
-/** crove_social.watermark */
+/** ludy_social.watermark */
 export interface SocialWatermarkTable {
   org_id: string;
   id: Generated<string>;

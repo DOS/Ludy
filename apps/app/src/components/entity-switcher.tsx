@@ -6,11 +6,11 @@ import { useQuery } from '@tanstack/react-query';
 import { useLocation, useParams } from '@tanstack/react-router';
 import { useId } from 'react';
 import { useTranslations } from 'use-intl';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { orpc } from '../lib/api.ts';
-import { getConfig } from '../lib/auth.ts';
 import { chooseEntity, isEntityPath, keepEntity, useKeptEntity, type VisibleEntity } from '../lib/legal-entity-choice.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 const NONE: readonly VisibleEntity[] = [];
 
@@ -18,9 +18,10 @@ const NONE: readonly VisibleEntity[] = [];
 // default first. Without the finance module there are no books, so nothing to choose between.
 // settled is false while the list is still loading.
 function useVisibleEntities(): { entities: readonly VisibleEntity[]; settled: boolean } {
-  const finance = getConfig().modules.includes('finance');
+  useModulesVersion(); // the apps of the org can change while this screen is open
+  const finance = installedModules().includes('finance');
   const entities = useQuery({ ...orpc.bookEntities.list.queryOptions(), enabled: finance, staleTime: 60_000 });
-  return { entities: entities.data ?? NONE, settled: !finance || !entities.isPending };
+  return { entities: finance ? (entities.data ?? NONE) : NONE, settled: !finance || !entities.isPending };
 }
 
 // The entity the finance screens work in, and the entities to choose from. entityId is null while the caller sees

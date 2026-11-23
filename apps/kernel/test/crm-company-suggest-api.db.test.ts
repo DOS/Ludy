@@ -8,13 +8,13 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import type { CompanySuggested } from '@crove/kernel-contract';
-import { crmCommands, crmQueries } from '@crove/mod-crm';
-import { Runtime, type BlobStore } from '@crove/kernel-runtime';
-import { InboxReader, type CompanyRankGenerator } from '@crove/agent';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import type { CompanySuggested } from '@ludy/kernel-contract';
+import { crmCommands, crmQueries } from '@ludy/mod-crm';
+import { Runtime, type BlobStore } from '@ludy/kernel-runtime';
+import { InboxReader, type CompanyRankGenerator } from '@ludy/agent';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -87,7 +87,7 @@ suite('the company a person may work at, through the API (#2438, PR 3)', () => {
     return { status: response.status, body: (body && 'json' in body ? body.json : body) as any };
   }
   const party = async (kind: 'person' | 'organization', name: string, email: string | null = null) =>
-    (await rows<{ id: string }>('INSERT INTO crove_kernel.party (org_id, kind, name, email) VALUES ($1, $2, $3, $4) RETURNING id', [org.orgId, kind, name, email]))[0]?.id as string;
+    (await rows<{ id: string }>('INSERT INTO ludy_kernel.party (org_id, kind, name, email) VALUES ($1, $2, $3, $4) RETURNING id', [org.orgId, kind, name, email]))[0]?.id as string;
   const suggest = (who: Account, partyId: string, app: keyof typeof apps = 'on') => rpc('crm/contacts/companySuggestions', who, { partyId }, { app });
   const names = (body: CompanySuggested) => body.candidates.map((c) => [c.name, c.reason]);
   let nam = '';
@@ -101,8 +101,8 @@ suite('the company a person may work at, through the API (#2438, PR 3)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    const appUrl = urlFor('crove_app', 'test-app-pw');
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    const appUrl = urlFor('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register({
@@ -122,7 +122,7 @@ suite('the company a person may work at, through the API (#2438, PR 3)', () => {
     const created = await rpc('org/create', owner, { name: 'Cửa hàng Gợi Ý', idempotencyKey: randomUUID() }, { slug: null });
     expect(created.status).toBe(200);
     org = { slug: String(created.body?.slug), orgId: String(created.body?.orgId) };
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [org.orgId, viewer.userId]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [org.orgId, viewer.userId]);
     await party('organization', 'Công ty Acme Domain', 'lienhe@acme.test');
     await party('organization', 'Acme Logistics');
     await party('organization', 'Công ty Acme Foods');
@@ -159,7 +159,7 @@ suite('the company a person may work at, through the API (#2438, PR 3)', () => {
     expect(prompt).toContain('1. Acme Logistics\n2. Công ty Acme Foods');
     for (const secret of ['Công ty Acme Domain', 'lienhe@acme.test', 'nam.tran@acme.test', 'Không Liên Quan', 'Cửa hàng Gợi Ý']) expect(prompt).not.toContain(secret);
     // Nothing is stored or linked by asking.
-    expect((await rows<{ company_id: string | null }>('SELECT company_id FROM crove_kernel.party WHERE id = $1', [nam]))[0]?.company_id).toBeNull();
+    expect((await rows<{ company_id: string | null }>('SELECT company_id FROM ludy_kernel.party WHERE id = $1', [nam]))[0]?.company_id).toBeNull();
   });
 
   it('keeps every name from the model while the org’s switch for AI on its customers’ words is off, answers off, and still shows the companies', async () => {

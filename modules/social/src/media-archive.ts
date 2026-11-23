@@ -1,13 +1,13 @@
 // Archived media library files (issue #1302): members take failed crops and rejected designs out of the library and its
-// pickers, up to MEDIA_ARCHIVE_MAX at once, and bring them back. crove_kernel.file never changes, so the mark lives in
-// crove_social.media_archive, one per file. An archived file stays stored: posts that already use it keep it, and the
+// pickers, up to MEDIA_ARCHIVE_MAX at once, and bring them back. ludy_kernel.file never changes, so the mark lives in
+// ludy_social.media_archive, one per file. An archived file stays stored: posts that already use it keep it, and the
 // library lists it again on restore. Members and above, on files they may use (#1081: a member limited to some
 // channels neither archives nor restores another channel's own media). What an archived file may no longer do is in
 // library.ts (refuseUnusableMedia).
 import { z } from 'zod';
-import { SOCIAL_MEDIA_ARCHIVE_MAX, zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { SOCIAL_MEDIA_ARCHIVE_MAX, zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { channelScope } from './channel-access.ts';
 import { LIBRARY_MEDIA_TYPES, mediaHidden, mediaNotAllowed } from './library.ts';
 
@@ -30,7 +30,7 @@ function requireUser(ctx: CommandContext): string {
 async function lockLibraryFiles(ctx: CommandContext, fileIds: readonly string[]): Promise<void> {
   const scope = await channelScope(ctx);
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.file as f')
+    .selectFrom('ludy_kernel.file as f')
     .select(['f.id', mediaHidden(scope).as('hidden')])
     .where('f.org_id', '=', ctx.orgId)
     .where('f.id', 'in', [...fileIds])
@@ -59,7 +59,7 @@ export const mediaArchive = defineCommand({
     const userId = requireUser(ctx);
     await lockLibraryFiles(ctx, input.fileIds);
     const done = await ctx.trx
-      .insertInto('crove_social.media_archive')
+      .insertInto('ludy_social.media_archive')
       .values(input.fileIds.map((fileId) => ({ org_id: ctx.orgId, file_id: fileId, archived_by: userId, archived_at: ctx.now })))
       .onConflict((oc) => oc.columns(['org_id', 'file_id']).doNothing())
       .returning('file_id')
@@ -82,7 +82,7 @@ export const mediaRestore = defineCommand({
   handler: async (ctx, input): Promise<{ restored: string[] }> => {
     requireUser(ctx);
     await lockLibraryFiles(ctx, input.fileIds);
-    const done = await ctx.trx.deleteFrom('crove_social.media_archive').where('org_id', '=', ctx.orgId).where('file_id', 'in', [...input.fileIds]).returning('file_id').execute();
+    const done = await ctx.trx.deleteFrom('ludy_social.media_archive').where('org_id', '=', ctx.orgId).where('file_id', 'in', [...input.fileIds]).returning('file_id').execute();
     const back = new Set(done.map((r) => r.file_id));
     const restored = input.fileIds.filter((id) => back.has(id));
     ctx.audit({ files: input.fileIds.length, restored: restored.length, file_ids: restored });

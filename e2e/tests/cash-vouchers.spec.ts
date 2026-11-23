@@ -15,12 +15,16 @@ test('enter a bank debit note, approve it and find it numbered in the books', as
   const slug = await createOrg(page, 'Công ty Thu Chi');
 
   await test.step('enter the voucher on the cash and bank screen', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Thu chi' }).click();
     await expect(page.getByRole('heading', { name: 'Thu chi' })).toBeVisible();
     await expect(page.getByText('Chưa có chứng từ thu chi nào được ghi sổ.')).toBeVisible();
     await page.getByRole('button', { name: 'Lập chứng từ' }).click();
-    await page.getByLabel('Loại chứng từ').first().selectOption('bank_debit');
+    // The form opens in a panel over the list, not above it (#3607); the first field is the party.
+    const panel = page.getByRole('dialog', { name: 'Lập chứng từ' });
+    await expect(panel).toBeVisible();
+    await expect(panel.getByLabel('Đối tượng')).toBeFocused();
+    await panel.getByLabel('Loại chứng từ').selectOption('bank_debit');
     await page.getByLabel('Ngày chứng từ').fill('2026-10-15');
     await page.getByLabel('Tài khoản ngân hàng').selectOption('1121');
     await page.getByLabel('Lý do chi').fill('Phí chuyển khoản tháng 10');
@@ -48,7 +52,7 @@ test('enter a bank debit note, approve it and find it numbered in the books', as
   });
 
   await test.step('the voucher is numbered BN00001, posted, and in the journal', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Thu chi' }).click();
     const row = page.getByRole('row').filter({ hasText: 'BN00001' });
     await expect(row).toContainText('Giấy báo Nợ');
@@ -59,8 +63,25 @@ test('enter a bank debit note, approve it and find it numbered in the books', as
     await expect(page.getByText('BN00001 Phí chuyển khoản tháng 10')).toBeVisible();
   });
 
+  await test.step('the same voucher typed again shows it looks like BN00001, before it is sent', async () => {
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Thu chi' }).click();
+    await page.getByRole('button', { name: 'Lập chứng từ' }).click();
+    const panel = page.getByRole('dialog', { name: 'Lập chứng từ' });
+    await panel.getByLabel('Loại chứng từ').selectOption('bank_debit');
+    await panel.getByLabel('Ngày chứng từ').fill('2026-10-15');
+    await panel.getByLabel('Số tiền dòng 1').fill('22.000');
+    await expect(panel.getByText(/Có vẻ trùng với phiếu BN00001/)).toBeVisible();
+    // Another amount is not a duplicate; Escape closes the panel and focus goes back to the button that opened it.
+    await panel.getByLabel('Số tiền dòng 1').fill('23.000');
+    await expect(panel.getByText(/Có vẻ trùng với phiếu/)).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(panel).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Lập chứng từ' })).toBeFocused();
+  });
+
   await test.step('the MISA exports download from the cash and bank screen: the bank note only in the báo Nợ file', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Thu chi' }).click();
     // The báo Nợ (voucher BN00001) is a row of its own file (header and one row); the other three files hold no voucher.
     for (const [button, file, sheet, rows] of [
@@ -70,7 +91,8 @@ test('enter a bank debit note, approve it and find it numbered in the books', as
       ['Xuất giấy báo Nợ cho MISA', `ludy-misa-bao-no-${slug}.xlsx`, 'Chứng từ Chi tiền gửi', 2],
     ] as const) {
       const download = page.waitForEvent('download');
-      await page.getByRole('button', { name: button }).click();
+      await page.getByRole('button', { name: 'Xuất', exact: true }).click();
+      await page.getByRole('menuitem', { name: button }).click();
       const saved = await download;
       expect(saved.suggestedFilename()).toBe(file);
       const workbook = new ExcelJS.Workbook();
@@ -102,12 +124,12 @@ test('enter a bank debit note, approve it and find it numbered in the books', as
     const rows = sql<{ code: string; amount: string; lines: string; aal: string }>(
       `SELECT v.voucher_type || '-' || v.number AS code, v.amount::text AS amount,
               (SELECT string_agg(l.account_code || ':' || l.debit::text || ':' || l.credit::text, ',' ORDER BY l.line_no)
-                 FROM crove_finance.journal_line l WHERE l.org_id = e.org_id AND l.entry_id = e.id) AS lines,
-              (SELECT a.detail->>'aal' FROM crove_kernel.audit_event a
+                 FROM ludy_finance.journal_line l WHERE l.org_id = e.org_id AND l.entry_id = e.id) AS lines,
+              (SELECT a.detail->>'aal' FROM ludy_kernel.audit_event a
                 WHERE a.org_id = v.org_id AND a.command = 'kernel.proposal.approve' AND a.outcome = 'ok' AND a.target_id = v.proposal_id) AS aal
-         FROM crove_finance.cash_voucher v
-         JOIN crove_kernel.tenant t ON t.org_id = v.org_id
-         JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.cash_voucher' AND e.source_id = v.id
+         FROM ludy_finance.cash_voucher v
+         JOIN ludy_kernel.tenant t ON t.org_id = v.org_id
+         JOIN ludy_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.cash_voucher' AND e.source_id = v.id
         WHERE t.slug = :'slug'`,
       { slug },
     );

@@ -8,11 +8,11 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ZALO_MAX_NOTICE_BYTES, ZaloOaPublisher, type Fetch } from '@crove/channel';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, Runtime, parseVaultKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
+import { ZALO_MAX_NOTICE_BYTES, ZaloOaPublisher, type Fetch } from '@ludy/channel';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CredentialVault, Runtime, parseVaultKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { runConversationIntake, runConversationJob } from '../src/conversations-worker.ts';
@@ -76,7 +76,7 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
     }
   }
   const rows = <T extends pg.QueryResultRow>(text: string, params: unknown[] = []) => admin(async (c) => (await c.query<T>(text, params)).rows);
-  const waiting = async () => (await rows('SELECT 1 FROM crove_kernel.conversation_inbound_pending')).length;
+  const waiting = async () => (await rows('SELECT 1 FROM ludy_kernel.conversation_inbound_pending')).length;
   const post = (target: ReturnType<typeof createHttpApp>, body: string, headers: Record<string, string> = {}) =>
     target.request(PATH, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body });
   const signed = (body: string, timestamp: string, key = OA_KEY) => ({ 'x-zevent-signature': mac(body, timestamp, key) });
@@ -94,9 +94,9 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     const pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     pools.push(pool);
@@ -111,7 +111,7 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
     app = createHttpApp({ ...common, zaloWebhook: { appId: APP_ID, oaSecretKey: OA_KEY, now: () => NOW } });
     bare = createHttpApp(common);
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = 'ludy_worker';
     workerUrl.password = 'test-worker-pw';
     const workerPool = createPool({ connectionString: workerUrl.toString(), max: 2 });
     pools.push(workerPool);
@@ -166,7 +166,7 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
     );
     for (const a of answers) expect(a).toEqual({ status: 401, body: '{"code":"WEBHOOK_SIGNATURE"}' });
     expect(await waiting()).toBe(0);
-    expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [orgId])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [orgId])).toHaveLength(0);
   });
 
   it('refuses a body over its cap before reading it, even with a valid signature', async () => {
@@ -183,16 +183,16 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
     expect(await response.text()).toBe('{"ok":true}');
     expect(await waiting()).toBe(1);
     // Nothing of an org or a thread yet: only the worker finds the org, from the stored connection.
-    expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [orgId])).toHaveLength(0);
-    expect(await rows('SELECT provider FROM crove_kernel.conversation_inbound_pending')).toEqual([{ provider: 'zalo_oa' }]);
+    expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [orgId])).toHaveLength(0);
+    expect(await rows('SELECT provider FROM ludy_kernel.conversation_inbound_pending')).toEqual([{ provider: 'zalo_oa' }]);
     // The worker stores it in the thread of that customer, deletes the notice, and the text is the customer's, tainted.
     expect(await intake()).toEqual({ stored: 1, dropped: 0 });
     expect(await waiting()).toBe(0);
-    expect(await rows("SELECT m.body, m.direction, m.tainted, m.seq, c.kind, c.external_thread_id, c.reply_window_until IS NOT NULL AS windowed, i.external_user_id FROM crove_kernel.conversation_message m JOIN crove_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id JOIN crove_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id WHERE m.org_id = $1", [orgId])).toEqual([
+    expect(await rows("SELECT m.body, m.direction, m.tainted, m.seq, c.kind, c.external_thread_id, c.reply_window_until IS NOT NULL AS windowed, i.external_user_id FROM ludy_kernel.conversation_message m JOIN ludy_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id JOIN ludy_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id WHERE m.org_id = $1", [orgId])).toEqual([
       { body: 'Shop còn hàng không?', direction: 'in', tainted: true, seq: 1, kind: 'direct', external_thread_id: 'u-100', windowed: true, external_user_id: 'u-100' },
     ]);
     // The free window runs 48 hours from the customer's message (the platform's own time).
-    expect(Number((await rows<{ hours: string }>("SELECT extract(epoch FROM (reply_window_until - last_inbound_at)) / 3600 AS hours FROM crove_kernel.conversation WHERE org_id = $1", [orgId]))[0]?.hours)).toBe(48);
+    expect(Number((await rows<{ hours: string }>("SELECT extract(epoch FROM (reply_window_until - last_inbound_at)) / 3600 AS hours FROM ludy_kernel.conversation WHERE org_id = $1", [orgId]))[0]?.hours)).toBe(48);
   });
 
   it('answers a replayed event without parking it again for an hour, and parks one whose first try was refused', async () => {
@@ -214,7 +214,7 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
     expect((await send()).status).toBe(200);
     expect(await waiting()).toBe(3);
     expect(await intake()).toEqual({ stored: 2, dropped: 0 });
-    expect(await rows("SELECT 1 FROM crove_kernel.conversation_message WHERE org_id = $1 AND external_message_id = 'm-replay'", [orgId])).toHaveLength(1);
+    expect(await rows("SELECT 1 FROM ludy_kernel.conversation_message WHERE org_id = $1 AND external_message_id = 'm-replay'", [orgId])).toHaveLength(1);
     // A signature that fails never reaches the cache, so a forged body cannot make a real one look replayed.
     const real = text('m-forged', 'Thật', '1788300092000');
     expect((await post(replaying, real, signed(real, '1788300092000', 'another-key'))).status).toBe(401);
@@ -228,11 +228,11 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
     expect((await post(app, old, signed(old, String(NOW - 25 * 3_600_000)))).status).toBe(200);
     expect(await waiting()).toBe(0);
     // The definer refuses past 10000 waiting notices; Zalo does not retry an error status, so this is the loss the history read recovers.
-    await rows("INSERT INTO crove_kernel.conversation_inbound_pending (provider, body) SELECT 'zalo_oa', 'x'::bytea FROM generate_series(1, 10001)");
+    await rows("INSERT INTO ludy_kernel.conversation_inbound_pending (provider, body) SELECT 'zalo_oa', 'x'::bytea FROM generate_series(1, 10001)");
     const fresh = text('m-full', 'Hàng đợi đầy', '1788300110000');
     const response = await post(app, fresh, signed(fresh, '1788300110000'));
     expect([response.status, await response.text()]).toEqual([503, '{"code":"BACKLOG"}']);
-    await rows('DELETE FROM crove_kernel.conversation_inbound_pending');
+    await rows('DELETE FROM ludy_kernel.conversation_inbound_pending');
     // Once there is room the same notice (Zalo's resend, or the next try) is parked: a refused one was not remembered as seen.
     expect((await post(app, fresh, signed(fresh, '1788300110000'))).status).toBe(200);
     expect(await waiting()).toBe(1);
@@ -267,14 +267,14 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
       expect((await post(app, body, signed(body, ts))).status).toBe(200);
     }
     expect(await intake()).toEqual({ stored: 2, dropped: 0 });
-    const seen = await rows<{ body: string; seq: number }>("SELECT body, seq FROM crove_kernel.conversation_message WHERE org_id = $1 AND body LIKE 'Tin đến%' ORDER BY seq", [orgId]);
+    const seen = await rows<{ body: string; seq: number }>("SELECT body, seq FROM ludy_kernel.conversation_message WHERE org_id = $1 AND body LIKE 'Tin đến%' ORDER BY seq", [orgId]);
     expect(seen).toHaveLength(2);
     // An OA no org connected: parked, claimed, found nowhere, deleted.
     const stranger = text('m-5', 'Gửi cho OA lạ', '1788300030000', 'u-9', 'oa-nobody');
     expect((await post(app, stranger, signed(stranger, '1788300030000'))).status).toBe(200);
     expect(await intake()).toEqual({ stored: 0, dropped: 0 });
     expect(await waiting()).toBe(0);
-    expect(await rows("SELECT 1 FROM crove_kernel.conversation_message WHERE body = 'Gửi cho OA lạ'")).toHaveLength(0);
+    expect(await rows("SELECT 1 FROM ludy_kernel.conversation_message WHERE body = 'Gửi cho OA lạ'")).toHaveLength(0);
   });
 
   it('answers 200 and parks nothing for a verified notice with no message in it, and 400 for a verified body that is not a notice', async () => {
@@ -294,7 +294,7 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
     const echo = `{"app_id":"${APP_ID}","event_name":"oa_send_text","timestamp":"1788300070000","sender":{"id":"oa-1"},"recipient":{"id":"u-100"},"message":{"msg_id":"zm-9","text":"Dạ còn ạ"}}`;
     expect((await post(app, echo, signed(echo, '1788300070000'))).status).toBe(200);
     expect(await intake()).toEqual({ stored: 1, dropped: 0 });
-    expect(await rows("SELECT direction, author_kind, send_state FROM crove_kernel.conversation_message WHERE org_id = $1 AND external_message_id = 'zm-9'", [orgId])).toEqual([{ direction: 'out', author_kind: 'system', send_state: 'sent' }]);
+    expect(await rows("SELECT direction, author_kind, send_state FROM ludy_kernel.conversation_message WHERE org_id = $1 AND external_message_id = 'zm-9'", [orgId])).toEqual([{ direction: 'out', author_kind: 'system', send_state: 'sent' }]);
     // A limit of its own per client address, before anything is read.
     const limited = createHttpApp({
       config: loadConfig({ DATABASE_URL: 'postgres://x/y', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' }),
@@ -336,25 +336,25 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
     expect((await post(rotating, viaOther, signed(viaOther, '1788300320000', 'some-other-key-entirely'))).status).toBe(401);
     // Without a previous key the old one is refused.
     expect((await post(app, viaNew, signed(viaNew, '1788300310000', 'the-new-oa-secret-key-0001'))).status).toBe(401);
-    await rows('DELETE FROM crove_kernel.conversation_inbound_pending');
+    await rows('DELETE FROM ludy_kernel.conversation_inbound_pending');
   });
 
   it("is not refused for the sandbox's backlog: the cap is per provider (#2348)", async () => {
     // The sandbox is refused at its own cap of 1000 waiting notices, while the real platform is still accepted.
-    await rows("INSERT INTO crove_kernel.conversation_inbound_pending (provider, body) SELECT 'sandbox', 'x'::bytea FROM generate_series(1, 1000)");
+    await rows("INSERT INTO ludy_kernel.conversation_inbound_pending (provider, body) SELECT 'sandbox', 'x'::bytea FROM generate_series(1, 1000)");
     const client = new pg.Client({ connectionString: appConfig.DATABASE_URL });
     await client.connect();
     try {
-      await expect(client.query("SELECT crove_kernel.conversation_inbound_enqueue('sandbox', 'y'::bytea)")).rejects.toMatchObject({ code: '53400' });
-      await expect(client.query("SELECT crove_kernel.conversation_inbound_enqueue('zalo_oa', 'z'::bytea)")).resolves.toBeDefined();
+      await expect(client.query("SELECT ludy_kernel.conversation_inbound_enqueue('sandbox', 'y'::bytea)")).rejects.toMatchObject({ code: '53400' });
+      await expect(client.query("SELECT ludy_kernel.conversation_inbound_enqueue('zalo_oa', 'z'::bytea)")).resolves.toBeDefined();
     } finally {
       await client.end();
     }
-    await rows("DELETE FROM crove_kernel.conversation_inbound_pending WHERE provider = 'zalo_oa'");
+    await rows("DELETE FROM ludy_kernel.conversation_inbound_pending WHERE provider = 'zalo_oa'");
     const real = text('m-cap-1', 'Tin thật vẫn nhận', '1788300400000');
     expect((await post(app, real, signed(real, '1788300400000'))).status).toBe(200);
-    expect(await rows("SELECT 1 FROM crove_kernel.conversation_inbound_pending WHERE provider = 'zalo_oa'")).toHaveLength(1);
-    await rows('DELETE FROM crove_kernel.conversation_inbound_pending');
+    expect(await rows("SELECT 1 FROM ludy_kernel.conversation_inbound_pending WHERE provider = 'zalo_oa'")).toHaveLength(1);
+    await rows('DELETE FROM ludy_kernel.conversation_inbound_pending');
   });
   it('answers the customer through the customer care API once, inside the 48-hour window, and refuses a reply after it', async () => {
     const asOwner = { actor: { type: 'user' as const, userId: ownerId, aal: 'aal1' as const }, orgId };
@@ -363,7 +363,7 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
     const fresh = text('m-now', 'Còn hàng không shop?', now);
     expect((await post(app, fresh, signed(fresh, now))).status).toBe(200);
     expect(await intake()).toEqual({ stored: 1, dropped: 0 });
-    const thread = (await rows<{ id: string; last_seq: number }>("SELECT id, last_seq FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = 'u-100'", [orgId]))[0] as { id: string; last_seq: number };
+    const thread = (await rows<{ id: string; last_seq: number }>("SELECT id, last_seq FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = 'u-100'", [orgId]))[0] as { id: string; last_seq: number };
     const calls: { url: string; user: string; text: string; token: string }[] = [];
     const fetchImpl: Fetch = async (input, init) => {
       const json = JSON.parse(String(init?.body)) as { recipient: { user_id: string }; message: { text: string } };
@@ -377,17 +377,17 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
     const job = { orgId, messageId, connectionId, action: 'reply' as const };
     expect(await runConversationJob(deps, job)).toBe('accepted');
     expect(calls).toEqual([{ url: 'https://openapi.zalo.me/v3.0/oa/message/cs', user: 'u-100', text: 'Dạ shop còn hàng ạ', token: 'zalo-access-1' }]);
-    expect(await rows('SELECT send_state, external_message_id FROM crove_kernel.conversation_message WHERE org_id = $1 AND id = $2', [orgId, messageId])).toEqual([{ send_state: 'sent', external_message_id: 'zm-reply-1' }]);
+    expect(await rows('SELECT send_state, external_message_id FROM ludy_kernel.conversation_message WHERE org_id = $1 AND id = $2', [orgId, messageId])).toEqual([{ send_state: 'sent', external_message_id: 'zm-reply-1' }]);
     // The same job again calls nothing; the echo of the reply that then arrives matches it by id and stores no second message.
     expect(await runConversationJob(deps, job)).toBe('settled');
     expect(calls).toHaveLength(1);
     const echo = `{"app_id":"${APP_ID}","event_name":"oa_send_text","timestamp":"1788300080000","sender":{"id":"oa-1"},"recipient":{"id":"u-100"},"message":{"msg_id":"zm-reply-1","text":"Dạ shop còn hàng ạ"}}`;
     expect((await post(app, echo, signed(echo, '1788300080000'))).status).toBe(200);
     expect(await intake()).toEqual({ stored: 0, dropped: 0 });
-    expect(await rows("SELECT 1 FROM crove_kernel.conversation_message WHERE org_id = $1 AND body = 'Dạ shop còn hàng ạ'", [orgId])).toHaveLength(1);
+    expect(await rows("SELECT 1 FROM ludy_kernel.conversation_message WHERE org_id = $1 AND body = 'Dạ shop còn hàng ạ'", [orgId])).toHaveLength(1);
     // Past 48 hours from the customer's last message a reply is refused with its reason, and Zalo is not asked.
-    await rows("UPDATE crove_kernel.conversation SET reply_window_until = now() - interval '1 minute' WHERE org_id = $1 AND id = $2", [orgId, thread.id]);
-    const seq = (await rows<{ last_seq: number }>('SELECT last_seq FROM crove_kernel.conversation WHERE id = $1', [thread.id]))[0]?.last_seq as number;
+    await rows("UPDATE ludy_kernel.conversation SET reply_window_until = now() - interval '1 minute' WHERE org_id = $1 AND id = $2", [orgId, thread.id]);
+    const seq = (await rows<{ last_seq: number }>('SELECT last_seq FROM ludy_kernel.conversation WHERE id = $1', [thread.id]))[0]?.last_seq as number;
     await expect(api.execute('kernel.conversation.reply', { conversationId: thread.id, body: 'Quá hạn', lastSeenSeq: seq }, asOwner)).rejects.toMatchObject({ code: 'REPLY_WINDOW_CLOSED', status: 409 });
     const detail = await api.query<{ reply: { allowed: boolean; reason: string | null } }>('kernel.conversation.get', { conversationId: thread.id }, asOwner);
     expect(detail.reply).toEqual({ allowed: false, reason: 'window_closed' });

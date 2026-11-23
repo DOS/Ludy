@@ -6,13 +6,13 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, type AiMeter } from '@crove/agent';
-import type { ModelPort } from '@crove/agent/member-vy';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { meetingsCommands, meetingsQueries, setSummaryEnabled } from '@crove/mod-meetings';
+import { AiBudgetExhaustedError, type AiMeter } from '@ludy/agent';
+import type { ModelPort } from '@ludy/agent/member-vy';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { meetingsCommands, meetingsQueries, setSummaryEnabled } from '@ludy/mod-meetings';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { runMeetingSummary, type MeetingSummaryDeps } from '../src/member-vy-ports.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
@@ -70,19 +70,19 @@ suite('the recorder\'s Vy summary route (#2580, M6 part B2)', () => {
   async function seedMeeting(recorder: string, segments: Array<[number, number, string]> = [[0, 10, SECRET_LINE], [10, 20, 'Hà sẽ gửi báo giá trước thứ sáu']], org = orgId): Promise<string> {
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp tuần', 'vi', '2026-11-10T03:00:00Z', '2026-11-10T03:30:00Z', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [org, meetingId, users[recorder]],
     );
     if (segments.length > 0 && recorder === 'viewer') {
       // A viewer cannot store a transcript through the command: a segment is put there directly (the case is a recorder who then lost vy.use).
-      await sqlAdmin(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, 0, 10, 'Hà', 'Một dòng', 'draft')`, [org, randomUUID(), meetingId]);
+      await sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, 0, 10, 'Hà', 'Một dòng', 'draft')`, [org, randomUUID(), meetingId]);
     } else if (segments.length > 0) {
       await exec(recorder, 'meetings.transcript.draft_store', { meetingId, segments: segments.map(([startSeconds, endSeconds, text]) => ({ startSeconds, endSeconds, speakerLabel: 'Hà', text })) }, org);
     }
     return meetingId;
   }
-  const runs = async (meetingId: string) => (await sqlAdmin<{ status: string; error_code: string | null; subject_type: string; subject_id: string; feature: string }>(`SELECT status, error_code, subject_type, subject_id, feature FROM crove_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`, [orgId, meetingId])).rows;
+  const runs = async (meetingId: string) => (await sqlAdmin<{ status: string; error_code: string | null; subject_type: string; subject_id: string; feature: string }>(`SELECT status, error_code, subject_type, subject_id, feature FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`, [orgId, meetingId])).rows;
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -93,9 +93,9 @@ suite('the recorder\'s Vy summary route (#2580, M6 part B2)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -107,7 +107,7 @@ suite('the recorder\'s Vy summary route (#2580, M6 part B2)', () => {
     for (const key of ['owner', 'recorder', 'attendee', 'viewer', 'foreign', 'nouse']) users[key] = await upsertIdentity(createDb(pool), { issuer: 'summary-run', subject: key, email: `${key}@summary-run.test`, name: key === 'recorder' ? 'Hà' : null });
     orgId = (await createOrg(runtime, asUser('owner'), 'Tóm tắt chạy')).orgId;
     otherOrgId = (await createOrg(runtime, asUser('foreign'), 'Org khác')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer'), ($1, $5, 'member')`, [orgId, users.recorder, users.attendee, users.viewer, users.nouse]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer'), ($1, $5, 'member')`, [orgId, users.recorder, users.attendee, users.viewer, users.nouse]);
   }, 300_000);
 
   afterAll(async () => {
@@ -135,6 +135,61 @@ suite('the recorder\'s Vy summary route (#2580, M6 part B2)', () => {
     expect(everything).not.toContain('Giữ giá cũ');
   });
 
+  // Minutes templates (A4, #3162): the same run fills the sections of the template the recorder picked; code writes the headings and the checks are the summary's.
+  it('fills the sections of the picked template in the same run, with the summary\'s checks, and copies them into the draft as one text under their headings', async () => {
+    const meetingId = await seedMeeting('recorder');
+    await exec('recorder', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'briefing' });
+    const prompts: string[] = [];
+    const sectionAnswer = JSON.stringify({
+      sections: [
+        { key: 'plan', text: 'Hà sẽ gửi báo giá trước thứ sáu. Tổng 999 triệu.' },
+        { key: 'progress', text: 'Khách A hẹn gặp lúc 9 giờ.' },
+        { key: 'unknown', text: 'Không có trong mẫu.' },
+      ],
+      decisions: ['Giữ giá cũ'],
+      items: [{ title: 'Gửi báo giá', who: 'Hà', when: 'thứ sáu', seconds: 15 }],
+    });
+    const spy: ModelPort = {
+      generate: async (_who, prompt) => {
+        prompts.push(prompt.system);
+        return { text: sectionAnswer, usage: { inputTokens: 100, outputTokens: 30 } };
+      },
+    };
+    const out = await runMeetingSummary(deps({ model: spy }), orgId, asUser('recorder'), meetingId);
+    expect(out).toMatchObject({ state: 'ready', errorCode: null });
+    // The model was asked for the template's sections by key, with their hints; the headings are not its to write.
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain('key "progress" (Kết quả công việc kỳ trước)');
+    expect(prompts[0]).toContain('"sections"');
+    await exec('recorder', 'meetings.summary.copy_result', { meetingId, runId: out.runId });
+    const got = await runtime.query<{ draft: { summary: string; tainted: boolean; decisions: string[] } | null }>('meetings.result.get', { meetingId }, { actor: asUser('recorder'), orgId });
+    // The foreign figure removed a sentence, the key the template lacks was dropped, the order is the template's, and the text is still the model's (tainted).
+    expect(got.draft?.summary).toBe('Kết quả công việc kỳ trước\nKhách A hẹn gặp lúc 9 giờ.\n\nKế hoạch kỳ tới\nHà sẽ gửi báo giá trước thứ sáu.');
+    expect(got.draft?.tainted).toBe(true);
+    expect(got.draft?.decisions).toEqual(['Giữ giá cũ']);
+  });
+
+  it('stores a bare dash, not a copy of a decision, when a run on a template filled no section', async () => {
+    const meetingId = await seedMeeting('recorder');
+    await exec('recorder', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'customer' });
+    const only = JSON.stringify({ sections: [], decisions: ['Giữ giá cũ'], items: [] });
+    const out = await runMeetingSummary(deps({ model: model(only) }), orgId, asUser('recorder'), meetingId);
+    await exec('recorder', 'meetings.summary.copy_result', { meetingId, runId: out.runId });
+    const got = await runtime.query<{ draft: { summary: string; decisions: string[] } | null }>('meetings.result.get', { meetingId }, { actor: asUser('recorder'), orgId });
+    expect(got.draft).toMatchObject({ summary: '-', decisions: ['Giữ giá cũ'] });
+  });
+
+  it('refuses to copy a result into a meeting whose template changed since the run, and a general run keeps its plain summary', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const out = await runMeetingSummary(deps(), orgId, asUser('recorder'), meetingId);
+    await exec('recorder', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'supplier' });
+    expect(await refuses(exec('recorder', 'meetings.summary.copy_result', { meetingId, runId: out.runId }))).toBe('SUMMARY_TEMPLATE_CHANGED');
+    await exec('recorder', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'general' });
+    await exec('recorder', 'meetings.summary.copy_result', { meetingId, runId: out.runId });
+    const got = await runtime.query<{ draft: { summary: string } | null }>('meetings.result.get', { meetingId }, { actor: asUser('recorder'), orgId });
+    expect(got.draft?.summary).toBe(`${SECRET_ANSWER}.`);
+  });
+
   it('refuses a member without vy.use, a member who is not the recorder, another org and a switch that is off, before any model call and without a run', async () => {
     // A recorder whose vy.use was taken away by an owner: refused by run.start, after the recorder check and before any read of the transcript.
     const viewerMeeting = await seedMeeting('nouse');
@@ -144,7 +199,7 @@ suite('the recorder\'s Vy summary route (#2580, M6 part B2)', () => {
     expect(await refuses(runMeetingSummary(deps(), orgId, asUser('viewer'), viewerMeeting))).toBe('FORBIDDEN');
     const mine = await seedMeeting('recorder');
     expect(await refuses(runMeetingSummary(deps(), orgId, asUser('attendee'), mine))).toBe('MEETING_NOT_FOUND');
-    await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), mine, users.attendee]);
+    await sqlAdmin(`INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), mine, users.attendee]);
     expect(await refuses(runMeetingSummary(deps(), orgId, asUser('attendee'), mine))).toBe('FORBIDDEN');
     // Another org's member names this org's meeting in their own org: no such meeting there.
     expect(await refuses(runMeetingSummary(deps(), otherOrgId, asUser('foreign'), mine))).toBe('MEETING_NOT_FOUND');
@@ -194,7 +249,7 @@ suite('the recorder\'s Vy summary route (#2580, M6 part B2)', () => {
 
   it('spends no rate on a member who is refused: only the recorder\'s own asks count against the org\'s few a minute', async () => {
     const meetingId = await seedMeeting('recorder');
-    await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users.attendee]);
+    await sqlAdmin(`INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users.attendee]);
     const budget = new DraftBudget({ perUserPerMinute: 100, perOrgPerMinute: 1 });
     for (let i = 0; i < 3; i += 1) expect(await refuses(runMeetingSummary(deps({ budget }), orgId, asUser('attendee'), meetingId))).toBe('FORBIDDEN');
     expect((await runMeetingSummary(deps({ budget }), orgId, asUser('recorder'), meetingId)).state).toBe('ready');
@@ -204,7 +259,7 @@ suite('the recorder\'s Vy summary route (#2580, M6 part B2)', () => {
   it('does not copy a result past its expiry', async () => {
     const meetingId = await seedMeeting('recorder');
     const out = await runMeetingSummary(deps(), orgId, asUser('recorder'), meetingId);
-    await sqlAdmin(`UPDATE crove_kernel.member_vy_result SET created_at = now() - interval '2 minutes', expires_at = now() - interval '1 minute' WHERE org_id = $1 AND run_id = $2`, [orgId, out.runId]);
+    await sqlAdmin(`UPDATE ludy_kernel.member_vy_result SET created_at = now() - interval '2 minutes', expires_at = now() - interval '1 minute' WHERE org_id = $1 AND run_id = $2`, [orgId, out.runId]);
     expect(await refuses(exec('recorder', 'meetings.summary.copy_result', { meetingId, runId: out.runId }))).toBe('SUMMARY_RESULT_NOT_FOUND');
   });
 
@@ -216,7 +271,7 @@ suite('the recorder\'s Vy summary route (#2580, M6 part B2)', () => {
     // The summary of another meeting runs and finishes; the transcription is not touched.
     expect((await runMeetingSummary(deps(), orgId, asUser('recorder'), meetingId)).state).toBe('ready');
     expect(modelCalls).toBe(before + 1);
-    const state = await sqlAdmin<{ status: string; error: string | null }>('SELECT status, error FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2', [orgId, live.runId]);
+    const state = await sqlAdmin<{ status: string; error: string | null }>('SELECT status, error FROM ludy_kernel.ai_run WHERE org_id = $1 AND id = $2', [orgId, live.runId]);
     expect(state.rows[0]).toEqual({ status: 'running', error: null });
   });
 
@@ -226,8 +281,16 @@ suite('the recorder\'s Vy summary route (#2580, M6 part B2)', () => {
     const before = modelCalls;
     expect(await refuses(runMeetingSummary(deps(), orgId, asUser('recorder'), meetingId))).toBe('TRANSCRIBE_RUNNING');
     expect(modelCalls).toBe(before);
-    await sqlAdmin(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND id = $2`, [orgId, live.runId]);
+    await sqlAdmin(`UPDATE ludy_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND id = $2`, [orgId, live.runId]);
     expect((await runMeetingSummary(deps(), orgId, asUser('recorder'), meetingId)).state).toBe('ready');
+  });
+
+  it('a summary start stamps the meeting\'s recording as used, so a joined one is no longer replaced by a late upload (#3187)', async () => {
+    const meetingId = await seedMeeting('recorder');
+    const used = () => admin((c) => c.query<{ used: boolean }>('SELECT audio_used_at IS NOT NULL AS used FROM ludy_meetings.meeting WHERE org_id = $1 AND id = $2', [orgId, meetingId]));
+    expect((await used()).rows[0]?.used).toBe(false);
+    await exec('recorder', 'meetings.summary.start', { meetingId });
+    expect((await used()).rows[0]?.used).toBe(true);
   });
 
   it('is rate limited per member, one at a time', async () => {

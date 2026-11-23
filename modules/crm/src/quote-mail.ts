@@ -4,7 +4,7 @@
 // pattern), so the queue and its retention never hold a secret; the link opens only the one quote and expires with it.
 // The words are Vietnamese (the quote itself is; a second language is a translation of these strings, not a rebuild).
 import { z } from 'zod';
-import { QUOTE_PAGE_PATH, QUOTE_TOKEN_PATTERN } from '@crove/kernel-contract';
+import { QUOTE_PAGE_PATH, QUOTE_TOKEN_PATTERN } from '@ludy/kernel-contract';
 
 export const QUOTE_MAIL_TEMPLATE = 'crm.quote';
 export const QUOTE_MAIL_SOURCE = 'crm.quote.send';
@@ -50,7 +50,8 @@ function dateVi(value: string): string {
 
 // The mail from its stored merge data. publicUrl: where the app is served (no trailing slash needed). replyTo: the org's conversation address when the deployment receives
 // mail and the org has one (never the document intake address). brand: the product name users see (BRAND_NAME). token: the link's token, made when the mail is sent.
-export function renderQuoteMail(raw: unknown, context: { publicUrl: string; replyTo: string | null; brand?: string; token: string }): RenderedQuoteMail {
+// pdfAttached: the quote's PDF goes with this mail (#3418), so the mail says so; without it the mail only tells the customer to print or save the page.
+export function renderQuoteMail(raw: unknown, context: { publicUrl: string; replyTo: string | null; brand?: string; token: string; pdfAttached?: boolean }): RenderedQuoteMail {
   const mail = zQuoteMail.parse(raw);
   if (!QUOTE_TOKEN_PATTERN.test(context.token)) throw new Error('quote mail: the link token is malformed');
   const brand = context.brand ?? 'Ludy';
@@ -59,13 +60,15 @@ export function renderQuoteMail(raw: unknown, context: { publicUrl: string; repl
   while (base.endsWith('/')) base = base.slice(0, -1);
   const url = `${base}${QUOTE_PAGE_PATH}#${context.token}`;
   const label = mail.revision > 1 ? `${mail.number}-R${mail.revision}` : mail.number;
+  const attached = context.pdfAttached === true;
   const lead = `${org} gửi Quý khách báo giá số ${label}, tổng cộng ${dong(mail.total)}, có hiệu lực đến ngày ${dateVi(mail.validUntil)}.`;
   const text = [
     'Kính gửi Quý khách,',
     '',
     lead,
     '',
-    'Xem báo giá đầy đủ (có thể in hoặc lưu thành PDF):',
+    ...(attached ? ['Bản PDF của báo giá được đính kèm trong thư này.', ''] : []),
+    attached ? 'Quý khách cũng có thể xem báo giá trực tuyến:' : 'Xem báo giá đầy đủ (có thể in hoặc lưu thành PDF):',
     url,
     '',
     'Trân trọng,',
@@ -77,7 +80,7 @@ export function renderQuoteMail(raw: unknown, context: { publicUrl: string; repl
 <html lang="vi"><body style="font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.5;color:#1f2328">
 <p>Kính gửi Quý khách,</p>
 <p>${escapeHtml(lead)}</p>
-<p><a href="${escapeHtml(url)}" style="display:inline-block;padding:10px 16px;background:#0b5fff;color:#ffffff;text-decoration:none;border-radius:6px">Xem báo giá ${escapeHtml(label)}</a></p>
+${attached ? '<p>Bản PDF của báo giá được đính kèm trong thư này.</p>\n' : ''}<p><a href="${escapeHtml(url)}" style="display:inline-block;padding:10px 16px;background:#0b5fff;color:#ffffff;text-decoration:none;border-radius:6px">Xem báo giá ${escapeHtml(label)}</a></p>
 <p style="font-size:13px;color:#57606a">Nếu nút không mở được, hãy dán địa chỉ này vào trình duyệt:<br>${escapeHtml(url)}</p>
 <p>Trân trọng,<br>${escapeHtml(org)}</p>
 <p style="font-size:13px;color:#57606a">${escapeHtml(`Thư này được gửi qua ${brand}. Quý khách có thể trả lời thư này.`)}</p>

@@ -6,10 +6,10 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, DomainError, Runtime, parseVaultKey, type UserActor } from '@crove/kernel-runtime';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CredentialVault, DomainError, Runtime, parseVaultKey, type UserActor } from '@ludy/kernel-runtime';
 import { makeWakeSecret } from '../src/mcp-wake-setup.ts';
 import { runWakeSweep, type SignalEvaluator } from '../src/mcp-wake-sweep.ts';
 import { wakeEvent, type WakeItem } from '../src/mcp-wake-body.ts';
@@ -46,7 +46,7 @@ suite('the wake-up test ping (#3024, step c2)', () => {
     const grantId = randomUUID();
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
+        `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
          VALUES ($1, $2, $3, $5, 'Test client', 'client.example.com', ARRAY['ludy.read'], $4, now(), now() + interval '30 days', $3)`,
         [orgId, grantId, ownerId, `oauth-${grantId}`, `client-${grantId}`],
       ),
@@ -57,7 +57,7 @@ suite('the wake-up test ping (#3024, step c2)', () => {
   }
 
   const deliveries = (grantId: string) =>
-    admin((c) => c.query(`SELECT id, type, status, attempts, last_code, body FROM crove_kernel.agent_wake_delivery WHERE grant_id = $1 ORDER BY created_at, id`, [grantId]).then((r) => r.rows as Array<{ id: string; type: string; status: string; attempts: number; last_code: number | null; body: { data: { items?: WakeItem[]; date?: string } } }>));
+    admin((c) => c.query(`SELECT id, type, status, attempts, last_code, body FROM ludy_kernel.agent_wake_delivery WHERE grant_id = $1 ORDER BY created_at, id`, [grantId]).then((r) => r.rows as Array<{ id: string; type: string; status: string; attempts: number; last_code: number | null; body: { data: { items?: WakeItem[]; date?: string } } }>));
   // A sweep with the signals the test says are there now, and every hand-over collected.
   const sweeper = (signals: () => WakeItem[], sent: Array<{ orgId: string; id: string }>, options: { complete?: () => string[]; runtime?: Runtime } = {}) => {
     const evaluate: SignalEvaluator = async () => ({ items: signals(), complete: options.complete ? options.complete() : ['deal_without_invoice'] });
@@ -74,15 +74,15 @@ suite('the wake-up test ping (#3024, step c2)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    const workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    const appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    const workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     pools.push(appPool, workerPool);
     const defs = { commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) };
     runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(defs);
@@ -114,7 +114,7 @@ suite('the wake-up test ping (#3024, step c2)', () => {
     await sweeper(() => [], sent)();
     expect(sent).toEqual([{ orgId, id: done.eventId }]);
     // The audit row names the grant and the event, nothing about the receiver.
-    const audit = await admin((c) => c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.mcp.wake.test' ORDER BY occurred_at DESC LIMIT 1`, [orgId]));
+    const audit = await admin((c) => c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.mcp.wake.test' ORDER BY occurred_at DESC LIMIT 1`, [orgId]));
     expect(JSON.stringify(audit.rows[0]?.detail)).not.toContain('example.com');
   });
 
@@ -127,7 +127,7 @@ suite('the wake-up test ping (#3024, step c2)', () => {
     // Another grant is not held back, and this one is free again after a minute.
     const other = await wakeUp();
     await runtime.execute('kernel.mcp.wake.test', { grantId: other.grantId }, { actor: owner(), orgId });
-    await admin((c) => c.query(`UPDATE crove_kernel.agent_wake_delivery SET created_at = now() - interval '2 minutes' WHERE grant_id = $1`, [grantId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.agent_wake_delivery SET created_at = now() - interval '2 minutes' WHERE grant_id = $1`, [grantId]));
     await runtime.execute('kernel.mcp.wake.test', { grantId }, { actor: owner(), orgId });
     expect(await deliveries(grantId)).toHaveLength(2);
   });
@@ -146,7 +146,7 @@ suite('the wake-up test ping (#3024, step c2)', () => {
     const paused = await wakeUp({ enabled: false });
     expect(await code(runtime.execute('kernel.mcp.wake.test', { grantId: paused.grantId }, { actor: owner(), orgId }))).toBe('MCP_WAKE_GRANT_NOT_FOUND');
     const revoked = await wakeUp();
-    await admin((c) => c.query(`UPDATE crove_kernel.agent_grant SET revoked_at = now() WHERE id = $1`, [revoked.grantId]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.agent_grant SET revoked_at = now() WHERE id = $1`, [revoked.grantId]));
     expect(await code(runtime.execute('kernel.mcp.wake.test', { grantId: revoked.grantId }, { actor: owner(), orgId }))).toBe('MCP_WAKE_GRANT_NOT_FOUND');
     const live = await wakeUp();
     const mcpActor: UserActor = { type: 'user', userId: ownerId, aal: 'aal1', mcp: { grantId: live.grantId, clientId: 'c', clientName: 'c', scopes: ['ludy.read'] } };

@@ -1,5 +1,5 @@
 // Outbox retention (issue #997, plan §4.9): events older than OUTBOX_KEEP_DAYS are archived to the WORM archive store
-// as one JSONL object per org and UTC day, with a manifest, and only then deleted from crove_kernel.outbox_event. The
+// as one JSONL object per org and UTC day, with a manifest, and only then deleted from ludy_kernel.outbox_event. The
 // daily retention run calls archiveOutbox; the database decides what may be deleted (migration
 // 20261028100000_crove_kernel_outbox_retention.sql), so a bug here can fail a run but never delete an event that the
 // archive does not hold.
@@ -9,7 +9,7 @@
 // deletion map); a bucket lifecycle rule on outbox/ removes them afterwards (docs/runbooks/worm-archive.md).
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
+import type { Db } from '@ludy/db';
 import { ArchiveObjectExistsError, type ArchiveStore } from './worm.ts';
 
 export const OUTBOX_KEEP_DAYS = 30;
@@ -56,7 +56,7 @@ async function putOnce(store: ArchiveStore, key: string, body: Uint8Array): Prom
 
 export async function archiveOutboxDay(workerDb: Db, store: ArchiveStore, orgId: string, day: string): Promise<OutboxManifest | null> {
   const { rows } = await sql<{ id: string; line: string }>`
-    SELECT id, line FROM crove_kernel.outbox_archive_rows(${orgId}::uuid, ${day}::date)`.execute(workerDb);
+    SELECT id, line FROM ludy_kernel.outbox_archive_rows(${orgId}::uuid, ${day}::date)`.execute(workerDb);
   const first = rows[0];
   const last = rows[rows.length - 1];
   if (!first || !last) return null;
@@ -75,7 +75,7 @@ export async function archiveOutboxDay(workerDb: Db, store: ArchiveStore, orgId:
     sha256: sha256(body),
   };
   await putOnce(store, `${OUTBOX_ARCHIVE_PREFIX}${orgId}/${day}.manifest.json`, new TextEncoder().encode(`${JSON.stringify(manifest, null, 2)}\n`));
-  await sql`SELECT crove_kernel.outbox_archive_record(${orgId}::uuid, ${day}::date, ${object}, ${manifest.sha256}, ${manifest.rows}::int)`.execute(workerDb);
+  await sql`SELECT ludy_kernel.outbox_archive_record(${orgId}::uuid, ${day}::date, ${object}, ${manifest.sha256}, ${manifest.rows}::int)`.execute(workerDb);
   return manifest;
 }
 
@@ -87,14 +87,18 @@ export async function archiveOutbox(workerDb: Db, store: ArchiveStore, keepDays 
   const result: OutboxRetentionResult = { archived: 0, purged: 0, deferred: 0 };
   // The day as text: pg turns a date into a local-midnight Date, which would move it a day in a zone ahead of UTC.
   const { rows: due } = await sql<{ org_id: string; day: string; archived: boolean }>`
-    SELECT org_id, day::text AS day, archived FROM crove_kernel.outbox_archive_due(${keepDays}::int, ${MAX_DAYS_PER_RUN}::int)`.execute(workerDb);
+    SELECT org_id, day::text AS day, archived FROM ludy_kernel.outbox_archive_due(${keepDays}::int, ${MAX_DAYS_PER_RUN}::int)`.execute(workerDb);
   for (const { org_id: orgId, day, archived } of due) {
     if (!archived) {
       if (!(await archiveOutboxDay(workerDb, store, orgId, day))) continue;
       result.archived += 1;
     }
+    // Events that waited while their app was off are past the keep period by now: they go with their day (the archive holds them). How many per app is logged, never what they say.
+    const { rows: expired } = await sql<{ module: string; expired: string }>`
+      SELECT module, expired FROM ludy_kernel.outbox_held_expire(${orgId}::uuid, ${day}::date, ${keepDays}::int)`.execute(workerDb);
+    for (const e of expired) console.warn(`[outbox-retention] org ${orgId} ${day}: ${e.expired} parked events of ${e.module} dropped after the keep period`);
     const { rows } = await sql<{ n: number }>`
-      SELECT crove_kernel.outbox_archive_purge(${orgId}::uuid, ${day}::date, ${keepDays}::int) AS n`.execute(workerDb);
+      SELECT ludy_kernel.outbox_archive_purge(${orgId}::uuid, ${day}::date, ${keepDays}::int) AS n`.execute(workerDb);
     const n = rows[0]?.n ?? 0;
     if (n < 0) result.deferred += 1;
     else result.purged += n;

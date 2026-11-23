@@ -41,4 +41,15 @@ describe('the Inbox items of Home, in words', () => {
     expect(en('today.items.conversations.oneUnanswered', { provider: 'sandbox' })).toBe('A customer is waiting for a reply');
     expect(vi('today.items.conversations.oneUnanswered', { provider: 'sandbox' })).toBe('Một khách đang chờ bạn trả lời');
   });
+
+  it('says "100+" for a wake line whose list came back full, and the plain number otherwise (#4146)', () => {
+    const en = sayIn('en');
+    const vi = sayIn('vi');
+    expect(en('today.items.wake.unanswered', { count: 100, plus: '+', hours: 4 })).toBe('100+ conversations have waited over 4 hours without an answer');
+    expect(en('today.items.wake.unanswered', { count: 1, plus: '', hours: 1 })).toBe('1 conversation has waited over 1 hour without an answer');
+    expect(en('today.items.wake.replyWindow', { count: 100, plus: '+', hours: 3 })).toContain('100+ conversations');
+    expect(en('today.items.wake.postComments', { count: 100, plus: '+' })).toBe('100+ new comments under a published post without an answer');
+    expect(vi('today.items.wake.unanswered', { count: 100, plus: '+', hours: 4 })).toBe('100+ hội thoại đã chờ quá 4 giờ mà chưa được trả lời');
+    expect(vi('today.items.wake.postComments', { count: 7, plus: '' })).toBe('7 bình luận mới dưới bài đã đăng chưa được trả lời');
+  });
 });

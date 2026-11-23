@@ -8,6 +8,7 @@ import { sql } from '../lib/db.ts';
 import { createOrg, newEmail, signInNewUser, signUp } from '../lib/session.ts';
 import { tabTo } from '../lib/inbox.ts';
 import { nextTotp } from '../lib/totp.ts';
+import { openSettingsTab } from '../lib/settings.ts';
 
 const INVOICE = fileURLToPath(new URL('../../apps/extract/test/fixtures/einvoice-basic.xml', import.meta.url));
 const SELLER = 'CÔNG TY TNHH DỊCH VỤ MẪU';
@@ -28,6 +29,8 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
 
   const slug = await test.step('create the first org', async () => {
     const created = await createOrg(page, 'Công ty E2E');
+    // A new org opens on the overview (#3225); the uploads are on the Inbox.
+    await page.goto(page.url().replace(/\/overview$/, '/inbox'));
     await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
     return created;
   });
@@ -35,15 +38,14 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
   await test.step('the empty Inbox links the quick guide, and the shell the support channel (#310)', async () => {
     const support = page.getByRole('complementary').getByRole('link', { name: 'Góp ý / Hỗ trợ' });
     await expect(support).toHaveAttribute('href', 'mailto:support@e2e.test');
-    await page.getByRole('link', { name: 'Xem hướng dẫn nhanh: tải lên, duyệt, xuất Excel' }).click();
+    await page.getByRole('link', { name: 'Xem hướng dẫn nhanh: tải lên, duyệt, khai thuế, xuất Excel' }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/guide$`));
     await expect(page.getByRole('heading', { name: 'Hướng dẫn nhanh' })).toBeVisible();
-    // The firm guide follows (#661).
-    await expect(page.getByRole('heading', { name: 'Hướng dẫn cho công ty dịch vụ kế toán' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Bước 7. Đưa số liệu sang phần mềm kế toán của hãng' })).toBeVisible();
-    for (const step of ['Bước 1. Tải hóa đơn lên', 'Bước 2. Kiểm tra và duyệt', 'Bước 3. Xuất Excel cho kế toán']) {
+    // The three jobs of the month (#3596); the guide for an accounting firm is gone.
+    for (const step of ['Bước 1. Tải hóa đơn lên và duyệt', 'Bước 2. Khai thuế GTGT của tháng', 'Bước 3. Xuất Excel cho kế toán']) {
       await expect(page.getByRole('heading', { name: step })).toBeVisible();
     }
+    await expect(page.getByRole('heading', { name: 'Hướng dẫn cho công ty dịch vụ kế toán' })).toHaveCount(0);
     await page.getByRole('link', { name: '← Chứng từ chờ duyệt' }).click();
     await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
   });
@@ -53,9 +55,9 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     await expect(page.getByText('einvoice-basic.xml')).toBeVisible();
     // The worker reads the XML and raises the proposal; the Inbox polls every few seconds.
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
-    // The file says its proposal waits for a person, in the proposal's words (#2009). The upload panel's chips are
-    // walked in bulk-intake.spec.ts and unit tested in intake.test.ts.
-    await expect(page.getByTestId('recent-file').filter({ hasText: 'einvoice-basic.xml' })).toContainText('Chờ duyệt');
+    // A file read into a proposal is that proposal's row, not a second chip saying the same (#3598). The upload panel's
+    // chips are walked in bulk-intake.spec.ts and unit tested in intake.test.ts.
+    await expect(page.getByTestId('recent-file')).toHaveCount(0);
   });
 
   await test.step('open the proposal and approve it', async () => {
@@ -88,8 +90,6 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     // The Inbox says what the approval did, in its button's verb (#1384).
     await expect(page.getByRole('status').filter({ hasText: `Đã duyệt và ghi sổ ${SELLER}` })).toBeVisible();
     await expect(page.getByText('Không có đề xuất nào chờ duyệt')).toBeVisible();
-    // Posted now: the file says so, no longer waiting (#2009).
-    await expect(page.getByTestId('recent-file').filter({ hasText: 'einvoice-basic.xml' })).toContainText('Đã ghi sổ');
     await page.getByRole('tab', { name: 'Đã ghi sổ' }).click();
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible();
   });
@@ -102,9 +102,13 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     // what it ran: the invoice's posting, which names the proposal. The invoice's reading, whose object is the file, is
     // not listed.
     const rows = page.getByRole('row').filter({ has: page.getByRole('cell') });
-    await expect(rows.filter({ hasText: 'kernel.proposal.approve' })).toHaveCount(2);
-    await expect(rows.filter({ hasText: 'finance.purchase.record' })).toHaveCount(1);
-    await expect(rows.filter({ hasText: 'kernel.extraction.record' })).toHaveCount(0);
+    // The log speaks in sentences (#3595): the refused approval says it was tried, the approval says it was done, and no command
+    // name is in the list.
+    await expect(rows.filter({ hasText: 'Đã thử duyệt đề xuất' })).toHaveCount(1);
+    await expect(rows.filter({ hasText: 'Đã duyệt đề xuất' })).toHaveCount(1);
+    await expect(rows.filter({ hasText: 'Đã ghi sổ hóa đơn mua vào' })).toHaveCount(1);
+    await expect(rows.filter({ hasText: 'Đã ghi kết quả đọc tệp' })).toHaveCount(0);
+    await expect(rows.filter({ hasText: 'kernel.' })).toHaveCount(0);
     await page.goBack();
     await page.goBack();
   });
@@ -112,14 +116,14 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
   await test.step('vendor, document and entry lists', async () => {
     const nav = page.getByRole('navigation');
 
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Nhà cung cấp' }).click();
     const vendor = page.getByRole('row').filter({ hasText: SELLER });
     await expect(vendor).toHaveCount(1);
     // The fifth cell is the vendor's default account (#319): for an owner, a picker on the account approving set. The
-    // last one opens the edit form (#887) and the vendor's notes (#1671).
+    // last one opens the edit form (#887), the bank accounts (#3113) and the vendor's notes (#1671).
     // Under the name, the contact the invoice gave: the seller's email.
-    await expect(vendor.getByRole('cell')).toHaveText([`${SELLER}hoadon@example.com`, SELLER_TAX_CODE, /Hà Nội/, '1', /6422 · Chi phí quản lý doanh nghiệp/, 'SửaGhi chú']);
+    await expect(vendor.getByRole('cell')).toHaveText([`${SELLER}hoadon@example.com`, SELLER_TAX_CODE, /Hà Nội/, '1', /6422 · Chi phí quản lý doanh nghiệp/, 'SửaNgân hàngGhi chú']);
     await expect(vendor.getByRole('combobox', { name: `Tài khoản mặc định của ${SELLER}` })).toHaveValue('6422');
 
     // A member of the team adds the vendor's phone (#887); the tax code from the invoice stays locked.
@@ -131,13 +135,14 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     await expect(form).toHaveCount(0);
     await expect(vendor.getByRole('cell').first()).toHaveText(`${SELLER}024 3826 0000 · hoadon@example.com`);
 
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
+    await page.getByRole('link', { name: 'Tất cả chứng từ' }).click();
     const document = page.getByRole('row').filter({ hasText: 'C26TAB-1234' });
     await expect(document).toHaveCount(1);
     await expect(document.getByRole('cell')).toHaveText(['15/09/2026', 'C26TAB-1234', 'Mua vào', SELLER, /^1\.800\.000/, /^180\.000/, /^1\.980\.000/, 'Đã ghi sổ', 'Ghi chú']);
 
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Bút toán' }).click();
     await expect(page.getByText(MEMO)).toBeVisible();
     const line = (account: string) => page.getByRole('row').filter({ has: page.getByRole('cell', { name: new RegExp(`^${account} `) }) });
@@ -147,7 +152,8 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
 
   await test.step('Excel export', async () => {
     const download = page.waitForEvent('download');
-    await page.getByRole('button', { name: 'Xuất Excel' }).click();
+    await page.getByRole('button', { name: 'Xuất sổ nhật ký' }).click();
+    await page.getByRole('menuitem', { name: 'Xuất Excel' }).click();
     const file = await download;
     expect(file.suggestedFilename()).toBe(`ludy-but-toan-${slug}.xlsx`);
 
@@ -172,13 +178,13 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
   });
 
   await test.step('VAT working for September 2026 and its Excel export (#316)', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
-    await page.getByRole('navigation').getByRole('link', { name: 'Tờ khai GTGT' }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Thuế', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Tờ khai thuế GTGT' })).toBeVisible();
     await page.getByLabel('Kỳ khai', { exact: true }).selectOption('month');
     await page.getByLabel('Năm', { exact: true }).selectOption('2026');
     await page.getByLabel('Tháng', { exact: true }).selectOption('9');
-    await expect(page.getByText('Từ 01/09/2026 đến 30/09/2026: bán ra theo ngày lập hóa đơn, mua vào theo ngày ghi sổ')).toBeVisible();
+    await expect(page.getByText('Từ 01/09/2026 đến 30/09/2026: bán ra theo ngày bán (ngày lập hóa đơn khi không có ngày bán riêng), mua vào theo ngày ghi sổ')).toBeVisible();
     const indicator = (code: string) => page.getByRole('row').filter({ has: page.getByRole('cell', { name: `[${code}]`, exact: true }) });
     await expect(indicator('23').getByRole('cell').last()).toHaveText(/^1\.800\.000/);
     await expect(indicator('24').getByRole('cell').last()).toHaveText(/^180\.000/);
@@ -201,9 +207,9 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
   });
 
   await test.step('ledger reports for September 2026 and their Excel export (#321)', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Sổ sách' }).click();
-    await expect(page.getByRole('heading', { name: 'Sổ sách kế toán' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Sổ sách', exact: true })).toBeVisible();
     await page.getByLabel('Kỳ báo cáo', { exact: true }).selectOption('month');
     await page.getByLabel('Năm', { exact: true }).selectOption('2026');
     await page.getByLabel('Tháng', { exact: true }).selectOption('9');
@@ -243,15 +249,17 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
   await test.step('add a sub-account in Settings and make it the vendor default (#319)', async () => {
     const nav = page.getByRole('navigation');
     await nav.getByRole('link', { name: 'Cài đặt' }).click();
+    await openSettingsTab(page, 'accounting');
+    await page.getByRole('button', { name: 'Thêm tài khoản con' }).click();
     const add = page.getByRole('form', { name: 'Thêm tài khoản con' });
     await add.getByLabel('Tài khoản cha').selectOption('6422');
     await expect(add.getByLabel('Mã tài khoản con')).toHaveValue('6422');
     await add.getByLabel('Mã tài khoản con').fill('6422.vp');
     await add.getByLabel('Tên tài khoản con').fill('Văn phòng Hà Nội');
-    await add.getByRole('button', { name: 'Thêm' }).click();
+    await add.getByRole('button', { name: 'Thêm', exact: true }).click();
     await expect(page.getByText('6422.VP', { exact: true })).toBeVisible();
 
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Nhà cung cấp' }).click();
     const picker = page.getByRole('combobox', { name: `Tài khoản mặc định của ${SELLER}` });
     await picker.selectOption('6422.VP');
@@ -259,6 +267,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
 
     // While it is a vendor's default, the sub-account stays in use, and the refusal names the vendor.
     await nav.getByRole('link', { name: 'Cài đặt' }).click();
+    await openSettingsTab(page, 'accounting');
     await page.getByRole('button', { name: 'Ngừng dùng tài khoản 6422.VP · Văn phòng Hà Nội' }).click();
     await expect(page.getByText(`Tài khoản 6422.VP đang là tài khoản mặc định của ${SELLER}`, { exact: false })).toBeVisible();
   });
@@ -266,7 +275,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
   await test.step('rows in the database', async () => {
     const [org] = sql<{ org_id: string; user_id: string }>(
       `SELECT t.org_id, u.id AS user_id
-         FROM crove_kernel.tenant t JOIN crove_kernel.user_account u ON u.id = t.created_by
+         FROM ludy_kernel.tenant t JOIN ludy_kernel.user_account u ON u.id = t.created_by
         WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
       { slug, email },
     );
@@ -274,24 +283,24 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     const vars = { org: org.org_id, user: org.user_id };
 
     const vendors = sql<{ id: string; name: string; tax_code: string }>(
-      `SELECT id, name, tax_code FROM crove_kernel.party WHERE org_id = :'org'`,
+      `SELECT id, name, tax_code FROM ludy_kernel.party WHERE org_id = :'org'`,
       vars,
     );
     expect(vendors).toEqual([{ id: expect.any(String), name: SELLER, tax_code: SELLER_TAX_CODE }]);
     // The vendor default is the sub-account added in Settings, which is still active (#319).
-    expect(sql<{ debit_account: string }>(`SELECT debit_account FROM crove_finance.vendor_account_rule WHERE org_id = :'org'`, vars)).toEqual([
+    expect(sql<{ debit_account: string }>(`SELECT debit_account FROM ludy_finance.vendor_account_rule WHERE org_id = :'org'`, vars)).toEqual([
       { debit_account: '6422.VP' },
     ]);
     expect(
       sql<{ code: string; parent_code: string; root_code: string; active: boolean }>(
-        `SELECT code, parent_code, root_code, active FROM crove_finance.org_account WHERE org_id = :'org'`,
+        `SELECT code, parent_code, root_code, active FROM ludy_finance.org_account WHERE org_id = :'org'`,
         vars,
       ),
     ).toEqual([{ code: '6422.VP', parent_code: '6422', root_code: '6422', active: true }]);
 
     const documents = sql<{ id: string; party_id: string; invoice_series: string; invoice_number: string; subtotal: string; vat_amount: string; total: string; created_by: string }>(
       `SELECT id, party_id, invoice_series, invoice_number, subtotal::text, vat_amount::text, total::text, created_by
-         FROM crove_finance.purchase_document WHERE org_id = :'org'`,
+         FROM ludy_finance.purchase_document WHERE org_id = :'org'`,
       vars,
     );
     expect(documents).toHaveLength(1);
@@ -302,8 +311,8 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
 
     const entries = sql<{ source_type: string; source_id: string; debit: string; credit: string; lines: number }>(
       `SELECT e.source_type, e.source_id, sum(l.debit)::text AS debit, sum(l.credit)::text AS credit, count(*)::int AS lines
-         FROM crove_finance.journal_entry e
-         JOIN crove_finance.journal_line l ON l.org_id = e.org_id AND l.entry_id = e.id
+         FROM ludy_finance.journal_entry e
+         JOIN ludy_finance.journal_line l ON l.org_id = e.org_id AND l.entry_id = e.id
         WHERE e.org_id = :'org'
         GROUP BY e.org_id, e.id`,
       vars,
@@ -317,7 +326,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
 
     const audit = sql<{ command: string; outcome: string; actor_type: string; by_user: boolean }>(
       `SELECT command, outcome, actor_type, coalesce(actor_id = :'user'::uuid, false) AS by_user
-         FROM crove_kernel.audit_event WHERE org_id = :'org' ORDER BY occurred_at, id`,
+         FROM ludy_kernel.audit_event WHERE org_id = :'org' ORDER BY occurred_at, id`,
       vars,
     );
     expect(audit).toEqual(
@@ -333,7 +342,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     // The denied attempt was aal1; the approval ran with the fresh second factor (policy P11).
     const approvals = sql<{ outcome: string; code: string | null; aal: string; mfa: boolean }>(
       `SELECT outcome, detail->>'code' AS code, detail->>'aal' AS aal, detail->>'mfaAt' IS NOT NULL AS mfa
-         FROM crove_kernel.audit_event WHERE org_id = :'org' AND command = 'kernel.proposal.approve' ORDER BY occurred_at, id`,
+         FROM ludy_kernel.audit_event WHERE org_id = :'org' AND command = 'kernel.proposal.approve' ORDER BY occurred_at, id`,
       vars,
     );
     expect(approvals).toEqual([
@@ -348,6 +357,8 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
 test('reject a proposal with a reason through the dialog', async ({ page }) => {
   await signInNewUser(page, newEmail('inbox-reject'));
   const slug = await createOrg(page, 'Công ty Từ Chối');
+  // A new org opens on the overview (#3225); the uploads are on the Inbox.
+  await page.goto(page.url().replace(/\/overview$/, '/inbox'));
 
   await test.step('upload the e-invoice and open its proposal', async () => {
     await page.locator('input[type=file]').setInputFiles(INVOICE);
@@ -399,7 +410,7 @@ test('reject a proposal with a reason through the dialog', async ({ page }) => {
   await test.step('the proposal is rejected with the reason typed', async () => {
     const rows = sql<{ status: string; decision_note: string | null }>(
       `SELECT p.status, p.decision_note
-         FROM crove_kernel.proposal p JOIN crove_kernel.tenant t ON t.org_id = p.org_id
+         FROM ludy_kernel.proposal p JOIN ludy_kernel.tenant t ON t.org_id = p.org_id
         WHERE t.slug = :'slug'`,
       { slug },
     );

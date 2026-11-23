@@ -9,7 +9,8 @@ import { createOrg, newEmail, signInNewUser } from '../lib/session.ts';
 
 test.use({ viewport: { width: 1280, height: 800 } });
 
-const MAX_STOPS = 120;
+// A safety stop for the walk, not a goal: Settings holds the apps' switches (ADR-0053) on top of its other cards.
+const MAX_STOPS = 160;
 
 // Each focusable element's look, and its parent's, while nothing has the focus.
 async function recordUnfocused(page: Page): Promise<void> {
@@ -58,6 +59,8 @@ test('every control the keyboard reaches on every sidebar screen shows a focus r
   const sidebar = page.getByRole('complementary');
   const apps = sidebar.getByRole('list', { name: 'Ứng dụng' });
   const links = new Set<string>();
+  // The shell shows the menu once the org's apps are read (ADR-0053), a moment after the address changes: wait for it instead of counting at once.
+  await expect(apps.getByRole('link').first()).toBeVisible();
   const appCount = await apps.getByRole('link').count();
   for (let i = 0; i < appCount; i++) {
     await apps.getByRole('link').nth(i).click();
@@ -69,7 +72,7 @@ test('every control the keyboard reaches on every sidebar screen shows a focus r
 
   const problems = new Set<string>();
   for (const theme of ['light', 'dark'] as const) {
-    await page.evaluate((value) => localStorage.setItem('crove-theme', value), theme);
+    await page.evaluate((value) => localStorage.setItem('ludy-theme', value), theme);
     for (const path of links) {
       await page.goto(path);
       await page.waitForLoadState('networkidle');

@@ -8,7 +8,7 @@ import { zTaxDueView } from './tax-calendar.ts';
 export const zId = z.uuid();
 // At most 16 integer digits, the size of the numeric(20,4) money columns.
 export const zMoney = z.string().regex(/^-?\d{1,16}(\.\d{1,8})?$/, 'decimal string');
-// VND per unit of a foreign currency (#918): positive, up to 10 decimals (FX_RATE_SCALE in @crove/mod-finance).
+// VND per unit of a foreign currency (#918): positive, up to 10 decimals (FX_RATE_SCALE in @ludy/mod-finance).
 export const zExchangeRate = z
   .string()
   .regex(/^\d{1,13}(\.\d{1,10})?$/, 'decimal string')
@@ -21,7 +21,7 @@ export function isCalendarDate(value: string): boolean {
   const date = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(date.getTime()) && date.toISOString().startsWith(value);
 }
-// Same rule as isCalendarDate in @crove/l10n-vn, which does not depend on this package.
+// Same rule as isCalendarDate in @ludy/l10n-vn, which does not depend on this package.
 export const zLocalDate = z.string().refine(isCalendarDate, 'YYYY-MM-DD calendar date');
 // Failed checks that make an invoice impossible to post as-is; confirming them does not help.
 // amount_scale: a VND invoice with an amount below one dong that cannot be rounded (#1282, rounding rule #1308, #2235).
@@ -31,7 +31,7 @@ export const zAccountCode = z.string().regex(ACCOUNT_CODE_PATTERN);
 export const zRole = z.enum(['owner', 'admin', 'member', 'viewer']);
 export const zSlug = z.string().regex(/^[a-z0-9][a-z0-9-]{1,46}[a-z0-9]$/);
 
-// The outcomes of the deterministic invoice checks (@crove/l10n-vn checkInvoice, issue #677), one code per wording.
+// The outcomes of the deterministic invoice checks (@ludy/l10n-vn checkInvoice, issue #677), one code per wording.
 // A check stores its code and parameters, and the SPA renders the sentence in the reader's language from them. The
 // Vietnamese `message` is kept: it is what payloads written before #677 carry, and what the SPA falls back to for a
 // code it does not know.
@@ -62,7 +62,7 @@ export const INVOICE_CHECK_CODES = [
   'signature.unverified',
   'signature.missing',
   // The signature verification in crove-extract (#674): verified (params.signer when a certificate names one), or the
-  // reason it is unverified or not applicable (SIGNATURE_REASONS in @crove/l10n-vn; missing is signature.missing).
+  // reason it is unverified or not applicable (SIGNATURE_REASONS in @ludy/l10n-vn; missing is signature.missing).
   'signature.verified',
   'signature.malformed',
   'signature.ambiguous',
@@ -97,6 +97,8 @@ export const INVOICE_CHECK_CODES = [
   'anomaly_price.jump',
   // The payment of a pay run in cash while a net pay is 5 million or more (#2532): a warning, approved one by one like the other anomaly flags.
   'anomaly_cash.payroll_limit',
+  // An ordinary payment voucher debiting a payroll payable while a pay-run payment of that liability is pending or recorded (#2793).
+  'anomaly_payroll.active_payment',
 ] as const;
 export type InvoiceCheckCode = (typeof INVOICE_CHECK_CODES)[number];
 // The ids of the anomaly flags start with this (#2380): a proposal that carries one is approved one by one.
@@ -125,7 +127,7 @@ export const zPartyRef = z.object({
 });
 
 // 'unclassified' (#2091): no rule matched the line, so it has no account yet and cannot be approved as it is.
-// The placeholder account of such a line, in no chart; the same value as UNCLASSIFIED_ACCOUNT in @crove/l10n-vn, which
+// The placeholder account of such a line, in no chart; the same value as UNCLASSIFIED_ACCOUNT in @ludy/l10n-vn, which
 // does not depend on this package (modules/finance/test checks they stay equal).
 export const UNCLASSIFIED_ACCOUNT_CODE = '000';
 export const ACCOUNT_RULE_SOURCES = ['learned', 'vendor_default', 'builtin', 'user', 'unclassified'] as const;
@@ -173,7 +175,7 @@ export const zProposedLine = z.object({
   // account of a sale line (direction 'sale', issue #313). The name predates sales.
   debitAccount: zAccountCode,
   reason: z.string().max(500),
-  // What chose debitAccount (#1399): a learned rule (crove_finance.categorization_rule, with its id and whether it is
+  // What chose debitAccount (#1399): a learned rule (ludy_finance.categorization_rule, with its id and whether it is
   // the vendor's own or every vendor's), the vendor's default account, the built-in keyword list, or a user who picked
   // it on a revision. Absent on proposals made before #1399.
   accountRule: zAccountRule.optional(),
@@ -213,7 +215,7 @@ export type RelatedInvoiceRef = z.infer<typeof zRelatedInvoiceRef>;
 
 // Where the seller's original XML can be looked up (#2267, plan docs/plan/einvoice-lookup.md): the provider, an https link on
 // one of its lookup hosts and the lookup code, as read from the invoice's PDF text. Each part may be absent (a code
-// with no link, a link with no code). The list of providers is LOOKUP_PROVIDERS in @crove/l10n-vn, which this package
+// with no link, a link with no code). The list of providers is LOOKUP_PROVIDERS in @ludy/l10n-vn, which this package
 // does not depend on; a finance test compares them. The code is invoice data (class pii): kept with the proposal, never
 // in a log, an audit row or an error text.
 export const LOOKUP_PROVIDER_IDS = ['misa', 'viettel', 'vnpt', 'bkav', 'easyinvoice', 'fpt'] as const;
@@ -238,6 +240,9 @@ export type LookupHint = z.infer<typeof zLookupHint>;
 // 3331. Absent on purchases, including every proposal raised before sales existed.
 export const zPurchaseProposal = z.object({
   direction: z.literal('sale').optional(),
+  // The books regime a sale is posted under on its issue date ('tt133', 'tt99'), for the Inbox preview of the journal (#3712 slice 4: a Circular 99 sale debits its revenue deductions to 521). Display
+  // only: the posting reads the books again. Absent on purchases and on proposals raised before it existed (read as Circular 133).
+  regime: z.string().max(20).optional(),
   seller: zPartyRef,
   buyer: zPartyRef,
   invoice: z.object({
@@ -300,6 +305,15 @@ export const zMe = z.object({
   displayName: z.string().nullable(),
   orgs: z.array(zOrgSummary),
 });
+
+// The per-org toggleable modules (ADR-0053, #3313; wire/table names keep `org.apps` / `apps_off` for compatibility):
+// `id` is a wire string (`ModuleId` names the canonical shipped set, not a closed schema constraint so custom or legacy
+// module IDs remain compatible). Each entry reports deployment availability (CROVE_MODULES), org entitlement,
+// org switch state, and effective availability. Settings groups canonical switchable modules under their parent Apps.
+export const zOrgApp = z.object({ id: z.string(), deployment: z.boolean(), entitled: z.boolean(), enabled: z.boolean(), effective: z.boolean() });
+export const zOrgApps = z.object({ apps: z.array(zOrgApp), version: z.number().int().positive(), canChange: z.boolean() });
+export const zOrgAppSet = z.object({ module: z.string().regex(/^[a-z][a-z0-9_]{0,49}$/), enabled: z.boolean() });
+export const zOrgAppSetResult = z.object({ module: z.string(), enabled: z.boolean(), version: z.number().int().positive() });
 
 // How often an org files its VAT return (issue #318).
 export const zVatFilingPeriod = z.enum(VAT_FILING_PERIODS);
@@ -474,6 +488,9 @@ export const zChannelConnection = z.object({
   chatError: z.string().nullable(),
   // When the state last changed (a switch standing for minutes was lost), or null.
   chatChangedAt: z.string().nullable(),
+  // The business accounts a Telegram bot is connected to (#3191): the account's name and @username, whether the connection is on, the bot may reply and an
+  // owner or admin allowed it, and a `ref` to name it by when allowing or stopping it; never the platform's id.
+  chatBusiness: z.array(z.strictObject({ ref: z.string(), name: z.string().nullable(), username: z.string().nullable(), enabled: z.boolean(), canReply: z.boolean(), approved: z.boolean() })).max(10),
 });
 
 // Providers connected through an OAuth dialog (Social plan S6), and the attempt's state: 32 random bytes, base64url.
@@ -562,6 +579,8 @@ export const zInboxItem = z.object({
   createdAt: z.string(),
   // The AI agent that asked for the proposal (#435); null for a proposal a person or an upload made.
   requestedByAgent: z.object({ id: zId, name: z.string() }).nullable(),
+  // The outside AI app (connected over MCP) that asked for the proposal (ADR-0051 decision 10): its self-declared name and the host it returns to, stamped from its grant; null for any other proposal.
+  requestedByMcp: z.object({ client: z.string(), host: z.string() }).nullable(),
   // Whether an extraction run read the proposal's source (so its invoice checks ran); an agent's proposal has none.
   extracted: z.boolean(),
   // An expired proposal (#876): the whole days it waited for approval before it expired, its reason; null otherwise.
@@ -680,6 +699,9 @@ export const zJournalVoucherProposal = z.object({
   // The legal entity whose books the voucher is posted in (#1280), resolved when it was asked for. Absent on proposals
   // made before #1280: the entity resolved for the approver.
   legalEntityId: zId.optional(),
+  // The confirmed count of stock whose surplus (3381) this voucher resolves (#3712 slice 2a): written only by finance's own preparer, never by a requester, and
+  // checked again at approval (modules/finance/src/stock-surplus.ts).
+  surplusCountId: zId.optional(),
 });
 export type JournalVoucherProposal = z.infer<typeof zJournalVoucherProposal>;
 
@@ -703,6 +725,42 @@ export const zInboxOriginal = z.object({
 });
 export type InboxOriginal = z.infer<typeof zInboxOriginal>;
 
+// What an AI coworker asks for in the Engage lines (E4 #3863), as the card shows it: the twin's command and the stored payload's fields, in order, each a name and a text. Every value is the AI's and is not
+// trusted: the card marks it so and renders it as plain text. The proposal's own `requestedByMcp` says which app asked.
+export const zEngageProposalField = z.object({ key: z.string(), value: z.string(), long: z.boolean() });
+// `about` says who and what the ask is about, read from the records themselves (the channel, the customer, the customer's message, the guest and time of a booking, the quote and its customer, the post and its channels, the launch and its budget), so an approver does not have to read ids.
+export const zEngageProposalAbout = z.object({
+  label: z.enum([
+    'channel',
+    'contact',
+    'customerMessage',
+    'guest',
+    'guestEmail',
+    'eventType',
+    'bookingTime',
+    'quote',
+    'quoteStatus',
+    'quoteTotal',
+    'party',
+    'partyEmail',
+    'post',
+    'channels',
+    'launch',
+    'adAccount',
+    'launchState',
+    'launchBudget',
+    'launchEnds',
+    'changeKind',
+    'changeState',
+    'changeTo',
+    'assignee',
+    'assigneeState',
+  ]),
+  value: z.string(),
+});
+export const zEngageProposalView = z.object({ command: z.string(), fields: z.array(zEngageProposalField).max(40), about: z.array(zEngageProposalAbout).max(10) });
+export type EngageProposalView = z.infer<typeof zEngageProposalView>;
+
 export const zInboxDetail = zInboxItem.extend({
   revision: z.number().int(),
   // Parsed by kind: a purchase (kind finance.purchase), a reversal (kind finance.journal_reversal) or a cash or bank
@@ -712,6 +770,8 @@ export const zInboxDetail = zInboxItem.extend({
   voucher: zCashVoucherProposal.nullable(),
   // A general journal voucher (kind finance.journal_voucher, #888).
   journalVoucher: zJournalVoucherProposal.nullable(),
+  // The ask of an AI coworker in an Engage line (a reply, a quote, a booking change, a post, an ad change), for its card; null for every other proposal.
+  engage: zEngageProposalView.nullable(),
   error: z.string().nullable(),
   file: z.object({ id: zId, filename: z.string(), contentType: z.string(), sizeBytes: z.string() }).nullable(),
   decidedAt: z.string().nullable(),
@@ -992,11 +1052,16 @@ export const zNotifications = z.object({
       subjectType: z.string().nullable(),
       subjectId: zId.nullable(),
       detail: z.record(z.string(), z.string()),
+      // True when the title in `detail` is a task title an AI coworker wrote (a person approved the ask): the screen marks its invisible characters (#4421). Absent for any other notice.
+      tainted: z.boolean().optional(),
       createdAt: z.string(),
       read: z.boolean(),
     }),
   ),
   unread: z.number().int().nonnegative(),
+  // `unread` without the notices that a finance proposal waits for the viewer's approval: Home's list counts those proposals, so the bell and
+  // Home's own notice row show this number and one thing is not counted by two. Counted on its own, with the same cap as `unread`.
+  unreadWork: z.number().int().nonnegative(),
   muted: z.array(zNotificationKind),
 });
 export type Notifications = z.infer<typeof zNotifications>;
@@ -1059,7 +1124,7 @@ export const zAccount = z.object({
 });
 
 // VAT working for a month ("2026-09") or a quarter ("2026-Q3") (issue #316): the period's input and output invoices
-// by VAT rate and the form 01/GTGT indicators they feed. The rules are in @crove/mod-finance (domain/vat-return.ts).
+// by VAT rate and the form 01/GTGT indicators they feed. The rules are in @ludy/mod-finance (domain/vat-return.ts).
 // The year is bounded (2000 to 2100) here, at the edge, so an out-of-range period is a 4xx, never a server error.
 export const VAT_PERIOD_PATTERN = /^(20\d{2}|2100)-(0[1-9]|1[0-2]|Q[1-4])$/;
 export const zVatPeriod = z.string().regex(VAT_PERIOD_PATTERN, 'YYYY-MM or YYYY-Qn');
@@ -1068,12 +1133,23 @@ export const zVatRate = z.enum(VAT_RATES);
 // declared_late (#478): a purchase invoice of an earlier period, recorded late (its own month was locked), so it is
 // declared in the period of its posting date. check_payment (#917): a purchase at or above the non-cash payment
 // threshold of its date, not shown as paid by bank and not marked by the accountant yet.
-export const VAT_WARNINGS = ['rate_unknown', 'rate_split', 'reduced_rate_outside_period', 'lines_mismatch', 'vat_mismatch', 'declared_late', 'check_payment'] as const;
+export const VAT_WARNINGS = ['rate_unknown', 'rate_split', 'reduced_rate_outside_period', 'lines_mismatch', 'vat_mismatch', 'declared_late', 'check_payment', 'late_sale'] as const;
 export const zVatWarning = z.enum(VAT_WARNINGS);
 const zRateAmounts = z.object({ rate: zVatRate, taxable: zMoney, vat: zMoney });
+// A replacement or an adjustment invoice in the VAT working (#916): the invoice it corrects, and the date its period follows: the posting date of its entry for a purchase (as every purchase
+// is counted, since input VAT may be declared in a later period than the invoice date), the date of its own invoice for a sale. The working says which, so the accountant can see and question it.
+const zVatCorrection = z.object({
+  kind: z.enum(['replacement', 'adjustment']),
+  series: z.string(),
+  number: z.string(),
+  basis: z.enum(['issue_date', 'posting_date']),
+});
 export const zVatInvoice = z.object({
   id: zId,
   issueDate: zLocalDate,
+  // The date of the sale when it is of an earlier day than the invoice (#3535): a sales invoice is declared in the period of this date, not of its issue date. Null for an
+  // invoice with no sale date of its own, and for every purchase.
+  saleDate: zLocalDate.nullable().default(null),
   // The date its journal entry is posted on: the issue date, or a later date in an open month for a purchase invoice
   // whose own month was locked (#478). The period is chosen by this date.
   postingDate: zLocalDate,
@@ -1086,6 +1162,7 @@ export const zVatInvoice = z.object({
   total: zMoney,
   rates: z.array(zRateAmounts),
   warnings: z.array(zVatWarning),
+  correction: zVatCorrection.nullable().default(null),
 });
 const zVatSide = z.object({
   // false: Crove has no source for this side yet (sales invoices); documents and totals are empty.
@@ -1144,10 +1221,28 @@ export const zVatCarryForward = z.object({
   previous: zVatFiledReturn.nullable(),
   lookedFor: z.array(zVatPeriod),
 });
+// A sales invoice issued in this period for a sale of an earlier one (#3535), with that period. `supplementary` says the earlier period is already locked or its return filed, so
+// the sale is shown there as an item to declare in a supplementary return ("cần kê khai bổ sung") and is in no main total of either period.
+export const zVatLateSale = z.object({
+  documentId: zId,
+  series: z.string(),
+  number: z.string(),
+  partyName: z.string(),
+  issueDate: zLocalDate,
+  saleDate: zLocalDate,
+  originalPeriod: zVatPeriod,
+  total: zMoney,
+  vatAmount: zMoney,
+  supplementary: z.boolean(),
+});
 export const zVatReport = z.object({
   period: z.object({ period: zVatPeriod, kind: z.enum(['month', 'quarter']), from: zLocalDate, to: zLocalDate }),
   input: zVatSide,
   output: zVatSide,
+  // The sales of this period that were issued after it was locked or its return filed (#3535): to declare in a supplementary return, not part of `output`.
+  supplementary: z.object({ documents: z.array(zVatInvoice), totals: z.object({ byRate: z.array(zRateAmounts), taxable: zMoney, vat: zMoney, documents: z.number().int().nonnegative() }) }),
+  // The sales issued in this period for a sale of an earlier period (#3535): counted there, listed here so none goes unseen.
+  lateSales: z.array(zVatLateSale),
   indicators: z.array(z.object({ code: z.string(), label: z.string(), amount: zMoney })),
   paymentChecks: zVatPaymentChecks,
   carryForward: zVatCarryForward,
@@ -1193,7 +1288,7 @@ export const zVatReturnMark = z.strictObject({
 
 // Ledger reports for a month ("2026-09"), a quarter ("2026-Q3") or a year ("2026") (issue #321): the trial balance,
 // the general ledger of one account, and the receivables (131) and payables (331) per party. The rules are in
-// @crove/mod-finance (domain/ledger-reports.ts). Balances of the general ledger are signed: debit minus credit.
+// @ludy/mod-finance (domain/ledger-reports.ts). Balances of the general ledger are signed: debit minus credit.
 export const LEDGER_PERIOD_PATTERN = /^(20\d{2})(?:-(0[1-9]|1[0-2]|Q[1-4]))?$/;
 export const zLedgerPeriod = z.string().regex(LEDGER_PERIOD_PATTERN, 'YYYY-MM, YYYY-Qn or YYYY');
 const zLedgerPeriodRange = z.object({ period: zLedgerPeriod, kind: z.enum(['month', 'quarter', 'year']), from: zLocalDate, to: zLocalDate });
@@ -1437,6 +1532,48 @@ export const zAiUsageReport = z.object({
 });
 export type AiUsageReport = z.infer<typeof zAiUsageReport>;
 
+export const TASK_CHECKLIST_STEPS_MAX = 50;
+export const TASK_CHECKLIST_STEP_MAX = 300;
+export const zTaskChecklistStep = z.strictObject({
+  text: z.string().trim().min(1).max(TASK_CHECKLIST_STEP_MAX),
+  done: z.boolean(),
+});
+export type TaskChecklistStep = z.infer<typeof zTaskChecklistStep>;
+export const zTaskChecklist = z.array(zTaskChecklistStep).max(TASK_CHECKLIST_STEPS_MAX);
+export const zTaskChecklistStepView = z.object({ text: z.string(), done: z.boolean() });
+
+/** Parses a stored task checklist jsonb column into clean step objects. */
+export function parseTaskChecklist(raw: unknown): TaskChecklistStep[] {
+  if (!Array.isArray(raw)) return [];
+  const steps: TaskChecklistStep[] = [];
+  for (const item of raw) {
+    if (
+      typeof item === 'object' &&
+      item !== null &&
+      typeof (item as { text?: unknown }).text === 'string' &&
+      typeof (item as { done?: unknown }).done === 'boolean'
+    ) {
+      steps.push({ text: (item as { text: string }).text, done: (item as { done: boolean }).done });
+    }
+  }
+  return steps;
+}
+
+/** Serializes task checklist steps with only { text, done } keys for jsonb writes. */
+export function serializeTaskChecklist(steps: readonly TaskChecklistStep[]): string {
+  return JSON.stringify(steps.map((s) => ({ text: s.text, done: s.done })));
+}
+
+/** Counts completed and total steps in a stored or parsed task checklist. */
+export function countTaskChecklistSteps(raw: unknown): { done: number; total: number } {
+  const steps = parseTaskChecklist(raw);
+  let done = 0;
+  for (const step of steps) {
+    if (step.done) done += 1;
+  }
+  return { done, total: steps.length };
+}
+
 export const zTask = z.object({
   id: zId,
   title: z.string(),
@@ -1451,6 +1588,7 @@ export const zTask = z.object({
   tainted: z.boolean(),
   createdByType: z.string(),
   due: z.string().nullable(),
+  checklist: z.array(zTaskChecklistStepView),
   createdAt: z.string(),
 });
 
@@ -1462,7 +1600,7 @@ export const zTaskDetail = z.object({
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Crove Social (Social plan §3.3). The commands in @crove/mod-social check every input again, strictly: time zones
+// Crove Social (Social plan §3.3). The commands in @ludy/mod-social check every input again, strictly: time zones
 // (IANA names), channel rules and the choice of a time or the queue are checked there, not here.
 // ---------------------------------------------------------------------------------------------------------------------
 
@@ -1488,7 +1626,7 @@ export const SOCIAL_POST_STATUSES = ['draft', 'scheduled', 'publishing', 'publis
 export const SOCIAL_DECISIONS = ['approved', 'changes_requested', 'rejected'] as const;
 // The palette a label's colour comes from (#639).
 export const SOCIAL_LABEL_COLORS = ['gray', 'red', 'orange', 'yellow', 'green', 'teal', 'blue', 'purple', 'pink'] as const;
-// The corner of an image the org's logo watermark goes in (#834); the same list as crove_social.watermark's CHECK.
+// The corner of an image the org's logo watermark goes in (#834); the same list as ludy_social.watermark's CHECK.
 export const SOCIAL_WATERMARK_CORNERS = ['top_left', 'top_right', 'bottom_left', 'bottom_right'] as const;
 // An org's white-label branding of its client reports (#1053), as the settings and the public views return it. The
 // command checks the logo (PNG, WebP or JPEG data URL, at most 64 KB, its magic number) and the accent's contrast.
@@ -1505,7 +1643,7 @@ export const zSocialReportBrandingSave = z.strictObject({
   hideCrove: z.boolean(),
 });
 // The org's team chat for Social alerts (#863): where it is, and the kinds of alert it may get; the same lists as
-// crove_social.chat_alert's CHECKs.
+// ludy_social.chat_alert's CHECKs.
 export const SOCIAL_CHAT_ALERT_TARGETS = ['telegram', 'discord'] as const;
 export const SOCIAL_CHAT_ALERT_KINDS = ['needs_approval', 'failed', 'published', 'client_answered'] as const;
 // The stages of an idea on the ideas board (#701).
@@ -1761,14 +1899,14 @@ export const zSocialRecurrence = z.strictObject({
     .max(7)
     .refine((days) => new Set(days).size === days.length, 'each weekday once'),
   time: z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/, 'a time HH:mm'),
-  // The database takes years from 2000 (crove_social.recurrence_valid).
+  // The database takes years from 2000 (ludy_social.recurrence_valid).
   until: zLocalDate.refine((d) => d >= '2000-01-01', 'a date from 2000').nullable(),
   times: z.number().int().min(1).max(SOCIAL_RECURRENCE_TIMES_MAX).nullable(),
 });
 export type SocialRecurrence = z.infer<typeof zSocialRecurrence>;
 
 // Text variations (#1260): up to 5 other texts of an evergreen or series post, in order; each evergreen repost or
-// recurring copy takes the next one in turn as its text. ai marks one AI wrote (#583). crove_social.text_variations_valid
+// recurring copy takes the next one in turn as its text. ai marks one AI wrote (#583). ludy_social.text_variations_valid
 // holds the same shape.
 export const SOCIAL_TEXT_VARIATIONS_MAX = 5;
 export const SOCIAL_TEXT_VARIATION_CHARS_MAX = 100_000;

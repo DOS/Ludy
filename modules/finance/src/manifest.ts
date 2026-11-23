@@ -2,24 +2,29 @@
 // permissions it owns. A migration that adds or drops a table or column of these schemas, or a role_permission row,
 // changes this list in the same PR; apps/kernel/test/manifest.db.test.ts checks it against the catalog. A column is
 // internal unless the second argument of columns() classifies it.
-import { MODULE_SCREENS, columns, defineModule } from '@crove/kernel-contract';
+import { MODULE_SCREENS, columns, defineModule } from '@ludy/kernel-contract';
 
 export const financeManifest = defineModule({
   id: 'finance',
   dependsOn: ['kernel'],
   tables: {
-    crove_finance: {
+    ludy_finance: {
       account: columns(['code', 'name', 'parent_code', 'standard']),
       bank_account_number: columns(['org_id', 'id', 'legal_entity_id', 'created_by', 'created_at'], { bank_account: 'payment', account_number: 'payment' }),
-      bank_feed_account: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'cursor', 'last_synced_at', 'created_by', 'created_at'], { bank_account: 'payment', external_account_id: 'payment' }),
+      bank_feed_account: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'cursor', 'last_synced_at', 'created_by', 'created_at', 'feed_from', 'last_pull_outcome', 'last_pull_outcome_at', 'last_pull_item'], { bank_account: 'payment', external_account_id: 'payment' }),
+      // The webhook hook key of a bank feed connection (#4203, Tingee S3): only the SHA-256 of the key in the address, the dates and the count of refused notices; definer-only.
+      bank_feed_hook: columns(['org_id', 'id', 'channel_connection_id', 'key_sha256', 'created_at', 'rotated_at', 'last_seen_at', 'rejected_count', 'rejected_window_start', 'stopped_at']),
       bank_feed_listed_account: columns(['org_id', 'id', 'channel_connection_id', 'listed_at'], { external_account_id: 'payment', display_name: 'pii' }),
       bank_feed_notice_pending: columns(['seq', 'provider', 'received_at'], { external_account_id: 'payment' }),
+      // A signed notice waiting for the worker (#4203): the request id, the provider's timestamp and signature, and the raw body (a payer's name and the transfer content: personal data), deleted when the worker claims it and, once older than ten minutes, by the next claim or the nightly sweep; definer-only.
+      bank_feed_webhook_notice: columns(['org_id', 'id', 'hook_id', 'request_id', 'notice_timestamp', 'signature', 'received_at'], { body: 'pii' }),
+      // MISA AMIS's callback results waiting for the worker (#3903): ids, codes and flags, and MISA's own capped text for a refusal (untrusted, never logged), deleted once the relay is done.
       bank_line: columns(['org_id', 'id', 'import_id', 'position', 'value_date', 'amount', 'running_balance', 'bank_ref', 'dedupe_key', 'ambiguous', 'created_by', 'created_at', 'legal_entity_id'], { bank_account: 'payment', counterparty_account: 'payment', description: 'pii' }),
       bank_party_rule: columns(['org_id', 'id', 'legal_entity_id', 'kind', 'party_id', 'confirmed_by', 'confirmed_at', 'source_voucher_id', 'created_at'], { key_hash: 'pii' }),
-      cash_voucher: columns(['org_id', 'id', 'voucher_type', 'number', 'voucher_date', 'cash_account', 'party_id', 'amount', 'proposal_id', 'created_by', 'created_at', 'bank_line_id', 'legal_entity_id', 'number_period', 'number_allocation_id', 'payroll_run_id', 'payroll_payment_kind'], { person_name: 'pii', description: 'pii' }),
+      cash_voucher: columns(['org_id', 'id', 'voucher_type', 'number', 'voucher_date', 'cash_account', 'party_id', 'amount', 'proposal_id', 'created_by', 'created_at', 'bank_line_id', 'legal_entity_id', 'number_period', 'number_allocation_id', 'payroll_run_id', 'payroll_payment_kind', 'supplier_payment_id'], { person_name: 'pii', description: 'pii' }),
       categorization_rule: columns(['org_id', 'id', 'vendor_party_id', 'match_kind', 'match_text', 'label', 'debit_account', 'confirmed_by', 'confirmed_at', 'source_document_id', 'created_at', 'legal_entity_id']),
       channel_order: columns(['org_id', 'id', 'legal_entity_id', 'platform', 'order_no', 'ordered_at', 'created_at']),
-      channel_order_line: columns(['org_id', 'id', 'legal_entity_id', 'order_id', 'line_key', 'sku', 'item_name', 'quantity', 'unit_price', 'amount', 'stage', 'shipped_at', 'attempt', 'source_sha256', 'source_row', 'created_at', 'updated_at']),
+      channel_order_line: columns(['org_id', 'id', 'legal_entity_id', 'order_id', 'line_key', 'sku', 'item_name', 'quantity', 'unit_price', 'amount', 'stage', 'shipped_at', 'delivered_at', 'attempt', 'goods_back', 'goods_back_attempt', 'goods_back_by', 'goods_back_at', 'source_sha256', 'source_row', 'created_at', 'updated_at']),
       channel_settlement: columns(['org_id', 'id', 'legal_entity_id', 'platform', 'period_start', 'period_end', 'payout_ref', 'report_net', 'source_sha256', 'reversal_of', 'created_at']),
       channel_settlement_line: columns(['org_id', 'id', 'legal_entity_id', 'settlement_id', 'order_id', 'line_key', 'sales', 'seller_discount', 'commission', 'service_fee', 'payment_fee', 'shipping', 'tax_withheld', 'refund', 'other', 'net', 'source_row', 'adjustment', 'created_at']),
       chart: columns(['regime', 'version', 'name']),
@@ -28,17 +33,41 @@ export const financeManifest = defineModule({
       customer_collection: columns(['org_id', 'id', 'party_id', 'terms_days', 'paused_until', 'set_by', 'created_at', 'updated_at']),
       depreciation_line: columns(['org_id', 'id', 'asset_id', 'month', 'amount', 'entry_id', 'created_at', 'legal_entity_id']),
       einvoice_connection: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'provider', 'last_test_state', 'last_tested_at', 'created_by', 'created_at'], { seller_tax_code: 'national_id_if_individual' }),
-      einvoice_draft: columns(['org_id', 'id', 'legal_entity_id', 'state', 'series_id', 'invoice_date', 'currency', 'buyer_kind', 'buyer_party_id', 'subtotal', 'vat_amount', 'total', 'idempotency_key', 'provider_ref', 'issued_number', 'issued_at', 'authority_code', 'signed_file_id', 'pdf_file_id', 'error_code', 'submitted_at', 'next_check_at', 'check_attempts', 'channel_connection_id', 'created_by', 'created_at', 'updated_at'], { buyer_tax_code: 'national_id_if_individual', buyer_name: 'pii', buyer_address: 'contact', buyer_email: 'contact' }),
+      einvoice_draft: columns(['org_id', 'id', 'legal_entity_id', 'state', 'series_id', 'invoice_date', 'currency', 'buyer_kind', 'buyer_party_id', 'subtotal', 'vat_amount', 'total', 'idempotency_key', 'provider_ref', 'issued_number', 'issued_at', 'authority_code', 'signed_file_id', 'pdf_file_id', 'error_code', 'submitted_at', 'next_check_at', 'check_attempts', 'channel_connection_id', 'created_by', 'created_at', 'updated_at', 'sale_date', 'buyer_identity_kind', 'correction_kind', 'original_draft_id', 'reason_code', 'agreement_file_id', 'correction_rate_basis'], { buyer_tax_code: 'national_id_if_individual', buyer_name: 'pii', buyer_address: 'contact', buyer_email: 'contact', buyer_identity: 'national_id', buyer_nationality: 'national_id', late_reason: 'pii' }),
       einvoice_draft_line: columns(['org_id', 'id', 'legal_entity_id', 'draft_id', 'line_no', 'description', 'unit', 'quantity', 'unit_price', 'amount', 'vat_rate', 'vat_amount', 'source_kind', 'source_id', 'source_line_no']),
+      einvoice_notice: columns(['org_id', 'id', 'legal_entity_id', 'draft_id', 'field', 'buyer_notice_state', 'buyer_notified_at', 'form_state', 'form_filed_at', 'created_by', 'created_at'], { correct_text: 'pii' }),
       einvoice_series: columns(['org_id', 'id', 'legal_entity_id', 'provider', 'template_no', 'symbol', 'description', 'is_default', 'created_by', 'created_at']),
       fixed_asset: columns(['org_id', 'id', 'kind', 'name', 'cost', 'asset_account', 'accumulated_account', 'expense_account', 'start_month', 'months', 'source_document_id', 'source_line_no', 'ended_month', 'end_reason', 'ended_by', 'created_by', 'created_at', 'legal_entity_id']),
+      household_expense_group_map: columns(['expense_group', 'account_prefix', 'effective_from', 'source', 'status']),
+      household_form_version: columns(['book', 'version', 'effective_from', 'name', 'pit_methods', 'source', 'status']),
+      household_profile: columns(['org_id', 'id', 'legal_entity_id', 'effective_from', 'tax_group', 'pit_method', 'trades', 'einvoice_registered', 'vat_cut_eligible', 'created_by', 'created_at'], { representative_name: 'pii' }),
+      household_return_form_version: columns(['form', 'version', 'effective_from', 'name', 'pit_methods', 'source', 'status']),
+      household_tax_reduction: columns(['kind', 'effective_from', 'cut_percent', 'revenue_ceiling', 'source', 'status']),
+      household_threshold: columns(['code', 'effective_from', 'amount', 'source', 'status']),
+      household_trade_rate: columns(['trade', 'effective_from', 'vat_percent', 'pit_percent', 'source', 'status']),
       input_vat_check: columns(['org_id', 'id', 'document_id', 'outcome', 'voucher_id', 'note', 'marked_by', 'created_at', 'legal_entity_id']),
       journal_entry: columns(['org_id', 'id', 'entry_date', 'source_type', 'source_id', 'created_by', 'created_at', 'created_xact_id', 'created_xact_start', 'reverses_entry_id', 'search', 'source_revision', 'payload_sha256', 'legal_entity_id'], { description: 'pii' }),
       journal_line: columns(['org_id', 'entry_id', 'line_no', 'account_code', 'debit', 'credit', 'party_id', 'legal_entity_id'], { memo: 'pii' }),
-      journal_voucher: columns(['org_id', 'id', 'number', 'voucher_date', 'proposal_id', 'created_by', 'created_at', 'closing_year', 'stock_closing_month', 'stock_count_id', 'payroll_run_id', 'legal_entity_id', 'number_period', 'number_allocation_id'], { description: 'pii' }),
+      journal_voucher: columns(['org_id', 'id', 'number', 'voucher_date', 'proposal_id', 'created_by', 'created_at', 'closing_year', 'stock_closing_month', 'stock_count_id', 'payroll_run_id', 'settlement_id', 'payout_settlement_id', 'payout_bank_line_id', 'settlement_month', 'fee_document_id', 'surplus_count_id', 'legal_entity_id', 'number_period', 'number_allocation_id'], { description: 'pii' }),
       legal_entity_books: columns(['org_id', 'id', 'legal_entity_id', 'regime', 'chart_version', 'effective_from', 'created_by', 'created_at']),
-      marketplace_connection: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'provider', 'platform', 'last_test_state', 'last_tested_at', 'poll_cursor', 'last_polled_at', 'last_poll_state', 'orders_waiting', 'created_by', 'created_at']),
+      marketplace_column_check: columns(['org_id', 'id', 'file_id', 'platform', 'assignments', 'state', 'failure', 'refusal', 'requested_by', 'requested_at', 'finished_at', 'sheet'], { preview: 'pii' }),
+      // The mapping of a marketplace report's columns a person confirmed (#4037): header texts of the mapped columns and their standard fields; no cell value, no sample, no buyer column.
+      marketplace_column_profile: columns(['org_id', 'id', 'platform', 'header_row', 'columns', 'header_digest', 'confirmed_by', 'confirmed_at']),
+      marketplace_connection: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'provider', 'platform', 'last_test_state', 'last_tested_at', 'poll_cursor', 'last_polled_at', 'last_poll_state', 'orders_waiting', 'created_by', 'created_at', 'app_key', 'authorize_state', 'authorize_state_hash', 'authorize_expires_at', 'authorize_by', 'authorize_code_key_id', 'reauthorize_by', 'authorize_pending_at', 'seller_ref'], { authorize_code_envelope: 'sensitive' }),
+      // The link between a marketplace connection and the staged file its poll ingested (#4250): ids and times only. It outlives the connection with no connection id and the time the connection went (#4284), so a purge can find the files.
+      marketplace_connection_file: columns(['org_id', 'id', 'marketplace_connection_id', 'file_id', 'created_at', 'disconnected_at']),
+      // A marketplace connection's push hook key (#4316, S1 of #4315): only the SHA-256 of the key in the address, the dates and the count of refused pushes; definer-only.
+      marketplace_hook: columns(['org_id', 'id', 'marketplace_connection_id', 'key_sha256', 'created_at', 'rotated_at', 'last_seen_at', 'rejected_count', 'rejected_window_start', 'stopped_at']),
+      // A raw push waiting for the worker (#4316): the dedupe key, the header as sent and the body as bytes (treated as personal data), deleted when the worker claims it or after ten minutes; definer-only.
+      marketplace_hook_notice: columns(['org_id', 'id', 'hook_id', 'dedupe_key', 'authorization_header', 'received_at'], { body: 'pii', request_url: 'pii' }),
       marketplace_party: columns(['org_id', 'id', 'legal_entity_id', 'platform', 'party_id', 'created_by', 'created_at']),
+      marketplace_vat_rate: columns(['org_id', 'id', 'legal_entity_id', 'effective_from', 'method', 'vat_percent', 'created_by', 'created_at']),
+      misa_amis_callback_pending: columns(['seq', 'org_refid', 'voucher_type', 'org_company_code', 'success', 'error_code', 'received_at', 'claimed_at', 'product'], { error_message: 'sensitive' }),
+      misa_amis_connection: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'org_company_code', 'last_test_state', 'last_tested_at', 'created_by', 'created_at', 'product', 'default_service_item_code', 'default_sales_item_code', 'default_sales_stock_code', 'unit_aliases']),
+      // The check of a connection's vouchers against the firm's MISA catalogue (#4112): the last request, and what was found per party (its tax code) or item (its code). No catalogue name, address or tax code is kept.
+      misa_amis_match: columns(['org_id', 'id', 'legal_entity_id', 'connection_id', 'kind', 'state', 'catalogue_code', 'catalogue_id', 'checked_at', 'confirmed_by', 'confirmed_at'], { match_key: 'national_id_if_individual', candidate_name: 'pii' }),
+      misa_amis_match_check: columns(['org_id', 'id', 'legal_entity_id', 'connection_id', 'params', 'state', 'failure', 'requested_by', 'requested_at', 'finished_at']),
+      misa_amis_push: columns(['org_id', 'id', 'legal_entity_id', 'connection_id', 'source_type', 'source_id', 'voucher_type', 'part', 'org_refid', 'org_refno', 'payload_digest', 'params', 'state', 'attempts', 'requested_by', 'requested_at', 'sent_at', 'answered_at', 'updated_at'], { reason: 'pii' }),
       misa_goods_code: columns(['org_id', 'id', 'account_code', 'item_code', 'warehouse_code', 'updated_by', 'updated_at']),
       org_account: columns(['org_id', 'id', 'code', 'name', 'parent_code', 'root_code', 'active', 'created_by', 'created_at', 'updated_by', 'updated_at']),
       period_balance_delta: columns(['org_id', 'id', 'entry_id', 'account_code', 'period_month', 'debit', 'credit', 'line_count', 'legal_entity_id']),
@@ -53,9 +82,12 @@ export const financeManifest = defineModule({
       stock_count: columns(['org_id', 'id', 'legal_entity_id', 'count_date', 'status', 'note', 'loss_norm_percent', 'created_by', 'created_at', 'confirmed_by', 'confirmed_at', 'voucher_id']),
       stock_count_line: columns(['org_id', 'id', 'legal_entity_id', 'count_id', 'item_id', 'counted_quantity', 'unit_cost']),
       stock_item: columns(['org_id', 'id', 'legal_entity_id', 'code', 'name', 'unit', 'kind', 'stock_account', 'trade', 'active', 'created_by', 'created_at', 'updated_at']),
-      stock_move: columns(['org_id', 'id', 'legal_entity_id', 'item_id', 'move_date', 'quantity', 'source_type', 'document_id', 'line_no', 'line_attempt', 'order_line_id', 'order_move', 'order_attempt', 'count_line_id', 'amount', 'crm_order_id', 'crm_order_line_no', 'reverses_move_id', 'created_by', 'created_at']),
+      stock_move: columns(['org_id', 'id', 'legal_entity_id', 'item_id', 'move_date', 'quantity', 'source_type', 'document_id', 'line_no', 'line_attempt', 'order_line_id', 'order_move', 'order_attempt', 'count_line_id', 'amount', 'crm_order_id', 'crm_order_line_no', 'reverses_move_id', 'return_of_move_id', 'created_by', 'created_at']),
       stock_period: columns(['org_id', 'id', 'legal_entity_id', 'period_month', 'voucher_id', 'total_cost', 'closed_by', 'closed_at']),
       stock_period_item: columns(['org_id', 'id', 'legal_entity_id', 'period_id', 'item_id', 'opening_quantity', 'opening_value', 'in_quantity', 'in_value', 'out_quantity', 'out_value', 'closing_quantity', 'closing_value', 'unit_cost']),
+      supplier_bank_account: columns(['org_id', 'id', 'party_id', 'bank_name', 'hash_key_id', 'status', 'retired_at', 'created_by', 'created_at'], { account_holder_sealed: 'payment', number_sealed: 'payment', number_hash: 'payment', last4: 'payment' }),
+      supplier_bank_account_change: columns(['org_id', 'id', 'party_id', 'account_id', 'kind', 'changed_by', 'changed_at', 'step_up_at'], { old_number_hash: 'payment', new_number_hash: 'payment' }),
+      supplier_payment: columns(['org_id', 'id', 'legal_entity_id', 'party_id', 'purchase_document_id', 'amount', 'currency', 'bank_account_id', 'hash_key_id', 'status', 'proposal_id', 'approved_by', 'approved_at', 'approver_step_up_at', 'payable_after', 'hold_reason', 'confirmed_by', 'confirmed_at', 'confirmed_channel', 'stale_at', 'cancelled_by', 'cancelled_at', 'cancel_reason', 'paid_at', 'created_at', 'exported_by', 'exported_at', 'export_count', 'first_exported_at'], { number_hash: 'payment' }),
       vat_return_filed: columns(['org_id', 'id', 'period', 'status', 'source', 'carried_in_amount', 'deductible_amount', 'carried_out_amount', 'marked_by', 'created_at', 'legal_entity_id']),
       vendor_account_rule: columns(['org_id', 'party_id', 'debit_account', 'confirmed_by', 'updated_at']),
     },
@@ -77,19 +109,26 @@ export const financeManifest = defineModule({
     { type: 'finance.bank_party_rule', table: 'bank_party_rule', legalEntityScoped: true, audit: 'command' },
     { type: 'finance.cash_voucher', table: 'cash_voucher', legalEntityScoped: true, numbering: { docType: 'finance.cash_voucher.<voucher_type>' }, audit: 'append_only' },
     { type: 'finance.categorization_rule', table: 'categorization_rule', legalEntityScoped: true, audit: 'command' },
+    { type: 'finance.channel_order_line', table: 'channel_order_line', legalEntityScoped: true, audit: 'command' },
     { type: 'finance.customer_collection', table: 'customer_collection', legalEntityScoped: false, audit: 'command' },
     { type: 'finance.einvoice_connection', table: 'einvoice_connection', legalEntityScoped: true, audit: 'command' },
     { type: 'finance.einvoice_draft', table: 'einvoice_draft', legalEntityScoped: true, audit: 'command' },
+    { type: 'finance.einvoice_notice', table: 'einvoice_notice', legalEntityScoped: true, audit: 'command' },
     { type: 'finance.einvoice_series', table: 'einvoice_series', legalEntityScoped: true, audit: 'command' },
     { type: 'finance.fixed_asset', table: 'fixed_asset', legalEntityScoped: true, audit: 'command' },
     { type: 'finance.journal_entry', table: 'journal_entry', legalEntityScoped: true, audit: 'append_only' },
     { type: 'finance.journal_voucher', table: 'journal_voucher', legalEntityScoped: true, numbering: { docType: 'finance.journal_voucher' }, audit: 'append_only' },
     { type: 'finance.marketplace_connection', table: 'marketplace_connection', legalEntityScoped: true, audit: 'command' },
+    { type: 'finance.misa_amis_connection', table: 'misa_amis_connection', legalEntityScoped: true, audit: 'command' },
+    { type: 'finance.misa_amis_push', table: 'misa_amis_push', legalEntityScoped: true, audit: 'command' },
     { type: 'finance.purchase_document', table: 'purchase_document', legalEntityScoped: true, audit: 'append_only' },
     { type: 'finance.stock_item', table: 'stock_item', legalEntityScoped: true, audit: 'command' },
     { type: 'finance.stock_move', table: 'stock_move', legalEntityScoped: true, audit: 'append_only' },
     { type: 'finance.stock_period', table: 'stock_period', legalEntityScoped: true, audit: 'append_only' },
+    { type: 'finance.supplier_bank_account', table: 'supplier_bank_account', legalEntityScoped: false, audit: 'command' },
+    { type: 'finance.supplier_bank_account_change', table: 'supplier_bank_account_change', legalEntityScoped: false, audit: 'command' },
+    { type: 'finance.supplier_payment', table: 'supplier_payment', legalEntityScoped: true, audit: 'command' },
   ],
-  // Its screens in the app and its menu items (#1652), kept with the other modules' in @crove/kernel-contract.
+  // Its screens in the app and its menu items (#1652), kept with the other modules' in @ludy/kernel-contract.
   ...MODULE_SCREENS.finance,
 });

@@ -5,8 +5,8 @@
 // migration's definer (calendar_feed_events), which the HTTP edge calls with the token.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { newReportToken, reportTokenHash } from './report-links.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -20,7 +20,7 @@ function requireUser(ctx: CommandContext): string {
 // Revokes the org's live feed, if any; true when there was one.
 async function revokeLive(ctx: CommandContext, userId: string): Promise<boolean> {
   const done = await ctx.trx
-    .updateTable('crove_social.calendar_feed')
+    .updateTable('ludy_social.calendar_feed')
     .set({ revoked_at: ctx.now, revoked_by: userId })
     .where('org_id', '=', ctx.orgId)
     .where('revoked_at', 'is', null)
@@ -38,10 +38,10 @@ export const calendarFeedCreate = defineCommand({
   handler: async (ctx) => {
     const userId = requireUser(ctx);
     // One create at a time per org, so the revoke below always frees the one live slot.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`crove_social.calendar_feed:${ctx.orgId}`}))`.execute(ctx.trx);
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`ludy_social.calendar_feed:${ctx.orgId}`}))`.execute(ctx.trx);
     await revokeLive(ctx, userId);
     const token = newReportToken();
-    await ctx.trx.insertInto('crove_social.calendar_feed').values({ org_id: ctx.orgId, token_sha256: reportTokenHash(token), created_by: userId, created_at: ctx.now }).execute();
+    await ctx.trx.insertInto('ludy_social.calendar_feed').values({ org_id: ctx.orgId, token_sha256: reportTokenHash(token), created_by: userId, created_at: ctx.now }).execute();
     // The token leaves only in this answer: the audit keeps the input, never the output.
     return { token };
   },
@@ -49,6 +49,7 @@ export const calendarFeedCreate = defineCommand({
 
 export const calendarFeedRevoke = defineCommand({
   name: 'social.calendar_feed.revoke',
+  runsWhenOff: 'revokes a calendar feed link, so a leaked link can still be killed while the app is off',
   input: z.strictObject({}),
   risk: 'R1',
   sideEffect: 'internal',
@@ -67,7 +68,7 @@ export const calendarFeedGet = defineQuery({
   input: z.object({}),
   access: ALL,
   handler: async (ctx): Promise<CalendarFeedView | null> => {
-    const row = await ctx.trx.selectFrom('crove_social.calendar_feed').select(['created_at', 'created_by']).where('org_id', '=', ctx.orgId).where('revoked_at', 'is', null).executeTakeFirst();
+    const row = await ctx.trx.selectFrom('ludy_social.calendar_feed').select(['created_at', 'created_by']).where('org_id', '=', ctx.orgId).where('revoked_at', 'is', null).executeTakeFirst();
     return row ? { createdAt: row.created_at.toISOString(), createdBy: row.created_by } : null;
   },
 });

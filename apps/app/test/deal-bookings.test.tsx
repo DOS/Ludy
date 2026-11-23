@@ -5,7 +5,7 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BookingItem } from '@crove/kernel-contract';
+import type { BookingItem } from '@ludy/kernel-contract';
 import { I18nProvider } from '../src/i18n/provider.tsx';
 import { setActiveLocale } from '../src/i18n/runtime.ts';
 
@@ -38,7 +38,7 @@ vi.mock('../src/lib/api.ts', async () => {
 });
 
 const { BookingDeal, DealBookings } = await import('../src/components/booking-deal.tsx');
-const { bookingLinkOf } = await import('../src/components/booking-suggest.tsx');
+const { bookingLinkOf } = await import('../src/lib/booking.ts');
 const { dealIdOf } = await import('../src/routes/booking-page.tsx');
 
 const DEAL_ID = '00000000-0000-4000-8000-000000000040';

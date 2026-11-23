@@ -8,12 +8,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { metered, type AiUsage, type ReplyDraftRequest, type ReplyDraftResult } from '@crove/agent';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { ConversationDetail, ConversationEvent, SavedReplyListed } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
+import { metered, type AiUsage, type ReplyDraftRequest, type ReplyDraftResult } from '@ludy/agent';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { ConversationDetail, ConversationEvent, SavedReplyListed } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
 import { failUndraftable, requestDueConversationDrafts, runConversationDraft, sweepConversationDrafts, type ConversationDraftJob } from '../src/conversations-worker.ts';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { systemMeter } from '../src/ai-meter.ts';
@@ -63,7 +63,7 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(user, orgId)]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(user, orgId)]);
       return await fn(c);
     } finally {
       await c.query('ROLLBACK').catch(() => {});
@@ -77,9 +77,9 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const [adm, member, viewer, desk] = [await person('admin'), await person('member'), await person('viewer'), await person('desk')];
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer'), ($1, $5, 'member')", [orgId, adm, member, viewer, desk]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer'), ($1, $5, 'member')", [orgId, adm, member, viewer, desk]);
     const connectionId = randomUUID();
-    await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'zalo_oa', $3, 'Zalo thử', $4)", [orgId, connectionId, `acct-${randomUUID().slice(0, 8)}`, owner]);
+    await rows("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'zalo_oa', $3, 'Zalo thử', $4)", [orgId, connectionId, `acct-${randomUUID().slice(0, 8)}`, owner]);
     return { orgId, owner, admin: adm, member, viewer, desk, connectionId };
   }
 
@@ -96,11 +96,11 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
     ...extra,
   });
   const ingest = (o: Org, events: ConversationEvent[]) => worker.execute('kernel.conversation.ingest', { connectionId: o.connectionId, events }, { actor: SYSTEM, orgId: o.orgId });
-  const threadOf = async (o: Org, external: string) => ((await rows<{ id: string }>('SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, external]))[0] as { id: string }).id;
+  const threadOf = async (o: Org, external: string) => ((await rows<{ id: string }>('SELECT id FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, external]))[0] as { id: string }).id;
   const detail = (o: Org, id: string, user = o.owner) => rt.query<ConversationDetail>('kernel.conversation.get', { conversationId: id }, { actor: asUser(user), orgId: o.orgId });
   const drafts = (o: Org) =>
     rows<{ id: string; state: string; body: string | null; source: string; tainted: boolean; draft_length: number | null; final_length: number | null; edit_size: number | null; basis_seq: number }>(
-      'SELECT id, state, body, source, tainted, draft_length, final_length, edit_size, basis_seq FROM crove_kernel.conversation_draft WHERE org_id = $1 ORDER BY created_at, id',
+      'SELECT id, state, body, source, tainted, draft_length, final_length, edit_size, basis_seq FROM ludy_kernel.conversation_draft WHERE org_id = $1 ORDER BY created_at, id',
       [o.orgId],
     );
   const request = (o: Org, conversationId: string, user = o.owner) => rt.execute<{ draftId: string; queued: boolean }>('kernel.conversation.draft_request', { conversationId }, { actor: asUser(user), orgId: o.orgId });
@@ -138,17 +138,17 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     workerDb = createDb(workerPool);
     const registered = { commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: null })] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register(registered);
@@ -174,7 +174,7 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       await create(o.admin, { title: 'Giờ mở cửa', body: 'Shop mở cửa 8h đến 21h ạ', keywords: ['giờ mở cửa'] });
       // A viewer writes none.
       await expect(create(o.viewer, { title: 'x', body: 'y' })).rejects.toMatchObject({ code: 'FORBIDDEN' });
-      await expect(asMember(o.orgId, o.viewer, (c) => c.query("INSERT INTO crove_kernel.saved_reply (org_id, title, body) VALUES ($1, 'x', 'y')", [o.orgId]))).rejects.toMatchObject({ code: '42501' });
+      await expect(asMember(o.orgId, o.viewer, (c) => c.query("INSERT INTO ludy_kernel.saved_reply (org_id, title, body) VALUES ($1, 'x', 'y')", [o.orgId]))).rejects.toMatchObject({ code: '42501' });
       const list = await rt.query<SavedReplyListed>('kernel.conversation.saved_reply_list', {}, { actor: asUser(o.viewer), orgId: o.orgId });
       expect(list.replies.map((r) => r.title)).toEqual(['Địa chỉ', 'Giá áo thun', 'Giờ mở cửa']);
       // The keywords are cleaned: the empty ones and the repeats (after the matching's own reading) are dropped.
@@ -190,14 +190,14 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       await expect(rt.execute('kernel.conversation.saved_reply_delete', { id: price.id }, { actor: asUser(o.member), orgId: o.orgId })).rejects.toMatchObject({ code: 'SAVED_REPLY_NOT_FOUND' });
       expect((await detail(o, id)).suggestions).toEqual([]);
       // No text in the audit row of a write: ids and lengths.
-      const audit = JSON.stringify(await rows("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'kernel.conversation.saved_reply_%'", [o.orgId]));
+      const audit = JSON.stringify(await rows("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'kernel.conversation.saved_reply_%'", [o.orgId]));
       expect(audit).not.toContain('Áo thun cotton');
       expect(audit).not.toContain('Giá áo thun');
     });
 
     it('are limited to 200 an org', async () => {
       const o = await org();
-      await rows("INSERT INTO crove_kernel.saved_reply (org_id, title, body) SELECT $1, 'Mẫu ' || g, 'Nội dung' FROM generate_series(1, 200) g", [o.orgId]);
+      await rows("INSERT INTO ludy_kernel.saved_reply (org_id, title, body) SELECT $1, 'Mẫu ' || g, 'Nội dung' FROM generate_series(1, 200) g", [o.orgId]);
       await expect(rt.execute('kernel.conversation.saved_reply_create', { title: 'Thêm', body: 'x' }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'SAVED_REPLY_LIMIT' });
     });
   });
@@ -213,7 +213,7 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       // Asked again: the same draft, nothing queued twice.
       expect(await request(o, id)).toEqual({ draftId: asked.draftId, queued: false });
       expect((await detail(o, id)).draft).toEqual({ id: asked.draftId, state: 'requested', source: 'asked', body: null, tainted: true });
-      const events = await rows<{ payload: unknown }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.conversation.draft_queued'", [o.orgId]);
+      const events = await rows<{ payload: unknown }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.conversation.draft_queued'", [o.orgId]);
       expect(events.map((e) => e.payload)).toEqual([{ draftId: asked.draftId, conversationId: id }]);
       // The job: the model is told the end of the thread and the saved replies that fit, in Vietnamese, within the channel's limit.
       const m = model(written);
@@ -226,15 +226,15 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       expect(shown.draft).toEqual({ id: asked.draftId, state: 'live', source: 'asked', body: DRAFT_TEXT, tainted: true });
       expect(shown.suggestions.map((s) => s.title)).toEqual(['Giá áo thun']);
       // The cost of the call counts against the org's AI cost limit: (1000 x 1000 + 200 x 3000) / 1e6.
-      expect(Number((await rows<{ amount: string }>("SELECT sum(amount)::text AS amount FROM crove_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost'", [o.orgId]))[0]?.amount)).toBeCloseTo(1.6, 6);
+      expect(Number((await rows<{ amount: string }>("SELECT sum(amount)::text AS amount FROM ludy_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost'", [o.orgId]))[0]?.amount)).toBeCloseTo(1.6, 6);
       // Nobody's text in an audit row or an event: the customer's and Vy's (ids, lengths and codes only).
       const leaks = await rows<{ n: string }>(
-        `SELECT (SELECT count(*) FROM crove_kernel.audit_event WHERE org_id = $1 AND (detail::text LIKE '%xyzzy%' OR detail::text LIKE '%cotton%' OR detail::text LIKE '%Dạ áo%'))
-              + (SELECT count(*) FROM crove_kernel.outbox_event WHERE org_id = $1 AND (payload::text LIKE '%xyzzy%' OR payload::text LIKE '%cotton%' OR payload::text LIKE '%Dạ áo%')) AS n`,
+        `SELECT (SELECT count(*) FROM ludy_kernel.audit_event WHERE org_id = $1 AND (detail::text LIKE '%xyzzy%' OR detail::text LIKE '%cotton%' OR detail::text LIKE '%Dạ áo%'))
+              + (SELECT count(*) FROM ludy_kernel.outbox_event WHERE org_id = $1 AND (payload::text LIKE '%xyzzy%' OR payload::text LIKE '%cotton%' OR payload::text LIKE '%Dạ áo%')) AS n`,
         [o.orgId],
       );
       expect(Number(leaks[0]?.n)).toBe(0);
-      const [audit] = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.draft_record' AND outcome = 'ok'", [o.orgId]);
+      const [audit] = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.draft_record' AND outcome = 'ok'", [o.orgId]);
       expect(audit?.detail).toMatchObject({ draft_id: asked.draftId, outcome: 'written', length: DRAFT_TEXT.length });
     });
 
@@ -247,7 +247,7 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       await expect(request(o, id, o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
       expect((await request(o, id, o.admin)).queued).toBe(true);
       // The business answered last: nothing to draft.
-      await rows("UPDATE crove_kernel.conversation_draft SET state = 'discarded' WHERE org_id = $1", [o.orgId]);
+      await rows("UPDATE ludy_kernel.conversation_draft SET state = 'discarded' WHERE org_id = $1", [o.orgId]);
       await rt.execute('kernel.conversation.reply', { conversationId: id, body: 'Dạ shop trả lời ạ', lastSeenSeq: 1 }, { actor: asUser(o.owner), orgId: o.orgId });
       await expect(request(o, id)).rejects.toMatchObject({ code: 'DRAFT_NOT_NEEDED' });
     });
@@ -283,7 +283,7 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       expect(await run(o, m.writer, asked.draftId, id, { ai_cost: '1' })).toBe('limit');
       expect(m.asked).toHaveLength(0);
       expect((await drafts(o)).at(-1)?.state).toBe('discarded');
-      const [audit] = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.draft_record' AND detail->>'code' = 'AI_LIMIT'", [o.orgId]);
+      const [audit] = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.draft_record' AND detail->>'code' = 'AI_LIMIT'", [o.orgId]);
       expect(audit?.detail).toMatchObject({ outcome: 'none', code: 'AI_LIMIT' });
     });
 
@@ -303,14 +303,14 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       // One call was made; the refused draft is discarded with its code, and the thread can be asked about again (the member's own ask is rationed in the API).
       expect(m.asked).toHaveLength(1);
       expect((await drafts(o)).map((d) => d.state)).toEqual(['live', 'discarded']);
-      const [audit] = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.draft_record' AND detail->>'code' = 'RATE_LIMITED'", [o.orgId]);
+      const [audit] = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.draft_record' AND detail->>'code' = 'RATE_LIMITED'", [o.orgId]);
       expect(audit?.detail).toMatchObject({ outcome: 'none', code: 'RATE_LIMITED' });
       expect((await request(o, two.id)).queued).toBe(true);
     });
 
     it('makes no draft once the AI budget of the month is spent, and says so', async () => {
       const o = await org();
-      await admin((c) => c.query("INSERT INTO crove_kernel.budget_policy (org_id, scope, target, monthly_limit, updated_by) VALUES ($1, 'org', '*', 0, $2)", [o.orgId, o.owner]));
+      await admin((c) => c.query("INSERT INTO ludy_kernel.budget_policy (org_id, scope, target, monthly_limit, updated_by) VALUES ($1, 'org', '*', 0, $2)", [o.orgId, o.owner]));
       await ingest(o, [event('spent')]);
       const id = await threadOf(o, 'spent');
       const asked = await request(o, id);
@@ -319,7 +319,7 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       // The meter refused before the model was asked; the draft is discarded with its code, and the thread can be asked about again.
       expect(m.asked).toHaveLength(0);
       expect((await drafts(o)).at(-1)?.state).toBe('discarded');
-      const [audit] = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.draft_record' AND detail->>'code' = 'AI_BUDGET'", [o.orgId]);
+      const [audit] = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.draft_record' AND detail->>'code' = 'AI_BUDGET'", [o.orgId]);
       expect(audit?.detail).toMatchObject({ outcome: 'none', code: 'AI_BUDGET' });
     });
 
@@ -357,7 +357,7 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
     it('does not stop the removal of a member who asked for a draft: the name goes, the draft stays whatever its state', async () => {
       const o = await org();
       const asker = await person('asker');
-      await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [o.orgId, asker]);
+      await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [o.orgId, asker]);
       await ingest(o, [event('gone1'), event('gone2')]);
       const [g1, g2] = [await threadOf(o, 'gone1'), await threadOf(o, 'gone2')];
       const asked = await request(o, g1, asker);
@@ -366,8 +366,8 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       expect(await run(o, model(written).writer, used.draftId, g2)).toBe('written');
       await rt.execute('kernel.conversation.reply', { conversationId: g2, body: 'Dạ vâng ạ', lastSeenSeq: 1, draftId: used.draftId }, { actor: asUser(o.owner), orgId: o.orgId });
       // The member is removed: the foreign key clears who asked, on a live draft and on a decided one, and nothing else of them changes.
-      await rows('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, asker]);
-      const after = await rows<{ state: string; requested_by: string | null; body: string | null }>('SELECT state, requested_by, body FROM crove_kernel.conversation_draft WHERE org_id = $1 ORDER BY created_at, id', [o.orgId]);
+      await rows('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, asker]);
+      const after = await rows<{ state: string; requested_by: string | null; body: string | null }>('SELECT state, requested_by, body FROM ludy_kernel.conversation_draft WHERE org_id = $1 ORDER BY created_at, id', [o.orgId]);
       expect(after).toEqual([{ state: 'live', requested_by: null, body: DRAFT_TEXT }, { state: 'used', requested_by: null, body: null }]);
     });
 
@@ -398,17 +398,17 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       await ingest(o, [event('g')]);
       const id = await threadOf(o, 'g');
       await request(o, id);
-      const [thread] = await rows<{ channel_connection_id: string }>('SELECT channel_connection_id FROM crove_kernel.conversation WHERE org_id = $1 AND id = $2', [o.orgId, id]);
+      const [thread] = await rows<{ channel_connection_id: string }>('SELECT channel_connection_id FROM ludy_kernel.conversation WHERE org_id = $1 AND id = $2', [o.orgId, id]);
       const insert = (user: string, values: { state?: string; body?: string | null; source?: string; by?: string }) =>
         asMember(o.orgId, user, (c) =>
           c.query(
-            `INSERT INTO crove_kernel.conversation_draft (org_id, conversation_id, channel_connection_id, kind, basis_seq, source, requested_by, state, body, tainted)
+            `INSERT INTO ludy_kernel.conversation_draft (org_id, conversation_id, channel_connection_id, kind, basis_seq, source, requested_by, state, body, tainted)
              VALUES ($1, $2, $3, 'direct', 1, $4, $5, $6, $7, true)`,
             [o.orgId, id, thread?.channel_connection_id, values.source ?? 'asked', values.by ?? user, values.state ?? 'requested', values.body ?? null],
           ),
         );
       // A second request is a second open draft: the unique index. One in another's name, with text, live or from the relay: the guard.
-      await rows("UPDATE crove_kernel.conversation_draft SET state = 'discarded' WHERE org_id = $1", [o.orgId]);
+      await rows("UPDATE ludy_kernel.conversation_draft SET state = 'discarded' WHERE org_id = $1", [o.orgId]);
       await expect(insert(o.owner, { by: o.admin })).rejects.toMatchObject({ code: '42501', message: 'DRAFT_FORBIDDEN' });
       await expect(insert(o.owner, { source: 'auto' })).rejects.toMatchObject({ code: '42501', message: 'DRAFT_FORBIDDEN' });
       await expect(insert(o.owner, { state: 'live', body: 'Vy nói giả' })).rejects.toMatchObject({ code: '42501' });
@@ -417,15 +417,15 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       await expect(insert(o.desk, {})).rejects.toMatchObject({ code: '42501' });
       // The system writes the text; a member's update of a requested draft to live, or with text, is refused; a decided draft never changes.
       const open = await request(o, id);
-      await expect(asMember(o.orgId, o.owner, (c) => c.query("UPDATE crove_kernel.conversation_draft SET state = 'live', body = 'Vy nói giả' WHERE id = $1", [open.draftId]))).rejects.toMatchObject({ code: '42501', message: 'DRAFT_FORBIDDEN' });
-      await expect(asMember(o.orgId, o.owner, (c) => c.query("UPDATE crove_kernel.conversation_draft SET tainted = false WHERE id = $1", [open.draftId]))).rejects.toBeTruthy();
+      await expect(asMember(o.orgId, o.owner, (c) => c.query("UPDATE ludy_kernel.conversation_draft SET state = 'live', body = 'Vy nói giả' WHERE id = $1", [open.draftId]))).rejects.toMatchObject({ code: '42501', message: 'DRAFT_FORBIDDEN' });
+      await expect(asMember(o.orgId, o.owner, (c) => c.query("UPDATE ludy_kernel.conversation_draft SET tainted = false WHERE id = $1", [open.draftId]))).rejects.toBeTruthy();
       expect(await run(o, model(written).writer, open.draftId, id)).toBe('written');
       // Used without the lengths a reply records is no draft state the table accepts (the check), and the text of a live draft is the system's.
-      await expect(asMember(o.orgId, o.owner, (c) => c.query("UPDATE crove_kernel.conversation_draft SET body = 'Sửa chữ của Vy' WHERE id = $1", [open.draftId]))).rejects.toMatchObject({ code: '42501', message: 'DRAFT_FORBIDDEN' });
-      await expect(asMember(o.orgId, o.owner, (c) => c.query("UPDATE crove_kernel.conversation_draft SET state = 'used', body = NULL WHERE id = $1", [open.draftId]))).rejects.toMatchObject({ code: '23514' });
+      await expect(asMember(o.orgId, o.owner, (c) => c.query("UPDATE ludy_kernel.conversation_draft SET body = 'Sửa chữ của Vy' WHERE id = $1", [open.draftId]))).rejects.toMatchObject({ code: '42501', message: 'DRAFT_FORBIDDEN' });
+      await expect(asMember(o.orgId, o.owner, (c) => c.query("UPDATE ludy_kernel.conversation_draft SET state = 'used', body = NULL WHERE id = $1", [open.draftId]))).rejects.toMatchObject({ code: '23514' });
       expect((await drafts(o)).at(-1)).toMatchObject({ state: 'live', body: DRAFT_TEXT, tainted: true });
       // A member does not delete a draft row; the system does, in the thread's deletion.
-      await expect(asMember(o.orgId, o.owner, (c) => c.query('DELETE FROM crove_kernel.conversation_draft'))).resolves.toMatchObject({ rowCount: 0 });
+      await expect(asMember(o.orgId, o.owner, (c) => c.query('DELETE FROM ludy_kernel.conversation_draft'))).resolves.toMatchObject({ rowCount: 0 });
       // The agent write guard sits on both tables, as on every tenant table: an agent context is refused whatever the policies say.
       const guarded = await rows<{ relname: string }>(
         `SELECT c.relname FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
@@ -440,7 +440,7 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       const id = await threadOf(o, 'h');
       const asked = await request(o, id);
       expect(await run(o, model(written).writer, asked.draftId, id)).toBe('written');
-      const count = (user: string) => asMember(o.orgId, user, async (c) => (await c.query('SELECT count(*)::int AS n FROM crove_kernel.conversation_draft')).rows[0].n as number);
+      const count = (user: string) => asMember(o.orgId, user, async (c) => (await c.query('SELECT count(*)::int AS n FROM ludy_kernel.conversation_draft')).rows[0].n as number);
       expect(await count(o.owner)).toBe(1);
       expect(await count(o.admin)).toBe(1);
       expect(await count(o.desk)).toBe(0);
@@ -466,7 +466,7 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       expect((await rt.query<SavedReplyListed>('kernel.conversation.saved_reply_list', {}, { actor: asUser(o.owner), orgId: o.orgId })).replies[0]?.useCount).toBe(1);
       expect((await detail(o, id)).draft).toBeNull();
       // The audit row of the reply names the draft and the lengths, not a word of either text.
-      const audit = JSON.stringify(await rows("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.reply'", [o.orgId]));
+      const audit = JSON.stringify(await rows("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.reply'", [o.orgId]));
       expect(audit).toContain(asked.draftId);
       expect(audit).not.toContain('cotton');
       expect(audit).not.toContain('Dạ');
@@ -486,7 +486,7 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       await expect(rt.execute('kernel.conversation.draft_discard', { draftId: randomUUID() }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'DRAFT_NOT_FOUND' });
       expect((await drafts(o)).map((d) => [d.state, d.body, d.edit_size])).toEqual([['discarded', null, null], ['discarded', null, null]]);
       // A decided draft's text is gone, so a retention purge or an erasure has nothing of Vy's text to delete.
-      expect((await rows<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.conversation_draft WHERE org_id = $1 AND body IS NOT NULL', [o.orgId]))[0]?.n).toBe('0');
+      expect((await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.conversation_draft WHERE org_id = $1 AND body IS NOT NULL', [o.orgId]))[0]?.n).toBe('0');
     });
 
     it('a reply that still holds the contact-name placeholder is refused, writes nothing and leaves the draft and the saved reply as they were (#3102)', async () => {
@@ -496,7 +496,7 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       const id = await threadOf(o, 'g');
       const asked = await request(o, id);
       expect(await run(o, model(written).writer, asked.draftId, id)).toBe('written');
-      const sent = () => rows<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.conversation_message WHERE org_id = $1 AND conversation_id = $2 AND direction = 'out'", [o.orgId, id]);
+      const sent = () => rows<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.conversation_message WHERE org_id = $1 AND conversation_id = $2 AND direction = 'out'", [o.orgId, id]);
       // Every spelling of the placeholder is refused, in a public and in a private reply alike, before anything is read or written.
       for (const body of ['Chào {tên}, shop còn hàng ạ', 'Chào {Tên} ạ', 'Chào {ten} ạ', 'Chào { tên } ạ']) {
         await expect(rt.execute('kernel.conversation.reply', { conversationId: id, body, lastSeenSeq: 1, draftId: asked.draftId, savedReplyId: saved.id }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'REPLY_PLACEHOLDER' });
@@ -555,7 +555,7 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       await ingest(o, [event('lost')]);
       const id = await threadOf(o, 'lost');
       const asked = await request(o, id);
-      await asOwnerSql("UPDATE crove_kernel.conversation_draft SET created_at = now() - interval '20 minutes' WHERE org_id = $1 AND id = $2", [o.orgId, asked.draftId]);
+      await asOwnerSql("UPDATE ludy_kernel.conversation_draft SET created_at = now() - interval '20 minutes' WHERE org_id = $1 AND id = $2", [o.orgId, asked.draftId]);
       // The list of conversations to draft for no longer settles anything (it is asked only where a model is configured); the sweep does.
       await requestDueConversationDrafts({ runtime: worker, workerDb, force: true });
       expect((await drafts(o)).map((d) => d.state)).toEqual(['requested']);
@@ -573,9 +573,9 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       const live = await request(o, oldLive);
       const ask = await request(o, oldAsk);
       const fresh = await request(o, freshLive);
-      await asOwnerSql("UPDATE crove_kernel.conversation_draft SET state = 'live', body = $3, written_at = now() - interval '8 days' WHERE org_id = $1 AND id = $2", [o.orgId, live.draftId, DRAFT_TEXT]);
-      await asOwnerSql("UPDATE crove_kernel.conversation_draft SET created_at = now() - interval '20 minutes' WHERE org_id = $1 AND id = $2", [o.orgId, ask.draftId]);
-      await asOwnerSql("UPDATE crove_kernel.conversation_draft SET state = 'live', body = $3, written_at = now() - interval '6 days' WHERE org_id = $1 AND id = $2", [o.orgId, fresh.draftId, DRAFT_TEXT]);
+      await asOwnerSql("UPDATE ludy_kernel.conversation_draft SET state = 'live', body = $3, written_at = now() - interval '8 days' WHERE org_id = $1 AND id = $2", [o.orgId, live.draftId, DRAFT_TEXT]);
+      await asOwnerSql("UPDATE ludy_kernel.conversation_draft SET created_at = now() - interval '20 minutes' WHERE org_id = $1 AND id = $2", [o.orgId, ask.draftId]);
+      await asOwnerSql("UPDATE ludy_kernel.conversation_draft SET state = 'live', body = $3, written_at = now() - interval '6 days' WHERE org_id = $1 AND id = $2", [o.orgId, fresh.draftId, DRAFT_TEXT]);
       // (The sweep is across orgs, so rows other tests aged count too: at least ours.)
       const swept = await sweepConversationDrafts({ workerDb, force: true });
       expect(swept.settled).toBeGreaterThanOrEqual(1);
@@ -587,7 +587,7 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       expect(states[fresh.draftId]).toEqual(['live', DRAFT_TEXT]);
       // Nothing left to do on a second pass, and the API login cannot run it.
       expect(await sweepConversationDrafts({ workerDb, force: true })).toEqual({ settled: 0, expired: 0 });
-      await expect(pool.query('SELECT * FROM crove_kernel.conversation_draft_sweep()')).rejects.toMatchObject({ code: '42501' });
+      await expect(pool.query('SELECT * FROM ludy_kernel.conversation_draft_sweep()')).rejects.toMatchObject({ code: '42501' });
     });
 
     it('waits for the customer to stop typing, drafts at most three times an hour for one conversation, skips a closed reply window, and lets a live draft nobody opened go stale after a week', async () => {
@@ -596,31 +596,31 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       await ingest(o, [event('quiet', CUSTOMER_TEXT, { at: new Date(Date.now() - 5_000).toISOString() })]);
       expect(await requestDueConversationDrafts({ runtime: worker, workerDb, force: true })).toBe(0);
       const quiet = await threadOf(o, 'quiet');
-      await asOwnerSql("UPDATE crove_kernel.conversation SET last_inbound_at = now() - interval '1 minute' WHERE org_id = $1 AND id = $2", [o.orgId, quiet]);
+      await asOwnerSql("UPDATE ludy_kernel.conversation SET last_inbound_at = now() - interval '1 minute' WHERE org_id = $1 AND id = $2", [o.orgId, quiet]);
       expect(await requestDueConversationDrafts({ runtime: worker, workerDb, force: true })).toBe(1);
       // A window the platform closed: nothing to draft for, by the relay or by a person.
       await ingest(o, [event('closed')]);
       const closed = await threadOf(o, 'closed');
-      await asOwnerSql("UPDATE crove_kernel.conversation SET reply_window_until = now() - interval '1 hour' WHERE org_id = $1 AND id = $2", [o.orgId, closed]);
+      await asOwnerSql("UPDATE ludy_kernel.conversation SET reply_window_until = now() - interval '1 hour' WHERE org_id = $1 AND id = $2", [o.orgId, closed]);
       expect(await requestDueConversationDrafts({ runtime: worker, workerDb, force: true })).toBe(0);
       await expect(request(o, closed)).rejects.toMatchObject({ code: 'REPLY_WINDOW_CLOSED' });
       // Three automatic drafts in the last hour for one conversation: no fourth, however many messages the customer sends.
       await ingest(o, [event('chatty')]);
       const chatty = await threadOf(o, 'chatty');
       for (let i = 0; i < 3; i++) {
-        await asOwnerSql("INSERT INTO crove_kernel.conversation_draft (org_id, conversation_id, channel_connection_id, kind, basis_seq, source, state) SELECT org_id, id, channel_connection_id, kind, 1, 'auto', 'discarded' FROM crove_kernel.conversation WHERE org_id = $1 AND id = $2", [o.orgId, chatty]);
+        await asOwnerSql("INSERT INTO ludy_kernel.conversation_draft (org_id, conversation_id, channel_connection_id, kind, basis_seq, source, state) SELECT org_id, id, channel_connection_id, kind, 1, 'auto', 'discarded' FROM ludy_kernel.conversation WHERE org_id = $1 AND id = $2", [o.orgId, chatty]);
       }
       await ingest(o, [event('chatty', 'Còn nữa nè')]);
       expect(await requestDueConversationDrafts({ runtime: worker, workerDb, force: true })).toBe(0);
       // A live draft nobody opened in a week goes stale, its text with it (the quiet thread's draft, asked for above, is made live and old).
-      await asOwnerSql("UPDATE crove_kernel.conversation_draft SET state = 'live', body = $3, written_at = now() - interval '8 days' WHERE org_id = $1 AND conversation_id = $2 AND state = 'requested'", [o.orgId, quiet, DRAFT_TEXT]);
+      await asOwnerSql("UPDATE ludy_kernel.conversation_draft SET state = 'live', body = $3, written_at = now() - interval '8 days' WHERE org_id = $1 AND conversation_id = $2 AND state = 'requested'", [o.orgId, quiet, DRAFT_TEXT]);
       await sweepConversationDrafts({ workerDb, force: true });
       expect((await drafts(o)).filter((d) => d.basis_seq === 1 && d.body !== null)).toEqual([]);
-      expect((await rows<{ state: string; body: string | null }>('SELECT state, body FROM crove_kernel.conversation_draft WHERE org_id = $1 AND conversation_id = $2', [o.orgId, quiet])).map((d) => [d.state, d.body])).toEqual([['stale', null]]);
+      expect((await rows<{ state: string; body: string | null }>('SELECT state, body FROM ludy_kernel.conversation_draft WHERE org_id = $1 AND conversation_id = $2', [o.orgId, quiet])).map((d) => [d.state, d.body])).toEqual([['stale', null]]);
     });
 
     it('keeps the due list and the worker’s functions out of the API login’s reach', async () => {
-      await expect(pool.query('SELECT * FROM crove_kernel.conversation_draft_due(10)')).rejects.toMatchObject({ code: '42501' });
+      await expect(pool.query('SELECT * FROM ludy_kernel.conversation_draft_due(10)')).rejects.toMatchObject({ code: '42501' });
     });
   });
 

@@ -6,11 +6,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, type PostView } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -43,7 +43,7 @@ suite('social multi-step approval on PostgreSQL (S9)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const roles = { admin: await person('admin'), second: await person('admin2'), member: await person('member') };
     for (const [key, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, key === 'member' ? 'member' : 'admin']));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, key === 'member' ? 'member' : 'admin']));
     }
     return { orgId, owner, ...roles };
   }
@@ -51,7 +51,7 @@ suite('social multi-step approval on PostgreSQL (S9)', () => {
   async function connection(o: Org) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         'sandbox',
@@ -85,9 +85,9 @@ suite('social multi-step approval on PostgreSQL (S9)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -174,7 +174,7 @@ suite('social multi-step approval on PostgreSQL (S9)', () => {
     expect((await get(o, scheduledPost)).variants[0]).toMatchObject({ status: 'scheduled', effectiveAt: slotBefore, error: null });
     await decide(o, o.admin, approvedPost, 'approved');
     expect((await get(o, approvedPost)).variants[0]).toMatchObject({ status: 'approved', error: null });
-    const events = await admin(async (c) => (await c.query<{ payload: { post_id: string } }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.post.submitted' AND payload->>'by_policy' = 'true'", [o.orgId])).rows);
+    const events = await admin(async (c) => (await c.query<{ payload: { post_id: string } }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.post.submitted' AND payload->>'by_policy' = 'true'", [o.orgId])).rows);
     expect(events.map((e) => e.payload.post_id).sort()).toEqual([approvedPost, scheduledPost].sort());
     // Re-submitted by the policy, each still goes to the content manager agent's pre-review (#816).
     expect(events.every((e) => (e.payload as { agent_task?: { ref?: { id?: string } } }).agent_task?.ref?.id === e.payload.post_id)).toBe(true);
@@ -192,7 +192,7 @@ suite('social multi-step approval on PostgreSQL (S9)', () => {
     await exec(o, o.owner, 'social.channel.set_policy', { connectionId: conn, approvalsRequired: 2 });
 
     // The kept time went by while the variant waited for its second approval.
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 minute' WHERE post_id = $1", [late]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 minute' WHERE post_id = $1", [late]));
     await decide(o, o.admin, late, 'approved');
     expect((await get(o, late)).variants[0]).toMatchObject({ status: 'approved', error: null });
 
@@ -207,7 +207,7 @@ suite('social multi-step approval on PostgreSQL (S9)', () => {
     const postId = await inReview(o, conn);
     await decide(o, o.owner, postId, 'approved');
     // The policy rose without set_policy re-checking (an approval that raced it).
-    await admin((c) => c.query('INSERT INTO crove_social.channel_policy (org_id, channel_connection_id, approvals_required, updated_by) VALUES ($1, $2, 2, $3)', [o.orgId, conn, o.owner]));
+    await admin((c) => c.query('INSERT INTO ludy_social.channel_policy (org_id, channel_connection_id, approvals_required, updated_by) VALUES ($1, $2, 2, $3)', [o.orgId, conn, o.owner]));
     await expect(schedule(o, postId)).rejects.toMatchObject({ code: 'APPROVALS_MISSING' });
   });
 
@@ -216,7 +216,7 @@ suite('social multi-step approval on PostgreSQL (S9)', () => {
     const [a, b] = [await connection(o), await connection(o)];
     const [p1, p2] = [await inReview(o, a), await inReview(o, a)];
     await inReview(o, b);
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'paused' WHERE post_id = ANY($1)", [[p1, p2]]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'paused' WHERE post_id = ANY($1)", [[p1, p2]]));
     expect(await rt.query('social.channel.waiting', {}, { actor: asUser(o.member), orgId: o.orgId })).toEqual([{ connectionId: a, paused: 2 }]);
   });
 
@@ -224,7 +224,7 @@ suite('social multi-step approval on PostgreSQL (S9)', () => {
     const o = await org();
     const conn = await connection(o);
     await exec(o, o.owner, 'social.channel.set_policy', { connectionId: conn, approvalsRequired: 2 });
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [conn]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [conn]));
     expect(await rt.query('social.channel.policies', {}, { actor: asUser(o.member), orgId: o.orgId })).toEqual([]);
   });
 
@@ -240,7 +240,7 @@ suite('social multi-step approval on PostgreSQL (S9)', () => {
     expect(lowered.approved).toEqual([(await get(o, postId)).variants[0]?.id]);
     expect((await get(o, postId)).variants[0]?.status).toBe('approved');
     // The approval reaches event consumers as a decision would, marked as made by the policy (#408).
-    const events = await admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.decided' AND payload->>'by_policy' = 'true'", [o.orgId])).rows);
+    const events = await admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.decided' AND payload->>'by_policy' = 'true'", [o.orgId])).rows);
     expect(events.map((e) => e.payload)).toEqual([{ post_id: postId, decision: 'approved', variant_ids: lowered.approved, waiting_variant_ids: [], by_policy: true }]);
 
     const plain = await inReview(o, await connection(o));

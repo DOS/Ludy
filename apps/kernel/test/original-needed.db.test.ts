@@ -9,12 +9,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, inboundKey, newInboundBlobId, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
-import type { ExtractClient } from '@crove/extract-contract';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, inboundKey, newInboundBlobId, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
+import type { ExtractClient } from '@ludy/extract-contract';
 import { processInboundEmail } from '../src/inbound.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -100,7 +100,7 @@ suite('original-needed Inbox items on PostgreSQL (#2286)', () => {
   const receive = async (job: Awaited<ReturnType<typeof mail>>) => processInboundEmail({ runtime: worker, store, domain: 'in.test', extract }, job);
 
   const originals = (userId: string, org = orgId) => rt.query<{ items: Array<{ id: string; provider: string | null; url: string | null; code: string | null }>; total: number }>('kernel.inbox.originals', {}, { actor: asUser(userId), orgId: org });
-  const rows = () => admin(async (c) => (await c.query<{ id: string; kind: string; dedupe_key: string; detail: Record<string, unknown>; dismissed_at: Date | null }>(`SELECT id, kind, dedupe_key, detail, dismissed_at FROM crove_kernel.inbox_item WHERE org_id = $1 AND kind = 'finance.invoice.original_needed' ORDER BY raised_at, dedupe_key`, [orgId])).rows);
+  const rows = () => admin(async (c) => (await c.query<{ id: string; kind: string; dedupe_key: string; detail: Record<string, unknown>; dismissed_at: Date | null }>(`SELECT id, kind, dedupe_key, detail, dismissed_at FROM ludy_kernel.inbox_item WHERE org_id = $1 AND kind = 'finance.invoice.original_needed' ORDER BY raised_at, dedupe_key`, [orgId])).rows);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -111,16 +111,16 @@ suite('original-needed Inbox items on PostgreSQL (#2286)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
     const asWorker = new URL(adminUrl);
-    asWorker.username = 'crove_worker';
+    asWorker.username = 'ludy_worker';
     asWorker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorker.toString(), max: 2 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
@@ -131,18 +131,18 @@ suite('original-needed Inbox items on PostgreSQL (#2286)', () => {
     ({ orgId } = await createOrg(rt, asUser(users.owner), 'Công ty có thư chỉ kèm đường dẫn'));
     ({ orgId: otherOrgId } = await createOrg(rt, asUser(users.outsider), 'Công ty khác'));
     await admin(async (c) => {
-      token = (await c.query<{ t: string }>('SELECT inbound_token AS t FROM crove_kernel.tenant WHERE org_id = $1', [orgId])).rows[0]?.t ?? '';
-      const entity = (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id;
+      token = (await c.query<{ t: string }>('SELECT inbound_token AS t FROM ludy_kernel.tenant WHERE org_id = $1', [orgId])).rows[0]?.t ?? '';
+      const entity = (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id;
       for (const [user, role] of [
         [users.admin, 'admin'],
         [users.member, 'member'],
         [users.viewer, 'viewer'],
         [users.limited, 'member'],
       ] as const) {
-        await c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]);
+        await c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]);
       }
       // A member limited to one legal entity by an external accountant assignment.
-      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, users.limited, entity, users.owner]);
+      await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, users.limited, entity, users.owner]);
     });
   }, 300_000);
 
@@ -205,7 +205,7 @@ suite('original-needed Inbox items on PostgreSQL (#2286)', () => {
   it('keeps the dead-letter items with owners and admins', async () => {
     const deadLetter = randomUUID();
     await admin((c) =>
-      c.query(`INSERT INTO crove_kernel.inbox_item (org_id, id, kind, dedupe_key, detail) VALUES ($1, $2, 'kernel.job.dead_lettered', 'queue:finance-portal-list:2026-11-01', $3)`, [
+      c.query(`INSERT INTO ludy_kernel.inbox_item (org_id, id, kind, dedupe_key, detail) VALUES ($1, $2, 'kernel.job.dead_lettered', 'queue:finance-portal-list:2026-11-01', $3)`, [
         orgId,
         deadLetter,
         JSON.stringify({ queue: 'finance-portal-list', jobId: randomUUID(), retries: 0, failures: 1 }),
@@ -238,7 +238,7 @@ suite('original-needed Inbox items on PostgreSQL (#2286)', () => {
   });
 
   it('keeps the lookup code and the link out of every audit row of the org', async () => {
-    const audit = await admin(async (c) => (await c.query<{ row: string }>('SELECT to_jsonb(a)::text AS row FROM crove_kernel.audit_event a WHERE org_id = $1', [orgId])).rows.map((r) => r.row));
+    const audit = await admin(async (c) => (await c.query<{ row: string }>('SELECT to_jsonb(a)::text AS row FROM ludy_kernel.audit_event a WHERE org_id = $1', [orgId])).rows.map((r) => r.row));
     expect(audit.length).toBeGreaterThan(0);
     const all = audit.join('\n');
     for (const secret of [CODE_A, CODE_B, '9ZZ8YY7XX6', 'meinvoice', 'easyinvoice']) expect(all, secret).not.toContain(secret);
@@ -248,7 +248,7 @@ suite('original-needed Inbox items on PostgreSQL (#2286)', () => {
 
   it('refuses at the database an item whose detail is not a hint', async () => {
     const insert = (detail: unknown, key = randomUUID()) =>
-      admin((c) => c.query(`INSERT INTO crove_kernel.inbox_item (org_id, kind, dedupe_key, detail) VALUES ($1, 'finance.invoice.original_needed', $2, $3)`, [orgId, `check:${key}`, JSON.stringify(detail)]));
+      admin((c) => c.query(`INSERT INTO ludy_kernel.inbox_item (org_id, kind, dedupe_key, detail) VALUES ($1, 'finance.invoice.original_needed', $2, $3)`, [orgId, `check:${key}`, JSON.stringify(detail)]));
     await expect(insert({ provider: 'misa', url: 'https://meinvoice.vn/tra-cuu', code: 'ABC12345' })).resolves.toBeTruthy();
     await expect(insert({ code: 'ABC12345' })).resolves.toBeTruthy();
     for (const bad of [
@@ -268,8 +268,8 @@ suite('original-needed Inbox items on PostgreSQL (#2286)', () => {
       await expect(insert(bad), JSON.stringify(bad)).rejects.toMatchObject({ code: '23514' });
     }
     // A dead-letter item has the shape it always had.
-    await expect(admin((c) => c.query(`INSERT INTO crove_kernel.inbox_item (org_id, kind, dedupe_key, detail) VALUES ($1, 'kernel.job.dead_lettered', $2, $3)`, [orgId, `check:${randomUUID()}`, JSON.stringify({ queue: 'q', anything: true })]))).resolves.toBeTruthy();
+    await expect(admin((c) => c.query(`INSERT INTO ludy_kernel.inbox_item (org_id, kind, dedupe_key, detail) VALUES ($1, 'kernel.job.dead_lettered', $2, $3)`, [orgId, `check:${randomUUID()}`, JSON.stringify({ queue: 'q', anything: true })]))).resolves.toBeTruthy();
     // And no other kind exists.
-    await expect(admin((c) => c.query(`INSERT INTO crove_kernel.inbox_item (org_id, kind, dedupe_key) VALUES ($1, 'finance.invoice.other', 'x')`, [orgId]))).rejects.toMatchObject({ code: '23514' });
+    await expect(admin((c) => c.query(`INSERT INTO ludy_kernel.inbox_item (org_id, kind, dedupe_key) VALUES ($1, 'finance.invoice.other', 'x')`, [orgId]))).rejects.toMatchObject({ code: '23514' });
   });
 });

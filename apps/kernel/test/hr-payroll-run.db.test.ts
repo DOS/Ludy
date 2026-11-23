@@ -13,17 +13,19 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { OWNER_RUN_EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { HrDeclarationDocument, HrPayslip, HrRunSheet, HrRunSummary, HrRunWritten, HrWritten } from '@crove/kernel-contract';
-import { CredentialVault, DomainError, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, sha256Hex, type BlobStore, type CommandDef, type QueryDef } from '@crove/kernel-runtime';
-import { calculatePayroll, PAYROLL_RULES } from '@crove/l10n-vn';
-import { hrCommands, hrQueries } from '@crove/mod-hr';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { OWNER_RUN_EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { HrDeclarationDocument, HrPayslip, HrRunSheet, HrRunSummary, HrRunWritten, HrWritten } from '@ludy/kernel-contract';
+import { CredentialVault, DomainError, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, sha256Hex, type BlobStore, type CommandDef, type QueryDef } from '@ludy/kernel-runtime';
+import { calculatePayroll, PAYROLL_RULES } from '@ludy/l10n-vn';
+import { hrCommands, hrManifest, hrQueries } from '@ludy/mod-hr';
 import type { AuthUser } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { ConcurrencyLimiter } from '../src/concurrency.ts';
 import { createHttpApp } from '../src/http.ts';
+import { orgPurgeCommand } from '../src/org-purge.ts';
+import { contextToken } from './invariant/fixtures/context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 // A blob store in memory, for the HTTP app of the org export tests.
@@ -67,8 +69,8 @@ function zipEntry(zip: Uint8Array, name: string): string | null {
 
 // Every rule of the shipped set is `commentary` until the accountant confirms it (#2535), so a real approval cannot pass yet. The tests that approve confirm the rows for the test: the
 // array module code reads is the one mutated here, in place; a test that needs the gate puts the status back.
-vi.mock('@crove/l10n-vn', async (importOriginal) => {
-  const real = await importOriginal<typeof import('@crove/l10n-vn')>();
+vi.mock('@ludy/l10n-vn', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@ludy/l10n-vn')>();
   return { ...real, PAYROLL_RULES: real.PAYROLL_RULES.map((row) => ({ ...row })) };
 });
 const setRuleStatus = (status: 'confirmed' | 'commentary') => {
@@ -103,8 +105,8 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     input: z.object({}),
     access: ['owner', 'admin', 'member', 'viewer'],
     handler: async (ctx) => {
-      const runs = await ctx.trx.selectFrom('crove_hr.payroll_run').select('id').where('org_id', '=', ctx.orgId).execute();
-      const lines = await ctx.trx.selectFrom('crove_hr.payroll_line').select('id').where('org_id', '=', ctx.orgId).execute();
+      const runs = await ctx.trx.selectFrom('ludy_hr.payroll_run').select('id').where('org_id', '=', ctx.orgId).execute();
+      const lines = await ctx.trx.selectFrom('ludy_hr.payroll_line').select('id').where('org_id', '=', ctx.orgId).execute();
       return { runs: runs.length, lines: lines.length };
     },
   }) as QueryDef<unknown, unknown>;
@@ -117,7 +119,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     access: ['owner', 'admin', 'member', 'viewer'],
     writes: [],
     handler: async (ctx, input) => {
-      await ctx.trx.updateTable('crove_hr.payroll_line').set({ updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.lineId).execute();
+      await ctx.trx.updateTable('ludy_hr.payroll_line').set({ updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.lineId).execute();
       return {};
     },
   }) as CommandDef<unknown, unknown>;
@@ -140,7 +142,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const member = await person('member');
     const viewer = await person('viewer');
     const { orgId, slug } = await createOrg(rt, asUser(owner), `Lương ${tag}`);
-    await withAdmin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, admin, member, viewer]));
+    await withAdmin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, admin, member, viewer]));
     const exec = <O>(userId: string, name: string, input: unknown = {}, actor: ReturnType<typeof asUser> | ReturnType<typeof asMfa> = asUser(userId)) => rt.execute<O>(name, input, { actor, orgId });
     const query = <O>(userId: string, name: string, input: unknown = {}) => rt.query<O>(name, input, { actor: asUser(userId), orgId });
     const hire = (extra: Record<string, unknown> = {}, wage = WAGES[0], name = NAMES[0]) =>
@@ -153,7 +155,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const open = (month = MONTH, extra: Record<string, unknown> = {}) => exec<HrRunWritten>(owner, 'hr.payroll.run.open', { month, ...extra });
     const sheet = (runId: string, who = owner) => query<HrRunSheet>(who, 'hr.payroll.run.sheet', { runId });
     const approve = (runId: string, fingerprint: string, extra: Record<string, unknown> = {}) => exec<HrRunWritten>(owner, 'hr.payroll.run.approve', { runId, fingerprint, ...extra }, asMfa(owner));
-    const audits = (command: string) => withAdmin(async (c) => (await c.query<{ outcome: string; detail: unknown }>('SELECT outcome, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY id', [orgId, command])).rows);
+    const audits = (command: string) => withAdmin(async (c) => (await c.query<{ outcome: string; detail: unknown }>('SELECT outcome, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY id', [orgId, command])).rows);
     return { orgId, slug, owner, admin, member, viewer, exec, query, hire, team, open, sheet, approve, audits };
   }
 
@@ -166,11 +168,11 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = new URL(url.toString());
-    login.username = 'crove_worker';
+    login.username = 'ludy_worker';
     login.password = 'test-worker-pw';
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
     pool = createPool({ connectionString: appUrl, max: 4 });
@@ -182,7 +184,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
         readAuditKey: randomBytes(32),
       }).register({ commands: [...kernelCommands, ...hrCommands, TOUCH_LINE], queries: [...kernelQueries({ inboundDomain: null }), ...hrQueries, PEEK] });
     rt = register(pool);
-    workerRt = register(workerPool);
+    workerRt = register(workerPool).register({ commands: [orgPurgeCommand({ store: new MemoryStore() })] });
   }, 120_000);
 
   afterAll(async () => {
@@ -341,7 +343,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     expect(after.totals).toEqual(fresh.totals);
     expect(after.rules.length).toBeGreaterThan(0);
     // The record of the approval: who, when, the fingerprint and the rules as they were.
-    const row = await withAdmin(async (c) => (await c.query<{ approved_by: string; approval: { fingerprint: string; flagsAccepted: boolean; rules: { id: string }[] } }>('SELECT approved_by, approval FROM crove_hr.payroll_run WHERE id = $1', [run.runId])).rows[0]);
+    const row = await withAdmin(async (c) => (await c.query<{ approved_by: string; approval: { fingerprint: string; flagsAccepted: boolean; rules: { id: string }[] } }>('SELECT approved_by, approval FROM ludy_hr.payroll_run WHERE id = $1', [run.runId])).rows[0]);
     expect(row?.approved_by).toBe(o.owner);
     expect(row?.approval).toMatchObject({ fingerprint: fresh.fingerprint, flagsAccepted: true });
     expect(row?.approval.rules.length).toBe(after.rules.length);
@@ -386,13 +388,13 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     expect(recalc?.detail).toMatchObject({ removed: 1 });
     // An approved month never loses a line, not even to a recalculation or a direct delete.
     await expect(o.exec(o.owner, 'hr.payroll.run.recalculate', { runId: run.runId })).rejects.toMatchObject({ code: 'HR_RUN_NOT_DRAFT' });
-    await expect(withAdmin((c) => c.query('DELETE FROM crove_hr.payroll_line WHERE id = $1', [after.lines[0]?.id]))).rejects.toThrow(/frozen/);
+    await expect(withAdmin((c) => c.query('DELETE FROM ludy_hr.payroll_line WHERE id = $1', [after.lines[0]?.id]))).rejects.toThrow(/frozen/);
     setRuleStatus('commentary');
   });
 
   it('refuses TRUNCATE of the pay run tables to every role, the table owner included', async () => {
     await org();
-    for (const table of ['crove_hr.payroll_line', 'crove_hr.payroll_run']) {
+    for (const table of ['ludy_hr.payroll_line', 'ludy_hr.payroll_run']) {
       await expect(withAdmin((c) => c.query(`TRUNCATE ${table} CASCADE`)), table).rejects.toThrow(/is append-only/);
     }
   });
@@ -415,13 +417,13 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
       logged.mockRestore();
     }
     // Even the table's owner with the role that bypasses row security meets the guard (it fires in replica mode as well).
-    await expect(withAdmin((c) => c.query('UPDATE crove_hr.payroll_line SET net = 1 WHERE id = $1', [line.id]))).rejects.toThrow(/frozen/);
-    await expect(withAdmin((c) => c.query("UPDATE crove_hr.payroll_run SET status = 'draft', approved_at = NULL, approved_by = NULL, approval = NULL WHERE id = $1", [run.runId]))).rejects.toThrow(/frozen/);
-    await expect(withAdmin((c) => c.query('DELETE FROM crove_hr.payroll_line WHERE id = $1', [line.id]))).rejects.toThrow(/frozen/);
+    await expect(withAdmin((c) => c.query('UPDATE ludy_hr.payroll_line SET net = 1 WHERE id = $1', [line.id]))).rejects.toThrow(/frozen/);
+    await expect(withAdmin((c) => c.query("UPDATE ludy_hr.payroll_run SET status = 'draft', approved_at = NULL, approved_by = NULL, approval = NULL WHERE id = $1", [run.runId]))).rejects.toThrow(/frozen/);
+    await expect(withAdmin((c) => c.query('DELETE FROM ludy_hr.payroll_line WHERE id = $1', [line.id]))).rejects.toThrow(/frozen/);
     await expect(
       withAdmin(async (c) => {
         await c.query("SET session_replication_role = 'replica'");
-        await c.query('UPDATE crove_hr.payroll_line SET net = 1 WHERE id = $1', [line.id]);
+        await c.query('UPDATE ludy_hr.payroll_line SET net = 1 WHERE id = $1', [line.id]);
       }),
     ).rejects.toThrow(/frozen/);
     // The run is unchanged.
@@ -486,7 +488,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const run = await o.open();
     const s = await o.sheet(run.runId);
     await o.approve(run.runId, s.fingerprint);
-    const all = await withAdmin(async (c) => (await c.query<{ row: string }>('SELECT audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1', [o.orgId])).rows.map((r) => r.row).join('\n'));
+    const all = await withAdmin(async (c) => (await c.query<{ row: string }>('SELECT audit_event::text AS row FROM ludy_kernel.audit_event WHERE org_id = $1', [o.orgId])).rows.map((r) => r.row).join('\n'));
     for (const needle of [...NAMES, '15000000', '9000000', '30000000', '54000000']) expect(all, needle).not.toContain(needle);
     const [approval] = await o.audits('hr.payroll.run.approve');
     expect(approval?.detail).toMatchObject({ runId: run.runId, month: MONTH, lines: 3, approval: { redacted: 'sensitive' } });
@@ -513,6 +515,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const o = await org();
     const employee = await o.hire({ address: '12 Đường Canary, Quận 1', identityNumber: EXPORT_IDENTITY, accountNumber: EXPORT_ACCOUNT, birthDate: '1990-05-17', taxCode: EXPORT_TAX, insuranceNumber: EXPORT_INSURANCE }, WAGES[0], EXPORT_NAME);
     await o.exec(o.owner, 'hr.payroll.dependent.add', { employeeId: employee.employeeId, displayName: EXPORT_DEPENDENT, relation: 'child', registeredOn: '2026-02-01' });
+    await o.exec(o.owner, 'hr.payroll.leave.set', { employeeId: employee.employeeId, month: '2026-06', kind: 'annual_leave', days: '1', approved: true });
     await o.open('2026-06');
     if (closing) await rt.execute('kernel.org.offboard', { confirmSlug: o.slug }, { actor: asMfa(o.owner), orgId: o.orgId });
     return o;
@@ -564,7 +567,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     expect(doc.used).toEqual({ months: ['2026-07', '2026-08'] });
     expect(doc.header.find((h) => h.label.startsWith('Bảng lương đã duyệt'))?.value).toBe('2026-07, 2026-08');
     const [summary, progressive] = doc.sheets;
-    const stored = await withAdmin(async (c) => (await c.query<{ pit: string; n: string }>(`SELECT COALESCE(sum(l.pit), 0)::text AS pit, count(DISTINCT l.employee_id)::text AS n FROM crove_hr.payroll_line l JOIN crove_hr.payroll_run r ON r.org_id = l.org_id AND r.id = l.run_id WHERE l.org_id = $1 AND r.status = 'approved'`, [o.orgId])).rows[0]);
+    const stored = await withAdmin(async (c) => (await c.query<{ pit: string; n: string }>(`SELECT COALESCE(sum(l.pit), 0)::text AS pit, count(DISTINCT l.employee_id)::text AS n FROM ludy_hr.payroll_line l JOIN ludy_hr.payroll_run r ON r.org_id = l.org_id AND r.id = l.run_id WHERE l.org_id = $1 AND r.status = 'approved'`, [o.orgId])).rows[0]);
     const value = (item: string) => summary?.rows.find((r) => r.item?.startsWith(item))?.value;
     expect(Number(value('Tổng số thuế'))).toBe(Number(stored?.pit));
     expect(value('Tổng số người lao động')).toBe(stored?.n);
@@ -573,7 +576,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     // The tax code is the one on file, or the identity number when none is: the document says so.
     const anRow = progressive?.rows.find((r) => r.name === NAMES[0]);
     expect(anRow).toMatchObject({ identityNumber: DECL_IDENTITY, taxCode: DECL_TAX, birthDate: '1990-05-17' });
-    expect(binhRow?.taxCode).toBe('079 111 222 333');
+    expect(binhRow?.taxCode).toBe('079111222333');
     expect(doc.notes.join(' ')).toContain('chưa có mã số thuế riêng');
   });
 
@@ -581,7 +584,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const { o, an, get } = await declarationOrg();
     setRuleStatus('confirmed');
     // A correction of July carried by an October run that is then approved: the correction keeps the split of its insurance for the posting, but no tax detail, and the declaration reads it as one with none.
-    const july = await withAdmin(async (c) => (await c.query<{ id: string }>(`SELECT id FROM crove_hr.payroll_run WHERE org_id = $1 AND month = '2026-07'`, [o.orgId])).rows[0]?.id as string);
+    const july = await withAdmin(async (c) => (await c.query<{ id: string }>(`SELECT id FROM ludy_hr.payroll_run WHERE org_id = $1 AND month = '2026-07'`, [o.orgId])).rows[0]?.id as string);
     const october = await o.open('2026-10');
     await o.exec(o.owner, 'hr.payroll.line.adjust', {
       runId: october.runId, adjustsRunId: july, employeeId: an.employeeId, note: 'Tính thiếu tiền làm thêm giờ', gross: '500000', pit: '25000',
@@ -598,7 +601,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const { o, get } = await declarationOrg();
     const d02 = await get(o.owner, 'd02lt', '2026-08');
     expect(d02.sheets[0]?.rows.map((r) => [r.name, r.movement, r.effectiveOn])).toEqual([[NAMES[1], 'Giảm lao động', '2026-08-15']]);
-    expect(d02.layout.version).toBe('ludy-hr-d02lt/1');
+    expect(d02.layout.version).toBe('ludy-hr-d02lt/2');
     const july = await get(o.owner, 'd02lt', '2026-07');
     expect(july.sheets[0]?.rows).toEqual([]);
     const annual = await get(o.owner, 'qtt', '2026');
@@ -613,6 +616,154 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     expect(certificates.sheets[1]?.rows.map((r) => r.name)).toEqual([NAMES[2]]);
   });
 
+  it('(declarations, #2748) sets org address only for default entity, warns on D02-LT/03-TNCN missing months, and validates nationalId fallback against PG17', async () => {
+    setRuleStatus('confirmed');
+    try {
+      const o = await org();
+      await o.exec(o.owner, 'kernel.org.set_address', { address: '123 Lê Lợi, Quận 1, TP. Hồ Chí Minh' });
+      const branch = await o.exec<{ id: string }>(o.owner, 'kernel.legal_entity.create', {
+        name: 'Chi nhánh Miền Bắc',
+        kind: 'branch',
+        taxCode: '0312345670-001',
+        parentId: null,
+      });
+      await o.hire({ identityNumber: '079 111 222 333' }, '35000000', 'Nguyễn CCCD Canary');
+      await o.hire({ identityNumber: 'B1234567' }, '35000000', 'Trần Hộ Chiếu Canary');
+      const jul = await o.open('2026-07');
+      await o.approve(jul.runId, (await o.sheet(jul.runId)).fingerprint, { acceptFlags: true });
+      // Leave August as a draft run so D02-LT 2026-08 and 03/TNCN 2026 both carry missing-month warnings.
+      await o.open('2026-08');
+
+      const d02Default = await rt.query<HrDeclarationDocument>('hr.payroll.declaration.get', { kind: 'd02lt', period: '2026-08' }, { actor: asMfa(o.owner), orgId: o.orgId });
+      expect(d02Default.header.find((h) => h.label === 'Địa chỉ')?.value).toBe('123 Lê Lợi, Quận 1, TP. Hồ Chí Minh');
+      expect(d02Default.notes[0]).toContain('Chưa có bảng lương đã duyệt của tháng 2026-08');
+
+      const d02Branch = await rt.query<HrDeclarationDocument>('hr.payroll.declaration.get', { kind: 'd02lt', period: '2026-08', legalEntityId: branch.id }, { actor: asMfa(o.owner), orgId: o.orgId });
+      expect(d02Branch.header.find((h) => h.label === 'Địa chỉ')?.value).toBe('');
+
+      const cert = await rt.query<HrDeclarationDocument>('hr.payroll.declaration.get', { kind: 'certificate', period: '2026' }, { actor: asMfa(o.owner), orgId: o.orgId });
+      expect(cert.header.find((h) => h.label === 'Địa chỉ')?.value).toBe('123 Lê Lợi, Quận 1, TP. Hồ Chí Minh');
+      expect(cert.notes[0]).toContain('Chưa có bảng lương đã duyệt của tháng');
+      const certRows = cert.sheets[0]?.rows ?? [];
+      expect(certRows.find((r) => r.name === 'Nguyễn CCCD Canary')?.taxCode).toBe('079111222333');
+      expect(certRows.find((r) => r.name === 'Trần Hộ Chiếu Canary')).toMatchObject({ taxCode: '', identityNumber: 'B1234567', note: 'Thiếu mã số thuế' });
+      expect(cert.notes.join(' ')).toContain('1 người chưa có mã số thuế riêng');
+    } finally {
+      setRuleStatus('commentary');
+    }
+  });
+
+  it('(declarations, #3437) populates D02-LT position, workplace, and effective-dated contractType from PostgreSQL and masks erased staff', async () => {
+    setRuleStatus('confirmed');
+    try {
+      const o = await org();
+      const salesDept = (await o.exec<{ departmentId: string }>(o.owner, 'hr.department.add', { name: 'Kinh doanh Canary', code: 'KD', payFunction: 'sales' })).departmentId;
+      const secretDept = (await o.exec<{ departmentId: string }>(o.owner, 'hr.department.add', { name: 'Phòng Bí Mật Erasure', code: 'BM', payFunction: 'admin' })).departmentId;
+
+      // 1) Existing employee starting fixed_term in 2026-01-01, converted to indefinite on 2026-08-01 with raise -> D02-LT 2026-08 adjust uses indefinite.
+      const raised = await o.exec<HrWritten>(o.owner, 'hr.payroll.employee.add', {
+        displayName: 'Nguyễn Điều Chỉnh Canary',
+        birthDate: '1991-04-12',
+        identityNumber: '000000000211',
+        insuranceNumber: '7309111222',
+        departmentId: salesDept,
+        jobTitle: 'Trưởng nhóm Kinh doanh',
+        employment: { effectiveFrom: '2026-01-01', contractType: 'fixed_term', region: 'I', baseWage: '10000000' },
+      });
+      await o.exec(o.owner, 'hr.payroll.employment.add', {
+        employeeId: raised.employeeId,
+        effectiveFrom: '2026-08-01',
+        contractType: 'indefinite',
+        region: 'I',
+        baseWage: '14000000',
+      });
+
+      // 2) Employee without department or jobTitle who increases in 2026-08 -> position/workplace are '' cleanly.
+      await o.exec<HrWritten>(o.owner, 'hr.payroll.employee.add', {
+        displayName: 'Trần Mới Không Phòng Ban Canary',
+        birthDate: '1994-06-20',
+        identityNumber: '000000000212',
+        insuranceNumber: '7309433444',
+        employment: { effectiveFrom: '2026-08-05', contractType: 'fixed_term', region: 'I', baseWage: '12000000' },
+      });
+
+      // 3) Employee assigned to secretDept + jobTitle who adjusts in 2026-08, then is ended and erased after retention -> D02-LT must mask position, workplace, and contractType.
+      const erasedEmp = await o.exec<HrWritten>(o.owner, 'hr.payroll.employee.add', {
+        displayName: 'Phạm Bị Xóa D02 Canary',
+        birthDate: '1987-01-05',
+        identityNumber: '000000000213',
+        insuranceNumber: '7308755666',
+        departmentId: secretDept,
+        jobTitle: 'Chức Danh Bí Mật',
+        employment: { effectiveFrom: '2026-01-01', contractType: 'fixed_term', region: 'I', baseWage: '11000000' },
+      });
+
+      const julRun = await o.open('2026-07');
+      const julSheetBefore = await o.sheet(julRun.runId);
+      for (const l of julSheetBefore.lines) {
+        await o.exec(o.owner, 'hr.payroll.line.inputs.set', { lineId: l.id, inputs: { ...l.inputs, contractTermMonths: 12 } });
+      }
+      await o.approve(julRun.runId, (await o.sheet(julRun.runId)).fingerprint, { acceptFlags: true });
+
+      // Give erasedEmp an August wage raise so they appear as an adjustment in 2026-08 before erasure.
+      await o.exec(o.owner, 'hr.payroll.employment.add', {
+        employeeId: erasedEmp.employeeId,
+        effectiveFrom: '2026-08-01',
+        contractType: 'indefinite',
+        region: 'I',
+        baseWage: '15000000',
+      });
+
+      const augRun = await o.open('2026-08');
+      const augSheetBefore = await o.sheet(augRun.runId);
+      const bareLine = augSheetBefore.lines.find((l) => l.employeeName === 'Trần Mới Không Phòng Ban Canary')!;
+      await o.exec(o.owner, 'hr.payroll.line.inputs.set', { lineId: bareLine.id, inputs: { ...bareLine.inputs, contractTermMonths: 12 } });
+      await o.approve(augRun.runId, (await o.sheet(augRun.runId)).fingerprint, { acceptFlags: true });
+
+      // End and erase erasedEmp after backdating retention (> 10 years ago).
+      await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: erasedEmp.employeeId, endedOn: '2026-08-20' });
+      await withAdmin((c) =>
+        c.query(`UPDATE ludy_hr.payroll_employee SET ended_on = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date WHERE id = $1`, [erasedEmp.employeeId]),
+      );
+      await o.exec(o.owner, 'hr.payroll.employee.erase', { employeeId: erasedEmp.employeeId }, asMfa(o.owner));
+
+      const d02 = await rt.query<HrDeclarationDocument>('hr.payroll.declaration.get', { kind: 'd02lt', period: '2026-08' }, { actor: asMfa(o.owner), orgId: o.orgId });
+      expect(d02.layout.version).toBe('ludy-hr-d02lt/2');
+      expect(d02.notes[0]).toBe('Nơi đăng ký khám chữa bệnh ban đầu chưa được lưu trong Ludy: nhập tay khi khai.');
+      const colKeys = d02.sheets[0]?.columns.map((c) => c.key) ?? [];
+      expect(colKeys.slice(colKeys.indexOf('insuranceNumber') + 1, colKeys.indexOf('effectiveOn'))).toEqual(['position', 'workplace', 'contractType']);
+
+      const rows = d02.sheets[0]?.rows ?? [];
+      expect(rows.find((r) => r.name === 'Nguyễn Điều Chỉnh Canary')).toMatchObject({
+        movement: 'Điều chỉnh mức đóng',
+        position: 'Trưởng nhóm Kinh doanh',
+        workplace: 'Kinh doanh Canary',
+        contractType: 'Không xác định thời hạn',
+        effectiveOn: '2026-08-01',
+      });
+      expect(rows.find((r) => r.name === 'Trần Mới Không Phòng Ban Canary')).toMatchObject({
+        movement: 'Tăng lao động',
+        position: '',
+        workplace: '',
+        contractType: 'Xác định thời hạn',
+        effectiveOn: '2026-08-05',
+      });
+      const erasedRow = rows.find((r) => r.name === 'Đã xóa theo yêu cầu');
+      expect(erasedRow).toMatchObject({
+        movement: 'Điều chỉnh mức đóng',
+        position: '',
+        workplace: '',
+        contractType: '',
+      });
+      const body = JSON.stringify(d02);
+      expect(body).not.toContain('Phòng Bí Mật Erasure');
+      expect(body).not.toContain('Chức Danh Bí Mật');
+      expect(body).not.toContain('Phạm Bị Xóa D02 Canary');
+    } finally {
+      setRuleStatus('commentary');
+    }
+  });
+
   it('(declarations, #2533) is a sensitive query owners and admins only: audited before the read, with no identifier in any audit row', async () => {
     const { o, get } = await declarationOrg();
     await get(o.owner, 'kk', '2026-Q3');
@@ -623,7 +774,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     for (const who of [o.member, o.viewer]) await expect(get(who, 'kk', '2026-Q3')).rejects.toMatchObject({ status: 403 });
     await expect(rt.query('hr.payroll.declaration.get', { kind: 'kk', period: '2026-Q3' }, { actor: { type: 'agent', agentId: randomUUID(), runId: randomUUID() } as never, orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
     await expect(get(o.owner, 'kk', '2026-13')).rejects.toBeDefined();
-    const rows = await withAdmin(async (c) => (await c.query<{ detail: string; row: string }>(`SELECT detail::text AS detail, audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.declaration.get' ORDER BY id`, [o.orgId])).rows);
+    const rows = await withAdmin(async (c) => (await c.query<{ detail: string; row: string }>(`SELECT detail::text AS detail, audit_event::text AS row FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.declaration.get' ORDER BY id`, [o.orgId])).rows);
     expect(rows.length).toBeGreaterThanOrEqual(2);
     expect(JSON.parse(rows[0]?.detail ?? '{}')).toMatchObject({ read: 'sensitive', stage: 'before_read', kind: 'kk' });
     expect(JSON.parse(rows[1]?.detail ?? '{}')).toMatchObject({ kind: 'd02lt' });
@@ -671,7 +822,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
       }
     }
     // A download leaves an audit row with counts only.
-    const exported = await withAdmin(async (c) => (await c.query<{ detail: string; row: string }>(`SELECT detail::text AS detail, audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.declaration.export' ORDER BY id`, [o.orgId])).rows);
+    const exported = await withAdmin(async (c) => (await c.query<{ detail: string; row: string }>(`SELECT detail::text AS detail, audit_event::text AS row FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.declaration.export' ORDER BY id`, [o.orgId])).rows);
     expect(exported.length).toBe(8);
     const details = exported.map((r) => JSON.parse(r.detail) as { kind: string; period: string; months: string[]; authorizedYear?: number; authorizedPeople?: number });
     expect(details.find((d) => d.kind === 'kk')).toMatchObject({ period: '2026-Q3', months: ['2026-07', '2026-08'] });
@@ -688,7 +839,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     expect(stale.status).toBe(403);
     expect(await stale.json()).toMatchObject({ code: 'STEP_UP_REQUIRED' });
     expect((await get('kk.xlsx', 'period=2026-Q3', 'other-owner')).status).toBe(403);
-    const foreignEntity = await withAdmin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [elsewhere.o.orgId])).rows[0]?.id as string);
+    const foreignEntity = await withAdmin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [elsewhere.o.orgId])).rows[0]?.id as string);
     expect((await get('kk.xlsx', `period=2026-Q3&legalEntityId=${foreignEntity}`, o.owner)).status).toBe(422);
     expect(exports.inUse).toBe(0);
     // HEAD is refused before any read, so it leaves no row for a download that never happened.
@@ -699,7 +850,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     expect(view.status).toBe(200);
     expect(view.headers.get('cache-control')).toBe('private, no-store');
     expect(((await view.json()) as HrDeclarationDocument).layout.version).toBe('ludy-hr-05kk/1');
-    const after = await withAdmin(async (c) => (await c.query<{ detail: string }>(`SELECT detail::text AS detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.declaration.export' ORDER BY id`, [o.orgId])).rows);
+    const after = await withAdmin(async (c) => (await c.query<{ detail: string }>(`SELECT detail::text AS detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'hr.payroll.declaration.export' ORDER BY id`, [o.orgId])).rows);
     expect(after.map((r) => (JSON.parse(r.detail) as { via: string }).via).slice(-2)).toEqual(['xlsx', 'view']);
     expect(after.length, 'only successful reads leave a download row').toBe(9);
     // A name that starts with "=" is a string cell in the file, never a formula.
@@ -755,19 +906,19 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const { o, get } = await declarationOrg();
     await withAdmin(async (c) => {
       // The freeze trigger of the lines is off for these inserts only (a disposable database): the rows are copies of the first person and of their July line, 5,000 times over.
-      await c.query('ALTER TABLE crove_hr.payroll_line DISABLE TRIGGER frozen_row');
+      await c.query('ALTER TABLE ludy_hr.payroll_line DISABLE TRIGGER frozen_row');
       try {
         await c.query('CREATE TEMP TABLE copies AS SELECT gen_random_uuid() AS new_id FROM generate_series(1, 5000)');
         await c.query(
-          `INSERT INTO crove_hr.payroll_employee SELECT (jsonb_populate_record(NULL::crove_hr.payroll_employee, to_jsonb(e) || jsonb_build_object('id', m.new_id))).* FROM (SELECT * FROM crove_hr.payroll_employee WHERE org_id = $1 LIMIT 1) e, copies m`,
+          `INSERT INTO ludy_hr.payroll_employee SELECT (jsonb_populate_record(NULL::ludy_hr.payroll_employee, to_jsonb(e) || jsonb_build_object('id', m.new_id))).* FROM (SELECT * FROM ludy_hr.payroll_employee WHERE org_id = $1 LIMIT 1) e, copies m`,
           [o.orgId],
         );
         await c.query(
-          `INSERT INTO crove_hr.payroll_line SELECT (jsonb_populate_record(NULL::crove_hr.payroll_line, to_jsonb(l) || jsonb_build_object('id', gen_random_uuid(), 'employee_id', m.new_id))).* FROM (SELECT l.* FROM crove_hr.payroll_line l JOIN crove_hr.payroll_run r ON r.org_id = l.org_id AND r.id = l.run_id WHERE l.org_id = $1 AND r.month = '2026-07' LIMIT 1) l, copies m`,
+          `INSERT INTO ludy_hr.payroll_line SELECT (jsonb_populate_record(NULL::ludy_hr.payroll_line, to_jsonb(l) || jsonb_build_object('id', gen_random_uuid(), 'employee_id', m.new_id, 'employment_id', NULL))).* FROM (SELECT l.* FROM ludy_hr.payroll_line l JOIN ludy_hr.payroll_run r ON r.org_id = l.org_id AND r.id = l.run_id WHERE l.org_id = $1 AND r.month = '2026-07' LIMIT 1) l, copies m`,
           [o.orgId],
         );
       } finally {
-        await c.query('ALTER TABLE crove_hr.payroll_line ENABLE TRIGGER frozen_row');
+        await c.query('ALTER TABLE ludy_hr.payroll_line ENABLE TRIGGER frozen_row');
       }
     });
     await expect(get(o.owner, 'kk', '2026-Q3')).rejects.toMatchObject({ code: 'EXPORT_TOO_LARGE', status: 422 });
@@ -775,15 +926,25 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
 
   it('(org export, #2676) streams the payroll tables to the owner with no plain number and no sealed text, and audits each read before it', async () => {
     const o = await exportOrg(true);
-    expect(OWNER_RUN_EXPORT_TABLE_NAMES).toEqual(['hr.payroll_employee', 'hr.payroll_employment', 'hr.payroll_dependent', 'hr.payroll_run', 'hr.payroll_line', 'hr.payroll_bank_template']);
+    expect(OWNER_RUN_EXPORT_TABLE_NAMES).toEqual(['hr.department', 'hr.payroll_employee', 'hr.payroll_employment', 'hr.payroll_dependent', 'hr.payroll_run', 'hr.payroll_line', 'hr.payroll_bank_template', 'hr.payroll_leave_entry', 'hr.leave_request', 'hr.attendance_log', 'hr.onboarding_submission', 'hr.overtime_request', 'hr.probation_review', 'hr.job_opening', 'hr.candidate', 'meetings.glossary_term']);
+    // No department, bank template, leave request, Stage 5B/5C data, or recruiting data was saved in this org: those tables are served, and empty.
+    const departments = await read(rt, 'hr.department', asUser(o.owner), o.orgId);
     const employees = await read(rt, 'hr.payroll_employee', asUser(o.owner), o.orgId);
     const employments = await read(rt, 'hr.payroll_employment', asUser(o.owner), o.orgId);
     const dependents = await read(rt, 'hr.payroll_dependent', asUser(o.owner), o.orgId);
     const runs = await read(rt, 'hr.payroll_run', asUser(o.owner), o.orgId);
     const lines = await read(rt, 'hr.payroll_line', asUser(o.owner), o.orgId);
-    // No bank template was saved in this org: the table is served, and empty.
     const templates = await read(rt, 'hr.payroll_bank_template', asUser(o.owner), o.orgId);
-    expect([employees.length, employments.length, dependents.length, runs.length, lines.length, templates.length]).toEqual([1, 1, 1, 1, 1, 0]);
+    const leaveEntries = await read(rt, 'hr.payroll_leave_entry', asUser(o.owner), o.orgId);
+    const leaveRequests = await read(rt, 'hr.leave_request', asUser(o.owner), o.orgId);
+    const attendanceLogs = await read(rt, 'hr.attendance_log', asUser(o.owner), o.orgId);
+    const onboardingSubmissions = await read(rt, 'hr.onboarding_submission', asUser(o.owner), o.orgId);
+    const overtimeRequests = await read(rt, 'hr.overtime_request', asUser(o.owner), o.orgId);
+    const probationReviews = await read(rt, 'hr.probation_review', asUser(o.owner), o.orgId);
+    const openings = await read(rt, 'hr.job_opening', asUser(o.owner), o.orgId);
+    const candidates = await read(rt, 'hr.candidate', asUser(o.owner), o.orgId);
+    const glossary = await read(rt, 'meetings.glossary_term', asUser(o.owner), o.orgId);
+    expect([departments.length, employees.length, employments.length, dependents.length, runs.length, lines.length, templates.length, leaveEntries.length, leaveRequests.length, attendanceLogs.length, onboardingSubmissions.length, overtimeRequests.length, probationReviews.length, openings.length, candidates.length, glossary.length]).toEqual([0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
     expect(runs[0]).toMatchObject({ month: '2026-06', status: 'draft' });
     expect(lines[0]).toMatchObject({ kind: 'pay', employee_id: employees[0]?.id });
     expect(employees[0]).toMatchObject({ display_name: EXPORT_NAME });
@@ -793,12 +954,13 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     expect(employees[0]).not.toHaveProperty('insurance_number_sealed');
     expect(employments[0]).toMatchObject({ contract_type: 'indefinite' });
     expect(dependents[0]).toMatchObject({ display_name: EXPORT_DEPENDENT });
-    const text = JSON.stringify([employees, employments, dependents, runs, lines]);
+    expect(leaveEntries[0]).toMatchObject({ employee_id: employees[0]?.id, month: '2026-06', kind: 'annual_leave' });
+    const text = JSON.stringify([employees, employments, dependents, runs, lines, leaveEntries]);
     for (const needle of [EXPORT_IDENTITY, EXPORT_IDENTITY_DIGITS, EXPORT_ACCOUNT, EXPORT_ACCOUNT_DIGITS, EXPORT_TAX, EXPORT_INSURANCE, 'crove:s1:']) expect(text, needle).not.toContain(needle);
     const audits = await withAdmin(
-      async (c) => (await c.query<{ outcome: string; detail: string; row: string }>(`SELECT outcome, detail::text AS detail, audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.export.people' ORDER BY id`, [o.orgId])).rows,
+      async (c) => (await c.query<{ outcome: string; detail: string; row: string }>(`SELECT outcome, detail::text AS detail, audit_event::text AS row FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.export.people' ORDER BY id`, [o.orgId])).rows,
     );
-    expect(audits.map((a) => a.outcome)).toEqual(['ok', 'ok', 'ok', 'ok', 'ok', 'ok']);
+    expect(audits.map((a) => a.outcome)).toEqual(OWNER_RUN_EXPORT_TABLE_NAMES.map(() => 'ok'));
     // Each row names the table read (not personal data) and says the read was started.
     expect(audits.map((a) => (JSON.parse(a.detail) as { table: string }).table)).toEqual([...OWNER_RUN_EXPORT_TABLE_NAMES]);
     expect(JSON.parse(audits[0]?.detail ?? '{}')).toMatchObject({ read: 'sensitive', stage: 'before_read' });
@@ -826,7 +988,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     });
     expect([...tables].filter((t) => t.startsWith('hr.'))).toEqual([]);
     // Refused reads leave no audit row of a read: only the owner's attempt on the active org, which passed access and was refused after its row, has one.
-    const rows = await withAdmin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.export.people'`, [o.orgId])).rowCount);
+    const rows = await withAdmin(async (c) => (await c.query(`SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.export.people'`, [o.orgId])).rowCount);
     expect(rows).toBe(1);
   });
 
@@ -869,7 +1031,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
       const text = await ok.text();
       const all = text.trim().split('\n').map((l) => JSON.parse(l) as { org_id: string; _end?: boolean; rows?: number });
       // The last line says how many rows came before it, so a cut download cannot look whole.
-      const expected = table === 'hr.payroll_bank_template' ? 0 : 1;
+      const expected = table === 'hr.payroll_bank_template' || table === 'hr.department' || table === 'hr.job_opening' || table === 'hr.candidate' || table === 'hr.leave_request' || table === 'hr.attendance_log' || table === 'hr.onboarding_submission' || table === 'hr.overtime_request' || table === 'hr.probation_review' || table === 'meetings.glossary_term' ? 0 : 1;
       expect(all.at(-1), table).toEqual({ _end: true, rows: expected });
       const rows = all.slice(0, -1);
       expect(rows.length, table).toBe(expected);
@@ -882,5 +1044,324 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     expect((await get('hr.payroll_employee', other.owner, closing.slug)).status).toBe(403);
     // A key of Object.prototype is not an owner-run table: it takes the stored-export path and finds no export.
     expect((await get('constructor', closing.owner, closing.slug)).status).toBe(404);
+  });
+
+  async function waitForLockWait(pid: number, timeoutMs = 5_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const waiting = await withAdmin(
+        async (c) => (await c.query<{ wait_event_type: string | null }>('SELECT wait_event_type FROM pg_stat_activity WHERE pid = $1', [pid])).rows[0]?.wait_event_type,
+      );
+      if (waiting === 'Lock') return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`backend pid ${pid} did not enter Lock wait within ${timeoutMs}ms`);
+  }
+
+  it('(#2720 H4) blocks a concurrent raw line INSERT, UPDATE or DELETE on FOR SHARE behind an approval and refuses it once the approval commits', async () => {
+    setRuleStatus('commentary');
+    const o = await org();
+    await o.team();
+    const extraEmp = (await o.hire({ displayName: 'Lê Thêm Canary', employment: { effectiveFrom: '2026-12-01', contractType: 'indefinite', region: 'I', baseWage: '10000000' } })).employeeId as string;
+    const extraEmployment = await withAdmin(
+      async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_hr.payroll_employment WHERE org_id = $1 AND employee_id = $2', [o.orgId, extraEmp])).rows[0]?.id as string,
+    );
+
+    const runCases: ReadonlyArray<{
+      month: string;
+      attempt: (writer: pg.Client, runId: string, lineId: string) => Promise<unknown>;
+    }> = [
+      {
+        month: '2026-01',
+        attempt: (writer, _runId, lineId) =>
+          writer.query('UPDATE ludy_hr.payroll_line SET updated_at = now() WHERE org_id = $1 AND id = $2', [o.orgId, lineId]),
+      },
+      {
+        month: '2026-02',
+        attempt: (writer, runId) =>
+          writer.query(
+            `INSERT INTO ludy_hr.payroll_line (org_id, run_id, employee_id, employment_id, kind, status, gross, employee_insurance, employer_insurance, union_fee, taxable_income, pit, net, employer_cost)
+             VALUES ($1, $2, $3, $4, 'pay', 'calculated', 10000000, 1050000, 2150000, 200000, 10000000, 0, 8950000, 12350000)`,
+            [o.orgId, runId, extraEmp, extraEmployment],
+          ),
+      },
+      {
+        month: '2026-03',
+        attempt: (writer, _runId, lineId) =>
+          writer.query('DELETE FROM ludy_hr.payroll_line WHERE org_id = $1 AND id = $2', [o.orgId, lineId]),
+      },
+    ];
+
+    const approver = new pg.Client({ connectionString: appUrl });
+    const writer = new pg.Client({ connectionString: appUrl });
+    await Promise.all([approver.connect(), writer.connect()]);
+    try {
+      const writerPid = (await writer.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid as number;
+      for (const { month, attempt } of runCases) {
+        const opened = await o.open(month);
+        const s = await o.sheet(opened.runId);
+        const lineId = (s.lines[0] as HrRunSheet['lines'][number]).id;
+
+        await approver.query('BEGIN');
+        await approver.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]);
+        await approver.query(
+          `UPDATE ludy_hr.payroll_run
+              SET status = 'approved', approved_by = $2, approved_at = now(), approval = '{}'::jsonb, updated_at = now()
+            WHERE org_id = $1 AND id = $3`,
+          [o.orgId, o.owner, opened.runId],
+        );
+
+        await writer.query('BEGIN');
+        await writer.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]);
+        let settled = false;
+        const pending = attempt(writer, opened.runId, lineId).finally(() => {
+          settled = true;
+        });
+        pending.catch(() => {});
+
+        await waitForLockWait(writerPid);
+        expect(settled, `${month} raw line write must block behind uncommitted approval`).toBe(false);
+
+        await approver.query('COMMIT');
+        await expect(pending, `${month} raw line write must be refused after approval commits`).rejects.toMatchObject({
+          code: '42501',
+          message: expect.stringMatching(/frozen once approved/),
+        });
+        expect(settled).toBe(true);
+        await writer.query('ROLLBACK');
+      }
+    } finally {
+      await Promise.all([approver, writer].map((c) => c.query('ROLLBACK').catch(() => {})));
+      await Promise.all([approver.end(), writer.end()]);
+    }
+  });
+
+  it('(#2720 H5a, H5b) classifies payroll_line.note as sensitive and binds payroll_line FKs to the employee and legal entity', async () => {
+    expect(hrManifest.tables.ludy_hr.payroll_line.note).toBe('sensitive');
+
+    setRuleStatus('confirmed');
+    try {
+      const o = await org();
+      const [emp1, emp2] = await o.team();
+      const empUnpaid = (await o.hire({ displayName: 'Trần Chưa Chạy Canary', employment: { effectiveFrom: '2026-12-01', contractType: 'indefinite', region: 'I', baseWage: '11000000' } })).employeeId as string;
+      const employments = await withAdmin(
+        async (c) =>
+          (await c.query<{ employee_id: string; id: string }>('SELECT employee_id, id FROM ludy_hr.payroll_employment WHERE org_id = $1', [o.orgId])).rows,
+      );
+      const empOf = (employeeId: string) => employments.find((e) => e.employee_id === employeeId)?.id as string;
+
+      const oct = await o.open(PREVIOUS);
+      await o.approve(oct.runId, (await o.sheet(oct.runId)).fingerprint);
+
+      const branch = await withAdmin(
+        async (c) =>
+          (
+            await c.query<{ id: string }>(
+              `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh H5b', 'branch', $2) RETURNING id`,
+              [o.orgId, o.owner],
+            )
+          ).rows[0]?.id as string,
+      );
+      await o.hire({ legalEntityId: branch, displayName: 'Nhân viên Chi nhánh', employment: { effectiveFrom: '2026-01-01', contractType: 'indefinite', region: 'I', baseWage: '10000000' } });
+      const branchOct = await o.open(PREVIOUS, { legalEntityId: branch });
+      await o.approve(branchOct.runId, (await o.sheet(branchOct.runId)).fingerprint);
+
+      const nov = await o.open(MONTH);
+      const novSheet = await o.sheet(nov.runId);
+      const emp1Line = novSheet.lines.find((l) => l.employeeId === emp1) as HrRunSheet['lines'][number];
+
+      const client = new pg.Client({ connectionString: appUrl });
+      await client.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]);
+
+        // H5b (employment): assigning another employee's employment_id on UPDATE or INSERT is refused with 23503.
+        await client.query('SAVEPOINT s1');
+        await expect(
+          client.query('UPDATE ludy_hr.payroll_line SET employment_id = $3 WHERE org_id = $1 AND id = $2', [o.orgId, emp1Line.id, empOf(emp2 as string)]),
+        ).rejects.toMatchObject({ code: '23503', constraint: 'payroll_line_employment_fk' });
+        await client.query('ROLLBACK TO SAVEPOINT s1');
+
+        await client.query('SAVEPOINT s2');
+        await expect(
+          client.query(
+            `INSERT INTO ludy_hr.payroll_line (org_id, run_id, employee_id, employment_id, kind, status, gross, employee_insurance, employer_insurance, union_fee, taxable_income, pit, net, employer_cost)
+             VALUES ($1, $2, $3, $4, 'pay', 'calculated', 11000000, 1155000, 2365000, 220000, 11000000, 0, 9845000, 13585000)`,
+            [o.orgId, nov.runId, empUnpaid, empOf(emp1 as string)],
+          ),
+        ).rejects.toMatchObject({ code: '23503', constraint: 'payroll_line_employment_fk' });
+        await client.query('ROLLBACK TO SAVEPOINT s2');
+
+        // H5b (adjusted run): referencing an approved run of another legal entity in the same org is refused with 23503.
+        await client.query('SAVEPOINT s3');
+        await expect(
+          client.query(
+            `INSERT INTO ludy_hr.payroll_line (org_id, run_id, employee_id, employment_id, kind, status, gross, employee_insurance, employer_insurance, union_fee, taxable_income, pit, net, employer_cost, adjusts_run_id, note)
+             VALUES ($1, $2, $3, $4, 'adjustment', 'calculated', 500000, 0, 0, 0, 500000, 25000, 475000, 500000, $5, 'Sai pháp nhân')`,
+            [o.orgId, nov.runId, emp1, empOf(emp1 as string), branchOct.runId],
+          ),
+        ).rejects.toMatchObject({ code: '23503', constraint: 'payroll_line_adjusts_fk' });
+        await client.query('ROLLBACK TO SAVEPOINT s3');
+
+        // Controls: NULL employment_id, the employee's own employment_id, and an adjusted run of the same entity all succeed.
+        await expect(
+          client.query(
+            `INSERT INTO ludy_hr.payroll_line (org_id, run_id, employee_id, employment_id, kind, status, gross, employee_insurance, employer_insurance, union_fee, taxable_income, pit, net, employer_cost)
+             VALUES ($1, $2, $3, NULL, 'pay', 'calculated', 11000000, 1155000, 2365000, 220000, 11000000, 0, 9845000, 13585000)`,
+            [o.orgId, nov.runId, empUnpaid],
+          ),
+        ).resolves.toMatchObject({ rowCount: 1 });
+        await expect(
+          client.query(
+            `INSERT INTO ludy_hr.payroll_line (org_id, run_id, employee_id, employment_id, kind, status, gross, employee_insurance, employer_insurance, union_fee, taxable_income, pit, net, employer_cost, adjusts_run_id, note)
+             VALUES ($1, $2, $3, $4, 'adjustment', 'calculated', 500000, 0, 0, 0, 500000, 25000, 475000, 500000, $5, 'Cùng pháp nhân')`,
+            [o.orgId, nov.runId, emp1, empOf(emp1 as string), oct.runId],
+          ),
+        ).resolves.toMatchObject({ rowCount: 1 });
+      } finally {
+        await client.query('ROLLBACK').catch(() => {});
+        await client.end();
+      }
+    } finally {
+      setRuleStatus('commentary');
+    }
+  });
+
+  it('(#2720 N1) refuses DELETE of kind = adjustment lines on a draft run unless org_purge is running', async () => {
+    setRuleStatus('confirmed');
+    try {
+      const o = await org();
+      const [emp1] = await o.team();
+      const oct = await o.open(PREVIOUS);
+      await o.approve(oct.runId, (await o.sheet(oct.runId)).fingerprint);
+      const nov = await o.open(MONTH);
+      const adjusted = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.line.adjust', {
+        runId: nov.runId,
+        adjustsRunId: oct.runId,
+        employeeId: emp1,
+        note: 'Bù phụ cấp tháng 10',
+        gross: '300000',
+        pit: '0',
+      });
+      const novSheet = await o.sheet(nov.runId);
+      const payLine = novSheet.lines.find((l) => l.kind === 'pay') as HrRunSheet['lines'][number];
+
+      const client = new pg.Client({ connectionString: appUrl });
+      await client.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]);
+        await client.query('SAVEPOINT before_adj_del');
+        await expect(
+          client.query('DELETE FROM ludy_hr.payroll_line WHERE org_id = $1 AND id = $2', [o.orgId, adjusted.lineId]),
+        ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/adjustment line .* cannot be deleted/) });
+        await client.query('ROLLBACK TO SAVEPOINT before_adj_del');
+
+        // Deleting a draft pay line still succeeds, as runRecalculate requires.
+        const deletedPay = await client.query('DELETE FROM ludy_hr.payroll_line WHERE org_id = $1 AND id = $2', [o.orgId, payLine.id]);
+        expect(deletedPay.rowCount).toBe(1);
+        await client.query('COMMIT');
+      } finally {
+        await client.query('ROLLBACK').catch(() => {});
+        await client.end();
+      }
+
+      // Even the table owner cannot delete an adjustment line outside org_purge.
+      await expect(
+        withAdmin((c) => c.query('DELETE FROM ludy_hr.payroll_line WHERE org_id = $1 AND id = $2', [o.orgId, adjusted.lineId])),
+      ).rejects.toMatchObject({ code: '42501', message: expect.stringMatching(/adjustment line .* cannot be deleted/) });
+
+      // Closing and purging the org deletes both runs and the adjustment line cleanly.
+      await withAdmin(async (c) => {
+        await c.query('BEGIN');
+        await c.query('SET LOCAL session_replication_role = replica');
+        await c.query(`UPDATE ludy_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [o.orgId]);
+        await c.query('COMMIT');
+        await c.query(
+          `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
+           VALUES ($1, now() - interval '40 days', 'user', $2, 'kernel.org.offboard', $3, 'ok', $5, '{}'::jsonb),
+                  ($1, now() - interval '31 days', 'system', NULL, 'kernel.org.export.record', $4, 'ok', $5, $6)`,
+          [o.orgId, o.owner, randomUUID(), randomUUID(), '0'.repeat(64), JSON.stringify({ format: 'crove.org-export.v2', file_count: 2 })],
+        );
+      });
+      const purged = await workerRt.execute<{ counts: { deleted: Record<string, number> } }>(
+        'kernel.org.purge',
+        { minDays: 30, reason: 'Owner closed org' },
+        { actor: { type: 'system', component: 'operator' }, orgId: o.orgId },
+      );
+      expect(purged.counts.deleted['ludy_hr.payroll_line']).toBe(6);
+      const left = await withAdmin(
+        async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_hr.payroll_line WHERE org_id = $1', [o.orgId])).rows[0]?.n,
+      );
+      expect(left).toBe(0);
+    } finally {
+      setRuleStatus('commentary');
+    }
+  });
+
+  it('(#2720 N2) pins expected runtime grants across all ludy_hr tables so accidental DELETE or table UPDATE grants fail', async () => {
+    const EXPECTED_HR_TABLE_GRANTS: Record<string, readonly string[]> = {
+      attendance_log: ['INSERT', 'SELECT'],
+      attendance_qr_config: ['INSERT', 'SELECT'],
+      candidate: ['INSERT', 'SELECT'],
+      department: ['INSERT', 'SELECT'],
+      job_opening: ['INSERT', 'SELECT'],
+      leave_request: ['INSERT', 'SELECT'],
+      onboarding_submission: ['INSERT', 'SELECT'],
+      overtime_request: ['INSERT', 'SELECT'],
+      payroll_bank_template: ['DELETE', 'INSERT', 'SELECT'],
+      payroll_dependent: ['INSERT', 'SELECT'],
+      payroll_employee: ['INSERT', 'SELECT'],
+      payroll_employment: ['INSERT', 'SELECT'],
+      payroll_leave_entry: ['DELETE', 'INSERT', 'SELECT'],
+      payroll_line: ['DELETE', 'INSERT', 'SELECT'],
+      payroll_run: ['INSERT', 'SELECT'],
+      probation_review: ['INSERT', 'SELECT'],
+    };
+    const TENANT_ROLES = ['ludy_app', 'ludy_definer_tenant', 'ludy_tenant', 'ludy_worker'];
+    const ALL_OPS = ['DELETE', 'INSERT', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE'];
+
+    const { tables, grants } = await withAdmin(async (c) => ({
+      tables: (
+        await c.query<{ relname: string }>(
+          `SELECT c.relname
+             FROM pg_catalog.pg_class c
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'ludy_hr' AND c.relkind IN ('r', 'p') AND NOT c.relispartition
+            ORDER BY 1`,
+        )
+      ).rows.map((r) => r.relname),
+      grants: (
+        await c.query<{ relname: string; role: string; ops: string[] }>(
+          `SELECT c.relname,
+                  r.rolname AS role,
+                  ARRAY(
+                    SELECT op
+                      FROM pg_catalog.unnest($2::text[]) AS op
+                     WHERE pg_catalog.has_table_privilege(r.oid, c.oid, op)
+                     ORDER BY op
+                  ) AS ops
+             FROM pg_catalog.pg_class c
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+             CROSS JOIN pg_catalog.pg_roles r
+            WHERE n.nspname = 'ludy_hr'
+              AND c.relkind IN ('r', 'p')
+              AND NOT c.relispartition
+              AND r.rolname = ANY($1::text[])
+            ORDER BY 1, 2`,
+          [[...TENANT_ROLES, 'ludy_auth_reader'], ALL_OPS],
+        )
+      ).rows,
+    }));
+
+    expect(tables).toEqual(Object.keys(EXPECTED_HR_TABLE_GRANTS).sort());
+    for (const row of grants) {
+      if (row.role === 'ludy_auth_reader') {
+        expect(row.ops, `${row.role} on ludy_hr.${row.relname}`).toEqual([]);
+      } else {
+        expect(row.ops, `${row.role} on ludy_hr.${row.relname}`).toEqual(EXPECTED_HR_TABLE_GRANTS[row.relname]);
+      }
+    }
   });
 });

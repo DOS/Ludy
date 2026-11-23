@@ -4,11 +4,11 @@
 // does not report is absent, never zero.
 import { sql, type RawBuilder } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { AVERAGE_METRIC_NAMES, METRIC_NAMES, POST_METRIC_NAMES, REEL_METRIC_NAMES, STORY_METRIC_NAMES, postTypeOf, type PostType, type Publisher } from '@crove/channel';
-import type { Db } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CredentialBroker, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { AVERAGE_METRIC_NAMES, METRIC_NAMES, POST_METRIC_NAMES, REEL_METRIC_NAMES, STORY_METRIC_NAMES, postTypeOf, type PostType, type Publisher } from '@ludy/channel';
+import type { Db } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CredentialBroker, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import type { Trx } from './variants.ts';
 import { labelsOfPosts } from './labels.ts';
 import { formatOf, whatWorks, type ChannelInsights, type InsightSample } from './domain/insights.ts';
@@ -56,7 +56,7 @@ export const metricsRecord = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
     const inserted = await ctx.trx
-      .insertInto('crove_social.metric_snapshot')
+      .insertInto('ludy_social.metric_snapshot')
       .values({ org_id: ctx.orgId, variant_id: input.variantId, capture_key: input.captureKey, metrics: JSON.stringify(input.metrics), extra: input.extra ? JSON.stringify(input.extra) : null })
       .onConflict((oc) => oc.columns(['org_id', 'variant_id', 'capture_key']).doNothing())
       .returning('id')
@@ -70,13 +70,13 @@ async function singleVideo(trx: Trx, orgId: string, variantId: string): Promise<
   const { rows } = await sql<{ types: string[] | null }>`
     SELECT CASE WHEN jsonb_typeof(v.media) = 'array' THEN (
              SELECT array_agg(f.content_type) FROM jsonb_array_elements(v.media) x(e)
-             JOIN crove_kernel.file f ON f.org_id = v.org_id AND f.id::text = x.e->>'fileId'
+             JOIN ludy_kernel.file f ON f.org_id = v.org_id AND f.id::text = x.e->>'fileId'
            ) ELSE (
-             SELECT array_agg(f.content_type) FROM crove_social.post_media m
-             JOIN crove_kernel.file f ON f.org_id = m.org_id AND f.id = m.file_id
+             SELECT array_agg(f.content_type) FROM ludy_social.post_media m
+             JOIN ludy_kernel.file f ON f.org_id = m.org_id AND f.id = m.file_id
              WHERE m.org_id = v.org_id AND m.post_id = v.post_id
            ) END AS types
-    FROM crove_social.post_variant v WHERE v.org_id = ${orgId} AND v.id = ${variantId}`.execute(trx);
+    FROM ludy_social.post_variant v WHERE v.org_id = ${orgId} AND v.id = ${variantId}`.execute(trx);
   const types = rows[0]?.types ?? [];
   return types.length === 1 && (types[0] ?? '').startsWith('video/');
 }
@@ -88,7 +88,7 @@ export const metricsTarget = defineQuery({
   access: 'system',
   handler: async (ctx, input) => {
     const row = await ctx.trx
-      .selectFrom('crove_social.post_variant')
+      .selectFrom('ludy_social.post_variant')
       .select(['id', 'channel_connection_id', 'external_post_id', 'provider', 'status', 'settings', 'published_at', 'outperform_checked_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.variantId)
@@ -222,10 +222,10 @@ export function channelKept(filter: SpanFilter, column: string): RawBuilder<bool
 
 // The totals of the variants published in the span, with the channels' posts published outside Crove in the same span
 // when the filter says so (their latest real counts, no clicks), leaving out the ones that are Crove's own
-// (crove_social.external_post_is_crove).
+// (ludy_social.external_post_is_crove).
 export async function spanTotals(trx: Trx, orgId: string, span: Span, filter: SpanFilter = {}): Promise<WindowTotals> {
   const labelled = filter.labelId
-    ? sql`AND EXISTS (SELECT 1 FROM crove_social.post_label pl WHERE pl.org_id = v.org_id AND pl.post_id = v.post_id AND pl.label_id = ${filter.labelId}::uuid)`
+    ? sql`AND EXISTS (SELECT 1 FROM ludy_social.post_label pl WHERE pl.org_id = v.org_id AND pl.post_id = v.post_id AND pl.label_id = ${filter.labelId}::uuid)`
     : sql``;
   // A span that ends before now counts its posts' short link clicks up to its end only, on the days (UTC) whose midday
   // is in it, as the client report does; the later clicks belong to the windows after it. A post's clicks all come
@@ -251,10 +251,10 @@ export function periodTotals(trx: Trx, orgId: string, start: Date, end: Date): P
 async function totalsWhere(trx: Trx, orgId: string, published: RawBuilder<unknown>, clickedBy: RawBuilder<unknown>, outsidePublished?: RawBuilder<unknown>): Promise<WindowTotals> {
   const outside = outsidePublished
     ? sql`, x AS (
-      SELECT e.channel_connection_id AS conn, c.provider, e.metrics FROM crove_social.external_post e
-      JOIN crove_kernel.channel_connection c ON c.org_id = e.org_id AND c.id = e.channel_connection_id
+      SELECT e.channel_connection_id AS conn, c.provider, e.metrics FROM ludy_social.external_post e
+      JOIN ludy_kernel.channel_connection c ON c.org_id = e.org_id AND c.id = e.channel_connection_id
       WHERE e.org_id = ${orgId} AND ${outsidePublished}
-        AND NOT crove_social.external_post_is_crove(e.org_id, e.channel_connection_id, e.external_post_id, e.permalink)
+        AND NOT ludy_social.external_post_is_crove(e.org_id, e.channel_connection_id, e.external_post_id, e.permalink)
     )`
     : sql``;
   const outsideCounts = outsidePublished ? sql`UNION ALL SELECT x.conn, x.metrics FROM x WHERE x.metrics <> '{}'::jsonb` : sql``;
@@ -268,11 +268,11 @@ async function totalsWhere(trx: Trx, orgId: string, published: RawBuilder<unknow
     rated: Record<string, { engagement: string | number; denominator: string | number }> | null;
   }>`
     WITH v AS (
-      SELECT v.org_id, v.id, v.channel_connection_id AS conn, v.provider FROM crove_social.post_variant v
+      SELECT v.org_id, v.id, v.channel_connection_id AS conn, v.provider FROM ludy_social.post_variant v
       WHERE v.org_id = ${orgId} AND v.status = 'published' AND ${published}
     )${outside}, latest AS (
       SELECT v.conn, s.metrics FROM v CROSS JOIN LATERAL (
-        SELECT m.metrics FROM crove_social.metric_snapshot m
+        SELECT m.metrics FROM ludy_social.metric_snapshot m
         WHERE m.org_id = v.org_id AND m.variant_id = v.id
         ORDER BY (m.metrics = '{}'::jsonb), m.captured_at DESC LIMIT 1
       ) s
@@ -295,8 +295,8 @@ async function totalsWhere(trx: Trx, orgId: string, published: RawBuilder<unknow
       GROUP BY latest.conn, b.basis
     ), clicks AS (
       SELECT v.conn, coalesce(sum(c.clicks), 0) AS clicks FROM v
-      JOIN crove_social.short_link l ON l.org_id = v.org_id AND l.variant_id = v.id
-      LEFT JOIN crove_social.short_link_click c ON c.org_id = l.org_id AND c.short_link_id = l.id ${clickedBy}
+      JOIN ludy_social.short_link l ON l.org_id = v.org_id AND l.variant_id = v.id
+      LEFT JOIN ludy_social.short_link_click c ON c.org_id = l.org_id AND c.short_link_id = l.id ${clickedBy}
       GROUP BY v.conn
     )
     SELECT v.conn, min(v.provider) AS provider, count(*) AS posts,
@@ -333,14 +333,17 @@ interface MetricsFilter {
   days?: number | undefined;
   postId?: string | undefined;
   labelId?: string | undefined;
+  // Leave out the posts that were archived after they went out (the screens keep them in their metrics as history; an MCP read does not send them).
+  liveOnly?: boolean | undefined;
 }
 
-async function latestMetrics(trx: Trx, orgId: string, input: MetricsFilter, limit: number, scope: ChannelScope): Promise<(MetricsRow & { text: string })[]> {
+export async function latestMetrics(trx: Trx, orgId: string, input: MetricsFilter, limit: number, scope: ChannelScope): Promise<(MetricsRow & { text: string })[]> {
   const days = input.days ?? 30;
   const window = input.postId ? sql`v.post_id = ${input.postId}::uuid` : sql`v.published_at > pg_catalog.now() - pg_catalog.make_interval(days => ${days}::int)`;
   const labelled = input.labelId
-    ? sql`AND EXISTS (SELECT 1 FROM crove_social.post_label pl WHERE pl.org_id = v.org_id AND pl.post_id = v.post_id AND pl.label_id = ${input.labelId}::uuid)`
+    ? sql`AND EXISTS (SELECT 1 FROM ludy_social.post_label pl WHERE pl.org_id = v.org_id AND pl.post_id = v.post_id AND pl.label_id = ${input.labelId}::uuid)`
     : sql``;
+  const live = input.liveOnly ? sql`AND p.archived_at IS NULL` : sql``;
   const { rows } = await sql<{
     variant_id: string;
     post_id: string;
@@ -355,18 +358,18 @@ async function latestMetrics(trx: Trx, orgId: string, input: MetricsFilter, limi
   }>`
     SELECT v.id AS variant_id, v.post_id, v.provider, v.channel_connection_id, coalesce(v.body, p.body) AS body,
            v.published_at, v.external_url, s.metrics, s.captured_at,
-           (SELECT CASE WHEN count(l.id) = 0 THEN NULL ELSE coalesce(sum(c.clicks), 0) END FROM crove_social.short_link l
-            LEFT JOIN crove_social.short_link_click c ON c.org_id = l.org_id AND c.short_link_id = l.id
+           (SELECT CASE WHEN count(l.id) = 0 THEN NULL ELSE coalesce(sum(c.clicks), 0) END FROM ludy_social.short_link l
+            LEFT JOIN ludy_social.short_link_click c ON c.org_id = l.org_id AND c.short_link_id = l.id
             WHERE l.org_id = v.org_id AND l.variant_id = v.id) AS clicks
-    FROM crove_social.post_variant v
-    JOIN crove_social.post p ON p.org_id = v.org_id AND p.id = v.post_id
+    FROM ludy_social.post_variant v
+    JOIN ludy_social.post p ON p.org_id = v.org_id AND p.id = v.post_id
     LEFT JOIN LATERAL (
-      SELECT m.metrics, m.captured_at FROM crove_social.metric_snapshot m
+      SELECT m.metrics, m.captured_at FROM ludy_social.metric_snapshot m
       WHERE m.org_id = v.org_id AND m.variant_id = v.id
       -- The last real answer; an empty snapshot (a failed try, a gone post) only when there is nothing else.
       ORDER BY (m.metrics = '{}'::jsonb), m.captured_at DESC LIMIT 1
     ) s ON true
-    WHERE v.org_id = ${orgId} AND v.status = 'published' AND ${window} ${labelled} AND ${connectionInScope(scope, 'v.channel_connection_id')}
+    WHERE v.org_id = ${orgId} AND v.status = 'published' AND ${window} ${labelled} ${live} AND ${connectionInScope(scope, 'v.channel_connection_id')}
     ORDER BY v.published_at DESC
     LIMIT ${limit}`.execute(trx);
   return rows.map((r) => ({
@@ -423,7 +426,7 @@ export const metricsExport = defineCommand({
     const names = new Map(
       ids.length === 0
         ? []
-        : (await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['id', 'display_name']).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute()).map((c) => [c.id, c.display_name] as const),
+        : (await ctx.trx.selectFrom('ludy_kernel.channel_connection').select(['id', 'display_name']).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute()).map((c) => [c.id, c.display_name] as const),
     );
     const labels = await labelsOfPosts(ctx.trx, ctx.orgId, [...new Set(rows.map((r) => r.postId))]);
     const labelNames = new Map([...labels].map(([postId, list]) => [postId, list.map((l) => l.name)] as const));
@@ -455,7 +458,7 @@ export const metricsInsights = defineQuery({
   access: ALL,
   handler: async (ctx, input): Promise<{ channels: ChannelInsightsView[]; truncated: boolean }> => {
     const labelled = input.labelId
-      ? sql`AND EXISTS (SELECT 1 FROM crove_social.post_label pl WHERE pl.org_id = v.org_id AND pl.post_id = v.post_id AND pl.label_id = ${input.labelId}::uuid)`
+      ? sql`AND EXISTS (SELECT 1 FROM ludy_social.post_label pl WHERE pl.org_id = v.org_id AND pl.post_id = v.post_id AND pl.label_id = ${input.labelId}::uuid)`
       : sql``;
     const { rows } = await sql<{
       variant_id: string;
@@ -474,18 +477,18 @@ export const metricsInsights = defineQuery({
              v.published_at, v.external_url, v.settings->>'postType' AS post_type,
              CASE WHEN jsonb_typeof(v.media) = 'array' THEN (
                SELECT array_agg(f.content_type ORDER BY x.n) FROM jsonb_array_elements(v.media) WITH ORDINALITY x(e, n)
-               JOIN crove_kernel.file f ON f.org_id = v.org_id AND f.id::text = x.e->>'fileId'
+               JOIN ludy_kernel.file f ON f.org_id = v.org_id AND f.id::text = x.e->>'fileId'
              ) ELSE (
-               SELECT array_agg(f.content_type ORDER BY m.position) FROM crove_social.post_media m
-               JOIN crove_kernel.file f ON f.org_id = m.org_id AND f.id = m.file_id
+               SELECT array_agg(f.content_type ORDER BY m.position) FROM ludy_social.post_media m
+               JOIN ludy_kernel.file f ON f.org_id = m.org_id AND f.id = m.file_id
                WHERE m.org_id = v.org_id AND m.post_id = v.post_id
              ) END AS media_types,
-             (SELECT array_agg(pl.label_id) FROM crove_social.post_label pl WHERE pl.org_id = v.org_id AND pl.post_id = v.post_id) AS label_ids,
+             (SELECT array_agg(pl.label_id) FROM ludy_social.post_label pl WHERE pl.org_id = v.org_id AND pl.post_id = v.post_id) AS label_ids,
              s.metrics
-      FROM crove_social.post_variant v
-      JOIN crove_social.post p ON p.org_id = v.org_id AND p.id = v.post_id
+      FROM ludy_social.post_variant v
+      JOIN ludy_social.post p ON p.org_id = v.org_id AND p.id = v.post_id
       LEFT JOIN LATERAL (
-        SELECT m.metrics FROM crove_social.metric_snapshot m
+        SELECT m.metrics FROM ludy_social.metric_snapshot m
         WHERE m.org_id = v.org_id AND m.variant_id = v.id
         ORDER BY (m.metrics = '{}'::jsonb), m.captured_at DESC LIMIT 1
       ) s ON true
@@ -563,7 +566,7 @@ export async function sweepMetrics(deps: MetricsDeps): Promise<{ recorded: numbe
   const out = { recorded: 0, skipped: 0 };
   if (providers.length === 0) return out;
   const { rows } = await sql<{ org_id: string; variant_id: string; provider: string }>`
-    SELECT org_id, variant_id, provider FROM crove_social.metrics_due(${METRICS_LIMIT}::int, ${providers}::text[], ${METRICS_INTERVAL_SECONDS}::int)`.execute(deps.workerDb);
+    SELECT org_id, variant_id, provider FROM ludy_social.metrics_due(${METRICS_LIMIT}::int, ${providers}::text[], ${METRICS_INTERVAL_SECONDS}::int)`.execute(deps.workerDb);
   const now = deps.now?.() ?? new Date();
   const key = captureKey(now);
   await eachBounded(rows, async (row) => {

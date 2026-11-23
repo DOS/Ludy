@@ -25,7 +25,8 @@ test('import contacts, find and save a view, add a deal, move it to Won, read th
     await expect(page.getByText('3 dòng mới')).toBeVisible();
     await page.getByRole('button', { name: 'Nhập 3 liên hệ mới' }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Đã nhập 3 liên hệ mới' })).toBeVisible();
-    await page.getByRole('link', { name: 'Về danh sách liên hệ' }).first().click();
+    // #3650: back goes to the screen the import came from; a link when the page was opened directly, a button when it was reached in the app.
+    await page.getByRole('link', { name: 'Quay lại danh sách' }).or(page.getByRole('button', { name: 'Quay lại danh sách' })).first().click();
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/contacts$`));
     await expect(page.getByText('Trần Thị Bình')).toBeVisible();
   });
@@ -104,10 +105,120 @@ test('import contacts, find and save a view, add a deal, move it to Won, read th
       await expect(ready).toBeVisible();
       expect(await sidewaysScroll(), path).toBeLessThanOrEqual(0);
     }
+    // #3649: the Deals list is cards on a phone: the open control, the stage select and the row buttons are all inside the 375 px, and 44 px high.
+    await page.goto(`/o/${slug}/deals`);
+    const row = page.getByTestId('deal-row').first();
+    await expect(row).toBeVisible();
+    for (const control of [row.getByTestId('deal-row-open'), row.getByRole('combobox'), row.getByRole('button', { name: 'Sửa', exact: false })]) {
+      const box = await control.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(375);
+    }
+    expect((await row.getByRole('combobox').boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    expect((await row.getByRole('button', { name: 'Sửa', exact: false }).boundingBox())!.height).toBeGreaterThanOrEqual(44);
     // The keyboard alone: focus the button, press Enter, the form is there.
     await page.goto(`/o/${slug}/deals`);
     await page.getByRole('button', { name: 'Thêm cơ hội' }).focus();
     await page.keyboard.press('Enter');
     await expect(page.getByRole('form', { name: 'Thêm cơ hội' })).toBeVisible();
+  });
+});
+
+// #3292: a contact added inside the deal form, a duplicate tax code refused with the owner's name, a deal added from the contact's panel.
+test('add a contact inside the deal form, and a deal from the contact panel', async ({ page }) => {
+  const email = newEmail('crm-inline');
+  await page.goto('/');
+  await signInNewUser(page, email);
+  const slug = await createOrg(page, 'Công ty Thêm Nhanh');
+  const dealForm = () => page.getByRole('form', { name: 'Thêm cơ hội' });
+  const group = () => page.getByRole('group', { name: 'Thêm liên hệ mới' });
+  const openForm = async () => {
+    await page.goto(`/o/${slug}/deals`);
+    await page.getByRole('button', { name: 'Thêm cơ hội' }).click();
+    await expect(dealForm()).toBeVisible();
+  };
+
+  await test.step('a deal for a customer who is not yet a contact, without leaving the form', async () => {
+    await openForm();
+    await dealForm().getByLabel('Tên cơ hội').fill('Gói tư vấn');
+    await dealForm().getByRole('searchbox', { name: 'Khách hàng' }).fill('Khách Mới');
+    await expect(page.getByText('Không thấy khách hàng nào khớp.')).toBeVisible();
+    await page.getByRole('button', { name: 'Thêm liên hệ mới' }).click();
+    await expect(group().getByLabel('Tên', { exact: true })).toHaveValue('Khách Mới');
+    await group().getByLabel('Điện thoại').fill('0912 345 678');
+    await group().getByRole('button', { name: 'Thêm liên hệ', exact: true }).click();
+    await expect(group()).toHaveCount(0);
+    await expect(dealForm().getByText('Khách Mới')).toBeVisible();
+    await dealForm().getByLabel('Số tiền (VND)').fill('5000000');
+    await dealForm().getByRole('button', { name: 'Thêm', exact: true }).click();
+    await expect(page.getByTestId('deal-board').getByTestId('deal-card').filter({ hasText: 'Gói tư vấn' })).toBeVisible();
+  });
+
+  await test.step('a tax code that already belongs to a contact is refused and names it; the deal is not created', async () => {
+    await openForm();
+    await dealForm().getByLabel('Tên cơ hội').fill('Gói thuế');
+    await dealForm().getByRole('searchbox', { name: 'Khách hàng' }).fill('Công ty Thuế');
+    await page.getByRole('button', { name: 'Thêm liên hệ mới' }).click();
+    await group().getByLabel('Loại').selectOption('organization');
+    await group().getByLabel('Mã số thuế').fill('0123456780');
+    await group().getByRole('button', { name: 'Thêm liên hệ', exact: true }).click();
+    await expect(dealForm().getByText('Công ty Thuế')).toBeVisible();
+    await dealForm().getByRole('button', { name: 'Hủy' }).click();
+    await openForm();
+    await dealForm().getByRole('searchbox', { name: 'Khách hàng' }).fill('Công ty Trùng');
+    await page.getByRole('button', { name: 'Thêm liên hệ mới' }).click();
+    await group().getByLabel('Loại').selectOption('organization');
+    await group().getByLabel('Mã số thuế').fill('0123456780');
+    await group().getByRole('button', { name: 'Thêm liên hệ', exact: true }).click();
+    await expect(group().getByText('Công ty Thuế')).toBeVisible();
+    await expect(group()).toBeVisible();
+    await group().getByRole('button', { name: 'Hủy' }).click();
+    await expect(page.getByRole('searchbox', { name: 'Khách hàng' })).toBeVisible();
+  });
+
+  await test.step('a phone number already on a contact offers that contact instead of making a second one', async () => {
+    await openForm();
+    await dealForm().getByRole('searchbox', { name: 'Khách hàng' }).fill('Người Khác');
+    await page.getByRole('button', { name: 'Thêm liên hệ mới' }).click();
+    // The same number as "Khách Mới", written another way.
+    await group().getByLabel('Điện thoại').fill('+84 912 345 678');
+    await group().getByRole('button', { name: 'Thêm liên hệ', exact: true }).click();
+    await expect(group().getByTestId('deal-new-party-existing')).toContainText('Khách Mới');
+    await group().getByRole('button', { name: 'Chọn liên hệ này' }).click();
+    await expect(group()).toHaveCount(0);
+    await expect(dealForm().getByText('Khách Mới')).toBeVisible();
+    await page.goto(`/o/${slug}/contacts`);
+    await expect(page.getByText('Người Khác')).toHaveCount(0);
+  });
+
+  await test.step("the contact's panel adds a deal for that contact, owner defaulted to the member", async () => {
+    await page.goto(`/o/${slug}/contacts`);
+    await page.getByRole('button', { name: 'Mở Khách Mới' }).click();
+    const deals = page.getByTestId('contact-deals');
+    await expect(deals).toContainText('Gói tư vấn');
+    await page.getByRole('button', { name: 'Thêm cơ hội cho Khách Mới' }).click();
+    // #3648: the form opens in the deal's side sheet, with the contact chosen.
+    const form = page.getByTestId('deal-sheet').getByRole('form', { name: 'Thêm cơ hội' });
+    await expect(form.getByText('Khách Mới')).toBeVisible();
+    await expect(form.getByRole('searchbox')).toHaveCount(0);
+    await expect(form.getByLabel('Người phụ trách')).toHaveValue('me');
+    await form.getByLabel('Tên cơ hội').fill('Gói gia hạn');
+    await form.getByLabel('Số tiền (VND)').fill('2000000');
+    await form.getByRole('button', { name: 'Thêm', exact: true }).click();
+    await expect(form).toHaveCount(0);
+    await expect(deals).toContainText('Gói gia hạn');
+    await expect(deals).toContainText('Gói tư vấn');
+  });
+
+  await test.step('on a 375 px phone nothing scrolls sideways and the keyboard opens the inline group', async () => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await openForm();
+    await dealForm().getByRole('searchbox', { name: 'Khách hàng' }).fill('Người Chưa Có');
+    await page.getByRole('button', { name: 'Thêm liên hệ mới' }).focus();
+    await page.keyboard.press('Enter');
+    await expect(group()).toBeVisible();
+    await group().getByLabel('Loại').selectOption('organization');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
   });
 });

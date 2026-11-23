@@ -23,9 +23,18 @@ describe('popup strings', () => {
     expect(same.sort()).toEqual(['cloud', 'title']);
   });
 
+  it('the sign-in step says, in both languages, that the browser and operating system name is sent (#3273)', () => {
+    expect(ENGLISH.signInDeviceNote).toMatch(/device name/i);
+    expect(ENGLISH.signInDeviceNote).toMatch(/browser/i);
+    expect(ENGLISH.signInDeviceNote).toMatch(/operating system/i);
+    expect(VIETNAMESE.signInDeviceNote).toMatch(/tên thiết bị/);
+    expect(VIETNAMESE.signInDeviceNote).toMatch(/trình duyệt/);
+    expect(VIETNAMESE.signInDeviceNote).toMatch(/hệ điều hành/);
+  });
+
   it('the consent step has its method choices and the confirmation in both languages', () => {
     for (const strings of [ENGLISH, VIETNAMESE]) {
-      expect(Object.keys(strings.consentMethods).sort()).toEqual(['in_invite', 'in_writing', 'told_at_start']);
+      expect(Object.keys(strings.consentMethods).sort()).toEqual(['in_call_chat', 'in_invite', 'in_writing', 'told_at_start']);
       expect(strings.consentConfirm.length).toBeGreaterThan(20);
       expect(strings.blockers.consentAgreed.length).toBeGreaterThan(0);
     }

@@ -2,7 +2,10 @@
 // signs in or signs up, so the invite page can pick it up again, and dropped once the invite is answered, when the
 // user signs out, or after PENDING_INVITE_TTL_MS (#134): a shared browser must not keep it for the next person. The
 // link itself stays valid until the invite expires, so opening it again starts over.
-const KEY = 'crove-pending-invite';
+import { promoteMigratedItem, readLegacyAwareItem, removeMigratedItem, writeMigratedItem } from './storage-migrate.ts';
+
+const KEY = 'ludy-pending-invite';
+const LEGACY_KEY = 'crove-pending-invite';
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
 // Long enough to sign in, or to sign up and confirm the email; much shorter than the invite (7 days).
 export const PENDING_INVITE_TTL_MS = 60 * 60 * 1000;
@@ -18,7 +21,7 @@ export function isInviteToken(value: string | null | undefined): value is string
 
 export function rememberInvite(token: string, now: number = Date.now()): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify({ token, savedAt: now } satisfies Stored));
+    writeMigratedItem(localStorage, KEY, LEGACY_KEY, JSON.stringify({ token, savedAt: now } satisfies Stored));
   } catch {
     // Storage may be unavailable (private mode); the link still works when opened again after signing in.
   }
@@ -39,11 +42,14 @@ function parse(raw: string | null): Stored | null {
 // older version stored) is removed.
 export function pendingInvite(now: number = Date.now()): string | null {
   try {
-    const raw = localStorage.getItem(KEY);
-    if (raw === null) return null;
-    const stored = parse(raw);
-    if (stored && stored.savedAt <= now && now - stored.savedAt < PENDING_INVITE_TTL_MS) return stored.token;
-    localStorage.removeItem(KEY);
+    const entry = readLegacyAwareItem(localStorage, KEY, LEGACY_KEY);
+    if (!entry) return null;
+    const stored = parse(entry.value);
+    if (stored && stored.savedAt <= now && now - stored.savedAt < PENDING_INVITE_TTL_MS) {
+      if (entry.fromLegacy) promoteMigratedItem(localStorage, KEY, LEGACY_KEY, entry.value);
+      return stored.token;
+    }
+    removeMigratedItem(localStorage, KEY, LEGACY_KEY);
     return null;
   } catch {
     return null;
@@ -52,7 +58,7 @@ export function pendingInvite(now: number = Date.now()): string | null {
 
 export function forgetInvite(): void {
   try {
-    localStorage.removeItem(KEY);
+    removeMigratedItem(localStorage, KEY, LEGACY_KEY);
   } catch {
     // Nothing stored.
   }
@@ -70,7 +76,7 @@ export function takeTokenFromHash(): string | null {
 // restricted (invite_only, or an invited address under allowlist), Supabase Auth only gets a sign-up for an invited
 // address that carries its token: whoever merely knows the address cannot create the account first with their own
 // password. The proxy never forwards the header.
-export const INVITE_TOKEN_HEADER = 'x-crove-invite';
+export const INVITE_TOKEN_HEADER = 'x-ludy-invite';
 
 function requestUrl(input: RequestInfo | URL): string {
   if (typeof input === 'string') return input;

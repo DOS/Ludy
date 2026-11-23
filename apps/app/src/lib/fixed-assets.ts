@@ -1,8 +1,8 @@
 // The register of fixed assets and prepaid costs (#919): the form's defaults and checks, the months offered for a
 // depreciation and the label of a month. The kernel decides every rule again (modules/finance/src/fixed-assets.ts);
 // these only spare a round trip.
-import type { FixedAssetCreate } from '@crove/kernel-contract';
-import { normalizeAmount } from './vouchers.ts';
+import type { FixedAssetCreate } from '@ludy/kernel-contract';
+import { amountUnits, normalizeAmount } from './vouchers.ts';
 
 export type FixedAssetKind = FixedAssetCreate['kind'];
 
@@ -106,4 +106,14 @@ export function recentMonths(last: string, count = 12): string[] {
 // MM/YYYY, as Vietnamese books write a month.
 export function monthLabel(month: string): string {
   return `${month.slice(5, 7)}/${month.slice(0, 4)}`;
+}
+
+// The asset in the register a new entry looks like (#3607): the same name (case and surrounding spaces ignored) and the
+// same cost, compared as amounts. One that was stopped early no longer counts: buying the same printer again is not a
+// second entry of the first. Only a hint shown while typing.
+export function findDuplicateAsset<T extends { name: string; cost: string; ended: unknown }>(assets: readonly T[], name: string, cost: string): T | null {
+  const wanted = name.trim().toLocaleLowerCase();
+  const units = amountUnits(cost);
+  if (wanted === '' || units === null || units <= 0n) return null;
+  return assets.find((a) => !a.ended && a.name.trim().toLocaleLowerCase() === wanted && amountUnits(a.cost) === units) ?? null;
 }

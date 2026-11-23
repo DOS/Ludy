@@ -6,13 +6,13 @@ import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { InvoiceExtractor } from '@crove/agent';
-import { createDb, createPool, type Db } from '@crove/db';
-import type { ExtractClient } from '@crove/extract-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
+import type { InvoiceExtractor } from '@ludy/agent';
+import { createDb, createPool, type Db } from '@ludy/db';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -88,7 +88,7 @@ suite('uploads of a member limited to a legal entity (#1280)', () => {
     (await runtime.query<FileStatus[]>('kernel.files.recent', {}, { actor: asUser(userId), orgId })).find((f) => f.id === fileId);
   // Runs the dispatch of the org's unreadable-file events, as the worker's kernel-notify job does.
   async function dispatchUnreadable() {
-    const { rows } = await admin((c) => c.query<{ id: string }>(`SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.file.read_failed'`, [orgId]));
+    const { rows } = await admin((c) => c.query<{ id: string }>(`SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.file.read_failed'`, [orgId]));
     for (const { id } of rows) await workerRuntime.execute('kernel.notification.dispatch', { eventId: id }, { actor: SYSTEM, orgId });
   }
   const notices = async (userId: string) =>
@@ -104,7 +104,7 @@ suite('uploads of a member limited to a legal entity (#1280)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = username;
@@ -117,21 +117,21 @@ suite('uploads of a member limited to a legal entity (#1280)', () => {
       const db: Db = createDb(pool);
       return { db, runtime: new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries] }) };
     };
-    const api = register(login('crove_app', 'test-app-pw'));
+    const api = register(login('ludy_app', 'test-app-pw'));
     runtime = api.runtime;
-    workerRuntime = register(login('crove_worker', 'test-worker-pw')).runtime;
+    workerRuntime = register(login('ludy_worker', 'test-worker-pw')).runtime;
     owner = await upsertIdentity(api.db, { issuer: 'test', subject: 'le-upload-owner', email: 'owner@le-upload.test', name: null });
     accountant = await upsertIdentity(api.db, { issuer: 'test', subject: 'le-upload-accountant', email: 'accountant@le-upload.test', name: null });
     other = await upsertIdentity(api.db, { issuer: 'test', subject: 'le-upload-other', email: 'other@le-upload.test', name: null });
     orgId = (await createOrg(runtime, asUser(owner), 'Hai pháp nhân')).orgId;
     await admin(async (c) => {
-      const defaultEntity = (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
-      branch = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner]))
+      const defaultEntity = (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
+      branch = (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner]))
         .rows[0]?.id as string;
       // The accountant keeps the branch's books; the other member keeps the default entity's.
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')`, [orgId, accountant, other]);
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')`, [orgId, accountant, other]);
       await c.query(
-        `INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $5), ($1, $4, 'external_accountant', $6, $5)`,
+        `INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $5), ($1, $4, 'external_accountant', $6, $5)`,
         [orgId, accountant, branch, other, owner, defaultEntity],
       );
     });
@@ -149,7 +149,7 @@ suite('uploads of a member limited to a legal entity (#1280)', () => {
   it('gives the first reading of its upload the uploader entity, so it sees the reading, the notice and reads again', async () => {
     const fileId = await upload(accountant);
     await extractAndPropose({ runtime: workerRuntime, store, extractor: ai, extract }, orgId, fileId);
-    const entity = await admin((c) => c.query<{ legal_entity_id: string }>('SELECT legal_entity_id FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2', [orgId, fileId]));
+    const entity = await admin((c) => c.query<{ legal_entity_id: string }>('SELECT legal_entity_id FROM ludy_kernel.extraction WHERE org_id = $1 AND file_id = $2', [orgId, fileId]));
     expect(entity.rows).toEqual([{ legal_entity_id: branch }]);
 
     expect(await recent(fileId, accountant)).toMatchObject({ status: 'failed', version: 1, canReextract: true });
@@ -160,7 +160,7 @@ suite('uploads of a member limited to a legal entity (#1280)', () => {
     const { version } = await runtime.execute<{ version: number }>('kernel.file.reextract', { fileId }, { actor: asUser(accountant), orgId });
     expect(version).toBe(2);
     expect(await recent(fileId, accountant)).toMatchObject({ status: 'processing', version: 2 });
-    const runs = await admin((c) => c.query<{ legal_entity_id: string }>('SELECT DISTINCT legal_entity_id FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2', [orgId, fileId]));
+    const runs = await admin((c) => c.query<{ legal_entity_id: string }>('SELECT DISTINCT legal_entity_id FROM ludy_kernel.extraction WHERE org_id = $1 AND file_id = $2', [orgId, fileId]));
     expect(runs.rows).toEqual([{ legal_entity_id: branch }]);
 
     // A member limited to the default entity sees no reading of it; the owner sees it all.

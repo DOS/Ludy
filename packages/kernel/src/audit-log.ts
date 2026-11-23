@@ -15,9 +15,9 @@ import {
   type AuditFilter,
   type AuditOutcome,
   type AuditPage,
-} from '@crove/kernel-contract';
-import type { Database, MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { Database, MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
 const TZ = 'Asia/Ho_Chi_Minh';
@@ -129,7 +129,7 @@ function where(orgId: string, filter: AuditFilter, before: AuditCursor | undefin
   // The cursor row's stored time (microseconds), not the page's millisecond copy of it, so rows within the same
   // millisecond are neither skipped nor shown twice. A cursor naming no row of the org matches nothing.
   if (before) {
-    parts.push(sql`(occurred_at, id) < (SELECT c.occurred_at, c.id FROM crove_kernel.audit_event c WHERE c.org_id = ${orgId}::uuid AND c.id = ${before.id}::uuid)`);
+    parts.push(sql`(occurred_at, id) < (SELECT c.occurred_at, c.id FROM ludy_kernel.audit_event c WHERE c.org_id = ${orgId}::uuid AND c.id = ${before.id}::uuid)`);
   }
   return sql.join(parts, sql` AND `);
 }
@@ -137,7 +137,7 @@ function where(orgId: string, filter: AuditFilter, before: AuditCursor | undefin
 async function readRows(db: Db, orgId: string, filter: AuditFilter, before: AuditCursor | undefined, limit: number): Promise<AuditRow[]> {
   const { rows } = await sql<AuditRow>`
     SELECT id, occurred_at, actor_type, actor_id, command, outcome, target_type, target_id, proposal_id, detail
-    FROM crove_kernel.audit_event
+    FROM ludy_kernel.audit_event
     WHERE ${where(orgId, filter, before)}
     ORDER BY occurred_at DESC, id DESC
     LIMIT ${limit}`.execute(db);
@@ -151,17 +151,17 @@ async function actorNames(db: Db, orgId: string, rows: readonly AuditRow[]): Pro
   const agents = [...new Set(rows.filter((r) => r.actor_type === 'agent' && r.actor_id).map((r) => r.actor_id as string))];
   if (users.length > 0) {
     const { rows: people } = await sql<{ user_id: string; email: string; display_name: string | null }>`
-      SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${users}::uuid[])`.execute(db);
+      SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${users}::uuid[])`.execute(db);
     for (const p of people) names.set(p.user_id, p.display_name ?? p.email);
   }
   if (agents.length > 0) {
-    const found = await db.selectFrom('crove_kernel.agent').select(['id', 'display_name']).where('org_id', '=', orgId).where('id', 'in', agents).execute();
+    const found = await db.selectFrom('ludy_kernel.agent').select(['id', 'display_name']).where('org_id', '=', orgId).where('id', 'in', agents).execute();
     for (const a of found) names.set(a.id, a.display_name);
   }
   return names;
 }
 
-// The MCP call a row records, when it is one: written by crove_kernel.mcp_call_audit and by the runtime for a refused MCP request, both with
+// The MCP call a row records, when it is one: written by ludy_kernel.mcp_call_audit and by the runtime for a refused MCP request, both with
 // mcpCall: true and the client's self-declared name.
 export function auditVia(detail: unknown): AuditEntry['via'] {
   const raw = typeof detail === 'string' ? safeParse(detail) : detail;
@@ -212,7 +212,7 @@ export const auditCommands = defineQuery({
   access: ADMINS,
   handler: async (ctx): Promise<string[]> => {
     const { rows } = await sql<{ command: string }>`
-      SELECT DISTINCT command FROM crove_kernel.audit_event WHERE org_id = ${ctx.orgId}::uuid ORDER BY command LIMIT ${COMMAND_LIMIT}`.execute(ctx.trx);
+      SELECT DISTINCT command FROM ludy_kernel.audit_event WHERE org_id = ${ctx.orgId}::uuid ORDER BY command LIMIT ${COMMAND_LIMIT}`.execute(ctx.trx);
     return rows.map((r) => r.command);
   },
 });

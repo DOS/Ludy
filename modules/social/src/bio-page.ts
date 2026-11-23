@@ -5,16 +5,16 @@
 // is drawn by the kernel from the definers, with nothing of the org beyond what the page shows.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
 export const MAX_BIO_BUTTONS = 12;
 export const BIO_SLUG = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
 // Paths of the app and the API a slug may not look like (they share the origin, under /b/ but read by people).
-const RESERVED = new Set(['admin', 'api', 'app', 'crove', 'help', 'login', 'new', 'settings', 'support']);
+const RESERVED = new Set(['admin', 'api', 'app', 'crove', 'help', 'login', 'ludy', 'new', 'settings', 'support']);
 
 const zText = (max: number) =>
   z
@@ -53,7 +53,7 @@ export const bioSave = defineCommand({
     const userId = requireUser(ctx);
     if (input.avatarFileId) {
       const file = await ctx.trx
-        .selectFrom('crove_kernel.file')
+        .selectFrom('ludy_kernel.file')
         .select('content_type')
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.avatarFileId)
@@ -72,11 +72,11 @@ export const bioSave = defineCommand({
       updated_at: ctx.now,
     };
     // One page per org: saves are taken one at a time, and a second save changes the page the first made.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`crove_social.bio_page:${ctx.orgId}`}))`.execute(ctx.trx);
-    const existing = await ctx.trx.selectFrom('crove_social.bio_page').select('id').where('org_id', '=', ctx.orgId).orderBy('created_at').orderBy('id').executeTakeFirst();
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`ludy_social.bio_page:${ctx.orgId}`}))`.execute(ctx.trx);
+    const existing = await ctx.trx.selectFrom('ludy_social.bio_page').select('id').where('org_id', '=', ctx.orgId).orderBy('created_at').orderBy('id').executeTakeFirst();
     const write = existing
-      ? ctx.trx.updateTable('crove_social.bio_page').set(values).where('org_id', '=', ctx.orgId).where('id', '=', existing.id).returning('id')
-      : ctx.trx.insertInto('crove_social.bio_page').values({ org_id: ctx.orgId, ...values, created_by: userId, created_at: ctx.now }).returning('id');
+      ? ctx.trx.updateTable('ludy_social.bio_page').set(values).where('org_id', '=', ctx.orgId).where('id', '=', existing.id).returning('id')
+      : ctx.trx.insertInto('ludy_social.bio_page').values({ org_id: ctx.orgId, ...values, created_by: userId, created_at: ctx.now }).returning('id');
     const row = await write
       .executeTakeFirstOrThrow()
       .catch((error: unknown) => {
@@ -108,7 +108,7 @@ export const bioGet = defineQuery({
   access: ALL,
   handler: async (ctx): Promise<BioPage | null> => {
     const page = await ctx.trx
-      .selectFrom('crove_social.bio_page')
+      .selectFrom('ludy_social.bio_page')
       .select(['id', 'slug', 'title', 'about', 'avatar_file_id', 'buttons', 'show_posts', 'published', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .orderBy('created_at')
@@ -116,7 +116,7 @@ export const bioGet = defineQuery({
       .executeTakeFirst();
     if (!page) return null;
     const { rows } = await sql<{ target: string; clicks: string }>`
-      SELECT target, sum(clicks) AS clicks FROM crove_social.bio_click
+      SELECT target, sum(clicks) AS clicks FROM ludy_social.bio_click
       WHERE org_id = ${ctx.orgId} AND page_id = ${page.id} AND day > (pg_catalog.now() AT TIME ZONE 'UTC')::date - 30
       GROUP BY target`.execute(ctx.trx);
     const buttons = (Array.isArray(page.buttons) ? page.buttons : []) as { label?: unknown; url?: unknown }[];

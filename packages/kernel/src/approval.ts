@@ -2,8 +2,9 @@
 // kernel.inbox.get reports the same decision, so the Inbox shows Approve only to users the server accepts.
 import { sql, type Transaction } from 'kysely';
 import { z } from 'zod';
-import type { Database, MemberRole } from '@crove/db';
-import { DomainError, type Actor, type CommandInfo, type QueryContext, type Risk } from '@crove/kernel-runtime';
+import type { Database, MemberRole } from '@ludy/db';
+import { ENGAGE_PROPOSALS } from '@ludy/kernel-contract';
+import { DomainError, type Actor, type CommandInfo, type QueryContext, type Risk } from '@ludy/kernel-runtime';
 
 // Who produced (part of) a revision's content. Only user entries are humans; system and agent entries never count
 // as approvers or for four-eyes (ADR-0029 §6).
@@ -57,7 +58,7 @@ interface CommandPolicy {
 // (role_key, scope) keeps it from naming an entity), and no entity-scoped role holds an approval permission (#1507;
 // roles.db.test.ts pins the table). So its holders cover every legal entity a proposal names (#1538, #2060). Should an
 // entity role ever hold it, eligibility must first become "holds it for the proposal's entity", here and in the
-// database (crove_kernel.proposal_approval_decide, approval_eligible_now and the chief accountant keep guard, #1793).
+// database (ludy_kernel.proposal_approval_decide, approval_eligible_now and the chief accountant keep guard, #1793).
 export const LEDGER_APPROVE_PERMISSION = 'finance.proposal.approve';
 
 // Approval policy per proposal command. Every proposal command is R3. The ledger's post to it, so the roles that may post
@@ -69,6 +70,12 @@ const ADS: CommandPolicy = { roles: ['owner', 'admin'], permission: null, fourEy
 // Issuing a sales e-invoice (ADR-0044 point 3, #2502): a legal document that posts nothing to the ledger (the sale is posted later, from the signed XML). Owners and admins approve,
 // with four-eyes and the one-person path (P10), judged on the members now: the same rule as the ads commands.
 const EINVOICE: CommandPolicy = { roles: ['owner', 'admin'], permission: null, fourEyes: true, live: true };
+// A payment to a supplier (#3113 S2): posts nothing to the ledger (Ludy moves no money). Owners and admins approve, with four-eyes and the one-person path (P10), judged on the members now.
+const SUPPLIER_PAYMENT: CommandPolicy = { roles: ['owner', 'admin'], permission: null, fourEyes: true, live: true };
+// What an AI coworker proposes in the Engage lines (a reply, a quote, a booking change, a post, an ad that only stops or reduces spend; E4 #3863, ADR-0051 decision 10): an owner or an admin approves, never
+// the grant (an agent entry, never an approver). Four-eyes with the one-person path (P10) counts the person who connected the AI app as an author, judged on the members now: an owner alone approves what their
+// own coworker asked, flagged self_approved; with two eligible approvers someone other than the grantor approves. No approval permission and no ledger.
+const ENGAGE: CommandPolicy = { roles: ['owner', 'admin'], permission: null, fourEyes: true, live: true };
 const POLICIES: Record<string, CommandPolicy> = {
   'finance.purchase.record': LEDGER,
   // A reversal is itself a posting (#138): the same roles approve it, with four-eyes.
@@ -89,6 +96,14 @@ const POLICIES: Record<string, CommandPolicy> = {
   'finance.payroll_posting.record': LEDGER,
   // The payment of a pay run's net pay or a remittance (#2532) is a payment voucher built from the frozen run: the same rule.
   'finance.payroll_payment.record': LEDGER,
+  // The posting of a stored marketplace settlement (#2516) is a general journal voucher rebuilt from the settlement's lines (Dr 131 / Cr 511): the same rule.
+  'finance.marketplace_settlement.record': LEDGER,
+  // The posting of a platform's payout (#2516) is a general journal voucher rebuilt from the settlement's lines and the bank line of the transfer: the same rule.
+  'finance.marketplace_payout.record': LEDGER,
+  // The clearing of the fees on 1388 by the platform's fee invoice (#2516) is a general journal voucher rebuilt from the invoice and the waiting fees: the same rule.
+  'finance.marketplace_fee_clearing.record': LEDGER,
+  // The settlement of an approved supplier payment (#3700 S3c) records a bank voucher (Dr 331 / Cr the bank) from the bank line of the transfer and moves the payment to paid: the same rule.
+  'finance.supplier_payment.settle.record': LEDGER,
   // What opens the way to spend on an ad platform (ADR-0043 point 1, #2294): a plain base-role policy, no approval
   // permission and no ledger. Owners and admins approve (Q2), with four-eyes and the one-person path (P10): an owner alone
   // approves their own request, flagged self_approved; with two eligible approvers someone other than an author approves.
@@ -98,19 +113,33 @@ const POLICIES: Record<string, CommandPolicy> = {
   'ads.launches.unblock': ADS,
   // The launch of a drafted campaign (ADR-0043, #2295, W1): the plan and its largest amount are what the approver signs; the same rule.
   'ads.campaign.launch': ADS,
+  // A resume, a raised daily budget and a longer schedule of a running ad (#3835, W4): what the approver signs is the largest amount the launch can spend with the change; the same rule.
+  'ads.object.resume': ADS,
+  'ads.budget.raise': ADS,
+  'ads.schedule.extend': ADS,
   'finance.einvoice.issue': EINVOICE,
+  'finance.supplier_payment.record': SUPPLIER_PAYMENT,
+  // The proposal-only twins of the Engage commands (E4 #3863): the list is ENGAGE_PROPOSALS, which the database's policy function must name too (a test compares the two).
+  ...Object.fromEntries(ENGAGE_PROPOSALS.map((p) => [p.command, ENGAGE])),
 };
+
+// Whether the command has an approval policy that names someone who may approve it (#3858 slice d): a command with none has no approver, so a proposal of it would wait for nobody. An MCP call to a
+// command reaches it as a proposal only when this holds, R2 and R3 alike (ADR-0051 decision 10); the database checks the same in the proposal context's guard (approval_command_policy).
+export function hasApprovalPolicy(command: string): boolean {
+  const policy = POLICIES[command];
+  return policy !== undefined && policy.roles.length > 0;
+}
 
 const NOBODY: CommandPolicy = { roles: [], permission: null, fourEyes: true };
 
-// The policy table as the database's approval gate must hold it too (crove_kernel.approval_command_policy, #1793):
+// The policy table as the database's approval gate must hold it too (ludy_kernel.approval_command_policy, #1793):
 // apps/kernel/test/invariant/proposal-approve-gate.db.test.ts compares the two.
 export function approvalPolicies(): Array<{ command: string; roles: readonly string[]; permission: string | null; fourEyes: boolean; ledger: boolean }> {
   return Object.entries(POLICIES).map(([command, p]) => ({ command, ...p, ledger: p === LEDGER }));
 }
 
 // The commands judged on the members of the org now, not on the snapshot taken at the request (CommandPolicy.live): the database's
-// crove_kernel.approval_command_live answers the same for each of them (apps/kernel/test/ads.db.test.ts pins both).
+// ludy_kernel.approval_command_live answers the same for each of them (apps/kernel/test/ads.db.test.ts pins both).
 export function liveApprovalCommands(): string[] {
   return Object.entries(POLICIES)
     .filter(([, p]) => p.live === true)
@@ -122,9 +151,19 @@ export function liveApprovalCommands(): string[] {
 // version and the build. 9: the co-authors of a proposal are held back in four-eyes like authors, but never grant (#2736; decideApproval and proposal_approval_decide).
 // 10: the payment of a pay run's net pay or a remittance (finance.payroll_payment.record, #2532) was given its approval policy.
 // 11: a payroll posting or payment is verified from the run's totals, so a member chief accountant approves it (#2751).
-export const APPROVAL_POLICY_VERSION = 11;
+// 12: the posting of a stored marketplace settlement (finance.marketplace_settlement.record, #2516) was given its approval policy.
+// 13: the posting of a platform's payout (finance.marketplace_payout.record, #2516) was given its approval policy.
+// 14: the clearing of a platform's waiting fees by its invoice (finance.marketplace_fee_clearing.record, #2516) was given its approval policy.
+// 15: the payment of a supplier invoice to the supplier's bank account (finance.supplier_payment.record, #3699) was given its approval policy.
+// 16: the settlement of an approved supplier payment by its bank line (finance.supplier_payment.settle.record, #3700 S3c) was given its approval policy (a ledger posting).
+// 17: a resume, a raised daily budget and a longer schedule of a running ad (ads.object.resume, ads.budget.raise, ads.schedule.extend, #3835) were given their approval policy (the launch's).
+// 18: the proposal-only twins of the Engage commands an AI coworker asks for (a reply, a private reply, hiding a comment, sending a quote, moving or cancelling a booking, submitting or scheduling a post, and the ads
+// that only stop or reduce spend; E4 #3863, ENGAGE_PROPOSALS) were given their approval policy.
+// 19: the proposal-only twin that cancels a queued change of a running ad that would start or raise spend (ads.manage.cancel_approved, #4181, in ENGAGE_PROPOSALS) was given its approval policy.
+// 20: the proposal-only twin that creates a team task linked to a thread (kernel.conversation.follow_up_approved, #4148, in ENGAGE_PROPOSALS) was given its approval policy.
+export const APPROVAL_POLICY_VERSION = 20;
 
-// The org's approval policy (#1402): its preset, a data row of crove_kernel.approval_preset, and the version of the
+// The org's approval policy (#1402): its preset, a data row of ludy_kernel.approval_preset, and the version of the
 // org's choice, which grows by one on every change (kernel.org.set_approval_preset).
 export interface OrgApprovalPolicy {
   preset: string;
@@ -135,8 +174,8 @@ export interface OrgApprovalPolicy {
 
 export async function orgApprovalPolicy(trx: Transaction<Database>, orgId: string): Promise<OrgApprovalPolicy> {
   const row = await trx
-    .selectFrom('crove_kernel.tenant as t')
-    .innerJoin('crove_kernel.approval_preset as p', 'p.key', 't.approval_preset')
+    .selectFrom('ludy_kernel.tenant as t')
+    .innerJoin('ludy_kernel.approval_preset as p', 'p.key', 't.approval_preset')
     .select(['t.approval_preset', 't.approval_policy_version', 'p.ledger_chief_accountant_only'])
     .where('t.org_id', '=', orgId)
     .executeTakeFirst();
@@ -165,10 +204,10 @@ async function permissionHolders(
 ): Promise<Set<string>> {
   if (options.userIds && options.userIds.length === 0) return new Set();
   let query = trx
-    .selectFrom('crove_kernel.role_assignment as a')
-    .innerJoin('crove_kernel.role_permission as p', 'p.role_key', 'a.role_key')
+    .selectFrom('ludy_kernel.role_assignment as a')
+    .innerJoin('ludy_kernel.role_permission as p', 'p.role_key', 'a.role_key')
     // A viewer (the read-only base role) holds no permission, whatever they were given before a demotion (#1279).
-    .innerJoin('crove_kernel.tenant_member as m', (join) => join.onRef('m.org_id', '=', 'a.org_id').onRef('m.user_id', '=', 'a.user_id'))
+    .innerJoin('ludy_kernel.tenant_member as m', (join) => join.onRef('m.org_id', '=', 'a.org_id').onRef('m.user_id', '=', 'a.user_id'))
     .select('a.user_id')
     .where('a.org_id', '=', orgId)
     .where('a.legal_entity_id', 'is', null)
@@ -214,7 +253,7 @@ export async function eligibleApprovers(trx: Transaction<Database>, orgId: strin
   const { roles, permission } = policyFor(command, await orgApprovalPolicy(trx, orgId));
   if (roles.length === 0 && permission === null) return [];
   const rows = await trx
-    .selectFrom('crove_kernel.tenant_member')
+    .selectFrom('ludy_kernel.tenant_member')
     .select(['user_id', 'role'])
     .where('org_id', '=', orgId)
     .orderBy('user_id')
@@ -277,7 +316,7 @@ export async function decideApproval(
   if ((snapshot.length === 0 && policy.live !== true) || authors === null) return deny('not_eligible');
   if (policy.roles.length === 0 && policy.permission === null) return deny('not_eligible');
   let query = trx
-    .selectFrom('crove_kernel.tenant_member')
+    .selectFrom('ludy_kernel.tenant_member')
     .select(['user_id', 'role'])
     .where('org_id', '=', orgId)
     // user_id order, as membership changes lock, so the two never take the same rows in opposite orders.
@@ -299,7 +338,7 @@ export async function decideApproval(
   // offboards only owners can, and an admin or chief accountant still counts, so a closing org's last postings keep
   // their second pair of eyes. The owner who wrote one rejects it or, under the founder preset, first demotes the others
   // or revokes their approval role (audited); under the accountant preset an author never approves a ledger proposal.
-  // The database gate (crove_kernel.proposal_approval_decide) counts the same way.
+  // The database gate (ludy_kernel.proposal_approval_decide) counts the same way.
   const eligible = new Set(live.filter((m) => policy.roles.includes(m.role) || holders.has(m.user_id)).map((m) => m.user_id));
   if (!eligible.has(actor.userId)) return deny('not_eligible', eligible.size);
 
@@ -425,9 +464,9 @@ export async function decideAgentApproval(
 
   const { rows: seats } = await sql<{ position_id: string; role_key: string; module: string; agent_risk: Risk; template_risk: Risk; le_scope: string[] }>`
     SELECT p.id AS position_id, p.role_key, p.module, a.max_risk AS agent_risk, t.max_risk AS template_risk, p.le_scope
-    FROM crove_kernel.agent a
-    JOIN crove_kernel.agent_template t ON t.key = a.template_key
-    JOIN crove_kernel.position p ON p.org_id = a.org_id AND p.holder_agent_id = a.id AND p.status = 'active' AND p.role_key = t.role_key
+    FROM ludy_kernel.agent a
+    JOIN ludy_kernel.agent_template t ON t.key = a.template_key
+    JOIN ludy_kernel.position p ON p.org_id = a.org_id AND p.holder_agent_id = a.id AND p.status = 'active' AND p.role_key = t.role_key
     WHERE a.org_id = ${orgId}::uuid AND a.id = ${approver.agentId}::uuid AND a.status = 'active'`.execute(trx);
   const seat = seats[0];
   if (!seat || !info.agentApprovers.includes(seat.role_key)) return { reason: 'not_eligible', rule: 'P12' };
@@ -443,11 +482,11 @@ export async function decideAgentApproval(
 
   const { rows: runs } = await sql<{ tainted: boolean; status: string; stopped: boolean }>`
     SELECT r.tainted, r.status,
-           EXISTS (SELECT 1 FROM crove_kernel.kill_switch k
+           EXISTS (SELECT 1 FROM ludy_kernel.kill_switch k
                    WHERE k.org_id = r.org_id AND (k.released_at IS NULL OR k.engaged_at > ${options.stoppedSince ?? null}::timestamptz)
                      AND (k.scope = 'org' OR (k.scope = 'module' AND k.target = ${seat.module}) OR (k.scope = 'agent' AND k.target = r.agent_id::text)))
-             OR crove_kernel.global_kill_switch_on('ai') AS stopped
-    FROM crove_kernel.ai_run r
+             OR ludy_kernel.global_kill_switch_on('ai') AS stopped
+    FROM ludy_kernel.ai_run r
     WHERE r.org_id = ${orgId}::uuid AND r.id = ${approver.runId}::uuid AND r.agent_id = ${approver.agentId}::uuid`.execute(trx);
   const run = runs[0];
   if (!run) return { reason: 'not_eligible', rule: 'P12' };
@@ -464,10 +503,10 @@ export async function decideAgentApproval(
     const { rows } = await sql<{ in_chain: boolean }>`
       WITH RECURSIVE chain (id, assignee_position_id, created_by_type, created_by_id, parent_task_id, depth) AS (
         SELECT t.id, t.assignee_position_id, t.created_by_type, t.created_by_id, t.parent_task_id, 0
-        FROM crove_kernel.task t WHERE t.org_id = ${orgId}::uuid AND t.id = ${proposal.source_task_id}::uuid
+        FROM ludy_kernel.task t WHERE t.org_id = ${orgId}::uuid AND t.id = ${proposal.source_task_id}::uuid
         UNION ALL
         SELECT t.id, t.assignee_position_id, t.created_by_type, t.created_by_id, t.parent_task_id, c.depth + 1
-        FROM chain c JOIN crove_kernel.task t ON t.org_id = ${orgId}::uuid AND t.id = c.parent_task_id
+        FROM chain c JOIN ludy_kernel.task t ON t.org_id = ${orgId}::uuid AND t.id = c.parent_task_id
         WHERE c.depth < 20
       )
       SELECT EXISTS (SELECT 1 FROM chain c
@@ -481,16 +520,16 @@ export async function decideAgentApproval(
     // approving work of its superior (who could route the review to it).
     const { rows } = await sql<{ same_line: boolean }>`
       WITH asker (pos) AS (
-        SELECT t.assignee_position_id FROM crove_kernel.task t
+        SELECT t.assignee_position_id FROM ludy_kernel.task t
         WHERE t.org_id = ${orgId}::uuid AND t.id = ${proposal.source_task_id}::uuid AND t.assignee_position_id IS NOT NULL
         UNION
-        SELECT p.id FROM crove_kernel.position p WHERE p.org_id = ${orgId}::uuid AND p.holder_agent_id = ${proposal.requested_by_agent}::uuid
+        SELECT p.id FROM ludy_kernel.position p WHERE p.org_id = ${orgId}::uuid AND p.holder_agent_id = ${proposal.requested_by_agent}::uuid
       )
       SELECT NOT EXISTS (SELECT 1 FROM asker)
              OR EXISTS (SELECT 1 FROM asker a
                         WHERE a.pos = ${seat.position_id}::uuid
-                           OR crove_kernel.position_in_subtree(${orgId}::uuid, ${seat.position_id}::uuid, a.pos)
-                           OR crove_kernel.position_in_subtree(${orgId}::uuid, a.pos, ${seat.position_id}::uuid)) AS same_line`.execute(trx);
+                           OR ludy_kernel.position_in_subtree(${orgId}::uuid, ${seat.position_id}::uuid, a.pos)
+                           OR ludy_kernel.position_in_subtree(${orgId}::uuid, a.pos, ${seat.position_id}::uuid)) AS same_line`.execute(trx);
     if (rows[0]?.same_line !== false) return { reason: 'reporting_line', rule: 'reporting_line' };
   }
   return { reason: 'ok' };

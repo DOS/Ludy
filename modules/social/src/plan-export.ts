@@ -8,9 +8,9 @@
 // format is domain/plan-csv.ts, which the app's import reads with.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { isValidTimeZone } from './domain/queue.ts';
 import { labelsOfPosts } from './labels.ts';
 import { connectionInScope, refuseChannels } from './channel-access.ts';
@@ -41,7 +41,7 @@ async function planMedia(trx: Trx, orgId: string, rows: readonly MediaRow[]): Pr
   const shared = new Map<string, PostMedia[]>();
   if (postIds.length > 0) {
     const list = await trx
-      .selectFrom('crove_social.post_media')
+      .selectFrom('ludy_social.post_media')
       .select(['post_id', 'file_id', 'alt_text'])
       .where('org_id', '=', orgId)
       .where('post_id', 'in', postIds)
@@ -56,10 +56,10 @@ async function planMedia(trx: Trx, orgId: string, rows: readonly MediaRow[]): Pr
   const refs = new Map<string, string>();
   if (fileIds.length > 0) {
     const key = sql<string>`lower(normalize(filename, NFC))`;
-    const files = await trx.selectFrom('crove_kernel.file').select(['id', 'filename', key.as('name_key')]).where('org_id', '=', orgId).where('id', 'in', fileIds).execute();
+    const files = await trx.selectFrom('ludy_kernel.file').select(['id', 'filename', key.as('name_key')]).where('org_id', '=', orgId).where('id', 'in', fileIds).execute();
     const names = [...new Set(files.map((f) => f.name_key))];
     const counts = await trx
-      .selectFrom('crove_kernel.file')
+      .selectFrom('ludy_kernel.file')
       .select([key.as('name_key'), (eb) => eb.fn.countAll<string>().as('n')])
       .where('org_id', '=', orgId)
       .where('source', '=', 'social')
@@ -125,29 +125,29 @@ export const planExport = defineCommand({
                CASE WHEN v.content_frozen THEN v.title ELSE coalesce(v.title, p.title) END AS title,
                CASE WHEN v.content_frozen THEN v.link_url ELSE coalesce(v.link_url, p.link_url) END AS link_url,
                CASE WHEN v.status IN ('published', 'removed') THEN v.published_at ELSE coalesce(v.queue_slot_at, v.scheduled_at, p.scheduled_at) END AS at
-        FROM crove_social.post_variant v
-        JOIN crove_social.post p ON p.org_id = v.org_id AND p.id = v.post_id
+        FROM ludy_social.post_variant v
+        JOIN ludy_social.post p ON p.org_id = v.org_id AND p.id = v.post_id
         WHERE v.org_id = ${ctx.orgId}::uuid AND v.status <> 'cancelled' AND p.archived_at IS NULL
           ${connections.length > 0 ? sql`AND v.channel_connection_id = ANY(${connections}::uuid[])` : sql``}
           AND ${connectionInScope(scope, 'v.channel_connection_id')}
-          ${labels.length > 0 ? sql`AND EXISTS (SELECT 1 FROM crove_social.post_label pl WHERE pl.org_id = v.org_id AND pl.post_id = v.post_id AND pl.label_id = ANY(${labels}::uuid[]))` : sql``}
+          ${labels.length > 0 ? sql`AND EXISTS (SELECT 1 FROM ludy_social.post_label pl WHERE pl.org_id = v.org_id AND pl.post_id = v.post_id AND pl.label_id = ANY(${labels}::uuid[]))` : sql``}
       )
       SELECT v.id AS variant_id, v.post_id, v.channel_connection_id, v.provider, v.status, c.display_name, v.body, v.settings, v.title,
              v.link_url, v.at, v.assignee_user_id, v.media, v.content_frozen
       FROM v
-      LEFT JOIN crove_kernel.channel_connection c ON c.org_id = ${ctx.orgId}::uuid AND c.id = v.channel_connection_id
+      LEFT JOIN ludy_kernel.channel_connection c ON c.org_id = ${ctx.orgId}::uuid AND c.id = v.channel_connection_id
       WHERE v.at >= ${from} AND v.at < ${to}
       ORDER BY v.at, v.post_id, v.position, v.id
       LIMIT ${PLAN_EXPORT_MAX_ROWS + 1}`.execute(ctx.trx);
     const truncated = rows.length > PLAN_EXPORT_MAX_ROWS;
     if (truncated) rows.length = PLAN_EXPORT_MAX_ROWS;
     const labelsOf = await labelsOfPosts(ctx.trx, ctx.orgId, [...new Set(rows.map((r) => r.post_id))]);
-    // Names while they are members (crove_kernel.member_profiles answers only members of the org).
+    // Names while they are members (ludy_kernel.member_profiles answers only members of the org).
     const people = [...new Set(rows.map((r) => r.assignee_user_id).filter((id): id is string => id !== null))];
     const names = new Map<string, string>();
     if (people.length > 0) {
       const { rows: profiles } = await sql<{ user_id: string; email: string; display_name: string | null }>`
-        SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${people}::uuid[])`.execute(ctx.trx);
+        SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${people}::uuid[])`.execute(ctx.trx);
       for (const p of profiles) names.set(p.user_id, p.display_name ?? p.email);
     }
     const mediaOfRow = await planMedia(ctx.trx, ctx.orgId, rows);
@@ -173,7 +173,7 @@ export const planExport = defineCommand({
     ctx.audit({ format, days: Math.round((to.getTime() - from.getTime()) / DAY_MS), rows: plan.length, truncated, channels: connections.length, labels: labels.length });
     const month = planTime(input.from, input.timeZone).slice(0, 7);
     return {
-      filename: `crove-ke-hoach-${month}.csv`,
+      filename: `ludy-ke-hoach-${month}.csv`,
       csv: format === 'csv' ? planCsv(plan, input.timeZone) : null,
       rows: format === 'print' ? plan : null,
       truncated,

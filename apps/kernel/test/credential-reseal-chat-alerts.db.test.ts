@@ -6,11 +6,11 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
-import { CHAT_ALERT_PROVIDER, socialCommands, socialQueries, type SealedChatAlert } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
+import { CHAT_ALERT_PROVIDER, socialCommands, socialQueries, type SealedChatAlert } from '@ludy/mod-social';
 import { resealCredentials, unopenableKeysLog } from '../src/credential-reseal.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -52,7 +52,7 @@ suite('team chat alert targets resealed after a key rotation on PostgreSQL (#863
     const owner = await person('owner');
     const { orgId } = await createOrg(api, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const adminUser = await person('admin');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [orgId, adminUser]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [orgId, adminUser]));
     return { orgId, owner, admin: adminUser };
   }
   const secretOf = (chatId: string) => JSON.stringify({ botToken: BOT_TOKEN, chatId });
@@ -63,7 +63,7 @@ suite('team chat alert targets resealed after a key rotation on PostgreSQL (#863
     await api.execute('social.chat_alert.save', { id, kind: 'telegram', keyId: sealed.keyId, envelope: sealed.envelope.toString('base64'), label: 'Nhóm', events: ['failed'] }, { actor: asUser(user), orgId });
     return id;
   }
-  const keyOf = (alertId: string) => admin(async (c) => (await c.query<{ key_id: string }>('SELECT key_id FROM crove_social.chat_alert_target WHERE alert_id = $1', [alertId])).rows[0]?.key_id);
+  const keyOf = (alertId: string) => admin(async (c) => (await c.query<{ key_id: string }>('SELECT key_id FROM ludy_social.chat_alert_target WHERE alert_id = $1', [alertId])).rows[0]?.key_id);
   const target = (orgId: string, alertId: string) => worker.query<SealedChatAlert>('social.chat_alert.target', { alertId }, { actor: system, orgId });
 
   beforeAll(async () => {
@@ -75,15 +75,15 @@ suite('team chat alert targets resealed after a key rotation on PostgreSQL (#863
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 4 });
     appDb = createDb(appPool);
     workerDb = createDb(workerPool);
     const defs = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
@@ -106,7 +106,7 @@ suite('team chat alert targets resealed after a key rotation on PostgreSQL (#863
     const b = await org();
     const usable = await save(a.orgId, a.owner, '-4012345678');
     const demoted = await save(b.orgId, b.admin, '-4012345679');
-    await admin((c) => c.query("UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2", [b.orgId, b.admin]));
+    await admin((c) => c.query("UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2", [b.orgId, b.admin]));
     expect(await keyOf(usable)).toBe(keyA.id);
 
     const first = await resealCredentials({ runtime: worker, broker: rotated, workerDb });
@@ -126,7 +126,7 @@ suite('team chat alert targets resealed after a key rotation on PostgreSQL (#863
     await api.execute('social.chat_alert.save', { id: demoted, kind: 'telegram', keyId: sealedAgain.keyId, envelope: sealedAgain.envelope.toString('base64'), label: 'Nhóm', events: ['failed'] }, { actor: asUser(b.owner), orgId: b.orgId });
     expect(await resealCredentials({ runtime: worker, broker: rotated, workerDb })).toMatchObject({ resealed: 0, leftActive: 0, leftInactive: 0 });
     // Audit rows name key ids, never the target.
-    const audits = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.chat_alert.reseal'", [a.orgId])).rows);
+    const audits = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.chat_alert.reseal'", [a.orgId])).rows);
     expect(audits).toHaveLength(1);
     expect(audits[0]?.detail).toMatchObject({ alert_id: usable, from_key_id: keyA.id, key_id: keyB.id });
     expect(JSON.stringify(audits)).not.toContain(BOT_TOKEN.split(':')[1]);
@@ -187,7 +187,7 @@ suite('team chat alert targets resealed after a key rotation on PostgreSQL (#863
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query("UPDATE crove_kernel.tenant SET status = 'offboarding' WHERE org_id = $1", [d.orgId]);
+      await c.query("UPDATE ludy_kernel.tenant SET status = 'offboarding' WHERE org_id = $1", [d.orgId]);
       await c.query('COMMIT');
     });
     const done = await resealCredentials({ runtime: worker, broker: rotated, workerDb });
@@ -213,17 +213,17 @@ suite('team chat alert targets resealed after a key rotation on PostgreSQL (#863
       async (c) =>
         (
           await c.query<{ role: string }>(
-            `SELECT r AS role FROM unnest(ARRAY['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant']) r
-              WHERE has_function_privilege(r, 'crove_social.chat_alert_target_reseal_due(text, int, timestamptz, uuid)', 'EXECUTE')
-                 OR has_function_privilege(r, 'crove_social.chat_alert_target_key_counts()', 'EXECUTE')
-                 OR has_function_privilege(r, 'crove_social.chat_alert_target_reseal(uuid, text, text, text, bytea)', 'EXECUTE')`,
+            `SELECT r AS role FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) r
+              WHERE has_function_privilege(r, 'ludy_social.chat_alert_target_reseal_due(text, int, timestamptz, uuid)', 'EXECUTE')
+                 OR has_function_privilege(r, 'ludy_social.chat_alert_target_key_counts()', 'EXECUTE')
+                 OR has_function_privilege(r, 'ludy_social.chat_alert_target_reseal(uuid, text, text, text, bytea)', 'EXECUTE')`,
           )
         ).rows,
     );
-    expect(roles.map((r) => r.role)).toEqual(['crove_worker']);
+    expect(roles.map((r) => r.role)).toEqual(['ludy_worker']);
     const usableRoles = await admin(
       async (c) =>
-        (await c.query<{ role: string }>(`SELECT r AS role FROM unnest(ARRAY['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant']) r WHERE has_function_privilege(r, 'crove_social.chat_alert_target_usable(uuid, uuid)', 'EXECUTE')`)).rows,
+        (await c.query<{ role: string }>(`SELECT r AS role FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) r WHERE has_function_privilege(r, 'ludy_social.chat_alert_target_usable(uuid, uuid)', 'EXECUTE')`)).rows,
     );
     expect(usableRoles).toEqual([]);
   });

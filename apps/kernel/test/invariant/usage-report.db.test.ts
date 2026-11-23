@@ -7,7 +7,8 @@
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { migrate } from '@ludy/db/migrate';
+import { createDbClient, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -19,17 +20,18 @@ const suite = ADMIN ? describe : describe.skip;
 suite('usage report privileges', () => {
   const dbName = `crove_test_usage_inv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   const clients: pg.Client[] = [];
 
   const loginUrl = (user: string, password: string) => {
     const url = new URL(adminUrl);
-    url.username = user;
+    url.username = dbIds ? dbIds.roleName(user) : user;
     url.password = password;
     return url.toString();
   };
 
   async function connect(url: string): Promise<pg.Client> {
-    const client = new pg.Client({ connectionString: url });
+    const client = createDbClient({ connectionString: url }, dbIds);
     await client.connect();
     clients.push(client);
     return client;
@@ -44,12 +46,13 @@ suite('usage report privileges', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, {
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, {
       crove_app: 'test-app-pw',
       crove_worker: 'test-worker-pw',
       crove_prober: 'test-prober-pw',
       crove_reporter: 'test-reporter-pw',
-    });
+    }, dbIds);
   });
 
   afterAll(async () => {
@@ -99,7 +102,7 @@ suite('usage report privileges', () => {
     expect(def.rows).toEqual([{ prosecdef: true, proconfig: ['search_path=pg_catalog, pg_temp'], provolatile: 's' }]);
     const others = await admin.query<{ fn: string }>(
       `SELECT p.oid::regprocedure::text AS fn FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-       WHERE n.nspname LIKE 'crove\\_%' AND n.nspname <> 'crove_jobs' AND p.oid <> $1::regprocedure
+       WHERE (n.nspname LIKE 'crove\\_%' OR n.nspname LIKE 'ludy\\_%') AND n.nspname <> 'crove_jobs' AND p.oid <> $1::regprocedure
          AND has_function_privilege('crove_reporter', p.oid, 'EXECUTE')`,
       [FN],
     );
@@ -118,7 +121,7 @@ suite('usage report privileges', () => {
     expect(tables.rows).toEqual([]);
     const schemas = await admin.query(
       `SELECT nspname, has_schema_privilege('crove_reporter', oid, 'CREATE') AS create
-       FROM pg_namespace WHERE nspname LIKE 'crove\\_%' AND (has_schema_privilege('crove_reporter', oid, 'USAGE') OR has_schema_privilege('crove_reporter', oid, 'CREATE'))
+       FROM pg_namespace WHERE (nspname LIKE 'crove\\_%' OR nspname LIKE 'ludy\\_%') AND (has_schema_privilege('crove_reporter', oid, 'USAGE') OR has_schema_privilege('crove_reporter', oid, 'CREATE'))
        ORDER BY 1`,
     );
     expect(schemas.rows).toEqual([{ nspname: 'crove_kernel', create: false }]);

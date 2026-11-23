@@ -4,6 +4,7 @@
 // one-time code, which the extension trades for its token. The password and the app's session never reach the extension.
 import { ludyUrl } from './ludy-address.ts';
 import { FEATURES } from './features.ts';
+import { signInScopes } from './agenda.ts';
 
 const b64url = (bytes: Uint8Array): string => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
@@ -19,13 +20,22 @@ export async function newPkce(): Promise<Pkce> {
   return { verifier, challenge, state: b64url(crypto.getRandomValues(new Uint8Array(16))) };
 }
 
-export function connectUrl(address: string, pkce: Pkce, redirectUri: string, deviceName: string): string {
+// `withAgenda`: the member chose to see their next meetings (B2), so the consent page also lists the agenda scope; the plain sign-in never asks for it.
+export function connectUrl(
+  address: string,
+  pkce: Pkce,
+  redirectUri: string,
+  deviceName: string,
+  withAgenda = false,
+  featureScopes: readonly string[] = FEATURES.map((f) => f.scope),
+): string {
+  const requested = featureScopes.length > 0 ? featureScopes : FEATURES.map((f) => f.scope);
   const params = new URLSearchParams({
     code_challenge: pkce.challenge,
     code_challenge_method: 'S256',
     redirect_uri: redirectUri,
     state: pkce.state,
-    scope: FEATURES.map((f) => f.scope).join(' '),
+    scope: signInScopes(requested, withAgenda).join(' '),
     device: deviceName,
   });
   return `${ludyUrl(address, '/-/extension/connect')}?${params.toString()}`;

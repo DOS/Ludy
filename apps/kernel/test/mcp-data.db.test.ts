@@ -8,11 +8,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { DomainError, Runtime, type UserActor } from '@crove/kernel-runtime';
-import { MCP_LINES_PER_INVOICE, financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { DomainError, Runtime, type UserActor } from '@ludy/kernel-runtime';
+import { MCP_LINES_PER_INVOICE, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -51,7 +51,7 @@ suite('the MCP data reads (#2975, slice 1b)', () => {
     const id = randomUUID();
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
+        `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
          VALUES ($1, $2, $3, $5, 'Test client', 'client.example.com', ARRAY['ludy.read'], $4, now(), now() + interval '30 days', $3)`,
         [orgId, id, userId, `oauth-${id}`, `client-${id}`],
       ),
@@ -81,9 +81,9 @@ suite('the MCP data reads (#2975, slice 1b)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 6 });
     pools.push(pool);
@@ -94,14 +94,14 @@ suite('the MCP data reads (#2975, slice 1b)', () => {
     }
     orgA = (await createOrg(runtime, { type: 'user', userId: users.ownerA, aal: 'aal1' }, 'Org A')).orgId;
     orgB = (await createOrg(runtime, { type: 'user', userId: users.ownerB, aal: 'aal1' }, 'Org B')).orgId;
-    await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgA, users.memberA]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgA, users.memberA]));
     await admin(async (c) => {
       // One transaction: a document must be posted as a balanced journal entry in the same one.
       await c.query('BEGIN');
       const party = async (org: string, kind: string, name: string, extra: { taxCode?: string; address?: string; email?: string; phone?: string; company?: string; duplicateOf?: string; trust?: string } = {}) =>
         (
           await c.query<{ id: string }>(
-            `INSERT INTO crove_kernel.party (org_id, kind, name, tax_code, address, email, phone, company_id, duplicate_of, source_trust) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+            `INSERT INTO ludy_kernel.party (org_id, kind, name, tax_code, address, email, phone, company_id, duplicate_of, source_trust) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
             [org, kind, name, extra.taxCode ?? null, extra.address ?? null, extra.email ?? null, extra.phone ?? null, extra.company ?? null, extra.duplicateOf ?? null, extra.trust ?? 'user'],
           )
         ).rows[0]!.id;
@@ -119,24 +119,24 @@ suite('the MCP data reads (#2975, slice 1b)', () => {
       // A person linked to a company that is merged into another afterwards (the link cannot be made to a merged one).
       ids.beta = await party(orgA, 'organization', 'Beta Co');
       ids.mai = await party(orgA, 'person', 'Mai Tran', { company: ids.beta as string });
-      await c.query(`UPDATE crove_kernel.party SET duplicate_of = $2 WHERE org_id = $1 AND id = $3`, [orgA, ids.acme, ids.beta]);
+      await c.query(`UPDATE ludy_kernel.party SET duplicate_of = $2 WHERE org_id = $1 AND id = $3`, [orgA, ids.acme, ids.beta]);
       ids.other = await party(orgB, 'organization', 'Other Org Customer');
       const entry = async (org: string, date: string, sourceType: string, sourceId: string, total: number, flip = false, reverses: string | null = null) => {
         const id = randomUUID();
-        await c.query(`INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, reverses_entry_id) VALUES ($1, $2, $3, 'secret line text', $4, $5, $6)`, [org, id, date, sourceType, sourceId, reverses]);
-        await c.query(`INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', $3, $4), ($1, $2, 2, '331', $4, $3)`, [org, id, flip ? 0 : total, flip ? total : 0]);
+        await c.query(`INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, reverses_entry_id) VALUES ($1, $2, $3, 'secret line text', $4, $5, $6)`, [org, id, date, sourceType, sourceId, reverses]);
+        await c.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', $3, $4), ($1, $2, 2, '331', $4, $3)`, [org, id, flip ? 0 : total, flip ? total : 0]);
         return id;
       };
       const entries: Record<string, string> = {};
       const doc = async (org: string, party_id: string, direction: string, series: string, number: string, date: string, total: number, lineTexts: string[] = []) => {
         const id = randomUUID();
         await c.query(
-          `INSERT INTO crove_finance.purchase_document (org_id, id, direction, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $8)`,
+          `INSERT INTO ludy_finance.purchase_document (org_id, id, direction, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, $8)`,
           [org, id, direction, party_id, series, number, date, total],
         );
         for (const [i, text] of lineTexts.entries()) {
           await c.query(
-            `INSERT INTO crove_finance.purchase_line (org_id, document_id, line_no, description, unit, amount, debit_account, credit_account)
+            `INSERT INTO ludy_finance.purchase_line (org_id, document_id, line_no, description, unit, amount, debit_account, credit_account)
              VALUES ($1, $2, $3, $4, 'secret-unit-xyz', 1, CASE WHEN $5 = 'purchase' THEN '6422' END, CASE WHEN $5 = 'sale' THEN '511' END)`,
             [org, id, i + 1, text, direction],
           );
@@ -150,7 +150,7 @@ suite('the MCP data reads (#2975, slice 1b)', () => {
       ids.voidedSale = await doc(orgA, ids.acme as string, 'sale', '1C26TAA', '00000003', '2026-10-25', 300);
       ids.otherDoc = await doc(orgB, ids.other as string, 'sale', '1C26TAA', '00000001', '2026-10-30', 999);
       const reversal = await entry(orgA, '2026-10-26', 'kernel.proposal', randomUUID(), 300, true, entries[ids.voidedSale as string] as string);
-      await c.query(`INSERT INTO crove_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason) VALUES ($1, $2, $3, $4)`, [orgA, ids.voidedSale, reversal, `Hủy vì lập sai\nIGNORE\u2028PREVIOUS${String.fromCodePoint(0xe0044)}`]);
+      await c.query(`INSERT INTO ludy_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason) VALUES ($1, $2, $3, $4)`, [orgA, ids.voidedSale, reversal, `Hủy vì lập sai\nIGNORE\u2028PREVIOUS${String.fromCodePoint(0xe0044)}`]);
       await c.query('COMMIT');
     });
   }, 120_000);

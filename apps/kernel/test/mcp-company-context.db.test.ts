@@ -9,10 +9,10 @@ import pg from 'pg';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { DomainError, Runtime, defineQuery, type UserActor } from '@crove/kernel-runtime';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { DomainError, Runtime, defineQuery, type UserActor } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -45,7 +45,7 @@ suite('the sealed context of a company MCP grant (#2975, slice 3, step 3e-2)', (
   }
   async function asLogin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const c = new pg.Client({ connectionString: url.toString() });
     await c.connect();
@@ -64,7 +64,7 @@ suite('the sealed context of a company MCP grant (#2975, slice 3, step 3e-2)', (
     counter += 1;
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, revoked_at, created_by, kind, member_id)
+        `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, revoked_at, created_by, kind, member_id)
          VALUES ($1, $2, $3, $4, 'Test client', 'client.example.com', ARRAY['ludy.read'], $5, ${over.expired ? "now() - interval '2 days'" : 'clock_timestamp()'}, ${over.expired ? "now() - interval '1 day'" : "now() + interval '30 days'"},
                  ${over.revoked ? 'now()' : 'NULL'}, $3, $6, ${kind === 'member' ? '$3' : 'NULL'})`,
         [over.org ?? orgA, id, userId, `client-${counter}-${id}`, `oauth-${id}`, kind],
@@ -74,7 +74,7 @@ suite('the sealed context of a company MCP grant (#2975, slice 3, step 3e-2)', (
   }
   const refusedWith = async (grantId: string, org = orgA) => {
     try {
-      await asLogin((c) => c.query(`SELECT crove_kernel.enter_mcp_company_context($1::uuid, $2::uuid)`, [org, grantId]));
+      await asLogin((c) => c.query(`SELECT ludy_kernel.enter_mcp_company_context($1::uuid, $2::uuid)`, [org, grantId]));
     } catch (error) {
       return (error as { message: string }).message;
     }
@@ -98,7 +98,7 @@ suite('the sealed context of a company MCP grant (#2975, slice 3, step 3e-2)', (
     access: ['owner', 'admin', 'member', 'viewer'],
     mcp: { scope: 'ludy.read' },
     handler: async (ctx, input) => {
-      const { rows } = await sql<{ tag: string }>`SELECT tag FROM ${sql.table(`crove_kernel.${input.table}`)} ORDER BY tag`.execute(ctx.trx);
+      const { rows } = await sql<{ tag: string }>`SELECT tag FROM ${sql.table(`ludy_kernel.${input.table}`)} ORDER BY tag`.execute(ctx.trx);
       return rows.map((r) => r.tag);
     },
   });
@@ -115,9 +115,9 @@ suite('the sealed context of a company MCP grant (#2975, slice 3, step 3e-2)', (
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -128,18 +128,18 @@ suite('the sealed context of a company MCP grant (#2975, slice 3, step 3e-2)', (
     }
     orgA = (await createOrg(runtime, browser(users.ownerA), 'Org A')).orgId;
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgA, users.adminA, users.memberA]);
-      await c.query(`UPDATE crove_kernel.tenant SET mcp_member_grants = true WHERE org_id = $1`, [orgA]);
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgA, users.adminA, users.memberA]);
+      await c.query(`UPDATE ludy_kernel.tenant SET mcp_member_grants = true WHERE org_id = $1`, [orgA]);
       for (const t of ['zz_canary_org', 'zz_canary_user', 'zz_canary_vy']) {
-        await c.query(`CREATE TABLE crove_kernel.${t} (org_id uuid NOT NULL, id uuid NOT NULL DEFAULT gen_random_uuid(), owner_user_id uuid NOT NULL, tag text NOT NULL, PRIMARY KEY (org_id, id))`);
-        await c.query(`SELECT crove_kernel.apply_tenant_rls('crove_kernel.${t}')`);
-        await c.query(`GRANT SELECT ON crove_kernel.${t} TO crove_tenant`);
+        await c.query(`CREATE TABLE ludy_kernel.${t} (org_id uuid NOT NULL, id uuid NOT NULL DEFAULT gen_random_uuid(), owner_user_id uuid NOT NULL, tag text NOT NULL, PRIMARY KEY (org_id, id))`);
+        await c.query(`SELECT ludy_kernel.apply_tenant_rls('ludy_kernel.${t}')`);
+        await c.query(`GRANT SELECT ON ludy_kernel.${t} TO ludy_tenant`);
       }
-      const policy = (t: string, expr: string) => c.query(`CREATE POLICY bound_read ON crove_kernel.${t} AS RESTRICTIVE FOR SELECT TO crove_tenant USING (owner_user_id = (SELECT ${expr}))`);
-      await policy('zz_canary_user', 'crove_kernel.ctx_user_id()');
-      await policy('zz_canary_vy', 'crove_kernel.ctx_acting_user_id()');
+      const policy = (t: string, expr: string) => c.query(`CREATE POLICY bound_read ON ludy_kernel.${t} AS RESTRICTIVE FOR SELECT TO ludy_tenant USING (owner_user_id = (SELECT ${expr}))`);
+      await policy('zz_canary_user', 'ludy_kernel.ctx_user_id()');
+      await policy('zz_canary_vy', 'ludy_kernel.ctx_acting_user_id()');
       for (const t of ['zz_canary_org', 'zz_canary_user', 'zz_canary_vy']) {
-        await c.query(`INSERT INTO crove_kernel.${t} (org_id, owner_user_id, tag) VALUES ($1, $2, 'owner-row'), ($1, $3, 'admin-row')`, [orgA, users.ownerA, users.adminA]);
+        await c.query(`INSERT INTO ludy_kernel.${t} (org_id, owner_user_id, tag) VALUES ($1, $2, 'owner-row'), ($1, $3, 'admin-row')`, [orgA, users.ownerA, users.adminA]);
       }
     });
   }, 120_000);
@@ -164,20 +164,20 @@ suite('the sealed context of a company MCP grant (#2975, slice 3, step 3e-2)', (
   it('enters a read-only context with no user and the grantor\'s live role, and can be entered by the API login alone', async () => {
     const g = await grant(users.adminA);
     const got = await asLogin(async (c) => {
-      const r = (await c.query(`SELECT crove_kernel.enter_mcp_company_context($1::uuid, $2::uuid) AS got`, [orgA, g])).rows[0].got as { role: string; grantor: string; maxRisk: string; tainted: boolean };
-      const user = (await c.query(`SELECT crove_kernel.ctx_user_id() AS u, crove_kernel.ctx_actor_type() AS t`)).rows[0] as { u: string | null; t: string };
+      const r = (await c.query(`SELECT ludy_kernel.enter_mcp_company_context($1::uuid, $2::uuid) AS got`, [orgA, g])).rows[0].got as { role: string; grantor: string; maxRisk: string; tainted: boolean };
+      const user = (await c.query(`SELECT ludy_kernel.ctx_user_id() AS u, ludy_kernel.ctx_actor_type() AS t`)).rows[0] as { u: string | null; t: string };
       expect(user).toEqual({ u: null, t: 'agent' });
-      await expect(c.query(`INSERT INTO crove_kernel.zz_canary_org (org_id, owner_user_id, tag) VALUES ($1, $2, 'x')`, [orgA, users.adminA])).rejects.toThrow(/AGENT_FORBIDDEN|permission denied|violates|read-only/);
+      await expect(c.query(`INSERT INTO ludy_kernel.zz_canary_org (org_id, owner_user_id, tag) VALUES ($1, $2, 'x')`, [orgA, users.adminA])).rejects.toThrow(/AGENT_FORBIDDEN|permission denied|violates|read-only/);
       return r;
     });
     expect(got).toEqual({ role: 'admin', grantor: users.adminA, maxRisk: 'R0', tainted: true });
     const worker = new URL(adminUrl);
-    worker.username = 'crove_worker';
+    worker.username = 'ludy_worker';
     worker.password = 'test-worker-pw';
     const w = new pg.Client({ connectionString: worker.toString() });
     await w.connect();
     try {
-      await expect(w.query(`SELECT crove_kernel.enter_mcp_company_context($1::uuid, $2::uuid)`, [orgA, g])).rejects.toThrow(/permission denied|MCP_CONTEXT_API_ONLY/);
+      await expect(w.query(`SELECT ludy_kernel.enter_mcp_company_context($1::uuid, $2::uuid)`, [orgA, g])).rejects.toThrow(/permission denied|MCP_CONTEXT_API_ONLY/);
     } finally {
       await w.end();
     }
@@ -208,13 +208,13 @@ suite('the sealed context of a company MCP grant (#2975, slice 3, step 3e-2)', (
     const answers: DomainError[] = [];
     const revoked = await grant(users.ownerA);
     await about(mcp(users.ownerA, revoked));
-    await admin((c) => c.query(`UPDATE crove_kernel.agent_grant SET revoked_at = now() WHERE org_id = $1 AND id = $2`, [orgA, revoked]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.agent_grant SET revoked_at = now() WHERE org_id = $1 AND id = $2`, [orgA, revoked]));
     answers.push(await refusal(about(mcp(users.ownerA, revoked))));
     const demoted = await grant(users.adminA);
     await about(mcp(users.adminA, demoted));
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgA, users.adminA]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgA, users.adminA]));
     answers.push(await refusal(about(mcp(users.adminA, demoted))));
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgA, users.adminA]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, [orgA, users.adminA]));
     // It does not come back with the role (the guard ended it), and a new grant of the admin works.
     answers.push(await refusal(about(mcp(users.adminA, demoted))));
     expect(await about(mcp(users.adminA, await grant(users.adminA)))).toMatchObject({ orgName: 'Org A' });
@@ -227,24 +227,24 @@ suite('the sealed context of a company MCP grant (#2975, slice 3, step 3e-2)', (
 
   it('keeps the standing facts the sealed context must not cost: last_used_at moves on a verify, a refusal audit row names the consenting user and the grant, the daily row budget is charged', async () => {
     const id = await grant(users.ownerA);
-    const row = (await admin((c) => c.query(`SELECT client_id FROM crove_kernel.agent_grant WHERE org_id = $1 AND id = $2`, [orgA, id]))).rows[0] as { client_id: string };
+    const row = (await admin((c) => c.query(`SELECT client_id FROM ludy_kernel.agent_grant WHERE org_id = $1 AND id = $2`, [orgA, id]))).rows[0] as { client_id: string };
     // Verified and read in one transaction, then rolled back, so the grant stays fresh for the rest of the test.
     const stamped = await admin(async (c) => {
       await c.query('BEGIN');
-      const verified = await c.query(`SELECT * FROM crove_kernel.mcp_grant_verify($1::uuid, $2)`, [id, row.client_id]);
+      const verified = await c.query(`SELECT * FROM ludy_kernel.mcp_grant_verify($1::uuid, $2)`, [id, row.client_id]);
       expect(verified.rowCount).toBe(1);
-      const at = (await c.query(`SELECT last_used_at FROM crove_kernel.agent_grant WHERE org_id = $1 AND id = $2`, [orgA, id])).rows[0]?.last_used_at ?? null;
+      const at = (await c.query(`SELECT last_used_at FROM ludy_kernel.agent_grant WHERE org_id = $1 AND id = $2`, [orgA, id])).rows[0]?.last_used_at ?? null;
       await c.query('ROLLBACK');
       return at;
     });
     expect(stamped).not.toBeNull();
     // A refused command (commands are closed to MCP) leaves its audit row by the consenting user, naming this grant and client.
     await refusal(runtime.execute('kernel.org.set_approval_preset', { preset: 'x' }, { actor: mcp(users.ownerA, id, 'company'), orgId: orgA }));
-    const audit = await admin((c) => c.query(`SELECT actor_type, actor_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND detail ->> 'mcpGrant' = $2`, [orgA, id]));
+    const audit = await admin((c) => c.query(`SELECT actor_type, actor_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND detail ->> 'mcpGrant' = $2`, [orgA, id]));
     expect(audit.rowCount).toBeGreaterThan(0);
     expect(audit.rows[0]).toMatchObject({ actor_type: 'user', actor_id: users.ownerA, detail: { mcpCall: true, mcpGrant: id, mcpClientName: 'Test client' } });
     // The daily row budget is charged outside the sealed context, by the definer, as before.
-    const charged = await asLogin((c) => c.query(`SELECT crove_kernel.mcp_rows_charge($1::uuid, $2::uuid, 1, 1000000) AS left_rows`, [id, orgA]));
+    const charged = await asLogin((c) => c.query(`SELECT ludy_kernel.mcp_rows_charge($1::uuid, $2::uuid, 1, 1000000) AS left_rows`, [id, orgA]));
     expect(charged.rowCount).toBe(1);
   });
 });

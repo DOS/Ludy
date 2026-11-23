@@ -3,10 +3,10 @@
 // their totals over the last 30, 90 or 365 days (by the day each quote was made) or ever. Read only, counts and decimal strings, no customer, number or text; the
 // member sees what row-level security shows them, which is every quote of the org. `sent` is the quotes that left draft and were not replaced by a revision.
 import { sql } from 'kysely';
-import { QUOTE_STATUSES, zQuoteReportQuery, type QuoteReport, type QuoteStatus } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { money } from '@crove/l10n-vn';
-import { defineQuery } from '@crove/kernel-runtime';
+import { QUOTE_STATUSES, zQuoteReportQuery, type QuoteReport, type QuoteStatus } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { money } from '@ludy/l10n-vn';
+import { defineQuery } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const DEFAULT_DAYS = 90;
@@ -19,7 +19,7 @@ export const quoteReport = defineQuery({
     const days = input.days === undefined ? DEFAULT_DAYS : input.days;
     const { rows } = await sql<{ status: QuoteStatus; n: number; total: string }>`
       SELECT q.status, pg_catalog.count(*)::int AS n, coalesce(pg_catalog.sum(q.total), 0)::text AS total
-      FROM crove_crm.quote q
+      FROM ludy_crm.quote q
       WHERE q.org_id = ${ctx.orgId}::uuid
         AND (${days}::int IS NULL OR q.created_at >= pg_catalog.now() - pg_catalog.make_interval(days => ${days}::int))
       GROUP BY q.status`.execute(ctx.trx);

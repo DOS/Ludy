@@ -2,13 +2,13 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { PortalListDirection, ReconcileOutcome } from '@crove/kernel-contract';
-import { Alert, AlertDescription, AlertTitle } from '@crove/ui/components/alert';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { TableCell, TableRow } from '@crove/ui/components/table';
+import type { PortalListDirection, ReconcileOutcome } from '@ludy/kernel-contract';
+import { Alert, AlertDescription, AlertTitle } from '@ludy/ui/components/alert';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { CardSkeleton, DataTable, Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { PortalSyncPanel } from '../components/portal-sync.tsx';
@@ -38,19 +38,19 @@ const SKIPPED_SHOWN = 20;
 function ItemRow({ item, slug, direction }: { item: ReconcileItem; slug: string; direction: PortalListDirection }) {
   const t = useTranslations('portalList');
   const f = useFormat();
-  const invoice = item.portal ?? item.crove;
+  const invoice = item.portal ?? item.ludy;
   if (!invoice) return null;
   // A sale's other party is its customer; the seller is the company itself (#2141).
-  const partyName = direction === 'sale' ? (item.crove?.buyerName ?? '') : item.portal?.sellerName || item.crove?.sellerName || '';
-  const partyTaxCode = direction === 'sale' ? (item.portal?.buyerTaxCode ?? item.crove?.buyerTaxCode ?? null) : (item.portal?.sellerTaxCode ?? item.crove?.sellerTaxCode ?? null);
+  const partyName = direction === 'sale' ? (item.ludy?.buyerName ?? '') : item.portal?.sellerName || item.ludy?.sellerName || '';
+  const partyTaxCode = direction === 'sale' ? (item.portal?.buyerTaxCode ?? item.ludy?.buyerTaxCode ?? null) : (item.portal?.sellerTaxCode ?? item.ludy?.sellerTaxCode ?? null);
   const notes: string[] = [];
   // A declared_late item is outside the period by definition; its section says so, and the note gives its posting date.
   if (item.outsidePeriod && item.outcome !== 'declared_late') notes.push(t('notes.outsidePeriod'));
-  if (item.outcome === 'declared_late' && item.crove?.postingDate) notes.push(t('notes.postedOn', { date: f.date(item.crove.postingDate) }));
-  if (item.declaredInLaterPeriod && item.crove?.postingDate) notes.push(t('notes.declaredInLaterPeriod', { date: f.date(item.crove.postingDate) }));
+  if (item.outcome === 'declared_late' && item.ludy?.postingDate) notes.push(t('notes.postedOn', { date: f.date(item.ludy.postingDate) }));
+  if (item.declaredInLaterPeriod && item.ludy?.postingDate) notes.push(t('notes.declaredInLaterPeriod', { date: f.date(item.ludy.postingDate) }));
   // A recorded sale has no seller code (it does not say which branch issued it), so every match is on series and number.
   if (item.withoutTaxCode && direction !== 'sale') notes.push(t('notes.withoutTaxCode'));
-  if (item.duplicateInCrove) notes.push(t('notes.duplicateInCrove'));
+  if (item.duplicateInLudy) notes.push(t('notes.duplicateInLudy'));
   if (item.duplicateRows > 0) notes.push(t('notes.duplicateRows', { count: item.duplicateRows }));
   for (const d of item.differences) notes.push(t(`differences.${d}`));
   return (
@@ -64,7 +64,7 @@ function ItemRow({ item, slug, direction }: { item: ReconcileItem; slug: string;
       <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">
         {item.portal?.total != null ? f.money(item.portal.total, item.portal.currency) : <span className="text-subtle-foreground">{t('noAmount')}</span>}
       </TableCell>
-      <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{item.crove ? f.money(item.crove.total, item.crove.currency) : '-'}</TableCell>
+      <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{item.ludy ? f.money(item.ludy.total, item.ludy.currency) : '-'}</TableCell>
       <TableCell className="px-4 py-3">
         <div className="flex flex-wrap items-center gap-1">
           {item.portal?.statusLabel && <Badge variant={item.portal.status === 'cancelled' || item.portal.status === 'replaced' ? 'destructive' : 'outline'}>{item.portal.statusLabel}</Badge>}
@@ -73,12 +73,12 @@ function ItemRow({ item, slug, direction }: { item: ReconcileItem; slug: string;
               {n}
             </Badge>
           ))}
-          {item.crove?.kind === 'proposal' && (
-            <Link to="/o/$slug/inbox/$id" params={{ slug, id: item.crove.id }} className="text-xs text-link underline-offset-4 hover:underline">
+          {item.ludy?.kind === 'proposal' && (
+            <Link to="/o/$slug/inbox/$id" params={{ slug, id: item.ludy.id }} className="text-xs text-link underline-offset-4 hover:underline">
               {t('openProposal')}
             </Link>
           )}
-          {item.crove?.kind === 'document' && (
+          {item.ludy?.kind === 'document' && (
             <Link to="/o/$slug/documents" params={{ slug }} className="text-xs text-link underline-offset-4 hover:underline">
               {t('openDocuments')}
             </Link>
@@ -96,9 +96,9 @@ function Section({ outcome, items, total, folded, slug, direction }: { outcome: 
   // The server lists the first items of a long section; the count and the summary still cover all of them.
   const truncated = total > items.length ? <p className="mt-2 text-sm text-muted-foreground">{t('truncatedSection', { shown: items.length, total })}</p> : null;
   const table = (
-    <DataTable numeric={[3, 4]} head={[t('columns.issueDate'), t('columns.invoice'), sales ? t('sale.columns.buyer') : t('columns.seller'), t('columns.portalTotal'), t('columns.croveTotal'), t('columns.notes')]}>
+    <DataTable numeric={[3, 4]} head={[t('columns.issueDate'), t('columns.invoice'), sales ? t('sale.columns.buyer') : t('columns.seller'), t('columns.portalTotal'), t('columns.ludyTotal'), t('columns.notes')]}>
       {items.map((item) => (
-        <ItemRow key={`${item.portal?.listId ?? 'crove'}-${item.portal?.rowNo ?? item.crove?.id}`} item={item} slug={slug} direction={direction} />
+        <ItemRow key={`${item.portal?.listId ?? 'ludy'}-${item.portal?.rowNo ?? item.ludy?.id}`} item={item} slug={slug} direction={direction} />
       ))}
     </DataTable>
   );
@@ -481,7 +481,7 @@ export function PortalListPage() {
                   [
                     ['missing', data.summary.missing],
                     ['amount_mismatch', data.summary.amountMismatch],
-                    ['void_in_crove', data.summary.voidInCrove],
+                    ['void_in_ludy', data.summary.voidInLudy],
                     ['not_on_portal', data.summary.notOnPortal],
                   ] as const
                 ).map(([outcome, count]) => (
@@ -501,7 +501,7 @@ export function PortalListPage() {
                 const items = grouped.get(outcome) ?? [];
                 return items.length > 0 ? <Section key={outcome} outcome={outcome} items={items} total={outcomeTotal(data.summary, outcome)} folded={folded} slug={slug} direction={direction} /> : null;
               })}
-              {data.items.length > 0 && data.summary.missing + data.summary.amountMismatch + data.summary.voidInCrove + data.summary.notOnPortal + data.summary.void === 0 && (
+              {data.items.length > 0 && data.summary.missing + data.summary.amountMismatch + data.summary.voidInLudy + data.summary.notOnPortal + data.summary.void === 0 && (
                 <Empty title={t('allClear')} hint={t(`${sx}allClearHint`)} />
               )}
             </>

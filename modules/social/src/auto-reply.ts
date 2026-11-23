@@ -6,9 +6,9 @@
 // shows it.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { Publisher } from '@crove/channel';
-import { DomainError, defineCommand, type CommandContext, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { Publisher } from '@ludy/channel';
+import { DomainError, defineCommand, type CommandContext, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { AUTO_REPLY_RULES, autoReplyOf, isProvider } from './domain/channels.ts';
 import { callRevision, publishCallKey } from './domain/publish.ts';
 import { COMMENT_STALE_MS, type CommentCall } from './comments.ts';
@@ -31,7 +31,7 @@ export async function autoReplyCallsOf(trx: Trx, orgId: string, variants: readon
   if (variants.length === 0) return out;
   const keys = new Map(variants.map((v) => [replyKey(v), v.id]));
   const { rows } = await sql<CommentCall & { finished_at: Date | null }>`
-    SELECT key, state, external_ref, error_code, started_at, finished_at FROM crove_kernel.external_call
+    SELECT key, state, external_ref, error_code, started_at, finished_at FROM ludy_kernel.external_call
     WHERE org_id = ${orgId}::uuid AND key = ANY(${[...keys.keys()]}::text[])`.execute(trx);
   for (const row of rows) {
     const id = keys.get(row.key);
@@ -73,10 +73,10 @@ export const autoReplyBegin = defineCommand({
     if (input.likes < reply.likes) return { action: 'none', reason: 'below' };
     const callKey = replyKey(v);
     // Once: any call made, whatever came of it, settles the reply of this publish.
-    const made = await ctx.trx.selectFrom('crove_kernel.external_call').select('key').where('org_id', '=', ctx.orgId).where('key', '=', callKey).executeTakeFirst();
+    const made = await ctx.trx.selectFrom('ludy_kernel.external_call').select('key').where('org_id', '=', ctx.orgId).where('key', '=', callKey).executeTakeFirst();
     if (made) return { action: 'none', reason: 'done' };
     await ctx.trx
-      .insertInto('crove_kernel.external_call')
+      .insertInto('ludy_kernel.external_call')
       .values({ org_id: ctx.orgId, key: callKey, module: 'social', target: v.provider, step: AUTO_REPLY_STEP, retry_safety: 'never', request_hash: v.content_hash, started_at: ctx.now })
       .execute();
     return { action: 'call', variantId: v.id, callKey, externalId: v.external_post_id, text: reply.text };
@@ -97,6 +97,7 @@ export const AUTO_REPLY_STALE_MS = COMMENT_STALE_MS;
 // Stores what the platform answered; an answer for a key that is not a started call changes nothing.
 export const autoReplyRecord = defineCommand({
   name: 'social.auto_reply.record',
+  runsWhenOff: "records the platform's answer to a call already made, so its outcome is not lost when the app is switched off",
   input: z.strictObject({ variantId: zId, callKey: z.string().min(1).max(300), result: zReplyResult }),
   risk: 'R1',
   sideEffect: 'internal',
@@ -114,7 +115,7 @@ export const autoReplyRecord = defineCommand({
         ? { state, external_ref: r.externalId, finished_at: ctx.now }
         : { state, error_kind: r.kind === 'unknown' ? 'unknown' : r.error, error_code: errorCode, finished_at: ctx.now };
     const updated = await ctx.trx
-      .updateTable('crove_kernel.external_call')
+      .updateTable('ludy_kernel.external_call')
       .set({ ...values, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('key', '=', input.callKey)

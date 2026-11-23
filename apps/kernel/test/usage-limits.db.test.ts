@@ -1,4 +1,4 @@
-// Per-org abuse limits on PostgreSQL 17 (#675): the sliding 24-hour window of crove_kernel.org_usage, what the worker
+// Per-org abuse limits on PostgreSQL 17 (#675): the sliding 24-hour window of ludy_kernel.org_usage, what the worker
 // records, deferrals that keep an item and mail the owners once per metric a day, an inbound message and a document
 // kept for the org's next budget, and the use counted when they go through. Set CROVE_TEST_ADMIN_URL to a superuser
 // URL; each run makes its own database.
@@ -7,12 +7,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { DEFAULT_USAGE_LIMITS, WAITING_FOR_BUDGET, createOrg, kernelCommands, kernelQueries, upsertIdentity, type UsageLimits, type UsageOver } from '@crove/kernel';
-import { Runtime, fileKey, inboundKey, newInboundBlobId, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { aiCost, extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
-import type { ExtractClient } from '@crove/extract-contract';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { DEFAULT_USAGE_LIMITS, WAITING_FOR_BUDGET, createOrg, kernelCommands, kernelQueries, upsertIdentity, type UsageLimits, type UsageOver } from '@ludy/kernel';
+import { Runtime, fileKey, inboundKey, newInboundBlobId, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { aiCost, extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
+import type { ExtractClient } from '@ludy/extract-contract';
 import { processInboundEmail } from '../src/inbound.ts';
 import { renderUsageDeferredMail } from '../src/usage-deferred-mail.ts';
 import { inProcessExtract } from './extract-service.ts';
@@ -92,19 +92,19 @@ suite('per-org abuse limits on PostgreSQL (#675)', () => {
   async function org(): Promise<{ orgId: string; owner: string; token: string }> {
     const owner = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `owner-${randomUUID().slice(0, 8)}@limits.test`, name: null });
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
-    const token = await admin(async (c) => (await c.query<{ t: string }>('SELECT inbound_token AS t FROM crove_kernel.tenant WHERE org_id = $1', [orgId])).rows[0]?.t ?? '');
+    const token = await admin(async (c) => (await c.query<{ t: string }>('SELECT inbound_token AS t FROM ludy_kernel.tenant WHERE org_id = $1', [orgId])).rows[0]?.t ?? '');
     return { orgId, owner, token };
   }
 
   const used = (orgId: string, metric: string, amount: string, hoursAgo: number) =>
-    admin((c) => c.query("INSERT INTO crove_kernel.org_usage (org_id, metric, amount, created_at) VALUES ($1, $2, $3, now() - make_interval(secs => $4 * 3600))", [orgId, metric, amount, hoursAgo]));
+    admin((c) => c.query("INSERT INTO ludy_kernel.org_usage (org_id, metric, amount, created_at) VALUES ($1, $2, $3, now() - make_interval(secs => $4 * 3600))", [orgId, metric, amount, hoursAgo]));
   const over = (orgId: string, metrics: string[], limits: Partial<UsageLimits>) => worker.query<UsageOver | null>('kernel.usage.over', { metrics, limits }, { actor: system, orgId });
   const usageOf = (orgId: string) =>
-    admin(async (c) => (await c.query<{ metric: string; amount: string }>('SELECT metric, sum(amount)::text AS amount FROM crove_kernel.org_usage WHERE org_id = $1 GROUP BY metric ORDER BY metric', [orgId])).rows);
+    admin(async (c) => (await c.query<{ metric: string; amount: string }>('SELECT metric, sum(amount)::text AS amount FROM ludy_kernel.org_usage WHERE org_id = $1 GROUP BY metric ORDER BY metric', [orgId])).rows);
   const deferrals = (orgId: string) =>
-    admin(async (c) => (await c.query<{ metric: string; subject_type: string; subject_id: string; notified: boolean }>('SELECT metric, subject_type, subject_id, notified FROM crove_kernel.usage_deferral WHERE org_id = $1 ORDER BY created_at, id', [orgId])).rows);
+    admin(async (c) => (await c.query<{ metric: string; subject_type: string; subject_id: string; notified: boolean }>('SELECT metric, subject_type, subject_id, notified FROM ludy_kernel.usage_deferral WHERE org_id = $1 ORDER BY created_at, id', [orgId])).rows);
   const mails = (orgId: string) =>
-    admin(async (c) => (await c.query<{ to_address: string; template_key: string; payload: Record<string, unknown> }>("SELECT to_address, template_key, payload FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'kernel.usage.defer' ORDER BY created_at", [orgId])).rows);
+    admin(async (c) => (await c.query<{ to_address: string; template_key: string; payload: Record<string, unknown> }>("SELECT to_address, template_key, payload FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'kernel.usage.defer' ORDER BY created_at", [orgId])).rows);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -115,16 +115,16 @@ suite('per-org abuse limits on PostgreSQL (#675)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
     const asWorker = new URL(adminUrl);
-    asWorker.username = 'crove_worker';
+    asWorker.username = 'ludy_worker';
     asWorker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorker.toString(), max: 2 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
@@ -184,14 +184,14 @@ suite('per-org abuse limits on PostgreSQL (#675)', () => {
     const grants = await admin(async (c) =>
       (
         await c.query<{ t: string; update: boolean; delete: boolean }>(
-          `SELECT t, has_table_privilege('crove_tenant', t, 'UPDATE') AS update, has_table_privilege('crove_tenant', t, 'DELETE') AS delete
-           FROM unnest(ARRAY['crove_kernel.org_usage', 'crove_kernel.usage_deferral']) t ORDER BY t`,
+          `SELECT t, has_table_privilege('ludy_tenant', t, 'UPDATE') AS update, has_table_privilege('ludy_tenant', t, 'DELETE') AS delete
+           FROM unnest(ARRAY['ludy_kernel.org_usage', 'ludy_kernel.usage_deferral']) t ORDER BY t`,
         )
       ).rows,
     );
     expect(grants).toEqual([
-      { t: 'crove_kernel.org_usage', update: false, delete: false },
-      { t: 'crove_kernel.usage_deferral', update: false, delete: false },
+      { t: 'ludy_kernel.org_usage', update: false, delete: false },
+      { t: 'ludy_kernel.usage_deferral', update: false, delete: false },
     ]);
   });
 
@@ -212,7 +212,7 @@ suite('per-org abuse limits on PostgreSQL (#675)', () => {
     expect(sent).toHaveLength(2);
     expect(sent[0]).toMatchObject({ template_key: 'kernel.usage.deferred', payload: { metric: 'inbound_emails', retryAt } });
     expect(String(sent[0]?.payload.path)).toMatch(/^\/o\/[a-z0-9-]+\/inbox$/);
-    const owner = await admin(async (c) => (await c.query<{ email: string }>('SELECT email FROM crove_kernel.user_account WHERE id = $1', [o.owner])).rows[0]?.email);
+    const owner = await admin(async (c) => (await c.query<{ email: string }>('SELECT email FROM ludy_kernel.user_account WHERE id = $1', [o.owner])).rows[0]?.email);
     expect(sent[0]?.to_address).toBe(owner);
   });
 
@@ -260,7 +260,7 @@ suite('per-org abuse limits on PostgreSQL (#675)', () => {
     if (!('deferred' in kept)) throw new Error('not deferred');
     expect(Date.parse(kept.deferred)).toBeGreaterThan(Date.now() + 23 * 3600_000);
     // Not filed, nothing stored for the org, and its raw message is still there for the next try.
-    const messages = await admin(async (c) => (await c.query('SELECT 1 FROM crove_kernel.inbound_message WHERE org_id = $1', [o.orgId])).rowCount);
+    const messages = await admin(async (c) => (await c.query('SELECT 1 FROM ludy_kernel.inbound_message WHERE org_id = $1', [o.orgId])).rowCount);
     expect(messages).toBe(1);
     expect(await store.get(inboundKey(second.job.blobId))).toBeInstanceOf(Uint8Array);
     expect(await deferrals(o.orgId)).toEqual([{ metric: 'inbound_emails', subject_type: 'inbound_email', subject_id: second.job.sha256, notified: true }]);
@@ -300,7 +300,7 @@ suite('per-org abuse limits on PostgreSQL (#675)', () => {
     expect(files.find((f) => f.id === waiting)).toMatchObject({ status: 'waiting', error: WAITING_FOR_BUDGET });
     expect(files.find((f) => f.id === read)).toMatchObject({ status: 'proposed' });
     // No extraction run was recorded for it, so it is read as new when its turn comes.
-    const runs = await admin(async (c) => (await c.query('SELECT 1 FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2', [o.orgId, waiting])).rowCount);
+    const runs = await admin(async (c) => (await c.query('SELECT 1 FROM ludy_kernel.extraction WHERE org_id = $1 AND file_id = $2', [o.orgId, waiting])).rowCount);
     expect(runs).toBe(0);
     // Once the window allows it (here: a higher limit), the same job reads it.
     const later = await extractAndPropose({ ...deps, limits: { ...limits, extraction_pages: '5' } }, o.orgId, waiting);

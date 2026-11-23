@@ -4,7 +4,7 @@
 // for R3.
 import { SignJWT } from 'jose';
 import { sql } from 'kysely';
-import { DomainError, type SessionStatusSource } from '@crove/kernel-runtime';
+import { DomainError, type SessionStatusSource } from '@ludy/kernel-runtime';
 import { liveAuthUrl, type Config, type SessionCheckMode } from './config.ts';
 
 // One definer call inside the request transaction: the Crove session records (global and for the org in context)
@@ -24,7 +24,7 @@ function sqlSource(mode: SessionCheckMode): SessionStatusSource {
     liveCheckForR3: mode === 'jwt',
     async check(trx, actor, orgId) {
       const aal = actor.aal === 'aal2' ? 'aal2' : 'aal1';
-      await sql`SELECT crove_kernel.session_check(${actor.userId}::uuid, ${actor.sessionId}::uuid, ${upstream}, ${orgId}::uuid, ${aal}::text)`.execute(
+      await sql`SELECT ludy_kernel.session_check(${actor.userId}::uuid, ${actor.sessionId}::uuid, ${upstream}, ${orgId}::uuid, ${aal}::text)`.execute(
         trx,
       );
     },

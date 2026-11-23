@@ -6,12 +6,12 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { BlueskyPublisher, FacebookPagePublisher, SandboxPublisher, TelegramPublisher, TikTokPublisher, YouTubePublisher, type Publisher, type PublishInput, type PublishResult, type ReconcileInput, type ReconcileResult, type RetrySafety } from '@crove/channel';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { BlobIntegrityError, CredentialVault, Runtime, parseVaultKey, type BlobStore } from '@crove/kernel-runtime';
-import { captureKey, runCommentJob, runGateJob, runPinJob, runPlaylistJob, runPublishJob, runThreadJob, METRICS_INTERVAL_SECONDS, socialCommands, socialQueries, STORY_EXPIRED_KEY, STORY_FINAL_KEY, storyCapture, sweepMetrics, type BeginResult, type MetricsRow, type PostView } from '@crove/mod-social';
+import { BlueskyPublisher, FacebookPagePublisher, SandboxPublisher, TelegramPublisher, TikTokPublisher, YouTubePublisher, type Publisher, type PublishInput, type PublishResult, type ReconcileInput, type ReconcileResult, type RetrySafety } from '@ludy/channel';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { BlobIntegrityError, CredentialVault, Runtime, parseVaultKey, type BlobStore } from '@ludy/kernel-runtime';
+import { captureKey, runCommentJob, runGateJob, runPinJob, runPlaylistJob, runPublishJob, runThreadJob, METRICS_INTERVAL_SECONDS, socialCommands, socialQueries, STORY_EXPIRED_KEY, STORY_FINAL_KEY, storyCapture, sweepMetrics, type BeginResult, type MetricsRow, type PostView } from '@ludy/mod-social';
 import { shortLinkTarget } from '../src/short-link.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -122,7 +122,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
       variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })),
     });
     await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
     return { postId, variants: post.variants.map((v) => v.id), connections, accounts };
   }
 
@@ -136,11 +136,11 @@ suite('social publishing on PostgreSQL (S4)', () => {
   };
 
   const calls = (variantId: string) =>
-    admin(async (c) => (await c.query<{ key: string; state: string; calls: number }>("SELECT key, state, calls FROM crove_kernel.external_call WHERE key LIKE $1 ORDER BY started_at, key", [`social.publish:${variantId}:%`])).rows);
+    admin(async (c) => (await c.query<{ key: string; state: string; calls: number }>("SELECT key, state, calls FROM ludy_kernel.external_call WHERE key LIKE $1 ORDER BY started_at, key", [`social.publish:${variantId}:%`])).rows);
 
   // Ages a variant's last change, as if the worker that started it had died that long ago.
   const age = (variantId: string, seconds: number) =>
-    admin((c) => c.query(`UPDATE crove_social.post_variant SET updated_at = now() - make_interval(secs => $2) WHERE id = $1`, [variantId, seconds]));
+    admin((c) => c.query(`UPDATE ludy_social.post_variant SET updated_at = now() - make_interval(secs => $2) WHERE id = $1`, [variantId, seconds]));
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -151,15 +151,15 @@ suite('social publishing on PostgreSQL (S4)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 4 });
     appDb = createDb(appPool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     api = new Runtime(appDb, { manifests: TEST_MANIFESTS }).register(registry);
@@ -183,7 +183,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const { postId, variants } = await duePost(o);
     const id = variants[0] as string;
 
-    const due = await admin(async (c) => (await c.query("SELECT variant_id, status FROM crove_social.publish_due(100, 600, ARRAY['sandbox'])")).rows);
+    const due = await admin(async (c) => (await c.query("SELECT variant_id, status FROM ludy_social.publish_due(100, 600, ARRAY['sandbox'])")).rows);
     expect(due).toContainEqual({ variant_id: id, status: 'scheduled' });
 
     expect(await run(o, id, platform)).toEqual({ action: 'call', status: 'published' });
@@ -193,7 +193,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     expect(await calls(id)).toEqual([{ key: `social.publish:${id}:1:1:publish`, state: 'succeeded', calls: 1 }]);
     expect(platform.posts.map((p) => p.content.body)).toHaveLength(1);
     // The channel keeps what it went out with in its own columns (#335).
-    const frozen = await admin(async (c) => (await c.query<{ content_frozen: boolean; body: string | null }>('SELECT content_frozen, body FROM crove_social.post_variant WHERE id = $1', [id])).rows[0]);
+    const frozen = await admin(async (c) => (await c.query<{ content_frozen: boolean; body: string | null }>('SELECT content_frozen, body FROM ludy_social.post_variant WHERE id = $1', [id])).rows[0]);
     expect(frozen).toEqual({ content_frozen: true, body: platform.posts[0]?.content.body });
 
     // Another run, or the sweep, finds nothing to do.
@@ -216,13 +216,13 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const post = await get(o, postId);
     await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
     await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
     const [short, other] = post.variants;
     const deps = { runtime: worker, broker: vault, publishers: { sandbox: platform }, callTimeoutMs: 2_000, publicUrl: 'https://crove.example/' };
     expect(await runPublishJob(deps, o.orgId, short?.id as string, 'sandbox')).toEqual({ action: 'call', status: 'published' });
     expect(await runPublishJob(deps, o.orgId, other?.id as string, 'sandbox')).toEqual({ action: 'call', status: 'published' });
 
-    const rows = await admin(async (c) => (await c.query<{ code: string; target_url: string }>('SELECT code, target_url FROM crove_social.short_link WHERE post_id = $1', [postId])).rows);
+    const rows = await admin(async (c) => (await c.query<{ code: string; target_url: string }>('SELECT code, target_url FROM ludy_social.short_link WHERE post_id = $1', [postId])).rows);
     expect(rows).toHaveLength(1);
     const code = rows[0]?.code as string;
     expect(code).toMatch(/^[A-Za-z0-9]{12}$/);
@@ -242,11 +242,11 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const summary = await api.query<{ variantId: string; clicks: number | null }[]>('social.metrics.summary', { postId }, { actor: asUser(o.owner), orgId: o.orgId });
     expect(Object.fromEntries(summary.map((r) => [r.variantId, r.clicks]))).toEqual({ [short?.id as string]: 2, [other?.id as string]: null });
     // Only the redirect's definer counts: members read the counts, and the API role cannot write them.
-    await expect(appPool.query("INSERT INTO crove_social.short_link_click (org_id, short_link_id, day, clicks) SELECT org_id, id, current_date, 99 FROM crove_social.short_link")).rejects.toMatchObject({ code: '42501' });
-    await expect(workerPool.query('SELECT crove_social.short_link_hit($1, true)', [code])).rejects.toMatchObject({ code: '42501' });
+    await expect(appPool.query("INSERT INTO ludy_social.short_link_click (org_id, short_link_id, day, clicks) SELECT org_id, id, current_date, 99 FROM ludy_social.short_link")).rejects.toMatchObject({ code: '42501' });
+    await expect(workerPool.query('SELECT ludy_social.short_link_hit($1, true)', [code])).rejects.toMatchObject({ code: '42501' });
     // A member cannot switch a channel's links.
     const member = await person('member');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, member]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, member]));
     await expect(api.execute('social.channel.set_short_links', { connectionId: plain, shortLinks: true }, { actor: asUser(member), orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
   it('never publishes a variant short of what its channel asks for now, and sends it back to review (#408)', async () => {
@@ -255,11 +255,11 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const { postId, variants, connections } = await duePost(o);
     const id = variants[0] as string;
     // The policy rose without set_policy re-checking (as after a retry or a resume brings a variant back).
-    await admin((c) => c.query('INSERT INTO crove_social.channel_policy (org_id, channel_connection_id, approvals_required, updated_by) VALUES ($1, $2, 2, $3)', [o.orgId, connections[0], o.owner]));
+    await admin((c) => c.query('INSERT INTO ludy_social.channel_policy (org_id, channel_connection_id, approvals_required, updated_by) VALUES ($1, $2, 2, $3)', [o.orgId, connections[0], o.owner]));
     expect(await run(o, id, platform)).toEqual({ action: 'none', reason: 'approval' });
     expect(platform.posts).toHaveLength(0);
     expect((await variant(o, postId)).status).toBe('in_review');
-    const events = await admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.post.submitted' AND payload->>'by_policy' = 'true'", [o.orgId])).rows);
+    const events = await admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.post.submitted' AND payload->>'by_policy' = 'true'", [o.orgId])).rows);
     // It carries the content manager agent's task too (#816), like a person's submit.
     expect(events.map((e) => e.payload)).toEqual([{ post_id: postId, variant_ids: [id], by_policy: true, agent_task: expect.objectContaining({ ref: { type: 'social.post', id: postId }, tainted: false }) }]);
   });
@@ -272,7 +272,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const post = await get(o, postId);
     await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
     await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
     const id = post.variants[0]?.id as string;
     expect(await run(o, id, platform)).toMatchObject({ status: 'published' });
     expect(platform.comments.map((c) => c.text)).toEqual(['#khaitruong']);
@@ -296,7 +296,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const post = await get(o, postId);
     await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
     await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
     const id = post.variants[0]?.id as string;
     const key = `social.publish:${id}:1:1:comment`;
     const deps = { runtime: worker, broker: vault, publishers: { sandbox }, callTimeoutMs: 2_000 };
@@ -306,16 +306,16 @@ suite('social publishing on PostgreSQL (S4)', () => {
     expect(await run(o, id, quiet)).toMatchObject({ status: 'published' });
     expect((await variant(o, postId)).commentStatus).toBe('pending');
     await expect(exec(o, 'social.comment.retry', { variantId: id })).rejects.toMatchObject({ code: 'COMMENT_NOT_RETRYABLE' });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET published_at = now() - interval '11 minutes' WHERE id = $1", [id]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET published_at = now() - interval '11 minutes' WHERE id = $1", [id]));
     expect((await variant(o, postId)).commentStatus).toBe('failed');
 
     // A call started and never answered (the worker died): unclear once it is old, and retried only after it.
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.external_call (org_id, key, module, target, step, retry_safety, request_hash, started_at) VALUES ($1, $2, 'social', 'sandbox', 'comment', 'never', NULL, now() - interval '11 minutes')", [o.orgId, key]),
+      c.query("INSERT INTO ludy_kernel.external_call (org_id, key, module, target, step, retry_safety, request_hash, started_at) VALUES ($1, $2, 'social', 'sandbox', 'comment', 'never', NULL, now() - interval '11 minutes')", [o.orgId, key]),
     );
     expect((await variant(o, postId)).commentStatus).toBe('unknown');
     await exec(o, 'social.comment.retry', { variantId: id });
-    const asks = await admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.comment.retry_requested'", [o.orgId])).rows);
+    const asks = await admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.comment.retry_requested'", [o.orgId])).rows);
     expect(asks.map((a) => a.payload)).toEqual([{ post_id: postId, variant_id: id, provider: 'sandbox', after: key }]);
     // An ask that saw no call is stale now; the ask that saw the quiet call posts once, and a second job of it stops.
     expect(await runCommentJob(deps, o.orgId, id, 'sandbox', { after: null })).toEqual({ action: 'none', reason: 'unknown' });
@@ -334,11 +334,11 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const post = await get(o, postId);
     await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
     await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
     return { postId, id: post.variants[0]?.id as string };
   }
   const partRefs = (variantId: string) =>
-    admin(async (c) => (await c.query<{ key: string; state: string; external_ref: string | null }>("SELECT key, state, external_ref, error_code FROM crove_kernel.external_call WHERE key LIKE $1 ORDER BY started_at, key", [`social.publish:${variantId}:%:part\\_%`])).rows);
+    admin(async (c) => (await c.query<{ key: string; state: string; external_ref: string | null }>("SELECT key, state, external_ref, error_code FROM ludy_kernel.external_call WHERE key LIKE $1 ORDER BY started_at, key", [`social.publish:${variantId}:%:part\\_%`])).rows);
 
   it('posts thread parts as a chain of replies after the post, each once (#742)', async () => {
     const o = await org();
@@ -352,7 +352,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     expect(refs.map((r) => [r.key.split(':').at(-1), r.state])).toEqual([['part_2', 'succeeded'], ['part_3', 'succeeded'], ['part_4', 'succeeded']]);
     // Part 2 answers the post, each later part the part before it.
     expect(sandbox.comments.map((c) => c.text)).toEqual(['Phần hai', 'Phần ba', 'Phần bốn']);
-    const root = await admin(async (c) => (await c.query<{ external_post_id: string }>('SELECT external_post_id FROM crove_social.post_variant WHERE id = $1', [id])).rows[0]?.external_post_id);
+    const root = await admin(async (c) => (await c.query<{ external_post_id: string }>('SELECT external_post_id FROM ludy_social.post_variant WHERE id = $1', [id])).rows[0]?.external_post_id);
     expect(sandbox.comments.map((c) => c.postId)).toEqual([root, refs[0]?.external_ref, refs[1]?.external_ref]);
     expect(sandbox.comments.map((c) => c.rootId)).toEqual([root, root, root]);
     // A later run posts nothing again, and there is nothing to retry.
@@ -387,7 +387,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     expect(await runThreadJob(deps, o.orgId, id, 'sandbox')).toMatchObject({ action: 'none', reason: 'failed' });
     const failedKey = `social.publish:${id}:1:1:part_3`;
     await exec(o, 'social.thread.retry', { variantId: id });
-    const asks = await admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.thread.retry_requested'", [o.orgId])).rows);
+    const asks = await admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.thread.retry_requested'", [o.orgId])).rows);
     expect(asks.map((a) => a.payload)).toEqual([{ post_id: postId, variant_id: id, provider: 'sandbox', after: failedKey }]);
     // The retry posts part 3 under a new key, then stops at an unclear part 4, which nothing posts again by itself.
     expect(await runThreadJob(deps, o.orgId, id, 'sandbox', { after: failedKey })).toMatchObject({ action: 'call', state: 'ambiguous', parts: 2 });
@@ -431,7 +431,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const platform = new FakePlatform();
     const { variants } = await duePost(o);
     const id = variants[0] as string;
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() + interval '1 hour' WHERE id = $1", [id]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() + interval '1 hour' WHERE id = $1", [id]));
     expect(await run(o, id, platform)).toEqual({ action: 'none', reason: 'not_due' });
     await expect(
       worker.execute<BeginResult>('social.publish.begin', { variantId: id, provider: 'facebook_page', safety: 'never' }, { actor: system, orgId: o.orgId }),
@@ -558,7 +558,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     let v = await variant(o, postId);
     expect([v.status, v.attempt, v.error?.kind, v.error?.retryAt, v.effectiveAt]).toEqual(['scheduled', 2, 'rate_limited', retryAt.toISOString(), retryAt.toISOString()]);
     expect(await run(o, id, platform)).toEqual({ action: 'none', reason: 'not_due' });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET error_retry_at = now() - interval '1 second' WHERE id = $1", [id]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET error_retry_at = now() - interval '1 second' WHERE id = $1", [id]));
     expect(await run(o, id, platform)).toEqual({ action: 'call', status: 'published' });
     v = await variant(o, postId);
     expect([v.status, v.error]).toEqual(['published', null]);
@@ -574,7 +574,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const sha = createHash('sha256').update(pdf).digest('hex');
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
          VALUES ($1, $2, $3, $4, $5, 'bao-gia-q4.pdf', 'application/pdf', 2000000, 'social')`,
         [o.orgId, pdf, sha, `org/${o.orgId}/${sha}`, `content:${sha}`],
       ),
@@ -591,7 +591,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     post = await get(o, postId);
     await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
     await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
     const seen: { mime: string[]; name: string | null; settings: Record<string, unknown> }[] = [];
     const linkedin: Publisher = {
       provider: 'linkedin',
@@ -613,7 +613,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     await expect(exec(o, 'social.post.submit', { postId: elsewhere })).rejects.toMatchObject({ code: 'VARIANT_INVALID' });
     // And a variant that reached the job anyway (its media set behind the rules' back) goes out to nobody.
     const sandboxId = other.variants[0] as string;
-    await admin((c) => c.query('UPDATE crove_social.post_variant SET media = $2::jsonb WHERE id = $1', [sandboxId, JSON.stringify([{ fileId: pdf, generation: `content:${sha}`, altText: null, mime: 'application/pdf', sizeBytes: 2000000 }])]));
+    await admin((c) => c.query('UPDATE ludy_social.post_variant SET media = $2::jsonb WHERE id = $1', [sandboxId, JSON.stringify([{ fileId: pdf, generation: `content:${sha}`, altText: null, mime: 'application/pdf', sizeBytes: 2000000 }])]));
     const platform = new FakePlatform();
     expect(await run(o, sandboxId, platform)).toMatchObject({ action: 'call', status: 'failed' });
     expect(platform.posts).toHaveLength(0);
@@ -631,7 +631,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
       const post = await get(o, postId);
       await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
       await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-      await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+      await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
       return { postId, id: post.variants[0]?.id as string };
     };
     let sent = 0;
@@ -641,24 +641,24 @@ suite('social publishing on PostgreSQL (S4)', () => {
     // The account made 150 posts in the last day (as the call ledger holds them), the oldest 23 hours 50 minutes ago.
     await admin((c) =>
       c.query(
-        "INSERT INTO crove_kernel.external_call (org_id, key, module, target, step, retry_safety, request_hash, state, started_at) SELECT $1, 'social.publish:' || $2 || ':1:' || n || ':publish', 'social', 'linkedin', 'publish', 'never', NULL, 'started', now() - interval '23 hours 50 minutes' + make_interval(secs => n) FROM generate_series(1, 150) n",
+        "INSERT INTO ludy_kernel.external_call (org_id, key, module, target, step, retry_safety, request_hash, state, started_at) SELECT $1, 'social.publish:' || $2 || ':1:' || n || ':publish', 'social', 'linkedin', 'publish', 'never', NULL, 'started', now() - interval '23 hours 50 minutes' + make_interval(secs => n) FROM generate_series(1, 150) n",
         [o.orgId, earlier.id],
       ),
     );
     // All but the oldest went out; the oldest is still on its way, and counts too.
-    await admin((c) => c.query("UPDATE crove_kernel.external_call SET state = 'succeeded', finished_at = now() WHERE org_id = $1 AND key LIKE 'social.publish:' || $2 || ':1:%:publish' AND key <> 'social.publish:' || $2 || ':1:1:publish'", [o.orgId, earlier.id]));
+    await admin((c) => c.query("UPDATE ludy_kernel.external_call SET state = 'succeeded', finished_at = now() WHERE org_id = $1 AND key LIKE 'social.publish:' || $2 || ':1:%:publish' AND key <> 'social.publish:' || $2 || ':1:1:publish'", [o.orgId, earlier.id]));
     const next = await due();
     expect(await runPublishJob(deps, o.orgId, next.id, 'linkedin')).toMatchObject({ action: 'none' });
     expect(sent).toBe(0);
-    const row = await admin(async (c) => (await c.query<{ status: string; error_code: string; error_retry_at: Date }>('SELECT status, error_code, error_retry_at FROM crove_social.post_variant WHERE id = $1', [next.id])).rows[0]);
+    const row = await admin(async (c) => (await c.query<{ status: string; error_code: string; error_retry_at: Date }>('SELECT status, error_code, error_retry_at FROM ludy_social.post_variant WHERE id = $1', [next.id])).rows[0]);
     expect(row).toMatchObject({ status: 'scheduled', error_code: 'QUOTA_EXHAUSTED' });
     // About 10 minutes from now, when the oldest of the 150 leaves the day.
     const retryIn = (row ? row.error_retry_at.getTime() : 0) - Date.now();
     expect(retryIn).toBeGreaterThan(9 * 60_000);
     expect(retryIn).toBeLessThan(11 * 60_000);
     // A refused call used no allowance: with the oldest refused, the post goes out once due.
-    await admin((c) => c.query("UPDATE crove_kernel.external_call SET state = 'failed', finished_at = now() WHERE org_id = $1 AND key = 'social.publish:' || $2 || ':1:1:publish'", [o.orgId, earlier.id]));
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET error_retry_at = now() - interval '1 second' WHERE id = $1", [next.id]));
+    await admin((c) => c.query("UPDATE ludy_kernel.external_call SET state = 'failed', finished_at = now() WHERE org_id = $1 AND key = 'social.publish:' || $2 || ':1:1:publish'", [o.orgId, earlier.id]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET error_retry_at = now() - interval '1 second' WHERE id = $1", [next.id]));
     expect(await runPublishJob(deps, o.orgId, next.id, 'linkedin')).toMatchObject({ status: 'published' });
     expect(sent).toBe(1);
   });
@@ -666,7 +666,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
   it("paces a LinkedIn page's posts against its member's shared daily limit, apart from another member's pages (#1096)", async () => {
     const o = await org();
     const other = await person('admin');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [o.orgId, other]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [o.orgId, other]));
     const connectAs = async (userId: string, provider: 'linkedin' | 'linkedin_page', account: string) => {
       const sealed = vault.seal(JSON.stringify({ accessToken: `li-${userId.slice(0, 4)}` }), { orgId: o.orgId, provider, externalAccountId: account });
       const input = { provider, externalAccountId: account, displayName: account, scopes: ['w_member_social', 'w_organization_social'], expiresAt: null, credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } };
@@ -681,7 +681,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
       const post = await get(o, postId);
       await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
       await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-      await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+      await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
       return post.variants[0]?.id as string;
     };
     let sent = 0;
@@ -695,7 +695,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const fill = (variantId: string, from: number, count: number) =>
       admin((c) =>
         c.query(
-          "INSERT INTO crove_kernel.external_call (org_id, key, module, target, step, retry_safety, request_hash, state, started_at, finished_at) SELECT $1, 'social.publish:' || $2 || ':1:' || n || ':publish', 'social', 'linkedin', 'publish', 'never', NULL, 'started', now() - interval '23 hours 50 minutes' + make_interval(secs => n), NULL FROM generate_series($3::int, $3::int + $4::int - 1) n",
+          "INSERT INTO ludy_kernel.external_call (org_id, key, module, target, step, retry_safety, request_hash, state, started_at, finished_at) SELECT $1, 'social.publish:' || $2 || ':1:' || n || ':publish', 'social', 'linkedin', 'publish', 'never', NULL, 'started', now() - interval '23 hours 50 minutes' + make_interval(secs => n), NULL FROM generate_series($3::int, $3::int + $4::int - 1) n",
           [o.orgId, variantId, from, count],
         ),
       );
@@ -704,7 +704,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     // A page post of the same member waits for the shared limit, with nothing sent.
     const next = await due(page);
     expect(await runPublishJob(deps, o.orgId, next, 'linkedin_page')).toMatchObject({ action: 'none' });
-    const row = await admin(async (c) => (await c.query<{ status: string; error_code: string; error_retry_at: Date }>('SELECT status, error_code, error_retry_at FROM crove_social.post_variant WHERE id = $1', [next])).rows[0]);
+    const row = await admin(async (c) => (await c.query<{ status: string; error_code: string; error_retry_at: Date }>('SELECT status, error_code, error_retry_at FROM ludy_social.post_variant WHERE id = $1', [next])).rows[0]);
     expect(row).toMatchObject({ status: 'scheduled', error_code: 'QUOTA_EXHAUSTED' });
     const retryIn = (row ? row.error_retry_at.getTime() : 0) - Date.now();
     expect(retryIn).toBeGreaterThan(9 * 60_000);
@@ -724,14 +724,14 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const retryAt = new Date(Date.now() + 600_000);
     const { postId, variants } = await duePost(o);
     const id = variants[0] as string;
-    await admin((c) => c.query('UPDATE crove_social.post_variant SET attempt = 5 WHERE id = $1', [id]));
+    await admin((c) => c.query('UPDATE ludy_social.post_variant SET attempt = 5 WHERE id = $1', [id]));
     platform.answers.push({ kind: 'rejected', error: 'rate_limited', code: 'QUOTA_EXHAUSTED', retryAt });
     expect(await run(o, id, platform)).toEqual({ action: 'call', status: 'scheduled' });
     expect((await variant(o, postId)).error).toMatchObject({ code: 'QUOTA_EXHAUSTED', retryAt: retryAt.toISOString() });
     // Any other rate limit at that count stops for a person.
     const other = await duePost(o);
     const second = other.variants[0] as string;
-    await admin((c) => c.query('UPDATE crove_social.post_variant SET attempt = 5 WHERE id = $1', [second]));
+    await admin((c) => c.query('UPDATE ludy_social.post_variant SET attempt = 5 WHERE id = $1', [second]));
     platform.answers.push({ kind: 'rejected', error: 'rate_limited', code: 'LIMIT', retryAt });
     expect(await run(o, second, platform)).toEqual({ action: 'call', status: 'failed' });
   });
@@ -797,7 +797,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const queued = await duePost(o);
     const qid = queued.variants[0] as string;
     await exec(o, 'social.queue.set', { connectionId: queued.connections[0], timeZone: 'Asia/Ho_Chi_Minh', paused: true, slots: [{ weekday: 1, minute: 540 }] });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = NULL, queue_slot_at = now() - interval '1 second' WHERE id = $1", [qid]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = NULL, queue_slot_at = now() - interval '1 second' WHERE id = $1", [qid]));
     expect(await run(o, qid, platform)).toEqual({ action: 'none', reason: 'queue_paused' });
   });
 
@@ -806,9 +806,9 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const closed = await org();
     const mine = (await duePost(o)).variants[0] as string;
     const theirs = (await duePost(closed)).variants[0] as string;
-    await admin((c) => c.query("UPDATE crove_kernel.tenant SET status = 'closed' WHERE org_id = $1", [closed.orgId]));
+    await admin((c) => c.query("UPDATE ludy_kernel.tenant SET status = 'closed' WHERE org_id = $1", [closed.orgId]));
     const due = async (providers: string[]) =>
-      (await admin(async (c) => (await c.query<{ variant_id: string }>('SELECT variant_id FROM crove_social.publish_due(1000, 600, $1)', [providers])).rows)).map((r) => r.variant_id);
+      (await admin(async (c) => (await c.query<{ variant_id: string }>('SELECT variant_id FROM ludy_social.publish_due(1000, 600, $1)', [providers])).rows)).map((r) => r.variant_id);
     expect(await due(['sandbox'])).toContain(mine);
     expect(await due(['sandbox'])).not.toContain(theirs);
     expect(await due(['facebook_page'])).not.toContain(mine);
@@ -822,7 +822,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const id = variants[0] as string;
     expect(await run(o, id, platform)).toEqual({ action: 'call', status: 'paused' });
     // A reconnect that committed with a clock behind the pause's.
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'active', updated_at = now() - interval '1 hour' WHERE id = $1", [connections[0]]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'active', updated_at = now() - interval '1 hour' WHERE id = $1", [connections[0]]));
     expect(await run(o, id, platform)).toEqual({ action: 'none', reason: 'resumed' });
     expect(await run(o, id, platform)).toEqual({ action: 'call', status: 'published' });
   });
@@ -857,7 +857,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     expect(await run(o, id, platform)).toEqual({ action: 'call', status: 'processing' });
     expect((await get(o, postId)).status).toBe('publishing');
     expect(await run(o, id, platform)).toEqual({ action: 'none', reason: 'not_due' });
-    const checkNow = () => admin((c) => c.query("UPDATE crove_social.post_variant SET next_check_at = now() - interval '1 second' WHERE id = $1", [id]));
+    const checkNow = () => admin((c) => c.query("UPDATE ludy_social.post_variant SET next_check_at = now() - interval '1 second' WHERE id = $1", [id]));
     await checkNow();
     expect(await run(o, id, platform)).toEqual({ action: 'status', status: 'processing' });
     await checkNow();
@@ -878,7 +878,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const sha = createHash('sha256').update(clip).digest('hex');
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, duration_ms)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, duration_ms)
          VALUES ($1, $2, $3, $4, $5, 'khai-truong.mp4', 'video/mp4', 2000000, 'social', 12000)`,
         [o.orgId, clip, sha, `org/${o.orgId}/${sha}`, `content:${sha}`],
       ),
@@ -890,7 +890,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const post = await get(o, postId);
     await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
     await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
     return { postId, id: post.variants[0]?.id as string, connectionId, connectTikTok };
   }
   const runOn = (o: { orgId: string }, id: string, tiktok: Publisher) => runPublishJob({ runtime: worker, broker: vault, publishers: { tiktok }, callTimeoutMs: 2_000 }, o.orgId, id, 'tiktok');
@@ -936,14 +936,14 @@ suite('social publishing on PostgreSQL (S4)', () => {
 
     // The status check ends at SEND_TO_USER_INBOX: published for Crove, but with no post id or address, and its note.
     statuses.push({ kind: 'accepted', externalId: 'v_inbox_file~v2.123456789', url: null, sentToApp: true });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET next_check_at = now() - interval '1 second' WHERE id = $1", [id]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET next_check_at = now() - interval '1 second' WHERE id = $1", [id]));
     expect(await runTikTok()).toEqual({ action: 'status', status: 'published' });
     const done = await variant(o, postId);
     expect([done.status, done.externalUrl, done.error]).toEqual(['published', null, { kind: null, code: 'SENT_TO_APP', action: null, message: null, retryAt: null }]);
-    const row = await admin(async (c) => (await c.query<{ external_post_id: string | null }>('SELECT external_post_id FROM crove_social.post_variant WHERE id = $1', [id])).rows[0]);
+    const row = await admin(async (c) => (await c.query<{ external_post_id: string | null }>('SELECT external_post_id FROM ludy_social.post_variant WHERE id = $1', [id])).rows[0]);
     expect(row?.external_post_id).toBeNull();
     // The publish_id stays on the call ledger; nothing reads the draft as a post (no counts, no comment).
-    const ledger = await admin(async (c) => (await c.query<{ external_ref: string }>("SELECT external_ref FROM crove_kernel.external_call WHERE key LIKE $1 AND state = 'succeeded'", [`social.publish:${id}:%`])).rows);
+    const ledger = await admin(async (c) => (await c.query<{ external_ref: string }>("SELECT external_ref FROM ludy_kernel.external_call WHERE key LIKE $1 AND state = 'succeeded'", [`social.publish:${id}:%`])).rows);
     expect(ledger).toEqual([{ external_ref: 'v_inbox_file~v2.123456789' }]);
     await expect(worker.query('social.metrics.target', { variantId: id }, { actor: system, orgId: o.orgId })).rejects.toMatchObject({ code: 'VARIANT_NOT_FOUND' });
     const timeline = await api.query<{ items: Array<{ kind: string; code: string | null; url: string | null }> }>('social.post.activity', { postId }, { actor: asUser(o.owner), orgId: o.orgId });
@@ -975,10 +975,10 @@ suite('social publishing on PostgreSQL (S4)', () => {
     expect(await run(o, id, platform)).toEqual({ action: 'call', status: 'published' });
     const done = await variant(o, postId);
     expect([done.status, done.externalUrl, done.error]).toEqual(['published', null, { kind: null, code: 'WORDPRESS_DRAFT', action: null, message: null, retryAt: null }]);
-    const row = await admin(async (c) => (await c.query<{ external_post_id: string | null }>('SELECT external_post_id FROM crove_social.post_variant WHERE id = $1', [id])).rows[0]);
+    const row = await admin(async (c) => (await c.query<{ external_post_id: string | null }>('SELECT external_post_id FROM ludy_social.post_variant WHERE id = $1', [id])).rows[0]);
     expect(row?.external_post_id).toBeNull();
     // The site's post id stays on the call ledger; no counts are read for it.
-    const ledger = await admin(async (c) => (await c.query<{ external_ref: string }>("SELECT external_ref FROM crove_kernel.external_call WHERE key LIKE $1 AND state = 'succeeded'", [`social.publish:${id}:%`])).rows);
+    const ledger = await admin(async (c) => (await c.query<{ external_ref: string }>("SELECT external_ref FROM ludy_kernel.external_call WHERE key LIKE $1 AND state = 'succeeded'", [`social.publish:${id}:%`])).rows);
     expect(ledger).toEqual([{ external_ref: '141' }]);
     await expect(worker.query('social.metrics.target', { variantId: id }, { actor: system, orgId: o.orgId })).rejects.toMatchObject({ code: 'VARIANT_NOT_FOUND' });
     const timeline = await api.query<{ items: Array<{ kind: string; code: string | null; url: string | null }> }>('social.post.activity', { postId }, { actor: asUser(o.owner), orgId: o.orgId });
@@ -1012,8 +1012,8 @@ suite('social publishing on PostgreSQL (S4)', () => {
     // triggers off).
     await admin(async (c) => {
       await c.query("SET session_replication_role = 'replica'");
-      await c.query("UPDATE crove_kernel.external_call SET started_at = now() - interval '25 hours' WHERE key LIKE $1", [`social.publish:${id}:%`]);
-      await c.query("UPDATE crove_social.post_variant SET next_check_at = now() - interval '1 second' WHERE id = $1", [id]);
+      await c.query("UPDATE ludy_kernel.external_call SET started_at = now() - interval '25 hours' WHERE key LIKE $1", [`social.publish:${id}:%`]);
+      await c.query("UPDATE ludy_social.post_variant SET next_check_at = now() - interval '1 second' WHERE id = $1", [id]);
     });
     expect(await run(o, id, platform)).toEqual({ action: 'reconcile', status: 'published' });
     expect((await variant(o, postId)).status).toBe('published');
@@ -1029,7 +1029,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const { postId, variants } = await duePost(o);
     const id = variants[0] as string;
     expect(await run(o, id, platform)).toEqual({ action: 'call', status: 'processing' });
-    const checkNow = () => admin((c) => c.query("UPDATE crove_social.post_variant SET next_check_at = now() - interval '1 second' WHERE id = $1", [id]));
+    const checkNow = () => admin((c) => c.query("UPDATE ludy_social.post_variant SET next_check_at = now() - interval '1 second' WHERE id = $1", [id]));
     // Within the day, an unclear or pending answer is checked again later.
     for (let i = 0; i < 2; i++) {
       await checkNow();
@@ -1038,8 +1038,8 @@ suite('social publishing on PostgreSQL (S4)', () => {
     expect((await variant(o, postId)).status).toBe('processing');
     await admin(async (c) => {
       await c.query("SET session_replication_role = 'replica'");
-      await c.query("UPDATE crove_kernel.external_call SET started_at = now() - interval '25 hours' WHERE key LIKE $1", [`social.publish:${id}:%`]);
-      await c.query("UPDATE crove_social.post_variant SET next_check_at = now() - interval '1 second' WHERE id = $1", [id]);
+      await c.query("UPDATE ludy_kernel.external_call SET started_at = now() - interval '25 hours' WHERE key LIKE $1", [`social.publish:${id}:%`]);
+      await c.query("UPDATE ludy_social.post_variant SET next_check_at = now() - interval '1 second' WHERE id = $1", [id]);
     });
     // A day on, the platform cannot say whether it went out: a person decides, nothing is posted again.
     expect(await run(o, id, platform)).toMatchObject({ action: 'reconcile', status: 'needs_attention' });
@@ -1068,32 +1068,32 @@ suite('social publishing on PostgreSQL (S4)', () => {
     await run(o, variants[0] as string, platform);
     const asTenant = async (text: string) => {
       const u = new URL(adminUrl);
-      u.username = 'crove_worker';
+      u.username = 'ludy_worker';
       u.password = 'test-worker-pw';
       const client = new pg.Client({ connectionString: u.toString() });
       await client.connect();
       try {
         await client.query('BEGIN');
-        await client.query('SELECT crove_kernel.enter_system_context($1::uuid)', [o.orgId]);
+        await client.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [o.orgId]);
         return await client.query(text);
       } finally {
         await client.query('ROLLBACK').catch(() => undefined);
         await client.end();
       }
     };
-    await expect(asTenant("UPDATE crove_kernel.external_call SET state = 'started', finished_at = NULL")).rejects.toThrow(/EXTERNAL_CALL_FINISHED/);
-    await expect(asTenant("UPDATE crove_kernel.external_call SET key = 'other'")).rejects.toThrow(/permission denied/);
-    await expect(asTenant('DELETE FROM crove_kernel.external_call')).rejects.toThrow(/permission denied/);
+    await expect(asTenant("UPDATE ludy_kernel.external_call SET state = 'started', finished_at = NULL")).rejects.toThrow(/EXTERNAL_CALL_FINISHED/);
+    await expect(asTenant("UPDATE ludy_kernel.external_call SET key = 'other'")).rejects.toThrow(/permission denied/);
+    await expect(asTenant('DELETE FROM ludy_kernel.external_call')).rejects.toThrow(/permission denied/);
     await expect(
-      asTenant(`INSERT INTO crove_kernel.external_call (org_id, key, module, target, step, retry_safety, state, finished_at) VALUES ('${o.orgId}', 'k', 'social', 'sandbox', 'publish', 'never', 'succeeded', now())`),
+      asTenant(`INSERT INTO ludy_kernel.external_call (org_id, key, module, target, step, retry_safety, state, finished_at) VALUES ('${o.orgId}', 'k', 'social', 'sandbox', 'publish', 'never', 'succeeded', now())`),
     ).rejects.toThrow(/EXTERNAL_CALL_INSERT/);
     const { rows } = await admin((c) =>
       c.query<{ role: string }>(
-        `SELECT r AS role FROM unnest(ARRAY['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant']) r
-         WHERE has_function_privilege(r, 'crove_social.publish_due(int, int, text[])', 'EXECUTE') ORDER BY 1`,
+        `SELECT r AS role FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) r
+         WHERE has_function_privilege(r, 'ludy_social.publish_due(int, int, text[])', 'EXECUTE') ORDER BY 1`,
       ),
     );
-    expect(rows.map((r) => r.role)).toEqual(['crove_worker']);
+    expect(rows.map((r) => r.role)).toEqual(['ludy_worker']);
   });
 
   // #982: the Telegram publisher through the same pipeline, against recorded Bot API answers: a silent post, and a pin
@@ -1129,7 +1129,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
       const post = await get(o, postId);
       await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
       await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-      await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+      await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
       return { postId, id: post.variants[0]?.id as string };
     }
     const runOn = (o: { orgId: string }, id: string, telegram: Publisher) => runPublishJob({ runtime: worker, broker: vault, publishers: { telegram }, callTimeoutMs: 2_000 }, o.orgId, id, 'telegram');
@@ -1168,7 +1168,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
         { key: `social.publish:${id}:1:1:publish`, state: 'succeeded', calls: 1 },
         { key: `social.publish:${id}:1:1:pin`, state: 'failed', calls: 1 },
       ]);
-      const events = await admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.pin_failed'", [o.orgId])).rows);
+      const events = await admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.pin_failed'", [o.orgId])).rows);
       expect(events.map((e) => e.payload)).toEqual([{ post_id: postId, variant_id: id, code: 'TELEGRAM_CANNOT_PIN' }]);
       // Another run, or another pin job, sends nothing more.
       expect(await runOn(o, id, publisher)).toEqual({ action: 'none', reason: 'published' });
@@ -1225,7 +1225,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
       const post = await get(o, postId);
       await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
       await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-      await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+      await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
       return { postId, id: post.variants[0]?.id as string };
     }
     const runOn = (o: { orgId: string }, id: string, bluesky: Publisher) => runPublishJob({ runtime: worker, broker: vault, publishers: { bluesky }, callTimeoutMs: 2_000 }, o.orgId, id, 'bluesky');
@@ -1272,7 +1272,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
         { key: `social.publish:${id}:1:1:publish`, state: 'succeeded', calls: 1 },
         { key: `social.publish:${id}:1:1:gate`, state: 'failed', calls: 1 },
       ]);
-      const events = await admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.gate_failed'", [o.orgId])).rows);
+      const events = await admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.gate_failed'", [o.orgId])).rows);
       expect(events.map((e) => e.payload)).toEqual([{ post_id: postId, variant_id: id, code: 'threadgate:InvalidRequest' }]);
       // Another run, or another gate job, sends nothing more.
       expect(await runOn(o, id, publisher)).toEqual({ action: 'none', reason: 'published' });
@@ -1336,7 +1336,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
       const clip = randomUUID();
       await admin((c) =>
         c.query(
-          `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, duration_ms)
+          `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, duration_ms)
            VALUES ($1, $2, $3, $4, $5, 'khai-truong.mp4', 'video/mp4', $6, 'social', 12000)`,
           [o.orgId, clip, sha, `org/${o.orgId}/${sha}`, `content:${sha}`, bytes.byteLength],
         ),
@@ -1347,7 +1347,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
       const post = await get(o, postId);
       await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
       await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-      await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+      await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
       const store = { get: async (key: string) => (key === `org/${o.orgId}/${sha}` ? bytes : undefined) } as unknown as BlobStore;
       return { postId, id: post.variants[0]?.id as string, store };
     }
@@ -1386,7 +1386,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
         { key: `social.publish:${id}:1:1:playlist_1`, state: 'failed', calls: 1 },
         { key: `social.publish:${id}:1:1:playlist_2`, state: 'succeeded', calls: 1 },
       ]);
-      const events = await admin(async (c) => (await c.query<{ type: string; payload: Record<string, unknown> }>("SELECT type, payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type LIKE 'social.variant.playlist%' ORDER BY id", [o.orgId])).rows);
+      const events = await admin(async (c) => (await c.query<{ type: string; payload: Record<string, unknown> }>("SELECT type, payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type LIKE 'social.variant.playlist%' ORDER BY id", [o.orgId])).rows);
       expect(events).toEqual([
         { type: 'social.variant.playlist_failed', payload: { post_id: postId, variant_id: id, playlist_id: GONE, code: 'PLAYLIST_NOT_FOUND' } },
         { type: 'social.variant.playlist_added', payload: { post_id: postId, variant_id: id, playlist_id: SALE } },
@@ -1438,7 +1438,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
       const post = await get(o, postId);
       await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
       await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-      await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+      await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
       return { postId, page, connectionId, variantId: post.variants[0]?.id as string };
     }
 
@@ -1464,7 +1464,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
       const fileId = randomUUID();
       await admin((c) =>
         c.query(
-          `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
+          `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
            VALUES ($1, $2, $3, $4, $5, 'anh.jpg', 'image/jpeg', $6, 'social')`,
           [o.orgId, fileId, sha, `org/${o.orgId}/${sha}`, `content:${sha}`, bytes.byteLength],
         ),
@@ -1494,7 +1494,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
       const fileId = randomUUID();
       await admin((c) =>
         c.query(
-          `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
+          `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
            VALUES ($1, $2, $3, $4, $5, 'anh.jpg', 'image/jpeg', 18, 'social')`,
           [o.orgId, fileId, sha, `org/${o.orgId}/${sha}`, `content:${sha}`],
         ),
@@ -1514,7 +1514,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
       const { publisher } = graph({ status: 400, body: { error: { message: 'Error validating access token', type: 'OAuthException', code: 190 } } });
       await runPage(o, variantId, publisher);
       expect((await variant(o, postId)).status).toBe('paused');
-      const channel = await admin(async (c) => (await c.query<{ status: string }>('SELECT status FROM crove_kernel.channel_connection WHERE id = $1', [connectionId])).rows[0]);
+      const channel = await admin(async (c) => (await c.query<{ status: string }>('SELECT status FROM ludy_kernel.channel_connection WHERE id = $1', [connectionId])).rows[0]);
       expect(channel?.status).toBe('expired');
     });
   });
@@ -1529,7 +1529,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
       const fileId = randomUUID();
       await admin((c) =>
         c.query(
-          `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
+          `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
           [o.orgId, fileId, sha, `org/${o.orgId}/${sha}`, `content:${sha}`, name, contentType, bytes.byteLength, source],
         ),
@@ -1558,7 +1558,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     expect(v?.issues).toEqual([]);
     await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((x) => ({ variantId: x.id, revision: x.revision, contentHash: x.contentHash })) });
     await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
 
     const read: Record<string, string> = {};
     const urls: Record<string, string | null> = {};
@@ -1603,7 +1603,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
       const fileId = randomUUID();
       await admin((c) =>
         c.query(
-          `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
+          `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
           [o.orgId, fileId, sha, `org/${o.orgId}/${sha}`, `content:${sha}`, 'anh.png', 'image/png', bytes.byteLength, 'social'],
         ),
@@ -1614,7 +1614,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
       const post = await get(o, postId);
       await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((x) => ({ variantId: x.id, revision: x.revision, contentHash: x.contentHash })) });
       await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-      await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+      await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
       return { postId, id: post.variants[0]?.id as string, fileId };
     };
     // The adapters' own rule: no URL, nothing posted, MEDIA_URL_UNAVAILABLE.
@@ -1702,7 +1702,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     expect(first.recorded).toBeGreaterThanOrEqual(1);
     // Captured now, it is not due again for 6 hours: a second sweep records nothing for it.
     await sweepMetrics({ runtime: worker, broker: vault, workerDb, publishers: { sandbox: platform } });
-    const snapshots = await admin(async (c) => (await c.query<{ capture_key: string; metrics: Record<string, number> }>('SELECT capture_key, metrics FROM crove_social.metric_snapshot WHERE variant_id = $1', [id])).rows);
+    const snapshots = await admin(async (c) => (await c.query<{ capture_key: string; metrics: Record<string, number> }>('SELECT capture_key, metrics FROM ludy_social.metric_snapshot WHERE variant_id = $1', [id])).rows);
     expect(snapshots).toHaveLength(1);
     expect(snapshots[0]?.capture_key).toBe(captureKey(new Date()));
     expect(snapshots[0]?.metrics).toMatchObject({ impressions: 40, reach: 30, reactions: 3 });
@@ -1718,16 +1718,16 @@ suite('social publishing on PostgreSQL (S4)', () => {
     expect(lines[1]).toContain(`${postId},Trang thử,sandbox,`);
     // The engagement rate in percent, last (#1157): 3 reactions over a reach of 30.
     expect(lines[1]?.split(',').at(-1)).toBe('10');
-    const audits = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.metrics.export' AND outcome = 'ok'", [o.orgId])).rows);
+    const audits = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.metrics.export' AND outcome = 'ok'", [o.orgId])).rows);
     expect(audits).toHaveLength(1);
     expect(audits[0]?.detail).toMatchObject({ days: 30, rows: 1, truncated: false });
     expect(file.truncated).toBe(false);
     // Tenant roles read snapshots but never write them: the record command is the system's.
     await expect(api.execute('social.metrics.record', { variantId: id, captureKey: 'x', metrics: {} }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
     const roles = await admin(async (c) =>
-      (await c.query<{ role: string }>(`SELECT r AS role FROM unnest(ARRAY['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant']) r WHERE has_function_privilege(r, 'crove_social.metrics_due(int, text[], int)', 'EXECUTE')`)).rows,
+      (await c.query<{ role: string }>(`SELECT r AS role FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) r WHERE has_function_privilege(r, 'ludy_social.metrics_due(int, text[], int)', 'EXECUTE')`)).rows,
     );
-    expect(roles.map((r) => r.role)).toEqual(['crove_worker']);
+    expect(roles.map((r) => r.role)).toEqual(['ludy_worker']);
   });
 
   // A post with an auto-reply on likes, approved and due (#746).
@@ -1738,13 +1738,13 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const post = await get(o, postId);
     await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
     await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
     return { postId, id: post.variants[0]?.id as string };
   }
   const activityOf = async (o: Awaited<ReturnType<typeof org>>, postId: string) =>
     (await api.query<{ items: { kind: string; code: string | null; variantId: string | null }[] }>('social.post.activity', { postId }, { actor: asUser(o.owner), orgId: o.orgId })).items;
   // Makes a variant's metrics due again, as if its last capture were 7 hours old.
-  const ageCaptures = (variantId: string) => admin((c) => c.query("UPDATE crove_social.metric_snapshot SET captured_at = captured_at - interval '7 hours', capture_key = capture_key || '-old' WHERE variant_id = $1", [variantId]));
+  const ageCaptures = (variantId: string) => admin((c) => c.query("UPDATE ludy_social.metric_snapshot SET captured_at = captured_at - interval '7 hours', capture_key = capture_key || '-old' WHERE variant_id = $1", [variantId]));
 
   it('replies once when the post reaches its like count, and shows it on the post (#746)', async () => {
     const o = await org();
@@ -1772,18 +1772,18 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const { variants, connections } = await duePost(o, 2);
     for (const id of variants) expect(await runPublishJob({ runtime: worker, broker: vault, publishers: { sandbox: platform }, callTimeoutMs: 2_000 }, o.orgId, id as string, 'sandbox')).toMatchObject({ status: 'published' });
     const [refused, reconnected] = connections as [string, string];
-    const accountOf = new Map((await admin(async (c) => (await c.query<{ id: string; external_account_id: string }>('SELECT id, external_account_id FROM crove_kernel.channel_connection WHERE id = ANY($1)', [connections])).rows)).map((r) => [r.external_account_id, r.id]));
+    const accountOf = new Map((await admin(async (c) => (await c.query<{ id: string; external_account_id: string }>('SELECT id, external_account_id FROM ludy_kernel.channel_connection WHERE id = ANY($1)', [connections])).rows)).map((r) => [r.external_account_id, r.id]));
     platform.metrics = async (input) => {
       // A reconnect lands between the sweep reading the connection and the platform refusing the old token.
-      if (accountOf.get(input.externalAccountId) === reconnected) await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET updated_at = now() + interval '1 second' WHERE id = $1", [reconnected]));
+      if (accountOf.get(input.externalAccountId) === reconnected) await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET updated_at = now() + interval '1 second' WHERE id = $1", [reconnected]));
       return { refused: 'token_expired' };
     };
     await sweepMetrics({ runtime: worker, broker: vault, workerDb, publishers: { sandbox: platform } });
-    const status = async (id: string) => (await admin(async (c) => (await c.query<{ status: string }>('SELECT status FROM crove_kernel.channel_connection WHERE id = $1', [id])).rows))[0]?.status;
+    const status = async (id: string) => (await admin(async (c) => (await c.query<{ status: string }>('SELECT status FROM ludy_kernel.channel_connection WHERE id = $1', [id])).rows))[0]?.status;
     expect(await status(refused)).toBe('expired');
     expect(await status(reconnected)).toBe('active');
     // The refusal is still kept as the capture's empty snapshot, as before.
-    const errors = await admin(async (c) => (await c.query<{ extra: { error?: string } }>('SELECT extra FROM crove_social.metric_snapshot WHERE variant_id = ANY($1)', [variants])).rows);
+    const errors = await admin(async (c) => (await c.query<{ extra: { error?: string } }>('SELECT extra FROM ludy_social.metric_snapshot WHERE variant_id = ANY($1)', [variants])).rows);
     expect(errors.map((r) => r.extra.error)).toEqual(['token_expired', 'token_expired']);
   });
 
@@ -1815,7 +1815,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const quiet = await dueReply(o, { text: 'Cảm ơn!', likes: 1 });
     expect(await runPublishJob({ runtime: worker, broker: vault, publishers: { sandbox }, callTimeoutMs: 2_000 }, o.orgId, quiet.id, 'sandbox')).toMatchObject({ status: 'published' });
     const key = `social.publish:${quiet.id}:1:1:autoreply`;
-    await admin((c) => c.query("INSERT INTO crove_kernel.external_call (org_id, key, module, target, step, retry_safety, request_hash, started_at) VALUES ($1, $2, 'social', 'sandbox', 'autoreply', 'never', NULL, now() - interval '11 minutes')", [o.orgId, key]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.external_call (org_id, key, module, target, step, retry_safety, request_hash, started_at) VALUES ($1, $2, 'social', 'sandbox', 'autoreply', 'never', NULL, now() - interval '11 minutes')", [o.orgId, key]));
     expect(await activityOf(o, quiet.postId)).toContainEqual(expect.objectContaining({ kind: 'auto_reply_failed', variantId: quiet.id, code: 'OUTCOME_UNKNOWN' }));
   });
 
@@ -1826,7 +1826,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const post = await get(o, postId);
     await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
     await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
     return { postId, id: post.variants[0]?.id as string };
   }
 
@@ -1839,7 +1839,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const notYet = await dueRepost(o, { likes: 50, afterHours: 48 });
     for (const v of [liked, later, notYet]) expect(await runPublishJob({ runtime: worker, broker: vault, publishers: { sandbox: platform }, callTimeoutMs: 2_000 }, o.orgId, v.id, 'sandbox')).toMatchObject({ status: 'published' });
     // A day has passed for one of them.
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET published_at = now() - interval '25 hours' WHERE id = $1", [later.id]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET published_at = now() - interval '25 hours' WHERE id = $1", [later.id]));
     await sweepMetrics({ runtime: worker, broker: vault, workerDb, publishers: { sandbox: platform } });
     const reposted = (id: string) => calls(id).then((rows) => rows.filter((r) => r.key.endsWith(':repost')));
     expect(await reposted(liked.id)).toEqual([expect.objectContaining({ state: 'succeeded' })]);
@@ -1868,9 +1868,9 @@ suite('social publishing on PostgreSQL (S4)', () => {
     expect(await runPublishJob({ runtime: worker, broker: vault, publishers: { sandbox: unclear }, callTimeoutMs: 2_000 }, o.orgId, v.id, 'sandbox')).toMatchObject({ status: 'published' });
     await sweepMetrics({ runtime: worker, broker: vault, workerDb, publishers: { sandbox: unclear } });
     expect(tries).toBe(1);
-    const row = await admin(async (c) => (await c.query<{ state: string; error_kind: string; error_code: string; finished_at: Date | null }>("SELECT state, error_kind, error_code, finished_at FROM crove_kernel.external_call WHERE key = $1", [`social.publish:${v.id}:1:1:repost`])).rows);
+    const row = await admin(async (c) => (await c.query<{ state: string; error_kind: string; error_code: string; finished_at: Date | null }>("SELECT state, error_kind, error_code, finished_at FROM ludy_kernel.external_call WHERE key = $1", [`social.publish:${v.id}:1:1:repost`])).rows);
     expect(row).toEqual([{ state: 'ambiguous', error_kind: 'unknown', error_code: 'TIMEOUT', finished_at: null }]);
-    const failed = await admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.repost_failed'", [o.orgId])).rows);
+    const failed = await admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.repost_failed'", [o.orgId])).rows);
     expect(failed.map((r) => r.payload)).toEqual([{ post_id: v.postId, variant_id: v.id, code: 'TIMEOUT' }]);
     expect(await activityOf(o, v.postId)).toContainEqual(expect.objectContaining({ kind: 'repost_failed', variantId: v.id, code: 'TIMEOUT' }));
     // A second answer for the same call changes nothing, and a later sweep makes no second repost.
@@ -1889,19 +1889,19 @@ suite('social publishing on PostgreSQL (S4)', () => {
     await runPublishJob({ runtime: worker, broker: vault, publishers: { sandbox: platform }, callTimeoutMs: 2_000 }, o.orgId, id, 'sandbox');
     await sweepMetrics({ runtime: worker, broker: vault, workerDb, publishers: { sandbox: platform } });
     // Six hours later the platform does not answer: an empty capture, and the summary keeps the real numbers.
-    await admin((c) => c.query("UPDATE crove_social.metric_snapshot SET captured_at = captured_at - interval '7 hours' WHERE variant_id = $1", [id]));
+    await admin((c) => c.query("UPDATE ludy_social.metric_snapshot SET captured_at = captured_at - interval '7 hours' WHERE variant_id = $1", [id]));
     const silent = Object.assign(Object.create(SandboxPublisher.prototype) as SandboxPublisher, platform, { metrics: async () => null });
     const later = new Date(Date.now() + 7 * 3_600_000);
     await sweepMetrics({ runtime: worker, broker: vault, workerDb, publishers: { sandbox: silent }, now: () => later });
-    const rows = await admin(async (c) => (await c.query<{ extra: unknown }>('SELECT extra FROM crove_social.metric_snapshot WHERE variant_id = $1 ORDER BY captured_at', [id])).rows);
+    const rows = await admin(async (c) => (await c.query<{ extra: unknown }>('SELECT extra FROM ludy_social.metric_snapshot WHERE variant_id = $1 ORDER BY captured_at', [id])).rows);
     expect(rows.map((r) => r.extra)).toEqual([null, { error: 'no_answer' }]);
     const summary = await api.query<MetricsRow[]>('social.metrics.summary', {}, { actor: asUser(o.owner), orgId: o.orgId });
     expect(summary.find((r) => r.variantId === id)?.metrics).toMatchObject({ reach: 30 });
     // A post the platform says is gone is not due any more.
-    await admin((c) => c.query("UPDATE crove_social.metric_snapshot SET captured_at = captured_at - interval '7 hours' WHERE variant_id = $1", [id]));
+    await admin((c) => c.query("UPDATE ludy_social.metric_snapshot SET captured_at = captured_at - interval '7 hours' WHERE variant_id = $1", [id]));
     const gone = Object.assign(Object.create(SandboxPublisher.prototype) as SandboxPublisher, platform, { metrics: async () => ({ refused: 'gone' as const }) });
     await sweepMetrics({ runtime: worker, broker: vault, workerDb, publishers: { sandbox: gone }, now: () => new Date(Date.now() + 14 * 3_600_000) });
-    const due = await admin(async (c) => (await c.query<{ variant_id: string }>("SELECT variant_id FROM crove_social.metrics_due(1000, ARRAY['sandbox'], 600)")).rows);
+    const due = await admin(async (c) => (await c.query<{ variant_id: string }>("SELECT variant_id FROM ludy_social.metrics_due(1000, ARRAY['sandbox'], 600)")).rows);
     expect(due.map((r) => r.variant_id)).not.toContain(id);
   });
 
@@ -1915,8 +1915,8 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const story = variants[0] as string;
     const feed = variants[1] as string;
     for (const id of [story, feed]) expect(await runPublishJob({ runtime: worker, broker: vault, publishers: { sandbox: platform }, callTimeoutMs: 2_000 }, o.orgId, id, 'sandbox')).toMatchObject({ status: 'published' });
-    await admin((c) => c.query(`UPDATE crove_social.post_variant SET settings = coalesce(settings, '{}'::jsonb) || '{"postType":"story"}'::jsonb WHERE id = $1`, [story]));
-    const external = async (id: string) => (await admin(async (c) => (await c.query<{ external_post_id: string }>('SELECT external_post_id FROM crove_social.post_variant WHERE id = $1', [id])).rows))[0]?.external_post_id as string;
+    await admin((c) => c.query(`UPDATE ludy_social.post_variant SET settings = coalesce(settings, '{}'::jsonb) || '{"postType":"story"}'::jsonb WHERE id = $1`, [story]));
+    const external = async (id: string) => (await admin(async (c) => (await c.query<{ external_post_id: string }>('SELECT external_post_id FROM ludy_social.post_variant WHERE id = $1', [id])).rows))[0]?.external_post_id as string;
     const storyPost = await external(story);
     const feedPost = await external(feed);
     // Every question the platform gets about these two posts.
@@ -1929,9 +1929,9 @@ suite('social publishing on PostgreSQL (S4)', () => {
       },
     });
     const sweep = () => sweepMetrics({ runtime: worker, broker: vault, workerDb, publishers: { sandbox: watching } });
-    const goneBy = (id: string, hours: number) => admin((c) => c.query(`UPDATE crove_social.post_variant SET published_at = now() - make_interval(mins => $2::int) WHERE id = $1`, [id, Math.round(hours * 60)]));
+    const goneBy = (id: string, hours: number) => admin((c) => c.query(`UPDATE ludy_social.post_variant SET published_at = now() - make_interval(mins => $2::int) WHERE id = $1`, [id, Math.round(hours * 60)]));
     const snapshots = async (id: string) =>
-      (await admin(async (c) => (await c.query<{ capture_key: string; metrics: Record<string, number>; extra: Record<string, unknown> | null }>('SELECT capture_key, metrics, extra FROM crove_social.metric_snapshot WHERE variant_id = $1 ORDER BY captured_at, capture_key', [id])).rows));
+      (await admin(async (c) => (await c.query<{ capture_key: string; metrics: Record<string, number>; extra: Record<string, unknown> | null }>('SELECT capture_key, metrics, extra FROM ludy_social.metric_snapshot WHERE variant_id = $1 ORDER BY captured_at, capture_key', [id])).rows));
 
     // Ten hours in: a regular capture, the Story asked as a Story and the feed post exactly as before.
     await goneBy(story, 10);
@@ -1978,7 +1978,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     await sweep();
     expect(asked).toEqual([]);
     expect((await snapshots(story)).find((r) => r.capture_key === STORY_EXPIRED_KEY)).toMatchObject({ metrics: {}, extra: { gone: true, expired: true } });
-    const due = await admin(async (c) => (await c.query<{ variant_id: string }>("SELECT variant_id FROM crove_social.metrics_due(1000, ARRAY['sandbox'], 600)")).rows);
+    const due = await admin(async (c) => (await c.query<{ variant_id: string }>("SELECT variant_id FROM ludy_social.metrics_due(1000, ARRAY['sandbox'], 600)")).rows);
     expect(due.map((r) => r.variant_id)).not.toContain(story);
     const summary = await api.query<MetricsRow[]>('social.metrics.summary', {}, { actor: asUser(o.owner), orgId: o.orgId });
     expect(summary.find((r) => r.variantId === story)?.metrics).toEqual(final?.metrics);
@@ -2004,28 +2004,28 @@ suite('social publishing on PostgreSQL (S4)', () => {
         const columns = async (table: string) =>
           (
             await c.query<{ list: string }>(
-              "SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position) AS list FROM information_schema.columns WHERE table_schema = 'crove_social' AND table_name = $1 AND is_generated = 'NEVER'",
+              "SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position) AS list FROM information_schema.columns WHERE table_schema = 'ludy_social' AND table_name = $1 AND is_generated = 'NEVER'",
               [table],
             )
           ).rows[0]?.list as string;
         const postColumns = await columns('post');
         const variantColumns = await columns('post_variant');
         await c.query(
-          `INSERT INTO crove_social.post (${postColumns}) SELECT ${postColumns} FROM (SELECT (jsonb_populate_record(NULL::crove_social.post, to_jsonb(p) || jsonb_build_object('id', x.pid))).*
-           FROM crove_social.post p, unnest($2::uuid[]) x(pid) WHERE p.id = (SELECT post_id FROM crove_social.post_variant WHERE id = $1)) r`,
+          `INSERT INTO ludy_social.post (${postColumns}) SELECT ${postColumns} FROM (SELECT (jsonb_populate_record(NULL::ludy_social.post, to_jsonb(p) || jsonb_build_object('id', x.pid))).*
+           FROM ludy_social.post p, unnest($2::uuid[]) x(pid) WHERE p.id = (SELECT post_id FROM ludy_social.post_variant WHERE id = $1)) r`,
           [template, posts],
         );
         await c.query(
-          `INSERT INTO crove_social.post_variant (${variantColumns}) SELECT ${variantColumns} FROM (SELECT (jsonb_populate_record(NULL::crove_social.post_variant, to_jsonb(v) || jsonb_build_object(
+          `INSERT INTO ludy_social.post_variant (${variantColumns}) SELECT ${variantColumns} FROM (SELECT (jsonb_populate_record(NULL::ludy_social.post_variant, to_jsonb(v) || jsonb_build_object(
              'id', x.vid, 'post_id', x.pid, 'provider', $3::text, 'external_post_id', 'ext-' || x.vid, 'settings', $4::jsonb,
              'published_at', now() - make_interval(mins => $5::int)))).*
-           FROM crove_social.post_variant v, unnest($2::uuid[], $6::uuid[]) x(vid, pid) WHERE v.id = $1) r`,
+           FROM ludy_social.post_variant v, unnest($2::uuid[], $6::uuid[]) x(vid, pid) WHERE v.id = $1) r`,
           [template, ids, provider, JSON.stringify(settings), Math.round(hours * 60), posts],
         );
         return ids;
       });
     const due = (limit: number) =>
-      admin(async (c) => (await c.query<{ variant_id: string }>('SELECT variant_id FROM crove_social.metrics_due($1, ARRAY[$2], $3)', [limit, provider, METRICS_INTERVAL_SECONDS])).rows.map((r) => r.variant_id));
+      admin(async (c) => (await c.query<{ variant_id: string }>('SELECT variant_id FROM ludy_social.metrics_due($1, ARRAY[$2], $3)', [limit, provider, METRICS_INTERVAL_SECONDS])).rows.map((r) => r.variant_id));
 
     // 250 Stories 18 hours in, waiting, and a feed post published 20 hours ago and never captured: before #1087 the
     // Stories came first (no capture, published later) and filled the 200 rows.
@@ -2059,7 +2059,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
     }
     // A Story captured in its final window is not due again before its end, as before.
     const [captured] = await copies(1, 22.5, { postType: 'story' });
-    await admin((c) => c.query(`INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, $3, '{"reach": 1}')`, [o.orgId, captured, STORY_FINAL_KEY]));
+    await admin((c) => c.query(`INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, $3, '{"reach": 1}')`, [o.orgId, captured, STORY_FINAL_KEY]));
     expect(await due(1000)).not.toContain(captured);
   });
 });

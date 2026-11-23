@@ -1,5 +1,5 @@
 // Extractions of a file and re-extraction (issue #40, plan §8.4). Every run of the extraction job on a file is a
-// numbered version (crove_kernel.extraction.version); a version is never overwritten. The proposal read from a file
+// numbered version (ludy_kernel.extraction.version); a version is never overwritten. The proposal read from a file
 // follows its newest successful version: a re-extraction becomes a new revision of the pending proposal, through
 // the same revision mechanism as an edit (#87), so an approval of the earlier revision never carries over.
 //
@@ -8,9 +8,9 @@
 // A pending run is at most one per file (partial UNIQUE index), and the database numbers versions.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { STAGED_STATEMENT_MAX_BYTES, zCheck, zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { STAGED_STATEMENT_MAX_BYTES, zCheck, zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { actorRef, addAuthor, eligibleApprovers, parseAuthors, type ActorRef } from './approval.ts';
 import { isArchiveType } from './files.ts';
 
@@ -78,7 +78,7 @@ export interface LatestExtraction {
 // The file's newest extraction run, or undefined if it has not been read yet.
 export async function latestExtraction(ctx: QueryContext, fileId: string): Promise<LatestExtraction | undefined> {
   const row = await ctx.trx
-    .selectFrom('crove_kernel.extraction')
+    .selectFrom('ludy_kernel.extraction')
     .select(['id', 'version', 'status', 'error', 'legal_entity_id', pendingSince.as('fresh')])
     .where('org_id', '=', ctx.orgId)
     .where('file_id', '=', fileId)
@@ -117,12 +117,12 @@ export async function executedButVoided(ctx: QueryContext, proposal: { id: strin
 export async function refuseWhileReextracting(ctx: CommandContext, fileId: string | null, extractionId: string | null = null): Promise<void> {
   const files = fileId ? [fileId] : [];
   if (extractionId) {
-    const read = await ctx.trx.selectFrom('crove_kernel.extraction').select('file_id').where('org_id', '=', ctx.orgId).where('id', '=', extractionId).executeTakeFirst();
+    const read = await ctx.trx.selectFrom('ludy_kernel.extraction').select('file_id').where('org_id', '=', ctx.orgId).where('id', '=', extractionId).executeTakeFirst();
     if (read && !files.includes(read.file_id)) files.push(read.file_id);
   }
   if (files.length === 0) return;
   const pending = await ctx.trx
-    .selectFrom('crove_kernel.extraction')
+    .selectFrom('ludy_kernel.extraction')
     .select('version')
     .where('org_id', '=', ctx.orgId)
     .where('file_id', 'in', files)
@@ -143,15 +143,15 @@ export async function uploaderEntity(ctx: CommandContext, uploader: string | nul
   const { rows } = await sql<{ entity: string | null }>`
     SELECT CASE
       WHEN m.role IN ('owner', 'admin') THEN NULL
-      WHEN EXISTS (SELECT 1 FROM crove_kernel.role_assignment a WHERE a.org_id = m.org_id AND a.user_id = m.user_id AND a.legal_entity_id IS NULL) THEN NULL
+      WHEN EXISTS (SELECT 1 FROM ludy_kernel.role_assignment a WHERE a.org_id = m.org_id AND a.user_id = m.user_id AND a.legal_entity_id IS NULL) THEN NULL
       ELSE (
-        SELECT a.legal_entity_id FROM crove_kernel.role_assignment a
-        LEFT JOIN crove_kernel.legal_entity e ON e.org_id = a.org_id AND e.id = a.legal_entity_id
+        SELECT a.legal_entity_id FROM ludy_kernel.role_assignment a
+        LEFT JOIN ludy_kernel.legal_entity e ON e.org_id = a.org_id AND e.id = a.legal_entity_id
         WHERE a.org_id = m.org_id AND a.user_id = m.user_id
         ORDER BY e.is_default DESC NULLS LAST, a.legal_entity_id
         LIMIT 1)
     END AS entity
-    FROM crove_kernel.tenant_member m
+    FROM ludy_kernel.tenant_member m
     WHERE m.org_id = ${ctx.orgId} AND m.user_id = ${uploader}`.execute(ctx.trx);
   return rows[0]?.entity ?? null;
 }
@@ -159,7 +159,7 @@ export async function uploaderEntity(ctx: CommandContext, uploader: string | nul
 // `statement`: the run is of a bank statement (#2142), whose .xlsx arrives stored as a ZIP, so a ZIP is let through.
 async function lockFile(ctx: CommandContext, fileId: string, statement = false) {
   const file = await ctx.trx
-    .selectFrom('crove_kernel.file')
+    .selectFrom('ludy_kernel.file')
     .select(['id', 'filename', 'created_by', 'content_type', 'upload_entity_id', 'original_deleted_at'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', fileId)
@@ -177,7 +177,7 @@ const STAGED_KINDS: readonly unknown[] = ['bank_statement', 'marketplace_orders'
 // Whether the file's newest run is a staged read (a bank statement, an order report) a member imported (#2142).
 async function statementImported(ctx: CommandContext, fileId: string): Promise<boolean> {
   const run = await ctx.trx
-    .selectFrom('crove_kernel.extraction')
+    .selectFrom('ludy_kernel.extraction')
     .select('result')
     .where('org_id', '=', ctx.orgId)
     .where('file_id', '=', fileId)
@@ -193,7 +193,7 @@ async function statementImported(ctx: CommandContext, fileId: string): Promise<b
 // account it names is mapped.
 async function readAsStatement(ctx: CommandContext, fileId: string): Promise<boolean> {
   const row = await ctx.trx
-    .selectFrom('crove_kernel.extraction')
+    .selectFrom('ludy_kernel.extraction')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('file_id', '=', fileId)
@@ -209,17 +209,17 @@ async function readAsStatement(ctx: CommandContext, fileId: string): Promise<boo
 // the books, so it is refused as for any posted invoice.
 async function lockFileProposal(ctx: CommandContext, fileId: string) {
   return ctx.trx
-    .selectFrom('crove_kernel.proposal')
+    .selectFrom('ludy_kernel.proposal')
     .selectAll()
     .where('org_id', '=', ctx.orgId)
     .where((eb) =>
       eb.or([
         eb('source_file_id', '=', fileId),
-        eb('extraction_id', 'in', eb.selectFrom('crove_kernel.extraction').select('id').where('org_id', '=', ctx.orgId).where('file_id', '=', fileId)),
+        eb('extraction_id', 'in', eb.selectFrom('ludy_kernel.extraction').select('id').where('org_id', '=', ctx.orgId).where('file_id', '=', fileId)),
         eb(
           'id',
           'in',
-          eb.selectFrom('crove_kernel.extraction').select('original_of_proposal_id').where('org_id', '=', ctx.orgId).where('file_id', '=', fileId).where('original_of_proposal_id', 'is not', null),
+          eb.selectFrom('ludy_kernel.extraction').select('original_of_proposal_id').where('org_id', '=', ctx.orgId).where('file_id', '=', fileId).where('original_of_proposal_id', 'is not', null),
         ),
       ]),
     )
@@ -234,7 +234,7 @@ async function lockFileProposal(ctx: CommandContext, fileId: string) {
 // first read from a PDF took its place (#2269), so reading the PDF again must not put the weaker reading back.
 async function readFromAnotherFile(ctx: CommandContext, proposal: { extraction_id: string | null }, fileId: string): Promise<boolean> {
   if (!proposal.extraction_id) return false;
-  const run = await ctx.trx.selectFrom('crove_kernel.extraction').select('file_id').where('org_id', '=', ctx.orgId).where('id', '=', proposal.extraction_id).executeTakeFirst();
+  const run = await ctx.trx.selectFrom('ludy_kernel.extraction').select('file_id').where('org_id', '=', ctx.orgId).where('id', '=', proposal.extraction_id).executeTakeFirst();
   return run !== undefined && run.file_id !== fileId;
 }
 
@@ -292,7 +292,7 @@ export const reextractFile = defineCommand({
     let entity = latest.legalEntityId;
     if (input.legalEntityId !== undefined && input.legalEntityId.toLowerCase() !== latest.legalEntityId) {
       if (proposal?.status === 'pending' || proposal?.status === 'approved') throw legalEntityMoveRefused();
-      const seen = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.legalEntityId).executeTakeFirst();
+      const seen = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.legalEntityId).executeTakeFirst();
       if (!seen) throw new DomainError('LEGAL_ENTITY_NOT_ALLOWED', 403, 'Bạn không có quyền với sổ sách của pháp nhân này');
       entity = seen.id;
     }
@@ -300,7 +300,7 @@ export const reextractFile = defineCommand({
     if (latest.status === 'pending') {
       // A stale run (presumed lost) is closed as failed; if its job still finishes, it finds no pending run.
       await ctx.trx
-        .updateTable('crove_kernel.extraction')
+        .updateTable('ludy_kernel.extraction')
         .set({ status: 'failed', error: 'Quá thời gian chờ đọc lại; đã yêu cầu đọc lại lần nữa', completed_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', latest.id)
@@ -309,7 +309,7 @@ export const reextractFile = defineCommand({
       superseded = latest.version;
     }
     const run = await ctx.trx
-      .insertInto('crove_kernel.extraction')
+      .insertInto('ludy_kernel.extraction')
       .values({
         org_id: ctx.orgId,
         file_id: input.fileId,
@@ -351,7 +351,7 @@ export const reextractFile = defineCommand({
 // waits for a decision or is booked; a proposal still pending is refused with the reason, and any other case stays a
 // plain duplicate.
 export async function readAgainIn(ctx: CommandContext, fileId: string, legalEntityId: string): Promise<void> {
-  const file = await ctx.trx.selectFrom('crove_kernel.file').select('content_type').where('org_id', '=', ctx.orgId).where('id', '=', fileId).executeTakeFirst();
+  const file = await ctx.trx.selectFrom('ludy_kernel.file').select('content_type').where('org_id', '=', ctx.orgId).where('id', '=', fileId).executeTakeFirst();
   if (!file || isArchiveType(file.content_type)) return;
   const latest = await latestExtraction(ctx, fileId);
   if (!latest || latest.inFlight || latest.legalEntityId === legalEntityId.toLowerCase()) return;
@@ -390,7 +390,7 @@ async function withDuplicateGuard<T extends { fileId: string; checks: Array<z.in
 ): Promise<{ input: T; flagged: T; upgrade: string | null; attach: { proposalId: string; differs: boolean } | null }> {
   const guard = input.proposal?.duplicateGuard;
   if (!input.proposal || !guard) return { input, flagged: input, upgrade: null, attach: null };
-  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_kernel.extraction_duplicate:${ctx.orgId}:${guard.key}`}, 0))`.execute(ctx.trx);
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`ludy_kernel.extraction_duplicate:${ctx.orgId}:${guard.key}`}, 0))`.execute(ctx.trx);
   const answer = await ctx.query<DuplicateAnswer>(DUPLICATE_LOOKUP_QUERY, { ...guard.lookup, fileId: input.fileId });
   if (answer.status !== 'ok' || (!answer.value.duplicateDocumentId && !answer.value.duplicateProposalId)) return { input, flagged: input, upgrade: null, attach: null };
   const upgrade =
@@ -440,7 +440,7 @@ async function withDuplicateGuard<T extends { fileId: string; checks: Array<z.in
 // proposal stays in its entity). The lock is taken
 // after the guard's, so a decision that went through first is seen here and one that comes later finds the new revision.
 async function lockUpgradable(ctx: CommandContext, proposalId: string, draft: z.infer<typeof zProposalDraft>, file: { created_by: string | null; upload_entity_id: string | null }) {
-  const row = await ctx.trx.selectFrom('crove_kernel.proposal').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', proposalId).forUpdate().executeTakeFirst();
+  const row = await ctx.trx.selectFrom('ludy_kernel.proposal').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', proposalId).forUpdate().executeTakeFirst();
   if (!row || row.status !== 'pending' || row.kind !== draft.kind || row.command !== draft.command) return undefined;
   const payload = row.payload as { extractionMethod?: unknown; legalEntityId?: unknown; lines?: Array<{ accountRule?: { source?: unknown } }>; invoice?: { foreign?: { source?: unknown } } } | null;
   if (!UPGRADABLE_METHODS.includes(payload?.extractionMethod)) return undefined;
@@ -450,7 +450,7 @@ async function lockUpgradable(ctx: CommandContext, proposalId: string, draft: z.
   const entity =
     file.upload_entity_id ??
     (await uploaderEntity(ctx, file.created_by)) ??
-    (await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst())?.id;
+    (await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst())?.id;
   return row.legal_entity_id === entity ? row : undefined;
 }
 
@@ -466,7 +466,7 @@ async function lockAttachable(
   draft: z.infer<typeof zProposalDraft>,
   file: { created_by: string | null; upload_entity_id: string | null },
 ) {
-  const row = await ctx.trx.selectFrom('crove_kernel.proposal').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', proposalId).forShare().executeTakeFirst();
+  const row = await ctx.trx.selectFrom('ludy_kernel.proposal').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', proposalId).forShare().executeTakeFirst();
   if (!row || row.status !== 'executed' || row.kind !== draft.kind || row.command !== draft.command) return undefined;
   if (await executedButVoided(ctx, row)) return undefined;
   const payload = row.payload as { extractionMethod?: unknown } | null;
@@ -474,7 +474,7 @@ async function lockAttachable(
   const entity =
     file.upload_entity_id ??
     (await uploaderEntity(ctx, file.created_by)) ??
-    (await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst())?.id;
+    (await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst())?.id;
   return row.legal_entity_id === entity ? row : undefined;
 }
 
@@ -554,7 +554,7 @@ export const recordExtraction = defineCommand({
     let applies = true;
     if (input.version === undefined) {
       const existing = await ctx.trx
-        .selectFrom('crove_kernel.extraction')
+        .selectFrom('ludy_kernel.extraction')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('file_id', '=', input.fileId)
@@ -569,7 +569,7 @@ export const recordExtraction = defineCommand({
       if (attachedTo && guarded.attach) {
         const differs = guarded.attach.differs;
         const attached = await ctx.trx
-          .insertInto('crove_kernel.extraction')
+          .insertInto('ludy_kernel.extraction')
           .values({
             org_id: ctx.orgId,
             file_id: input.fileId,
@@ -603,7 +603,7 @@ export const recordExtraction = defineCommand({
         return { extractionId: attached.id, proposalId: null, duplicate: false };
       }
       run = await ctx.trx
-        .insertInto('crove_kernel.extraction')
+        .insertInto('ludy_kernel.extraction')
         .values({ org_id: ctx.orgId, file_id: input.fileId, ...(entity ? { legal_entity_id: entity } : {}), ...outcome })
         .returning(['id', 'version', 'requested_by'])
         .executeTakeFirstOrThrow();
@@ -611,7 +611,7 @@ export const recordExtraction = defineCommand({
       current = upgraded;
     } else {
       const pending = await ctx.trx
-        .selectFrom('crove_kernel.extraction')
+        .selectFrom('ludy_kernel.extraction')
         .select(['id', 'version', 'status', 'requested_by', 'legal_entity_id'])
         .where('org_id', '=', ctx.orgId)
         .where('file_id', '=', input.fileId)
@@ -630,13 +630,13 @@ export const recordExtraction = defineCommand({
         pending.legal_entity_id !== original.legalEntityId.toLowerCase()
       ) {
         await ctx.trx
-          .updateTable('crove_kernel.extraction')
+          .updateTable('ludy_kernel.extraction')
           .set({ method: 'unsupported', status: 'failed', result: null, checks: '[]', error: 'Sao kê thuộc sổ của pháp nhân khác; hãy xem lần đọc mới nhất', completed_at: ctx.now })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', pending.id)
           .execute();
         const moved = await ctx.trx
-          .insertInto('crove_kernel.extraction')
+          .insertInto('ludy_kernel.extraction')
           .values({ org_id: ctx.orgId, file_id: input.fileId, legal_entity_id: original.legalEntityId, ...outcome })
           .returning(['id', 'version'])
           .executeTakeFirstOrThrow();
@@ -651,12 +651,12 @@ export const recordExtraction = defineCommand({
       current = await lockFileProposal(ctx, input.fileId);
       const { rows } = await sql<{ fresh: boolean }>`
         SELECT created_at > pg_catalog.clock_timestamp() - pg_catalog.make_interval(mins => ${REEXTRACT_STALE_MINUTES}::int) AS fresh
-        FROM crove_kernel.extraction WHERE org_id = ${ctx.orgId}::uuid AND id = ${pending.id}::uuid`.execute(ctx.trx);
+        FROM ludy_kernel.extraction WHERE org_id = ${ctx.orgId}::uuid AND id = ${pending.id}::uuid`.execute(ctx.trx);
       applies = rows[0]?.fresh === true;
       // The proposal's revision was read from another file (the original, #2269): a re-reading of this one leaves it.
       if (applies && current?.status === 'pending' && (await readFromAnotherFile(ctx, current, input.fileId))) applies = false;
       await ctx.trx
-        .updateTable('crove_kernel.extraction')
+        .updateTable('ludy_kernel.extraction')
         .set(outcome)
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', pending.id)
@@ -704,7 +704,7 @@ export const recordExtraction = defineCommand({
       if (!authors) throw new DomainError('NOT_EDITABLE', 422, 'Đề xuất thiếu thông tin người soạn nên không cập nhật được');
       const revision = current.revision + 1;
       await ctx.trx
-        .updateTable('crove_kernel.proposal')
+        .updateTable('ludy_kernel.proposal')
         .set({
           title: input.proposal.title,
           payload: JSON.stringify(input.proposal.payload),
@@ -726,7 +726,7 @@ export const recordExtraction = defineCommand({
     // The first proposal of the file, or a new one after a rejected proposal or a voided purchase (the file was read
     // again on purpose). A rejection while the run was in flight is refused, so this rejection came before the request.
     const proposal = await ctx.trx
-      .insertInto('crove_kernel.proposal')
+      .insertInto('ludy_kernel.proposal')
       .values({
         org_id: ctx.orgId,
         kind: input.proposal.kind,
@@ -774,7 +774,7 @@ export const statementState = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới quyết định được sao kê');
     await lockFile(ctx, input.fileId, true);
     const run = await ctx.trx
-      .selectFrom('crove_kernel.extraction')
+      .selectFrom('ludy_kernel.extraction')
       .select(['id', 'status', 'result', 'legal_entity_id'])
       .where('org_id', '=', ctx.orgId)
       .where('file_id', '=', input.fileId)
@@ -795,7 +795,7 @@ export const statementState = defineCommand({
       ...(input.importId !== undefined ? { importId: input.importId } : {}),
     };
     await ctx.trx
-      .insertInto('crove_kernel.extraction')
+      .insertInto('ludy_kernel.extraction')
       .values({
         org_id: ctx.orgId,
         file_id: input.fileId,

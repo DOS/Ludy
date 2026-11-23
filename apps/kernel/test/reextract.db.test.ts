@@ -6,14 +6,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { InvoiceExtractor } from '@crove/agent';
-import { createDb, createPool, type Db } from '@crove/db';
-import type { ExtractClient } from '@crove/extract-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { MAX_EXTRACTION_VERSIONS, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import type { ParsedInvoice } from '@crove/l10n-vn';
-import { extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
+import type { InvoiceExtractor } from '@ludy/agent';
+import { createDb, createPool, type Db } from '@ludy/db';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { MAX_EXTRACTION_VERSIONS, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import type { ParsedInvoice } from '@ludy/l10n-vn';
+import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { startWorker } from '../src/worker.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -113,20 +113,20 @@ suite('re-extraction on PostgreSQL (issue #40)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const loginUrl = (username: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = username;
       u.password = password;
       return u.toString();
     };
-    workerUrl = loginUrl('crove_worker', 'test-worker-pw');
+    workerUrl = loginUrl('ludy_worker', 'test-worker-pw');
     const register = (target: Db) =>
       new Runtime(target, { manifests: TEST_MANIFESTS }).register({
         commands: [...kernelCommands, ...financeCommands],
         queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries],
       });
-    pool = createPool({ connectionString: loginUrl('crove_app', 'test-app-pw'), max: 4 });
+    pool = createPool({ connectionString: loginUrl('ludy_app', 'test-app-pw'), max: 4 });
     const db = createDb(pool);
     runtime = register(db);
     workerPool = createPool({ connectionString: workerUrl, max: 4 });
@@ -188,7 +188,7 @@ suite('re-extraction on PostgreSQL (issue #40)', () => {
     const closer = new pg.Client({ connectionString: adminUrl });
     await closer.connect();
     try {
-      await closer.query(`DELETE FROM crove_kernel.outbox_pending WHERE org_id = $1`, [orgA]);
+      await closer.query(`DELETE FROM ludy_kernel.outbox_pending WHERE org_id = $1`, [orgA]);
     } finally {
       await closer.end();
     }
@@ -208,7 +208,7 @@ suite('re-extraction on PostgreSQL (issue #40)', () => {
     const closer = new pg.Client({ connectionString: adminUrl });
     await closer.connect();
     try {
-      await closer.query(`DELETE FROM crove_kernel.outbox_pending WHERE org_id = $1`, [orgA]);
+      await closer.query(`DELETE FROM ludy_kernel.outbox_pending WHERE org_id = $1`, [orgA]);
     } finally {
       await closer.end();
     }
@@ -223,7 +223,7 @@ suite('re-extraction on PostgreSQL (issue #40)', () => {
     await admin.connect();
     try {
       await admin.query(`SET session_replication_role = replica`);
-      await admin.query(`UPDATE crove_kernel.extraction SET created_at = now() - interval '1 hour' WHERE file_id = $1 AND status = 'pending'`, [fileId]);
+      await admin.query(`UPDATE ludy_kernel.extraction SET created_at = now() - interval '1 hour' WHERE file_id = $1 AND status = 'pending'`, [fileId]);
     } finally {
       await admin.end();
     }
@@ -232,8 +232,8 @@ suite('re-extraction on PostgreSQL (issue #40)', () => {
     const closer = new pg.Client({ connectionString: adminUrl });
     await closer.connect();
     try {
-      await closer.query(`UPDATE crove_kernel.extraction SET status = 'failed', completed_at = now() WHERE file_id = $1 AND status = 'pending'`, [fileId]);
-      await closer.query(`DELETE FROM crove_kernel.outbox_pending WHERE org_id = $1`, [orgA]);
+      await closer.query(`UPDATE ludy_kernel.extraction SET status = 'failed', completed_at = now() WHERE file_id = $1 AND status = 'pending'`, [fileId]);
+      await closer.query(`DELETE FROM ludy_kernel.outbox_pending WHERE org_id = $1`, [orgA]);
     } finally {
       await closer.end();
     }
@@ -247,7 +247,7 @@ suite('re-extraction on PostgreSQL (issue #40)', () => {
     await admin.connect();
     try {
       await admin.query(
-        `INSERT INTO crove_kernel.extraction (org_id, file_id, status, method)
+        `INSERT INTO ludy_kernel.extraction (org_id, file_id, status, method)
          SELECT $1, $2, 'failed', 'image_ai' FROM generate_series(2, $3::int)`,
         [orgA, fileId, MAX_EXTRACTION_VERSIONS],
       );

@@ -1,0 +1,24 @@
+{
+  "name": "@ludy/mod-sign",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "eSign module: envelopes, signers, fields, hash-chained events and PDF sealing (plan docs/plan/esign.md)",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@ludy/db": "workspace:*",
+    "@ludy/extract-contract": "workspace:*",
+    "@ludy/kernel": "workspace:*",
+    "@ludy/kernel-contract": "workspace:*",
+    "@ludy/kernel-runtime": "workspace:*",
+    "@ludy/l10n-vn": "workspace:*",
+    "kysely": "catalog:",
+    "zod": "catalog:"
+  }
+}

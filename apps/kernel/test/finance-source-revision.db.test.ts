@@ -1,5 +1,5 @@
 // Source revisions of journal entries (issue #1283, ADR-0021 decision 5, red-team S32) on a real PostgreSQL 17: the
-// revision rules of crove_finance.post_journal_entry() in one session. The same revision with the same payload is a
+// revision rules of ludy_finance.post_journal_entry() in one session. The same revision with the same payload is a
 // replay that returns the posted entry and writes nothing; with another payload it is refused (IDEMPOTENCY_CONFLICT);
 // a new revision follows the latest one (REVISION_OUT_OF_ORDER) and only after its reversal (SOURCE_STILL_POSTED). An
 // entry posted before the payload hash existed is compared by its stored lines. Concurrent replays are in the invariant
@@ -9,11 +9,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { sourceRevisionError } from '@crove/mod-finance';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { sourceRevisionError } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
@@ -71,12 +71,12 @@ suite('journal entry source revisions (#1283)', () => {
       if (p.dateStyle) await app.query(`SELECT set_config('DateStyle', $1, false)`, [p.dateStyle]);
       await app.query('BEGIN');
       try {
-        await app.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+        await app.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
         const args = [p.date ?? '2026-10-01', p.description ?? 'Mua văn phòng phẩm', p.sourceType ?? 'test.source', p.sourceId, JSON.stringify(p.lines), p.reverses ?? null];
         const { rows } =
           p.revision === undefined
-            ? await app.query<{ id: string }>('SELECT crove_finance.post_journal_entry($1::date, $2, $3, $4::uuid, $5::jsonb, $6::uuid) AS id', args)
-            : await app.query<{ id: string }>('SELECT crove_finance.post_journal_entry($1::date, $2, $3, $4::uuid, $5::jsonb, $6::uuid, $7::int) AS id', [
+            ? await app.query<{ id: string }>('SELECT ludy_finance.post_journal_entry($1::date, $2, $3, $4::uuid, $5::jsonb, $6::uuid) AS id', args)
+            : await app.query<{ id: string }>('SELECT ludy_finance.post_journal_entry($1::date, $2, $3, $4::uuid, $5::jsonb, $6::uuid, $7::int) AS id', [
                 ...args,
                 p.revision,
               ]);
@@ -100,7 +100,7 @@ suite('journal entry source revisions (#1283)', () => {
       (
         await c.query<{ id: string; source_revision: number; hash_bytes: number | null; reverses_entry_id: string | null }>(
           `SELECT id, source_revision, octet_length(payload_sha256) AS hash_bytes, reverses_entry_id
-           FROM crove_finance.journal_entry WHERE org_id = $1 AND source_id = $2 ORDER BY source_revision`,
+           FROM ludy_finance.journal_entry WHERE org_id = $1 AND source_id = $2 ORDER BY source_revision`,
           [orgId, sourceId],
         )
       ).rows,
@@ -115,9 +115,9 @@ suite('journal entry source revisions (#1283)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
     pool = createPool({ connectionString: appUrl, max: 1 });
@@ -143,7 +143,7 @@ suite('journal entry source revisions (#1283)', () => {
       (
         await c.query<{ name: string; def: string }>(
           `SELECT conname AS name, pg_get_constraintdef(oid) AS def FROM pg_constraint
-           WHERE conrelid = 'crove_finance.journal_entry'::regclass AND contype IN ('u', 'c') ORDER BY conname`,
+           WHERE conrelid = 'ludy_finance.journal_entry'::regclass AND contype IN ('u', 'c') ORDER BY conname`,
         )
       ).rows,
     );
@@ -159,7 +159,7 @@ suite('journal entry source revisions (#1283)', () => {
       (
         await c.query<{ def: string; nullable: string }>(
           `SELECT column_default AS def, is_nullable AS nullable FROM information_schema.columns
-           WHERE table_schema = 'crove_finance' AND table_name = 'journal_entry' AND column_name = 'source_revision'`,
+           WHERE table_schema = 'ludy_finance' AND table_name = 'journal_entry' AND column_name = 'source_revision'`,
         )
       ).rows[0],
     );
@@ -253,7 +253,7 @@ suite('journal entry source revisions (#1283)', () => {
     const net = await withAdmin(async (c) =>
       (
         await c.query<{ account_code: string; net: string }>(
-          `SELECT account_code, sum(debit - credit)::text AS net FROM crove_finance.journal_line
+          `SELECT account_code, sum(debit - credit)::text AS net FROM ludy_finance.journal_line
            WHERE org_id = $1 AND entry_id IN ($2, $3) GROUP BY account_code ORDER BY account_code`,
           [orgs.a, first, reversal],
         )
@@ -302,13 +302,13 @@ suite('journal entry source revisions (#1283)', () => {
     const legacy = await withAdmin(async (c) => {
       await c.query('BEGIN');
       const { rows } = await c.query<{ id: string }>(
-        `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-10-01', 'Trước #1283', 'test.source', $2) RETURNING id`,
+        `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-10-01', 'Trước #1283', 'test.source', $2) RETURNING id`,
         [orgs.a, sourceId],
       );
       const id = rows[0]?.id ?? '';
       for (const l of SALE) {
         await c.query(
-          `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, memo) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, memo) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
           [orgs.a, id, l.line_no, l.account_code, l.debit, l.credit, l.party_id ?? null, l.memo ?? null],
         );
       }

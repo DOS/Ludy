@@ -8,12 +8,12 @@ import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { FacebookPagePublisher, InstagramPublisher, platformUserHash, type Fetch } from '@crove/channel';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { ConversationDetail, ConversationListed } from '@crove/kernel-contract';
-import { CredentialVault, DomainError, Runtime, type BlobStore } from '@crove/kernel-runtime';
+import { FacebookPagePublisher, InstagramPublisher, platformUserHash, type Fetch } from '@ludy/channel';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { ConversationDetail, ConversationListed } from '@ludy/kernel-contract';
+import { CredentialVault, DomainError, Runtime, type BlobStore } from '@ludy/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
 import { runConversationIntake, runConversationJob, runConversationSync } from '../src/conversations-worker.ts';
 import { FACEBOOK_SIGNATURE_HEADER, FACEBOOK_WEBHOOK_PATH } from '../src/facebook-webhook.ts';
@@ -70,14 +70,14 @@ suite('Facebook Page conversations on PostgreSQL (#2307)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const w = new URL(adminUrl);
-    w.username = 'crove_worker';
+    w.username = 'ludy_worker';
     w.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: w.toString(), max: 2 });
     workerDb = createDb(workerPool);
@@ -182,7 +182,7 @@ suite('Facebook Page conversations on PostgreSQL (#2307)', () => {
       { actor: asUser(owner), orgId },
     );
 
-    const storedHash = await admin(async (c) => (await c.query<{ granted_by_hash: string | null }>('SELECT granted_by_hash FROM crove_kernel.channel_connection WHERE id = $1', [connectionId])).rows[0]?.granted_by_hash);
+    const storedHash = await admin(async (c) => (await c.query<{ granted_by_hash: string | null }>('SELECT granted_by_hash FROM ludy_kernel.channel_connection WHERE id = $1', [connectionId])).rows[0]?.granted_by_hash);
     expect(storedHash).toBe(grantedByHash);
 
     const app = buildApp();
@@ -358,7 +358,7 @@ suite('Facebook Page conversations on PostgreSQL (#2307)', () => {
     expect(detail.messages[0]?.hidden).toBe(true);
     expect(detail.messages[1]?.sendState).toBe('sent');
     const storedReplyExternalId = await admin(
-      async (c) => (await c.query<{ external_message_id: string | null }>('SELECT external_message_id FROM crove_kernel.conversation_message WHERE id = $1', [replyMessageId])).rows[0]?.external_message_id,
+      async (c) => (await c.query<{ external_message_id: string | null }>('SELECT external_message_id FROM ludy_kernel.conversation_message WHERE id = $1', [replyMessageId])).rows[0]?.external_message_id,
     );
     expect(storedReplyExternalId).toBe('900800700600500_222');
 
@@ -369,10 +369,10 @@ suite('Facebook Page conversations on PostgreSQL (#2307)', () => {
 
     // 5. No customer text or name reaches audit_event or outbox_event.
     const leakedAudit = await admin((c) =>
-      c.query('SELECT 1 FROM crove_kernel.audit_event a WHERE org_id = $1 AND row_to_json(a)::text ILIKE $2', [orgId, '%0909123456%']),
+      c.query('SELECT 1 FROM ludy_kernel.audit_event a WHERE org_id = $1 AND row_to_json(a)::text ILIKE $2', [orgId, '%0909123456%']),
     );
     const leakedEvents = await admin((c) =>
-      c.query('SELECT 1 FROM crove_kernel.outbox_event e WHERE org_id = $1 AND row_to_json(e)::text ILIKE $2', [orgId, '%0909123456%']),
+      c.query('SELECT 1 FROM ludy_kernel.outbox_event e WHERE org_id = $1 AND row_to_json(e)::text ILIKE $2', [orgId, '%0909123456%']),
     );
     expect(leakedAudit.rows).toHaveLength(0);
     expect(leakedEvents.rows).toHaveLength(0);
@@ -384,7 +384,7 @@ suite('Facebook Page conversations on PostgreSQL (#2307)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org CV4 ${randomUUID().slice(0, 6)}`);
     // Add plainMember as an ordinary member without desk.agent.
     await admin((c) =>
-      c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, plainMember]),
+      c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, plainMember]),
     );
 
     const pageId = '200300400500600';

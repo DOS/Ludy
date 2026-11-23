@@ -14,11 +14,11 @@ import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import type { CellResolver } from '@crove/db';
-import { kernelManifest } from '@crove/kernel';
-import { DATA_CLASSES, defineModule, tableWrite, type ModuleManifest } from '@crove/kernel-contract';
-import { P04_CLEAN_EVENTS, Runtime, WRITE_DATA_CLASSES, defineCommand, type AgentApprovers, type CommandDef, type CommandWrite, type ManifestTables } from '@crove/kernel-runtime';
-import { financeManifest } from '@crove/mod-finance';
+import type { CellResolver } from '@ludy/db';
+import { kernelManifest } from '@ludy/kernel';
+import { DATA_CLASSES, defineModule, tableWrite, type ModuleManifest } from '@ludy/kernel-contract';
+import { P04_CLEAN_EVENTS, Runtime, WRITE_DATA_CLASSES, defineCommand, type AgentApprovers, type CommandDef, type CommandWrite, type ManifestTables } from '@ludy/kernel-runtime';
+import { financeManifest } from '@ludy/mod-finance';
 import { loadConfig } from '../../src/config.ts';
 import { moduleDefinitions, moduleManifests, serverRuntime } from '../../src/kernel.ts';
 import { orgPurgeCommand } from '../../src/org-purge.ts';
@@ -243,15 +243,29 @@ const P04_COLUMNS: Readonly<Record<string, 'contact' | 'payment'>> = {
   'crove_crm.booking.phone': 'contact',
 };
 
-const PARTY = kernelManifest.tables.crove_kernel.party;
-const CONTACT = tableWrite(kernelManifest.tables, 'crove_kernel', 'party', ['email']);
-const PAYMENT = tableWrite(financeManifest.tables, 'crove_finance', 'bank_line', ['bank_account']);
-const INTERNAL = tableWrite(kernelManifest.tables, 'crove_kernel', 'task_comment', ['body']);
+const kernelTables = kernelManifest.tables as unknown as Record<string, Record<string, Record<string, string>>>;
+const financeTables = financeManifest.tables as unknown as Record<string, Record<string, Record<string, string>>>;
+const schemaOf = (tables: Record<string, unknown>, mod: string): string =>
+  Object.keys(tables).find((s) => s === `ludy_${mod}` || s === `crove_${mod}`) ?? `crove_${mod}`;
+const KERNEL_SCHEMA = schemaOf(kernelTables, 'kernel');
+const JOBS_SCHEMA = schemaOf(kernelTables, 'jobs');
+const FINANCE_SCHEMA = schemaOf(financeTables, 'finance');
+const manifestTableWrite = (
+  tables: Record<string, Record<string, Record<string, string>>>,
+  schema: string,
+  table: string,
+  columns: readonly string[],
+) => tableWrite(tables as never, schema as never, table as never, columns as never);
+
+const PARTY = kernelTables[KERNEL_SCHEMA]!.party!;
+const CONTACT = manifestTableWrite(kernelTables, KERNEL_SCHEMA, 'party', ['email']);
+const PAYMENT = manifestTableWrite(financeTables, FINANCE_SCHEMA, 'bank_line', ['bank_account']);
+const INTERNAL = manifestTableWrite(kernelTables, KERNEL_SCHEMA, 'task_comment', ['body']);
 
 const def = (extra: Partial<CommandDef<unknown, unknown>>): CommandDef<unknown, unknown> =>
   defineCommand({ sideEffect: 'none', name: 't1710.reg', input: z.object({}), risk: 'R1', access: 'proposal', handler: async () => ({}), ...extra }) as CommandDef<unknown, unknown>;
 const withManifests = (extra: Partial<CommandDef<unknown, unknown>>) => () => new Runtime(cells, { manifests: manifests() }).register({ commands: [def(extra)] });
-const forged = (classes: Record<string, string>, columns: readonly string[] = ['email']): CommandWrite => ({ table: 'crove_kernel.party', classes, columns });
+const forged = (classes: Record<string, string>, columns: readonly string[] = ['email']): CommandWrite => ({ table: `${KERNEL_SCHEMA}.party`, classes, columns });
 
 describe('declared command writes against the manifests (#1697, #1710)', () => {
   it('knows the data classes the manifests use', () => {
@@ -270,7 +284,7 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
     const { email: _email, ...withoutEmail } = PARTY;
     expect(withManifests({ writes: [forged(withoutEmail, ['name'])] })).toThrow(/not its manifest's/);
     // A table no manifest has.
-    expect(withManifests({ writes: [{ table: 'crove_kernel.no_such_table', classes: { body: 'internal' }, columns: ['body'] }] })).toThrow(/no module manifest has/);
+    expect(withManifests({ writes: [{ table: `${KERNEL_SCHEMA}.no_such_table`, classes: { body: 'internal' }, columns: ['body'] }] })).toThrow(/no module manifest has/);
     // What the manifests give passes, and P04 follows their classes.
     expect(withManifests({ writes: [CONTACT, PAYMENT, INTERNAL] })).not.toThrow();
     const runtime = new Runtime(cells, { manifests: manifests() }).register({
@@ -351,7 +365,7 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
     expect(start).toBeGreaterThan(0);
     expect(end).toBeGreaterThan(start);
     expect(kernel.slice(start, end)).toMatch(/new Runtime\(/);
-    const runtimeImport = [...kernel.matchAll(/\bimport\b[^;]*?\bfrom\s*'@crove\/kernel-runtime';/g)];
+    const runtimeImport = [...kernel.matchAll(/\bimport\b[^;]*?\bfrom\s*'@ludy\/kernel-runtime';/g)];
     expect(runtimeImport).toHaveLength(1);
     const outside = [kernel.slice(0, runtimeImport[0]?.index), kernel.slice((runtimeImport[0]?.index ?? 0) + (runtimeImport[0]?.[0].length ?? 0), start), kernel.slice(end)]
       .join('\n')
@@ -362,8 +376,8 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
 
   it('finds every way the scan names to reach the Runtime class, and nothing in comments', () => {
     const scan = (source: string) => runtimeImports(source);
-    expect(scan(`import { DomainError, type Runtime } from '@crove/kernel-runtime';`)).toEqual({ names: [], problems: [] });
-    expect(scan(`import type { Runtime } from '@crove/kernel-runtime';`)).toEqual({ names: [], problems: [] });
+    expect(scan(`import { DomainError, type Runtime } from '@ludy/kernel-runtime';`)).toEqual({ names: [], problems: [] });
+    expect(scan(`import type { Runtime } from '@ludy/kernel-runtime';`)).toEqual({ names: [], problems: [] });
     expect(scan(`// an import (#465) of a .constructor, Reflect.construct\nconst a = 1;`)).toEqual({ names: [], problems: [] });
     expect(scan(`class A {\n  constructor(a: string) {}\n}`)).toEqual({ names: [], problems: [] });
     expect(scan('const out = Object.create(null) as Record<string, unknown>;')).toEqual({ names: [], problems: [] });
@@ -371,18 +385,18 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
     expect(scan('const d = Object.getOwnPropertyDescriptor(value, key);')).toEqual({ names: [], problems: [] });
     // A quote or backtick in a regular expression does not hide the code after it.
     expect(scan("const re = /[`'*]/g;\nconst k = require('x');").problems).toEqual(['require()']);
-    expect(scan(`import { 'Runtime' as R } from '@crove/kernel-runtime';`).names).toEqual(['R']);
-    expect(scan(`import { Runtime } from '@crove/kernel-runtime';`).names).toEqual(['Runtime']);
-    expect(scan(`import {\n  DomainError,\n  Runtime as R, // the class\n} from '@crove/kernel-runtime';`).names).toEqual(['R']);
+    expect(scan(`import { 'Runtime' as R } from '@ludy/kernel-runtime';`).names).toEqual(['R']);
+    expect(scan(`import { Runtime } from '@ludy/kernel-runtime';`).names).toEqual(['Runtime']);
+    expect(scan(`import {\n  DomainError,\n  Runtime as R, // the class\n} from '@ludy/kernel-runtime';`).names).toEqual(['R']);
     expect(scan(`import { Runtime as R } from '../../packages/kernel-runtime/src/runtime.ts';`).names).toEqual(['R']);
     for (const source of [
-      `import * as K from '@crove/kernel-runtime';`,
-      `export * from '@crove/kernel-runtime';`,
-      `export { Runtime } from '@crove/kernel-runtime';`,
-      `import K from '@crove/kernel-runtime';`,
-      `const k = await import('@crove/kernel-runtime');`,
+      `import * as K from '@ludy/kernel-runtime';`,
+      `export * from '@ludy/kernel-runtime';`,
+      `export { Runtime } from '@ludy/kernel-runtime';`,
+      `import K from '@ludy/kernel-runtime';`,
+      `const k = await import('@ludy/kernel-runtime');`,
       'const k = await import (name);',
-      `const k = require('@crove/kernel-runtime');`,
+      `const k = require('@ludy/kernel-runtime');`,
       `const r = createRequire(import.meta.url);`,
       'const R = runtime.constructor;',
       `const R = Object.getPrototypeOf(runtime)['constructor'];`,
@@ -396,7 +410,7 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
       'eval(code);',
       // The module loader and code built past the import graph (#1772).
       `const mod = process.getBuiltinModule('module');`,
-      `const k = Module._load('@crove/kernel-runtime');`,
+      `const k = Module._load('@ludy/kernel-runtime');`,
       `const r = Module.prototype.require.call(m, 'x');`,
       'const all = Object.getOwnPropertyDescriptors(Object.getPrototypeOf(runtime));',
       `import vm from 'node:vm';`,
@@ -490,11 +504,11 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
   });
 
   it('counts a declared table that holds a contact or payment column as a write of it, since writes are checked per table', () => {
-    const name = tableWrite(kernelManifest.tables, 'crove_kernel', 'party', ['name']);
+    const name = manifestTableWrite(kernelTables, KERNEL_SCHEMA, 'party', ['name']);
     const runtime = new Runtime(cells, { manifests: manifests() }).register({ commands: [def({ name: 't1710.party_name', writes: [name] })] });
     expect(runtime.commandInfo('t1710.party_name')?.contactOrPayment).toBe(true);
     expect(() => new Runtime(cells, { manifests: manifests() }).register({ commands: [def({ name: 't1710.agent_party', access: [], agent: { roles: 'any' }, writes: [name] })] })).toThrow(
-      /crove_kernel\.party \(holds .*email \(contact\).*checked per table\), so no agent may run it/,
+      /(?:crove|ludy)_kernel\.party \(holds .*email \(contact\).*checked per table\), so no agent may run it/,
     );
   });
 
@@ -569,12 +583,12 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
     for (const manifest of moduleManifests(config)) walk(manifest, manifest.id);
     expect(unfrozen).toEqual([]);
     expect(() => {
-      (kernelManifest.tables.crove_kernel as Record<string, unknown>).party = { email: 'internal' };
+      (kernelTables[KERNEL_SCHEMA] as Record<string, unknown>).party = { email: 'internal' };
     }).toThrow(TypeError);
     // A manifest object changed after the runtime read it does not change the check.
-    const tables = { crove_kernel: { party: { ...PARTY } } };
+    const tables = { [KERNEL_SCHEMA]: { party: { ...PARTY } } };
     const runtime = new Runtime(cells, { manifests: [tables] });
-    tables.crove_kernel.party.email = 'internal';
+    tables[KERNEL_SCHEMA]!.party.email = 'internal';
     expect(() => runtime.register({ commands: [def({ writes: [forged({ ...PARTY, email: 'internal' })] })] })).toThrow(/not its manifest's/);
   });
 
@@ -630,7 +644,7 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
       input: z.object({}),
       risk: 'R1',
       access: 'system',
-      writes: [tableWrite(kernelManifest.tables, 'crove_kernel', 'outbox_event', ['type'])],
+      writes: [manifestTableWrite(kernelTables, KERNEL_SCHEMA, 'outbox_event', ['type'])],
       handler: async () => ({}),
     }) as CommandDef<unknown, unknown>;
     expect(() => new Runtime(cells, { manifests: manifests() }).register({ commands: [declaresOutbox] })).toThrow(/events are the runtime's/);
@@ -638,13 +652,14 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
 
   it('refuses a proposal command declared free of contact and payment writes that declares a job table, and only that (#2107)', () => {
     // A row in these starts work later, under the job's own declaration, which the proposal's says nothing about.
+    const jobsKey = (table: string) => `${JOBS_SCHEMA}.${table}`;
     const startsWork = {
-      'crove_jobs.job': tableWrite(kernelManifest.tables, 'crove_jobs', 'job', ['name']),
-      'crove_jobs.job_dependency': tableWrite(kernelManifest.tables, 'crove_jobs', 'job_dependency', ['child_name']),
-      'crove_jobs.schedule': tableWrite(kernelManifest.tables, 'crove_jobs', 'schedule', ['name']),
-      'crove_jobs.subscription': tableWrite(kernelManifest.tables, 'crove_jobs', 'subscription', ['event']),
-      'crove_jobs.queue': tableWrite(kernelManifest.tables, 'crove_jobs', 'queue', ['name']),
-      'crove_jobs.bam': tableWrite(kernelManifest.tables, 'crove_jobs', 'bam', ['name']),
+      [jobsKey('job')]: manifestTableWrite(kernelTables, JOBS_SCHEMA, 'job', ['name']),
+      [jobsKey('job_dependency')]: manifestTableWrite(kernelTables, JOBS_SCHEMA, 'job_dependency', ['child_name']),
+      [jobsKey('schedule')]: manifestTableWrite(kernelTables, JOBS_SCHEMA, 'schedule', ['name']),
+      [jobsKey('subscription')]: manifestTableWrite(kernelTables, JOBS_SCHEMA, 'subscription', ['event']),
+      [jobsKey('queue')]: manifestTableWrite(kernelTables, JOBS_SCHEMA, 'queue', ['name']),
+      [jobsKey('bam')]: manifestTableWrite(kernelTables, JOBS_SCHEMA, 'bam', ['name']),
     };
     const command = (access: CommandDef<unknown, unknown>['access'], writes: readonly CommandWrite[]) =>
       defineCommand({ sideEffect: 'none', name: 'tjobs.command', input: z.object({}), risk: 'R1', access, writes, handler: async () => ({}) }) as CommandDef<unknown, unknown>;
@@ -653,16 +668,18 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
       expect(register(command('proposal', [write])), table).toThrow(new RegExp(`may not declare ${table.replace('.', '\\.')}: the job it starts runs later under its own declaration`));
     }
     // Next to other tables, too.
-    expect(register(command('proposal', [tableWrite(kernelManifest.tables, 'crove_kernel', 'task_comment', ['body']), startsWork['crove_jobs.job']])), 'with another table').toThrow(/may not declare crove_jobs\.job:/);
-    // Every crove_jobs table of the manifest is classified here: one that starts work above, one that starts none below. A
+    expect(register(command('proposal', [manifestTableWrite(kernelTables, KERNEL_SCHEMA, 'task_comment', ['body']), startsWork[jobsKey('job')]!])), 'with another table').toThrow(
+      /may not declare (?:crove|ludy)_jobs\.job:/,
+    );
+    // Every jobs table of the manifest is classified here: one that starts work above, one that starts none below. A
     // table a pg-boss upgrade adds fails this until someone says which it is.
     const startsNone = ['instance', 'queue_stats', 'version', 'warning'];
-    expect(Object.keys(kernelManifest.tables.crove_jobs).sort()).toEqual([...Object.keys(startsWork).map((t) => t.replace('crove_jobs.', '')), ...startsNone].sort());
+    expect(Object.keys(kernelTables[JOBS_SCHEMA]!).sort()).toEqual([...Object.keys(startsWork).map((t) => t.replace(`${JOBS_SCHEMA}.`, '')), ...startsNone].sort());
     // Not global: the statistics start nothing, a command that is not a proposal queues jobs as before, and a proposal
     // that writes a contact column is flagged P04 anyway (it is not "free of" them).
-    expect(register(command('proposal', [tableWrite(kernelManifest.tables, 'crove_jobs', 'queue_stats', ['name'])])), 'queue_stats').not.toThrow();
-    expect(register(command('system', [startsWork['crove_jobs.job']])), 'a system command').not.toThrow();
-    expect(register(command('proposal', [tableWrite(kernelManifest.tables, 'crove_kernel', 'party', ['email']), startsWork['crove_jobs.job']])), 'a proposal that writes a contact column').not.toThrow();
+    expect(register(command('proposal', [manifestTableWrite(kernelTables, JOBS_SCHEMA, 'queue_stats', ['name'])])), 'queue_stats').not.toThrow();
+    expect(register(command('system', [startsWork[jobsKey('job')]!])), 'a system command').not.toThrow();
+    expect(register(command('proposal', [manifestTableWrite(kernelTables, KERNEL_SCHEMA, 'party', ['email']), startsWork[jobsKey('job')]!])), 'a proposal that writes a contact column').not.toThrow();
   });
 
   it('keeps every contact and payment column of the manifests', () => {
@@ -670,7 +687,7 @@ describe('declared command writes against the manifests (#1697, #1710)', () => {
     for (const tables of manifests()) {
       for (const [schema, byTable] of Object.entries(tables)) {
         for (const [table, columns] of Object.entries(byTable)) {
-          for (const [column, cls] of Object.entries(columns)) classes.set(`${schema}.${table}.${column}`, cls);
+          for (const [column, cls] of Object.entries(columns)) classes.set(`${schema.replace(/^ludy_/, 'crove_')}.${table}.${column}`, cls);
         }
       }
     }

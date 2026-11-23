@@ -3,12 +3,12 @@
 // extraction queue (#432 made it fair, not bounded). The worker asks kernel.usage.over before it files a message or
 // reads a document, and records what it used with kernel.usage.record. An item over a limit is never dropped: the
 // worker keeps it, records a deferral (kernel.usage.defer) and tries it again once enough of the window has passed;
-// the org's owners get one mail per metric in any 24 hours. Counted in crove_kernel.org_usage, a sliding window like
+// the org's owners get one mail per metric in any 24 hours. Counted in ludy_kernel.org_usage, a sliding window like
 // the auth email budget.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { USAGE_DEFERRAL_METRICS, USAGE_DEFERRAL_SUBJECTS, USAGE_METRICS, type UsageMetric } from '@crove/db';
-import { defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { USAGE_DEFERRAL_METRICS, USAGE_DEFERRAL_SUBJECTS, USAGE_METRICS, type UsageMetric } from '@ludy/db';
+import { defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { createMailMessage } from './mail.ts';
 
 export const USAGE_DEFERRED_TEMPLATE = 'kernel.usage.deferred';
@@ -57,7 +57,7 @@ export const usageOver = defineQuery({
           SELECT created_at, amount,
                  sum(amount) OVER (ORDER BY created_at, id) AS prefix,
                  sum(amount) OVER () AS total
-          FROM crove_kernel.org_usage
+          FROM ludy_kernel.org_usage
           WHERE org_id = ${ctx.orgId} AND metric = ${metric}
             -- The day's AI cost bounds the extraction queue (#675): what drafts and rewrites cost is the month's budget's (#2382).
             AND (metric <> 'ai_cost' OR feature IS NULL OR module IN ('finance', 'conversation'))
@@ -84,7 +84,7 @@ export const usageRecord = defineCommand({
   access: 'system',
   handler: async (ctx, input) => {
     const values = input.entries.filter((e) => /[1-9]/.test(e.amount)).map((e) => ({ org_id: ctx.orgId, metric: e.metric, amount: e.amount }));
-    if (values.length > 0) await ctx.trx.insertInto('crove_kernel.org_usage').values(values).execute();
+    if (values.length > 0) await ctx.trx.insertInto('ludy_kernel.org_usage').values(values).execute();
     return { recorded: values.length };
   },
 });
@@ -114,7 +114,7 @@ export const usageDefer = defineCommand({
   handler: async (ctx, input) => {
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.usage_deferral:${ctx.orgId}:${input.metric}`}, 0))`.execute(ctx.trx);
     const told = await ctx.trx
-      .selectFrom('crove_kernel.usage_deferral')
+      .selectFrom('ludy_kernel.usage_deferral')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('metric', '=', input.metric)
@@ -127,11 +127,11 @@ export const usageDefer = defineCommand({
     // owners and admins, and the Inbox shows the file as waiting.
     const aiBudget = input.metric === 'ai_budget';
     if (!told && !aiBudget) {
-      const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
-      const owners = await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('role', '=', 'owner').orderBy('user_id').execute();
+      const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+      const owners = await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('role', '=', 'owner').orderBy('user_id').execute();
       const ids = owners.map((o) => o.user_id);
       const { rows: people } = ids.length
-        ? await sql<{ user_id: string; email: string | null }>`SELECT user_id, email FROM crove_kernel.member_emails(${ids}::uuid[])`.execute(ctx.trx)
+        ? await sql<{ user_id: string; email: string | null }>`SELECT user_id, email FROM ludy_kernel.member_emails(${ids}::uuid[])`.execute(ctx.trx)
         : { rows: [] };
       for (const person of people) {
         if (!person.email) continue;
@@ -150,7 +150,7 @@ export const usageDefer = defineCommand({
     }
     // The org's owners count as told even when none had an address: the audit row says how many were mailed.
     await ctx.trx
-      .insertInto('crove_kernel.usage_deferral')
+      .insertInto('ludy_kernel.usage_deferral')
       .values({
         org_id: ctx.orgId,
         metric: input.metric,

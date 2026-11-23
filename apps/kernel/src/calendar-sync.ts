@@ -7,12 +7,12 @@
 // the member reconnects. A refusal of the access token alone is first answered by renewing it once. Any other failure
 // leaves the connection active with the reason noted, and the next sweep, 15 minutes later, tries again. The blocks of
 // a failing connection stay: a stale block withholds a slot, it never frees one that may be busy.
-import { CALENDAR_SYNC_DAYS, calendarBinding, type CalendarProvider } from '@crove/kernel-contract';
-import type { CalendarAdapter } from '@crove/channel';
+import { CALENDAR_SYNC_DAYS, calendarBinding, type CalendarProvider } from '@ludy/kernel-contract';
+import type { CalendarAdapter } from '@ludy/channel';
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { CredentialError, DomainError, type CredentialBroker, type Runtime, type SystemActor } from '@crove/kernel-runtime';
-import { busyPieces, type SealedCalendarCredential, type WriteBackAction } from '@crove/kernel';
+import type { Db } from '@ludy/db';
+import { CredentialError, DomainError, type CredentialBroker, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
+import { busyPieces, type SealedCalendarCredential, type WriteBackAction } from '@ludy/kernel';
 
 const ACTOR: SystemActor = { type: 'system', component: 'kernel.calendar.sync' };
 export const CALENDAR_SYNC_SWEEP_MS = 15 * 60_000;
@@ -52,7 +52,7 @@ export interface CalendarWriteBackJob {
 
 export type CalendarSyncOutcome = { outcome: 'synced'; added: number; removed: number } | { outcome: 'skipped' | 'expired' | 'retry'; reason: string };
 
-// A page of the active calendar connections of active orgs after a key (crove_kernel.calendar_sync_due, the worker
+// A page of the active calendar connections of active orgs after a key (ludy_kernel.calendar_sync_due, the worker
 // login's alone), for the 15 minute sweep.
 export const CALENDAR_SYNC_PAGE = 1000;
 export async function calendarSyncDue(
@@ -60,7 +60,7 @@ export async function calendarSyncDue(
   after: { orgId: string; connectionId: string } | null,
 ): Promise<Array<{ orgId: string; connectionId: string; provider: string }>> {
   const { rows } = await sql<{ org_id: string; connection_id: string; provider: string }>`
-    SELECT org_id, connection_id, provider FROM crove_kernel.calendar_sync_due(${after?.orgId ?? null}::uuid, ${after?.connectionId ?? null}::uuid, ${CALENDAR_SYNC_PAGE}::int)`.execute(workerDb);
+    SELECT org_id, connection_id, provider FROM ludy_kernel.calendar_sync_due(${after?.orgId ?? null}::uuid, ${after?.connectionId ?? null}::uuid, ${CALENDAR_SYNC_PAGE}::int)`.execute(workerDb);
   return rows.map((r) => ({ orgId: r.org_id, connectionId: r.connection_id, provider: r.provider }));
 }
 
@@ -135,7 +135,7 @@ async function disconnectSeen(deps: CalendarSyncDeps, job: CalendarSyncJob, stat
 export async function runCalendarSync(deps: CalendarSyncDeps, job: CalendarSyncJob): Promise<CalendarSyncOutcome> {
   const options = { actor: ACTOR, orgId: job.orgId };
   const now = deps.now ?? (() => new Date());
-  const state = await deps.runtime.query<{ status: string; provider: string; expiresAt: string | null; updatedAt: string; writeBack?: boolean } | null>('kernel.calendar.connection_state', { connectionId: job.connectionId }, options);
+  const state = await deps.runtime.query<{ status: string; provider: string; expiresAt: string | null; updatedAt: string; writeBack?: boolean; readEvents?: boolean } | null>('kernel.calendar.connection_state', { connectionId: job.connectionId }, options);
   if (!state || state.status !== 'active') return { outcome: 'skipped', reason: 'not_active' };
   // An adapter switched off (the app credentials removed) syncs nothing; the connection and its blocks stay.
   const adapter = adapterFor(deps.adapters, state.provider);
@@ -283,7 +283,33 @@ export async function runCalendarSync(deps: CalendarSyncDeps, job: CalendarSyncJ
     { connectionId: job.connectionId, from: from.toISOString(), to: to.toISOString(), busy: merged.map((b) => ({ start: new Date(b.start).toISOString(), end: new Date(b.end).toISOString() })), readStartedAt },
     options,
   );
-  return done.replaced ? { outcome: 'synced', added: done.added, removed: done.removed } : { outcome: 'skipped', reason: 'not_active' };
+  if (!done.replaced) return { outcome: 'skipped', reason: 'not_active' };
+  // The member's own meetings (B1, #3165), only when they switched the read on and the grant carries its scope: after the busy times, with a token that has just worked. A failure here
+  // never costs the member their busy times; it is named by a code and the next sweep reads again.
+  if (state.readEvents) await readAgenda(deps, job, adapter, secret, now(), options);
+  return { outcome: 'synced', added: done.added, removed: done.removed };
+}
+
+// How far back and ahead the member's meetings are kept: from 1 day ago to 7 days ahead.
+const AGENDA_BACK_MS = DAY_MS;
+const AGENDA_AHEAD_MS = 7 * DAY_MS;
+
+// Reads the member's events and hands them to the meetings module's own command, which replaces the cache (the system context cannot read it back, so a definer does the delete and the write).
+// An org whose Meetings is off, or a deployment without the meetings module, has no agenda to keep: the provider is not read and nothing is logged. Nothing here keeps a title in a log: a failure is named by a code.
+async function readAgenda(deps: CalendarSyncDeps, job: CalendarSyncJob, adapter: CalendarAdapter, secret: string, at: Date, options: { actor: SystemActor; orgId: string }): Promise<void> {
+  try {
+    // An org whose Meetings is off (ADR-0053) has no agenda to keep: the provider is not read, and nothing is logged for the refusal that would follow.
+    if (!(await deps.runtime.appOn(options.orgId, 'meetings'))) return;
+    const from = new Date(at.getTime() - AGENDA_BACK_MS);
+    const answer = await adapter.events(secret, from, new Date(at.getTime() + AGENDA_AHEAD_MS));
+    if (!('events' in answer)) {
+      console.error(`[calendar-sync] connection ${job.connectionId.slice(0, 8)} could not read events: ${'refused' in answer ? answer.refused : 'scope' in answer ? 'scope' : answer.failed}`);
+      return;
+    }
+    await deps.runtime.execute('meetings.agenda.replace', { connectionId: job.connectionId, from: from.toISOString(), events: answer.events }, options);
+  } catch (error: unknown) {
+    console.error(`[calendar-sync] connection ${job.connectionId.slice(0, 8)} could not store events: ${error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'error'}`);
+  }
 }
 
 interface WriteBackBatch {

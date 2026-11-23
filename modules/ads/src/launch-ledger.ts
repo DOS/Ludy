@@ -6,11 +6,11 @@
 //
 // The caps are checked under the org's lock (lockedSetting), by the commands that take it, against the plan AND every launch that still commits (launch-caps.ts is
 // the arithmetic, in decimal): at the request for approval as an early warning, and at the approval as the authoritative check, in the transaction that writes the
-// commitment, so two launches approved together serialise and the second sees the first. The database holds the ledger itself (crove_ads.launch_guard): a row exists
+// commitment, so two launches approved together serialise and the second sees the first. The database holds the ledger itself (ludy_ads.launch_guard): a row exists
 // only for an approved plan, its commitment only shortens, and a state moves only along its graph.
 import { sql } from 'kysely';
-import { DomainError, type CommandContext } from '@crove/kernel-runtime';
-import type { AdsLaunchObjectView, AdsLaunchView } from '@crove/kernel-contract';
+import { DomainError, type CommandContext } from '@ludy/kernel-runtime';
+import type { AdsLaunchObjectView, AdsLaunchView } from '@ludy/kernel-contract';
 import { addDays } from './domain.ts';
 import { committedProblems, type Commitment, type CommittedCap, type CommittedPlan } from './launch-caps.ts';
 
@@ -27,13 +27,26 @@ export function monthsWindow(startOn: string, endOn: string): { from: string; to
   return { from: `${startOn.slice(0, 7)}-01`, to: addDays(`${new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10)}`, -1) };
 }
 
-// Every launch of the org that still commits some of its budget in the window, in the currency (crove_ads.launch_commitments: owners, admins and the system,
+// Every launch of the org that still commits some of its budget in the window, in the currency (ludy_ads.launch_commitments: owners, admins and the system,
 // across the org's entities, since an org cap counts every account).
-export async function committedLaunches(ctx: Db, currency: string, startOn: string, endOn: string): Promise<Commitment[]> {
+// `exceptLaunchId` leaves one launch out (W4, #3835): the begin step and the approval of a raise, an extension or a resume judge the launch against the OTHERS, with its own
+// new values, so its own commitment (which already holds the change, as a queued change is held) is never counted twice.
+export async function committedLaunches(ctx: Db, currency: string, startOn: string, endOn: string, exceptLaunchId: string | null = null): Promise<Commitment[]> {
   const { from, to } = monthsWindow(startOn, endOn);
   const { rows } = await sql<{ ad_account_id: string; currency: string; daily_budget: string; start_on: string; commit_until: string }>`
     SELECT ad_account_id, currency, daily_budget, start_on::text AS start_on, commit_until::text AS commit_until
-    FROM crove_ads.launch_commitments(${currency}, ${from}::date, ${to}::date)`.execute(ctx.trx);
+    FROM ludy_ads.launch_commitments_except(${currency}, ${from}::date, ${to}::date, ${exceptLaunchId}::uuid)`.execute(ctx.trx);
+  return rows.map((r) => ({ adAccountId: r.ad_account_id, currency: r.currency, dailyBudget: r.daily_budget, startOn: r.start_on, endOn: r.commit_until }));
+}
+
+// One launch's own commitment, as segments (W4, #3835): what it holds against the caps by budget, the last segment running to its end. The change of a running ad replaces that last
+// segment with the values it is judged at and keeps the earlier ones.
+export async function ownCommitments(ctx: Db, launchId: string, currency: string, startOn: string, endOn: string): Promise<Commitment[]> {
+  const { from, to } = monthsWindow(startOn, endOn);
+  const { rows } = await sql<{ ad_account_id: string; currency: string; daily_budget: string; start_on: string; commit_until: string }>`
+    SELECT ad_account_id, currency, daily_budget, start_on::text AS start_on, commit_until::text AS commit_until
+    FROM ludy_ads.launch_commitments_of(${currency}, ${from}::date, ${to}::date, ${launchId}::uuid)
+    ORDER BY start_on`.execute(ctx.trx);
   return rows.map((r) => ({ adAccountId: r.ad_account_id, currency: r.currency, dailyBudget: r.daily_budget, startOn: r.start_on, endOn: r.commit_until }));
 }
 
@@ -72,10 +85,10 @@ export interface QueuedLaunch {
 }
 
 // Writes the ledger row of an approved plan. The database accepts it only inside the execution of that plan's approved proposal, for the approved draft, while the
-// switches are on (crove_ads.launch_guard), and stamps the proposal, the commitment window and who and when.
+// switches are on (ludy_ads.launch_guard), and stamps the proposal, the commitment window and who and when.
 export async function queueLaunch(ctx: Db, launch: QueuedLaunch): Promise<{ id: string; tag: string }> {
   const row = await ctx.trx
-    .insertInto('crove_ads.ad_launch')
+    .insertInto('ludy_ads.ad_launch')
     .values({
       org_id: ctx.orgId,
       ad_account_id: launch.adAccountId,
@@ -99,7 +112,7 @@ export async function queueLaunch(ctx: Db, launch: QueuedLaunch): Promise<{ id: 
 // stop's (W2-4), not this. Returns how many. The guard lets an owner, an admin or the system do it.
 export async function cancelQueuedLaunches(ctx: Db, reason: 'cancelled' | 'switch_off' | 'account_off' | 'launches_blocked', adAccountId?: string, launchId?: string): Promise<number> {
   let query = ctx.trx
-    .updateTable('crove_ads.ad_launch')
+    .updateTable('ludy_ads.ad_launch')
     .set({ state: 'cancelled', stop_reason: reason })
     .where('org_id', '=', ctx.orgId)
     .where('state', '=', 'queued');
@@ -119,7 +132,7 @@ export interface StoppedLaunch {
 
 // Stops the launches that have started, of the org, of one account or one launch, in the actor's own context (an owner's or an admin's, or the system's): each moves to
 // `stopped` and keeps its commitment against the caps to at least the earlier of what it was and today in the account's own time zone, never cleared (the database's
-// guard holds the rule whoever stops it, crove_ads.launch_guard: a person's stop must not release spend that ran or is in flight, and crove_ads.launch_today is the one
+// guard holds the rule whoever stops it, ludy_ads.launch_guard: a person's stop must not release spend that ran or is in flight, and ludy_ads.launch_today is the one
 // definition of today, tomorrow in UTC when no zone is known). A flight that has not begun keeps its first day (the ledger holds a commitment inside the flight, never
 // before its first day), which is never less than the guard allows. The objects at the platform are paused afterwards, by the pause job, from the event the caller writes
 // for each launch returned (`ads.pause.queued`, ids only): never inside this transaction, so a platform that is down cannot stop a stop. A launch that has not started
@@ -132,9 +145,9 @@ export async function stopStartedLaunches(
   const account = filter.adAccountId ?? null;
   const launch = filter.launchId ?? null;
   const { rows } = await sql<{ id: string; ad_account_id: string }>`
-    UPDATE crove_ads.ad_launch l
+    UPDATE ludy_ads.ad_launch l
     SET state = 'stopped', stop_reason = ${reason},
-        commit_until = GREATEST(l.start_on, LEAST(l.commit_until, crove_ads.launch_today((SELECT a.time_zone FROM crove_ads.ad_account a WHERE a.org_id = l.org_id AND a.id = l.ad_account_id))))
+        commit_until = GREATEST(l.start_on, LEAST(l.commit_until, ludy_ads.launch_today((SELECT a.time_zone FROM ludy_ads.ad_account a WHERE a.org_id = l.org_id AND a.id = l.ad_account_id))))
     WHERE l.org_id = ${ctx.orgId}::uuid AND l.state IN ('launching', 'needs_attention', 'live')
       AND (${account}::uuid IS NULL OR l.ad_account_id = ${account}::uuid) AND (${launch}::uuid IS NULL OR l.id = ${launch}::uuid)
     RETURNING l.id, l.ad_account_id`.execute(ctx.trx);
@@ -150,7 +163,7 @@ export const stopRunningLaunch = (ctx: Db, reason: Parameters<typeof stopStarted
 export async function hasOpenLaunch(ctx: Db, adAccountId: string): Promise<boolean> {
   const { rows } = await sql<{ open: boolean }>`
     SELECT EXISTS (
-      SELECT 1 FROM crove_ads.ad_launch l
+      SELECT 1 FROM ludy_ads.ad_launch l
       WHERE l.org_id = ${ctx.orgId}::uuid AND l.ad_account_id = ${adAccountId}::uuid
         AND (l.state IN ('launching', 'needs_attention', 'live') OR (l.state = 'stopped' AND l.started_at IS NOT NULL AND l.wound_down_at IS NULL AND l.wind_down_code IS NULL))
     ) AS open`.execute(ctx.trx);
@@ -162,14 +175,14 @@ export async function hasOpenLaunch(ctx: Db, adAccountId: string): Promise<boole
 export async function openLaunchObjects(ctx: Db, adAccountId: string): Promise<{ launches: number; objects: Array<{ level: string; id: string }> }> {
   const { rows } = await sql<{ launches: number; level: string | null; external_id: string | null }>`
     WITH open AS (
-      SELECT l.id FROM crove_ads.ad_launch l
+      SELECT l.id FROM ludy_ads.ad_launch l
       WHERE l.org_id = ${ctx.orgId}::uuid AND l.ad_account_id = ${adAccountId}::uuid
         AND (l.state IN ('launching', 'needs_attention', 'live') OR (l.state = 'stopped' AND l.started_at IS NOT NULL AND l.wound_down_at IS NULL AND l.wind_down_code IS NULL))
     )
     SELECT (SELECT count(*)::int FROM open) AS launches, o.level, o.external_id
     FROM (SELECT 1) one
     LEFT JOIN LATERAL (
-      SELECT o.level, o.external_id FROM crove_ads.ad_object o
+      SELECT o.level, o.external_id FROM ludy_ads.ad_object o
       WHERE o.org_id = ${ctx.orgId}::uuid AND o.launch_id IN (SELECT id FROM open) AND o.level IN ('campaign', 'ad_set', 'ad')
       ORDER BY o.level, o.external_id LIMIT 30
     ) o ON true`.execute(ctx.trx);
@@ -178,7 +191,7 @@ export async function openLaunchObjects(ctx: Db, adAccountId: string): Promise<{
 
 // The launch of a draft, if one was queued (the builder shows it on an approved draft).
 const launchSelect = (db: Db['trx']) =>
-  db.selectFrom('crove_ads.ad_launch as l').select([
+  db.selectFrom('ludy_ads.ad_launch as l').select([
     'l.id',
     'l.draft_id',
     'l.ad_account_id',
@@ -201,7 +214,12 @@ const launchSelect = (db: Db['trx']) =>
   ]);
 type LaunchRow = Awaited<ReturnType<ReturnType<typeof launchSelect>['execute']>>[number];
 
-export function launchView(row: LaunchRow, objects: AdsLaunchObjectView[] = []): AdsLaunchView {
+// When Ludy last asked the platform about a launch's objects, and whether that read worked (#3419).
+export type StatesRead = { at: string; ok: boolean };
+// A state read's key in the kernel's ledger starts with the launch it read (`ads.state:<launch>:<time>`, written by `ads.object.sync_state`).
+export const stateReadKeyPrefix = (launchId: string): string => `ads.state:${launchId}:`;
+
+export function launchView(row: LaunchRow, objects: AdsLaunchObjectView[] = [], provider = '', read: StatesRead | null = null): AdsLaunchView {
   return {
     id: row.id,
     draftId: row.draft_id,
@@ -224,6 +242,9 @@ export function launchView(row: LaunchRow, objects: AdsLaunchObjectView[] = []):
     // them by hand there. null for a launch that is not stopped.
     windDown: row.state === 'stopped' ? { state: row.wound_down_at ? 'done' : row.wind_down_code ? 'gave_up' : 'pending', code: row.wind_down_code } : null,
     objects,
+    provider,
+    statesReadAt: read ? read.at : null,
+    statesReadOk: read ? read.ok : null,
   };
 }
 
@@ -234,7 +255,7 @@ export async function launchesOfDrafts(ctx: Db, draftIds: readonly string[]): Pr
   if (rows.length === 0) return out;
   const objectsByLaunch = new Map<string, AdsLaunchObjectView[]>();
   const objectRows = await ctx.trx
-    .selectFrom('crove_ads.ad_object')
+    .selectFrom('ludy_ads.ad_object')
     .select(['launch_id', 'slot', 'level', 'external_id', 'name', 'effective_status', 'review_reason'])
     .where('org_id', '=', ctx.orgId)
     .where('launch_id', 'in', rows.map((r) => r.id))
@@ -253,7 +274,27 @@ export async function launchesOfDrafts(ctx: Db, draftIds: readonly string[]): Pr
     });
     objectsByLaunch.set(o.launch_id, list);
   }
-  for (const row of rows) out.set(row.draft_id, launchView(row, objectsByLaunch.get(row.id) ?? []));
+  // The provider of each launch's ad account, and the newest settled state read of each launch in the kernel's ledger (a `started` row is a read not yet settled and says nothing). Both
+  // come from this org's own rows under RLS; a read's key names its launch (`ads.state:<launch>:<time>`), so no other launch's row can match.
+  const accounts = await ctx.trx.selectFrom('ludy_ads.ad_account').select(['id', 'provider']).where('org_id', '=', ctx.orgId).where('id', 'in', [...new Set(rows.map((r) => r.ad_account_id))]).execute();
+  const providerOf = new Map(accounts.map((a) => [a.id, a.provider]));
+  // One row per launch, reduced in SQL (the ledger gets a row per read and has no prune yet): the newest settled one. The key holds the launch id after `ads.state:` (10 characters).
+  const launchOfKey = sql<string>`substring(key from 11 for 36)`;
+  const reads = await ctx.trx
+    .selectFrom('ludy_kernel.external_call')
+    .select([launchOfKey.as('launch_id'), 'state', 'finished_at'])
+    .distinctOn(launchOfKey)
+    .where('org_id', '=', ctx.orgId)
+    .where('module', '=', 'ads')
+    .where('step', '=', 'state_read')
+    .where('state', 'in', ['succeeded', 'failed'])
+    .where(sql<boolean>`key like any (${rows.map((r) => `${stateReadKeyPrefix(r.id)}%`)}::text[])`)
+    .orderBy(launchOfKey)
+    .orderBy('finished_at', 'desc')
+    .execute();
+  const readOf = new Map<string, StatesRead>();
+  for (const r of reads) if (r.finished_at) readOf.set(r.launch_id, { at: r.finished_at.toISOString(), ok: r.state === 'succeeded' });
+  for (const row of rows) out.set(row.draft_id, launchView(row, objectsByLaunch.get(row.id) ?? [], providerOf.get(row.ad_account_id) ?? '', readOf.get(row.id) ?? null));
   return out;
 }
 

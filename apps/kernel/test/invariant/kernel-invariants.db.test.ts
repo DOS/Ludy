@@ -12,17 +12,18 @@ import { sql, type Transaction } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { assertSystemContextAccess, createDb, createPool, type Database, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createExtractApp } from '@crove/extract';
-import { createExtractClient } from '@crove/extract-contract';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, defineCommand, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
+import { assertSystemContextAccess, createDb, type Database, type Db } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createExtractApp } from '@ludy/extract';
+import { createExtractClient } from '@ludy/extract-contract';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, defineCommand, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { actorOf, createAuthenticator } from '../../src/auth.ts';
 import { loadConfig } from '../../src/config.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -56,6 +57,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('kernel invariants on PostgreSQL', () => {
   const dbName = `crove_test_inv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl: string;
+  let dbIds: DbIdentifiers | undefined;
   let appUrl: string;
   let workerUrl: string;
   let pool: pg.Pool;
@@ -110,7 +112,7 @@ suite('kernel invariants on PostgreSQL', () => {
   }
 
   async function withAdmin<T>(fn: (admin: pg.Client) => Promise<T>): Promise<T> {
-    const admin = new pg.Client({ connectionString: adminUrl });
+    const admin = createDbClient({ connectionString: adminUrl }, dbIds);
     await admin.connect();
     try {
       return await fn(admin);
@@ -150,10 +152,11 @@ suite('kernel invariants on PostgreSQL', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const loginUrl = (username: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = username;
+      url.username = dbIds ? dbIds.roleName(username) : username;
       url.password = password;
       return url.toString();
     };
@@ -164,10 +167,10 @@ suite('kernel invariants on PostgreSQL', () => {
         commands: [...kernelCommands, ...financeCommands],
         queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries],
       });
-    pool = createPool({ connectionString: appUrl, max: 4 });
+    pool = createDbPool({ connectionString: appUrl, max: 4 }, dbIds);
     db = createDb(pool);
     runtime = register(db);
-    workerPool = createPool({ connectionString: workerUrl, max: 4 });
+    workerPool = createDbPool({ connectionString: workerUrl, max: 4 }, dbIds);
     workerDb = createDb(workerPool);
     workerRuntime = register(workerDb);
     users.owner = await upsertIdentity(db, { issuer: 'test', subject: 'owner', email: 'owner@example.com', name: 'Owner' });
@@ -199,16 +202,16 @@ suite('kernel invariants on PostgreSQL', () => {
     await ingest(orgA, users.owner, new TextEncoder().encode('<a>org-a</a>'));
     const visible = await db.transaction().execute(async (trx) => {
       await sql`SELECT crove_kernel.enter_user_context(${orgB}::uuid, ${contextToken(users.outsider, orgB)}::text)`.execute(trx);
-      return trx.selectFrom('crove_kernel.file').select('org_id').execute();
+      return trx.selectFrom('ludy_kernel.file').select('org_id').execute();
     });
     expect(visible.every((r) => r.org_id === orgB)).toBe(true);
-    const noContext = await db.selectFrom('crove_kernel.file').select('id').execute();
+    const noContext = await db.selectFrom('ludy_kernel.file').select('id').execute();
     expect(noContext).toHaveLength(0);
     await expect(
       db.transaction().execute(async (trx) => {
         await sql`SELECT crove_kernel.enter_user_context(${orgB}::uuid, ${contextToken(users.outsider, orgB)}::text)`.execute(trx);
         await trx
-          .insertInto('crove_kernel.party')
+          .insertInto('ludy_kernel.party')
           .values({ org_id: orgA, name: 'smuggled' })
           .execute();
       }),
@@ -216,7 +219,7 @@ suite('kernel invariants on PostgreSQL', () => {
   });
 
   it('keeps audit and outbox append-only, even for the database owner', async () => {
-    const admin = new pg.Client({ connectionString: adminUrl });
+    const admin = createDbClient({ connectionString: adminUrl }, dbIds);
     await admin.connect();
     try {
       await expect(admin.query('UPDATE crove_kernel.audit_event SET outcome = $1', ['denied'])).rejects.toThrow(/append-only/);
@@ -229,7 +232,7 @@ suite('kernel invariants on PostgreSQL', () => {
   });
 
   it('refuses unbalanced journal entries at commit', async () => {
-    const admin = new pg.Client({ connectionString: adminUrl });
+    const admin = createDbClient({ connectionString: adminUrl }, dbIds);
     await admin.connect();
     try {
       await admin.query('BEGIN');
@@ -274,7 +277,7 @@ suite('kernel invariants on PostgreSQL', () => {
     await expect(
       inOrgB((trx) =>
         trx
-          .insertInto('crove_finance.journal_entry')
+          .insertInto('ludy_finance.journal_entry')
           // @ts-expect-error crove_tenant has no INSERT here, so the write does not typecheck either (issue #266)
           .values({ org_id: orgB, entry_date: '2026-10-01', description: 'direct', source_type: 'test', source_id: randomUUID() })
           .execute(),
@@ -283,7 +286,7 @@ suite('kernel invariants on PostgreSQL', () => {
     await expect(
       inOrgB((trx) =>
         trx
-          .insertInto('crove_finance.journal_line')
+          .insertInto('ludy_finance.journal_line')
           // @ts-expect-error crove_tenant has no INSERT here, so the write does not typecheck either (issue #266)
           .values({ org_id: orgB, entry_id: randomUUID(), line_no: 1, account_code: '6422', debit: '100' })
           .execute(),
@@ -315,7 +318,7 @@ suite('kernel invariants on PostgreSQL', () => {
 
   it('gives the login roles no temporary schema to plant objects in', async () => {
     for (const url of [appUrl, workerUrl]) {
-      const login = new pg.Client({ connectionString: url });
+      const login = createDbClient({ connectionString: url }, dbIds);
       await login.connect();
       try {
         await expect(login.query('CREATE TEMP TABLE text (v pg_catalog.text)')).rejects.toThrow(/permission denied to create temporary tables/);
@@ -330,7 +333,7 @@ suite('kernel invariants on PostgreSQL', () => {
     // Login roles have no TEMPORARY (previous test). Grant it back for this session so the pinned
     // search_path is tested on its own, as the layer that still holds if TEMP is ever granted.
     await withAdmin((admin) => admin.query(`GRANT TEMPORARY ON DATABASE ${dbName} TO crove_app`));
-    const app = new pg.Client({ connectionString: appUrl });
+    const app = createDbClient({ connectionString: appUrl }, dbIds);
     await app.connect();
     try {
       // A temp table named "text" is also a type; casts on it run whatever the caller wrote.
@@ -365,7 +368,7 @@ suite('kernel invariants on PostgreSQL', () => {
   it('keeps recorded documents and journal entries append-only', async () => {
     // Record one document so the row triggers have rows to refuse.
     await runtime.execute('kernel.proposal.approve', await propose(variant('1250')), { actor: asMfa(users.owner), orgId: orgA });
-    const admin = new pg.Client({ connectionString: adminUrl });
+    const admin = createDbClient({ connectionString: adminUrl }, dbIds);
     await admin.connect();
     try {
       const { rows } = await admin.query<{ docs: number; lines: number }>(
@@ -400,7 +403,7 @@ suite('kernel invariants on PostgreSQL', () => {
       const g = await admin.query<{ role: string; privilege: string }>(
         `SELECT r.rolname AS role, p AS privilege
          FROM pg_roles r CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
-         WHERE r.rolname LIKE 'crove\\_%' AND NOT r.rolsuper
+         WHERE ((r.rolname LIKE 'crove\\_%' OR r.rolname LIKE 'ludy\\_%') AND r.rolname NOT LIKE '%\\_test\\_%' AND r.rolname NOT LIKE 'crove\\_test%' AND r.rolname NOT LIKE 'ludy\\_test%' AND r.rolname <> 'ludy_migrate_test') AND NOT r.rolsuper
            AND r.oid <> (SELECT relowner FROM pg_class WHERE oid = 'crove_kernel.user_account'::regclass)
            AND (has_table_privilege(r.oid, 'crove_kernel.user_account', p)
                 OR (p IN ('SELECT', 'INSERT', 'UPDATE', 'REFERENCES')
@@ -659,9 +662,9 @@ suite('kernel invariants on PostgreSQL', () => {
     await expect(assertSystemContextAccess(pool, 'denied')).resolves.toBeUndefined();
     await expect(assertSystemContextAccess(workerPool, 'granted')).resolves.toBeUndefined();
     await expect(assertSystemContextAccess(pool, 'granted')).rejects.toThrow(
-      /cannot enter system context \(crove_kernel.enter_system_context\(uuid\), crove_kernel.org_by_inbound_token\(text\), crove_kernel.inbound_claim\(integer\)\)/,
+      /cannot enter system context \((?:crove|ludy)_kernel.enter_system_context\(uuid\), (?:crove|ludy)_kernel.org_by_inbound_token\(text\), (?:crove|ludy)_kernel.inbound_claim\(integer\)\)/,
     );
-    await expect(assertSystemContextAccess(workerPool, 'denied')).rejects.toThrow(/can enter system context \(crove_kernel.enter_system_context/);
+    await expect(assertSystemContextAccess(workerPool, 'denied')).rejects.toThrow(/can enter system context \((?:crove|ludy)_kernel.enter_system_context/);
   });
 
   // ---------------------------------------------------------------------------------------------------------

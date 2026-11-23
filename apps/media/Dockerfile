@@ -13,7 +13,7 @@ ENV CI=true
 RUN npm install -g pnpm@10.34.7 --no-fund --no-audit
 COPY . .
 # Only crove-media and its workspace dependencies, production dependencies only.
-RUN pnpm install --frozen-lockfile --prod --filter "@crove/media..." \
+RUN pnpm install --frozen-lockfile --prod --filter "@ludy/media..." \
  && rm -rf apps/media/test
 
 FROM node:26-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0
@@ -42,7 +42,7 @@ COPY --from=build /app/packages/media-contract /app/packages/media-contract
 
 # Marker (apps/media/src/main.ts, IMAGE_MARKER): in this image the environment allowlist always applies,
 # even when NODE_ENV is overridden. Owned by root, so the service user cannot remove it.
-RUN echo 'crove-media image: the environment allowlist always applies' > /etc/crove-media-image
+RUN echo 'ludy-media image: the environment allowlist always applies' > /etc/ludy-media-image
 
 USER node
 EXPOSE 8095

@@ -3,9 +3,9 @@
 // buyer comes from the customer's own record (a tax code that fails its checksum is left out), a line without a stated rate gets the customer's usual rate, else the org's, and every state of
 // `ai` is an answer with nothing to fill in, never an error.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, type EInvoiceDraftRequest, type EInvoiceDraftResult } from '@crove/agent';
-import { enterpriseCheckDigit } from '@crove/l10n-vn';
-import type { EInvoiceSuggestSource } from '@crove/mod-finance';
+import { AiBudgetExhaustedError, type EInvoiceDraftRequest, type EInvoiceDraftResult } from '@ludy/agent';
+import { enterpriseCheckDigit } from '@ludy/l10n-vn';
+import type { EInvoiceSuggestSource } from '@ludy/mod-finance';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { buyerOf, einvoiceAi, suggestEInvoiceDraft, usualRate, withInvoice, type EInvoiceAi } from '../src/einvoice-ai.ts';
 
@@ -22,6 +22,7 @@ const SOURCE: EInvoiceSuggestSource = {
   ],
   orgRates: [{ vatRate: '10%', n: 9 }],
   invoice: null,
+  formBuyerRates: null,
 };
 const LINES = [{ description: 'Bánh A', unit: 'hộp', quantity: '10', unitPrice: '120000', vatRate: null }];
 
@@ -79,7 +80,7 @@ describe('suggestEInvoiceDraft', () => {
     expect(JSON.stringify(asked)).not.toContain('Lê Lợi');
     expect(JSON.stringify(asked)).not.toContain(VALID_TAX_CODE);
     expect(answer.ai).toBe('used');
-    expect(answer.buyer).toEqual({ kind: 'business', partyId: 'party-1', taxCode: VALID_TAX_CODE, name: 'Công ty Hoa Mai', address: '12 Lê Lợi, Quận 1', email: 'ketoan@hoamai.example' });
+    expect(answer.buyer).toEqual({ kind: 'business', partyId: 'party-1', taxCode: VALID_TAX_CODE, name: 'Công ty Hoa Mai', address: '12 Lê Lợi, Quận 1', email: 'ketoan@hoamai.example', identity: null });
     // The text states no rate: the customer's usual one fills it.
     expect(answer.lines).toEqual([{ description: 'Bánh A', unit: 'hộp', quantity: '10', unitPrice: '120000', vatRate: '8%', vatFrom: 'earlier' }]);
   });
@@ -93,6 +94,22 @@ describe('suggestEInvoiceDraft', () => {
     expect((await suggestEInvoiceDraft(bare.ai, ORG, USER, { ...SOURCE, orgRates: [], parties: [{ ...SOURCE.parties[0]!, rates: [] }] }, INPUT)).lines[0]).toMatchObject({ vatRate: '10%', vatFrom: 'default' });
   });
 
+  it('takes the rate history of the customer the form already names, not of the customer the model picked (#2713)', async () => {
+    // The model picks party 1 (usual rate 8%), but the form names another customer whose usual rate is 5%: the line gets 5%, and the buyer proposed is still the model's (the form decides whether to use it).
+    const named = setup();
+    const answer = await suggestEInvoiceDraft(named.ai, ORG, USER, { ...SOURCE, formBuyerRates: [{ vatRate: '5%', n: 3 }, { vatRate: '10%', n: 1 }] }, INPUT);
+    expect(answer.lines[0]).toMatchObject({ vatRate: '5%', vatFrom: 'earlier' });
+    expect(answer.buyer?.partyId).toBe('party-1');
+    // A named customer with no earlier draft has no history of its own: the org's usual rate, not the history of the customer the model picked.
+    const fresh = setup();
+    expect((await suggestEInvoiceDraft(fresh.ai, ORG, USER, { ...SOURCE, formBuyerRates: [] }, INPUT)).lines[0]).toMatchObject({ vatRate: '10%', vatFrom: 'earlier' });
+    // A customer whose usual rate the invoice date does not allow falls to the org's; the form names none (null): the model's customer, as before.
+    const dated = setup();
+    expect((await suggestEInvoiceDraft(dated.ai, ORG, USER, { ...SOURCE, formBuyerRates: [{ vatRate: '8%', n: 3 }] }, { ...INPUT, date: '2027-01-05' })).lines[0]).toMatchObject({ vatRate: '10%', vatFrom: 'earlier' });
+    const none = setup();
+    expect((await suggestEInvoiceDraft(none.ai, ORG, USER, { ...SOURCE, formBuyerRates: null }, INPUT)).lines[0]).toMatchObject({ vatRate: '8%', vatFrom: 'earlier' });
+  });
+
   it('gives no buyer when the model named none, and a person\'s record as an individual', async () => {
     const noBuyer = setup({ ask: async () => ({ kind: 'proposal', lines: LINES, buyerIndex: null }) });
     expect((await suggestEInvoiceDraft(noBuyer.ai, ORG, USER, SOURCE, INPUT)).buyer).toBeNull();
@@ -100,7 +117,7 @@ describe('suggestEInvoiceDraft', () => {
     expect(await suggestEInvoiceDraft(person.ai, ORG, USER, SOURCE, INPUT)).toEqual({
       ai: 'used',
       lines: [],
-      buyer: { kind: 'individual', partyId: 'party-2', taxCode: null, name: 'Nguyễn Văn Nam', address: null, email: null },
+      buyer: { kind: 'individual', partyId: 'party-2', taxCode: null, name: 'Nguyễn Văn Nam', address: null, email: null, identity: null },
     });
   });
 

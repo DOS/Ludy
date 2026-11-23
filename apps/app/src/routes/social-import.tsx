@@ -7,18 +7,19 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { SOCIAL_MEDIA_URLS_MAX } from '@crove/kernel-contract';
-import { COMMENT_RULES, isProvider } from '@crove/mod-social/contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { TableCell, TableRow } from '@crove/ui/components/table';
+import { SOCIAL_MEDIA_URLS_MAX } from '@ludy/kernel-contract';
+import { COMMENT_RULES, isProvider } from '@ludy/mod-social/contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { Thumb } from '../components/social-media.tsx';
 import { DataTable, ErrorText, PageHeader, Spinner } from '../components/ui.tsx';
+import { brandFileName } from '../i18n/brand.ts';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { MAX_STATEMENT_BYTES, readStatementFile } from '../lib/bank-statement.ts';
-import { draftIssues, providerName } from '../lib/social.ts';
+import { draftIssues, lastSocialList, providerName } from '../lib/social.ts';
 import type { SheetRows } from '../lib/xlsx.ts';
 import { IMPORT_TEMPLATE, importRows, lookupKey, MAX_IMPORT_ROWS, newLabels, pendingRefs, withMedia, type ImportRow, type MediaLookup } from '../lib/social-import.ts';
 
@@ -171,7 +172,7 @@ export function SocialImportPage() {
     const url = URL.createObjectURL(new Blob([IMPORT_TEMPLATE], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'crove-social-mau.csv';
+    a.download = brandFileName('ludy-mau-nhap-bai.csv');
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
   };
@@ -182,7 +183,7 @@ export function SocialImportPage() {
         title={t('import.title')}
         subtitle={t('import.subtitle')}
         actions={
-          <Link to="/o/$slug/social" params={{ slug }} className="inline-flex h-9 items-center px-2.5 text-sm text-muted-foreground hover:text-foreground">
+          <Link to="/o/$slug/social" params={{ slug }} search={lastSocialList(slug)} className="inline-flex h-9 items-center px-2.5 text-sm text-muted-foreground hover:text-foreground">
             {t('back')}
           </Link>
         }

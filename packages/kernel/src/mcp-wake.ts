@@ -10,9 +10,9 @@
 // - Only a user, and no MCP grant, sets any of it: the handlers say so themselves, and a test reads them.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { mcpWakeUrlProblem, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, type McpWakeView } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, hasFreshMfa } from '@crove/kernel-runtime';
+import { MINUTES_PUBLISHED_EVENT, MINUTES_WAKE_TYPE, mcpWakeUrlProblem, zMcpWakeGetInput, zMcpWakeGrantRef, zMcpWakeSet, zMinutesPublishedEvent, type McpWakeView } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, hasFreshMfa } from '@ludy/kernel-runtime';
 
 // Every role: the database decides whose wake-up it is (an owner or admin's for a company grant; a member's alone for their own member-bound grant), ADR-0051 slice 3c.
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -68,7 +68,7 @@ export const mcpWakeSet = defineCommand({
     if (mcpWakeUrlProblem(input.url) !== null) throw new DomainError('INVALID', 422, 'Địa chỉ nhận phải là https, dùng tên miền công khai, cổng 443, không kèm tài khoản');
     const url = new URL(input.url);
     const { rows } = await sql<{ created: boolean }>`
-      SELECT crove_kernel.mcp_wake_put(
+      SELECT ludy_kernel.mcp_wake_put(
         ${input.grantId}::uuid, ${url.href}, ${sealedOf(input.credential)}::jsonb, ${input.credential.hint}, ${input.schedule},
         ${input.schedule === 'off' ? null : (input.minute ?? null)}::smallint, ${input.schedule === 'weekly' ? (input.weekday ?? null) : null}::smallint, ${input.enabled}) AS created`
       .execute(ctx.trx)
@@ -92,7 +92,7 @@ export const mcpWakeRotate = defineCommand({
       throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để đổi khóa bí mật');
     }
     const { rows } = await sql<{ rotated: boolean }>`
-      SELECT crove_kernel.mcp_wake_rotate(${input.grantId}::uuid, ${sealedOf(input.credential)}::jsonb, ${input.credential.hint}) AS rotated`
+      SELECT ludy_kernel.mcp_wake_rotate(${input.grantId}::uuid, ${sealedOf(input.credential)}::jsonb, ${input.credential.hint}) AS rotated`
       .execute(ctx.trx)
       .catch(wakeError);
     if (rows[0]?.rotated !== true) throw new DomainError('MCP_WAKE_NOT_FOUND', 404, 'Quyền kết nối này chưa có địa chỉ nhận');
@@ -109,7 +109,7 @@ export const mcpWakeClear = defineCommand({
   access: ALL,
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user' || ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới gỡ được địa chỉ nhận của quyền kết nối MCP');
-    const { rows } = await sql<{ cleared: boolean }>`SELECT crove_kernel.mcp_wake_clear(${input.grantId}::uuid) AS cleared`.execute(ctx.trx).catch(wakeError);
+    const { rows } = await sql<{ cleared: boolean }>`SELECT ludy_kernel.mcp_wake_clear(${input.grantId}::uuid) AS cleared`.execute(ctx.trx).catch(wakeError);
     if (rows[0]?.cleared !== true) throw new DomainError('MCP_WAKE_NOT_FOUND', 404, 'Quyền kết nối này chưa có địa chỉ nhận');
     ctx.audit({ grantId: input.grantId });
     return { grantId: input.grantId, cleared: true as const };
@@ -129,7 +129,7 @@ export const mcpWakeTest = defineCommand({
     if (ctx.actor.aal === 'aal2' && !hasFreshMfa(ctx.actor)) {
       throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để gửi thử');
     }
-    const { rows } = await sql<{ id: string }>`SELECT crove_kernel.mcp_wake_test(${input.grantId}::uuid) AS id`.execute(ctx.trx).catch(wakeError);
+    const { rows } = await sql<{ id: string }>`SELECT ludy_kernel.mcp_wake_test(${input.grantId}::uuid) AS id`.execute(ctx.trx).catch(wakeError);
     const eventId = rows[0]?.id;
     if (!eventId) throw new DomainError('MCP_WAKE_NOT_FOUND', 404, 'Quyền kết nối này chưa có địa chỉ nhận');
     ctx.audit({ grantId: input.grantId, eventId });
@@ -162,7 +162,7 @@ export const mcpWakeGet = defineQuery({
   access: ALL,
   handler: async (ctx, input): Promise<McpWakeView[]> => {
     if (ctx.actor.type !== 'user' || ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới xem được địa chỉ nhận của quyền kết nối MCP');
-    const { rows } = await sql<WakeRow>`SELECT * FROM crove_kernel.mcp_wake_get(${input.grantId ?? null}::uuid)`.execute(ctx.trx).catch(wakeError);
+    const { rows } = await sql<WakeRow>`SELECT * FROM ludy_kernel.mcp_wake_get(${input.grantId ?? null}::uuid)`.execute(ctx.trx).catch(wakeError);
     return rows.map((r) => ({
       grantId: r.grant_id,
       url: r.url,
@@ -195,7 +195,8 @@ const zWakeKey = z.string().max(300);
 export const zMcpWakeEnqueue = z.strictObject({
   id: zWakeEventId,
   grantId: zMcpWakeGrantRef.shape.grantId,
-  type: z.enum(['signal.fired', 'schedule.due', 'ping']),
+  // The fixed types, or a line's (`engage.conversation_unanswered`): the body check of the database says which are registered.
+  type: z.union([z.enum(['signal.fired', 'schedule.due', 'ping', MINUTES_WAKE_TYPE]), z.string().regex(/^(social|engage|ads)(\.[a-z_]+){1,3}$/)]),
   body: z.record(z.string(), z.unknown()),
   // The signal keys this event carries: noted as seen in the same transaction that stores it.
   keys: z.array(zWakeKey).max(20).optional(),
@@ -206,10 +207,26 @@ export const zMcpWakeTouch = z.strictObject({ id: zWakeEventId });
 // `complete`: the short names of the rules that answered in full (the part of a key before the first colon); only their keys are forgotten.
 export const zMcpWakeSignalsCheck = z.strictObject({ grantId: zMcpWakeGrantRef.shape.grantId, keys: z.array(zWakeKey).max(200), complete: z.array(z.string().max(60)).max(10) });
 
+// The item keys of a line's source (`<type>_<words>:<id>:<yyyy-mm-dd>`, the type's dots as underscores): which of them were not sent for the grant yet (#3862).
+export const zMcpWakeLineCheck = z.strictObject({ grantId: zMcpWakeGrantRef.shape.grantId, keys: z.array(zWakeKey).max(200) });
+// What a line's source needs before it reads for a grant: the kind and scopes of the grant and the org's N (the inbox's setting row, with the defaults when the org set none).
+export const zMcpWakeLinePlan = z.strictObject({
+  kind: z.enum(['company', 'member']),
+  scopes: z.array(z.string().max(60)).max(20),
+  // The apps the org switched off (ADR-0053): a line's source leaves them out.
+  appsOff: z.array(z.string().max(60)).max(40),
+  unansweredHours: z.number().int(),
+  replyWindowHours: z.number().int(),
+  quoteDays: z.number().int(),
+});
+export type McpWakeLinePlan = z.infer<typeof zMcpWakeLinePlan>;
+
 function wakeSystemError(error: unknown): never {
   const message = (error as { message?: unknown; code?: unknown } | null)?.message;
   const code = (error as { code?: unknown } | null)?.code;
   if (message === 'MCP_WAKE_GRANT') throw new DomainError('MCP_WAKE_GRANT_NOT_FOUND', 404, 'Không tìm thấy quyền kết nối này, hoặc đã hết hiệu lực');
+  // An event of a line's type for a grant that does not hold the type's scope (or is not a company grant): not for this grant.
+  if (message === 'MCP_WAKE_SCOPE') throw new DomainError('MCP_WAKE_SCOPE', 403, 'Quyền kết nối này không nhận loại báo thức này');
   if (message === 'MCP_WAKE_INVALID' || code === '23514') throw new DomainError('INVALID', 422, 'Nội dung báo thức không hợp lệ');
   throw error;
 }
@@ -224,7 +241,7 @@ export const mcpWakeEnqueue = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới xếp hàng một lần báo thức');
     const { rows } = await sql<{ stored: boolean }>`
-      SELECT crove_kernel.mcp_wake_enqueue(${input.id}::uuid, ${input.grantId}::uuid, ${input.type}, ${JSON.stringify(input.body)}::jsonb, ${input.keys ?? null}::text[]) AS stored`
+      SELECT ludy_kernel.mcp_wake_enqueue(${input.id}::uuid, ${input.grantId}::uuid, ${input.type}, ${JSON.stringify(input.body)}::jsonb, ${input.keys ?? null}::text[]) AS stored`
       .execute(ctx.trx)
       .catch(wakeSystemError);
     const stored = rows[0]?.stored === true;
@@ -242,7 +259,7 @@ export const mcpWakeTouch = defineCommand({
   access: 'system',
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới ghi nhận lần chuyển vào hàng đợi');
-    const { rows } = await sql<{ done: boolean }>`SELECT crove_kernel.mcp_wake_touch(${input.id}::uuid) AS done`.execute(ctx.trx).catch(wakeSystemError);
+    const { rows } = await sql<{ done: boolean }>`SELECT ludy_kernel.mcp_wake_touch(${input.id}::uuid) AS done`.execute(ctx.trx).catch(wakeSystemError);
     return { id: input.id, touched: rows[0]?.done === true };
   },
 });
@@ -256,7 +273,7 @@ export const mcpWakeRecord = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới ghi nhận kết quả một lần gửi');
     const { rows } = await sql<{ done: boolean }>`
-      SELECT crove_kernel.mcp_wake_record(${input.id}::uuid, ${input.outcome}, ${input.code ?? null}::int) AS done`
+      SELECT ludy_kernel.mcp_wake_record(${input.id}::uuid, ${input.outcome}, ${input.code ?? null}::int) AS done`
       .execute(ctx.trx)
       .catch(wakeSystemError);
     const done = rows[0]?.done === true;
@@ -275,7 +292,7 @@ export const mcpWakeSignalsCheck = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới kiểm tra các tín hiệu đã gửi báo thức');
     const { rows } = await sql<{ fresh: string[] }>`
-      SELECT crove_kernel.mcp_wake_signals_check(${input.grantId}::uuid, ${input.keys}::text[], ${input.complete}::text[]) AS fresh`
+      SELECT ludy_kernel.mcp_wake_signals_check(${input.grantId}::uuid, ${input.keys}::text[], ${input.complete}::text[]) AS fresh`
       .execute(ctx.trx)
       .catch(wakeSystemError);
     return { fresh: rows[0]?.fresh ?? [] };
@@ -288,7 +305,7 @@ export const mcpWakeSignalsCheck = defineCommand({
 export interface McpWakeDeliveryRow {
   id: string;
   grantId: string;
-  type: 'signal.fired' | 'schedule.due' | 'ping';
+  type: string;
   body: Record<string, unknown>;
   status: 'queued' | 'sent' | 'failed' | 'dropped';
   attempts: number;
@@ -306,7 +323,7 @@ export const mcpWakeDelivery = defineQuery({
   handler: async (ctx, input): Promise<McpWakeDeliveryRow | null> => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới đọc một lần báo thức đang chờ gửi');
     const { rows } = await sql<{ id: string; grant_id: string; type: McpWakeDeliveryRow['type']; body: Record<string, unknown>; status: McpWakeDeliveryRow['status']; attempts: number }>`
-      SELECT id, grant_id, type, body, status, attempts FROM crove_kernel.mcp_wake_delivery_get(${ctx.orgId}::uuid, ${input.id}::uuid)`.execute(ctx.trx);
+      SELECT id, grant_id, type, body, status, attempts FROM ludy_kernel.mcp_wake_delivery_get(${ctx.orgId}::uuid, ${input.id}::uuid)`.execute(ctx.trx);
     const r = rows[0];
     return r ? { id: r.id, grantId: r.grant_id, type: r.type, body: r.body, status: r.status, attempts: r.attempts } : null;
   },
@@ -319,11 +336,78 @@ export const mcpWakeTarget = defineQuery({
   handler: async (ctx, input): Promise<McpWakeTargetRow | null> => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới đọc địa chỉ nhận của một quyền kết nối');
     const { rows } = await sql<{ url: string; secret_sealed: { keyId: string; envelope: string }; previous_sealed: { keyId: string; envelope: string } | null }>`
-      SELECT url, secret_sealed, previous_sealed FROM crove_kernel.mcp_wake_target(${ctx.orgId}::uuid, ${input.grantId}::uuid)`.execute(ctx.trx);
+      SELECT url, secret_sealed, previous_sealed FROM ludy_kernel.mcp_wake_target(${ctx.orgId}::uuid, ${input.grantId}::uuid)`.execute(ctx.trx);
     const r = rows[0];
     return r ? { url: r.url, sealed: r.secret_sealed, previous: r.previous_sealed } : null;
   },
 });
 
-export const mcpWakeCommands = [mcpWakeSet, mcpWakeRotate, mcpWakeClear, mcpWakeTest, mcpWakeEnqueue, mcpWakeTouch, mcpWakeRecord, mcpWakeSignalsCheck];
-export const mcpWakeQueries = [mcpWakeGet, mcpWakeDelivery, mcpWakeTarget];
+// The grants to wake for a published minutes event (#3803), and the 24-hour bound: the worker's notify job gives the event's id; the command reads the event itself (never the job's copy), checks its type, and
+// lists the company grants whose wake-up stands now through the worker-only definer. An event older than 24 hours when it would be sent is dropped (nothing is listed) and audited by its id, so a long
+// off-period of Meetings cannot release a burst of stale wake-ups; the agent reads current state through the gated tool, so nothing is lost. It is a command, not a query, for that one audit row.
+// What it answers: the meeting's id and the instant (from the event), the grants, and whether it dropped. Never a title or a word of the minutes: the event holds none.
+export const MINUTES_WAKE_MAX_AGE_MS = 24 * 3_600_000;
+const MINUTES_WAKE_GRANTS_MAX = 200;
+export const zMcpWakeMinutesTargets = z.strictObject({ eventId: z.uuid(), now: z.iso.datetime() });
+export interface McpWakeMinutesTargets {
+  meetingId: string;
+  publishedAt: string;
+  grants: string[];
+  dropped: boolean;
+}
+export const mcpWakeMinutesTargets = defineCommand({
+  name: 'kernel.mcp.wake.minutes_targets',
+  input: zMcpWakeMinutesTargets,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  handler: async (ctx, input): Promise<McpWakeMinutesTargets | null> => {
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới tìm các quyền kết nối cần báo thức');
+    const event = await ctx.trx
+      .selectFrom('ludy_kernel.outbox_event')
+      .select(['type', 'payload', 'created_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.eventId)
+      .executeTakeFirst();
+    if (!event || event.type !== MINUTES_PUBLISHED_EVENT) return null;
+    const published = zMinutesPublishedEvent.parse(event.payload);
+    // Stale when it would be sent: older than 24 hours at the moment the worker asks.
+    const stale = Date.parse(input.now) - event.created_at.getTime() > MINUTES_WAKE_MAX_AGE_MS;
+    const grants = stale
+      ? []
+      : (await sql<{ grant_id: string }>`SELECT grant_id FROM ludy_kernel.mcp_wake_company_targets(${ctx.orgId}::uuid, ${MINUTES_WAKE_GRANTS_MAX}::int)`.execute(ctx.trx)).rows.map((r) => r.grant_id);
+    // The event's id and what came of it: never a body.
+    // `capped` says the list stopped at its limit, so a count equal to it is never read as the whole.
+    ctx.audit({ eventId: input.eventId, dropped: stale, grants: grants.length, capped: grants.length >= MINUTES_WAKE_GRANTS_MAX });
+    return { meetingId: published.meetingId, publishedAt: published.publishedAt, grants, dropped: stale };
+  },
+});
+
+// Which of a line source's item keys are new for the grant (#3862): the keys are noted as seen by the event that carries them (kernel.mcp.wake.enqueue), so a failure between the two sends the event again.
+export const mcpWakeLineCheck = defineCommand({
+  name: 'kernel.mcp.wake.line_check',
+  input: zMcpWakeLineCheck,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  handler: async (ctx, input) => {
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới kiểm tra các mục đã gửi báo thức');
+    const { rows } = await sql<{ fresh: string[] }>`SELECT ludy_kernel.mcp_wake_line_check(${input.grantId}::uuid, ${input.keys}::text[]) AS fresh`.execute(ctx.trx).catch(wakeSystemError);
+    return { fresh: rows[0]?.fresh ?? [] };
+  },
+});
+
+// The grant's kind and scopes and the org's N, for the worker's sweep before a line's source reads (#3862). Ids, words and numbers only.
+export const mcpWakeLinePlan = defineQuery({
+  name: 'kernel.mcp.wake.line_plan',
+  input: z.strictObject({ grantId: zMcpWakeGrantRef.shape.grantId }),
+  access: 'system',
+  handler: async (ctx, input): Promise<McpWakeLinePlan> => {
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới đọc cách xếp báo thức của một quyền kết nối');
+    const { rows } = await sql<{ plan: unknown }>`SELECT ludy_kernel.mcp_wake_line_plan(${input.grantId}::uuid) AS plan`.execute(ctx.trx).catch(wakeSystemError);
+    return zMcpWakeLinePlan.parse(rows[0]?.plan);
+  },
+});
+
+export const mcpWakeCommands = [mcpWakeSet, mcpWakeRotate, mcpWakeClear, mcpWakeTest, mcpWakeEnqueue, mcpWakeTouch, mcpWakeRecord, mcpWakeSignalsCheck, mcpWakeLineCheck, mcpWakeMinutesTargets];
+export const mcpWakeQueries = [mcpWakeGet, mcpWakeDelivery, mcpWakeTarget, mcpWakeLinePlan];

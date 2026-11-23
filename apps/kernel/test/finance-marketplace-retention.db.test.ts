@@ -7,13 +7,13 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import type { ExtractClient } from '@crove/extract-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { MARKETPLACE_ORIGINAL_RETENTION_DAYS } from '@crove/kernel-contract';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries, readMarketplaceIncomeFile } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { MARKETPLACE_ORIGINAL_RETENTION_DAYS } from '@ludy/kernel-contract';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries, readMarketplaceIncomeFile } from '@ludy/mod-finance';
 import { buildXlsx, type XlsxCell } from '../../extract/test/xlsx-fixture.ts';
 import { runMarketplaceRetention } from '../src/marketplace-retention.ts';
 import { inProcessExtract } from './extract-service.ts';
@@ -101,14 +101,14 @@ suite('retention of marketplace report originals (#2516, C-2b3)', () => {
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty Bán sàn ${randomUUID().slice(0, 6)}`);
     const [member, viewer] = await Promise.all([identity('member'), identity('viewer')]);
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]);
     const o = { orgId, owner, member, viewer, a: `2611A${randomUUID().slice(0, 6).toUpperCase()}`, b: `2611B${randomUUID().slice(0, 6).toUpperCase()}` };
     if (known) await addOrders(o, o.a, o.b);
     return o;
   }
   // The orders the income report names, as an order report would have stored them.
   const addOrders = async (o: Org, ...orderNos: string[]) => {
-    for (const orderNo of orderNos) await rows("INSERT INTO crove_finance.channel_order (org_id, platform, order_no) VALUES ($1, 'shopee', $2)", [o.orgId, orderNo]);
+    for (const orderNo of orderNos) await rows("INSERT INTO ludy_finance.channel_order (org_id, platform, order_no) VALUES ($1, 'shopee', $2)", [o.orgId, orderNo]);
   };
   const execute = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.execute<T>(name, input, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
   const query = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.query<T>(name, input, { actor: asUser(user), orgId: o.orgId });
@@ -129,8 +129,8 @@ suite('retention of marketplace report originals (#2516, C-2b3)', () => {
     return { fileId, ...result };
   }
   const confirm = (o: Org, fileId: string, user = o.member) => execute<{ settlementId: string; lines: number; reportNet: string; other: string }>(o, 'finance.marketplace_income.confirm', { fileId }, user);
-  const settlements = (o: Org) => rows<{ id: string; platform: string; period_start: string; period_end: string; report_net: string; source_sha256: string | null }>("SELECT id::text, platform, period_start::text, period_end::text, report_net::text, source_sha256 FROM crove_finance.channel_settlement WHERE org_id = $1 ORDER BY period_start", [o.orgId]);
-  const settlementLines = (o: Org) => rows<{ line_key: string; sales: string; commission: string; tax_withheld: string; other: string; net: string; source_row: number }>('SELECT line_key, sales::text, commission::text, tax_withheld::text, other::text, net::text, source_row FROM crove_finance.channel_settlement_line WHERE org_id = $1 ORDER BY line_key', [o.orgId]);
+  const settlements = (o: Org) => rows<{ id: string; platform: string; period_start: string; period_end: string; report_net: string; source_sha256: string | null }>("SELECT id::text, platform, period_start::text, period_end::text, report_net::text, source_sha256 FROM ludy_finance.channel_settlement WHERE org_id = $1 ORDER BY period_start", [o.orgId]);
+  const settlementLines = (o: Org) => rows<{ line_key: string; sales: string; commission: string; tax_withheld: string; other: string; net: string; source_row: number }>('SELECT line_key, sales::text, commission::text, tax_withheld::text, other::text, net::text, source_row FROM ludy_finance.channel_settlement_line WHERE org_id = $1 ORDER BY line_key', [o.orgId]);
 
   beforeAll(async () => {
     extract = inProcessExtract();
@@ -142,16 +142,16 @@ suite('retention of marketplace report originals (#2516, C-2b3)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db) => new Runtime(target, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] });
     rt = register(db);
     worker = register(createDb(workerPool));
@@ -185,17 +185,17 @@ suite('retention of marketplace report originals (#2516, C-2b3)', () => {
     await client.connect();
     try {
       await client.query('SET session_replication_role = replica');
-      await client.query(`UPDATE crove_kernel.extraction SET completed_at = now() - make_interval(days => $2) WHERE file_id = $1`, [fileId, days]);
+      await client.query(`UPDATE ludy_kernel.extraction SET completed_at = now() - make_interval(days => $2) WHERE file_id = $1`, [fileId, days]);
     } finally {
       await client.end();
     }
   }
   const fileRow = async (fileId: string) => {
-    const [row] = await rows<{ original_deleted_at: string | null; sha256: string; storage_key: string }>('SELECT original_deleted_at::text, sha256, storage_key FROM crove_kernel.file WHERE id = $1', [fileId]);
+    const [row] = await rows<{ original_deleted_at: string | null; sha256: string; storage_key: string }>('SELECT original_deleted_at::text, sha256, storage_key FROM ludy_kernel.file WHERE id = $1', [fileId]);
     if (!row) throw new Error('no such file');
     return row;
   };
-  const versions = (fileId: string) => rows<{ version: number; state: string | null; has_lines: boolean }>("SELECT version, result -> 'summary' ->> 'state' AS state, (result ? 'lines') AS has_lines FROM crove_kernel.extraction WHERE file_id = $1 ORDER BY version", [fileId]);
+  const versions = (fileId: string) => rows<{ version: number; state: string | null; has_lines: boolean }>("SELECT version, result -> 'summary' ->> 'state' AS state, (result ? 'lines') AS has_lines FROM ludy_kernel.extraction WHERE file_id = $1 ORDER BY version", [fileId]);
   const reject = (o: Org, fileId: string) => execute(o, 'finance.marketplace_income.reject', { fileId }, o.member);
 
   it('deletes the object and the staged read 90 days after a confirmation, and keeps the file row, its hash, the decision summary and the settlement', async () => {
@@ -229,7 +229,7 @@ suite('retention of marketplace report originals (#2516, C-2b3)', () => {
     // What the confirmation stored is not touched: the settlement and its lines (append-only), and the decision's summary.
     expect(await settlements(o)).toHaveLength(1);
     expect(await settlementLines(o)).toHaveLength(2);
-    const [kept] = await rows<{ result: { summary: { totals: { net: string }; importId: string } } }>('SELECT result FROM crove_kernel.extraction WHERE file_id = $1', [fileId]);
+    const [kept] = await rows<{ result: { summary: { totals: { net: string }; importId: string } } }>('SELECT result FROM ludy_kernel.extraction WHERE file_id = $1', [fileId]);
     expect(kept?.result.summary.totals.net).toBe('125750');
 
     // A rerun finds nothing more.
@@ -243,11 +243,11 @@ suite('retention of marketplace report originals (#2516, C-2b3)', () => {
     await age(fileId, DAY + 5);
     expect(await run()).toMatchObject({ deleted: 1, failed: 0 });
     expect(await versions(fileId)).toEqual([{ version: 2, state: 'rejected', has_lines: false }]);
-    const audit = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.marketplace_retention.apply' AND outcome = 'ok'", [o.orgId]);
+    const audit = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.marketplace_retention.apply' AND outcome = 'ok'", [o.orgId]);
     expect(audit).toHaveLength(1);
     // The facts are the file id and two counts; the runtime adds only which worker ran it.
     expect(Object.keys(audit[0]?.detail ?? {}).sort()).toEqual(['applied', 'component', 'fileId', 'versions', 'workerInstance']);
-    const text = JSON.stringify(audit) + JSON.stringify(await rows('SELECT * FROM crove_kernel.activity WHERE org_id = $1', [o.orgId]));
+    const text = JSON.stringify(audit) + JSON.stringify(await rows('SELECT * FROM ludy_kernel.activity WHERE org_id = $1', [o.orgId]));
     for (const value of [...Object.values(BUYER), o.a, o.b, 'thu-nhap.xlsx']) expect(text).not.toContain(value);
   });
 
@@ -270,7 +270,7 @@ suite('retention of marketplace report originals (#2516, C-2b3)', () => {
       ['order-like text', { method: 'unsupported', result: { kind: 'other', summary: { state: 'rejected' } } }],
     ] as const) {
       const fileId = await ingest(o, new TextEncoder().encode(`not a marketplace report ${note} ${randomUUID()}`), `${note}.pdf`);
-      await rows("INSERT INTO crove_kernel.extraction (org_id, file_id, method, status, result, checks) VALUES ($1, $2, $3, 'done', $4::jsonb, '[]')", [o.orgId, fileId, extraction.method, JSON.stringify(extraction.result)]);
+      await rows("INSERT INTO ludy_kernel.extraction (org_id, file_id, method, status, result, checks) VALUES ($1, $2, $3, 'done', $4::jsonb, '[]')", [o.orgId, fileId, extraction.method, JSON.stringify(extraction.result)]);
       await age(fileId, 400);
       others.push(fileId);
     }
@@ -375,9 +375,9 @@ suite('retention of marketplace report originals (#2516, C-2b3)', () => {
     try {
       // The guards of held_until and of the purchase document's constraints are switched off for this one session only: the test stands in for the store's hold and a booked invoice.
       await client.query('SET session_replication_role = replica');
-      await client.query("UPDATE crove_kernel.file SET held_until = now() + interval '1 year' WHERE id = $1", [held.fileId]);
+      await client.query("UPDATE ludy_kernel.file SET held_until = now() + interval '1 year' WHERE id = $1", [held.fileId]);
       await client.query(
-        `INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total, source_file_id) VALUES ($1, $2, 'X1', '2026-11-01', 1, 0, 1, $3)`,
+        `INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total, source_file_id) VALUES ($1, $2, 'X1', '2026-11-01', 1, 0, 1, $3)`,
         [o.orgId, randomUUID(), named.fileId],
       );
     } finally {
@@ -400,20 +400,20 @@ suite('retention of marketplace report originals (#2516, C-2b3)', () => {
     await confirm(o, fileId);
     await age(fileId, DAY + 1);
     // 30 days, asked straight of the database as the worker: refused, so no bug in the job can delete early.
-    await expect(workerPool.query('SELECT * FROM crove_finance.marketplace_retention_due(30, 10)')).rejects.toThrow(/MARKETPLACE_RETENTION_TOO_SHORT/);
+    await expect(workerPool.query('SELECT * FROM ludy_finance.marketplace_retention_due(30, 10)')).rejects.toThrow(/MARKETPLACE_RETENTION_TOO_SHORT/);
     // Asked straight of the database with no system context (the worker's login role alone), key and apply refuse: they need the system actor and the context org.
-    await expect(workerPool.query('SELECT * FROM crove_finance.marketplace_retention_apply($1::uuid, $2::uuid, $3::int)', [o.orgId, fileId, DAY])).rejects.toThrow(/MARKETPLACE_RETENTION_WORKER_ONLY/);
-    await expect(workerPool.query('SELECT * FROM crove_finance.marketplace_retention_key($1::uuid, $2::uuid, $3::int)', [o.orgId, fileId, DAY])).rejects.toThrow(/MARKETPLACE_RETENTION_WORKER_ONLY/);
+    await expect(workerPool.query('SELECT * FROM ludy_finance.marketplace_retention_apply($1::uuid, $2::uuid, $3::int)', [o.orgId, fileId, DAY])).rejects.toThrow(/MARKETPLACE_RETENTION_WORKER_ONLY/);
+    await expect(workerPool.query('SELECT * FROM ludy_finance.marketplace_retention_key($1::uuid, $2::uuid, $3::int)', [o.orgId, fileId, DAY])).rejects.toThrow(/MARKETPLACE_RETENTION_WORKER_ONLY/);
     // A member, even the owner, cannot run the command or the query through the runtime: both are for the system actor only.
     await expect(execute(o, 'finance.marketplace_retention.apply', { fileId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(query(o, 'finance.marketplace_retention.key', { fileId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     // The app role (the API process) cannot list, key or apply.
-    await expect(pool.query('SELECT * FROM crove_finance.marketplace_retention_due($1, 10)', [DAY])).rejects.toThrow(/permission denied|MARKETPLACE_RETENTION_WORKER_ONLY/);
+    await expect(pool.query('SELECT * FROM ludy_finance.marketplace_retention_due($1, 10)', [DAY])).rejects.toThrow(/permission denied|MARKETPLACE_RETENTION_WORKER_ONLY/);
     // Setting the marker by hand is refused by the trigger, even for the database owner.
-    await expect(rows('UPDATE crove_kernel.file SET original_deleted_at = now() WHERE id = $1', [fileId])).rejects.toThrow(/FILE_ORIGINAL_DELETED_IMMUTABLE/);
+    await expect(rows('UPDATE ludy_kernel.file SET original_deleted_at = now() WHERE id = $1', [fileId])).rejects.toThrow(/FILE_ORIGINAL_DELETED_IMMUTABLE/);
     // After a real deletion it cannot be cleared by hand either: only the restore definer (a duplicate upload) clears it, in the caller's own org.
     await run();
-    await expect(rows('UPDATE crove_kernel.file SET original_deleted_at = NULL WHERE id = $1', [fileId])).rejects.toThrow(/FILE_ORIGINAL_DELETED_IMMUTABLE/);
-    await expect(pool.query('SELECT crove_kernel.file_original_restore($1::uuid)', [fileId])).rejects.toThrow(/permission denied|FILE_ORIGINAL_RESTORE_NO_ORG/);
+    await expect(rows('UPDATE ludy_kernel.file SET original_deleted_at = NULL WHERE id = $1', [fileId])).rejects.toThrow(/FILE_ORIGINAL_DELETED_IMMUTABLE/);
+    await expect(pool.query('SELECT ludy_kernel.file_original_restore($1::uuid)', [fileId])).rejects.toThrow(/permission denied|FILE_ORIGINAL_RESTORE_NO_ORG/);
   });
 });

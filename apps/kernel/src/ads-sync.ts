@@ -9,12 +9,12 @@
 // kernel.channel.credential refuses once the member who connected the account may no longer use it, or the connection is
 // no longer active: the sync then marks the connection expired, so the hourly sweep skips it and an owner or admin connects
 // it again, rather than failing every hour. The platform's own answer to a refused token does the same.
-import { AdPlatformError, type AdDailyRow, type AdPlatform } from '@crove/ad-platform';
-import { settleBefore, syncWindow, todayIn } from '@crove/mod-ads';
+import { AdPlatformError, type AdDailyRow, type AdPlatform } from '@ludy/ad-platform';
+import { settleBefore, syncWindow, todayIn } from '@ludy/mod-ads';
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import { ADS_MAX_ROWS_PER_RUN, ADS_SYNC_RUN_DAYS } from '@crove/kernel-contract';
+import type { Db } from '@ludy/db';
+import { DomainError, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
+import { ADS_MAX_ROWS_PER_RUN, ADS_SYNC_RUN_DAYS } from '@ludy/kernel-contract';
 
 const SYSTEM = { type: 'system' as const, component: 'ads' };
 // Days one record command covers at most: a month or so of a large account stays well under its row limit.
@@ -49,19 +49,19 @@ interface Target {
   nextRunAt: string | null;
 }
 
-// A page of the active ad accounts of active orgs after a key (crove_ads.ads_due, the worker login's alone), for the
+// A page of the active ad accounts of active orgs after a key (ludy_ads.ads_due, the worker login's alone), for the
 // hourly sweep.
 export const ADS_DUE_PAGE = 1000;
 export async function adsDue(workerDb: Db, after: { orgId: string; connectionId: string } | null): Promise<Array<{ orgId: string; connectionId: string; provider: string }>> {
   const { rows } = await sql<{ org_id: string; connection_id: string; provider: string }>`
-    SELECT org_id, connection_id, provider FROM crove_ads.ads_due(${after?.orgId ?? null}::uuid, ${after?.connectionId ?? null}::uuid, ${ADS_DUE_PAGE}::int)`.execute(workerDb);
+    SELECT org_id, connection_id, provider FROM ludy_ads.ads_due(${after?.orgId ?? null}::uuid, ${after?.connectionId ?? null}::uuid, ${ADS_DUE_PAGE}::int)`.execute(workerDb);
   return rows.map((r) => ({ orgId: r.org_id, connectionId: r.connection_id, provider: r.provider }));
 }
 
-// Removes the sync runs older than ADS_SYNC_RUN_DAYS, for every org (crove_ads.sync_runs_prune, the worker login's alone).
+// Removes the sync runs older than ADS_SYNC_RUN_DAYS, for every org (ludy_ads.sync_runs_prune, the worker login's alone).
 export async function pruneAdsRuns(workerDb: Db, now: Date): Promise<number> {
   const before = new Date(now.getTime() - ADS_SYNC_RUN_DAYS * 86_400_000);
-  const { rows } = await sql<{ n: string }>`SELECT crove_ads.sync_runs_prune(${before}::timestamptz) AS n`.execute(workerDb);
+  const { rows } = await sql<{ n: string }>`SELECT ludy_ads.sync_runs_prune(${before}::timestamptz) AS n`.execute(workerDb);
   return Number(rows[0]?.n ?? 0);
 }
 

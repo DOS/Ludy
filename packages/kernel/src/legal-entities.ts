@@ -1,6 +1,6 @@
 // The legal entities of an org (issue #1278, plan §4.6): the companies, branches and household businesses it keeps
-// books for (crove_kernel.legal_entity). Every org has one default entity, created with the org by
-// crove_kernel.create_or_replay_org and backfilled for older orgs from the tenant row. Owners and admins list them, add
+// books for (ludy_kernel.legal_entity). Every org has one default entity, created with the org by
+// ludy_kernel.create_or_replay_org and backfilled for older orgs from the tenant row. Owners and admins list them, add
 // one and change one; the runtime audits every change, and the detail keeps which fields changed and the old and the new
 // values of the internal ones (the kind, the parent). The name and the tax code are classified (a household business is
 // a person, and its tax code is the owner's national id), so the detail keeps a marker in their place (auditValue,
@@ -12,19 +12,19 @@
 // #1316, so a staff fix on the tenant row moves it too), kernel.legal_entity.update refuses to change it, and the
 // database refuses a default entity whose code is not the tenant's (legal_entity_default_tax_code).
 //
-// The default entity's name is the org's too (#1317): renaming it renames the org (crove_kernel.tenant.name) in the same
+// The default entity's name is the org's too (#1317): renaming it renames the org (ludy_kernel.tenant.name) in the same
 // command and audit row, so the tax forms' taxpayer block (01/GTGT, the HTKK statements), the org switcher, mails and
 // the books name the business alike. Renaming any other entity leaves the org's name alone. Its kind follows a 12-digit
 // tax code, an owner's personal number, to 'household' (defaultKindForTaxCode), unless an owner or an admin set it.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { LEGAL_ENTITY_NAME_MAX, auditValue, normalizeTaxCode, zLegalEntityInput, type LegalEntity, type LegalEntityKind } from '@crove/kernel-contract';
-import type { LegalEntityKind as StoredKind, MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { LEGAL_ENTITY_NAME_MAX, auditValue, normalizeTaxCode, zLegalEntityInput, type LegalEntity, type LegalEntityKind } from '@ludy/kernel-contract';
+import type { LegalEntityKind as StoredKind, MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { kernelManifest } from './manifest.ts';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
-const ENTITY = kernelManifest.tables.crove_kernel.legal_entity;
+const ENTITY = kernelManifest.tables.ludy_kernel.legal_entity;
 
 // The contract's kinds and the database's are one list (a compile error if they drift).
 const sameKinds: [LegalEntityKind, StoredKind] extends [StoredKind, LegalEntityKind] ? true : never = true;
@@ -89,19 +89,19 @@ const taxCodeTaken = (taxCode: string) => new DomainError('LEGAL_ENTITY_TAX_CODE
 // Refuses a tax code another entity of the org already holds (the unique index decides in the end; see onWrite).
 async function assertTaxCodeFree(ctx: Trx, taxCode: string | null, self: string | null): Promise<void> {
   if (!taxCode) return;
-  let q = ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('tax_code', '=', taxCode);
+  let q = ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('tax_code', '=', taxCode);
   if (self) q = q.where('id', '<>', self);
   if (await q.executeTakeFirst()) throw taxCodeTaken(taxCode);
 }
 
 async function assertParent(ctx: Trx, parentId: string | null): Promise<void> {
   if (!parentId) return;
-  const parent = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('id', '=', parentId).executeTakeFirst();
+  const parent = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('id', '=', parentId).executeTakeFirst();
   if (!parent) throw new DomainError('LEGAL_ENTITY_PARENT_NOT_FOUND', 422, 'Không tìm thấy pháp nhân cấp trên');
 }
 
 // Maps the database's refusals of a write: another entity took the tax code after the check (the unique index), or
-// the new parent is below the entity (crove_kernel.legal_entity_no_cycle).
+// the new parent is below the entity (ludy_kernel.legal_entity_no_cycle).
 export function onWrite(taxCode: string | null) {
   return (error: unknown): never => {
     const pg = error as { code?: string; message?: string; constraint?: string };
@@ -121,7 +121,7 @@ export function onWrite(taxCode: string | null) {
 export async function assertOrgTaxCodeFree(ctx: Trx, taxCode: string | null): Promise<void> {
   if (!taxCode) return;
   const holder = await ctx.trx
-    .selectFrom('crove_kernel.legal_entity')
+    .selectFrom('ludy_kernel.legal_entity')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('tax_code', '=', taxCode)
@@ -140,7 +140,7 @@ export async function assertOrgTaxCodeFree(ctx: Trx, taxCode: string | null): Pr
 export async function defaultKindForTaxCode(ctx: Pick<CommandContext, 'trx' | 'orgId' | 'now'> & { userId: string | null }, taxCode: string | null): Promise<'household' | null> {
   if (!taxCode || !/^[0-9]{12}$/.test(taxCode)) return null;
   const entity = await ctx.trx
-    .selectFrom('crove_kernel.legal_entity')
+    .selectFrom('ludy_kernel.legal_entity')
     .select(['id', 'kind'])
     .where('org_id', '=', ctx.orgId)
     .where('is_default', '=', true)
@@ -148,7 +148,7 @@ export async function defaultKindForTaxCode(ctx: Pick<CommandContext, 'trx' | 'o
     .executeTakeFirst();
   if (!entity || entity.kind !== 'company') return null;
   const chosen = await ctx.trx
-    .selectFrom('crove_kernel.audit_event')
+    .selectFrom('ludy_kernel.audit_event')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('command', '=', 'kernel.legal_entity.update')
@@ -158,7 +158,7 @@ export async function defaultKindForTaxCode(ctx: Pick<CommandContext, 'trx' | 'o
     .executeTakeFirst();
   if (chosen) return null;
   await ctx.trx
-    .updateTable('crove_kernel.legal_entity')
+    .updateTable('ludy_kernel.legal_entity')
     .set({ kind: 'household', updated_by: ctx.userId, updated_at: ctx.now })
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', entity.id)
@@ -173,7 +173,7 @@ export async function defaultKindForTaxCode(ctx: Pick<CommandContext, 'trx' | 'o
  */
 export async function setDefaultEntityTaxCode(ctx: Pick<CommandContext, 'trx' | 'orgId' | 'now'> & { userId: string | null }, taxCode: string | null): Promise<void> {
   const entity = await ctx.trx
-    .selectFrom('crove_kernel.legal_entity')
+    .selectFrom('ludy_kernel.legal_entity')
     .select(['id', 'tax_code'])
     .where('org_id', '=', ctx.orgId)
     .where('is_default', '=', true)
@@ -183,7 +183,7 @@ export async function setDefaultEntityTaxCode(ctx: Pick<CommandContext, 'trx' | 
   if (!entity || entity.tax_code === taxCode) return;
   await assertTaxCodeFree(ctx, taxCode, entity.id);
   await ctx.trx
-    .updateTable('crove_kernel.legal_entity')
+    .updateTable('ludy_kernel.legal_entity')
     .set({ tax_code: taxCode, updated_by: ctx.userId, updated_at: ctx.now })
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', entity.id)
@@ -197,7 +197,7 @@ export const legalEntityList = defineQuery({
   access: ADMINS,
   handler: async (ctx: QueryContext): Promise<LegalEntity[]> => {
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.legal_entity')
+      .selectFrom('ludy_kernel.legal_entity')
       .select(COLUMNS)
       .where('org_id', '=', ctx.orgId)
       .orderBy('is_default', 'desc')
@@ -221,7 +221,7 @@ export const legalEntityCreate = defineCommand({
     await assertParent(ctx, input.parentId);
     await assertTaxCodeFree(ctx, taxCode, null);
     const row = await ctx.trx
-      .insertInto('crove_kernel.legal_entity')
+      .insertInto('ludy_kernel.legal_entity')
       .values({ org_id: ctx.orgId, name, kind: input.kind, tax_code: taxCode, parent_id: input.parentId, created_by: ctx.actor.userId, created_at: ctx.now, updated_at: ctx.now })
       .returning(COLUMNS)
       .executeTakeFirstOrThrow()
@@ -249,14 +249,14 @@ export const legalEntityUpdate = defineCommand({
     // order kernel.org.set_tax_code takes the two rows, so the two commands never wait on each other in a cycle.
     // is_default never changes, so reading it before the lock is safe.
     const isDefault = await ctx.trx
-      .selectFrom('crove_kernel.legal_entity')
+      .selectFrom('ludy_kernel.legal_entity')
       .select('is_default')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.legalEntityId)
       .executeTakeFirst();
-    if (isDefault?.is_default) await ctx.trx.selectFrom('crove_kernel.tenant').select('org_id').where('org_id', '=', ctx.orgId).forNoKeyUpdate().execute();
+    if (isDefault?.is_default) await ctx.trx.selectFrom('ludy_kernel.tenant').select('org_id').where('org_id', '=', ctx.orgId).forNoKeyUpdate().execute();
     const before = await ctx.trx
-      .selectFrom('crove_kernel.legal_entity')
+      .selectFrom('ludy_kernel.legal_entity')
       .select(COLUMNS)
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.legalEntityId)
@@ -276,11 +276,11 @@ export const legalEntityUpdate = defineCommand({
     if (changed.includes('parent_id')) await assertParent(ctx, input.parentId);
     // The default entity is the org: its new name is the org's (#1317). Only the default's.
     const renamesOrg = before.is_default && changed.includes('name');
-    if (renamesOrg) await ctx.trx.updateTable('crove_kernel.tenant').set({ name }).where('org_id', '=', ctx.orgId).execute();
+    if (renamesOrg) await ctx.trx.updateTable('ludy_kernel.tenant').set({ name }).where('org_id', '=', ctx.orgId).execute();
     if (changed.includes('tax_code')) await assertTaxCodeFree(ctx, taxCode, before.id);
 
     const row = await ctx.trx
-      .updateTable('crove_kernel.legal_entity')
+      .updateTable('ludy_kernel.legal_entity')
       .set({ ...next, updated_by: ctx.actor.userId, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', before.id)

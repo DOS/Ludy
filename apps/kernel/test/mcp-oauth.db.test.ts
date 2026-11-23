@@ -15,12 +15,14 @@ import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { crmQueries } from '@crove/mod-crm';
-import { financeQueries } from '@crove/mod-finance';
-import { BlobNotFoundError, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { crmQueries } from '@ludy/mod-crm';
+import { financeQueries } from '@ludy/mod-finance';
+import { projectsQueries } from '@ludy/mod-projects';
+import { socialCommands, socialQueries } from '@ludy/mod-social';
+import { BlobNotFoundError, Runtime, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -124,25 +126,25 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
   }
 
   // The authorization request up to the consent page: the provider's redirect and its interaction cookie.
-  async function authorize(clientId: string, redirect: string, verifier: string) {
+  async function authorize(clientId: string, redirect: string, verifier: string, scope = 'ludy.read') {
     const url = new URL(`${base}/oauth/authorize`);
-    url.search = new URLSearchParams({ client_id: clientId, response_type: 'code', redirect_uri: redirect, scope: 'ludy.read', resource, code_challenge: challengeOf(verifier), code_challenge_method: 'S256', state: 'st-1' }).toString();
+    url.search = new URLSearchParams({ client_id: clientId, response_type: 'code', redirect_uri: redirect, scope, resource, code_challenge: challengeOf(verifier), code_challenge_method: 'S256', state: 'st-1' }).toString();
     const response = await fetch(url, { redirect: 'manual' });
     return { status: response.status, location: response.headers.get('location') ?? '', cookie: cookiesOf(response) };
   }
 
   // The whole consent: authorize, the page's details call, the approve call, the resumed authorization, the code.
-  async function consent(owner: string, orgOf: string = orgId, decision: 'approve' | 'deny' = 'approve', kind?: 'company' | 'member') {
+  async function consent(owner: string, orgOf: string = orgId, decision: 'approve' | 'deny' = 'approve', kind?: 'company' | 'member', opts: { scope?: string; draft?: boolean; writes?: string[] } = {}) {
     const reg = await register();
     expect(reg.status, JSON.stringify(reg.body)).toBe(201);
     const clientId = String(reg.body.client_id);
     const verifier = randomBytes(32).toString('base64url');
-    const started = await authorize(clientId, reg.redirect, verifier);
+    const started = await authorize(clientId, reg.redirect, verifier, opts.scope);
     expect(started.status).toBe(303);
     const uid = new URL(started.location, base).pathname.split('/').pop() as string;
     const headers = { ...(await asBrowser(owner, null)), cookie: started.cookie };
     const detailsResponse = await fetch(`${base}/oauth/interaction/${uid}/details`, { headers });
-    const approved = await fetch(`${base}/oauth/interaction/${uid}/consent`, { method: 'POST', headers, body: JSON.stringify(decision === 'approve' ? { decision, orgId: orgOf, ...(kind ? { kind } : {}) } : { decision }) });
+    const approved = await fetch(`${base}/oauth/interaction/${uid}/consent`, { method: 'POST', headers, body: JSON.stringify(decision === 'approve' ? { decision, orgId: orgOf, ...(kind ? { kind } : {}), ...(opts.draft !== undefined ? { draft: opts.draft } : {}), ...(opts.writes !== undefined ? { writes: opts.writes } : {}) } : { decision }) });
     const answer = (await approved.json()) as { redirectTo?: string; message?: string; code?: string };
     return { clientId, verifier, redirect: reg.redirect, uid, started, details: { status: detailsResponse.status, body: (await detailsResponse.json()) as Record<string, unknown> }, consentStatus: approved.status, redirectTo: answer.redirectTo ?? '', cookie: started.cookie + '; ' + cookiesOf(approved) };
   }
@@ -198,9 +200,9 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     dbBase.pathname = `/${dbName}`;
     adminUrl = dbBase.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 8 });
     const db = createDb(pool);
@@ -227,8 +229,8 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     };
     const config = loadConfig(bootEnv);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register({
-      commands: [...kernelCommands],
-      queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries, ...crmQueries],
+      commands: [...kernelCommands, ...socialCommands],
+      queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries, ...crmQueries, ...projectsQueries, ...socialQueries],
     });
     sharedDb = db;
     sharedRuntime = runtime;
@@ -253,7 +255,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
 
   it('publishes its metadata: the resource, the issuer, S256 only, registration, revocation', async () => {
     const protectedResource = (await (await fetch(`${base}/.well-known/oauth-protected-resource/mcp`)).json()) as Record<string, unknown>;
-    expect(protectedResource).toMatchObject({ resource, authorization_servers: [base], scopes_supported: ['ludy.read'] });
+    expect(protectedResource).toMatchObject({ resource, authorization_servers: [base], scopes_supported: ['ludy.read', 'ludy.social.draft', 'ludy.engage.write', 'ludy.ads.draft'] });
     for (const path of ['/.well-known/oauth-authorization-server', '/.well-known/openid-configuration']) {
       const meta = (await (await fetch(`${base}${path}`)).json()) as Record<string, any>;
       expect(meta.issuer).toBe(base);
@@ -284,7 +286,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect(about.body?.result?.structuredContent).toMatchObject({ clientName: 'Test MCP client', scopes: ['ludy.read'] });
     expect(about.body?.result?.resultType).toBe('complete');
     // The audit row says it came over MCP, from which grant and client.
-    const rows = await admin((client) => client.query(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'kernel.mcp.call' ORDER BY id DESC LIMIT 1`));
+    const rows = await admin((client) => client.query(`SELECT detail FROM ludy_kernel.audit_event WHERE command = 'kernel.mcp.call' ORDER BY id DESC LIMIT 1`));
     expect(rows.rows[0].detail).toMatchObject({ mcpCall: true, tool: 'ludy_about', result: 'ok', mcpClientName: 'Test MCP client' });
   });
 
@@ -311,9 +313,9 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
 
   it('stores no authorization code, refresh token or access token in clear', async () => {
     const c = await connect();
-    const dump = await admin(async (client) => (await client.query<{ blob: string }>(`SELECT pg_catalog.string_agg(payload::text || encode(key_hash, 'hex') || coalesce(grant_id, '') || coalesce(uid, ''), ' ') AS blob FROM crove_kernel.oauth_record`)).rows[0]?.blob ?? '');
+    const dump = await admin(async (client) => (await client.query<{ blob: string }>(`SELECT pg_catalog.string_agg(payload::text || encode(key_hash, 'hex') || coalesce(grant_id, '') || coalesce(uid, ''), ' ') AS blob FROM ludy_kernel.oauth_record`)).rows[0]?.blob ?? '');
     for (const secret of [c.refresh, c.access, c.code]) expect(dump).not.toContain(secret);
-    const hashed = await admin(async (client) => (await client.query(`SELECT 1 FROM crove_kernel.oauth_record WHERE model = 'RefreshToken' AND key_hash = $1`, [createHash('sha256').update(c.refresh).digest()])).rowCount);
+    const hashed = await admin(async (client) => (await client.query(`SELECT 1 FROM ludy_kernel.oauth_record WHERE model = 'RefreshToken' AND key_hash = $1`, [createHash('sha256').update(c.refresh).digest()])).rowCount);
     expect(hashed).toBe(1);
   });
 
@@ -351,9 +353,110 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect(accepted.status).toBe(200);
     const c = await connect(second);
     expect(await aboutStatus(c.access)).toBe(200);
-    await admin((client) => client.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = (SELECT id FROM crove_kernel.user_account WHERE email = $2)`, [orgId, email]));
+    await admin((client) => client.query(`UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = (SELECT id FROM ludy_kernel.user_account WHERE email = $2)`, [orgId, email]));
     expect(await aboutStatus(c.access)).toBe(401);
     expect((await refreshWith(c.clientId, c.refresh)).status).toBe(400);
+  });
+
+  // AUTH_ALLOWED_EMAILS binds the grant that outlives a browser session (#3223): the email of the person who gave it against the list on every call, before
+  // mcp_grant_verify stamps last_used_at and before any call audit row, so a refused account costs no write.
+  it('refuses a grant whose account the allow-list leaves out, on every call and with no database write, and lets it through once it is listed (#3223)', async () => {
+    const c = await connect();
+    const email = String(accounts.get('owner')?.email);
+    const grant = () => admin(async (client) => (await client.query<{ id: string; last_used_at: Date | null }>('SELECT id, last_used_at FROM ludy_kernel.agent_grant WHERE client_id = $1', [c.clientId])).rows[0]);
+    const audits = () => admin(async (client) => Number((await client.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.audit_event WHERE org_id = $1', [orgId])).rows[0]?.n));
+    const row = await grant();
+    expect(row).toBeDefined();
+    // Start from a grant that was never used, so a stamp would show.
+    await admin((client) => client.query('UPDATE ludy_kernel.agent_grant SET last_used_at = NULL WHERE id = $1', [row?.id]));
+    const before = await audits();
+
+    // The same keys and resource, a deployment that lists people: the token verifies there as it does here.
+    const appWith = async (list: string) => {
+      const config = loadConfig({ ...bootEnv, AUTH_ALLOWED_EMAILS: list });
+      const oauth = await createOauthServer(config, (fn) => sharedRuntime.orgless(fn));
+      return createHttpApp({ config, oauth, runtime: sharedRuntime, store: new MemoryStore(), authenticate: createAuthenticator(config, sharedDb), pool, aiEnabled: false });
+    };
+    const call = (target: Awaited<ReturnType<typeof appWith>>, access: string) =>
+      target.request(`${base}/mcp`, {
+        method: 'POST',
+        headers: modernHeaders(access, 'tools/call', 'ludy_about'),
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'ludy_about', arguments: {}, _meta: { 'io.modelcontextprotocol/protocolVersion': '2026-07-28' } } }),
+      });
+
+    // The list names somebody else (an address and a domain): every call is 403 ACCOUNT_NOT_ALLOWED, however often, and nothing is written.
+    const elsewhere = await appWith('someone-else@mcp.test @elsewhere.test');
+    for (let use = 0; use < 3; use++) {
+      const refused = await call(elsewhere, c.access);
+      expect(refused.status).toBe(403);
+      expect(await refused.json()).toMatchObject({ code: 'ACCOUNT_NOT_ALLOWED' });
+    }
+    expect((await grant())?.last_used_at, 'a refusal must not stamp last_used_at').toBeNull();
+    expect(await audits(), 'a refusal writes no call audit row').toBe(before);
+
+    // A token no grant has still gets the flat 401 challenge there: the list says nothing about grants that do not exist.
+    expect((await call(elsewhere, 'not-a-token')).status).toBe(401);
+
+    // Listed by address (any letter case) or by domain: the call works and the grant is stamped as before.
+    const listed = await appWith(email.toUpperCase());
+    const answered = await call(listed, c.access);
+    expect(answered.status).toBe(200);
+    expect(await answered.json()).toMatchObject({ result: { structuredContent: { clientName: 'Test MCP client' } } });
+    expect((await grant())?.last_used_at).not.toBeNull();
+    expect((await call(await appWith('@mcp.test'), c.access)).status).toBe(200);
+
+    // The list unset (the server of this suite): today's behavior, exactly.
+    expect(await aboutStatus(c.access)).toBe(200);
+
+    // Standing is not loosened by the list: a revoked grant of a listed account is refused 401, as before.
+    for (const g of (await grantsOf()).filter((x) => x.id === row?.id)) expect((await rpc('mcp/grant/revoke', await asBrowser('owner'), { grantId: g.id })).status).toBe(200);
+    expect((await call(listed, c.access)).status).toBe(401);
+
+    // The definer answers the person's email for a known grant and NULL for an unknown one, to the API login only.
+    const ask = async (id: string) => (await pool.query<{ email: string | null }>('SELECT ludy_kernel.mcp_grant_account_email($1::uuid) AS email', [id])).rows[0]?.email;
+    expect(await ask(String(row?.id))).toBe(email);
+    expect(await ask(randomUUID())).toBeNull();
+  });
+
+  // The refresh is a use of the grant too (#3223): with the list leaving the account out, the token endpoint signs no new access token.
+  it('refuses a refresh and a code exchange for a grant whose account the allow-list leaves out, with invalid_grant (#3223)', async () => {
+    const c = await connect();
+    const port = Number(new URL(base).port);
+    // The consent is the person's own browser sign-in, which the list would refuse: it is done first, and its code is traded after.
+    const second = await consent('owner');
+    expect(second.consentStatus).toBe(200);
+    const secondCode = (await codeOf(second)).code;
+    const serveWith = async (list: string | null) => {
+      const config = loadConfig({ ...bootEnv, ...(list === null ? {} : { AUTH_ALLOWED_EMAILS: list }) });
+      const oauth = await createOauthServer(config, (fn) => sharedRuntime.orgless(fn));
+      const app = createHttpApp({ config, oauth, runtime: sharedRuntime, store: new MemoryStore(), authenticate: createAuthenticator(config, sharedDb), pool, aiEnabled: false });
+      return serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }) as unknown as Server;
+    };
+    const swap = async (list: string | null) => {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+      server = await serveWith(list);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    };
+    try {
+      await swap('someone-else@mcp.test');
+      const refused = await refreshWith(c.clientId, c.refresh);
+      expect(refused.status).toBe(400);
+      expect(refused.body.error).toBe('invalid_grant');
+      expect(refused.body.access_token).toBeUndefined();
+      // A code of such an account is not traded for tokens either.
+      const exchanged = await tokens(second, secondCode);
+      expect(exchanged.status).toBe(400);
+      expect(exchanged.body.access_token).toBeUndefined();
+      // The refused refresh consumed nothing: once the account is listed again the same refresh token works, and the provider's reuse detection has
+      // not revoked the grant (it would, had the refresh token been consumed and a rotated one lost).
+      await swap(accounts.get('owner')?.email ?? 'owner@mcp.test');
+      const again = await refreshWith(c.clientId, c.refresh);
+      expect(again.status).toBe(200);
+      expect(await aboutStatus(String(again.body.access_token))).toBe(200);
+    } finally {
+      await swap(null);
+    }
   });
 
   it('lets a member connect their own AI app once the org allows it: refused while the switch is off, a token that reads only what a member reads, and the very next call refused when the owner turns the switch off', async () => {
@@ -363,7 +466,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     const invited = await rpc('org/invite', await asBrowser('owner'), { email, role: 'member' });
     expect(invited.status).toBe(200);
     expect((await rpc('invites/accept', await asBrowser(member, null), { token: String(invited.body.acceptPath).split('#')[1] })).status).toBe(200);
-    const setSwitch = (on: boolean) => admin((client) => client.query(`UPDATE crove_kernel.tenant SET mcp_member_grants = $2 WHERE org_id = $1`, [orgId, on]));
+    const setSwitch = (on: boolean) => admin((client) => client.query(`UPDATE ludy_kernel.tenant SET mcp_member_grants = $2 WHERE org_id = $1`, [orgId, on]));
     await setSwitch(false);
     // The consent page lists the orgs where the user may connect: none for a member while the org has not allowed it.
     const before = await consent(member, orgId, 'approve', 'member');
@@ -410,13 +513,13 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     const c = await connect();
     expect(await aboutStatus(c.access)).toBe(200);
     const owner = accounts.get('owner')?.subject;
-    await admin((client) => client.query(`INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'org', '*', $2)`, [orgId, owner]));
+    await admin((client) => client.query(`INSERT INTO ludy_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'org', '*', $2)`, [orgId, owner]));
     expect(await aboutStatus(c.access)).toBe(401);
-    await admin((client) => client.query(`UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = engaged_by WHERE org_id = $1 AND released_at IS NULL`, [orgId]));
+    await admin((client) => client.query(`UPDATE ludy_kernel.kill_switch SET released_at = now(), released_by = engaged_by WHERE org_id = $1 AND released_at IS NULL`, [orgId]));
     expect(await aboutStatus(c.access)).toBe(200);
-    await admin((client) => client.query(`SELECT crove_kernel.global_kill_switch_set('ai', true, 'test', 'test')`));
+    await admin((client) => client.query(`SELECT ludy_kernel.global_kill_switch_set('ai', true, 'test', 'test')`));
     expect(await aboutStatus(c.access)).toBe(401);
-    await admin((client) => client.query(`SELECT crove_kernel.global_kill_switch_set('ai', false, 'test', 'test')`));
+    await admin((client) => client.query(`SELECT ludy_kernel.global_kill_switch_set('ai', false, 'test', 'test')`));
     expect(await aboutStatus(c.access)).toBe(200);
   });
 
@@ -431,7 +534,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
       const initialized = await post({ 'mcp-protocol-version': version }, { jsonrpc: '2.0', method: 'notifications/initialized' });
       expect(initialized.status).toBe(202);
       const list = (await (await post({ 'mcp-protocol-version': version }, { jsonrpc: '2.0', id: 2, method: 'tools/list' })).json()) as any;
-      expect(list.result.tools.map((t: any) => t.name)).toEqual(['ludy_about', 'ludy_invoices_list', 'ludy_parties_list', 'ludy_signals']);
+      expect(list.result.tools.map((t: any) => t.name)).toEqual(['ludy_about', 'ludy_bookings_list', 'ludy_conversation', 'ludy_conversations_list', 'ludy_deal', 'ludy_deals_list', 'ludy_finance_open_balances', 'ludy_finance_overview', 'ludy_invoices_list', 'ludy_parties_list', 'ludy_payment_reminder_draft', 'ludy_projects_roadmap_demand_summary', 'ludy_projects_roadmap_ideas', 'ludy_quote', 'ludy_quotes_list', 'ludy_signals', 'ludy_social_metrics_summary', 'ludy_social_metrics_totals', 'ludy_social_posts_list', 'ludy_social_review_queue']);
       for (const tool of list.result.tools) expect(tool.annotations, tool.name).toMatchObject({ readOnlyHint: true, destructiveHint: false, idempotentHint: true });
       const called = (await (await post({ 'mcp-protocol-version': version }, { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'ludy_about', arguments: {} } })).json()) as any;
       expect(called.result.structuredContent.clientName).toBe('Test MCP client');
@@ -464,7 +567,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
   // Slice 1b: the data tools over the real endpoint, with arguments. The reads themselves, their projections and what they never return are pinned in mcp-data.db.test.ts.
   it('serves the data tools with checked arguments, hands an AI app the contact details an owner sees but nothing beyond them, and audits each call by tool', async () => {
     const c = await connect();
-    await admin((client) => client.query(`INSERT INTO crove_kernel.party (org_id, kind, name, email, phone, tax_code, address, source_trust) VALUES ($1, 'organization', 'Khach Hang E2E', 'e2e@customer.test', '0988 e2e phone', '0300000999', '1 Duong E2E', 'external')`, [orgId]));
+    await admin((client) => client.query(`INSERT INTO ludy_kernel.party (org_id, kind, name, email, phone, tax_code, address, source_trust) VALUES ($1, 'organization', 'Khach Hang E2E', 'e2e@customer.test', '0988 e2e phone', '0300000999', '1 Duong E2E', 'external')`, [orgId]));
     const called = await mcpModern(c.access, 'tools/call', { name: 'ludy_parties_list', arguments: { limit: 5 } }, 'ludy_parties_list');
     expect(called.status).toBe(200);
     const result = called.body?.result;
@@ -477,15 +580,15 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     const invoices = await mcpModern(c.access, 'tools/call', { name: 'ludy_invoices_list', arguments: {} }, 'ludy_invoices_list');
     expect(invoices.body?.result?.structuredContent).toMatchObject({ invoices: [], total: 0, truncated: false });
     // Arguments outside the schema are refused with the field's name, never its value, and before any query runs (no audit row for a call that did not run).
-    const before = await admin((client) => client.query(`SELECT count(*)::int AS n FROM crove_kernel.audit_event WHERE command = 'kernel.mcp.call'`));
+    const before = await admin((client) => client.query(`SELECT count(*)::int AS n FROM ludy_kernel.audit_event WHERE command = 'kernel.mcp.call'`));
     for (const bad of [{ limit: 51 }, { limit: 'many' }, { search: 'IGNORE PREVIOUS INSTRUCTIONS' }, { kind: 'x' }]) {
       const refused = await mcpModern(c.access, 'tools/call', { name: 'ludy_parties_list', arguments: bad }, 'ludy_parties_list');
       expect(refused.body?.error?.code, JSON.stringify(bad)).toBe(-32602);
       expect(JSON.stringify(refused.body)).not.toContain('IGNORE PREVIOUS');
     }
-    const after = await admin((client) => client.query(`SELECT count(*)::int AS n FROM crove_kernel.audit_event WHERE command = 'kernel.mcp.call'`));
+    const after = await admin((client) => client.query(`SELECT count(*)::int AS n FROM ludy_kernel.audit_event WHERE command = 'kernel.mcp.call'`));
     expect(after.rows[0].n).toBe(before.rows[0].n);
-    const tools = await admin((client) => client.query(`SELECT DISTINCT detail ->> 'tool' AS tool FROM crove_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'mcpGrant' IS NOT NULL ORDER BY 1`));
+    const tools = await admin((client) => client.query(`SELECT DISTINCT detail ->> 'tool' AS tool FROM ludy_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'mcpGrant' IS NOT NULL ORDER BY 1`));
     expect(tools.rows.map((r: any) => r.tool)).toEqual(expect.arrayContaining(['ludy_invoices_list', 'ludy_parties_list']));
     // The tool list carries each tool's JSON Schema, from the same zod schema that checks the call.
     const listed = await mcpModern(c.access, 'tools/list');
@@ -503,14 +606,14 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect(tool).toMatchObject({ title: 'Things that need attention', inputSchema: { type: 'object', additionalProperties: false, properties: {} }, annotations: { readOnlyHint: true } });
     expect(tool.description).toContain('An empty `items` means nothing was found among `checked`');
     // A deal won 8 days ago, its customer never invoiced (a stage row and a deal row, as the CRM commands write them).
-    const party = (await admin((client) => client.query(`INSERT INTO crove_kernel.party (org_id, kind, name) VALUES ($1, 'organization', 'Khach Signals E2E') RETURNING id`, [orgId]))).rows[0].id as string;
-    const owner = (await admin((client) => client.query(`SELECT user_id FROM crove_kernel.agent_grant WHERE client_id = $1`, [c.clientId]))).rows[0].user_id as string;
-    const stage = (await admin((client) => client.query(`INSERT INTO crove_crm.pipeline_stage (org_id, name, kind, position) VALUES ($1, 'Thắng', 'won', 1) RETURNING id`, [orgId]))).rows[0].id as string;
+    const party = (await admin((client) => client.query(`INSERT INTO ludy_kernel.party (org_id, kind, name) VALUES ($1, 'organization', 'Khach Signals E2E') RETURNING id`, [orgId]))).rows[0].id as string;
+    const owner = (await admin((client) => client.query(`SELECT user_id FROM ludy_kernel.agent_grant WHERE client_id = $1`, [c.clientId]))).rows[0].user_id as string;
+    const stage = (await admin((client) => client.query(`INSERT INTO ludy_crm.pipeline_stage (org_id, name, kind, position) VALUES ($1, 'Thắng', 'won', 1) RETURNING id`, [orgId]))).rows[0].id as string;
     const deal = (await admin((client) => client.query(
-      `INSERT INTO crove_crm.deal (org_id, party_id, title, amount, stage_id, sort_key, created_by, updated_by, closed_at) VALUES ($1, $2, 'Hop dong bi mat', 4200000, $3, 'a', $4, $4, now() - interval '8 days') RETURNING id`,
+      `INSERT INTO ludy_crm.deal (org_id, party_id, title, amount, stage_id, sort_key, created_by, updated_by, closed_at) VALUES ($1, $2, 'Hop dong bi mat', 4200000, $3, 'a', $4, $4, now() - interval '8 days') RETURNING id`,
       [orgId, party, stage, owner],
     ))).rows[0].id as string;
-    const used = async () => Number((await admin((client) => client.query(`SELECT rows_used FROM crove_kernel.agent_grant WHERE client_id = $1`, [c.clientId]))).rows[0].rows_used ?? 0);
+    const used = async () => Number((await admin((client) => client.query(`SELECT rows_used FROM ludy_kernel.agent_grant WHERE client_id = $1`, [c.clientId]))).rows[0].rows_used ?? 0);
     const before = await used();
     const called = await mcpModern(c.access, 'tools/call', { name: 'ludy_signals', arguments: {} }, 'ludy_signals');
     expect(called.status).toBe(200);
@@ -521,12 +624,13 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     // Ids, days and amounts only: the deal's title and the party's name never cross.
     expect(JSON.stringify(out)).not.toContain('bi mat');
     expect(JSON.stringify(out)).not.toContain('Khach Signals');
-    // The two rules that could look are `checked`; rule 3 has no data to read yet and says so, so an empty list is never mistaken for "all clear".
-    expect(out.checked).toEqual(['deal_without_invoice', 'receivable_with_open_deal']);
-    expect(out.unchecked).toEqual([{ rule: 'supplier_bank_changed', reason: 'not_available' }]);
+    // The three rules that could look are `checked` (rule 3, the supplier bank change, reads `finance.signals.supplier_bank_changes` since #3113 S1; none here, so no item).
+    expect(out.checked).toEqual(['deal_without_invoice', 'receivable_with_open_deal', 'supplier_bank_changed']);
+    // The conversation rule (#3124) never looks over MCP: a grant's context reads no conversation, so it is named unchecked, never an empty "all clear".
+    expect(out.unchecked).toEqual([{ rule: 'conversation_unanswered', reason: 'not_available' }]);
     // One row of the daily budget per item, and the audit row names the tool.
     expect((await used()) - before).toBe(1);
-    const audited = await admin((client) => client.query(`SELECT DISTINCT detail ->> 'tool' AS tool FROM crove_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'mcpGrant' IS NOT NULL`));
+    const audited = await admin((client) => client.query(`SELECT DISTINCT detail ->> 'tool' AS tool FROM ludy_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'mcpGrant' IS NOT NULL`));
     expect(audited.rows.map((r: any) => r.tool)).toContain('ludy_signals');
     // A tool that takes no arguments refuses one, by the field's name, before any query runs.
     const refused = await mcpModern(c.access, 'tools/call', { name: 'ludy_signals', arguments: { rule: 'x' } }, 'ludy_signals');
@@ -536,6 +640,43 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
   // ADR-0032 acceptance test 2: the official MCP TypeScript client, not our own fetch calls. The client discovers the resource and the authorization server
   // from the 401 challenge, registers itself (DCR), sends the person to the authorization URL, takes the code back and then speaks 2025-11-25 (the newest
   // revision this SDK knows), with no session id. The consent step is the test's, in place of the person's browser.
+  // ADR-0053, slice e (#3311): an app the org switched off leaves the tool list, and a call into it answers MODULE_OFF as an error result the model can read; the grant stays authorized.
+  it('leaves the tools of an app the org switched off out of tools/list and answers a call into one with MODULE_OFF as isError, until it is switched back on', async () => {
+    const c = await connect();
+    const ownerId = (await admin((client) => client.query(`SELECT user_id FROM ludy_kernel.tenant_member WHERE org_id = $1 AND role = 'owner'`, [orgId]))).rows[0].user_id as string;
+    const owner = { type: 'user' as const, userId: ownerId, aal: 'aal2' as const, sessionId: '7e1c2b4a-5d6f-4a8b-9c0d-1e2f3a4b5c6d', mfaAt: Math.floor(Date.now() / 1000) };
+    const setApp = (enabled: boolean) => sharedRuntime.execute('kernel.org.set_app', { module: 'social', enabled }, { actor: owner, orgId, idempotencyKey: randomUUID() });
+    const names = async () => (((await mcpModern(c.access, 'tools/list')).body?.result?.tools ?? []) as Array<{ name: string }>).map((t) => t.name);
+    expect(await names()).toEqual(expect.arrayContaining(['ludy_social_posts_list', 'ludy_social_review_queue']));
+    await setApp(false);
+    try {
+      const listed = await names();
+      expect(listed).not.toContain('ludy_social_posts_list');
+      expect(listed).not.toContain('ludy_social_review_queue');
+      // The other tools are untouched.
+      expect(listed).toEqual(expect.arrayContaining(['ludy_about', 'ludy_parties_list', 'ludy_invoices_list', 'ludy_signals']));
+      const called = await mcpModern(c.access, 'tools/call', { name: 'ludy_social_posts_list', arguments: {} }, 'ludy_social_posts_list');
+      expect(called.status).toBe(200);
+      expect(called.body?.error).toBeUndefined();
+      expect(called.body?.result?.isError).toBe(true);
+      expect(called.body?.result?.content?.[0]?.text).toContain('MODULE_OFF');
+      expect(called.body?.result?.content?.[0]?.text).toContain('social');
+      // The call is audited as refused, and the grant still reads the apps that are on.
+      const audited = await admin((client) => client.query(`SELECT detail ->> 'result' AS outcome FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.mcp.call' AND detail ->> 'tool' = 'ludy_social_posts_list' AND detail ->> 'result' = 'refused' LIMIT 1`, [orgId]));
+      expect(audited.rows[0]?.outcome).toBe('refused');
+      // The listing carries no internal field of the descriptor.
+      const raw = (await mcpModern(c.access, 'tools/list')).body?.result?.tools as Array<Record<string, unknown>>;
+      expect(raw.every((t) => !('module' in t))).toBe(true);
+      const about = await mcpModern(c.access, 'tools/call', { name: 'ludy_about', arguments: {} }, 'ludy_about');
+      expect(about.body?.result?.isError).toBe(false);
+    } finally {
+      await setApp(true);
+    }
+    expect(await names()).toEqual(expect.arrayContaining(['ludy_social_posts_list', 'ludy_social_review_queue']));
+    const back = await mcpModern(c.access, 'tools/call', { name: 'ludy_social_posts_list', arguments: {} }, 'ludy_social_posts_list');
+    expect(back.body?.result?.isError).toBe(false);
+  });
+
   it('works with the official MCP TypeScript SDK client: discovery, registration, consent, token, tools/list and a tool call', async () => {
     const callback = 'http://127.0.0.1:39998/callback';
     let info: { client_id: string } | undefined;
@@ -595,14 +736,14 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect(client.getServerVersion()?.name).toBe('ludy');
     expect(client.getServerCapabilities()?.tools).toBeDefined();
     const listed = await client.listTools();
-    expect(listed.tools.map((t) => t.name)).toEqual(['ludy_about', 'ludy_invoices_list', 'ludy_parties_list', 'ludy_signals']);
+    expect(listed.tools.map((t) => t.name)).toEqual(['ludy_about', 'ludy_bookings_list', 'ludy_conversation', 'ludy_conversations_list', 'ludy_deal', 'ludy_deals_list', 'ludy_finance_open_balances', 'ludy_finance_overview', 'ludy_invoices_list', 'ludy_parties_list', 'ludy_payment_reminder_draft', 'ludy_projects_roadmap_demand_summary', 'ludy_projects_roadmap_ideas', 'ludy_quote', 'ludy_quotes_list', 'ludy_signals', 'ludy_social_metrics_summary', 'ludy_social_metrics_totals', 'ludy_social_posts_list', 'ludy_social_review_queue']);
     expect(listed.tools[0]?.annotations).toMatchObject({ readOnlyHint: true });
     const called = await client.callTool({ name: 'ludy_about', arguments: {} });
     expect(called.isError).toBeFalsy();
     expect(called.structuredContent).toMatchObject({ clientName: 'SDK client', scopes: ['ludy.read'] });
     await client.close();
     // The tool call it made is in the audit log under its grant (a tool call is what is audited, not the handshake or the list).
-    const rows = await admin((c) => c.query(`SELECT detail FROM crove_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'mcpClientName' = 'SDK client'`));
+    const rows = await admin((c) => c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'mcpClientName' = 'SDK client'`));
     expect(rows.rowCount).toBe(1);
     expect(rows.rows[0].detail).toMatchObject({ mcpCall: true, tool: 'ludy_about', result: 'ok' });
   });
@@ -652,7 +793,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
   it('writes an audit row for every call that names the grant, the client and the tool, and says it came over MCP', async () => {
     const c = await connect();
     await mcpModern(c.access, 'tools/call', { name: 'ludy_about', arguments: {} }, 'ludy_about');
-    const rows = await admin(async (client) => (await client.query(`SELECT actor_type, actor_id, command, detail FROM crove_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'mcpClientName' = 'Test MCP client' ORDER BY id DESC LIMIT 1`)).rows);
+    const rows = await admin(async (client) => (await client.query(`SELECT actor_type, actor_id, command, detail FROM ludy_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'mcpClientName' = 'Test MCP client' ORDER BY id DESC LIMIT 1`)).rows);
     expect(rows[0]).toMatchObject({ actor_type: 'system', actor_id: null, command: 'kernel.mcp.call' });
     expect(rows[0].detail).toMatchObject({ mcpCall: true, tool: 'ludy_about', result: 'ok' });
     expect(rows[0].detail.mcpGrant).toMatch(/^[0-9a-f-]{36}$/);
@@ -668,23 +809,23 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
 
   it('stops a grant that has read its day\'s rows: the call that crosses the line is answered, the next is refused before any query runs and audited as rate limited, and a new day starts at zero', async () => {
     const c = await connect();
-    const grantId = (await admin((client) => client.query(`SELECT id FROM crove_kernel.agent_grant WHERE client_id = $1 AND revoked_at IS NULL`, [c.clientId]))).rows[0].id as string;
-    await admin((client) => client.query(`INSERT INTO crove_kernel.party (org_id, kind, name, source_trust) VALUES ($1, 'organization', 'Budget Kh 1', 'external'), ($1, 'organization', 'Budget Kh 2', 'external')`, [orgId]));
+    const grantId = (await admin((client) => client.query(`SELECT id FROM ludy_kernel.agent_grant WHERE client_id = $1 AND revoked_at IS NULL`, [c.clientId]))).rows[0].id as string;
+    await admin((client) => client.query(`INSERT INTO ludy_kernel.party (org_id, kind, name, source_trust) VALUES ($1, 'organization', 'Budget Kh 1', 'external'), ($1, 'organization', 'Budget Kh 2', 'external')`, [orgId]));
     const limit = 2000;
-    await admin((client) => client.query(`UPDATE crove_kernel.agent_grant SET rows_day = (now() AT TIME ZONE 'UTC')::date, rows_used = $2 WHERE id = $1`, [grantId, limit - 1]));
+    await admin((client) => client.query(`UPDATE ludy_kernel.agent_grant SET rows_day = (now() AT TIME ZONE 'UTC')::date, rows_used = $2 WHERE id = $1`, [grantId, limit - 1]));
     const crossing = await mcpModern(c.access, 'tools/call', { name: 'ludy_parties_list', arguments: { limit: 5 } }, 'ludy_parties_list');
     expect(crossing.body?.result?.isError).toBe(false);
-    const used = await admin((client) => client.query(`SELECT rows_used FROM crove_kernel.agent_grant WHERE id = $1`, [grantId]));
+    const used = await admin((client) => client.query(`SELECT rows_used FROM ludy_kernel.agent_grant WHERE id = $1`, [grantId]));
     expect(used.rows[0].rows_used).toBeGreaterThan(limit);
     const refused = await mcpModern(c.access, 'tools/call', { name: 'ludy_parties_list', arguments: { limit: 5 } }, 'ludy_parties_list');
     expect(refused.body?.error?.message).toContain('daily limit');
     expect(JSON.stringify(refused.body)).not.toContain('Budget Kh');
     // Every tool is refused once the day's rows are spent (the check runs before the query), and the refusal is in the audit as rate limited.
     expect((await mcpModern(c.access, 'tools/call', { name: 'ludy_about', arguments: {} }, 'ludy_about')).body?.error?.message).toContain('daily limit');
-    const audit = await admin((client) => client.query(`SELECT detail ->> 'result' AS result FROM crove_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'mcpGrant' = $1 AND detail ->> 'tool' = 'ludy_parties_list' ORDER BY id DESC LIMIT 1`, [grantId]));
+    const audit = await admin((client) => client.query(`SELECT detail ->> 'result' AS result FROM ludy_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'mcpGrant' = $1 AND detail ->> 'tool' = 'ludy_parties_list' ORDER BY id DESC LIMIT 1`, [grantId]));
     expect(audit.rows[0].result).toBe('rate_limited');
     // Yesterday's counter does not count today.
-    await admin((client) => client.query(`UPDATE crove_kernel.agent_grant SET rows_day = (now() AT TIME ZONE 'UTC')::date - 1 WHERE id = $1`, [grantId]));
+    await admin((client) => client.query(`UPDATE ludy_kernel.agent_grant SET rows_day = (now() AT TIME ZONE 'UTC')::date - 1 WHERE id = $1`, [grantId]));
     expect((await mcpModern(c.access, 'tools/call', { name: 'ludy_parties_list', arguments: { limit: 5 } }, 'ludy_parties_list')).body?.result?.isError).toBe(false);
   });
 
@@ -816,5 +957,177 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     const c = await connect();
     const results = await Promise.all([refreshWith(c.clientId, c.refresh), refreshWith(c.clientId, c.refresh)]);
     expect(results.filter((r) => r.status === 200).length).toBeLessThanOrEqual(1);
+  });
+
+  // The one MCP write (#3227): the choice on the consent page, the token, the tool list and the draft it makes, end to end.
+  const DRAFT = 'ludy.social.draft';
+  const claimsOf = (access: string) => JSON.parse(Buffer.from(access.split('.')[1] as string, 'base64url').toString()) as { scope: string };
+  async function draftGrant(opts: { scope?: string; draft?: boolean; kind?: 'company' | 'member'; owner?: string } = {}) {
+    const c = await consent(opts.owner ?? 'owner', orgId, 'approve', opts.kind, { scope: opts.scope ?? `ludy.read ${DRAFT}`, ...(opts.draft !== undefined ? { draft: opts.draft } : {}) });
+    return c;
+  }
+  async function tokenOf(c: Awaited<ReturnType<typeof consent>>) {
+    expect(c.consentStatus).toBe(200);
+    const { code } = await codeOf(c);
+    expect(code).not.toBe('');
+    const t = await tokens(c, code);
+    expect(t.status).toBe(200);
+    return String(t.body.access_token);
+  }
+  const toolNames = async (access: string) => ((((await mcpModern(access, 'tools/list')).body?.result?.tools ?? []) as Array<{ name: string }>)).map((t) => t.name);
+
+  it('lets an owner tick the draft scope: the page offers it, the token and the grant hold it, the write tool is listed, and a draft is an AI post made over MCP', async () => {
+    const c = await draftGrant({ draft: true });
+    expect(c.details.body).toMatchObject({ scopes: ['ludy.read', DRAFT] });
+    const access = await tokenOf(c);
+    expect(claimsOf(access).scope.split(' ').sort()).toEqual(['ludy.read', DRAFT]);
+    const row = await admin((client) => client.query(`SELECT scopes, kind FROM ludy_kernel.agent_grant WHERE client_id = $1`, [c.clientId]));
+    expect(row.rows[0]).toEqual({ scopes: ['ludy.read', DRAFT], kind: 'company' });
+    const list = ((await mcpModern(access, 'tools/list')).body?.result?.tools ?? []) as Array<{ name: string; annotations: Record<string, boolean> }>;
+    const tool = list.find((t) => t.name === 'ludy_social_draft_create');
+    expect(tool?.annotations).toEqual({ readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false });
+    const connectionId = randomUUID();
+    await admin((client) => client.query(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) SELECT $1, $2, 'sandbox', 'acct-mcp-draft', 'Kênh thử', user_id FROM ludy_kernel.tenant_member WHERE org_id = $1 AND role = 'owner' LIMIT 1`, [orgId, connectionId]));
+    const made = await mcpModern(access, 'tools/call', { name: 'ludy_social_draft_create', arguments: { body: 'Bài do ứng dụng AI soạn', channels: [{ connectionId }] } }, 'ludy_social_draft_create');
+    expect(made.status).toBe(200);
+    const result = made.body?.result?.structuredContent as { postId: string; status: string; variants: Array<Record<string, string>> };
+    expect(result).toMatchObject({ status: 'draft', revision: 1 });
+    expect(Object.keys(result.variants[0] as object).sort()).toEqual(['connectionId', 'variantId']);
+    const post = await admin((client) => client.query(`SELECT origin, actor_origin, tainted, status FROM ludy_social.post WHERE id = $1`, [result.postId]));
+    expect(post.rows[0]).toEqual({ origin: 'ai', actor_origin: 'mcp', tainted: true, status: 'draft' });
+    // The call is audited by tool as the grant's, and the read tools still work for the same grant.
+    const audit = await admin((client) => client.query(`SELECT detail FROM ludy_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'tool' = 'ludy_social_draft_create' ORDER BY id DESC LIMIT 1`));
+    expect(audit.rows[0].detail).toMatchObject({ mcpCall: true, result: 'ok', mcpClientName: 'Test MCP client' });
+    const seen = await mcpModern(access, 'tools/call', { name: 'ludy_social_posts_list', arguments: {} }, 'ludy_social_posts_list');
+    const seenPosts = (seen.body?.result?.structuredContent ?? { posts: [] }) as { posts: Array<{ id: string }> };
+    expect(seenPosts.posts.map((p) => p.id)).toContain(result.postId);
+    // A bad argument names the field, and a field outside the schema (a channel's own settings, media or link) is refused before anything runs.
+    const bad = await mcpModern(access, 'tools/call', { name: 'ludy_social_draft_create', arguments: { body: 'x', channels: [{ connectionId, settings: { removeAt: '2030-01-01T00:00:00Z' } }] } }, 'ludy_social_draft_create');
+    expect(bad.body?.error?.message).toMatch(/Invalid arguments/);
+  });
+
+  it('keeps the draft scope off unless the person ticks it: the same request with the box left clear gets a code, a read-only token and no write tool', async () => {
+    for (const draft of [false, undefined]) {
+      const c = await draftGrant(draft === undefined ? {} : { draft });
+      const access = await tokenOf(c);
+      expect(claimsOf(access).scope).toBe('ludy.read');
+      expect((await admin((client) => client.query(`SELECT scopes FROM ludy_kernel.agent_grant WHERE client_id = $1`, [c.clientId]))).rows[0].scopes).toEqual(['ludy.read']);
+      expect(await toolNames(access)).not.toContain('ludy_social_draft_create');
+      const refused = await mcpModern(access, 'tools/call', { name: 'ludy_social_draft_create', arguments: { body: 'x', channels: [{ connectionId: randomUUID() }] } }, 'ludy_social_draft_create');
+      expect(refused.body?.error?.message).toBe('Unknown tool');
+    }
+  });
+
+  it('refuses the draft scope a client did not ask for and one asked for a member grant, and offers a read-only client nothing', async () => {
+    const readOnly = await consent('owner', orgId, 'approve', undefined, { draft: true });
+    expect(readOnly.details.body).toMatchObject({ scopes: ['ludy.read'] });
+    expect(readOnly.consentStatus).toBe(422);
+    const asMember = await draftGrant({ draft: true, kind: 'member' });
+    expect(asMember.consentStatus).toBe(422);
+    // A client that asks for the draft scope alone is offered the read scope only, and cannot tick a draft grant that would hold no read scope.
+    const draftOnly = await draftGrant({ scope: DRAFT, draft: true });
+    expect(draftOnly.details.body).toMatchObject({ scopes: ['ludy.read'] });
+    expect(draftOnly.consentStatus).toBe(422);
+    // Nothing half made is left: no grant of those clients.
+    for (const c of [readOnly, asMember, draftOnly]) {
+      expect((await admin((client) => client.query(`SELECT count(*)::int AS n FROM ludy_kernel.agent_grant WHERE client_id = $1`, [c.clientId]))).rows[0].n).toBe(0);
+    }
+  });
+
+  // The per-line write scopes (ADR-0051 decision 11, #3858): each is ticked on its own, held only by a company grant with the read scope, and lists the tools of its commands (E2, #3861).
+  const ENGAGE = 'ludy.engage.write';
+  const ADS = 'ludy.ads.draft';
+  const ALL_WRITES = `ludy.read ${DRAFT} ${ENGAGE} ${ADS}`;
+
+  it('lets an owner tick the Engage and Ads write scopes one by one: the page offers all three, the token and the grant hold exactly the ticked ones, and the tools of the ticked scope are listed', async () => {
+    const asked = await consent('owner', orgId, 'approve', undefined, { scope: ALL_WRITES, writes: [ENGAGE] });
+    expect(asked.details.body).toMatchObject({ scopes: ['ludy.read', DRAFT, ENGAGE, ADS] });
+    const access = await tokenOf(asked);
+    expect(claimsOf(access).scope.split(' ').sort()).toEqual(['ludy.engage.write', 'ludy.read']);
+    expect((await admin((client) => client.query(`SELECT scopes, kind FROM ludy_kernel.agent_grant WHERE client_id = $1`, [asked.clientId]))).rows[0]).toEqual({ scopes: ['ludy.engage.write', 'ludy.read'], kind: 'company' });
+    // The tool list is filtered by scope: the Social draft tool is not listed for a grant that does not hold its scope.
+    const names = await toolNames(access);
+    expect(names).not.toContain('ludy_social_draft_create');
+    expect(names).toContain('ludy_about');
+    const both = await tokenOf(await consent('owner', orgId, 'approve', undefined, { scope: ALL_WRITES, writes: [DRAFT, ADS] }));
+    expect(claimsOf(both).scope.split(' ').sort()).toEqual(['ludy.ads.draft', 'ludy.read', DRAFT]);
+    expect(await toolNames(both)).toContain('ludy_social_draft_create');
+    // Ticking nothing leaves the read scope alone, whatever the client asked for.
+    const none = await tokenOf(await consent('owner', orgId, 'approve', undefined, { scope: ALL_WRITES, writes: [] }));
+    expect(claimsOf(none).scope).toBe('ludy.read');
+  });
+
+  it('works an inbox thread through the endpoint with the Engage scope: the tools are listed for it alone, a note and a contact land, and the calls are audited by tool and as the grant\'s (#3861)', async () => {
+    const engageOnly = await tokenOf(await consent('owner', orgId, 'approve', undefined, { scope: ALL_WRITES, writes: [ENGAGE] }));
+    const names = await toolNames(engageOnly);
+    for (const name of ['ludy_conversation_assign', 'ludy_conversation_resolve', 'ludy_conversation_reopen', 'ludy_conversation_note', 'ludy_conversation_link_contact', 'ludy_party_create', 'ludy_deal_create', 'ludy_deal_move', 'ludy_quote_save', 'ludy_quote_revise', 'ludy_next_step_done', 'ludy_next_step_snooze']) expect(names, name).toContain(name);
+    expect(names).not.toContain('ludy_ads_campaign_draft_save');
+    expect(names).not.toContain('ludy_social_draft_create');
+    // A read-only grant is offered none of them and a call to one is an unknown tool.
+    const readOnly = await tokenOf(await consent('owner', orgId, 'approve', undefined, { scope: ALL_WRITES, writes: [] }));
+    expect(await toolNames(readOnly)).not.toContain('ludy_conversation_note');
+    expect((await mcpModern(readOnly, 'tools/call', { name: 'ludy_conversation_note', arguments: {} }, 'ludy_conversation_note')).body?.error?.message).toBe('Unknown tool');
+    // A thread of the org, and the writes through the tools.
+    const [connection, identity, thread] = [randomUUID(), randomUUID(), randomUUID()];
+    await admin((client) => client.query(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) SELECT $1, $2, 'facebook_page', 'acct-engage-e2e', 'Trang thử', user_id FROM ludy_kernel.tenant_member WHERE org_id = $1 AND role = 'owner' LIMIT 1`, [orgId, connection]));
+    await admin((client) => client.query(`INSERT INTO ludy_kernel.conversation_identity (org_id, id, provider, external_user_id, display_name) VALUES ($1, $2, 'facebook', 'u-e2e-12345678', 'Khách')`, [orgId, identity]));
+    await admin((client) => client.query(`INSERT INTO ludy_kernel.conversation (org_id, id, channel_connection_id, kind, external_thread_id, identity_id, last_seq, last_message_at, last_inbound_at) VALUES ($1, $2, $3, 'comment_thread', 't-e2e', $4, 1, now(), now())`, [orgId, thread, connection, identity]));
+    const noted = await mcpModern(engageOnly, 'tools/call', { name: 'ludy_conversation_note', arguments: { conversationId: thread, body: 'Khách hỏi giá (Dy)' } }, 'ludy_conversation_note');
+    expect(noted.status).toBe(200);
+    const noteId = ((noted.body?.result?.structuredContent ?? {}) as { noteId: string }).noteId;
+    expect((await admin((client) => client.query(`SELECT body FROM ludy_kernel.conversation_note WHERE id = $1`, [noteId]))).rows[0].body).toBe('Khách hỏi giá (Dy)');
+    const made = await mcpModern(engageOnly, 'tools/call', { name: 'ludy_party_create', arguments: { kind: 'person', name: 'Khách qua MCP' } }, 'ludy_party_create');
+    const partyId = ((made.body?.result?.structuredContent ?? {}) as { partyId: string }).partyId;
+    expect((await admin((client) => client.query(`SELECT source_trust FROM ludy_kernel.party WHERE id = $1`, [partyId]))).rows[0].source_trust).toBe('external');
+    const resolved = await mcpModern(engageOnly, 'tools/call', { name: 'ludy_conversation_resolve', arguments: { conversationId: thread } }, 'ludy_conversation_resolve');
+    expect(resolved.body?.result?.structuredContent).toEqual({ conversationId: thread });
+    expect((await admin((client) => client.query(`SELECT status FROM ludy_kernel.conversation WHERE id = $1`, [thread]))).rows[0].status).toBe('resolved');
+    // A field outside the schema is refused before anything runs.
+    const bad = await mcpModern(engageOnly, 'tools/call', { name: 'ludy_conversation_note', arguments: { conversationId: thread, body: 'x', authorUserId: randomUUID() } }, 'ludy_conversation_note');
+    expect(bad.body?.error?.message).toMatch(/Invalid arguments/);
+    // Every call is audited by tool (the endpoint's row) and as the grant's (the command's row, naming the client).
+    for (const [tool, command] of [['ludy_conversation_note', 'kernel.mcp.conversation_note'], ['ludy_party_create', 'kernel.mcp.party_create'], ['ludy_conversation_resolve', 'kernel.mcp.conversation_resolve']] as const) {
+      const call = await admin((client) => client.query(`SELECT detail FROM ludy_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'tool' = $1 ORDER BY id DESC LIMIT 1`, [tool]));
+      expect(call.rows[0].detail, tool).toMatchObject({ mcpCall: true, result: 'ok', mcpClientName: 'Test MCP client' });
+      const row = await admin((client) => client.query(`SELECT outcome, detail FROM ludy_kernel.audit_event WHERE command = $1 ORDER BY id DESC LIMIT 1`, [command]));
+      expect(row.rows[0], command).toMatchObject({ outcome: 'ok', detail: { mcpCall: true, mcpClientName: 'Test MCP client' } });
+      expect(typeof row.rows[0].detail.mcpGrant, command).toBe('string');
+    }
+  });
+
+  it('refuses a write scope the client did not ask for, one asked for a member grant, and the old draft box together with another scope the client left out', async () => {
+    const notAsked = await consent('owner', orgId, 'approve', undefined, { scope: `ludy.read ${ENGAGE}`, writes: [ADS] });
+    expect(notAsked.consentStatus).toBe(422);
+    const asMember = await consent('owner', orgId, 'approve', 'member', { scope: ALL_WRITES, writes: [ENGAGE] });
+    expect(asMember.consentStatus).toBe(422);
+    // The old one-box form means the Social draft scope: refused when the client did not ask for it, and the same scope as `writes: [DRAFT]` (one scope, not two) when it did.
+    const oldBoxNotAsked = await consent('owner', orgId, 'approve', undefined, { scope: `ludy.read ${ENGAGE}`, draft: true, writes: [ENGAGE] });
+    expect(oldBoxNotAsked.consentStatus).toBe(422);
+    const oldBoxAndWrites = await consent('owner', orgId, 'approve', undefined, { scope: `ludy.read ${DRAFT}`, draft: true, writes: [DRAFT] });
+    expect(oldBoxAndWrites.consentStatus).toBe(200);
+    expect(claimsOf(await tokenOf(oldBoxAndWrites)).scope.split(' ').sort()).toEqual(['ludy.read', DRAFT]);
+    const noRead = await consent('owner', orgId, 'approve', undefined, { scope: ENGAGE, writes: [ENGAGE] });
+    expect(noRead.details.body).toMatchObject({ scopes: ['ludy.read'] });
+    expect(noRead.consentStatus).toBe(422);
+    for (const c of [notAsked, asMember, oldBoxNotAsked, noRead]) {
+      expect((await admin((client) => client.query(`SELECT count(*)::int AS n FROM ludy_kernel.agent_grant WHERE client_id = $1`, [c.clientId]))).rows[0].n).toBe(0);
+    }
+  });
+
+  it('answers a draft over the drafts budget with the seconds to wait, before the command runs', async () => {
+    const access = await tokenOf(await draftGrant({ draft: true }));
+    const connectionId = randomUUID();
+    await admin((client) => client.query(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) SELECT $1, $2, 'sandbox', 'acct-mcp-budget', 'Kênh hạn mức', user_id FROM ludy_kernel.tenant_member WHERE org_id = $1 AND role = 'owner' LIMIT 1`, [orgId, connectionId]));
+    const call = () => mcpModern(access, 'tools/call', { name: 'ludy_social_draft_create', arguments: { body: 'Bản nháp', channels: [{ connectionId }] } }, 'ludy_social_draft_create');
+    const before = Number((await admin((client) => client.query(`SELECT count(*) AS n FROM ludy_social.post WHERE org_id = $1`, [orgId]))).rows[0].n);
+    const answers: string[] = [];
+    for (let i = 0; i < 8; i += 1) answers.push((await call()).body?.error?.message ?? 'ok');
+    // A person's own budget is six a minute for a member of an org (the draft of the first test of this group is one of them, unless a minute has passed); the rest wait.
+    const made = answers.filter((a) => a === 'ok').length;
+    expect(made).toBeGreaterThanOrEqual(5);
+    expect(made).toBeLessThanOrEqual(6);
+    expect(answers.filter((a) => /^Too many drafts just now; try again in \d+ seconds$/.test(a)).length).toBe(8 - made);
+    const after = Number((await admin((client) => client.query(`SELECT count(*) AS n FROM ludy_social.post WHERE org_id = $1`, [orgId]))).rows[0].n);
+    expect(after - before).toBe(made);
   });
 });

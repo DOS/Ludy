@@ -6,11 +6,17 @@
 // this file.
 import { activatorOf, type AdActivator } from './activators.ts';
 import { MetaAdActivator } from './meta-activate.ts';
+import { MetaAdManager } from './meta-manage.ts';
+import { managerOf, type AdManager } from './managers.ts';
+import { SandboxAdManager } from './sandbox-manage.ts';
 import { META_WRITE_PROVIDER } from './meta-write-connector.ts';
 import { MetaAdWriter } from './meta-write.ts';
+import { MetaAdStateReader } from './meta-state.ts';
 import { pauserOf, type AdPauser } from './pausers.ts';
 import { SandboxAdActivator } from './sandbox-activate.ts';
+import { SandboxAdStateReader } from './sandbox-state.ts';
 import { sandboxAdWriter, type SandboxAdWriter } from './sandbox-write.ts';
+import { stateReaderOf, type AdStateReader } from './state-readers.ts';
 import type { AdWriter } from './writer.ts';
 
 export type LaunchWriter = Pick<AdWriter, 'capabilities' | 'verify' | 'resolveTargeting' | 'createCampaign' | 'createAdSet' | 'createCreative' | 'createAd' | 'findByTag'>;
@@ -81,4 +87,41 @@ export function adActivators(options: LaunchWritersOptions): Readonly<Record<str
     activators[META_WRITE_PROVIDER] = activatorOf(new MetaAdActivator({ appSecret: options.meta.writeAppSecret, ...(graphVersion ? { graphVersion } : {}) }));
   }
   return Object.freeze(activators);
+}
+
+// The state readers of a deployment (#3301), by the provider id of the write connection they work with: the frozen view the state job is given (state-readers.ts), which reads
+// what the platform says of the objects of a launch and nothing else. Built with the same switches as the writer (the sandbox; Meta's only where ADS_LIVE_LAUNCH is on, with the
+// secret of the same write app). A provider without one has no entry: its objects keep the last state they had. The map is frozen too.
+export function adStateReaders(options: LaunchWritersOptions): Readonly<Record<string, AdStateReader>> {
+  const readers: Record<string, AdStateReader> = {};
+  if (options.sandbox) {
+    const sandbox = options.sandbox === true ? sandboxAdWriter : options.sandbox;
+    readers[sandbox.provider] = stateReaderOf(new SandboxAdStateReader(sandbox));
+  }
+  if (options.meta) {
+    const graphVersion = options.meta.graphVersion;
+    readers[META_WRITE_PROVIDER] = stateReaderOf(new MetaAdStateReader({ appSecret: options.meta.writeAppSecret, ...(graphVersion ? { graphVersion } : {}) }));
+  }
+  return Object.freeze(readers);
+}
+
+// The managers of a deployment (#3835, W4), by the provider id of the write connection they work with: the frozen view the manage job is given (managers.ts), which changes a live
+// launch's objects (a status, the ad set's budget and end time) and reads them back, and nothing else. Built with the same switches as the writer (the sandbox; Meta's only where
+// ADS_LIVE_LAUNCH is on, with the secret of the same write app). The status changes go through the writer (pause, archive) and the activator (switch on) the deployment already
+// has, which are built here and handed in, so the file that sends the switch-on stays the activation's. A provider without one has no entry: its changes stay queued. The map is
+// frozen too.
+export function adManagers(options: LaunchWritersOptions): Readonly<Record<string, AdManager>> {
+  const managers: Record<string, AdManager> = {};
+  if (options.sandbox) {
+    const sandbox = options.sandbox === true ? sandboxAdWriter : options.sandbox;
+    managers[sandbox.provider] = managerOf(new SandboxAdManager(sandbox, new SandboxAdActivator(sandbox)));
+  }
+  if (options.meta) {
+    const graphVersion = options.meta.graphVersion;
+    const versioned = graphVersion ? { graphVersion } : {};
+    const writer = new MetaAdWriter({ appSecret: options.meta.writeAppSecret, ...versioned });
+    const activator = new MetaAdActivator({ appSecret: options.meta.writeAppSecret, ...versioned });
+    managers[META_WRITE_PROVIDER] = managerOf(new MetaAdManager({ appSecret: options.meta.writeAppSecret, writer, activator, ...versioned }));
+  }
+  return Object.freeze(managers);
 }

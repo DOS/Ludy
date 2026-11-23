@@ -9,11 +9,11 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { Runtime, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -126,14 +126,14 @@ suite('unusual payment amounts (#2419)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 6 });
     db = createDb(pool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register({
@@ -152,7 +152,7 @@ suite('unusual payment amounts (#2419)', () => {
       expect((await rpc('invites/accept', await tokenFor(who), { token: String(invite.body?.acceptPath).split('#')[1] }, null)).status).toBe(200);
     }
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Công ty Cung Cấp Đều', '0312345675'), ($1, $3, 'Công ty Thỉnh Thoảng', NULL)`, [org.orgId, often, rarely]);
+      await c.query(`INSERT INTO ludy_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Công ty Cung Cấp Đều', '0312345675'), ($1, $3, 'Công ty Thỉnh Thoảng', NULL)`, [org.orgId, often, rarely]);
     });
   }, 300_000);
 
@@ -246,7 +246,7 @@ suite('unusual payment amounts (#2419)', () => {
     // A party paid twice a month: five bank debits of 500 000 and a receipt of 80 million from it.
     const twice = randomUUID();
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Chuyển Khoản')`, [org.orgId, twice]);
+      await c.query(`INSERT INTO ludy_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Chuyển Khoản')`, [org.orgId, twice]);
     });
     for (let n = 0; n < 5; n++) {
       const id = await ask({ type: 'bank_debit', date: '2026-09-22', cashAccount: '1121', partyId: twice, description: 'Chuyển khoản tháng', lines: [{ account: '331', amount: '500000' }] });
@@ -275,7 +275,7 @@ suite('unusual payment amounts (#2419)', () => {
     expect(await flagsOf(await ask(pay(often, '3200000')))).toHaveLength(1);
     const [big] = await admin(
       async (c) =>
-        (await c.query(`SELECT j.id FROM crove_finance.journal_entry j JOIN crove_finance.cash_voucher v ON v.id = j.source_id AND v.org_id = j.org_id WHERE v.amount = 90000000 AND j.reverses_entry_id IS NULL`)).rows,
+        (await c.query(`SELECT j.id FROM ludy_finance.journal_entry j JOIN ludy_finance.cash_voucher v ON v.id = j.source_id AND v.org_id = j.org_id WHERE v.amount = 90000000 AND j.reverses_entry_id IS NULL`)).rows,
     );
     const reversal = await rpc('inbox/request', await tokenFor(member), { command: 'finance.journal.reverse', input: { entryId: big.id, entryDate: '2026-09-30', reason: 'Chi nhầm' }, idempotencyKey: randomUUID() });
     expect(reversal.status).toBe(200);

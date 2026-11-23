@@ -7,7 +7,7 @@
 //   worker   outbox relay + jobs
 //   all      api + worker in one process (default for self-host)
 //   prober   health check and alert (plan §4.13): once, or `--every <seconds>`; `--test-alert` sends a test alert
-//   usage-report  the weekly usage counts of the MVP goal, as crove_reporter (issue #311); prints and exits
+//   usage-report  the weekly usage counts of the MVP goal, as ludy_reporter (issue #311); prints and exits
 //   pilot-check   the pilot readiness preflight (issue #308): checks the settings, and with --url the running
 //                 instance; prints and exits
 //   exports-rebind <org id>...  after a restore into a new bucket, re-records each org's export with the restored
@@ -28,7 +28,7 @@
 //   context-token-key  print a new context token key (#1822): CROVE_CONTEXT_TOKEN_KEY, for migrate and the kernel
 // It wires the open-source default adapters into the composition root (createKernel, ADR-0030).
 import { randomBytes } from 'node:crypto';
-import { applyAuthGrants, installDdlWatch, migrate, setRolePasswords } from '@crove/db/migrate';
+import { applyAuthGrants, installDdlWatch, migrate, setRolePasswords } from '@ludy/db/migrate';
 import { liveAuthUrl, loadConfig, type Config } from './config.ts';
 import { installJsonLogs, parseLogFormat } from './log.ts';
 import { createKernel, defaultAdapters, type ServerRole } from './kernel.ts';
@@ -51,16 +51,20 @@ async function runMigrate(config: Config) {
     log: (m) => console.log(`[migrate] ${m}`),
     ...(config.MIGRATE_LOCK_WAIT_SECONDS === undefined ? {} : { lockWaitMs: config.MIGRATE_LOCK_WAIT_SECONDS * 1000 }),
     // Installed after the migrations, as a bind parameter (#1822); unset installs none.
-    contextTokenKey: config.CROVE_CONTEXT_TOKEN_KEY ?? null,
-    sharedDatabase: config.CROVE_SHARED_DATABASE === 'true',
-    allowModeSwitch: config.CROVE_SHARED_DATABASE_SWITCH === 'true',
+    contextTokenKey: config.LUDY_CONTEXT_TOKEN_KEY ?? null,
+    sharedDatabase: config.LUDY_SHARED_DATABASE === 'true',
+    allowModeSwitch: config.LUDY_SHARED_DATABASE_SWITCH === 'true',
   });
-  const shared = config.CROVE_SHARED_DATABASE === 'true';
+  const shared = config.LUDY_SHARED_DATABASE === 'true';
   await setRolePasswords(adminUrl, {
-    crove_app: config.CROVE_APP_DB_PASSWORD,
-    crove_worker: config.CROVE_WORKER_DB_PASSWORD,
-    crove_prober: config.CROVE_PROBER_DB_PASSWORD,
-    crove_reporter: config.CROVE_REPORTER_DB_PASSWORD,
+    ludy_app: config.LUDY_APP_DB_PASSWORD,
+    ludy_worker: config.LUDY_WORKER_DB_PASSWORD,
+    ludy_prober: config.LUDY_PROBER_DB_PASSWORD,
+    ludy_reporter: config.LUDY_REPORTER_DB_PASSWORD,
+    crove_app: config.LUDY_APP_DB_PASSWORD,
+    crove_worker: config.LUDY_WORKER_DB_PASSWORD,
+    crove_prober: config.LUDY_PROBER_DB_PASSWORD,
+    crove_reporter: config.LUDY_REPORTER_DB_PASSWORD,
     // Supabase Auth's role belongs to the other system in a shared database.
     ...(shared ? {} : { supabase_auth_admin: config.AUTH_DB_PASSWORD }),
   }, { sharedDatabase: shared });
@@ -73,7 +77,7 @@ async function runMigrate(config: Config) {
 async function runAuthGrants(config: Config) {
   const adminUrl = config.ADMIN_DATABASE_URL;
   if (!adminUrl) throw new Error('ADMIN_DATABASE_URL is required for auth-grants');
-  await applyAuthGrants({ adminUrl, sharedDatabase: config.CROVE_SHARED_DATABASE === 'true', log: (m) => console.log(`[auth-grants] ${m}`) });
+  await applyAuthGrants({ adminUrl, sharedDatabase: config.LUDY_SHARED_DATABASE === 'true', log: (m) => console.log(`[auth-grants] ${m}`) });
 }
 
 async function main() {
@@ -98,7 +102,7 @@ VAPID_PRIVATE_KEY=${keys.privateKey}`);
   }
   // Needs no settings either: 32 random bytes, for the environment of the migrate step and the kernel alike.
   if (role === 'context-token-key') {
-    console.log(`CROVE_CONTEXT_TOKEN_KEY=${randomBytes(32).toString('base64')}`);
+    console.log(`LUDY_CONTEXT_TOKEN_KEY=${randomBytes(32).toString('base64')}`);
     return;
   }
   const config = loadConfig();
@@ -118,7 +122,7 @@ VAPID_PRIVATE_KEY=${keys.privateKey}`);
   );
   console.log(`[storage] ${describeStorage(config)}`);
   console.log(`[mail] ${describeMailer(config)}`);
-  console.log(`[modules] ${config.CROVE_MODULES.join(', ')}`);
+  console.log(`[modules] ${config.LUDY_MODULES.join(', ')}`);
   console.log(
     `[export] org exports kept ${config.EXPORT_RETENTION_DAYS} days, ` +
       (config.EXPORT_ENCRYPTION_KEY ? 'sealed with AES-256-GCM' : 'stored unencrypted (set EXPORT_ENCRYPTION_KEY)'),

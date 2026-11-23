@@ -3,7 +3,7 @@
 // in onboarding.db.test.ts.
 import type pg from 'pg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { BlobStore, Runtime } from '@crove/kernel-runtime';
+import type { BlobStore, Runtime } from '@ludy/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { createTaxCodeLookup, type TaxCodeLookup } from '../src/tax-lookup.ts';
@@ -151,7 +151,7 @@ describe('tax registry lookup limits', () => {
 });
 
 describe('tax registry lookup configuration', () => {
-  const base = { DATABASE_URL: 'postgres://crove_app:pw@localhost:5432/crove', AUTH_JWT_SECRET: 'x'.repeat(40), AUTH_ISSUER: 'crove-auth' };
+  const base = { DATABASE_URL: 'postgres://ludy_app:pw@localhost:5432/crove', AUTH_JWT_SECRET: 'x'.repeat(40), AUTH_ISSUER: 'crove-auth' };
 
   it('is off when TAX_CODE_LOOKUP_URL is unset, and takes an https template with {taxCode}', () => {
     expect(loadConfig(base).TAX_CODE_LOOKUP_URL).toBeUndefined();

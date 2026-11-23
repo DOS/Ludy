@@ -1,21 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Outlet, useLocation, useNavigate, useParams } from '@tanstack/react-router';
+import { Outlet, useLocation, useNavigate, useParams, useRouter } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { NavIcon } from '@crove/ui/components/nav-icon';
 import { NavDrawer, ShellNav } from '../components/app-nav.tsx';
+import { PhoneHeader } from '../components/phone-header.tsx';
 import { CommandPalette, type PaletteEntry } from '../components/command-palette.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
+import { ScreenTabs } from '../components/screen-tabs.tsx';
 import { Toaster } from '../components/toaster.tsx';
-import { Logo, OrgLeftNotice } from '../components/ui.tsx';
+import { QuickCaptureDialog } from '../components/todo-quick-add.tsx';
+import { OrgLeftNotice } from '../components/ui.tsx';
 import { LOCALE_NAMES, LOCALES } from '../i18n/locale.ts';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
+import { aiConnectionsVisible } from '../lib/agents.ts';
 import { orpc } from '../lib/api.ts';
-import { ALL_NAV, appOfPath, installedApps, type AppId } from '../lib/apps.ts';
+import { ALL_NAV, NAV_KEYWORDS, SETTINGS_ITEMS, appOfPath, installedApps, isShellItemHidden, visibleApps } from '../lib/apps.ts';
 import { getConfig } from '../lib/auth.ts';
-import { installedItems } from '../lib/modules.ts';
-import { shellBadges } from '../lib/overview.ts';
+import { effectiveModules, installedItems } from '../lib/modules.ts';
+import { installedModules, setOrgModules, useModulesVersion } from '../lib/org-modules.ts';
+import { shellBadges, unreadNotices } from '../lib/overview.ts';
 import { isPaletteShortcut, searchTerm } from '../lib/palette.ts';
+import { hasOpenModalDialog, isQuickCaptureShortcut } from '../lib/quick-add.ts';
 import { documentNumber } from '../lib/search.ts';
 import { proposalName } from '../lib/review.ts';
 import { THEMES } from '../lib/theme.ts';
@@ -39,15 +44,21 @@ function useSettled<T>(value: T, ms: number): T {
 }
 
 export function OrgLayout() {
-  const allNav = useMemo(() => installedItems(getConfig().modules, ALL_NAV), []);
-  const allApps = useMemo(() => installedApps(getConfig().modules), []);
-  // The app of the screen (#1528), from the URL so a deep link opens in its app; on the org's own screens (Settings,
-  // the chart) the menu keeps the app last used.
+  // The org's own apps (ADR-0053, slice d): the router read them before this screen opened; the stream's org_apps hint, or this tab's own switch, makes this read them again, and a change
+  // rebuilds the menus and remounts the screen so every "is this app installed" question below it answers again. A failed read leaves the deployment's list.
+  const appsLive = useStreamLive();
+  const orgApps = useQuery({ ...orpc.org.apps.queryOptions(), refetchInterval: pollEvery(appsLive, 60_000, SAFETY_POLL_MS) });
+  useEffect(() => {
+    if (orgApps.data) setOrgModules(effectiveModules(getConfig().modules, orgApps.data.apps));
+  }, [orgApps.data]);
+  const modulesVersion = useModulesVersion();
+  const allNav = useMemo(() => installedItems(installedModules(), ALL_NAV), [modulesVersion]); // oxlint-disable-line react-hooks/exhaustive-deps
+  const allApps = useMemo(() => installedApps(installedModules()), [modulesVersion]); // oxlint-disable-line react-hooks/exhaustive-deps
+  const settingsItems = useMemo(() => installedItems(installedModules(), SETTINGS_ITEMS), [modulesVersion]); // oxlint-disable-line react-hooks/exhaustive-deps
+  // The app of the screen (#1528), from the URL so a deep link opens in its app. Overview, Notifications, Audit and Personal data
+  // belong to no app: the shell shows the rail and no secondary menu there (#3588). Settings shows its own sub-page menu (#4499).
   const { pathname } = useLocation();
   const screenApp = appOfPath(pathname);
-  // State set during render (not a ref), so a render React discards cannot leave a menu whose route never committed.
-  const [lastApp, setLastApp] = useState<AppId>('home');
-  if (screenApp && screenApp !== lastApp) setLastApp(screenApp);
   const [menuOpen, setMenuOpen] = useState(false);
   // The phone's header sticks to the top: a control the keyboard focuses stops below it, never under it (#1575).
   const phoneHeader = useRef<HTMLElement>(null);
@@ -56,6 +67,15 @@ export function OrgLayout() {
   useScrollRoom(phoneHeader, 'top');
   const { slug } = useParams({ strict: false }) as { slug: string };
   const navigate = useNavigate();
+  // A change of the apps runs the router's guards and renders the screen again (router.invalidate): a screen of an app that was just switched off goes to the overview, as one opened
+  // by address does (ADR-0053 section 3), and every other screen is rendered again with the new list, keeping what its user has typed. Not on the first render.
+  const router = useRouter();
+  const seenVersion = useRef(modulesVersion);
+  useEffect(() => {
+    if (seenVersion.current === modulesVersion) return;
+    seenVersion.current = modulesVersion;
+    void router.invalidate();
+  }, [modulesVersion, router]);
   const t = useTranslations('nav');
   const tc = useTranslations('common');
   const me = useQuery(orpc.me.get.queryOptions());
@@ -68,16 +88,21 @@ export function OrgLayout() {
   });
   // Social posts waiting for the viewer's review (#749) count on Social's menu item (#2234), not on the inbox. Asked of the modules, not of the
   // menu: the reports item (#2435) is the social module's but shows where crm or ads runs alone, and Social's reads answer not installed there.
-  const socialOn = getConfig().modules.includes('social');
+  const socialOn = installedModules().includes('social');
   const reviews = useQuery({ ...orpc.social.reviewInbox.queryOptions({ input: {} }), enabled: socialOn, refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
   // And what needs a person there (#771): channels to reconnect, posts that did not go out.
   const attention = useQuery({ ...orpc.social.attentionInbox.queryOptions({ input: {} }), enabled: socialOn, refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
   // And background work that failed (#1720), which only owners and admins see.
   const roleHere = me.data?.orgs.find((o) => o.slug === slug)?.role;
-  // HR holds the people payroll is run for: owners and admins only (the queries and the database refuse everyone else too), so nobody else is offered its app or its palette entry.
+  // HR payroll/admin screens stay restricted to owners and admins, while Cổng nhân viên (`hrMy`) is open to org members too (viewers still see none).
   const managerHere = roleHere === 'owner' || roleHere === 'admin';
-  const NAV = useMemo(() => (managerHere ? allNav : allNav.filter((n) => n.module !== 'hr')), [allNav, managerHere]);
-  const apps = useMemo(() => (managerHere ? allApps : allApps.filter((a) => a.id !== 'hr')), [allApps, managerHere]);
+  const hrMemberHere = managerHere || roleHere === 'member';
+  const showAiConnections = aiConnectionsVisible(getConfig().mcpEnabled);
+  const visibility = { manager: managerHere, hrMember: hrMemberHere, showAiConnections };
+  // Items left out of the menu and the palette for a member/viewer who cannot use them (#3225): the AI budgets are for owners and admins, and the AI connections
+  // exist only where this system runs MCP. Their screens still answer anyone who types the address.
+  const NAV = useMemo(() => allNav.filter((n) => !isShellItemHidden(n, visibility)), [allNav, managerHere, hrMemberHere, showAiConnections]); // oxlint-disable-line react-hooks/exhaustive-deps
+  const apps = useMemo(() => visibleApps(allApps, visibility), [allApps, managerHere, hrMemberHere, showAiConnections]); // oxlint-disable-line react-hooks/exhaustive-deps
   const failedJobs = useQuery({
     ...orpc.inbox.raised.queryOptions({ input: {} }),
     enabled: roleHere === 'owner' || roleHere === 'admin',
@@ -85,26 +110,30 @@ export function OrgLayout() {
   });
   const menuBadges = shellBadges({
     pending: pending.data?.length ?? 0,
-    attention: attention.data?.total ?? 0,
+    attention: socialOn ? (attention.data?.total ?? 0) : 0,
     failedJobs: failedJobs.data?.total ?? 0,
-    reviews: reviews.data?.total ?? 0,
+    reviews: socialOn ? (reviews.data?.total ?? 0) : 0,
   });
   // The member's unread notifications (#637), where Social runs.
   const notifications = useNotifications(socialOn);
   const unread = unreadLabel(notifications.data?.unread ?? 0);
   // The kernel's and finance's (#671).
   const work = useWorkNotifications();
-  const workUnread = unreadLabel(work.data?.unread ?? 0);
+  // The bell counts what Home counts (#3591): a notice that a proposal waits is that proposal, already on the Inbox badge and in Home's list.
+  const workUnread = unreadLabel(unreadNotices(work.data) ?? 0);
   const org = me.data?.orgs.find((o) => o.slug === slug);
   const tp = useTranslations('palette');
+  const tmw = useTranslations('myWork');
   const f = useFormat();
   const { locale, setLocale } = useLocaleSetting();
   const [theme, setTheme] = useThemeSetting();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   // The org's search (#673): parties, documents and journal entries for what is typed in the palette, where finance runs;
   // and the notes the member may read, where notes runs (#1675).
   const financeOn = NAV.some((n) => n.module === 'finance');
-  const notesOn = NAV.some((n) => n.module === 'notes');
+  const notesOn = installedModules().includes('notes');
+  const canQuickCapture = notesOn && me.isSuccess && Boolean(org) && roleHere !== 'viewer';
   const [paletteQuery, setPaletteQuery] = useState('');
   const typed = (financeOn || notesOn) && paletteOpen ? searchTerm(paletteQuery) : null;
   const term = useSettled(typed, 250);
@@ -133,15 +162,32 @@ export function OrgLayout() {
   const paletteKeys = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.userAgent) ? '⌘ K' : 'Ctrl K';
 
   // Ctrl K (Cmd K on a Mac) opens or closes the command palette from any screen of the org.
+  // Alt+Q opens the quick capture modal when the notes module is active and focus is not in an editable field.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!isPaletteShortcut(event)) return;
-      event.preventDefault();
-      setPaletteOpen((open) => !open);
+      if (isPaletteShortcut(event)) {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+        return;
+      }
+      if (
+        isQuickCaptureShortcut(event, {
+          notesEnabled: notesOn,
+          authenticated: me.isSuccess && Boolean(org),
+          canWrite: roleHere !== 'viewer',
+          modalOpen: hasOpenModalDialog(typeof document !== 'undefined' ? document : null),
+          activeElement: typeof document !== 'undefined' ? document.activeElement : null,
+        })
+      ) {
+        event.preventDefault();
+        setMenuOpen(false);
+        setPaletteOpen(false);
+        setQuickCaptureOpen(true);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [notesOn, me.isSuccess, org, roleHere]);
 
   const paletteEntries = useMemo<PaletteEntry[]>(
     () => [
@@ -149,9 +195,10 @@ export function OrgLayout() {
         id: `go:${item.to}`,
         group: 'go' as const,
         label: t(item.label),
+        ...(NAV_KEYWORDS[item.label] ? { keywords: NAV_KEYWORDS[item.label] } : {}),
         run: () => void navigate({ to: item.to, params: { slug } }),
       })),
-      ...(reviews.data?.items ?? []).map((item) => ({
+      ...((socialOn ? reviews.data?.items : undefined) ?? []).map((item) => ({
         id: `social-review:${item.postId}`,
         group: 'proposals' as const,
         label: item.title || item.excerpt,
@@ -171,7 +218,7 @@ export function OrgLayout() {
           id: `org:${o.slug}`,
           group: 'orgs' as const,
           label: tp('switchOrg', { name: o.name }),
-          run: () => void navigate({ to: '/o/$slug/inbox', params: { slug: o.slug } }),
+          run: () => void navigate({ to: '/o/$slug/overview', params: { slug: o.slug } }),
         })),
       ...LOCALES.filter((l) => l !== locale).map((l) => ({
         id: `locale:${l}`,
@@ -187,9 +234,20 @@ export function OrgLayout() {
         keywords: 'theme giao dien sang toi dark light',
         run: () => setTheme(th),
       })),
+      ...(canQuickCapture
+        ? [
+            {
+              id: 'quick-capture',
+              group: 'actions' as const,
+              label: tmw('quickCapturePalette'),
+              keywords: 'todo viec nhanh quick capture alt q',
+              run: () => setQuickCaptureOpen(true),
+            },
+          ]
+        : []),
       { id: 'sign-out', group: 'actions' as const, label: tc('signOut'), run: () => void signOut() },
     ],
-    [NAV, pending.data, reviews.data, me.data, slug, locale, theme, t, tp, tc, f, navigate, setLocale, setTheme],
+    [NAV, pending.data, reviews.data, socialOn, me.data, slug, locale, theme, canQuickCapture, t, tp, tmw, tc, f, navigate, setLocale, setTheme],
   );
   const foundEntries = useMemo<PaletteEntry[]>(() => {
     const settled = typed !== null && term === typed;
@@ -243,13 +301,17 @@ export function OrgLayout() {
     ];
   }, [found.data, notesFound.data, financeOn, notesOn, typed, term, slug, tp, f, navigate]);
 
+  // The count on a tab: the pending proposals on Chứng từ's first tab.
+  const tabBadges = { inbox: menuBadges.inbox };
+
   const shellNav = (onNavigate?: () => void) => (
     <ShellNav
       slug={slug}
       apps={apps}
-      app={screenApp ?? lastApp}
-      inApp={screenApp !== null}
-      badges={{ ...menuBadges, alerts: workUnread, notifications: unread }}
+      app={screenApp}
+      settingsItems={settingsItems}
+      // The pending count sits on the Documents item, whose first tab is "Chờ duyệt" (#3225).
+      badges={{ documents: menuBadges.inbox, social: menuBadges.social, alerts: workUnread, socialNotifications: unread }}
       orgs={me.data?.orgs ?? []}
       email={me.data?.email}
       onOpenPalette={() => {
@@ -257,6 +319,14 @@ export function OrgLayout() {
         setPaletteOpen(true);
       }}
       paletteKeys={paletteKeys}
+      onOpenQuickCapture={
+        canQuickCapture
+          ? () => {
+              onNavigate?.();
+              setQuickCaptureOpen(true);
+            }
+          : undefined
+      }
       {...(onNavigate ? { onNavigate } : {})}
     />
   );
@@ -278,30 +348,16 @@ export function OrgLayout() {
       <div role="status" aria-live="polite" data-route-announcer className="sr-only">
         <span key={screenName.seq}>{screenName.name}</span>
       </div>
-      <aside className="sticky top-0 hidden h-screen w-72 shrink-0 border-r bg-sidebar md:flex">{shellNav()}</aside>
+      <aside className="sticky top-0 hidden h-screen w-72 shrink-0 border-r bg-sidebar md:flex print:hidden">{shellNav()}</aside>
       <div className="min-w-0 flex-1">
-        {/* The phone's header (issue #1245): the menu button, the org's name and the palette; the rest is in the drawer. */}
-        <header ref={phoneHeader} className="sticky top-0 z-10 flex items-center gap-2 border-b bg-sidebar px-3 py-2 md:hidden">
-          <button
-            type="button"
-            onClick={() => setMenuOpen(true)}
-            aria-label={t('openMenu')}
-            className="relative grid size-11 place-items-center rounded-lg text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-          >
-            <NavIcon name="menu" className="size-5" />
-            {menuBadges.inbox !== null && <span className="absolute top-2 right-2 size-2 rounded-full bg-primary" aria-hidden="true" />}
-          </button>
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">{org?.name ?? <Logo />}</span>
-          <button type="button" onClick={() => setPaletteOpen(true)} className="min-h-11 rounded-lg border px-2 text-xs text-subtle-foreground">
-            {tp('open')}
-          </button>
-        </header>
+        <PhoneHeader headerRef={phoneHeader} orgName={org?.name} attention={menuBadges.inbox !== null} onOpenMenu={() => setMenuOpen(true)} onOpenPalette={() => setPaletteOpen(true)} />
         <NavDrawer open={menuOpen} onOpenChange={setMenuOpen}>
           {shellNav(() => setMenuOpen(false))}
         </NavDrawer>
         {/* Focusable from code only: where the focus goes when the toast that held it leaves (#2026). */}
-        <main ref={main} id="main-content" tabIndex={-1} className="mx-auto w-full max-w-6xl px-4 py-6 outline-none md:px-8 md:py-8">
+        <main ref={main} id="main-content" tabIndex={-1} className="mx-auto w-full max-w-6xl px-4 py-6 outline-none md:px-8 md:py-8 print:max-w-none print:p-0">
           <OrgLeftNotice />
+          <ScreenTabs slug={slug} installed={NAV} badges={tabBadges} />
           {me.isSuccess && !org ? <p className="text-sm text-destructive">{t('notMember')}</p> : <Outlet />}
         </main>
         <Toaster />
@@ -313,6 +369,7 @@ export function OrgLayout() {
           open={paletteOpen}
           onOpenChange={setPaletteOpen}
         />
+        {canQuickCapture && <QuickCaptureDialog slug={slug} open={quickCaptureOpen} onOpenChange={setQuickCaptureOpen} />}
       </div>
     </div>
   );

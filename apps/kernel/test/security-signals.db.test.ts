@@ -6,10 +6,10 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { sweepSecuritySignals, type SecurityThresholds } from '../src/security-signals.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -43,7 +43,7 @@ suite('detective security alerts on PostgreSQL (#996)', () => {
   const audit = (orgId: string, actorId: string, command: string, outcome: string, detail: Record<string, unknown> = {}, agoSeconds = 10) =>
     admin(async (c) => {
       const { rows } = await c.query<{ id: string }>(
-        `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
+        `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
          VALUES ($1, now() - make_interval(secs => $2), 'user', $3, $4, gen_random_uuid(), $5, repeat('0', 64), $6) RETURNING id`,
         [orgId, agoSeconds, actorId, command, outcome, JSON.stringify(detail)],
       );
@@ -53,9 +53,9 @@ suite('detective security alerts on PostgreSQL (#996)', () => {
   // Every alert line and every posted message of one sweep.
   async function sweep() {
     const lines: string[] = [];
-    const posted: Array<{ text: string; crove: Record<string, unknown> }> = [];
+    const posted: Array<{ text: string; ludy: Record<string, unknown>; crove: Record<string, unknown> }> = [];
     const fetch = (async (_url: string, init: RequestInit) => {
-      const body = JSON.parse(String(init.body)) as { text: string; crove: Record<string, unknown> };
+      const body = JSON.parse(String(init.body)) as { text: string; ludy: Record<string, unknown>; crove: Record<string, unknown> };
       posted.push(body);
       return new Response('{}', { status: 200 });
     }) as unknown as typeof globalThis.fetch;
@@ -78,15 +78,15 @@ suite('detective security alerts on PostgreSQL (#996)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 2 });
     db = createDb(pool);
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
     const asWorker = new URL(adminUrl);
-    asWorker.username = 'crove_worker';
+    asWorker.username = 'ludy_worker';
     asWorker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorker.toString(), max: 2 });
     workerDb = createDb(workerPool);
@@ -129,7 +129,9 @@ suite('detective security alerts on PostgreSQL (#996)', () => {
     expect(first.lines).toEqual([expect.stringMatching(new RegExp(`^\\[security\\] ALERT actor_many_orgs: user ${probe} acted in 3 orgs within 5 min`))]);
     expect(first.posted).toHaveLength(1);
     expect(first.posted[0]?.text).toMatch(/^\[Crove\] Security alert from books\.example\.test: user /);
-    expect(first.posted[0]?.crove).toMatchObject({ kind: 'security', signal: 'actor_many_orgs', subject: probe, value: 3 });
+    const expected = { kind: 'security', signal: 'actor_many_orgs', subject: probe, value: 3 };
+    expect(first.posted[0]?.ludy).toMatchObject(expected);
+    expect(first.posted[0]?.crove).toMatchObject(expected);
     // The same signal stays quiet until the repeat interval.
     expect((await sweep()).found).toBe(0);
   });
@@ -137,7 +139,7 @@ suite('detective security alerts on PostgreSQL (#996)', () => {
   it('alerts once on a refusal spike across the deployment', async () => {
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.refusal_tally (org_id, window_start, actor_key, command, code, refusals, last_at)
+        `INSERT INTO ludy_kernel.refusal_tally (org_id, window_start, actor_key, command, code, refusals, last_at)
          VALUES ($1, date_trunc('hour', now()), 'user:' || $2, 'kernel.inbox.list', 'FORBIDDEN', 60, now())`,
         [orgs[0], probe],
       ),

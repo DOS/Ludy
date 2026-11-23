@@ -2,10 +2,10 @@
 // The finance coworker on stock on the API side (#2514) with stand-ins for the reader: the model is asked once with the lines and the items it may see and nothing else, a suggestion
 // names an item that was offered, and every state of `ai` is an answer with no suggestion (and, for a reorder, the fixed template), never an error.
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AiBudgetExhaustedError, type ReorderRequest, type ReorderResult, type StockMatchAnswer, type StockMatchItem, type StockMatchLine } from '@crove/agent';
-import type { ReorderSource, SuggestSource } from '@crove/mod-finance';
+import { AiBudgetExhaustedError, type ReorderRequest, type ReorderResult, type StockMatchAnswer, type StockMatchItem, type StockMatchLine } from '@ludy/agent';
+import type { MarketplaceSuggestSource, ReorderSource, SuggestSource } from '@ludy/mod-finance';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
-import { draftReorder, stockAi, suggestItems, STOCK_KEEP_MS, STOCK_KEEP_NONE_MS, type StockAi } from '../src/stock-ai.ts';
+import { draftReorder, stockAi, suggestItems, suggestMarketplaceItems, STOCK_KEEP_MS, STOCK_KEEP_NONE_MS, type StockAi } from '../src/stock-ai.ts';
 
 const ORG = 'org-1';
 const USER = 'user-1';
@@ -18,6 +18,13 @@ const SOURCE: SuggestSource = {
     { id: 'item-a', code: 'AO01', name: 'Áo thun cổ tròn trắng M', unit: 'cái' },
     { id: 'item-b', code: 'AO02', name: 'Áo thun cổ tròn đen L', unit: 'cái' },
   ],
+};
+const MARKET: MarketplaceSuggestSource = {
+  lines: [
+    { lineId: 'line-1', text: 'Áo thun cổ tròn đen L SKU AO-L-BLK' },
+    { lineId: 'line-2', text: 'Phí vận chuyển' },
+  ],
+  items: SOURCE.items,
 };
 const REORDER: ReorderSource = {
   orgName: 'Công ty Hoa Mai',
@@ -142,6 +149,71 @@ describe('suggestItems', () => {
     expect(JSON.stringify(log.mock.calls)).not.toContain('Ao thun');
     const ok = setup({ budget });
     expect((await suggestItems(ok.ai, ORG, USER, SOURCE, 'vi')).ai).toBe('used');
+  });
+});
+
+describe('suggestMarketplaceItems (#2686)', () => {
+  it('asks the model once with each line\'s text alone and the items, and answers line ids with item ids and the reasons', async () => {
+    const { ai, asked } = setup();
+    expect(await suggestMarketplaceItems(ai, ORG, USER, MARKET, 'vi')).toEqual({ ai: 'used', suggestions: [{ lineId: 'line-1', itemId: 'item-b', reason: 'Khớp tên' }] });
+    expect(asked.match).toHaveLength(1);
+    // The model sees the text of the line and no unit, plus the codes, names and units of the items: no order, buyer, price or id.
+    expect(asked.match[0]).toEqual({
+      lines: [
+        { description: 'Áo thun cổ tròn đen L SKU AO-L-BLK', unit: null },
+        { description: 'Phí vận chuyển', unit: null },
+      ],
+      items: [
+        { code: 'AO01', name: 'Áo thun cổ tròn trắng M', unit: 'cái' },
+        { code: 'AO02', name: 'Áo thun cổ tròn đen L', unit: 'cái' },
+      ],
+      language: 'vi',
+    });
+  });
+
+  it('leaves out an answer whose item is outside the offered list, says off with no model and quiet with nothing to ask', async () => {
+    const wild = setup({ match: async () => [{ itemIndex: 9, reason: 'Khớp tên' }, null] });
+    expect(await suggestMarketplaceItems(wild.ai, ORG, USER, MARKET, 'vi')).toEqual({ ai: 'used', suggestions: [] });
+    expect(await suggestMarketplaceItems(setup({ match: null }).ai, ORG, USER, MARKET, 'vi')).toEqual({ ai: 'off', suggestions: [] });
+    const { ai, asked } = setup();
+    expect(await suggestMarketplaceItems(ai, ORG, USER, { lines: [], items: MARKET.items }, 'vi')).toEqual({ ai: 'quiet', suggestions: [] });
+    expect(await suggestMarketplaceItems(ai, ORG, USER, { lines: MARKET.lines, items: [] }, 'vi')).toEqual({ ai: 'quiet', suggestions: [] });
+    expect(asked.match).toEqual([]);
+  });
+
+  it('keeps its answers apart from the invoice lines\' and by content, and states busy, budget and failed as answers', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { ai, asked } = setup();
+    let clock = 1_000_000;
+    const now = () => clock;
+    await suggestMarketplaceItems(ai, ORG, USER, MARKET, 'vi', now);
+    await suggestMarketplaceItems(ai, ORG, USER, MARKET, 'vi', now);
+    expect(asked.match).toHaveLength(1);
+    // The same wording as an invoice line is another list, never served from the other's keep.
+    await suggestItems(ai, ORG, USER, SOURCE, 'vi', now);
+    expect(asked.match).toHaveLength(2);
+    await suggestMarketplaceItems(ai, ORG, USER, { ...MARKET, lines: [MARKET.lines[1]!] }, 'vi', now);
+    expect(asked.match).toHaveLength(3);
+    clock += STOCK_KEEP_MS + 1;
+    await suggestMarketplaceItems(ai, ORG, USER, MARKET, 'vi', now);
+    expect(asked.match).toHaveLength(4);
+    const budget = new DraftBudget({ perUserPerMinute: 1, perOrgPerMinute: 1 });
+    const busy = setup({ budget });
+    await suggestMarketplaceItems(busy.ai, ORG, USER, MARKET, 'vi');
+    expect(await suggestMarketplaceItems(busy.ai, ORG, USER, { ...MARKET, lines: [MARKET.lines[1]!] }, 'vi')).toEqual({ ai: 'busy', suggestions: [] });
+    const spent = setup({
+      match: async () => {
+        throw new AiBudgetExhaustedError('org', null);
+      },
+    });
+    expect(await suggestMarketplaceItems(spent.ai, ORG, USER, MARKET, 'vi')).toEqual({ ai: 'budget', suggestions: [] });
+    const broken = setup({
+      match: async () => {
+        throw new Error('boom: SKU AO-L-BLK');
+      },
+    });
+    expect(await suggestMarketplaceItems(broken.ai, ORG, USER, MARKET, 'vi')).toEqual({ ai: 'failed', suggestions: [] });
+    expect(JSON.stringify(log.mock.calls)).not.toContain('AO-L-BLK');
   });
 });
 

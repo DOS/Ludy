@@ -9,9 +9,9 @@
 //   still reviewed as usual; nothing goes out before an approval and a schedule.
 // Lock order: the queue rows (sorted by connection) before any post, as social.variant.schedule takes them.
 import { z } from 'zod';
-import { SOCIAL_IMAGE_TYPES, SOCIAL_VIDEO_TYPES, zSocialDraftsFromMedia, type zSocialDraftsFromMediaResult } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { SOCIAL_IMAGE_TYPES, SOCIAL_VIDEO_TYPES, zSocialDraftsFromMedia, type zSocialDraftsFromMediaResult } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { captionFromFilename, fileIssues } from './domain/bulk-drafts.ts';
 import { nextFreeSlot } from './domain/queue.ts';
 import { validateVariant, type MediaItem } from './domain/validate.ts';
@@ -31,14 +31,14 @@ function requireUser(ctx: CommandContext): string {
 
 // A saved set's channels still connected, in the order saved.
 async function setChannels(ctx: CommandContext, setId: string): Promise<string[]> {
-  const set = await ctx.trx.selectFrom('crove_social.channel_set').select('connection_ids').where('org_id', '=', ctx.orgId).where('id', '=', setId).executeTakeFirst();
+  const set = await ctx.trx.selectFrom('ludy_social.channel_set').select('connection_ids').where('org_id', '=', ctx.orgId).where('id', '=', setId).executeTakeFirst();
   if (!set) throw new DomainError('CHANNEL_SET_NOT_FOUND', 404, 'Không tìm thấy bộ kênh này');
   return set.connection_ids;
 }
 
 // The org's live connections among ids, in their order; every id must be one.
 async function liveChannels(ctx: CommandContext, ids: readonly string[], fromSet: boolean): Promise<Array<{ id: string; provider: ReturnType<typeof providerOf> }>> {
-  const rows = ids.length === 0 ? [] : await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['id', 'provider']).where('org_id', '=', ctx.orgId).where('id', 'in', [...ids]).where('status', '<>', 'revoked').execute();
+  const rows = ids.length === 0 ? [] : await ctx.trx.selectFrom('ludy_kernel.channel_connection').select(['id', 'provider']).where('org_id', '=', ctx.orgId).where('id', 'in', [...ids]).where('status', '<>', 'revoked').execute();
   const byId = new Map(rows.map((r) => [r.id, r.provider]));
   // A set drops the channels disconnected since it was saved, as the composer shows it; channels named one by one
   // must all be live.
@@ -56,7 +56,7 @@ interface LibraryFile {
 // The files named, in their order: each an image or a video of the org uploaded for Social.
 async function libraryFiles(ctx: CommandContext, ids: readonly string[]): Promise<LibraryFile[]> {
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.file')
+    .selectFrom('ludy_kernel.file')
     .select(['id', 'filename', 'content_type', 'size_bytes', 'source', 'duration_ms', 'image_width', 'image_height'])
     .where('org_id', '=', ctx.orgId)
     .where('id', 'in', [...ids])
@@ -124,7 +124,7 @@ export const postCreateFromMedia = defineCommand({
     const caption = input.caption ?? { kind: 'none' as const };
     let snippet = '';
     if (caption.kind === 'snippet') {
-      const row = await ctx.trx.selectFrom('crove_social.snippet').select('body').where('org_id', '=', ctx.orgId).where('id', '=', caption.snippetId).executeTakeFirst();
+      const row = await ctx.trx.selectFrom('ludy_social.snippet').select('body').where('org_id', '=', ctx.orgId).where('id', '=', caption.snippetId).executeTakeFirst();
       if (!row) throw new DomainError('SNIPPET_NOT_FOUND', 404, 'Không tìm thấy đoạn mẫu này');
       snippet = row.body;
     }

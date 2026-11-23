@@ -13,9 +13,9 @@
 import { createPublicKey } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole, SocialNotificationKind } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole, SocialNotificationKind } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { PUSHED_KINDS, notificationPath } from './notifications.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -92,7 +92,7 @@ export const pushDevices = defineQuery({
     const me = requireUser(ctx);
     const mine = input.endpoint === null ? null : normalEndpoint(input.endpoint);
     const rows = await ctx.trx
-      .selectFrom('crove_social.push_subscription')
+      .selectFrom('ludy_social.push_subscription')
       .select(['id', 'user_agent', 'created_at', 'last_used_at', 'endpoint'])
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', me)
@@ -116,15 +116,15 @@ export const pushSubscribe = defineCommand({
     const me = requireUser(ctx);
     const label = input.label || null;
     const row = await ctx.trx
-      .insertInto('crove_social.push_subscription')
+      .insertInto('ludy_social.push_subscription')
       .values({ org_id: ctx.orgId, user_id: me, endpoint: input.endpoint, p256dh: input.p256dh, auth: input.auth, user_agent: label, created_at: ctx.now })
       .onConflict((oc) => oc.columns(['org_id', 'user_id', 'endpoint']).doUpdateSet({ p256dh: input.p256dh, auth: input.auth, user_agent: label, failure_count: 0 }))
       .returning('id')
       .executeTakeFirstOrThrow();
     await sql`
-      DELETE FROM crove_social.push_subscription
+      DELETE FROM ludy_social.push_subscription
       WHERE org_id = ${ctx.orgId} AND user_id = ${me} AND id IN (
-        SELECT id FROM crove_social.push_subscription
+        SELECT id FROM ludy_social.push_subscription
         WHERE org_id = ${ctx.orgId} AND user_id = ${me} AND id <> ${row.id}
         ORDER BY coalesce(last_used_at, created_at) DESC, id DESC
         OFFSET ${PUSH_DEVICE_LIMIT - 1})`.execute(ctx.trx);
@@ -142,7 +142,7 @@ export const pushUnsubscribe = defineCommand({
   access: ALL,
   handler: async (ctx, input): Promise<{ removed: number }> => {
     const me = requireUser(ctx);
-    let q = ctx.trx.deleteFrom('crove_social.push_subscription').where('org_id', '=', ctx.orgId).where('user_id', '=', me);
+    let q = ctx.trx.deleteFrom('ludy_social.push_subscription').where('org_id', '=', ctx.orgId).where('user_id', '=', me);
     q = 'id' in input ? q.where('id', '=', input.id) : q.where('endpoint', '=', normalEndpoint(input.endpoint));
     const done = await q.executeTakeFirst();
     return { removed: Number(done.numDeletedRows) };
@@ -157,6 +157,7 @@ export function pushLine(kind: SocialNotificationKind, detail: Readonly<Record<s
     case 'decided':
       return detail.decision === 'approved' ? 'Bài của bạn đã được duyệt' : detail.decision === 'rejected' ? 'Bài của bạn bị từ chối' : 'Người duyệt đề nghị sửa bài của bạn';
     case 'failed':
+      if (detail.late && detail.count) return `${String(detail.count)} bài đăng không thành công vì đã quá giờ hẹn`;
       return detail.removal === 'scheduled' ? 'Chưa tự gỡ được một bài đã hẹn giờ gỡ' : 'Một bài đăng không thành công';
     case 'needs_attention':
       return 'Một bài đăng cần bạn xử lý';
@@ -201,19 +202,19 @@ export const pushTargets = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<PushTargets | null> => {
     const n = await ctx.trx
-      .selectFrom('crove_social.notification')
+      .selectFrom('ludy_social.notification')
       .select(['user_id', 'kind', 'post_id', 'connection_id', 'detail', 'read_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.notificationId)
       .executeTakeFirst();
     if (!n || n.read_at !== null || !PUSHED_KINDS.has(n.kind)) return null;
-    const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['slug', 'status']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['slug', 'status']).where('org_id', '=', ctx.orgId).executeTakeFirst();
     if (org?.status !== 'active') return null;
     // A member now, with an account that is not disabled.
-    const { rows: active } = await sql<{ user_id: string }>`SELECT user_id FROM crove_kernel.member_emails(${[n.user_id]}::uuid[])`.execute(ctx.trx);
+    const { rows: active } = await sql<{ user_id: string }>`SELECT user_id FROM ludy_kernel.member_emails(${[n.user_id]}::uuid[])`.execute(ctx.trx);
     if (active.length === 0) return null;
     const subscriptions = await ctx.trx
-      .selectFrom('crove_social.push_subscription')
+      .selectFrom('ludy_social.push_subscription')
       .select(['id', 'endpoint', 'p256dh', 'auth'])
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', n.user_id)
@@ -244,20 +245,20 @@ export const pushRecord = defineCommand({
     const sent = ids('sent');
     const gone = ids('gone');
     const failed = ids('failed');
-    if (sent.length > 0) await ctx.trx.updateTable('crove_social.push_subscription').set({ failure_count: 0, last_used_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', 'in', sent).execute();
+    if (sent.length > 0) await ctx.trx.updateTable('ludy_social.push_subscription').set({ failure_count: 0, last_used_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', 'in', sent).execute();
     let removed = 0;
     if (failed.length > 0) {
       await ctx.trx
-        .updateTable('crove_social.push_subscription')
+        .updateTable('ludy_social.push_subscription')
         .set((eb) => ({ failure_count: eb('failure_count', '+', 1) }))
         .where('org_id', '=', ctx.orgId)
         .where('id', 'in', failed)
         .execute();
-      const worn = await ctx.trx.deleteFrom('crove_social.push_subscription').where('org_id', '=', ctx.orgId).where('id', 'in', failed).where('failure_count', '>=', PUSH_FAILURE_LIMIT).executeTakeFirst();
+      const worn = await ctx.trx.deleteFrom('ludy_social.push_subscription').where('org_id', '=', ctx.orgId).where('id', 'in', failed).where('failure_count', '>=', PUSH_FAILURE_LIMIT).executeTakeFirst();
       removed += Number(worn.numDeletedRows);
     }
     if (gone.length > 0) {
-      const done = await ctx.trx.deleteFrom('crove_social.push_subscription').where('org_id', '=', ctx.orgId).where('id', 'in', gone).executeTakeFirst();
+      const done = await ctx.trx.deleteFrom('ludy_social.push_subscription').where('org_id', '=', ctx.orgId).where('id', 'in', gone).executeTakeFirst();
       removed += Number(done.numDeletedRows);
     }
     return { sent: sent.length, removed, failed: failed.length };

@@ -11,12 +11,12 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import type { ExtractClient } from '@crove/extract-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -134,7 +134,7 @@ suite('VAT working per month or quarter (#316)', () => {
     app.request(`/api/export/vat.xlsx?${new URLSearchParams({ period })}`, { headers: { authorization: `Bearer ${token}`, 'x-crove-org': slug } });
 
   const exportAudits = () =>
-    admin(async (c) => (await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.vat.export' AND outcome = 'ok' ORDER BY occurred_at`, [org.orgId])).rows);
+    admin(async (c) => (await c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.vat.export' AND outcome = 'ok' ORDER BY occurred_at`, [org.orgId])).rows);
 
   beforeAll(async () => {
     extract = inProcessExtract();
@@ -146,17 +146,17 @@ suite('VAT working per month or quarter (#316)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     const db: Db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -446,7 +446,7 @@ suite('VAT working per month or quarter (#316)', () => {
     const withTable = await record('6001', '2026-06-10', mixedSale('6001', true));
     const withoutTable = await record('6002', '2026-06-10', mixedSale('6002', false));
     const stored = await admin(async (c) => {
-      const sql = `SELECT document_id, row_no, vat_rate, taxable_amount::text, vat_amount::text FROM crove_finance.purchase_tax_rate
+      const sql = `SELECT document_id, row_no, vat_rate, taxable_amount::text, vat_amount::text FROM ludy_finance.purchase_tax_rate
                    WHERE org_id = $1 AND document_id = ANY($2) ORDER BY row_no`;
       return (await c.query(sql, [org.orgId, [withTable.documentId, withoutTable.documentId]])).rows;
     });
@@ -485,10 +485,10 @@ suite('VAT working per month or quarter (#316)', () => {
     const refusal = (sql: string, params: unknown[]) =>
       admin((c) => c.query(sql, params).then(() => null, (error: { message: string }) => error.message));
     expect(
-      await refusal(`INSERT INTO crove_finance.purchase_tax_rate (org_id, document_id, row_no, vat_rate, taxable_amount, vat_amount) VALUES ($1, $2, 9, '0%', 1, 0)`, [org.orgId, withoutTable.documentId]),
+      await refusal(`INSERT INTO ludy_finance.purchase_tax_rate (org_id, document_id, row_no, vat_rate, taxable_amount, vat_amount) VALUES ($1, $2, 9, '0%', 1, 0)`, [org.orgId, withoutTable.documentId]),
     ).toMatch(/already posted/);
-    expect(await refusal(`UPDATE crove_finance.purchase_tax_rate SET vat_amount = 50001 WHERE org_id = $1 AND row_no = 1`, [org.orgId])).not.toBeNull();
-    expect(await refusal(`DELETE FROM crove_finance.purchase_tax_rate WHERE org_id = $1`, [org.orgId])).not.toBeNull();
+    expect(await refusal(`UPDATE ludy_finance.purchase_tax_rate SET vat_amount = 50001 WHERE org_id = $1 AND row_no = 1`, [org.orgId])).not.toBeNull();
+    expect(await refusal(`DELETE FROM ludy_finance.purchase_tax_rate WHERE org_id = $1`, [org.orgId])).not.toBeNull();
   });
 
   // The fixture scaled to 9,000,000 at 10% (VAT 900,000, total 9,900,000), above the 5 million VND threshold, paid as given.
@@ -560,18 +560,18 @@ suite('VAT working per month or quarter (#316)', () => {
     expect((await period()).paymentChecks).toMatchObject({ unchecked: 1, notDeductibleVat: '0', suggested25: '2880000' });
 
     // Every mark is a row and an audit event; the rows never change.
-    const rows = await admin(async (c) => (await c.query(`SELECT outcome, note, marked_by FROM crove_finance.input_vat_check WHERE org_id = $1 ORDER BY created_at, id`, [org.orgId])).rows);
+    const rows = await admin(async (c) => (await c.query(`SELECT outcome, note, marked_by FROM ludy_finance.input_vat_check WHERE org_id = $1 ORDER BY created_at, id`, [org.orgId])).rows);
     expect(rows).toEqual([
       { outcome: 'not_deductible', note: 'Trả tiền mặt', marked_by: owner.userId },
       { outcome: 'paid_by_bank', note: null, marked_by: owner.userId },
       { outcome: 'not_deductible', note: null, marked_by: owner.userId },
       { outcome: 'cleared', note: null, marked_by: owner.userId },
     ]);
-    const audits = await admin(async (c) => (await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.vat.payment_mark' AND outcome = 'ok' ORDER BY occurred_at`, [org.orgId])).rows);
+    const audits = await admin(async (c) => (await c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.vat.payment_mark' AND outcome = 'ok' ORDER BY occurred_at`, [org.orgId])).rows);
     expect(audits.map((a: { detail: { outcome: string } }) => a.detail.outcome)).toEqual(['not_deductible', 'paid_by_bank', 'not_deductible', 'cleared']);
     const refusal = (sql: string, params: unknown[]) => admin((c) => c.query(sql, params).then(() => null, (error: { message: string }) => error.message));
-    expect(await refusal(`UPDATE crove_finance.input_vat_check SET outcome = 'paid_by_bank' WHERE org_id = $1`, [org.orgId])).not.toBeNull();
-    expect(await refusal(`DELETE FROM crove_finance.input_vat_check WHERE org_id = $1`, [org.orgId])).not.toBeNull();
+    expect(await refusal(`UPDATE ludy_finance.input_vat_check SET outcome = 'paid_by_bank' WHERE org_id = $1`, [org.orgId])).not.toBeNull();
+    expect(await refusal(`DELETE FROM ludy_finance.input_vat_check WHERE org_id = $1`, [org.orgId])).not.toBeNull();
   });
 
   // [22] carried forward from the previous filed return's [43] (#1400). Runs last: it uses May (purchases, VAT
@@ -580,14 +580,14 @@ suite('VAT working per month or quarter (#316)', () => {
     const owned = await tokenFor(owner);
     const period = async (p: string) => (await rpc('vat/period', await tokenFor(viewer), { period: p })).body;
     const doneMarks = () =>
-      admin(async (c) => (await c.query(`SELECT period FROM crove_kernel.tax_obligation_done WHERE org_id = $1 AND obligation = 'vat_return' ORDER BY period`, [org.orgId])).rows.map((r: { period: string }) => r.period));
+      admin(async (c) => (await c.query(`SELECT period FROM ludy_kernel.tax_obligation_done WHERE org_id = $1 AND obligation = 'vat_return' ORDER BY period`, [org.orgId])).rows.map((r: { period: string }) => r.period));
     const filedRows = () =>
       admin(
         async (c) =>
           (
             await c.query(
               `SELECT period, status, source, carried_in_amount::text AS c22, deductible_amount::text AS c25, carried_out_amount::text AS c43, marked_by
-               FROM crove_finance.vat_return_filed WHERE org_id = $1 ORDER BY created_at, id`,
+               FROM ludy_finance.vat_return_filed WHERE org_id = $1 ORDER BY created_at, id`,
               [org.orgId],
             )
           ).rows,
@@ -657,7 +657,7 @@ suite('VAT working per month or quarter (#316)', () => {
       { period: '2026-06', status: 'filed', source: 'entered', c22: '2880000.0000', c25: '0.0000', c43: '2700000.0000', marked_by: owner.userId },
       { period: '2026-06', status: 'withdrawn', source: null, c22: null, c25: null, c43: null, marked_by: owner.userId },
     ]);
-    const audits = await admin(async (c) => (await c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.vat.return_mark' AND outcome = 'ok' ORDER BY occurred_at`, [org.orgId])).rows);
+    const audits = await admin(async (c) => (await c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.vat.return_mark' AND outcome = 'ok' ORDER BY occurred_at`, [org.orgId])).rows);
     // The default legal entity's return (#1280).
     const entity = { legal_entity_id: expect.any(String) };
     expect(audits.map((a: { detail: Record<string, unknown> }) => a.detail)).toContainEqual({ period: '2026-05', done: true, source: 'computed', recorded: true, ...entity });
@@ -666,27 +666,27 @@ suite('VAT working per month or quarter (#316)', () => {
 
     // History never changes, not even for the database owner.
     const refusal = (sql: string, params: unknown[]) => admin((c) => c.query(sql, params).then(() => null, (error: { message: string }) => error.message));
-    expect(await refusal(`UPDATE crove_finance.vat_return_filed SET carried_out_amount = 1 WHERE org_id = $1`, [org.orgId])).not.toBeNull();
-    expect(await refusal(`DELETE FROM crove_finance.vat_return_filed WHERE org_id = $1`, [org.orgId])).not.toBeNull();
+    expect(await refusal(`UPDATE ludy_finance.vat_return_filed SET carried_out_amount = 1 WHERE org_id = $1`, [org.orgId])).not.toBeNull();
+    expect(await refusal(`DELETE FROM ludy_finance.vat_return_filed WHERE org_id = $1`, [org.orgId])).not.toBeNull();
 
     // A raw insert in a member's own context, past the command: refused for a viewer at once (and for an owner who
     // names someone else), and for an owner at commit, with no audit row of the command. Tenant roles cannot update.
     // contextOrg: the org whose context the session enters (org A by default), or null for no context at all, as
-    // crove_tenant.
+    // ludy_tenant.
     const raw = async (userId: string, markedBy: string, statement = 'INSERT', contextOrg: string | null = org.orgId) => {
       const c = await pool.connect();
       try {
         await c.query('BEGIN');
-        if (contextOrg) await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [contextOrg, contextToken(userId, contextOrg)]);
-        else await c.query('SET LOCAL ROLE crove_tenant');
+        if (contextOrg) await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [contextOrg, contextToken(userId, contextOrg)]);
+        else await c.query('SET LOCAL ROLE ludy_tenant');
         if (statement === 'INSERT') {
           await c.query(
-            `INSERT INTO crove_finance.vat_return_filed (org_id, period, status, source, carried_in_amount, deductible_amount, carried_out_amount, marked_by)
+            `INSERT INTO ludy_finance.vat_return_filed (org_id, period, status, source, carried_in_amount, deductible_amount, carried_out_amount, marked_by)
              VALUES ($1, '2026-08', 'filed', 'entered', 0, 0, 999, $2)`,
             [org.orgId, markedBy],
           );
         } else {
-          await c.query(`UPDATE crove_finance.vat_return_filed SET carried_out_amount = 1`);
+          await c.query(`UPDATE ludy_finance.vat_return_filed SET carried_out_amount = 1`);
         }
         await c.query('COMMIT');
         return null;
@@ -710,7 +710,7 @@ suite('VAT working per month or quarter (#316)', () => {
     // [22] of the default entity's September.
     await admin(async (c) => {
       const branch = (
-        await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh VAT', 'branch', $2) RETURNING id`, [
+        await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh VAT', 'branch', $2) RETURNING id`, [
           org.orgId,
           owner.userId,
         ])
@@ -718,7 +718,7 @@ suite('VAT working per month or quarter (#316)', () => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
       await c.query(
-        `INSERT INTO crove_finance.vat_return_filed (org_id, legal_entity_id, period, status, source, carried_in_amount, deductible_amount, carried_out_amount, marked_by)
+        `INSERT INTO ludy_finance.vat_return_filed (org_id, legal_entity_id, period, status, source, carried_in_amount, deductible_amount, carried_out_amount, marked_by)
          VALUES ($1, $2, '2026-08', 'filed', 'entered', 0, 0, 777, $3)`,
         [org.orgId, branch, owner.userId],
       );
@@ -729,9 +729,9 @@ suite('VAT working per month or quarter (#316)', () => {
 
   it("takes a filed mark's audit row only for the row's own legal entity (#1923)", async () => {
     const [defaultEntity, branch] = await admin(async (c) => {
-      const found = (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])).rows[0]?.id as string;
+      const found = (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])).rows[0]?.id as string;
       const made = (
-        await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh nhật ký', 'branch', $2) RETURNING id`, [
+        await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh nhật ký', 'branch', $2) RETURNING id`, [
           org.orgId,
           owner.userId,
         ])
@@ -745,15 +745,15 @@ suite('VAT working per month or quarter (#316)', () => {
       const c = await pool.connect();
       try {
         await c.query('BEGIN');
-        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.userId, org.orgId)]);
+        await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.userId, org.orgId)]);
         const detail = { period: '2026-12', done: true, source: 'entered', recorded: true, ...(auditEntity ? { legal_entity_id: auditEntity } : {}) };
         await c.query(
-          `INSERT INTO crove_kernel.audit_event (org_id, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
+          `INSERT INTO ludy_kernel.audit_event (org_id, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
            VALUES ($1, 'user', $2, 'finance.vat.return_mark', gen_random_uuid(), 'ok', repeat('0', 64), $3::jsonb)`,
           [org.orgId, owner.userId, JSON.stringify(detail)],
         );
         await c.query(
-          `INSERT INTO crove_finance.vat_return_filed (org_id, legal_entity_id, period, status, source, carried_in_amount, deductible_amount, carried_out_amount, marked_by)
+          `INSERT INTO ludy_finance.vat_return_filed (org_id, legal_entity_id, period, status, source, carried_in_amount, deductible_amount, carried_out_amount, marked_by)
            VALUES ($1, $2, '2026-12', 'filed', 'entered', 0, 0, 0, $3)`,
           [org.orgId, defaultEntity, owner.userId],
         );

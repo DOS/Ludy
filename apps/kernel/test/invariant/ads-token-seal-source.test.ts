@@ -7,6 +7,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { exactPkgNamedImports } from './fixtures/ad-platform-imports.ts';
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const SKIP = new Set(['node_modules', 'dist', 'test', 'tests', '.git', '.turbo', 'coverage']);
@@ -24,6 +25,8 @@ function sources(dir: string, out: string[] = []): string[] {
 
 const ALL = ['apps', 'packages', 'modules', 'tools'].filter((d) => existsSync(join(ROOT, d))).flatMap((d) => sources(join(ROOT, d)));
 const read = (path: string) => readFileSync(join(ROOT, path), 'utf8');
+const AD_PLATFORM_PKG = '@ludy/ad-platform';
+const revokeNamedImports = (src: string): string[] => exactPkgNamedImports(src, AD_PLATFORM_PKG).names;
 const naming = (text: string) => ALL.filter((path) => read(path).includes(text)).sort();
 // Code only: the lines that are not comments.
 const code = (path: string) => read(path).split('\n').filter((line) => !line.trimStart().startsWith('//') && !line.trimStart().startsWith('*')).join('\n');
@@ -47,8 +50,11 @@ describe('what may open or name the sealed copy of a closed ads connection token
     expect(file).not.toContain('kernel.channel.credential');
     expect(file).not.toMatch(/runtime\.(execute|query)[^;]*envelope/);
     // The platform adapters it is built on are the revoke view and the typed error, never a writer.
-    const imports = [...read('apps/kernel/src/ads-revoke.ts').matchAll(/import \{([^}]*)\} from '@crove\/ad-platform'/g)].flatMap((m) => (m[1] ?? '').split(',').map((s) => s.replace(/\btype\b/, '').trim()));
-    expect(imports.sort()).toEqual(['AdPlatformError', 'AdRevoker']);
+    const rawRevoke = read('apps/kernel/src/ads-revoke.ts');
+    expect(revokeNamedImports(rawRevoke).sort()).toEqual(['AdPlatformError', 'AdRevoker']);
+    const commentOrStringOnly = `// reference to ${AD_PLATFORM_PKG}\n/* from '${AD_PLATFORM_PKG}' */\nconst note = "Use ${AD_PLATFORM_PKG}";\nimport { AdRevoker, AdPlatformError } from '${AD_PLATFORM_PKG}';`;
+    expect(revokeNamedImports(commentOrStringOnly).sort()).toEqual(['AdPlatformError', 'AdRevoker']);
+    expect(() => revokeNamedImports(`import { AdRevoker } from '${AD_PLATFORM_PKG}/writers';`)).toThrow(/Unexpected subpath import/);
   });
 
   it('never logs, returns or records the secret: the file that opens it writes only codes and counts', () => {
@@ -76,13 +82,13 @@ describe('what may open or name the sealed copy of a closed ads connection token
   it('has no source that drops a credential but the kernel commands that close a connection, and every close in the HTTP edge goes through the command', () => {
     // Every drop of a credential in code is one of the three commands of the channel layer (disconnect, the platform's deletion, the system's close of a
     // member who left); the database's trigger holds the copy whatever else deletes (an operator's statement, a cascade).
-    expect(naming('crove_kernel.credential_drop')).toEqual(['packages/kernel/src/channels.ts']);
-    const drops = [...code('packages/kernel/src/channels.ts').matchAll(/crove_kernel\.credential_drop\(/g)].length;
+    expect([...new Set([...naming('crove_kernel.credential_drop'), ...naming('ludy_kernel.credential_drop')])].sort()).toEqual(['packages/kernel/src/channels.ts']);
+    const drops = [...code('packages/kernel/src/channels.ts').matchAll(/(?:crove|ludy)_kernel\.credential_drop\(/g)].length;
     expect(drops).toBe(3);
     // The rollbacks of a refused link in the API (a connection that was made and could not be attached) close it with the same command, not with SQL.
     const rpc = code('apps/kernel/src/rpc.ts');
     expect([...rpc.matchAll(/runtime\.execute\('kernel\.channel\.disconnect'/g)].length).toBeGreaterThanOrEqual(4);
-    expect(rpc).not.toMatch(/credential_drop|DELETE FROM crove_kernel\.credential/);
+    expect(rpc).not.toMatch(/credential_drop|DELETE FROM (?:crove|ludy)_kernel\.credential/);
   });
 
   it('carries no data in the job: a sweep on a schedule, never retried by the queue, and no job of that queue is sent with data', () => {
@@ -116,7 +122,7 @@ describe('what may open or name the sealed copy of a closed ads connection token
     // The sweep that has no egress is the agent sweep (queue egress none): the age sweep is in its handler, not in the job that reaches the platform.
     const worker = read('apps/kernel/src/worker.ts');
     const sweep = worker.slice(worker.indexOf('boss.work(QUEUES.agentSweep'), worker.indexOf('boss.schedule(QUEUES.agentSweep'));
-    expect(sweep).toContain('crove_ads.token_revoke_expire()');
+    expect(sweep).toMatch(/(?:crove|ludy)_ads\.token_revoke_expire\(\)/);
     expect(code('apps/kernel/src/jobs-schema.ts')).toMatch(/\[QUEUES\.agentSweep\]: 'none'/);
   });
 });

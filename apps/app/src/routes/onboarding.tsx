@@ -2,12 +2,12 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { normalizeTaxCode } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NavIcon } from '@crove/ui/components/nav-icon';
+import { normalizeTaxCode } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NavIcon } from '@ludy/ui/components/nav-icon';
 import { ErrorText, Field, FieldError, Logo, OrgLeftNotice, ScreenTitle, fieldControl, focusFirstInvalid, isEmailAddress, useFieldErrors } from '../components/ui.tsx';
 import { SupportLink } from '../components/support-link.tsx';
 import { client, clientForOrg, errorMessage, orglessClient, orpc, queryClient } from '../lib/api.ts';
@@ -60,8 +60,8 @@ export function OnboardingPage() {
     onSuccess: async (org, input) => {
       await queryClient.invalidateQueries();
       // Inviting is R3 (a fresh second factor): the org's own invite form asks for it and shows the link.
-      if (input.contact) await navigate({ to: '/o/$slug/settings', params: { slug: org.slug }, search: { invite: input.contact } });
-      else await navigate({ to: '/o/$slug/inbox', params: { slug: org.slug } });
+      if (input.contact) await navigate({ to: '/o/$slug/settings/members', params: { slug: org.slug }, search: { invite: input.contact } });
+      else await navigate({ to: '/o/$slug/overview', params: { slug: org.slug } });
     },
   });
 

@@ -4,12 +4,13 @@
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, toDomainError } from '@crove/kernel-runtime';
+import { createDb, type Db } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, toDomainError } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -22,6 +23,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('context re-entry guard on PostgreSQL (§4.5 item 1, T10)', () => {
   const dbName = `crove_test_ctx_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   let pool: pg.Pool;
@@ -35,7 +37,7 @@ suite('context re-entry guard on PostgreSQL (§4.5 item 1, T10)', () => {
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
 
   async function connect(url: string): Promise<pg.Client> {
-    const client = new pg.Client({ connectionString: url });
+    const client = createDbClient({ connectionString: url }, dbIds);
     await client.connect();
     clients.push(client);
     return client;
@@ -43,6 +45,8 @@ suite('context re-entry guard on PostgreSQL (§4.5 item 1, T10)', () => {
 
   const enter = (c: pg.Client, userId: string, orgId: string) =>
     c.query<{ role: string }>('SELECT crove_kernel.enter_user_context($1::uuid, $2::text) AS role', [orgId, contextToken(userId, orgId)]);
+
+  const lockNamespace = () => dbIds?.lockNamespace ?? NAMESPACE;
 
   async function context(c: pg.Client) {
     const { rows } = await c.query<{ org: string | null; user: string | null; rawOrg: string | null; rawUser: string | null }>(
@@ -58,7 +62,7 @@ suite('context re-entry guard on PostgreSQL (§4.5 item 1, T10)', () => {
       `SELECT l.mode FROM pg_locks l
        WHERE l.locktype = 'advisory' AND l.classid = $1::oid AND l.objid = pg_backend_pid()::oid AND l.objsubid = 2
          AND l.pid = pg_backend_pid() AND l.granted`,
-      [NAMESPACE],
+      [lockNamespace()],
     );
     return rows.length;
   }
@@ -82,17 +86,18 @@ suite('context re-entry guard on PostgreSQL (§4.5 item 1, T10)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const loginUrl = (username: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = username;
+      url.username = dbIds ? dbIds.roleName(username) : username;
       url.password = password;
       return url.toString();
     };
     appUrl = loginUrl('crove_app', 'test-app-pw');
     workerUrl = loginUrl('crove_worker', 'test-worker-pw');
     // One connection, so every runtime transaction below reuses the same pooled backend.
-    pool = createPool({ connectionString: appUrl, max: 1 });
+    pool = createDbPool({ connectionString: appUrl, max: 1 }, dbIds);
     db = createDb(pool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: 'in.test' }) });
     users.owner = await upsertIdentity(db, { issuer: 'test', subject: 'ctx-owner', email: 'owner@ctx.test', name: null });
@@ -101,7 +106,7 @@ suite('context re-entry guard on PostgreSQL (§4.5 item 1, T10)', () => {
     orgA = (await createOrg(runtime, asUser(users.owner), 'Ctx A')).orgId;
     orgB = (await createOrg(runtime, asUser(users.other), 'Ctx B')).orgId;
     // owner belongs to both orgs; member belongs to org A only.
-    const seed = new pg.Client({ connectionString: adminUrl });
+    const seed = createDbClient({ connectionString: adminUrl }, dbIds);
     await seed.connect();
     await seed.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($3, $4, 'member')`, [
       orgB,
@@ -175,7 +180,7 @@ suite('context re-entry guard on PostgreSQL (§4.5 item 1, T10)', () => {
     await inTx(app, 'BEGIN', async () => {
       await enter(app, users.owner, orgA);
       // Neither call releases a transaction-level lock (both report it as not held at session level).
-      await app.query('SELECT pg_advisory_unlock($1::int, pg_backend_pid())', [NAMESPACE]);
+      await app.query('SELECT pg_advisory_unlock($1::int, pg_backend_pid())', [lockNamespace()]);
       await app.query('SELECT pg_advisory_unlock_all()');
       for (const name of ['crove.org_id', 'crove.user_id', 'crove.ctx', 'crove.ctx_seal']) {
         await app.query(`SELECT set_config($1, '', true)`, [name]);
@@ -213,13 +218,13 @@ suite('context re-entry guard on PostgreSQL (§4.5 item 1, T10)', () => {
 
   it('fails closed when the key is already held at session level, by this session or another one', async () => {
     const app = await connect(appUrl);
-    await app.query('SELECT pg_advisory_lock($1::int, pg_backend_pid())', [NAMESPACE]);
+    await app.query('SELECT pg_advisory_lock($1::int, pg_backend_pid())', [lockNamespace()]);
     try {
       await inTx(app, 'BEGIN', async () => {
         await expect(enter(app, users.owner, orgA)).rejects.toMatchObject(REENTRY);
       });
     } finally {
-      await app.query('SELECT pg_advisory_unlock($1::int, pg_backend_pid())', [NAMESPACE]);
+      await app.query('SELECT pg_advisory_unlock($1::int, pg_backend_pid())', [lockNamespace()]);
     }
     await inTx(app, 'BEGIN', async () => {
       await expect(enter(app, users.owner, orgA)).resolves.toMatchObject({ rows: [{ role: 'owner' }] });
@@ -228,7 +233,7 @@ suite('context re-entry guard on PostgreSQL (§4.5 item 1, T10)', () => {
     // Another backend holding this backend's key makes the guard refuse at once instead of waiting for it.
     const squatter = await connect(appUrl);
     const { rows } = await app.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
-    await squatter.query('SELECT pg_advisory_lock($1::int, $2::int)', [NAMESPACE, rows[0]?.pid]);
+    await squatter.query('SELECT pg_advisory_lock($1::int, $2::int)', [lockNamespace(), rows[0]?.pid]);
     try {
       await inTx(app, 'BEGIN', async () => {
         await app.query(`SET LOCAL statement_timeout = '5s'`);

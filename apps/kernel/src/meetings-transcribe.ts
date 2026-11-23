@@ -12,7 +12,7 @@
 // The job writes no meeting table: the recorder's own action copies the result into the draft (meetings.transcript.copy_result). A failed run stores a fixed
 // code, never a message. Logs carry ids and codes. A job is never retried by the queue: another try would send the audio to the provider again; the recorder
 // starts it again if they want to.
-import { AiBudgetExhaustedError, aiCost, mergeChunkTranscripts, transcribeChunks, withAiScope, TranscriptionError, type AiCall, type AiMeter, type AiUsage, type TranscribeConfig, type TranscribeInput, type TranscriptSegment } from '@crove/agent';
+import { AiBudgetExhaustedError, aiCost, mergeChunkTranscripts, transcribeChunks, withAiScope, TranscriptionError, type AiCall, type AiMeter, type AiUsage, type TranscribeConfig, type TranscribeInput, type TranscriptSegment } from '@ludy/agent';
 import {
   DomainError,
   decryptBlobBuffer,
@@ -24,10 +24,10 @@ import {
   type MemberVyRuntime,
   type Runtime,
   type SystemActor,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 import type { MediaMeasurer } from './meetings-measure.ts';
-import { MEMBER_VY_RUN_ERROR_CODES, type MemberVyRunErrorCode } from '@crove/kernel';
-import { decodeTranscriptResult, encodeTranscriptResult, TRANSCRIPT_RESULT_MAX } from '@crove/mod-meetings';
+import { MEMBER_VY_RUN_ERROR_CODES, type MemberVyRunErrorCode } from '@ludy/kernel';
+import { decodeTranscriptResult, encodeTranscriptResult, TRANSCRIPT_RESULT_MAX } from '@ludy/mod-meetings';
 
 export interface MeetingsTranscribeJob {
   orgId: string;
@@ -55,6 +55,8 @@ export const TRANSCRIPT_MAX_SECONDS = 90 * 60;
 
 interface RunAudio {
   language: string;
+  // Names that may be spoken in the meeting (#3499), as the door read them for the recorder; the transcription client cuts and cleans them before they leave.
+  terms?: string[];
   keyId: string;
   wrappedKey: Buffer | Uint8Array;
   segments: Array<{ order: number; startOffsetSeconds: number; lengthSeconds: number; fileId: string; storageKey: string; generation: string | null; sizeBytes: number; sha256: string; contentType: string }>;
@@ -138,7 +140,7 @@ async function openChunk(deps: MeetingsTranscribeDeps, job: MeetingsTranscribeJo
       copy.fill(0);
       throw error;
     }
-    return { input: { audio: copy, mimeType: segment.contentType, language: audio.language === 'en' ? 'en' : 'vi', lengthSeconds: measured, offsetSeconds: segment.startOffsetSeconds }, chunks: audio.segments.length };
+    return { input: { audio: copy, mimeType: segment.contentType, language: audio.language === 'en' ? 'en' : 'vi', lengthSeconds: measured, offsetSeconds: segment.startOffsetSeconds, terms: audio.terms ?? [] }, chunks: audio.segments.length };
   } finally {
     dataKey?.fill(0);
     subkey.fill(0);

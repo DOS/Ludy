@@ -39,16 +39,17 @@ test('post an invoice of a locked month in the first open month, keeping its inv
   const nav = page.getByRole('navigation');
 
   await test.step('lock the month before last', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Sổ sách' }).click();
+    await page.getByRole('tab', { name: 'Kết thúc kỳ' }).click();
     await page.getByLabel('Tháng khóa sổ').fill(LOCKED);
     await page.getByRole('button', { name: `Khóa sổ tháng ${my(LOCKED)}` }).click();
     await expect(page.getByText(`Đã khóa sổ đến hết ngày ${dmy(LAST_LOCKED_DAY)}`, { exact: false })).toBeVisible();
   });
 
   await test.step('the Inbox says the invoice month is locked and offers the first open day', async () => {
-    await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
     await page.getByRole('link', { name: SELLER }).click();
@@ -86,16 +87,16 @@ test('post an invoice of a locked month in the first open month, keeping its inv
   await test.step('the document keeps its invoice date, the entry is on the posting date, the audit rows record it', async () => {
     const posted = sql<{ invoice_date: string; entry_date: string }>(
       `SELECT d.invoice_date::text AS invoice_date, j.entry_date::text AS entry_date
-       FROM crove_finance.purchase_document d
-       JOIN crove_finance.journal_entry j ON j.org_id = d.org_id AND j.source_type = 'finance.purchase_document' AND j.source_id = d.id
-       JOIN crove_kernel.tenant t ON t.org_id = d.org_id
+       FROM ludy_finance.purchase_document d
+       JOIN ludy_finance.journal_entry j ON j.org_id = d.org_id AND j.source_type = 'finance.purchase_document' AND j.source_id = d.id
+       JOIN ludy_kernel.tenant t ON t.org_id = d.org_id
        WHERE t.slug = :'slug'`,
       { slug },
     );
     expect(posted).toEqual([{ invoice_date: INVOICE_DATE, entry_date: FIRST_OPEN_DAY }]);
     const audits = sql<{ command: string; posting_date: string }>(
       `SELECT a.command, a.detail->>'posting_date' AS posting_date
-       FROM crove_kernel.audit_event a JOIN crove_kernel.tenant t ON t.org_id = a.org_id
+       FROM ludy_kernel.audit_event a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id
        WHERE t.slug = :'slug' AND a.outcome = 'ok' AND a.command IN ('kernel.proposal.approve', 'finance.purchase.record') ORDER BY a.command`,
       { slug },
     );

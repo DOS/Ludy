@@ -7,12 +7,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { JournalVoucherRequest } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { JournalVoucherRequest } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -72,9 +72,9 @@ suite('general journal vouchers (#888)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -89,10 +89,10 @@ suite('general journal vouchers (#888)', () => {
       [o.member, 'member'],
       [second, 'admin'],
     ] as const) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]));
     }
     const { rows } = await admin((c) =>
-      c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, name, tax_code) VALUES ($1, 'Công ty Điện lực Mẫu', '0101234564') RETURNING id`, [orgId]),
+      c.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, name, tax_code) VALUES ($1, 'Công ty Điện lực Mẫu', '0101234564') RETURNING id`, [orgId]),
     );
     vendor = String(rows[0]?.id);
   });
@@ -143,12 +143,12 @@ suite('general journal vouchers (#888)', () => {
       ['6422', 1500000, 0],
       ['331', 0, 1500000],
     ]);
-    const lines = await admin(async (c) => (await c.query('SELECT account_code, party_id, memo FROM crove_finance.journal_line WHERE entry_id = $1 ORDER BY line_no', [first.journalEntryId])).rows);
+    const lines = await admin(async (c) => (await c.query('SELECT account_code, party_id, memo FROM ludy_finance.journal_line WHERE entry_id = $1 ORDER BY line_no', [first.journalEntryId])).rows);
     expect(lines).toEqual([
       { account_code: '6422', party_id: null, memo: 'Tiền điện văn phòng' },
       { account_code: '331', party_id: vendor, memo: 'Trích trước chi phí điện tháng 10' },
     ]);
-    const vouchers = await admin(async (c) => (await c.query('SELECT number, voucher_date::text AS date, proposal_id FROM crove_finance.journal_voucher WHERE org_id = $1 ORDER BY number', [o.orgId])).rows);
+    const vouchers = await admin(async (c) => (await c.query('SELECT number, voucher_date::text AS date, proposal_id FROM ludy_finance.journal_voucher WHERE org_id = $1 ORDER BY number', [o.orgId])).rows);
     expect(vouchers).toEqual([
       { number: 1, date: '2026-10-31', proposal_id: proposalId },
       { number: 2, date: '2026-10-31', proposal_id: expect.any(String) },
@@ -192,18 +192,18 @@ suite('general journal vouchers (#888)', () => {
   it('refuses a date in a locked month when asked for, and nothing is numbered for it', async () => {
     await rt.execute('finance.period.lock', { month: '2026-08' }, { actor: asMfa(o.owner), orgId: o.orgId });
     await expect(request(accrual('2026-08-20'))).rejects.toMatchObject({ code: 'PERIOD_LOCKED', status: 409, details: { lockedThrough: '2026-08-31', entryDate: '2026-08-20' } });
-    const { rows } = await admin((c) => c.query('SELECT count(*)::int AS n FROM crove_finance.journal_voucher WHERE org_id = $1', [o.orgId]));
+    const { rows } = await admin((c) => c.query('SELECT count(*)::int AS n FROM ludy_finance.journal_voucher WHERE org_id = $1', [o.orgId]));
     expect(rows).toEqual([{ n: 2 }]);
   });
 
   it('keeps the table append-only and posted only with its entry', async () => {
     // Even the owner of the table cannot change a voucher.
-    await expect(admin((c) => c.query(`UPDATE crove_finance.journal_voucher SET description = 'x' WHERE org_id = $1`, [o.orgId]))).rejects.toThrow();
+    await expect(admin((c) => c.query(`UPDATE ludy_finance.journal_voucher SET description = 'x' WHERE org_id = $1`, [o.orgId]))).rejects.toThrow();
     // A voucher without its journal entry is refused at commit, whoever writes it.
     await expect(
       admin(async (c) => {
         await c.query('BEGIN');
-        await c.query(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description) VALUES ($1, '2026-10-31', 'no entry')`, [o.orgId]);
+        await c.query(`INSERT INTO ludy_finance.journal_voucher (org_id, voucher_date, description) VALUES ($1, '2026-10-31', 'no entry')`, [o.orgId]);
         await c.query('COMMIT');
       }),
     ).rejects.toThrow(/must be posted as a journal entry dated 2026-10-31/);

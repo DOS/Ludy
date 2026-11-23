@@ -4,11 +4,11 @@
 import { useMutation } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { normalizeTaxCode, type Party } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { normalizeTaxCode, type Party } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { ErrorText, FieldError, fieldControl, fieldHintId, focusFirstInvalid, isEmailAddress, useFieldErrors } from './ui.tsx';
 
@@ -22,6 +22,8 @@ export type EditableFields = Omit<EditableParty, 'duplicates'>;
 export const refreshParties = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.parties.key() });
   void queryClient.invalidateQueries({ queryKey: orpc.crm.contacts.key() });
+  // The deal form's customer search reads the parties too: a contact just added must be found by it.
+  void queryClient.invalidateQueries({ queryKey: orpc.crm.parties.key() });
 };
 
 // A party's name and contact details, edited in a row under it by owners, admins and members. The version read goes

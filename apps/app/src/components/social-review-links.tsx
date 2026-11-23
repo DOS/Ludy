@@ -5,12 +5,12 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { Textarea } from '@crove/ui/components/textarea';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { useMemberNames } from './social-mentions.tsx';
 import { ErrorText } from './ui.tsx';
@@ -111,7 +111,9 @@ export function ClientAnswer({ fb, canReply, nameOf }: { fb: Feedback; canReply:
   );
 }
 
-export function ReviewLinks({ postId, canDecide, canReply = false }: { postId: string; canDecide: boolean; canReply?: boolean }) {
+// canCreate: false once every channel is out or dropped (#3656): no new link to ask for, but the links still live can be revoked and
+// the clients' answers stay.
+export function ReviewLinks({ postId, canDecide, canReply = false, canCreate = true }: { postId: string; canDecide: boolean; canReply?: boolean; canCreate?: boolean }) {
   const t = useTranslations('social.reviewLinks');
   const f = useFormat();
   const list = useQuery(orpc.social.reviewLinks.list.queryOptions({ input: { postId } }));
@@ -148,14 +150,14 @@ export function ReviewLinks({ postId, canDecide, canReply = false }: { postId: s
   const feedback = list.data?.feedback ?? [];
   const now = Date.now();
   const live = links.filter((l) => !l.revokedAt && Date.parse(l.expiresAt) > now);
-  if (!canDecide && !list.error && links.length === 0 && feedback.length === 0) return null;
+  if ((!canDecide || !canCreate) && !list.error && links.length === 0 && feedback.length === 0) return null;
   return (
     <Card className="block space-y-3 p-4">
       <div>
         <h3 className="text-sm font-medium text-foreground">{t('title')}</h3>
         <p className="text-xs text-subtle-foreground">{t('hint')}</p>
       </div>
-      {canDecide && (
+      {canDecide && canCreate && (
         <div className="flex flex-wrap items-center gap-2">
           <NativeSelect value={String(days)} aria-label={t('validFor')} className="w-auto" onChange={(e) => setDays(Number(e.target.value))}>
             {DAYS.map((d) => (

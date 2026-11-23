@@ -10,9 +10,9 @@
 import { Decimal } from 'decimal.js';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { zAdsCampaignDraftRecord, zAdsCampaignRequest, zId, type AdsCampaignDraftSource, type AdsCampaignPlanDraft, type AdsCampaignRequestAsked, type AdsCampaignRequestView } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { zAdsCampaignDraftRecord, zAdsCampaignRequest, zId, type AdsCampaignDraftSource, type AdsCampaignPlanDraft, type AdsCampaignRequestAsked, type AdsCampaignRequestView } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { accountOf, columnsOf, contextBase } from './campaign-draft.ts';
 import { flightDays, maxSpendOf } from './campaign-plan.ts';
 import { addDays, currencyDecimals, todayIn } from './domain.ts';
@@ -79,8 +79,8 @@ export function assembleDraft(source: Pick<AdsCampaignDraftSource, 'objective' |
 
 function requestSelect(db: Db['trx']) {
   return db
-    .selectFrom('crove_ads.ad_campaign_request as r')
-    .innerJoin('crove_ads.ad_account as a', (j) => j.onRef('a.org_id', '=', 'r.org_id').onRef('a.id', '=', 'r.ad_account_id'))
+    .selectFrom('ludy_ads.ad_campaign_request as r')
+    .innerJoin('ludy_ads.ad_account as a', (j) => j.onRef('a.org_id', '=', 'r.org_id').onRef('a.id', '=', 'r.ad_account_id'))
     .select(['r.id', 'r.ad_account_id', 'r.objective', 'r.brief', 'r.source_post_id', 'r.state', 'r.code', 'r.draft_id', 'r.requested_by', 'r.requested_at', 'r.settled_at', 'a.name as account_name']);
 }
 type RequestRow = Awaited<ReturnType<ReturnType<typeof requestSelect>['execute']>>[number];
@@ -116,7 +116,7 @@ export const adsCampaignDraftRequest = defineCommand({
     // One request waits per member: two asks of the same member at once wait for each other here, so the second sees the first.
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.ads.request:${ctx.orgId}:${userId}`}, 0))`.execute(ctx.trx);
     const waiting = await ctx.trx
-      .selectFrom('crove_ads.ad_campaign_request')
+      .selectFrom('ludy_ads.ad_campaign_request')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('requested_by', '=', userId)
@@ -124,7 +124,7 @@ export const adsCampaignDraftRequest = defineCommand({
       .executeTakeFirst();
     if (waiting) throw new DomainError('ADS_DRAFT_REQUEST_OPEN', 409, 'Bạn đang có một yêu cầu soạn nháp chờ trả lời; chờ xong rồi nhờ tiếp');
     const inserted = await ctx.trx
-      .insertInto('crove_ads.ad_campaign_request')
+      .insertInto('ludy_ads.ad_campaign_request')
       .values({
         org_id: ctx.orgId,
         ad_account_id: adAccountId,
@@ -178,7 +178,7 @@ export const adsCampaignDraftSource = defineQuery({
   handler: async (ctx: QueryContext, input): Promise<AdsCampaignDraftSource | null> => {
     requireSystem(ctx);
     const row = await ctx.trx
-      .selectFrom('crove_ads.ad_campaign_request')
+      .selectFrom('ludy_ads.ad_campaign_request')
       .select(['id', 'ad_account_id', 'objective', 'brief', 'source_post_id', 'state'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.requestId.toLowerCase())
@@ -222,7 +222,7 @@ export const adsCampaignDraftRecord = defineCommand({
     const requestId = input.requestId.toLowerCase();
     // The account row is locked before the request row, the order an account's move to another legal entity takes them in (its cascade then locks the
     // requests), so the two never wait for each other in a circle.
-    const known = await ctx.trx.selectFrom('crove_ads.ad_campaign_request').select(['ad_account_id', 'state']).where('org_id', '=', ctx.orgId).where('id', '=', requestId).executeTakeFirst();
+    const known = await ctx.trx.selectFrom('ludy_ads.ad_campaign_request').select(['ad_account_id', 'state']).where('org_id', '=', ctx.orgId).where('id', '=', requestId).executeTakeFirst();
     if (!known || known.state !== 'requested') return { recorded: false };
     const account = await accountOf(ctx, known.ad_account_id, true).catch((error: unknown) => {
       if (error instanceof DomainError && error.code === 'ADS_ACCOUNT_NOT_FOUND') return null;
@@ -230,7 +230,7 @@ export const adsCampaignDraftRecord = defineCommand({
     });
     if (!account) return { recorded: false };
     const request = await ctx.trx
-      .selectFrom('crove_ads.ad_campaign_request')
+      .selectFrom('ludy_ads.ad_campaign_request')
       .select(['ad_account_id', 'requested_by', 'state'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', requestId)
@@ -239,14 +239,14 @@ export const adsCampaignDraftRecord = defineCommand({
     // Read again under the lock: settled or gone meanwhile, or its account is not the one that was locked.
     if (!request || request.state !== 'requested' || request.ad_account_id !== account.id) return { recorded: false };
     if (input.outcome === 'none') {
-      await ctx.trx.updateTable('crove_ads.ad_campaign_request').set({ state: 'none', code: input.code }).where('org_id', '=', ctx.orgId).where('id', '=', requestId).execute();
+      await ctx.trx.updateTable('ludy_ads.ad_campaign_request').set({ state: 'none', code: input.code }).where('org_id', '=', ctx.orgId).where('id', '=', requestId).execute();
       ctx.audit({ requestId, outcome: 'none', code: input.code });
       return { recorded: true };
     }
     const { days, ...columns } = columnsOf(input.plan);
     const maxSpend = input.plan.dailyBudget && days ? maxSpendOf(input.plan.dailyBudget, days) : null;
     const draft = await ctx.trx
-      .insertInto('crove_ads.ad_campaign_draft')
+      .insertInto('ludy_ads.ad_campaign_draft')
       .values({
         org_id: ctx.orgId,
         ad_account_id: request.ad_account_id,
@@ -259,7 +259,7 @@ export const adsCampaignDraftRecord = defineCommand({
       })
       .returning('id')
       .executeTakeFirstOrThrow();
-    await ctx.trx.updateTable('crove_ads.ad_campaign_request').set({ state: 'written', draft_id: draft.id }).where('org_id', '=', ctx.orgId).where('id', '=', requestId).execute();
+    await ctx.trx.updateTable('ludy_ads.ad_campaign_request').set({ state: 'written', draft_id: draft.id }).where('org_id', '=', ctx.orgId).where('id', '=', requestId).execute();
     ctx.audit({ requestId, outcome: 'written', draftId: draft.id, adAccountId: request.ad_account_id, days: flightDays(input.plan.startOn, input.plan.endOn), maxSpend });
     return { recorded: true };
   },

@@ -3,8 +3,9 @@
 // of a draft. The copy of a finished result into the draft, which does, is in summary.ts. A feature that must not cut off a paid transcription asks the kernel
 // (kernel.member_vy.run.live) instead of reading the private rows itself.
 import { sql } from 'kysely';
-import { zDraftReview, zDraftReviewed, zSummaryStart, zSummaryStarted, zSummaryStatus, zSummaryRef } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { zDraftReview, zDraftReviewed, zSummaryStart, zSummaryStarted, zSummaryStatus, zSummaryRef } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
+import { lockMeetingMedia, markAudioUsed } from './media-record.ts';
 import { ROLES, openMeeting, userOf } from './transcript.ts';
 
 export const SUMMARY_FEATURE = 'meetings.summary';
@@ -34,15 +35,19 @@ export const summaryStart = defineCommand({
     if (!summaryEnabled) throw new DomainError('SUMMARY_OFF', 422, 'Summaries by Vy are not turned on here; type the summary by hand');
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can ask Vy to summarize it');
+    // The meeting's media lock, as a recording takes it (#3187): the stamp below is then ordered against a replacement of a joined recording.
+    await lockMeetingMedia(ctx, input.meetingId);
     // The meeting is held FOR SHARE, so a concurrent erase or retention change waits for this start (as transcribe does).
-    await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forShare().execute();
+    await ctx.trx.selectFrom('ludy_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forShare().execute();
     // A summary no longer supersedes a transcription (one live Vy run per feature, ADR-0049 decision 1, #3029): one of another meeting goes on. This meeting's own
     // transcription still blocks it, because a summary of a half-written transcript is wrong.
     const live = await ctx.query<{ live: boolean }>('kernel.member_vy.run.live', { feature: 'meetings.transcribe', subjectId: input.meetingId });
     if (live.status !== 'ok' || live.value.live) throw new DomainError('TRANSCRIBE_RUNNING', 409, 'This meeting is still being transcribed; wait for it to finish');
-    const any = await ctx.trx.selectFrom('crove_meetings.transcript_segment').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).limit(1).executeTakeFirst();
+    const any = await ctx.trx.selectFrom('ludy_meetings.transcript_segment').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).limit(1).executeTakeFirst();
     if (!any) throw new DomainError('TRANSCRIPT_EMPTY', 422, 'There is no transcript to summarize yet');
     const started = await ctx.run<{ runId: string }>('kernel.member_vy.run.start', { feature: FEATURE, subjectType: 'meeting', subjectId: input.meetingId });
+    // A summary rests on the transcript of the recording: it is in use from here on (#3187), under the media lock a replacement takes.
+    await markAudioUsed(ctx, input.meetingId);
     ctx.audit({ meetingId: input.meetingId, runId: started.runId });
     return zSummaryStarted.parse({ meetingId: input.meetingId, runId: started.runId });
   },
@@ -74,7 +79,7 @@ export const draftReview = defineCommand({
     userOf(ctx.actor);
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userOf(ctx.actor)) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can review its draft');
-    const { rows } = await sql<{ n: number }>`SELECT crove_meetings.draft_review(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${sql.val(input.ids)}::uuid[]) AS n`.execute(ctx.trx);
+    const { rows } = await sql<{ n: number }>`SELECT ludy_meetings.draft_review(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${sql.val(input.ids)}::uuid[]) AS n`.execute(ctx.trx);
     const cleared = rows[0]?.n ?? 0;
     ctx.audit({ meetingId: input.meetingId, count: cleared });
     return zDraftReviewed.parse({ meetingId: input.meetingId, cleared });

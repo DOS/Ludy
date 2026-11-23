@@ -6,7 +6,7 @@
 //
 // A launch creates, in this order and every one PAUSED: the campaign, the ad set, and for each text variant a creative and an ad. Nothing in W2-3 un-pauses an
 // object: when the last create is recorded the launch is at the step `paused` (objects created, paused) and waits for W2-4's activation.
-import type { AdsCampaignPlan } from '@crove/kernel-contract';
+import type { AdsCampaignPlan } from '@ludy/kernel-contract';
 
 export const LAUNCH_LEVELS = ['campaign', 'ad_set', 'creative', 'ad'] as const;
 export type LaunchLevel = (typeof LAUNCH_LEVELS)[number];

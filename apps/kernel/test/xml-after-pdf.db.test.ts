@@ -10,13 +10,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
-import type { ExtractClient } from '@crove/extract-contract';
-import type { ParsedInvoice } from '@crove/l10n-vn';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
+import type { ExtractClient } from '@ludy/extract-contract';
+import type { ParsedInvoice } from '@ludy/l10n-vn';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -114,11 +114,11 @@ suite('the original XML after the PDF on PostgreSQL (#2269)', () => {
     return { fileId, proposalId: proposalId as string };
   }
   const proposals = (number: string) =>
-    admin(async (c) => (await c.query<Row>(`SELECT id, status, revision, source_file_id, extraction_id, duplicate_of, legal_entity_id, authors, payload FROM crove_kernel.proposal WHERE org_id = $1 AND payload #>> '{invoice,number}' = $2 ORDER BY created_at`, [orgId, number])).rows);
+    admin(async (c) => (await c.query<Row>(`SELECT id, status, revision, source_file_id, extraction_id, duplicate_of, legal_entity_id, authors, payload FROM ludy_kernel.proposal WHERE org_id = $1 AND payload #>> '{invoice,number}' = $2 ORDER BY created_at`, [orgId, number])).rows);
   const fileStatus = async (userId: string, fileId: string) =>
     (await rt.query<Array<{ id: string; status: string; proposalId: string | null }>>('kernel.files.recent', {}, { actor: asUser(userId), orgId })).find((f) => f.id === fileId);
   const activityKinds = (proposalId: string) =>
-    admin(async (c) => (await c.query<{ kind: string }>(`SELECT kind FROM crove_kernel.activity WHERE org_id = $1 AND record_type = 'kernel.proposal' AND record_id = $2 ORDER BY occurred_at`, [orgId, proposalId])).rows.map((r) => r.kind));
+    admin(async (c) => (await c.query<{ kind: string }>(`SELECT kind FROM ludy_kernel.activity WHERE org_id = $1 AND record_type = 'kernel.proposal' AND record_id = $2 ORDER BY occurred_at`, [orgId, proposalId])).rows.map((r) => r.kind));
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -129,16 +129,16 @@ suite('the original XML after the PDF on PostgreSQL (#2269)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
     const asWorker = new URL(adminUrl);
-    asWorker.username = 'crove_worker';
+    asWorker.username = 'ludy_worker';
     asWorker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorker.toString(), max: 2 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
@@ -147,8 +147,8 @@ suite('the original XML after the PDF on PostgreSQL (#2269)', () => {
     }
     ({ orgId } = await createOrg(rt, asUser(users.owner), 'Công ty có hóa đơn gốc đến sau'));
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'admin')`, [orgId, users.admin, users.approver]);
-      branch = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, users.owner])).rows[0]?.id as string;
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'admin')`, [orgId, users.admin, users.approver]);
+      branch = (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, users.owner])).rows[0]?.id as string;
     });
   }, 300_000);
 
@@ -180,7 +180,7 @@ suite('the original XML after the PDF on PostgreSQL (#2269)', () => {
     // The signature check of the original is on it: the point of fetching the XML.
     expect(proposal.payload.checks.some((c) => c.id === 'signature')).toBe(true);
     // The XML is the document's source file once it is posted, and its run is the proposal's current reading.
-    const xmlRun = await admin(async (c) => (await c.query<{ file_id: string }>('SELECT file_id FROM crove_kernel.extraction WHERE org_id = $1 AND id = $2', [orgId, proposal.extraction_id])).rows[0]);
+    const xmlRun = await admin(async (c) => (await c.query<{ file_id: string }>('SELECT file_id FROM ludy_kernel.extraction WHERE org_id = $1 AND id = $2', [orgId, proposal.extraction_id])).rows[0]);
     expect(xmlRun?.file_id).toBe(xml.fileId);
     expect(proposal.payload.sourceFileId).toBe(xml.fileId);
     // P10: who uploaded the original is an author, besides who uploaded the PDF and the readers.
@@ -288,7 +288,7 @@ suite('the original XML after the PDF on PostgreSQL (#2269)', () => {
     // The uploaders are authors: a third person approves (P10).
     const done = await rt.execute<{ journalEntryId: string; documentId: string }>('kernel.proposal.approve', { id: pdf.proposalId, revision: detail.revision, acceptUnverifiedSignature: true }, { actor: asMfa(users.approver), orgId });
     expect(done.journalEntryId).toEqual(expect.any(String));
-    const documents = await admin(async (c) => (await c.query<{ source_file_id: string }>(`SELECT source_file_id FROM crove_finance.purchase_document WHERE org_id = $1 AND invoice_number = '5003'`, [orgId])).rows);
+    const documents = await admin(async (c) => (await c.query<{ source_file_id: string }>(`SELECT source_file_id FROM ludy_finance.purchase_document WHERE org_id = $1 AND invoice_number = '5003'`, [orgId])).rows);
     expect(documents).toEqual([{ source_file_id: xml.fileId }]);
     expect(await fileStatus(users.owner, pdf.fileId)).toMatchObject({ status: 'proposed' });
   });

@@ -2,7 +2,7 @@
 // Google Calendar or Outlook subscribes to. It runs the migration's definer on the control plane as the API login role;
 // the token is the only credential, and only what goes out (time, channel, status, a short title) comes back.
 import { sql } from 'kysely';
-import type { Runtime } from '@crove/kernel-runtime';
+import type { Runtime } from '@ludy/kernel-runtime';
 import { DEFAULT_BRAND_NAME } from './config.ts';
 
 // Calendar apps fetch from shared provider addresses, so one client address may stand for many subscribers.
@@ -30,7 +30,7 @@ export interface CalendarFeed {
 export async function calendarFeed(runtime: Runtime, token: string): Promise<CalendarFeed | null> {
   if (!TOKEN.test(token)) return null;
   return runtime.orgless(async (db) => {
-    const { rows } = await sql<{ feed: CalendarFeed | null }>`SELECT crove_social.calendar_feed_events(${token}) AS feed`.execute(db);
+    const { rows } = await sql<{ feed: CalendarFeed | null }>`SELECT ludy_social.calendar_feed_events(${token}) AS feed`.execute(db);
     return rows[0]?.feed ?? null;
   });
 }
@@ -93,14 +93,14 @@ export function icsTime(at: Date): string {
 }
 
 // brand: the product name users see (BRAND_NAME, #1045), in the calendar's name and each event's link line. PRODID and
-// UID keep "Crove": they identify the software, not the product.
+// UID keep "Ludy": they identify the software, not the product.
 export function renderIcs(feed: CalendarFeed, publicUrl: string, now: Date, brand = DEFAULT_BRAND_NAME): string {
   const base = publicUrl.replace(/\/+$/, '');
   const stamp = icsTime(now);
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//Crove//Social//VI',
+    'PRODID:-//Ludy//Social//VI',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
     `X-WR-CALNAME:${escapeText(`${feed.name} - ${brand}`)}`,
@@ -115,7 +115,7 @@ export function renderIcs(feed: CalendarFeed, publicUrl: string, now: Date, bran
     const url = `${base}/o/${feed.slug}/social/${e.postId}`;
     lines.push(
       'BEGIN:VEVENT',
-      `UID:${e.id}@crove`,
+      `UID:${e.id}@ludy`,
       `DTSTAMP:${stamp}`,
       `DTSTART:${icsTime(at)}`,
       'DURATION:PT15M',

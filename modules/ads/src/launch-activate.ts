@@ -2,12 +2,12 @@
 // Retry and activation of a launch (W2-4b, issue #2296, ADR-0043 points 4 and 5, plan docs/plan/ads-write.md sections 3.6 and 9). Three commands:
 //
 // - `ads.launch.retry` (an owner's or an admin's): a launch that needs attention runs again. The move itself is the system's, so this stamps the request through a definer
-//   (crove_ads.launch_request_retry) and writes `ads.launch.queued`; `ads.launch.begin` takes the request with the move and counts the attempt.
+//   (ludy_ads.launch_request_retry) and writes `ads.launch.queued`; `ads.launch.begin` takes the request with the move and counts the attempt.
 // - `ads.activate.begin` and `ads.activate.record` (the system's, the activation job's): the last steps of the approved launch, which switch on what the launch made, one
 //   object per platform call, each ad first, then the ad set, then the campaign LAST (nothing delivers until the campaign is on, so a failure half way spends nothing). The
 //   activation CONTINUES the launch's own `ads.campaign.launch` approval (ruling of 2026-11-04): there is no second approval, and the authority is the database, which refuses
 //   the move of the launch to live unless the stamped approved proposal, the recorded objects, the settled activations, the switches and the flight all hold
-//   (crove_ads.launch_guard). A resume of something stopped or paused is not this: it stays a separate approval (W4).
+//   (ludy_ads.launch_guard). A resume of something stopped or paused is not this: it stays a separate approval (W4).
 //
 // BEFORE EACH CALL, `begin` re-checks everything under the org's lock (the lock every stop and every approval takes, so a stop and this begin queue): the stop conditions (the
 // org's switch, the account's, launches blocked, the write connection active), the plan hash, that the flight has begun and not ended in the account's own zone, and the caps
@@ -18,9 +18,9 @@
 // The activation touches only the launch's OWN recorded objects (the ids in `ad_object`), never one found by a tag.
 import { z } from 'zod';
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
-import { zId } from '@crove/kernel-contract';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { zId } from '@ludy/kernel-contract';
+import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { planHash } from './campaign-plan.ts';
 import { draftPlanOf } from './campaign-draft.ts';
 import { todayIn } from './domain.ts';
@@ -60,7 +60,7 @@ export const adsLaunchRetry = defineCommand({
     await lockedSetting(ctx);
     const launch = await lockedLaunch(ctx, input.launchId.toLowerCase());
     if (launch.state !== 'needs_attention') throw new DomainError('ADS_LAUNCH_NOT_RETRYABLE', 409, 'Chỉ chạy lại được lần chạy đang chờ người xử lý');
-    const { rows } = await sql<{ requested: boolean }>`SELECT crove_ads.launch_request_retry(${ctx.orgId}::uuid, ${launch.id}::uuid) AS requested`.execute(ctx.trx);
+    const { rows } = await sql<{ requested: boolean }>`SELECT ludy_ads.launch_request_retry(${ctx.orgId}::uuid, ${launch.id}::uuid) AS requested`.execute(ctx.trx);
     const requested = rows[0]?.requested === true;
     await ctx.emit('ads.launch.queued', { launchId: launch.id, adAccountId: launch.ad_account_id });
     ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, draftId: launch.draft_id, attempt: launch.attempt, stopReason: launch.stop_reason, requested });
@@ -134,7 +134,7 @@ interface CallRow {
 // The ledger rows of every activation call of a launch, of every attempt, locked.
 async function activationRows(ctx: Db, launchId: string): Promise<CallRow[]> {
   const { rows } = await sql<CallRow>`
-    SELECT id, key, state, calls, error_code, started_at, updated_at FROM crove_kernel.external_call
+    SELECT id, key, state, calls, error_code, started_at, updated_at FROM ludy_kernel.external_call
     WHERE org_id = ${ctx.orgId}::uuid AND key LIKE ${`ads.launch:${launchId}:%:activate\\_%`} FOR UPDATE`.execute(ctx.trx);
   return rows.filter((r) => {
     const parsed = parseLaunchCallKey(r.key);
@@ -154,6 +154,8 @@ function doneSlots(rows: readonly CallRow[]): Set<string> {
 
 export const adsActivateBegin = defineCommand({
   name: 'ads.activate.begin',
+  // Begins an activation (spend) that a switch-off must not overtake: it holds the tenant row, as the switch does (ADR-0053).
+  opensBusyWork: true,
   input: zActivateBeginInput,
   // The platform is called by the job, not here. It is the system's and R2 external, because an R3 command cannot run as the system: the authority to start spend is the
   // approval the launch already carries (stamped on the row, checked by the database in the move to live), and nothing here calls a platform without the checks above.
@@ -234,7 +236,7 @@ export const adsActivateBegin = defineCommand({
     }
 
     // Which object is next: each ad, then the ad set, then the campaign last; the first whose activation has not succeeded.
-    const objects = await ctx.trx.selectFrom('crove_ads.ad_object').select(['slot', 'external_id']).where('org_id', '=', ctx.orgId).where('launch_id', '=', launch.id).execute();
+    const objects = await ctx.trx.selectFrom('ludy_ads.ad_object').select(['slot', 'external_id']).where('org_id', '=', ctx.orgId).where('launch_id', '=', launch.id).execute();
     const idOf = new Map(objects.map((o) => [o.slot, o.external_id]));
     const done = doneSlots(rows);
     const slots = activationSlots(plan.variants.length);
@@ -248,7 +250,7 @@ export const adsActivateBegin = defineCommand({
     if (!next) {
       // Every object is on: the launch is live. The database holds the rule in this very statement (the approval, the objects, the settled activations, the switches and the
       // flight); asked first, so a launch it would refuse is stopped and paused here, never left half way with every object on.
-      const { rows: gap } = await sql<{ p: string | null }>`SELECT crove_ads.launch_activation_problem(${ctx.orgId}::uuid, ${launch.id}::uuid) AS p`.execute(ctx.trx);
+      const { rows: gap } = await sql<{ p: string | null }>`SELECT ludy_ads.launch_activation_problem(${ctx.orgId}::uuid, ${launch.id}::uuid) AS p`.execute(ctx.trx);
       if (gap[0]?.p != null) {
         const stopped = await stopRunningLaunch(ctx, 'activation_unconfirmed', launch.id);
         for (const s of stopped) await ctx.emit('ads.pause.queued', { launchId: s.id, adAccountId: s.adAccountId });
@@ -283,7 +285,7 @@ export const adsActivateBegin = defineCommand({
         earlierUnsettled = true;
         for (const e of earlier) {
           await ctx.trx
-            .updateTable('crove_kernel.external_call')
+            .updateTable('ludy_kernel.external_call')
             .set({ state: 'failed', error_kind: 'unknown', error_code: 'SUPERSEDED', finished_at: ctx.now, updated_at: ctx.now })
             .where('org_id', '=', ctx.orgId)
             .where('id', '=', e.id)
@@ -299,11 +301,11 @@ export const adsActivateBegin = defineCommand({
     }
     if (action === 'wait') return none(row?.state === 'started' ? 'in_flight' : 'reconcile_wait');
     if (action === 'call' || earlierUnsettled) {
-      await ctx.trx.insertInto('crove_kernel.external_call').values({ org_id: ctx.orgId, key: callKey, module: 'ads', target: 'launch', step, retry_safety: 'idempotent', started_at: ctx.now }).execute();
-      if (earlierUnsettled) await ctx.trx.updateTable('crove_kernel.external_call').set({ state: 'ambiguous', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('key', '=', callKey).execute();
+      await ctx.trx.insertInto('ludy_kernel.external_call').values({ org_id: ctx.orgId, key: callKey, module: 'ads', target: 'launch', step, retry_safety: 'idempotent', started_at: ctx.now }).execute();
+      if (earlierUnsettled) await ctx.trx.updateTable('ludy_kernel.external_call').set({ state: 'ambiguous', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('key', '=', callKey).execute();
     } else if (row) {
       // A reconcile: the row is taken by this run (a call begun and never settled, and old enough to be lost, is unclear now), so a job that begins at the same moment waits.
-      await ctx.trx.updateTable('crove_kernel.external_call').set({ state: 'ambiguous', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
+      await ctx.trx.updateTable('ludy_kernel.external_call').set({ state: 'ambiguous', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
     }
     return {
       action: action === 'reconcile' ? 'reconcile' : 'call',
@@ -339,11 +341,11 @@ export const adsActivateRecord = defineCommand({
     if (!found) return { recorded: false, reason: 'not_found' };
     const launch = await launchSelect(ctx).where('id', '=', launchId).forUpdate().executeTakeFirst();
     const result = input.result;
-    const row = await ctx.trx.selectFrom('crove_kernel.external_call').select(['id', 'state', 'calls']).where('org_id', '=', ctx.orgId).where('key', '=', input.callKey).forUpdate().executeTakeFirst();
+    const row = await ctx.trx.selectFrom('ludy_kernel.external_call').select(['id', 'state', 'calls']).where('org_id', '=', ctx.orgId).where('key', '=', input.callKey).forUpdate().executeTakeFirst();
     if (!launch || !row) return { recorded: false, reason: 'stale' };
     if (row.state === 'succeeded' || row.state === 'failed') return { recorded: false, reason: 'settled' };
     const settle = (values: { state: 'started' | 'succeeded' | 'failed' | 'ambiguous'; calls?: number; error_kind?: 'token_expired' | 'permission' | 'bad_request' | 'rate_limited' | 'transient' | 'unknown'; error_code?: string; finished_at?: Date }) =>
-      ctx.trx.updateTable('crove_kernel.external_call').set({ updated_at: ctx.now, ...values }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
+      ctx.trx.updateTable('ludy_kernel.external_call').set({ updated_at: ctx.now, ...values }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
     // Whether this launch is still at the attempt and the state this call was begun under: a result for a launch that moved on (stopped, retried) never moves it.
     const current = launch.state === 'launching' && launch.attempt === parsed.attempt;
 
@@ -362,7 +364,7 @@ export const adsActivateRecord = defineCommand({
       if (slots.length === 0 || !slots.every((s) => done.has(s))) return { recorded: true, state: 'launching', step: launch.step, next: 'continue' };
       const setting = await currentSetting(ctx);
       // The database's own rule, asked before the move (a refusal would throw and leave every object on): a launch it would refuse is left for the next begin, which stops and pauses it.
-      const { rows: gap } = await sql<{ p: string | null }>`SELECT crove_ads.launch_activation_problem(${ctx.orgId}::uuid, ${launch.id}::uuid) AS p`.execute(ctx.trx);
+      const { rows: gap } = await sql<{ p: string | null }>`SELECT ludy_ads.launch_activation_problem(${ctx.orgId}::uuid, ${launch.id}::uuid) AS p`.execute(ctx.trx);
       if (gap[0]?.p != null) return { recorded: true, state: 'launching', step: launch.step, next: 'stop' };
       const today = found.account.time_zone && zoneKnown(found.account.time_zone) ? todayIn(found.account.time_zone, ctx.now) : null;
       if (stopConditionOf(setting, found.account, found.connection) || today === null || today < launch.start_text || today > launch.end_text) return { recorded: true, state: 'launching', step: launch.step, next: 'stop' };

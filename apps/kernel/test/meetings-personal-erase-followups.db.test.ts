@@ -5,12 +5,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import type { PersonalDataErasure, PersonalDataNotice } from '@crove/kernel-contract';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { meetingsCommands, meetingsQueries, setSummaryEnabled } from '@crove/mod-meetings';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import type { PersonalDataErasure, PersonalDataNotice } from '@ludy/kernel-contract';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { meetingsCommands, meetingsQueries, setSummaryEnabled } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -47,18 +47,18 @@ suite('the erasure in meeting text: follow-ups (#2917)', () => {
   async function meeting(recorder: string, title: string, visibility: 'attendees' | 'org', readers: string[] = [], org = orgId): Promise<string> {
     const id = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, $3, 'vi', '2026-11-10T03:00:00Z', '2026-11-10T03:30:00Z', 1800, $4, $5, 'ready', 'told_at_start', $4, now(), '1.0', current_date + 20, current_date + 365)`,
       [org, id, title, users[recorder], visibility],
     );
-    for (const reader of readers) await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [org, randomUUID(), id, users[reader]]);
+    for (const reader of readers) await sqlAdmin(`INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [org, randomUUID(), id, users[reader]]);
     return id;
   }
   const segment = async (meetingId: string, text: string, stage: 'draft' | 'published', label = 'Hà', org = orgId) =>
-    (await sqlAdmin<{ id: string }>(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, 0, 10, $3, $4, $5) RETURNING id`, [org, meetingId, label, text, stage])).rows[0]?.id as string;
+    (await sqlAdmin<{ id: string }>(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, 0, 10, $3, $4, $5) RETURNING id`, [org, meetingId, label, text, stage])).rows[0]?.id as string;
   const result = async (meetingId: string, summary: string, decisions: string[], stage: 'draft' | 'published', tainted = false) =>
-    (await sqlAdmin<{ id: string }>(`INSERT INTO crove_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage, tainted) VALUES ($1, $2, $3, $4::jsonb, 'manual', $5, $6) RETURNING id`, [orgId, meetingId, summary, JSON.stringify(decisions), stage, tainted])).rows[0]?.id as string;
-  const textOf = async (table: string, id: string, column: string) => (await sqlAdmin<{ v: string }>(`SELECT ${column}::text AS v FROM crove_meetings.${table} WHERE id = $1`, [id])).rows[0]?.v as string;
+    (await sqlAdmin<{ id: string }>(`INSERT INTO ludy_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage, tainted) VALUES ($1, $2, $3, $4::jsonb, 'manual', $5, $6) RETURNING id`, [orgId, meetingId, summary, JSON.stringify(decisions), stage, tainted])).rows[0]?.id as string;
+  const textOf = async (table: string, id: string, column: string) => (await sqlAdmin<{ v: string }>(`SELECT ${column}::text AS v FROM ludy_meetings.${table} WHERE id = $1`, [id])).rows[0]?.v as string;
 
 
   beforeAll(async () => {
@@ -70,16 +70,16 @@ suite('the erasure in meeting text: follow-ups (#2917)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
     runtime = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] });
     const workerUrl = (() => {
       const u = new URL(adminUrl);
-      u.username = 'crove_worker';
+      u.username = 'ludy_worker';
       u.password = 'test-worker-pw';
       return u.toString();
     })();
@@ -89,7 +89,7 @@ suite('the erasure in meeting text: follow-ups (#2917)', () => {
     setSummaryEnabled(false);
     for (const key of ['owner', 'admin', 'recorder', 'attendee', 'outsider']) users[key] = await upsertIdentity(createDb(pool), { issuer: 'meetings-erase', subject: key, email: `${key}@meetings-erase.test`, name: null });
     orgId = (await createOrg(runtime, asUser('owner'), 'Xóa trong họp')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.admin, users.recorder, users.attendee]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.admin, users.recorder, users.attendee]);
   }, 300_000);
 
   afterAll(async () => {
@@ -103,7 +103,7 @@ suite('the erasure in meeting text: follow-ups (#2917)', () => {
 
 
   const SYSTEM = { type: 'system' as const, component: 'test.meetings-erase-followups' };
-  const noticeEvent = async () => (await sqlAdmin<{ event: string }>(`SELECT detail ->> 'event' AS event FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.notify' ORDER BY id DESC LIMIT 1`, [orgId])).rows[0]?.event as string;
+  const noticeEvent = async () => (await sqlAdmin<{ event: string }>(`SELECT detail ->> 'event' AS event FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.notify' ORDER BY id DESC LIMIT 1`, [orgId])).rows[0]?.event as string;
   const lockWait = async (needle: string) => {
     for (let i = 0; i < 100; i += 1) {
       if ((await count(`SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%${needle}%'`)) > 0) return true;
@@ -116,11 +116,11 @@ suite('the erasure in meeting text: follow-ups (#2917)', () => {
   it('gives the audio retention date of readable meetings only and counts the hidden ones', async () => {
     const value = 'khach.cu@congty.example';
     const audioOf = async (meetingId: string, date: string) => {
-      await sqlAdmin(`UPDATE crove_meetings.meeting SET audio_retention_date = $3 WHERE org_id = $1 AND id = $2`, [orgId, meetingId, date]);
+      await sqlAdmin(`UPDATE ludy_meetings.meeting SET audio_retention_date = $3 WHERE org_id = $1 AND id = $2`, [orgId, meetingId, date]);
       const fileId = randomUUID();
       const sha = randomUUID().replaceAll('-', '').repeat(2);
-      await sqlAdmin(`INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'a.opus', 'audio/ogg', 10, 'meeting_audio')`, [orgId, fileId, sha, `org/${orgId}/${sha}`]);
-      await sqlAdmin(`INSERT INTO crove_meetings.audio_segment (org_id, id, meeting_id, file_id, segment_order, start_offset_seconds, length_seconds) VALUES ($1, $2, $3, $4, 0, 0, 600)`, [orgId, randomUUID(), meetingId, fileId]);
+      await sqlAdmin(`INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'a.opus', 'audio/ogg', 10, 'meeting_audio')`, [orgId, fileId, sha, `org/${orgId}/${sha}`]);
+      await sqlAdmin(`INSERT INTO ludy_meetings.audio_segment (org_id, id, meeting_id, file_id, segment_order, start_offset_seconds, length_seconds) VALUES ($1, $2, $3, $4, 0, 0, 600)`, [orgId, randomUUID(), meetingId, fileId]);
     };
     const hidden = await meeting('recorder', 'Họp kín có ghi âm', 'attendees', ['attendee']);
     await segment(hidden, `Gửi ${value}`, 'published');
@@ -129,7 +129,7 @@ suite('the erasure in meeting text: follow-ups (#2917)', () => {
     await segment(shared, `Gửi ${value}`, 'published');
     await audioOf(shared, '2027-06-30');
     const out = await erase(value);
-    const audio = out.kept.find((k) => k.column === 'crove_meetings.audio');
+    const audio = out.kept.find((k) => k.column === 'ludy_meetings.audio');
     expect(audio?.rows).toBe(2);
     expect(audio?.reason).toContain('2027-06-30');
     expect(audio?.reason).not.toContain('2027-01-02');
@@ -143,7 +143,7 @@ suite('the erasure in meeting text: follow-ups (#2917)', () => {
     await segment(hidden, `Gửi ${value}`, 'published');
     await notify(value);
     const event = await noticeEvent();
-    const eventId = (await sqlAdmin<{ id: string }>(`SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified' ORDER BY id DESC LIMIT 1`, [orgId])).rows[0]?.id as string;
+    const eventId = (await sqlAdmin<{ id: string }>(`SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.personal_data.notified' ORDER BY id DESC LIMIT 1`, [orgId])).rows[0]?.id as string;
     expect(event).toBe(eventId);
     // The kernel's clock is a day behind while it dispatches.
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -154,7 +154,7 @@ suite('the erasure in meeting text: follow-ups (#2917)', () => {
       vi.useRealTimers();
     }
     const skew = (
-      await sqlAdmin<{ s: string }>(`SELECT extract(epoch FROM (now() - created_at))::text AS s FROM crove_kernel.notification WHERE org_id = $1 AND dedupe_key = $2 AND user_id = $3`, [orgId, `personal_data_notice:${event}`, users.recorder])
+      await sqlAdmin<{ s: string }>(`SELECT extract(epoch FROM (now() - created_at))::text AS s FROM ludy_kernel.notification WHERE org_id = $1 AND dedupe_key = $2 AND user_id = $3`, [orgId, `personal_data_notice:${event}`, users.recorder])
     ).rows[0]?.s;
     expect(Number(skew)).toBeLessThan(60);
   });
@@ -170,7 +170,7 @@ suite('the erasure in meeting text: follow-ups (#2917)', () => {
     const summary = await result(shared, 'Tóm tắt', ['Giữ giá', `Gọi ${value} nhé`], 'published');
     const out = await erase(value);
     expect(JSON.parse(await textOf('meeting_result', summary, 'decisions'))).toEqual(['Giữ giá', `Gọi ${MARK} nhé`]);
-    expect(out.kept.filter((k) => k.column.startsWith('crove_meetings.'))).toEqual([]);
+    expect(out.kept.filter((k) => k.column.startsWith('ludy_meetings.'))).toEqual([]);
   });
 
   // N5: the lock order. A recorder's replaceDraft holds the draft's old lines and then inserts new ones (a FOR KEY SHARE of the meeting row for the foreign key): the erasure, which holds
@@ -183,17 +183,17 @@ suite('the erasure in meeting text: follow-ups (#2917)', () => {
     await editor.connect();
     try {
       await editor.query('BEGIN');
-      await editor.query('DELETE FROM crove_meetings.transcript_segment WHERE id = $1', [oldLine]);
+      await editor.query('DELETE FROM ludy_meetings.transcript_segment WHERE id = $1', [oldLine]);
       const erasing = erase(value);
       expect(await lockWait('personal_erase')).toBe(true);
       // The recorder now inserts the replacement line: it needs the meeting row's key share, which the erasure's lock must allow.
-      await editor.query(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, 0, 5, 'Hà', 'Nháp mới', 'draft')`, [orgId, hidden]);
+      await editor.query(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, 0, 5, 'Hà', 'Nháp mới', 'draft')`, [orgId, hidden]);
       await editor.query('COMMIT');
       await expect(erasing).resolves.toBeTruthy();
     } finally {
       await editor.end();
     }
-    expect(await count('SELECT 1 FROM crove_meetings.transcript_segment WHERE meeting_id = $1 AND text = $2', [hidden, 'Nháp mới'])).toBe(1);
+    expect(await count('SELECT 1 FROM ludy_meetings.transcript_segment WHERE meeting_id = $1 AND text = $2', [hidden, 'Nháp mới'])).toBe(1);
   });
 
   it('answers a deadlock that still happens with a retryable error and changes nothing', async () => {
@@ -204,7 +204,7 @@ suite('the erasure in meeting text: follow-ups (#2917)', () => {
     await other.connect();
     try {
       await other.query('BEGIN');
-      await other.query(`UPDATE crove_meetings.transcript_segment SET text = text WHERE id = $1`, [line]);
+      await other.query(`UPDATE ludy_meetings.transcript_segment SET text = text WHERE id = $1`, [line]);
       const erasing = erase(value).then(
         (v) => ({ ok: true as const, v }),
         (e: { code?: string }) => ({ ok: false as const, code: e.code }),
@@ -212,7 +212,7 @@ suite('the erasure in meeting text: follow-ups (#2917)', () => {
       expect(await lockWait('personal_erase')).toBe(true);
       // The other session now wants the meeting row exclusively, which the erasure holds, while the erasure waits for the line this session holds: a cycle. The erasure waited first, so the
       // database ends it (after deadlock_timeout), and the other session goes on.
-      await other.query('SELECT 1 FROM crove_meetings.meeting WHERE id = $1 FOR UPDATE', [room]);
+      await other.query('SELECT 1 FROM ludy_meetings.meeting WHERE id = $1 FOR UPDATE', [room]);
       await other.query('COMMIT');
       const out = await erasing;
       expect(out).toEqual({ ok: false, code: 'PERSONAL_DATA_BUSY' });

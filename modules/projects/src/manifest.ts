@@ -1,0 +1,143 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// The projects module's manifest (plan docs/plan/projects.md sections 4.1 and 6, ADR-0048): the three tables of
+// ludy_projects and the class of every column. Project name and description are free text a member writes, which may
+// name people, so pii: audit rows keep a marker for them (auditValue), never the text.
+import { MODULE_SCREENS, columns, defineModule } from '@ludy/kernel-contract';
+
+export const projectsManifest = defineModule({
+  id: 'projects',
+  dependsOn: ['kernel'],
+  tables: {
+    ludy_projects: {
+      project: columns(
+        [
+          'org_id',
+          'id',
+          'owner_user_id',
+          'status',
+          'visibility',
+          'is_template',
+          'cycles_enabled',
+          'cycle_duration_weeks',
+          'points_enabled',
+          'created_by',
+          'created_at',
+          'updated_at',
+        ],
+        { name: 'pii', description: 'pii', template_tasks: 'pii' },
+      ),
+      project_column: columns(
+        ['org_id', 'id', 'project_id', 'task_status', 'color', 'wip_limit', 'sort_key', 'created_at', 'updated_at'],
+        { name: 'pii' },
+      ),
+      project_cycle: columns(
+        ['org_id', 'id', 'project_id', 'number', 'status', 'starts_on', 'ends_on', 'started_at', 'completed_at', 'created_by', 'created_at', 'updated_at'],
+        { name: 'pii', goal: 'pii' },
+      ),
+      project_member: columns(['org_id', 'id', 'project_id', 'user_id', 'created_at']),
+      project_task: columns([
+        'org_id',
+        'id',
+        'project_id',
+        'task_id',
+        'column_id',
+        'cycle_id',
+        'story_points',
+        'sort_key',
+        'start_on',
+        'recurrence',
+        'recurrence_count',
+        'recurrence_last_due',
+        'recurrence_next_at',
+        'recurrence_source_task_id',
+        'added_by',
+        'created_at',
+      ]),
+      roadmap_announcement: columns(
+        ['org_id', 'id', 'board_id', 'status', 'published_at', 'linked_item_ids', 'notifications_sent_at', 'created_by', 'created_at', 'updated_at'],
+        { title: 'pii', body_md: 'pii' },
+      ),
+      roadmap_board: columns(
+        [
+          'org_id',
+          'id',
+          'slug',
+          'enabled',
+          'project_id',
+          'allow_submissions',
+          'allow_voting',
+          'require_moderation',
+          'embed_allowed_origins',
+          'created_by',
+          'created_at',
+          'updated_at',
+        ],
+        { title: 'pii', description: 'pii' },
+      ),
+      roadmap_item: columns(
+        [
+          'org_id',
+          'id',
+          'board_id',
+          'linked_task_id',
+          'source',
+          'moderation_status',
+          'merged_into_item_id',
+          'stage',
+          'category',
+          'vote_count',
+          'tainted',
+          'created_by',
+          'created_at',
+          'updated_at',
+        ],
+        { public_title: 'pii', public_summary: 'pii', submitter_display_name: 'pii' },
+      ),
+      roadmap_otp: columns(
+        ['org_id', 'id', 'board_id', 'email_hash', 'ip_hash', 'expires_at', 'attempts', 'verified_at', 'invalidated_at', 'created_at'],
+        { email: 'contact', otp_sha256: 'sensitive', claim_sha256: 'sensitive' },
+      ),
+      roadmap_subscriber: columns(
+        ['org_id', 'id', 'board_id', 'voter_email_hash', 'mail_hash', 'notify_on_ship', 'unsubscribed_at', 'created_at', 'updated_at'],
+        { email_sealed: 'contact', unsubscribe_token_sha256: 'sensitive', unsub_token_sealed: 'sensitive' },
+      ),
+      roadmap_vote: columns(['org_id', 'id', 'board_id', 'item_id', 'voter_email_hash', 'notify_on_ship', 'created_at']),
+      task_dependency: columns([
+        'org_id',
+        'id',
+        'project_id',
+        'blocker_task_id',
+        'blocked_task_id',
+        'created_by',
+        'created_at',
+      ]),
+      time_entry: columns(
+        [
+          'org_id',
+          'id',
+          'project_id',
+          'task_id',
+          'user_id',
+          'started_at',
+          'ended_at',
+          'duration_minutes',
+          'billable',
+          'hourly_rate',
+          'created_at',
+          'updated_at',
+        ],
+        { note: 'pii' },
+      ),
+    },
+  },
+  // Access comes from the base role (every member and viewer reads; owners, admins and members create projects and add
+  // or remove tasks; the project owner, owners and admins manage the project itself).
+  permissions: [],
+  entities: [
+    { type: 'projects.project', table: 'project', legalEntityScoped: false, audit: 'command' },
+    { type: 'projects.roadmap_announcement', table: 'roadmap_announcement', legalEntityScoped: false, audit: 'command' },
+    { type: 'projects.roadmap_board', table: 'roadmap_board', legalEntityScoped: false, audit: 'command' },
+    { type: 'projects.roadmap_item', table: 'roadmap_item', legalEntityScoped: false, audit: 'command' },
+  ],
+  ...MODULE_SCREENS.projects,
+});

@@ -7,7 +7,7 @@
 // closed too. One line per account (a sub-account is closed on its own line), in account order: first the revenue
 // side and its 911 credit, then the 911 debit and the cost side, then the result. Each line is on one side, as a
 // general journal voucher's lines are.
-import { money, toMoney, type Money } from '@crove/l10n-vn';
+import { money, toMoney, type Money } from '@ludy/l10n-vn';
 import { CLOSING_ACCOUNT } from './tt133-reports.ts';
 
 export const RETAINED_EARNINGS_ACCOUNT = '4212';

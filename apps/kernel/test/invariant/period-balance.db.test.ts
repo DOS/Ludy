@@ -11,12 +11,13 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -35,6 +36,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('period balances on PostgreSQL (#1284)', () => {
   const dbName = `crove_test_period_balance_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   let pool: pg.Pool;
@@ -42,7 +44,7 @@ suite('period balances on PostgreSQL (#1284)', () => {
   const orgs: string[] = [];
 
   async function withClient<T>(url: string, fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: url });
+    const client = createDbClient({ connectionString: url }, dbIds);
     await client.connect();
     try {
       return await fn(client);
@@ -110,16 +112,17 @@ suite('period balances on PostgreSQL (#1284)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     app.password = 'test-app-pw';
     appUrl = app.toString();
     const worker = new URL(adminUrl);
-    worker.username = 'crove_worker';
+    worker.username = dbIds ? dbIds.roleName('crove_worker') : 'crove_worker';
     worker.password = 'test-worker-pw';
     workerUrl = worker.toString();
-    pool = createPool({ connectionString: appUrl, max: 1 });
+    pool = createDbPool({ connectionString: appUrl, max: 1 }, dbIds);
     const db = createDb(pool);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: 'in.test' }) });
     userId = await upsertIdentity(db, { issuer: 'test', subject: 'period-balance', email: 'balance@period.test', name: null });
@@ -257,7 +260,7 @@ suite('period balances on PostgreSQL (#1284)', () => {
     const clients: pg.Client[] = [];
     try {
       for (let i = 0; i < CLIENTS; i++) {
-        const c = new pg.Client({ connectionString: appUrl });
+        const c = createDbClient({ connectionString: appUrl }, dbIds);
         await c.connect();
         clients.push(c);
         await c.query('BEGIN');

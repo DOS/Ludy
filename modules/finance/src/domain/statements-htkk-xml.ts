@@ -12,7 +12,7 @@
 // F01 rows of HTKK's fixed account list from the year's trial balance. What Crove does not hold stays empty for the
 // accountant: the note references (Thuyết minh), the audit opinion, the signers. The cash flow statement (B03-DNN) is
 // optional in the schema and not written; the notes (B09-DNN) are not part of this file.
-import { Decimal, money, type DecimalValue, type Money } from '@crove/l10n-vn';
+import { Decimal, money, type DecimalValue, type Money } from '@ludy/l10n-vn';
 import { el, serializeXml, type XmlElement } from './xml.ts';
 import { HTKK_AMOUNT_LIMIT, HtkkAmountError } from './vat-01gtgt-xml.ts';
 import { B01_LINES, B02_LINES, type ReportLine, type ReportLineDef } from './tt133-reports.ts';
@@ -25,7 +25,7 @@ export const HTKK_BCTC = {
   formBasis: '(Ban hành theo Thông tư số 133/2016/TT-BTC ngày 26/8/2016 của Bộ Tài chính)',
   xmlVersion: '2.3.2',
   // The software that made the file; Crove names itself rather than pose as HTKK (as for 01/GTGT).
-  service: { code: 'CROVE', name: 'Crove', version: '1.0' },
+  service: { code: 'LUDY', name: 'Ludy', version: '1.0' },
 } as const;
 
 // The indicators of B01a-DNN and B02-DNN in the template's order: the line codes of tt133-reports.ts.

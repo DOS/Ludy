@@ -40,7 +40,16 @@ Việc cần người thật: không cần tài khoản nào. Luật sư đọc 
 
 Việc cần người thật (JOY): **B-OA1** thêm quyền đọc lịch vào màn hình đồng ý OAuth của Google và làm thủ tục xác minh nếu Google xếp vào loại "nhạy cảm" (video demo, trang chính sách quyền riêng tư; khoảng 3 đến 5 ngày làm việc theo báo cáo); **B-OA2** đăng ký ứng dụng Microsoft Entra cho lịch Outlook. Slack, Teams và Zalo (B4, B5) không cần tài khoản mới của Ludy.
 
-## Nhóm C: nhập bản ghi sau cuộc họp (giai đoạn GA gate, P2)
+## Nhóm C: nhập bản ghi sau cuộc họp (đã hoãn, quyết định của JOY ngày 2026-11-15)
+
+> **Quyết định của JOY (2026-11-15): nhóm C để vào lộ trình làm sau, chưa làm bây giờ.** C2 (Google Meet), C3 (Zoom), C4 (Microsoft Teams), bước C2a (#3306, rút âm thanh từ video của Meet) và các việc cần người thật C-OA1 đến C-OA3 (#3177 đến #3179) đã chuyển sang kho ý tưởng (Icebox), mức P3.
+>
+> **Lý do:** khoảng 99% người dùng Ludy không có Google Workspace, Zoom Pro hay Microsoft 365 gói doanh nghiệp, nên tài khoản miễn phí không ghi hình lên đám mây được và các nền tảng đó không có gì để đưa cho Ludy. Người dùng miễn phí đã có hai đường: tiện ích Ludy ghi cuộc gọi Meet trực tiếp, và tải lên file đã ghi (kể cả file Zoom ghi trên máy).
+>
+> **Giữ lại gì:** lõi C1 đã làm xong và được giữ (kết nối nền tảng, danh sách gợi ý, tải bản ghi, cách xác nhận mới, màn hình trong ứng dụng); hiện chỉ có nền tảng thử (sandbox), chưa nối với nền tảng thật. Việc làm chắc thêm bộ kiểm soát tải file (#3291, PR #3305) cũng giữ vì nó bảo vệ mã đã nằm trong sản phẩm. Những điều đã đọc từ trang của Google (quyền đọc file Drive thuộc loại "hạn chế", nên phải có đánh giá bảo mật CASA; đường Google Picker với quyền `drive.file` là lựa chọn đầu của JOY) nằm ở issue #3174, để dùng khi nhóm C quay lại.
+
+Phần còn lại của mục này là thiết kế cho lúc nhóm C quay lại, không phải cam kết.
+
 
 Ba nền tảng đều đóng hoặc tính tiền đường nghe trực tiếp nhưng còn đường **lấy bản ghi sau cuộc họp**. Ludy chỉ dùng đường này và **ưu tiên lấy file âm thanh** để tự chép tiếng Việt bằng bộ chép lời của Ludy, vì bản chép lời có sẵn của nền tảng có thể kém tiếng Việt.
 
@@ -72,14 +81,14 @@ JOY thêm nhóm này ngày 2026-11-14 ("Tính năng dịch transcript và summar
 
 ## Chưa làm (đã nói rõ)
 
-Dịch ghi chú trực tiếp, thư theo dõi đã dịch, chia sẻ bản dịch cho mọi người dự, biên bản đã dịch và các ngôn ngữ ngoài Việt-Anh (E3) cũng để sau. Ứng dụng máy tính; ứng dụng di động gốc; bot vào cuộc họp (không tự vào họp, không tự gửi tóm tắt cho mọi người được mời); Zoom RTMS và chép lời trực tiếp của Teams (chỉ theo dõi: giá RTMS và ai trả, tài liệu kỹ thuật của mục lộ trình RM570651, Google tắt Media API ngày 15/1/2027). Ba đề xuất khác trong báo cáo chưa được JOY duyệt nên chưa lên kế hoạch: ghi kết quả họp vào giao dịch và liên hệ trong CRM, công bố cấu trúc dữ liệu MCP của cuộc họp, và ứng dụng Slack riêng của Ludy.
+Dịch ghi chú trực tiếp, thư theo dõi đã dịch, chia sẻ bản dịch cho mọi người dự, biên bản đã dịch và các ngôn ngữ ngoài Việt-Anh (E3) cũng để sau. Riêng **ứng dụng máy tính `Ludy Desktop`** nay đã duyệt hướng đi theo [ADR-0055](../adr/0055-three-capture-paths-one-meeting.md) (2026-11-20 UTC / 2026-11-21 +07:00, đảo lại quyết định 2026-11-03): hoàn tất lát 1 (`#4123`) trước, sau đó làm khung Electron thuộc nhóm Platform (`line:platform`) cho ghi cuộc họp (Windows trước rồi macOS, lát 3 chờ câu trả lời luật sư `#2585` / `#62`, chưa mua tài khoản ký phần mềm vội). Vẫn chưa làm: ứng dụng di động gốc; bot vào cuộc họp (các câu hỏi 2, 3, 4, 6, 7, 8 của ADR-0052 vẫn giữ mở, không tự vào họp, không tự gửi tóm tắt cho mọi người được mời); Zoom RTMS và chép lời trực tiếp của Teams (chỉ theo dõi: giá RTMS và ai trả, tài liệu kỹ thuật của mục lộ trình RM570651, Google tắt Media API ngày 15/1/2027). Ba đề xuất khác trong báo cáo chưa được JOY duyệt nên chưa lên kế hoạch: ghi kết quả họp vào giao dịch và liên hệ trong CRM, công bố cấu trúc dữ liệu MCP của cuộc họp, và ứng dụng Slack riêng của Ludy.
 
 ## Thứ tự làm
 
 1. Nhóm A trước (không cần tài khoản): A1 và A2, A6 song song với A3 và A4; A5 sau A4.
 2. D1 sớm (nhỏ, giảm nguy cơ bị cửa hàng từ chối), D2 sau D1 và sau D-OA1.
 3. B1 rồi B2; B4 và B5 làm lúc nào cũng được sau khi có cơ chế webhook của A6; B3 sau B1 và B-OA2.
-4. Nhóm C chờ mốc GA gate và chờ ứng dụng nền tảng đầu tiên; thứ tự theo nền tảng khách thí điểm dùng (báo cáo gợi ý Google, Zoom, Microsoft).
+4. Nhóm C: lõi C1 đã làm xong; C2, C3, C4 đã hoãn (quyết định của JOY ngày 2026-11-15); nếu quay lại thì theo nền tảng khách thí điểm dùng (báo cáo gợi ý Google, Zoom, Microsoft).
 
 ## Các câu đã được PO Meetings quyết (2026-11-14) và một câu còn mở
 

@@ -1,4 +1,11 @@
-:root { color-scheme: light dark; font: 13px/1.45 system-ui, sans-serif; }
+:root {
+  color-scheme: light dark;
+  font: 13px/1.45 system-ui, sans-serif;
+  --surface-subtle: color-mix(in srgb, CanvasText 8%, transparent);
+  --border-subtle: color-mix(in srgb, CanvasText 24%, transparent);
+  --accent-surface: Highlight;
+  --accent-ink: HighlightText;
+}
 body { width: 340px; margin: 0; padding: 12px; }
 h1 { font-size: 15px; margin: 0 0 8px; }
 h2 { font-size: 13px; margin: 12px 0 4px; }
@@ -6,10 +13,22 @@ p, .note { margin: 4px 0; }
 .note { font-size: 12px; opacity: 0.75; }
 .row { display: flex; gap: 6px; align-items: center; margin: 6px 0; }
 label.block { display: block; margin: 6px 0 2px; }
-input[type="text"], select { width: 100%; box-sizing: border-box; padding: 5px; }
+input[type="text"], input[type="date"], select, textarea { width: 100%; box-sizing: border-box; padding: 5px; font: inherit; }
+textarea { min-height: 68px; resize: vertical; }
 button { padding: 6px 10px; cursor: pointer; }
 button.primary { font-weight: 600; }
+button.active-tab { background: var(--accent-surface); color: var(--accent-ink); border: 1px solid var(--accent-surface); border-radius: 4px; font-weight: 600; }
 button.danger { background: #d92d20; color: #fff; border: 0; border-radius: 4px; }
 .error { color: #d92d20; margin: 6px 0; }
 .rec { color: #d92d20; font-weight: 700; }
 .consent { border: 1px solid; border-radius: 6px; padding: 8px; margin: 8px 0; }
+.notice { margin: 4px 0; padding: 6px; border-radius: 4px; background: rgba(127, 127, 127, 0.15); font-style: italic; }
+.lost { border: 1px solid #b54708; border-radius: 6px; padding: 8px; margin: 8px 0; }
+.agenda { border: 1px solid; border-radius: 6px; padding: 8px; margin: 8px 0; }
+.agenda-event span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.capture-box { border: 1px solid var(--border-subtle); border-radius: 6px; padding: 8px; margin: 8px 0; }
+.clipper-box { background: var(--surface-subtle); border-radius: 6px; padding: 8px; margin: 8px 0 4px; }
+.source-chip { display: flex; gap: 6px; align-items: center; justify-content: space-between; font-size: 12px; background: var(--surface-subtle); border-radius: 4px; padding: 4px 6px; margin: 6px 0; }
+.source-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tabs { display: flex; gap: 6px; margin: 6px 0; }
+.tabs button { flex: 1; }

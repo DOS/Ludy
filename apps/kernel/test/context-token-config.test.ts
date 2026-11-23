@@ -2,8 +2,8 @@
 // migration runner's reading of it. The database side is apps/kernel/test/invariant/context-token.db.test.ts.
 import { createHmac, randomBytes } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import { contextTokenKeyBytes as runnerKeyBytes } from '@crove/db/migrate';
-import { CONTEXT_TOKEN_TTL_S, contextTokenKeyBytes, mintContextToken } from '@crove/kernel-runtime';
+import { contextTokenKeyBytes as runnerKeyBytes } from '@ludy/db/migrate';
+import { CONTEXT_TOKEN_TTL_S, contextTokenKeyBytes, mintContextToken } from '@ludy/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
 
 const base = {
@@ -28,7 +28,7 @@ describe('CROVE_CONTEXT_TOKEN_KEY', () => {
       expect(loadConfig({ ...base, CROVE_CONTEXT_TOKEN_KEY: key }).CROVE_CONTEXT_TOKEN_KEY).toBe(key);
     }
     for (const bad of [randomBytes(31).toString('base64'), randomBytes(65).toString('base64'), 'not base64 at all!', randomBytes(32).toString('hex').slice(0, 20)]) {
-      expect(() => loadConfig({ ...base, CROVE_CONTEXT_TOKEN_KEY: bad }), bad).toThrow(/CROVE_CONTEXT_TOKEN_KEY must be base64 of 32 to 64 random bytes/);
+      expect(() => loadConfig({ ...base, CROVE_CONTEXT_TOKEN_KEY: bad }), bad).toThrow(/LUDY_CONTEXT_TOKEN_KEY must be base64 of 32 to 64 random bytes/);
     }
   });
 

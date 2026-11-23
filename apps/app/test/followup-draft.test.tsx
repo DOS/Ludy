@@ -5,7 +5,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { CRM_FOLLOWUP_STATES, DEAL_NEXT_STEP_REASONS } from '@crove/kernel-contract';
+import { CRM_FOLLOWUP_STATES, DEAL_NEXT_STEP_REASONS } from '@ludy/kernel-contract';
 import { I18nProvider } from '../src/i18n/provider.tsx';
 import { catalog, setActiveLocale } from '../src/i18n/runtime.ts';
 

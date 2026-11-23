@@ -7,9 +7,9 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import {
   vietnamToday,
   type Deal,
@@ -21,9 +21,9 @@ import {
   type SalesOrderHandoff,
   type SalesOrderPage,
   type SalesOrderSummary,
-} from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
-import { crmCommands, crmQueries } from '@crove/mod-crm';
+} from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
+import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -59,13 +59,13 @@ suite('crm sales orders on PostgreSQL (#2696)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty ${randomUUID().slice(0, 6)}`);
     const member = await person('member');
     const viewer = await person('viewer');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
     // A tax code is unique within an org (party_tax_code_uq), so only the org's first customer has one; the others have none.
     let customers = 0;
     const party = (name: string) =>
       admin((c) =>
         c
-          .query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind, tax_code, address) VALUES ($1, $2, 'organization', $3, '12 Lê Lợi, Quận 1') RETURNING id", [orgId, name, customers++ === 0 ? '0312345678' : null])
+          .query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind, tax_code, address) VALUES ($1, $2, 'organization', $3, '12 Lê Lợi, Quận 1') RETURNING id", [orgId, name, customers++ === 0 ? '0312345678' : null])
           .then((r) => r.rows[0]!.id),
       );
     const exec = <T>(user: string, command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(user), orgId });
@@ -84,7 +84,7 @@ suite('crm sales orders on PostgreSQL (#2696)', () => {
     };
     const accept = (user: string, quote: Quote, extra: Record<string, unknown> = {}) => exec<QuoteDecided>(user, 'crm.quote.accept', { quoteId: quote.id, version: quote.version, ...extra });
     const orderCount = (quoteId?: string) =>
-      admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_crm.sales_order WHERE org_id = $1${quoteId ? ' AND quote_id = $2' : ''}`, quoteId ? [orgId, quoteId] : [orgId]).then((r) => Number(r.rows[0]!.n)));
+      admin((c) => c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_crm.sales_order WHERE org_id = $1${quoteId ? ' AND quote_id = $2' : ''}`, quoteId ? [orgId, quoteId] : [orgId]).then((r) => Number(r.rows[0]!.n)));
     return { orgId, owner, member, viewer, party, exec, query, newDeal, sentQuote, accept, orderCount };
   }
 
@@ -109,9 +109,9 @@ suite('crm sales orders on PostgreSQL (#2696)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -195,12 +195,12 @@ suite('crm sales orders on PostgreSQL (#2696)', () => {
     await expect(rt.execute('crm.quote.accept', { quoteId: quote.id, version: quote.version }, { actor: { type: 'system', component: 'test' }, orgId: o.orgId })).rejects.toBeDefined();
 
     // Totals that are not the sums of the lines (changed behind the command's back, as the database owner may) are refused, not repaired.
-    await admin((c) => c.query('UPDATE crove_crm.quote SET subtotal = subtotal + 1, total = total + 1 WHERE org_id = $1 AND id = $2', [o.orgId, quote.id]));
+    await admin((c) => c.query('UPDATE ludy_crm.quote SET subtotal = subtotal + 1, total = total + 1 WHERE org_id = $1 AND id = $2', [o.orgId, quote.id]));
     await expect(o.accept(o.member, quote)).rejects.toMatchObject({ code: 'QUOTE_TOTALS_MISMATCH', status: 409 });
-    await admin((c) => c.query('UPDATE crove_crm.quote SET subtotal = subtotal - 1, total = total - 1 WHERE org_id = $1 AND id = $2', [o.orgId, quote.id]));
+    await admin((c) => c.query('UPDATE ludy_crm.quote SET subtotal = subtotal - 1, total = total - 1 WHERE org_id = $1 AND id = $2', [o.orgId, quote.id]));
 
     // An expired quote is revised, never accepted late (nor declined: it just lapses).
-    await admin((c) => c.query("UPDATE crove_crm.quote SET valid_until = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 3 WHERE org_id = $1 AND id = $2", [o.orgId, quote.id]));
+    await admin((c) => c.query("UPDATE ludy_crm.quote SET valid_until = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 3 WHERE org_id = $1 AND id = $2", [o.orgId, quote.id]));
     await expect(o.accept(o.member, quote)).rejects.toMatchObject({ code: 'QUOTE_EXPIRED', status: 409 });
     expect(await o.orderCount()).toBe(0);
     expect((await o.query<Quote>(o.viewer, 'crm.quote.get', { quoteId: quote.id })).status).toBe('sent');
@@ -212,7 +212,7 @@ suite('crm sales orders on PostgreSQL (#2696)', () => {
     await expect(o.exec(o.viewer, 'crm.quote.decline', { quoteId: quote.id, version: quote.version })).rejects.toMatchObject({ status: 403 });
     const decided = await o.exec<QuoteDecided>(o.member, 'crm.quote.decline', { quoteId: quote.id, version: quote.version, reason: `  ${REASON}  ` });
     expect(decided).toEqual({ quoteId: quote.id, status: 'declined', orderId: null, orderNumber: null });
-    const row = await admin((c) => c.query<{ status: string; decline_reason: string; decided_at: Date | null }>('SELECT status, decline_reason, decided_at FROM crove_crm.quote WHERE org_id = $1 AND id = $2', [o.orgId, quote.id]));
+    const row = await admin((c) => c.query<{ status: string; decline_reason: string; decided_at: Date | null }>('SELECT status, decline_reason, decided_at FROM ludy_crm.quote WHERE org_id = $1 AND id = $2', [o.orgId, quote.id]));
     expect(row.rows[0]).toMatchObject({ status: 'declined', decline_reason: REASON });
     expect(row.rows[0]!.decided_at).not.toBeNull();
     expect(await o.orderCount()).toBe(0);
@@ -231,7 +231,7 @@ suite('crm sales orders on PostgreSQL (#2696)', () => {
     ]);
     const decided = await o.accept(o.member, quote);
     const handoff = await o.query<SalesOrderHandoff>(o.viewer, 'crm.sales_order.handoff', { orderId: decided.orderId });
-    const entity = await admin((c) => c.query<{ issuer_entity_id: string }>('SELECT issuer_entity_id FROM crove_crm.sales_order WHERE org_id = $1 AND id = $2', [o.orgId, decided.orderId]));
+    const entity = await admin((c) => c.query<{ issuer_entity_id: string }>('SELECT issuer_entity_id FROM ludy_crm.sales_order WHERE org_id = $1 AND id = $2', [o.orgId, decided.orderId]));
     expect(handoff).toMatchObject({
       orderId: decided.orderId,
       orderNumber: decided.orderNumber,
@@ -266,9 +266,9 @@ suite('crm sales orders on PostgreSQL (#2696)', () => {
     const o = await org();
     const { quote } = await o.sentQuote(await o.party('Công ty ABC'));
     // A quote cannot be taken to accepted without its order, nor without the decision time, nor with a reason, nor changed in any other column on the way.
-    const toAccepted = (extra = '') => `UPDATE crove_crm.quote SET status = 'accepted', decided_at = now()${extra} WHERE org_id = $1 AND id = $2`;
+    const toAccepted = (extra = '') => `UPDATE ludy_crm.quote SET status = 'accepted', decided_at = now()${extra} WHERE org_id = $1 AND id = $2`;
     await expect(as(o.orgId, o.member, (c) => c.query(toAccepted(), [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501' });
-    await expect(as(o.orgId, o.member, (c) => c.query("UPDATE crove_crm.quote SET status = 'accepted' WHERE org_id = $1 AND id = $2", [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501' });
+    await expect(as(o.orgId, o.member, (c) => c.query("UPDATE ludy_crm.quote SET status = 'accepted' WHERE org_id = $1 AND id = $2", [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501' });
     await expect(as(o.orgId, o.member, (c) => c.query(toAccepted(', remarks = \'x\''), [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501' });
     // The seller's letterhead frozen at the send (#2826) does not change on the way either.
     await expect(as(o.orgId, o.member, (c) => c.query(toAccepted(", seller_bank_note = 'STK moi'"), [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501', detail: 'a decision changes the status, its time and its reason only' });
@@ -279,25 +279,25 @@ suite('crm sales orders on PostgreSQL (#2696)', () => {
     const order = await o.query<SalesOrder>(o.viewer, 'crm.sales_order.get', { orderId: decided.orderId });
     // What the order froze is not a person's to change: the amounts and the buyer are not granted, the order and its lines are not deleted, a line is not changed.
     for (const sql of [
-      'UPDATE crove_crm.sales_order SET total = total + 1, subtotal = subtotal + 1 WHERE org_id = $1 AND id = $2',
-      "UPDATE crove_crm.sales_order SET buyer_name = 'x' WHERE org_id = $1 AND id = $2",
-      'DELETE FROM crove_crm.sales_order WHERE org_id = $1 AND id = $2',
+      'UPDATE ludy_crm.sales_order SET total = total + 1, subtotal = subtotal + 1 WHERE org_id = $1 AND id = $2',
+      "UPDATE ludy_crm.sales_order SET buyer_name = 'x' WHERE org_id = $1 AND id = $2",
+      'DELETE FROM ludy_crm.sales_order WHERE org_id = $1 AND id = $2',
     ]) {
       await expect(as(o.orgId, o.member, (c) => c.query(sql, [o.orgId, order.id]))).rejects.toMatchObject({ code: '42501' });
     }
-    for (const sql of ["UPDATE crove_crm.sales_order_line SET description = 'x' WHERE org_id = $1 AND order_id = $2", 'DELETE FROM crove_crm.sales_order_line WHERE org_id = $1 AND order_id = $2']) {
+    for (const sql of ["UPDATE ludy_crm.sales_order_line SET description = 'x' WHERE org_id = $1 AND order_id = $2", 'DELETE FROM ludy_crm.sales_order_line WHERE org_id = $1 AND order_id = $2']) {
       await expect(as(o.orgId, o.member, (c) => c.query(sql, [o.orgId, order.id]))).rejects.toMatchObject({ code: '42501' });
     }
     // A viewer inserts no order and changes none.
-    expect(await as(o.orgId, o.viewer, async (c) => (await c.query("UPDATE crove_crm.sales_order SET cancel_reason = cancel_reason WHERE org_id = $1 AND id = $2", [o.orgId, order.id])).rowCount)).toBe(0);
+    expect(await as(o.orgId, o.viewer, async (c) => (await c.query("UPDATE ludy_crm.sales_order SET cancel_reason = cancel_reason WHERE org_id = $1 AND id = $2", [o.orgId, order.id])).rowCount)).toBe(0);
     // The accepted quote is frozen: no one changes its status back or its decision.
     // Nor its seller's letterhead (#2826): the payment details the customer accepted stay.
-    await expect(as(o.orgId, o.member, (c) => c.query("UPDATE crove_crm.quote SET seller_bank_note = 'STK moi' WHERE org_id = $1 AND id = $2", [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501' });
-    await expect(as(o.orgId, o.member, (c) => c.query("UPDATE crove_crm.quote SET status = 'sent' WHERE org_id = $1 AND id = $2", [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501' });
+    await expect(as(o.orgId, o.member, (c) => c.query("UPDATE ludy_crm.quote SET seller_bank_note = 'STK moi' WHERE org_id = $1 AND id = $2", [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501' });
+    await expect(as(o.orgId, o.member, (c) => c.query("UPDATE ludy_crm.quote SET status = 'sent' WHERE org_id = $1 AND id = $2", [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501' });
     // A cancelled order stays cancelled.
     await o.exec(o.member, 'crm.sales_order.cancel', { orderId: order.id, version: order.version, reason: REASON });
     await expect(
-      as(o.orgId, o.member, (c) => c.query("UPDATE crove_crm.sales_order SET status = 'confirmed', cancelled_at = NULL, cancel_reason = NULL WHERE org_id = $1 AND id = $2", [o.orgId, order.id])),
+      as(o.orgId, o.member, (c) => c.query("UPDATE ludy_crm.sales_order SET status = 'confirmed', cancelled_at = NULL, cancel_reason = NULL WHERE org_id = $1 AND id = $2", [o.orgId, order.id])),
     ).rejects.toMatchObject({ code: '42501' });
   });
 
@@ -313,12 +313,12 @@ suite('crm sales orders on PostgreSQL (#2696)', () => {
 
     // Another sent quote: an order insert must carry the quote's own deal, customer and issuing entity, and the signer's own id.
     const other = await o.sentQuote(await o.party('Công ty XYZ'));
-    const row = await admin((c) => c.query<{ issuer_entity_id: string; party_id: string; deal_id: string }>('SELECT issuer_entity_id, party_id, deal_id FROM crove_crm.quote WHERE org_id = $1 AND id = $2', [o.orgId, other.quote.id])).then((r) => r.rows[0]!);
+    const row = await admin((c) => c.query<{ issuer_entity_id: string; party_id: string; deal_id: string }>('SELECT issuer_entity_id, party_id, deal_id FROM ludy_crm.quote WHERE org_id = $1 AND id = $2', [o.orgId, other.quote.id])).then((r) => r.rows[0]!);
     const insertOrder = (over: Record<string, string>, user = o.member) => {
       const v = { deal_id: row.deal_id, party_id: row.party_id, issuer_entity_id: row.issuer_entity_id, created_by: user, ...over };
       return as(o.orgId, user, (c) =>
         c.query(
-          "INSERT INTO crove_crm.sales_order (org_id, quote_id, deal_id, party_id, issuer_entity_id, number, order_date, buyer_name, created_by) VALUES ($1, $2, $3, $4, $5, $6, '2026-11-01', 'x', $7)",
+          "INSERT INTO ludy_crm.sales_order (org_id, quote_id, deal_id, party_id, issuer_entity_id, number, order_date, buyer_name, created_by) VALUES ($1, $2, $3, $4, $5, $6, '2026-11-01', 'x', $7)",
           [o.orgId, other.quote.id, v.deal_id, v.party_id, v.issuer_entity_id, `DH-X-${randomUUID().slice(0, 6)}`, v.created_by],
         ),
       );
@@ -332,7 +332,7 @@ suite('crm sales orders on PostgreSQL (#2696)', () => {
     const decided = await o.accept(o.member, done.quote);
     await expect(
       as(o.orgId, o.member, (c) =>
-        c.query("INSERT INTO crove_crm.sales_order_line (org_id, order_id, line_no, kind, description, quantity, unit_price, vat_rate, amount, vat_amount) VALUES ($1, $2, 99, 'item', 'late', '1', '1', '10%', '1', '0.1')", [o.orgId, decided.orderId]),
+        c.query("INSERT INTO ludy_crm.sales_order_line (org_id, order_id, line_no, kind, description, quantity, unit_price, vat_rate, amount, vat_amount) VALUES ($1, $2, 99, 'item', 'late', '1', '1', '10%', '1', '0.1')", [o.orgId, decided.orderId]),
       ),
     ).rejects.toMatchObject({ code: '42501' });
   });
@@ -358,7 +358,7 @@ suite('crm sales orders on PostgreSQL (#2696)', () => {
     await o.exec(o.member, 'crm.sales_order.cancel', { orderId: order.id, version: order.version, reason: REASON });
     await o.exec(o.member, 'crm.quote.decline', { quoteId: second.quote.id, version: second.quote.version, reason: `${REASON} lần hai` });
     const audit = await admin((c) =>
-      c.query<{ command: string; detail: unknown }>("SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND (command LIKE 'crm.quote.accept' OR command LIKE 'crm.quote.decline' OR command LIKE 'crm.sales_order%') AND outcome = 'ok' ORDER BY id", [o.orgId]),
+      c.query<{ command: string; detail: unknown }>("SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND (command LIKE 'crm.quote.accept' OR command LIKE 'crm.quote.decline' OR command LIKE 'crm.sales_order%') AND outcome = 'ok' ORDER BY id", [o.orgId]),
     );
     expect(audit.rows.map((r) => r.command)).toEqual(['crm.quote.accept', 'crm.sales_order.cancel', 'crm.quote.decline']);
     const text = JSON.stringify(audit.rows);

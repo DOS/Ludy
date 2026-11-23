@@ -8,6 +8,7 @@ import { client, orpc, queryClient } from '../lib/api.ts';
 import { accessToken, auth } from '../lib/auth.ts';
 import { forgetInvite } from '../lib/invite.ts';
 import { forgetPushDevice } from '../lib/push.ts';
+import { stopAndSave } from '../lib/recording-controller.ts';
 import {
   describeUserAgent,
   otherActiveSessionIds,
@@ -17,21 +18,24 @@ import {
   sortSessions,
   type SessionRow,
 } from '../lib/sessions.ts';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
 import { ErrorText, RowsSkeleton } from './ui.tsx';
 
 // Signs this tab out; auth-js tells the other tabs, and main.tsx sends every tab to /login.
 // This browser's push subscription goes first (#1238), as with the menu's sign-out.
 function signOutHere(): void {
   forgetInvite();
-  void forgetPushDevice((endpoint) => client.social.notifications.push.unsubscribe({ endpoint })).finally(() => void auth().signOut({ scope: 'local' }));
+  // A recording in the app is saved first (#3197), then this tab signs out.
+  void stopAndSave({ quiet: true })
+    .then(() => forgetPushDevice((endpoint) => client.social.notifications.push.unsubscribe({ endpoint })))
+    .finally(() => void auth().signOut({ scope: 'local' }));
 }
 
 function useCurrentSessionId() {
-  return useQuery({ queryKey: ['crove', 'current-session'], queryFn: async () => sessionIdFromToken(await accessToken()), staleTime: 60_000 });
+  return useQuery({ queryKey: ['ludy', 'current-session'], queryFn: async () => sessionIdFromToken(await accessToken()), staleTime: 60_000 });
 }
 
 function ConfirmBox({ title, children, actions }: { title: string; children?: ReactNode; actions: ReactNode }) {
@@ -275,7 +279,8 @@ function MemberSessionsPanel({ userId, name, onClose }: { userId: string; name: 
   const sorted = sortSessions(sessions.data ?? [], null);
   const active = sorted.filter((s) => s.status === 'active');
   const revoked = sorted.filter((s) => s.status === 'revoked');
-  const labelOf = (s: SessionRow) => t('session', { id: shortSessionId(s.sessionId) });
+  // In an admin's view of another member's sessions "another device" would be wrong: the label is neutral.
+  const labelOf = (s: SessionRow) => t('sessionNamed', { id: shortSessionId(s.sessionId) });
   const ask = (next: MemberTarget) => {
     revoke.reset();
     setTarget(next);

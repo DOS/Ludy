@@ -41,8 +41,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 function assert(condition, message) {
   if (!condition) throw new Error(`assertion failed: ${message}`);
 }
-// An exported CROVE_MODULES, COMPOSE_PROFILES or COMPOSE_FILE would override the empty .env and change the stack under test.
-const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(COMPOSE_|CROVE_)/.test(name)));
+// An exported LUDY_MODULES, CROVE_MODULES, COMPOSE_PROFILES or COMPOSE_FILE would override the empty .env and change the stack under test.
+const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(COMPOSE_|LUDY_|CROVE_)/.test(name)));
 const docker = (args) => execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...inherited, PORT, PUBLIC_URL: `http://localhost:${PORT}` } });
 const compose = (args) => docker([...COMPOSE, ...args]);
 
@@ -65,7 +65,7 @@ async function ok(path) {
 
 async function rpc(token, path, input, org) {
   const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
-  if (org) headers['x-crove-org'] = org;
+  if (org) headers['x-ludy-org'] = org;
   const response = await fetch(`${BASE_URL}/api/rpc/${path}`, {
     method: 'POST',
     headers,
@@ -94,10 +94,10 @@ function checkTopology() {
   const workerEnv = envOf(worker);
   assert(!('WORKER_DATABASE_URL' in apiEnv), 'the API container has no WORKER_DATABASE_URL');
   assert(!('EXTRACT_URL' in apiEnv), 'the API container has no EXTRACT_URL');
-  assert(workerEnv['WORKER_DATABASE_URL']?.includes('crove_worker'), 'the worker container has the worker login');
-  assert(workerEnv['EXTRACT_URL'] === 'http://crove-extract:8090', 'the worker reaches crove-extract');
-  assert(apiEnv['DATABASE_URL']?.includes('crove_app'), 'the API runs on the app login');
-  for (const [name, env] of [['api', apiEnv], ['worker', workerEnv]]) assert(env['CROVE_MODULES'] === 'finance', `${name} runs the finance module only (CROVE_MODULES=${env['CROVE_MODULES']})`);
+  assert(workerEnv['WORKER_DATABASE_URL']?.includes('ludy_worker') || workerEnv['WORKER_DATABASE_URL']?.includes('crove_worker'), 'the worker container has the worker login');
+  assert(workerEnv['EXTRACT_URL'] === 'http://ludy-extract:8090', 'the worker reaches ludy-extract');
+  assert(apiEnv['DATABASE_URL']?.includes('ludy_app') || apiEnv['DATABASE_URL']?.includes('crove_app'), 'the API runs on the app login');
+  for (const [name, env] of [['api', apiEnv], ['worker', workerEnv]]) assert(env['LUDY_MODULES'] === 'finance', `${name} runs the finance module only (LUDY_MODULES=${env['LUDY_MODULES']})`);
   const extractNet = `${PROJECT}_extract`;
   assert(!Object.keys(api.NetworkSettings.Networks).includes(extractNet), 'the API is not on the extract network');
   assert(Object.keys(worker.NetworkSettings.Networks).includes(extractNet), 'the worker is on the extract network');
@@ -105,7 +105,7 @@ function checkTopology() {
   const mediaNet = `${PROJECT}_media`;
   assert(Object.keys(api.NetworkSettings.Networks).includes(mediaNet), 'the API is on the media network');
   assert(Object.keys(worker.NetworkSettings.Networks).includes(mediaNet), 'the worker is on the media network');
-  assert(apiEnv['MEDIA_URL'] === 'http://crove-media:8095' && workerEnv['MEDIA_URL'] === 'http://crove-media:8095', 'api and worker reach crove-media at MEDIA_URL');
+  assert(apiEnv['MEDIA_URL'] === 'http://ludy-media:8095' && workerEnv['MEDIA_URL'] === 'http://ludy-media:8095', 'api and worker reach ludy-media at MEDIA_URL');
   assert(Object.keys(containerOf('crove-media').NetworkSettings.Networks).join() === mediaNet, 'crove-media is on the media network only');
   assert(api.Image === worker.Image, 'api and worker run the same image');
   assert(JSON.stringify(api.Config.Cmd) === '["api"]' && JSON.stringify(worker.Config.Cmd) === '["worker"]', `commands api and worker (${api.Config.Cmd}, ${worker.Config.Cmd})`);
@@ -154,7 +154,7 @@ async function main() {
   const org = await rpc(token, 'org/create', { name: 'Công ty Pilot Stack', idempotencyKey: crypto.randomUUID() });
   const form = new FormData();
   form.append('file', new Blob([INVOICE], { type: 'application/xml' }), 'einvoice-basic.xml');
-  const upload = await fetch(`${BASE_URL}/api/files`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-crove-org': org.slug }, body: form, signal: AbortSignal.timeout(REQUEST_MS) });
+  const upload = await fetch(`${BASE_URL}/api/files`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'x-ludy-org': org.slug }, body: form, signal: AbortSignal.timeout(REQUEST_MS) });
   const uploaded = await upload.json();
   assert(upload.ok && uploaded.files?.[0]?.fileId, `upload accepted (HTTP ${upload.status})`);
   const id = uploaded.files[0].fileId;

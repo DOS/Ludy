@@ -46,9 +46,9 @@
 // review. A channel the caller may not use, or not a live channel of the org, refuses the whole command.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zSocialBulkAddChannel, zSocialBulkAssign, zSocialBulkLabels, zSocialBulkReplace, type SocialBulkSkipReason, type SocialReplaceField } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { zSocialBulkAddChannel, zSocialBulkAssign, zSocialBulkLabels, zSocialBulkReplace, type SocialBulkSkipReason, type SocialReplaceField } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { BannedWordsTooComplex } from './domain/banned-words.ts';
 import { replaceLiteral, type ReplaceExcerpt, type ReplaceOptions } from './domain/replace.ts';
 import { FROZEN, IN_FLIGHT } from './domain/state.ts';
@@ -81,7 +81,7 @@ function requireUser(ctx: CommandContext): string {
 // Every post named, locked in id order; the ones not found are simply missing from the map.
 async function lockPosts(ctx: CommandContext, postIds: readonly string[]): Promise<Map<string, LockedPost>> {
   const rows = await ctx.trx
-    .selectFrom('crove_social.post')
+    .selectFrom('ludy_social.post')
     .select(['id', 'status', 'assignee_user_id', 'due_at'])
     .where('org_id', '=', ctx.orgId)
     .where('id', 'in', [...postIds])
@@ -125,12 +125,12 @@ export const postBulkLabels = defineCommand({
     const posts = await lockPosts(ctx, input.postIds);
     if (input.add.length > 0) {
       // Held until the commit, as social.post.set_labels does, so a label deleted meanwhile waits for this command.
-      const found = await ctx.trx.selectFrom('crove_social.label').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', input.add).forKeyShare().execute();
+      const found = await ctx.trx.selectFrom('ludy_social.label').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', input.add).forKeyShare().execute();
       if (found.length !== input.add.length) throw new DomainError('LABEL_NOT_FOUND', 404, 'Có nhãn không tồn tại hoặc đã bị xóa');
     }
     const ids = [...posts.keys()];
     const visible = await visiblePosts(ctx, ids);
-    const current = ids.length === 0 ? [] : await ctx.trx.selectFrom('crove_social.post_label').select(['post_id', 'label_id']).where('org_id', '=', ctx.orgId).where('post_id', 'in', ids).orderBy('created_at').orderBy('label_id').execute();
+    const current = ids.length === 0 ? [] : await ctx.trx.selectFrom('ludy_social.post_label').select(['post_id', 'label_id']).where('org_id', '=', ctx.orgId).where('post_id', 'in', ids).orderBy('created_at').orderBy('label_id').execute();
     const labelsOf = new Map<string, string[]>();
     for (const r of current) labelsOf.set(r.post_id, [...(labelsOf.get(r.post_id) ?? []), r.label_id]);
     const remove = new Set(input.remove);
@@ -207,10 +207,10 @@ export const postBulkAssign = defineCommand({
       planned.push({ postId, dueAt: due, newAssignee: post.assignee_user_id !== input.assigneeUserId });
     }
     // Checked once for all the posts, and only when some post gets them as a new assignee (#1062): a person who is not a
-    // member is never assigned anything (crove_kernel.member_profiles answers for members of the org only), while
+    // member is never assigned anything (ludy_kernel.member_profiles answers for members of the org only), while
     // keeping one who has since left, to change only the due dates, is allowed as for a single assignment.
     if (input.assigneeUserId && planned.some((p) => p.newAssignee)) {
-      const { rows } = await sql<{ user_id: string }>`SELECT user_id FROM crove_kernel.member_profiles(${[input.assigneeUserId]}::uuid[])`.execute(ctx.trx);
+      const { rows } = await sql<{ user_id: string }>`SELECT user_id FROM ludy_kernel.member_profiles(${[input.assigneeUserId]}::uuid[])`.execute(ctx.trx);
       if (rows.length === 0) throw new DomainError('ASSIGNEE_NOT_MEMBER', 422, 'Người được giao không phải thành viên của tổ chức');
     }
     const given: string[] = [];
@@ -269,14 +269,14 @@ interface LoadedPost {
 // The posts named and their channels; the command locks them (posts in id order, then each post's variants, as the
 // nested edits lock them), the preview reads them.
 async function loadPosts(trx: Trx, orgId: string, postIds: readonly string[], lock: boolean): Promise<Map<string, LoadedPost>> {
-  let q = trx.selectFrom('crove_social.post').select(POST_COLUMNS).where('org_id', '=', orgId).where('id', 'in', [...postIds]).orderBy('id');
+  let q = trx.selectFrom('ludy_social.post').select(POST_COLUMNS).where('org_id', '=', orgId).where('id', 'in', [...postIds]).orderBy('id');
   if (lock) q = q.forUpdate();
   const out = new Map<string, LoadedPost>();
   for (const row of await q.execute()) {
     const media = await loadPostMedia(trx, orgId, row.id);
     const variants = lock
       ? await lockVariants(trx, orgId, row.id)
-      : await trx.selectFrom('crove_social.post_variant').select(VARIANT_COLUMNS).where('org_id', '=', orgId).where('post_id', '=', row.id).orderBy('position').orderBy('id').execute();
+      : await trx.selectFrom('ludy_social.post_variant').select(VARIANT_COLUMNS).where('org_id', '=', orgId).where('post_id', '=', row.id).orderBy('position').orderBy('id').execute();
     out.set(row.id, { post: { ...row, media }, variants });
   }
   return out;
@@ -419,7 +419,7 @@ async function applyPlan(ctx: CommandContext, plan: ReplacePlan, revision: numbe
   }
   for (const { variantId, edit } of plan.variants) {
     // Read again: the base edit before may have given the channel a new revision.
-    const v = await ctx.trx.selectFrom('crove_social.post_variant').select('revision').where('org_id', '=', ctx.orgId).where('id', '=', variantId).executeTakeFirstOrThrow();
+    const v = await ctx.trx.selectFrom('ludy_social.post_variant').select('revision').where('org_id', '=', ctx.orgId).where('id', '=', variantId).executeTakeFirstOrThrow();
     const left = await run('social.variant.update', { variantId, revision: v.revision, ...edit });
     if (left) return left;
   }
@@ -498,7 +498,7 @@ export const postBulkAddChannel = defineCommand({
     const scope = await channelScope(ctx);
     refuseOutside(scope, [input.connectionId]);
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['id', 'provider'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -530,7 +530,7 @@ export const postBulkAddChannel = defineCommand({
       made.push({ postId, variantId: created.variantId });
     }
     // The added channels read in one go, to say which still miss their channel's rules.
-    const variants = made.length === 0 ? [] : await ctx.trx.selectFrom('crove_social.post_variant').select(VARIANT_COLUMNS).where('org_id', '=', ctx.orgId).where('id', 'in', made.map((m) => m.variantId)).execute();
+    const variants = made.length === 0 ? [] : await ctx.trx.selectFrom('ludy_social.post_variant').select(VARIANT_COLUMNS).where('org_id', '=', ctx.orgId).where('id', 'in', made.map((m) => m.variantId)).execute();
     const byVariant = new Map(variants.map((v) => [v.id, v]));
     for (const { postId, variantId } of made) {
       const variant = byVariant.get(variantId);

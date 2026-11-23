@@ -7,11 +7,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, type ActivityItem, type DraftsFromMediaResult, type PostView } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, type ActivityItem, type DraftsFromMediaResult, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -50,8 +50,8 @@ suite('social drafts from library files on PostgreSQL (#1080)', () => {
     const member = await person('member');
     const viewer = await person('viewer');
     await admin(async (c) => {
-      await c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, member, 'member']);
-      await c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, viewer, 'viewer']);
+      await c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, member, 'member']);
+      await c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, viewer, 'viewer']);
     });
     return { orgId, owner, member, viewer };
   }
@@ -59,7 +59,7 @@ suite('social drafts from library files on PostgreSQL (#1080)', () => {
   async function connection(o: Org, provider: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         provider,
@@ -77,7 +77,7 @@ suite('social drafts from library files on PostgreSQL (#1080)', () => {
     const sha = createHash('sha256').update(id).digest('hex');
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, duration_ms)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, duration_ms)
          VALUES ($1, $2, $3, $4, $5, $6, $7, 200000, $8, $9)`,
         [o.orgId, id, sha, `org/${o.orgId}/${sha}`, `content:${sha}`, filename, options.contentType ?? 'image/jpeg', options.source ?? 'social', options.durationMs ?? null],
       ),
@@ -88,9 +88,9 @@ suite('social drafts from library files on PostgreSQL (#1080)', () => {
   const exec = <O>(o: Org, user: string, name: string, input: unknown) => rt.execute<O>(name, input, { actor: asUser(user), orgId: o.orgId });
   const fromMedia = <O = DraftsFromMediaResult>(o: Org, user: string, input: unknown) => exec<O>(o, user, 'social.post.create_from_media', input);
   const get = (o: Org, postId: string) => rt.query<PostView>('social.post.get', { postId }, { actor: asUser(o.viewer), orgId: o.orgId });
-  const postCount = (o: Org) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_social.post WHERE org_id = $1', [o.orgId])).rows[0]?.n));
+  const postCount = (o: Org) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_social.post WHERE org_id = $1', [o.orgId])).rows[0]?.n));
   const audits = (o: Org, command: string) =>
-    admin(async (c) => (await c.query<{ detail: Record<string, unknown> | null }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' ORDER BY occurred_at, id", [o.orgId, command])).rows);
+    admin(async (c) => (await c.query<{ detail: Record<string, unknown> | null }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = 'ok' ORDER BY occurred_at, id", [o.orgId, command])).rows);
   const daily = (minute: number) => [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, minute }));
 
   beforeAll(async () => {
@@ -102,9 +102,9 @@ suite('social drafts from library files on PostgreSQL (#1080)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -246,21 +246,21 @@ suite('social drafts from library files on PostgreSQL (#1080)', () => {
     // drifting apart, so this run lifts the table's for one set.
     const setId = randomUUID();
     await admin(async (c) => {
-      await c.query('ALTER TABLE crove_social.channel_set DROP CONSTRAINT channel_set_connection_ids_check');
-      await c.query('INSERT INTO crove_social.channel_set (org_id, id, name, connection_ids, updated_by) VALUES ($1, $2, $3, $4::uuid[], $5)', [o.orgId, setId, 'Mọi kênh', channels, o.owner]);
+      await c.query('ALTER TABLE ludy_social.channel_set DROP CONSTRAINT channel_set_connection_ids_check');
+      await c.query('INSERT INTO ludy_social.channel_set (org_id, id, name, connection_ids, updated_by) VALUES ($1, $2, $3, $4::uuid[], $5)', [o.orgId, setId, 'Mọi kênh', channels, o.owner]);
     });
     try {
       const photo = await file(o, 'anh.jpg');
       await expect(fromMedia(o, o.member, { fileIds: [photo], channelSetId: setId, queue: true })).rejects.toMatchObject({ code: 'CHANNEL_SET_TOO_LARGE', status: 422, details: { limit: 20, actual: 21 } });
       expect(await postCount(o)).toBe(0);
       // One of them disconnected: the 20 left fit one post.
-      await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [channels[0]]));
+      await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [channels[0]]));
       const result = await fromMedia<Created>(o, o.member, { fileIds: [photo], channelSetId: setId });
       expect(result.posts[0]?.variants).toHaveLength(20);
     } finally {
       await admin(async (c) => {
-        await c.query('DELETE FROM crove_social.channel_set WHERE org_id = $1 AND id = $2', [o.orgId, setId]);
-        await c.query('ALTER TABLE crove_social.channel_set ADD CONSTRAINT channel_set_connection_ids_check CHECK (cardinality(connection_ids) <= 20)');
+        await c.query('DELETE FROM ludy_social.channel_set WHERE org_id = $1 AND id = $2', [o.orgId, setId]);
+        await c.query('ALTER TABLE ludy_social.channel_set ADD CONSTRAINT channel_set_connection_ids_check CHECK (cardinality(connection_ids) <= 20)');
       });
     }
   });
@@ -278,25 +278,25 @@ suite('social drafts from library files on PostgreSQL (#1080)', () => {
       await c.query(`CREATE FUNCTION public.t1088_fail() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
         BEGIN
           IF NEW.body = 'hong giua chung' AND EXISTS (
-            SELECT 1 FROM crove_social.post p JOIN crove_social.post_variant v ON v.org_id = p.org_id AND v.post_id = p.id
+            SELECT 1 FROM ludy_social.post p JOIN ludy_social.post_variant v ON v.org_id = p.org_id AND v.post_id = p.id
              WHERE p.org_id = NEW.org_id AND p.body = 'mot' AND v.queue_slot_at IS NOT NULL
           ) THEN
             RAISE EXCEPTION 'forced failure mid-loop';
           END IF;
           RETURN NEW;
         END $$`);
-      await c.query('CREATE TRIGGER t1088_fail BEFORE INSERT ON crove_social.post FOR EACH ROW EXECUTE FUNCTION public.t1088_fail()');
+      await c.query('CREATE TRIGGER t1088_fail BEFORE INSERT ON ludy_social.post FOR EACH ROW EXECUTE FUNCTION public.t1088_fail()');
     });
     try {
       await expect(fromMedia(o, o.member, { fileIds: files, connectionIds: [sandbox], caption: { kind: 'filename' }, queue: true })).rejects.toMatchObject({ status: 500 });
     } finally {
       await admin(async (c) => {
-        await c.query('DROP TRIGGER t1088_fail ON crove_social.post');
+        await c.query('DROP TRIGGER t1088_fail ON ludy_social.post');
         await c.query('DROP FUNCTION public.t1088_fail()');
       });
     }
     expect(await postCount(o)).toBe(0);
-    const held = await admin(async (c) => (await c.query('SELECT id FROM crove_social.post_variant WHERE org_id = $1 AND queue_slot_at IS NOT NULL', [o.orgId])).rows);
+    const held = await admin(async (c) => (await c.query('SELECT id FROM ludy_social.post_variant WHERE org_id = $1 AND queue_slot_at IS NOT NULL', [o.orgId])).rows);
     expect(held).toEqual([]);
     expect(await audits(o, 'social.post.create')).toHaveLength(0);
     expect(await free()).toEqual(before);

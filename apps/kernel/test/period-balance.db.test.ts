@@ -8,18 +8,19 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { PERIOD_BALANCE_VERIFY_CRON, PeriodBalanceMismatchError, findPeriodBalanceDifferences, runPeriodBalanceReconciliation } from '../src/period-balance.ts';
 import { QUEUES } from '../src/jobs-schema.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
+import { rewriteHistoricalCoreSql } from './pre-cutover-db.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
-const BACKFILL = readFileSync(new URL('../../../supabase/migrations/20261101160100_crove_finance_period_balance_backfill.sql', import.meta.url), 'utf8');
+const BACKFILL = rewriteHistoricalCoreSql(readFileSync(new URL('../../../supabase/migrations/20261101160100_crove_finance_period_balance_backfill.sql', import.meta.url), 'utf8'));
 
 const suite = ADMIN ? describe : describe.skip;
 
@@ -48,13 +49,13 @@ suite('period balance reconciliation (#1284)', () => {
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
       const lines = [
         { line_no: 1, account_code: '6422', debit, credit: '0' },
         { line_no: 2, account_code: '331', debit: '0', credit: debit },
       ];
       const { rows } = await c.query<{ id: string }>(
-        `SELECT crove_finance.post_journal_entry($1::date, 'reconcile', 'test.reconcile', $2::uuid, $3::jsonb, NULL::uuid, 1) AS id`,
+        `SELECT ludy_finance.post_journal_entry($1::date, 'reconcile', 'test.reconcile', $2::uuid, $3::jsonb, NULL::uuid, 1) AS id`,
         [date, randomUUID(), JSON.stringify(lines)],
       );
       await c.query('COMMIT');
@@ -69,10 +70,10 @@ suite('period balance reconciliation (#1284)', () => {
     withAdmin(async (a) => {
       await a.query('BEGIN');
       const { rows } = await a.query<{ id: string }>(
-        `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, $2, 'legacy', 'test.legacy', $3) RETURNING id`,
+        `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, $2, 'legacy', 'test.legacy', $3) RETURNING id`,
         [orgId, date, randomUUID()],
       );
-      await a.query(`INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '1111', $3, 0), ($1, $2, 2, '5111', 0, $3)`, [
+      await a.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '1111', $3, 0), ($1, $2, 2, '5111', 0, $3)`, [
         orgId,
         rows[0]?.id,
         amount,
@@ -82,7 +83,7 @@ suite('period balance reconciliation (#1284)', () => {
     });
 
   const deltaCount = () =>
-    withAdmin(async (a) => Number((await a.query<{ n: string }>(`SELECT count(*) AS n FROM crove_finance.period_balance_delta WHERE org_id = $1`, [orgId])).rows[0]?.n));
+    withAdmin(async (a) => Number((await a.query<{ n: string }>(`SELECT count(*) AS n FROM ludy_finance.period_balance_delta WHERE org_id = $1`, [orgId])).rows[0]?.n));
 
   const runBackfill = () =>
     withAdmin(async (a) => {
@@ -100,13 +101,13 @@ suite('period balance reconciliation (#1284)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     appUrl = app.toString();
     const worker = new URL(adminUrl);
-    worker.username = 'crove_worker';
+    worker.username = 'ludy_worker';
     worker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: worker.toString(), max: 1 });
     workerDb = createDb(workerPool);
@@ -130,7 +131,7 @@ suite('period balance reconciliation (#1284)', () => {
   it('has the queue the worker schedules nightly', async () => {
     expect(QUEUES.periodBalanceVerify).toBe('finance-period-balance-verify');
     expect(PERIOD_BALANCE_VERIFY_CRON).toBe('40 3 * * *');
-    const queues = await withAdmin(async (a) => (await a.query<{ name: string }>(`SELECT name FROM crove_jobs.queue WHERE name = $1`, [QUEUES.periodBalanceVerify])).rows);
+    const queues = await withAdmin(async (a) => (await a.query<{ name: string }>(`SELECT name FROM ludy_jobs.queue WHERE name = $1`, [QUEUES.periodBalanceVerify])).rows);
     expect(queues).toEqual([{ name: QUEUES.periodBalanceVerify }]);
   });
 
@@ -147,7 +148,7 @@ suite('period balance reconciliation (#1284)', () => {
       (
         await a.query<{ entry: string; month: string; account: string; debit: string }>(
           `SELECT entry_id AS entry, period_month::text AS month, account_code AS account, debit::numeric(30,4)::text AS debit
-           FROM crove_finance.period_balance_delta WHERE org_id = $1 AND entry_id = ANY($2::uuid[]) ORDER BY month, account`,
+           FROM ludy_finance.period_balance_delta WHERE org_id = $1 AND entry_id = ANY($2::uuid[]) ORDER BY month, account`,
           [orgId, legacy],
         )
       ).rows,
@@ -167,7 +168,7 @@ suite('period balance reconciliation (#1284)', () => {
     await withAdmin(async (a) => {
       await a.query('BEGIN');
       await a.query('SET LOCAL session_replication_role = replica');
-      await a.query(`UPDATE crove_finance.period_balance_delta SET credit = credit + 1 WHERE org_id = $1 AND entry_id = $2 AND account_code = '331'`, [orgId, entry]);
+      await a.query(`UPDATE ludy_finance.period_balance_delta SET credit = credit + 1 WHERE org_id = $1 AND entry_id = $2 AND account_code = '331'`, [orgId, entry]);
       await a.query('COMMIT');
     });
     const error = await runPeriodBalanceReconciliation(workerDb).then(

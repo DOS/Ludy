@@ -4,7 +4,7 @@
 // - Learning: when a purchase invoice is approved (finance.purchase.record), every line whose account a user chose on
 //   the approved revision (finance.purchase.revise marks it) writes or updates the vendor's description rule, with the
 //   approver, the time and the new document as provenance, in the same audited command.
-// - Suggesting: extraction reads the vendor's rules and every vendor's rules (rulesForSuggestion) and @crove/l10n-vn
+// - Suggesting: extraction reads the vendor's rules and every vendor's rules (rulesForSuggestion) and @ludy/l10n-vn
 //   (suggestDebitAccount) applies them in order: the vendor's own rules, the vendor's default account, every vendor's
 //   rules, then the built-in keyword list. A rule only proposes an account: the approver confirms every line and the
 //   posting checks the account again.
@@ -13,10 +13,10 @@
 // and the lookup reads at most LEARNED_RULE_LIMIT rules of each scope.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { isRevenueAccount, zAccountCode, zId, type CategorizationRule } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
-import { descriptionRuleText, keywordRuleText, money, type LearnedRule, type ProposedLine } from '@crove/l10n-vn';
+import { isRevenueAccount, zAccountCode, zId, type CategorizationRule } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
+import { descriptionRuleText, keywordRuleText, money, type LearnedRule, type ProposedLine } from '@ludy/l10n-vn';
 import { assertUsableAccounts } from './accounts.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 
@@ -36,16 +36,16 @@ export async function rulesForSuggestion(ctx: QueryContext, partyId: string | nu
   const load = async (vendor: boolean) => {
     if (vendor && partyId === null) return [];
     const rows = await ctx.trx
-      .selectFrom('crove_finance.categorization_rule as r')
+      .selectFrom('ludy_finance.categorization_rule as r')
       .select(['r.id', 'r.match_kind', 'r.match_text', 'r.label', 'r.debit_account'])
       .where('r.org_id', '=', ctx.orgId)
       .where('r.legal_entity_id', '=', legalEntityId)
       .where((eb) => (vendor && partyId !== null ? eb('r.vendor_party_id', '=', partyId) : eb('r.vendor_party_id', 'is', null)))
       .where(({ or, exists, selectFrom }) =>
         or([
-          exists(selectFrom('crove_finance.account as a').select('a.code').whereRef('a.code', '=', 'r.debit_account')),
+          exists(selectFrom('ludy_finance.account as a').select('a.code').whereRef('a.code', '=', 'r.debit_account')),
           exists(
-            selectFrom('crove_finance.org_account as o')
+            selectFrom('ludy_finance.org_account as o')
               .select('o.code')
               .whereRef('o.org_id', '=', 'r.org_id')
               .whereRef('o.code', '=', 'r.debit_account')
@@ -94,7 +94,7 @@ export async function learnFromApproval(
       source_document_id: input.documentId,
     };
     const row = await ctx.trx
-      .insertInto('crove_finance.categorization_rule')
+      .insertInto('ludy_finance.categorization_rule')
       .values({ org_id: ctx.orgId, vendor_party_id: input.partyId, match_kind: 'description', match_text: text, ...provenance })
       .onConflict((oc) => oc.constraint('categorization_rule_match_uq').doUpdateSet(provenance))
       .returning(['id', sql<boolean>`(xmax = 0)`.as('created')])
@@ -112,9 +112,9 @@ export const categorizationRulesList = defineQuery({
   handler: async (ctx, input): Promise<CategorizationRule[]> => {
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     const rows = await ctx.trx
-      .selectFrom('crove_finance.categorization_rule as r')
-      .leftJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'r.org_id').onRef('p.id', '=', 'r.vendor_party_id'))
-      .leftJoin('crove_finance.purchase_document as d', (join) => join.onRef('d.org_id', '=', 'r.org_id').onRef('d.id', '=', 'r.source_document_id'))
+      .selectFrom('ludy_finance.categorization_rule as r')
+      .leftJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'r.org_id').onRef('p.id', '=', 'r.vendor_party_id'))
+      .leftJoin('ludy_finance.purchase_document as d', (join) => join.onRef('d.org_id', '=', 'r.org_id').onRef('d.id', '=', 'r.source_document_id'))
       .select([
         'r.id',
         'r.vendor_party_id',
@@ -142,19 +142,19 @@ export const categorizationRulesList = defineQuery({
     if (rows.length > 0) {
       const { rows: counted } = await sql<{ rule_id: string; n: string }>`
         SELECT l #>> '{accountRule,correctedRuleId}' AS rule_id, count(*) AS n
-        FROM crove_kernel.proposal p
+        FROM ludy_kernel.proposal p
         CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(p.payload -> 'lines') = 'array' THEN p.payload -> 'lines' ELSE '[]'::jsonb END) l
         WHERE p.org_id = ${ctx.orgId} AND p.command = 'finance.purchase.record' AND p.status = 'executed'
           AND (l #>> '{accountRule,correctedRuleId}') = ANY(${rows.map((r) => r.id)}::text[])
         GROUP BY 1`.execute(ctx.trx);
       for (const c of counted) corrections.set(c.rule_id, Number(c.n));
     }
-    // Who confirmed a rule, by name while they are a member (crove_kernel.member_profiles answers only members).
+    // Who confirmed a rule, by name while they are a member (ludy_kernel.member_profiles answers only members).
     const users = [...new Set(rows.map((r) => r.confirmed_by).filter((u): u is string => u !== null))];
     const names = new Map<string, string>();
     if (users.length > 0) {
       const { rows: people } = await sql<{ user_id: string; email: string; display_name: string | null }>`
-        SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${users}::uuid[])`.execute(ctx.trx);
+        SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${users}::uuid[])`.execute(ctx.trx);
       for (const p of people) names.set(p.user_id, p.display_name ?? p.email);
     }
     return rows.map((r) => ({
@@ -203,11 +203,11 @@ export const createCategorizationRule = defineCommand({
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     const vendorPartyId = input.vendorPartyId ?? null;
     if (vendorPartyId !== null) {
-      const party = await ctx.trx.selectFrom('crove_kernel.party').select('id').where('org_id', '=', ctx.orgId).where('id', '=', vendorPartyId).executeTakeFirst();
+      const party = await ctx.trx.selectFrom('ludy_kernel.party').select('id').where('org_id', '=', ctx.orgId).where('id', '=', vendorPartyId).executeTakeFirst();
       if (!party) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy nhà cung cấp');
     }
     const row = await ctx.trx
-      .insertInto('crove_finance.categorization_rule')
+      .insertInto('ludy_finance.categorization_rule')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: legalEntityId,
@@ -237,7 +237,7 @@ export const removeCategorizationRule = defineCommand({
   target: (input) => ({ type: 'finance.categorization_rule', id: input.id }),
   handler: async (ctx, { id }) => {
     const removed = await ctx.trx
-      .deleteFrom('crove_finance.categorization_rule')
+      .deleteFrom('ludy_finance.categorization_rule')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', id)
       .returning(['vendor_party_id', 'match_kind', 'match_text', 'debit_account', 'confirmed_by', 'source_document_id'])

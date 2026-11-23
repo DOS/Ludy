@@ -12,7 +12,7 @@ const STRUCTURE_RULES = ['landmark-one-main', 'region', 'landmark-unique', 'page
 
 // The home page and every app page (content/site.ts APP_PAGES), each in both languages at the same address (#2360):
 // the English visit is one whose cookie says so, what the header toggle sets.
-const PAGES = ['/', '/ke-toan', '/engage', '/notes', '/privacy'].flatMap((path) => [
+const PAGES = ['/', '/cong-tac', '/ke-toan', '/engage', '/nhan-su', '/esign', '/privacy'].flatMap((path) => [
   { path, lang: 'vi' as const },
   { path, lang: 'en' as const },
 ]);
@@ -203,7 +203,7 @@ for (const { path, lang } of PAGES) {
         await chooseLanguage(page, lang);
         await page.setViewportSize({ width: viewport.width, height: viewport.height });
         // The theme the page applies before its first paint (root-document.tsx), as if the visitor had picked it.
-        await page.addInitScript((value) => localStorage.setItem('crove-theme', value), theme);
+        await page.addInitScript((value) => localStorage.setItem('ludy-theme', value), theme);
         await page.goto(path);
         await page.waitForLoadState('networkidle');
         await expect(page.locator('html')).toHaveAttribute('data-theme', theme);

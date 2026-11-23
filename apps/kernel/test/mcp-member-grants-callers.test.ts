@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// crove_kernel.mcp_member_grants_for_user(user) answers, for a user id it is given, which orgs that user belongs to and whether each lets members connect their own AI app
+// ludy_kernel.mcp_member_grants_for_user(user) answers, for a user id it is given, which orgs that user belongs to and whether each lets members connect their own AI app
 // (ADR-0051 decision 2, slice 3, step 3b-3). It is safe only when called with the signed-in user's own id, never one taken from a request. This pins the call sites: it is
 // called from exactly one place, apps/kernel/src/mcp-endpoint.ts, and there only with `user.userId` of the signed-in user.
 import { readdirSync, readFileSync, statSync } from 'node:fs';

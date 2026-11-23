@@ -1,5 +1,5 @@
 // Search across parties, documents and journal entries (issue #673), for the command palette. finance.search folds
-// what was typed the way the stored search columns fold each row (crove_kernel.search_fold, migration
+// what was typed the way the stored search columns fold each row (ludy_kernel.search_fold, migration
 // 20261023060000_crove_finance_search: Vietnamese marks, đ and case ignored), so "dien luc" finds "Điện lực". Every
 // word must start a word of the row (a prefix match): parties by name or tax code, documents by series and number or
 // by their party, entries by description, and entries by amount when what was typed reads as one. Each group holds at
@@ -8,9 +8,9 @@
 // are the org's.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, type DocumentDirection } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { zId, type DocumentDirection } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { resolveLegalEntity } from './legal-entity.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -68,13 +68,13 @@ const ENTRY_VECTOR = sql`j.search`;
 
 async function searchParties(ctx: QueryContext, q: string): Promise<SearchResult['parties']> {
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.party as p')
+    .selectFrom('ludy_kernel.party as p')
     .select(['p.id', 'p.name', 'p.tax_code'])
     // The same test as finance.vendors.list, which leaves these parties out.
     .select(({ and, exists, not, selectFrom }) =>
       and([
         exists(
-          selectFrom('crove_finance.purchase_document as s')
+          selectFrom('ludy_finance.purchase_document as s')
             .select('s.id')
             .whereRef('s.org_id', '=', 'p.org_id')
             .whereRef('s.party_id', '=', 'p.id')
@@ -82,7 +82,7 @@ async function searchParties(ctx: QueryContext, q: string): Promise<SearchResult
         ),
         not(
           exists(
-            selectFrom('crove_finance.purchase_document as b')
+            selectFrom('ludy_finance.purchase_document as b')
               .select('b.id')
               .whereRef('b.org_id', '=', 'p.org_id')
               .whereRef('b.party_id', '=', 'p.id')
@@ -94,10 +94,10 @@ async function searchParties(ctx: QueryContext, q: string): Promise<SearchResult
     .where('p.org_id', '=', ctx.orgId)
     // A party marked as a duplicate (#887) is not listed; its documents still are, under its own name.
     .where('p.duplicate_of', 'is', null)
-    .where(sql<boolean>`${PARTY_VECTOR} @@ crove_kernel.search_query(${q})`)
+    .where(sql<boolean>`${PARTY_VECTOR} @@ ludy_kernel.search_query(${q})`)
     // The exact tax code first, then the rows that match more of the words, then by name.
     .orderBy(sql`p.tax_code IS NOT DISTINCT FROM ${q.trim()}`, 'desc')
-    .orderBy(sql`pg_catalog.ts_rank(${PARTY_VECTOR}, crove_kernel.search_query(${q}))`, 'desc')
+    .orderBy(sql`pg_catalog.ts_rank(${PARTY_VECTOR}, ludy_kernel.search_query(${q}))`, 'desc')
     .orderBy('p.name')
     .limit(SEARCH_LIMIT)
     .execute();
@@ -114,9 +114,9 @@ async function searchParties(ctx: QueryContext, q: string): Promise<SearchResult
 async function searchDocuments(ctx: QueryContext, q: string, legalEntityId: string): Promise<SearchResult['documents']> {
   const base = () =>
     ctx.trx
-      .selectFrom('crove_finance.purchase_document as d')
-      .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
-      .leftJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
+      .selectFrom('ludy_finance.purchase_document as d')
+      .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
+      .leftJoin('ludy_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
       .select([
         'd.id',
         'd.direction',
@@ -135,16 +135,16 @@ async function searchDocuments(ctx: QueryContext, q: string, legalEntityId: stri
       .orderBy('d.created_at', 'desc')
       .limit(SEARCH_LIMIT);
   const byNumber = await base()
-    .where(sql<boolean>`${DOCUMENT_VECTOR} @@ crove_kernel.search_query(${q})`)
+    .where(sql<boolean>`${DOCUMENT_VECTOR} @@ ludy_kernel.search_query(${q})`)
     .execute();
   // The matching parties first: none (the usual case for a number) skips the query, and a short list is read
   // through the party index. Past PARTY_IDS_LIMIT the words are generic enough that the newest documents are
   // found quickly by date.
   const parties = await ctx.trx
-    .selectFrom('crove_kernel.party as p')
+    .selectFrom('ludy_kernel.party as p')
     .select('p.id')
     .where('p.org_id', '=', ctx.orgId)
-    .where(sql<boolean>`${PARTY_VECTOR} @@ crove_kernel.search_query(${q})`)
+    .where(sql<boolean>`${PARTY_VECTOR} @@ ludy_kernel.search_query(${q})`)
     .limit(PARTY_IDS_LIMIT + 1)
     .execute();
   const byParty =
@@ -157,10 +157,10 @@ async function searchDocuments(ctx: QueryContext, q: string, legalEntityId: stri
         : await base()
             .where('d.party_id', 'in', (eb) =>
               eb
-                .selectFrom('crove_kernel.party as p')
+                .selectFrom('ludy_kernel.party as p')
                 .select('p.id')
                 .where('p.org_id', '=', ctx.orgId)
-                .where(sql<boolean>`${PARTY_VECTOR} @@ crove_kernel.search_query(${q})`),
+                .where(sql<boolean>`${PARTY_VECTOR} @@ ludy_kernel.search_query(${q})`),
             )
             .execute();
   // A number match is what was looked for, so those come first; then the party's documents.
@@ -185,12 +185,12 @@ async function searchEntries(ctx: QueryContext, q: string, legalEntityId: string
   const amount = searchAmount(q);
   const base = () =>
     ctx.trx
-      .selectFrom('crove_finance.journal_entry as j')
+      .selectFrom('ludy_finance.journal_entry as j')
       .select(['j.id', sql<string>`pg_catalog.to_char(j.entry_date, 'YYYY-MM-DD')`.as('entry_date'), 'j.created_at', 'j.description'])
       // The entry's amount: the sum of its debits (it balances, so its credits sum the same).
       .select((eb) =>
         eb
-          .selectFrom('crove_finance.journal_line as l')
+          .selectFrom('ludy_finance.journal_line as l')
           .select(sql<string>`pg_catalog.sum(l.debit)`.as('s'))
           .whereRef('l.org_id', '=', 'j.org_id')
           .whereRef('l.entry_id', '=', 'j.id')
@@ -202,7 +202,7 @@ async function searchEntries(ctx: QueryContext, q: string, legalEntityId: string
       .orderBy('j.created_at', 'desc')
       .limit(SEARCH_LIMIT);
   const byText = await base()
-    .where(sql<boolean>`${ENTRY_VECTOR} @@ crove_kernel.search_query(${q})`)
+    .where(sql<boolean>`${ENTRY_VECTOR} @@ ludy_kernel.search_query(${q})`)
     .execute();
   const byAmount =
     amount === null
@@ -210,7 +210,7 @@ async function searchEntries(ctx: QueryContext, q: string, legalEntityId: string
       : await base()
           .where('j.id', 'in', (eb) =>
             eb
-              .selectFrom('crove_finance.journal_line as l')
+              .selectFrom('ludy_finance.journal_line as l')
               .select('l.entry_id')
               .where('l.org_id', '=', ctx.orgId)
               .where('l.legal_entity_id', '=', legalEntityId)

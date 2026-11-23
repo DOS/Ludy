@@ -4,7 +4,7 @@
 // moneyCell, text never read as a formula. Headers and labels stay Vietnamese in every locale: the file goes to
 // Vietnamese accountants and their software.
 import ExcelJS from 'exceljs';
-import { money } from '@crove/l10n-vn';
+import { money } from '@ludy/l10n-vn';
 import { setMoneyCell as setMoney, setTextCell as setText } from './export.ts';
 import type { VatRate } from './domain/vat-return.ts';
 import type { VatInvoiceView, VatReport, VatSide, VatWarning } from './vat.ts';
@@ -26,6 +26,7 @@ export const VAT_WARNING_LABELS: Readonly<Record<VatWarning, string>> = {
   lines_mismatch: 'Tổng các dòng lệch tiền trước thuế của hóa đơn; số tổng cộng theo các dòng',
   vat_mismatch: 'Thuế GTGT lệch giá trị trước thuế nhân thuế suất',
   declared_late: 'Hóa đơn của kỳ trước, ghi sổ và kê khai vào kỳ này vì tháng của hóa đơn đã khóa sổ',
+  late_sale: 'Hóa đơn lập sau kỳ của ngày bán (hóa đơn lập muộn): kê khai ở kỳ của ngày bán',
   check_payment: 'Đạt ngưỡng phải thanh toán không dùng tiền mặt mà chưa rõ đã thanh toán qua ngân hàng: kiểm tra chứng từ trước khi khấu trừ',
 };
 

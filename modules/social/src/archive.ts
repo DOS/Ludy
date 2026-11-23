@@ -32,9 +32,9 @@
 // The bulk commands take up to 100 posts, lock them in id order (as the other bulk edits do) and run the single
 // command on each as a nested command, with its checks and its audit row; a post left out is named with the reason.
 import { sql } from 'kysely';
-import { zSocialBulkArchive, zSocialPostArchive, type SocialBulkSkipReason } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { zSocialBulkArchive, zSocialPostArchive, type SocialBulkSkipReason } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { REMOVE_READY, isProvider, removeAtFit, removeAtOf } from './domain/channels.ts';
 import { IN_FLIGHT } from './domain/state.ts';
 import { channelScope, postsInScope, refusePostWholly } from './channel-access.ts';
@@ -65,7 +65,7 @@ async function lockOwn(ctx: CommandContext, postId: string, userId: string) {
   const post = await lockPost(ctx.trx, ctx.orgId, postId);
   await refusePostWholly(ctx, postId);
   if (ctx.role !== 'owner' && ctx.role !== 'admin') {
-    const row = await ctx.trx.selectFrom('crove_social.post').select('author_user_id').where('org_id', '=', ctx.orgId).where('id', '=', postId).executeTakeFirstOrThrow();
+    const row = await ctx.trx.selectFrom('ludy_social.post').select('author_user_id').where('org_id', '=', ctx.orgId).where('id', '=', postId).executeTakeFirstOrThrow();
     if (row.author_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Thành viên chỉ lưu trữ hoặc khôi phục được bài mình viết; hãy nhờ chủ sở hữu hoặc quản trị viên');
   }
   return post;
@@ -76,9 +76,9 @@ async function lockOwn(ctx: CommandContext, postId: string, userId: string) {
 // would wait in a cycle with a bulk command that took the source first. A post's repost_of and recurrence_source_id never
 // change once it is written, so reading them unlocked is safe.
 async function lockWithSources(ctx: CommandContext, ids: string[]): Promise<Set<string>> {
-  const rows = await ctx.trx.selectFrom('crove_social.post').select(['repost_of', 'recurrence_source_id']).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
+  const rows = await ctx.trx.selectFrom('ludy_social.post').select(['repost_of', 'recurrence_source_id']).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
   const all = [...new Set([...ids, ...rows.flatMap((r) => [r.repost_of, r.recurrence_source_id]).filter((id): id is string => id !== null)])];
-  const locked = await ctx.trx.selectFrom('crove_social.post').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', all).orderBy('id').forUpdate().execute();
+  const locked = await ctx.trx.selectFrom('ludy_social.post').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', all).orderBy('id').forUpdate().execute();
   return new Set(locked.map((r) => r.id));
 }
 
@@ -88,7 +88,7 @@ async function removing(ctx: CommandContext, variants: readonly VariantRow[]): P
   const published = variants.filter((v) => v.status === 'published');
   if (published.length === 0) return [];
   const asked = await ctx.trx
-    .selectFrom('crove_social.post_variant')
+    .selectFrom('ludy_social.post_variant')
     .select(['id', 'remove_requested_at'])
     .where('org_id', '=', ctx.orgId)
     .where(
@@ -115,7 +115,7 @@ async function editing(ctx: CommandContext, variants: readonly VariantRow[]): Pr
   const published = variants.filter((v) => v.status === 'published');
   if (published.length === 0) return [];
   const rows = await ctx.trx
-    .selectFrom('crove_social.post_variant')
+    .selectFrom('ludy_social.post_variant')
     .select(['id', 'edit_state', 'edit_requested_at', 'edit_error_code'])
     .where('org_id', '=', ctx.orgId)
     .where(
@@ -138,15 +138,15 @@ async function editing(ctx: CommandContext, variants: readonly VariantRow[]): Pr
 async function openRepeatCopy(ctx: CommandContext, postId: string): Promise<boolean> {
   const { rows } = await sql<{ open: boolean }>`
     SELECT EXISTS (
-      SELECT 1 FROM crove_social.post c
-      JOIN crove_social.post s ON s.org_id = c.org_id AND s.id = c.repost_of
+      SELECT 1 FROM ludy_social.post c
+      JOIN ludy_social.post s ON s.org_id = c.org_id AND s.id = c.repost_of
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ${postId}::uuid AND s.evergreen_days IS NOT NULL
         AND c.status NOT IN ('published', 'partially_published', 'failed', 'cancelled')
     ) OR EXISTS (
-      SELECT 1 FROM crove_social.post c
-      JOIN crove_social.post s ON s.org_id = c.org_id AND s.id = c.recurrence_source_id
+      SELECT 1 FROM ludy_social.post c
+      JOIN ludy_social.post s ON s.org_id = c.org_id AND s.id = c.recurrence_source_id
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ${postId}::uuid AND s.recurrence IS NOT NULL
-        AND EXISTS (SELECT 1 FROM crove_social.post_variant v WHERE v.org_id = c.org_id AND v.post_id = c.id AND v.status NOT IN ('published', 'failed', 'cancelled', 'removed'))
+        AND EXISTS (SELECT 1 FROM ludy_social.post_variant v WHERE v.org_id = c.org_id AND v.post_id = c.id AND v.status NOT IN ('published', 'failed', 'cancelled', 'removed'))
     ) AS open`.execute(ctx.trx);
   return rows[0]?.open === true;
 }
@@ -175,9 +175,9 @@ export const postArchive = defineCommand({
     if (await openRepeatCopy(ctx, post.id)) throw new DomainError('POST_ARCHIVE_REPEAT_COPY', 409, 'Bài này là một lần đăng lại hoặc một lần lặp đang chờ; lưu trữ sẽ làm bài gốc dừng lặp, hãy hủy bài thay vì lưu trữ');
     const takedown = await removing(ctx, variants);
     if (takedown.length > 0) throw new DomainError('POST_ARCHIVE_REMOVING', 409, 'Bài có kênh đang chờ gỡ khỏi nền tảng; hãy đợi gỡ xong rồi lưu trữ', { variantIds: takedown });
-    const before = await ctx.trx.selectFrom('crove_social.post').select(['evergreen_days', 'recurrence']).where('org_id', '=', ctx.orgId).where('id', '=', post.id).executeTakeFirstOrThrow();
+    const before = await ctx.trx.selectFrom('ludy_social.post').select(['evergreen_days', 'recurrence']).where('org_id', '=', ctx.orgId).where('id', '=', post.id).executeTakeFirstOrThrow();
     await ctx.trx
-      .updateTable('crove_social.post')
+      .updateTable('ludy_social.post')
       .set({ archived_at: ctx.now, archived_by: userId, evergreen_days: null, recurrence: null, recurrence_next_at: null })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', post.id)
@@ -185,10 +185,10 @@ export const postArchive = defineCommand({
     // The open review links of the post, and of every plan that includes it (#902): a plan link is the client's view of
     // its posts together, so it goes with any of them.
     const { rows: revoked } = await sql<{ id: string }>`
-      UPDATE crove_social.review_link l SET revoked_at = ${ctx.now}, revoked_by = ${userId}::uuid
+      UPDATE ludy_social.review_link l SET revoked_at = ${ctx.now}, revoked_by = ${userId}::uuid
       WHERE l.org_id = ${ctx.orgId}::uuid AND l.revoked_at IS NULL AND l.expires_at > ${ctx.now}
         AND (l.post_id = ${post.id}::uuid
-          OR EXISTS (SELECT 1 FROM crove_social.review_link_post lp WHERE lp.org_id = l.org_id AND lp.link_id = l.id AND lp.post_id = ${post.id}::uuid))
+          OR EXISTS (SELECT 1 FROM ludy_social.review_link_post lp WHERE lp.org_id = l.org_id AND lp.link_id = l.id AND lp.post_id = ${post.id}::uuid))
       RETURNING l.id`.execute(ctx.trx);
     // What it turned off, as it was before, and the links it revoked.
     ctx.audit({ post_id: post.id, evergreen_days: before.evergreen_days, recurrence_stopped: before.recurrence !== null, review_links: revoked.map((r) => r.id).sort() });
@@ -208,13 +208,13 @@ export const postRestore = defineCommand({
     const post = await lockOwn(ctx, input.postId, userId);
     if (post.archived_at === null) return { postId: post.id, archived: false, changed: false };
     // Nothing else changes: not its status, its channels, its labels, nor the time of its last change.
-    await ctx.trx.updateTable('crove_social.post').set({ archived_at: null, archived_by: null }).where('org_id', '=', ctx.orgId).where('id', '=', post.id).execute();
+    await ctx.trx.updateTable('ludy_social.post').set({ archived_at: null, archived_by: null }).where('org_id', '=', ctx.orgId).where('id', '=', post.id).execute();
     // Its channels in review are reminded again: the sweep marked them while it was archived. Only those marks go; a
     // reminder sent before the archive stays sent (the sweep keeps an earlier mark), so archiving and restoring never
     // repeats one.
     const since = post.archived_at;
     const reminded = await ctx.trx
-      .updateTable('crove_social.post_variant')
+      .updateTable('ludy_social.post_variant')
       .set({
         reminded_waiting_at: sql<Date | null>`CASE WHEN reminded_waiting_at >= ${since} THEN NULL ELSE reminded_waiting_at END`,
         reminded_due_at: sql<Date | null>`CASE WHEN reminded_due_at >= ${since} THEN NULL ELSE reminded_due_at END`,

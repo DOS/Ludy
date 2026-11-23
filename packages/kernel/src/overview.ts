@@ -17,10 +17,11 @@
 // read (an error, the statement timeout) is one error row, not a failed screen (#495).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { nextVatDeadline, vietnamToday, type TaxDueView, type VatDeadline, type VatFilingPeriod } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery, type Runtime, type UserActor } from '@crove/kernel-runtime';
+import { nextVatDeadline, vietnamToday, type TaxDueView, type VatDeadline, type VatFilingPeriod } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { fileStatuses } from './file-status.ts';
+import { offAppsOf, proposalOfApp } from './org-apps.ts';
 import { sessionOrgs } from './commands.ts';
 import { taxDuesOf } from './tax-calendar.ts';
 import type { OrgSummary } from './identity.ts';
@@ -74,16 +75,19 @@ export function orgOverviewQuery(options: { now?: () => Date; contributions?: re
     input: z.object({}),
     access: ALL,
     handler: async (ctx): Promise<OrgOverview> => {
-      const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select('vat_filing_period').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
-      const pending = await ctx.trx
-        .selectFrom('crove_kernel.proposal')
+      const tenant = await ctx.trx.selectFrom('ludy_kernel.tenant').select('vat_filing_period').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+      // Not the proposals of an app the org turned off: the Inbox does not list them, and this count links to it (ADR-0053, slice e).
+      const off = await offAppsOf(ctx.trx, ctx.orgId);
+      let pendingQuery = ctx.trx
+        .selectFrom('ludy_kernel.proposal')
         .select(sql<string>`count(*)`.as('n'))
         .where('org_id', '=', ctx.orgId)
-        .where('status', '=', 'pending')
-        .executeTakeFirstOrThrow();
+        .where('status', '=', 'pending');
+      if (off.length > 0) pendingQuery = pendingQuery.where(sql<boolean>`NOT (${proposalOfApp(off)})`);
+      const pending = await pendingQuery.executeTakeFirstOrThrow();
       const files = await fileStatuses(ctx, { recent: RECENT_FILES });
       const last = await ctx.trx
-        .selectFrom('crove_kernel.activity')
+        .selectFrom('ludy_kernel.activity')
         .select(sql<Date | null>`max(occurred_at)`.as('at'))
         .where('org_id', '=', ctx.orgId)
         .executeTakeFirstOrThrow();

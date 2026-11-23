@@ -8,7 +8,7 @@
 //
 // The layout is described, not drawn: a document is sheets of typed columns and rows (text, money, count), so the xlsx file and the print view are two renderings of the same data and
 // cannot disagree. Text is always text: a renderer must write every `text` cell as a string cell, never a formula (see the kernel's export route).
-import { money, type DecimalValue as Decimal } from '@crove/l10n-vn';
+import { money, parseTaxCode, type DecimalValue as Decimal } from '@ludy/l10n-vn';
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
 // Names, layout versions and the draft banner
@@ -23,7 +23,7 @@ export type DeclarationKind = (typeof DECLARATION_KINDS)[number];
 
 /** The layout version of each document: bump the suffix when a column is added, moved or renamed, so a file says which layout it has. */
 export const DECLARATION_LAYOUTS: Readonly<Record<DeclarationKind, { form: string; version: string }>> = {
-  d02lt: { form: 'D02-LT (Quyết định 366/QĐ-BHXH)', version: 'ludy-hr-d02lt/1' },
+  d02lt: { form: 'D02-LT (Quyết định 366/QĐ-BHXH)', version: 'ludy-hr-d02lt/2' },
   kk: { form: '05/KK-TNCN và bảng kê (Thông tư 89/2026/TT-BTC)', version: 'ludy-hr-05kk/1' },
   qtt: { form: '05/QTT-TNCN và bảng kê (Thông tư 89/2026/TT-BTC)', version: 'ludy-hr-05qtt/1' },
   certificate: { form: '03/TNCN chứng từ khấu trừ thuế (Thông tư 91/2026/TT-BTC)', version: 'ludy-hr-03tncn/1' },
@@ -83,7 +83,18 @@ export interface DeclarationDocument {
 
 export const INSURANCE_FUND_KEYS = ['retirement_death', 'sickness_maternity', 'work_accident', 'health', 'unemployment'] as const;
 export type InsuranceFundKey = (typeof INSURANCE_FUND_KEYS)[number];
-export type WithholdingMode = 'progressive' | 'flat' | 'commitment' | 'below_threshold';
+export type WithholdingMode = 'progressive' | 'flat' | 'commitment' | 'below_threshold' | 'non_resident_flat';
+export type DeclarationContractType = 'indefinite' | 'fixed_term' | 'under_one_month' | 'none';
+export interface DeclarationContractTerm {
+  effectiveFrom: string;
+  contractType: DeclarationContractType;
+}
+export const DECLARATION_CONTRACT_LABELS: Readonly<Record<DeclarationContractType, string>> = {
+  indefinite: 'Không xác định thời hạn',
+  fixed_term: 'Xác định thời hạn',
+  under_one_month: 'Dưới 1 tháng',
+  none: 'Không ký HĐLĐ',
+};
 
 /** The employer the declarations are of: a legal entity's name, tax code and address. */
 export interface DeclarationEmployer {
@@ -100,6 +111,10 @@ export interface DeclarationPerson {
   taxCode: string | null;
   insuranceNumber: string | null;
   identityNumber: string | null;
+  position?: string | null;
+  workplace?: string | null;
+  /** Employment contract history in ascending `effectiveFrom` order. */
+  contracts?: readonly DeclarationContractTerm[];
   /** The first day of the first employment terms. */
   startedOn: string;
   /** The last day of work, or null while employed. */
@@ -110,7 +125,7 @@ export interface DeclarationPerson {
 
 /** The part of a line's stored breakdown the declarations read. */
 export interface DeclarationBreakdown {
-  insurance: { suspended: 'not_insured' | 'unpaid_leave' | null; funds: { fund: InsuranceFundKey; wage: string; employee: string; employer: string }[] };
+  insurance: { suspended: 'not_insured' | 'unpaid_leave' | 'sickness_leave' | 'maternity_leave' | null; funds: { fund: InsuranceFundKey; wage: string; employee: string; employer: string }[] };
   tax: {
     mode: WithholdingMode;
     exemptMealCash: string;
@@ -152,15 +167,67 @@ function assertKnown(persons: readonly DeclarationPerson[], lines: readonly Decl
 }
 
 /**
- * How a line was withheld. A pay line says so in its breakdown; an adjustment line may carry none and follows the mode of the person's pay lines (the first one in the list),
- * or the monthly brackets when the person has none in the lines given.
+ * Validates and normalizes an identity number before falling back to it in the tax-code column (#2748):
+ * accepts 10-digit, 10-3 (13-digit) branch, or 12-digit CCCD shapes via `parseTaxCode`;
+ * returns `null` for passports, 9-digit CMNDs, and malformed values so the column stays blank for manual review.
  */
-function modeOfLine(line: DeclarationLine, lines: readonly DeclarationLine[]): WithholdingMode {
-  if (line.breakdown) return line.breakdown.tax.mode;
-  const mine = lines.filter((l) => l.employeeId === line.employeeId && l.kind === 'pay' && l.breakdown !== null);
-  // The month a correction corrects, when the line says it; else the person's first pay line.
-  const corrected = line.adjustsMonth ? mine.find((l) => l.month === line.adjustsMonth) : undefined;
-  return (corrected ?? mine[0])?.breakdown?.tax.mode ?? 'progressive';
+export function fallbackTaxCode(identityNumber: string | null | undefined): string | null {
+  return parseTaxCode(identityNumber)?.normalized ?? null;
+}
+
+interface LineIndex {
+  byEmployee: Map<string, DeclarationLine[]>;
+  modeOf: (line: DeclarationLine) => WithholdingMode;
+}
+
+/**
+ * Indexes lines by `employeeId` once in O(n) and resolves each line's withholding mode in O(1):
+ * a pay line carries its mode in its breakdown; an adjustment without a breakdown takes the corrected month's pay mode,
+ * else the person's first pay line mode, else `'progressive'`.
+ */
+function indexLines(lines: readonly DeclarationLine[]): LineIndex {
+  const byEmployee = new Map<string, DeclarationLine[]>();
+  const firstPayMode = new Map<string, WithholdingMode>();
+  const payModeByMonth = new Map<string, Map<string, WithholdingMode>>();
+  for (const line of lines) {
+    let list = byEmployee.get(line.employeeId);
+    if (!list) {
+      list = [];
+      byEmployee.set(line.employeeId, list);
+    }
+    list.push(line);
+    if (line.kind === 'pay' && line.breakdown !== null) {
+      const mode = line.breakdown.tax.mode;
+      if (!firstPayMode.has(line.employeeId)) firstPayMode.set(line.employeeId, mode);
+      let monthModes = payModeByMonth.get(line.employeeId);
+      if (!monthModes) {
+        monthModes = new Map<string, WithholdingMode>();
+        payModeByMonth.set(line.employeeId, monthModes);
+      }
+      if (!monthModes.has(line.month)) monthModes.set(line.month, mode);
+    }
+  }
+  const modeOf = (line: DeclarationLine): WithholdingMode => {
+    if (line.breakdown) return line.breakdown.tax.mode;
+    const corrected = line.adjustsMonth ? payModeByMonth.get(line.employeeId)?.get(line.adjustsMonth) : undefined;
+    return corrected ?? firstPayMode.get(line.employeeId) ?? 'progressive';
+  };
+  return { byEmployee, modeOf };
+}
+
+function firstPayByEmployee(lines: readonly DeclarationLine[] | null): Map<string, DeclarationLine> {
+  const map = new Map<string, DeclarationLine>();
+  if (!lines) return map;
+  for (const line of lines) {
+    if (line.kind === 'pay' && !map.has(line.employeeId)) map.set(line.employeeId, line);
+  }
+  return map;
+}
+
+function missingYearMonths(year: number, approvedMonths: readonly string[]): string[] {
+  const prefix = `${year}-`;
+  const done = new Set(approvedMonths.filter((m) => m.startsWith(prefix)));
+  return Array.from({ length: 12 }, (_, i) => `${prefix}${String(i + 1).padStart(2, '0')}`).filter((m) => !done.has(m));
 }
 
 /** Corrections that carry no breakdown add their tax and taxable income but not the assessable income; the document says so rather than report a figure that looks complete. */
@@ -214,6 +281,8 @@ export interface D02LtInput {
   lines: readonly DeclarationLine[];
   /** The pay lines of the previous month's approved run; null when there is none, so a change of wage cannot be told and none is listed. */
   previousLines: readonly DeclarationLine[] | null;
+  /** The approved months available; when provided and `month` is absent, the document notes that this month has no approved payroll run yet. */
+  approvedMonths?: readonly string[];
 }
 
 const insuredWage = (line: DeclarationLine | undefined): Decimal | null => {
@@ -222,6 +291,18 @@ const insuredWage = (line: DeclarationLine | undefined): Decimal | null => {
   return wage.isZero() ? null : wage;
 };
 const sameWages = (a: DeclarationLine, b: DeclarationLine): boolean => INSURANCE_FUND_KEYS.every((fund) => fundWage(a.breakdown, fund).eq(fundWage(b.breakdown, fund)));
+
+/** Resolves the localized contract label in force as of `effective` (`effectiveFrom <= effective`, picking the latest row in ascending `contracts` order). */
+function contractLabelAt(contracts: readonly DeclarationContractTerm[] | undefined, effective: string): string {
+  if (!contracts || contracts.length === 0) return '';
+  let matched: DeclarationContractTerm | null = null;
+  for (const entry of contracts) {
+    if (entry.effectiveFrom <= effective && (matched === null || entry.effectiveFrom >= matched.effectiveFrom)) {
+      matched = entry;
+    }
+  }
+  return matched ? (DECLARATION_CONTRACT_LABELS[matched.contractType] ?? '') : '';
+}
 
 /**
  * Who is listed, by the rules of the plan (row 9): a person whose first terms start in the month and who is insured is an increase, effective on the start day; a person whose last
@@ -235,15 +316,19 @@ export function buildD02Lt(input: D02LtInput): DeclarationDocument {
 /** The D02-LT and the people it lists (the ones with a change that month), so a caller can open the identifiers of those people only. */
 export function buildD02LtListing(input: D02LtInput): { document: DeclarationDocument; listed: ReadonlySet<string> } {
   const listed = new Set<string>();
-  const lineOf = (lines: readonly DeclarationLine[] | null, id: string) => lines?.find((l) => l.employeeId === id && l.kind === 'pay');
-  assertKnown(input.persons, [...input.lines, ...(input.previousLines ?? [])]);
+  const currentByEmployee = firstPayByEmployee(input.lines);
+  const previousByEmployee = firstPayByEmployee(input.previousLines);
+  assertKnown(input.persons, input.lines);
+  if (input.previousLines) assertKnown(input.persons, input.previousLines);
   const rows: (Record<string, string> & { _order: string; _name: string; _id: string })[] = [];
   let skipped = 0;
-  let suspended = 0;
+  let suspendedUnpaid = 0;
+  let suspendedSickness = 0;
+  let suspendedMaternity = 0;
   let unexplained = 0;
   for (const person of input.persons) {
-    const line = lineOf(input.lines, person.employeeId);
-    const previous = lineOf(input.previousLines, person.employeeId);
+    const line = currentByEmployee.get(person.employeeId);
+    const previous = previousByEmployee.get(person.employeeId);
     if (!line && !previous) continue;
     const wage = insuredWage(line);
     const startsHere = monthOf(person.startedOn) === input.month;
@@ -261,8 +346,11 @@ export function buildD02LtListing(input: D02LtInput): { document: DeclarationDoc
     }
     if (movements.length === 0) {
       if (wage === null && insuredWage(previous) !== null) {
-        // Only a month the calculator marked as unpaid leave is called unpaid leave; any other loss of an insured wage is flagged without a cause.
-        if (line?.breakdown?.insurance.suspended === 'unpaid_leave') suspended += 1;
+        // Only a month the calculator marked as unpaid, sickness BHXH, or maternity BHXH leave is treated as a known suspension; any other loss of an insured wage is flagged without a cause.
+        const reason = line?.breakdown?.insurance.suspended;
+        if (reason === 'unpaid_leave') suspendedUnpaid += 1;
+        else if (reason === 'sickness_leave') suspendedSickness += 1;
+        else if (reason === 'maternity_leave') suspendedMaternity += 1;
         else unexplained += 1;
       } else if (wage === null) skipped += 1;
       continue;
@@ -279,6 +367,9 @@ export function buildD02LtListing(input: D02LtInput): { document: DeclarationDoc
         birthDate: text(person.birthDate),
         identityNumber: text(person.identityNumber),
         insuranceNumber: text(person.insuranceNumber),
+        position: text(person.position),
+        workplace: text(person.workplace),
+        contractType: contractLabelAt(person.contracts, effective),
         effectiveOn: effective,
         wageRetirement: fixed(fundWage(source.breakdown, 'retirement_death')),
         wageSickness: fixed(fundWage(source.breakdown, 'sickness_maternity')),
@@ -301,6 +392,9 @@ export function buildD02LtListing(input: D02LtInput): { document: DeclarationDoc
       { key: 'birthDate', header: 'Ngày sinh', kind: 'text' },
       { key: 'identityNumber', header: 'Số định danh cá nhân', kind: 'text' },
       { key: 'insuranceNumber', header: 'Số sổ BHXH', kind: 'text' },
+      { key: 'position', header: 'Chức vụ, chức danh nghề', kind: 'text' },
+      { key: 'workplace', header: 'Phòng ban / nơi làm việc', kind: 'text' },
+      { key: 'contractType', header: 'Loại hợp đồng', kind: 'text' },
       { key: 'effectiveOn', header: 'Có hiệu lực từ', kind: 'text' },
       ...FUND_COLUMNS,
       { key: 'note', header: 'Ghi chú', kind: 'text' },
@@ -308,12 +402,22 @@ export function buildD02LtListing(input: D02LtInput): { document: DeclarationDoc
     rows: numbered,
   };
   const notes = [
-    'Chức danh, nơi làm việc, loại hợp đồng và nơi đăng ký khám chữa bệnh ban đầu chưa được lưu trong Ludy: nhập tay khi khai.',
+    'Nơi đăng ký khám chữa bệnh ban đầu chưa được lưu trong Ludy: nhập tay khi khai.',
     'Mức đóng là tiền lương làm căn cứ đóng từng quỹ của tháng, đã áp mức sàn và mức trần theo quy định.',
   ];
+  if (input.approvedMonths !== undefined && !input.approvedMonths.includes(input.month)) {
+    notes.unshift(`Chưa có bảng lương đã duyệt của tháng ${input.month}: số liệu của tháng chưa có.`);
+  }
   if (input.previousLines === null) notes.push('Chưa có bảng lương đã duyệt của tháng trước nên không liệt kê được những người đổi mức đóng.');
   if (skipped > 0) notes.push(`${skipped} người không đóng bảo hiểm trong tháng nên không có trong danh sách.`);
-  if (suspended > 0) notes.push(`${suspended} người tạm dừng đóng bảo hiểm trong tháng (nghỉ không lương từ 14 ngày): khai theo quy định, Ludy chưa lập dòng cho trường hợp này.`);
+  const suspended = suspendedUnpaid + suspendedSickness + suspendedMaternity;
+  if (suspended > 0) {
+    const reasons: string[] = [];
+    if (suspendedUnpaid > 0) reasons.push('nghỉ không lương từ 14 ngày làm việc');
+    if (suspendedSickness > 0) reasons.push('tổng ngày nghỉ không lương/hưởng BHXH từ 14 ngày làm việc (gồm nghỉ ốm đau hưởng BHXH)');
+    if (suspendedMaternity > 0) reasons.push('tổng ngày nghỉ không lương/hưởng BHXH từ 14 ngày làm việc (gồm nghỉ thai sản hưởng BHXH)');
+    notes.push(`${suspended} người tạm dừng đóng bảo hiểm trong tháng (${reasons.join(', ')}): khai theo quy định, Ludy chưa lập dòng cho trường hợp này.`);
+  }
   if (unexplained > 0) notes.push(`${unexplained} người có mức đóng tháng trước nhưng tháng này không có mức đóng (không rõ lý do): kiểm tra xem có phải báo giảm hay điều chỉnh không.`);
   return { document: documentOf('d02lt', `${DECLARATION_NOTICE} D02-LT tháng ${input.month}`, header(input.employer, [{ label: 'Tháng', value: input.month }]), [sheet], notes), listed };
 }
@@ -413,15 +517,18 @@ export function buildQuarterly(input: QuarterlyInput): DeclarationDocument {
 /** The quarter's document and the people its schedules print (not those counted in the headcount only), so a caller opens the identifiers of those people only. */
 export function buildQuarterlyListing(input: QuarterlyInput): { document: DeclarationDocument; printed: ReadonlySet<string> } {
   const months = new Set(quarterMonths(input.quarter));
-  assertKnown(input.persons, input.lines.filter((l) => months.has(l.month)));
+  const quarterLines = input.lines.filter((l) => months.has(l.month));
+  assertKnown(input.persons, quarterLines);
+  const { modeOf } = indexLines(input.lines);
   const people = new Map(input.persons.map((p) => [p.employeeId, p]));
   const progressive = new Map<string, PersonTotals>();
   const flat = new Map<string, PersonTotals>();
+  const nonResident = new Map<string, PersonTotals>();
+  const nonResidentIds = new Set<string>();
   const headcount = new Set<string>();
   let adjustmentTax = zero();
   const grand = { gross: zero(), exempt: zero(), insurance: zero(), taxable: zero(), pit: zero(), withheldBase: zero() };
-  for (const line of input.lines) {
-    if (!months.has(line.month)) continue;
+  for (const line of quarterLines) {
     const person = people.get(line.employeeId) as DeclarationPerson;
     headcount.add(line.employeeId);
     grand.gross = grand.gross.plus(line.gross);
@@ -431,8 +538,16 @@ export function buildQuarterlyListing(input: QuarterlyInput): { document: Declar
     grand.pit = grand.pit.plus(line.pit);
     if (!money(line.pit).isZero()) grand.withheldBase = grand.withheldBase.plus(line.taxableIncome);
     if (line.kind === 'adjustment') adjustmentTax = adjustmentTax.plus(line.pit);
-    const mode = modeOfLine(line, input.lines);
-    const target = mode === 'flat' ? flat : mode === 'progressive' ? progressive : null;
+    const mode = modeOf(line);
+    if (mode === 'non_resident_flat') nonResidentIds.add(line.employeeId);
+    const target =
+      mode === 'non_resident_flat'
+        ? nonResident
+        : mode === 'flat'
+          ? flat
+          : mode === 'progressive'
+            ? progressive
+            : null;
     if (target) {
       const t = target.get(line.employeeId) ?? newTotals(person);
       add(t, line);
@@ -440,9 +555,16 @@ export function buildQuarterlyListing(input: QuarterlyInput): { document: Declar
     }
   }
   const noteOf = (t: PersonTotals): string =>
-    [t.person.endedOn && months.has(monthOf(t.person.endedOn)) ? `Nghỉ việc ngày ${t.person.endedOn}` : '', t.person.taxCode ? '' : 'Thiếu mã số thuế'].filter(Boolean).join('; ');
+    [
+      t.person.endedOn && months.has(monthOf(t.person.endedOn)) ? `Nghỉ việc ngày ${t.person.endedOn}` : '',
+      nonResidentIds.has(t.person.employeeId) ? 'Không cư trú (20%)' : '',
+      t.person.taxCode ? '' : 'Thiếu mã số thuế',
+    ]
+      .filter(Boolean)
+      .join('; ');
   const progressiveList = sortTotals([...progressive.values()]);
   const flatList = sortTotals([...flat.values()]);
+  const nonResidentList = sortTotals([...nonResident.values()]);
   const summary: DeclarationSheet = {
     name: '05-KK-TNCN',
     title: `Chỉ tiêu 05/KK-TNCN quý ${input.quarter}`,
@@ -454,6 +576,7 @@ export function buildQuarterlyListing(input: QuarterlyInput): { document: Declar
       { item: 'Tổng số người lao động được chi trả thu nhập', value: String(headcount.size) },
       { item: 'Trong đó: khấu trừ theo biểu lũy tiến', value: String(progressiveList.length) },
       { item: 'Trong đó: khấu trừ 10%', value: String(flatList.length) },
+      { item: 'Trong đó: khấu trừ 20% (không cư trú)', value: String(nonResidentList.length) },
       { item: 'Tổng thu nhập chi trả', value: fixed(grand.gross) },
       { item: 'Tổng thu nhập được miễn', value: fixed(grand.exempt) },
       { item: 'Bảo hiểm bắt buộc đã trừ', value: fixed(grand.insurance) },
@@ -477,20 +600,25 @@ export function buildQuarterlyListing(input: QuarterlyInput): { document: Declar
     'Quý không có khoản khấu trừ nào thì không phải nộp tờ khai, trừ quý cuối năm.',
   ];
   if (missing.length > 0) notes.unshift(`Chưa có bảng lương đã duyệt của tháng ${missing.join(', ')}: số liệu của quý chưa đủ.`);
-  const qNote = assessableNote(input.lines.filter((l) => months.has(l.month)));
+  const qNote = assessableNote(quarterLines);
   if (qNote) notes.push(qNote);
+  if (nonResidentList.length > 0) notes.push(`Có ${nonResidentList.length} cá nhân không cư trú khấu trừ 20% được tách riêng tại bảng kê khấu trừ 20%.`);
+  const sheets: DeclarationSheet[] = [
+    summary,
+    schedule('Lũy tiến', 'Bảng kê cá nhân khấu trừ theo biểu lũy tiến', progressiveList),
+    schedule('Khấu trừ 10%', 'Bảng kê cá nhân khấu trừ 10%', flatList),
+  ];
+  if (nonResidentList.length > 0) {
+    sheets.push(schedule('Khấu trừ 20% (không cư trú)', 'Bảng kê cá nhân không cư trú khấu trừ 20%', nonResidentList));
+  }
   const document = documentOf(
     'kk',
     `${DECLARATION_NOTICE} 05/KK-TNCN quý ${input.quarter}`,
     header(input.employer, [{ label: 'Quý', value: input.quarter }, { label: 'Tháng chưa có bảng lương đã duyệt', value: missing.join(', ') || 'không có' }]),
-    [
-      summary,
-      schedule('Lũy tiến', 'Bảng kê cá nhân khấu trừ theo biểu lũy tiến', progressiveList),
-      schedule('Khấu trừ 10%', 'Bảng kê cá nhân khấu trừ 10%', flatList),
-    ],
+    sheets,
     notes,
   );
-  return { document, printed: new Set([...progressive.keys(), ...flat.keys()]) };
+  return { document, printed: new Set([...progressive.keys(), ...flat.keys(), ...nonResident.keys()]) };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -514,15 +642,26 @@ export interface AnnualInput {
   approvedMonths: readonly string[];
 }
 
-/** Why a person is not in the annual schedule, or null when they are: they authorized this year, were paid, were withheld by the monthly brackets, and still worked at year end. */
-export function annualExclusion(person: DeclarationPerson, year: number, lines: readonly DeclarationLine[]): AnnualExclusion | null {
+function annualExclusionFor(
+  person: DeclarationPerson,
+  year: number,
+  employeeLines: readonly DeclarationLine[],
+  modeOf: (line: DeclarationLine) => WithholdingMode,
+): AnnualExclusion | null {
+  const prefix = `${year}-`;
   // Only a pay line shows the person was paid: a correction alone (an adjustment line) is not a month of work.
-  const mine = lines.filter((l) => l.employeeId === person.employeeId && l.month.startsWith(`${year}-`) && l.kind === 'pay');
+  const mine = employeeLines.filter((l) => l.month.startsWith(prefix) && l.kind === 'pay');
   if (mine.length === 0) return 'not_paid';
   if (!person.finalizationAuthorizedYears.includes(year)) return 'not_authorized';
   if (person.endedOn !== null && person.endedOn < `${year}-12-31`) return 'left_before_year_end';
-  if (mine.some((l) => modeOfLine(l, lines) !== 'progressive')) return 'not_progressive';
+  if (mine.some((l) => modeOf(l) !== 'progressive')) return 'not_progressive';
   return null;
+}
+
+/** Why a person is not in the annual schedule, or null when they are: they authorized this year, were paid, were withheld by the monthly brackets, and still worked at year end. */
+export function annualExclusion(person: DeclarationPerson, year: number, lines: readonly DeclarationLine[]): AnnualExclusion | null {
+  const { byEmployee, modeOf } = indexLines(lines.filter((l) => l.employeeId === person.employeeId));
+  return annualExclusionFor(person, year, byEmployee.get(person.employeeId) ?? [], modeOf);
 }
 
 /**
@@ -537,20 +676,29 @@ export function buildAnnual(input: AnnualInput): DeclarationDocument {
 /** The annual document and the people it schedules (the list of everyone else shows a name and a reason only). */
 export function buildAnnualListing(input: AnnualInput): { document: DeclarationDocument; printed: ReadonlySet<string> } {
   const prefix = `${input.year}-`;
-  assertKnown(input.persons, input.lines.filter((l) => l.month.startsWith(prefix)));
+  const yearLines = input.lines.filter((l) => l.month.startsWith(prefix));
+  assertKnown(input.persons, yearLines);
+  const allIndex = indexLines(input.lines);
+  const yearByEmployee = indexLines(yearLines).byEmployee;
   const scheduled: PersonTotals[] = [];
   const payMonths = new Map<string, Set<string>>();
   const excluded: { person: DeclarationPerson; reason: AnnualExclusion }[] = [];
   for (const person of input.persons) {
-    const reason = annualExclusion(person, input.year, input.lines);
+    const allMine = allIndex.byEmployee.get(person.employeeId) ?? [];
+    const reason = annualExclusionFor(person, input.year, allMine, allIndex.modeOf);
     if (reason !== null) {
       if (reason !== 'not_paid') excluded.push({ person, reason });
       continue;
     }
     const t = newTotals(person);
-    for (const line of input.lines) if (line.employeeId === person.employeeId && line.month.startsWith(prefix)) add(t, line);
+    const mineYear = yearByEmployee.get(person.employeeId) ?? [];
+    const monthsSet = new Set<string>();
+    for (const line of mineYear) {
+      add(t, line);
+      if (line.kind === 'pay') monthsSet.add(line.month);
+    }
     scheduled.push(t);
-    payMonths.set(person.employeeId, new Set(input.lines.filter((l) => l.employeeId === person.employeeId && l.kind === 'pay' && l.month.startsWith(prefix)).map((l) => l.month)));
+    payMonths.set(person.employeeId, monthsSet);
   }
   const sorted = sortTotals(scheduled);
   const schedule: DeclarationSheet = {
@@ -586,14 +734,13 @@ export function buildAnnualListing(input: AnnualInput): { document: DeclarationD
     ],
     rows: [...excluded].sort((a, b) => byName({ name: a.person.name, employeeId: a.person.employeeId }, { name: b.person.name, employeeId: b.person.employeeId })).map((e, i) => ({ seq: String(i + 1), name: e.person.name, reason: EXCLUSION_LABEL[e.reason] })),
   };
-  const monthsDone = input.approvedMonths.filter((m) => m.startsWith(prefix)).sort();
-  const missing = Array.from({ length: 12 }, (_, i) => `${prefix}${String(i + 1).padStart(2, '0')}`).filter((m) => !monthsDone.includes(m));
+  const missing = missingYearMonths(input.year, input.approvedMonths);
   const notes = [
     'Chỉ gồm người lao động đã ủy quyền cho đơn vị quyết toán (mẫu 08/UQ-QTT-TNCN), chỉ ký hợp đồng với một nơi, còn làm việc đến cuối năm.',
     'Thuế phải nộp hoặc được hoàn theo quyết toán chưa tính ở đây: biểu thuế năm và hạn quyết toán năm tính thuế 2026 chưa được kế toán xác nhận (dòng 14).',
   ];
   if (missing.length > 0) notes.unshift(`Chưa có bảng lương đã duyệt của tháng ${missing.join(', ')}: số liệu của năm chưa đủ.`);
-  const aNote = assessableNote(input.lines.filter((l) => l.month.startsWith(prefix)));
+  const aNote = assessableNote(yearLines);
   if (aNote) notes.push(aNote);
   const document = documentOf('qtt', `${DECLARATION_NOTICE} 05/QTT-TNCN năm ${input.year}`, header(input.employer, [{ label: 'Năm tính thuế', value: String(input.year) }]), [summary, schedule, notExcluded], notes);
   return { document, printed: new Set(scheduled.map((t) => t.person.employeeId)) };
@@ -608,6 +755,8 @@ export interface CertificateInput {
   employer: DeclarationEmployer;
   persons: readonly DeclarationPerson[];
   lines: readonly DeclarationLine[];
+  /** The months of the year with an approved run; when provided, missing months are noted. */
+  approvedMonths?: readonly string[];
 }
 
 /**
@@ -647,33 +796,55 @@ export function buildCertificatesListing(input: CertificateInput): { document: D
   };
   const yearLines = input.lines.filter((l) => l.month.startsWith(prefix));
   assertKnown(input.persons, yearLines);
+  const { byEmployee, modeOf } = indexLines(yearLines);
   for (const person of [...input.persons].sort((a, b) => byName({ name: a.name, employeeId: a.employeeId }, { name: b.name, employeeId: b.employeeId }))) {
-    const mine = yearLines.filter((l) => l.employeeId === person.employeeId);
+    const mine = byEmployee.get(person.employeeId) ?? [];
+    if (mine.length === 0) continue;
+    const progressiveLines: DeclarationLine[] = [];
+    const flatByMonth = new Map<string, DeclarationLine[]>();
+    const nonResidentMonths = new Set<string>();
+    let totalPit = zero();
+    for (const line of mine) {
+      totalPit = totalPit.plus(line.pit);
+      const mode = modeOf(line);
+      if (mode === 'flat' || mode === 'non_resident_flat') {
+        if (mode === 'non_resident_flat') nonResidentMonths.add(line.month);
+        let group = flatByMonth.get(line.month);
+        if (!group) {
+          group = [];
+          flatByMonth.set(line.month, group);
+        }
+        group.push(line);
+      } else {
+        progressiveLines.push(line);
+      }
+    }
+    const flatGroups: { month: string; group: DeclarationLine[]; net: Decimal }[] = [];
+    for (const month of [...flatByMonth.keys()].sort()) {
+      const group = flatByMonth.get(month) as DeclarationLine[];
+      const net = group.reduce((acc, l) => acc.plus(l.pit), zero());
+      // A correction carried in a later month refunds tax withheld earlier; collect it before checking totalPit <= 0 so a fully refunded employee still has the refund month named.
+      if (net.lt(0)) refunds.push(`${person.name}: tháng ${month} có điều chỉnh hoàn thuế ${fixed(net.abs())}`);
+      flatGroups.push({ month, group, net });
+    }
     // A certificate is for tax actually withheld in the year, net of corrections: a refunded or never withheld person has nothing to certify.
-    if (mine.length === 0 || mine.reduce((acc, l) => acc.plus(l.pit), zero()).lte(0)) continue;
+    if (totalPit.lte(0)) continue;
     // Whoever the finalization schedule takes (the same rule as the annual document) is not given a certificate.
-    if (annualExclusion(person, input.year, yearLines) === null) {
+    if (annualExclusionFor(person, input.year, mine, modeOf) === null) {
       authorized.push(person);
       continue;
     }
-    const progressiveLines = mine.filter((l) => modeOfLine(l, yearLines) !== 'flat');
-    const flatLines = mine.filter((l) => modeOfLine(l, yearLines) === 'flat');
     if (progressiveLines.length > 0 && progressiveLines.reduce((acc, l) => acc.plus(l.pit), zero()).gt(0)) {
       const months = progressiveLines.map((l) => l.month).sort();
       certified.add(person.employeeId);
       rows.push(mk(person, `${months[0]} đến ${months.at(-1)}`, progressiveLines, person.taxCode ? '' : 'Thiếu mã số thuế'));
     }
-    const byMonth = new Map<string, DeclarationLine[]>();
-    for (const line of flatLines) byMonth.set(line.month, [...(byMonth.get(line.month) ?? []), line]);
-    for (const month of [...byMonth.keys()].sort()) {
-      const group = byMonth.get(month) as DeclarationLine[];
-      const net = group.reduce((acc, l) => acc.plus(l.pit), zero());
+    for (const { month, group, net } of flatGroups) {
       if (net.gt(0)) {
         certified.add(person.employeeId);
-        rows.push(mk(person, month, group, 'Khấu trừ 10% theo từng lần chi trả'));
+        const note = nonResidentMonths.has(month) ? 'Khấu trừ 20% (cá nhân không cư trú)' : 'Khấu trừ 10% theo từng lần chi trả';
+        rows.push(mk(person, month, group, note));
       }
-      // A correction carried in a later month refunds tax withheld earlier; the certificate already issued is not changed here, so the refund is named for the person to reconcile.
-      else if (net.lt(0)) refunds.push(`${person.name}: tháng ${month} có điều chỉnh hoàn thuế ${fixed(net.abs())}`);
     }
   }
   rows.forEach((row, index) => {
@@ -714,6 +885,8 @@ export function buildCertificatesListing(input: CertificateInput): { document: D
     'Chứng từ khấu trừ là chứng từ điện tử ký bằng chữ ký số của đơn vị (mẫu 03/TNCN): Ludy chỉ cung cấp số liệu, không giữ chữ ký số và không phát hành chứng từ.',
     'Địa chỉ của người nộp thuế nhập tay khi lập chứng từ.',
   ];
+  const missing = input.approvedMonths ? missingYearMonths(input.year, input.approvedMonths) : [];
+  if (missing.length > 0) notes.unshift(`Chưa có bảng lương đã duyệt của tháng ${missing.join(', ')}: số liệu của năm chưa đủ.`);
   const cNote = assessableNote(yearLines);
   if (cNote) notes.push(cNote);
   if (refunds.length > 0) notes.push(`Có điều chỉnh hoàn thuế cần đối chiếu với chứng từ đã cấp: ${refunds.join('; ')}.`);

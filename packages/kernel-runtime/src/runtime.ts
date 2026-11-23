@@ -4,8 +4,9 @@ import { PostgresQueryCompiler, sql, type KyselyPlugin, type RawBuilder, type Tr
 import { createHmac, randomUUID } from 'node:crypto';
 import { v7 as uuidv7 } from 'uuid';
 import { SubjectKeyError, SubjectVault, parseSealed } from './subject-vault.ts';
+import { keyedHash } from './keyed-hash.ts';
 import type { z } from 'zod';
-import { contextTaint, singleCell, type CellResolver, type Database, type Db, type MemberRole } from '@crove/db';
+import { contextTaint, readEnvPair, singleCell, type CellResolver, type Database, type Db, type MemberRole } from '@ludy/db';
 import { DomainError, toDomainError } from './errors.ts';
 import { eventPayloadProblem, normalizeEventPayload } from './event-payload.ts';
 import { sha256Hex } from './storage.ts';
@@ -35,8 +36,8 @@ export type Aal = 'aal1' | 'aal2';
 // The scopes an extension token may hold, one per feature of the Ludy extension (ADR-0047 point 10, issue #2582). A
 // command or query is reachable with an extension token only when it declares one of the token's scopes
 // (CommandDef.extension, QueryDef.extension): every other command, query and org-less call refuses the token.
-// crove_kernel.extension_token's CHECK lists the same scopes; a new one is a migration and an entry here.
-export const EXTENSION_SCOPES = Object.freeze(['meetings'] as const);
+// ludy_kernel.extension_token's CHECK lists the same scopes; a new one is a migration and an entry here.
+export const EXTENSION_SCOPES = Object.freeze(['meetings', 'agenda', 'notes'] as const);
 export type ExtensionScope = (typeof EXTENSION_SCOPES)[number];
 
 // What an extension token proved at the HTTP edge: its id and the scopes it holds. It lives only on a user actor made
@@ -51,9 +52,19 @@ export interface ExtensionAccess {
   scope: ExtensionScope;
 }
 
-// The scopes an MCP grant may hold (ADR-0051 decision 2, issue #2975). Only a QUERY can declare one (QueryDef.mcp): no command type
-// carries `mcp`, so a grant reaches no write. crove_kernel.agent_grant's CHECK lists the same scopes; a new one is a migration and an entry here.
-export const MCP_SCOPES = Object.freeze(['ludy.read'] as const);
+// The scopes an MCP grant may hold (ADR-0051 decision 2, issue #2975). A QUERY declares a read scope (QueryDef.mcp). A COMMAND may declare a write scope
+// (CommandDef.mcp) only from the short list below, which the owner widened one scope at a time (#3227, 2026-11-14: `ludy.social.draft`, one command that creates a
+// draft post for a person to review); every other command is closed to an MCP grant. ludy_kernel.agent_grant's CHECK lists the same scopes; a new one is a migration
+// and an entry here.
+export const MCP_READ_SCOPES = Object.freeze(['ludy.read'] as const);
+export const MCP_WRITE_SCOPES = Object.freeze(['ludy.social.draft', 'ludy.engage.write', 'ludy.ads.draft'] as const);
+// The write scopes that have a sealed write context to enter (ADR-0051 decision 11, #3858 slice c). A scope is listed in MCP_WRITE_SCOPES before its commands exist, so a person can consent to it and the tool list can
+// be filtered by it; a command that declares a scope with no context here is refused at run time (rule `mcp_scope`), never run in another scope's context. A scope joins this list with the migration that seals its context
+// and the guard branch that says what that context may write (Engage E2, #3861, for `ludy.engage.write` and `ludy.ads.draft`).
+export const MCP_WRITE_CONTEXT_SCOPES: readonly string[] = Object.freeze(['ludy.social.draft', 'ludy.engage.write', 'ludy.ads.draft']);
+export const MCP_SCOPES = Object.freeze([...MCP_READ_SCOPES, ...MCP_WRITE_SCOPES] as const);
+export type McpReadScope = (typeof MCP_READ_SCOPES)[number];
+export type McpWriteScope = (typeof MCP_WRITE_SCOPES)[number];
 export type McpScope = (typeof MCP_SCOPES)[number];
 
 // What an MCP access token proved at the HTTP edge: the grant it belongs to, the client it was issued to (id and the name the client
@@ -65,15 +76,25 @@ export interface McpGrant {
   clientName: string;
   scopes: readonly string[];
   // 'member' for a grant one member made for themself (ADR-0051 decision 2, slice 3b): it enters the sealed member-bound context
-  // (crove_kernel.enter_mcp_member_context) instead of the consenting user's own, reads in a read-only transaction and is re-entered on every request.
+  // (ludy_kernel.enter_mcp_member_context) instead of the consenting user's own, reads in a read-only transaction and is re-entered on every request.
   // Absent or 'company': the consenting owner or admin's grant. The database holds the kind; the edge only copies it.
   kind?: 'company' | 'member';
 }
 
-// The declaration that opens a query to an MCP grant holding `scope` (and to no other scope).
+// The declaration that opens a query to an MCP grant holding a read `scope` (and to no other scope).
 export interface McpAccess {
-  scope: McpScope;
+  scope: McpReadScope;
 }
+
+// The declaration that opens a command to an MCP grant holding a write `scope` (and to no other scope): the grant enters its write context (a company grant only) for it.
+export interface McpWriteAccess {
+  scope: McpWriteScope;
+  // 'run' (the default): a call runs the command in the sealed write context of its scope (an R1 command, today the Social draft). 'proposal' (ADR-0051 decision 10, #3858 slice d): the command is an R2 or R3
+  // command that runs only through a proposal (access 'proposal'), and a call by an MCP grant never executes it: it creates a pending proposal (kernel.mcp.propose) that a person approves in Ludy.
+  mode?: 'run' | 'proposal';
+}
+// The kernel command that creates the proposal of an MCP call to a command declared with mode 'proposal': the runtime runs it in place of that command for an MCP actor, and for nobody else.
+export const MCP_PROPOSE_COMMAND = 'kernel.mcp.propose';
 
 export interface UserActor {
   type: 'user';
@@ -100,13 +121,13 @@ export interface UserActor {
 }
 
 // A position-holding agent acting in one of its runs (ADR-0029). It enters only in the worker, through
-// crove_kernel.enter_agent_context, which checks the run is live and derives everything else from the database.
+// ludy_kernel.enter_agent_context, which checks the run is live and derives everything else from the database.
 export interface AgentActor {
   type: 'agent';
   agentId: string;
   runId: string;
   // Set for the Vy of one member working in the background (ADR-0049): the run enters through
-  // crove_kernel.enter_member_vy_context, whose seal carries the member's rights and no position. The database refuses an
+  // ludy_kernel.enter_member_vy_context, whose seal carries the member's rights and no position. The database refuses an
   // org-chart agent here and a member's Vy in the org-chart entry, so a wrong flag opens nothing.
   memberVy?: true;
 }
@@ -213,6 +234,12 @@ export function memberVyRuntime(runtime: Runtime, orgId: string, actor: Pick<Age
   });
 }
 
+// A copy of a command definition that names no record: the refusal audit of an MCP call to a proposal command takes its record id from nothing the client sent.
+function withoutTarget(def: CommandDef<unknown, unknown>): CommandDef<unknown, unknown> {
+  const { target: _target, ...rest } = def;
+  return rest;
+}
+
 const RISK_RANK: Record<Risk, number> = { R0: 0, R1: 1, R2: 2, R3: 3 };
 
 // 'members' = owner/admin/member; 'system' = system actor only;
@@ -239,12 +266,12 @@ export interface CommandDef<I = unknown, O = unknown> {
   access: Access;
   // A permission a user may hold through an org-wide role assignment (plan §4.6, issue #1279): a member whose role is
   // not in `access` still passes the role check when they hold it. Only with a role list as access, and only for user
-  // actors; the runtime reads it in the command's own transaction (crove_kernel.ctx_has_permission), so a revoke
+  // actors; the runtime reads it in the command's own transaction (ludy_kernel.ctx_has_permission), so a revoke
   // applies from the next command, and a user without it is refused FORBIDDEN before any step-up. The handler still
   // decides per record (the approval policy for approvals).
   permission?: string;
   // 'legal_entity' (#1507): a user who holds the permission for some legal entities only (entity-scoped assignments,
-  // crove_kernel.ctx_permission_entities) passes the gate too, with those entities, and the handler must name the entity
+  // ludy_kernel.ctx_permission_entities) passes the gate too, with those entities, and the handler must name the entity
   // it acts on through ctx.permissionEntity: one outside them is refused, and a command that names none fails (fails
   // closed) after its handler returns. Such a holder is past the gate, so an R3 command asks them for the step-up first
   // and refuses another entity after it. Default 'org': an org-wide assignment only, exactly as before. Only beside a
@@ -254,14 +281,24 @@ export interface CommandDef<I = unknown, O = unknown> {
   // Opens the command to a Ludy extension token that holds this scope (issue #2582, ADR-0047 point 10). Absent: an
   // extension token never runs it. Only a command run by users with a role list, below R3.
   extension?: ExtensionAccess;
-  // An MCP grant never runs a command (ADR-0051 decision 2, #2975): the field exists only to be refused, by type and at register().
-  mcp?: never;
+  // Opens the command to an MCP grant that holds this write scope (ADR-0051 decision 2, #3227; absent: an MCP grant never runs it). register() accepts it only for a scope of
+  // MCP_WRITE_SCOPES on an R1 command that has no side effect beyond its transaction, runs for owners and admins by a role list, and is no extension, agent, member-mode,
+  // bootstrap, sensitive or permission command; the database lets the sealed write context write only what its guard names.
+  mcp?: McpWriteAccess;
   // Org-less commands (creating an org) start without an org. `bootstrap` calls a definer that creates the
   // org with the actor as a member, or returns the org an earlier request with the same idempotency key
   // created. executeOrgless() then enters that org as the actor, so membership is checked as on every other
   // command, and writes the handler's changes, the audit row and the idempotency key in one transaction.
   // `env` says how the runtime checks sessions, for definers that also read the upstream Auth records (invites).
   bootstrap?: (trx: Transaction<Database>, actor: UserActor, input: I, idempotencyKey: string | null, env: BootstrapEnv) => Promise<string>;
+  // The per-org app gate (ADR-0053): a command of an app the org switched off (or does not hold) is refused with MODULE_OFF. A command that
+  // keeps what the org owes (retention, shredding, erasure, the revocation of a leaver's links, the reseal of a sealed key) declares why it
+  // runs while its app is off; the default is refused. A one-line reason, listed by a test so a new one is a visible, reviewed addition.
+  runsWhenOff?: string;
+  // The command opens work the app's switch-off must wait for (a recording start, ADR-0053 section 4): the runtime reads the org's tenant
+  // row FOR SHARE in this command's transaction, held to commit, and kernel.org.set_app holds it FOR UPDATE while it runs the app's busy
+  // probe, so a switch and a start meet on the row and either order is safe. Shared holders do not block each other.
+  opensBusyWork?: true;
   // access 'proposal_revision' only, and required there: the proposal command whose pending proposals this reviser
   // revises. The runtime refuses the reviser for a proposal of any other command. One reviser per proposal command;
   // the edit finds it through reviserOf() on its context, so this is the only place the pairing is written.
@@ -280,7 +317,7 @@ export interface CommandDef<I = unknown, O = unknown> {
   // definer it calls or a trigger they fire, with the columns they set (database defaults and the columns triggers
   // derive aside). The rows the runtime writes for it (ctx.emit, ctx.activity, ctx.audit, ctx.numbering, its audit row)
   // are not listed, and a nested command declares its own. Each entry carries the classes of its table from the
-  // module's manifest (tableWrite() in @crove/kernel-contract builds it); register() refuses a column the classes do
+  // module's manifest (tableWrite() in @ludy/kernel-contract builds it); register() refuses a column the classes do
   // not have, an unknown class, a table listed twice or an empty column list, and, on a runtime given the manifests
   // (RuntimeOptions.manifests), a table no manifest has or classes that are not its manifest's (#1710). An empty list
   // says the command writes no table (only the runtime's rows for it). An agent's proposal of the command is
@@ -292,7 +329,7 @@ export interface CommandDef<I = unknown, O = unknown> {
   // nested write cannot escape P04. Events it emits are not writes: a command that handles them runs on its own, under
   // its own declaration, so such a proposal command emits, itself or through a nested command, only the events on
   // P04_CLEAN_EVENTS, whose handlers were reviewed to write no contact or payment column (#1710); no command declares
-  // the outbox table (crove_kernel.outbox_event), events are the runtime's. Nor does such a proposal command, or a
+  // the outbox table (ludy_kernel.outbox_event), events are the runtime's. Nor does such a proposal command, or a
   // command run under it, declare a job table (JOB_TABLES): a job it queued would run later under its own declaration
   // (#2107).
   writes?: readonly CommandWrite[];
@@ -306,6 +343,9 @@ export interface CommandDef<I = unknown, O = unknown> {
   // command's module. Absent: the command's name. A proposal an agent asks for always takes its kind from here,
   // never from what the agent's run prepared (#435).
   proposalKind?: string;
+  // One-time credential results (for example raw signing tokens whose hashes alone belong in storage) cannot be
+  // replayed from ludy_kernel.idempotency_key.response: callers must omit idempotencyKey.
+  noIdempotency?: true;
   handler: (ctx: CommandContext, input: I) => Promise<O>;
 }
 
@@ -314,7 +354,7 @@ export interface AgentApprovers {
   roles: readonly string[];
 }
 
-// One table a command writes (CommandDef.writes): the shape of TableWrite in @crove/kernel-contract.
+// One table a command writes (CommandDef.writes): the shape of TableWrite in @ludy/kernel-contract.
 export interface CommandWrite {
   // `<schema>.<table>`.
   readonly table: string;
@@ -324,7 +364,7 @@ export interface CommandWrite {
   readonly columns: readonly string[];
 }
 
-// The data classes of the manifests (DATA_CLASSES in @crove/kernel-contract, which this package does not import;
+// The data classes of the manifests (DATA_CLASSES in @ludy/kernel-contract, which this package does not import;
 // apps/kernel/test/invariant/command-writes.test.ts checks the two lists are the same).
 export const WRITE_DATA_CLASSES = Object.freeze(['internal', 'pii', 'contact', 'payment', 'national_id', 'national_id_if_individual', 'sensitive'] as const);
 // The classes whose write is policy P04 (plan §4.7: changing a payee, bank account or contact point).
@@ -343,12 +383,12 @@ const CLEAN_EVENTS: ReadonlySet<string> = new Set(P04_CLEAN_EVENTS);
 // The pg-boss tables a row in which starts work later (a job, a dependency between jobs, a schedule, a subscription, a
 // queue, a bulk request): a proposal command declared free of contact and payment writes, and the commands run under it,
 // do not declare them, since the job they start runs under its own declaration and the proposal's says nothing of what
-// it writes (#2107). The other crove_jobs tables start nothing: queue_stats and warning are statistics and a log, instance
+// it writes (#2107). The other ludy_jobs tables start nothing: queue_stats and warning are statistics and a log, instance
 // is the workers' heartbeat, and version holds the leases of the maintenance passes (no job content). The invariant suite
 // pins the list against the manifest, so a table a pg-boss upgrade adds is classified before it is used. Which tables
 // start nothing rests on reading the vendored pg-boss schema: re-check them on every `pnpm db:vendor:pgboss` bump, a new
 // pg-boss version or a new schema version of it, before the list or the manifest is changed to match.
-const JOB_TABLES: ReadonlySet<string> = new Set(['crove_jobs.job', 'crove_jobs.job_dependency', 'crove_jobs.schedule', 'crove_jobs.subscription', 'crove_jobs.queue', 'crove_jobs.bam']);
+const JOB_TABLES: ReadonlySet<string> = new Set(['ludy_jobs.job', 'ludy_jobs.job_dependency', 'ludy_jobs.schedule', 'ludy_jobs.subscription', 'ludy_jobs.queue', 'ludy_jobs.bam']);
 const jobTablesOf = (writes: readonly CommandWrite[] | undefined): string[] => (writes ?? []).filter((w) => JOB_TABLES.has(w.table)).map((w) => w.table);
 
 // What a handler may learn about a registered command (ADR-0029 section 6): enough to judge a proposal of it.
@@ -362,6 +402,8 @@ export interface CommandInfo {
   // Whether an agent's proposal of it is flagged P04: it declares a write of a `contact` or `payment` column, or it
   // declares no writes, so nothing says it writes none.
   contactOrPayment: boolean;
+  // The MCP declaration (CommandDef.mcp) of a command a grant may call, or absent.
+  mcp?: { scope: string; mode: 'run' | 'proposal' };
 }
 
 export interface BootstrapEnv {
@@ -399,6 +441,8 @@ export interface QueryDef<I = unknown, O = unknown> {
   // Facts of the read to keep in its audit row's detail, from its parsed input: names of what is read (a table), never a value or personal data. The
   // keys of the runtime's own detail (read, stage, the actor's) are kept as they are. Ignored without `sensitive`.
   auditDetail?: (input: I) => Record<string, string>; // keys and values are names (AUDIT_DETAIL_KEY, TARGET_TYPE), checked before the row is written
+  // Why this read runs while its app is switched off for the org (ADR-0053), as CommandDef.runsWhenOff; the default is refused with MODULE_OFF.
+  runsWhenOff?: string;
   // sink is set exactly when the query runs through Runtime.stream().
   handler: (ctx: QueryContext, input: I, sink?: QuerySink) => Promise<O>;
 }
@@ -476,6 +520,16 @@ export interface CommandContext extends QueryContext {
   // none, and answers the text to store in the column at `place` (ADR-0017). Only a user's command seals (never an agent, the system or the worker); the
   // value is 1 byte to 4 KiB. Sealing is the command's own step, before its insert: no other path writes a sealed column.
   seal(ref: string, place: string, value: string): Promise<string>;
+  // A keyed hash (HMAC-SHA256 hex) of a short value, for comparing it later without reading it back (a bank account number: is it the same account, did it change). The key derives from
+  // the deployment's key material for this purpose (a lowercase name, such as `supplier_bank_account.number`) and this org, so the same value gives other hashes elsewhere; it never leaves
+  // the runtime. 1 byte to 4 KiB. `keyId` names an older credential key still kept (CREDENTIAL_KEY_PREVIOUS); omitted, the newest; a key the deployment no longer keeps answers 409
+  // KEYED_HASH_KEY_RETIRED (make the hash again from the value). The deployment needs its credential key (BROKER_NOT_CONFIGURED otherwise). Not sealed under a subject: it survives the shred of a
+  // subject's key. The value is hashed byte for byte: the caller of each purpose normalizes first (digits only for a bank number, trimmed and NFC for text). Open to every actor, so NEVER return or
+  // emit a keyed hash in a command's output or an event: an agent that could compare hashes would hold an equality oracle inside the org.
+  keyedHash(purpose: string, value: string, keyId?: string): string;
+  // The id of the credential key ctx.keyedHash uses by default (the newest): store it next to a stored hash, so that after a key rotation a hash made under another id is re-made from the
+  // value (opened from its sealed copy) and is never taken for a change of the value. BROKER_NOT_CONFIGURED when the deployment has no key.
+  keyedHashKeyId(): string;
   // Runs another registered command in the same transaction (audited on its own row).
   run<O>(name: string, input: unknown, options?: { proposalId?: string }): Promise<O>;
   // Runs another registered command as run() does, inside a savepoint, for a command that goes on when that one is
@@ -506,13 +560,13 @@ export interface CommandContext extends QueryContext {
 // Thin wrappers over the numbering definers (migration 20261103030000): the database checks the context, the legal
 // entity's scope and the actor, and refuses with SQL errors the command maps or lets toDomainError map.
 export interface Numbering {
-  // crove_kernel.allocate_number: the next number of the series of (legal entity, docType) and the period the
+  // ludy_kernel.allocate_number: the next number of the series of (legal entity, docType) and the period the
   // document date falls in, recorded as given to (targetType, targetId). The counter row stays locked until the command
   // commits (a rollback gives the number back), so call it as the last step before the document's insert. legalEntityId
   // null: the org's default entity. Refused: LEGAL_ENTITY_NOT_ALLOWED and NUMBER_SERIES_RESERVED (42501), a second
   // number for one target (23505).
   allocate(input: NumberAllocateInput): Promise<NumberAllocated>;
-  // crove_kernel.void_number: declares an allocated number void (owners and admins; the R2 command kernel.number.void).
+  // ludy_kernel.void_number: declares an allocated number void (owners and admins; the R2 command kernel.number.void).
   // Refused: NUMBER_FORBIDDEN (42501), NUMBER_ALLOCATION_NOT_FOUND (23503), NUMBER_VOID_REASON (22023), already void
   // (23505).
   void(input: NumberVoidInput): Promise<{ voidId: string }>;
@@ -563,7 +617,7 @@ export interface SessionStatusSource {
 // when it is the actor's first of its (command, code) in the window, or the actor has fewer than reserve refusals (a
 // share the org bound never takes away), or the actor has fewer than perActor and either the org fewer than perOrg
 // or the refusal is security relevant (SECURITY_REFUSAL_CODES, or any 404). Otherwise it is only counted in
-// crove_kernel.refusal_tally.
+// ludy_kernel.refusal_tally.
 export interface RefusalAuditLimits {
   perActor: number;
   perOrg: number;
@@ -607,7 +661,7 @@ export function isSecurityRefusal(refusal: DomainError): boolean {
   return refusal.status === 404 || SECURITY_REFUSAL_CODES.has(refusal.code);
 }
 
-// Same ranges as crove_kernel.refusal_tally_note, which refuses anything else.
+// Same ranges as ludy_kernel.refusal_tally_note, which refuses anything else.
 export function validateRefusalAuditLimits(limits: RefusalAuditLimits): Required<RefusalAuditLimits> {
   const check = (name: string, value: number, min: number, max: number) => {
     if (!Number.isInteger(value) || value < min || value > max) throw new Error(`${name} must be an integer from ${min} to ${max}`);
@@ -636,20 +690,26 @@ export interface RuntimeOptions {
   // never mistaken for a module that is off. Unset (tests and tools that register only some modules): every module
   // without a registered command or query answers not_installed.
   absentModules?: readonly string[];
+  // The org's entitlements, the `billing` port's answer (plan Decision 10, ADR-0053): the entitlement keys the org holds, `full` for every
+  // module. The per-org app gate refuses an app the org does not hold. A runtime given none holds every app for every org, so the server
+  // always passes it (createKernel). The answer is cached per org for 60 seconds in this process. If the port throws or takes over 3
+  // seconds, the gate fails open to the last answer for the org, `full` when it has none, and records a security event (an entitlement is a
+  // commercial limit, not a safety one); the deployment's list and the org's own choice still apply.
+  entitlements?: (orgId: string) => Promise<readonly string[]>;
   // The build this runtime runs: the git SHA of the image (CROVE_BUILD). Default 'dev' (a local build, tests).
   build?: string;
   // How a command's input is hashed into audit_event.input_sha256 and idempotency_key.request_sha256 (#1732).
-  // 'keyed': crove_kernel.command_input_hash, an HMAC-SHA256 under the deployment's hash key that no runtime role can
+  // 'keyed': ludy_kernel.command_input_hash, an HMAC-SHA256 under the deployment's hash key that no runtime role can
   // read, over the org of the sealed context, the actor key, the command and the canonical input ('k1:<hex>'): whoever
   // holds an exported or archived row cannot confirm a guessed input (a private note's title, ADR-0037). The default
   // (#1741), and what the server runs (apps/kernel createKernel). 'sha256': the plain SHA-256 of the canonical input,
   // as before #1732, only for tests: one that shows what the plain hash gives away, and those that seed a database
-  // migrated to a version before crove_kernel.command_input_hash exists.
+  // migrated to a version before ludy_kernel.command_input_hash exists.
   inputHash?: InputHashMode;
   // The deployment's context token key (#1822, ADR-0028 section 9): base64 of 32 to 64 random bytes, the one the
   // migration runner installed in the database. Given, a user's context is entered with a token the runtime signs
-  // with it (crove_kernel.enter_user_context), which raw SQL on the API's login cannot make. Unset:
-  // CROVE_CONTEXT_TOKEN_KEY from the environment; null, or neither: today's crove_kernel.enter_context, until step 2
+  // with it (ludy_kernel.enter_user_context), which raw SQL on the API's login cannot make. Unset:
+  // CROVE_CONTEXT_TOKEN_KEY from the environment; null, or neither: today's ludy_kernel.enter_context, until step 2
   // of #1822 requires the key.
   contextTokenKey?: string | null;
   // The key that hashes the input of a sensitive read into its audit row (QueryDef.sensitive): 32 bytes derived from a
@@ -660,6 +720,9 @@ export interface RuntimeOptions {
   // Seals personal values under per-subject keys (ctx.seal, ctx.open; ADR-0017, #2640): the wrap keys derive from the credential key
   // (apps/kernel serverRuntime). Absent, null: both answer 503 BROKER_NOT_CONFIGURED.
   subjectVault?: SubjectVault | null;
+  // The deployment secrets ctx.keyedHash derives its per-purpose and per-org keys from, newest first, one per credential key id this deployment opens (apps/kernel serverRuntime derives them
+  // from CREDENTIAL_KEY and CREDENTIAL_KEY_PREVIOUS). Absent, empty: ctx.keyedHash answers 503 BROKER_NOT_CONFIGURED. Never stored, logged or put in an error.
+  keyedHashRoots?: readonly { id: string; key: Buffer }[];
   // The tables of the module manifests (ModuleManifest['tables'] of each module, #1710). register() checks each
   // declared write (CommandDef.writes) against them: the table is a manifest's and the classes it carries are exactly
   // that manifest's, so P04 rests on the manifests rather than on classes a declaration builds by hand. Required
@@ -701,11 +764,17 @@ function mcpDetail(mcp: McpGrant): Record<string, unknown> {
   return { mcpCall: true, mcpGrant: mcp.grantId, mcpClient: mcp.clientId, mcpClientName: mcp.clientName };
 }
 
-// A user actor made from an MCP grant reaches a query only when it declares a scope the grant holds. A command is closed to it whatever it
-// declares. Any other actor is not restricted here.
-function authorizeMcp(access: McpAccess | undefined, actor: Actor): void {
+// A user actor made from an MCP grant reaches a query or a command only when it declares a scope the grant holds (a command only a write scope, and
+// register() allows that on one narrow kind of command). Every other command is closed to it. Any other actor is not restricted here.
+function authorizeMcp(access: McpAccess | McpWriteAccess | undefined, actor: Actor): void {
   if (actor.type !== 'user' || !actor.mcp) return;
   if (!access || !actor.mcp.scopes.includes(access.scope)) {
+    throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
+  }
+  // A scope that has no sealed write context yet (MCP_WRITE_CONTEXT_SCOPES): a grant may hold it, but a command that runs directly under it is refused here, after the context was entered, so the
+  // refusal is audited as the grant's (#3858, N3 of the review of slice c). A proposal-mode command needs no write context of its own scope: it creates a proposal in the proposal context.
+  const write = access as McpWriteAccess;
+  if ((MCP_WRITE_SCOPES as readonly string[]).includes(write.scope) && (write.mode ?? 'run') === 'run' && !MCP_WRITE_CONTEXT_SCOPES.includes(write.scope)) {
     throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
   }
 }
@@ -743,6 +812,7 @@ export const NEVER_RECOVERED: ReadonlySet<string> = new Set([
   'LEASE_LOST',
   'KILL_SWITCH_ON',
   'IDEMPOTENCY_MISMATCH',
+  'IDEMPOTENCY_UNSUPPORTED',
   'CONTEXT_REENTRY',
   'BUDGET_EXHAUSTED',
   'ORG_CLOSED',
@@ -848,6 +918,8 @@ interface Entered {
   role: MemberRole | null;
   agent: AgentGrant | null;
   memberVy: MemberVyGrant | null;
+  // Set only by the sealed write and proposal entries of an MCP company grant (#4155): the module whose switches executeIn reads once the context is entered, so a refusal is audited as the grant's.
+  mcpSwitchModule?: string;
 }
 
 // The detail an audit row of this actor carries when the command adds none: the system component, or the agent's
@@ -1091,6 +1163,18 @@ function logInternal(where: string, error: unknown, ids: { orgId?: string | null
   });
 }
 
+// Whether the entitlement keys hold the module (plan Decision 10): `full` grants every module, otherwise one key per module id; kernel is
+// always held. The one function every gate uses (packages/kernel's kernel.org.apps too).
+export function entitledTo(entitlements: readonly string[], module: string): boolean {
+  return module === 'kernel' || entitlements.includes('full') || entitlements.includes(module);
+}
+
+const ENTITLEMENT_TTL_MS = 60_000;
+const ENTITLEMENT_TIMEOUT_MS = 3_000;
+// After a failed answer the fallback is kept this long before the port is asked again, so an outage costs one wait a few seconds, not one per call.
+const ENTITLEMENT_RETRY_MS = 10_000;
+const ENTITLEMENT_CACHE_MAX = 5_000;
+
 // The module a command, query or event belongs to: the part of its name before the first dot.
 function moduleOf(name: string): string {
   const dot = name.indexOf('.');
@@ -1144,7 +1228,7 @@ interface CaughtRefusal {
   detail: Record<string, unknown>;
 }
 
-const WRITE_TABLE = /^crove_[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/;
+const WRITE_TABLE = /^(?:crove|ludy)_[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/;
 // A column name as the manifests write them: never a pattern such as '*'.
 const WRITE_COLUMN = /^[a-z_][a-z0-9_]*$/;
 
@@ -1156,7 +1240,7 @@ function manifestTableClasses(manifests: readonly ManifestTables[]): Map<string,
     for (const [schema, byTable] of Object.entries(tables)) {
       for (const [table, given] of Object.entries(byTable)) {
         const name = `${schema}.${table}`;
-        if (!WRITE_TABLE.test(name)) throw new Error(`manifests: ${name} is not <schema>.<table> of a crove_* schema`);
+        if (!WRITE_TABLE.test(name)) throw new Error(`manifests: ${name} is not <schema>.<table> of a ludy_* or crove_* schema`);
         if (out.has(name)) throw new Error(`manifests: ${name} is in two manifests`);
         // A frozen copy of the own enumerable classes, read once: a later change of the manifest object, or a getter in
         // it, never reaches the check (#1710).
@@ -1191,11 +1275,11 @@ function checkedWrites(command: string, writes: readonly CommandWrite[], manifes
   const out: string[] = [];
   for (const w of writes) {
     if (typeof w !== 'object' || w === null || typeof w.table !== 'string' || !WRITE_TABLE.test(w.table)) {
-      refuse(`name a table as <schema>.<table> of a crove_* schema (${String((w as Partial<CommandWrite> | null)?.table)})`);
+      refuse(`name a table as <schema>.<table> of a ludy_* or crove_* schema (${String((w as Partial<CommandWrite> | null)?.table)})`);
     }
     if (tables.has(w.table)) refuse(`list ${w.table} twice`);
     // Events are the runtime's (ctx.emit): a command that declared the outbox could emit past the P04 gate on them.
-    if (w.table === 'crove_kernel.outbox_event') refuse('name crove_kernel.outbox_event: events are the runtime\'s (ctx.emit), never a command\'s declared write');
+    if (w.table === 'ludy_kernel.outbox_event' || w.table === 'crove_kernel.outbox_event') refuse('name ludy_kernel.outbox_event: events are the runtime\'s (ctx.emit), never a command\'s declared write');
     tables.add(w.table);
     if (typeof w.classes !== 'object' || w.classes === null || Array.isArray(w.classes)) refuse(`of ${w.table} carry no column classes`);
     // One copy of the own enumerable classes, read once: every check below and the P04 answer use it, so a getter or
@@ -1264,11 +1348,15 @@ function snapshotMemberVy(value: unknown, what: string): unknown {
 }
 
 // What register() keeps of an MCP access declaration: a frozen copy, its scope checked to be a known one.
-function snapshotMcp(value: unknown, what: string): unknown {
+function snapshotMcp(value: unknown, what: string, allowed: readonly string[] = MCP_READ_SCOPES): unknown {
   if (value === undefined) return undefined;
   const copy = plainCopy(value, what);
-  if (typeof copy.scope !== 'string' || !(MCP_SCOPES as readonly string[]).includes(copy.scope)) {
-    throw new Error(`${what}: the scope is one of ${MCP_SCOPES.join(', ')}`);
+  if (typeof copy.scope !== 'string' || !allowed.includes(copy.scope)) {
+    throw new Error(`${what}: the scope is one of ${allowed.join(', ')}`);
+  }
+  // Only a command declares a mode, and it is 'run' or 'proposal'.
+  if (copy.mode !== undefined && (allowed !== MCP_WRITE_SCOPES || (copy.mode !== 'run' && copy.mode !== 'proposal'))) {
+    throw new Error(`${what}: the mode, on a command only, is 'run' or 'proposal'`);
   }
   return Object.freeze(copy);
 }
@@ -1283,6 +1371,15 @@ function snapshotExtension(value: unknown, what: string): unknown {
   return Object.freeze(copy);
 }
 
+// runsWhenOff is a one-line reason, and only where there is an app to be off for: not a kernel command, which the gate never refuses.
+function checkAppFlags(label: string, def: { name: string; runsWhenOff?: unknown }): void {
+  if (def.runsWhenOff === undefined) return;
+  if (typeof def.runsWhenOff !== 'string' || def.runsWhenOff.trim().length < 10 || def.runsWhenOff.includes('\n')) {
+    throw new Error(`${label}: runsWhenOff is a one-line reason of at least 10 characters`);
+  }
+  if (moduleOf(def.name) === 'kernel') throw new Error(`${label}: a kernel definition is never refused by the app gate, so it declares no runsWhenOff`);
+}
+
 // A command definition as register() checks, keeps and runs it (#1766): a frozen copy, with the policy fields it
 // holds (access, agent, agentApprovers, writes) copied and frozen as well; keys it did not have stay absent. The
 // handler and the other functions are kept as they are.
@@ -1295,6 +1392,7 @@ function snapshotCommand(def: CommandDef<any, any>): CommandDef<unknown, unknown
   if (Object.hasOwn(copy, 'agentApprovers')) copy.agentApprovers = snapshotAgent(copy.agentApprovers, `${label}: agentApprovers`);
   if (Object.hasOwn(copy, 'memberVy')) copy.memberVy = snapshotMemberVy(copy.memberVy, `${label}: memberVy`);
   if (Object.hasOwn(copy, 'extension')) copy.extension = snapshotExtension(copy.extension, `${label}: extension`);
+  if (Object.hasOwn(copy, 'mcp')) copy.mcp = snapshotMcp(copy.mcp, `${label}: mcp`, MCP_WRITE_SCOPES);
   if (Array.isArray(copy.writes)) {
     copy.writes = Object.freeze(
       copy.writes.map((w: unknown, i: number) => {
@@ -1439,7 +1537,7 @@ function transactionControl(statement: string): string | null {
   if (savepoint) {
     const name = (savepoint[1] ?? '').replace(/^"|"$/g, '');
     // A name spelled with Unicode escapes (U&"...") is refused rather than decoded.
-    return name.startsWith('CROVE_') || name.startsWith('U&') ? `a savepoint of the runtime (${name.toLowerCase()})` : null;
+    return name.startsWith('LUDY_') || name.startsWith('CROVE_') || name.startsWith('U&') ? `a savepoint of the runtime (${name.toLowerCase()})` : null;
   }
   if (/^(?:SAVEPOINT|RELEASE|ROLLBACK)\b/.test(text)) return text.split(/\s+/)[0] ?? text;
   return null;
@@ -1476,7 +1574,7 @@ function refuseTransactionControl(command: string, closed: () => boolean = () =>
 
 // The rows inserted, updated and deleted so far in this transaction, per crove_* table (#1710). A partition counts
 // under the table at the root of its tree (pg-boss creates one per queue at runtime, and a manifest declares the
-// partitioned table: crove_jobs.job, crove_jobs.queue_stats; #1797). The counts need
+// partitioned table: ludy_jobs.job, ludy_jobs.queue_stats; #1797). The counts need
 // track_counts, which is on by default; with it off they would read zero, so the runtime refuses to go on.
 async function tableWriteCounts(trx: Transaction<Database>): Promise<Map<string, number>> {
   // The counters pg_stat_xact_user_tables reads, for the crove_* tables this transaction changed only.
@@ -1489,7 +1587,7 @@ async function tableWriteCounts(trx: Transaction<Database>): Promise<Map<string,
                  FROM pg_catalog.pg_class c
                  JOIN pg_catalog.pg_class r ON r.oid = COALESCE(pg_catalog.pg_partition_root(c.oid), c.oid)
                  JOIN pg_catalog.pg_namespace rn ON rn.oid = r.relnamespace
-                WHERE c.relkind = 'r' AND pg_catalog.starts_with(rn.nspname, 'crove_')
+                WHERE c.relkind = 'r' AND (pg_catalog.starts_with(rn.nspname, 'ludy_') OR pg_catalog.starts_with(rn.nspname, 'crove_'))
                 GROUP BY 1) t
         WHERE t.n > 0) AS counts`.execute(trx);
   const row = rows[0];
@@ -1503,7 +1601,7 @@ const validAccess = (access: unknown, kinds: readonly string[]): boolean =>
   Array.isArray(access) ? access.every((role) => typeof role === 'string' && role.length > 0) : typeof access === 'string' && kinds.includes(access);
 
 // How long a context token is good for, by the kernel's clock (#1822). The database allows 30 seconds of skew either way
-// between its clock and the kernel's (crove_kernel.enter_user_context).
+// between its clock and the kernel's (ludy_kernel.enter_user_context).
 export const CONTEXT_TOKEN_TTL_S = 60;
 
 // The wall clock as this module loaded it: a test that mocks Date (vi.useFakeTimers({ toFake: ['Date'] }), a spy on
@@ -1516,7 +1614,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export function contextTokenKeyBytes(value: string): Buffer {
   const trimmed = value.trim();
   const bytes = /^[A-Za-z0-9+/_-]+={0,2}$/.test(trimmed) ? Buffer.from(trimmed, 'base64') : Buffer.alloc(0);
-  if (bytes.length < 32 || bytes.length > 64) throw new Error('CROVE_CONTEXT_TOKEN_KEY must be base64 of 32 to 64 random bytes');
+  if (bytes.length < 32 || bytes.length > 64) throw new Error('LUDY_CONTEXT_TOKEN_KEY must be base64 of 32 to 64 random bytes');
   return bytes;
 }
 
@@ -1531,7 +1629,7 @@ export interface ContextTokenClaims {
 
 // A context token (#1822, ADR-0028 section 9), signed with the deployment's key:
 //   v1.<user>.<session|->.<org>.<aal1|aal2>.<mfa epoch|->.<exp epoch>.<hmac-sha256 hex of everything before it>
-// crove_kernel.enter_user_context verifies it and enters that user's context in that org, nothing else.
+// ludy_kernel.enter_user_context verifies it and enters that user's context in that org, nothing else.
 export function mintContextToken(key: Uint8Array | string, claims: ContextTokenClaims, nowMs: number = wallClock()): string {
   const bytes = typeof key === 'string' ? contextTokenKeyBytes(key) : Buffer.from(key);
   const user = claims.userId.toLowerCase();
@@ -1566,6 +1664,8 @@ export class Runtime {
   readonly #contextTokenKey: Buffer | null;
   // The key of the sensitive-read audit hash (RuntimeOptions.readAuditKey), or null: never logged, never in an error.
   readonly #readAuditKey: Buffer | null;
+  // The roots of ctx.keyedHash (RuntimeOptions.keyedHashRoots), newest first; empty without a credential key.
+  readonly #keyedHashRoots: readonly { id: string; key: Buffer }[];
   // The subject vault (RuntimeOptions.subjectVault), or null.
   readonly #subjectVault: SubjectVault | null;
   // Where each transaction opens (Decision 14): tenant work on the org's cell, org-less work on the control plane.
@@ -1579,6 +1679,18 @@ export class Runtime {
   private readonly inputHash: InputHashMode;
   // Numbers the savepoints of ctx.tryRun, so each call has its own.
   #savepointSeq = 0;
+  // The billing port's function (RuntimeOptions.entitlements), or null: every app held. Its last answer per org, with when it came.
+  readonly #entitlementsPort: ((orgId: string) => Promise<readonly string[]>) | null;
+  readonly #entitlementCache = new Map<string, { keys: readonly string[]; at: number; failed?: boolean }>();
+  // One port call at a time per org: concurrent callers share it.
+  readonly #entitlementInflight = new Map<string, Promise<readonly string[]>>();
+  #entitlementFailureLoggedAt = 0;
+  #appsOffColumn = false;
+  // appOn's answer per org, shared by the callers of one sweep.
+  readonly #appsOnCache = new Map<string, { at: number; modules: Promise<ReadonlySet<string>> }>();
+  #entitlementFailureNotedAt = 0;
+  // The apps the org switched off as one call reads them, per entered context (one transaction), so a page of lookups reads the row once.
+  readonly #appsOffMemo = new WeakMap<object, Promise<ReadonlySet<string>>>();
 
   // A plain Db is one cell that also holds the control plane (singleCell).
   readonly #mcpEntry: 'api' | 'worker';
@@ -1601,14 +1713,19 @@ export class Runtime {
     const refusalAudit = options.refusalAudit ?? DEFAULT_REFUSAL_AUDIT_LIMITS;
     this.refusalAudit = refusalAudit === 'unbounded' ? 'unbounded' : Object.freeze(validateRefusalAuditLimits(refusalAudit));
     this.#absentModules = options.absentModules ? new Set(options.absentModules) : null;
+    if (options.entitlements !== undefined && typeof options.entitlements !== 'function') throw new Error('entitlements: the billing port function, or absent');
+    this.#entitlementsPort = options.entitlements ?? null;
     this.build = options.build ?? 'dev';
     const inputHash = options.inputHash ?? 'keyed';
     if (!(INPUT_HASH_MODES as readonly string[]).includes(inputHash)) throw new Error(`unknown input hash mode ${String(inputHash)}`);
     this.inputHash = inputHash;
     this.#manifestTables = manifestTableClasses(manifests as readonly ManifestTables[]);
-    const contextTokenKey = options.contextTokenKey === undefined ? process.env.CROVE_CONTEXT_TOKEN_KEY : options.contextTokenKey;
+    const contextTokenKey = options.contextTokenKey === undefined
+      ? readEnvPair(process.env, 'LUDY_CONTEXT_TOKEN_KEY', 'CROVE_CONTEXT_TOKEN_KEY')
+      : options.contextTokenKey;
     this.#contextTokenKey = contextTokenKey?.trim() ? contextTokenKeyBytes(contextTokenKey) : null;
     this.#readAuditKey = options.readAuditKey ? Buffer.from(options.readAuditKey) : null;
+    this.#keyedHashRoots = (options.keyedHashRoots ?? []).map((root) => ({ id: root.id, key: Buffer.from(root.key) }));
     this.#subjectVault = options.subjectVault ?? null;
     Object.freeze(this);
   }
@@ -1643,6 +1760,12 @@ export class Runtime {
       if (!validAccess(c.access, ACCESS_KINDS)) throw new Error(`command ${c.name}: access is a role list or one of ${ACCESS_KINDS.join(', ')}`);
       if (c.agent !== undefined && (!validAccess(c.agent.roles, ['any']) || (c.agent.taint !== undefined && c.agent.taint !== 'propagate'))) {
         throw new Error(`command ${c.name}: agent access names a role list or 'any', and taint is 'propagate' or absent`);
+      }
+      checkAppFlags(`command ${c.name}`, c);
+      // An org-less command runs before there is an org to gate, so only the kernel's (org creation) may be one.
+      if (c.bootstrap !== undefined && moduleOf(c.name) !== 'kernel') throw new Error(`command ${c.name}: an org-less (bootstrap) command is a kernel command: the app gate cannot read an org it runs before`);
+      if (c.opensBusyWork !== undefined && (c.opensBusyWork !== true || moduleOf(c.name) === 'kernel' || c.runsWhenOff !== undefined)) {
+        throw new Error(`command ${c.name}: opensBusyWork is true, on a command of an app (not kernel) that is not also runsWhenOff`);
       }
       // Every command says what it does beyond its transaction (#1637): the risk it derives is the floor of its own.
       if (typeof c.sideEffect !== 'string' || !(SIDE_EFFECTS as readonly string[]).includes(c.sideEffect)) {
@@ -1712,9 +1835,48 @@ export class Runtime {
           throw new Error(`command ${c.name}: writes ${contactOrPayment.join(', ')}, so Vy in member mode may not run it (P04: it asks for a proposal instead)`);
         }
       }
-      // An MCP grant runs no command (ADR-0051 decision 2): a definition that declares `mcp` is a mistake, whatever the type says.
+      // An MCP grant runs a command only when it declares a write scope (ADR-0051 decision 2, #3227), and only the narrow kind the sealed write context can run: an R1 command with
+      // no side effect beyond its transaction, for owners and admins by a role list, that is no extension, agent, member-mode, bootstrap, sensitive or permission command, takes
+      // no sealed input and runs under no proposal.
       if ((c as { mcp?: unknown }).mcp !== undefined) {
-        throw new Error(`command ${c.name}: an MCP grant runs no command, so a command cannot declare mcp (ADR-0051 decision 2)`);
+        snapshotMcp((c as { mcp?: unknown }).mcp, `command ${c.name}: mcp`, MCP_WRITE_SCOPES);
+        const mcpMode = (c.mcp as McpWriteAccess | undefined)?.mode ?? 'run';
+        if (mcpMode === 'proposal') {
+          // An R2 or R3 command that runs only through a proposal (access 'proposal'): a grant's call to it creates a pending proposal and never runs it (ADR-0051 decision 10). It names the kind its
+          // proposals carry (the Inbox card), and is no extension, agent, member-mode, bootstrap, sensitive or sealed-input command. Who may approve it is the approval policy's (a command with none has no approver).
+          if (
+            c.access !== 'proposal' ||
+            (c.risk !== 'R2' && c.risk !== 'R3') ||
+            typeof c.proposalKind !== 'string' ||
+            c.proposalKind.length === 0 ||
+            c.extension !== undefined ||
+            c.agent !== undefined ||
+            c.memberVy !== undefined ||
+            c.bootstrap !== undefined ||
+            c.sealedInput !== undefined ||
+            (c as { sensitive?: unknown }).sensitive !== undefined
+          ) {
+            throw new Error(`command ${c.name}: an MCP grant reaches a command of mode 'proposal' only when it is an R2 or R3 command that runs through a proposal (access 'proposal') and names its proposalKind, and is no extension, agent, member-mode, bootstrap, sensitive or sealed-input command (ADR-0051 decision 10)`);
+          }
+        } else {
+          const roles = c.access as readonly string[];
+          if (
+            !Array.isArray(c.access) ||
+            roles.length === 0 ||
+            roles.some((r) => r !== 'owner' && r !== 'admin') ||
+            c.risk !== 'R1' ||
+            c.sideEffect !== 'internal' ||
+            c.extension !== undefined ||
+            c.agent !== undefined ||
+            c.memberVy !== undefined ||
+            c.bootstrap !== undefined ||
+            c.permission !== undefined ||
+            c.sealedInput !== undefined ||
+            (c as { sensitive?: unknown }).sensitive !== undefined
+          ) {
+            throw new Error(`command ${c.name}: an MCP grant runs only an R1 command with no side effect, whose access is owner and admin and that is no extension, agent, member-mode, bootstrap, sensitive, permission or sealed-input command (ADR-0051 decision 2)`);
+          }
+        }
       }
       if (c.extension !== undefined && (!Array.isArray(c.access) || c.risk === 'R3' || c.agent !== undefined || c.bootstrap !== undefined)) {
         throw new Error(`command ${c.name}: an extension token reaches only a user command with a role list as access, below R3, that no agent runs and that creates no org (ADR-0047 point 10)`);
@@ -1747,6 +1909,15 @@ export class Runtime {
         const editor = this.proposalEditor();
         if (editor) throw new Error(`command ${c.name}: ${editor.name} is already the proposal editor`);
       }
+      if (c.noIdempotency !== undefined && c.noIdempotency !== true) {
+        throw new Error(`command ${c.name}: noIdempotency must be true when declared`);
+      }
+      if (c.noIdempotency && c.bootstrap) {
+        throw new Error(`command ${c.name}: an org-less bootstrap command cannot declare noIdempotency`);
+      }
+      if (c.noIdempotency && (c.access === 'proposal' || c.access === 'proposal_revision')) {
+        throw new Error(`command ${c.name}: a proposal or proposal_revision command cannot declare noIdempotency (proposals persist their result)`);
+      }
       this.#commands.set(c.name, c as CommandDef<unknown, unknown>);
       this.#contactOrPayment.set(c.name, contactOrPayment === null || contactOrPayment.length > 0);
       this.#installedModules.add(moduleOf(c.name));
@@ -1757,6 +1928,8 @@ export class Runtime {
       if (typeof q.name !== 'string' || q.name.length === 0) throw new Error('a query is named');
       if (this.#queries.has(q.name)) throw new Error(`duplicate query ${q.name}`);
       if (!validAccess(q.access, ['system'])) throw new Error(`query ${q.name}: access is a role list or 'system'`);
+      checkAppFlags(`query ${q.name}`, q);
+      if ((q as { opensBusyWork?: unknown }).opensBusyWork !== undefined) throw new Error(`query ${q.name}: opensBusyWork is for commands (a read-only transaction takes no row lock)`);
       if (q.agent !== undefined && !validAccess(q.agent.roles, ['any'])) throw new Error(`query ${q.name}: agent access names a role list or 'any'`);
       if (q.memberVy !== undefined && q.stream === true) {
         throw new Error(`query ${q.name}: Vy in member mode reads no streamed query (a stream is not a bounded read of the member's own rows)`);
@@ -1787,6 +1960,7 @@ export class Runtime {
       agentApprovers: [...(def.agentApprovers?.roles ?? [])],
       proposalKind: def.proposalKind ?? def.name,
       contactOrPayment: this.#contactOrPayment.get(def.name) !== false,
+      ...(def.mcp ? { mcp: { scope: def.mcp.scope, mode: def.mcp.mode ?? 'run' } } : {}),
     };
   }
 
@@ -1794,6 +1968,159 @@ export class Runtime {
   // before registering a module's routes and jobs, so the registry is the one source of what is installed.
   installed(module: string): boolean {
     return this.#installedModules.has(module);
+  }
+
+  // The apps this org has: the modules this runtime registered (the deployment's), that the org did not switch off and holds
+  // (ADR-0053 section 1), kernel always, sorted. For callers with no context (the worker's sweeps, Vy's tool list, the app's menus); a call
+  // inside a command or a query is gated by the call itself. The org's choice comes from ludy_kernel.org_app_on, read without a context.
+  async effectiveModules(orgId: string): Promise<string[]> {
+    const installed = this.modules();
+    const db = await this.#cells.resolveTenant(orgId);
+    const { rows } = await sql<{ m: string }>`SELECT m FROM pg_catalog.unnest(${installed}::text[]) AS m WHERE ludy_kernel.org_app_on(${orgId}::uuid, m)`.execute(db);
+    const on = new Set(rows.map((r) => r.m));
+    const keys = this.#entitlementsPort ? await this.entitlementsOf(orgId, null) : null;
+    return installed.filter((m) => m === 'kernel' || (on.has(m) && (keys === null || entitledTo(keys, m))));
+  }
+
+  // Whether the app is on for the org (ADR-0053 section 1): the answer of effectiveModules, kept 5 seconds per org so a sweep over many rows of
+  // one org asks once. kernel is always on. Errors (the database, not a refusal) are thrown to the caller, which is already per item.
+  // `fresh` skips the kept answer: a one-shot job that is dropped when the app is off (it is queued once and nothing sends it again) asks fresh, so an app
+  // switched back on a moment ago is never read as still off.
+  async appOn(orgId: string, module: string, options: { fresh?: boolean } = {}): Promise<boolean> {
+    if (module === 'kernel') return true;
+    const now = Date.now();
+    const hit = this.#appsOnCache.get(orgId);
+    if (hit && !options.fresh && now - hit.at < 5_000) return (await hit.modules).has(module);
+    const modules = this.effectiveModules(orgId).then((list) => new Set(list) as ReadonlySet<string>);
+    this.#appsOnCache.delete(orgId);
+    this.#appsOnCache.set(orgId, { at: now, modules });
+    if (this.#appsOnCache.size > 2_000) {
+      const oldest = this.#appsOnCache.keys().next().value;
+      if (oldest !== undefined) this.#appsOnCache.delete(oldest);
+    }
+    try {
+      return (await modules).has(module);
+    } catch (error) {
+      this.#appsOnCache.delete(orgId);
+      throw error;
+    }
+  }
+
+  // The org's entitlement keys: cached for a minute, one port call at a time per org, and on a failure of the port (a throw, or no answer in 3
+  // seconds) the last answer, `full` when there is none, kept for 10 seconds before the port is asked again, with one log line a minute and one
+  // security event a minute (never for an actor that is the system or none: nothing is noted for them). The event is noted outside the call's
+  // transaction: noting needs a second connection, and a single-cell deployment shares one pool.
+  private entitlementsOf(orgId: string, actor: Actor | null): Promise<readonly string[]> {
+    const port = this.#entitlementsPort;
+    if (!port) return Promise.resolve(['full']);
+    const now = Date.now();
+    const cached = this.#entitlementCache.get(orgId);
+    if (cached && now - cached.at < ENTITLEMENT_TTL_MS) return Promise.resolve(cached.keys);
+    const running = this.#entitlementInflight.get(orgId);
+    if (running) return running;
+    const call = this.askEntitlements(orgId, port, cached?.keys, now).finally(() => this.#entitlementInflight.delete(orgId));
+    this.#entitlementInflight.set(orgId, call);
+    // The note belongs to the call that started the port call, and its actor.
+    void call.then((keys) => {
+      const failed = this.#entitlementCache.get(orgId)?.failed === true;
+      if (failed && keys && actor && actor.type !== 'system' && Date.now() - this.#entitlementFailureNotedAt > 60_000) {
+        this.#entitlementFailureNotedAt = Date.now();
+        setImmediate(() => void this.noteSecurityEvent('runtime.entitlements', actor, orgId, 'ENTITLEMENTS_UNAVAILABLE'));
+      }
+    });
+    return call;
+  }
+
+  private async askEntitlements(orgId: string, port: (orgId: string) => Promise<readonly string[]>, last: readonly string[] | undefined, now: number): Promise<readonly string[]> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const remember = (keys: readonly string[], at: number, failed: boolean) => {
+      this.#entitlementCache.delete(orgId);
+      this.#entitlementCache.set(orgId, { keys, at, failed });
+      if (this.#entitlementCache.size > ENTITLEMENT_CACHE_MAX) {
+        const oldest = this.#entitlementCache.keys().next().value;
+        if (oldest !== undefined) this.#entitlementCache.delete(oldest);
+      }
+    };
+    try {
+      const answer = await Promise.race([
+        port(orgId),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('the entitlements port did not answer')), ENTITLEMENT_TIMEOUT_MS);
+        }),
+      ]);
+      if (!Array.isArray(answer) || !answer.every((k) => typeof k === 'string')) throw new Error('the entitlements port answered something other than a list of keys');
+      const keys: readonly string[] = Object.freeze([...answer]);
+      remember(keys, now, false);
+      return keys;
+    } catch (error) {
+      if (now - this.#entitlementFailureLoggedAt > 60_000) {
+        this.#entitlementFailureLoggedAt = now;
+        // The error's name only: a port's message can carry anything its service said (an address, a token), and a log line is no place for it.
+        console.error('[runtime] ENTITLEMENTS_UNAVAILABLE', { orgId, reason: error instanceof Error ? error.name.slice(0, 40) : 'unknown', haveLastAnswer: last !== undefined });
+      }
+      const fallback = last ?? ['full'];
+      // The fallback counts as fresh for only the retry interval.
+      remember(fallback, now - ENTITLEMENT_TTL_MS + ENTITLEMENT_RETRY_MS, true);
+      return fallback;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  // Whether ludy_kernel.tenant has the apps_off column (slice a's migration). Once seen it stays true for the process.
+  private async hasAppsOffColumn(trx: Transaction<Database>): Promise<boolean> {
+    if (this.#appsOffColumn) return true;
+    const { rows } = await sql<{ present: boolean }>`
+      SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute a WHERE a.attrelid = 'ludy_kernel.tenant'::pg_catalog.regclass AND a.attname = 'apps_off' AND NOT a.attisdropped) AS present`.execute(trx);
+    this.#appsOffColumn = rows[0]?.present === true;
+    return this.#appsOffColumn;
+  }
+
+  // The apps the org switched off, read in the caller's transaction and context (no cache: the owner's choice takes effect at once). With
+  // `lock` the row is read FOR SHARE, held to commit (CommandDef.opensBusyWork; never in a read-only transaction).
+  private appsOffOf(trx: Transaction<Database>, orgId: string, entered: object, lock: boolean): Promise<ReadonlySet<string>> {
+    const known = lock ? undefined : this.#appsOffMemo.get(entered);
+    if (known) return known;
+    const read = (async () => {
+      // A database before the migration that adds the column (an upgrade in progress, or a test of one) has no choice to read: nothing is off. A
+      // row the context cannot read, on a database that has the column, is another matter and fails closed below.
+      if (!(await this.hasAppsOffColumn(trx))) return new Set<string>() as ReadonlySet<string>;
+      let query = trx.selectFrom('ludy_kernel.tenant').select('apps_off').where('org_id', '=', orgId);
+      if (lock) query = query.forShare();
+      const row = await query.executeTakeFirst();
+      // A row the context cannot read is no row: fail closed, never read it as 'no app is off'.
+      if (!row) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      return new Set(row.apps_off) as ReadonlySet<string>;
+    })();
+    this.#appsOffMemo.set(entered, read);
+    return read;
+  }
+
+  // Whether the call's app is off for the org (ADR-0053): the org switched it off, or does not hold it. kernel, and a definition that
+  // declares runsWhenOff, are never off. Called after the session and the membership are checked, so a stranger learns nothing.
+  private async appIsOff(
+    trx: Transaction<Database>,
+    orgId: string,
+    entered: object,
+    actor: Actor,
+    def: { name: string; runsWhenOff?: string; opensBusyWork?: true },
+  ): Promise<boolean> {
+    const module = moduleOf(def.name);
+    if (module === 'kernel' || def.runsWhenOff !== undefined) return false;
+    if ((await this.appsOffOf(trx, orgId, entered, def.opensBusyWork === true)).has(module)) return true;
+    return this.#entitlementsPort !== null && !entitledTo(await this.entitlementsOf(orgId, actor), module);
+  }
+
+  private async refuseIfAppOff(
+    trx: Transaction<Database>,
+    orgId: string,
+    entered: object,
+    actor: Actor,
+    def: { name: string; runsWhenOff?: string; opensBusyWork?: true },
+  ): Promise<void> {
+    if (!(await this.appIsOff(trx, orgId, entered, actor, def))) return;
+    const module = moduleOf(def.name);
+    throw new DomainError('MODULE_OFF', 404, `Ứng dụng ${module} đã được tắt cho công ty này`, { module });
   }
 
   // The installed modules, sorted.
@@ -1838,6 +2165,8 @@ export class Runtime {
       if (absent && !this.#installedModules.has(module)) return { status: 'not_installed', module };
       throw new DomainError('QUERY_NOT_FOUND', 404, `Không có truy vấn ${name}`);
     }
+    // An app the org switched off answers the same typed not_installed as one the deployment leaves out.
+    if (await this.appIsOff(trx, orgId, entered, actor, def)) return { status: 'not_installed', module: moduleOf(name) };
     const input = parseInput(def.input, rawInput);
     this.authorizeQuery(def, actor, entered);
     refuseStreamed(def);
@@ -1895,6 +2224,10 @@ export class Runtime {
     for (const [command, names] of this.#revisers) {
       if (names.length > 1) problems.push(`proposal command ${command} has more than one reviser: ${names.join(', ')}`);
     }
+    // A command a grant reaches in mode 'proposal' needs the proposer the runtime runs in its place (kernel.mcp.propose).
+    for (const c of this.#commands.values()) {
+      if (c.mcp?.mode === 'proposal' && !this.#commands.has(MCP_PROPOSE_COMMAND)) problems.push(`command ${c.name} is reached by an MCP grant as a proposal, but ${MCP_PROPOSE_COMMAND} is not registered`);
+    }
     if (this.#revisers.size > 0 && !this.proposalEditor()) problems.push('revisers are registered but no proposal editor (proposalEditor: true) is');
     if (problems.length > 0) throw new Error(`invalid command registry:\n- ${problems.join('\n- ')}`);
     return this;
@@ -1921,7 +2254,7 @@ export class Runtime {
       // A member-bound grant is checked by its own entry (enterContext), which reads the same standing plus the org's switch in this transaction.
       // The worker's wake entry (mcpEntry 'worker') does the same: the worker login has no mcp_grant_check, and the core the entry calls re-reads the same standing in this transaction.
       if (actor.mcp.kind === 'member' || this.#mcpEntry === 'worker') return;
-      await sql`SELECT crove_kernel.mcp_grant_check(${actor.mcp.grantId}::uuid, ${actor.userId}::uuid, ${orgId}::uuid)`.execute(trx);
+      await sql`SELECT ludy_kernel.mcp_grant_check(${actor.mcp.grantId}::uuid, ${actor.userId}::uuid, ${orgId}::uuid)`.execute(trx);
       return;
     }
     if (actor.type === 'user' && actor.extension) {
@@ -1929,7 +2262,7 @@ export class Runtime {
       // org, the org active, the user enabled) is read here, in the request's own transaction and before the context
       // is entered, so a revoke or a removal applies at once. It names one org: org-less work is refused.
       if (orgId === null) throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy chỉ dùng được trong tổ chức đã cấp', { rule: 'extension_org' });
-      await sql`SELECT crove_kernel.extension_token_check(${actor.extension.tokenId}::uuid, ${actor.userId}::uuid, ${orgId}::uuid)`.execute(trx);
+      await sql`SELECT ludy_kernel.extension_token_check(${actor.extension.tokenId}::uuid, ${actor.userId}::uuid, ${orgId}::uuid)`.execute(trx);
       return;
     }
     if (actor.type !== 'user' || !this.#sessions) return;
@@ -1938,24 +2271,35 @@ export class Runtime {
     await this.#sessions.check(trx, { ...actor, sessionId }, orgId);
   }
 
-  private async enter(trx: Transaction<Database>, actor: Actor, orgId: string): Promise<Entered> {
+  private async enter(trx: Transaction<Database>, actor: Actor, orgId: string, mcpWrite?: McpWriteScope, mcpMode?: 'run' | 'proposal', mcpModule?: string): Promise<Entered> {
     await this.checkSession(trx, actor, orgId);
-    return this.enterContext(trx, actor, orgId);
+    return this.enterContext(trx, actor, orgId, mcpWrite, mcpMode, mcpModule);
+  }
+
+  // The module and coworker switches of an MCP grant's write or proposal entry (#4155). The entry's own gate reads the grant's standing (live, the org not stopped, the deployment's AI switch);
+  // this reads the two stops an owner or admin uses for one app or one coworker, as an org-chart agent's entry does: an engaged module switch for the module the command belongs to (for a proposal,
+  // the command the proposal is for), and an engaged agent switch naming the grant. executeIn calls it right after the context is entered, so the refusal, KILL_SWITCH_ON (403), is audited as the
+  // grant's like any other refused command, with no handler run. The app gate (ADR-0053, MODULE_OFF) follows on the same module.
+  private async refuseIfMcpSwitched(trx: Transaction<Database>, orgId: string, actor: Actor, entered: Entered): Promise<void> {
+    if (entered.mcpSwitchModule === undefined) return;
+    if (actor.type !== 'user' || !actor.mcp) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+    await sql`SELECT ludy_kernel.mcp_switch_check(${orgId}::uuid, ${actor.mcp.grantId}::uuid, ${entered.mcpSwitchModule}::text)`.execute(trx);
   }
 
   // Works on a hot standby too: the re-entry guard's advisory lock and pg_locks read are allowed during recovery
   // (PostgreSQL 17, probed in #105). What a standby refuses is every write (25006, INTERNAL 500): commands, a session
   // check that records a first-seen session, refusal audits. Replica reads are not wired up (plan §3.3).
-  private async enterContext(trx: Transaction<Database>, actor: Actor, orgId: string): Promise<Entered> {
+  // `mcpWrite` is the write scope a command declares (CommandDef.mcp), set only when a command runs: an MCP grant that holds it enters its sealed write context in place of the read-only one.
+  private async enterContext(trx: Transaction<Database>, actor: Actor, orgId: string, mcpWrite?: McpWriteScope, mcpMode?: 'run' | 'proposal', mcpModule?: string): Promise<Entered> {
     if (actor.type === 'system') {
-      await sql`SELECT crove_kernel.enter_system_context(${orgId}::uuid)`.execute(trx);
+      await sql`SELECT ludy_kernel.enter_system_context(${orgId}::uuid)`.execute(trx);
       return { role: null, agent: null, memberVy: null };
     }
     if (actor.type === 'agent' && actor.memberVy === true) {
       // Worker only. The database checks the run is live, the member is active now, no kill switch or spent budget covers it, and derives the
       // member's rights; the answer carries them (ADR-0049 decision 1).
       const { rows } = await sql<{ entered: { role: string; member: string; module: string; maxRisk: string; tainted: boolean } }>`
-        SELECT crove_kernel.enter_member_vy_context(${orgId}::uuid, ${actor.agentId}::uuid, ${actor.runId}::uuid) AS entered`.execute(trx);
+        SELECT ludy_kernel.enter_member_vy_context(${orgId}::uuid, ${actor.agentId}::uuid, ${actor.runId}::uuid) AS entered`.execute(trx);
       const got = rows[0]?.entered;
       const risk = got?.maxRisk;
       const role = got?.role;
@@ -1967,7 +2311,7 @@ export class Runtime {
     if (actor.type === 'agent') {
       // Worker only; the database checks the run is live and derives the rest (ADR-0029 section 2).
       const { rows } = await sql<{ entered: { role: string; position: string; module: string; maxRisk: string; tainted: boolean } }>`
-        SELECT crove_kernel.enter_agent_context(${orgId}::uuid, ${actor.agentId}::uuid, ${actor.runId}::uuid) AS entered`.execute(trx);
+        SELECT ludy_kernel.enter_agent_context(${orgId}::uuid, ${actor.agentId}::uuid, ${actor.runId}::uuid) AS entered`.execute(trx);
       const entered = rows[0]?.entered;
       const maxRisk = entered?.maxRisk;
       if (!entered || (maxRisk !== 'R0' && maxRisk !== 'R1' && maxRisk !== 'R2')) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
@@ -1985,12 +2329,17 @@ export class Runtime {
         memberVy: null,
       };
     }
+    if (mcpWrite !== undefined && actor.type === 'user' && actor.mcp && (actor.mcp.kind === 'member' || this.#mcpEntry === 'worker')) {
+      // A write scope belongs to a company grant on the API's own entry: a member-bound grant and the worker's wake entry never enter a write context. A company grant without the scope enters its read
+      // context below, where authorizeMcp refuses the command after entry, so the refusal is audited as the grant's, as any other refused command is.
+      throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
+    }
     if (actor.mcp?.kind === 'member') {
       // A member-bound MCP grant (ADR-0051 decision 2): the sealed context is the grant's, not the person's (no user in the seal, tainted, R0), and
       // it is entered afresh in every request, so a revoke, a demotion or a switch turned off applies to the next call. Queries only: the transaction
       // is already read-only here (query() sets it first) and no command reaches a grant.
       const { rows } = await sql<{ entered: { role: string; member: string; maxRisk: string; tainted: boolean } }>`
-        SELECT crove_kernel.enter_mcp_member_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid) AS entered`.execute(trx);
+        SELECT ludy_kernel.enter_mcp_member_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid) AS entered`.execute(trx);
       const got = rows[0]?.entered;
       const role = got?.role;
       // The member of the seal is the consenting user the edge named; anything else is a bug or tampering, never answered as a role.
@@ -1999,15 +2348,45 @@ export class Runtime {
       }
       return { role, agent: null, memberVy: null };
     }
+    if (actor.mcp && mcpWrite !== undefined && mcpMode === 'proposal' && actor.mcp.scopes.includes(mcpWrite)) {
+      // A call to a command of mode 'proposal' (ADR-0051 decision 10, #3858 slice d): the sealed context in which a company grant that holds the scope may insert one pending proposal of an exact shape and nothing else.
+      const { rows } = await sql<{ entered: { role: string; grantor: string; maxRisk: string; tainted: boolean } }>`
+        SELECT ludy_kernel.enter_mcp_company_proposal_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid, ${mcpWrite}::text) AS entered`.execute(trx);
+      const got = rows[0]?.entered;
+      const role = got?.role;
+      if (!got || got.grantor !== actor.userId || got.maxRisk !== 'R1' || got.tainted !== true || (role !== 'owner' && role !== 'admin')) {
+        throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      }
+      if (mcpModule === undefined) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      return { role, agent: null, memberVy: null, mcpSwitchModule: mcpModule };
+    }
+    if (actor.mcp && mcpWrite !== undefined && actor.mcp.scopes.includes(mcpWrite) && MCP_WRITE_CONTEXT_SCOPES.includes(mcpWrite)) {
+      // A company MCP grant that holds a write scope runs the command that declares it (ADR-0051 decision 2, #3227): the same sealed shape as the read context (agent-shaped, no user,
+      // tainted), at R1 and of its own kind, so the database guard lets it write exactly what that scope names. The grantor named in the seal is the user the edge named, else a bug.
+      // Each write scope enters its own context, by name: the draft scope the draft entry, the engage and ads scopes the write entry (which seals the scope it was given and the kind of that scope). A scope
+      // with no entry is refused here and never falls back to the draft or the read context; the entry's answer must name the scope it was asked for.
+      let entry;
+      if (mcpWrite === 'ludy.social.draft') entry = sql`ludy_kernel.enter_mcp_company_draft_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid)`;
+      else if (mcpWrite === 'ludy.engage.write' || mcpWrite === 'ludy.ads.draft') entry = sql`ludy_kernel.enter_mcp_company_write_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid, ${mcpWrite}::text)`;
+      else throw new DomainError('FORBIDDEN', 403, 'Quyền kết nối MCP không được thực hiện việc này', { rule: 'mcp_scope' });
+      const { rows } = await sql<{ entered: { role: string; grantor: string; maxRisk: string; tainted: boolean; scope?: string } }>`SELECT ${entry} AS entered`.execute(trx);
+      const got = rows[0]?.entered;
+      const role = got?.role;
+      if (!got || got.grantor !== actor.userId || got.maxRisk !== 'R1' || got.tainted !== true || (role !== 'owner' && role !== 'admin') || (mcpWrite !== 'ludy.social.draft' && got.scope !== mcpWrite)) {
+        throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      }
+      if (mcpModule === undefined) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      return { role, agent: null, memberVy: null, mcpSwitchModule: mcpModule };
+    }
     if (actor.mcp) {
       // A company MCP grant (ADR-0051 decision 2, slice 3e): the same sealed shape, with no user in the seal, so a policy bound to a user (a private note, a Vy-catalog table) answers nothing to
       // it whatever the grantor holds. The role is the consenting owner's or admin's, read live in this transaction; the grantor named in the seal is the user the edge named, else a bug.
       const { rows } =
         this.#mcpEntry === 'worker'
           ? await sql<{ entered: { role: string; grantor: string; maxRisk: string; tainted: boolean } }>`
-              SELECT crove_kernel.enter_mcp_wake_company_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid) AS entered`.execute(trx)
+              SELECT ludy_kernel.enter_mcp_wake_company_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid) AS entered`.execute(trx)
           : await sql<{ entered: { role: string; grantor: string; maxRisk: string; tainted: boolean } }>`
-              SELECT crove_kernel.enter_mcp_company_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid) AS entered`.execute(trx);
+              SELECT ludy_kernel.enter_mcp_company_context(${orgId}::uuid, ${actor.mcp.grantId}::uuid) AS entered`.execute(trx);
       const got = rows[0]?.entered;
       const role = got?.role;
       if (!got || got.grantor !== actor.userId || got.maxRisk !== 'R0' || got.tainted !== true || (role !== 'owner' && role !== 'admin')) {
@@ -2018,10 +2397,10 @@ export class Runtime {
     if (this.#contextTokenKey !== null) {
       // Signed right before it is used, as a bind parameter (never in a statement's text).
       const token = mintContextToken(this.#contextTokenKey, { userId: actor.userId, sessionId: actor.sessionId ?? null, orgId, aal: actor.aal, mfaAt: actor.mfaAt ?? null });
-      const { rows } = await sql<{ role: MemberRole }>`SELECT crove_kernel.enter_user_context(${orgId}::uuid, ${token}::text) AS role`.execute(trx);
+      const { rows } = await sql<{ role: MemberRole }>`SELECT ludy_kernel.enter_user_context(${orgId}::uuid, ${token}::text) AS role`.execute(trx);
       return { role: rows[0]?.role ?? null, agent: null, memberVy: null };
     }
-    const { rows } = await sql<{ role: MemberRole }>`SELECT crove_kernel.enter_context(${actor.userId}::uuid, ${orgId}::uuid) AS role`.execute(trx);
+    const { rows } = await sql<{ role: MemberRole }>`SELECT ludy_kernel.enter_context(${actor.userId}::uuid, ${orgId}::uuid) AS role`.execute(trx);
     return { role: rows[0]?.role ?? null, agent: null, memberVy: null };
   }
 
@@ -2047,11 +2426,11 @@ export class Runtime {
 
   // Answers the legal entities the user was let in for when only an entity-scoped permission admitted them (#1507),
   // else null (their role, or the permission org-wide).
-  private async authorize(trx: Transaction<Database>, def: CommandDef<unknown, unknown>, actor: Actor, entered: Entered, viaProposal: boolean): Promise<readonly string[] | null> {
+  private async authorize(trx: Transaction<Database>, def: CommandDef<unknown, unknown>, actor: Actor, entered: Entered, viaProposal: boolean, mcpTarget?: CommandDef<unknown, unknown>): Promise<readonly string[] | null> {
     // First of all: an extension token reaches a command only through the scope the command declares (ADR-0047 point 10).
     authorizeExtension(def.extension, actor);
-    // An MCP grant runs no command, whatever the command declares (no command type carries `mcp`).
-    authorizeMcp(undefined, actor);
+    // An MCP grant runs a command only when it declares a write scope the grant holds; every other command is closed to it.
+    authorizeMcp((mcpTarget ?? def).mcp, actor);
     try {
       this.authorizeRole(def, actor, entered, viaProposal);
       return null;
@@ -2069,12 +2448,12 @@ export class Runtime {
   private async holdsPermission(trx: Transaction<Database>, def: CommandDef<unknown, unknown>, actor: Actor, entered: Entered): Promise<false | readonly string[] | null> {
     if (def.permission === undefined || actor.type !== 'user' || entered.role === null || typeof def.access === 'string') return false;
     if (def.permissionScope === 'legal_entity') {
-      const { rows } = await sql<{ entities: string[] }>`SELECT crove_kernel.ctx_permission_entities(${def.permission}::text) AS entities`.execute(trx);
+      const { rows } = await sql<{ entities: string[] }>`SELECT ludy_kernel.ctx_permission_entities(${def.permission}::text) AS entities`.execute(trx);
       const entities = rows[0]?.entities ?? [];
       if (entities.length === 0) return false;
       return entities.includes('*') ? null : Object.freeze([...entities]);
     }
-    const { rows } = await sql<{ held: boolean }>`SELECT crove_kernel.ctx_has_permission(${def.permission}::text) AS held`.execute(trx);
+    const { rows } = await sql<{ held: boolean }>`SELECT ludy_kernel.ctx_has_permission(${def.permission}::text) AS held`.execute(trx);
     return rows[0]?.held === true ? null : false;
   }
 
@@ -2159,7 +2538,7 @@ export class Runtime {
     caller: { def: CommandDef<unknown, unknown>; commandId: string },
   ): Promise<void> {
     const proposal = await trx
-      .selectFrom('crove_kernel.proposal')
+      .selectFrom('ludy_kernel.proposal')
       .select(['status', 'command', 'executed_command_id'])
       .where('org_id', '=', orgId)
       .where('id', '=', proposalId)
@@ -2203,7 +2582,7 @@ export class Runtime {
     delete detail.under_proposal;
     if (proposalId !== null && !ownsProposal) detail.under_proposal = proposalId;
     await trx
-      .insertInto('crove_kernel.audit_event')
+      .insertInto('ludy_kernel.audit_event')
       .values({
         org_id: row.orgId,
         actor_type: row.actor.type,
@@ -2232,7 +2611,7 @@ export class Runtime {
   // its own), else the plain SHA-256.
   private inputHashOf(actor: Actor, command: string, canonical: string): RawBuilder<string> | string {
     if (this.inputHash === 'sha256') return sha256Hex(canonical);
-    return sql<string>`crove_kernel.command_input_hash(${actorKey(actor)}, ${command}, ${canonical})`;
+    return sql<string>`ludy_kernel.command_input_hash(${actorKey(actor)}, ${command}, ${canonical})`;
   }
 
   private async runInTx<O>(
@@ -2449,7 +2828,7 @@ export class Runtime {
           refuseSealed('ctx.emit', checked);
           const problem = eventPayloadProblem(checked, type);
           if (problem) throw new Error(`command ${def.name} cannot emit ${type} with ${problem}`);
-          const { rows } = await aside(() => sql<{ id: string }>`SELECT crove_kernel.emit(${type}, ${JSON.stringify(checked)}::jsonb, ${commandId}::uuid) AS id`.execute(trx));
+          const { rows } = await aside(() => sql<{ id: string }>`SELECT ludy_kernel.emit(${type}, ${JSON.stringify(checked)}::jsonb, ${commandId}::uuid) AS id`.execute(trx));
           return rows[0]?.id ?? '';
         }),
       activity: (recordType, recordId, kind, summary, options) =>
@@ -2458,7 +2837,7 @@ export class Runtime {
           refuseSealed('ctx.activity', [recordType, recordId, kind, summary, options?.legalEntityId]);
           await aside(() =>
             trx
-              .insertInto('crove_kernel.activity')
+              .insertInto('ludy_kernel.activity')
               .values({
                 org_id: base.orgId,
                 record_type: recordType,
@@ -2480,6 +2859,20 @@ export class Runtime {
           refuseSealed('ctx.seal reference', ref);
           return aside(() => this.sealSubject(trx, base.orgId, base.actor, ref, place, value));
         }),
+      keyedHash: (purpose, value, keyId) => {
+        refuseClosed('ctx.keyedHash');
+        if (this.#keyedHashRoots.length === 0) throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa (CREDENTIAL_KEY)');
+        const root = keyId === undefined ? this.#keyedHashRoots[0] : this.#keyedHashRoots.find((r) => r.id === keyId);
+        // A key id this deployment no longer keeps is not a missing key: the caller makes the hash again from the value instead of reading the old hash as a change.
+        if (!root) throw new DomainError('KEYED_HASH_KEY_RETIRED', 409, 'Khóa mã hóa dùng cho giá trị này đã được thay');
+        return keyedHash(root.key, base.orgId, purpose, value);
+      },
+      keyedHashKeyId: () => {
+        refuseClosed('ctx.keyedHashKeyId');
+        const root = this.#keyedHashRoots[0];
+        if (!root) throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa (CREDENTIAL_KEY)');
+        return root.id;
+      },
       permissionEntity: (legalEntityId) => {
         refuseClosed('ctx.permissionEntity');
         if (permissionEntities === null) return;
@@ -2518,7 +2911,7 @@ export class Runtime {
             refuseSealed('ctx.numbering.allocate', n);
             const { rows } = await aside(() => sql<{ period_key: string; number: string; allocation_id: string }>`
               SELECT a.period_key, a.number::text AS number, a.allocation_id
-              FROM crove_kernel.allocate_number(${n.legalEntityId}::uuid, ${n.docType}::text, ${n.documentDate}::date, ${n.targetType}::text, ${n.targetId}::uuid) a`.execute(trx));
+              FROM ludy_kernel.allocate_number(${n.legalEntityId}::uuid, ${n.docType}::text, ${n.documentDate}::date, ${n.targetType}::text, ${n.targetId}::uuid) a`.execute(trx));
             const row = rows[0];
             const number = Number(row?.number);
             if (!row || !Number.isSafeInteger(number) || number < 1) throw new Error(`command ${def.name}: allocate_number answered no number`);
@@ -2528,7 +2921,7 @@ export class Runtime {
           pending(async () => {
             refuseClosed('ctx.numbering.void');
             refuseSealed('ctx.numbering.void', n.reason);
-            const { rows } = await aside(() => sql<{ id: string }>`SELECT crove_kernel.void_number(${n.allocationId}::uuid, ${n.reason}::text) AS id`.execute(trx));
+            const { rows } = await aside(() => sql<{ id: string }>`SELECT ludy_kernel.void_number(${n.allocationId}::uuid, ${n.reason}::text) AS id`.execute(trx));
             const voidId = rows[0]?.id;
             if (!voidId) throw new Error(`command ${def.name}: void_number answered no void`);
             return { voidId };
@@ -2539,6 +2932,10 @@ export class Runtime {
     const resolveNested = (name: string, nestedInput: unknown, proposalIdOption: string | undefined): NestedRun => {
       const nested = this.#commands.get(name);
       if (!nested || nested.bootstrap) throw new DomainError('COMMAND_NOT_FOUND', 404, `Không có lệnh ${name}`);
+      // A one-time secret answer must never flow back into an unflagged caller whose idempotency row or proposal result could persist it (#3428).
+      if (nested.noIdempotency && !def.noIdempotency) {
+        throw new Error(`command ${def.name}: cannot run ${nested.name} (noIdempotency) unless ${def.name} also declares noIdempotency: true`);
+      }
       const parsed = parseInput(nested.input, nestedInput);
       // A sealed value passed down: the nested command declares it too (its own path), so its audit row and hash are masked as well.
       if (sealed.size > 0 && leaksSealed(maskSealed(parsed, nested.sealedInput), sealed)) {
@@ -2560,7 +2957,7 @@ export class Runtime {
       this.#savepointSeq += 1;
       // With a random part: ROLLBACK TO goes to the newest savepoint of that name, so a nested handler that could guess
       // it could set its own, shadow this one, and keep its writes while the caller sees a refusal (#1797).
-      const savepoint = sql.raw(`crove_try_run_${this.#savepointSeq}_${randomUUID().replaceAll('-', '')}`);
+      const savepoint = sql.raw(`ludy_try_run_${this.#savepointSeq}_${randomUUID().replaceAll('-', '')}`);
       await sql`SAVEPOINT ${savepoint}`.execute(trx);
       // Undoes the nested command. Every path that does not return its value takes it, so a handler that catches the
       // error and goes on never keeps a refused or failed command's writes, and an aborted transaction is usable again.
@@ -2656,6 +3053,8 @@ export class Runtime {
         throw new Error(`command ${cleanRoot}: declares no contact or payment write (P04), so it cannot run ${nested.def.name}, which declares ${startsJobs.join(', ')}: the job it starts runs later under its own declaration (#2107)`);
       }
       const { proposalId } = nested;
+      // A nested command, and the command an approved proposal runs, answers to the same gate: MODULE_OFF rolls the caller back.
+      await this.refuseIfAppOff(trx, base.orgId, base.entered, base.actor, nested.def);
       const permissionEntities = await this.authorize(trx, nested.def, base.actor, base.entered, proposalId !== null);
       if (proposalId !== null && (nested.def.access === 'proposal' || nested.def.access === 'proposal_revision')) {
         await this.requireProposalState(trx, base.orgId, nested.def, proposalId, { def, commandId });
@@ -2754,6 +3153,19 @@ export class Runtime {
     if (!def || def.bootstrap) throw new DomainError('COMMAND_NOT_FOUND', 404, `Không có lệnh ${name}`);
     const input = parseInput(def.input, rawInput);
     const orgId = options.orgId;
+    if (options.actor.type === 'user' && options.actor.mcp && def.mcp?.mode === 'proposal') {
+      // An MCP grant's call to a command of mode 'proposal' never executes it (ADR-0051 decision 10, #3858 slice d): the kernel's proposer runs in its place, in the sealed proposal context of the
+      // command's scope, and makes a pending proposal of the command and this (parsed) input. The scope is checked against the command's own declaration, and a refusal is audited under its name.
+      const proposer = this.#commands.get(MCP_PROPOSE_COMMAND);
+      if (!proposer) throw new DomainError('COMMAND_NOT_FOUND', 404, `Không có lệnh ${MCP_PROPOSE_COMMAND}`);
+      // A proposal command takes the envelope the approval runs it with, `{ payload, acceptFailedChecks? }`: the proposal stores the payload, and what the approver accepts (failed checks, a posting date) is the
+      // approver's to choose at approval, never a client's: a call that sets either is refused before anything is written.
+      const envelope = input as { payload?: unknown; acceptFailedChecks?: unknown; postingDate?: unknown };
+      if (typeof envelope.payload !== 'object' || envelope.payload === null || Array.isArray(envelope.payload) || envelope.acceptFailedChecks === true || envelope.postingDate !== undefined) {
+        throw new DomainError('INVALID', 422, 'Nội dung đề xuất không hợp lệ');
+      }
+      return this.executeIn<O>(MCP_PROPOSE_COMMAND, proposer, { command: name, payload: envelope.payload }, options.actor, options.idempotencyKey, () => this.#cells.resolveTenant(orgId), async () => orgId, def);
+    }
     return this.executeIn<O>(name, def, input, options.actor, options.idempotencyKey, () => this.#cells.resolveTenant(orgId), async () => orgId);
   }
 
@@ -2782,6 +3194,8 @@ export class Runtime {
     idempotencyKey: string | undefined,
     cell: () => Promise<Db>,
     resolveOrg: (trx: Transaction<Database>) => Promise<string>,
+    // The command an MCP call to a proposal-mode command is for: `def` is then the proposer, and the scope, the mode and the audit name are the target's.
+    mcpTarget?: CommandDef<unknown, unknown>,
   ): Promise<O> {
     const canonical = stableStringify(maskSealed(input, def.sealedInput));
     let orgId = '';
@@ -2794,23 +3208,30 @@ export class Runtime {
       const db = await cell();
       return await db.transaction().execute(async (trx) => {
         orgId = await resolveOrg(trx);
-        context = await this.enter(trx, actor, orgId);
+        context = await this.enter(trx, actor, orgId, (mcpTarget ?? def).mcp?.scope, (mcpTarget ?? def).mcp?.mode, moduleOf((mcpTarget ?? def).name));
         entered = true;
+        await this.refuseIfMcpSwitched(trx, orgId, actor, context);
         if (def.bootstrap) {
           const { rows } = await sql<{ fresh: boolean }>`
             SELECT COALESCE(t.xmin = pg_catalog.pg_current_xact_id_if_assigned()::xid, false) AS fresh
-            FROM crove_kernel.tenant t WHERE t.org_id = ${orgId}::uuid`.execute(trx);
+            FROM ludy_kernel.tenant t WHERE t.org_id = ${orgId}::uuid`.execute(trx);
           orgIsNew = rows[0]?.fresh === true;
         }
-        const permissionEntities = await this.authorize(trx, def, actor, context, false);
+        // The per-org app gate (ADR-0053), after the session and the membership and before the role check, the idempotency key and the handler.
+        // A proposal an MCP grant makes for a command of an app the org switched off is refused as the command itself would be (the gate reads the target's module, not the proposer's).
+        if (!def.bootstrap) await this.refuseIfAppOff(trx, orgId, context, actor, mcpTarget ?? def);
+        const permissionEntities = await this.authorize(trx, def, actor, context, false, mcpTarget);
         this.requireStepUp(def, actor);
         await this.requireLiveSession(def, actor);
 
+        if (idempotencyKey !== undefined && def.noIdempotency) {
+          throw new DomainError('IDEMPOTENCY_UNSUPPORTED', 400, 'Lệnh này trả về mã bí mật dùng một lần nên không hỗ trợ khóa chống lặp');
+        }
         if (idempotencyKey) {
           const key = actorKey(actor);
           const requestHash = this.inputHashOf(actor, name, canonical);
           const claimed = await trx
-            .insertInto('crove_kernel.idempotency_key')
+            .insertInto('ludy_kernel.idempotency_key')
             .values({ org_id: orgId, actor_key: key, key: idempotencyKey, command: name, request_sha256: requestHash, response: null })
             .onConflict((oc) => oc.doNothing())
             .returning('key')
@@ -2819,7 +3240,7 @@ export class Runtime {
             // A row claimed before the switch to keyed hashes (#1732) holds the plain SHA-256 and still replays, until
             // the 7-day retention removes it; a keyed row is compared only with the keyed hash.
             const existing = await trx
-              .selectFrom('crove_kernel.idempotency_key')
+              .selectFrom('ludy_kernel.idempotency_key')
               .select([
                 'command',
                 'response',
@@ -2838,7 +3259,7 @@ export class Runtime {
           }
           const output = await this.runInTx<O>(trx, def, input, { orgId, actor, entered: context, proposalId: null, permissionEntities });
           await trx
-            .updateTable('crove_kernel.idempotency_key')
+            .updateTable('ludy_kernel.idempotency_key')
             .set({ response: JSON.stringify({ value: output ?? null }) })
             .where('org_id', '=', orgId)
             .where('actor_key', '=', key)
@@ -2855,8 +3276,13 @@ export class Runtime {
       // membership was established (plan §4.4 steps 7 and 14: a record the actor named is not in the org, such as
       // MEMBER_NOT_FOUND for a member of another org) is audited as failed like 409 and 422. Other statuses are not
       // audited today.
-      if (entered && !orgIsNew && AUDITED_REFUSAL_STATUSES.has(domain.status)) {
-        await this.writeRefusalAudit(name, def, input, canonical, actor, orgId, domain);
+      // A line's wake event for a grant that does not hold the line's scope (MCP_WAKE_SCOPE, #3858 slice e) is the same: the sweep offers a line's source to every due grant and the database says which are not for it.
+      // A refusal because the app is off is the org's state, not an attempt to audit, and the worker, a sweep and the relay meet it every
+      // tick for every item of an off org: it writes no row and spends none of the refusal budget when the system is the actor. A person's
+      // or an AI agent's call keeps its failed row.
+      if (entered && !orgIsNew && AUDITED_REFUSAL_STATUSES.has(domain.status) && !((domain.code === 'MODULE_OFF' || domain.code === 'MCP_WAKE_SCOPE') && actor.type === 'system')) {
+        // The refusal of an MCP call to a proposal command is audited under the target's name with NO target: the target's id would come from the client's payload.
+        await this.writeRefusalAudit((mcpTarget ?? def).name, mcpTarget ? withoutTarget(mcpTarget) : def, mcpTarget ? { payload: (input as { payload: unknown }).payload } : input, canonical, actor, orgId, domain);
       } else if ((!entered || orgIsNew) && isPreMembershipRefusal(domain)) {
         // Refused before the caller was a member of the org (or the org-less command's new org rolled back with
         // it): there is no org to audit in, so it is noted in security_event (plan §4.4 step 3, issue #1006).
@@ -2925,7 +3351,7 @@ export class Runtime {
     if (memberDenied) await this.noteSecurityEvent(name, actor, orgId, refusal.code);
   }
 
-  // Notes a refusal made before membership was established in crove_kernel.security_event (sampled per caller,
+  // Notes a refusal made before membership was established in ludy_kernel.security_event (sampled per caller,
   // kept 30 days), in its own statement with no tenant context. Best effort, like the refusal audit: a failure is
   // logged with ids and codes only and never replaces the caller's refusal. System actors are not noted: they are the
   // deployment's own jobs, never an outside caller.
@@ -2934,7 +3360,7 @@ export class Runtime {
     const caller = actor.type === 'user' ? `user:${actor.userId.toLowerCase()}` : `agent:${actor.agentId.toLowerCase()}`;
     const target = orgId && UUID_RE.test(orgId) ? orgId.toLowerCase() : null;
     try {
-      await sql`SELECT crove_kernel.security_event_note(${caller}, ${name}, ${code}, ${target}::uuid)`.execute(this.#cells.controlPlane());
+      await sql`SELECT ludy_kernel.security_event_note(${caller}, ${name}, ${code}, ${target}::uuid)`.execute(this.#cells.controlPlane());
     } catch (error) {
       const sqlState = (error as { code?: unknown } | null)?.code;
       console.error(`[execute ${name}] SECURITY_EVENT_FAILED`, {
@@ -2967,7 +3393,7 @@ export class Runtime {
     });
   }
 
-  // Counts the refusal in crove_kernel.refusal_tally (in the refusal transaction, after the context is entered) and
+  // Counts the refusal in ludy_kernel.refusal_tally (in the refusal transaction, after the context is entered) and
   // answers whether its audit row is written. A failing count never suppresses the row: the count is rolled back to
   // a savepoint, logged with ids and codes only, and the row is written as without a bound.
   private async countRefusal(
@@ -2985,7 +3411,7 @@ export class Runtime {
     await sql`SAVEPOINT refusal_tally`.execute(trx);
     try {
       const { rows } = await sql<{ audit: boolean }>`
-        SELECT crove_kernel.refusal_tally_note(${name}, ${code}, ${refusal.security}::boolean,
+        SELECT ludy_kernel.refusal_tally_note(${name}, ${code}, ${refusal.security}::boolean,
           ${limits.perActor}::integer, ${limits.perOrg}::integer, ${limits.reserve}::integer,
           ${limits.windowSeconds}::integer) AS audit`.execute(trx);
       await sql`RELEASE SAVEPOINT refusal_tally`.execute(trx);
@@ -3032,6 +3458,8 @@ export class Runtime {
       await db.transaction().execute(async (trx) => {
         const entered = await this.enter(trx, options.actor, options.orgId);
         onEntered();
+        // An app that is off is refused before the audit row, which says a read started: no sensitive read of an app that is off is recorded.
+        await this.refuseIfAppOff(trx, options.orgId, entered, options.actor, def);
         try {
           this.authorizeQuery(def, options.actor, entered);
         } catch (error) {
@@ -3079,7 +3507,7 @@ export class Runtime {
     let dataKey = fresh.dataKey;
     try {
       const { rows } = await sql<{ id: string; key_id: string; wrapped_key: Buffer }>`
-        SELECT id, key_id, wrapped_key FROM crove_kernel.subject_key_ensure(${subjectId}::uuid, ${ref}, ${fresh.keyId}, ${fresh.wrapped})`.execute(trx);
+        SELECT id, key_id, wrapped_key FROM ludy_kernel.subject_key_ensure(${subjectId}::uuid, ${ref}, ${fresh.keyId}, ${fresh.wrapped})`.execute(trx);
       const stored = rows[0];
       if (!stored) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
       if (stored.id !== subjectId) {
@@ -3108,7 +3536,7 @@ export class Runtime {
     const keys = new Map<string, { dataKey: Buffer; ref: string }>();
     try {
       if (ids.length > 0) {
-        const { rows } = await sql<{ id: string; key_id: string; wrapped_key: Buffer; ref: string }>`SELECT id, key_id, wrapped_key, ref FROM crove_kernel.subject_key_wrapped(${ids}::uuid[])`.execute(trx);
+        const { rows } = await sql<{ id: string; key_id: string; wrapped_key: Buffer; ref: string }>`SELECT id, key_id, wrapped_key, ref FROM ludy_kernel.subject_key_wrapped(${ids}::uuid[])`.execute(trx);
         for (const row of rows) keys.set(row.id, { dataKey: vault.unwrap(orgId, row.id, row.key_id, row.wrapped_key), ref: row.ref });
       }
       return parsed.map((p) => {
@@ -3149,6 +3577,7 @@ export class Runtime {
         await sql`SET TRANSACTION READ ONLY`.execute(trx);
         const entered = await this.enterContext(trx, options.actor, options.orgId);
         reached = true;
+        await this.refuseIfAppOff(trx, options.orgId, entered, options.actor, def);
         this.authorizeQuery(def, options.actor, entered);
         refuseStreamed(def);
         return (await def.handler(this.queryContext(trx.withPlugin(refuseTransactionControl(name)), options.orgId, options.actor, entered, def.sensitive === true), input)) as O;
@@ -3195,6 +3624,7 @@ export class Runtime {
           await sql`SET LOCAL idle_in_transaction_session_timeout = ${sql.lit(`${STREAM_IDLE_MINUTES}min`)}`.execute(trx);
           const entered = await this.enterContext(trx, options.actor, options.orgId);
           reached = true;
+          await this.refuseIfAppOff(trx, options.orgId, entered, options.actor, def);
           this.authorizeQuery(def, options.actor, entered);
           return (await def.handler(this.queryContext(trx.withPlugin(refuseTransactionControl(name)), options.orgId, options.actor, entered, def.sensitive === true), input, sink)) as O;
         });

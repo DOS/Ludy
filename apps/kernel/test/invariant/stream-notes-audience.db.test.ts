@@ -23,10 +23,10 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { LocalDiskStore, Runtime, sha256Hex } from '@crove/kernel-runtime';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { LocalDiskStore, Runtime, sha256Hex } from '@ludy/kernel-runtime';
 import { createAuthenticator } from '../../src/auth.ts';
 import { ConcurrencyLimiter } from '../../src/concurrency.ts';
 import { loadConfig } from '../../src/config.ts';
@@ -35,6 +35,7 @@ import { createSessionStatusSource } from '../../src/sessions.ts';
 import { StreamHub, createDbTicketStore, createPgNotificationSource } from '../../src/stream.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -55,6 +56,7 @@ interface SseEvent {
 suite('invariant: the hints of to-dos and notes reach only the members who may read them', () => {
   const dbName = `crove_test_stream_notes_inv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let pool: pg.Pool;
   let runtime: Runtime;
   let hub: StreamHub;
@@ -66,7 +68,7 @@ suite('invariant: the hints of to-dos and notes reach only the members who may r
   const userIds = new Map<string, string>();
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = createDbClient({ connectionString: adminUrl }, dbIds);
     await client.connect();
     try {
       return await fn(client);
@@ -220,11 +222,12 @@ suite('invariant: the hints of to-dos and notes reach only the members who may r
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     appUrl.password = 'test-app-pw';
-    pool = createPool({ connectionString: appUrl.toString(), max: 8 });
+    pool = createDbPool({ connectionString: appUrl.toString(), max: 8 }, dbIds);
     const db = createDb(pool);
     const config = loadConfig({
       DATABASE_URL: appUrl.toString(),
@@ -301,11 +304,11 @@ suite('invariant: the hints of to-dos and notes reach only the members who may r
   });
 
   it('names the owner of a to-do, the author of a note and a shared note on the channel', async () => {
-    const listener = new pg.Client({ connectionString: adminUrl });
+    const listener = createDbClient({ connectionString: adminUrl }, dbIds);
     await listener.connect();
     const payloads: string[] = [];
     listener.on('notification', (m) => {
-      if (m.channel === 'crove_stream' && m.payload) payloads.push(m.payload);
+      if (m.channel === (dbIds?.streamChannel ?? 'crove_stream') && m.payload) payloads.push(m.payload);
     });
     await listener.query('LISTEN crove_stream');
     try {
@@ -441,9 +444,9 @@ suite('invariant: the hints of to-dos and notes reach only the members who may r
       await admin((a) => a.query(`UPDATE crove_notes.note SET deleted_at = now() - interval '31 days', revision = revision + 1 WHERE org_id = $1 AND id = $2`, [orgId, privateNote]));
       await streams.author.waitFor((e) => got(e, privateNote) >= 2, 5_000);
       const workerUrl = new URL(adminUrl);
-      workerUrl.username = 'crove_worker';
+      workerUrl.username = dbIds ? dbIds.roleName('crove_worker') : 'crove_worker';
       workerUrl.password = 'test-worker-pw';
-      const worker = new pg.Client({ connectionString: workerUrl.toString() });
+      const worker = createDbClient({ connectionString: workerUrl.toString() }, dbIds);
       await worker.connect();
       try {
         await worker.query('BEGIN');

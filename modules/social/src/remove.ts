@@ -9,9 +9,9 @@
 // (social.remove.watch, #937) tells the owners and admins when that ask's job never recorded an answer.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { Db, MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { Db, MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { REMOVE_READY, isProvider, removeAtFit, removeAtOf, removeWindowMs } from './domain/channels.ts';
 import { callRevision, publishCallKey } from './domain/publish.ts';
 import { COMMENT_STALE_MS, type CommentCall } from './comments.ts';
@@ -38,7 +38,7 @@ export async function removeCallsOf(trx: Trx, orgId: string, variants: readonly 
   if (variants.length === 0) return out;
   const prefixes = variants.map(removePrefix);
   const { rows } = await sql<CommentCall>`
-    SELECT key, state, external_ref, error_code, started_at FROM crove_kernel.external_call
+    SELECT key, state, external_ref, error_code, started_at FROM ludy_kernel.external_call
     WHERE org_id = ${orgId}::uuid
       AND (key = ANY(${prefixes}::text[]) OR key LIKE ANY(${prefixes.map((p) => `${p}\\_%`)}::text[]))
     ORDER BY started_at, key`.execute(trx);
@@ -72,7 +72,7 @@ async function lockVariant(ctx: CommandContext, variantId: string): Promise<Vari
   await lockPost(ctx.trx, ctx.orgId, postId);
   const v = (await lockVariants(ctx.trx, ctx.orgId, postId)).find((x) => x.id === variantId);
   if (!v) throw new DomainError('VARIANT_NOT_FOUND', 404, 'Không tìm thấy kênh này của bài đăng');
-  const asked = await ctx.trx.selectFrom('crove_social.post_variant').select('remove_requested_at').where('org_id', '=', ctx.orgId).where('id', '=', v.id).executeTakeFirstOrThrow();
+  const asked = await ctx.trx.selectFrom('ludy_social.post_variant').select('remove_requested_at').where('org_id', '=', ctx.orgId).where('id', '=', v.id).executeTakeFirstOrThrow();
   return { ...v, remove_requested_at: asked.remove_requested_at };
 }
 
@@ -115,6 +115,7 @@ export const variantRemove = defineCommand({
 // Decides whether the worker makes the remove call now, and records the call as started first.
 export const removeBegin = defineCommand({
   name: 'social.remove.begin',
+  runsWhenOff: 'a takedown asked before the app was switched off still goes out: removing a post stops its exposure (ADR-0053)',
   // after: the last remove call the ask saw (null: none was made).
   input: z.strictObject({ variantId: zId, provider: z.string().min(1).max(32), after: z.string().min(1).max(300).nullable() }),
   // Commits the provider call as started; the worker then makes it, an effect outside Crove (#1578).
@@ -135,7 +136,7 @@ export const removeBegin = defineCommand({
     const callKey = publishCallKey(v.id, callRevision(v), v.attempt, stepName);
     // Idempotent: the platform answers a post already gone like a removal.
     await ctx.trx
-      .insertInto('crove_kernel.external_call')
+      .insertInto('ludy_kernel.external_call')
       .values({ org_id: ctx.orgId, key: callKey, module: 'social', target: v.provider, step: stepName, retry_safety: 'idempotent', request_hash: v.content_hash, started_at: ctx.now })
       .execute();
     return { action: 'call', variantId: v.id, provider: v.provider, connectionId: v.channel_connection_id, callKey, externalId: v.external_post_id, settings: settingsOf(v) };
@@ -155,6 +156,7 @@ export type RemoveRecord = z.infer<typeof zRemoveResult>;
 // Stores what the platform answered for the remove call; an answer for a call that is not started changes nothing.
 export const removeRecord = defineCommand({
   name: 'social.remove.record',
+  runsWhenOff: "records the platform's answer to a call already made, so its outcome is not lost when the app is switched off",
   input: z.strictObject({ variantId: zId, callKey: z.string().min(1).max(300), result: zRemoveResult }),
   risk: 'R1',
   sideEffect: 'internal',
@@ -171,13 +173,13 @@ export const removeRecord = defineCommand({
     const errorCode = r.kind === 'removed' ? null : r.kind === 'unknown' ? (r.code ?? 'OUTCOME_UNKNOWN') : (r.code ?? null);
     const errorKind = r.kind === 'removed' ? null : r.kind === 'unknown' ? 'unknown' : r.kind === 'blocked' ? (r.code === 'CHANNEL_NOT_ACTIVE' ? 'token_expired' : 'permission') : r.error;
     await ctx.trx
-      .updateTable('crove_kernel.external_call')
+      .updateTable('ludy_kernel.external_call')
       .set({ state, error_kind: errorKind, error_code: errorCode, ...(state === 'ambiguous' ? {} : { finished_at: ctx.now }), updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('key', '=', input.callKey)
       .where('state', '=', 'started')
       .execute();
-    const by = (await ctx.trx.selectFrom('crove_social.post_variant').select('removed_by').where('org_id', '=', ctx.orgId).where('id', '=', v.id).executeTakeFirstOrThrow()).removed_by;
+    const by = (await ctx.trx.selectFrom('ludy_social.post_variant').select('removed_by').where('org_id', '=', ctx.orgId).where('id', '=', v.id).executeTakeFirstOrThrow()).removed_by;
     // Only a published variant moves; the call is recorded whatever the variant became meanwhile.
     if (r.kind === 'removed' && v.status === 'published') {
       await setVariant(ctx, v.id, { status: step(v, { type: 'removed' }), removed_at: ctx.now });
@@ -194,7 +196,7 @@ export const removeRecord = defineCommand({
 // A post set to come down by itself (#861): its planned time (settings.removeAt) has come, and fits the time the post
 // really went out (at least REMOVE_AT_MIN_GAP_MS after it, within the channel's window). A post that went out late,
 // after a rate limit, a paused channel or a queue edit, so that the time no longer fits, stays up. The same rule as
-// crove_social.remove_due.
+// ludy_social.remove_due.
 export function removeDue(provider: string, settings: Readonly<Record<string, unknown>>, publishedAt: Date | null, now: Date): boolean {
   const at = removeAtOf(settings);
   if (at === null || at === 'invalid' || !publishedAt) return false;
@@ -206,6 +208,7 @@ export function removeDue(provider: string, settings: Readonly<Record<string, un
 // lock; once anyone asked (a person, or this before), it asks nothing more: a failed or unclear removal waits for a person.
 export const removeSchedule = defineCommand({
   name: 'social.remove.schedule',
+  runsWhenOff: 'a planned takedown still comes down on time while the app is off: removing a post stops its exposure (ADR-0053)',
   input: z.strictObject({ variantId: zId }),
   // Its event queues the remove job, which takes the post down on the platform (plan §4.7: a job with egress
   // derives R2; #1662). A system command, so the worker runs it as before.
@@ -243,6 +246,7 @@ export type RemoveWatch = { told: false; reason: 'not_published' | 'not_schedule
 // again from the post page. A person's own ask since (removed_by set) is left to them.
 export const removeWatch = defineCommand({
   name: 'social.remove.watch',
+  runsWhenOff: 'records that a takedown never got its answer, so the post page shows it, while the app is off (ADR-0053); the notice itself waits for the app',
   input: z.strictObject({ variantId: zId, after: z.string().min(1).max(300).nullable() }),
   risk: 'R1',
   sideEffect: 'internal',
@@ -252,7 +256,7 @@ export const removeWatch = defineCommand({
     requireSystem(ctx);
     const v = await lockVariant(ctx, input.variantId);
     if (v.status !== 'published' || !v.external_post_id) return { told: false, reason: 'not_published' };
-    const by = (await ctx.trx.selectFrom('crove_social.post_variant').select('removed_by').where('org_id', '=', ctx.orgId).where('id', '=', v.id).executeTakeFirstOrThrow()).removed_by;
+    const by = (await ctx.trx.selectFrom('ludy_social.post_variant').select('removed_by').where('org_id', '=', ctx.orgId).where('id', '=', v.id).executeTakeFirstOrThrow()).removed_by;
     if (!v.remove_requested_at || by !== null) return { told: false, reason: 'not_scheduled' };
     const calls = (await removeCallsOf(ctx.trx, ctx.orgId, [v])).get(v.id) ?? [];
     const seen = input.after === null ? -1 : calls.findIndex((c) => c.key === input.after);
@@ -266,11 +270,11 @@ export const removeWatch = defineCommand({
       const callKey = publishCallKey(v.id, callRevision(v), v.attempt, stepName);
       code = 'REMOVE_NOT_RUN';
       await ctx.trx
-        .insertInto('crove_kernel.external_call')
+        .insertInto('ludy_kernel.external_call')
         .values({ org_id: ctx.orgId, key: callKey, module: 'social', target: v.provider, step: stepName, retry_safety: 'idempotent', request_hash: v.content_hash, started_at: ctx.now })
         .execute();
       await ctx.trx
-        .updateTable('crove_kernel.external_call')
+        .updateTable('ludy_kernel.external_call')
         .set({ state: 'failed', error_kind: 'transient', error_code: code, finished_at: ctx.now, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('key', '=', callKey)
@@ -279,7 +283,7 @@ export const removeWatch = defineCommand({
       if (now - call.started_at.getTime() <= REMOVE_STALE_MS) return { told: false, reason: 'not_stale' };
       code = 'OUTCOME_UNKNOWN';
       await ctx.trx
-        .updateTable('crove_kernel.external_call')
+        .updateTable('ludy_kernel.external_call')
         .set({ state: 'ambiguous', error_kind: 'unknown', error_code: code, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('key', '=', call.key)
@@ -313,7 +317,7 @@ export async function sweepRemovals(deps: { runtime: Runtime; workerDb: Db }, pr
   // Each provider's window, in seconds, beside it: the scan reads the rule from here, so it stays data in one place.
   const windows = removable.map((p) => Math.floor(removeWindowMs(p) / 1000));
   const { rows } = await sql<{ org_id: string; variant_id: string }>`
-    SELECT org_id, variant_id FROM crove_social.remove_due(${REMOVE_SWEEP_LIMIT}::int, ${removable}::text[], ${windows}::int[])`.execute(deps.workerDb);
+    SELECT org_id, variant_id FROM ludy_social.remove_due(${REMOVE_SWEEP_LIMIT}::int, ${removable}::text[], ${windows}::int[])`.execute(deps.workerDb);
   let queued = 0;
   for (const row of rows) {
     try {

@@ -1,6 +1,6 @@
 // The `user-disable` and `user-enable` image roles (issue #985, ADR-0028 section 2): the deployment operator blocks a
 // user account in Crove, or unblocks it, without touching Supabase Auth. Run in the worker's container (the worker
-// login is the only role that may execute crove_kernel.user_set_disabled), like exports-rebind:
+// login is the only role that may execute ludy_kernel.user_set_disabled), like exports-rebind:
 //
 //   user-disable <account id or email> --reason <text> [--code security|abuse|request|offboarding|other]
 //   user-enable  <account id or email> --reason <text> [--code ...]
@@ -12,8 +12,8 @@
 // repeated run changes nothing and is noted as unchanged.
 // Exit codes: 0 done, 2 the command could not run (arguments, unknown or ambiguous account, database).
 import { sql } from 'kysely';
-import { USER_STATUS_CODES } from '@crove/kernel';
-import type { Actor, Runtime } from '@crove/kernel-runtime';
+import { USER_STATUS_CODES } from '@ludy/kernel';
+import type { Actor, Runtime } from '@ludy/kernel-runtime';
 
 export const USER_DISABLE_EXIT = { ok: 0, failed: 2 } as const;
 
@@ -72,10 +72,10 @@ export interface UserStatusResult {
 export async function setUserDisabled(runtime: Pick<Runtime, 'orgless' | 'execute'>, disabled: boolean, args: UserDisableArgs): Promise<UserStatusResult> {
   const row = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ outcome: string; user_id: string | null; changed: boolean | null; disabled_at: Date | null; org_ids: string[] | null }>`
-      SELECT outcome, user_id, changed, disabled_at, org_ids FROM crove_kernel.user_set_disabled(${args.ref}, ${disabled}, ${args.reason})`.execute(db);
+      SELECT outcome, user_id, changed, disabled_at, org_ids FROM ludy_kernel.user_set_disabled(${args.ref}, ${disabled}, ${args.reason})`.execute(db);
     return rows[0];
   });
-  if (!row) throw new Error('crove_kernel.user_set_disabled returned no row');
+  if (!row) throw new Error('ludy_kernel.user_set_disabled returned no row');
   if (row.outcome !== 'ok' || !row.user_id || !row.org_ids) throw new Error(OUTCOMES[row.outcome] ?? `unexpected outcome ${row.outcome}`);
   // One org's failed note does not keep the others from theirs; the run then fails naming them, and can be repeated.
   const failed: string[] = [];

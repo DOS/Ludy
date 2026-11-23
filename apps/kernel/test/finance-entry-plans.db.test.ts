@@ -8,10 +8,10 @@
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -34,9 +34,9 @@ suite('finance posting triggers under a bulk load (#1525)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     const pool = createPool({ connectionString: app.toString(), max: 2 });
     const db = createDb(pool);
@@ -59,27 +59,27 @@ suite('finance posting triggers under a bulk load (#1525)', () => {
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query(`INSERT INTO crove_kernel.party (org_id, name, tax_code) VALUES ($1, 'Công ty Mẫu', '0100000001')`, [orgId]);
+      await c.query(`INSERT INTO ludy_kernel.party (org_id, name, tax_code) VALUES ($1, 'Công ty Mẫu', '0100000001')`, [orgId]);
       await c.query(
         `CREATE TEMP TABLE seeded ON COMMIT DROP AS
-         SELECT g, crove_kernel.uuid_v7() AS doc_id, crove_kernel.uuid_v7() AS entry_id,
-                (SELECT p.id FROM crove_kernel.party p WHERE p.org_id = $1) AS party_id,
+         SELECT g, ludy_kernel.uuid_v7() AS doc_id, ludy_kernel.uuid_v7() AS entry_id,
+                (SELECT p.id FROM ludy_kernel.party p WHERE p.org_id = $1) AS party_id,
                 DATE '2024-01-01' + (g % 300) AS day, (100000 + g)::numeric AS total
          FROM pg_catalog.generate_series(1, $2::int) g`,
         [orgId, ENTRIES],
       );
       await c.query(
-        `INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total)
+        `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total)
          SELECT $1, doc_id, party_id, '1C26TAA', pg_catalog.lpad(g::text, 8, '0'), day, total, 0, total FROM seeded`,
         [orgId],
       );
       await c.query(
-        `INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id)
+        `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id)
          SELECT $1, entry_id, day, 'Mua hàng ' || g, 'finance.purchase_document', doc_id FROM seeded`,
         [orgId],
       );
       await c.query(
-        `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit)
+        `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit)
          SELECT $1::uuid, entry_id, 1, '6422', total, 0 FROM seeded UNION ALL SELECT $1::uuid, entry_id, 2, '331', 0, total FROM seeded`,
         [orgId],
       );
@@ -87,12 +87,12 @@ suite('finance posting triggers under a bulk load (#1525)', () => {
       await c.query('SET CONSTRAINTS ALL IMMEDIATE');
       const table = (
         await c.query<{ seq_scan: string; seq_tup_read: string }>(
-          `SELECT seq_scan, seq_tup_read FROM pg_catalog.pg_stat_xact_user_tables WHERE relid = 'crove_finance.journal_entry'::regclass`,
+          `SELECT seq_scan, seq_tup_read FROM pg_catalog.pg_stat_xact_user_tables WHERE relid = 'ludy_finance.journal_entry'::regclass`,
         )
       ).rows[0];
       const entityIndex = (
         await c.query<{ idx_tup_read: string }>(
-          `SELECT pg_catalog.pg_stat_get_xact_tuples_returned('crove_finance.journal_entry_legal_entity_idx'::regclass) AS idx_tup_read`,
+          `SELECT pg_catalog.pg_stat_get_xact_tuples_returned('ludy_finance.journal_entry_legal_entity_idx'::regclass) AS idx_tup_read`,
         )
       ).rows[0];
       await c.query('COMMIT');

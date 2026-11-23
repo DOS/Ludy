@@ -17,13 +17,13 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import type { ExtractClient } from '@crove/extract-contract';
-import { vietnamToday } from '@crove/kernel-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries, importPortalList } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { vietnamToday } from '@ludy/kernel-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { extractAndPropose, financeCommands, financeQueries, importPortalList } from '@ludy/mod-finance';
 import { portalListXlsx, type PortalInvoiceSpec } from '../../extract/test/xlsx-fixture.ts';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
@@ -169,7 +169,7 @@ suite('late purchase invoice in an open month (#478)', () => {
       async (c) =>
         (
           await c.query<{ outcome: string; detail: Record<string, unknown> }>(
-            `SELECT outcome, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY occurred_at, id`,
+            `SELECT outcome, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY occurred_at, id`,
             [org.orgId, command],
           )
         ).rows,
@@ -187,17 +187,17 @@ suite('late purchase invoice in an open month (#478)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 6 });
     const db: Db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -283,7 +283,7 @@ suite('late purchase invoice in an open month (#478)', () => {
     lateDocument = documentId;
 
     // The document keeps the invoice date; the entry is dated on the posting date; the Inbox shows the date chosen.
-    const doc = await admin(async (c) => (await c.query(`SELECT invoice_date::text FROM crove_finance.purchase_document WHERE id = $1`, [documentId])).rows[0]);
+    const doc = await admin(async (c) => (await c.query(`SELECT invoice_date::text FROM ludy_finance.purchase_document WHERE id = $1`, [documentId])).rows[0]);
     expect(doc).toEqual({ invoice_date: day(LOCKED, 20) });
     expect((await rpc('journal/get', await tokenFor(owner), { id: journalEntryId })).body).toMatchObject({
       entryDate: day(OPEN, 1),
@@ -299,7 +299,7 @@ suite('late purchase invoice in an open month (#478)', () => {
     expect(approvals).toEqual([expect.objectContaining({ detail: expect.objectContaining({ posting_date: day(OPEN, 1) }) })]);
     const records = (await auditsOf('finance.purchase.record')).filter((a) => a.outcome === 'ok' && a.detail.posting_date !== undefined);
     expect(records).toEqual([expect.objectContaining({ detail: expect.objectContaining({ invoice_date: day(LOCKED, 20), posting_date: day(OPEN, 1) }) })]);
-    const activity = await admin(async (c) => (await c.query(`SELECT summary FROM crove_kernel.activity WHERE org_id = $1 AND record_id = $2`, [org.orgId, documentId])).rows);
+    const activity = await admin(async (c) => (await c.query(`SELECT summary FROM ludy_kernel.activity WHERE org_id = $1 AND record_id = $2`, [org.orgId, documentId])).rows);
     expect(activity).toEqual([{ summary: expect.stringContaining(`vào ngày ${dmy(day(OPEN, 1))} (tháng của hóa đơn đã khóa sổ)`) }]);
 
     // The ledger counts it in the open month, not in the locked one.
@@ -325,7 +325,7 @@ suite('late purchase invoice in an open month (#478)', () => {
   });
 
   it('refuses a posting date for a proposal that is not an invoice', async () => {
-    const entries = await admin(async (c) => (await c.query(`SELECT id FROM crove_finance.journal_entry WHERE org_id = $1 AND entry_date = $2`, [org.orgId, day(OPEN, 2)])).rows);
+    const entries = await admin(async (c) => (await c.query(`SELECT id FROM ludy_finance.journal_entry WHERE org_id = $1 AND entry_date = $2`, [org.orgId, day(OPEN, 2)])).rows);
     const asked = await rpc('inbox/request', await tokenFor(owner), {
       command: 'finance.journal.reverse',
       input: { entryId: entries[0].id, entryDate: day(OPEN, 5), reason: 'Ghi nhầm' },
@@ -394,7 +394,7 @@ suite('late purchase invoice in an open month (#478)', () => {
       expect.objectContaining({
         outcome: 'matched',
         declaredInLaterPeriod: true,
-        crove: expect.objectContaining({ id: lateDocument, issueDate: day(LOCKED, 20), postingDate: day(OPEN, 1) }),
+        ludy: expect.objectContaining({ id: lateDocument, issueDate: day(LOCKED, 20), postingDate: day(OPEN, 1) }),
       }),
     ]);
     expect(locked.summary).toMatchObject({ matched: 1, missing: 0, notOnPortal: 0, declaredLate: 0 });
@@ -402,11 +402,11 @@ suite('late purchase invoice in an open month (#478)', () => {
     // The month it was posted in: the month's own invoice matched, and the late one declared late, neither missing from
     // the portal nor unexplained, as the VAT working counts it here.
     const open = await reconcile(OPEN);
-    expect(open.items.map((i: any) => [i.crove?.id ?? null, i.outcome, i.declaredInLaterPeriod])).toEqual([
+    expect(open.items.map((i: any) => [i.ludy?.id ?? null, i.outcome, i.declaredInLaterPeriod])).toEqual([
       [expect.any(String), 'matched', false],
       [lateDocument, 'declared_late', false],
     ]);
-    expect(open.items[1].crove).toMatchObject({ issueDate: day(LOCKED, 20), postingDate: day(OPEN, 1) });
+    expect(open.items[1].ludy).toMatchObject({ issueDate: day(LOCKED, 20), postingDate: day(OPEN, 1) });
     expect(open.summary).toMatchObject({ matched: 1, missing: 0, notOnPortal: 0, declaredLate: 1 });
   });
 
@@ -417,8 +417,8 @@ suite('late purchase invoice in an open month (#478)', () => {
         async (c) =>
           (
             await c.query<{ n: number }>(
-              `SELECT count(*)::int AS n FROM crove_finance.purchase_document d
-               JOIN crove_finance.journal_entry j ON j.org_id = d.org_id AND j.source_type = 'finance.purchase_document' AND j.source_id = d.id
+              `SELECT count(*)::int AS n FROM ludy_finance.purchase_document d
+               JOIN ludy_finance.journal_entry j ON j.org_id = d.org_id AND j.source_type = 'finance.purchase_document' AND j.source_id = d.id
                WHERE d.org_id = $1 AND d.proposal_id = $2`,
               [org.orgId, proposalId],
             )
@@ -430,8 +430,8 @@ suite('late purchase invoice in an open month (#478)', () => {
       const client = new pg.Client({ connectionString: adminUrl });
       await client.connect();
       await client.query('BEGIN');
-      await client.query(`SELECT 1 FROM crove_finance.period_lock WHERE org_id = $1 FOR UPDATE`, [org.orgId]);
-      await client.query(`UPDATE crove_finance.period_lock SET locked_from = NULL, locked_through = NULL WHERE org_id = $1`, [org.orgId]);
+      await client.query(`SELECT 1 FROM ludy_finance.period_lock WHERE org_id = $1 FOR UPDATE`, [org.orgId]);
+      await client.query(`UPDATE ludy_finance.period_lock SET locked_from = NULL, locked_through = NULL WHERE org_id = $1`, [org.orgId]);
       return client;
     };
 
@@ -489,9 +489,9 @@ suite('late purchase invoice in an open month (#478)', () => {
         await c.query('BEGIN');
         try {
           await c.query(
-            `INSERT INTO crove_finance.purchase_document (org_id, id, direction, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total)
+            `INSERT INTO ludy_finance.purchase_document (org_id, id, direction, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total)
              SELECT org_id, $2, 'purchase', party_id, 'C26TZZ', $3, $4, 100, 10, 110
-             FROM crove_finance.purchase_document WHERE org_id = $1 AND direction = 'purchase' LIMIT 1`,
+             FROM ludy_finance.purchase_document WHERE org_id = $1 AND direction = 'purchase' LIMIT 1`,
             [org.orgId, id, id.slice(0, 8), day(OPEN, 15)],
           );
           await steps(c, id);
@@ -506,7 +506,7 @@ suite('late purchase invoice in an open month (#478)', () => {
     // A balanced entry for the document (or another source), posted after it.
     const post = async (c: pg.Client, sourceId: string, sourceType = 'finance.purchase_document') => {
       const { rows } = await c.query<{ id: string }>(
-        `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, $2, 'test', $3, $4) RETURNING id`,
+        `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, $2, 'test', $3, $4) RETURNING id`,
         [org.orgId, day(OPEN, 15), sourceType, sourceId],
       );
       const lines: Array<[number, string, number, number]> = [
@@ -515,7 +515,7 @@ suite('late purchase invoice in an open month (#478)', () => {
         [3, '331', 0, 110],
       ];
       for (const [n, account, debit, credit] of lines) {
-        await c.query(`INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, $4, $5, $6)`, [
+        await c.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, $4, $5, $6)`, [
           org.orgId,
           rows[0]?.id,
           n,
@@ -531,7 +531,7 @@ suite('late purchase invoice in an open month (#478)', () => {
     // Checked early, before the entry is posted: refused.
     expect(
       await attempt(async (c, id) => {
-        await c.query('SET CONSTRAINTS crove_finance.purchase_document_entry IMMEDIATE');
+        await c.query('SET CONSTRAINTS ludy_finance.purchase_document_entry IMMEDIATE');
         await post(c, id);
       }),
     ).toMatchObject({ ok: false, code: '23514' });
@@ -570,7 +570,7 @@ suite('late purchase invoice in an open month (#478)', () => {
     const records = (await auditsOf('finance.purchase.record')).filter((a) => a.outcome === 'ok' && a.detail.late_reason === 'opening');
     expect(records).toEqual([expect.objectContaining({ detail: expect.objectContaining({ invoice_date: day(OPEN, 5), posting_date: day(OPEN, 15) }) })]);
     const activity = await admin(
-      async (c) => (await c.query(`SELECT summary FROM crove_kernel.activity WHERE org_id = $1 AND record_id = $2`, [org.orgId, approved.body.documentId])).rows,
+      async (c) => (await c.query(`SELECT summary FROM ludy_kernel.activity WHERE org_id = $1 AND record_id = $2`, [org.orgId, approved.body.documentId])).rows,
     );
     expect(activity).toEqual([{ summary: expect.stringContaining(`vào ngày ${dmy(day(OPEN, 15))} (ngày hóa đơn không sau ngày số dư đầu kỳ)`) }]);
 

@@ -5,11 +5,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -47,7 +47,7 @@ suite('links of a member who loses the right to make them (#625)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const runtimeFor = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
@@ -57,11 +57,11 @@ suite('links of a member who loses the right to make them (#625)', () => {
       const d = createDb(pool);
       return { pool, db: d, runtime: new Runtime(d, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] }) };
     };
-    const api = runtimeFor('crove_app', 'test-app-pw');
+    const api = runtimeFor('ludy_app', 'test-app-pw');
     app = api.runtime;
     db = api.db;
     appPool = api.pool;
-    worker = runtimeFor('crove_worker', 'test-worker-pw').runtime;
+    worker = runtimeFor('ludy_worker', 'test-worker-pw').runtime;
   });
 
   afterAll(async () => {
@@ -78,10 +78,10 @@ suite('links of a member who loses the right to make them (#625)', () => {
     const owner = await person('owner');
     const editor = await person('editor');
     const { orgId } = await createOrg(app, asUser(owner), 'Agency');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [orgId, editor]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [orgId, editor]));
     const connection = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, connection, 'sandbox', `acct-${connection.slice(0, 8)}`, 'Kênh thử', owner]),
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, connection, 'sandbox', `acct-${connection.slice(0, 8)}`, 'Kênh thử', owner]),
     );
     const as = (user: string) => ({ actor: asUser(user), orgId });
     const { postId } = await app.execute<{ postId: string }>('social.post.create', { body: 'Bài cho khách', channels: [{ connectionId: connection }] }, as(editor));
@@ -95,10 +95,10 @@ suite('links of a member who loses the right to make them (#625)', () => {
   }
 
   const live = async (orgId: string, table: 'review_link' | 'report_link' | 'calendar_feed', user: string) =>
-    admin(async (c) => (await c.query(`SELECT count(*)::int AS n FROM crove_social.${table} WHERE org_id = $1 AND created_by = $2 AND revoked_at IS NULL`, [orgId, user])).rows[0]?.n as number);
-  const view = async (token: string) => (await appPool.query<{ page: unknown }>('SELECT crove_social.review_link_view($1) AS page', [token])).rows[0]?.page ?? null;
+    admin(async (c) => (await c.query(`SELECT count(*)::int AS n FROM ludy_social.${table} WHERE org_id = $1 AND created_by = $2 AND revoked_at IS NULL`, [orgId, user])).rows[0]?.n as number);
+  const view = async (token: string) => (await appPool.query<{ page: unknown }>('SELECT ludy_social.review_link_view($1) AS page', [token])).rows[0]?.page ?? null;
   const lastEvent = async (orgId: string, type: string) =>
-    admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY created_at DESC, id DESC LIMIT 1', [orgId, type])).rows[0]?.id as string);
+    admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY created_at DESC, id DESC LIMIT 1', [orgId, type])).rows[0]?.id as string);
 
   it('revokes the review and report links and the calendar feed of an admin moved to member, and only theirs', async () => {
     const s = await setup();
@@ -112,7 +112,7 @@ suite('links of a member who loses the right to make them (#625)', () => {
     // The owner's own link still works, and a second run changes nothing.
     expect(await view(s.theirs.token)).not.toBeNull();
     expect(await worker.execute('social.links.revoke_for_member', { eventId }, { actor: SYSTEM, orgId: s.orgId })).toEqual({ review: 0, report: 0, calendar: 0 });
-    const by = await admin(async (c) => (await c.query('SELECT DISTINCT revoked_by FROM crove_social.review_link WHERE org_id = $1 AND created_by = $2', [s.orgId, s.editor])).rows);
+    const by = await admin(async (c) => (await c.query('SELECT DISTINCT revoked_by FROM ludy_social.review_link WHERE org_id = $1 AND created_by = $2', [s.orgId, s.editor])).rows);
     expect(by).toEqual([{ revoked_by: s.owner }]);
   });
 

@@ -16,24 +16,24 @@ interface Coworker {
 }
 
 export const ROSTER: Readonly<Record<CoworkerKey, Coworker>> = {
-  // The general manager across every app and Ludy Notes.
+  // The general manager across every app and Ludy Cộng tác.
   gm: {
     name: 'Vy',
     title: { vi: 'Tổng quản', en: 'General manager' },
     scope: { vi: 'Điều phối cả đội, xuyên suốt mọi ứng dụng', en: 'Coordinates the whole team, across every app' },
   },
-  // Ludy Kế toán.
+  // Ludy Tài chính and Ludy Nhân sự (#3225).
   finance: {
     name: 'Ly',
     title: { vi: 'Giám đốc tài chính', en: 'CFO' },
-    scope: { vi: 'Ludy Kế toán: đọc hoá đơn và soạn sẵn bút toán', en: 'Ludy Accounting: reads invoices and drafts the entries' },
+    scope: { vi: 'Ludy Tài chính và Nhân sự: đọc hoá đơn, soạn sẵn bút toán và rà bảng lương', en: 'Ludy Finance and HR: reads invoices, drafts the entries and reviews payroll' },
   },
-  // Ludy Engage's Inbox and its customers and sales.
+  // Ludy Engage's Inbox and CRM (customers and sales).
   sales: {
     name: 'Dy',
     title: { vi: 'Trưởng phòng bán hàng và chăm sóc khách hàng', en: 'Head of sales and customer care' },
-    // Customers and sales are the group of Ludy Engage that the former Ludy CRM folded into (#2435, #2440).
-    scope: { vi: 'Hộp thư, khách hàng và bán hàng', en: 'The Inbox, customers and sales' },
+    // CRM is the group of Ludy Engage that the former Ludy CRM folded into (#2435, #2440, #3225).
+    scope: { vi: 'Ludy Engage: Hộp thư và CRM (khách hàng và bán hàng)', en: 'Ludy Engage: the Inbox and CRM (customers and sales)' },
   },
   // Ludy Engage's marketing: publishing and ads.
   marketing: {

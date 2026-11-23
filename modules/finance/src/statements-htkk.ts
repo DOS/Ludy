@@ -5,9 +5,9 @@
 // the year's closing entries (#889) not posted, B01 not balancing, balances no line reads, accounts outside HTKK's
 // trial balance list. They are warnings: the accountant decides, the file is still written.
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { vietnamToday, zId, zStatementsHtkkYear, type StatementsHtkkCheck, type StatementsHtkkWarning } from '@crove/kernel-contract';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { vietnamToday, zId, zStatementsHtkkYear, type StatementsHtkkCheck, type StatementsHtkkWarning } from '@ludy/kernel-contract';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { buildStatementsXml, f01Values, type BctcInput, type BctcTaxpayer } from './domain/statements-htkk-xml.ts';
 import { HtkkAmountError } from './domain/vat-01gtgt-xml.ts';
 import { yearTrialBalance } from './ledger-reports.ts';
@@ -65,7 +65,7 @@ export const statementsHtkkQuery = defineQuery({
   access: ALL,
   handler: async (ctx, { year, legalEntityId }): Promise<StatementsFiling> => {
     const entity = await resolveLegalEntity(ctx, legalEntityId);
-    const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['tax_code', 'name', 'address']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['tax_code', 'name', 'address']).where('org_id', '=', ctx.orgId).executeTakeFirst();
     if (!org?.tax_code) throw new DomainError('TAX_CODE_REQUIRED', 422, 'Tổ chức chưa có mã số thuế. Nhập mã số thuế trong Cài đặt rồi xuất lại.');
     return { ...(await loadFiling(ctx, year, entity)), taxpayer: { taxCode: org.tax_code, name: org.name, address: org.address } };
   },

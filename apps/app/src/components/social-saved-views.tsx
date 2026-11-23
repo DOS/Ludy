@@ -6,10 +6,10 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useId, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect, NativeSelectOptGroup, NativeSelectOption } from '@crove/ui/components/native-select';
+import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect, NativeSelectOptGroup, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { ErrorText } from './ui.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -20,16 +20,20 @@ const SAVED_VIEW_LIMIT = 20;
 
 type SavedView = Awaited<ReturnType<typeof client.social.savedViews.list>>[number];
 
-// search: the address now; onApply: the address a view opens. canShare: members and above share with the team.
+// search: the address now; onApply: the address a view opens. canShare: members and above share with the team. canSave: a
+// filter is set (#3655): "Lưu bộ lọc này" is offered only then, and the whole row is absent while there is nothing to pick
+// and nothing to save.
 export function SavedViews({
   search,
   members,
   canShare,
+  canSave,
   onApply,
 }: {
   search: SocialSearch;
   members: readonly { userId: string; name: string }[];
   canShare: boolean;
+  canSave: boolean;
   onApply: (next: SocialSearch) => void;
 }) {
   const t = useTranslations('social.views');
@@ -78,6 +82,8 @@ export function SavedViews({
   // At the limit no new view can be saved (the server refuses it too); an existing one can still be updated.
   const full = mine.length >= SAVED_VIEW_LIMIT;
   const error = save.error ?? remove.error ?? views.error;
+  // Nothing to pick, nothing to save and nothing to say: no row at all.
+  if (list.length === 0 && !canSave && !naming && !notice && !error) return null;
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-end gap-2">
@@ -112,7 +118,7 @@ export function SavedViews({
             {t('update', { name: picked.name })}
           </Button>
         )}
-        {!naming && (
+        {!naming && canSave && (
           <Button
             variant="ghost"
             disabled={full}

@@ -62,20 +62,23 @@ export interface Alert {
   previous?: string[];
 }
 
+export interface AlertPayloadData {
+  kind: AlertKind;
+  severity: 'critical' | 'info';
+  instance: string;
+  at: string;
+  findings: Finding[];
+  state?: AlertState;
+  since?: string;
+  previous?: string[];
+  health?: Record<string, unknown>;
+}
+
 export interface AlertPayload {
   text: string;
   content: string;
-  crove: {
-    kind: AlertKind;
-    severity: 'critical' | 'info';
-    instance: string;
-    at: string;
-    findings: Finding[];
-    state?: AlertState;
-    since?: string;
-    previous?: string[];
-    health?: Record<string, unknown>;
-  };
+  ludy: AlertPayloadData;
+  crove: AlertPayloadData;
 }
 
 export const WEBHOOK_FORMATS = ['generic', 'slack', 'discord', 'telegram'] as const;
@@ -106,26 +109,26 @@ function lasted(alert: Alert): string | null {
 function headline(alert: Alert): string {
   const n = alert.findings.length;
   const duration = lasted(alert);
-  if (alert.kind === 'test') return `[Crove] Test alert from ${alert.instance}: alert delivery works.`;
+  if (alert.kind === 'test') return `[Ludy] Test alert from ${alert.instance}: alert delivery works.`;
   if (alert.kind === 'alert' && n > 0 && alert.findings.every((f) => f.check === 'backup')) {
-    return `[Crove] ALERT on ${alert.instance}: the backup failed.`;
+    return `[Ludy] ALERT on ${alert.instance}: the backup failed.`;
   }
   if (alert.kind === 'resolved') {
     const after = duration ? ` after ${duration}` : '';
     if (alert.previous?.length === 1 && alert.previous[0] === 'probe') {
-      return `[Crove] RESOLVED on ${alert.instance}: the prober reads crove_kernel.health() again${after}.`;
+      return `[Ludy] RESOLVED on ${alert.instance}: the prober reads ludy_kernel.health() again${after}.`;
     }
     const was = alert.previous?.length ? ` (${alert.previous.join(', ')})` : '';
-    return `[Crove] RESOLVED on ${alert.instance}: the failing health checks pass again${after}${was}.`;
+    return `[Ludy] RESOLVED on ${alert.instance}: the failing health checks pass again${after}${was}.`;
   }
   if (alert.state === 'repeat') {
-    return `[Crove] STILL FAILING on ${alert.instance}${duration ? ` for ${duration}` : ''}: ${n} health check(s) failed.`;
+    return `[Ludy] STILL FAILING on ${alert.instance}${duration ? ` for ${duration}` : ''}: ${n} health check(s) failed.`;
   }
   if (alert.state === 'changed') {
     const was = alert.previous?.length ? ` (was: ${alert.previous.join(', ')})` : '';
-    return `[Crove] ALERT on ${alert.instance}: ${n} health check(s) failed${was}.`;
+    return `[Ludy] ALERT on ${alert.instance}: ${n} health check(s) failed${was}.`;
   }
-  return `[Crove] ALERT on ${alert.instance}: ${n} health check(s) failed.`;
+  return `[Ludy] ALERT on ${alert.instance}: ${n} health check(s) failed.`;
 }
 
 export function alertText(alert: Alert): string {
@@ -136,20 +139,22 @@ export function alertText(alert: Alert): string {
 
 export function alertPayload(alert: Alert): AlertPayload {
   const text = alertText(alert);
+  const data: AlertPayloadData = {
+    kind: alert.kind,
+    severity: alert.kind === 'alert' ? 'critical' : 'info',
+    instance: alert.instance,
+    at: alert.at,
+    findings: alert.findings,
+    ...(alert.kind === 'alert' ? { state: alert.state ?? 'new' } : {}),
+    ...(alert.since ? { since: alert.since } : {}),
+    ...(alert.previous ? { previous: alert.previous } : {}),
+    ...(alert.health ? { health: alert.health } : {}),
+  };
   return {
     text,
     content: text,
-    crove: {
-      kind: alert.kind,
-      severity: alert.kind === 'alert' ? 'critical' : 'info',
-      instance: alert.instance,
-      at: alert.at,
-      findings: alert.findings,
-      ...(alert.kind === 'alert' ? { state: alert.state ?? 'new' } : {}),
-      ...(alert.since ? { since: alert.since } : {}),
-      ...(alert.previous ? { previous: alert.previous } : {}),
-      ...(alert.health ? { health: alert.health } : {}),
-    },
+    ludy: data,
+    crove: data,
   };
 }
 
@@ -159,7 +164,7 @@ export function slackEscape(text: string): string {
 }
 
 // Discord renders Markdown in content: a backslash makes each emphasis, code and spoiler character literal (the
-// lines start with "[Crove]" or "- ", so no heading or quote can form, and the findings render as a list). The
+// lines start with "[Ludy]" or "- ", so no heading or quote can form, and the findings render as a list). The
 // result is cut to the 2000-character limit without leaving a dangling escape.
 export function discordContent(text: string): string {
   const escaped = text.replace(/[\\*_~`|]/g, (c) => `\\${c}`);
@@ -188,11 +193,12 @@ export function detectWebhookFormat(url: string): WebhookFormat {
 
 /**
  * One message for the alert webhook: the plain text every format sends, and the structured object only a generic
- * receiver gets (as `crove`).
+ * receiver gets (as `ludy`, plus legacy `crove` alias during rollout).
  */
 export interface WebhookMessage {
   text: string;
-  crove: Record<string, unknown>;
+  ludy?: Record<string, unknown>;
+  crove?: Record<string, unknown>;
 }
 
 /** The JSON body for one message in a given format. telegramChatId is required for 'telegram'. */
@@ -205,15 +211,17 @@ export function messageBody(message: WebhookMessage, format: WebhookFormat, tele
     case 'telegram':
       if (!telegramChatId) throw new Error('a Telegram webhook needs ALERT_TELEGRAM_CHAT_ID');
       return { chat_id: telegramChatId, text: message.text, link_preview_options: { is_disabled: true } };
-    case 'generic':
-      return { text: message.text, content: message.text, crove: message.crove };
+    case 'generic': {
+      const data = message.ludy ?? message.crove ?? {};
+      return { text: message.text, content: message.text, ludy: data, crove: data };
+    }
   }
 }
 
 /** The JSON body for one alert in a given format. telegramChatId is required for 'telegram'. */
 export function webhookBody(alert: Alert, format: WebhookFormat, telegramChatId?: string): Record<string, unknown> {
   const payload = alertPayload(alert);
-  return messageBody({ text: payload.text, crove: payload.crove }, format, telegramChatId);
+  return messageBody({ text: payload.text, ludy: payload.ludy as unknown as Record<string, unknown>, crove: payload.crove as unknown as Record<string, unknown> }, format, telegramChatId);
 }
 
 export interface AlertSinkOptions {
@@ -301,7 +309,7 @@ export async function deliverAlert(alert: Alert, options: AlertSinkOptions): Pro
     log(payload.text);
     return { channel: 'stdout', ok: true };
   }
-  const delivery = await postMessage({ text: payload.text, crove: payload.crove }, options);
+  const delivery = await postMessage({ text: payload.text, ludy: payload.ludy as unknown as Record<string, unknown>, crove: payload.crove as unknown as Record<string, unknown> }, options);
   if (!delivery.ok) log(payload.text);
   return delivery;
 }

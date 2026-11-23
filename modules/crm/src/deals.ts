@@ -2,7 +2,7 @@
 // Deals and the pipeline (issue #2225, plan docs/plan/crm.md §4.1, §4.2 and §5, step K1): the org's one pipeline of
 // ordered stages and the deals that sit in them. Owners, admins and members write; viewers read. Every command is R1
 // and internal: it changes only the org's own records, and no agent runs one (the commands refuse a caller that is not
-// a person, and no agent role writes crove_crm).
+// a person, and no agent role writes ludy_crm).
 //
 // A deal's status is its stage's kind: moving it into a won or lost stage closes it, moving it back opens it again.
 // An edit or a move sends the version the caller read, so a second person's save in between is refused instead of
@@ -35,11 +35,11 @@ import {
   type FilterAst,
   type PartyChoice,
   type PipelineStage,
-} from '@crove/kernel-contract';
-import { filterCondition, sortTerms } from '@crove/kernel';
-import type { MemberRole } from '@crove/db';
+} from '@ludy/kernel-contract';
+import { filterCondition, sortTerms } from '@ludy/kernel';
+import type { MemberRole } from '@ludy/db';
 import { z } from 'zod';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { DEAL_DEFAULT_SORT, dealFields, dealSortColumns, dealSortText, dealsAfter } from './deal-filter.ts';
 import { closeNextSteps } from './next-steps.ts';
 import { dealHasQuotes } from './quotes.ts';
@@ -62,7 +62,7 @@ const day = (value: Date | string | null): string | null => (value === null ? nu
 // ---------------------------------------------------------------------------------------------------------------
 
 export async function loadStages(ctx: Reader): Promise<PipelineStage[]> {
-  const rows = await ctx.trx.selectFrom('crove_crm.pipeline_stage').select(['id', 'name', 'kind', 'position']).where('org_id', '=', ctx.orgId).orderBy('position').execute();
+  const rows = await ctx.trx.selectFrom('ludy_crm.pipeline_stage').select(['id', 'name', 'kind', 'position']).where('org_id', '=', ctx.orgId).orderBy('position').execute();
   return rows.map((r) => ({ id: r.id, name: r.name, kind: r.kind as DealStageKind, position: r.position }));
 }
 
@@ -80,7 +80,7 @@ export async function ensureStages(ctx: CommandContext): Promise<PipelineStage[]
   const existing = await loadStages(ctx);
   if (existing.length > 0) return existing;
   await ctx.trx
-    .insertInto('crove_crm.pipeline_stage')
+    .insertInto('ludy_crm.pipeline_stage')
     .values(DEFAULT_PIPELINE_STAGES.map((s, i) => ({ org_id: ctx.orgId, name: s.name, kind: s.kind, position: i + 1 })))
     .execute();
   const stages = await loadStages(ctx);
@@ -111,7 +111,7 @@ export const pipelineSetup = defineCommand({
 // Deals
 // ---------------------------------------------------------------------------------------------------------------
 
-const COLUMNS = ['d.id', 'd.party_id', 'd.title', 'd.amount', 'd.currency', 'd.stage_id', 'd.expected_close', 'd.owner_user_id', 'd.lost_reason', 'd.closed_at', 'd.version', 'd.created_by', 'd.created_at', 'd.updated_at'] as const;
+const COLUMNS = ['d.id', 'd.party_id', 'd.title', 'd.amount', 'd.currency', 'd.stage_id', 'd.expected_close', 'd.owner_user_id', 'd.lost_reason', 'd.closed_at', 'd.version', 'd.created_by', 'd.created_at', 'd.updated_at', 'd.actor_origin', 'd.tainted'] as const;
 
 export interface Row {
   id: string;
@@ -128,12 +128,17 @@ export interface Row {
   created_by: string;
   created_at: Date | string;
   updated_at: Date | string;
+  actor_origin: string;
+  tainted: boolean;
   party_name: string;
   stage_kind: string;
   // The deal's open next step, while it is not snoozed (#2381).
   follow_up_id: string | null;
   follow_up_reason: string | null;
   follow_up_since: Date | string | null;
+  // The party the deal's party was marked a duplicate of, the end of the chain (CRM-15, #3294).
+  keep_party_id: string | null;
+  keep_party_name: string | null;
 }
 
 // Owners and admins delete any deal, a member the ones they made (the delete command enforces it).
@@ -156,21 +161,39 @@ export function view(r: Row, canDelete: boolean): Deal {
     version: r.version,
     canDelete,
     followUp: r.follow_up_id === null ? null : { id: r.follow_up_id, reason: r.follow_up_reason as DealNextStepReason, sinceOn: day(r.follow_up_since) ?? '' },
+    partyDuplicateOf: r.keep_party_id === null ? null : { id: r.keep_party_id, name: r.keep_party_name ?? '' },
     createdAt: iso(r.created_at),
     updatedAt: iso(r.updated_at),
+    actorOrigin: r.actor_origin as 'ui' | 'mcp',
+    tainted: r.tainted,
   };
 }
 
+// How far a duplicate chain is followed: the database refuses to build one (PARTY_DUPLICATE_CHAIN), so the walk is a guard that ends at the kept party and never loops.
+const DUPLICATE_CHAIN_MAX = 10;
+
 export function base(ctx: Reader) {
   return ctx.trx
-    .selectFrom('crove_crm.deal as d')
-    .innerJoin('crove_kernel.party as p', (j) => j.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
-    .innerJoin('crove_crm.pipeline_stage as s', (j) => j.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.stage_id'))
+    .selectFrom('ludy_crm.deal as d')
+    .innerJoin('ludy_kernel.party as p', (j) => j.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
+    .innerJoin('ludy_crm.pipeline_stage as s', (j) => j.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.stage_id'))
     // The open next step of the deal (at most one, by index) unless it is snoozed: the badge "Cần theo dõi".
-    .leftJoin('crove_crm.deal_next_step as n', (j) =>
+    .leftJoin('ludy_crm.deal_next_step as n', (j) =>
       j.onRef('n.org_id', '=', 'd.org_id').onRef('n.deal_id', '=', 'd.id').on('n.status', '=', 'open').on(sql<boolean>`(n.snoozed_until IS NULL OR n.snoozed_until <= now())`),
     )
-    .select([...COLUMNS, 'p.name as party_name', 's.kind as stage_kind', 'n.id as follow_up_id', 'n.reason as follow_up_reason', 'n.since_on as follow_up_since'])
+    // The party the deal's party was marked a duplicate of: follow duplicate_of to the end of the chain (one row, none for a party that is not a duplicate), inside the org.
+    .leftJoin(
+      sql`LATERAL (
+        WITH RECURSIVE chain(id, name, duplicate_of, depth) AS (
+          SELECT x.id, x.name, x.duplicate_of, 1 FROM ludy_kernel.party x WHERE x.org_id = d.org_id AND x.id = p.duplicate_of
+          UNION ALL
+          SELECT y.id, y.name, y.duplicate_of, c.depth + 1 FROM chain c JOIN ludy_kernel.party y ON y.org_id = d.org_id AND y.id = c.duplicate_of WHERE c.depth < ${sql.lit(DUPLICATE_CHAIN_MAX)}
+        )
+        SELECT id, name FROM chain ORDER BY depth DESC LIMIT 1
+      )`.as('k'),
+      (j) => j.on(sql<boolean>`true`),
+    )
+    .select([...COLUMNS, 'p.name as party_name', 's.kind as stage_kind', 'n.id as follow_up_id', 'n.reason as follow_up_reason', 'n.since_on as follow_up_since', sql<string | null>`k.id`.as('keep_party_id'), sql<string | null>`k.name`.as('keep_party_name')])
     .where('d.org_id', '=', ctx.orgId);
 }
 
@@ -184,20 +207,20 @@ const notFound = () => new DomainError('DEAL_NOT_FOUND', 404, 'Không tìm thấ
 const stale = () => new DomainError('STALE_VERSION', 409, 'Cơ hội này vừa được người khác sửa; hãy mở lại để xem bản mới');
 
 async function assertParty(ctx: CommandContext, partyId: string): Promise<string> {
-  const party = await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', '=', partyId).executeTakeFirst();
+  const party = await ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', '=', partyId).executeTakeFirst();
   if (!party) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy liên hệ hoặc công ty này');
   return party.name;
 }
 
 async function assertOwner(ctx: CommandContext, userId: string | null): Promise<void> {
   if (userId === null) return;
-  const member = await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('user_id', '=', userId).executeTakeFirst();
+  const member = await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('user_id', '=', userId).executeTakeFirst();
   if (!member) throw new DomainError('DEAL_OWNER_INVALID', 422, 'Người phụ trách phải là thành viên của tổ chức');
 }
 
 // The stage's keys in order, for placing a deal between two others.
 async function stageKeys(ctx: CommandContext, stageId: string, except: string | null): Promise<{ id: string; sort_key: string }[]> {
-  let q = ctx.trx.selectFrom('crove_crm.deal').select(['id', 'sort_key']).where('org_id', '=', ctx.orgId).where('stage_id', '=', stageId);
+  let q = ctx.trx.selectFrom('ludy_crm.deal').select(['id', 'sort_key']).where('org_id', '=', ctx.orgId).where('stage_id', '=', stageId);
   if (except) q = q.where('id', '<>', except);
   return q.orderBy('sort_key').orderBy('id').execute();
 }
@@ -205,7 +228,7 @@ async function stageKeys(ctx: CommandContext, stageId: string, except: string | 
 async function rebalance(ctx: CommandContext, rows: { id: string; sort_key: string }[]): Promise<{ id: string; sort_key: string }[]> {
   const keys = spreadKeys(rows.length);
   const next = rows.map((r, i) => ({ id: r.id, sort_key: keys[i] as string }));
-  for (const r of next) await ctx.trx.updateTable('crove_crm.deal').set({ sort_key: r.sort_key }).where('org_id', '=', ctx.orgId).where('id', '=', r.id).execute();
+  for (const r of next) await ctx.trx.updateTable('ludy_crm.deal').set({ sort_key: r.sort_key }).where('org_id', '=', ctx.orgId).where('id', '=', r.id).execute();
   return next;
 }
 
@@ -235,7 +258,7 @@ async function keyFor(ctx: CommandContext, stageId: string, except: string | nul
 }
 
 async function stageOf(ctx: CommandContext, stageId: string): Promise<{ id: string; name: string; kind: DealStageKind }> {
-  const stage = await ctx.trx.selectFrom('crove_crm.pipeline_stage').select(['id', 'name', 'kind']).where('org_id', '=', ctx.orgId).where('id', '=', stageId).executeTakeFirst();
+  const stage = await ctx.trx.selectFrom('ludy_crm.pipeline_stage').select(['id', 'name', 'kind']).where('org_id', '=', ctx.orgId).where('id', '=', stageId).executeTakeFirst();
   if (!stage) throw new DomainError('STAGE_NOT_FOUND', 404, 'Không tìm thấy giai đoạn này');
   return { id: stage.id, name: stage.name, kind: stage.kind as DealStageKind };
 }
@@ -266,7 +289,7 @@ export const dealCreate = defineCommand({
     if (stage.kind !== 'open') throw new DomainError('DEAL_STAGE_CLOSED', 422, 'Cơ hội mới chỉ tạo ở một giai đoạn đang mở');
     const sortKey = await keyFor(ctx, stage.id, null, null, null);
     const row = await ctx.trx
-      .insertInto('crove_crm.deal')
+      .insertInto('ludy_crm.deal')
       .values({
         org_id: ctx.orgId,
         party_id: input.partyId,
@@ -301,7 +324,7 @@ export const dealUpdate = defineCommand({
     const title = oneLine(input.title);
     if (!title) throw new DomainError('INVALID_DEAL_TITLE', 422, 'Tên cơ hội không được để trống');
     const before = await ctx.trx
-      .selectFrom('crove_crm.deal')
+      .selectFrom('ludy_crm.deal')
       .select(['id', 'party_id', 'title', 'amount', 'expected_close', 'owner_user_id', 'version'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.dealId)
@@ -313,7 +336,7 @@ export const dealUpdate = defineCommand({
     if (input.ownerUserId !== before.owner_user_id) await assertOwner(ctx, input.ownerUserId);
     const titleChanged = title !== before.title;
     await ctx.trx
-      .updateTable('crove_crm.deal')
+      .updateTable('ludy_crm.deal')
       .set({ party_id: input.partyId, title, amount: input.amount, expected_close: input.expectedClose, owner_user_id: input.ownerUserId, version: before.version + 1, updated_by: userId, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.dealId)
@@ -343,8 +366,8 @@ export const dealMove = defineCommand({
     const userId = userOf(ctx.actor);
     await lockPipeline(ctx);
     const before = await ctx.trx
-      .selectFrom('crove_crm.deal as d')
-      .innerJoin('crove_crm.pipeline_stage as s', (j) => j.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.stage_id'))
+      .selectFrom('ludy_crm.deal as d')
+      .innerJoin('ludy_crm.pipeline_stage as s', (j) => j.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.stage_id'))
       .select(['d.id', 'd.party_id', 'd.stage_id', 'd.version', 's.kind as stage_kind', 's.name as stage_name'])
       .where('d.org_id', '=', ctx.orgId)
       .where('d.id', '=', input.dealId)
@@ -358,7 +381,7 @@ export const dealMove = defineCommand({
     if (input.lostReason && stage.kind !== 'lost') throw new DomainError('DEAL_LOST_REASON_INVALID', 422, 'Lý do chỉ ghi khi chuyển cơ hội sang giai đoạn thua');
     const sortKey = await keyFor(ctx, stage.id, input.dealId, input.beforeDealId ?? null, input.afterDealId ?? null);
     await ctx.trx
-      .updateTable('crove_crm.deal')
+      .updateTable('ludy_crm.deal')
       .set({
         stage_id: stage.id,
         sort_key: sortKey,
@@ -397,13 +420,13 @@ export const dealDelete = defineCommand({
   target: (input) => ({ type: 'crm.deal', id: input.dealId }),
   handler: async (ctx, input): Promise<{ dealId: string; deleted: true }> => {
     const userId = userOf(ctx.actor);
-    const deal = await ctx.trx.selectFrom('crove_crm.deal').select(['id', 'party_id', 'created_by']).where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).forUpdate().executeTakeFirst();
+    const deal = await ctx.trx.selectFrom('ludy_crm.deal').select(['id', 'party_id', 'created_by']).where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).forUpdate().executeTakeFirst();
     if (!deal) throw notFound();
     // A member deletes the deals they created; owners and admins any.
     if (ctx.role === 'member' && deal.created_by !== userId) throw new DomainError('DEAL_DELETE_FORBIDDEN', 403, 'Bạn chỉ xóa được cơ hội do chính mình tạo');
     // A quote the customer holds is a document: a deal with one is kept (plan docs/plan/crm-quotes.md 4.1).
     if (await dealHasQuotes(ctx, input.dealId)) throw new DomainError('DEAL_HAS_QUOTES', 409, 'Cơ hội này đã có báo giá nên không xóa được');
-    await ctx.trx.deleteFrom('crove_crm.deal').where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).execute();
+    await ctx.trx.deleteFrom('ludy_crm.deal').where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).execute();
     ctx.audit({ dealId: input.dealId, partyId: deal.party_id });
     await ctx.activity('kernel.party', deal.party_id, 'deal.deleted', 'Xóa một cơ hội bán hàng');
     return { dealId: input.dealId, deleted: true };
@@ -468,11 +491,11 @@ export const partyDeals = defineQuery({
 });
 
 // The conversations linked to a contact (#2333; for a company, its people's too, and duplicates merged into it), read
-// through crove_kernel.conversation under its own row-level security (a member limited to other channels or without
+// through ludy_kernel.conversation under its own row-level security (a member limited to other channels or without
 // kernel.conversation.direct.read sees no entry for a direct or email thread), with no message body.
 async function conversationsForParty(ctx: Reader, partyId: string, since: Date | null): Promise<ConversationOther[]> {
   const party = await ctx.trx
-    .selectFrom('crove_kernel.party')
+    .selectFrom('ludy_kernel.party')
     .select(['id', 'duplicate_of'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', partyId)
@@ -480,16 +503,16 @@ async function conversationsForParty(ctx: Reader, partyId: string, since: Date |
   if (!party) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy liên hệ hoặc công ty này');
   const keepId = party.duplicate_of ?? party.id;
   let q = ctx.trx
-    .selectFrom('crove_kernel.conversation as c')
-    .innerJoin('crove_kernel.channel_connection as cc', (j) => j.onRef('cc.org_id', '=', 'c.org_id').onRef('cc.id', '=', 'c.channel_connection_id'))
+    .selectFrom('ludy_kernel.conversation as c')
+    .innerJoin('ludy_kernel.channel_connection as cc', (j) => j.onRef('cc.org_id', '=', 'c.org_id').onRef('cc.id', '=', 'c.channel_connection_id'))
     .select(['c.id', 'c.kind', 'c.status', 'c.channel_connection_id', 'cc.provider', 'cc.display_name', 'c.last_message_at'])
     .where('c.org_id', '=', ctx.orgId)
     .where('c.party_id', 'is not', null)
     .where(
       sql<boolean>`EXISTS (
-        SELECT 1 FROM crove_kernel.party p
-        LEFT JOIN crove_kernel.party kp ON kp.org_id = p.org_id AND kp.id = coalesce(p.duplicate_of, p.id)
-        LEFT JOIN crove_kernel.party co ON co.org_id = kp.org_id AND co.id = kp.company_id
+        SELECT 1 FROM ludy_kernel.party p
+        LEFT JOIN ludy_kernel.party kp ON kp.org_id = p.org_id AND kp.id = coalesce(p.duplicate_of, p.id)
+        LEFT JOIN ludy_kernel.party co ON co.org_id = kp.org_id AND co.id = kp.company_id
         WHERE p.org_id = c.org_id AND p.id = c.party_id
           AND (kp.id = ${keepId}::uuid OR coalesce(co.duplicate_of, co.id) = ${keepId}::uuid)
       )`,
@@ -519,7 +542,7 @@ export const dealConversations = defineQuery({
   input: zDealRef,
   access: ALL,
   handler: async (ctx, input): Promise<ConversationOther[]> => {
-    const deal = await ctx.trx.selectFrom('crove_crm.deal').select(['id', 'party_id', 'created_at']).where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).executeTakeFirst();
+    const deal = await ctx.trx.selectFrom('ludy_crm.deal').select(['id', 'party_id', 'created_at']).where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).executeTakeFirst();
     if (!deal) throw notFound();
     return conversationsForParty(ctx, deal.party_id, new Date(deal.created_at));
   },
@@ -533,7 +556,7 @@ export const partySearch = defineQuery({
   access: ALL,
   handler: async (ctx, input): Promise<PartyChoice[]> => {
     const like = `%${input.q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-    let q = ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name', 'kind', 'tax_code']).where('org_id', '=', ctx.orgId);
+    let q = ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name', 'kind', 'tax_code']).where('org_id', '=', ctx.orgId);
     if (input.q) q = q.where((eb) => eb.or([eb('name', 'ilike', like), eb('tax_code', 'ilike', like)]));
     const rows = await q.orderBy('name').orderBy('id').limit(input.limit ?? PARTY_SEARCH_LIMIT).execute();
     return rows.map((r) => ({ id: r.id, name: r.name, kind: r.kind as PartyChoice['kind'], taxCode: r.tax_code }));

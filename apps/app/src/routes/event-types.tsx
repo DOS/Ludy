@@ -3,18 +3,21 @@
 // Event types are archived, not deleted. The server enforces every rule; the screen offers only what can succeed.
 // Team types (#1373): owners and admins pick round-robin or collective and the co-hosts; a member sees them only.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { EVENT_TYPE_ASSIGNMENTS, EVENT_TYPE_LOCATION_KINDS, type EventType, type EventTypeAssignment, type EventTypeLocationKind } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { Textarea } from '@crove/ui/components/textarea';
+import { EVENT_TYPE_ASSIGNMENTS, EVENT_TYPE_LOCATION_KINDS, type EventType, type EventTypeAssignment, type EventTypeLocationKind } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { Textarea } from '@ludy/ui/components/textarea';
+import { FormPanel } from '../components/form-panel.tsx';
 import { ErrorText, FieldError, fieldControl, fieldErrorId, focusFirstInvalid, RowsSkeleton, useFieldErrors } from '../components/ui.tsx';
+import { CopyBookingLinkButton, OpenBookingPageLink, bookingUrlOf } from '../components/booking-link.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { appOrigin, BOOKING_EVENT_TYPES_ID, bookingLinkOf } from '../lib/booking.ts';
 import {
   coHostChoices,
   draftOf,
@@ -38,28 +41,44 @@ const nameOf = (members: readonly EventTypeMember[], userId: string) => {
   return m ? (m.displayName ?? m.email) : null;
 };
 
-function EventTypeForm({
+export function EventTypeForm({
+  slug,
   type,
   members,
   me,
   manager,
   pending,
+  failed,
   submitLabel,
   onSubmit,
   onCancel,
 }: {
+  slug: string;
   type: EventType | null;
   members: readonly EventTypeMember[];
   me: string;
   manager: boolean;
   pending: boolean;
+  // The error of the last save: the options open, so a link already taken or a field the server refused is in view.
+  failed?: unknown;
   submitLabel: string;
   onSubmit: (input: Exclude<ReturnType<typeof inputOf>, { invalid: unknown }>['input']) => void;
-  onCancel?: () => void;
+  onCancel: () => void;
 }) {
   const t = useTranslations('eventTypes');
   const tc = useTranslations('common');
   const [draft, setDraft] = useState<EventTypeDraft>(() => draftOf(type, me));
+  // Typed input that is not saved yet: the panel asks before it throws it away.
+  const [initial] = useState(() => JSON.stringify(draftOf(type, me)));
+  const dirty = JSON.stringify(draft) !== initial;
+  // The first form shows what a new type needs (name, length, format, place); buffers, notice, host and the rest sit under "Tùy chọn khác" (#3643). Editing opens them.
+  const [more, setMore] = useState(type !== null);
+  const moreId = useId();
+  useEffect(() => {
+    if (failed) setMore(true);
+  }, [failed]);
+  // A name with no letters or digits makes no link: the last part of the link must then be typed, so the field shows at once.
+  const slugBlank = draft.slug.trim() === '' && draft.title.trim() !== '';
   // A Google Meet per booking needs the host's own Google connection with write-back on, so only the host picks it, for a one-host type; a type that already has
   // it keeps the option, so the form still shows what it is.
   const connections = useQuery(orpc.calendar.connections.queryOptions());
@@ -85,9 +104,15 @@ function EventTypeForm({
   );
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const form = event.currentTarget;
     const result = inputOf(draft);
     if (!fields.checkAll(EVENT_TYPE_CHECKED_FIELDS) || 'invalid' in result) {
-      focusFirstInvalid(event.currentTarget);
+      // A problem under "Tùy chọn khác" opens it first, so the field to focus is on screen.
+      if (more) focusFirstInvalid(form);
+      else {
+        setMore(true);
+        requestAnimationFrame(() => focusFirstInvalid(form));
+      }
       return;
     }
     onSubmit(result.input);
@@ -116,36 +141,45 @@ function EventTypeForm({
   );
   const coHostsError = fields.of('coHostUserIds');
   return (
-    <form className="mt-2 space-y-2" onSubmit={submit} aria-label={type ? t('editOf', { title: type.title }) : t('addTitle')}>
-      <Input required maxLength={120} placeholder={t('titlePlaceholder')} aria-label={t('fields.title')} value={draft.title} onChange={(e) => setDraft((d) => withTitle(d, e.target.value))} />
-      <div className="flex items-center gap-2 text-sm">
-        <span className="text-subtle-foreground">/</span>
-        <Input
-          required
-          maxLength={60}
-          className="font-mono"
-          aria-label={t('fields.slug')}
-          value={draft.slug}
-          onChange={(e) => setDraft((d) => ({ ...d, slug: e.target.value, slugEdited: true }))}
-        />
-      </div>
+    <FormPanel
+      title={type ? t('editOf', { title: type.title }) : t('addTitle')}
+      {...(type ? {} : { description: t('addHint') })}
+      busy={pending}
+      dirty={dirty}
+      wide
+      onClose={onCancel}
+      onSubmit={submit}
+      footer={(requestClose) => (
+        <>
+          <Button type="button" variant="ghost" disabled={pending} onClick={requestClose}>
+            {tc('cancel')}
+          </Button>
+          <Button loading={pending} type="submit" disabled={pending || !draft.title.trim() || !draft.slug.trim()}>
+            {submitLabel}
+          </Button>
+        </>
+      )}
+    >
+      <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+        {t('fields.title')}
+        <Input required maxLength={120} placeholder={t('titlePlaceholder')} value={draft.title} onChange={(e) => setDraft((d) => withTitle(d, e.target.value))} />
+      </label>
       <div className="flex flex-wrap gap-3">
         {number('durationMin')}
-        {number('bufferBeforeMin')}
-        {number('bufferAfterMin')}
-        {number('minNoticeHours')}
-        {number('horizonDays')}
-        {number('dailyLimit', t('noLimit'))}
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <NativeSelect className="min-w-40" value={draft.locationKind} onChange={(e) => set('locationKind', e.target.value as EventTypeLocationKind)} aria-label={t('fields.locationKind')}>
-          {locationKinds.map((k) => (
-            <NativeSelectOption key={k} value={k}>
-              {t(`locations.${k}`)}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
-        <Input className="min-w-48 flex-1" maxLength={500} placeholder={t(`locationPlaceholders.${draft.locationKind}`)} aria-label={t('fields.locationValue')} value={draft.locationValue} onChange={(e) => set('locationValue', e.target.value)} />
+        <label className="flex min-w-40 flex-col gap-1 text-xs text-muted-foreground">
+          {t('fields.locationKind')}
+          <NativeSelect value={draft.locationKind} onChange={(e) => set('locationKind', e.target.value as EventTypeLocationKind)}>
+            {locationKinds.map((k) => (
+              <NativeSelectOption key={k} value={k}>
+                {t(`locations.${k}`)}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </label>
+        <label className="flex min-w-48 flex-1 flex-col gap-1 text-xs text-muted-foreground">
+          {t('fields.locationValue')}
+          <Input maxLength={500} placeholder={t(`locationPlaceholders.${draft.locationKind}`)} value={draft.locationValue} onChange={(e) => set('locationValue', e.target.value)} />
+        </label>
       </div>
       {draft.locationKind === 'google_meet' ? (
         <p className="text-xs text-subtle-foreground" data-testid="meet-hint">
@@ -158,69 +192,94 @@ function EventTypeForm({
           </p>
         )
       )}
-      <div className="flex flex-wrap gap-2">
-        <NativeSelect className="min-w-48 flex-1" value={draft.hostUserId} disabled={!manager} onChange={(e) => setDraft((d) => meetOnlyWhereAllowed(withHost(d, e.target.value)))} aria-label={t('fields.host')}>
-          {hostChoices(members, me, manager).map((m) => (
-            <NativeSelectOption key={m.userId} value={m.userId}>
-              {m.displayName ?? m.email}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
-        <NativeSelect
-          className="min-w-48"
-          value={draft.assignment}
-          disabled={!manager}
-          onChange={(e) => {
-            set('assignment', e.target.value as EventTypeAssignment);
-            fields.edit('coHostUserIds');
-          }}
-          aria-label={t('fields.assignment')}
-        >
-          {EVENT_TYPE_ASSIGNMENTS.map((a) => (
-            <NativeSelectOption key={a} value={a}>
-              {t(`assignments.${a}`)}
-            </NativeSelectOption>
-          ))}
-        </NativeSelect>
-      </div>
-      {draft.assignment !== 'single' && (
-        <fieldset className="space-y-1" aria-invalid={Boolean(coHostsError) || undefined} aria-describedby={coHostsError ? fieldErrorId(idOf('coHostUserIds')) : undefined}>
-          <legend className="text-xs text-muted-foreground">{t('fields.coHostUserIds')}</legend>
-          <p className="text-xs text-subtle-foreground">{t(`assignmentHints.${draft.assignment}`)}</p>
-          <div className="flex flex-wrap gap-x-4 gap-y-1">
-            {coHostChoices(members, draft.hostUserId).map((m) => (
-              <label key={m.userId} className="flex items-center gap-2 text-sm">
-                <Checkbox
-                  checked={draft.coHostUserIds.includes(m.userId)}
-                  disabled={!manager}
-                  onCheckedChange={(on) => {
-                    setDraft((d) => withCoHost(d, m.userId, on === true));
-                    fields.edit('coHostUserIds');
-                  }}
-                />
-                {m.displayName ?? m.email}
-              </label>
-            ))}
+      {/* The link a client opens, made from the name (#3643): the owner reads it rather than edits a slug. */}
+      <p className="break-all text-xs text-subtle-foreground" data-testid="event-type-link">
+        {t('linkIs')}{' '}
+        {draft.slug ? <span className="font-mono text-foreground">{bookingLinkOf(appOrigin(), slug, draft.slug)}</span> : <span>{t('linkPending')}</span>}
+      </p>
+      <Button type="button" variant="ghost" size="sm" aria-expanded={more} aria-controls={moreId} onClick={() => setMore((m) => !m)}>
+        {t('moreOptions')}
+      </Button>
+      {(more || slugBlank) && (
+        <div id={moreId} className="space-y-2">
+          <div className="flex flex-wrap gap-3">
+            {number('bufferBeforeMin')}
+            {number('bufferAfterMin')}
+            {number('minNoticeHours')}
+            {number('horizonDays')}
+            {number('dailyLimit', t('noLimit'))}
           </div>
-          <FieldError id={idOf('coHostUserIds')}>{coHostsError}</FieldError>
-        </fieldset>
+          <div className="flex flex-wrap gap-2">
+            <label className="flex min-w-48 flex-1 flex-col gap-1 text-xs text-muted-foreground">
+              {t('fields.host')}
+              <NativeSelect value={draft.hostUserId} disabled={!manager} onChange={(e) => setDraft((d) => meetOnlyWhereAllowed(withHost(d, e.target.value)))}>
+                {hostChoices(members, me, manager).map((m) => (
+                  <NativeSelectOption key={m.userId} value={m.userId}>
+                    {m.displayName ?? m.email}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </label>
+            <label className="flex min-w-48 flex-col gap-1 text-xs text-muted-foreground">
+              {t('fields.assignment')}
+              <NativeSelect
+                value={draft.assignment}
+                disabled={!manager}
+                onChange={(e) => {
+                  set('assignment', e.target.value as EventTypeAssignment);
+                  fields.edit('coHostUserIds');
+                }}
+              >
+                {EVENT_TYPE_ASSIGNMENTS.map((a) => (
+                  <NativeSelectOption key={a} value={a}>
+                    {t(`assignments.${a}`)}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </label>
+          </div>
+          {draft.assignment !== 'single' && (
+            <fieldset className="space-y-1" aria-invalid={Boolean(coHostsError) || undefined} aria-describedby={coHostsError ? fieldErrorId(idOf('coHostUserIds')) : undefined}>
+              <legend className="text-xs text-muted-foreground">{t('fields.coHostUserIds')}</legend>
+              <p className="text-xs text-subtle-foreground">{t(`assignmentHints.${draft.assignment}`)}</p>
+              <div className="flex flex-wrap gap-x-4 gap-y-1">
+                {coHostChoices(members, draft.hostUserId).map((m) => (
+                  <label key={m.userId} className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={draft.coHostUserIds.includes(m.userId)}
+                      disabled={!manager}
+                      onCheckedChange={(on) => {
+                        setDraft((d) => withCoHost(d, m.userId, on === true));
+                        fields.edit('coHostUserIds');
+                      }}
+                    />
+                    {m.displayName ?? m.email}
+                  </label>
+                ))}
+              </div>
+              <FieldError id={idOf('coHostUserIds')}>{coHostsError}</FieldError>
+            </fieldset>
+          )}
+          {/* Two types with the same name make the same link: the last part of the link can be typed here (the options open when a save is refused), so a name clash is never a dead end. Changing it breaks links already sent. */}
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            {t('fields.slug')}
+            <span className="flex items-center gap-2 text-sm">
+              <span className="text-subtle-foreground">/</span>
+              <Input required maxLength={60} className="font-mono" value={draft.slug} onChange={(e) => setDraft((d) => ({ ...d, slug: e.target.value, slugEdited: true }))} />
+            </span>
+          </label>
+          <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+            {t('fields.description')}
+            <Textarea maxLength={1000} rows={2} placeholder={t('descriptionPlaceholder')} value={draft.description} onChange={(e) => set('description', e.target.value)} />
+          </label>
+        </div>
       )}
-      <Textarea maxLength={1000} rows={2} placeholder={t('descriptionPlaceholder')} aria-label={t('fields.description')} value={draft.description} onChange={(e) => set('description', e.target.value)} />
-      <div className="flex gap-2">
-        <Button loading={pending} type="submit" variant="outline" size="sm" disabled={pending || !draft.title.trim() || !draft.slug.trim()}>
-          {submitLabel}
-        </Button>
-        {onCancel && (
-          <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
-            {tc('cancel')}
-          </Button>
-        )}
-      </div>
-    </form>
+      {failed ? <ErrorText>{errorMessage(failed)}</ErrorText> : null}
+    </FormPanel>
   );
 }
 
-function EventTypeRow({ type, members, me, manager, editor }: { type: EventType; members: readonly EventTypeMember[]; me: string; manager: boolean; editor: boolean }) {
+function EventTypeRow({ slug, type, members, me, manager, editor }: { slug: string; type: EventType; members: readonly EventTypeMember[]; me: string; manager: boolean; editor: boolean }) {
   const t = useTranslations('eventTypes');
   const [editing, setEditing] = useState(false);
   const update = useMutation(
@@ -238,13 +297,15 @@ function EventTypeRow({ type, members, me, manager, editor }: { type: EventType;
   const coHosts = type.coHostUserIds.map((id) => nameOf(members, id)).filter((n): n is string => n !== null);
   return (
     <li className="py-2 text-sm">
-      {editing ? (
+      {editing && (
         <EventTypeForm
+          slug={slug}
           type={type}
           members={members}
           me={me}
           manager={manager}
           pending={update.isPending}
+          failed={update.error}
           submitLabel={t('save')}
           onSubmit={(input) => update.mutate({ eventTypeId: type.id, ...input })}
           onCancel={() => {
@@ -252,64 +313,86 @@ function EventTypeRow({ type, members, me, manager, editor }: { type: EventType;
             update.reset();
           }}
         />
-      ) : (
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="flex flex-wrap items-center gap-2 text-foreground">
-              <span className="truncate">{type.title}</span>
-              {!type.active && <Badge variant="secondary">{t('archived')}</Badge>}
-            </p>
-            <p className="text-xs text-subtle-foreground">
-              <span className="font-mono">/{type.slug}</span> · {t('minutes', { count: String(type.durationMin) })} · {t(`locations.${type.locationKind}`)}
-              {host ? ` · ${t('hostedBy', { name: host })}` : null}
-              {type.assignment !== 'single' ? ` · ${t(`assignments.${type.assignment}`)}${coHosts.length > 0 ? `: ${coHosts.join(', ')}` : ''}` : null}
-            </p>
-          </div>
-          {canManage && (
-            <div className="flex shrink-0 gap-1">
-              <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(true)} aria-label={t('editOf', { title: type.title })}>
-                {t('edit')}
-              </Button>
-              <Button type="button" variant="ghost" size="sm" disabled={setActive.isPending} onClick={() => setActive.mutate({ eventTypeId: type.id, active: !type.active })}>
-                {type.active ? t('archive') : t('restore')}
-              </Button>
+      )}
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="flex flex-wrap items-center gap-2 text-foreground">
+            <span className="truncate">{type.title}</span>
+            {!type.active && <Badge variant="secondary">{t('archived')}</Badge>}
+          </p>
+          <p className="text-xs text-subtle-foreground">
+            <span className="font-mono">/{type.slug}</span> · {t('minutes', { count: String(type.durationMin) })} · {t(`locations.${type.locationKind}`)}
+            {host ? ` · ${t('hostedBy', { name: host })}` : null}
+            {type.assignment !== 'single' ? ` · ${t(`assignments.${type.assignment}`)}${coHosts.length > 0 ? `: ${coHosts.join(', ')}` : ''}` : null}
+          </p>
+          {/* The link to send to a client (#3643): any member may copy or open it; an archived type has no page to send. */}
+          {type.active && (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              <CopyBookingLinkButton url={bookingUrlOf(slug, type)} title={type.title} />
+              <OpenBookingPageLink url={bookingUrlOf(slug, type)} title={type.title} label="view" />
             </div>
           )}
         </div>
-      )}
-      {(update.error ?? setActive.error) && <ErrorText>{errorMessage(update.error ?? setActive.error)}</ErrorText>}
+        {canManage && (
+          <div className="flex shrink-0 gap-1">
+            <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(true)} aria-label={t('editOf', { title: type.title })}>
+              {t('edit')}
+            </Button>
+            <Button type="button" variant="ghost" size="sm" disabled={setActive.isPending} onClick={() => setActive.mutate({ eventTypeId: type.id, active: !type.active })}>
+              {type.active ? t('archive') : t('restore')}
+            </Button>
+          </div>
+        )}
+      </div>
+      {(editing ? setActive.error : (update.error ?? setActive.error)) && <ErrorText>{errorMessage(editing ? setActive.error : (update.error ?? setActive.error))}</ErrorText>}
     </li>
   );
 }
 
-function AddEventType({ members, me, manager }: { members: readonly EventTypeMember[]; me: string; manager: boolean }) {
+function AddEventType({ slug, members, me, manager }: { slug: string; members: readonly EventTypeMember[]; me: string; manager: boolean }) {
   const t = useTranslations('eventTypes');
-  // A new form after each add, so the fields start empty again.
-  const [round, setRound] = useState(0);
+  const [open, setOpen] = useState(false);
   const create = useMutation(
     orpc.crm.eventTypes.create.mutationOptions({
       onSuccess: async () => {
-        setRound((r) => r + 1);
+        setOpen(false);
         await refresh();
       },
     }),
   );
   return (
     <div className="mt-4">
-      <p className="text-xs font-medium text-muted-foreground">{t('addTitle')}</p>
-      <EventTypeForm key={round} type={null} members={members} me={me} manager={manager} pending={create.isPending} submitLabel={t('add')} onSubmit={(input) => create.mutate(input)} />
-      {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
+      <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
+        {t('addTitle')}
+      </Button>
+      {open && (
+        <EventTypeForm
+          slug={slug}
+          type={null}
+          members={members}
+          me={me}
+          manager={manager}
+          pending={create.isPending}
+          failed={create.error}
+          submitLabel={t('add')}
+          onSubmit={(input) => create.mutate(input)}
+          onCancel={() => {
+            setOpen(false);
+            create.reset();
+          }}
+        />
+      )}
     </div>
   );
 }
 
 // Every member reads the list; role decides what they may change.
-export function EventTypesCard({ members, me, role }: { members: readonly EventTypeMember[]; me: string; role: EventTypeMember['role'] }) {
+export function EventTypesCard({ slug, members, me, role }: { slug: string; members: readonly EventTypeMember[]; me: string; role: EventTypeMember['role'] }) {
   const t = useTranslations('eventTypes');
   const types = useQuery(orpc.crm.eventTypes.list.queryOptions());
   const manager = role === 'owner' || role === 'admin';
   return (
-    <Card className="block p-4" aria-label={t('title')}>
+    <Card id={BOOKING_EVENT_TYPES_ID} tabIndex={-1} className="block scroll-mt-20 p-4 outline-none" aria-label={t('title')}>
       <p className="text-sm font-medium text-muted-foreground">{t('title')}</p>
       <p className="mt-2 text-sm text-muted-foreground">{t('intro')}</p>
       {types.isLoading ? (
@@ -323,11 +406,11 @@ export function EventTypesCard({ members, me, role }: { members: readonly EventT
           ) : (
             <ul className="mt-3 divide-y">
               {(types.data ?? []).map((type) => (
-                <EventTypeRow key={`${type.id}:${type.updatedAt}`} type={type} members={members} me={me} manager={manager} editor={role !== 'viewer'} />
+                <EventTypeRow key={`${type.id}:${type.updatedAt}`} slug={slug} type={type} members={members} me={me} manager={manager} editor={role !== 'viewer'} />
               ))}
             </ul>
           )}
-          {role !== 'viewer' && <AddEventType members={members} me={me} manager={manager} />}
+          {role !== 'viewer' && <AddEventType slug={slug} members={members} me={me} manager={manager} />}
         </>
       )}
     </Card>

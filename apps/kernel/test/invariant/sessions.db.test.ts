@@ -8,19 +8,20 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { applyAuthGrants, migrate, setRolePasswords } from '@crove/db/migrate';
-import { createExtractApp } from '@crove/extract';
-import { createExtractClient } from '@crove/extract-contract';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { Runtime, type BlobStore } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, type Db } from '@ludy/db';
+import { applyAuthGrants, migrate } from '@ludy/db/migrate';
+import { createExtractApp } from '@ludy/extract';
+import { createExtractClient } from '@ludy/extract-contract';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { Runtime, type BlobStore } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { createAuthenticator } from '../../src/auth.ts';
 import { loadConfig } from '../../src/config.ts';
 import { createHttpApp } from '../../src/http.ts';
 import { createSessionStatusSource, type SignOutTarget } from '../../src/sessions.ts';
 import { startWorker } from '../../src/worker.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -39,6 +40,7 @@ interface Account {
 suite('sessions and revocation on PostgreSQL (ADR-0028, self-host db adapter)', () => {
   const dbName = `crove_test_sessions_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let workerUrl = '';
   let pool: pg.Pool;
   let db: Db;
@@ -53,7 +55,7 @@ suite('sessions and revocation on PostgreSQL (ADR-0028, self-host db adapter)', 
   };
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = createDbClient({ connectionString: adminUrl }, dbIds);
     await client.connect();
     try {
       return await fn(client);
@@ -112,19 +114,20 @@ suite('sessions and revocation on PostgreSQL (ADR-0028, self-host db adapter)', 
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     // Supabase Auth's schema; its tables appear only once Supabase Auth has started (see the fresh-install test).
     await sql('CREATE SCHEMA IF NOT EXISTS auth AUTHORIZATION supabase_auth_admin');
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = user;
+      url.username = dbIds ? dbIds.roleName(user) : user;
       url.password = password;
       return url.toString();
     };
     workerUrl = login('crove_worker', 'test-worker-pw');
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
+    pool = createDbPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 }, dbIds);
     db = createDb(pool);
-    workerPool = createPool({ connectionString: workerUrl, max: 2 });
+    workerPool = createDbPool({ connectionString: workerUrl, max: 2 }, dbIds);
     workerDb = createDb(workerPool);
     const config = loadConfig({
       DATABASE_URL: login('crove_app', 'test-app-pw'),

@@ -15,9 +15,9 @@
 // Matching is the pure domain/banned-words.ts, the same in the app. Crove ships no list of its own.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole, SocialBannedWordLevel } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole, SocialBannedWordLevel } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { effectiveContent } from './domain/approval.ts';
 import {
   BANNED_PHRASE_MAX,
@@ -71,7 +71,7 @@ export const zBannedWordAdd = z.strictObject({
 });
 
 // One write at a time per org, so the count and the duplicate check hold until the commit.
-const lockOrg = (ctx: CommandContext) => sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`crove_social.banned_word:${ctx.orgId}`}))`.execute(ctx.trx);
+const lockOrg = (ctx: CommandContext) => sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`ludy_social.banned_word:${ctx.orgId}`}))`.execute(ctx.trx);
 
 export const bannedWordAdd = defineCommand({
   name: 'social.banned_word.add',
@@ -83,18 +83,18 @@ export const bannedWordAdd = defineCommand({
     const userId = requireUser(ctx);
     const connectionIds = [...new Set(input.connectionIds ?? [])];
     if (connectionIds.length > 0) {
-      const found = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', connectionIds).where('status', '<>', 'revoked').execute();
+      const found = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', connectionIds).where('status', '<>', 'revoked').execute();
       if (found.length !== connectionIds.length) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Có kênh không thuộc tổ chức này');
     }
     await lockOrg(ctx);
     const normalized = normalizePhrase(input.phrase);
-    const count = await ctx.trx.selectFrom('crove_social.banned_word').select((eb) => eb.fn.countAll<string>().as('n')).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const count = await ctx.trx.selectFrom('ludy_social.banned_word').select((eb) => eb.fn.countAll<string>().as('n')).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     if (Number(count.n) >= BANNED_WORDS_MAX) throw new DomainError('BANNED_WORD_LIMIT', 409, `Mỗi tổ chức lưu tối đa ${BANNED_WORDS_MAX} từ cấm`);
-    const taken = await ctx.trx.selectFrom('crove_social.banned_word').select('id').where('org_id', '=', ctx.orgId).where('normalized', '=', normalized).executeTakeFirst();
+    const taken = await ctx.trx.selectFrom('ludy_social.banned_word').select('id').where('org_id', '=', ctx.orgId).where('normalized', '=', normalized).executeTakeFirst();
     if (taken) throw new DomainError('BANNED_WORD_EXISTS', 409, 'Từ này đã có trong danh sách', { wordId: taken.id });
     const reason = input.reason ? input.reason : null;
     const row = await ctx.trx
-      .insertInto('crove_social.banned_word')
+      .insertInto('ludy_social.banned_word')
       .values({ org_id: ctx.orgId, phrase: input.phrase, normalized, level: input.level, reason, connection_ids: connectionIds, created_by: userId, created_at: ctx.now })
       .returning('id')
       .executeTakeFirstOrThrow();
@@ -112,7 +112,7 @@ export const bannedWordRemove = defineCommand({
   handler: async (ctx, input) => {
     requireUser(ctx);
     const row = await ctx.trx
-      .deleteFrom('crove_social.banned_word')
+      .deleteFrom('ludy_social.banned_word')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.wordId)
       .returning(['id', 'phrase', 'level'])
@@ -131,7 +131,7 @@ export interface BannedWordView extends BannedWord {
 /** The org's words, by phrase. */
 export async function bannedWordsOf(trx: Trx, orgId: string): Promise<BannedWordView[]> {
   const rows = await trx
-    .selectFrom('crove_social.banned_word')
+    .selectFrom('ludy_social.banned_word')
     .select(['id', 'phrase', 'level', 'reason', 'connection_ids', 'created_by', 'created_at'])
     .where('org_id', '=', orgId)
     .orderBy('normalized')
@@ -274,7 +274,7 @@ export function bannedForView(check: BannedCheck, post: PostContent, v: VariantR
   }
 }
 
-// The level lists of this module and of the table's refinement in @crove/db must stay the same.
+// The level lists of this module and of the table's refinement in @ludy/db must stay the same.
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 const levelsAgree: Same<BannedWordLevel, SocialBannedWordLevel> = true;
 void levelsAgree;

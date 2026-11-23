@@ -3,21 +3,24 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useRef, useState } from 'react';
-import { useTranslations } from 'use-intl';
-import { OAUTH_CHANNEL_PROVIDERS, SOCIAL_QUEUE_SLOTS_MAX } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { useLocale, useTranslations } from 'use-intl';
+import { OAUTH_CHANNEL_PROVIDERS, SOCIAL_QUEUE_SLOTS_MAX } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { cn } from '@ludy/ui/lib/utils';
+import { GeneralSettings } from '../components/social-general-settings.tsx';
 import { DateInput } from '../components/date-input.tsx';
 import { TimeInput } from '../components/time-input.tsx';
 import { VoiceEditor } from '../components/social-brand-voice.tsx';
 import { WatermarkCard } from '../components/social-watermark.tsx';
 import { ReportBrandingCard } from '../components/social-report-branding.tsx';
 import { ChatAlertCard } from '../components/social-chat-alert.tsx';
+import { ChannelDisconnectConfirm } from '../components/social-channel-disconnect.tsx';
 import { ShareCard } from '../components/social-share.tsx';
 import { PublishHoldCard } from '../components/social-publish-hold.tsx';
 import { BannedWordsCard } from '../components/social-banned-words.tsx';
@@ -35,15 +38,16 @@ import { isAdOAuthProvider } from '../lib/ads.ts';
 import { getConfig } from '../lib/auth.ts';
 import { AutoDraftSetting, SavedRepliesManager } from '../components/conversation-drafts.tsx';
 import { YoutubeCommentsPanel } from '../components/youtube-comments-panel.tsx';
+import { CalendarFeedCard } from '../components/social-calendar-feed.tsx';
+import { PlanReviewCard } from '../components/social-plan-review.tsx';
 import { rememberOAuthAttempt } from '../lib/oauth.ts';
-import { connectPlatforms, minuteLabel, parseMinute, providerName } from '../lib/social.ts';
+import { connectSplit, isMessagingOnly, lastSocialList, minuteLabel, parseMinute, providerName, zoneLabel } from '../lib/social.ts';
 import { shuffleRange } from '../lib/social-queue-order.ts';
 import type { QueueSuggestion } from '../lib/social-best-time.ts';
 import { copySlots } from '../lib/social-queue-copy.ts';
 
 type Channel = Awaited<ReturnType<typeof orpc.channels.list.call>>[number];
 type OAuthProvider = (typeof OAUTH_CHANNEL_PROVIDERS)[number];
-const OAUTH_PROVIDERS: readonly string[] = OAUTH_CHANNEL_PROVIDERS;
 type Slot = { weekday: number; minute: number; label?: string; labelId?: string | null };
 
 const CHANNEL_TONE = { active: 'success', expired: 'warning', error: 'destructive', revoked: 'outline' } as const;
@@ -154,6 +158,7 @@ function ReviewPolicy({ channel, required, reminders, shortLinks, fourEyes, clie
 
 function QueueEditor({ channel, canEdit, copyTargets }: { channel: Channel; canEdit: boolean; copyTargets: readonly Channel[] }) {
   const t = useTranslations('social');
+  const locale = useLocale();
   const f = useFormat();
   const { slug } = useParams({ strict: false }) as { slug: string };
   const queue = useQuery(orpc.social.queues.get.queryOptions({ input: { connectionId: channel.id } }));
@@ -231,7 +236,7 @@ function QueueEditor({ channel, canEdit, copyTargets }: { channel: Channel; canE
           <NativeSelect size="sm" value={current.timeZone} disabled={!canEdit} onChange={(e) => setDraft({ ...current, timeZone: e.target.value })}>
             {[...new Set([current.timeZone, ...ZONES])].map((z) => (
               <NativeSelectOption key={z} value={z}>
-                {z}
+                {zoneLabel(z, locale)}
               </NativeSelectOption>
             ))}
           </NativeSelect>
@@ -281,7 +286,7 @@ function QueueEditor({ channel, canEdit, copyTargets }: { channel: Channel; canE
                   <button
                     type="button"
                     aria-label={t('removeSlot')}
-                    className="rounded text-subtle-foreground hover:text-destructive focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+                    className="inline-flex min-h-6 min-w-6 items-center justify-center rounded text-subtle-foreground hover:text-destructive focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none max-sm:min-h-11 max-sm:min-w-11"
                     onClick={() => setDraft({ ...current, slots: current.slots.filter((x) => !(x.weekday === s.weekday && x.minute === s.minute)) })}
                   >
                     ×
@@ -294,7 +299,7 @@ function QueueEditor({ channel, canEdit, copyTargets }: { channel: Channel; canE
       )}
       {suggestedNow > 0 && (
         <p role="status" className="text-xs text-muted-foreground">
-          {t('queueTools.suggested', { count: suggestedNow, zone: current.timeZone })}
+          {t('queueTools.suggested', { count: suggestedNow, zone: zoneLabel(current.timeZone, locale) })}
         </p>
       )}
       {canEdit && (
@@ -402,10 +407,12 @@ export function SocialChannelsPage() {
   const voices = useQuery(orpc.social.brandVoices.list.queryOptions({ input: {} }));
   const orgVoice = voices.data?.find((v) => v.connectionId === null);
   const channelVoice = new Map((voices.data ?? []).filter((v) => v.connectionId !== null).map((v) => [v.connectionId as string, v]));
-  const listed = useQuery(orpc.channels.list.queryOptions({ input: {} }));
+  const listed = useQuery(orpc.channels.list.queryOptions({ input: { includeMessaging: true } }));
   // A member limited to some channels (#1081) sees those here: the others' queues and settings are not theirs.
   const scope = useChannelScope();
   const channels = { ...listed, data: listed.data?.filter((c) => scope.allows(c.id)), isLoading: listed.isLoading || scope.loading };
+  // The channels a post can go to: a messaging-only one (WhatsApp, #3131) has none of the publishing settings the cards below are for.
+  const publishing = (channels.data ?? []).filter((c) => !isMessagingOnly(c.provider));
   const policyRows = useQuery(orpc.social.policies.list.queryOptions({ input: {} }));
   const policies = new Map((policyRows.data ?? []).map((p) => [p.connectionId, p.approvalsRequired]));
   const reminders = new Map((policyRows.data ?? []).map((p) => [p.connectionId, p.reviewReminders]));
@@ -467,6 +474,16 @@ export function SocialChannelsPage() {
       void queryClient.invalidateQueries();
     },
   });
+  // WhatsApp (#3131): a system user token, the phone number id and the WABA id, checked once by the server against the number and sealed; the form forgets the token.
+  const whatsappOn = getConfig().channels?.whatsapp ?? false;
+  const [wa, setWa] = useState({ accessToken: '', phoneNumberId: '', wabaId: '' });
+  const connectWhatsApp = useMutation({
+    mutationFn: () => client.channels.connectWhatsApp({ accessToken: wa.accessToken.trim(), phoneNumberId: wa.phoneNumberId.trim(), wabaId: wa.wabaId.trim() }),
+    onSuccess: () => {
+      setWa({ accessToken: '', phoneNumberId: '', wabaId: '' });
+      void queryClient.invalidateQueries();
+    },
+  });
   // Discord: a channel's webhook URL, checked by the server and sealed; the form forgets it.
   const discordOn = getConfig().channels?.discord ?? false;
   const [webhookUrl, setWebhookUrl] = useState('');
@@ -493,6 +510,7 @@ export function SocialChannelsPage() {
   const pausedOn = new Map((waiting.data ?? []).map((w) => [w.connectionId, w.paused]));
   const blueskyForm = useRef<HTMLInputElement>(null);
   const telegramForm = useRef<HTMLInputElement>(null);
+  const whatsappForm = useRef<HTMLInputElement>(null);
   const mastodonForm = useRef<HTMLInputElement>(null);
   const discordForm = useRef<HTMLInputElement>(null);
   const wordpressForm = useRef<HTMLInputElement>(null);
@@ -505,6 +523,12 @@ export function SocialChannelsPage() {
     }
     if (c.provider === 'telegram') {
       telegramForm.current?.focus();
+      return;
+    }
+    if (c.provider === 'whatsapp') {
+      // The account id is the phone number id; the token and the business account id are asked again, since neither is kept in the clear.
+      setWa({ accessToken: '', phoneNumberId: c.externalAccountId, wabaId: '' });
+      whatsappForm.current?.focus();
       return;
     }
     if (c.provider === 'discord') {
@@ -531,14 +555,11 @@ export function SocialChannelsPage() {
       start.mutate({ provider: c.provider as OAuthProvider, ...(comments ? { comments: true } : {}) });
     }
   };
-  const canReconnect = (c: Channel) => isAdmin && c.status !== 'revoked' && (c.provider === 'bluesky' ? blueskyOn : c.provider === 'telegram' ? telegramOn : c.provider === 'mastodon' ? mastodonOn : c.provider === 'discord' ? discordOn : c.provider === 'wordpress' ? wordpressOn : oauth.includes(c.provider as OAuthProvider));
-  const disconnect = useMutation({
-    mutationFn: (connectionId: string) => client.channels.disconnect({ connectionId, idempotencyKey: crypto.randomUUID() }),
-    onSuccess: () => {
-      setConfirming(null);
-      void queryClient.invalidateQueries();
-    },
-  });
+  // Only what can be connected is offered (#3651): Facebook and Instagram come first (the order of the list); a platform this
+  // server has not set up is folded away instead of listed with a badge the owner cannot act on.
+  const { ready: readyPlatforms, unavailable } = connectSplit(oauth);
+  const hasReal = readyPlatforms.length > 0 || blueskyOn || mastodonOn || wordpressOn || telegramOn || whatsappOn || discordOn;
+  const canReconnect = (c: Channel) => isAdmin && c.status !== 'revoked' && (c.provider === 'bluesky' ? blueskyOn : c.provider === 'telegram' ? telegramOn : c.provider === 'whatsapp' ? whatsappOn : c.provider === 'mastodon' ? mastodonOn : c.provider === 'discord' ? discordOn : c.provider === 'wordpress' ? wordpressOn : oauth.includes(c.provider as OAuthProvider));
 
   return (
     <>
@@ -546,54 +567,220 @@ export function SocialChannelsPage() {
         title={t('channelsTitle')}
         subtitle={t('channelsSubtitle')}
         actions={
-          <Link to="/o/$slug/social" params={{ slug }} className="inline-flex h-9 items-center px-2.5 text-sm text-muted-foreground hover:text-foreground">
+          <Link to="/o/$slug/social" params={{ slug }} search={lastSocialList(slug)} className="inline-flex h-9 items-center px-2.5 text-sm text-muted-foreground hover:text-foreground">
             {t('back')}
           </Link>
         }
       />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-        <div className="space-y-3">
-          <Card className="block space-y-3 p-4" data-testid="conversation-replies-card">
-            <SavedRepliesManager canWrite={canWriteReplies} />
-            <AutoDraftSetting isAdmin={isAdmin} />
-          </Card>
-          <Card className="block space-y-2 p-4">
-            <div>
-              <p className="text-sm font-medium text-foreground">{t('voice.orgTitle')}</p>
-              <p className="text-xs text-subtle-foreground">{t('voice.orgHint')}</p>
-            </div>
-            {!voices.isLoading && <VoiceEditor key={orgVoice?.updatedAt ?? 'none'} connectionId={null} voice={orgVoice} canEdit={isAdmin} />}
-          </Card>
-          <Card className="block space-y-2 p-4">
-            <div>
-              <p className="text-sm font-medium text-foreground">{t('watermark.title')}</p>
-              <p className="text-xs text-subtle-foreground">{t('watermark.hint')}</p>
-            </div>
-            <WatermarkCard canEdit={isAdmin} />
-          </Card>
-          <Card className="block space-y-2 p-4">
-            <div>
-              <p className="text-sm font-medium text-foreground">{t('reportBranding.title')}</p>
-              <p className="text-xs text-subtle-foreground">{t('reportBranding.hint')}</p>
-            </div>
-            <ReportBrandingCard canEdit={isAdmin} />
-          </Card>
-          <Card className="block p-4">
-            <PublishHoldCard key={slug} />
-          </Card>
-          <BannedWordsCard channels={(channels.data ?? []).filter((c) => c.status !== 'revoked')} canEdit={isAdmin} />
-          <ReviewChecklistCard channels={(channels.data ?? []).filter((c) => c.status !== 'revoked')} canEdit={isAdmin} />
-          {channels.data && <ChannelAccessCard channels={channels.data} canEdit={isAdmin} />}
-          <Card className="block space-y-2 p-4">
-            <div>
-              <p className="text-sm font-medium text-foreground">{t('chatAlert.title')}</p>
-              <p className="text-xs text-subtle-foreground">{t('chatAlert.hint')}</p>
-            </div>
-            <ChatAlertCard canEdit={isAdmin} />
-          </Card>
-          <ShareCard />
-          {/* Once the channels are loaded: before, every set would read as having none left. */}
-          {channels.data && <ChannelSetsCard channels={channels.data.filter((c) => c.status !== 'revoked')} canEdit={isAdmin} />}
+        {/* First in the page, so on a phone it is the first card; beside the channels on a wide screen (#3651). */}
+        <Card className="block h-fit space-y-4 p-4 lg:col-start-2 lg:row-start-1" data-testid="connect-card">
+          <p className="text-sm font-medium text-foreground">{t('connectTitle')}</p>
+          {!isAdmin ? (
+            <p className="text-sm text-muted-foreground">{t('adminsConnect')}</p>
+          ) : (
+            <>
+              {readyPlatforms.length > 0 && (
+                <div className="space-y-2">
+                  {readyPlatforms.map((p, index) => (
+                    <div key={p} className="space-y-1.5">
+                      <Button
+                        variant={index === 0 ? 'default' : 'outline'}
+                        size={index === 0 ? 'lg' : 'sm'}
+                        disabled={start.isPending}
+                        onClick={() => start.mutate({ provider: p as OAuthProvider, ...((p === 'facebook_page' && fbComments) || (p === 'instagram' && igComments) || (p === 'threads' && thComments) ? { comments: true } : {}) })}
+                      >
+                        {t('connectWith', { provider: providerName(p) })}
+                      </Button>
+                      {p === 'facebook_page' && (
+                        <label className="flex items-center gap-2 text-xs text-subtle-foreground">
+                          <Checkbox checked={fbComments} onCheckedChange={(v) => setFbComments(v === true)} />
+                          <span>{t('facebookCommentsOptIn')}</span>
+                        </label>
+                      )}
+                      {p === 'instagram' && (
+                        <label className="flex items-center gap-2 text-xs text-subtle-foreground">
+                          <Checkbox checked={igComments} onCheckedChange={(v) => setIgComments(v === true)} />
+                          <span>{t('instagramCommentsOptIn')}</span>
+                        </label>
+                      )}
+                      {p === 'threads' && (
+                        <label className="flex items-center gap-2 text-xs text-subtle-foreground">
+                          <Checkbox checked={thComments} onCheckedChange={(v) => setThComments(v === true)} />
+                          <span>{t('threadsCommentsOptIn')}</span>
+                        </label>
+                      )}
+                    </div>
+                  ))}
+                  {oauth.includes('google_business') && <p className="text-xs text-subtle-foreground">{t('gbpConnectHint')}</p>}
+                  {oauth.includes('linkedin_page') && <p className="text-xs text-subtle-foreground">{t('linkedinPageHint')}</p>}
+                  <p className="text-xs text-subtle-foreground">{t('oauthHint')}</p>
+                </div>
+              )}
+              {start.error && <ErrorText>{errorMessage(start.error)}</ErrorText>}
+                  {blueskyOn && (
+                    <form
+                      className="space-y-2 border-t pt-3"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (bsky.handle.trim() && bsky.appPassword.trim()) connectBluesky.mutate();
+                      }}
+                    >
+                      <p className="text-sm font-medium text-foreground">{providerName('bluesky')}</p>
+                      <Label htmlFor="bsky-handle">{t('blueskyHandle')}</Label>
+                      <Input id="bsky-handle" ref={blueskyForm} value={bsky.handle} autoComplete="off" placeholder="ten.bsky.social" onChange={(e) => setBsky({ ...bsky, handle: e.target.value })} />
+                      <Label htmlFor="bsky-password">{t('blueskyAppPassword')}</Label>
+                      <Input id="bsky-password" type="password" autoComplete="off" value={bsky.appPassword} placeholder="xxxx-xxxx-xxxx-xxxx" onChange={(e) => setBsky({ ...bsky, appPassword: e.target.value })} />
+                      <p className="text-xs text-subtle-foreground">{t('blueskyHint')}</p>
+                      <Button type="submit" variant="outline" size="sm" disabled={!bsky.handle.trim() || !bsky.appPassword.trim() || connectBluesky.isPending}>
+                        {t('connectWith', { provider: providerName('bluesky') })}
+                      </Button>
+                      {connectBluesky.error && <ErrorText>{errorMessage(connectBluesky.error)}</ErrorText>}
+                    </form>
+                  )}
+                  {mastodonOn && (
+                    <form
+                      className="space-y-2 border-t pt-3"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (mdn.instance.trim() && mdn.accessToken.trim()) connectMastodon.mutate();
+                      }}
+                    >
+                      <p className="text-sm font-medium text-foreground">{providerName('mastodon')}</p>
+                      <Label htmlFor="mdn-instance">{t('mastodonInstance')}</Label>
+                      <Input id="mdn-instance" ref={mastodonForm} autoComplete="off" value={mdn.instance} placeholder="mastodon.social" onChange={(e) => setMdn({ ...mdn, instance: e.target.value })} />
+                      <Label htmlFor="mdn-token">{t('mastodonToken')}</Label>
+                      <Input id="mdn-token" type="password" autoComplete="off" value={mdn.accessToken} onChange={(e) => setMdn({ ...mdn, accessToken: e.target.value })} />
+                      <p className="text-xs text-subtle-foreground">{t('mastodonHint')}</p>
+                      <Button type="submit" variant="outline" size="sm" disabled={!mdn.instance.trim() || !mdn.accessToken.trim() || connectMastodon.isPending}>
+                        {t('connectWith', { provider: providerName('mastodon') })}
+                      </Button>
+                      {connectMastodon.error && <ErrorText>{errorMessage(connectMastodon.error)}</ErrorText>}
+                    </form>
+                  )}
+                  {wordpressOn && (
+                    <form
+                      className="space-y-2 border-t pt-3"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (wp.site.trim() && wp.username.trim() && wp.appPassword.trim()) connectWordPress.mutate();
+                      }}
+                    >
+                      <p className="text-sm font-medium text-foreground">{providerName('wordpress')}</p>
+                      <Label htmlFor="wp-site">{t('wordpressSite')}</Label>
+                      <Input id="wp-site" ref={wordpressForm} autoComplete="off" value={wp.site} placeholder="https://tiemcuaban.vn" onChange={(e) => setWp({ ...wp, site: e.target.value })} />
+                      <Label htmlFor="wp-username">{t('wordpressUsername')}</Label>
+                      <Input id="wp-username" autoComplete="off" value={wp.username} onChange={(e) => setWp({ ...wp, username: e.target.value })} />
+                      <Label htmlFor="wp-password">{t('wordpressAppPassword')}</Label>
+                      <Input id="wp-password" type="password" autoComplete="off" value={wp.appPassword} placeholder="xxxx xxxx xxxx xxxx xxxx xxxx" onChange={(e) => setWp({ ...wp, appPassword: e.target.value })} />
+                      <p className="text-xs text-subtle-foreground">{t('wordpressHint')}</p>
+                      <Button type="submit" variant="outline" size="sm" disabled={!wp.site.trim() || !wp.username.trim() || !wp.appPassword.trim() || connectWordPress.isPending}>
+                        {t('connectWith', { provider: providerName('wordpress') })}
+                      </Button>
+                      {connectWordPress.error && <ErrorText>{errorMessage(connectWordPress.error)}</ErrorText>}
+                    </form>
+                  )}
+                  {telegramOn && (
+                    <form
+                      className="space-y-2 border-t pt-3"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (tg.botToken.trim() && tg.channel.trim()) connectTelegram.mutate();
+                      }}
+                    >
+                      <p className="text-sm font-medium text-foreground">{providerName('telegram')}</p>
+                      <Label htmlFor="tg-token">{t('telegramBotToken')}</Label>
+                      <Input id="tg-token" ref={telegramForm} type="password" autoComplete="off" value={tg.botToken} placeholder="123456789:AA..." onChange={(e) => setTg({ ...tg, botToken: e.target.value })} />
+                      <Label htmlFor="tg-channel">{t('telegramChannel')}</Label>
+                      <Input id="tg-channel" autoComplete="off" value={tg.channel} placeholder="@tenkenh" onChange={(e) => setTg({ ...tg, channel: e.target.value })} />
+                      <p className="text-xs text-subtle-foreground">{t('telegramHint')}</p>
+                      <Button type="submit" variant="outline" size="sm" disabled={!tg.botToken.trim() || !tg.channel.trim() || connectTelegram.isPending}>
+                        {t('connectWith', { provider: providerName('telegram') })}
+                      </Button>
+                      {connectTelegram.error && <ErrorText>{errorMessage(connectTelegram.error)}</ErrorText>}
+                    </form>
+                  )}
+                  {whatsappOn && (
+                    <form
+                      className="space-y-2 border-t pt-3"
+                      data-testid="whatsapp-connect"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (wa.accessToken.trim() && wa.phoneNumberId.trim() && wa.wabaId.trim()) connectWhatsApp.mutate();
+                      }}
+                    >
+                      <p className="text-sm font-medium text-foreground">{providerName('whatsapp')}</p>
+                      <Label htmlFor="wa-token">{t('whatsappAccessToken')}</Label>
+                      <Input id="wa-token" ref={whatsappForm} type="password" autoComplete="off" value={wa.accessToken} placeholder="EAAG..." onChange={(e) => setWa({ ...wa, accessToken: e.target.value })} />
+                      <Label htmlFor="wa-phone">{t('whatsappPhoneNumberId')}</Label>
+                      <Input id="wa-phone" autoComplete="off" inputMode="numeric" value={wa.phoneNumberId} onChange={(e) => setWa({ ...wa, phoneNumberId: e.target.value })} />
+                      <Label htmlFor="wa-waba">{t('whatsappWabaId')}</Label>
+                      <Input id="wa-waba" autoComplete="off" inputMode="numeric" value={wa.wabaId} onChange={(e) => setWa({ ...wa, wabaId: e.target.value })} />
+                      <p className="text-xs text-subtle-foreground">{t('whatsappHint')}</p>
+                      <p className="text-xs text-warning" data-testid="whatsapp-billing">
+                        {t('whatsappBilling')}
+                      </p>
+                      <Button type="submit" variant="outline" size="sm" disabled={!wa.accessToken.trim() || !wa.phoneNumberId.trim() || !wa.wabaId.trim() || connectWhatsApp.isPending}>
+                        {t('connectWith', { provider: providerName('whatsapp') })}
+                      </Button>
+                      {connectWhatsApp.error && <ErrorText>{errorMessage(connectWhatsApp.error)}</ErrorText>}
+                    </form>
+                  )}
+                  {discordOn && (
+                    <form
+                      className="space-y-2 border-t pt-3"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (webhookUrl.trim()) connectDiscord.mutate();
+                      }}
+                    >
+                      <p className="text-sm font-medium text-foreground">{providerName('discord')}</p>
+                      <Label htmlFor="dc-webhook">{t('discordWebhook')}</Label>
+                      <Input id="dc-webhook" ref={discordForm} type="password" autoComplete="off" value={webhookUrl} placeholder="https://discord.com/api/webhooks/..." onChange={(e) => setWebhookUrl(e.target.value)} />
+                      <p className="text-xs text-subtle-foreground">{t('discordHint')}</p>
+                      <Button type="submit" variant="outline" size="sm" disabled={!webhookUrl.trim() || connectDiscord.isPending}>
+                        {t('connectWith', { provider: providerName('discord') })}
+                      </Button>
+                      {connectDiscord.error && <ErrorText>{errorMessage(connectDiscord.error)}</ErrorText>}
+                    </form>
+                  )}
+              {/* The demo channel: only when this server offers it, labelled as a demo, and never the first thing to press when real platforms can be connected. */}
+              {sandbox && (
+                <form
+                  className={cn('space-y-2', hasReal && 'border-t pt-3')}
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (name.trim()) connect.mutate();
+                  }}
+                >
+                  <p className="text-sm font-medium text-foreground">{t('sandboxTitle')}</p>
+                  <Label htmlFor="sandbox-name">{t('sandboxName')}</Label>
+                  <Input id="sandbox-name" value={name} placeholder={t('sandboxPlaceholder')} onChange={(e) => setName(e.target.value)} />
+                  <p className="text-xs text-subtle-foreground">{t('sandboxHint')}</p>
+                  <Button type="submit" size={hasReal ? 'sm' : 'lg'} variant={hasReal ? 'outline' : 'default'} disabled={!name.trim() || connect.isPending}>
+                    {t('connectSandbox')}
+                  </Button>
+                  {connect.error && <ErrorText>{errorMessage(connect.error)}</ErrorText>}
+                </form>
+              )}
+              {!hasReal && !sandbox && <p className="text-sm text-muted-foreground">{t('nothingToConnect')}</p>}
+              {/* What this server cannot connect yet is out of the way, in one folded line (#3651). */}
+              {unavailable.length > 0 && (
+                <details className="border-t pt-3 text-sm text-muted-foreground">
+                  <summary className="cursor-pointer text-foreground">{t('otherPlatforms')}</summary>
+                  <ul className="mt-2 list-disc space-y-0.5 pl-5">
+                    {unavailable.map((p) => (
+                      <li key={p}>{providerName(p)}</li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 text-xs text-subtle-foreground">{t('otherPlatformsHint')}</p>
+                  {!oauth.includes('google_business') && <p className="mt-1 text-xs text-subtle-foreground">{t('gbpSetupHint')}</p>}
+                </details>
+              )}
+            </>
+          )}
+        </Card>
+        <div className="space-y-3 lg:col-start-1 lg:row-start-1">
           {channels.isLoading ? (
             <Spinner />
           ) : channels.error ? (
@@ -660,209 +847,84 @@ export function SocialChannelsPage() {
                       ) : null
                     )}
                   </div>
-                  {isAdmin &&
-                    (confirming === c.id ? (
-                      <div className="flex gap-2">
-                        <Button variant="destructive" size="sm" disabled={disconnect.isPending} onClick={() => disconnect.mutate(c.id)}>
-                          {t('confirmDisconnect')}
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => setConfirming(null)}>
-                          {t('keep')}
-                        </Button>
-                      </div>
-                    ) : (
-                      <Button variant="ghost" size="sm" onClick={() => setConfirming(c.id)}>
-                        {t('disconnect')}
-                      </Button>
-                    ))}
+                  {isAdmin && confirming !== c.id && (
+                    <Button variant="ghost" size="sm" onClick={() => setConfirming(c.id)}>
+                      {t('disconnect')}
+                    </Button>
+                  )}
                 </div>
-                {confirming === c.id && <p className="text-xs text-muted-foreground">{t('disconnectHint')}</p>}
-                <div className="border-t pt-3">
-                  <ReviewPolicy channel={c} required={policies.get(c.id) ?? 1} reminders={reminders.get(c.id) ?? true} shortLinks={shortLinks.get(c.id) ?? false} fourEyes={fourEyes.get(c.id) ?? false} clientApproval={clientApproval.get(c.id) ?? false} canEdit={isAdmin} canOwn={role === 'owner'} loading={policyRows.isLoading} />
-                </div>
-                <div className="border-t pt-3">
-                  {!policyRows.isLoading && <SignatureEditor key={signatures.get(c.id) ?? 'none'} connectionId={c.id} revoked={c.status === 'revoked'} signature={signatures.get(c.id) ?? null} canEdit={isAdmin} />}
-                </div>
-                <div className="border-t pt-3">
-                  <p className="mb-2 text-sm font-medium text-muted-foreground">{t('voice.channelTitle')}</p>
-                  {!voices.isLoading && <VoiceEditor key={channelVoice.get(c.id)?.updatedAt ?? 'none'} connectionId={c.id} voice={channelVoice.get(c.id)} canEdit={isAdmin} inherited={orgVoice !== undefined} />}
-                </div>
-                <div className="border-t pt-3">
-                  <p className="mb-2 text-sm font-medium text-muted-foreground">{t('queueTitle')}</p>
-                  <QueueEditor channel={c} canEdit={isAdmin} copyTargets={(channels.data ?? []).filter((x) => x.id !== c.id && x.status !== 'revoked')} />
-                </div>
+                {/* The confirmation, with the choice to delete the channel's conversations too (#3299), for owners and admins. */}
+                {isAdmin && confirming === c.id && <ChannelDisconnectConfirm connectionId={c.id} onDone={() => setConfirming(null)} onKeep={() => setConfirming(null)} />}
+                {/* A messaging-only channel (WhatsApp, #3131) has no queue, voice, signature or review policy: its card is its name, state and disconnect. */}
+                {!isMessagingOnly(c.provider) && (
+                  <>
+                    <div className="border-t pt-3">
+                      <ReviewPolicy channel={c} required={policies.get(c.id) ?? 1} reminders={reminders.get(c.id) ?? true} shortLinks={shortLinks.get(c.id) ?? false} fourEyes={fourEyes.get(c.id) ?? false} clientApproval={clientApproval.get(c.id) ?? false} canEdit={isAdmin} canOwn={role === 'owner'} loading={policyRows.isLoading} />
+                    </div>
+                    <div className="border-t pt-3">
+                      {!policyRows.isLoading && <SignatureEditor key={signatures.get(c.id) ?? 'none'} connectionId={c.id} revoked={c.status === 'revoked'} signature={signatures.get(c.id) ?? null} canEdit={isAdmin} />}
+                    </div>
+                    <div className="border-t pt-3">
+                      <p className="mb-2 text-sm font-medium text-muted-foreground">{t('voice.channelTitle')}</p>
+                      {!voices.isLoading && <VoiceEditor key={channelVoice.get(c.id)?.updatedAt ?? 'none'} connectionId={c.id} voice={channelVoice.get(c.id)} canEdit={isAdmin} inherited={orgVoice !== undefined} />}
+                    </div>
+                    <div className="border-t pt-3">
+                      <p className="mb-2 text-sm font-medium text-muted-foreground">{t('queueTitle')}</p>
+                      <QueueEditor channel={c} canEdit={isAdmin} copyTargets={publishing.filter((x) => x.id !== c.id && x.status !== 'revoked')} />
+                    </div>
+                  </>
+                )}
               </Card>
             ))
           )}
-          {disconnect.error && <ErrorText>{errorMessage(disconnect.error)}</ErrorText>}
-        </div>
-        <Card className="block h-fit space-y-4 p-4">
-          <p className="text-sm font-medium text-foreground">{t('connectTitle')}</p>
-          {sandbox && isAdmin ? (
-            <form
-              className="space-y-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (name.trim()) connect.mutate();
-              }}
-            >
-              <Label htmlFor="sandbox-name">{t('sandboxName')}</Label>
-              <Input id="sandbox-name" value={name} placeholder={t('sandboxPlaceholder')} onChange={(e) => setName(e.target.value)} />
-              <p className="text-xs text-subtle-foreground">{t('sandboxHint')}</p>
-              <Button type="submit" size="lg" disabled={!name.trim() || connect.isPending}>
-                {t('connectSandbox')}
-              </Button>
-              {connect.error && <ErrorText>{errorMessage(connect.error)}</ErrorText>}
-            </form>
-          ) : (
-            <p className="text-xs text-subtle-foreground">{isAdmin ? t('sandboxOff') : t('adminsConnect')}</p>
-          )}
-          <div className="space-y-2 border-t pt-3">
-            {connectPlatforms(oauth).map((p) => (
-              <div key={p} className="space-y-1.5">
-                <div className="flex items-center justify-between gap-2 text-sm text-muted-foreground">
-                  {providerName(p)}
-                  {oauth.includes(p) ? (
-                    isAdmin ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={start.isPending}
-                        onClick={() => start.mutate({ provider: p as OAuthProvider, ...((p === 'facebook_page' && fbComments) || (p === 'instagram' && igComments) || (p === 'threads' && thComments) ? { comments: true } : {}) })}
-                      >
-                        {t('connectWith', { provider: providerName(p) })}
-                      </Button>
-                    ) : null
-                  ) : (
-                    <Badge variant="secondary">{OAUTH_PROVIDERS.includes(p) ? t('notConfigured') : t('comingSoon')}</Badge>
-                  )}
-                </div>
-                {p === 'facebook_page' && oauth.includes(p) && isAdmin && (
-                  <label className="flex items-center gap-2 text-xs text-subtle-foreground">
-                    <Checkbox checked={fbComments} onCheckedChange={(v) => setFbComments(v === true)} />
-                    <span>{t('facebookCommentsOptIn')}</span>
-                  </label>
-                )}
-                {p === 'instagram' && oauth.includes(p) && isAdmin && (
-                  <label className="flex items-center gap-2 text-xs text-subtle-foreground">
-                    <Checkbox checked={igComments} onCheckedChange={(v) => setIgComments(v === true)} />
-                    <span>{t('instagramCommentsOptIn')}</span>
-                  </label>
-                )}
-                {p === 'threads' && oauth.includes(p) && isAdmin && (
-                  <label className="flex items-center gap-2 text-xs text-subtle-foreground">
-                    <Checkbox checked={thComments} onCheckedChange={(v) => setThComments(v === true)} />
-                    <span>{t('threadsCommentsOptIn')}</span>
-                  </label>
-                )}
+          <GeneralSettings>
+            <Card className="block space-y-3 p-4" data-testid="conversation-replies-card">
+              <SavedRepliesManager canWrite={canWriteReplies} />
+              <AutoDraftSetting isAdmin={isAdmin} />
+            </Card>
+            <Card className="block space-y-2 p-4">
+              <div>
+                <p className="text-sm font-medium text-foreground">{t('voice.orgTitle')}</p>
+                <p className="text-xs text-subtle-foreground">{t('voice.orgHint')}</p>
               </div>
-            ))}
-            {isAdmin && <p className="text-xs text-subtle-foreground">{t(oauth.includes('google_business') ? 'gbpConnectHint' : 'gbpSetupHint')}</p>}
-            {isAdmin && oauth.includes('linkedin_page') && <p className="text-xs text-subtle-foreground">{t('linkedinPageHint')}</p>}
-            {isAdmin && oauth.length > 0 && <p className="text-xs text-subtle-foreground">{t('oauthHint')}</p>}
-            {start.error && <ErrorText>{errorMessage(start.error)}</ErrorText>}
-          </div>
-          {blueskyOn && isAdmin && (
-            <form
-              className="space-y-2 border-t pt-3"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (bsky.handle.trim() && bsky.appPassword.trim()) connectBluesky.mutate();
-              }}
-            >
-              <p className="text-sm font-medium text-foreground">{providerName('bluesky')}</p>
-              <Label htmlFor="bsky-handle">{t('blueskyHandle')}</Label>
-              <Input id="bsky-handle" ref={blueskyForm} value={bsky.handle} autoComplete="off" placeholder="ten.bsky.social" onChange={(e) => setBsky({ ...bsky, handle: e.target.value })} />
-              <Label htmlFor="bsky-password">{t('blueskyAppPassword')}</Label>
-              <Input id="bsky-password" type="password" autoComplete="off" value={bsky.appPassword} placeholder="xxxx-xxxx-xxxx-xxxx" onChange={(e) => setBsky({ ...bsky, appPassword: e.target.value })} />
-              <p className="text-xs text-subtle-foreground">{t('blueskyHint')}</p>
-              <Button type="submit" variant="outline" size="sm" disabled={!bsky.handle.trim() || !bsky.appPassword.trim() || connectBluesky.isPending}>
-                {t('connectWith', { provider: providerName('bluesky') })}
-              </Button>
-              {connectBluesky.error && <ErrorText>{errorMessage(connectBluesky.error)}</ErrorText>}
-            </form>
-          )}
-          {mastodonOn && isAdmin && (
-            <form
-              className="space-y-2 border-t pt-3"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (mdn.instance.trim() && mdn.accessToken.trim()) connectMastodon.mutate();
-              }}
-            >
-              <p className="text-sm font-medium text-foreground">{providerName('mastodon')}</p>
-              <Label htmlFor="mdn-instance">{t('mastodonInstance')}</Label>
-              <Input id="mdn-instance" ref={mastodonForm} autoComplete="off" value={mdn.instance} placeholder="mastodon.social" onChange={(e) => setMdn({ ...mdn, instance: e.target.value })} />
-              <Label htmlFor="mdn-token">{t('mastodonToken')}</Label>
-              <Input id="mdn-token" type="password" autoComplete="off" value={mdn.accessToken} onChange={(e) => setMdn({ ...mdn, accessToken: e.target.value })} />
-              <p className="text-xs text-subtle-foreground">{t('mastodonHint')}</p>
-              <Button type="submit" variant="outline" size="sm" disabled={!mdn.instance.trim() || !mdn.accessToken.trim() || connectMastodon.isPending}>
-                {t('connectWith', { provider: providerName('mastodon') })}
-              </Button>
-              {connectMastodon.error && <ErrorText>{errorMessage(connectMastodon.error)}</ErrorText>}
-            </form>
-          )}
-          {wordpressOn && isAdmin && (
-            <form
-              className="space-y-2 border-t pt-3"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (wp.site.trim() && wp.username.trim() && wp.appPassword.trim()) connectWordPress.mutate();
-              }}
-            >
-              <p className="text-sm font-medium text-foreground">{providerName('wordpress')}</p>
-              <Label htmlFor="wp-site">{t('wordpressSite')}</Label>
-              <Input id="wp-site" ref={wordpressForm} autoComplete="off" value={wp.site} placeholder="https://tiemcuaban.vn" onChange={(e) => setWp({ ...wp, site: e.target.value })} />
-              <Label htmlFor="wp-username">{t('wordpressUsername')}</Label>
-              <Input id="wp-username" autoComplete="off" value={wp.username} onChange={(e) => setWp({ ...wp, username: e.target.value })} />
-              <Label htmlFor="wp-password">{t('wordpressAppPassword')}</Label>
-              <Input id="wp-password" type="password" autoComplete="off" value={wp.appPassword} placeholder="xxxx xxxx xxxx xxxx xxxx xxxx" onChange={(e) => setWp({ ...wp, appPassword: e.target.value })} />
-              <p className="text-xs text-subtle-foreground">{t('wordpressHint')}</p>
-              <Button type="submit" variant="outline" size="sm" disabled={!wp.site.trim() || !wp.username.trim() || !wp.appPassword.trim() || connectWordPress.isPending}>
-                {t('connectWith', { provider: providerName('wordpress') })}
-              </Button>
-              {connectWordPress.error && <ErrorText>{errorMessage(connectWordPress.error)}</ErrorText>}
-            </form>
-          )}
-          {telegramOn && isAdmin && (
-            <form
-              className="space-y-2 border-t pt-3"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (tg.botToken.trim() && tg.channel.trim()) connectTelegram.mutate();
-              }}
-            >
-              <p className="text-sm font-medium text-foreground">{providerName('telegram')}</p>
-              <Label htmlFor="tg-token">{t('telegramBotToken')}</Label>
-              <Input id="tg-token" ref={telegramForm} type="password" autoComplete="off" value={tg.botToken} placeholder="123456789:AA..." onChange={(e) => setTg({ ...tg, botToken: e.target.value })} />
-              <Label htmlFor="tg-channel">{t('telegramChannel')}</Label>
-              <Input id="tg-channel" autoComplete="off" value={tg.channel} placeholder="@tenkenh" onChange={(e) => setTg({ ...tg, channel: e.target.value })} />
-              <p className="text-xs text-subtle-foreground">{t('telegramHint')}</p>
-              <Button type="submit" variant="outline" size="sm" disabled={!tg.botToken.trim() || !tg.channel.trim() || connectTelegram.isPending}>
-                {t('connectWith', { provider: providerName('telegram') })}
-              </Button>
-              {connectTelegram.error && <ErrorText>{errorMessage(connectTelegram.error)}</ErrorText>}
-            </form>
-          )}
-          {discordOn && isAdmin && (
-            <form
-              className="space-y-2 border-t pt-3"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (webhookUrl.trim()) connectDiscord.mutate();
-              }}
-            >
-              <p className="text-sm font-medium text-foreground">{providerName('discord')}</p>
-              <Label htmlFor="dc-webhook">{t('discordWebhook')}</Label>
-              <Input id="dc-webhook" ref={discordForm} type="password" autoComplete="off" value={webhookUrl} placeholder="https://discord.com/api/webhooks/..." onChange={(e) => setWebhookUrl(e.target.value)} />
-              <p className="text-xs text-subtle-foreground">{t('discordHint')}</p>
-              <Button type="submit" variant="outline" size="sm" disabled={!webhookUrl.trim() || connectDiscord.isPending}>
-                {t('connectWith', { provider: providerName('discord') })}
-              </Button>
-              {connectDiscord.error && <ErrorText>{errorMessage(connectDiscord.error)}</ErrorText>}
-            </form>
-          )}
-        </Card>
+              {!voices.isLoading && <VoiceEditor key={orgVoice?.updatedAt ?? 'none'} connectionId={null} voice={orgVoice} canEdit={isAdmin} />}
+            </Card>
+            <Card className="block space-y-2 p-4">
+              <div>
+                <p className="text-sm font-medium text-foreground">{t('watermark.title')}</p>
+                <p className="text-xs text-subtle-foreground">{t('watermark.hint')}</p>
+              </div>
+              <WatermarkCard canEdit={isAdmin} />
+            </Card>
+            <Card className="block space-y-2 p-4">
+              <div>
+                <p className="text-sm font-medium text-foreground">{t('reportBranding.title')}</p>
+                <p className="text-xs text-subtle-foreground">{t('reportBranding.hint')}</p>
+              </div>
+              <ReportBrandingCard canEdit={isAdmin} />
+            </Card>
+            <Card className="block p-4">
+              <PublishHoldCard key={slug} />
+            </Card>
+            <BannedWordsCard channels={publishing.filter((c) => c.status !== 'revoked')} canEdit={isAdmin} />
+            <ReviewChecklistCard channels={publishing.filter((c) => c.status !== 'revoked')} canEdit={isAdmin} />
+            {channels.data && <ChannelAccessCard channels={channels.data} canEdit={isAdmin} />}
+            <Card className="block space-y-2 p-4">
+              <div>
+                <p className="text-sm font-medium text-foreground">{t('chatAlert.title')}</p>
+                <p className="text-xs text-subtle-foreground">{t('chatAlert.hint')}</p>
+              </div>
+              <ChatAlertCard canEdit={isAdmin} />
+            </Card>
+            {/* Moved here from the calendar (#3655): the address that shows the schedule in Google Calendar and the plan link a client
+                approves are settings, not part of the calendar. Owners and admins manage them; others see what exists. */}
+            {channels.data && <PlanReviewCard channels={channels.data} canManage={isAdmin} />}
+            <CalendarFeedCard canManage={isAdmin} />
+            <ShareCard />
+            {/* Once the channels are loaded: before, every set would read as having none left. */}
+            {channels.data && <ChannelSetsCard channels={publishing.filter((c) => c.status !== 'revoked')} canEdit={isAdmin} />}
+          </GeneralSettings>
+        </div>
       </div>
     </>
   );

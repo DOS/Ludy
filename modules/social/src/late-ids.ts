@@ -1,6 +1,6 @@
 // TikTok posts that get their public id later (#1475; the rules are in domain/late-ids.ts). Every 15 minutes the worker
 // lists the published TikTok variants still waiting for their id or for the creator to post their inbox draft
-// (crove_social.late_id_due, across orgs), asks TikTok's status for each through the adapter's lateId (status/fetch, a
+// (ludy_social.late_id_due, across orgs), asks TikTok's status for each through the adapter's lateId (status/fetch, a
 // read: nothing is posted and no call is written to the ledger), and records the answer under the post's lock:
 // - the public id (and the address video/query gives, with video.list): the variant keeps it as its external_post_id,
 //   so the metrics sweep reads its counts, and a draft posted in the app loses its SENT_TO_APP note;
@@ -11,10 +11,10 @@
 // (ADR-0025): the sweep opens the connection's token with kernel.channel.credential; the commands never see it.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { Db } from '@crove/db';
-import type { LateIdResult, Publisher } from '@crove/channel';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type CredentialBroker, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { Db } from '@ludy/db';
+import type { LateIdResult, Publisher } from '@ludy/channel';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type CredentialBroker, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { callRevision, publishCallKey } from './domain/publish.ts';
 import { TIKTOK_NO_POST_ID, TIKTOK_POST_ID, lateIdNextCheck, lateIdOver, lateIdStopped, lateIdWait } from './domain/late-ids.ts';
 import { lockPost, lockVariants, setVariant, settingsOf, type VariantRow } from './variants.ts';
@@ -37,7 +37,7 @@ type Waiting = Pick<VariantRow, 'id' | 'provider' | 'status' | 'settings' | 'ext
 async function publishIdOf(trx: CommandContext['trx'], orgId: string, v: Waiting, wait: 'sent_to_app' | 'no_id'): Promise<string | null> {
   if (wait === 'no_id') return v.external_post_id;
   const call = await trx
-    .selectFrom('crove_kernel.external_call')
+    .selectFrom('ludy_kernel.external_call')
     .select('external_ref')
     .where('org_id', '=', orgId)
     .where('key', '=', publishCallKey(v.id, callRevision(v), v.attempt, PUBLISH_STEP))
@@ -65,8 +65,8 @@ export const lateIdTarget = defineQuery({
   handler: async (ctx, input): Promise<LateIdTarget | null> => {
     requireSystem(ctx);
     const v = await ctx.trx
-      .selectFrom('crove_social.post_variant as v')
-      .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'v.org_id').onRef('c.id', '=', 'v.channel_connection_id'))
+      .selectFrom('ludy_social.post_variant as v')
+      .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'v.org_id').onRef('c.id', '=', 'v.channel_connection_id'))
       .select([
         'v.id',
         'v.provider',
@@ -118,7 +118,7 @@ export const lateIdRecord = defineCommand({
   access: 'system',
   handler: async (ctx, input) => {
     requireSystem(ctx);
-    const found = await ctx.trx.selectFrom('crove_social.post_variant').select('post_id').where('org_id', '=', ctx.orgId).where('id', '=', input.variantId).executeTakeFirst();
+    const found = await ctx.trx.selectFrom('ludy_social.post_variant').select('post_id').where('org_id', '=', ctx.orgId).where('id', '=', input.variantId).executeTakeFirst();
     if (!found) return { recorded: false as const, reason: 'not_found' };
     const post = await lockPost(ctx.trx, ctx.orgId, found.post_id);
     const v = (await lockVariants(ctx.trx, ctx.orgId, post.id)).find((x) => x.id === input.variantId);
@@ -129,7 +129,7 @@ export const lateIdRecord = defineCommand({
     const r = input.result;
     if (r.kind === 'over' && !lateIdOver(v.published_at, ctx.now)) return { recorded: false as const, reason: 'invalid' };
     // A turn that changes nothing anyone sees moves only the next check, not updated_at.
-    const later = (at: Date) => ctx.trx.updateTable('crove_social.post_variant').set({ next_check_at: at }).where('org_id', '=', ctx.orgId).where('id', '=', v.id).execute();
+    const later = (at: Date) => ctx.trx.updateTable('ludy_social.post_variant').set({ next_check_at: at }).where('org_id', '=', ctx.orgId).where('id', '=', v.id).execute();
     const next = lateIdNextCheck(v.published_at, ctx.now);
     const event = { post_id: post.id, variant_id: v.id, posted_in_app: wait === 'sent_to_app' };
     switch (r.kind) {
@@ -192,7 +192,7 @@ export async function sweepLateIds(deps: LateIdDeps): Promise<{ checked: number;
   const publisher = deps.publishers.tiktok;
   if (!publisher?.lateId) return out;
   const { rows } = await sql<{ org_id: string; variant_id: string }>`
-    SELECT org_id, variant_id FROM crove_social.late_id_due(${LATE_ID_LIMIT}::int)`.execute(deps.workerDb);
+    SELECT org_id, variant_id FROM ludy_social.late_id_due(${LATE_ID_LIMIT}::int)`.execute(deps.workerDb);
   await eachBounded(
     rows.map((r) => ({ ...r, provider: 'tiktok' })),
     async (row) => {

@@ -6,9 +6,9 @@
 // (periodSummaryInput); nothing is saved here.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 import { channelScope, refuseOutside } from './channel-access.ts';
 import { GOAL_DEFAULT_TIME_ZONE, GOAL_ENGAGEMENT_COUNTS } from './domain/goals.ts';
 import type { PeriodSummaryData, SummaryTotals } from './domain/period-summary.ts';
@@ -51,11 +51,11 @@ export const summaryFigures = defineQuery({
     const ids = [...new Set(input.connectionIds ?? [])];
     refuseOutside(scope, ids);
     if (ids.length > 0) {
-      const found = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
+      const found = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
       if (found.length !== ids.length) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
     }
     if (input.labelId) {
-      const label = await ctx.trx.selectFrom('crove_social.label').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.labelId).executeTakeFirst();
+      const label = await ctx.trx.selectFrom('ludy_social.label').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.labelId).executeTakeFirst();
       if (!label) throw new DomainError('LABEL_NOT_FOUND', 404, 'Không tìm thấy nhãn này');
     }
     const filter: SpanFilter = { labelId: input.labelId, external: input.includeExternal === true && !input.labelId, scope, connectionIds: ids };
@@ -80,7 +80,7 @@ export const summaryFigures = defineQuery({
     const top = await topPosts(ctx.trx, ctx.orgId, span, filter);
     const conns = [...new Set([...totals.channels.map((c) => c.connectionId), ...top.map((p) => p.conn)])];
     const names = new Map(
-      conns.length === 0 ? [] : (await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['id', 'display_name']).where('org_id', '=', ctx.orgId).where('id', 'in', conns).execute()).map((c) => [c.id, c.display_name] as const),
+      conns.length === 0 ? [] : (await ctx.trx.selectFrom('ludy_kernel.channel_connection').select(['id', 'display_name']).where('org_id', '=', ctx.orgId).where('id', 'in', conns).execute()).map((c) => [c.id, c.display_name] as const),
     );
     // The goals as the client report shows them: a period of exactly one month, no label; the org's own only when the
     // caller sees and chose every channel (a limited member gets their channels' goals only, as social.goal.progress).
@@ -104,23 +104,23 @@ export const summaryFigures = defineQuery({
 // client report ranks its top posts), then the most seen; only posts with a count of engagement.
 async function topPosts(trx: Trx, orgId: string, span: Span, filter: SpanFilter): Promise<{ conn: string; provider: string; body: string; metrics: Record<string, number> }[]> {
   const labelled = filter.labelId
-    ? sql`AND EXISTS (SELECT 1 FROM crove_social.post_label pl WHERE pl.org_id = v.org_id AND pl.post_id = v.post_id AND pl.label_id = ${filter.labelId}::uuid)`
+    ? sql`AND EXISTS (SELECT 1 FROM ludy_social.post_label pl WHERE pl.org_id = v.org_id AND pl.post_id = v.post_id AND pl.label_id = ${filter.labelId}::uuid)`
     : sql``;
   const outside =
     filter.external && !filter.labelId
       ? sql`UNION ALL
-        SELECT e.channel_connection_id, c.provider, e.excerpt, e.published_at, e.metrics FROM crove_social.external_post e
-        JOIN crove_kernel.channel_connection c ON c.org_id = e.org_id AND c.id = e.channel_connection_id
+        SELECT e.channel_connection_id, c.provider, e.excerpt, e.published_at, e.metrics FROM ludy_social.external_post e
+        JOIN ludy_kernel.channel_connection c ON c.org_id = e.org_id AND c.id = e.channel_connection_id
         WHERE e.org_id = ${orgId} AND ${inSpan(span, 'e.published_at')} AND ${channelKept(filter, 'e.channel_connection_id')}
-          AND NOT crove_social.external_post_is_crove(e.org_id, e.channel_connection_id, e.external_post_id, e.permalink)`
+          AND NOT ludy_social.external_post_is_crove(e.org_id, e.channel_connection_id, e.external_post_id, e.permalink)`
       : sql``;
   const { rows } = await sql<{ conn: string; provider: string; body: string | null; metrics: Record<string, number> }>`
     WITH v AS (
       SELECT v.channel_connection_id AS conn, v.provider, coalesce(v.body, p.body) AS body, v.published_at, coalesce(s.metrics, '{}'::jsonb) AS metrics
-      FROM crove_social.post_variant v
-      JOIN crove_social.post p ON p.org_id = v.org_id AND p.id = v.post_id
+      FROM ludy_social.post_variant v
+      JOIN ludy_social.post p ON p.org_id = v.org_id AND p.id = v.post_id
       LEFT JOIN LATERAL (
-        SELECT m.metrics FROM crove_social.metric_snapshot m
+        SELECT m.metrics FROM ludy_social.metric_snapshot m
         WHERE m.org_id = v.org_id AND m.variant_id = v.id
         ORDER BY (m.metrics = '{}'::jsonb), m.captured_at DESC LIMIT 1
       ) s ON true

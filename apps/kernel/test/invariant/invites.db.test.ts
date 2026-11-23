@@ -11,13 +11,14 @@ import { fileURLToPath } from 'node:url';
 import { sql, type Transaction } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createDb, createPool, type Database, type Db } from '@crove/db';
-import { applyAuthGrants, migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, previewInvite, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb, type Database, type Db } from '@ludy/db';
+import { applyAuthGrants, migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, previewInvite, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { createSessionStatusSource } from '../../src/sessions.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -36,6 +37,7 @@ interface Created {
 suite('member invites with consent on PostgreSQL (issue #35)', () => {
   const dbName = `crove_test_invites_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let pool: pg.Pool;
   let db: Db;
   let runtime: Runtime;
@@ -51,7 +53,7 @@ suite('member invites with consent on PostgreSQL (issue #35)', () => {
   });
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = createDbClient({ connectionString: adminUrl }, dbIds);
     await client.connect();
     try {
       return await fn(client);
@@ -87,11 +89,12 @@ suite('member invites with consent on PostgreSQL (issue #35)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     appUrl.password = 'test-app-pw';
-    pool = createPool({ connectionString: appUrl.toString(), max: 4 });
+    pool = createDbPool({ connectionString: appUrl.toString(), max: 4 }, dbIds);
     db = createDb(pool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
   });

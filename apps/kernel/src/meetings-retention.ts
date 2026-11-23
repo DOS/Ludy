@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Retention and shredding of meeting audio, video and text, the worker's side (issue #2579, ADR-0047 point 7, plan docs/plan/meetings.md section 9).
 //
-// Four jobs, each safe to run twice, each reaching meetings only through the worker-only definers of crove_meetings and the system commands of
+// Four jobs, each safe to run twice, each reaching meetings only through the worker-only definers of ludy_meetings and the system commands of
 // modules/meetings/src/retention.ts (one write path):
 //   - runMeetingsRetention, nightly (the retention run, 02:30 Vietnam time): the meetings whose audio, video or text period has ended
 //     (meetings_due) get meetings.retention.shred in their own org. Shredding deletes the kind's media_key row, so every copy of the ciphertext (current
@@ -18,8 +18,8 @@
 // Nothing here logs a title, a transcript or a key: ids and counts.
 import { z } from 'zod';
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import type { BlobStore, Runtime, SystemActor } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import type { BlobStore, Runtime, SystemActor } from '@ludy/kernel-runtime';
 import { opsAlert } from './ops-alert.ts';
 import { ArchiveObjectExistsError, type ArchiveStore } from './worm.ts';
 
@@ -57,7 +57,7 @@ export async function runMeetingsRetention(deps: { runtime: Runtime; workerDb: D
   for (let pass = 0; pass < MAX_BATCHES; pass++) {
     const size = deps.batch ?? DUE_BATCH;
     const { rows: listed } = await sql<{ org_id: string; meeting_id: string; kind: 'audio' | 'video' | 'text' }>`
-      SELECT org_id, meeting_id, kind FROM crove_meetings.meetings_due(${Math.min(size + failedNow.size, 1000)}::int)`.execute(deps.workerDb);
+      SELECT org_id, meeting_id, kind FROM ludy_meetings.meetings_due(${Math.min(size + failedNow.size, 1000)}::int)`.execute(deps.workerDb);
     const rows = listed.filter((r) => !failedNow.has(`${r.meeting_id}:${r.kind}`));
     let applied = 0;
     for (const row of rows) {
@@ -80,7 +80,7 @@ export async function runMeetingsRetention(deps: { runtime: Runtime; workerDb: D
   // Drafts the recorder never published, past their 30 days: after the media and text periods, in the same bounded passes.
   for (let pass = 0; pass < MAX_BATCHES; pass++) {
     const size = Math.min((deps.batch ?? DUE_BATCH) + failedNow.size, 1000);
-    const { rows: listed } = await sql<{ org_id: string; meeting_id: string }>`SELECT org_id, meeting_id FROM crove_meetings.meeting_drafts_due(${size}::int)`.execute(deps.workerDb);
+    const { rows: listed } = await sql<{ org_id: string; meeting_id: string }>`SELECT org_id, meeting_id FROM ludy_meetings.meeting_drafts_due(${size}::int)`.execute(deps.workerDb);
     const rows = listed.filter((r) => !failedNow.has(`${r.meeting_id}:draft`));
     let applied = 0;
     for (const row of rows) {
@@ -116,7 +116,7 @@ export async function sweepMeetingMedia(deps: { runtime: Runtime; workerDb: Db; 
   for (let pass = 0; pass < MAX_ORPHAN_BATCHES; pass++) {
     const limit = Math.min(ORPHAN_BATCH + failedNow.size, 1000);
     const { rows: listed } = await sql<{ org_id: string; file_id: string }>`
-      SELECT org_id, file_id FROM crove_meetings.meetings_orphan_media(${limit}::int)`.execute(deps.workerDb);
+      SELECT org_id, file_id FROM ludy_meetings.meetings_orphan_media(${limit}::int)`.execute(deps.workerDb);
     const rows = listed.filter((r) => !failedNow.has(r.file_id));
     if (rows.length === 0) break;
     const byOrg = new Map<string, string[]>();
@@ -179,7 +179,7 @@ export function shredRefKey(orgId: string, meetingId: string): string {
  */
 export async function syncShredRefs(deps: { workerDb: Db; store: ArchiveStore; since: Date; written?: Set<string> }): Promise<{ seen: number; written: number; truncatedAt: Date | null }> {
   const { rows } = await sql<{ org_id: string; meeting_id: string; occurred_at: Date }>`
-    SELECT org_id, meeting_id, occurred_at FROM crove_meetings.meetings_deleted_since(${deps.since}::timestamptz)`.execute(deps.workerDb);
+    SELECT org_id, meeting_id, occurred_at FROM ludy_meetings.meetings_deleted_since(${deps.since}::timestamptz)`.execute(deps.workerDb);
   let written = 0;
   for (const row of rows) {
     const key = shredRefKey(row.org_id, row.meeting_id);
@@ -266,7 +266,7 @@ export async function replayShreds(deps: { runtime: Runtime; workerDb: Db; store
       }
       // An org that is closed by its purge (or gone) has nothing left to delete, and its reference stays under Object Lock: skipped, never a failure.
       if (!open.has(parsed.data.orgId)) {
-        const { rows } = await sql<{ open: boolean }>`SELECT crove_meetings.meetings_org_open(${parsed.data.orgId}::uuid) AS open`.execute(deps.workerDb);
+        const { rows } = await sql<{ open: boolean }>`SELECT ludy_meetings.meetings_org_open(${parsed.data.orgId}::uuid) AS open`.execute(deps.workerDb);
         open.set(parsed.data.orgId, rows[0]?.open === true);
       }
       if (!open.get(parsed.data.orgId)) {

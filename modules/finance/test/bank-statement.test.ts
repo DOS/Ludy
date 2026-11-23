@@ -2,8 +2,8 @@
 // the dedupe keys (the "+X, -X, +X" day the ADR left open), the classification against stored lines and the running
 // balance check. The import itself is tested on PostgreSQL in apps/kernel/test/finance-bank.db.test.ts.
 import { describe, expect, it } from 'vitest';
-import { normalizeStatementAmount, type BankStatementRow } from '@crove/kernel-contract';
-import { balanceBreaks, checkLines, checkStatement, classify, dedupeKeys, judge, parseStatementAmount, parseStatementDate, readFeedLines, readStatement } from '../src/domain/bank-statement.ts';
+import { normalizeStatementAmount, type BankStatementRow } from '@ludy/kernel-contract';
+import { balanceBreaks, checkLines, checkStatement, classify, dedupeKeys, judge, parseStatementAmount, parseStatementDate, readFeedLines, readStatement, skipFedLines } from '../src/domain/bank-statement.ts';
 
 let rowNo = 1;
 const row = (date: string, moneyIn: string, moneyOut: string, balance = '', reference = '', description = 'Giao dịch'): BankStatementRow => ({
@@ -248,5 +248,27 @@ describe('readFeedLines', () => {
     const checked = checkLines(read.lines, read.keys, { keys: new Set(['ref:FT1']), dateAmounts: new Set() }, { before: null, within: [] });
     expect(checked.statuses).toEqual(['duplicate', 'new', 'duplicate']);
     expect(checked.toStore.map((l) => [l.key, l.position])).toEqual([['ref:FT2', 2]]);
+  });
+});
+
+describe('skipFedLines (#4218)', () => {
+  const checked = () => {
+    const rows = [row('2026-10-10', '100', '', '', 'F-A'), row('2026-10-15', '200', '', '', 'F-B'), row('2026-10-20', '300', '', '', 'F-C')];
+    return checkStatement(input(rows), none, { before: null, within: [] });
+  };
+
+  it('turns the lines on or after the day into duplicates, stores none of them, and says how many', () => {
+    const skipped = skipFedLines(checked(), '2026-10-15');
+    expect(skipped.preview.rows.map((r) => r.status)).toEqual(['new', 'duplicate', 'duplicate']);
+    expect(skipped.preview.counts).toMatchObject({ new: 1, duplicate: 2 });
+    expect(skipped.lines.map((l) => l.date)).toEqual(['2026-10-10']);
+    expect(skipped.preview.feed).toEqual({ from: '2026-10-15', leftOut: 2 });
+  });
+
+  it('leaves a file wholly before the day as it was, and says nothing was skipped', () => {
+    const skipped = skipFedLines(checked(), '2026-11-01');
+    expect(skipped.preview.counts).toMatchObject({ new: 3, duplicate: 0 });
+    expect(skipped.lines).toHaveLength(3);
+    expect(skipped.preview.feed).toEqual({ from: '2026-11-01', leftOut: 0 });
   });
 });

@@ -5,7 +5,7 @@ The shared Ludy browser extension (Manifest V3, Chrome and Edge). Decision: [ADR
 ## What it is
 
 - **Shell:** setup for `app.ludy.vn` or a self-hosted address (asked as an optional host permission for that one origin), sign-in through the app's `/-/extension/connect` page with PKCE (`chrome.identity.launchWebAuthFlow`), an org picker (one token per org), features shown only when the org runs the module and the token holds the scope (`GET /api/extension/me`), and a permission request per feature, given back when turned off.
-- **Meetings feature:** consent step (name, how participants were told, a confirmation), "Ghi cả video" off by default, tab capture in an offscreen document mixed with the microphone, a REC badge and timer, chunks saved on the device (the app recorder's chunk store, `@crove/meeting-recorder`), uploaded to the meeting on stop. AI off still records: the transcript and summary come from the meeting pipeline, never from the extension.
+- **Meetings feature:** consent step (name, how participants were told, a confirmation), "Ghi cả video" off by default, tab capture in an offscreen document mixed with the microphone, a REC badge and timer, chunks saved on the device (the app recorder's chunk store, `@ludy/meeting-recorder`), uploaded to the meeting on stop. AI off still records: the transcript and summary come from the meeting pipeline, never from the extension.
 - **Languages and icons:** the popup is English for an English browser and Vietnamese for any other language (`src/strings.ts`, both sets in the package, chosen once from the browser's interface language, `chrome.i18n.getUILanguage()`). The manifest names the Ludy mark at 16, 32, 48 and 128 pixels (`icons/`, copied by `scripts/build.mjs`).
 - **Page capture:** `src/page-capture.ts` defines the generic "capture this page to one command, on a click" contract of plan section 5.6. No feature uses it.
 - **No dependency at runtime or in the package:** `chrome.*` is typed by hand (`src/chrome.d.ts`); `scripts/build.mjs` strips the TypeScript types with Node and copies one workspace package. No remote code.
@@ -24,15 +24,15 @@ Never `<all_urls>`, `tabs`, `cookies`, `history`, `activeTab`, content scripts o
 ## Commands
 
 ```
-pnpm --filter @crove/extension build                       # dist/, the unpacked package
-pnpm --filter @crove/extension check:manifest              # dist/manifest.json against the fixed list
-pnpm --filter @crove/extension test:e2e                    # unpacked in Chromium, fake server, fake media
+pnpm --filter @ludy/extension build                       # dist/, the unpacked package
+pnpm --filter @ludy/extension check:manifest              # dist/manifest.json against the fixed list
+pnpm --filter @ludy/extension test:e2e                    # unpacked in Chromium, fake server, fake media
 node apps/extension/scripts/build.mjs --version 1.2.3      # a release build by hand; CI does it for a tag ext-v1.2.3 (.github/workflows/extension-package.yml)
 ```
 
 A Ludy server signs in only the extension ids it lists: the Chrome Web Store build's id by default (`DEFAULT_EXTENSION_IDS`, #3010), or only the ids in its `EXTENSION_IDS` setting when that is set (#2740), so a server that sets it lists the store id too if it wants the store build. An unpacked build has its own id (shown at `chrome://extensions`), so list it in `EXTENSION_IDS` on the server it connects to, or the sign-in window says the request is not valid.
 
-Load `dist/` through `chrome://extensions` (Developer mode, Load unpacked) or `edge://extensions`. Locally, `CHROMIUM_PATH=/path/to/chrome pnpm --filter @crove/extension test:e2e` uses a browser installed elsewhere.
+Load `dist/` through `chrome://extensions` (Developer mode, Load unpacked) or `edge://extensions`. Locally, `CHROMIUM_PATH=/path/to/chrome pnpm --filter @ludy/extension test:e2e` uses a browser installed elsewhere.
 
 ## Manual test: a 60-minute Google Meet in Chrome and Edge
 
@@ -56,6 +56,7 @@ Pass: all steps hold in both browsers, and the 60-minute recording has both voic
 
 ## Known limits
 
-- Real-world capture length, tab-capture behaviour on Meet, Teams and Zoom in the browser, and Edge behaviour are untested by CI.
+- Real-world capture length, tab-capture behaviour on Meet, Teams and Zoom in the browser, and Edge behaviour are untested by CI. There is no Edge job in CI on purpose (the e2e tests load the package in Playwright's Chromium, and an Edge channel is not a drop-in): Edge is covered by the manual test above, with the Edge additions in [the store runbook](../../docs/runbooks/extension-store.md#microsoft-edge-add-ons-d2-3181).
+- **The Edge Add-ons build has its own extension id**, which a Ludy server must list (`DEFAULT_EXTENSION_IDS`, or `EXTENSION_IDS`), or its sign-in is refused; the id exists only once the owner creates the Edge item (runbook step E5). The same release zip is uploaded to both stores.
 - With object storage (`STORAGE=s3`) the upload goes to the storage address the Ludy server grants. The bucket's CORS must allow the extension's origin (`chrome-extension://<id>`), or the upload fails and the recording stays on the device for a retry.
 - The devices are opened before the meeting is created, so a refused device leaves no meeting; if the recorder fails to start after the meeting exists, that meeting stays empty, because the extension token cannot delete a meeting.

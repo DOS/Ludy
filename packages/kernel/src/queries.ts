@@ -7,6 +7,7 @@ import {
   zCashVoucherProposal,
   zJournalVoucherProposal,
   zId,
+  plainLine,
   LEARNED_RULE_IDS_MAX,
   zJournalReversal,
   zLocalDate,
@@ -22,12 +23,15 @@ import {
   type JournalVoucherProposal,
   type PurchaseProposal,
   type SignatureStatus,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+  isEngageProposalKind,
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
+import { engageAboutOf, engageViewOf } from './engage-view.ts';
 import { EDITOR_ROLES, decideApproval, proposalEditable } from './approval.ts';
 import { MAX_EXTRACTION_VERSIONS, executedButVoided, latestExtraction, voidedProposals } from './extraction.ts';
 import { archiveQueries } from './archives.ts';
+import { offAppsOf, orgAppsQuery, proposalOfApp, type OrgAppsOptions } from './org-apps.ts';
 import { fileStatuses, seesEveryEntity as unscoped } from './file-status.ts';
 import { agentQueries } from './agents.ts';
 import { channelQueries } from './channels.ts';
@@ -45,8 +49,12 @@ import { todayMailQueries } from './today-mail.ts';
 import { offboardingQueries } from './offboarding.ts';
 import { memberProfiles } from './profiles.ts';
 import { orgOverviewQuery, RECENT_FILES, type OverviewContribution } from './overview.ts';
-import { dealWithoutInvoiceQuery, receivableWithOpenDealQuery, supplierBankChangedQuery } from './signals.ts';
+import { conversationSignalsQueries } from './conversation-signals.ts';
+import { engageWakeQueries } from './engage-wake.ts';
+import { conversationUnansweredQuery, dealWithoutInvoiceQuery, receivableWithOpenDealQuery, supplierBankChangedQuery } from './signals.ts';
 import { todayQuery } from './today.ts';
+import { todayWeeklyQuery } from './today-weekly.ts';
+import { sinceYesterdayQuery } from './today-since.ts';
 import { proposalReminderQueries } from './proposal-reminders.ts';
 import { mayResubmit, resubmitSource } from './proposal-resubmit.ts';
 import { taxCalendarQueries } from './tax-calendar.ts';
@@ -55,6 +63,7 @@ import { numberingQueries } from './numbering.ts';
 import { memberVyQueries } from './member-vy.ts';
 import { myPermissions, roleQueries } from './roles.ts';
 import { calendarQueries } from './calendar.ts';
+import { meetingPlatformQueries } from './meeting-platform.ts';
 import { partyQueries } from './parties.ts';
 import { aiBudgetQueries } from './ai-budget.ts';
 import { usageQueries } from './usage-limits.ts';
@@ -72,12 +81,12 @@ export function orgDetailQuery(options: OrgDetailOptions) {
     access: ALL,
     handler: async (ctx) => {
       const tenant = await ctx.trx
-        .selectFrom('crove_kernel.tenant')
+        .selectFrom('ludy_kernel.tenant')
         .select(['org_id', 'slug', 'name', 'inbound_token', 'conversation_token', 'tax_code', 'vat_filing_period', 'address', 'contact_email', 'approval_preset', 'approval_policy_version'])
         .where('org_id', '=', ctx.orgId)
         .executeTakeFirstOrThrow();
       const memberRows = await ctx.trx
-        .selectFrom('crove_kernel.tenant_member')
+        .selectFrom('ludy_kernel.tenant_member')
         .select(['user_id', 'role'])
         .where('org_id', '=', ctx.orgId)
         .orderBy('created_at')
@@ -93,7 +102,7 @@ export function orgDetailQuery(options: OrgDetailOptions) {
       const seesInbound = Boolean(options.inboundDomain) && (ctx.role === 'owner' || ctx.role === 'admin');
       let inboundDroppedCount: number | null = null;
       if (seesInbound) {
-        const { rows } = await sql<{ n: string }>`SELECT crove_kernel.inbound_drop_count() AS n`.execute(ctx.trx);
+        const { rows } = await sql<{ n: string }>`SELECT ludy_kernel.inbound_drop_count() AS n`.execute(ctx.trx);
         inboundDroppedCount = Number(rows[0]?.n ?? 0);
       }
       return {
@@ -199,6 +208,9 @@ function toInboxItem(row: {
   decided_at: Date | null;
   extraction_id: string | null;
   requested_by_agent: string | null;
+  requested_by_grant?: string | null;
+  mcp_client_name?: string | null;
+  mcp_client_host?: string | null;
   legal_entity_id: string;
 }, agentName: string | null) {
   const payload = parsePayload(row.kind, row.payload);
@@ -261,9 +273,14 @@ function expiredAfterDays(row: { status: string; created_at: Date; decided_at: D
 
 // Whether an AI agent asked for the proposal and whether an extraction run read it (#435). An agent's proposal has no
 // extraction, so no invoice checks ran and the Inbox must not show it as matched.
-function agentFields(row: { extraction_id: string | null; requested_by_agent: string | null }, agentName: string | null) {
+function agentFields(
+  row: { extraction_id: string | null; requested_by_agent: string | null; requested_by_grant?: string | null; mcp_client_name?: string | null; mcp_client_host?: string | null },
+  agentName: string | null,
+) {
   return {
     requestedByAgent: row.requested_by_agent ? { id: row.requested_by_agent, name: agentName ?? '' } : null,
+    // An outside AI app connected over MCP asked for it (ADR-0051 decision 10): the client's self-declared name and the host it returns to, both stamped from the grant by the database, so the card says who asked.
+    requestedByMcp: row.requested_by_grant && row.mcp_client_name ? { client: plainLine(row.mcp_client_name, 120), host: plainLine(row.mcp_client_host ?? '', 253) } : null,
     extracted: row.extraction_id !== null,
   };
 }
@@ -276,8 +293,8 @@ export const inboxList = defineQuery({
     const countChecksSql = (status: 'fail' | 'warn') =>
       sql<string>`(SELECT count(*) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(payload -> 'checks') = 'array' THEN payload -> 'checks' ELSE '[]'::jsonb END) c WHERE c ->> 'status' = ${status})`;
     let query = ctx.trx
-      .selectFrom('crove_kernel.proposal')
-      .select(['id', 'kind', 'status', 'title', 'revision', 'duplicate_of', 'created_at', 'decided_at', 'extraction_id', 'requested_by_agent'])
+      .selectFrom('ludy_kernel.proposal')
+      .select(['id', 'kind', 'status', 'title', 'revision', 'duplicate_of', 'created_at', 'decided_at', 'extraction_id', 'requested_by_agent', 'requested_by_grant', 'mcp_client_name', 'mcp_client_host'])
       .select([
         sql<string | null>`left(payload #>> '{seller,name}', 500)`.as('seller_name'),
         sql<boolean>`coalesce(payload ->> 'direction' = 'sale', false)`.as('is_sale'),
@@ -291,7 +308,7 @@ export const inboxList = defineQuery({
         sql<string | null>`left(CASE WHEN kind IN (${VOUCHER_KIND}, ${JOURNAL_VOUCHER_KIND}) THEN payload ->> 'total' ELSE payload #>> '{invoice,total}' END, 30)`.as('total'),
         sql<string | null>`left(CASE WHEN kind IN (${VOUCHER_KIND}, ${JOURNAL_VOUCHER_KIND}) THEN payload ->> 'date' ELSE payload #>> '{invoice,issueDate}' END, 10)`.as('issue_date'),
         // The requesting agent's name, read in the same org under the agent table's own row security (no cross-org read).
-        sql<string | null>`(SELECT a.display_name FROM crove_kernel.agent a WHERE a.org_id = crove_kernel.proposal.org_id AND a.id = crove_kernel.proposal.requested_by_agent)`.as('agent_name'),
+        sql<string | null>`(SELECT a.display_name FROM ludy_kernel.agent a WHERE a.org_id = ludy_kernel.proposal.org_id AND a.id = ludy_kernel.proposal.requested_by_agent)`.as('agent_name'),
         countChecksSql('fail').as('failed_checks'),
         countChecksSql('warn').as('warn_checks'),
         // The anomaly flags among them (#2380).
@@ -308,6 +325,9 @@ export const inboxList = defineQuery({
       .where('org_id', '=', ctx.orgId)
       .orderBy('created_at', 'desc')
       .limit(200);
+    // The proposals of an app the org turned off are left out (ADR-0053 section 4): they keep their own expiry, cannot be approved (MODULE_OFF) and are counted by kernel.inbox.hidden.
+    const off = await offAppsOf(ctx.trx, ctx.orgId);
+    if (off.length > 0) query = query.where(sql<boolean>`NOT (${proposalOfApp(off)})`);
     if (input.status) query = query.where('status', '=', input.status);
     const rows = await query.execute();
     // The posted ones whose recorded document a reversal voided (#165), asked of the finance module once for the page
@@ -351,7 +371,7 @@ export const inboxGet = defineQuery({
   access: ALL,
   handler: async (ctx, input) => {
     const row = await ctx.trx
-      .selectFrom('crove_kernel.proposal')
+      .selectFrom('ludy_kernel.proposal')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
@@ -359,7 +379,7 @@ export const inboxGet = defineQuery({
     if (!row) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy đề xuất');
     const file = row.source_file_id
       ? await ctx.trx
-          .selectFrom('crove_kernel.file')
+          .selectFrom('ludy_kernel.file')
           .select(['id', 'filename', 'content_type', 'size_bytes'])
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', row.source_file_id)
@@ -383,7 +403,7 @@ export const inboxGet = defineQuery({
     const latest = file ? await latestExtraction(ctx, file.id) : undefined;
     const own = row.extraction_id
       ? await ctx.trx
-          .selectFrom('crove_kernel.extraction')
+          .selectFrom('ludy_kernel.extraction')
           .select(['version', 'file_id'])
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', row.extraction_id)
@@ -404,7 +424,7 @@ export const inboxGet = defineQuery({
     // kernel.file.reextract acts on the file's newest proposal, so only that one offers it.
     const newest = file
       ? await ctx.trx
-          .selectFrom('crove_kernel.proposal')
+          .selectFrom('ludy_kernel.proposal')
           .select(['id', 'status'])
           .where('org_id', '=', ctx.orgId)
           .where('source_file_id', '=', file.id)
@@ -414,14 +434,14 @@ export const inboxGet = defineQuery({
           .executeTakeFirst()
       : undefined;
     const agent = row.requested_by_agent
-      ? await ctx.trx.selectFrom('crove_kernel.agent').select('display_name').where('org_id', '=', ctx.orgId).where('id', '=', row.requested_by_agent).executeTakeFirst()
+      ? await ctx.trx.selectFrom('ludy_kernel.agent').select('display_name').where('org_id', '=', ctx.orgId).where('id', '=', row.requested_by_agent).executeTakeFirst()
       : undefined;
     const canChange = row.status === 'pending' && editor && !reading;
     // An expired proposal (#876): the one asked for again from it, if any, and whether the caller may ask for it again,
     // by the same checks kernel.proposal.resubmit makes.
     const resubmittedAs =
       row.status === 'expired'
-        ? ((await ctx.trx.selectFrom('crove_kernel.proposal').select('id').where('org_id', '=', ctx.orgId).where('resubmitted_from', '=', row.id).executeTakeFirst())?.id ?? null)
+        ? ((await ctx.trx.selectFrom('ludy_kernel.proposal').select('id').where('org_id', '=', ctx.orgId).where('resubmitted_from', '=', row.id).executeTakeFirst())?.id ?? null)
         : null;
     const source = resubmitSource(row);
     const canResubmit =
@@ -440,8 +460,8 @@ export const inboxGet = defineQuery({
     const originalRuns =
       row.status === 'executed'
         ? await ctx.trx
-            .selectFrom('crove_kernel.extraction as x')
-            .innerJoin('crove_kernel.file as of', (join) => join.onRef('of.org_id', '=', 'x.org_id').onRef('of.id', '=', 'x.file_id'))
+            .selectFrom('ludy_kernel.extraction as x')
+            .innerJoin('ludy_kernel.file as of', (join) => join.onRef('of.org_id', '=', 'x.org_id').onRef('of.id', '=', 'x.file_id'))
             .select(['of.id as file_id', 'of.filename', 'x.created_at', 'x.original_differs', sql<unknown>`x.result -> 'signature'`.as('signature')])
             .where('x.org_id', '=', ctx.orgId)
             .where('x.original_of_proposal_id', '=', row.id)
@@ -452,6 +472,7 @@ export const inboxGet = defineQuery({
             .limit(20)
             .execute()
         : [];
+    const engage = (ctx.role === 'owner' || ctx.role === 'admin') && isEngageProposalKind(row.kind) ? engageViewOf(row.kind, row.command, row.payload, await engageAboutOf(ctx.trx, ctx.orgId, row.command, row.payload)) : null;
     return {
       ...toInboxItem(row, agent?.display_name ?? null),
       revision: row.revision,
@@ -459,6 +480,8 @@ export const inboxGet = defineQuery({
       reversal: parseReversal(row.kind, row.payload),
       voucher: parseVoucher(row.kind, row.payload),
       journalVoucher: parseJournalVoucher(row.kind, row.payload),
+      // The text an AI coworker proposes may be a reply in a thread this reader may not read (a private message, an email): only the people who approve it, owners and admins, who read every thread, see it.
+      engage: engage,
       error: null,
       file: file ? { id: file.id, filename: file.filename, contentType: file.content_type, sizeBytes: file.size_bytes } : null,
       decidedAt: row.decided_at ? row.decided_at.toISOString() : null,
@@ -546,7 +569,7 @@ export const inboundRecent = defineQuery({
   access: MAIL_READERS,
   handler: async (ctx) => {
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.inbound_message')
+      .selectFrom('ludy_kernel.inbound_message')
       .select(['id', 'from_address', 'subject', 'attachment_count', 'received_at', sql<boolean>`body_text IS NOT NULL`.as('has_text')])
       .where('org_id', '=', ctx.orgId)
       .where(unscoped)
@@ -565,7 +588,7 @@ export const inboundText = defineQuery({
   input: z.object({ id: zId }),
   access: MAIL_READERS,
   handler: async (ctx, input) => {
-    const row = await ctx.trx.selectFrom('crove_kernel.inbound_message').select(['subject', 'body_text']).where('org_id', '=', ctx.orgId).where('id', '=', input.id).where(unscoped).executeTakeFirst();
+    const row = await ctx.trx.selectFrom('ludy_kernel.inbound_message').select(['subject', 'body_text']).where('org_id', '=', ctx.orgId).where('id', '=', input.id).where(unscoped).executeTakeFirst();
     if (!row) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy thư này');
     return { subject: row.subject, text: row.body_text };
   },
@@ -577,12 +600,18 @@ export const fileGet = defineQuery({
   access: ALL,
   handler: async (ctx, input) => {
     const file = await ctx.trx
-      .selectFrom('crove_kernel.file')
+      .selectFrom('ludy_kernel.file')
       .select(['id', 'filename', 'content_type', 'storage_key', 'generation', 'sha256', 'size_bytes', 'source', 'original_deleted_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
       .executeTakeFirst();
     if (!file) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy tệp');
+    // Confidential eSign artifacts (such as source_kind = 'hr_contract' PDFs, certificates, and signer attachments, #3553/#3818) are gated by
+    // ludy_sign.can_read_sign_file so unauthorized workspace members receive the same 404 as a missing file.
+    if (file.source === 'sign_document' || file.source === 'sign_sealed' || file.source === 'sign_certificate' || file.source === 'sign_attachment') {
+      const { rows } = await sql<{ allowed: boolean }>`SELECT ludy_sign.can_read_sign_file(${file.id}::uuid) AS allowed`.execute(ctx.trx);
+      if (!rows[0]?.allowed) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy tệp');
+    }
     // The original of a marketplace report is deleted 90 days after the decision (#2516, ADR-0045 point 8): the row and its hash stay, the bytes do not.
     if (file.original_deleted_at) throw new DomainError('FILE_ORIGINAL_DELETED', 409, 'Tệp gốc của báo cáo này đã được xóa sau 90 ngày kể từ khi bạn quyết định; chỉ còn bản tóm tắt');
     const { original_deleted_at: _deleted, ...rest } = file;
@@ -603,7 +632,7 @@ export const sessionsList = defineQuery({
       first_seen_at: Date;
       last_seen_at: Date;
       revoked_at: Date | null;
-    }>`SELECT session_id, status, first_seen_at, last_seen_at, revoked_at FROM crove_kernel.session_list(${input.userId}::uuid)`.execute(ctx.trx);
+    }>`SELECT session_id, status, first_seen_at, last_seen_at, revoked_at FROM ludy_kernel.session_list(${input.userId}::uuid)`.execute(ctx.trx);
     return rows.map((r) => ({
       sessionId: r.session_id,
       status: r.status,
@@ -633,10 +662,10 @@ export const streamCheck = defineQuery({
     // migration that changes note_read changes this too: stream-notes-audience.db.test.ts compares the two for each
     // role and for a member limited to one entity, and fails when they drift apart.
     const { rows } = await sql<{ scope: string[] | null; shared_notes: boolean | null }>`
-      SELECT crove_kernel.ctx_le_scope() AS scope,
-             '*' = ANY (crove_kernel.ctx_le_scope()::text[]) AND EXISTS (
-               SELECT 1 FROM crove_kernel.tenant_member m
-               WHERE m.org_id = crove_kernel.ctx_org_id() AND m.user_id = crove_kernel.ctx_user_id()
+      SELECT ludy_kernel.ctx_le_scope() AS scope,
+             '*' = ANY (ludy_kernel.ctx_le_scope()::text[]) AND EXISTS (
+               SELECT 1 FROM ludy_kernel.tenant_member m
+               WHERE m.org_id = ludy_kernel.ctx_org_id() AND m.user_id = ludy_kernel.ctx_user_id()
                  AND m.role IN ('owner', 'admin', 'member')) AS shared_notes`.execute(ctx.trx);
     // As stored by enter_context (uuid::text); the API refuses anything that is not an id (streamScopeOf).
     const scope = rows[0]?.scope ?? [];
@@ -646,6 +675,6 @@ export const streamCheck = defineQuery({
 });
 
 // overview: the home screen's figures of the modules this deployment enables (#1261), from the composition root.
-export function kernelQueries(options: OrgDetailOptions & { overview?: readonly OverviewContribution[] }) {
-  return [orgDetailQuery(options), orgOverviewQuery({ contributions: options.overview ?? [] }), todayQuery(), dealWithoutInvoiceQuery(), receivableWithOpenDealQuery(), supplierBankChangedQuery(), streamCheck, inboxList, inboxGet, filesRecent, filesStaged, inboundRecent, inboundText, fileGet, ...archiveQueries, sessionsList, ...inviteQueries, ...offboardingQueries, ...agentQueries, ...channelQueries, ...extensionQueries, ...mcpQueries, ...conversationQueries, ...mailQueries, ...proposalReminderQueries, ...taxCalendarQueries, ...legalEntityQueries, ...numberingQueries, ...roleQueries, ...calendarQueries, ...timelineQueries, ...auditLogQueries, ...partyQueries, ...notificationQueries, ...inboxItemQueries, ...savedViewQueries, ...todayMailQueries, ...usageQueries, ...aiBudgetQueries, ...memberVyQueries];
+export function kernelQueries(options: OrgDetailOptions & { overview?: readonly OverviewContribution[]; apps?: OrgAppsOptions }) {
+  return [orgDetailQuery(options), orgAppsQuery(options.apps ?? { shipped: [], deployment: [], entitlements: async () => ['full'] }), orgOverviewQuery({ contributions: options.overview ?? [] }), todayQuery(), todayWeeklyQuery(), sinceYesterdayQuery(), dealWithoutInvoiceQuery(), receivableWithOpenDealQuery(), supplierBankChangedQuery(), conversationUnansweredQuery(), ...conversationSignalsQueries, streamCheck, inboxList, inboxGet, filesRecent, filesStaged, inboundRecent, inboundText, fileGet, ...archiveQueries, sessionsList, ...inviteQueries, ...offboardingQueries, ...agentQueries, ...channelQueries, ...extensionQueries, ...mcpQueries, ...conversationQueries, ...engageWakeQueries, ...mailQueries, ...proposalReminderQueries, ...taxCalendarQueries, ...legalEntityQueries, ...numberingQueries, ...roleQueries, ...calendarQueries, ...meetingPlatformQueries, ...timelineQueries, ...auditLogQueries, ...partyQueries, ...notificationQueries, ...inboxItemQueries, ...savedViewQueries, ...todayMailQueries, ...usageQueries, ...aiBudgetQueries, ...memberVyQueries];
 }

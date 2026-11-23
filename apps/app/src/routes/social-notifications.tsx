@@ -5,10 +5,10 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams, Link } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { cn } from '@crove/ui/lib/utils';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { cn } from '@ludy/ui/lib/utils';
 import { Empty, ErrorText, PageHeader, Spinner } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -44,6 +44,7 @@ function useLine() {
       }
       // A planned takedown that did not happen (#861).
       case 'failed':
+        if (n.detail.late && n.detail.count) return t('text.failed_late', { count: Number(n.detail.count) });
         return t(n.detail.removal === 'scheduled' ? 'text.remove_failed' : 'text.failed', { provider });
       case 'needs_attention':
         return t(`text.${n.kind}`, { provider });
@@ -164,6 +165,9 @@ function PushSetting() {
   );
 }
 
+// The three updates worth having on for anyone who posts: a post to review, a post that failed, a client's answer.
+const USEFUL_KINDS: readonly (typeof NOTIFICATION_KINDS)[number][] = ['review_requested', 'failed', 'client_answer'];
+
 function Settings({ muted, mailOff }: { muted: readonly NotificationKind[]; mailOff: boolean }) {
   const t = useTranslations('social.notifications');
   const mute = useMutation({
@@ -173,23 +177,31 @@ function Settings({ muted, mailOff }: { muted: readonly NotificationKind[]; mail
   const mail = useMutation({ mutationFn: (enabled: boolean) => client.social.notifications.mail({ enabled }), onSettled: refresh });
   const mailOn = mail.isPending && mail.variables !== undefined ? mail.variables : !mailOff;
   const digestOn = mute.isPending && mute.variables?.kind === DIGEST_KIND ? !mute.variables.muted : !muted.includes(DIGEST_KIND);
+  const kindBox = (kind: (typeof NOTIFICATION_KINDS)[number]) => {
+    const on = mute.isPending && mute.variables?.kind === kind ? !mute.variables.muted : !muted.includes(kind);
+    return (
+      <label key={kind} className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Checkbox checked={on} disabled={mute.isPending} onCheckedChange={(checked) => mute.mutate({ kind, muted: checked !== true })} />
+        {t(`kinds.${kind}`)}
+      </label>
+    );
+  };
+  // The few that matter to everyone come first (#3658); the rest, and the mail and the phone, are one fold further.
+  const useful = NOTIFICATION_KINDS.filter((k) => USEFUL_KINDS.includes(k));
+  const others = NOTIFICATION_KINDS.filter((k) => !USEFUL_KINDS.includes(k));
   return (
-    <Card className="block space-y-3 p-4">
-      <div>
-        <h2 className="text-sm font-medium text-foreground">{t('settings')}</h2>
-        <p className="text-xs text-subtle-foreground">{t('settingsHint')}</p>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {NOTIFICATION_KINDS.map((kind) => {
-          const on = mute.isPending && mute.variables?.kind === kind ? !mute.variables.muted : !muted.includes(kind);
-          return (
-            <label key={kind} className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Checkbox checked={on} disabled={mute.isPending} onCheckedChange={(checked) => mute.mutate({ kind, muted: checked !== true })} />
-              {t(`kinds.${kind}`)}
-            </label>
-          );
-        })}
-      </div>
+    <Card className="block p-4">
+      <details className="group" data-testid="notification-settings">
+        <summary className="flex min-h-11 cursor-pointer flex-col justify-center select-none focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none">
+          <span className="text-sm font-medium text-foreground">{t('settings')}</span>
+          <span className="text-xs text-subtle-foreground">{t('settingsHint')}</span>
+        </summary>
+        <div className="mt-3 space-y-3">
+      <div className="grid gap-2 sm:grid-cols-2">{useful.map(kindBox)}</div>
+      <details>
+        <summary className="min-h-8 cursor-pointer text-xs font-medium text-muted-foreground select-none">{t('moreKinds')}</summary>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">{others.map(kindBox)}</div>
+      </details>
       <label className="flex items-start gap-2 border-t pt-3 text-sm text-muted-foreground">
         <Checkbox checked={mailOn} disabled={mail.isPending} onCheckedChange={(checked) => mail.mutate(checked === true)} />
         <span>
@@ -207,6 +219,8 @@ function Settings({ muted, mailOff }: { muted: readonly NotificationKind[]; mail
       </label>
       {(mute.error ?? mail.error) && <ErrorText>{errorMessage(mute.error ?? mail.error)}</ErrorText>}
       <PushSetting />
+        </div>
+      </details>
     </Card>
   );
 }
@@ -230,6 +244,7 @@ export function SocialNotificationsPage() {
     else if (target?.to === 'feeds') void navigate({ to: '/o/$slug/social/feeds', params: { slug } });
     else if (target?.to === 'compose') void navigate({ to: '/o/$slug/social/new', params: { slug }, search: { channel: target.channelId } });
     else if (target?.to === 'mine') void navigate({ to: '/o/$slug/social', params: { slug }, search: { assignee: 'me' } });
+    else if (target?.to === 'attention') void navigate({ to: '/o/$slug/social', params: { slug }, search: { tab: 'attention' } });
   };
   const items = list.data?.items ?? [];
   return (

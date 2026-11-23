@@ -5,9 +5,9 @@
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import { describe, expect, it, vi } from 'vitest';
-import { ORG_HEADER } from '@crove/kernel-contract';
-import { DomainError, sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
-import type { QuoteDocument } from '@crove/mod-crm';
+import { ORG_HEADER } from '@ludy/kernel-contract';
+import { DomainError, sha256Hex, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
+import type { QuoteDocument } from '@ludy/mod-crm';
 import type { AuthUser } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -40,6 +40,8 @@ function document(number: string | null): QuoteDocument {
       createdBy: 'u',
       createdAt: '2026-11-15T02:00:00.000Z',
       updatedAt: '2026-11-15T02:00:00.000Z',
+      actorOrigin: 'ui',
+      tainted: false,
       notes: null,
       terms: null,
       // The send's facts (Q2, #2694).

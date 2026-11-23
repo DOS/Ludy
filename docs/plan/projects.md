@@ -94,26 +94,32 @@ The same proposal step later runs on a meeting's notes, once the Meeting Notes m
 
 ## 7. What waits, checked against the gate
 
-| Item | Gate result | Where it goes |
+> **Update (2026-11-22, Projects v2):** Since this 2026-11-04 gate table, `#2606` to `#2610` have shipped in `M3 Paid pilot`, and owner JOY decided on 2026-11-22 ([#1210 comment](https://github.com/DOS/Ludy/issues/1210#issuecomment-7072041736), `A1` and `A2`) to reopen `#2605`, `#2601`, `#2604` (Wave 1 `P1`) and `#2599`, `#2600` (Wave 2 `P2`, lean slice without Accounting auto-invoicing) plus opt-in Sprints/Cycles & Story points (`#4361`) in [projects-v2.md](projects-v2.md) and [ADR-0056](../adr/0056-projects-v2-cycles-columns-dependencies-privacy.md). `#2602` and `#2603` remain in the Icebox.
+>
+> **Update (2026-11-22, Public Roadmap):** On 2026-11-22 ([#1210 comment](https://github.com/DOS/Ludy/issues/1210#issuecomment-7073382197)), owner JOY also approved an opt-in Public Roadmap (`Ideas`, `Roadmap`, `Changelog`, `?embed=1`, 6-digit email OTP voting without CAPTCHA per `#203`, Vy AI dedupe/changelog draft, and MCP read tools) in [projects-public-roadmap.md](projects-public-roadmap.md) ([projects-public-roadmap.vi.md](projects-public-roadmap.vi.md)) and [ADR-0057](../adr/0057-projects-public-roadmap-ideas-voting-changelog.md) (issues [#4397](https://github.com/DOS/Ludy/issues/4397), [#4398](https://github.com/DOS/Ludy/issues/4398), [#4399](https://github.com/DOS/Ludy/issues/4399), [#4400](https://github.com/DOS/Ludy/issues/4400)). Private authenticated client portals (`#2603`) stay separate and remain in the Icebox.
+
+| Item | Gate result (2026-11-04 baseline) | Where it goes |
 | --- | --- | --- |
-| Gantt chart and timeline | Fails fit: a planning view for larger teams with long schedules; small teams plan by week | Icebox, P3, #2599 |
-| Time tracking and billable hours | Fails smallest slice: a different product (time sheets, rates, invoicing exactly once to Accounting); the payroll plan also keeps time-keeping out | Icebox, P3, #2600 |
-| Dependencies between tasks | Fails smallest slice: a graph with its own rules, and `parent_task_id` already means the agents' chain | Icebox, P3, #2601 |
-| Sprints | Fails fit: a software-team practice, not a small business's week | Skip |
-| Resource planning and workload | Fails fit: serves managers of many people (scope gate 1, large organisations) | Icebox, P3, #2602 |
-| Client portals | Fails fit and security for now: outside users, sign-in and sharing rules; not needed weekly by a small team | Icebox, P3, #2603 |
-| Private projects (members only) | Passes fit for some teams, but needs a restrictive policy on `kernel.task`, an invariant change | Icebox, P3, owner decision D-2, #2604 |
-| Columns per project | Passes fit weakly; status columns cover the weekly job | Icebox, P3, decision D-4, #2605 |
-| Checklist on a task | Passes fit; the task has no such field, and the private to-do's checklist covers it for now | Icebox, P3, #2606 |
-| Recurring tasks and project templates | Passes fit (a monthly close), but the tax calendar already covers the main recurring dates | Icebox, P3, #2607 |
-| Manual order in a column | Small; due-date order first | Icebox, P3, #2610 |
-| Tasks from a meeting or a conversation | Passes fit; depends on the Meeting Notes module and the conversation core | Icebox, P3, after P7, #2608 |
-| Weekly status by mail, or shared with the whole project | Passes fit; an org-visible AI output needs the taint rule of #1677 point 4 | Icebox, P3, after P6, #2609 |
-| A task saved-view scope | Passes fit; filters cover v1 | Icebox, P3, #2610 |
+| Gantt chart and timeline | Fails fit: a planning view for larger teams with long schedules; small teams plan by week | Reopened 2026-11-22 -> Wave 2, M3, P2, #2599 ([projects-v2.md](projects-v2.md)) |
+| Time tracking and billable hours | Fails smallest slice: a different product (time sheets, rates, invoicing exactly once to Accounting); the payroll plan also keeps time-keeping out | Reopened 2026-11-22 (lean slice without Accounting auto-invoicing) -> Wave 2, M3, P2, #2600 ([projects-v2.md](projects-v2.md)) |
+| Dependencies between tasks | Fails smallest slice: a graph with its own rules, and `parent_task_id` already means the agents' chain | Reopened 2026-11-22 (isolated in `task_dependency`) -> Wave 1, M3, P1, #2601 ([projects-v2.md](projects-v2.md)) |
+| Sprints | Fails fit: a software-team practice, not a small business's week | Reopened 2026-11-22 (opt-in Cycles & Story points) -> Wave 1, M3, P1, #4361 ([projects-v2.md](projects-v2.md)) |
+| Resource planning and workload | Fails fit: serves managers of many people (scope gate 1, large organisations) | Icebox, P3, #2602 (kept in Icebox 2026-11-22) |
+| Client portals | Fails fit and security for now: outside users, sign-in and sharing rules; not needed weekly by a small team | Icebox, P3, #2603 (kept in Icebox 2026-11-22) |
+| Private projects (members only) | Passes fit for some teams, but needs a restrictive policy on `kernel.task`, an invariant change | Reopened 2026-11-22 (A2 invariant approved) -> Wave 1, M3, P1, #2604 ([ADR-0056](../adr/0056-projects-v2-cycles-columns-dependencies-privacy.md)) |
+| Columns per project | Passes fit weakly; status columns cover the weekly job | Reopened 2026-11-22 (opt-in, mapped to status) -> Wave 1, M3, P1, #2605 ([ADR-0056](../adr/0056-projects-v2-cycles-columns-dependencies-privacy.md)) |
+| Checklist on a task | Passes fit; the task has no such field, and the private to-do's checklist covers it for now | Shipped in M3 (#2606, closed) |
+| Recurring tasks and project templates | Passes fit (a monthly close), but the tax calendar already covers the main recurring dates | Shipped in M3 (#2607, closed) |
+| Manual order in a column | Small; due-date order first | Shipped in M3 (#2610, closed) |
+| Tasks from a meeting or a conversation | Passes fit; depends on the Meeting Notes module and the conversation core | Shipped in M3 (#2608, closed) |
+| Weekly status by mail, or shared with the whole project | Passes fit; an org-visible AI output needs the taint rule of #1677 point 4 | Shipped in M3 (#2609, closed) |
+| A task saved-view scope | Passes fit; filters cover v1 | Shipped in M3 (#2610, closed) |
 
 ## 8. Owner decisions and risks
 
 The owner decided D-1 to D-5 on 2026-11-04 with one word, "Đồng ý" (Agreed): each as recommended below.
+
+> **2026-11-22 Amendments (`A1`, `A2`, `A3`):** On 2026-11-22 ([#1210 comment](https://github.com/DOS/Ludy/issues/1210#issuecomment-7072041736)), owner JOY amended `D-2` (approving opt-in `private` projects and the `RESTRICTIVE` `private_project_scope` policy on `crove_kernel.task` via the two-step invariant process, `#2604`) and `D-4` (approving opt-in per-project custom columns mapped to canonical `kernel.task.status`, `#2605`), and approved the two-wave Projects v2 roadmap in [projects-v2.md](projects-v2.md) and [ADR-0056](../adr/0056-projects-v2-cycles-columns-dependencies-privacy.md). `D-3` (seats on `kernel.task`) remains unchanged.
 
 | # | Question | Decided (owner, 2026-11-04, as recommended) | Why |
 | --- | --- | --- | --- |

@@ -10,13 +10,13 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
-import type { ExtractClient } from '@crove/extract-contract';
-import type { ParsedInvoice } from '@crove/l10n-vn';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
+import type { ExtractClient } from '@ludy/extract-contract';
+import type { ParsedInvoice } from '@ludy/l10n-vn';
 import { enterUser } from './context-token.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -109,11 +109,11 @@ suite('the original XML after the posting on PostgreSQL (#2320)', () => {
     return { fileId, proposalId: proposalId as string };
   }
   const proposals = (number: string) =>
-    admin(async (c) => (await c.query<Row>(`SELECT id, status, revision, source_file_id, extraction_id, duplicate_of, legal_entity_id, authors, payload FROM crove_kernel.proposal WHERE org_id = $1 AND payload #>> '{invoice,number}' = $2 ORDER BY created_at`, [orgId, number])).rows);
+    admin(async (c) => (await c.query<Row>(`SELECT id, status, revision, source_file_id, extraction_id, duplicate_of, legal_entity_id, authors, payload FROM ludy_kernel.proposal WHERE org_id = $1 AND payload #>> '{invoice,number}' = $2 ORDER BY created_at`, [orgId, number])).rows);
   const fileStatus = async (userId: string, fileId: string) =>
     (await rt.query<Array<{ id: string; status: string; proposalId: string | null }>>('kernel.files.recent', {}, { actor: asUser(userId), orgId })).find((f) => f.id === fileId);
   const activityKinds = (proposalId: string) =>
-    admin(async (c) => (await c.query<{ kind: string }>(`SELECT kind FROM crove_kernel.activity WHERE org_id = $1 AND record_type = 'kernel.proposal' AND record_id = $2 ORDER BY occurred_at`, [orgId, proposalId])).rows.map((r) => r.kind));
+    admin(async (c) => (await c.query<{ kind: string }>(`SELECT kind FROM ludy_kernel.activity WHERE org_id = $1 AND record_type = 'kernel.proposal' AND record_id = $2 ORDER BY occurred_at`, [orgId, proposalId])).rows.map((r) => r.kind));
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -124,16 +124,16 @@ suite('the original XML after the posting on PostgreSQL (#2320)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
     const asWorker = new URL(adminUrl);
-    asWorker.username = 'crove_worker';
+    asWorker.username = 'ludy_worker';
     asWorker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorker.toString(), max: 2 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
@@ -142,8 +142,8 @@ suite('the original XML after the posting on PostgreSQL (#2320)', () => {
     }
     ({ orgId } = await createOrg(rt, asUser(users.owner), 'Công ty có hóa đơn gốc đến sau khi ghi sổ'));
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'admin')`, [orgId, users.admin, users.approver]);
-      branch = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, users.owner])).rows[0]?.id as string;
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'admin')`, [orgId, users.admin, users.approver]);
+      branch = (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, users.owner])).rows[0]?.id as string;
     });
   }, 300_000);
 
@@ -173,7 +173,7 @@ suite('the original XML after the posting on PostgreSQL (#2320)', () => {
   const runOf = (fileId: string) =>
     admin(async (c) =>
       (await c.query<{ original_of_proposal_id: string | null; original_differs: boolean | null; status: string; method: string }>(
-        'SELECT original_of_proposal_id, original_differs, status, method FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2 ORDER BY version',
+        'SELECT original_of_proposal_id, original_differs, status, method FROM ludy_kernel.extraction WHERE org_id = $1 AND file_id = $2 ORDER BY version',
         [orgId, fileId],
       )).rows,
     );
@@ -183,14 +183,14 @@ suite('the original XML after the posting on PostgreSQL (#2320)', () => {
     admin(async (c) => ({
       documents: (
         await c.query<{ id: string; source_file_id: string; proposal_id: string; subtotal: string; vat_amount: string; total: string }>(
-          `SELECT id, source_file_id, proposal_id, subtotal::text, vat_amount::text, total::text FROM crove_finance.purchase_document WHERE org_id = $1 AND invoice_number = $2 ORDER BY id`,
+          `SELECT id, source_file_id, proposal_id, subtotal::text, vat_amount::text, total::text FROM ludy_finance.purchase_document WHERE org_id = $1 AND invoice_number = $2 ORDER BY id`,
           [orgId, number],
         )
       ).rows,
-      entries: (await c.query<{ entries: string; debit: string }>(`SELECT (SELECT count(*) FROM crove_finance.journal_entry WHERE org_id = $1)::text AS entries, (SELECT coalesce(sum(debit), 0) FROM crove_finance.journal_line WHERE org_id = $1)::text AS debit`, [orgId])).rows[0],
+      entries: (await c.query<{ entries: string; debit: string }>(`SELECT (SELECT count(*) FROM ludy_finance.journal_entry WHERE org_id = $1)::text AS entries, (SELECT coalesce(sum(debit), 0) FROM ludy_finance.journal_line WHERE org_id = $1)::text AS debit`, [orgId])).rows[0],
     }));
   const documentCount = (number: string) =>
-    admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM crove_finance.purchase_document WHERE org_id = $1 AND invoice_number = $2`, [orgId, number])).rows[0]?.n));
+    admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM ludy_finance.purchase_document WHERE org_id = $1 AND invoice_number = $2`, [orgId, number])).rows[0]?.n));
 
   // Reads and approves the PDF of an invoice: the posting an original comes after.
   async function postPdf(number: string, by = users.owner, legalEntityId?: string, reading = reader(number), exchangeRate?: string) {
@@ -255,7 +255,7 @@ suite('the original XML after the posting on PostgreSQL (#2320)', () => {
     expect(await ledger('6002')).toEqual(before);
     expect(before.documents[0]?.total).toMatch(/^2090000(\.0+)?$/);
     expect((await detailOf(users.owner, pdf.proposalId)).originals[0]).toMatchObject({ fileId: xml.fileId, differs: true });
-    const activity = await admin(async (c) => (await c.query<{ summary: string }>(`SELECT summary FROM crove_kernel.activity WHERE org_id = $1 AND record_id = $2 AND kind = 'proposal.original_attached'`, [orgId, pdf.proposalId])).rows);
+    const activity = await admin(async (c) => (await c.query<{ summary: string }>(`SELECT summary FROM ludy_kernel.activity WHERE org_id = $1 AND record_id = $2 AND kind = 'proposal.original_attached'`, [orgId, pdf.proposalId])).rows);
     expect(activity[0]?.summary).toContain('KHÁC');
   });
 
@@ -305,16 +305,16 @@ suite('the original XML after the posting on PostgreSQL (#2320)', () => {
     // The database itself refuses the shape: an original is an e-invoice XML run that is done, and the two columns go together.
     await expect(
       admin((c) =>
-        c.query(`INSERT INTO crove_kernel.extraction (org_id, file_id, method, status, original_of_proposal_id, original_differs, completed_at) VALUES ($1, $2, 'pdf_text_ai', 'done', $3, false, now())`, [orgId, fileId, pdf.proposalId]),
+        c.query(`INSERT INTO ludy_kernel.extraction (org_id, file_id, method, status, original_of_proposal_id, original_differs, completed_at) VALUES ($1, $2, 'pdf_text_ai', 'done', $3, false, now())`, [orgId, fileId, pdf.proposalId]),
       ),
     ).rejects.toMatchObject({ code: '23514' });
     await expect(
-      admin((c) => c.query(`INSERT INTO crove_kernel.extraction (org_id, file_id, method, status, original_of_proposal_id, completed_at) VALUES ($1, $2, 'einvoice_xml', 'done', $3, now())`, [orgId, fileId, pdf.proposalId])),
+      admin((c) => c.query(`INSERT INTO ludy_kernel.extraction (org_id, file_id, method, status, original_of_proposal_id, completed_at) VALUES ($1, $2, 'einvoice_xml', 'done', $3, now())`, [orgId, fileId, pdf.proposalId])),
     ).rejects.toMatchObject({ code: '23514' });
     // And it must name a proposal of the same org.
     await expect(
       admin((c) =>
-        c.query(`INSERT INTO crove_kernel.extraction (org_id, file_id, method, status, original_of_proposal_id, original_differs, completed_at) VALUES ($1, $2, 'einvoice_xml', 'done', $3, false, now())`, [orgId, fileId, randomUUID()]),
+        c.query(`INSERT INTO ludy_kernel.extraction (org_id, file_id, method, status, original_of_proposal_id, original_differs, completed_at) VALUES ($1, $2, 'einvoice_xml', 'done', $3, false, now())`, [orgId, fileId, randomUUID()]),
       ),
     ).rejects.toMatchObject({ code: '23503' });
   });
@@ -368,7 +368,7 @@ suite('the original XML after the posting on PostgreSQL (#2320)', () => {
   it('lets only the system context insert a run that names a proposal: a member context cannot fake the evidence', async () => {
     const pdf = await postPdf('6010');
     const { fileId } = await ingest(users.owner, pdfOf('6010b'), 'hd-6010b.pdf', 'application/pdf');
-    const insert = `INSERT INTO crove_kernel.extraction (org_id, file_id, method, status, original_of_proposal_id, original_differs, completed_at) VALUES ($1, $2, 'einvoice_xml', 'done', $3, false, now())`;
+    const insert = `INSERT INTO ludy_kernel.extraction (org_id, file_id, method, status, original_of_proposal_id, original_differs, completed_at) VALUES ($1, $2, 'einvoice_xml', 'done', $3, false, now())`;
     // A user context of the tenant role (owner and an admin) is refused by the guard, whatever its role in the org.
     for (const userId of [users.owner, users.admin]) {
       const c = await pool.connect();
@@ -385,7 +385,7 @@ suite('the original XML after the posting on PostgreSQL (#2320)', () => {
     const system = await workerPool.connect();
     try {
       await system.query('BEGIN');
-      await system.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+      await system.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
       await expect(system.query(insert, [orgId, fileId, pdf.proposalId])).resolves.toMatchObject({ rowCount: 1 });
     } finally {
       await system.query('ROLLBACK');
@@ -397,7 +397,7 @@ suite('the original XML after the posting on PostgreSQL (#2320)', () => {
     const pdf = await postPdf('6007');
     const xml = await readXml('6007');
     await expect(
-      admin((c) => c.query(`UPDATE crove_kernel.extraction SET original_differs = true WHERE org_id = $1 AND file_id = $2`, [orgId, xml.fileId])),
+      admin((c) => c.query(`UPDATE ludy_kernel.extraction SET original_differs = true WHERE org_id = $1 AND file_id = $2`, [orgId, xml.fileId])),
     ).rejects.toMatchObject({ code: '42501' });
     expect((await runOf(xml.fileId))[0]).toMatchObject({ original_of_proposal_id: pdf.proposalId, original_differs: false });
   });
@@ -405,7 +405,7 @@ suite('the original XML after the posting on PostgreSQL (#2320)', () => {
   // dispatch runs as the worker's kernel-notify job does; the ledger is not touched by any of it.
   const SYSTEM = { type: 'system' as const, component: 'test.notify' };
   const flaggedEvents = (proposalId: string) =>
-    admin(async (c) => (await c.query<{ id: string }>(`SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.proposal.original_flagged' AND payload ->> 'proposalId' = $2 ORDER BY id`, [orgId, proposalId])).rows.map((r) => r.id));
+    admin(async (c) => (await c.query<{ id: string }>(`SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.proposal.original_flagged' AND payload ->> 'proposalId' = $2 ORDER BY id`, [orgId, proposalId])).rows.map((r) => r.id));
   async function dispatchFlagged(proposalId: string): Promise<number> {
     let sent = 0;
     for (const eventId of await flaggedEvents(proposalId)) {
@@ -445,7 +445,7 @@ suite('the original XML after the posting on PostgreSQL (#2320)', () => {
     expect(await flaggedFor(users.owner, pdf.proposalId)).toEqual([]);
     // Never a change of the books, and the notice carries the proposal's entity.
     expect(await ledger('6020')).toEqual(before);
-    const rows = await admin(async (c) => (await c.query<{ legal_entity_id: string; detail: Record<string, string> }>(`SELECT legal_entity_id, detail FROM crove_kernel.notification WHERE org_id = $1 AND kind = 'kernel.original_flagged' AND subject_id = $2`, [orgId, pdf.proposalId])).rows);
+    const rows = await admin(async (c) => (await c.query<{ legal_entity_id: string; detail: Record<string, string> }>(`SELECT legal_entity_id, detail FROM ludy_kernel.notification WHERE org_id = $1 AND kind = 'kernel.original_flagged' AND subject_id = $2`, [orgId, pdf.proposalId])).rows);
     const entity = (await proposals('6020'))[0]?.legal_entity_id;
     expect(rows.map((r) => r.legal_entity_id)).toEqual([entity, entity]);
     // Ids and codes only: no title, no file name.
@@ -458,7 +458,7 @@ suite('the original XML after the posting on PostgreSQL (#2320)', () => {
     expect((await runOf(xml.fileId))[0]).toMatchObject({ original_of_proposal_id: pdf.proposalId, original_differs: false });
     expect(await dispatchFlagged(pdf.proposalId)).toBe(2);
     expect(await flaggedFor(users.admin, pdf.proposalId)).toEqual([expect.objectContaining({ detail: expect.objectContaining({ differs: 'false', signature: expect.stringMatching(/^(unverified|none)$/) }) })]);
-    const rows = await admin(async (c) => (await c.query<{ legal_entity_id: string }>(`SELECT legal_entity_id FROM crove_kernel.notification WHERE org_id = $1 AND kind = 'kernel.original_flagged' AND subject_id = $2`, [orgId, pdf.proposalId])).rows);
+    const rows = await admin(async (c) => (await c.query<{ legal_entity_id: string }>(`SELECT legal_entity_id FROM ludy_kernel.notification WHERE org_id = $1 AND kind = 'kernel.original_flagged' AND subject_id = $2`, [orgId, pdf.proposalId])).rows);
     expect(rows.map((r) => r.legal_entity_id)).toEqual([branch, branch]);
   });
 

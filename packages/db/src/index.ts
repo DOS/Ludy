@@ -5,6 +5,7 @@ import type { Database } from './schema.ts';
 export type { Database } from './schema.ts';
 export * from './schema.ts';
 export { singleCell, type CellResolver } from './cells.ts';
+export { checkEnvPair, readEnvPair, type EnvPairResult, type EnvPairSource } from './env.ts';
 
 // Money (numeric), int8 and dates stay strings end to end; timestamptz becomes a Date.
 const NUMERIC = 1700;
@@ -153,7 +154,7 @@ function guardCheckout(client: pg.PoolClient, reset: string | null): pg.PoolClie
 }
 
 // pg.Pool whose every checkout, including pool.query(), goes through guardCheckout.
-class CrovePool extends pg.Pool {
+class LudyPool extends pg.Pool {
   readonly #reset: string | null;
 
   constructor(config: pg.PoolConfig, reset: string | null) {
@@ -174,10 +175,11 @@ class CrovePool extends pg.Pool {
 }
 
 export function createPool(options: PoolOptions): pg.Pool {
-  const pool = new CrovePool(
+  const pool = new LudyPool(
     {
       connectionString: options.connectionString,
       max: options.max ?? 10,
+      // Deferred from #3970 to #3972 (with two-step sealed-context.db.test.ts update) so Invariant suite (from base) stays green.
       application_name: options.applicationName ?? 'crove',
       statement_timeout: options.statementTimeoutMs ?? 15_000,
       idle_in_transaction_session_timeout: 10_000,
@@ -203,10 +205,10 @@ export async function assertRlsEnforced(pool: pg.Pool): Promise<void> {
   );
   const role = rows[0];
   const owned = await pool.query<{ n: string }>(
-    "SELECT count(*) AS n FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname LIKE 'crove\\_%' AND c.relowner = (SELECT oid FROM pg_roles WHERE rolname = current_user)",
+    "SELECT count(*) AS n FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE (n.nspname LIKE 'ludy\\_%' OR n.nspname LIKE 'crove\\_%') AND c.relowner = (SELECT oid FROM pg_roles WHERE rolname = current_user)",
   );
   if (!role || role.rolsuper || role.rolbypassrls || Number(owned.rows[0]?.n ?? 0) > 0) {
-    throw new Error(`database role ${role?.rolname ?? '?'} bypasses row-level security; connect as crove_app / crove_worker`);
+    throw new Error(`database role ${role?.rolname ?? '?'} bypasses row-level security; connect as ludy_app / ludy_worker`);
   }
 }
 
@@ -214,9 +216,9 @@ export async function assertRlsEnforced(pool: pg.Pool): Promise<void> {
 // system context, resolve inbound tokens or claim inbound mail, and the worker role must. Functions that do
 // not exist yet (before migrate) are skipped.
 export const WORKER_ONLY_FUNCTIONS = [
-  'crove_kernel.enter_system_context(uuid)',
-  'crove_kernel.org_by_inbound_token(text)',
-  'crove_kernel.inbound_claim(integer)',
+  'ludy_kernel.enter_system_context(uuid)',
+  'ludy_kernel.org_by_inbound_token(text)',
+  'ludy_kernel.inbound_claim(integer)',
 ] as const;
 
 export async function assertSystemContextAccess(pool: pg.Pool, expected: 'denied' | 'granted'): Promise<void> {
@@ -231,7 +233,7 @@ export async function assertSystemContextAccess(pool: pg.Pool, expected: 'denied
   const role = wrong[0]?.rolname ?? '?';
   const names = wrong.map((row) => row.fn).join(', ');
   if (expected === 'denied') {
-    throw new Error(`database role ${role} can enter system context (${names}); the API must connect as crove_app (run migrate first)`);
+    throw new Error(`database role ${role} can enter system context (${names}); the API must connect as ludy_app (run migrate first)`);
   }
-  throw new Error(`database role ${role} cannot enter system context (${names}); the worker must connect as crove_worker (WORKER_DATABASE_URL)`);
+  throw new Error(`database role ${role} cannot enter system context (${names}); the worker must connect as ludy_worker (WORKER_DATABASE_URL)`);
 }

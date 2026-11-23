@@ -7,12 +7,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, type PostView, type PreReview } from '@crove/mod-social';
-import { styleSelection, styleText } from '@crove/mod-social/contract';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, type PostView, type PreReview } from '@ludy/mod-social';
+import { styleSelection, styleText } from '@ludy/mod-social/contract';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -45,7 +45,7 @@ suite('social duplicate text on PostgreSQL (#1156)', () => {
   async function connection(orgId: string, owner: string, provider: string, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, provider, `acct-${id.slice(0, 8)}`, name, owner]),
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, provider, `acct-${id.slice(0, 8)}`, name, owner]),
     );
     return id;
   }
@@ -54,7 +54,7 @@ suite('social duplicate text on PostgreSQL (#1156)', () => {
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const member = await person('member');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]));
     return { orgId, owner, member, x: await connection(orgId, owner, 'x', 'Kênh X'), other: await connection(orgId, owner, 'sandbox', 'Kênh khác') };
   }
 
@@ -72,8 +72,8 @@ suite('social duplicate text on PostgreSQL (#1156)', () => {
   async function published(o: Org, postId: string, connectionId: string, daysAgo: number) {
     await admin((c) =>
       c.query(
-        `UPDATE crove_social.post_variant v SET status = 'published', published_at = now() - make_interval(days => $4), content_frozen = true, body = coalesce(v.body, p.body), external_post_id = 'x-' || v.id
-           FROM crove_social.post p WHERE p.org_id = v.org_id AND p.id = v.post_id AND v.org_id = $1 AND v.post_id = $2 AND v.channel_connection_id = $3`,
+        `UPDATE ludy_social.post_variant v SET status = 'published', published_at = now() - make_interval(days => $4), content_frozen = true, body = coalesce(v.body, p.body), external_post_id = 'x-' || v.id
+           FROM ludy_social.post p WHERE p.org_id = v.org_id AND p.id = v.post_id AND v.org_id = $1 AND v.post_id = $2 AND v.channel_connection_id = $3`,
         [o.orgId, postId, connectionId, daysAgo],
       ),
     );
@@ -81,7 +81,7 @@ suite('social duplicate text on PostgreSQL (#1156)', () => {
   async function scheduled(o: Org, postId: string, connectionId: string, at: Date, queued = false) {
     await admin((c) =>
       c.query(
-        `UPDATE crove_social.post_variant SET status = 'scheduled', ${queued ? 'queue_slot_at' : 'scheduled_at'} = $4 WHERE org_id = $1 AND post_id = $2 AND channel_connection_id = $3`,
+        `UPDATE ludy_social.post_variant SET status = 'scheduled', ${queued ? 'queue_slot_at' : 'scheduled_at'} = $4 WHERE org_id = $1 AND post_id = $2 AND channel_connection_id = $3`,
         [o.orgId, postId, connectionId, at],
       ),
     );
@@ -96,9 +96,9 @@ suite('social duplicate text on PostgreSQL (#1156)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const u = new URL(adminUrl);
-    u.username = 'crove_app';
+    u.username = 'ludy_app';
     u.password = 'test-app-pw';
     appPool = createPool({ connectionString: u.toString(), max: 4 });
     db = createDb(appPool);

@@ -6,12 +6,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import type { PersonalDataErasure, PersonalDataNotice, PersonalDataResult } from '@crove/kernel-contract';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { meetingsCommands, meetingsQueries, setSummaryEnabled } from '@crove/mod-meetings';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import type { PersonalDataErasure, PersonalDataNotice, PersonalDataResult } from '@ludy/kernel-contract';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { meetingsCommands, meetingsQueries, setSummaryEnabled } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -49,29 +49,29 @@ suite('the erasure in meeting text (#2594, L5 part 2)', () => {
   async function meeting(recorder: string, title: string, visibility: 'attendees' | 'org', readers: string[] = [], org = orgId): Promise<string> {
     const id = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, $3, 'vi', '2026-11-10T03:00:00Z', '2026-11-10T03:30:00Z', 1800, $4, $5, 'ready', 'told_at_start', $4, now(), '1.0', current_date + 20, current_date + 365)`,
       [org, id, title, users[recorder], visibility],
     );
-    for (const reader of readers) await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [org, randomUUID(), id, users[reader]]);
+    for (const reader of readers) await sqlAdmin(`INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [org, randomUUID(), id, users[reader]]);
     return id;
   }
   const segment = async (meetingId: string, text: string, stage: 'draft' | 'published', label = 'Hà', org = orgId) =>
-    (await sqlAdmin<{ id: string }>(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, 0, 10, $3, $4, $5) RETURNING id`, [org, meetingId, label, text, stage])).rows[0]?.id as string;
+    (await sqlAdmin<{ id: string }>(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, 0, 10, $3, $4, $5) RETURNING id`, [org, meetingId, label, text, stage])).rows[0]?.id as string;
   const result = async (meetingId: string, summary: string, decisions: string[], stage: 'draft' | 'published', tainted = false) =>
-    (await sqlAdmin<{ id: string }>(`INSERT INTO crove_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage, tainted) VALUES ($1, $2, $3, $4::jsonb, 'manual', $5, $6) RETURNING id`, [orgId, meetingId, summary, JSON.stringify(decisions), stage, tainted])).rows[0]?.id as string;
+    (await sqlAdmin<{ id: string }>(`INSERT INTO ludy_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage, tainted) VALUES ($1, $2, $3, $4::jsonb, 'manual', $5, $6) RETURNING id`, [orgId, meetingId, summary, JSON.stringify(decisions), stage, tainted])).rows[0]?.id as string;
   const item = async (meetingId: string, title: string, stage: 'draft' | 'published', who = 'Hà') =>
-    (await sqlAdmin<{ id: string }>(`INSERT INTO crove_meetings.action_item (org_id, meeting_id, title, who_drafted, when_drafted, stage) VALUES ($1, $2, $3, $4, 'thứ sáu', $5) RETURNING id`, [orgId, meetingId, title, who, stage])).rows[0]?.id as string;
-  const textOf = async (table: string, id: string, column: string) => (await sqlAdmin<{ v: string }>(`SELECT ${column}::text AS v FROM crove_meetings.${table} WHERE id = $1`, [id])).rows[0]?.v as string;
+    (await sqlAdmin<{ id: string }>(`INSERT INTO ludy_meetings.action_item (org_id, meeting_id, title, who_drafted, when_drafted, stage) VALUES ($1, $2, $3, $4, 'thứ sáu', $5) RETURNING id`, [orgId, meetingId, title, who, stage])).rows[0]?.id as string;
+  const textOf = async (table: string, id: string, column: string) => (await sqlAdmin<{ v: string }>(`SELECT ${column}::text AS v FROM ludy_meetings.${table} WHERE id = $1`, [id])).rows[0]?.v as string;
   const erasedRows = (e: PersonalDataErasure, column: string) => e.erased.find((r) => r.column === column)?.rows ?? 0;
 
   // What the erasure must never touch (row counts), taken before and after.
   const untouchedCounts = async () => ({
-    vy: await count('SELECT 1 FROM crove_kernel.member_vy_result'),
-    audio: await count('SELECT 1 FROM crove_meetings.audio_segment'),
-    files: await count('SELECT 1 FROM crove_kernel.file'),
-    readers: await count('SELECT 1 FROM crove_meetings.meeting_reader'),
-    keys: await count('SELECT 1 FROM crove_meetings.media_key'),
+    vy: await count('SELECT 1 FROM ludy_kernel.member_vy_result'),
+    audio: await count('SELECT 1 FROM ludy_meetings.audio_segment'),
+    files: await count('SELECT 1 FROM ludy_kernel.file'),
+    readers: await count('SELECT 1 FROM ludy_meetings.meeting_reader'),
+    keys: await count('SELECT 1 FROM ludy_meetings.media_key'),
   });
 
   beforeAll(async () => {
@@ -83,9 +83,9 @@ suite('the erasure in meeting text (#2594, L5 part 2)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -94,7 +94,7 @@ suite('the erasure in meeting text (#2594, L5 part 2)', () => {
     for (const key of ['owner', 'admin', 'recorder', 'attendee', 'outsider']) users[key] = await upsertIdentity(createDb(pool), { issuer: 'meetings-erase', subject: key, email: `${key}@meetings-erase.test`, name: null });
     orgId = (await createOrg(runtime, asUser('owner'), 'Xóa trong họp')).orgId;
     otherOrgId = (await createOrg(runtime, asUser('outsider'), 'Org khác')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.admin, users.recorder, users.attendee]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.admin, users.recorder, users.attendee]);
   }, 300_000);
 
   afterAll(async () => {
@@ -123,9 +123,17 @@ suite('the erasure in meeting text (#2594, L5 part 2)', () => {
     const foreign = await meeting('outsider', 'Họp org khác', 'attendees', [], otherOrgId);
     const foreignLine = await segment(foreign, `Của org khác ${EMAIL}`, 'published', 'Hà', otherOrgId);
     // The things an erasure must not touch.
-    await sqlAdmin(`INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'a.opus', 'audio/ogg', 10, 'meeting_audio')`, [orgId, randomUUID(), 'a'.repeat(64), `org/${orgId}/${'a'.repeat(64)}`]);
-    const fileId = (await sqlAdmin<{ id: string }>(`SELECT id FROM crove_kernel.file WHERE org_id = $1 AND filename = 'a.opus'`, [orgId])).rows[0]?.id;
-    await sqlAdmin(`INSERT INTO crove_meetings.audio_segment (org_id, id, meeting_id, file_id, segment_order, start_offset_seconds, length_seconds) VALUES ($1, $2, $3, $4, 0, 0, 600)`, [orgId, randomUUID(), hidden, fileId]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'a.opus', 'audio/ogg', 10, 'meeting_audio')`, [orgId, randomUUID(), 'a'.repeat(64), `org/${orgId}/${'a'.repeat(64)}`]);
+    const fileId = (await sqlAdmin<{ id: string }>(`SELECT id FROM ludy_kernel.file WHERE org_id = $1 AND filename = 'a.opus'`, [orgId])).rows[0]?.id;
+    await sqlAdmin(`INSERT INTO ludy_meetings.audio_segment (org_id, id, meeting_id, file_id, segment_order, start_offset_seconds, length_seconds) VALUES ($1, $2, $3, $4, 0, 0, 600)`, [orgId, randomUUID(), hidden, fileId]);
+    // A member's own translation of a meeting the value never touches (an erasure drops the translations of a meeting it touches), and the recorder's preview line of the meeting the owner
+    // cannot read: private to each, counted and never read (#3584).
+    const quiet = await meeting('recorder', 'Họp không liên quan', 'attendees', ['attendee']);
+    await sqlAdmin(
+      `INSERT INTO ludy_meetings.translation (org_id, meeting_id, member_user_id, kind, target_language, source_stage, source_hash, body) VALUES ($1, $2, $3, 'summary', 'en', 'published', $4, '[]'::jsonb)`,
+      [orgId, quiet, users.attendee, 'a'.repeat(64)],
+    );
+    await sqlAdmin(`INSERT INTO ludy_meetings.live_line (org_id, meeting_id, seq, start_seconds, end_seconds, text) VALUES ($1, $2, 0, 0, 15, $3)`, [orgId, hidden, `Bản nháp ${EMAIL}`]);
     await runtime.execute('kernel.member_vy.run.start', { feature: 'meetings.summary', subjectType: 'meeting', subjectId: shared }, { actor: asUser('recorder'), orgId });
     const before = await untouchedCounts();
     expect(before.vy).toBeGreaterThan(0);
@@ -146,27 +154,31 @@ suite('the erasure in meeting text (#2594, L5 part 2)', () => {
     expect(await textOf('action_item', hiddenItem, 'title')).toContain(EMAIL);
     expect(await textOf('meeting', hidden, 'title')).toContain(EMAIL);
     expect(await textOf('transcript_segment', foreignLine, 'text')).toContain(EMAIL);
-    expect(erasedRows(erased, 'crove_meetings.transcript_segment.text')).toBe(2);
-    expect(erasedRows(erased, 'crove_meetings.meeting_result.summary')).toBe(1);
-    expect(erasedRows(erased, 'crove_meetings.action_item.title')).toBe(1);
-    expect(erasedRows(erased, 'crove_meetings.meeting.title')).toBe(1);
+    expect(erasedRows(erased, 'ludy_meetings.transcript_segment.text')).toBe(2);
+    expect(erasedRows(erased, 'ludy_meetings.meeting_result.summary')).toBe(1);
+    expect(erasedRows(erased, 'ludy_meetings.action_item.title')).toBe(1);
+    expect(erasedRows(erased, 'ludy_meetings.meeting.title')).toBe(1);
     // The answer says what it left: the unread text, the audio and its date with the way to delete a meeting now, and the Vy results it cannot read.
-    expect(erased.kept.find((k) => k.column === 'crove_meetings.text')?.reason).toMatch(/send the notice/);
-    const audio = erased.kept.find((k) => k.column === 'crove_meetings.audio');
+    expect(erased.kept.find((k) => k.column === 'ludy_meetings.text')?.reason).toMatch(/send the notice/);
+    const audio = erased.kept.find((k) => k.column === 'ludy_meetings.audio');
     expect(audio?.rows).toBe(1);
     expect(audio?.reason).toMatch(/owner_delete/);
     // The meeting is hidden from the owner: no retention date shows, only the count (#2917).
     expect(audio?.reason).not.toMatch(/\d{4}-\d{2}-\d{2}/);
     expect(audio?.reason).toMatch(/1 more held in meetings the owner cannot read/);
-    expect(erased.kept.find((k) => k.column === 'crove_kernel.member_vy_result.body')?.reason).toMatch(/at most 31 days/);
+    expect(erased.kept.find((k) => k.column === 'ludy_kernel.member_vy_result.body')?.reason).toMatch(/at most 31 days/);
+    // The translations and the preview lines of members are counted too, with the 30-day former-member purge named, and their text is not read.
+    expect(erased.kept.find((k) => k.column === 'ludy_meetings.translation.body')).toMatchObject({ rows: 1, reason: expect.stringMatching(/30 days after that member is removed/) });
+    expect(erased.kept.find((k) => k.column === 'ludy_meetings.live_line.text')).toMatchObject({ rows: 1, reason: expect.stringMatching(/30 days after their recorder is removed/) });
+    expect(await textOf('live_line', (await sqlAdmin<{ id: string }>(`SELECT id FROM ludy_meetings.live_line WHERE org_id = $1 AND meeting_id = $2`, [orgId, hidden])).rows[0]?.id as string, 'text')).toContain(EMAIL);
     // Nothing else changed.
     expect(await untouchedCounts()).toEqual(before);
     // The audit row has counts and ids only, never the value or a text.
-    const audit = JSON.stringify((await sqlAdmin(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.erase' ORDER BY id DESC LIMIT 1`, [orgId])).rows);
+    const audit = JSON.stringify((await sqlAdmin(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.erase' ORDER BY id DESC LIMIT 1`, [orgId])).rows);
     for (const secret of [EMAIL, 'Chuyện kín', 'Nháp riêng']) expect(audit, secret).not.toContain(secret);
     // A second run changes nothing more.
     const again = await erase();
-    expect(erasedRows(again, 'crove_meetings.transcript_segment.text')).toBe(0);
+    expect(erasedRows(again, 'ludy_meetings.transcript_segment.text')).toBe(0);
     expect(await textOf('transcript_segment', line, 'text')).toBe(`Gửi hợp đồng về ${MARK} nhé, tổng 1.250.000 đồng hạn 12/03/2026`);
   });
 
@@ -177,49 +189,49 @@ suite('the erasure in meeting text (#2594, L5 part 2)', () => {
     const draft = await result(hidden, `Tóm tắt kín ${value}`, [`Gọi ${value}`], 'draft', true);
     // No notice yet: nothing is redacted, and the answer counts it.
     const first = await erase(value);
-    expect(erasedRows(first, 'crove_meetings.transcript_segment.text')).toBe(0);
+    expect(erasedRows(first, 'ludy_meetings.transcript_segment.text')).toBe(0);
     expect(await textOf('transcript_segment', line, 'text')).toContain(value);
-    expect(first.kept.find((k) => k.column === 'crove_meetings.text')?.rows).toBeGreaterThanOrEqual(2);
+    expect(first.kept.find((k) => k.column === 'ludy_meetings.text')?.rows).toBeGreaterThanOrEqual(2);
     // The notice: the recorder is named with a count, no text.
     const notice = await notify(value);
     expect(notice.authors).toEqual([{ authorUserId: users.recorder, notes: 0, todos: 0, meetings: 1 }]);
-    const detail = (await sqlAdmin<{ detail: { event: string; meetings: string[]; meeting_key: string } }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.notify' ORDER BY id DESC LIMIT 1`, [orgId])).rows[0]?.detail;
+    const detail = (await sqlAdmin<{ detail: { event: string; meetings: string[]; meeting_key: string } }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.notify' ORDER BY id DESC LIMIT 1`, [orgId])).rows[0]?.detail;
     expect(detail?.meetings).toHaveLength(1);
     expect(detail?.meetings[0]).toMatch(new RegExp(`^${hidden}:-?\\d+$`));
     expect(JSON.stringify(detail)).not.toContain(value);
     // Sent, but the recorder was not told yet (no notification): kept.
-    expect(erasedRows(await erase(value), 'crove_meetings.transcript_segment.text')).toBe(0);
+    expect(erasedRows(await erase(value), 'ludy_meetings.transcript_segment.text')).toBe(0);
     const told = (hoursAgo: number) =>
-      sqlAdmin(`INSERT INTO crove_kernel.notification (org_id, user_id, kind, dedupe_key, created_at) VALUES ($1, $2, 'kernel.personal_data_notice', $3, now() - make_interval(hours => $4))`, [orgId, users.recorder, `personal_data_notice:${detail?.event}`, hoursAgo]);
+      sqlAdmin(`INSERT INTO ludy_kernel.notification (org_id, user_id, kind, dedupe_key, created_at) VALUES ($1, $2, 'kernel.personal_data_notice', $3, now() - make_interval(hours => $4))`, [orgId, users.recorder, `personal_data_notice:${detail?.event}`, hoursAgo]);
     const age = () =>
       admin(async (c) => {
         await c.query('BEGIN');
         await c.query('SET LOCAL session_replication_role = replica');
-        await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [orgId]);
+        await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [orgId]);
         await c.query('COMMIT');
       });
     // Told only an hour ago: kept.
     await told(1);
     await age();
-    expect(erasedRows(await erase(value), 'crove_meetings.transcript_segment.text')).toBe(0);
+    expect(erasedRows(await erase(value), 'ludy_meetings.transcript_segment.text')).toBe(0);
     // Told a day ago, but the recorder changed the text after the notice: the notice did not see it, so it stays.
-    await sqlAdmin(`UPDATE crove_kernel.notification SET created_at = now() - interval '25 hours' WHERE org_id = $1 AND dedupe_key = $2`, [orgId, `personal_data_notice:${detail?.event}`]);
-    await sqlAdmin(`UPDATE crove_meetings.transcript_segment SET text = text || ' (sửa)' WHERE id = $1`, [line]);
-    expect(erasedRows(await erase(value), 'crove_meetings.transcript_segment.text')).toBe(0);
+    await sqlAdmin(`UPDATE ludy_kernel.notification SET created_at = now() - interval '25 hours' WHERE org_id = $1 AND dedupe_key = $2`, [orgId, `personal_data_notice:${detail?.event}`]);
+    await sqlAdmin(`UPDATE ludy_meetings.transcript_segment SET text = text || ' (sửa)' WHERE id = $1`, [line]);
+    expect(erasedRows(await erase(value), 'ludy_meetings.transcript_segment.text')).toBe(0);
     expect(await textOf('transcript_segment', line, 'text')).toContain(value);
     // A new notice at the text as it is now, told a day ago: redacted, and the tainted draft is still tainted and still refused for publishing.
     await notify(value);
-    const fresh = (await sqlAdmin<{ detail: { event: string } }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.notify' ORDER BY id DESC LIMIT 1`, [orgId])).rows[0]?.detail;
+    const fresh = (await sqlAdmin<{ detail: { event: string } }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.notify' ORDER BY id DESC LIMIT 1`, [orgId])).rows[0]?.detail;
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [orgId]);
+      await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [orgId]);
       await c.query('COMMIT');
     });
-    await sqlAdmin(`INSERT INTO crove_kernel.notification (org_id, user_id, kind, dedupe_key, created_at) VALUES ($1, $2, 'kernel.personal_data_notice', $3, now() - interval '25 hours')`, [orgId, users.recorder, `personal_data_notice:${fresh?.event}`]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.notification (org_id, user_id, kind, dedupe_key, created_at) VALUES ($1, $2, 'kernel.personal_data_notice', $3, now() - interval '25 hours')`, [orgId, users.recorder, `personal_data_notice:${fresh?.event}`]);
     const done = await erase(value);
-    expect(erasedRows(done, 'crove_meetings.transcript_segment.text')).toBe(1);
-    expect(erasedRows(done, 'crove_meetings.meeting_result.summary')).toBe(1);
+    expect(erasedRows(done, 'ludy_meetings.transcript_segment.text')).toBe(1);
+    expect(erasedRows(done, 'ludy_meetings.meeting_result.summary')).toBe(1);
     expect(await textOf('transcript_segment', line, 'text')).toBe(`Gửi tới ${MARK} (sửa)`);
     expect(await textOf('meeting_result', draft, 'summary')).toBe(`Tóm tắt kín ${MARK}`);
     expect(await textOf('meeting_result', draft, 'tainted')).toBe('true');
@@ -232,27 +244,27 @@ suite('the erasure in meeting text (#2594, L5 part 2)', () => {
     const shared = await meeting('recorder', 'Họp chung có nháp', 'org');
     const published = await segment(shared, `Dòng chung ${value}`, 'published');
     const draft = await segment(shared, `Nháp riêng ${value}`, 'draft');
-    const eventOf = async () => (await sqlAdmin<{ event: string }>(`SELECT detail ->> 'event' AS event FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.notify' ORDER BY id DESC LIMIT 1`, [orgId])).rows[0]?.event as string;
+    const eventOf = async () => (await sqlAdmin<{ event: string }>(`SELECT detail ->> 'event' AS event FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.notify' ORDER BY id DESC LIMIT 1`, [orgId])).rows[0]?.event as string;
     await notify(value);
     const event = await eventOf();
     // The owner erases straight away: the published line (the owner reads it) goes, the recorder's draft stays.
     const now = await erase(value);
-    expect(erasedRows(now, 'crove_meetings.transcript_segment.text')).toBe(1);
+    expect(erasedRows(now, 'ludy_meetings.transcript_segment.text')).toBe(1);
     expect(await textOf('transcript_segment', published, 'text')).toBe(`Dòng chung ${MARK}`);
     expect(await textOf('transcript_segment', draft, 'text')).toContain(value);
     // A day later the notice still covers the draft: the owner's own redaction did not change what the notice saw.
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [orgId]);
+      await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [orgId]);
       await c.query('COMMIT');
     });
-    await sqlAdmin(`INSERT INTO crove_kernel.notification (org_id, user_id, kind, dedupe_key, created_at) VALUES ($1, $2, 'kernel.personal_data_notice', $3, now() - interval '25 hours')`, [orgId, users.recorder, `personal_data_notice:${event}`]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.notification (org_id, user_id, kind, dedupe_key, created_at) VALUES ($1, $2, 'kernel.personal_data_notice', $3, now() - interval '25 hours')`, [orgId, users.recorder, `personal_data_notice:${event}`]);
     // A notice sent for another value does not cover this one.
-    expect(erasedRows(await erase('autre.personne@khach.example'), 'crove_meetings.transcript_segment.text')).toBe(0);
+    expect(erasedRows(await erase('autre.personne@khach.example'), 'ludy_meetings.transcript_segment.text')).toBe(0);
     expect(await textOf('transcript_segment', draft, 'text')).toContain(value);
     const later = await erase(value);
-    expect(erasedRows(later, 'crove_meetings.transcript_segment.text')).toBe(1);
+    expect(erasedRows(later, 'ludy_meetings.transcript_segment.text')).toBe(1);
     expect(await textOf('transcript_segment', draft, 'text')).toBe(`Nháp riêng ${MARK}`);
 
     // The same for a phone number written +84 in the notice and 0 in the erasure.
@@ -263,11 +275,11 @@ suite('the erasure in meeting text (#2594, L5 part 2)', () => {
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [orgId]);
+      await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [orgId]);
       await c.query('COMMIT');
     });
-    await sqlAdmin(`INSERT INTO crove_kernel.notification (org_id, user_id, kind, dedupe_key, created_at) VALUES ($1, $2, 'kernel.personal_data_notice', $3, now() - interval '25 hours')`, [orgId, users.recorder, `personal_data_notice:${phoneEvent}`]);
-    expect(erasedRows(await erase('0912345678'), 'crove_meetings.transcript_segment.text')).toBe(1);
+    await sqlAdmin(`INSERT INTO ludy_kernel.notification (org_id, user_id, kind, dedupe_key, created_at) VALUES ($1, $2, 'kernel.personal_data_notice', $3, now() - interval '25 hours')`, [orgId, users.recorder, `personal_data_notice:${phoneEvent}`]);
+    expect(erasedRows(await erase('0912345678'), 'ludy_meetings.transcript_segment.text')).toBe(1);
     expect(await textOf('transcript_segment', phoneLine, 'text')).toBe(`Gọi anh Tuấn số ${MARK} nhé`);
   });
 
@@ -276,20 +288,20 @@ suite('the erasure in meeting text (#2594, L5 part 2)', () => {
     const hidden = await meeting('recorder', 'Họp kín đang sửa', 'attendees', ['attendee']);
     const line = await segment(hidden, `Dòng ${value}`, 'published');
     await notify(value);
-    const event = (await sqlAdmin<{ event: string }>(`SELECT detail ->> 'event' AS event FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.notify' ORDER BY id DESC LIMIT 1`, [orgId])).rows[0]?.event as string;
+    const event = (await sqlAdmin<{ event: string }>(`SELECT detail ->> 'event' AS event FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.notify' ORDER BY id DESC LIMIT 1`, [orgId])).rows[0]?.event as string;
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [orgId]);
+      await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '25 hours' WHERE org_id = $1 AND command = 'kernel.personal_data.notify'`, [orgId]);
       await c.query('COMMIT');
     });
-    await sqlAdmin(`INSERT INTO crove_kernel.notification (org_id, user_id, kind, dedupe_key, created_at) VALUES ($1, $2, 'kernel.personal_data_notice', $3, now() - interval '25 hours')`, [orgId, users.recorder, `personal_data_notice:${event}`]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.notification (org_id, user_id, kind, dedupe_key, created_at) VALUES ($1, $2, 'kernel.personal_data_notice', $3, now() - interval '25 hours')`, [orgId, users.recorder, `personal_data_notice:${event}`]);
     // The recorder's correction holds the line's lock, uncommitted, while the erasure starts and waits.
     const editor = new pg.Client({ connectionString: adminUrl });
     await editor.connect();
     try {
       await editor.query('BEGIN');
-      await editor.query(`UPDATE crove_meetings.transcript_segment SET text = text || ' (đã sửa)' WHERE id = $1`, [line]);
+      await editor.query(`UPDATE ludy_meetings.transcript_segment SET text = text || ' (đã sửa)' WHERE id = $1`, [line]);
       const erasing = erase(value);
       let waiting = false;
       for (let i = 0; i < 100 && !waiting; i += 1) {
@@ -299,7 +311,7 @@ suite('the erasure in meeting text (#2594, L5 part 2)', () => {
       expect(waiting).toBe(true);
       await editor.query('COMMIT');
       const out = await erasing;
-      expect(erasedRows(out, 'crove_meetings.transcript_segment.text')).toBe(0);
+      expect(erasedRows(out, 'ludy_meetings.transcript_segment.text')).toBe(0);
     } finally {
       await editor.end();
     }
@@ -322,14 +334,14 @@ suite('the erasure in meeting text (#2594, L5 part 2)', () => {
     const shared = randomUUID();
     const make = async (org: string, recorder: string) => {
       await sqlAdmin(
-        `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+        `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
          VALUES ($1, $2, 'Họp ngắn chỉ có tiêu đề', 'vi', '2026-11-10T03:00:00Z', '2026-11-10T03:30:00Z', 600, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 20, current_date + 365)`,
         [org, shared, users[recorder]],
       );
     };
     await make(orgId, 'recorder');
     await make(otherOrgId, 'outsider');
-    const stamp = async (org: string) => (await sqlAdmin<{ s: string }>(`SELECT crove_meetings.text_stamp($1, $2, false, false)::text AS s`, [org, shared])).rows[0]?.s as string;
+    const stamp = async (org: string) => (await sqlAdmin<{ s: string }>(`SELECT ludy_meetings.text_stamp($1, $2, false, false)::text AS s`, [org, shared])).rows[0]?.s as string;
     const [a, b] = [await stamp(orgId), await stamp(otherOrgId)];
     expect(a).not.toBe(b);
     // Stable for the same text, and not the first 64 bits of an unkeyed md5 of the title.
@@ -339,11 +351,11 @@ suite('the erasure in meeting text (#2594, L5 part 2)', () => {
   });
 
   it('fails the find when the database refuses a meeting scan (only a timeout is skipped)', async () => {
-    await sqlAdmin('REVOKE EXECUTE ON FUNCTION crove_meetings.personal_row_ids(text, text) FROM crove_tenant');
+    await sqlAdmin('REVOKE EXECUTE ON FUNCTION ludy_meetings.personal_row_ids(text, text) FROM ludy_tenant');
     try {
       await expect(find('owner')).rejects.toBeTruthy();
     } finally {
-      await sqlAdmin('GRANT EXECUTE ON FUNCTION crove_meetings.personal_row_ids(text, text) TO crove_tenant');
+      await sqlAdmin('GRANT EXECUTE ON FUNCTION ludy_meetings.personal_row_ids(text, text) TO ludy_tenant');
     }
     // And the finder is whole again.
     expect((await find('owner')).meetingTextSkipped).toBe(false);

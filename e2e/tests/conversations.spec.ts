@@ -3,6 +3,7 @@
 // post, an owner answers it (the worker sends the reply through the sandbox and the message settles), hides it, adds a note and
 // resolves it, and the comment inbox lists it as resolved. The comment itself is a demo one the owner asks the sandbox for, which
 // takes the intake a platform's notice takes. Each test has its own user and org.
+import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 import { exec, sql } from '../lib/db.ts';
 import { createOrg, newEmail, signInNewUser } from '../lib/session.ts';
@@ -17,8 +18,8 @@ async function publishOnSandbox(page: Page, channel: string, body: string): Prom
   await page.getByLabel('Tên kênh thử').fill(channel);
   await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
   await expect(page.getByText(channel).first()).toBeVisible();
-  await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('link', { name: 'Soạn bài' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
   await page.getByLabel('Nội dung chung').fill(body);
   await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
@@ -26,8 +27,8 @@ async function publishOnSandbox(page: Page, channel: string, body: string): Prom
   await expect(page.getByText('Lên lịch 1 kênh đã duyệt')).toBeVisible();
   await page.getByRole('button', { name: 'Lên lịch', exact: true }).click();
   const postId = new URL(page.url()).pathname.split('/').pop() ?? '';
-  exec(`UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postId });
-  await expect(page.locator('[data-slot="card"]').filter({ hasText: channel }).filter({ hasText: 'Viết riêng cho kênh này' }).getByText('Đã đăng', { exact: true })).toBeVisible({ timeout: 45_000 });
+  exec(`UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postId });
+  await expect(page.getByTestId('channel-card').filter({ hasText: channel }).getByText('Đã đăng', { exact: true })).toBeVisible({ timeout: 45_000 });
   return postId;
 }
 
@@ -50,10 +51,10 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   await comments.getByTestId('conversation-send').click();
   await expect(comments.getByTestId('conversation-status')).toHaveText('Đang chờ');
   await expect
-    .poll(() => sql<{ send_state: string }>(`SELECT m.send_state FROM crove_kernel.conversation_message m JOIN crove_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug' AND m.direction = 'out'`, { slug })[0]?.send_state, { timeout: 30_000 })
+    .poll(() => sql<{ send_state: string }>(`SELECT m.send_state FROM ludy_kernel.conversation_message m JOIN ludy_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug' AND m.direction = 'out'`, { slug })[0]?.send_state, { timeout: 30_000 })
     .toBe('sent');
   // One call row for it, made once.
-  expect(sql<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.external_call c JOIN crove_kernel.tenant t ON t.org_id = c.org_id WHERE t.slug = :'slug' AND c.step = 'reply'`, { slug })[0]?.n).toBe('1');
+  expect(sql<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.external_call c JOIN ludy_kernel.tenant t ON t.org_id = c.org_id WHERE t.slug = :'slug' AND c.step = 'reply'`, { slug })[0]?.n).toBe('1');
 
   // Hide the customer's comment (the worker asks the sandbox), then an internal note.
   await comments.getByTestId('conversation-hide').first().click();
@@ -70,6 +71,11 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/social/inbox\\?kind=comment_thread`));
   await expect(page.getByRole('heading', { name: 'Hộp thư', exact: true })).toBeVisible();
   await expect(page.getByRole('navigation').getByRole('region', { name: 'Hộp thư' }).getByRole('link', { name: 'Hội thoại' })).toBeVisible();
+  // Exactly one menu item is current on the Inbox (#3582): Posts (`social`) is a prefix of the Inbox's path and is not marked.
+  // (The app switcher's own Engage link opens the Inbox too, so only the menu's sections are counted.)
+  await expect(page.getByRole('navigation').locator('section a[aria-current="page"]')).toHaveCount(1);
+  await expect(page.getByRole('navigation').getByRole('link', { name: 'Hội thoại' })).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('navigation').getByRole('link', { name: 'Bài đăng', exact: true })).not.toHaveAttribute('aria-current', 'page');
   await page.getByTestId('conversation-tab-resolved').click();
   await expect(page.getByTestId('conversation-item')).toHaveCount(1);
   await expect(page.getByTestId('conversation-thread').getByText('Dạ còn hàng ạ, bạn nhắn số điện thoại nhé.')).toBeVisible();
@@ -85,7 +91,7 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   await panel.getByLabel('Tên liên hệ mới').fill('Chị Mai Hương');
   await panel.getByRole('button', { name: 'Tạo và gắn' }).click();
   await expect(panel.getByTestId('contact-name')).toHaveText('Chị Mai Hương');
-  expect(sql<{ name: string }>(`SELECT p.name FROM crove_kernel.conversation c JOIN crove_kernel.party p ON p.org_id = c.org_id AND p.id = c.party_id JOIN crove_kernel.tenant t ON t.org_id = c.org_id WHERE t.slug = :'slug'`, { slug })).toEqual([{ name: 'Chị Mai Hương' }]);
+  expect(sql<{ name: string }>(`SELECT p.name FROM ludy_kernel.conversation c JOIN ludy_kernel.party p ON p.org_id = c.org_id AND p.id = c.party_id JOIN ludy_kernel.tenant t ON t.org_id = c.org_id WHERE t.slug = :'slug'`, { slug })).toEqual([{ name: 'Chị Mai Hương' }]);
   // The intent (CV3, #2306): the stack has no model, so there is no suggestion; a person applies a label, and the list shows it and filters by it.
   await expect(page.getByTestId('intent-suggested')).toHaveCount(0);
   await page.getByTestId('intent-select').selectOption('complaint');
@@ -100,29 +106,43 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   await expect(page.getByTestId('conversation-status')).not.toHaveText('Đã xong');
   expect(postId).not.toBe('');
 
-  // The retention (CV6, #2305): 24 months by default, an owner picks 12, and it holds after a reload. Erasing the customer asks to
-  // confirm first and can be cancelled.
+  // The retention (CV6, #2305): 24 months by default, an owner picks 12, and it holds after a reload.
+  // It is an org setting (#3582): not on the Inbox, in Settings, and an owner finds it there.
+  const inboxUrl = page.url();
+  await expect(page.getByTestId('conversation-retention')).toHaveCount(0);
+  await page.goto(`/o/${slug}/settings/apps`);
   const retention = page.getByTestId('conversation-retention-select');
   await expect(retention).toHaveValue('24');
   await retention.selectOption('12');
   // A shorter retention asks first: it deletes the older threads tonight.
   await page.getByTestId('conversation-retention-yes').click();
-  await expect.poll(() => sql<{ m: string }>(`SELECT s.retention_months::text AS m FROM crove_kernel.conversation_setting s JOIN crove_kernel.tenant t ON t.org_id = s.org_id WHERE t.slug = :'slug'`, { slug })[0]?.m).toBe('12');
+  await expect.poll(() => sql<{ m: string }>(`SELECT s.retention_months::text AS m FROM ludy_kernel.conversation_setting s JOIN ludy_kernel.tenant t ON t.org_id = s.org_id WHERE t.slug = :'slug'`, { slug })[0]?.m).toBe('12');
   await page.reload();
   await expect(page.getByTestId('conversation-retention-select')).toHaveValue('12');
+  await page.goto(inboxUrl);
   // The reopened thread waits for the customer, in Pending.
   await page.getByTestId('conversation-tab-pending').click();
-  // The customer's message has its own erase button (for a customer who only replied in a thread), apart from the thread's.
-  await expect(page.getByTestId('conversation-message-erase-open').first()).toBeVisible();
-  await page.getByTestId('conversation-message-erase-open').first().click();
-  await expect(page.getByTestId('conversation-message-erase-confirm')).toBeVisible();
-  await page.getByTestId('conversation-message-erase-confirm').getByRole('button', { name: 'Hủy' }).click();
-  await expect(page.getByTestId('conversation-message-erase-confirm')).toBeHidden();
-  await page.getByTestId('conversation-erase-open').click();
-  await expect(page.getByTestId('conversation-erase-confirm')).toBeVisible();
-  await page.getByTestId('conversation-erase-confirm').getByRole('button', { name: 'Hủy' }).click();
-  await expect(page.getByTestId('conversation-erase-confirm')).toBeHidden();
-  await expect(page.getByTestId('conversation-thread')).toBeVisible();
+  // Erasing the customer is a personal-data action (#3635): not in the thread's working row or in a comment bubble, but in the contact panel's own
+  // "Dữ liệu cá nhân" section, behind a modal that names what is lost and what stays. Esc and "Giữ lại" leave everything as it was.
+  const thread = page.getByTestId('conversation-thread');
+  await expect(thread).toBeVisible();
+  await expect(thread.getByTestId('conversation-erase-open')).toHaveCount(0);
+  await expect(thread.getByTestId('conversation-message-erase-open')).toHaveCount(0);
+  const personalData = page.getByTestId('contact-panel').getByTestId('conversation-personal-data');
+  await expect(personalData).toContainText('Dữ liệu cá nhân');
+  await personalData.getByTestId('conversation-erase-open').click();
+  const confirm = page.getByRole('dialog');
+  await expect(confirm).toBeVisible();
+  await expect(confirm).toContainText(/Xóa dữ liệu hội thoại của .+\?/);
+  await expect(confirm).toContainText('Liên hệ trong CRM, việc đã giao và báo giá được giữ nguyên');
+  await expect(confirm).toContainText('Không khôi phục được');
+  await expect(confirm).toContainText(/Xóa vĩnh viễn \d+ hội thoại/);
+  await page.keyboard.press('Escape');
+  await expect(confirm).toBeHidden();
+  await personalData.getByTestId('conversation-erase-open').click();
+  await confirm.getByRole('button', { name: 'Giữ lại' }).click();
+  await expect(confirm).toBeHidden();
+  await expect(thread).toBeVisible();
 
   // The contact's timeline (#2333): opening Chị Mai Hương on the Contacts screen shows the linked conversation (channel, kind, status)
   // without the message body, and clicking the channel link opens the Inbox on that thread.
@@ -149,7 +169,7 @@ test('a saved reply with the contact-name placeholder shows the contact name in 
   await expect(comments.getByTestId('conversation-item')).toHaveCount(1, { timeout: 30_000 });
 
   // The org's saved reply, with the placeholder, answering the words "còn hàng".
-  exec(`INSERT INTO crove_kernel.saved_reply (org_id, title, body, keywords) SELECT t.org_id, 'Chào khách', 'Chào {tên}, shop còn hàng ạ.', ARRAY['còn hàng'] FROM crove_kernel.tenant t WHERE t.slug = :'slug'`, { slug });
+  exec(`INSERT INTO ludy_kernel.saved_reply (org_id, title, body, keywords) SELECT t.org_id, 'Chào khách', 'Chào {tên}, shop còn hàng ạ.', ARRAY['còn hàng'] FROM ludy_kernel.tenant t WHERE t.slug = :'slug'`, { slug });
 
   // The Inbox: link the customer to a contact so the thread has a name, then pick the saved reply.
   await page.goto(`/o/${slug}/social/inbox?kind=comment_thread`);
@@ -171,6 +191,28 @@ test('a saved reply with the contact-name placeholder shows the contact name in 
   await page.getByTestId('conversation-send').click();
   // The screen shows the kernel's own Vietnamese message for this code.
   await expect(page.getByText('Câu trả lời còn chỗ trống {tên} chưa điền')).toBeVisible();
-  expect(sql<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.conversation_message m JOIN crove_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug' AND m.direction = 'out'`, { slug })[0]?.n).toBe('0');
+  expect(sql<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.conversation_message m JOIN ludy_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug' AND m.direction = 'out'`, { slug })[0]?.n).toBe('0');
   await expect(box).toHaveValue('Chào {tên}, shop còn hàng ạ.');
+});
+
+test('an Inbox with no channel connected says so and offers to connect one, instead of "no new conversations" (#3638)', async ({ page }) => {
+  await signInNewUser(page, newEmail('inbox-no-channels'));
+  const slug = await createOrg(page, 'Công ty Chưa Kênh');
+  await page.goto(`/o/${slug}/social/inbox`);
+  const empty = page.getByTestId('inbox-no-channels');
+  await expect(empty).toBeVisible();
+  await expect(empty).toContainText('Chưa kết nối kênh nào');
+  await expect(page.getByTestId('inbox-list-empty')).toHaveCount(0);
+  // The Inbox passes axe (WCAG 2.2 AA, serious and critical) at desktop and phone width, and the action is a 44 px target on the phone.
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(empty).toBeVisible();
+    const scan = await new AxeBuilder({ page }).include('[data-testid="inbox"]').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze();
+    const bad = scan.violations.filter((v) => v.impact === 'serious' || v.impact === 'critical').map((v) => `${width}: ${v.id} on ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(', ')}`);
+    expect(bad).toEqual([]);
+  }
+  const box = await page.getByTestId('inbox-connect-channel').boundingBox();
+  expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+  await page.getByTestId('inbox-connect-channel').click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/social/channels`));
 });

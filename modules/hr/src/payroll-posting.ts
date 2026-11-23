@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The posting proposal of an approved pay run (issue #2532; payroll plan docs/plan/payroll.md section 6.4 and row 18, ADR-0046). `hr.payroll.posting.prepare` is the preparer of
 // kernel.proposal.request for `finance.payroll_posting.record` (the finance proposal path): it reads the frozen run in the requester's context (owners and admins only, the people tables
-// are never read as the system actor or the worker), builds the entry from stored figures with the account map of the entity's chart (@crove/l10n-vn, every row of it still `commentary`
+// are never read as the system actor or the worker), builds the entry from stored figures with the account map of the entity's chart (@ludy/l10n-vn, every row of it still `commentary`
 // until the accountant confirms row 18, #2535), checks it as a general journal voucher through finance's own check (`finance.payroll_posting.check`, regime-aware), and returns the draft. It writes nothing. A person approves the
 // proposal; nothing here posts. The lines are one per account, never per person: the detail stays on the run, and Kế toán approves from the totals by account.
 //
 // No model call is made: everything here is deterministic over stored facts, and the posting works with AI off.
-import { PAYROLL_REGIMES, PAYROLL_POSTING_COMMAND, zHrPostingRequest, JOURNAL_VOUCHER_KIND, type PayrollPostingProposal } from '@crove/kernel-contract';
-import { PAY_FUNCTIONS, PAYROLL_POSTING_MAPS, PostingRefusedError, buildPosting, money, toMoney, type PayFunction, type PayrollRegime, type PostingLine } from '@crove/l10n-vn';
+import { PAYROLL_REGIMES, PAYROLL_POSTING_COMMAND, zHrPostingRequest, JOURNAL_VOUCHER_KIND, type PayrollPostingProposal } from '@ludy/kernel-contract';
+import { PAY_FUNCTIONS, PAYROLL_POSTING_MAPS, PostingRefusedError, buildPosting, money, toMoney, type PayFunction, type PayrollRegime, type PostingLine } from '@ludy/l10n-vn';
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 const FUNDS = ['retirement_death', 'sickness_maternity', 'work_accident', 'health', 'unemployment'] as const;
@@ -19,7 +19,7 @@ const monthEnd = (month: string): string => {
   const [year, m] = month.split('-').map(Number) as [number, number];
   return new Date(Date.UTC(year, m, 0)).toISOString().slice(0, 10);
 };
-export const monthLabel = (month: string): string => `${month.slice(5)}/${month.slice(0, 4)}`;
+const monthLabel = (month: string): string => `${month.slice(5)}/${month.slice(0, 4)}`;
 const incompleteAdjustment = () =>
   new DomainError('HR_POSTING_ADJUSTMENTS', 422, 'Bảng lương có dòng điều chỉnh làm trước khi ghi nhận bộ phận và các quỹ bảo hiểm nên chưa hạch toán được tháng này');
 const mismatch = (what: string) => new DomainError('HR_POSTING_MISMATCH', 422, `Số liệu của bảng lương không khớp (${what}); không lập được bút toán`, { what });
@@ -117,7 +117,7 @@ async function finishPosting(
 export async function buildRunPosting(ctx: CommandContext, runId: string, lock: boolean): Promise<BuiltPosting> {
   if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
   let query = ctx.trx
-    .selectFrom('crove_hr.payroll_run')
+    .selectFrom('ludy_hr.payroll_run')
     .select(['id', 'legal_entity_id', 'month', 'status', 'approval', 'approved_by'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', runId);
@@ -126,7 +126,7 @@ export async function buildRunPosting(ctx: CommandContext, runId: string, lock: 
   if (!run) throw new DomainError('HR_RUN_NOT_FOUND', 404, 'Không tìm thấy bảng lương này');
   if (run.status !== 'approved') throw new DomainError('HR_RUN_NOT_APPROVED', 409, 'Chỉ bảng lương đã được duyệt mới hạch toán được');
   const stored = await ctx.trx
-    .selectFrom('crove_hr.payroll_line')
+    .selectFrom('ludy_hr.payroll_line')
     .select(['employee_id', 'employment_id', 'kind', 'status', 'gross', 'employee_insurance', 'employer_insurance', 'union_fee', 'pit', 'net', 'breakdown'])
     .where('org_id', '=', ctx.orgId)
     .where('run_id', '=', runId)
@@ -142,7 +142,7 @@ export async function buildRunPosting(ctx: CommandContext, runId: string, lock: 
   const employments =
     employmentIds.length === 0
       ? []
-      : await ctx.trx.selectFrom('crove_hr.payroll_employment').select(['id', 'pay_function']).where('org_id', '=', ctx.orgId).where('id', 'in', employmentIds).execute();
+      : await ctx.trx.selectFrom('ludy_hr.payroll_employment').select(['id', 'pay_function']).where('org_id', '=', ctx.orgId).where('id', 'in', employmentIds).execute();
   const functionOf = new Map(employments.map((e) => [e.id, e.pay_function]));
 
   const lines: PostingLine[] = stored.map((l) => {
@@ -171,7 +171,7 @@ export async function buildRunPosting(ctx: CommandContext, runId: string, lock: 
   return { payrollRun: run, date, regime, result, lines: stored.length, adjustments: stored.filter((l) => l.kind !== 'pay').length, nets: netsByPerson(stored) };
 }
 
-// The same entry rebuilt from the run's totals by cost department (crove_hr.payroll_run_totals), never from a person's line: what the verification of a posting or of a payment reads, so
+// The same entry rebuilt from the run's totals by cost department (ludy_hr.payroll_run_totals), never from a person's line: what the verification of a posting or of a payment reads, so
 // whoever may approve it (an owner, an admin, or a member holding finance.proposal.approve) can check it, and nothing per person is read or returned (#2751). The function checks the caller
 // itself; a run it does not show is a run not found. It refuses what cannot be summed (an adjustment line, a line not calculated, one without its cost department or its per-fund split).
 export interface BuiltTotals {
@@ -208,7 +208,7 @@ export function groupProblem(g: StoredGroup): string | null {
 }
 export async function buildRunPostingFromTotals(ctx: CommandContext, runId: string): Promise<BuiltTotals> {
   if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
-  const { rows } = await sql<{ totals: unknown }>`SELECT crove_hr.payroll_run_totals(${runId}::uuid) AS totals`.execute(ctx.trx);
+  const { rows } = await sql<{ totals: unknown }>`SELECT ludy_hr.payroll_run_totals(${runId}::uuid) AS totals`.execute(ctx.trx);
   const t = rows[0]?.totals as
     | { runId: string; legalEntityId: string; month: string; status: string; approvedBy: string | null; approvalTotals: unknown; counts: Record<string, number>; groups: StoredGroup[] }
     | null
@@ -256,7 +256,7 @@ export const prepareRunPosting = defineCommand({
     const { payrollRun, date, regime, result } = built;
     // One proposal per run: another still open ends it, and one already posted is refused by finance's check (a rejected or expired one does not).
     const open = await ctx.trx
-      .selectFrom('crove_kernel.proposal')
+      .selectFrom('ludy_kernel.proposal')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('command', '=', PAYROLL_POSTING_COMMAND)

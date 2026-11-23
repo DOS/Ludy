@@ -3,8 +3,8 @@
 // login role; the token is the only credential, a bad, expired or revoked token gets the same answer as an unknown one, and nothing else of the org comes back.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { QUOTE_LOGO_MAX_BYTES, QUOTE_LOGO_TYPES, QUOTE_TOKEN_PATTERN, type QuoteDocument } from '@crove/kernel-contract';
-import { readVerified, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { QUOTE_LOGO_MAX_BYTES, QUOTE_LOGO_TYPES, QUOTE_TOKEN_PATTERN, type QuoteDocument } from '@ludy/kernel-contract';
+import { readVerified, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
 import { sniffType } from './sniff.ts';
 
 export const QUOTE_VIEWS_PER_MINUTE = 60;
@@ -18,7 +18,7 @@ export async function quoteView(runtime: Runtime, body: unknown): Promise<QuoteD
   const input = zView.safeParse(body);
   if (!input.success) return null;
   return runtime.orgless(async (db) => {
-    const { rows } = await sql<{ page: QuoteDocument | null }>`SELECT crove_crm.quote_link_view(${input.data.token}) AS page`.execute(db);
+    const { rows } = await sql<{ page: QuoteDocument | null }>`SELECT ludy_crm.quote_link_view(${input.data.token}) AS page`.execute(db);
     return rows[0]?.page ?? null;
   });
 }
@@ -40,7 +40,7 @@ export async function quoteLogo(runtime: Runtime, store: BlobStore, body: unknow
   if (!input.success) return null;
   const file = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ logo: { storageKey: string; generation: string | null; sha256: string; contentType: string; sizeBytes: string | number } | null }>`
-      SELECT crove_crm.quote_link_logo(${input.data.token}) AS logo`.execute(db);
+      SELECT ludy_crm.quote_link_logo(${input.data.token}) AS logo`.execute(db);
     return rows[0]?.logo ?? null;
   });
   return file ? readLogoFile(store, file) : null;

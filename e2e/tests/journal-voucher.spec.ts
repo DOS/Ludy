@@ -13,7 +13,7 @@ test('enter a general journal voucher, approve it and find it numbered in the jo
   const slug = await createOrg(page, 'Công ty Bút Toán');
 
   await test.step('enter the voucher on the journal screen', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Bút toán' }).click();
     await page.getByRole('button', { name: 'Lập phiếu kế toán' }).click();
     const form = page.getByRole('form', { name: 'Phiếu kế toán khác' });
@@ -42,7 +42,7 @@ test('enter a general journal voucher, approve it and find it numbered in the jo
   });
 
   await test.step('the entry is in the journal as NVK00001', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Bút toán' }).click();
     await expect(page.getByText('NVK00001 Trích trước lương tháng 10')).toBeVisible();
   });
@@ -51,10 +51,10 @@ test('enter a general journal voucher, approve it and find it numbered in the jo
     const rows = sql<{ number: number; lines: string }>(
       `SELECT v.number,
               (SELECT string_agg(l.account_code || ':' || l.debit::text || ':' || l.credit::text, ',' ORDER BY l.line_no)
-                 FROM crove_finance.journal_line l WHERE l.org_id = e.org_id AND l.entry_id = e.id) AS lines
-         FROM crove_finance.journal_voucher v
-         JOIN crove_kernel.tenant t ON t.org_id = v.org_id
-         JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = v.id
+                 FROM ludy_finance.journal_line l WHERE l.org_id = e.org_id AND l.entry_id = e.id) AS lines
+         FROM ludy_finance.journal_voucher v
+         JOIN ludy_kernel.tenant t ON t.org_id = v.org_id
+         JOIN ludy_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = v.id
         WHERE t.slug = :'slug'`,
       { slug },
     );

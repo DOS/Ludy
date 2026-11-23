@@ -6,12 +6,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { EgressError, Runtime, type EgressResponse } from '@crove/kernel-runtime';
-import { LINK_PREVIEW_PER_MINUTE, socialCommands, socialQueries, type LinkPreview } from '@crove/mod-social';
-import type { ExtractClient } from '@crove/extract-contract';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { EgressError, Runtime, type EgressResponse } from '@ludy/kernel-runtime';
+import { LINK_PREVIEW_PER_MINUTE, socialCommands, socialQueries, type LinkPreview } from '@ludy/mod-social';
+import type { ExtractClient } from '@ludy/extract-contract';
 import { runLinkPreviewJob } from '../src/link-preview.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -46,14 +46,14 @@ suite('social link previews on PostgreSQL (#641)', () => {
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const viewer = await person('viewer');
-    await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, viewer, 'viewer']));
+    await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, viewer, 'viewer']));
     return { orgId, owner, viewer };
   }
 
   const request = (o: { orgId: string }, user: string, url: string) => rt.execute<LinkPreview>('social.link_preview.request', { url }, { actor: asUser(user), orgId: o.orgId });
   const get = (o: { orgId: string }, user: string, url: string) => rt.query<LinkPreview | null>('social.link_preview.get', { url }, { actor: asUser(user), orgId: o.orgId });
   const requests = (o: { orgId: string }) =>
-    admin(async (c) => (await c.query<{ id: string; payload: { preview_id: string } }>("SELECT id, payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.link_preview.requested' ORDER BY created_at", [o.orgId])).rows);
+    admin(async (c) => (await c.query<{ id: string; payload: { preview_id: string } }>("SELECT id, payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.link_preview.requested' ORDER BY created_at", [o.orgId])).rows);
   const html = (body: string, contentType = 'text/html; charset=utf-8', status = 200) => async (url: string): Promise<EgressResponse> => ({ url, status, contentType, body: Buffer.from(body), truncated: false });
   const job = (o: { orgId: string }, previewId: string, fetch: (url: string) => Promise<EgressResponse>, client = extract) => runLinkPreviewJob({ runtime: worker, extract: client, fetch }, o.orgId, previewId);
 
@@ -66,15 +66,15 @@ suite('social link previews on PostgreSQL (#641)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    pool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 2 });
+    pool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 2 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
@@ -113,7 +113,7 @@ suite('social link previews on PostgreSQL (#641)', () => {
     expect(await requests(o)).toHaveLength(1);
 
     // A day later it is read again, keeping the old answer meanwhile.
-    await admin((c) => c.query("UPDATE crove_social.link_preview SET fetched_at = now() - interval '25 hours' WHERE org_id = $1", [o.orgId]));
+    await admin((c) => c.query("UPDATE ludy_social.link_preview SET fetched_at = now() - interval '25 hours' WHERE org_id = $1", [o.orgId]));
     expect(await request(o, o.owner, url)).toMatchObject({ status: 'pending', title: 'Khai trương cửa hàng' });
     expect(await requests(o)).toHaveLength(2);
   });
@@ -153,7 +153,7 @@ suite('social link previews on PostgreSQL (#641)', () => {
 
     await admin((c) =>
       c.query(
-        "INSERT INTO crove_social.link_preview (org_id, url, url_sha256, status, requested_at) SELECT $1, 'https://n.example/' || g, md5(g::text) || md5((g + 1)::text), 'pending', now() FROM generate_series(1, $2) g",
+        "INSERT INTO ludy_social.link_preview (org_id, url, url_sha256, status, requested_at) SELECT $1, 'https://n.example/' || g, md5(g::text) || md5((g + 1)::text), 'pending', now() FROM generate_series(1, $2) g",
         [o.orgId, LINK_PREVIEW_PER_MINUTE],
       ),
     );
@@ -164,7 +164,7 @@ suite('social link previews on PostgreSQL (#641)', () => {
     const grants = await admin(async (c) =>
       (
         await c.query<{ privilege_type: string }>(
-          "SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'link_preview' ORDER BY 1",
+          "SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'ludy_tenant' AND table_schema = 'ludy_social' AND table_name = 'link_preview' ORDER BY 1",
         )
       ).rows.map((r) => r.privilege_type),
     );

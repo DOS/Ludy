@@ -10,12 +10,12 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { Publisher } from '@crove/channel';
-import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, sweepMetrics, type NotificationItem, type OutperformState } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { Publisher } from '@ludy/channel';
+import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, sweepMetrics, type NotificationItem, type OutperformState } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -29,7 +29,7 @@ suite('social posts doing much better than usual on PostgreSQL (#1132)', () => {
   let db: Db;
   let rt: Runtime;
   let workerPool: pg.Pool;
-  // The worker's runtime (the crove_worker login): only it enters an org's system context.
+  // The worker's runtime (the ludy_worker login): only it enters an org's system context.
   let worker: Runtime;
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
   const system = { type: 'system' as const, component: 'test' };
@@ -53,7 +53,7 @@ suite('social posts doing much better than usual on PostgreSQL (#1132)', () => {
   async function connection(orgId: string, owner: string, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         orgId,
         id,
         'sandbox',
@@ -70,7 +70,7 @@ suite('social posts doing much better than usual on PostgreSQL (#1132)', () => {
     const roles = { admin: await person('admin'), author: await person('author'), assignee: await person('assignee') };
     const role = { admin: 'admin', author: 'member', assignee: 'member' } as const;
     for (const [key, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
     }
     return { orgId, owner, ...roles, a: await connection(orgId, owner, 'Trang thử'), b: await connection(orgId, owner, 'Kênh khác'), dispatched: new Set() };
   }
@@ -82,16 +82,16 @@ suite('social posts doing much better than usual on PostgreSQL (#1132)', () => {
   async function published(o: Org, conn: string, hoursAgo: number, metrics: Record<string, number> | null, opts: { capturedHoursAgo?: number; story?: boolean } = {}): Promise<{ postId: string; variantId: string }> {
     const { postId } = await exec<{ postId: string }>(o, o.author, 'social.post.create', { body: `Bài ${hoursAgo} giờ trước`, channels: [{ connectionId: conn }] });
     return admin(async (c) => {
-      await c.query('UPDATE crove_social.post SET assignee_user_id = $2 WHERE id = $1', [postId, o.assignee]);
+      await c.query('UPDATE ludy_social.post SET assignee_user_id = $2 WHERE id = $1', [postId, o.assignee]);
       const { rows } = await c.query<{ id: string }>(
-        `UPDATE crove_social.post_variant SET status = 'published', published_at = now() - make_interval(hours => $2::int), external_post_id = $3,
+        `UPDATE ludy_social.post_variant SET status = 'published', published_at = now() - make_interval(hours => $2::int), external_post_id = $3,
            settings = CASE WHEN $4::boolean THEN coalesce(settings, '{}'::jsonb) || '{"postType": "story"}'::jsonb ELSE settings END
          WHERE post_id = $1 RETURNING id`,
         [postId, hoursAgo, `ext-${randomUUID().slice(0, 8)}`, opts.story === true],
       );
       const variantId = rows[0]?.id as string;
       if (metrics) {
-        await c.query('INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics, captured_at) VALUES ($1, $2, $3, $4, now() - make_interval(hours => $5::int))', [
+        await c.query('INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics, captured_at) VALUES ($1, $2, $3, $4, now() - make_interval(hours => $5::int))', [
           o.orgId,
           variantId,
           `k-${randomUUID().slice(0, 8)}`,
@@ -108,7 +108,7 @@ suite('social posts doing much better than usual on PostgreSQL (#1132)', () => {
   }
   const capture = (o: Org, variantId: string, metrics: Record<string, number>, hoursAgo = 0) =>
     admin((c) =>
-      c.query('INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics, captured_at) VALUES ($1, $2, $3, $4, now() - make_interval(hours => $5::int))', [
+      c.query('INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics, captured_at) VALUES ($1, $2, $3, $4, now() - make_interval(hours => $5::int))', [
         o.orgId,
         variantId,
         `k-${randomUUID().slice(0, 8)}`,
@@ -121,7 +121,7 @@ suite('social posts doing much better than usual on PostgreSQL (#1132)', () => {
 
   // What the worker does for each new event of the org: the dispatch, in the org's system context.
   async function deliver(o: Org): Promise<number> {
-    const events = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 ORDER BY created_at, id', [o.orgId])).rows);
+    const events = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 ORDER BY created_at, id', [o.orgId])).rows);
     let sent = 0;
     for (const e of events) {
       if (o.dispatched.has(e.id)) continue;
@@ -133,21 +133,21 @@ suite('social posts doing much better than usual on PostgreSQL (#1132)', () => {
   type List = { items: NotificationItem[] };
   const notices = async (o: Org, user: string) => (await rt.query<List>('social.notification.list', {}, { actor: asUser(user), orgId: o.orgId })).items.filter((i) => i.kind === 'post_outperforming');
   const events = (o: Org) =>
-    admin(async (c) => (await c.query<{ n: number }>("SELECT count(*)::int AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.outperforming'", [o.orgId])).rows[0]?.n ?? 0);
+    admin(async (c) => (await c.query<{ n: number }>("SELECT count(*)::int AS n FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.outperforming'", [o.orgId])).rows[0]?.n ?? 0);
   const mails = (o: Org) =>
     admin(
       async (c) =>
         (
           await c.query<{ user_id: string; subject: string }>(
-            `SELECT n.user_id, m.subject FROM crove_kernel.mail_message m
-             JOIN crove_social.notification n ON n.org_id = m.org_id AND n.id = m.source_id
+            `SELECT n.user_id, m.subject FROM ludy_kernel.mail_message m
+             JOIN ludy_social.notification n ON n.org_id = m.org_id AND n.id = m.source_id
              WHERE m.org_id = $1 AND m.source = 'social.notification.dispatch' AND n.kind = 'post_outperforming'`,
             [o.orgId],
           )
         ).rows,
     );
-  const marker = (variantId: string) => admin(async (c) => (await c.query<{ at: Date | null }>('SELECT outperform_notified_at AS at FROM crove_social.post_variant WHERE id = $1', [variantId])).rows[0]?.at ?? null);
-  const checked = (variantId: string) => admin(async (c) => (await c.query<{ at: Date | null }>('SELECT outperform_checked_at AS at FROM crove_social.post_variant WHERE id = $1', [variantId])).rows[0]?.at ?? null);
+  const marker = (variantId: string) => admin(async (c) => (await c.query<{ at: Date | null }>('SELECT outperform_notified_at AS at FROM ludy_social.post_variant WHERE id = $1', [variantId])).rows[0]?.at ?? null);
+  const checked = (variantId: string) => admin(async (c) => (await c.query<{ at: Date | null }>('SELECT outperform_checked_at AS at FROM ludy_social.post_variant WHERE id = $1', [variantId])).rows[0]?.at ?? null);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -158,16 +158,16 @@ suite('social posts doing much better than usual on PostgreSQL (#1132)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
     const asWorker = new URL(adminUrl);
-    asWorker.username = 'crove_worker';
+    asWorker.username = 'ludy_worker';
     asWorker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorker.toString(), max: 6 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
@@ -315,12 +315,12 @@ suite('social posts doing much better than usual on PostgreSQL (#1132)', () => {
     });
     // Captured just now, so the first sweep does not ask about them, and weighed long ago.
     await history(o, conn, 10, 10);
-    await admin((c) => c.query('UPDATE crove_social.post_variant SET outperform_checked_at = now() WHERE org_id = $1', [o.orgId]));
+    await admin((c) => c.query('UPDATE ludy_social.post_variant SET outperform_checked_at = now() WHERE org_id = $1', [o.orgId]));
     // Past its 24-hour capture by more than a day; already weighed; too young; one due for its 24-hour capture; and one
     // whose check failed at its 24-hour capture six hours ago (rolled back, so nothing is set), tried again now.
     const stale = await published(o, conn, 60, { reactions: 10 }, { capturedHoursAgo: 30 });
     const weighed = await published(o, conn, 50, null);
-    await admin((c) => c.query('UPDATE crove_social.post_variant SET outperform_checked_at = now() WHERE id = $1', [weighed.variantId]));
+    await admin((c) => c.query('UPDATE ludy_social.post_variant SET outperform_checked_at = now() WHERE id = $1', [weighed.variantId]));
     const young = await published(o, conn, 5, null);
     const fresh = await published(o, conn, 25, null);
     const retry = await published(o, conn, 31, { reactions: 50 }, { capturedHoursAgo: 6 });
@@ -334,12 +334,12 @@ suite('social posts doing much better than usual on PostgreSQL (#1132)', () => {
     const audits = () =>
       admin(
         async (c) =>
-          (await c.query<{ target_id: string }>("SELECT target_id FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.metrics.check_outperforming'", [o.orgId])).rows.map(
+          (await c.query<{ target_id: string }>("SELECT target_id FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.metrics.check_outperforming'", [o.orgId])).rows.map(
             (r) => r.target_id,
           ),
       );
     const snapshots = (variantId: string) =>
-      admin(async (c) => (await c.query<{ n: number }>("SELECT count(*)::int AS n FROM crove_social.metric_snapshot WHERE variant_id = $1 AND metrics <> '{}'::jsonb", [variantId])).rows[0]?.n ?? 0);
+      admin(async (c) => (await c.query<{ n: number }>("SELECT count(*)::int AS n FROM ludy_social.metric_snapshot WHERE variant_id = $1 AND metrics <> '{}'::jsonb", [variantId])).rows[0]?.n ?? 0);
 
     await sweepMetrics({ runtime: worker, broker: vault, workerDb: createDb(workerPool), publishers: { sandbox: platform } });
     for (const v of [weighed, young, fresh]) expect(await snapshots(v.variantId)).toBe(1);
@@ -352,8 +352,8 @@ suite('social posts doing much better than usual on PostgreSQL (#1132)', () => {
     expect((await notices(o, o.author)).map((n) => n.detail.ratio).sort()).toEqual(['3', '5']);
 
     // Seven hours on (the captures in an earlier bucket), every one of them is captured again: no check runs.
-    await admin((c) => c.query("UPDATE crove_social.metric_snapshot SET captured_at = captured_at - interval '7 hours', capture_key = capture_key || '-before' WHERE org_id = $1", [o.orgId]));
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET published_at = published_at - interval '7 hours' WHERE org_id = $1", [o.orgId]));
+    await admin((c) => c.query("UPDATE ludy_social.metric_snapshot SET captured_at = captured_at - interval '7 hours', capture_key = capture_key || '-before' WHERE org_id = $1", [o.orgId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET published_at = published_at - interval '7 hours' WHERE org_id = $1", [o.orgId]));
     const before = asked.length;
     await sweepMetrics({ runtime: worker, broker: vault, workerDb: createDb(workerPool), publishers: { sandbox: platform } });
     expect(asked.length).toBeGreaterThan(before);

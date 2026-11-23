@@ -4,13 +4,13 @@
 // is the opaque id a connection holds (it names a connection's hook, never an org). The route checks `X-Telegram-Bot-Api-Secret-Token` against the
 // secret derived from that hook under the deployment's key, in constant time, before it reads the body or asks the database; a missing header, a
 // hook of the wrong shape, an unknown hook and a wrong secret are refused with the same answer. A verified update that carries a customer's message
-// is parked in crove_kernel.conversation_inbound_pending for the worker, which finds the org from the stored connection by the hook; the notice
+// is parked in ludy_kernel.conversation_inbound_pending for the worker, which finds the org from the stored connection by the hook; the notice
 // names no org, and neither does the path or any answer (ADR-0039). A body is personal data of a third party, so the route logs nothing of it and
 // the table deletes it the moment it is stored. A verified update with no customer message in it (an edit, a group) is answered 200 and not parked,
 // so Telegram stops sending it and the queue holds messages only.
 import { sql } from 'kysely';
-import { TELEGRAM_HOOK_PATTERN, telegramChatEvents, telegramHookSecretOk, wrapTelegramChatNotice } from '@crove/channel';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
+import { TELEGRAM_HOOK_PATTERN, telegramBusinessState, telegramChatEvents, telegramHookSecretOk, wrapTelegramChatNotice } from '@ludy/channel';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
 
 export const TELEGRAM_WEBHOOK_PATH = '/api/channels/telegram/webhook/:hook';
 export const TELEGRAM_SECRET_HEADER = 'x-telegram-bot-api-secret-token';
@@ -94,14 +94,22 @@ export async function acceptTelegramWebhook(
   // Only the messages of the customer not yet seen and not too old are worth a place in the queue.
   const keys: string[] = [];
   for (const event of telegramChatEvents(update)) {
-    if (now - Date.parse(event.at) > TELEGRAM_NOTICE_MAX_AGE_MS) continue;
-    const key = `${request.hook}:${event.threadId}:${event.messageId}`;
+    // A removal carries no date of its own (it is dated at the earliest instant an event may have, so an erased customer is not brought back by it), and an
+    // edit carries the message's first date, not the edit's: the age of a message does not apply to either. The message id names its chat, so the key is the
+    // hook and the id.
+    if (!event.removed && !event.edited && now - Date.parse(event.at) > TELEGRAM_NOTICE_MAX_AGE_MS) continue;
+    // An edit repeats a message id on purpose (each edit is its own update), so it is told apart by the update's id.
+    const key = event.edited ? `${request.hook}:update:${(update as { update_id: number }).update_id}` : `${request.hook}:${event.removed ? 'removed:' : ''}${event.messageId}`;
     if (!replays?.has(key)) keys.push(key);
   }
+  // A `business_connection` update (a business account connected the bot, edited it or took it away, #3191) carries no message but is state the worker
+  // records: it is parked once per update id, so a redelivery is answered without being parked again.
+  const stateKey = telegramBusinessState(update) !== null ? `${request.hook}:update:${(update as { update_id: number }).update_id}` : null;
+  if (stateKey !== null && !replays?.has(stateKey)) keys.push(stateKey);
   if (keys.length === 0) return { status: 200, parked: false };
   try {
     await runtime.orgless(async (db) => {
-      await sql`SELECT crove_kernel.conversation_inbound_enqueue(${TELEGRAM_INTAKE_PROVIDER}, ${wrapTelegramChatNotice(request.hook, body)}::bytea)`.execute(db);
+      await sql`SELECT ludy_kernel.conversation_inbound_enqueue(${TELEGRAM_INTAKE_PROVIDER}, ${wrapTelegramChatNotice(request.hook, body)}::bytea)`.execute(db);
     });
   } catch (error) {
     // The definer refuses past 10000 waiting notices (53400), which the runtime maps to OVERLOADED. Telegram retries a delivery that was not

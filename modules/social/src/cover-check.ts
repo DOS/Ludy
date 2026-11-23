@@ -1,7 +1,7 @@
 // The cover and link card checks a channel's settings edit runs (social.post.create, social.variant.update), shared
 // with social.post.bulk_replace, which leaves a post out instead of refusing the whole command.
-import { zId } from '@crove/kernel-contract';
-import { DomainError, type CommandContext } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import { DomainError, type CommandContext } from '@ludy/kernel-runtime';
 import { COVER_IMAGE_MAX_BYTES, COVER_IMAGE_TYPES, LINK_CARD_DESCRIPTION_MAX, LINK_CARD_THUMB_MAX_BYTES, LINK_CARD_THUMB_TYPES, LINK_CARD_TITLE_MAX, coverOf, isProvider, linkCardOf } from './domain/channels.ts';
 
 // What checkCover would refuse, without throwing: social.post.bulk_replace leaves such a post out before it edits
@@ -14,7 +14,7 @@ export async function coverProblem(ctx: Pick<CommandContext, 'trx' | 'orgId'>, p
   // Stored in the lower case ids are kept in, so the hash and the worker's lookup see one spelling.
   (settings.cover as { fileId: string }).fileId = cover.fileId;
   const file = zId.safeParse(cover.fileId).success
-    ? await ctx.trx.selectFrom('crove_kernel.file').select(['source', 'content_type', 'size_bytes']).where('org_id', '=', ctx.orgId).where('id', '=', cover.fileId).executeTakeFirst()
+    ? await ctx.trx.selectFrom('ludy_kernel.file').select(['source', 'content_type', 'size_bytes']).where('org_id', '=', ctx.orgId).where('id', '=', cover.fileId).executeTakeFirst()
     : undefined;
   // Only images uploaded for posts, as for the post's media.
   if (!file || file.source !== 'social') return new DomainError('MEDIA_NOT_FOUND', 404, 'Không tìm thấy ảnh bìa này');
@@ -39,7 +39,7 @@ export async function linkCardProblem(ctx: Pick<CommandContext, 'trx' | 'orgId'>
   // Stored in lower case, as a cover's id is; a new card object, so the caller's nested value is never changed in place.
   settings.linkCard = { ...(settings.linkCard as Record<string, unknown>), thumbFileId: card.thumbFileId };
   const file = zId.safeParse(card.thumbFileId).success
-    ? await ctx.trx.selectFrom('crove_kernel.file').select(['source', 'content_type', 'size_bytes']).where('org_id', '=', ctx.orgId).where('id', '=', card.thumbFileId).executeTakeFirst()
+    ? await ctx.trx.selectFrom('ludy_kernel.file').select(['source', 'content_type', 'size_bytes']).where('org_id', '=', ctx.orgId).where('id', '=', card.thumbFileId).executeTakeFirst()
     : undefined;
   if (!file || file.source !== 'social') return new DomainError('MEDIA_NOT_FOUND', 404, 'Không tìm thấy ảnh của thẻ liên kết');
   if (!LINK_CARD_THUMB_TYPES.includes(file.content_type)) return new DomainError('LINK_CARD_THUMB_TYPE', 422, 'Ảnh của thẻ liên kết phải là ảnh JPG hoặc PNG');

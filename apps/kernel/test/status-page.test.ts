@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { BlobStore, Runtime } from '@crove/kernel-runtime';
+import type { BlobStore, Runtime } from '@ludy/kernel-runtime';
 import { memoryAlertGate } from '../src/alert-gate.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -107,7 +107,7 @@ describe('prober', () => {
     extraction_document_failures: 0,
   };
   const config = (overrides: Partial<ProberConfig> = {}): ProberConfig => ({
-    databaseUrl: 'postgres://crove_prober:pw@db:5432/postgres',
+    databaseUrl: 'postgres://ludy_prober:pw@db:5432/postgres',
     webhookUrl: undefined,
     webhookFormat: 'generic',
     telegramChatId: undefined,

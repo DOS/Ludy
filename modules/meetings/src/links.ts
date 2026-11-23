@@ -5,7 +5,7 @@
 // CRM module, so it is checked through that module's query (a deployment without CRM cannot link one) and has no foreign key: modules name no other module's schema.
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
+import type { MemberRole } from '@ludy/db';
 import {
   zMeetingLinkAdd,
   zMeetingLinkRemove,
@@ -20,8 +20,8 @@ import {
   type MeetingOfTarget,
   type MeetingStatus,
   type MeetingVisibility,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { vnDay } from './retention.ts';
 import { openMeeting } from './transcript.ts';
 
@@ -70,7 +70,7 @@ function userOf(actor: CommandContext['actor']): string {
 
 // The meeting, as the caller may read it (the table's own policy): one the caller does not read is not found, so a link cannot tell that it exists.
 async function recordedMeeting(ctx: CommandContext, meetingId: string, userId: string): Promise<void> {
-  const meeting = await ctx.trx.selectFrom('crove_meetings.meeting').select(['id', 'recorder_user_id']).where('org_id', '=', ctx.orgId).where('id', '=', meetingId).executeTakeFirst();
+  const meeting = await ctx.trx.selectFrom('ludy_meetings.meeting').select(['id', 'recorder_user_id']).where('org_id', '=', ctx.orgId).where('id', '=', meetingId).executeTakeFirst();
   if (!meeting) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
   if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can change its links');
 }
@@ -81,12 +81,12 @@ const targetMissing = () => new DomainError('LINK_TARGET_NOT_FOUND', 404, 'The p
 // booking (a synced busy block is deleted and rewritten by every calendar sync, and would take the link with it), a deal by the CRM module's query.
 async function checkTarget(ctx: CommandContext, kind: MeetingLinkKind, targetId: string, userId: string): Promise<void> {
   if (kind === 'party') {
-    const found = await ctx.trx.selectFrom('crove_kernel.party').select('id').where('org_id', '=', ctx.orgId).where('id', '=', targetId).executeTakeFirst();
+    const found = await ctx.trx.selectFrom('ludy_kernel.party').select('id').where('org_id', '=', ctx.orgId).where('id', '=', targetId).executeTakeFirst();
     if (!found) throw targetMissing();
     return;
   }
   if (kind === 'calendar_event') {
-    const found = await ctx.trx.selectFrom('crove_kernel.calendar_event').select('id').where('org_id', '=', ctx.orgId).where('id', '=', targetId).where('status', '=', 'active').where('user_id', '=', userId).where('kind', 'in', ['manual', 'booking']).executeTakeFirst();
+    const found = await ctx.trx.selectFrom('ludy_kernel.calendar_event').select('id').where('org_id', '=', ctx.orgId).where('id', '=', targetId).where('status', '=', 'active').where('user_id', '=', userId).where('kind', 'in', ['manual', 'booking']).executeTakeFirst();
     if (!found) throw targetMissing();
     return;
   }
@@ -125,15 +125,15 @@ export const meetingLinkAdd = defineCommand({
     await checkTarget(ctx, input.kind, input.targetId, userId);
 
     const column = COLUMN[input.kind];
-    const same = await ctx.trx.selectFrom('crove_meetings.meeting_link').selectAll().where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where(column, '=', input.targetId).executeTakeFirst();
+    const same = await ctx.trx.selectFrom('ludy_meetings.meeting_link').selectAll().where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where(column, '=', input.targetId).executeTakeFirst();
     // The same link again is the same link: nothing is written or audited twice.
     if (same) return toLink(same as unknown as LinkRow);
     if (input.kind === 'deal') {
-      const other = await ctx.trx.selectFrom('crove_meetings.meeting_link').select(['id', 'deal_id']).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('deal_id', 'is not', null).executeTakeFirst();
+      const other = await ctx.trx.selectFrom('ludy_meetings.meeting_link').select(['id', 'deal_id']).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('deal_id', 'is not', null).executeTakeFirst();
       if (other) {
         // A deal that was deleted left its link behind (a deal has no foreign key): such a link is dropped, not a reason to refuse the new one.
         if (await dealIsGone(ctx, other.deal_id as string)) {
-          await ctx.trx.deleteFrom('crove_meetings.meeting_link').where('org_id', '=', ctx.orgId).where('id', '=', other.id).execute();
+          await ctx.trx.deleteFrom('ludy_meetings.meeting_link').where('org_id', '=', ctx.orgId).where('id', '=', other.id).execute();
           ctx.audit({ meetingId: input.meetingId, linkId: other.id, kind: 'deal', targetId: other.deal_id, removed: true, reason: 'DEAL_DELETED' });
         } else {
           throw new DomainError('MEETING_HAS_DEAL', 409, 'This meeting is already linked to a deal; remove that link first');
@@ -142,7 +142,7 @@ export const meetingLinkAdd = defineCommand({
     }
 
     const row = await ctx.trx
-      .insertInto('crove_meetings.meeting_link')
+      .insertInto('ludy_meetings.meeting_link')
       .values({ org_id: ctx.orgId, id: randomUUID(), meeting_id: input.meetingId, [column]: input.targetId, created_by: userId } as never)
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -162,9 +162,9 @@ export const meetingLinkRemove = defineCommand({
   handler: async (ctx, input): Promise<MeetingLinkRemoved> => {
     const userId = userOf(ctx.actor);
     await recordedMeeting(ctx, input.meetingId, userId);
-    const row = await ctx.trx.selectFrom('crove_meetings.meeting_link').selectAll().where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('id', '=', input.linkId).executeTakeFirst();
+    const row = await ctx.trx.selectFrom('ludy_meetings.meeting_link').selectAll().where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('id', '=', input.linkId).executeTakeFirst();
     if (!row) throw new DomainError('LINK_NOT_FOUND', 404, 'Link not found');
-    await ctx.trx.deleteFrom('crove_meetings.meeting_link').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('id', '=', input.linkId).execute();
+    await ctx.trx.deleteFrom('ludy_meetings.meeting_link').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('id', '=', input.linkId).execute();
     const removed = toLink(row as unknown as LinkRow);
     // Removing a link is audited (L1): who, which meeting, which target (ids only).
     ctx.audit({ meetingId: input.meetingId, linkId: input.linkId, kind: removed.kind, targetId: removed.targetId, removed: true });
@@ -178,14 +178,14 @@ export const meetingLinkList = defineQuery({
   input: zMeetingRef,
   access: READERS,
   handler: async (ctx: QueryContext, input): Promise<MeetingLink[]> => {
-    const rows = await ctx.trx.selectFrom('crove_meetings.meeting_link').selectAll().where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).orderBy('created_at').orderBy('id').execute();
+    const rows = await ctx.trx.selectFrom('ludy_meetings.meeting_link').selectAll().where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).orderBy('created_at').orderBy('id').execute();
     const links = rows as unknown as LinkRow[];
     // Names for display. A party is read under the caller's own policies. A calendar event title is shared on purpose with every reader of this meeting: the recorder
     // linked their own event (link.add takes no other), and the meeting's readers are the people the recorder chose.
     const partyIds = links.flatMap((l) => (l.party_id ? [l.party_id] : []));
     const eventIds = links.flatMap((l) => (l.calendar_event_id ? [l.calendar_event_id] : []));
-    const parties = partyIds.length ? await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', partyIds).execute() : [];
-    const events = eventIds.length ? await ctx.trx.selectFrom('crove_kernel.calendar_event').select(['id', 'title']).where('org_id', '=', ctx.orgId).where('id', 'in', eventIds).execute() : [];
+    const parties = partyIds.length ? await ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', partyIds).execute() : [];
+    const events = eventIds.length ? await ctx.trx.selectFrom('ludy_kernel.calendar_event').select(['id', 'title']).where('org_id', '=', ctx.orgId).where('id', 'in', eventIds).execute() : [];
     const names = new Map<string, string | null>([...parties.map((p) => [p.id, p.name] as const), ...events.map((e) => [e.id, e.title] as const)]);
     return links.map((l) => toLink(l, names.get((l.party_id ?? l.calendar_event_id) ?? '') ?? null));
   },
@@ -200,8 +200,8 @@ export const meetingsOfTarget = defineQuery({
   handler: async (ctx: QueryContext, input): Promise<MeetingOfTarget[]> => {
     const column = COLUMN[input.kind];
     const rows = await ctx.trx
-      .selectFrom('crove_meetings.meeting_link as l')
-      .innerJoin('crove_meetings.meeting as m', (join) => join.onRef('m.org_id', '=', 'l.org_id').onRef('m.id', '=', 'l.meeting_id'))
+      .selectFrom('ludy_meetings.meeting_link as l')
+      .innerJoin('ludy_meetings.meeting as m', (join) => join.onRef('m.org_id', '=', 'l.org_id').onRef('m.id', '=', 'l.meeting_id'))
       .select(['l.id as link_id', 'm.id as meeting_id', 'm.title', 'm.started_at', 'm.status', 'm.visibility', 'm.recorder_user_id'])
       .where('l.org_id', '=', ctx.orgId)
       .where(`l.${column}`, '=', input.targetId)
@@ -251,21 +251,21 @@ export const meetingLinkSuggest = defineQuery({
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder gets suggestions');
     const none: MeetingLinkSuggested = { tainted: true, ai: 'off', parties: [], deals: [] };
-    const segments = await ctx.trx.selectFrom('crove_meetings.transcript_segment').select('text').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).orderBy('start_seconds').orderBy('id').execute();
+    const segments = await ctx.trx.selectFrom('ludy_meetings.transcript_segment').select('text').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).orderBy('start_seconds').orderBy('id').execute();
     const raw = segments.map((r) => r.text).join(' ').slice(0, TRANSCRIPT_SCAN_MAX);
     if (raw.trim() === '') return none;
     // One fold for the transcript and the names alike (the search's own, in SQL), so a name and the text are always read the same way.
-    const folded = await sql<{ body: string }>`SELECT crove_kernel.search_fold(${raw}) AS body`.execute(ctx.trx);
+    const folded = await sql<{ body: string }>`SELECT ludy_kernel.search_fold(${raw}) AS body`.execute(ctx.trx);
     const body = ` ${folded.rows[0]?.body ?? ''} `;
     if (body.trim() === '') return none;
-    const linked = await ctx.trx.selectFrom('crove_meetings.meeting_link').select(['party_id', 'deal_id']).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).execute();
+    const linked = await ctx.trx.selectFrom('ludy_meetings.meeting_link').select(['party_id', 'deal_id']).where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).execute();
     const linkedParties = linked.flatMap((l) => (l.party_id ? [l.party_id] : []));
     const hasDeal = linked.some((l) => l.deal_id !== null);
 
     // Contacts: the folded name, as a whole phrase, of at least three characters, not yet linked. The kernel party table is read under the recorder's own policies.
     const { rows } = await sql<{ id: string; name: string; folded: string }>`
-      SELECT p.id, p.name, f.folded FROM crove_kernel.party p
-      CROSS JOIN LATERAL (SELECT crove_kernel.search_fold(p.name) AS folded) f
+      SELECT p.id, p.name, f.folded FROM ludy_kernel.party p
+      CROSS JOIN LATERAL (SELECT ludy_kernel.search_fold(p.name) AS folded) f
       WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND p.id <> ALL(${linkedParties}::uuid[])
         AND pg_catalog.length(f.folded) >= 3 AND pg_catalog.strpos(${body}, ' ' || f.folded || ' ') > 0
       ORDER BY p.id LIMIT ${PARTY_SCAN_MAX}`.execute(ctx.trx);
@@ -288,7 +288,7 @@ export const meetingLinkSuggest = defineQuery({
     const deals: MeetingLinkSuggested['deals'] = [];
     if (open.length > 0) {
       const titles = await sql<{ i: string; folded: string }>`
-        SELECT t.i::text AS i, crove_kernel.search_fold(t.title) AS folded FROM unnest(${open.map((d) => d.title)}::text[]) WITH ORDINALITY AS t(title, i)`.execute(ctx.trx);
+        SELECT t.i::text AS i, ludy_kernel.search_fold(t.title) AS folded FROM unnest(${open.map((d) => d.title)}::text[]) WITH ORDINALITY AS t(title, i)`.execute(ctx.trx);
       for (const row of titles.rows) {
         const d = open[Number(row.i) - 1];
         if (d && mentionsOf(body, row.folded) > 0) deals.push({ dealId: d.id, title: d.title, partyId: d.partyId, partyName: d.partyName });

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# WAL archiving and point-in-time recovery of a Crove docker compose stack (issue #2120). Runbook:
+# WAL archiving and point-in-time recovery of a Ludy docker compose stack (issue #2120). Runbook:
 # docs/runbooks/backup-and-restore.md, "Point in time recovery". Needs tools/backup/compose.wal.yml in COMPOSE_FILE (the
 # `db` service is then PostgreSQL plus pgBackRest, with the bucket's settings).
 #
@@ -20,11 +20,11 @@
 #                                a scratch copy never pushes into the bucket it was restored from; for the real thing,
 #                                after checking the data, run `wal.sh setup` to start archiving again (a new timeline)
 #
-# Settings: the stack's .env (CROVE_DIR, default this checkout), as backup.sh reads it. The bucket and its keys are
-# BACKUP_S3_*; the others are the WAL_* settings of tools/backup/compose.wal.yml (WAL_ENCRYPTION_KEY, WAL_S3_ENDPOINT,
-# WAL_S3_PORT, WAL_S3_REGION, WAL_S3_URI_STYLE, WAL_RETENTION_FULL, WAL_RETENTION_DIFF). WAL_ARCHIVE_TIMEOUT (default 60) is
-# the longest a write waits before its WAL segment is closed and pushed: the recovery point objective is that plus the
-# upload time. BACKUP_ALERT=off turns the failure alert off.
+# Settings: the stack's .env (LUDY_DIR / CROVE_DIR, default this checkout), as backup.sh reads it. The bucket and its
+# keys are BACKUP_S3_*; the others are the WAL_* settings of tools/backup/compose.wal.yml (WAL_STANZA default crove,
+# WAL_ENCRYPTION_KEY, WAL_S3_ENDPOINT, WAL_S3_PORT, WAL_S3_REGION, WAL_S3_URI_STYLE, WAL_RETENTION_FULL,
+# WAL_RETENTION_DIFF). WAL_ARCHIVE_TIMEOUT (default 60) is the longest a write waits before its WAL segment is closed and
+# pushed: the recovery point objective is that plus the upload time. BACKUP_ALERT=off turns the failure alert off.
 set -Eeuo pipefail
 LOG_TAG=wal
 # shellcheck source=tools/backup/lib.sh
@@ -55,11 +55,16 @@ COMMAND="${1:-}"
 }
 shift
 
-STEP="reading $CROVE_DIR/.env"
-load_env_file "$CROVE_DIR/.env"
+STEP="reading $LUDY_DIR/.env"
+load_env_file "$LUDY_DIR/.env"
 WAL_ARCHIVE_TIMEOUT="${WAL_ARCHIVE_TIMEOUT:-60}"
 [[ "$WAL_ARCHIVE_TIMEOUT" =~ ^[0-9]+$ ]] && [ "$WAL_ARCHIVE_TIMEOUT" -ge 10 ] && [ "$WAL_ARCHIVE_TIMEOUT" -le 3600 ] || {
   echo '[wal] WAL_ARCHIVE_TIMEOUT is a whole number of seconds, 10 to 3600' >&2
+  exit 2
+}
+WAL_STANZA="${WAL_STANZA:-crove}"
+[[ "$WAL_STANZA" =~ ^[a-z0-9][a-z0-9_-]{0,63}$ ]] || {
+  echo '[wal] WAL_STANZA must start with a lowercase letter or digit and use only lowercase letters, digits, _ or - (max 64 chars)' >&2
   exit 2
 }
 
@@ -97,12 +102,17 @@ full_backup_needed() {
 setup() {
   STEP='checking the database'
   wait_ready
-  local mode
+  local mode container_stanza
+  container_stanza="$(dc exec -T db printenv PGBACKREST_STANZA 2>/dev/null || true)"
+  if [ -n "$container_stanza" ] && [ "$container_stanza" != "$WAL_STANZA" ]; then
+    echo "[wal] db container PGBACKREST_STANZA='$container_stanza' differs from WAL_STANZA='$WAL_STANZA'; recreate db with \`docker compose up -d --no-deps --no-build db\` first" >&2
+    return 1
+  fi
   mode="$(db_psql -At -c 'SHOW archive_mode')"
   STEP='setting the archiving parameters'
   db_psql -c "ALTER SYSTEM SET wal_level = 'replica'" \
     -c "ALTER SYSTEM SET archive_mode = 'on'" \
-    -c "ALTER SYSTEM SET archive_command = 'pgbackrest --stanza=crove archive-push %p'" \
+    -c "ALTER SYSTEM SET archive_command = 'pgbackrest --stanza=${WAL_STANZA} archive-push %p'" \
     -c "ALTER SYSTEM SET archive_timeout = '${WAL_ARCHIVE_TIMEOUT}s'" >/dev/null
   # The stanza first: while archive_mode is on and the stanza is missing every push fails, and a restart cannot finish.
   STEP='creating the stanza'

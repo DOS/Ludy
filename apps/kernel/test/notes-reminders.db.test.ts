@@ -8,12 +8,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { todoDueInstant, type NoteSummary, type NoteWritten, type Todo, type TodoSummary, type TodoWritten } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
-import { notesCommands, notesQueries } from '@crove/mod-notes';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { todoDueInstant, type NoteSummary, type NoteWritten, type Todo, type TodoSummary, type TodoWritten } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
+import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { sweepNotesReminders } from '../src/notes-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -56,10 +56,10 @@ suite('to-do reminders and search on PostgreSQL (#1675)', () => {
     const limited = await user('limited');
     const { orgId } = await createOrg(app, asUser(owner), `Nhắc ${tag}`);
     const branch = await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, mine, other, limited]);
-      const id = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner]))
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, mine, other, limited]);
+      const id = (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner]))
         .rows[0]?.id as string;
-      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, limited, id, owner]);
+      await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, limited, id, owner]);
       return id;
     });
     const exec = <O>(userId: string, name: string, input: unknown = {}) => app.execute<O>(name, input, { actor: asUser(userId), orgId });
@@ -71,13 +71,13 @@ suite('to-do reminders and search on PostgreSQL (#1675)', () => {
         async (c) =>
           (
             await c.query<{ user_id: string; subject_id: string; detail: Record<string, unknown>; dedupe_key: string; legal_entity_id: string }>(
-              `SELECT user_id, subject_id, detail, dedupe_key, legal_entity_id FROM crove_kernel.notification WHERE org_id = $1 AND kind = 'notes.todo_due' ORDER BY created_at, id`,
+              `SELECT user_id, subject_id, detail, dedupe_key, legal_entity_id FROM ludy_kernel.notification WHERE org_id = $1 AND kind = 'notes.todo_due' ORDER BY created_at, id`,
               [orgId],
             )
           ).rows,
       );
     // Moves a to-do's reminder into the past, as time passing would.
-    const due = (todoId: string) => admin((c) => c.query(`UPDATE crove_notes.todo SET remind_at = now() - interval '1 minute' WHERE id = $1`, [todoId]));
+    const due = (todoId: string) => admin((c) => c.query(`UPDATE ludy_notes.todo SET remind_at = now() - interval '1 minute' WHERE id = $1`, [todoId]));
     return { orgId, owner, mine, other, limited, branch, exec, query, get, reminders, due };
   }
 
@@ -90,7 +90,7 @@ suite('to-do reminders and search on PostgreSQL (#1675)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const runtimeFor = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
@@ -100,8 +100,8 @@ suite('to-do reminders and search on PostgreSQL (#1675)', () => {
       const db = createDb(pool);
       return { db, runtime: new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...notesCommands], queries: [...kernelQueries({ inboundDomain: null }), ...notesQueries] }) };
     };
-    app = runtimeFor('crove_app', 'test-app-pw').runtime;
-    const w = runtimeFor('crove_worker', 'test-worker-pw');
+    app = runtimeFor('ludy_app', 'test-app-pw').runtime;
+    const w = runtimeFor('ludy_worker', 'test-worker-pw');
     worker = w.runtime;
     workerDb = w.db;
   }, 300_000);
@@ -130,7 +130,7 @@ suite('to-do reminders and search on PostgreSQL (#1675)', () => {
     // to a later day, the automatic reminder follows it.
     const late = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', { title: 'Quá hạn', dueOn: dayAhead(-1), timeZone: TZ });
     expect((await o.get(o.mine, late.todoId)).remindAt).toBe(todoDueInstant(dayAhead(-1), '08:00', TZ).toISOString());
-    const sentAt = (id: string) => admin(async (c) => (await c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM crove_notes.todo WHERE id = $1`, [id])).rows[0]?.reminded_at);
+    const sentAt = (id: string) => admin(async (c) => (await c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM ludy_notes.todo WHERE id = $1`, [id])).rows[0]?.reminded_at);
     expect(await sentAt(late.todoId)).not.toBeNull();
     await o.exec(o.mine, 'notes.todo.update', { todoId: late.todoId, revision: 1, title: 'Quá hạn', details: '', checklist: [], dueOn: dayAhead(2), dueTime: null, timeZone: TZ });
     expect((await o.get(o.mine, late.todoId)).remindAt).toBe(todoDueInstant(dayAhead(2), '08:00', TZ).toISOString());
@@ -163,14 +163,14 @@ suite('to-do reminders and search on PostgreSQL (#1675)', () => {
     expect((await o.get(o.mine, todoId)).remindAt).toBeNull();
     // A sent reminder is armed again by a new time, and not by an edit that leaves it.
     await edit(todoId, 6, { dueOn: dayAhead(6), reminder: 'auto' });
-    await admin((c) => c.query(`UPDATE crove_notes.todo SET reminded_at = now() WHERE id = $1`, [todoId]));
+    await admin((c) => c.query(`UPDATE ludy_notes.todo SET reminded_at = now() WHERE id = $1`, [todoId]));
     await edit(todoId, 7, { dueOn: dayAhead(6), details: 'Thêm chi tiết' });
-    const sent = await admin((c) => c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM crove_notes.todo WHERE id = $1`, [todoId]));
+    const sent = await admin((c) => c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM ludy_notes.todo WHERE id = $1`, [todoId]));
     expect(sent.rows[0]?.reminded_at).not.toBeNull();
     await edit(todoId, 8, { dueOn: dayAhead(7) });
-    const armed = await admin((c) => c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM crove_notes.todo WHERE id = $1`, [todoId]));
+    const armed = await admin((c) => c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM ludy_notes.todo WHERE id = $1`, [todoId]));
     expect(armed.rows[0]?.reminded_at).toBeNull();
-    const audit = await admin((c) => c.query<{ detail: unknown }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.todo.%'`, [o.orgId]));
+    const audit = await admin((c) => c.query<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.todo.%'`, [o.orgId]));
     const text = JSON.stringify(audit.rows);
     expect(text).toContain('"reminder"');
     for (const secret of [TITLE, 'Thêm chi tiết']) expect(text).not.toContain(secret);
@@ -189,7 +189,7 @@ suite('to-do reminders and search on PostgreSQL (#1675)', () => {
     for (const id of [open, done, deleted, cancelled, theirs]) await o.due(id);
     await o.exec(o.mine, 'notes.todo.complete', { todoId: done });
     await o.exec(o.mine, 'notes.todo.delete', { todoId: deleted });
-    await admin((c) => c.query(`UPDATE crove_notes.todo SET status = 'cancelled' WHERE id = $1`, [cancelled]));
+    await admin((c) => c.query(`UPDATE ludy_notes.todo SET status = 'cancelled' WHERE id = $1`, [cancelled]));
 
     await sweepNotesReminders({ runtime: worker, workerDb });
     const first = await o.reminders();
@@ -202,9 +202,9 @@ suite('to-do reminders and search on PostgreSQL (#1675)', () => {
     for (const r of first) expect(r.detail).toEqual({});
     // Nothing of the to-do's text anywhere the reminder wrote: the notification, the audit row, the outbox.
     const written = await admin(async (c) => [
-      ...(await c.query(`SELECT * FROM crove_kernel.notification WHERE org_id = $1`, [o.orgId])).rows,
-      ...(await c.query(`SELECT * FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'notes.todo.remind'`, [o.orgId])).rows,
-      ...(await c.query(`SELECT * FROM crove_kernel.outbox_event WHERE org_id = $1`, [o.orgId])).rows,
+      ...(await c.query(`SELECT * FROM ludy_kernel.notification WHERE org_id = $1`, [o.orgId])).rows,
+      ...(await c.query(`SELECT * FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'notes.todo.remind'`, [o.orgId])).rows,
+      ...(await c.query(`SELECT * FROM ludy_kernel.outbox_event WHERE org_id = $1`, [o.orgId])).rows,
     ]);
     const text = JSON.stringify(written);
     for (const secret of [TITLE, DETAILS, 'Việc của người khác']) expect(text).not.toContain(secret);
@@ -229,7 +229,7 @@ suite('to-do reminders and search on PostgreSQL (#1675)', () => {
     await o.due(again);
     await sweepNotesReminders({ runtime: worker, workerDb });
     expect((await o.reminders()).some((r) => r.subject_id === again)).toBe(false);
-    const claimed = await admin((c) => c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM crove_notes.todo WHERE id = $1`, [again]));
+    const claimed = await admin((c) => c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM ludy_notes.todo WHERE id = $1`, [again]));
     expect(claimed.rows[0]?.reminded_at).not.toBeNull();
     // Done before its time and reopened after it, or restored from the trash: not reminded late.
     await o.exec(o.mine, 'notes.todo.reopen', { todoId: done });

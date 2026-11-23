@@ -7,12 +7,15 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link, useParams } from '@tanstack/react-router';
 import { useLocale, useTranslations } from 'use-intl';
-import { OVERVIEW_RANGES, type FinanceOverview, type OverviewComparison, type OverviewFigure, type OverviewRange } from '@crove/kernel-contract';
-import { buttonVariants } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { cn } from '@crove/ui/lib/utils';
+import { OVERVIEW_RANGES, type FinanceOverview, type OverviewComparison, type OverviewFigure, type OverviewRange } from '@ludy/kernel-contract';
+import { buttonVariants } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { cn } from '@ludy/ui/lib/utils';
+import { CashForecastCard } from '../components/cash-forecast-card.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
+import { MonthCloseCard } from '../components/month-close-card.tsx';
+import { ExpenseVarianceCard } from './expense-variance-card.tsx';
 import { CardSkeleton, Empty, ErrorText, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
@@ -31,7 +34,7 @@ function CardLink({ card, slug, label }: { card: OverviewCard; slug: string; lab
   return <Link to="/o/$slug/vendors" params={{ slug }} className={className}>{label}</Link>;
 }
 
-function FigureCard({ card, figure, slug, comparison }: { card: OverviewCard; figure: OverviewFigure; slug: string; comparison: OverviewComparison }) {
+export function FigureCard({ card, figure, slug, comparison }: { card: OverviewCard; figure: OverviewFigure; slug: string; comparison: OverviewComparison }) {
   const t = useTranslations('financeOverview');
   const f = useFormat();
   const direction = directionOf(figure);
@@ -254,14 +257,19 @@ export function AccountingOverviewPage() {
       {data && (
         <>
           <p className="mb-3 text-xs text-subtle-foreground">{t('period', { from: f.date(data.from), to: f.date(data.to), previousFrom: f.date(data.previousFrom), previousTo: f.date(data.previousTo) })}</p>
-          <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {OVERVIEW_CARDS.map((card) => (
-              <li key={card}>
-                <FigureCard card={card} figure={data[card]} slug={slug} comparison={data.comparison} />
-              </li>
-            ))}
-          </ul>
-          {data.unmapped > 0 && <p className="mt-3 text-xs text-warning">{t('unmapped', { count: data.unmapped })}</p>}
+          {/* With no ledger data the next steps stand alone: four cards of 0 and "no change" say nothing (#3602). */}
+          {!data.empty && (
+            <>
+              <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {OVERVIEW_CARDS.map((card) => (
+                  <li key={card}>
+                    <FigureCard card={card} figure={data[card]} slug={slug} comparison={data.comparison} />
+                  </li>
+                ))}
+              </ul>
+              {data.unmapped > 0 && <p className="mt-3 text-xs text-warning">{t('unmapped', { count: data.unmapped })}</p>}
+            </>
+          )}
           {data.empty ? (
             <div className="mt-8">
               <FirstSteps slug={slug} />
@@ -269,8 +277,11 @@ export function AccountingOverviewPage() {
           ) : (
             <>
               <Explanation input={input} ready={entity.ready} version={overview.dataUpdatedAt} />
+              <CashForecastCard legalEntityId={entity.legalEntityId} ready={entity.ready} />
               <ResultsChart months={data.months} />
               <ExpenseMix expenses={data.expenses} />
+              <MonthCloseCard slug={slug} />
+              <ExpenseVarianceCard legalEntityId={entity.legalEntityId} ready={entity.ready} />
             </>
           )}
         </>

@@ -11,14 +11,15 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { JournalVoucherRequest, Timeline } from '@crove/kernel-contract';
-import { Runtime, type InputHashMode } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { JournalVoucherRequest, Timeline } from '@ludy/kernel-contract';
+import { Runtime, type InputHashMode } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { enterUser } from './context-token.ts';
+import { createPreCutoverClient, createPreCutoverPool } from './pre-cutover-db.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -30,6 +31,7 @@ suite('activity per legal entity on PostgreSQL (#1716)', () => {
   let adminUrl = '';
   let appUrl = '';
   let before = '';
+  let upgraded = false;
   let pool: pg.Pool;
   let rt: Runtime;
   let owner = '';
@@ -47,7 +49,7 @@ suite('activity per legal entity on PostgreSQL (#1716)', () => {
   const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = upgraded ? new pg.Client({ connectionString: adminUrl }) : createPreCutoverClient({ connectionString: adminUrl });
     await client.connect();
     try {
       return await fn(client);
@@ -56,7 +58,7 @@ suite('activity per legal entity on PostgreSQL (#1716)', () => {
     }
   }
 
-  // Runs statements as crove_app in the user's sealed context, in one transaction, committed unless it fails.
+  // Runs statements as ludy_app in the user's sealed context, in one transaction, committed unless it fails.
   async function asMember<T>(userId: string, fn: (client: pg.Client) => Promise<T>): Promise<T> {
     const client = new pg.Client({ connectionString: appUrl });
     await client.connect();
@@ -75,9 +77,9 @@ suite('activity per legal entity on PostgreSQL (#1716)', () => {
   }
 
   // The database starts before the keyed input hash's migration (20261103180000_crove_kernel_input_hash.sql), where
-  // crove_kernel.command_input_hash does not exist yet: the runtime that seeds it writes the plain hash (#1741).
-  function connect(inputHash: InputHashMode = 'keyed') {
-    pool = createPool({ connectionString: appUrl, max: 4 });
+  // ludy_kernel.command_input_hash does not exist yet: the runtime that seeds it writes the plain hash (#1741).
+  function connect(inputHash: InputHashMode = 'keyed', preCutover = false) {
+    pool = preCutover ? createPreCutoverPool({ connectionString: appUrl, max: 4 }) : createPool({ connectionString: appUrl, max: 4 });
     // No context token key: the database starts at a version before enter_user_context (#1822).
     rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS, contextTokenKey: null, inputHash }).register({
       commands: [...kernelCommands, ...financeCommands],
@@ -115,7 +117,7 @@ suite('activity per legal entity on PostgreSQL (#1716)', () => {
   const entityOf = async (recordType: string, recordId: string) =>
     (
       await admin((c) =>
-        c.query<{ e: string | null }>('SELECT legal_entity_id AS e FROM crove_kernel.activity WHERE org_id = $1 AND record_type = $2 AND record_id = $3', [
+        c.query<{ e: string | null }>('SELECT legal_entity_id AS e FROM ludy_kernel.activity WHERE org_id = $1 AND record_type = $2 AND record_id = $3', [
           orgId,
           recordType,
           recordId,
@@ -142,7 +144,7 @@ suite('activity per legal entity on PostgreSQL (#1716)', () => {
     app.username = 'crove_app';
     app.password = 'test-app-pw';
     appUrl = app.toString();
-    connect('sha256');
+    connect('sha256', true);
 
     const db = createDb(pool);
     const person = (name: string) => upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `${name}@activity-le.test`, name: null });
@@ -153,9 +155,9 @@ suite('activity per legal entity on PostgreSQL (#1716)', () => {
     const second = await person('admin');
     ({ orgId } = await createOrg(rt, asUser(owner), 'Hai pháp nhân'));
     await admin(async (c) => {
-      defaultEntity = (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
+      defaultEntity = (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
       branch = (
-        await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner])
+        await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner])
       ).rows[0]?.id as string;
       // A second approver, so the owner may approve what the member asked for (P10, four-eyes).
       for (const [user, role] of [
@@ -164,13 +166,13 @@ suite('activity per legal entity on PostgreSQL (#1716)', () => {
         [accountantA, 'member'],
         [accountantB, 'member'],
       ] as const) {
-        await c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]);
+        await c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]);
       }
       for (const [user, entity] of [
         [accountantA, defaultEntity],
         [accountantB, branch],
       ] as const) {
-        await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
+        await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
           orgId,
           user,
           entity,
@@ -182,6 +184,12 @@ suite('activity per legal entity on PostgreSQL (#1716)', () => {
     legacy = await record(voucher('Trích trước tiền điện chi nhánh tháng 9', branch));
 
     await migrate({ adminUrl, dir: MIGRATIONS });
+    upgraded = true;
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    const postApp = new URL(adminUrl);
+    postApp.username = 'ludy_app';
+    postApp.password = 'test-app-pw';
+    appUrl = postApp.toString();
     // Connections opened before the migration may hold plans of the table as it was.
     await pool.end();
     connect();
@@ -214,7 +222,7 @@ suite('activity per legal entity on PostgreSQL (#1716)', () => {
     // A later command on the branch's journal entry leaves its row there, as a reversal does (reversal.ts); the
     // timeline follows the entry the approval posted.
     await asMember(owner, (c) =>
-      c.query(`INSERT INTO crove_kernel.activity (org_id, record_type, record_id, kind, summary, actor_id) VALUES ($1, 'finance.journal_entry', $2, 'journal_entry.reversed', $3, $4)`, [
+      c.query(`INSERT INTO ludy_kernel.activity (org_id, record_type, record_id, kind, summary, actor_id) VALUES ($1, 'finance.journal_entry', $2, 'journal_entry.reversed', $3, $4)`, [
         orgId,
         fresh.journalEntryId,
         'Đảo bút toán: Trích trước tiền điện chi nhánh tháng 10 (450.000 đ)',
@@ -236,7 +244,7 @@ suite('activity per legal entity on PostgreSQL (#1716)', () => {
     // not org-level.
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.activity (org_id, record_type, record_id, kind, summary, actor_id, occurred_at)
+        `INSERT INTO ludy_kernel.activity (org_id, record_type, record_id, kind, summary, actor_id, occurred_at)
          VALUES ($1, 'kernel.org', $1, 'org.updated', 'Sửa thông tin tổ chức', $2, '2026-01-01T00:00:00Z')`,
         [orgId, owner],
       ),
@@ -247,7 +255,7 @@ suite('activity per legal entity on PostgreSQL (#1716)', () => {
           `SELECT count(*) FILTER (WHERE legal_entity_id = $1)::int AS b,
                   count(*) FILTER (WHERE legal_entity_id = $2)::int AS a,
                   count(*) FILTER (WHERE legal_entity_id IS NULL)::int AS org
-           FROM crove_kernel.activity`,
+           FROM ludy_kernel.activity`,
           [branch, defaultEntity],
         );
         return rows[0];
@@ -256,7 +264,7 @@ suite('activity per legal entity on PostgreSQL (#1716)', () => {
       await admin((c) =>
         c.query<{ b: number; org: number }>(
           `SELECT count(*) FILTER (WHERE legal_entity_id = $2)::int AS b, count(*) FILTER (WHERE legal_entity_id IS NULL)::int AS org
-           FROM crove_kernel.activity WHERE org_id = $1`,
+           FROM ludy_kernel.activity WHERE org_id = $1`,
           [orgId, branch],
         ),
       )
@@ -271,7 +279,7 @@ suite('activity per legal entity on PostgreSQL (#1716)', () => {
       (await rt.query<{ lastActivityAt: string | null }>('kernel.org.overview', {}, { actor: asUser(userId), orgId })).lastActivityAt;
     const newest = (
       await admin((c) =>
-        c.query<{ at: Date; e: string | null }>('SELECT occurred_at AS at, legal_entity_id AS e FROM crove_kernel.activity WHERE org_id = $1 ORDER BY occurred_at DESC, id DESC LIMIT 1', [orgId]),
+        c.query<{ at: Date; e: string | null }>('SELECT occurred_at AS at, legal_entity_id AS e FROM ludy_kernel.activity WHERE org_id = $1 ORDER BY occurred_at DESC, id DESC LIMIT 1', [orgId]),
       )
     ).rows[0];
     if (!newest) throw new Error('no activity row');
@@ -290,7 +298,7 @@ suite('activity per legal entity on PostgreSQL (#1716)', () => {
     );
     expect(await entityOf('kernel.legal_entity', added.id)).toEqual([added.id]);
     const sees = (userId: string) =>
-      asMember(userId, async (c) => (await c.query('SELECT 1 FROM crove_kernel.activity WHERE record_type = $1 AND record_id = $2', ['kernel.legal_entity', added.id])).rowCount);
+      asMember(userId, async (c) => (await c.query('SELECT 1 FROM ludy_kernel.activity WHERE record_type = $1 AND record_id = $2', ['kernel.legal_entity', added.id])).rowCount);
     expect(await sees(owner)).toBe(1);
     expect(await sees(accountantA)).toBe(0);
     expect(await sees(accountantB)).toBe(0);
@@ -301,7 +309,7 @@ suite('activity per legal entity on PostgreSQL (#1716)', () => {
       asMember(userId, async (c) =>
         (
           await c.query<{ e: string | null }>(
-            `INSERT INTO crove_kernel.activity (org_id, record_type, record_id, kind, summary, legal_entity_id)
+            `INSERT INTO ludy_kernel.activity (org_id, record_type, record_id, kind, summary, legal_entity_id)
              VALUES ($1, $2, $3, 'test.activity', 'x', $4) RETURNING legal_entity_id AS e`,
             [orgId, recordType, recordId, entity],
           )

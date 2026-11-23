@@ -5,12 +5,12 @@
 // escalation target of #1788 (the nearest active position up the chart held by a person who reads the entity), else to
 // the owners at the root (no position). The task keeps its entity, its parent and its history; a lease an agent held on
 // it ends (an in-progress task starts again as todo). The database moves them set-based and writes an activity row per
-// task (crove_kernel.task_reroute: a few statements whatever the count, its targets locked first, a task moved only to
+// task (ludy_kernel.task_reroute: a few statements whatever the count, its targets locked first, a task moved only to
 // a locked one, more rounds until none is stranded, each task answered once, a deadlock retried once), so a narrowing
 // never waits on how many tasks there are. One event per new holder and entity (kernel.task.rerouted) becomes one
 // notice for whoever has them now (kernel.notification.dispatch).
 import { sql } from 'kysely';
-import type { CommandContext } from '@crove/kernel-runtime';
+import type { CommandContext } from '@ludy/kernel-runtime';
 
 export interface ReroutedTask {
   taskId: string;
@@ -27,7 +27,7 @@ export const REROUTED_EVENT_TASKS = 200;
 // members, and its retry of a deadlock cannot release those earlier locks, so two such commands of an org must not
 // interleave.
 export async function lockChartChanges(ctx: Pick<CommandContext, 'trx' | 'orgId'>): Promise<void> {
-  const key = `crove_kernel.chart:${ctx.orgId}`;
+  const key = `ludy_kernel.chart:${ctx.orgId}`;
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${key}, 0))`.execute(ctx.trx);
 }
 
@@ -35,7 +35,7 @@ export async function rerouteStrandedTasks(ctx: CommandContext, positionIds: rea
   const positions = [...new Set(positionIds)];
   if (positions.length === 0) return [];
   const { rows } = await sql<{ task_id: string; from_position_id: string; legal_entity_id: string; to_position_id: string | null }>`
-    SELECT task_id, from_position_id, legal_entity_id, to_position_id FROM crove_kernel.task_reroute(${positions}::uuid[])`.execute(ctx.trx);
+    SELECT task_id, from_position_id, legal_entity_id, to_position_id FROM ludy_kernel.task_reroute(${positions}::uuid[])`.execute(ctx.trx);
   const moved = rows.map((r) => ({ taskId: r.task_id, fromPositionId: r.from_position_id, legalEntityId: r.legal_entity_id, toPositionId: r.to_position_id }));
   if (moved.length === 0) return moved;
   const groups = new Map<string, { toPositionId: string | null; legalEntityId: string; taskIds: string[] }>();
@@ -59,6 +59,6 @@ export async function rerouteStrandedTasks(ctx: CommandContext, positionIds: rea
 
 // The positions a person holds, for the role commands (their scope is what changes).
 export async function positionsHeldBy(ctx: Pick<CommandContext, 'trx' | 'orgId'>, userId: string): Promise<string[]> {
-  const rows = await ctx.trx.selectFrom('crove_kernel.position').select('id').where('org_id', '=', ctx.orgId).where('holder_user_id', '=', userId).execute();
+  const rows = await ctx.trx.selectFrom('ludy_kernel.position').select('id').where('org_id', '=', ctx.orgId).where('holder_user_id', '=', userId).execute();
   return rows.map((r) => r.id);
 }

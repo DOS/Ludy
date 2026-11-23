@@ -7,15 +7,15 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { STOCK_TRADES, vietnamToday, type StockItem, type StockTradeKey, type StockUnassignedLine } from '@crove/kernel-contract';
-import { Alert, AlertDescription } from '@crove/ui/components/alert';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { TableCell, TableRow } from '@crove/ui/components/table';
+import { STOCK_TRADES, vietnamToday, type StockItem, type StockTradeKey, type StockUnassignedLine } from '@ludy/kernel-contract';
+import { Alert, AlertDescription } from '@ludy/ui/components/alert';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { MarketplaceOrders, MarketplaceUnassigned } from '../components/marketplace-orders.tsx';
 import { LowStock, SuggestBar, SuggestionChip, lineKey, useLineSuggestions, type Suggestion } from '../components/stock-ai.tsx';
@@ -119,6 +119,17 @@ function MovesPanel({ item, canWrite, onClose }: { item: StockItem; canWrite: bo
   const reverse = useMutation({ mutationFn: (moveId: string) => client.stock.moves.reverse({ moveId }), onSuccess: refresh });
   // A reversal cannot be taken back, so the button asks once.
   const [confirming, setConfirming] = useState<string | null>(null);
+  // A partial return of a sale's goods (#3712): the quantity is typed once on the row of the sale's stock-out; the cost comes back with the month close.
+  // The key is the identity of one return: a retry of the same draft (a response that never came) sends the same key and writes no second move; typing another quantity is another return, so a new key.
+  const [returning, setReturning] = useState<{ id: string; quantity: string; key: string } | null>(null);
+  const giveBack = useMutation({
+    mutationFn: (v: { moveId: string; quantity: string; idempotencyKey: string }) => client.stock.moves.return(v),
+    // Only the draft that was sent is cleared: one opened on another row, or edited (a new key) meanwhile, stays.
+    onSuccess: (_data, v) => {
+      setReturning((cur) => (cur?.id === v.moveId && cur.key === v.idempotencyKey ? null : cur));
+      refresh();
+    },
+  });
   return (
     <Card className="mb-6 block p-4" data-testid="stock-moves">
       <div className="flex items-center justify-between gap-2">
@@ -141,6 +152,38 @@ function MovesPanel({ item, canWrite, onClose }: { item: StockItem; canWrite: bo
               <TableCell className={NUM}>{m.quantity}</TableCell>
               <TableCell className="px-4 py-3">{t(`sources.${m.source}`)}</TableCell>
               <TableCell className="px-4 py-3 text-right">
+                {canWrite && !m.reversed && m.returnable !== '0' && (
+                  returning?.id === m.id ? (
+                    <span className="mr-2 inline-flex items-center gap-2">
+                      <Input
+                        aria-label={t('returnQuantity', { left: m.returnable })}
+                        className="w-28"
+                        inputMode="decimal"
+                        placeholder={t('returnLeft', { left: m.returnable })}
+                        value={returning.quantity}
+                        onChange={(e) => setReturning({ id: m.id, quantity: e.target.value, key: crypto.randomUUID() })}
+                        data-testid="stock-move-return-quantity"
+                      />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        loading={giveBack.isPending}
+                        disabled={!/^\d{1,14}(\.\d{1,6})?$/.test(returning.quantity.trim()) || Number(returning.quantity) <= 0}
+                        onClick={() => giveBack.mutate({ moveId: m.id, quantity: returning.quantity.trim(), idempotencyKey: returning.key })}
+                        data-testid="stock-move-return-confirm"
+                      >
+                        {t('returnConfirm')}
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setReturning(null)}>
+                        {t('cancel')}
+                      </Button>
+                    </span>
+                  ) : (
+                    <Button variant="ghost" size="sm" className="mr-2" onClick={() => setReturning({ id: m.id, quantity: '', key: crypto.randomUUID() })} data-testid="stock-move-return">
+                      {t('return')}
+                    </Button>
+                  )
+                )}
                 {m.reversed ? (
                   <Badge variant="secondary">{t('reversed')}</Badge>
                 ) : (
@@ -174,7 +217,13 @@ function MovesPanel({ item, canWrite, onClose }: { item: StockItem; canWrite: bo
           ))}
         </DataTable>
       )}
+      {moves.data?.some((m) => m.source === 'sale_return') && (
+        <p className="mt-3 text-xs text-subtle-foreground" data-testid="stock-return-hint">
+          {t('returnHint')}
+        </p>
+      )}
       {reverse.error && <ErrorText>{errorMessage(reverse.error)}</ErrorText>}
+      {giveBack.error && <ErrorText>{errorMessage(giveBack.error)}</ErrorText>}
     </Card>
   );
 }
@@ -252,6 +301,15 @@ function CardPanel({ item, month, legalEntityId, onClose }: { item: { id: string
 // is kept as it is: its report reads what the close stored and the stock takes no more moves dated in it.
 function CloseMonthCard({ month, legalEntityId, slug }: { month: string; legalEntityId: string | undefined; slug: string }) {
   const t = useTranslations('stock');
+  const f = useFormat();
+  // Circular 99 asks a balance on 1381 (goods waiting to be resolved) without evidence of its cause to be expensed at the reporting date (#3712 slice 3). The code reads the balance and says
+  // so in fixed words; it is a warning only and never blocks the close. Nothing here needs AI.
+  const check = useQuery(orpc.stock.closeCheck.queryOptions({ input: { month, legalEntityId } }));
+  const warning = check.data?.applies ? (
+    <Alert className="mb-4" data-testid="stock-close-1381">
+      <AlertDescription>{t('close1381Warning', { amount: f.money(check.data.balance1381, 'VND') })}</AlertDescription>
+    </Alert>
+  ) : null;
   const [confirming, setConfirming] = useState(false);
   // A month with no cost has no entry to approve: after asking, the person is told so and confirms the direct close on its own.
   const [direct, setDirect] = useState(false);
@@ -301,7 +359,7 @@ function CloseMonthCard({ month, legalEntityId, slug }: { month: string; legalEn
   ) : (
     close.error && <ErrorText>{errorMessage(close.error)}</ErrorText>
   );
-  return direct ? (
+  const card = direct ? (
     <Card className="mb-4 block p-4" data-testid="stock-close-direct">
       <p className="max-w-3xl text-sm text-foreground">{t('closeDirectWarning', { month })}</p>
       {error}
@@ -333,6 +391,12 @@ function CloseMonthCard({ month, legalEntityId, slug }: { month: string; legalEn
         {t('closeMonth', { month })}
       </Button>
     </div>
+  );
+  return (
+    <>
+      {warning}
+      {card}
+    </>
   );
 }
 

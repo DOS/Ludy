@@ -6,12 +6,12 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { BlobNotFoundError, DomainError, Runtime, sha256Hex, type BlobStore, type CredentialBroker, type SessionStatusSource } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
-import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { BlobNotFoundError, DomainError, Runtime, sha256Hex, type BlobStore, type CredentialBroker, type SessionStatusSource } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
+import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { ConcurrencyLimiter } from '../src/concurrency.ts';
@@ -135,7 +135,7 @@ suite('meeting video tickets (#2703)', () => {
     expect(invited.status).toBe(200);
     const accepted = await rpc('invites/accept', name, { token: String(invited.body.acceptPath).split('#')[1] }, null);
     expect(accepted.status).toBe(200);
-    userIds.set(name, await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.user_account WHERE email = $1', [email])).rows[0]!.id));
+    userIds.set(name, await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.user_account WHERE email = $1', [email])).rows[0]!.id));
   }
 
   // A meeting recorded by `recorder`, readable by `attendee` too, with this video sealed into it.
@@ -155,7 +155,7 @@ suite('meeting video tickets (#2703)', () => {
       store.staged.set(stagingKey, bytes);
       await admin((c) =>
         c.query(
-          `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+          `INSERT INTO ludy_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
            VALUES ($1, $2, $3, $4, $5, 'meeting_video', now(), now() + interval '5 minutes')`,
           [orgId, uploadId, stagingKey, userIds.get('recorder'), 2 * 1024 * 1024 * 1024],
         ),
@@ -216,9 +216,9 @@ suite('meeting video tickets (#2703)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 8 });
     const db = createDb(pool);
@@ -243,7 +243,7 @@ suite('meeting video tickets (#2703)', () => {
     expect(created.status).toBe(200);
     slug = String(created.body.slug);
     orgId = String(created.body.orgId);
-    userIds.set('owner', await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.user_account WHERE email = $1', [accounts.get('owner')?.email])).rows[0]!.id));
+    userIds.set('owner', await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.user_account WHERE email = $1', [accounts.get('owner')?.email])).rows[0]!.id));
     await join('recorder', 'member');
     await join('attendee', 'member');
     await join('otherMember', 'member');
@@ -563,16 +563,16 @@ suite('meeting video tickets (#2703)', () => {
     // Re-recorded: the meeting now names another file.
     await run((meetingId) =>
       admin(async (c) => {
-        const other = (await c.query<{ id: string }>('SELECT f.id FROM crove_kernel.file f WHERE f.org_id = $1 AND f.id NOT IN (SELECT file_id FROM crove_meetings.meeting_video WHERE meeting_id = $2) LIMIT 1', [orgId, meetingId])).rows[0]!.id;
-        await c.query('UPDATE crove_meetings.meeting_video SET file_id = $1 WHERE meeting_id = $2', [other, meetingId]);
+        const other = (await c.query<{ id: string }>('SELECT f.id FROM ludy_kernel.file f WHERE f.org_id = $1 AND f.id NOT IN (SELECT file_id FROM ludy_meetings.meeting_video WHERE meeting_id = $2) LIMIT 1', [orgId, meetingId])).rows[0]!.id;
+        await c.query('UPDATE ludy_meetings.meeting_video SET file_id = $1 WHERE meeting_id = $2', [other, meetingId]);
       }),
     );
     // Resealed under another key id.
-    await run((meetingId) => admin(async (c) => void (await c.query(`UPDATE crove_meetings.media_key SET key_id = 'k-resealed' WHERE meeting_id = $1 AND kind = 'video'`, [meetingId]))));
+    await run((meetingId) => admin(async (c) => void (await c.query(`UPDATE ludy_meetings.media_key SET key_id = 'k-resealed' WHERE meeting_id = $1 AND kind = 'video'`, [meetingId]))));
     // Retention date passed.
-    await run((meetingId) => admin(async (c) => void (await c.query(`UPDATE crove_meetings.meeting_video SET video_retention_date = current_date - 2 WHERE meeting_id = $1`, [meetingId]))));
+    await run((meetingId) => admin(async (c) => void (await c.query(`UPDATE ludy_meetings.meeting_video SET video_retention_date = current_date - 2 WHERE meeting_id = $1`, [meetingId]))));
     // Key shredded.
-    await run((meetingId) => admin(async (c) => void (await c.query(`DELETE FROM crove_meetings.media_key WHERE meeting_id = $1 AND kind = 'video'`, [meetingId]))));
+    await run((meetingId) => admin(async (c) => void (await c.query(`DELETE FROM ludy_meetings.media_key WHERE meeting_id = $1 AND kind = 'video'`, [meetingId]))));
     // The meeting deleted.
     await run(async (meetingId) => void (await rpc('meetings/delete', 'recorder', { meetingId })));
   });

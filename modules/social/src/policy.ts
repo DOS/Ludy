@@ -3,9 +3,9 @@
 // content hash its reviewer saw (post_approval), and a person approves a variant's content once.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole, SocialVariantStatus } from '@crove/db';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole, SocialVariantStatus } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { approvalsInRound } from './domain/approval.ts';
 import { approvedValues, base, lockPost, lockVariants, refreshPostStatus, regateValues, setVariant, type Trx, type VariantRow } from './variants.ts';
 import { bannedChecker, bannedCommandBudget, bannedWordsOf, isBlocked } from './banned-words.ts';
@@ -27,7 +27,7 @@ export async function approvalsRequired(trx: Trx, orgId: string, connectionIds: 
   const out = new Map(connectionIds.map((id) => [id, 1]));
   if (connectionIds.length === 0) return out;
   const rows = await trx
-    .selectFrom('crove_social.channel_policy')
+    .selectFrom('ludy_social.channel_policy')
     .select(['channel_connection_id', 'approvals_required'])
     .where('org_id', '=', orgId)
     .where('channel_connection_id', 'in', [...connectionIds])
@@ -40,7 +40,7 @@ export async function approvalsRequired(trx: Trx, orgId: string, connectionIds: 
 export async function channelSignatures(trx: Trx, orgId: string, connectionIds: readonly string[]): Promise<Map<string, string>> {
   if (connectionIds.length === 0) return new Map();
   const rows = await trx
-    .selectFrom('crove_social.channel_policy')
+    .selectFrom('ludy_social.channel_policy')
     .select(['channel_connection_id', 'signature'])
     .where('org_id', '=', orgId)
     .where('channel_connection_id', 'in', [...new Set(connectionIds)])
@@ -65,7 +65,7 @@ export const zSignature = z
 export async function clientApprovalOn(trx: Trx, orgId: string, connectionIds: readonly string[]): Promise<Set<string>> {
   if (connectionIds.length === 0) return new Set();
   const rows = await trx
-    .selectFrom('crove_social.channel_policy')
+    .selectFrom('ludy_social.channel_policy')
     .select('channel_connection_id')
     .where('org_id', '=', orgId)
     .where('channel_connection_id', 'in', [...connectionIds])
@@ -79,11 +79,11 @@ export async function clientApprovalOn(trx: Trx, orgId: string, connectionIds: r
 // and a revoked link takes its answers back. A plan link (#902) was made for each of its posts' content then.
 export async function clientVerdict(trx: Trx, orgId: string, postId: string): Promise<'approved' | 'changes_requested' | null> {
   const { rows } = await sql<{ verdict: 'approved' | 'changes_requested' }>`
-    SELECT f.verdict FROM crove_social.review_feedback f
-    JOIN crove_social.review_link l ON l.org_id = f.org_id AND l.id = f.link_id
-    LEFT JOIN crove_social.review_link_post lp ON lp.org_id = f.org_id AND lp.link_id = f.link_id AND lp.post_id = f.post_id
+    SELECT f.verdict FROM ludy_social.review_feedback f
+    JOIN ludy_social.review_link l ON l.org_id = f.org_id AND l.id = f.link_id
+    LEFT JOIN ludy_social.review_link_post lp ON lp.org_id = f.org_id AND lp.link_id = f.link_id AND lp.post_id = f.post_id
     WHERE f.org_id = ${orgId}::uuid AND f.post_id = ${postId}::uuid AND f.verdict IN ('approved', 'changes_requested') AND NOT f.changed AND l.revoked_at IS NULL
-      AND CASE WHEN l.kind = 'plan' THEN lp.content_key ELSE l.content_key END = crove_social.review_content_key(${orgId}::uuid, ${postId}::uuid)
+      AND CASE WHEN l.kind = 'plan' THEN lp.content_key ELSE l.content_key END = ludy_social.review_content_key(${orgId}::uuid, ${postId}::uuid)
     ORDER BY f.created_at DESC, f.id DESC LIMIT 1`.execute(trx);
   return rows[0]?.verdict ?? null;
 }
@@ -91,7 +91,7 @@ export async function clientVerdict(trx: Trx, orgId: string, postId: string): Pr
 export async function fourEyesOn(trx: Trx, orgId: string, connectionIds: readonly string[]): Promise<Set<string>> {
   if (connectionIds.length === 0) return new Set();
   const rows = await trx
-    .selectFrom('crove_social.channel_policy')
+    .selectFrom('ludy_social.channel_policy')
     .select('channel_connection_id')
     .where('org_id', '=', orgId)
     .where('channel_connection_id', 'in', [...connectionIds])
@@ -104,7 +104,7 @@ export async function decisionsOf(trx: Trx, orgId: string, variantIds: readonly 
   const out = new Map<string, { decision: string; decidedBy: string; revision: number; contentHash: string; checklist: unknown }[]>();
   if (variantIds.length === 0) return out;
   const rows = await trx
-    .selectFrom('crove_social.post_approval')
+    .selectFrom('ludy_social.post_approval')
     .select(['variant_id', 'decision', 'decided_by', 'revision', 'content_hash', 'checklist'])
     .where('org_id', '=', orgId)
     .where('variant_id', 'in', [...variantIds])
@@ -133,7 +133,7 @@ export const policySet = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const userId = ctx.actor.userId;
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -141,7 +141,7 @@ export const policySet = defineCommand({
       .executeTakeFirst();
     if (!connection) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh này');
     await ctx.trx
-      .insertInto('crove_social.channel_policy')
+      .insertInto('ludy_social.channel_policy')
       .values({ org_id: ctx.orgId, channel_connection_id: input.connectionId, approvals_required: input.approvalsRequired, updated_by: userId })
       .onConflict((oc) => oc.columns(['org_id', 'channel_connection_id']).doUpdateSet({ approvals_required: input.approvalsRequired, updated_by: userId, updated_at: ctx.now }))
       .execute();
@@ -149,7 +149,7 @@ export const policySet = defineCommand({
     // its current content, it is approved; approved, scheduled or paused with fewer, it goes back to review and keeps
     // its place in the queue until the missing approvals are given.
     const touched = await ctx.trx
-      .selectFrom('crove_social.post_variant')
+      .selectFrom('ludy_social.post_variant')
       .select(['post_id'])
       .distinct()
       .where('org_id', '=', ctx.orgId)
@@ -222,7 +222,7 @@ export const remindersSet = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const userId = ctx.actor.userId;
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -231,7 +231,7 @@ export const remindersSet = defineCommand({
     if (!connection) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh này');
     // A new policy row keeps the default of one approval.
     await ctx.trx
-      .insertInto('crove_social.channel_policy')
+      .insertInto('ludy_social.channel_policy')
       .values({ org_id: ctx.orgId, channel_connection_id: input.connectionId, review_reminders: input.reviewReminders, updated_by: userId })
       .onConflict((oc) => oc.columns(['org_id', 'channel_connection_id']).doUpdateSet({ review_reminders: input.reviewReminders, updated_by: userId, updated_at: ctx.now }))
       .execute();
@@ -253,7 +253,7 @@ export const fourEyesSet = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const userId = ctx.actor.userId;
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -261,7 +261,7 @@ export const fourEyesSet = defineCommand({
       .executeTakeFirst();
     if (!connection) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh này');
     await ctx.trx
-      .insertInto('crove_social.channel_policy')
+      .insertInto('ludy_social.channel_policy')
       .values({ org_id: ctx.orgId, channel_connection_id: input.connectionId, four_eyes: input.fourEyes, updated_by: userId })
       .onConflict((oc) => oc.columns(['org_id', 'channel_connection_id']).doUpdateSet({ four_eyes: input.fourEyes, updated_by: userId, updated_at: ctx.now }))
       .execute();
@@ -283,7 +283,7 @@ export const shortLinksSet = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const userId = ctx.actor.userId;
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -291,7 +291,7 @@ export const shortLinksSet = defineCommand({
       .executeTakeFirst();
     if (!connection) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh này');
     await ctx.trx
-      .insertInto('crove_social.channel_policy')
+      .insertInto('ludy_social.channel_policy')
       .values({ org_id: ctx.orgId, channel_connection_id: input.connectionId, short_links: input.shortLinks, updated_by: userId })
       .onConflict((oc) => oc.columns(['org_id', 'channel_connection_id']).doUpdateSet({ short_links: input.shortLinks, updated_by: userId, updated_at: ctx.now }))
       .execute();
@@ -313,7 +313,7 @@ export const signatureSet = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const userId = ctx.actor.userId;
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -322,7 +322,7 @@ export const signatureSet = defineCommand({
     if (!connection) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh này');
     const signature = input.signature || null;
     await ctx.trx
-      .insertInto('crove_social.channel_policy')
+      .insertInto('ludy_social.channel_policy')
       .values({ org_id: ctx.orgId, channel_connection_id: input.connectionId, signature, updated_by: userId })
       .onConflict((oc) => oc.columns(['org_id', 'channel_connection_id']).doUpdateSet({ signature, updated_by: userId, updated_at: ctx.now }))
       .execute();
@@ -338,8 +338,8 @@ export const policyList = defineQuery({
   handler: async (ctx) => {
     // A revoked connection's policy row stays (it can get no new posts) but is not shown (#408).
     const rows = await ctx.trx
-      .selectFrom('crove_social.channel_policy as p')
-      .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'p.org_id').onRef('c.id', '=', 'p.channel_connection_id'))
+      .selectFrom('ludy_social.channel_policy as p')
+      .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'p.org_id').onRef('c.id', '=', 'p.channel_connection_id'))
       .select(['p.channel_connection_id', 'p.approvals_required', 'p.review_reminders', 'p.short_links', 'p.four_eyes', 'p.client_approval', 'p.signature', 'p.updated_by', 'p.updated_at'])
       .where('p.org_id', '=', ctx.orgId)
       .where('c.status', '<>', 'revoked')
@@ -359,8 +359,8 @@ export const channelWaiting = defineQuery({
   access: ALL,
   handler: async (ctx) => {
     const rows = await ctx.trx
-      .selectFrom('crove_social.post_variant as v')
-      .innerJoin('crove_social.post as p', (j) => j.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.post_id'))
+      .selectFrom('ludy_social.post_variant as v')
+      .innerJoin('ludy_social.post as p', (j) => j.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.post_id'))
       .select(['v.channel_connection_id', (eb) => eb.fn.countAll<string>().as('paused')])
       .where('v.org_id', '=', ctx.orgId)
       .where('v.status', '=', 'paused')
@@ -387,7 +387,7 @@ export const clientApprovalSet = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const userId = ctx.actor.userId;
     const connection = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -395,7 +395,7 @@ export const clientApprovalSet = defineCommand({
       .executeTakeFirst();
     if (!connection) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh này');
     await ctx.trx
-      .insertInto('crove_social.channel_policy')
+      .insertInto('ludy_social.channel_policy')
       .values({ org_id: ctx.orgId, channel_connection_id: input.connectionId, client_approval: input.clientApproval, updated_by: userId })
       .onConflict((oc) => oc.columns(['org_id', 'channel_connection_id']).doUpdateSet({ client_approval: input.clientApproval, updated_by: userId, updated_at: ctx.now }))
       .execute();
@@ -404,7 +404,7 @@ export const clientApprovalSet = defineCommand({
     const approved: string[] = [];
     if (!input.clientApproval) {
       const touched = await ctx.trx
-        .selectFrom('crove_social.post_variant')
+        .selectFrom('ludy_social.post_variant')
         .select(['post_id'])
         .distinct()
         .where('org_id', '=', ctx.orgId)

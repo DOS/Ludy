@@ -13,9 +13,9 @@
 // them: a post being queued is either seen or queued after the check.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { Db } from '@crove/db';
-import { DomainError, defineCommand, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { Db } from '@ludy/db';
+import { DomainError, defineCommand, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { queueRunway, type QueueSpec } from './domain/queue.ts';
 import { publishingHeld } from './publish-hold.ts';
 import { SLOT_FREED } from './variants.ts';
@@ -43,25 +43,25 @@ export const queueCheckLow = defineCommand({
   handler: async (ctx, input): Promise<{ state: QueueLowState; postingDays: number; filledDays: number }> => {
     const none = { postingDays: 0, filledDays: 0 };
     // Closed or offboarding since the scan (#1095): nobody is told.
-    const org = await ctx.trx.selectFrom('crove_kernel.tenant').select('status').where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select('status').where('org_id', '=', ctx.orgId).executeTakeFirst();
     if (org?.status !== 'active') return { state: 'skipped', ...none };
     // Held since the scan: nothing goes out, so nothing is missing yet.
     if (await publishingHeld(ctx)) return { state: 'skipped', ...none };
     const queue = await ctx.trx
-      .selectFrom('crove_social.queue')
+      .selectFrom('ludy_social.queue')
       .select(['id', 'channel_connection_id', 'time_zone', 'paused', 'low_days', 'low_alerted_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.queueId)
       .forUpdate()
       .executeTakeFirst();
     if (!queue || queue.low_days === null || queue.paused) return { state: 'skipped', ...none };
-    const channel = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('status').where('org_id', '=', ctx.orgId).where('id', '=', queue.channel_connection_id).executeTakeFirst();
+    const channel = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('status').where('org_id', '=', ctx.orgId).where('id', '=', queue.channel_connection_id).executeTakeFirst();
     if (channel?.status !== 'active') return { state: 'skipped', ...none };
-    const slots = await ctx.trx.selectFrom('crove_social.queue_slot').select(['weekday', 'minute', 'label_id']).where('org_id', '=', ctx.orgId).where('queue_id', '=', queue.id).where('active', '=', true).execute();
+    const slots = await ctx.trx.selectFrom('ludy_social.queue_slot').select(['weekday', 'minute', 'label_id']).where('org_id', '=', ctx.orgId).where('queue_id', '=', queue.id).where('active', '=', true).execute();
     const spec: QueueSpec = { timeZone: queue.time_zone, slots: slots.map((s) => ({ weekday: s.weekday, minute: s.minute, labelId: s.label_id })) };
     const now = ctx.now.getTime();
     const held = await ctx.trx
-      .selectFrom('crove_social.post_variant')
+      .selectFrom('ludy_social.post_variant')
       .select('queue_slot_at')
       .where('org_id', '=', ctx.orgId)
       .where('channel_connection_id', '=', queue.channel_connection_id)
@@ -79,12 +79,12 @@ export const queueCheckLow = defineCommand({
     if (!runway.low) {
       if (queue.low_alerted_at === null) return { state: 'filled', ...measured };
       // Refilled: the next dip tells the team again.
-      await ctx.trx.updateTable('crove_social.queue').set({ low_alerted_at: null }).where('org_id', '=', ctx.orgId).where('id', '=', queue.id).where('low_alerted_at', 'is not', null).execute();
+      await ctx.trx.updateTable('ludy_social.queue').set({ low_alerted_at: null }).where('org_id', '=', ctx.orgId).where('id', '=', queue.id).where('low_alerted_at', 'is not', null).execute();
       return { state: 'cleared', ...measured };
     }
     // Once per dip: only the check that sets the marker tells the team.
     const marked = await ctx.trx
-      .updateTable('crove_social.queue')
+      .updateTable('ludy_social.queue')
       .set({ low_alerted_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', queue.id)
@@ -105,9 +105,11 @@ export async function sweepQueueLow(deps: { runtime: Runtime; workerDb: Db }): P
   let alerted = 0;
   for (let page = 0; page < QUEUE_LOW_MAX_PAGES; page++) {
     const { rows } = await sql<{ org_id: string; queue_id: string }>`
-      SELECT org_id, queue_id FROM crove_social.queue_low_due(${after?.org ?? null}::uuid, ${after?.id ?? null}::uuid, ${QUEUE_LOW_PAGE}::int)`.execute(deps.workerDb);
+      SELECT org_id, queue_id FROM ludy_social.queue_low_due(${after?.org ?? null}::uuid, ${after?.id ?? null}::uuid, ${QUEUE_LOW_PAGE}::int)`.execute(deps.workerDb);
     for (const row of rows) {
       try {
+        // An app that is off for the org (ADR-0053) has nothing to do here: no call, no refusal row, no line in the log.
+        if (!(await deps.runtime.appOn(row.org_id, 'social'))) continue;
         const done = await deps.runtime.execute<{ state: QueueLowState }>('social.queue.check_low', { queueId: row.queue_id }, { actor: ACTOR, orgId: row.org_id });
         if (done.state === 'alerted') alerted += 1;
       } catch (error) {

@@ -7,12 +7,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { zTodayItems, type TodayItem } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, TODAY_SOCIAL_DUE } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { zTodayItems, type TodayItem } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, TODAY_SOCIAL_DUE } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -50,7 +50,7 @@ suite('social.today: what needs the member in Social (#2387)', () => {
     const roles = { admin: await person('admin'), limited: await person('limited'), free: await person('free'), viewer: await person('viewer') };
     const role = { admin: 'admin', limited: 'member', free: 'member', viewer: 'viewer' } as const;
     for (const [key, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
     }
     return { orgId, owner, ...roles };
   }
@@ -58,7 +58,7 @@ suite('social.today: what needs the member in Social (#2387)', () => {
   async function connection(orgId: string, owner: string, provider = 'sandbox') {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         orgId,
         id,
         provider,
@@ -79,8 +79,8 @@ suite('social.today: what needs the member in Social (#2387)', () => {
     await exec(o, author, 'social.post.submit', { postId });
     return postId;
   }
-  const schedule = (postId: string, at: Date) => admin((c) => c.query('UPDATE crove_social.post SET scheduled_at = $2 WHERE id = $1', [postId, at]));
-  const setVariant = (postId: string, connectionId: string, status: string) => admin((c) => c.query('UPDATE crove_social.post_variant SET status = $3 WHERE post_id = $1 AND channel_connection_id = $2', [postId, connectionId, status]));
+  const schedule = (postId: string, at: Date) => admin((c) => c.query('UPDATE ludy_social.post SET scheduled_at = $2 WHERE id = $1', [postId, at]));
+  const setVariant = (postId: string, connectionId: string, status: string) => admin((c) => c.query('UPDATE ludy_social.post_variant SET status = $3 WHERE post_id = $1 AND channel_connection_id = $2', [postId, connectionId, status]));
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -91,9 +91,9 @@ suite('social.today: what needs the member in Social (#2387)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -147,8 +147,8 @@ suite('social.today: what needs the member in Social (#2387)', () => {
     const ads = await connection(o.orgId, o.owner, 'sandbox_ads');
     // An e-invoice provider's connection is the finance module's: its sign-in breaking is not a Social channel to reconnect.
     const einvoice = await connection(o.orgId, o.owner, 'einvoice_sandbox');
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE id = ANY ($1::uuid[])", [[a, ads, einvoice]]));
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'error' WHERE id = $1", [b]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'expired' WHERE id = ANY ($1::uuid[])", [[a, ads, einvoice]]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'error' WHERE id = $1", [b]));
     const expected = [{ kind: 'flag', app: 'social', id: 'channels', title: { key: 'social.channels', params: { count: 2 } }, count: 2, severity: 'warn', href: '/social/channels' }];
     expect(await today(o, o.owner)).toEqual(expected);
     expect(await today(o, o.admin)).toEqual(expected);
@@ -157,7 +157,7 @@ suite('social.today: what needs the member in Social (#2387)', () => {
     expect(await today(o, o.limited)).toEqual([]);
     expect(await today(o, o.viewer)).toEqual([]);
     // Disconnected on purpose (revoked) is not a channel to reconnect.
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [a]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [a]));
     expect(ofKind(await today(o, o.owner), 'flag')[0]?.count).toBe(1);
   });
 
@@ -182,7 +182,7 @@ suite('social.today: what needs the member in Social (#2387)', () => {
     const list = await rt.query<unknown[]>('social.post.list', { stage: 'attention', limit: 200 }, { actor: asUser(o.limited), orgId: o.orgId });
     expect(list).toHaveLength(2);
     // An archived post leaves the count, and so does one that went out.
-    await admin((c) => c.query('UPDATE crove_social.post SET archived_at = now(), archived_by = $2 WHERE id = $1', [other, o.owner]));
+    await admin((c) => c.query('UPDATE ludy_social.post SET archived_at = now(), archived_by = $2 WHERE id = $1', [other, o.owner]));
     expect(block(await today(o, o.owner))[0]).toMatchObject({ count: 2 });
     await setVariant(own, mine, 'published');
     await setVariant(paused, mine, 'published');
@@ -210,21 +210,21 @@ suite('social.today: what needs the member in Social (#2387)', () => {
     const split = await submitted(o, o.owner, [mine, theirs], 'Hai kênh');
     await schedule(soon, hoursFromNow(10));
     await schedule(named, hoursFromNow(2));
-    await admin((c) => c.query('UPDATE crove_social.post SET title = $2 WHERE id = $1', [named, '  Khuyến   mãi\ncuối \u202Etuần\u200B ']));
+    await admin((c) => c.query('UPDATE ludy_social.post SET title = $2 WHERE id = $1', [named, '  Khuyến   mãi\ncuối \u202Etuần\u200B ']));
     await schedule(later, hoursFromNow(30));
     await schedule(past, hoursFromNow(-1));
     await schedule(fewDays, hoursFromNow(-6 * 24));
-    await admin((c) => c.query('UPDATE crove_social.post SET title = $2 WHERE id = $1', [fewDays, 'Bài cũ']));
+    await admin((c) => c.query('UPDATE ludy_social.post SET title = $2 WHERE id = $1', [fewDays, 'Bài cũ']));
     await schedule(longAgo, hoursFromNow(-8 * 24));
     await schedule(elsewhere, hoursFromNow(5));
     await schedule(viaVariant, hoursFromNow(40));
-    await admin((c) => c.query('UPDATE crove_social.post_variant SET scheduled_at = $2 WHERE post_id = $1', [viaVariant, hoursFromNow(3)]));
+    await admin((c) => c.query('UPDATE ludy_social.post_variant SET scheduled_at = $2 WHERE post_id = $1', [viaVariant, hoursFromNow(3)]));
     await schedule(movedOut, hoursFromNow(3));
-    await admin((c) => c.query('UPDATE crove_social.post_variant SET scheduled_at = $2 WHERE post_id = $1', [movedOut, hoursFromNow(40)]));
+    await admin((c) => c.query('UPDATE ludy_social.post_variant SET scheduled_at = $2 WHERE post_id = $1', [movedOut, hoursFromNow(40)]));
     await schedule(archived, hoursFromNow(4));
-    await admin((c) => c.query('UPDATE crove_social.post SET archived_at = now(), archived_by = $2 WHERE id = $1', [archived, o.owner]));
+    await admin((c) => c.query('UPDATE ludy_social.post SET archived_at = now(), archived_by = $2 WHERE id = $1', [archived, o.owner]));
     await schedule(split, hoursFromNow(6));
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'approved' WHERE post_id = $1 AND channel_connection_id = $2", [split, mine]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'approved' WHERE post_id = $1 AND channel_connection_id = $2", [split, mine]));
     const due = (items: TodayItem[]) => ofKind(items, 'deadline');
     const forOwner = due(await today(o, o.owner));
     // The oldest first; none for a post 8 days overdue, 30 hours away, with its channel's time 40 hours away, archived, or with no time.
@@ -264,7 +264,7 @@ suite('social.today: what needs the member in Social (#2387)', () => {
     const o = await org();
     const a = await connection(o.orgId, o.owner);
     await submitted(o, o.free, [a]);
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE id = $1", [a]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'expired' WHERE id = $1", [a]));
     expect((await today(o, o.owner)).length).toBeGreaterThan(0);
     const other = await org();
     expect(await today(other, other.owner)).toEqual([]);

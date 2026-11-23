@@ -7,9 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
 import {
   BlobNotFoundError,
   BlobTooLargeError,
@@ -18,9 +18,9 @@ import {
   type BlobStore,
   type CredentialBroker,
   type DirectTransfers,
-} from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
-import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
+} from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
+import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp, type HttpDeps } from '../src/http.ts';
@@ -142,7 +142,7 @@ suite('the meeting transcript (#2578, M4a)', () => {
     const accepted = await rpc('invites/accept', name, { token: tokenPart }, null);
     expect(accepted.status).toBe(200);
     const uid = await admin(async (c) => {
-      const res = await c.query<{ id: string }>('SELECT id FROM crove_kernel.user_account WHERE email = $1', [email]);
+      const res = await c.query<{ id: string }>('SELECT id FROM ludy_kernel.user_account WHERE email = $1', [email]);
       return res.rows[0]!.id;
     });
     userIds.set(name, uid);
@@ -168,10 +168,10 @@ suite('the meeting transcript (#2578, M4a)', () => {
     adminUrl = base.toString();
 
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
 
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 8 });
     const db = createDb(pool);
@@ -219,7 +219,7 @@ suite('the meeting transcript (#2578, M4a)', () => {
     orgId = String(created.body.orgId);
     const ownerEmail = accounts.get('owner')?.email;
     const ownerUid = await admin(async (c) => {
-      const res = await c.query<{ id: string }>('SELECT id FROM crove_kernel.user_account WHERE email = $1', [ownerEmail]);
+      const res = await c.query<{ id: string }>('SELECT id FROM ludy_kernel.user_account WHERE email = $1', [ownerEmail]);
       return res.rows[0]!.id;
     });
     userIds.set('owner', ownerUid);
@@ -254,9 +254,9 @@ suite('the meeting transcript (#2578, M4a)', () => {
     return String(created.body.meetingId);
   }
   const rows = (meetingId: string) =>
-    admin(async (c) => (await c.query('SELECT id, stage, text, speaker_label, corrected FROM crove_meetings.transcript_segment WHERE meeting_id = $1 ORDER BY start_seconds, id', [meetingId])).rows as Array<{ id: string; stage: string; text: string; speaker_label: string; corrected: boolean }>);
+    admin(async (c) => (await c.query('SELECT id, stage, text, speaker_label, corrected FROM ludy_meetings.transcript_segment WHERE meeting_id = $1 ORDER BY start_seconds, id', [meetingId])).rows as Array<{ id: string; stage: string; text: string; speaker_label: string; corrected: boolean }>);
   const auditOf = (command: string) =>
-    admin(async (c) => (await c.query('SELECT detail, target_id FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY occurred_at', [orgId, command])).rows as Array<{ detail: Record<string, unknown>; target_id: string | null }>);
+    admin(async (c) => (await c.query('SELECT detail, target_id FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY occurred_at', [orgId, command])).rows as Array<{ detail: Record<string, unknown>; target_id: string | null }>);
   const get = (name: string, meetingId: string) => rpc('meetings/transcript/get', name, { meetingId });
   const storeDraft = (name: string, meetingId: string, segments: unknown[]) => rpc('meetings/transcript/draftStore', name, { meetingId, segments });
 
@@ -350,7 +350,7 @@ suite('the meeting transcript (#2578, M4a)', () => {
     const meetingId = await newMeeting('Họp công bố');
     await storeDraft('recorder', meetingId, [segment(0, 10, 'nháp một')]);
     await admin((c) =>
-      c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, 100, 110, 'Người nói 1', 'đã công bố', 'published')`, [orgId, meetingId]),
+      c.query(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, 100, 110, 'Người nói 1', 'đã công bố', 'published')`, [orgId, meetingId]),
     );
     const attendee = (await get('attendee', meetingId)).body as { stage: string; segments: Array<{ text: string; stage: string }> };
     expect(attendee.stage).toBe('published');
@@ -379,7 +379,7 @@ suite('the meeting transcript (#2578, M4a)', () => {
     const [only] = await rows(meetingId);
     await rpc('meetings/transcript/correct', 'recorder', { segmentId: only!.id, text: 'Văn bản đã sửa riêng tư' });
     await get('recorder', meetingId);
-    const everything = JSON.stringify(await admin(async (c) => (await c.query(`SELECT detail, target_id, command FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'meetings.transcript.%'`, [orgId])).rows));
+    const everything = JSON.stringify(await admin(async (c) => (await c.query(`SELECT detail, target_id, command FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'meetings.transcript.%'`, [orgId])).rows));
     expect(everything).toContain('meetings.transcript.draft_store');
     expect(everything).toContain('meetings.transcript.correct');
     expect(everything).toContain('meetings.transcript.get');
@@ -393,7 +393,7 @@ suite('the meeting transcript (#2578, M4a)', () => {
   it('goes with its meeting when the recorder deletes it', async () => {
     const meetingId = await newMeeting('Họp bị xóa');
     await storeDraft('recorder', meetingId, [segment(0, 10, 'sẽ biến mất'), segment(10, 20, 'cùng cuộc họp')]);
-    await admin((c) => c.query(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, text, stage) VALUES ($1, $2, 30, 40, 'đã công bố', 'published')`, [orgId, meetingId]));
+    await admin((c) => c.query(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, text, stage) VALUES ($1, $2, 30, 40, 'đã công bố', 'published')`, [orgId, meetingId]));
     expect(await rows(meetingId)).toHaveLength(3);
     const gone = await rpc('meetings/delete', 'recorder', { meetingId });
     expect(gone.status).toBe(200);

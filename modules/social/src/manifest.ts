@@ -1,13 +1,13 @@
 // The social module's manifest (plan §5.2, #1588, #1599): the tables it owns and the class of every column. A migration
 // that adds or drops a table or column of these schemas changes this list in the same PR; apps/kernel/test/manifest.db.test.ts
 // checks it against the catalog. A column is internal unless the second argument of columns() classifies it.
-import { MODULE_SCREENS, columns, defineModule } from '@crove/kernel-contract';
+import { MODULE_SCREENS, columns, defineModule } from '@ludy/kernel-contract';
 
 export const socialManifest = defineModule({
   id: 'social',
   dependsOn: ['kernel'],
   tables: {
-    crove_social: {
+    ludy_social: {
       account_snapshot: columns(['org_id', 'id', 'channel_connection_id', 'captured_on', 'followers', 'reach', 'error', 'captured_at', 'audience', 'performance']),
       banned_word: columns(['org_id', 'id', 'phrase', 'normalized', 'level', 'reason', 'connection_ids', 'created_by', 'created_at']),
       bio_click: columns(['org_id', 'id', 'page_id', 'target', 'day', 'clicks']),
@@ -78,6 +78,6 @@ export const socialManifest = defineModule({
     { type: 'social.queue', table: 'queue', legalEntityScoped: false, audit: 'command' },
     { type: 'social.review_feedback', table: 'review_feedback', legalEntityScoped: false, audit: 'command' },
   ],
-  // Its screens in the app and its menu items (#1652), kept with the other modules' in @crove/kernel-contract.
+  // Its screens in the app and its menu items (#1652), kept with the other modules' in @ludy/kernel-contract.
   ...MODULE_SCREENS.social,
 });

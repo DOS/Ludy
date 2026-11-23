@@ -7,7 +7,7 @@
 // What each rule compares with is the vendor's own history, read by finance.extraction.lookup from the books: the totals
 // of its last invoices, the unit prices of their lines, and the bank accounts its earlier proposals carried. A vendor
 // with too little history raises nothing: the first account, the first few invoices and the first price are never odd.
-import { Decimal, descriptionRuleText, type DecimalValue, type InvoiceCheck } from '@crove/l10n-vn';
+import { bankAccountRuns, Decimal, descriptionRuleText, type DecimalValue, type InvoiceCheck } from '@ludy/l10n-vn';
 
 // What the books remember of a vendor.
 export interface VendorHistory {
@@ -35,9 +35,10 @@ const ITEM_MAX = 60;
 // two.
 export const normalizeBankAccount = (account: string): string => account.replace(/[^0-9A-Za-z]/g, '').toUpperCase();
 
-// An account number for a sentence: all but its last four characters hidden.
+// An account number for a sentence: all but its last four characters hidden (of its longest digit run when it has one).
 export function maskBankAccount(account: string): string {
-  const plain = normalizeBankAccount(account);
+  const longest = bankAccountRuns(account).reduce((best, run) => (run.length > best.length ? run : best), '');
+  const plain = longest === '' ? normalizeBankAccount(account) : longest;
   return plain.length <= 4 ? plain : `${'*'.repeat(Math.min(plain.length - 4, 8))}${plain.slice(-4)}`;
 }
 
@@ -59,16 +60,21 @@ const positive = (value: string): DecimalValue | null => {
 // The invoice names a bank account the vendor's earlier invoices did not: the classic payment fraud. Nothing without an
 // account on this invoice or without earlier ones to compare with.
 export function bankAccountCheck(account: string | null | undefined, earlier: readonly string[]): InvoiceCheck | null {
-  const now = account ? normalizeBankAccount(account) : '';
-  const before = earlier.map(normalizeBankAccount).filter((a) => a.length > 0);
-  if (now === '' || before.length === 0 || before.includes(now)) return null;
-  const last = before[0] as string;
+  const now = account ? bankAccountRuns(account) : [];
+  const before = earlier.map(bankAccountRuns).filter((runs) => runs.length > 0);
+  if (now.length === 0 || before.length === 0) return null;
+  // Every account this invoice names must be one the vendor used before: a single new one is the change (an old account printed beside it does not hide it).
+  const seen = new Set(before.flat());
+  const fresh = now.find((run) => !seen.has(run));
+  if (fresh === undefined) return null;
+  const last = maskBankAccount((earlier.find((a) => bankAccountRuns(a).length > 0) as string));
+  const current = maskBankAccount(fresh);
   return {
     id: 'anomaly_bank',
     status: 'warn',
     code: 'anomaly_bank.changed',
-    message: `Cảnh báo: tài khoản nhận tiền khác lần trước (lần trước ${maskBankAccount(last)}, lần này ${maskBankAccount(now)}); hãy xác nhận với nhà cung cấp trước khi thanh toán`,
-    params: { previous: maskBankAccount(last), current: maskBankAccount(now) },
+    message: `Cảnh báo: tài khoản nhận tiền khác lần trước (lần trước ${last}, lần này ${current}); hãy xác nhận với nhà cung cấp trước khi thanh toán`,
+    params: { previous: last, current },
   };
 }
 
@@ -162,5 +168,21 @@ export function payrollCashCheck(count: number): InvoiceCheck | null {
     code: 'anomaly_cash.payroll_limit',
     message: `Cảnh báo: ${count} người có lương thực lĩnh từ 5.000.000 đồng trở lên mà chi bằng tiền mặt; khoản chi từ 5 triệu đồng một lần cần thanh toán không dùng tiền mặt mới được tính chi phí được trừ. Hãy chuyển khoản hoặc hỏi kế toán`,
     params: { count: String(count) },
+  };
+}
+
+// An ordinary payment voucher (finance.voucher.record) debits a payroll payable account while the same legal entity has a
+// pending or recorded pay-run payment voucher for that liability (#2793). Only the voucher's own account codes are named
+// (never a person, run id or payroll figure), and the check id starts with `anomaly` so the reviewer checks it one by one.
+export function payrollLiabilityCheck(accounts: readonly string[]): InvoiceCheck | null {
+  const unique = [...new Set(accounts.map((a) => a.trim()).filter((a) => a.length > 0))].sort();
+  if (unique.length === 0) return null;
+  const joined = unique.join(', ').slice(0, 180);
+  return {
+    id: 'anomaly_payroll',
+    status: 'warn',
+    code: 'anomaly_payroll.active_payment',
+    message: `Cảnh báo: chứng từ chi thẳng vào tài khoản công nợ lương (${joined}) trong khi pháp nhân đang có chứng từ chi lương theo bảng lương chờ duyệt hoặc đã ghi sổ; hãy kiểm tra để tránh chi trùng nghĩa vụ của bảng lương`,
+    params: { accounts: joined },
   };
 }

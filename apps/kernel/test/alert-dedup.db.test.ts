@@ -1,5 +1,5 @@
-// Prober alert de-duplication (issue #151) against a real PostgreSQL 17: crove_kernel.prober_alert_gate() as the
-// crove_prober login, state that survives a restart, and two probers that never both send. The privilege checks are
+// Prober alert de-duplication (issue #151) against a real PostgreSQL 17: ludy_kernel.prober_alert_gate() as the
+// ludy_prober login, state that survives a restart, and two probers that never both send. The privilege checks are
 // in the invariant suite (test/invariant/prober.db.test.ts). Set CROVE_TEST_ADMIN_URL to a superuser URL; the run
 // creates and drops its own database.
 import { createServer, type Server } from 'node:http';
@@ -7,7 +7,7 @@ import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { pgAlertGate } from '../src/alert-gate.ts';
 import { EXIT, probeOnce, type HealthSnapshot, type ProberConfig } from '../src/prober.ts';
 
@@ -54,10 +54,10 @@ suite('prober alert state on PostgreSQL', () => {
     }
   }
   const state = () =>
-    admin(async (c) => (await c.query('SELECT problem, started_at, notified_at FROM crove_kernel.prober_alert_state')).rows as Array<{ problem: string | null; started_at: Date | null; notified_at: Date | null }>);
+    admin(async (c) => (await c.query('SELECT problem, started_at, notified_at FROM ludy_kernel.prober_alert_state')).rows as Array<{ problem: string | null; started_at: Date | null; notified_at: Date | null }>);
   const rewind = (minutes: number) =>
-    admin((c) => c.query(`UPDATE crove_kernel.prober_alert_state SET notified_at = notified_at - make_interval(mins => $1), started_at = started_at - make_interval(mins => $1)`, [minutes]));
-  const reset = () => admin((c) => c.query('UPDATE crove_kernel.prober_alert_state SET problem = NULL, started_at = NULL, notified_at = NULL'));
+    admin((c) => c.query(`UPDATE ludy_kernel.prober_alert_state SET notified_at = notified_at - make_interval(mins => $1), started_at = started_at - make_interval(mins => $1)`, [minutes]));
+  const reset = () => admin((c) => c.query('UPDATE ludy_kernel.prober_alert_state SET problem = NULL, started_at = NULL, notified_at = NULL'));
 
   const config = (): ProberConfig => ({
     databaseUrl: proberUrl,
@@ -79,9 +79,9 @@ suite('prober alert state on PostgreSQL', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw', crove_prober: 'test-prober-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw', ludy_prober: 'test-prober-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_prober';
+    url.username = 'ludy_prober';
     url.password = 'test-prober-pw';
     proberUrl = url.toString();
 
@@ -112,7 +112,7 @@ suite('prober alert state on PostgreSQL', () => {
     expect(await state()).toEqual([{ problem: null, started_at: null, notified_at: null }]);
   });
 
-  it('walks new, suppressed, repeat, changed and resolved as crove_prober, and keeps the state across gates (restarts)', async () => {
+  it('walks new, suppressed, repeat, changed and resolved as ludy_prober, and keeps the state across gates (restarts)', async () => {
     const decide = async (problem: string | null, repeatSeconds = 3600) => {
       // A fresh gate each time, like a fresh process.
       const gate = pgAlertGate(proberUrl, repeatSeconds);
@@ -185,20 +185,20 @@ suite('prober alert state on PostgreSQL', () => {
     try {
       expect(await Promise.all([probe(workerDown), probe(workerDown)])).toEqual([EXIT.unhealthy, EXIT.unhealthy]);
       expect(received).toHaveLength(1);
-      expect(received[0]).toMatch(/^\[Crove\] ALERT on dedup-test: 1 health check\(s\) failed\./);
+      expect(received[0]).toMatch(/^\[Ludy\] ALERT on dedup-test: 1 health check\(s\) failed\./);
       // Later probes of the same problem stay quiet, then it resolves once.
       expect(await Promise.all([probe(workerDown), probe(workerDown)])).toEqual([EXIT.unhealthy, EXIT.unhealthy]);
       expect(received).toHaveLength(1);
       expect(await Promise.all([probe(healthy), probe(healthy)])).toEqual([EXIT.ok, EXIT.ok]);
       expect(received).toHaveLength(2);
-      expect(received[1]).toMatch(/^\[Crove\] RESOLVED on dedup-test: the failing health checks pass again after \d+ s \(heartbeat\)\.$/);
+      expect(received[1]).toMatch(/^\[Ludy\] RESOLVED on dedup-test: the failing health checks pass again after \d+ s \(heartbeat\)\.$/);
     } finally {
       hookDelayMs = 0;
     }
   });
 
   it('restores the state row when it was deleted', async () => {
-    await admin((c) => c.query('DELETE FROM crove_kernel.prober_alert_state'));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.prober_alert_state'));
     const gate = pgAlertGate(proberUrl, 3600);
     expect((await gate.decide('heartbeat', new Date())).decision).toBe('new');
     await gate.settle(true);
@@ -209,9 +209,9 @@ suite('prober alert state on PostgreSQL', () => {
     const client = new pg.Client({ connectionString: proberUrl });
     await client.connect();
     try {
-      await expect(client.query(`SELECT * FROM crove_kernel.prober_alert_gate('Heartbeat; drop', 60)`)).rejects.toMatchObject({ code: '22023', message: 'INVALID_PROBLEM' });
-      await expect(client.query(`SELECT * FROM crove_kernel.prober_alert_gate(repeat('a', 300), 60)`)).rejects.toMatchObject({ code: '22023' });
-      expect((await client.query(`SELECT decision FROM crove_kernel.prober_alert_gate('', 60)`)).rows[0]).toMatchObject({ decision: expect.any(String) });
+      await expect(client.query(`SELECT * FROM ludy_kernel.prober_alert_gate('Heartbeat; drop', 60)`)).rejects.toMatchObject({ code: '22023', message: 'INVALID_PROBLEM' });
+      await expect(client.query(`SELECT * FROM ludy_kernel.prober_alert_gate(repeat('a', 300), 60)`)).rejects.toMatchObject({ code: '22023' });
+      expect((await client.query(`SELECT decision FROM ludy_kernel.prober_alert_gate('', 60)`)).rows[0]).toMatchObject({ decision: expect.any(String) });
     } finally {
       await client.end();
     }

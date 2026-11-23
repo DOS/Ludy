@@ -7,12 +7,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { JournalVoucherRequest } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { JournalVoucherRequest } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -63,7 +63,7 @@ suite('year-end closing (#889)', () => {
     const { rows } = await admin((c) =>
       c.query<{ account_code: string; net: string }>(
         `SELECT l.account_code, (sum(l.debit) - sum(l.credit))::text AS net
-           FROM crove_finance.journal_line l JOIN crove_finance.journal_entry e ON e.org_id = l.org_id AND e.id = l.entry_id
+           FROM ludy_finance.journal_line l JOIN ludy_finance.journal_entry e ON e.org_id = l.org_id AND e.id = l.entry_id
           WHERE l.org_id = $1 AND e.entry_date <= $2 GROUP BY l.account_code`,
         [o.orgId, to],
       ),
@@ -81,9 +81,9 @@ suite('year-end closing (#889)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -98,10 +98,10 @@ suite('year-end closing (#889)', () => {
       [o.member, 'member'],
       [second, 'admin'],
     ] as const) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]));
     }
     const { rows } = await admin((c) =>
-      c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, name, tax_code) VALUES ($1, 'Công ty Khách Hàng Mẫu', '0309876546') RETURNING id`, [orgId]),
+      c.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, name, tax_code) VALUES ($1, 'Công ty Khách Hàng Mẫu', '0309876546') RETURNING id`, [orgId]),
     );
     customer = String(rows[0]?.id);
   });
@@ -154,7 +154,7 @@ suite('year-end closing (#889)', () => {
     const after = await balances('2025-12-31');
     for (const code of ['511', '632', '6422', '911']) expect(after[code]).toBe(0);
     expect(after['4212']).toBe(-5000000);
-    const { rows } = await admin((c) => c.query<{ closing_year: number }>('SELECT closing_year FROM crove_finance.journal_voucher WHERE org_id = $1 AND id = $2', [o.orgId, closed.voucherId]));
+    const { rows } = await admin((c) => c.query<{ closing_year: number }>('SELECT closing_year FROM ludy_finance.journal_voucher WHERE org_id = $1 AND id = $2', [o.orgId, closed.voucherId]));
     expect(rows).toEqual([{ closing_year: 2025 }]);
     // B02 leaves the closing entry out and B01 counts 4212 with the unclosed result: neither moves.
     expect(await statements('2025')).toEqual(before);
@@ -170,7 +170,7 @@ suite('year-end closing (#889)', () => {
     (
       await admin((c) =>
         c.query<{ id: string }>(
-          `SELECT e.id FROM crove_finance.journal_entry e JOIN crove_finance.journal_voucher v ON v.org_id = e.org_id AND v.id = e.source_id
+          `SELECT e.id FROM ludy_finance.journal_entry e JOIN ludy_finance.journal_voucher v ON v.org_id = e.org_id AND v.id = e.source_id
             WHERE e.org_id = $1 AND e.source_type = 'finance.journal_voucher' AND e.reverses_entry_id IS NULL AND v.closing_year = $2`,
           [o.orgId, year],
         ),

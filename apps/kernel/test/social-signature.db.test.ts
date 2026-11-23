@@ -9,12 +9,13 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, withSignature, type PostView } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, withSignature, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
+import { rewriteHistoricalCoreSql } from './pre-cutover-db.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -50,7 +51,7 @@ suite('social channel signatures on PostgreSQL (#1190)', () => {
     const roles = { admin: await person('admin'), member: await person('member'), other: await person('other') };
     const role = { admin: 'admin', member: 'member', other: 'member' } as const;
     for (const [key, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
     }
     return { orgId, owner, ...roles };
   }
@@ -58,7 +59,7 @@ suite('social channel signatures on PostgreSQL (#1190)', () => {
   async function connection(orgId: string, owner: string, provider = 'sandbox') {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, provider, `acct-${id.slice(0, 8)}`, 'Kênh thử', owner]),
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, provider, `acct-${id.slice(0, 8)}`, 'Kênh thử', owner]),
     );
     return id;
   }
@@ -68,7 +69,7 @@ suite('social channel signatures on PostgreSQL (#1190)', () => {
     const sha = createHash('sha256').update(id).digest('hex');
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
         [orgId, id, sha, `org/${orgId}/${sha}`, `content:${sha}`, 'anh.jpg', 'image/jpeg', 120_000, 'social'],
       ),
@@ -93,9 +94,9 @@ suite('social channel signatures on PostgreSQL (#1190)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -122,12 +123,12 @@ suite('social channel signatures on PostgreSQL (#1190)', () => {
     expect(await refusal(sign(o, o.owner, conn, 'x'.repeat(501)))).toBe('VALIDATION');
     expect(await sign(o, o.owner, conn, 'ầ'.repeat(500))).toMatchObject({ signature: 'ầ'.repeat(500) });
     // The table refuses one over the cap whoever writes it.
-    await expect(admin((c) => c.query('UPDATE crove_social.channel_policy SET signature = $1 WHERE org_id = $2', ['x'.repeat(501), o.orgId]))).rejects.toThrow(/channel_policy_signature_length/);
-    await expect(admin((c) => c.query("UPDATE crove_social.channel_policy SET signature = '' WHERE org_id = $1", [o.orgId]))).rejects.toThrow(/channel_policy_signature_length/);
+    await expect(admin((c) => c.query('UPDATE ludy_social.channel_policy SET signature = $1 WHERE org_id = $2', ['x'.repeat(501), o.orgId]))).rejects.toThrow(/channel_policy_signature_length/);
+    await expect(admin((c) => c.query("UPDATE ludy_social.channel_policy SET signature = '' WHERE org_id = $1", [o.orgId]))).rejects.toThrow(/channel_policy_signature_length/);
     // Null or empty clears it.
     expect((await sign(o, o.owner, conn, '  ')).signature).toBeNull();
     expect(await policy(o, conn)).toBeNull();
-    const { rows } = await admin((c) => c.query<{ count: string }>("SELECT count(*) FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.channel.set_signature' AND outcome = 'ok'", [o.orgId]));
+    const { rows } = await admin((c) => c.query<{ count: string }>("SELECT count(*) FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.channel.set_signature' AND outcome = 'ok'", [o.orgId]));
     expect(Number(rows[0]?.count)).toBe(3);
   });
 
@@ -276,7 +277,7 @@ suite('social channel signatures on PostgreSQL (#1190)', () => {
   type ReviewChannel = { channel: string; body: string; signature: string | null };
   // A plan sends each post's body once (#930): a channel's body is null when it shows the post's.
   type ReviewPage = { kind?: 'plan'; channels?: ReviewChannel[]; posts?: { id: string; body?: string | null; channels?: (Omit<ReviewChannel, 'body'> & { body: string | null })[] }[] };
-  const review = async (token: string) => (await pool.query<{ page: ReviewPage | null }>('SELECT crove_social.review_link_view($1) AS page', [token])).rows[0]?.page ?? null;
+  const review = async (token: string) => (await pool.query<{ page: ReviewPage | null }>('SELECT ludy_social.review_link_view($1) AS page', [token])).rows[0]?.page ?? null;
   // A post on a signed channel, a channel without one and a signed channel left off, with an answer.
   async function reviewed(o: Org) {
     const signed = await connection(o.orgId, o.owner);
@@ -291,7 +292,7 @@ suite('social channel signatures on PostgreSQL (#1190)', () => {
     });
     const single = await exec<{ token: string }>(o, o.owner, 'social.review_link.create', { postId });
     const plan = await exec<{ token: string }>(o, o.owner, 'social.review_link.create_plan', { postIds: [postId] });
-    await pool.query("SELECT crove_social.review_feedback_add($1, 'Khách', 'comment', 'Xem giúp')", [single.token]);
+    await pool.query("SELECT ludy_social.review_feedback_add($1, 'Khách', 'comment', 'Xem giúp')", [single.token]);
     return { postId, single: single.token, plan: plan.token };
   }
 
@@ -311,7 +312,7 @@ suite('social channel signatures on PostgreSQL (#1190)', () => {
       expect(channels?.map((c) => withSignature(c.body, { signature: c.signature }))).toEqual(sent);
     }
     // A signature that is not a text (a hand-written setting) shows as none, as it is never appended.
-    await admin((c) => c.query(`UPDATE crove_social.post_variant SET settings = '{"signature": 7}' WHERE org_id = $1 AND post_id = $2 AND settings->>'signature' = $3`, [o.orgId, postId, SIGNATURE]));
+    await admin((c) => c.query(`UPDATE ludy_social.post_variant SET settings = '{"signature": 7}' WHERE org_id = $1 AND post_id = $2 AND settings->>'signature' = $3`, [o.orgId, postId, SIGNATURE]));
     expect((await review(single))?.channels?.[0]?.signature).toBeNull();
   });
 
@@ -327,12 +328,12 @@ suite('social channel signatures on PostgreSQL (#1190)', () => {
       const end = text.indexOf('$$;', start);
       expect(start).toBeGreaterThanOrEqual(0);
       expect(end).toBeGreaterThan(start);
-      return text.slice(start, end + 3);
+      return rewriteHistoricalCoreSql(text.slice(start, end + 3));
     };
     const planPage = previous('20261023233000_crove_social_plan_review_link.sql', 'crove_social.review_plan_page');
     const linkView = previous('20261028150000_crove_social_report_branding.sql', 'crove_social.review_link_view');
     const pages = await admin(async (c) => {
-      const read = async (token: string) => (await c.query<{ page: string }>('SELECT crove_social.review_link_view($1)::text AS page', [token])).rows[0]?.page as string;
+      const read = async (token: string) => (await c.query<{ page: string }>('SELECT ludy_social.review_link_view($1)::text AS page', [token])).rows[0]?.page as string;
       await c.query('BEGIN');
       try {
         await c.query(previous('20261029160000_crove_social_channel_signature.sql', 'crove_social.review_plan_page'));

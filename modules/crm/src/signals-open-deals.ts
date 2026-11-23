@@ -9,11 +9,11 @@
 // Who sees which deal is the deal screens' own rule: a deal belongs to the whole org (the pipeline and the list show every deal to every role the CRM lists), so the row
 // policy of the caller's own transaction (org only) is the only filter. The 500 most recently created open deals are listed (the contract's cap); a longer list can hide
 // a flag (the oldest open deals), never raise a false one.
-import { zCrmOpenDealSignals, type CrmOpenDealSignal } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
+import { zCrmOpenDealSignals, type CrmOpenDealSignal } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const LIMIT = 500;
@@ -28,8 +28,8 @@ export const crmOpenDealsSignals = defineQuery({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const { rows } = await sql<{ deal_id: string; party_id: string }>`
       SELECT d.id AS deal_id, d.party_id
-      FROM crove_crm.deal d
-      JOIN crove_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id
+      FROM ludy_crm.deal d
+      JOIN ludy_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id
       WHERE d.org_id = ${ctx.orgId}::uuid AND s.kind = 'open' AND d.closed_at IS NULL
       ORDER BY d.created_at DESC, d.id
       LIMIT ${LIMIT}`.execute(ctx.trx);

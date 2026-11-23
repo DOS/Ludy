@@ -11,8 +11,8 @@
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { BLOCKING_CHECK_IDS, isRevenueAccount, zAccountCode, zExchangeRate, zId, zLocalDate, zPurchaseProposal, type DocumentDirection, type PurchaseProposal, type RelatedInvoiceRef } from '@crove/kernel-contract';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { BLOCKING_CHECK_IDS, isRevenueAccount, zAccountCode, zExchangeRate, zId, zLocalDate, zPurchaseProposal, type DocumentDirection, type PurchaseProposal, type RelatedInvoiceRef } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import {
   PAYABLE_ACCOUNT,
   RECEIVABLE_ACCOUNT,
@@ -25,10 +25,11 @@ import {
   parseTaxCode,
   type JournalLineDraft,
   type ProposedLine,
-} from '@crove/l10n-vn';
+} from '@ludy/l10n-vn';
 import { assertUsableAccounts, isInactiveDefaultRefusal } from './accounts.ts';
 import { postNewEntry } from './ledger.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
+import { booksOn } from './payroll-posting.ts';
 import { latestRevision } from './source-entry.ts';
 import { learnFromApproval } from './categorization.ts';
 import { postReversal } from './reversal.ts';
@@ -44,8 +45,22 @@ function directionOf(payload: PurchaseProposal): DocumentDirection {
 }
 
 // The journal of an invoice by its direction.
-export function invoiceJournal(direction: DocumentDirection, lines: ProposedLine[], vatTotal: string, memo: string): JournalLineDraft[] {
-  return direction === 'sale' ? buildSalesJournal(lines, vatTotal, memo) : buildPurchaseJournal(lines, vatTotal, memo);
+export function invoiceJournal(direction: DocumentDirection, lines: ProposedLine[], vatTotal: string, memo: string, regime?: string): JournalLineDraft[] {
+  return direction === 'sale' ? buildSalesJournal(lines, vatTotal, memo, regime) : buildPurchaseJournal(lines, vatTotal, memo);
+}
+
+// The books regime a sale is posted under (#3712 slice 4): the entity's books row in force on the day of the entry. Only a sale needs it (a Circular 99 sale debits its revenue deductions to 521);
+// a purchase has none.
+async function saleRegime(ctx: CommandContext, direction: DocumentDirection, legalEntityId: string | null | undefined, date: string): Promise<string | undefined> {
+  if (direction !== 'sale') return undefined;
+  return (await booksOn(ctx, await resolveLegalEntity(ctx, legalEntityId), date)).regime;
+}
+
+// The legal entity a proposal was stamped with (#1538: the entity of the reading it came from), none for a call that is not an approval.
+async function proposalEntity(ctx: CommandContext): Promise<string | undefined> {
+  if (!ctx.proposalId) return undefined;
+  const row = await ctx.trx.selectFrom('ludy_kernel.proposal').select('legal_entity_id').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
+  return row?.legal_entity_id ?? undefined;
 }
 
 // The party of the invoice in Crove's books: the supplier of a purchase, the customer of a sale. Matched by tax code,
@@ -57,14 +72,14 @@ export async function upsertParty(ctx: CommandContext, ref: PurchaseProposal['se
   // a change of its kind (#2438, kernel.party.update checks that nothing points at the party) could commit between that check and the line.
   const existing = taxCode
     ? await ctx.trx
-        .selectFrom('crove_kernel.party')
+        .selectFrom('ludy_kernel.party')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('tax_code', '=', taxCode)
         .forShare()
         .executeTakeFirst()
     : await ctx.trx
-        .selectFrom('crove_kernel.party')
+        .selectFrom('ludy_kernel.party')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('tax_code', 'is', null)
@@ -82,7 +97,7 @@ export async function upsertParty(ctx: CommandContext, ref: PurchaseProposal['se
   // new party (party_link_new) is not visible to the same statement's RETURNING check.
   const created = { id: randomUUID() };
   await ctx.trx
-    .insertInto('crove_kernel.party')
+    .insertInto('ludy_kernel.party')
     .values({
       id: created.id,
       org_id: ctx.orgId,
@@ -113,8 +128,8 @@ async function replaceableDocument(
   number: string,
 ): Promise<string | null> {
   let query = ctx.trx
-    .selectFrom('crove_finance.purchase_document as d')
-    .innerJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
+    .selectFrom('ludy_finance.purchase_document as d')
+    .innerJoin('ludy_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
     .select('d.id')
     .where('d.org_id', '=', ctx.orgId)
     .where('d.legal_entity_id', '=', legalEntityId)
@@ -124,7 +139,7 @@ async function replaceableDocument(
     .where(({ not, exists, selectFrom }) =>
       not(
         exists(
-          selectFrom('crove_finance.purchase_document as n')
+          selectFrom('ludy_finance.purchase_document as n')
             .select('n.id')
             .whereRef('n.org_id', '=', 'd.org_id')
             .whereRef('n.replaces_document_id', '=', 'd.id'),
@@ -145,19 +160,19 @@ async function replaceableDocument(
 // to one in force. The database checks the link again (check_document_corrects). Only a document of the same legal
 // entity (#1280) is corrected.
 async function correctedDocument(ctx: CommandContext, legalEntityId: string, direction: DocumentDirection, partyId: string, related: RelatedInvoiceRef) {
-  const key = `crove_finance.invoice_correction:${ctx.orgId}:${legalEntityId}:${direction}:${direction === 'sale' ? '' : partyId}:${related.series}/${related.number}`;
+  const key = `ludy_finance.invoice_correction:${ctx.orgId}:${legalEntityId}:${direction}:${direction === 'sale' ? '' : partyId}:${related.series}/${related.number}`;
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${key}, 0))`.execute(ctx.trx);
   let query = ctx.trx
-    .selectFrom('crove_finance.purchase_document as d')
+    .selectFrom('ludy_finance.purchase_document as d')
     .select(['d.id', 'd.invoice_date'])
     .select((eb) => [
       eb
-        .exists(eb.selectFrom('crove_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))
+        .exists(eb.selectFrom('ludy_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))
         .as('voided'),
       eb
         .exists(
           eb
-            .selectFrom('crove_finance.purchase_document as r')
+            .selectFrom('ludy_finance.purchase_document as r')
             .select('r.id')
             .whereRef('r.org_id', '=', 'd.org_id')
             .whereRef('r.corrects_document_id', '=', 'd.id')
@@ -181,7 +196,7 @@ async function correctedDocument(ctx: CommandContext, legalEntityId: string, dir
 // The posted entry of a document in force, which a replacement reverses.
 async function documentEntry(ctx: CommandContext, documentId: string) {
   const entry = await ctx.trx
-    .selectFrom('crove_finance.journal_entry as e')
+    .selectFrom('ludy_finance.journal_entry as e')
     .select(['e.id', 'e.entry_date', 'e.description', 'e.source_type', 'e.source_id'])
     .where('e.org_id', '=', ctx.orgId)
     .where('e.source_type', '=', 'finance.purchase_document')
@@ -255,7 +270,7 @@ export function latePostingRefusal(direction: DocumentDirection, issueDate: stri
 // The lock and the opening entry are those of the legal entity the invoice is posted in (#1280).
 async function lateReason(ctx: CommandContext, legalEntityId: string, issueDate: string, postingDate: string): Promise<'locked' | 'opening'> {
   const row = await ctx.trx
-    .selectFrom('crove_finance.period_lock')
+    .selectFrom('ludy_finance.period_lock')
     .select('locked_through')
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', legalEntityId)
@@ -273,7 +288,7 @@ async function lateReason(ctx: CommandContext, legalEntityId: string, issueDate:
 }
 
 // A sale line goes to a revenue account and a purchase line never does (#430, isRevenueAccount); the database holds
-// every writer to the same rule (crove_finance.check_line_direction). Checked here first to name the line.
+// every writer to the same rule (ludy_finance.check_line_direction). Checked here first to name the line.
 function assertDirectionAccounts(direction: DocumentDirection, lines: ReadonlyArray<Pick<ProposedLine, 'lineNo' | 'debitAccount'>>): void {
   for (const line of lines) {
     if (direction === 'sale' && !isRevenueAccount(line.debitAccount)) {
@@ -350,7 +365,8 @@ export const revisePurchase = defineCommand({
     // proposal carries one only when extraction found a line no rule matched.
     const classification = payload.checks.some((c) => c.id === 'accounts') ? classificationCheck(lines) : null;
     const checks = classification ? payload.checks.map((c) => (c.id === 'accounts' ? classification : c)) : payload.checks;
-    const revised = { ...payload, lines, checks, journal: invoiceJournal(directionOf(payload), lines, payload.invoice.vatTotal, journalMemo(payload)) };
+    const regime = await saleRegime(ctx, directionOf(payload), payload.legalEntityId ?? (await proposalEntity(ctx)), payload.invoice.issueDate);
+    const revised = { ...payload, lines, checks, ...(regime ? { regime } : {}), journal: invoiceJournal(directionOf(payload), lines, payload.invoice.vatTotal, journalMemo(payload), regime) };
     return { changed: true as const, payload: revised };
   },
 });
@@ -453,7 +469,17 @@ export const recordPurchase = defineCommand({
     // A foreign-currency invoice says what it was in its entry's description, which the journal and the MISA export
     // show (#918).
     const memo = foreign ? `${journalMemo(payload)} (${foreignNote(foreign)})` : journalMemo(payload);
-    const journal = invoiceJournal(direction, lines, invoice.vatTotal, memo);
+    // The entry the approver saw is the entry posted (DESIGN.md 5.1): a sale posts under the regime its proposal carries, the one its preview was worked out with. A proposal raised before the regime
+    // was carried has none and keeps the earlier posting (Dr 511). If the entity's books have changed since the proposal was made, the entry would no longer be the one shown, so it is refused
+    // with a named error and the proposal is rejected and read again.
+    const regime = sale ? payload.regime : undefined;
+    if (regime !== undefined) {
+      const current = await saleRegime(ctx, direction, payload.legalEntityId ?? (await proposalEntity(ctx)), lateDate ?? invoice.issueDate);
+      if (current !== regime) {
+        throw new DomainError('BOOKS_REGIME_CHANGED', 409, 'Chế độ kế toán của sổ đã đổi từ khi lập đề xuất nên bút toán sẽ khác bản đã xem; hãy từ chối đề xuất này và đọc lại hóa đơn', { proposed: regime, current });
+      }
+    }
+    const journal = invoiceJournal(direction, lines, invoice.vatTotal, memo, regime);
     if (!journalIsBalanced(journal)) throw new DomainError('UNBALANCED', 422, 'Bút toán không cân');
     // The payable (purchase) or receivable (sale) booked must equal the invoice total exactly.
     const counterAccount = sale ? RECEIVABLE_ACCOUNT : PAYABLE_ACCOUNT;
@@ -467,10 +493,7 @@ export const recordPurchase = defineCommand({
     // The legal entity whose books it goes to (#1280): the revision's, else the proposal's own (#1538: the entity of
     // the reading it came from, where its members see it), else the one resolved for the approver. The approver must
     // see it.
-    const stamped = ctx.proposalId
-      ? (await ctx.trx.selectFrom('crove_kernel.proposal').select('legal_entity_id').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst())
-          ?.legal_entity_id
-      : undefined;
+    const stamped = await proposalEntity(ctx);
     const legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId ?? stamped);
     await assertDirection(ctx, payload, legalEntityId);
     const partyId = await upsertParty(ctx, sale ? payload.buyer : payload.seller, direction);
@@ -497,7 +520,7 @@ export const recordPurchase = defineCommand({
       voidedOriginal = corrected.id;
     }
     const document = await ctx.trx
-      .insertInto('crove_finance.purchase_document')
+      .insertInto('ludy_finance.purchase_document')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: legalEntityId,
@@ -551,7 +574,7 @@ export const recordPurchase = defineCommand({
       return source && money(source.amount).equals(money(l.amount)) ? { kind: source.kind, id: source.id, lineNo: source.lineNo } : null;
     };
     await ctx.trx
-      .insertInto('crove_finance.purchase_line')
+      .insertInto('ludy_finance.purchase_line')
       .values(
         lines.map((l) => {
           const from = carried(l);
@@ -580,7 +603,7 @@ export const recordPurchase = defineCommand({
     const taxRates = invoice.taxBreakdown ?? [];
     if (taxRates.length > 0) {
       await ctx.trx
-        .insertInto('crove_finance.purchase_tax_rate')
+        .insertInto('ludy_finance.purchase_tax_rate')
         .values(
           taxRates.map((t, i) => ({
             org_id: ctx.orgId,
@@ -623,7 +646,7 @@ export const recordPurchase = defineCommand({
     const main = sale ? undefined : [...lines].sort((a, b) => money(b.amount).abs().comparedTo(money(a.amount).abs()))[0];
     if (main) {
       await ctx.trx
-        .insertInto('crove_finance.vendor_account_rule')
+        .insertInto('ludy_finance.vendor_account_rule')
         .values({
           org_id: ctx.orgId,
           party_id: partyId,

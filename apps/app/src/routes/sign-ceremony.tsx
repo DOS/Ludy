@@ -1,0 +1,1654 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Mobile-first public signing ceremony (/-/sign#<token>, zero query tokens, zero CAPTCHA, OTP gate, PNG signature pad) (#3325).
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslations } from 'use-intl';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@ludy/ui/components/dialog';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { cn } from '@ludy/ui/lib/utils';
+import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
+import { CounterpartySummaryBanner } from '../components/sign/shared-summary-card.tsx';
+import { SignaturePadModal } from '../components/sign/signature-pad-modal.tsx';
+import { StampPadModal } from '../components/sign/stamp-pad-modal.tsx';
+import { ErrorText, isEmailAddress, ListSkeleton, Logo, ScreenTitle } from '../components/ui.tsx';
+import {
+  loadCeremonyWorkspaceProfiles,
+  publicSignApi,
+  PublicSignError,
+  saveCeremonyMemberSignature,
+  type PublicFieldSubmission,
+  type PublicSignField,
+  type PublicSignFieldAttachment,
+  type PublicSignViewState,
+  type SignMemberSignatureItem,
+  type SignOrgStampItem,
+} from '../lib/sign-api.ts';
+import { SIGN_ATTACHMENT_MAX_BYTES, isChoiceFieldType, type SignSignerRole } from '../lib/sign-fields.ts';
+import {
+  forgetSignToken,
+  hasInPersonQueryFlag,
+  pendingSignToken,
+  readSignTokenFromHash,
+  rememberSignToken,
+  scrubSignTokenHash,
+  subscribeToHash,
+} from '../lib/sign-hash.ts';
+import { rawBase64ToPngDataUrl, stripPngDataUrlPrefix } from '../lib/sign-signature.ts';
+import { toast } from '../lib/toast.ts';
+
+export interface CeremonyFieldAnswer {
+  signaturePngDataUrl?: string;
+  signatureKind?: 'drawn' | 'typed';
+  signatureTypedText?: string;
+  valueText?: string;
+  valueChecked?: boolean;
+  attachment?: PublicSignFieldAttachment | null;
+}
+
+type ReadySignView = Extract<PublicSignViewState, { state: 'ready' }>;
+
+function isOtpRequiredError(error: unknown): error is PublicSignError {
+  return error instanceof PublicSignError && (error.code === 'OTP_REQUIRED' || error.code === 'SIGN_OTP_REQUIRED');
+}
+
+export function isApproverCeremonyMode(view: Pick<ReadySignView, 'signerRole' | 'fields'>): boolean {
+  return (
+    view.signerRole === 'approver' &&
+    view.fields.every(
+      (field) => field.fieldType !== 'signature' && field.fieldType !== 'initials' && field.fieldType !== 'stamp',
+    )
+  );
+}
+
+export function isFieldFilled(field: PublicSignField, answer: CeremonyFieldAnswer | undefined): boolean {
+  if (field.fieldType === 'signature' || field.fieldType === 'initials' || field.fieldType === 'stamp') {
+    return Boolean(answer?.signaturePngDataUrl);
+  }
+  if (field.fieldType === 'checkbox') {
+    return answer?.valueChecked === true;
+  }
+  if (field.fieldType === 'attachment') {
+    return Boolean(answer?.attachment?.fileId || field.attachment?.fileId);
+  }
+  if (isChoiceFieldType(field.fieldType)) {
+    const selected = answer?.valueText?.trim() ?? '';
+    return Boolean(selected && (field.options ?? []).includes(selected));
+  }
+  return Boolean(answer?.valueText?.trim());
+}
+
+export function isFieldComplete(field: PublicSignField, answer: CeremonyFieldAnswer | undefined): boolean {
+  return !field.required || isFieldFilled(field, answer);
+}
+
+export function buildSignSubmitPayload(params: {
+  token: string;
+  fields: readonly PublicSignField[];
+  answers: Readonly<Record<string, CeremonyFieldAnswer>>;
+}): {
+  token: string;
+  consentAccepted: true;
+  signatureKind?: 'draw' | 'type';
+  signatureTypedText?: string;
+  fields: PublicFieldSubmission[];
+} {
+  let signatureKind: 'draw' | 'type' | undefined;
+  let signatureTypedText: string | undefined;
+  let primaryIsSignature = false;
+  const payloadFields: PublicFieldSubmission[] = params.fields.map((field) => {
+    const answer = params.answers[field.id] ?? {};
+    if (field.fieldType === 'attachment') {
+      return { fieldId: field.id };
+    }
+    if (answer.signaturePngDataUrl && answer.signatureKind) {
+      const isPrimary = field.fieldType === 'signature';
+      if (!signatureKind || (isPrimary && !primaryIsSignature)) {
+        signatureKind = answer.signatureKind === 'drawn' ? 'draw' : 'type';
+        signatureTypedText = answer.signatureTypedText || undefined;
+        primaryIsSignature = isPrimary;
+      }
+    }
+    return {
+      fieldId: field.id,
+      ...(answer.signaturePngDataUrl ? { signaturePngBase64: answer.signaturePngDataUrl } : {}),
+      ...(answer.valueText !== undefined ? { valueText: answer.valueText } : {}),
+      ...(answer.valueChecked !== undefined ? { valueChecked: answer.valueChecked } : {}),
+    };
+  });
+  return {
+    token: params.token,
+    consentAccepted: true,
+    ...(signatureKind ? { signatureKind } : {}),
+    ...(signatureTypedText ? { signatureTypedText } : {}),
+    fields: payloadFields,
+  };
+}
+
+export function canSubmitCeremony(params: {
+  viewReady: boolean;
+  incompleteRequiredCount: number;
+  consentChecked: boolean;
+  pdfBytes: Uint8Array | null;
+  loadingPdf: boolean;
+  pdfError: string | null;
+  viewerRenderError: string | null;
+  pdfRendered: boolean;
+}): boolean {
+  return (
+    params.viewReady &&
+    params.incompleteRequiredCount === 0 &&
+    params.consentChecked &&
+    Boolean(params.pdfBytes && params.pdfBytes.byteLength > 0) &&
+    !params.loadingPdf &&
+    !params.pdfError &&
+    !params.viewerRenderError &&
+    params.pdfRendered
+  );
+}
+
+export function SignInPersonHandoffCard({
+  title,
+  outcome,
+  signerRole,
+}: {
+  title: string;
+  outcome: 'completed' | 'declined';
+  signerRole?: SignSignerRole | undefined;
+}) {
+  const t = useTranslations('sign.ceremony');
+  const isApprover = signerRole === 'approver';
+  const heading =
+    outcome === 'declined'
+      ? t(isApprover ? 'approverDeclinedTitle' : 'declinedTitle')
+      : t(isApprover ? 'inPersonApproverCompletedTitle' : 'inPersonCompletedTitle');
+
+  return (
+    <Card className="mx-auto max-w-lg border-primary/40" data-testid="sign-ceremony-in-person-handoff">
+      <CardHeader className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="brand" data-testid="ceremony-in-person-badge">
+            {t('inPersonBadge')}
+          </Badge>
+        </div>
+        <CardTitle className="text-lg">{heading}</CardTitle>
+        <CardDescription className="font-medium text-foreground">{title}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2 text-sm text-muted-foreground">
+        <p>{t('inPersonHandoffHint')}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function SignCeremonyPage() {
+  const t = useTranslations('sign.ceremony');
+
+  const [inPersonMode, setInPersonMode] = useState<boolean>(() => hasInPersonQueryFlag());
+  const [token, setToken] = useState<string | null>(() => {
+    const hadHash = typeof window !== 'undefined' && Boolean(window.location.hash);
+    const fromHash = readSignTokenFromHash();
+    if (hadHash) {
+      scrubSignTokenHash();
+    }
+    if (fromHash) {
+      rememberSignToken(fromHash);
+      return fromHash;
+    }
+    if (hadHash) {
+      forgetSignToken();
+      return null;
+    }
+    return pendingSignToken();
+  });
+
+  const [tokenEpoch, setTokenEpoch] = useState(0);
+  const [viewState, setViewState] = useState<PublicSignViewState | null>(null);
+  const [loadingView, setLoadingView] = useState(false);
+  const [viewError, setViewError] = useState<string | null>(null);
+  const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
+  const [loadingPdf, setLoadingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  const [pdfRendered, setPdfRendered] = useState(false);
+  const [viewerRenderError, setViewerRenderError] = useState<string | null>(null);
+
+  const [otpCode, setOtpCode] = useState('');
+  const [otpSent, setOtpSent] = useState(false);
+  const [otpSending, setOtpSending] = useState(false);
+  const [otpVerifying, setOtpVerifying] = useState(false);
+  const [otpError, setOtpError] = useState<string | null>(null);
+
+  const [pageNumber, setPageNumber] = useState(1);
+  const [scale, setScale] = useState(0.95);
+  const [answers, setAnswers] = useState<Record<string, CeremonyFieldAnswer>>({});
+  const [uploadingFieldIds, setUploadingFieldIds] = useState<Record<string, boolean>>({});
+  const [attachmentErrors, setAttachmentErrors] = useState<Record<string, string>>({});
+  const [padFieldId, setPadFieldId] = useState<string | null>(null);
+  const [consentChecked, setConsentChecked] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const [declineOpen, setDeclineOpen] = useState(false);
+  const [declineReason, setDeclineReason] = useState('');
+  const [declineError, setDeclineError] = useState<string | null>(null);
+  const [declining, setDeclining] = useState(false);
+  const [workspaceOrgSlug, setWorkspaceOrgSlug] = useState<string | null>(null);
+  const [savedSignatures, setSavedSignatures] = useState<SignMemberSignatureItem[]>([]);
+  const [savedStamps, setSavedStamps] = useState<SignOrgStampItem[]>([]);
+
+  const [delegateOpen, setDelegateOpen] = useState(false);
+  const [delegateName, setDelegateName] = useState('');
+  const [delegateEmail, setDelegateEmail] = useState('');
+  const [delegateReason, setDelegateReason] = useState('');
+  const [delegateError, setDelegateError] = useState<string | null>(null);
+  const [delegating, setDelegating] = useState(false);
+
+  const fieldCardRefs = useRef<Record<string, HTMLElement | null>>({});
+  const requestGenRef = useRef(0);
+
+  const resetCeremonyTransientState = useCallback(() => {
+    requestGenRef.current += 1;
+    setViewState(null);
+    setLoadingView(false);
+    setViewError(null);
+    setPdfError(null);
+    setPdfBytes(null);
+    setLoadingPdf(false);
+    setPdfRendered(false);
+    setViewerRenderError(null);
+    setAnswers({});
+    setUploadingFieldIds({});
+    setAttachmentErrors({});
+    setPadFieldId(null);
+    setConsentChecked(false);
+    setOtpSent(false);
+    setOtpCode('');
+    setOtpError(null);
+    setSubmitError(null);
+    setDeclineOpen(false);
+    setDeclineReason('');
+    setDeclineError(null);
+    setDelegateOpen(false);
+    setDelegateName('');
+    setDelegateEmail('');
+    setDelegateReason('');
+    setDelegateError(null);
+    setPageNumber(1);
+    setWorkspaceOrgSlug(null);
+    setSavedSignatures([]);
+    setSavedStamps([]);
+  }, []);
+
+  useEffect(() => {
+    return subscribeToHash(() => {
+      const hadHash = typeof window !== 'undefined' && Boolean(window.location.hash);
+      const next = readSignTokenFromHash();
+      if (hadHash) {
+        scrubSignTokenHash();
+      }
+      if (next) {
+        rememberSignToken(next);
+        resetCeremonyTransientState();
+        setInPersonMode(hasInPersonQueryFlag());
+        setToken(next);
+        setTokenEpoch((n) => n + 1);
+      } else if (hadHash) {
+        forgetSignToken();
+        resetCeremonyTransientState();
+        setInPersonMode(hasInPersonQueryFlag());
+        setToken(null);
+      }
+    });
+  }, [resetCeremonyTransientState]);
+
+  const loadView = useCallback(async (activeToken: string) => {
+    const requestId = ++requestGenRef.current;
+    setLoadingView(true);
+    setViewError(null);
+    setPdfError(null);
+    setPdfBytes(null);
+    setPdfRendered(false);
+    setViewerRenderError(null);
+    setSubmitError(null);
+    try {
+      const view = await publicSignApi.view(activeToken);
+      if (requestGenRef.current !== requestId) return;
+      if ('inPerson' in view && view.inPerson === true) {
+        setInPersonMode(true);
+      }
+      setViewState(view);
+      if (
+        view.state === 'already_completed' ||
+        view.state === 'declined' ||
+        view.state === 'delegated' ||
+        view.state === 'voided' ||
+        view.state === 'expired'
+      ) {
+        forgetSignToken();
+      }
+      if (view.state === 'ready') {
+        const todayStr = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Ho_Chi_Minh',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).format(new Date());
+        setAnswers((prev) => {
+          const next = { ...prev };
+          for (const field of view.fields) {
+            if (field.fieldType === 'date' && !next[field.id]?.valueText) {
+              next[field.id] = { ...next[field.id], valueText: todayStr };
+            } else if (field.fieldType === 'text' && field.valueText && !next[field.id]?.valueText) {
+              next[field.id] = { ...next[field.id], valueText: field.valueText };
+            } else if (field.fieldType === 'attachment' && field.attachment && !next[field.id]?.attachment) {
+              next[field.id] = { ...next[field.id], attachment: field.attachment };
+            }
+          }
+          return next;
+        });
+        setLoadingPdf(true);
+        try {
+          const bytes = await publicSignApi.pdf(activeToken);
+          if (requestGenRef.current !== requestId) return;
+          setPdfBytes(bytes);
+        } catch (pdfErr) {
+          if (requestGenRef.current !== requestId) return;
+          if (isOtpRequiredError(pdfErr)) {
+            setOtpSent(false);
+            setOtpCode('');
+            setViewState({
+              state: 'otp_required',
+              orgName: view.orgName,
+              title: view.title,
+              maskedEmail: null,
+              ...(view.inPerson ? { inPerson: true } : {}),
+            });
+          } else {
+            setPdfError(t('invalidHint'));
+          }
+        } finally {
+          if (requestGenRef.current === requestId) {
+            setLoadingPdf(false);
+          }
+        }
+      }
+    } catch (error) {
+      if (requestGenRef.current !== requestId) return;
+      if (error instanceof PublicSignError && error.status === 404) {
+        forgetSignToken();
+      }
+      if (error instanceof PublicSignError && error.status !== 404) {
+        setViewError(t('invalidTitle'));
+      } else {
+        setViewError(t('invalidHint'));
+      }
+      setViewState(null);
+    } finally {
+      if (requestGenRef.current === requestId) {
+        setLoadingView(false);
+      }
+    }
+  }, [t]);
+
+  useEffect(() => {
+    if (!token) return;
+    void loadView(token);
+  }, [token, tokenEpoch, loadView]);
+
+  const readyOrgName = viewState?.state === 'ready' ? viewState.orgName : null;
+  const isInPersonReady = Boolean(inPersonMode || (viewState?.state === 'ready' && viewState.inPerson));
+  useEffect(() => {
+    // Never load or offer the host's personal saved signatures or workspace stamps during an in-person ceremony (#3820).
+    if (!readyOrgName || isInPersonReady) {
+      setWorkspaceOrgSlug(null);
+      setSavedSignatures([]);
+      setSavedStamps([]);
+      return;
+    }
+    let cancelled = false;
+    void loadCeremonyWorkspaceProfiles(readyOrgName).then((profile) => {
+      if (cancelled) return;
+      if (!profile) {
+        setWorkspaceOrgSlug(null);
+        setSavedSignatures([]);
+        setSavedStamps([]);
+        return;
+      }
+      setWorkspaceOrgSlug(profile.orgSlug);
+      setSavedSignatures(profile.signatures);
+      setSavedStamps(profile.stamps);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [readyOrgName, isInPersonReady, tokenEpoch]);
+
+  const handlePdfRenderStatus = useCallback((status: { rendered: boolean; error: string | null }) => {
+    setPdfRendered(status.rendered);
+    setViewerRenderError(status.error);
+  }, []);
+
+  const readyFields = useMemo(() => (viewState?.state === 'ready' ? viewState.fields : []), [viewState]);
+  const isApproverCeremony = useMemo(
+    () => (viewState?.state === 'ready' ? isApproverCeremonyMode(viewState) : false),
+    [viewState],
+  );
+  const incompleteRequired = useMemo(
+    () => readyFields.filter((field) => !isFieldComplete(field, answers[field.id])),
+    [readyFields, answers],
+  );
+  const anyAttachmentUploading = useMemo(
+    () => Object.values(uploadingFieldIds).some(Boolean),
+    [uploadingFieldIds],
+  );
+  const canSubmit =
+    !anyAttachmentUploading &&
+    canSubmitCeremony({
+      viewReady: viewState?.state === 'ready',
+      incompleteRequiredCount: incompleteRequired.length,
+      consentChecked,
+      pdfBytes,
+      loadingPdf,
+      pdfError,
+      viewerRenderError,
+      pdfRendered,
+    });
+
+  const handleUploadAttachment = async (fieldId: string, file: File) => {
+    if (!token || viewState?.state !== 'ready') return;
+    if (file.size === 0) {
+      setAttachmentErrors((prev) => ({ ...prev, [fieldId]: t('attachmentEmptyError') }));
+      return;
+    }
+    if (file.size > SIGN_ATTACHMENT_MAX_BYTES) {
+      setAttachmentErrors((prev) => ({ ...prev, [fieldId]: t('attachmentTooLargeError') }));
+      return;
+    }
+    setUploadingFieldIds((prev) => ({ ...prev, [fieldId]: true }));
+    setAttachmentErrors((prev) => {
+      if (!(fieldId in prev)) return prev;
+      const copy = { ...prev };
+      delete copy[fieldId];
+      return copy;
+    });
+    setSubmitError(null);
+    try {
+      const uploaded = await publicSignApi.uploadAttachment({ token, fieldId, file });
+      setAnswers((prev) => ({
+        ...prev,
+        [fieldId]: {
+          ...prev[fieldId],
+          attachment: uploaded,
+        },
+      }));
+      toast(t('attachmentUploadedToast'));
+    } catch (error) {
+      if (isOtpRequiredError(error)) {
+        setOtpSent(false);
+        setOtpCode('');
+        setOtpError(error.message || t('otpInvalid'));
+        setPdfBytes(null);
+        setViewState({ state: 'otp_required', orgName: viewState.orgName, title: viewState.title, maskedEmail: null });
+        toast(t('otpInvalid'), 'error');
+      } else {
+        const msg =
+          error instanceof PublicSignError && error.status === 413
+            ? t('attachmentTooLargeError')
+            : error instanceof PublicSignError && error.status === 415
+              ? t('attachmentInvalidTypeError')
+              : error instanceof Error && error.message
+                ? error.message
+                : t('attachmentUploadFailed');
+        setAttachmentErrors((prev) => ({ ...prev, [fieldId]: msg }));
+        toast(msg, 'error');
+      }
+    } finally {
+      setUploadingFieldIds((prev) => ({ ...prev, [fieldId]: false }));
+    }
+  };
+
+  const handleRequestOtp = async () => {
+    if (!token) return;
+    setOtpSending(true);
+    setOtpError(null);
+    try {
+      await publicSignApi.requestOtp(token);
+      setOtpSent(true);
+      toast(t('otpSentToast'));
+    } catch (error) {
+      setOtpError(error instanceof Error ? error.message : t('otpInvalid'));
+    } finally {
+      setOtpSending(false);
+    }
+  };
+
+  const handleVerifyOtp = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!token) return;
+    setOtpVerifying(true);
+    setOtpError(null);
+    try {
+      const res = await publicSignApi.verifyOtp(token, otpCode.trim());
+      if (!res.ok) {
+        setOtpError(t('otpInvalid'));
+        return;
+      }
+      await loadView(token);
+    } catch {
+      setOtpError(t('otpInvalid'));
+    } finally {
+      setOtpVerifying(false);
+    }
+  };
+
+  const handleJumpToNext = () => {
+    const nextField = incompleteRequired[0];
+    if (!nextField) return;
+    setPageNumber(nextField.pageNumber);
+    const el = fieldCardRefs.current[nextField.id];
+    el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    if (nextField.fieldType === 'signature' || nextField.fieldType === 'initials' || nextField.fieldType === 'stamp') {
+      setPadFieldId(nextField.id);
+    } else {
+      const inputEl = document.getElementById(
+        nextField.fieldType === 'checkbox'
+          ? `ceremony-field-checkbox-${nextField.id}`
+          : `ceremony-field-input-${nextField.id}`,
+      );
+      inputEl?.focus();
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!token || viewState?.state !== 'ready' || incompleteRequired.length > 0 || !consentChecked) return;
+    if (!canSubmit) {
+      setSubmitError(t(isApproverCeremony ? 'approverPdfRequired' : 'pdfRequiredToSign'));
+      return;
+    }
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const submitRes = await publicSignApi.submit(
+        buildSignSubmitPayload({
+          token,
+          fields: viewState.fields,
+          answers,
+        }),
+      );
+      const wasInPerson = Boolean(inPersonMode || viewState.inPerson || submitRes.inPerson);
+      if (wasInPerson) {
+        setInPersonMode(true);
+      }
+      forgetSignToken();
+      toast(t(isApproverCeremony ? 'approverSubmitSuccessToast' : 'submitSuccessToast'));
+      setViewState({
+        state: 'already_completed',
+        title: viewState.title,
+        status: 'completed',
+        signerRole: isApproverCeremony ? 'approver' : 'signer',
+        ...(wasInPerson ? { inPerson: true } : {}),
+      });
+      setPdfBytes(null);
+    } catch (error) {
+      if (isOtpRequiredError(error)) {
+        setOtpSent(false);
+        setOtpCode('');
+        setOtpError(error.message || t('otpInvalid'));
+        setPdfBytes(null);
+        setViewState({
+          state: 'otp_required',
+          orgName: viewState.orgName,
+          title: viewState.title,
+          maskedEmail: null,
+          ...(inPersonMode || viewState.inPerson ? { inPerson: true } : {}),
+        });
+        toast(t('otpInvalid'), 'error');
+      } else {
+        const msg = error instanceof Error ? error.message : t('invalidTitle');
+        setSubmitError(msg);
+        toast(msg, 'error');
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDecline = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!token || viewState?.state !== 'ready') return;
+    if (!declineReason.trim()) {
+      setDeclineError(t('declineReasonRequired'));
+      return;
+    }
+    setDeclining(true);
+    setDeclineError(null);
+    try {
+      await publicSignApi.decline({ token, reason: declineReason.trim() });
+      const wasInPerson = Boolean(inPersonMode || viewState.inPerson);
+      forgetSignToken();
+      setDeclineOpen(false);
+      toast(t(isApproverCeremony ? 'approverDeclineSuccessToast' : 'declineSuccessToast'));
+      setViewState({
+        state: 'declined',
+        title: viewState.title,
+        status: 'declined',
+        signerRole: isApproverCeremony ? 'approver' : 'signer',
+        ...(wasInPerson ? { inPerson: true } : {}),
+      });
+      setPdfBytes(null);
+    } catch (error) {
+      if (isOtpRequiredError(error)) {
+        setDeclineOpen(false);
+        setOtpSent(false);
+        setOtpCode('');
+        setOtpError(error.message || t('otpInvalid'));
+        setPdfBytes(null);
+        setViewState({
+          state: 'otp_required',
+          orgName: viewState.orgName,
+          title: viewState.title,
+          maskedEmail: null,
+          ...(inPersonMode || viewState.inPerson ? { inPerson: true } : {}),
+        });
+        toast(t('otpInvalid'), 'error');
+      } else {
+        setDeclineError(error instanceof Error ? error.message : t('invalidTitle'));
+      }
+    } finally {
+      setDeclining(false);
+    }
+  };
+
+  const handleDelegate = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!token || viewState?.state !== 'ready' || inPersonMode || viewState.inPerson) return;
+    const trimmedName = delegateName.trim();
+    const trimmedEmail = delegateEmail.trim().toLowerCase();
+    const trimmedReason = delegateReason.trim();
+    if (!trimmedName || !isEmailAddress(trimmedEmail)) {
+      setDelegateError(t('delegateInvalidFields'));
+      return;
+    }
+    if (!trimmedReason) {
+      setDelegateError(t('delegateReasonRequired'));
+      return;
+    }
+    setDelegating(true);
+    setDelegateError(null);
+    try {
+      const res = await publicSignApi.delegate({
+        token,
+        delegateName: trimmedName,
+        delegateEmail: trimmedEmail,
+        reason: trimmedReason,
+      });
+      forgetSignToken();
+      setDelegateOpen(false);
+      toast(t('delegateSuccessToast'));
+      setViewState({
+        state: 'delegated',
+        title: viewState.title,
+        delegateName: res.delegateName,
+        maskedDelegateEmail: res.maskedDelegateEmail,
+      });
+      setPdfBytes(null);
+    } catch (error) {
+      if (isOtpRequiredError(error)) {
+        setDelegateOpen(false);
+        setOtpSent(false);
+        setOtpCode('');
+        setOtpError(error.message || t('otpInvalid'));
+        setPdfBytes(null);
+        setViewState({
+          state: 'otp_required',
+          orgName: viewState.orgName,
+          title: viewState.title,
+          maskedEmail: null,
+          ...(inPersonMode || viewState.inPerson ? { inPerson: true } : {}),
+        });
+        toast(t('otpInvalid'), 'error');
+      } else {
+        setDelegateError(error instanceof Error ? error.message : t('invalidTitle'));
+      }
+    } finally {
+      setDelegating(false);
+    }
+  };
+
+  const isInPerson = Boolean(inPersonMode || (viewState && 'inPerson' in viewState && viewState.inPerson));
+
+  return (
+    <div className="min-h-screen bg-background text-foreground">
+      <ScreenTitle name={viewState?.title ?? t('invalidTitle')} />
+
+      <header className="border-b bg-card px-4 py-3">
+        <div className="mx-auto flex max-w-3xl flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Logo />
+            {isInPerson ? (
+              <Badge variant="brand" data-testid="ceremony-header-in-person-badge">
+                {t('inPersonBadge')}
+              </Badge>
+            ) : null}
+          </div>
+          <span className="text-xs leading-relaxed text-muted-foreground">
+            {isInPerson ? t('inPersonSecurityNote') : t('securityNote')}
+          </span>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-3xl px-3 py-5 pb-28 sm:px-6">
+        {!token || viewError ? (
+          <Card data-testid="sign-ceremony-invalid">
+            <CardHeader>
+              <CardTitle>{t('invalidTitle')}</CardTitle>
+              <CardDescription>{viewError || t('invalidHint')}</CardDescription>
+            </CardHeader>
+          </Card>
+        ) : loadingView ? (
+          <ListSkeleton rows={4} />
+        ) : viewState?.state === 'waiting_turn' ? (
+          <Card data-testid="sign-ceremony-waiting">
+            <CardHeader>
+              <CardTitle>{t('waitingTitle')}</CardTitle>
+              <CardDescription>{t('waitingHint', { order: String(viewState.order) })}</CardDescription>
+            </CardHeader>
+          </Card>
+        ) : isInPerson && (viewState?.state === 'already_completed' || viewState?.state === 'declined') ? (
+          <SignInPersonHandoffCard
+            title={viewState.title}
+            outcome={viewState.state === 'declined' ? 'declined' : 'completed'}
+            signerRole={viewState.signerRole}
+          />
+        ) : viewState?.state === 'already_completed' ? (
+          <Card data-testid="sign-ceremony-completed">
+            <CardHeader>
+              <CardTitle>{t(viewState.signerRole === 'approver' ? 'approverCompletedTitle' : 'completedTitle')}</CardTitle>
+              <CardDescription>
+                {t(viewState.signerRole === 'approver' ? 'approverCompletedHint' : 'completedHint')}
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        ) : viewState?.state === 'declined' ? (
+          <Card data-testid="sign-ceremony-declined">
+            <CardHeader>
+              <CardTitle>{t(viewState.signerRole === 'approver' ? 'approverDeclinedTitle' : 'declinedTitle')}</CardTitle>
+            </CardHeader>
+          </Card>
+        ) : viewState?.state === 'delegated' ? (
+          <Card data-testid="sign-ceremony-delegated">
+            <CardHeader>
+              <CardTitle>{t('delegatedTitle')}</CardTitle>
+              <CardDescription>
+                {t('delegatedHint', {
+                  name: viewState.delegateName,
+                  email: viewState.maskedDelegateEmail ?? '',
+                })}
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        ) : viewState?.state === 'voided' ? (
+          <Card data-testid="sign-ceremony-voided">
+            <CardHeader>
+              <CardTitle>{t('voidedTitle')}</CardTitle>
+            </CardHeader>
+          </Card>
+        ) : viewState?.state === 'expired' ? (
+          <Card data-testid="sign-ceremony-expired">
+            <CardHeader>
+              <CardTitle>{t('expiredTitle')}</CardTitle>
+            </CardHeader>
+          </Card>
+        ) : viewState?.state === 'otp_required' ? (
+          <Card className="mx-auto max-w-md" data-testid="sign-ceremony-otp">
+            <CardHeader>
+              <CardTitle>{t('otpTitle')}</CardTitle>
+              <CardDescription>{t('otpHint', { email: viewState.maskedEmail ?? '' })}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {otpSent && !otpError ? (
+                <p
+                  className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground"
+                  role="status"
+                  data-testid="otp-sent-notice"
+                >
+                  {t('otpSentToast')}
+                </p>
+              ) : null}
+              {otpError ? <ErrorText>{otpError}</ErrorText> : null}
+
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11 w-full"
+                loading={otpSending}
+                onClick={() => void handleRequestOtp()}
+                data-testid="otp-request-btn"
+              >
+                {otpSent ? t('otpResend') : t('otpSend')}
+              </Button>
+
+              <form onSubmit={(e) => void handleVerifyOtp(e)} className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="sign-otp-input">{t('otpCodeLabel')}</Label>
+                  <Input
+                    id="sign-otp-input"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    value={otpCode}
+                    onChange={(e) => setOtpCode(e.target.value)}
+                    className="min-h-11 text-center font-mono text-lg tracking-widest"
+                    data-testid="otp-code-input"
+                  />
+                </div>
+                <Button
+                  type="submit"
+                  className="min-h-11 w-full"
+                  disabled={otpCode.trim().length < 6}
+                  loading={otpVerifying}
+                  data-testid="otp-verify-btn"
+                >
+                  {t('otpVerifyButton')}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        ) : viewState?.state === 'ready' ? (
+          <SignCeremonyReadyView
+            viewState={viewState}
+            inPerson={isInPerson}
+            answers={answers}
+            pdfBytes={pdfBytes}
+            loadingPdf={loadingPdf}
+            pdfError={pdfError}
+            viewerRenderError={viewerRenderError}
+            pageNumber={pageNumber}
+            scale={scale}
+            consentChecked={consentChecked}
+            canSubmit={canSubmit}
+            submitting={submitting}
+            submitError={submitError}
+            declineOpen={declineOpen}
+            declineReason={declineReason}
+            declining={declining}
+            declineError={declineError}
+            delegateOpen={delegateOpen}
+            delegateName={delegateName}
+            delegateEmail={delegateEmail}
+            delegateReason={delegateReason}
+            delegating={delegating}
+            delegateError={delegateError}
+            padFieldId={padFieldId}
+            onPageChange={setPageNumber}
+            onScaleChange={setScale}
+            onRenderStatusChange={handlePdfRenderStatus}
+            onJumpToNext={handleJumpToNext}
+            onOpenPad={(fieldId) => {
+              if (!isApproverCeremony) {
+                setPadFieldId(fieldId);
+              }
+            }}
+            onUpdateAnswer={(fieldId, updater) => {
+              setSubmitError(null);
+              setAnswers((prev) => ({
+                ...prev,
+                [fieldId]: updater(prev[fieldId]),
+              }));
+            }}
+            uploadingFieldIds={uploadingFieldIds}
+            attachmentErrors={attachmentErrors}
+            onUploadAttachment={(fieldId, file) => void handleUploadAttachment(fieldId, file)}
+            onConsentChange={(checked) => {
+              setConsentChecked(checked);
+              setSubmitError(null);
+            }}
+            onSubmit={() => void handleSubmit()}
+            onDeclineOpenChange={setDeclineOpen}
+            onDeclineReasonChange={setDeclineReason}
+            onDeclineSubmit={(event) => void handleDecline(event)}
+            onDelegateOpenChange={(open) => {
+              setDelegateOpen(open);
+              if (!open) setDelegateError(null);
+            }}
+            onDelegateNameChange={setDelegateName}
+            onDelegateEmailChange={setDelegateEmail}
+            onDelegateReasonChange={setDelegateReason}
+            onDelegateSubmit={(event) => void handleDelegate(event)}
+            savedSignatures={savedSignatures}
+            savedStamps={savedStamps}
+            canSaveSignatureProfile={Boolean(workspaceOrgSlug)}
+            onSaveSignatureProfile={async (input) => {
+              if (!workspaceOrgSlug) return;
+              const ok = await saveCeremonyMemberSignature(workspaceOrgSlug, input);
+              if (!ok) return;
+              const reloaded = await loadCeremonyWorkspaceProfiles(viewState.orgName);
+              if (reloaded) {
+                setSavedSignatures(reloaded.signatures);
+              }
+            }}
+            setFieldCardRef={(fieldId, el) => {
+              fieldCardRefs.current[fieldId] = el;
+            }}
+          />
+        ) : null}
+      </main>
+    </div>
+  );
+}
+
+export interface SignCeremonyReadyViewProps {
+  viewState: ReadySignView;
+  inPerson?: boolean;
+  answers: Readonly<Record<string, CeremonyFieldAnswer>>;
+  pdfBytes: Uint8Array | null;
+  loadingPdf: boolean;
+  pdfError: string | null;
+  viewerRenderError: string | null;
+  pageNumber: number;
+  scale: number;
+  consentChecked: boolean;
+  canSubmit: boolean;
+  submitting: boolean;
+  submitError: string | null;
+  declineOpen: boolean;
+  declineReason: string;
+  declining: boolean;
+  declineError: string | null;
+  delegateOpen?: boolean;
+  delegateName?: string;
+  delegateEmail?: string;
+  delegateReason?: string;
+  delegating?: boolean;
+  delegateError?: string | null;
+  padFieldId: string | null;
+  uploadingFieldIds?: Readonly<Record<string, boolean>>;
+  attachmentErrors?: Readonly<Record<string, string>>;
+  onUploadAttachment?: (fieldId: string, file: File) => void;
+  onPageChange: (page: number) => void;
+  onScaleChange: (scale: number) => void;
+  onRenderStatusChange: (status: { rendered: boolean; error: string | null }) => void;
+  onJumpToNext: () => void;
+  onOpenPad: (fieldId: string | null) => void;
+  onUpdateAnswer: (fieldId: string, updater: (prev: CeremonyFieldAnswer | undefined) => CeremonyFieldAnswer) => void;
+  onConsentChange: (checked: boolean) => void;
+  onSubmit: () => void;
+  onDeclineOpenChange: (open: boolean) => void;
+  onDeclineReasonChange: (reason: string) => void;
+  onDeclineSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+  onDelegateOpenChange?: (open: boolean) => void;
+  onDelegateNameChange?: (name: string) => void;
+  onDelegateEmailChange?: (email: string) => void;
+  onDelegateReasonChange?: (reason: string) => void;
+  onDelegateSubmit?: (event: React.FormEvent<HTMLFormElement>) => void;
+  savedSignatures?: readonly SignMemberSignatureItem[];
+  savedStamps?: readonly SignOrgStampItem[];
+  canSaveSignatureProfile?: boolean;
+  onSaveSignatureProfile?: (input: {
+    kind: 'signature' | 'initials';
+    signatureKind: 'draw' | 'type';
+    signatureTypedText?: string | null;
+    signaturePngBase64: string;
+  }) => Promise<void> | void;
+  setFieldCardRef?: (fieldId: string, el: HTMLDivElement | null) => void;
+}
+
+export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
+  const { viewState, answers } = props;
+  const t = useTranslations('sign.ceremony');
+  const tField = useTranslations('sign.fields');
+  const common = useTranslations('common');
+
+  const isApproverCeremony = isApproverCeremonyMode(viewState);
+  const isInPerson = Boolean(props.inPerson || viewState.inPerson);
+  const canDelegateCeremony = Boolean(
+    !isInPerson &&
+      viewState.allowDelegation &&
+      viewState.signerRole !== 'cc' &&
+      (viewState.delegationCount ?? 0) < 2 &&
+      props.onDelegateOpenChange,
+  );
+  const incompleteRequired = useMemo(
+    () => viewState.fields.filter((field) => !isFieldComplete(field, answers[field.id])),
+    [viewState.fields, answers],
+  );
+
+  return (
+    <div className="space-y-4" data-testid="sign-ceremony-ready">
+      <div className="sticky top-2 z-30 flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-card/95 px-3 py-2.5">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="min-w-0 truncate text-base font-semibold text-foreground">{viewState.title}</h1>
+            {isApproverCeremony ? (
+              <Badge variant="brand" data-testid="ceremony-role-badge">
+                {t('approverBadge')}
+              </Badge>
+            ) : null}
+          </div>
+          <p className="truncate text-xs text-muted-foreground">
+            {viewState.signerName}
+            {viewState.roleLabel ? ` (${viewState.roleLabel})` : ''}
+          </p>
+          {viewState.delegatedFromName ? (
+            <p className="truncate text-xs text-muted-foreground" data-testid="ceremony-delegated-from">
+              {t('delegatedFromNotice', { name: viewState.delegatedFromName })}
+            </p>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {incompleteRequired.length > 0 ? (
+            <>
+              <Badge variant="warning" data-testid="ceremony-remaining-badge">
+                {t('remainingFields', { count: String(incompleteRequired.length) })}
+              </Badge>
+              <Button
+                type="button"
+                size="sm"
+                className="min-h-11"
+                onClick={props.onJumpToNext}
+                data-testid="ceremony-jump-next"
+              >
+                {t('jumpNext')}
+              </Button>
+            </>
+          ) : viewState.fields.length > 0 || !isApproverCeremony ? (
+            <Badge variant="success">{t('allDoneBadge')}</Badge>
+          ) : null}
+        </div>
+      </div>
+
+      {viewState.message ? (
+        <div
+          className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-foreground"
+          data-testid="ceremony-sender-message"
+        >
+          <p className="text-xs font-medium text-muted-foreground">{t('senderMessageLabel')}</p>
+          <p className="mt-0.5 whitespace-pre-wrap break-words">{viewState.message}</p>
+        </div>
+      ) : null}
+
+      {viewState.sharedSummary ? (
+        <CounterpartySummaryBanner
+          sharedSummary={viewState.sharedSummary}
+          pageCount={viewState.pageCount}
+          onJumpToPage={props.onPageChange}
+        />
+      ) : null}
+
+      {props.loadingPdf ? <ListSkeleton rows={3} /> : null}
+      {props.pdfError ? <ErrorText>{props.pdfError}</ErrorText> : null}
+
+      <PdfCanvasViewer
+        pdfBytes={props.pdfBytes}
+        pageNumber={props.pageNumber}
+        pageCount={viewState.pageCount}
+        scale={props.scale}
+        onPageChange={props.onPageChange}
+        onScaleChange={props.onScaleChange}
+        onRenderStatusChange={props.onRenderStatusChange}
+        renderOverlay={(page) => (
+          <div className="pointer-events-none relative h-full w-full">
+            {viewState.fields
+              .filter((field) => field.pageNumber === page)
+              .map((field) => {
+                const answer = answers[field.id];
+                const filled = isFieldFilled(field, answer);
+                const isSig =
+                  field.fieldType === 'signature' || field.fieldType === 'initials' || field.fieldType === 'stamp';
+                return (
+                  <button
+                    key={field.id}
+                    type="button"
+                    onClick={() => {
+                      if (isSig && !isApproverCeremony) {
+                        props.onOpenPad(field.id);
+                      } else {
+                        const inputEl = document.getElementById(
+                          field.fieldType === 'checkbox'
+                            ? `ceremony-field-checkbox-${field.id}`
+                            : `ceremony-field-input-${field.id}`,
+                        );
+                        inputEl?.focus();
+                      }
+                    }}
+                    style={{
+                      left: `${field.xNorm * 100}%`,
+                      top: `${field.yNorm * 100}%`,
+                      width: `${field.wNorm * 100}%`,
+                      height: `${field.hNorm * 100}%`,
+                    }}
+                    className={cn(
+                      'pointer-events-auto absolute flex items-center justify-center rounded border-2 p-1 text-xs font-medium',
+                      filled ? 'border-success bg-success/10 text-success' : 'border-primary bg-primary/10 text-primary',
+                    )}
+                  >
+                    {answer?.signaturePngDataUrl ? (
+                      <img
+                        src={answer.signaturePngDataUrl}
+                        alt={tField(`types.${field.fieldType}`)}
+                        className="max-h-full max-w-full object-contain"
+                      />
+                    ) : (
+                      <span className="truncate">
+                        {field.fieldType === 'attachment'
+                          ? answer?.attachment?.filename ||
+                            field.attachment?.filename ||
+                            (field.label || tField('types.attachment'))
+                          : answer?.valueText ||
+                            (field.fieldType === 'checkbox'
+                              ? answer?.valueChecked
+                                ? t('filledMark')
+                                : field.label || tField('types.checkbox')
+                              : field.fieldType === 'initials'
+                                ? t('tapToInitial')
+                                : field.fieldType === 'stamp'
+                                  ? t('tapToStamp')
+                                : isSig
+                                  ? t('tapToSign')
+                                  : field.label || tField(`types.${field.fieldType}`))}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+          </div>
+        )}
+      />
+
+      {isApproverCeremony ? (
+        <Card data-testid="ceremony-approver-card">
+          <CardContent className="p-4 text-sm text-foreground">{t('approverGuidance')}</CardContent>
+        </Card>
+      ) : null}
+
+      {viewState.fields.length > 0 ? (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">{tField('paletteTitle')}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {viewState.fields.map((field) => {
+              const answer = answers[field.id];
+              const complete = isFieldComplete(field, answer);
+              const filled = isFieldFilled(field, answer);
+              const isSig =
+                field.fieldType === 'signature' || field.fieldType === 'initials' || field.fieldType === 'stamp';
+              const fieldLabel = field.label || tField(`types.${field.fieldType}`);
+              const quickSavedSig =
+                field.fieldType === 'signature' || field.fieldType === 'initials'
+                  ? (props.savedSignatures ?? []).find((item) => item.kind === field.fieldType) ?? null
+                  : null;
+              return (
+                <div
+                  key={field.id}
+                  ref={(el) => {
+                    props.setFieldCardRef?.(field.id, el);
+                  }}
+                  tabIndex={-1}
+                  className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm font-medium">{fieldLabel}</span>
+                      <Badge variant={filled ? 'success' : 'outline'}>
+                        {filled
+                          ? field.fieldType === 'stamp'
+                            ? t('stampedMark')
+                            : isSig
+                              ? t('signedMark')
+                              : t('filledMark')
+                          : field.required
+                            ? tField('requiredToggle')
+                            : tField('optionalBadge')}
+                      </Badge>
+                    </div>
+                    <span className="text-xs text-muted-foreground">
+                      {tField('pageNav', { current: String(field.pageNumber), total: String(viewState.pageCount) })}
+                    </span>
+                  </div>
+
+                  {isSig ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {quickSavedSig && !answer?.signaturePngDataUrl ? (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className="min-h-11"
+                          onClick={() => {
+                            const pngDataUrl = rawBase64ToPngDataUrl(quickSavedSig.signaturePngBase64);
+                            if (!pngDataUrl) return;
+                            const targets =
+                              field.fieldType === 'initials'
+                                ? viewState.fields.filter((f) => f.fieldType === 'initials')
+                                : [field];
+                            for (const target of targets) {
+                              props.onUpdateAnswer(target.id, (prev) => ({
+                                ...(prev?.valueText !== undefined ? { valueText: prev.valueText } : {}),
+                                ...(prev?.valueChecked !== undefined ? { valueChecked: prev.valueChecked } : {}),
+                                signaturePngDataUrl: pngDataUrl,
+                                signatureKind: quickSavedSig.signatureKind === 'type' ? 'typed' : 'drawn',
+                                ...(quickSavedSig.signatureTypedText
+                                  ? { signatureTypedText: quickSavedSig.signatureTypedText }
+                                  : {}),
+                              }));
+                            }
+                          }}
+                          data-testid={`ceremony-quick-saved-btn-${field.id}`}
+                        >
+                          {t('useSavedSignature')}
+                        </Button>
+                      ) : null}
+                      <Button
+                        type="button"
+                        variant={complete ? 'outline' : 'default'}
+                        className="min-h-11"
+                        onClick={() => props.onOpenPad(field.id)}
+                        data-testid={`ceremony-sign-btn-${field.id}`}
+                      >
+                        {answer?.signaturePngDataUrl
+                          ? field.fieldType === 'stamp'
+                            ? t('stampedMark')
+                            : t('signedMark')
+                          : field.fieldType === 'initials'
+                            ? t('tapToInitial')
+                            : field.fieldType === 'stamp'
+                              ? t('tapToStamp')
+                              : t('tapToSign')}
+                      </Button>
+                    </div>
+                  ) : field.fieldType === 'checkbox' ? (
+                    <label
+                      htmlFor={`ceremony-field-checkbox-${field.id}`}
+                      className="flex min-h-11 cursor-pointer items-center gap-2 text-sm"
+                    >
+                      <Checkbox
+                        id={`ceremony-field-checkbox-${field.id}`}
+                        checked={Boolean(answer?.valueChecked)}
+                        onCheckedChange={(checked) =>
+                          props.onUpdateAnswer(field.id, (prev) => ({ ...prev, valueChecked: Boolean(checked) }))
+                        }
+                      />
+                      <span>{field.label || t('checkboxLabel')}</span>
+                    </label>
+                  ) : field.fieldType === 'dropdown' ? (
+                    <div className="w-full sm:max-w-xs">
+                      <Label htmlFor={`ceremony-field-input-${field.id}`} className="sr-only">
+                        {fieldLabel}
+                      </Label>
+                      <NativeSelect
+                        id={`ceremony-field-input-${field.id}`}
+                        className="min-h-11 w-full"
+                        value={answer?.valueText ?? ''}
+                        onChange={(e) =>
+                          props.onUpdateAnswer(field.id, (prev) => ({ ...prev, valueText: e.target.value }))
+                        }
+                        data-testid={`ceremony-dropdown-${field.id}`}
+                      >
+                        <NativeSelectOption value="">{t('dropdownPlaceholder')}</NativeSelectOption>
+                        {(field.options ?? []).map((opt) => (
+                          <NativeSelectOption key={opt} value={opt}>
+                            {opt}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                    </div>
+                  ) : field.fieldType === 'radio' ? (
+                    <fieldset
+                      role="radiogroup"
+                      aria-labelledby={`ceremony-radiogroup-legend-${field.id}`}
+                      className="w-full sm:max-w-xs"
+                      data-testid={`ceremony-radiogroup-${field.id}`}
+                    >
+                      <legend id={`ceremony-radiogroup-legend-${field.id}`} className="sr-only">
+                        {fieldLabel}
+                      </legend>
+                      <div className="space-y-1.5">
+                        {(field.options ?? []).map((opt, idx) => {
+                          const radioId =
+                            idx === 0 ? `ceremony-field-input-${field.id}` : `ceremony-field-radio-${field.id}-${idx}`;
+                          const checked = answer?.valueText === opt;
+                          return (
+                            <label
+                              key={opt}
+                              htmlFor={radioId}
+                              className={cn(
+                                'flex min-h-11 cursor-pointer items-center gap-2.5 rounded-md border px-3 py-2 text-sm transition-colors',
+                                checked
+                                  ? 'border-primary bg-primary/5 font-medium text-foreground'
+                                  : 'border-border bg-card text-foreground',
+                              )}
+                            >
+                              <input
+                                id={radioId}
+                                type="radio"
+                                name={`ceremony-radio-${field.id}`}
+                                value={opt}
+                                checked={checked}
+                                onChange={() =>
+                                  props.onUpdateAnswer(field.id, (prev) => ({ ...prev, valueText: opt }))
+                                }
+                                className="size-4 shrink-0 accent-primary"
+                              />
+                              <span className="min-w-0 break-words">{opt}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </fieldset>
+                  ) : field.fieldType === 'attachment' ? (
+                    <div className="w-full space-y-1.5 sm:max-w-xs" data-testid={`ceremony-attachment-${field.id}`}>
+                      {(() => {
+                        const isUploading = Boolean(props.uploadingFieldIds?.[field.id]);
+                        const currentAttachment = answer?.attachment ?? field.attachment ?? null;
+                        const fieldAttachmentError = props.attachmentErrors?.[field.id] ?? null;
+                        return (
+                          <>
+                            <input
+                              id={`ceremony-file-picker-${field.id}`}
+                              type="file"
+                              tabIndex={-1}
+                              aria-hidden="true"
+                              accept=".pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg"
+                              disabled={isUploading}
+                              className="sr-only"
+                              onChange={(e) => {
+                                const picked = e.currentTarget.files?.[0];
+                                e.currentTarget.value = '';
+                                if (picked) {
+                                  props.onUploadAttachment?.(field.id, picked);
+                                }
+                              }}
+                              data-testid={`ceremony-attachment-input-${field.id}`}
+                            />
+                            <Button
+                              id={`ceremony-field-input-${field.id}`}
+                              type="button"
+                              variant={currentAttachment ? 'outline' : 'default'}
+                              className="min-h-11 w-full"
+                              loading={isUploading}
+                              aria-label={`${fieldLabel} - ${
+                                isUploading
+                                  ? t('attachmentUploading')
+                                  : currentAttachment
+                                    ? t('attachmentReplaceButton')
+                                    : t('attachmentPickButton')
+                              }`}
+                              onClick={() => document.getElementById(`ceremony-file-picker-${field.id}`)?.click()}
+                              data-testid={`ceremony-attachment-btn-${field.id}`}
+                            >
+                              {isUploading
+                                ? t('attachmentUploading')
+                                : currentAttachment
+                                  ? t('attachmentReplaceButton')
+                                  : t('attachmentPickButton')}
+                            </Button>
+                            {currentAttachment ? (
+                              <div
+                                className="rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-xs"
+                                data-testid={`ceremony-attachment-summary-${field.id}`}
+                              >
+                                <p className="truncate font-medium text-foreground">{currentAttachment.filename}</p>
+                                {currentAttachment.sha256 ? (
+                                  <p className="truncate font-mono text-[11px] text-muted-foreground">
+                                    SHA-256: {currentAttachment.sha256.slice(0, 16)}...
+                                  </p>
+                                ) : null}
+                              </div>
+                            ) : (
+                              <p className="text-[11px] text-muted-foreground">{t('attachmentAcceptHint')}</p>
+                            )}
+                            {fieldAttachmentError ? <ErrorText>{fieldAttachmentError}</ErrorText> : null}
+                          </>
+                        );
+                      })()}
+                    </div>
+                  ) : (
+                    <div className="w-full sm:max-w-xs">
+                      <Label htmlFor={`ceremony-field-input-${field.id}`} className="sr-only">
+                        {fieldLabel}
+                      </Label>
+                      <Input
+                        id={`ceremony-field-input-${field.id}`}
+                        className="min-h-11"
+                        placeholder={t('textPlaceholder')}
+                        value={answer?.valueText ?? ''}
+                        onChange={(e) =>
+                          props.onUpdateAnswer(field.id, (prev) => ({ ...prev, valueText: e.target.value }))
+                        }
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <Card>
+        <CardContent className="space-y-4 p-4">
+          <label
+            htmlFor="ceremony-consent-input"
+            className="flex min-h-11 cursor-pointer items-start gap-3 text-sm"
+          >
+            <Checkbox
+              id="ceremony-consent-input"
+              checked={props.consentChecked}
+              onCheckedChange={(checked) => props.onConsentChange(Boolean(checked))}
+              className="mt-1"
+              data-testid="ceremony-consent-checkbox"
+            />
+            <span>{t(isApproverCeremony ? 'approverConsentLabel' : 'consentLabel')}</span>
+          </label>
+
+          {props.submitError ? (
+            <div data-testid="ceremony-submit-error">
+              <ErrorText>{props.submitError}</ErrorText>
+            </div>
+          ) : props.pdfError || props.viewerRenderError ? (
+            <div data-testid="ceremony-pdf-required-error">
+              <ErrorText>{t(isApproverCeremony ? 'approverPdfRequired' : 'pdfRequiredToSign')}</ErrorText>
+            </div>
+          ) : null}
+
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-between">
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                onClick={() => props.onDeclineOpenChange(true)}
+                data-testid="ceremony-decline-btn"
+              >
+                {t(isApproverCeremony ? 'approverDeclineButton' : 'declineButton')}
+              </Button>
+              {canDelegateCeremony ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  onClick={() => props.onDelegateOpenChange?.(true)}
+                  data-testid="ceremony-delegate-btn"
+                >
+                  {t('delegateButton')}
+                </Button>
+              ) : null}
+            </div>
+            <Button
+              type="button"
+              className="min-h-11"
+              disabled={!props.canSubmit}
+              loading={props.submitting}
+              onClick={props.onSubmit}
+              data-testid="ceremony-submit-btn"
+            >
+              {t(isApproverCeremony ? 'approverSubmitButton' : 'submitButton')}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {!isApproverCeremony ? (
+        (() => {
+          const activePadField = props.padFieldId
+            ? viewState.fields.find((f) => f.id === props.padFieldId) ?? null
+            : null;
+          if (activePadField?.fieldType === 'stamp') {
+            return (
+              <StampPadModal
+                open={props.padFieldId !== null}
+                defaultOrgName={viewState.orgName}
+                savedStamps={props.savedStamps ?? []}
+                onOpenChange={(next) => !next && props.onOpenPad(null)}
+                onConfirm={({ pngDataUrl }) => {
+                  if (!props.padFieldId) return;
+                  props.onUpdateAnswer(props.padFieldId, (prev) => ({
+                    ...(prev?.valueText !== undefined ? { valueText: prev.valueText } : {}),
+                    ...(prev?.valueChecked !== undefined ? { valueChecked: prev.valueChecked } : {}),
+                    ...(prev?.attachment !== undefined ? { attachment: prev.attachment } : {}),
+                    signaturePngDataUrl: pngDataUrl,
+                  }));
+                }}
+              />
+            );
+          }
+          const padMode: 'signature' | 'initials' = activePadField?.fieldType === 'initials' ? 'initials' : 'signature';
+          const savedForMode = (props.savedSignatures ?? []).find((item) => item.kind === padMode) ?? null;
+          const initialsCount = viewState.fields.filter((f) => f.fieldType === 'initials').length;
+          return (
+            <SignaturePadModal
+              open={props.padFieldId !== null}
+              mode={padMode}
+              defaultName={viewState.signerName}
+              savedSignature={savedForMode}
+              canSaveProfile={Boolean(props.canSaveSignatureProfile)}
+              showApplyAllInitials={padMode === 'initials' && initialsCount > 1}
+              onOpenChange={(next) => !next && props.onOpenPad(null)}
+              onConfirm={({ pngDataUrl, kind, typedText, saveForNextTime, applyToAllInitials }) => {
+                if (!props.padFieldId) return;
+                const targets =
+                  padMode === 'initials' && applyToAllInitials
+                    ? viewState.fields.filter((f) => f.fieldType === 'initials').map((f) => f.id)
+                    : [props.padFieldId];
+                for (const targetFieldId of targets) {
+                  props.onUpdateAnswer(targetFieldId, (prev) => ({
+                    ...(prev?.valueText !== undefined ? { valueText: prev.valueText } : {}),
+                    ...(prev?.valueChecked !== undefined ? { valueChecked: prev.valueChecked } : {}),
+                    ...(prev?.attachment !== undefined ? { attachment: prev.attachment } : {}),
+                    signaturePngDataUrl: pngDataUrl,
+                    signatureKind: kind,
+                    ...(kind === 'typed' && typedText ? { signatureTypedText: typedText } : {}),
+                  }));
+                }
+                if (saveForNextTime && props.onSaveSignatureProfile) {
+                  void props.onSaveSignatureProfile({
+                    kind: padMode,
+                    signatureKind: kind === 'typed' ? 'type' : 'draw',
+                    ...(kind === 'typed' && typedText ? { signatureTypedText: typedText } : {}),
+                    signaturePngBase64: stripPngDataUrlPrefix(pngDataUrl),
+                  });
+                }
+              }}
+            />
+          );
+        })()
+      ) : null}
+
+      <Dialog open={props.declineOpen} onOpenChange={props.onDeclineOpenChange}>
+        <DialogContent className="sm:max-w-md" variant="destructive" closeLabel={common('close')}>
+          <DialogHeader>
+            <DialogTitle>{t(isApproverCeremony ? 'approverDeclineTitle' : 'declineTitle')}</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={props.onDeclineSubmit} className="space-y-3">
+            {props.declineError ? <ErrorText>{props.declineError}</ErrorText> : null}
+            <div className="space-y-1.5">
+              <Label htmlFor="decline-reason-input">{t('declineReasonLabel')}</Label>
+              <Input
+                id="decline-reason-input"
+                className="min-h-11"
+                value={props.declineReason}
+                onChange={(e) => props.onDeclineReasonChange(e.target.value)}
+                required
+              />
+            </div>
+            <DialogFooter className="gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                onClick={() => props.onDeclineOpenChange(false)}
+              >
+                {common('cancel')}
+              </Button>
+              <Button type="submit" variant="destructive" className="min-h-11" loading={props.declining}>
+                {t('declineConfirm')}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {canDelegateCeremony ? (
+        <Dialog open={Boolean(props.delegateOpen)} onOpenChange={props.onDelegateOpenChange}>
+          <DialogContent className="sm:max-w-md" closeLabel={common('close')} data-testid="ceremony-delegate-dialog">
+            <DialogHeader>
+              <DialogTitle>{t('delegateTitle')}</DialogTitle>
+              <DialogDescription>{t('delegateDescription')}</DialogDescription>
+            </DialogHeader>
+            <form onSubmit={props.onDelegateSubmit} className="space-y-3">
+              {props.delegateError ? <ErrorText>{props.delegateError}</ErrorText> : null}
+              <div className="space-y-1.5">
+                <Label htmlFor="delegate-name-input">{t('delegateNameLabel')}</Label>
+                <Input
+                  id="delegate-name-input"
+                  className="min-h-11"
+                  value={props.delegateName ?? ''}
+                  onChange={(e) => props.onDelegateNameChange?.(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="delegate-email-input">{t('delegateEmailLabel')}</Label>
+                <Input
+                  id="delegate-email-input"
+                  type="email"
+                  className="min-h-11"
+                  value={props.delegateEmail ?? ''}
+                  onChange={(e) => props.onDelegateEmailChange?.(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="delegate-reason-input">{t('delegateReasonLabel')}</Label>
+                <Input
+                  id="delegate-reason-input"
+                  className="min-h-11"
+                  value={props.delegateReason ?? ''}
+                  onChange={(e) => props.onDelegateReasonChange?.(e.target.value)}
+                  required
+                />
+              </div>
+              <DialogFooter className="gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11"
+                  onClick={() => props.onDelegateOpenChange?.(false)}
+                >
+                  {common('cancel')}
+                </Button>
+                <Button type="submit" className="min-h-11" loading={Boolean(props.delegating)}>
+                  {t('delegateConfirm')}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      ) : null}
+    </div>
+  );
+}

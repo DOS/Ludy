@@ -6,7 +6,7 @@
 // - before: 20 million VND, Circular 219/2013/TT-BTC, Article 15.
 // The threshold applies per invoice by its invoice date. Several invoices from one seller on one day that add up past
 // the threshold, which the rules also catch, are left to the accountant.
-import { money, type Money } from '@crove/l10n-vn';
+import { money, type Money } from '@ludy/l10n-vn';
 
 export interface NonCashThreshold {
   // First invoice date the threshold applies to; null for the earliest rule.

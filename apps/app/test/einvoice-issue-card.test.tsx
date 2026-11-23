@@ -5,7 +5,7 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { EInvoiceIssueView } from '@crove/kernel-contract';
+import type { EInvoiceIssueView } from '@ludy/kernel-contract';
 
 const cache = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 
@@ -34,6 +34,8 @@ const view = (sourceOrderIds: string[]): EInvoiceIssueView => ({
   draftId: '00000000-0000-4000-8000-0000000000d1',
   state: 'draft',
   date: '2026-11-13',
+  saleDate: null,
+  lateReason: null,
   currency: 'VND',
   total: '110000',
   lineCount: 1,
@@ -88,5 +90,20 @@ describe('the issue card and a cancelled sales order (#2849)', () => {
     const html = render(view([orderA, orderB]), { orders: { [orderA]: { status: 'cancelled', number: 'DH-2026-0007' }, [orderB]: { status: 'cancelled', number: 'DH-2026-0009' } } });
     expect(html.match(/data-testid="einvoice-issue-order-cancelled"/g)).toHaveLength(2);
     expect(html).toContain('DH-2026-0009');
+  });
+});
+
+describe('the issue card and a late sale (#3535)', () => {
+  beforeEach(() => cache.current.clear());
+
+  it('shows the sale date and the reason the person gave, so an approver sees why the invoice is late', () => {
+    const html = render({ ...view([]), saleDate: '2026-10-28', lateReason: 'Quên lập hóa đơn' }, { locale: 'vi' });
+    expect(html).toContain('data-testid="einvoice-issue-late-sale"');
+    expect(html).toContain('28/10/2026');
+    expect(html).toContain('Lý do lập muộn: Quên lập hóa đơn');
+  });
+
+  it('shows nothing about a sale date when the invoice has none', () => {
+    expect(render(view([]))).not.toContain('einvoice-issue-late-sale');
   });
 });

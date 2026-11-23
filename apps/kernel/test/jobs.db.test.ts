@@ -1,4 +1,4 @@
-// The crove_jobs schema comes only from committed migrations (External-tenant gate T6). Set CROVE_TEST_ADMIN_URL
+// The ludy_jobs schema comes only from committed migrations (External-tenant gate T6). Set CROVE_TEST_ADMIN_URL
 // to a superuser URL; each test creates and drops its own database.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -6,8 +6,9 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { PgBoss } from 'pg-boss';
 import { afterAll, describe, expect, it } from 'vitest';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { JOB_SCHEMA, MAIL_QUEUES, QUEUES, SOCIAL_PUBLISH_QUEUES, pgBossSchemaVersion } from '../src/jobs-schema.ts';
+import { rewriteHistoricalCoreSql } from './pre-cutover-db.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -40,7 +41,7 @@ function loginUrl(adminUrl: string, username: string, password: string): string 
   return url.toString();
 }
 
-suite('crove_jobs from committed migrations', () => {
+suite('ludy_jobs from committed migrations', () => {
   afterAll(async () => {
     if (!ADMIN) return;
     for (const name of created) await withClient(ADMIN, (admin) => admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`));
@@ -52,7 +53,7 @@ suite('crove_jobs from committed migrations', () => {
   it('stamps the dead letter queue on jobs queued before it, and only on unfinished ones (#1780)', async () => {
     const adminUrl = await createDatabase();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    const backfill = readFileSync(join(MIGRATIONS, '20261104210000_crove_jobs_dead_letter_backfill.sql'), 'utf8');
+    const backfill = rewriteHistoricalCoreSql(readFileSync(join(MIGRATIONS, '20261104210000_crove_jobs_dead_letter_backfill.sql'), 'utf8'));
     await withClient(adminUrl, async (admin) => {
       const add = async (name: string, state: string) =>
         (
@@ -102,8 +103,8 @@ suite('crove_jobs from committed migrations', () => {
       expect(queues.rows).toEqual(
         [...Object.values(QUEUES), ...SOCIAL_PUBLISH_QUEUES, ...MAIL_QUEUES].sort().map((name) => ({
           name,
-          // The e-invoice issue queue is exclusive: one job per draft waiting, running or retrying (#2502), which a standard queue's singleton key does not give. The marketplace poll queue is exclusive for the same reason: one poll per connection at a time (#2519).
-          policy: name === QUEUES.einvoiceIssue || name === QUEUES.marketplacePoll ? 'exclusive' : name === QUEUES.agentWake || name === QUEUES.adsSync || name === QUEUES.mcpWake || SOCIAL_PUBLISH_QUEUES.includes(name) || MAIL_QUEUES.includes(name) ? 'stately' : 'standard',
+          // The e-invoice issue queue is exclusive: one job per draft waiting, running or retrying (#2502), which a standard queue's singleton key does not give. The marketplace poll queue is exclusive for the same reason: one poll per connection at a time (the MISA AMIS test queue too: one test per connection at a time, #3885) (#2519). Sign PDF inspect, seal and CA reconcile queues are exclusive so outbox replays and recovery sweeps coalesce per envelope or request (#3323, #3554).
+          policy: name === QUEUES.einvoiceIssue || name === QUEUES.marketplacePoll || name === QUEUES.misaAmisTest || name === QUEUES.misaAmisMatch || name === QUEUES.marketplaceColumns || name === QUEUES.misaAmisPush || name === QUEUES.signPdfInspect || name === QUEUES.signPdfSeal || name === QUEUES.signCaReconcile ? 'exclusive' : name === QUEUES.agentWake || name === QUEUES.adsSync || name === QUEUES.mcpWake || name === QUEUES.meetingHook || name === QUEUES.meetingChat || name === QUEUES.meetingsImport || name === QUEUES.signHookDeliver || SOCIAL_PUBLISH_QUEUES.includes(name) || MAIL_QUEUES.includes(name) ? 'stately' : 'standard',
           dead_letter: name === QUEUES.deadLetter ? null : QUEUES.deadLetter,
         })),
       );
@@ -112,29 +113,29 @@ suite('crove_jobs from committed migrations', () => {
         SELECT p.oid::regprocedure::text AS fn,
                coalesce('search_path=pg_catalog, pg_temp' = ANY (p.proconfig), false) AS pinned,
                EXISTS (SELECT 1 FROM aclexplode(p.proacl) a WHERE a.grantee = 0) AS public,
-               has_function_privilege('crove_worker', p.oid, 'EXECUTE') AS worker,
-               has_function_privilege('crove_app', p.oid, 'EXECUTE') AS app
+               has_function_privilege('ludy_worker', p.oid, 'EXECUTE') AS worker,
+               has_function_privilege('ludy_app', p.oid, 'EXECUTE') AS app
         FROM pg_proc p WHERE p.pronamespace = '${JOB_SCHEMA}'::regnamespace ORDER BY 1`);
       expect(functions.rows.length).toBeGreaterThan(0);
       for (const row of functions.rows) expect(row, row.fn).toMatchObject({ pinned: true, public: false, worker: true, app: false });
 
       const schema = await admin.query<{ worker: boolean; app: boolean; worker_create: boolean }>(`
-        SELECT has_schema_privilege('crove_worker', '${JOB_SCHEMA}', 'USAGE') AS worker,
-               has_schema_privilege('crove_app', '${JOB_SCHEMA}', 'USAGE') AS app,
-               has_schema_privilege('crove_worker', '${JOB_SCHEMA}', 'CREATE') AS worker_create`);
+        SELECT has_schema_privilege('ludy_worker', '${JOB_SCHEMA}', 'USAGE') AS worker,
+               has_schema_privilege('ludy_app', '${JOB_SCHEMA}', 'USAGE') AS app,
+               has_schema_privilege('ludy_worker', '${JOB_SCHEMA}', 'CREATE') AS worker_create`);
       expect(schema.rows).toEqual([{ worker: true, app: false, worker_create: false }]);
     });
 
     // The API role sees only the version, for /readyz.
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    await withClient(loginUrl(adminUrl, 'crove_app', 'test-app-pw'), async (app) => {
-      const { rows } = await app.query<{ version: number }>('SELECT crove_kernel.jobs_schema_version() AS version');
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    await withClient(loginUrl(adminUrl, 'ludy_app', 'test-app-pw'), async (app) => {
+      const { rows } = await app.query<{ version: number }>('SELECT ludy_kernel.jobs_schema_version() AS version');
       expect(rows[0]?.version).toBe(pgBossSchemaVersion());
       await expect(app.query(`SELECT 1 FROM ${JOB_SCHEMA}.queue`)).rejects.toThrow(/permission denied/);
     });
 
     // pg-boss as the worker, with migrate: false: starts on the vendored schema, sends and fetches a job.
-    const boss = new PgBoss({ connectionString: loginUrl(adminUrl, 'crove_worker', 'test-worker-pw'), schema: JOB_SCHEMA, migrate: false, createSchema: false, supervise: false });
+    const boss = new PgBoss({ connectionString: loginUrl(adminUrl, 'ludy_worker', 'test-worker-pw'), schema: JOB_SCHEMA, migrate: false, createSchema: false, supervise: false });
     boss.on('error', () => {});
     await boss.start();
     try {
@@ -142,13 +143,24 @@ suite('crove_jobs from committed migrations', () => {
       const [job] = await boss.fetch<{ probe: boolean }>(QUEUES.extract);
       expect(job?.id).toBe(id);
       expect(job?.data).toEqual({ probe: true });
+
+      for (const exclusiveQueue of [QUEUES.signPdfInspect, QUEUES.signPdfSeal, QUEUES.signCaReconcile]) {
+        const key = `00000000-0000-4000-8000-000000000001:${exclusiveQueue}:00000000-0000-4000-8000-000000000002`;
+        const firstId = await boss.send(exclusiveQueue, { orgId: 'o', envelopeId: 'e' }, { singletonKey: key });
+        expect(firstId).toBeTruthy();
+        expect(await boss.send(exclusiveQueue, { orgId: 'o', envelopeId: 'e' }, { singletonKey: key })).toBeNull();
+        const [activeJob] = await boss.fetch(exclusiveQueue);
+        expect(activeJob?.id).toBe(firstId);
+        expect(await boss.send(exclusiveQueue, { orgId: 'o', envelopeId: 'e' }, { singletonKey: key })).toBeNull();
+        await boss.complete(exclusiveQueue, firstId!);
+      }
     } finally {
       await boss.stop({ graceful: false });
     }
 
     // The version row decides whether a vendored upgrade runs, so only migrations write it; pg-boss with
     // migrate: false stamps the maintenance columns (cron, BAM, flow, reindex, monitor back-off).
-    await withClient(loginUrl(adminUrl, 'crove_worker', 'test-worker-pw'), async (worker) => {
+    await withClient(loginUrl(adminUrl, 'ludy_worker', 'test-worker-pw'), async (worker) => {
       await expect(worker.query(`UPDATE ${JOB_SCHEMA}.version SET version = version + 1`)).rejects.toThrow(/permission denied/);
       await expect(worker.query(`INSERT INTO ${JOB_SCHEMA}.version (version) VALUES (0)`)).rejects.toThrow(/permission denied/);
       await expect(worker.query(`DELETE FROM ${JOB_SCHEMA}.version`)).rejects.toThrow(/permission denied/);
@@ -166,9 +178,9 @@ suite('crove_jobs from committed migrations', () => {
   it('has the shape the pinned pg-boss expects (pg-boss doctor), and the scan reports a dropped index', async () => {
     const adminUrl = await createDatabase();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const drift = async () => {
-      const boss = new PgBoss({ connectionString: loginUrl(adminUrl, 'crove_worker', 'test-worker-pw'), schema: JOB_SCHEMA, migrate: false, createSchema: false, supervise: false, schedule: false });
+      const boss = new PgBoss({ connectionString: loginUrl(adminUrl, 'ludy_worker', 'test-worker-pw'), schema: JOB_SCHEMA, migrate: false, createSchema: false, supervise: false, schedule: false });
       boss.on('error', () => {});
       await boss.start();
       try {
@@ -178,7 +190,7 @@ suite('crove_jobs from committed migrations', () => {
       }
     };
     const report = await drift();
-    expect(report, 'crove_jobs drifts from the shape the pinned pg-boss expects: fix the vendored migration (pnpm db:vendor:pgboss)').toMatchObject({ ok: true });
+    expect(report, 'ludy_jobs drifts from the shape the pinned pg-boss expects: fix the vendored migration (pnpm db:vendor:pgboss)').toMatchObject({ ok: true });
 
     await withClient(adminUrl, (admin) => admin.query(`DROP INDEX ${JOB_SCHEMA}.warning_i1`));
     const broken = await drift();
@@ -188,15 +200,16 @@ suite('crove_jobs from committed migrations', () => {
 
   it('leaves a schema pg-boss already created at the same version in place', async () => {
     const adminUrl = await createDatabase();
-    // Before #25 the migrate role let pg-boss create crove_jobs at runtime.
-    const boss = new PgBoss({ connectionString: adminUrl, schema: JOB_SCHEMA, migrate: true, supervise: false, schedule: false });
+    // Before #25 the migrate role let pg-boss create crove_jobs at runtime; the #3970 core cutover migration renames it to ludy_jobs.
+    const legacySchema = 'crove_jobs';
+    const boss = new PgBoss({ connectionString: adminUrl, schema: legacySchema, migrate: true, supervise: false, schedule: false });
     boss.on('error', () => {});
     await boss.start();
     await boss.createQueue(QUEUES.extract);
     await boss.stop({ graceful: false });
 
     await withClient(adminUrl, async (admin) => {
-      const { rows } = await admin.query<{ n: number }>(`SELECT count(*)::int AS n FROM pg_proc WHERE pronamespace = '${JOB_SCHEMA}'::regnamespace AND proconfig IS NULL`);
+      const { rows } = await admin.query<{ n: number }>(`SELECT count(*)::int AS n FROM pg_proc WHERE pronamespace = '${legacySchema}'::regnamespace AND proconfig IS NULL`);
       expect(rows[0]?.n).toBeGreaterThan(0);
     });
 
@@ -213,19 +226,19 @@ suite('crove_jobs from committed migrations', () => {
     });
   });
 
-  it('stops on a crove_jobs schema with more than one version row', async () => {
+  it('stops on a pre-cutover crove_jobs schema with more than one version row', async () => {
     const adminUrl = await createDatabase();
     const target = pgBossSchemaVersion();
     await withClient(adminUrl, (admin) =>
-      admin.query(`CREATE SCHEMA ${JOB_SCHEMA}; CREATE TABLE ${JOB_SCHEMA}.version (version int PRIMARY KEY); INSERT INTO ${JOB_SCHEMA}.version VALUES (${target}), (${target + 1})`),
+      admin.query(`CREATE SCHEMA crove_jobs; CREATE TABLE crove_jobs.version (version int PRIMARY KEY); INSERT INTO crove_jobs.version VALUES (${target}), (${target + 1})`),
     );
     await expect(migrate({ adminUrl, dir: MIGRATIONS })).rejects.toThrow(`holds pg-boss schema version ${target}, ${target + 1}`);
   });
 
-  it('stops on a crove_jobs schema at another version', async () => {
+  it('stops on a pre-cutover crove_jobs schema at another version', async () => {
     const adminUrl = await createDatabase();
     await withClient(adminUrl, (admin) =>
-      admin.query(`CREATE SCHEMA ${JOB_SCHEMA}; CREATE TABLE ${JOB_SCHEMA}.version (version int PRIMARY KEY); INSERT INTO ${JOB_SCHEMA}.version VALUES (${pgBossSchemaVersion() - 1})`),
+      admin.query(`CREATE SCHEMA crove_jobs; CREATE TABLE crove_jobs.version (version int PRIMARY KEY); INSERT INTO crove_jobs.version VALUES (${pgBossSchemaVersion() - 1})`),
     );
     await expect(migrate({ adminUrl, dir: MIGRATIONS })).rejects.toThrow(`holds pg-boss schema version ${pgBossSchemaVersion() - 1}`);
   });

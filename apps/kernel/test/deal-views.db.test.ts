@@ -8,12 +8,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { SAVED_VIEW_SCOPES, vietnamToday, type DealPage, type FilterAst, type SavedView } from '@crove/kernel-contract';
-import { crmCommands, crmQueries } from '@crove/mod-crm';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { SAVED_VIEW_SCOPES, vietnamToday, type DealPage, type FilterAst, type SavedView } from '@ludy/kernel-contract';
+import { crmCommands, crmQueries } from '@ludy/mod-crm';
+import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -49,7 +49,7 @@ suite('saved views of the deals on PostgreSQL (CRM K3, #2227)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const o = { orgId, owner, admin: await person('admin'), lan: await person('lan'), viewer: await person('viewer') };
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, o.admin, o.lan, o.viewer]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, o.admin, o.lan, o.viewer]),
     );
     return o;
   }
@@ -68,9 +68,9 @@ suite('saved views of the deals on PostgreSQL (CRM K3, #2227)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -120,7 +120,7 @@ suite('saved views of the deals on PostgreSQL (CRM K3, #2227)', () => {
     await exec(o, o.lan, 'crm.deal.move', { dealId: e.id, version: e.version, stageId: lost, lostReason: 'Giá cao' });
     // Creation dates a view can tell apart.
     for (const [title, days] of [['Hợp đồng Trần', 40], ['Đã thắng Phạm', 100], ['Mất Hoàng 50%', 200]] as const) {
-      await admin((c) => c.query(`UPDATE crove_crm.deal SET created_at = now() - make_interval(days => $3) WHERE org_id = $1 AND title = $2`, [o.orgId, title, days]));
+      await admin((c) => c.query(`UPDATE ludy_crm.deal SET created_at = now() - make_interval(days => $3) WHERE org_id = $1 AND title = $2`, [o.orgId, title, days]));
     }
     // Another org's deal that every filter below could match.
     const otherStages = await exec<Array<{ id: string; kind: string }>>(other, other.owner, 'crm.pipeline.setup', {});
@@ -140,7 +140,7 @@ suite('saved views of the deals on PostgreSQL (CRM K3, #2227)', () => {
     expect(await q('xyz')).toEqual([]);
     expect(await q('%')).toEqual(['Mất Hoàng 50%']);
     expect(await q('_')).toEqual([]);
-    expect(await q("'; DROP TABLE crove_crm.deal; --")).toEqual([]);
+    expect(await q("'; DROP TABLE ludy_crm.deal; --")).toEqual([]);
   });
 
   it('matches stage, status, owner and contact', async () => {
@@ -282,7 +282,7 @@ suite('saved views of the deals on PostgreSQL (CRM K3, #2227)', () => {
     // before it reaches a cast, and so is a cursor naming a sort the registry does not know.
     const sort = (field: string) => ({ field, dir: 'asc' as const });
     await refused({ after: { id: 'không-phải-id', value: 'x' } });
-    await refused({ sort: sort('amount'), after: { id: randomUUID(), value: '1; DROP TABLE crove_crm.deal' } });
+    await refused({ sort: sort('amount'), after: { id: randomUUID(), value: '1; DROP TABLE ludy_crm.deal' } });
     await refused({ sort: sort('amount'), after: { id: randomUUID(), value: 'abc' } });
     await refused({ sort: sort('created'), after: { id: randomUUID(), value: '2026-13-45T00:00:00.000000Z' } });
     await refused({ sort: sort('created'), after: { id: randomUUID(), value: '2026-11-01 00:00:00+00' } });

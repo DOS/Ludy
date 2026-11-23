@@ -27,8 +27,8 @@ import {
   type RecordedArchive,
   type VatDeclaration,
   type VatReport,
-} from '@crove/mod-finance';
-import type { YearArchiveVerification } from '@crove/kernel-contract';
+} from '@ludy/mod-finance';
+import type { YearArchiveVerification } from '@ludy/kernel-contract';
 import {
   BlobIntegrityError,
   BlobNotFoundError,
@@ -39,7 +39,7 @@ import {
   type Actor,
   type BlobStore,
   type Runtime,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 import { DEFAULT_BRAND_NAME } from './config.ts';
 
 export const YEAR_ARCHIVE_ACTOR: Actor = { type: 'system', component: 'finance.archive' };

@@ -3,7 +3,7 @@
 // this one helper; nothing else decides it.
 //
 // Rules:
-// - A member or viewer with any row in crove_kernel.channel_access is limited to the channels of those rows; one with
+// - A member or viewer with any row in ludy_kernel.channel_access is limited to the channels of those rows; one with
 //   none uses every channel. Any row counts, whatever the status of its connection: a revoked or expired connection
 //   still limits, so revoking a limited member's only channel never widens them to every channel.
 // - Owners and admins are never limited, whatever rows exist (a role change needs no cleanup). Neither are agents and
@@ -17,13 +17,13 @@
 //   answers POST_NOT_FOUND), a post with some shows only those variants, and metrics, insights, exports, the
 //   calendar, activity and notifications leave the other channels out.
 // - Owners and admins replace a member's list with social.channel_access.set; an empty list lifts the limit. The
-//   database keeps the rows org-wide under RLS, and crove_tenant may insert and delete them, so the command's role check
+//   database keeps the rows org-wide under RLS, and ludy_tenant may insert and delete them, so the command's role check
 //   is what keeps a limited member from changing their own list or anyone's.
 import { sql, type RawBuilder } from 'kysely';
 import { z } from 'zod';
-import { zSocialChannelAccessSet } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { zSocialChannelAccessSet } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import type { Trx } from './variants.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -37,7 +37,7 @@ type ScopeContext = Pick<QueryContext, 'trx' | 'orgId' | 'actor' | 'role'>;
 // The rows of a member, whatever their role: what the list says, not whether it applies.
 async function listOf(trx: Trx, orgId: string, userId: string): Promise<string[]> {
   const rows = await trx
-    .selectFrom('crove_kernel.channel_access')
+    .selectFrom('ludy_kernel.channel_access')
     .select('channel_connection_id')
     .where('org_id', '=', orgId)
     .where('user_id', '=', userId)
@@ -82,7 +82,7 @@ export async function refuseChannels(ctx: ScopeContext, connectionIds: Iterable<
 export async function refusePostOutside(ctx: ScopeContext, postId: string): Promise<ChannelScope> {
   const scope = await channelScope(ctx);
   if (scope === null) return scope;
-  const rows = await ctx.trx.selectFrom('crove_social.post_variant').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('post_id', '=', postId).execute();
+  const rows = await ctx.trx.selectFrom('ludy_social.post_variant').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('post_id', '=', postId).execute();
   if (rows.length > 0 && !rows.some((r) => scope.has(r.channel_connection_id))) throw channelNotAllowed([...new Set(rows.map((r) => r.channel_connection_id))].sort());
   return scope;
 }
@@ -92,7 +92,7 @@ export async function refusePostOutside(ctx: ScopeContext, postId: string): Prom
 export async function refusePostWholly(ctx: ScopeContext, postId: string): Promise<ChannelScope> {
   const scope = await channelScope(ctx);
   if (scope === null) return scope;
-  const rows = await ctx.trx.selectFrom('crove_social.post_variant').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('post_id', '=', postId).execute();
+  const rows = await ctx.trx.selectFrom('ludy_social.post_variant').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('post_id', '=', postId).execute();
   refuseOutside(
     scope,
     rows.map((r) => r.channel_connection_id),
@@ -110,14 +110,14 @@ export function connectionInScope(scope: ChannelScope, column: string): RawBuild
 export function postInScope(scope: ChannelScope, idColumn = 'p.id', orgColumn = 'p.org_id'): RawBuilder<boolean> {
   return scope === null
     ? sql<boolean>`TRUE`
-    : sql<boolean>`EXISTS (SELECT 1 FROM crove_social.post_variant sv WHERE sv.org_id = ${sql.ref(orgColumn)} AND sv.post_id = ${sql.ref(idColumn)} AND sv.channel_connection_id = ANY(${[...scope]}::uuid[]))`;
+    : sql<boolean>`EXISTS (SELECT 1 FROM ludy_social.post_variant sv WHERE sv.org_id = ${sql.ref(orgColumn)} AND sv.post_id = ${sql.ref(idColumn)} AND sv.channel_connection_id = ANY(${[...scope]}::uuid[]))`;
 }
 
 // The posts among these the caller may see, in their order.
 export async function postsInScope(ctx: ScopeContext, scope: ChannelScope, postIds: readonly string[]): Promise<string[]> {
   if (scope === null || postIds.length === 0) return [...postIds];
   const rows = await ctx.trx
-    .selectFrom('crove_social.post_variant')
+    .selectFrom('ludy_social.post_variant')
     .select('post_id')
     .distinct()
     .where('org_id', '=', ctx.orgId)
@@ -131,7 +131,7 @@ export async function postsInScope(ctx: ScopeContext, scope: ChannelScope, postI
 // The variants among these the caller may see.
 export async function variantsInScope(ctx: ScopeContext, scope: ChannelScope, variantIds: readonly string[]): Promise<Set<string>> {
   if (variantIds.length === 0) return new Set();
-  let q = ctx.trx.selectFrom('crove_social.post_variant').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', [...new Set(variantIds)]);
+  let q = ctx.trx.selectFrom('ludy_social.post_variant').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', [...new Set(variantIds)]);
   if (scope !== null) q = q.where('channel_connection_id', 'in', [...scope]);
   return new Set((await q.execute()).map((r) => r.id));
 }
@@ -140,15 +140,15 @@ export async function variantsInScope(ctx: ScopeContext, scope: ChannelScope, va
 // are not limited, and limited ones when the channel is one of theirs and the post has a variant on one of theirs.
 export async function usersInScope(trx: Trx, orgId: string, userIds: readonly string[], about: { postId: string | null; connectionId: string | null }): Promise<string[]> {
   if (userIds.length === 0) return [];
-  const roles = await trx.selectFrom('crove_kernel.tenant_member').select(['user_id', 'role']).where('org_id', '=', orgId).where('user_id', 'in', [...userIds]).execute();
+  const roles = await trx.selectFrom('ludy_kernel.tenant_member').select(['user_id', 'role']).where('org_id', '=', orgId).where('user_id', 'in', [...userIds]).execute();
   const free = new Set(roles.filter((r) => r.role === 'owner' || r.role === 'admin').map((r) => r.user_id));
   const rest = userIds.filter((u) => !free.has(u));
   if (rest.length === 0) return [...userIds];
-  const rows = await trx.selectFrom('crove_kernel.channel_access').select(['user_id', 'channel_connection_id']).where('org_id', '=', orgId).where('user_id', 'in', rest).execute();
+  const rows = await trx.selectFrom('ludy_kernel.channel_access').select(['user_id', 'channel_connection_id']).where('org_id', '=', orgId).where('user_id', 'in', rest).execute();
   const lists = new Map<string, Set<string>>();
   for (const r of rows) lists.set(r.user_id, (lists.get(r.user_id) ?? new Set<string>()).add(r.channel_connection_id));
   const postChannels = about.postId
-    ? (await trx.selectFrom('crove_social.post_variant').select('channel_connection_id').where('org_id', '=', orgId).where('post_id', '=', about.postId).execute()).map((v) => v.channel_connection_id)
+    ? (await trx.selectFrom('ludy_social.post_variant').select('channel_connection_id').where('org_id', '=', orgId).where('post_id', '=', about.postId).execute()).map((v) => v.channel_connection_id)
     : [];
   return userIds.filter((u) => {
     const scope = lists.get(u);
@@ -163,12 +163,12 @@ export async function usersInScope(trx: Trx, orgId: string, userIds: readonly st
 // who is not a member sees any. For a notification about many posts at once (a bulk assignment, #1062).
 export async function postsVisibleTo(trx: Trx, orgId: string, userId: string, postIds: readonly string[]): Promise<string[]> {
   if (postIds.length === 0) return [];
-  const member = await trx.selectFrom('crove_kernel.tenant_member').select('role').where('org_id', '=', orgId).where('user_id', '=', userId).executeTakeFirst();
+  const member = await trx.selectFrom('ludy_kernel.tenant_member').select('role').where('org_id', '=', orgId).where('user_id', '=', userId).executeTakeFirst();
   if (!member) return [];
   const list = member.role === 'owner' || member.role === 'admin' ? [] : await listOf(trx, orgId, userId);
   if (list.length === 0) return [...postIds];
   const rows = await trx
-    .selectFrom('crove_social.post_variant')
+    .selectFrom('ludy_social.post_variant')
     .select('post_id')
     .distinct()
     .where('org_id', '=', orgId)
@@ -200,15 +200,15 @@ export const channelAccessSet = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const by = ctx.actor.userId;
     // One change of a member's list at a time, so two at once never leave a mix of both.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_kernel.channel_access:${ctx.orgId}:${input.userId}`}, 0))`.execute(ctx.trx);
-    const member = await ctx.trx.selectFrom('crove_kernel.tenant_member').select('role').where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).executeTakeFirst();
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`ludy_kernel.channel_access:${ctx.orgId}:${input.userId}`}, 0))`.execute(ctx.trx);
+    const member = await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('role').where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).executeTakeFirst();
     if (!member) throw new DomainError('MEMBER_NOT_FOUND', 404, 'Người này không phải thành viên của tổ chức');
     const ids = [...new Set(input.channelConnectionIds.map((id) => id.toLowerCase()))].sort();
     if (ids.length > 0 && (member.role === 'owner' || member.role === 'admin')) {
       throw new DomainError('CHANNEL_ACCESS_NOT_LIMITABLE', 422, 'Chủ sở hữu và quản trị viên luôn dùng được mọi kênh, nên không giới hạn kênh cho họ được', { role: member.role });
     }
     if (ids.length > 0) {
-      const found = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
+      const found = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
       if (found.length !== ids.length) {
         const known = new Set(found.map((c) => c.id));
         throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Có kênh không thuộc tổ chức này', { connectionIds: ids.filter((id) => !known.has(id)) });
@@ -218,11 +218,11 @@ export const channelAccessSet = defineCommand({
     const removed = before.filter((id) => !ids.includes(id));
     const added = ids.filter((id) => !before.includes(id));
     if (removed.length > 0) {
-      await ctx.trx.deleteFrom('crove_kernel.channel_access').where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).where('channel_connection_id', 'in', removed).execute();
+      await ctx.trx.deleteFrom('ludy_kernel.channel_access').where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).where('channel_connection_id', 'in', removed).execute();
     }
     if (added.length > 0) {
       await ctx.trx
-        .insertInto('crove_kernel.channel_access')
+        .insertInto('ludy_kernel.channel_access')
         .values(added.map((id) => ({ org_id: ctx.orgId, user_id: input.userId, channel_connection_id: id, created_by: by })))
         .execute();
     }
@@ -238,7 +238,7 @@ export const channelAccessList = defineQuery({
   access: ADMINS,
   handler: async (ctx): Promise<ChannelAccessEntry[]> => {
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.channel_access')
+      .selectFrom('ludy_kernel.channel_access')
       .select(['user_id', 'channel_connection_id'])
       .where('org_id', '=', ctx.orgId)
       .orderBy('user_id')

@@ -2,7 +2,7 @@
 // The Ludy extension's sign-in request: what the page accepts, where it sends the code, and how long it keeps a request
 // while the member signs in (#2582, ADR-0047 point 10).
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { PENDING_CONNECT_TTL_MS, connectRedirect, forgetConnect, parseConnectRequest, pendingConnect, rememberConnect } from '../src/lib/extension-connect.ts';
+import { PENDING_CONNECT_TTL_MS, connectRedirect, filterScopesForModules, forgetConnect, parseConnectRequest, pendingConnect, rememberConnect } from '../src/lib/extension-connect.ts';
 
 const EXTENSION = 'abcdefghijklmnopabcdefghijklmnop';
 const ALLOWED = [EXTENSION];
@@ -20,6 +20,16 @@ describe('parseConnectRequest', () => {
   it('accepts the extension\'s request and tidies its device name', () => {
     expect(parseConnectRequest(query(), ALLOWED)).toEqual({ extensionId: EXTENSION, codeChallenge: CHALLENGE, redirect: REDIRECT, state: 'st_1-A', scopes: ['meetings'], deviceName: 'Chrome trên máy bàn' });
     expect(parseConnectRequest(query({ scope: undefined }), ALLOWED)?.scopes).toEqual(['meetings']);
+    // The agenda scope (B2) rides with meetings: both is fine, agenda alone is not a request.
+    expect(parseConnectRequest(query({ scope: 'meetings agenda' }), ALLOWED)?.scopes).toEqual(['agenda', 'meetings']);
+    expect(parseConnectRequest(query({ scope: 'notes' }), ALLOWED)?.scopes).toEqual(['notes']);
+    expect(parseConnectRequest(query({ scope: 'meetings agenda notes' }), ALLOWED)?.scopes).toEqual(['agenda', 'meetings', 'notes']);
+    expect(parseConnectRequest(query({ scope: 'notes agenda' }), ALLOWED)).toBeNull();
+    expect(parseConnectRequest(query({ scope: 'agenda' }), ALLOWED)).toBeNull();
+    expect(filterScopesForModules(['agenda', 'meetings', 'notes'], ['notes'])).toEqual(['notes']);
+    expect(filterScopesForModules(['agenda', 'meetings', 'notes'], ['meetings'])).toEqual(['agenda', 'meetings']);
+    expect(filterScopesForModules(['agenda', 'meetings', 'notes'], ['crm'])).toEqual([]);
+    expect(filterScopesForModules(['agenda', 'notes'], ['notes'])).toEqual(['notes']);
     expect(parseConnectRequest(query({ device: undefined }), ALLOWED)?.deviceName).toBe('');
     expect(parseConnectRequest(query({ device: 'x'.repeat(200) }), ALLOWED)?.deviceName).toHaveLength(80);
   });
@@ -103,9 +113,15 @@ describe('the request kept while the member signs in', () => {
   });
 
   it('checks what storage holds as it checked the address', () => {
-    store.set('crove-pending-extension-connect', JSON.stringify({ request: { extensionId: EXTENSION, codeChallenge: CHALLENGE, redirect: 'https://evil.example/', state: 's', scopes: ['meetings'], deviceName: '' }, savedAt: Date.now() }));
+    store.set('ludy-pending-extension-connect', JSON.stringify({ request: { extensionId: EXTENSION, codeChallenge: CHALLENGE, redirect: 'https://evil.example/', state: 's', scopes: ['meetings'], deviceName: '' }, savedAt: Date.now() }));
     expect(pendingConnect(ALLOWED)).toBeNull();
-    store.set('crove-pending-extension-connect', 'not json');
+    store.set('ludy-pending-extension-connect', 'not json');
     expect(pendingConnect(ALLOWED)).toBeNull();
+    const request = parseConnectRequest(query(), ALLOWED)!;
+    const now = 1_700_000_000_000;
+    store.set('crove-pending-extension-connect', JSON.stringify({ request, savedAt: now }));
+    expect(pendingConnect(ALLOWED, now + 1000)).toEqual(request);
+    expect(store.has('ludy-pending-extension-connect')).toBe(true);
+    expect(store.has('crove-pending-extension-connect')).toBe(false);
   });
 });

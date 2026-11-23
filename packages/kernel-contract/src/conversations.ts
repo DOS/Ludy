@@ -3,10 +3,10 @@
 // connected channel, a comment under a post or a private message, and how the org answers. The kernel owns the store;
 // Social shows the comment threads under its posts and in its comment inbox, Service will show the private messages.
 //
-// A platform's notice is turned by its adapter (@crove/channel) into the events below, which are the only thing the intake
+// A platform's notice is turned by its adapter (@ludy/channel) into the events below, which are the only thing the intake
 // command takes: the org comes from the stored connection, never from an event. Text in an event is tainted external text.
 import { z } from 'zod';
-import { zId } from './schemas.ts';
+import { zId, zTaskStatus } from './schemas.ts';
 
 export const CONVERSATION_KINDS = ['comment_thread', 'direct', 'email'] as const;
 export type ConversationKind = (typeof CONVERSATION_KINDS)[number];
@@ -29,6 +29,8 @@ export const CONVERSATION_REPLY_MAX = 8_000;
 export const CONVERSATION_FACEBOOK_DIRECT_MAX = 2_000;
 export const CONVERSATION_INSTAGRAM_COMMENT_MAX = 2_200;
 export const CONVERSATION_INSTAGRAM_DIRECT_MAX = 1_000;
+// WhatsApp Business (Cloud API) text body limit [M until the live check, docs/runbooks/whatsapp-conversations-live-check.md].
+export const CONVERSATION_WHATSAPP_REPLY_MAX = 4_096;
 // Threads' own limit of 500 characters a post applies to a reply [U until the live check and the official page settle it] (#3133, plan section 4.4).
 export const CONVERSATION_THREADS_REPLY_MAX = 500;
 export const CONVERSATION_NOTE_MAX = 5_000;
@@ -37,6 +39,8 @@ export const CONVERSATION_LIST_MAX = 100;
 export const CONVERSATION_SEARCH_MAX = 100;
 // The posts one list asks about at most (the post page lists the threads of all its channels).
 export const CONVERSATION_POSTS_MAX = 20;
+// The posts one post-count read asks about at most: a page of the post list or a month of the calendar.
+export const CONVERSATION_POST_COUNTS_MAX = 200;
 // A message shown in a list is cut to this many characters.
 export const CONVERSATION_PREVIEW_CHARS = 140;
 // A customer's image stored with its message (CV5c, #2357): at most this many a message, this many bytes each, and only these types (read
@@ -74,14 +78,19 @@ export const CONVERSATION_PROVIDER_RULES: Readonly<Record<string, ConversationPr
   // Zalo OA (#2304): private chats only (no comment API found); 2000 characters a message and a 48-hour free window from the customer's
   // last message [S, U until the live check settles them].
   zalo_oa: { kinds: ['direct'], replyMax: 2000, canHide: false, windowHours: 48 },
+  // WhatsApp Business, Cloud API (#3131, plan docs/plan/conversations-channels.md section 4.1): private chats only, 4096 characters a message,
+  // and a free-form reply only inside 24 hours of the customer's last message [S, live]. Past the window the Send button is disabled with the
+  // reason: Ludy sends no template and no business-initiated message (a paid message the business did not mean to buy).
+  whatsapp: { kinds: ['direct'], replyMax: CONVERSATION_WHATSAPP_REPLY_MAX, canHide: false, windowHours: 24 },
   // Telegram bot chats (#3132, plan section 4.2): private chats only (a group is out of v1), up to 4096 characters (TELEGRAM_TEXT_MAX of
-  // @crove/channel) and no reply window: a bot may answer a user who wrote to it at any time. A blocked bot is refused as `permission`.
+  // @ludy/channel) and no reply window: a bot may answer a user who wrote to it at any time. A blocked bot is refused as `permission`.
   telegram: { kinds: ['direct'], replyMax: 4096, canHide: false, windowHours: null },
   // YouTube comments on the business's own channel (#3134, plan docs/plan/conversations-channels.md section 4.5): public comment threads, one per
   // top-level comment, no reply window. YouTube's own comment limit is 10,000 characters [U] and the core's reply is at most CONVERSATION_REPLY_MAX,
-  // so that is the rule here. `canHide` is false in v1: hiding is `comments.setModerationStatus` and acts on someone else's words, so it waits
-  // for the live check (docs/runbooks/youtube-conversations-live-check.md).
-  youtube: { kinds: ['comment_thread'], replyMax: CONVERSATION_REPLY_MAX, canHide: false, windowHours: null },
+  // so that is the rule here. `canHide` is true since #3808 (`comments.setModerationStatus`: hide is `heldForReview`, show again is `published`, so it
+  // is reversible; the official page says a rejected comment cannot be published again). It holds for a connection only while the grant has the comment
+  // scope (YOUTUBE_COMMENT_SCOPE): the kernel checks that on the connection, and the thread's `hideAllowed` tells the screen.
+  youtube: { kinds: ['comment_thread'], replyMax: CONVERSATION_REPLY_MAX, canHide: true, windowHours: null },
   // An email reply is as long as any other reply the core takes (CONVERSATION_REPLY_MAX), so the input, the box and the channel agree.
   email: { kinds: ['email'], replyMax: CONVERSATION_REPLY_MAX, canHide: false, windowHours: null },
 };
@@ -96,6 +105,10 @@ export const zConversationAddress = z.strictObject({ conversationAddress: z.stri
 export type ConversationAddressView = z.infer<typeof zConversationAddress>;
 export const conversationRules = (provider: string): ConversationProviderRules | null =>
   Object.hasOwn(CONVERSATION_PROVIDER_RULES, provider) ? (CONVERSATION_PROVIDER_RULES[provider] ?? null) : null;
+// The channels whose unclear send (`unknown`) a person may not send again with a button: no platform history can say whether it arrived, so a second send may
+// reach the customer twice (WhatsApp, #3131). The person looks on the platform and marks it sent. An email is the same by its own rule.
+const NO_RESEND_WHEN_UNKNOWN: readonly string[] = ['whatsapp'];
+export const conversationCanResendUnknown = (provider: string, kind: string): boolean => kind !== 'email' && !NO_RESEND_WHEN_UNKNOWN.includes(provider);
 
 // Text the database can store: PostgreSQL refuses a NUL character in text, which would fail a whole notice.
 const noNul = (value: string) => !value.includes('\u0000');
@@ -107,10 +120,21 @@ export const zConversationIntent = z.enum(CONVERSATION_INTENTS);
 
 // An image the platform says a customer's message carries, by the address it can be fetched from (personal data: kept only until fetched,
 // at most six days, and never in an audit row, an event, a log or a job). https only; the fetch itself is limited to the platform's media hosts.
-export const zConversationEventImage = z.strictObject({
+const zConversationEventImageUrl = z.strictObject({
   kind: z.literal('image'),
   url: z.string().min(1).max(2000).refine(noNul, 'NUL character').refine((value) => value.startsWith('https://'), 'https only'),
 });
+// An image whose bytes need the connection's token (WhatsApp's media id, Telegram's file_id; #3131, plan docs/plan/conversations-channels.md section 4.1): a
+// provider-scoped reference that is not a URL and holds no token. Exactly one of `url` and `mediaRef` (the union of two strict objects). The reference is
+// personal data like the address: it travels in the parked notice and the ingest event only until the pending row is made, lives in the row's `source_ref`
+// (class pii) until the bytes are stored, and the fetch job turns it into bytes with the sealed credential. Never in a job, an emitted event, an audit row or
+// a log, and no token-bearing address is ever stored.
+export const CONVERSATION_MEDIA_REF_PATTERN = /^[A-Za-z0-9._:=-]{1,300}$/;
+const zConversationEventImageRef = z.strictObject({
+  kind: z.literal('image'),
+  mediaRef: z.string().regex(CONVERSATION_MEDIA_REF_PATTERN),
+});
+export const zConversationEventImage = z.union([zConversationEventImageUrl, zConversationEventImageRef]);
 
 // One thing a notice told us, in the core's own words. `contact` is the customer of the thread (the commenter, or the
 // person writing to the page, also when the event is the page's own message seen as an echo); `direction` out is the
@@ -134,6 +158,12 @@ export const zConversationEvent = z.strictObject({
   hiddenOnly: z.boolean().optional(),
   // The images the customer's message carries (CV5c, #2357); each is fetched later by the worker and shown beside the message's text.
   attachments: z.array(zConversationEventImage).max(CONVERSATION_ATTACHMENTS_MAX).optional(),
+  // The platform says a message the org sent did not reach the customer (WhatsApp's status `failed`, #3131): the stored outbound message with this platform id
+  // becomes `failed` with this short code, which the screen words for a person. An outbound event only, with no text; it never creates a message or a thread.
+  deliveryFailed: z.strictObject({ code: z.string().regex(/^[A-Za-z0-9_.:-]{1,60}$/) }).optional(),
+  // How long the platform lets this thread be answered after the customer's last message, when that differs from the provider's rule (Telegram
+  // Business, #3191: 24 hours for a business chat). Whole hours; it only ever narrows what a person may send, never widens what the platform allows.
+  replyWindowHours: z.number().int().min(1).max(720).optional(),
   // Email only (#2439): the subject line, and the Message-IDs the mail names in In-Reply-To and References, which decide the thread.
   subject: z.string().trim().min(1).max(EMAIL_SUBJECT_MAX).refine(noNul, 'NUL character').optional(),
   refs: z.array(zThreadId).max(EMAIL_REFS_MAX).optional(),
@@ -151,6 +181,9 @@ export type ConversationEvent = z.infer<typeof zConversationEvent>;
 export const zConversationIngest = z.strictObject({
   connectionId: zId,
   events: z.array(zConversationEvent).min(1).max(CONVERSATION_EVENTS_MAX),
+  // Telegram Business (#3191): the business connection the events came through. They are stored only while the connection's own state lists it as
+  // enabled (an unknown or disabled one stores nothing and counts as ignored), and never when the contact is the business account's own user.
+  businessConnectionId: z.string().min(1).max(100).refine(noNul, 'NUL character').optional(),
 });
 export type ConversationIngestInput = z.infer<typeof zConversationIngest>;
 // What the mail worker hands the core for one customer mail (#2439): the org is the worker's (found from the stored address), the events are
@@ -238,7 +271,8 @@ export const zConversationMessage = z.strictObject({
 });
 export type ConversationMessage = z.infer<typeof zConversationMessage>;
 
-export const zConversationNote = z.strictObject({ id: zId, authorUserId: zId, body: z.string(), createdAt: z.iso.datetime({ offset: true }) });
+// `actorOrigin` 'mcp' and `tainted`: a connected AI app wrote the note under the name of the person who connected it; the screen says so (#4149).
+export const zConversationNote = z.strictObject({ id: zId, authorUserId: zId, body: z.string(), createdAt: z.iso.datetime({ offset: true }), actorOrigin: z.enum(['ui', 'mcp']), tainted: z.boolean() });
 export type ConversationNote = z.infer<typeof zConversationNote>;
 
 // Vy's draft of a reply (CV8, #2310): asked for (requested, the text is on its way) or live (the text). Always tainted: a model wrote it from a customer's
@@ -337,7 +371,10 @@ export const zConversationDetail = z.strictObject({
   // The comment thread a private reply continues, when the reader may see it.
   parentId: zId.nullable(),
   // Whether a reply can be sent now, else why not (a code the screen turns into words).
-  reply: z.strictObject({ allowed: z.boolean(), reason: z.enum(['channel_inactive', 'not_supported', 'window_closed']).nullable() }),
+  reply: z.strictObject({ allowed: z.boolean(), reason: z.enum(['channel_inactive', 'not_supported', 'window_closed', 'business_stopped', 'business_read_only']).nullable() }),
+  // Whether the platform lets the channel hide a comment of this thread now: the provider's rule, and for YouTube (#3808) a grant that holds the comment
+  // scope. Absent from an older answer: the screen then falls back to the provider's rule.
+  hideAllowed: z.boolean().optional(),
   // Events of this channel may be missing between these two times (the platform's history could not be read back far enough to fill
   // them): shown on a thread that was active after `from`.
   gap: z.strictObject({ from: z.iso.datetime({ offset: true }), to: z.iso.datetime({ offset: true }) }).nullable(),
@@ -382,6 +419,16 @@ export const zConversationCounted = z.strictObject({
 });
 export type ConversationCounted = z.infer<typeof zConversationCounted>;
 
+// The comment threads still New (nobody has answered or resolved them) under each of the posts a screen shows (#3298): one grouped read for the whole
+// page of the post list or the calendar. Only a post with at least one is listed; a count carries no text and no name.
+export const zConversationPostCounts = z.strictObject({
+  posts: z.array(z.strictObject({ connectionId: zId, externalPostId: z.string().min(1).max(300) })).min(1).max(CONVERSATION_POST_COUNTS_MAX),
+});
+export const zConversationPostCounted = z.strictObject({
+  counts: z.array(z.strictObject({ connectionId: zId, externalPostId: z.string(), unanswered: z.number().int().min(1) })),
+});
+export type ConversationPostCounted = z.infer<typeof zConversationPostCounted>;
+
 export const zConversationGet = z.strictObject({ conversationId: zId });
 export const zConversationReply = z.strictObject({
   conversationId: zId,
@@ -413,6 +460,34 @@ export const zConversationAssign = z.strictObject({ conversationId: zId, assigne
 export const zConversationId = z.strictObject({ conversationId: zId });
 export const zConversationNoteAdd = z.strictObject({ conversationId: zId, body: z.string().trim().min(1).max(CONVERSATION_NOTE_MAX).refine(noNul, 'NUL character') });
 export const zConversationLinkContact = z.strictObject({ conversationId: zId, partyId: zId.nullable() });
+// "Create task" from a conversation (CV3, #3295, plan docs/plan/conversations.md section 4 point 2): a person's own title (never the customer's words, which a task
+// would show to every member), the seat that does it (none: the owner at the root of the chart) and a due date. The task links back to the thread.
+export const CONVERSATION_FOLLOW_UP_TITLE_MAX = 300;
+export const zConversationFollowUp = z.strictObject({
+  conversationId: zId,
+  title: z.string().trim().min(1).max(CONVERSATION_FOLLOW_UP_TITLE_MAX).refine(noNul, 'NUL character'),
+  assigneePositionId: zId.nullable(),
+  due: z.iso.datetime({ offset: true }).optional(),
+});
+export const zConversationFollowedUp = z.strictObject({ taskId: zId });
+export type ConversationFollowedUp = z.infer<typeof zConversationFollowedUp>;
+// The open tasks of one thread (any status but done and cancelled), the newest first, at most CONVERSATION_TASKS_MAX.
+export const CONVERSATION_TASKS_MAX = 20;
+export const zConversationTaskList = z.strictObject({
+  tasks: z.array(
+    z.strictObject({
+      id: zId,
+      title: z.string(),
+      status: zTaskStatus,
+      assigneePositionId: zId.nullable(),
+      due: z.string().nullable(),
+      createdAt: z.string(),
+      // True for a task made from an AI coworker's approved ask (#4148): its title is an AI's text, and the panel marks it as the task board does.
+      tainted: z.boolean(),
+    }),
+  ),
+});
+export type ConversationTaskList = z.infer<typeof zConversationTaskList>;
 // A person applies an intent to a thread, changes it, or clears it (null) (CV3, #2306).
 export const zConversationSetIntent = z.strictObject({ conversationId: zId, intent: zConversationIntent.nullable() });
 
@@ -539,6 +614,8 @@ export const zConversationDraftRecord = z.discriminatedUnion('outcome', [
 export const YOUTUBE_COMMENT_SCOPE = 'https://www.googleapis.com/auth/youtube.force-ssl';
 export const YOUTUBE_LIST_UNITS = 1;
 export const YOUTUBE_REPLY_UNITS = 50;
+// Hiding or showing a comment (`comments.setModerationStatus`, #3808): 50 units on the official page. Counted beside the reply's, never held back by the polling budget.
+export const YOUTUBE_MODERATE_UNITS = 50;
 // What polling may spend for one connection in one Pacific day. A poll of the newest comments is a few list requests, so 150 is about one poll
 // every 15 minutes (96 a day) with room to catch up; a deployment's 10,000 units a day then hold the polling of about 60 channels with replies to spare.
 // Replies are a person's act and are never held back by this budget; their units are counted beside it and shown.
@@ -642,6 +719,14 @@ export const zConversationPurgeExpired = z.strictObject({ limit: z.number().int(
 export const zConversationPurged = z.strictObject({ threads: z.number().int(), messages: z.number().int(), identities: z.number().int(), more: z.boolean() });
 export type ConversationPurged = z.infer<typeof zConversationPurged>;
 export const zConversationEraseConnection = z.strictObject({ connectionId: zId });
+// A person's choice to delete a disconnected channel's conversations too (#3299): owners and admins, behind a confirmation that names the
+// counts and a fresh second factor. The channel must be disconnected first. The answer is the counts the erasure removed.
+export const zConversationEraseChannel = z.strictObject({ connectionId: zId, confirm: z.literal(true) });
+export const zConversationChannelErased = z.strictObject({ threads: z.number().int(), messages: z.number().int(), identities: z.number().int() });
+export type ConversationChannelErased = z.infer<typeof zConversationChannelErased>;
+// What the dialog's confirmation names: the threads and messages of one connection that the erasure would remove (counts only).
+export const zConversationChannelCounts = z.strictObject({ threads: z.number().int(), messages: z.number().int() });
+export type ConversationChannelCounts = z.infer<typeof zConversationChannelCounts>;
 
 // The "you are replying" marker (CV3, #2306): a member typing a reply marks the thread for 60 seconds; a mark is written at most once in 20 seconds
 // per thread and member, and the screens read it with their poll. A sweep drops the expired ones.

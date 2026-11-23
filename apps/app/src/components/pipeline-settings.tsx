@@ -5,9 +5,9 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { PIPELINE_STAGE_MAX, PIPELINE_STAGE_NAME_MAX, type PipelineStage } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
+import { PIPELINE_STAGE_MAX, PIPELINE_STAGE_NAME_MAX, type PipelineStage } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { ErrorText, Field } from './ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -116,9 +116,9 @@ export function PipelineSettings() {
   const list = stages.data ?? [];
   const open = list.filter((s) => s.kind === 'open');
   return (
-    <section aria-label={t('title')} className="space-y-3 rounded-lg border border-border p-4">
+    <section aria-label={t('title')} className="space-y-3">
       <div>
-        <h2 className="text-sm font-semibold text-foreground">{t('title')}</h2>
+        <p className="text-sm font-semibold text-foreground">{t('title')}</p>
         <p className="text-xs text-muted-foreground">{t('hint', { max: String(PIPELINE_STAGE_MAX) })}</p>
       </div>
       <ul className="space-y-3">

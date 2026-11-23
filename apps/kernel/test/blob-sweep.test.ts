@@ -1,10 +1,10 @@
-// The retention job's blob sweeps (issue #212) on a fake store: leftover raw inbound mail and expired exports. The
+// The retention job's blob sweeps (issue #212) on a fake store: leftover raw inbound mail, expired exports and the temporary sealed videos a crash left (#3341). The
 // references to inbound blobs come from the database (blob-sweep.db.test.ts); here the listing, the age cutoff, the
 // page budget and the ALERT lines.
 import { describe, expect, it } from 'vitest';
-import type { Db } from '@crove/db';
-import { exportKey, inboundKey, newInboundBlobId, type BlobListing, type BlobStore, type ListPrefix } from '@crove/kernel-runtime';
-import { BLOB_SWEEP_PAGE, expireExports, sweepInboundBlobs } from '../src/retention.ts';
+import type { Db } from '@ludy/db';
+import { exportKey, fileKey, inboundKey, newInboundBlobId, tmpKey, type BlobListing, type BlobStore, type ListPrefix } from '@ludy/kernel-runtime';
+import { BLOB_SWEEP_PAGE, TMP_BLOB_MAX_AGE_HOURS, expireExports, sweepInboundBlobs, sweepTmpBlobs } from '../src/retention.ts';
 
 const DAY = 86_400_000;
 const now = new Date('2026-12-01T02:30:00Z');
@@ -167,5 +167,61 @@ describe('expireExports', () => {
     expect(await expireExports(store, runtimeWith({}).runtime, 35, now, r.log)).toEqual({ deleted: 1, kept: 1, more: false });
     expect(deleted).toEqual([expired]);
     expect(r.errors).toEqual([`[retention] export records of org ${gone} unreadable; its export blobs expire by age`]);
+  });
+});
+
+describe('sweepTmpBlobs (#3341)', () => {
+  const ORG = '00000000-0000-4000-8000-000000000001';
+  const OTHER_ORG = '00000000-0000-4000-8000-000000000002';
+  const HOUR = 3_600_000;
+  const sha = (c: string) => c.repeat(64);
+
+  it('deletes the temporary videos older than six hours, and keeps the younger ones and every blob of another prefix', async () => {
+    expect(TMP_BLOB_MAX_AGE_HOURS).toBe(6);
+    const { store, deleted, lists } = fakeStore({
+      [tmpKey(ORG, sha('a'))]: new Date(now.getTime() - 7 * HOUR),
+      [tmpKey(OTHER_ORG, sha('b'))]: new Date(now.getTime() - 30 * DAY),
+      [tmpKey(ORG, sha('c'))]: new Date(now.getTime() - 5 * HOUR),
+      [tmpKey(ORG, sha('d'))]: new Date(now.getTime() - 1000),
+      // Never touched: a recording (org/), an export and raw inbound mail. (A key that only looks like a tmp one is never listed by a real store: the list tests of kernel-runtime.)
+      [fileKey(ORG, sha('e'))]: new Date(0),
+      [exportKey(ORG, sha('f'))]: new Date(0),
+      [inboundKey(newInboundBlobId())]: new Date(0),
+    });
+    const r = recorder();
+    expect(await sweepTmpBlobs(store, now, r.log)).toEqual({ deleted: 2, kept: 0, more: false });
+    expect(deleted.sort()).toEqual([tmpKey(ORG, sha('a')), tmpKey(OTHER_ORG, sha('b'))].sort());
+    expect(lists.every((l) => l.prefix === 'tmp/')).toBe(true);
+    expect(r.lines.join('\n')).toContain('temporary video blobs deleted=2');
+    expect(r.errors).toEqual([]);
+  });
+
+  it('sweeps by age alone (nothing references a tmp object), stops at its page budget with an ALERT and the next run continues', async () => {
+    const blobs: Record<string, Date> = {};
+    for (let i = 0; i < 5; i++) blobs[tmpKey(ORG, i.toString(16).padStart(64, '0'))] = new Date(now.getTime() - 8 * HOUR);
+    const { store, deleted } = fakeStore(blobs);
+    const r = recorder();
+    expect(await sweepTmpBlobs(store, now, r.log, { pageSize: 2, maxPages: 1 })).toEqual({ deleted: 2, kept: 0, more: true });
+    expect(r.errors.join('\n')).toContain('ALERT temporary video blobs');
+    expect(await sweepTmpBlobs(store, now, r.log, { pageSize: 2, maxPages: 10 })).toMatchObject({ deleted: 3, more: false });
+    expect(deleted).toHaveLength(5);
+  });
+
+  it('logs an ALERT and returns null when a delete fails, and skips a store that cannot list', async () => {
+    const failing: BlobStore = {
+      put: async () => 'content:x',
+      get: async () => new Uint8Array(),
+      delete: async () => {
+        throw new Error('bucket unavailable');
+      },
+      list: async () => ({ blobs: [{ key: tmpKey(ORG, sha('a')), lastModified: new Date(now.getTime() - 9 * HOUR) }], next: null }),
+    };
+    const r = recorder();
+    expect(await sweepTmpBlobs(failing, now, r.log)).toBeNull();
+    expect(r.errors.join('\n')).toContain('ALERT temporary video blobs sweep failed');
+    const quiet = recorder();
+    const noList: BlobStore = { put: async () => 'content:x', get: async () => new Uint8Array(), delete: async () => undefined };
+    expect(await sweepTmpBlobs(noList, now, quiet.log)).toBeNull();
+    expect(quiet.lines.join('\n')).toContain('the blob store cannot list');
   });
 });

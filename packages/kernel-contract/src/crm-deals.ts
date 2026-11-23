@@ -65,6 +65,11 @@ export interface DealFollowUp {
   sinceOn: string;
 }
 
+export interface DealPartyDuplicate {
+  id: string;
+  name: string;
+}
+
 export interface Deal {
   id: string;
   partyId: string;
@@ -83,8 +88,13 @@ export interface Deal {
   canDelete: boolean;
   // The open next step the stale-deal rule raised for it, while it is not snoozed; null otherwise.
   followUp: DealFollowUp | null;
+  // The party this deal's party was marked a duplicate of (CRM-15, #3294): the last party of the chain, the one that is kept; null while the party is not a duplicate.
+  partyDuplicateOf: DealPartyDuplicate | null;
   createdAt: string;
   updatedAt: string;
+  // 'mcp' when a connected AI app made the deal (under the name of the person who connected it), and whether its title or lost reason may be the app's text: the screen says so (#4149).
+  actorOrigin: 'ui' | 'mcp';
+  tainted: boolean;
 }
 
 export interface DealPage {
@@ -181,8 +191,11 @@ export const zDeal = z.object({
   version: z.number().int(),
   canDelete: z.boolean(),
   followUp: z.object({ id: zId, reason: z.enum(DEAL_NEXT_STEP_REASONS), sinceOn: z.string() }).nullable(),
+  partyDuplicateOf: z.object({ id: zId, name: z.string() }).nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  actorOrigin: z.enum(['ui', 'mcp']),
+  tainted: z.boolean(),
 });
 export const zDealPage = z.object({ items: z.array(zDeal), next: zDealCursor.nullable() });
 

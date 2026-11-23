@@ -1,5 +1,5 @@
-// Weekly usage report (issue #311) on a real PostgreSQL 17: crove_kernel.usage_weekly() over seeded audit rows, files
-// and proposals of two orgs across three weeks, read as crove_reporter through the CLI's reader; the journal export's
+// Weekly usage report (issue #311) on a real PostgreSQL 17: ludy_kernel.usage_weekly() over seeded audit rows, files
+// and proposals of two orgs across three weeks, read as ludy_reporter through the CLI's reader; the journal export's
 // audit row written by the real command; and no tenant content in the result. Privileges (who may execute it) are in
 // test/invariant/usage-report.db.test.ts. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its
 // own database.
@@ -7,11 +7,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { formatUsage, readUsage, runUsageReport, type UsageRow } from '../src/usage-report.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -66,9 +66,9 @@ suite('weekly usage report (#311)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_reporter: 'test-reporter-pw' });
-    reporterUrl = login('crove_reporter', 'test-reporter-pw');
-    appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 2 });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_reporter: 'test-reporter-pw' });
+    reporterUrl = login('ludy_reporter', 'test-reporter-pw');
+    appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 2 });
     appDb = createDb(appPool);
     runtime = new Runtime(appDb, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] });
     for (const key of Object.keys(users) as Array<keyof typeof users>) {
@@ -95,7 +95,7 @@ suite('weekly usage report (#311)', () => {
         const id = randomUUID();
         const sha = randomUUID().replace(/-/g, '').padEnd(64, '0');
         await c.query(
-          `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, created_at)
+          `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, created_at)
            VALUES ($1, $2, $3, $4, $5, $6, 'application/xml', 10, $7, $8)`,
           [org, id, sha, `org/${org}/${sha}`, `content:${sha}`, `${SECRET}-invoice.xml`, source, created],
         );
@@ -104,7 +104,7 @@ suite('weekly usage report (#311)', () => {
       const proposal = async (org: string, fileId: string | null) => {
         const id = randomUUID();
         await c.query(
-          `INSERT INTO crove_kernel.proposal (org_id, id, kind, command, title, payload, source_file_id, status)
+          `INSERT INTO ludy_kernel.proposal (org_id, id, kind, command, title, payload, source_file_id, status)
            VALUES ($1, $2, 'finance.purchase', 'finance.purchase.record', $3, $4, $5, 'executed')`,
           [org, id, `${SECRET} title`, JSON.stringify({ note: SECRET }), fileId],
         );
@@ -118,7 +118,7 @@ suite('weekly usage report (#311)', () => {
       ) => {
         const actor = options.actor ?? null;
         await c.query(
-          `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, target_type, target_id, input_sha256, detail)
+          `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, target_type, target_id, input_sha256, detail)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
           [
             org,
@@ -293,9 +293,9 @@ suite('weekly usage report (#311)', () => {
     const reporter = new pg.Client({ connectionString: reporterUrl });
     await reporter.connect();
     try {
-      const { rows } = await reporter.query(`SELECT count(*)::int AS n FROM crove_kernel.usage_weekly(1000)`);
+      const { rows } = await reporter.query(`SELECT count(*)::int AS n FROM ludy_kernel.usage_weekly(1000)`);
       expect(rows).toEqual([{ n: 104 }]);
-      const none = await reporter.query(`SELECT count(*)::int AS n FROM crove_kernel.usage_weekly(0)`);
+      const none = await reporter.query(`SELECT count(*)::int AS n FROM ludy_kernel.usage_weekly(0)`);
       expect(none.rows).toEqual([{ n: 1 }]);
     } finally {
       await reporter.end();

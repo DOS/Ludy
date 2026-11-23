@@ -22,7 +22,7 @@ The rule: a link that opens a screen of the app uses `APP_URL`; what the API its
 | Link | Address |
 |---|---|
 | Invite, notification, digest, report and booking mail; chat alerts; events in calendar feeds | `APP_URL` |
-| The OAuth return addresses of channels, ads and calendars (`/channels/oauth/<provider>/callback`, `/calendar/oauth/<provider>/callback`) are **pages of the app**: register them at the provider under `APP_URL` | `APP_URL` |
+| The OAuth return addresses of channels, ads, calendars and meeting platforms (`/channels/oauth/<provider>/callback`, `/calendar/oauth/<provider>/callback`, `/meetings/oauth/<platform>/callback`) are **pages of the app**: register them at the provider under `APP_URL` | `APP_URL` |
 | Supabase Auth's site URL and redirect allow list (bundled Auth: `GOTRUE_SITE_URL`, set from `APP_URL` by `docker-compose.yml`) | `APP_URL` |
 | The sign-in endpoint `/auth/v1` (`PUBLIC_AUTH_URL`, else `PUBLIC_URL/auth/v1`), mail and bank-feed webhooks, `/api/inbound/email`, the status page, link-in-bio pages (`/b/<slug>`), calendar feed files (`/cal/<file>`), Social short links (`/l/<code>`) | `PUBLIC_URL` |
 | The bucket's CORS rule for presigned transfers (`S3_PRESIGNED_URLS=true`) | the **app's** origin: browsers upload from there |
@@ -44,6 +44,7 @@ The repository names no deployment's address. Set these in the static host's pro
 |---|---|
 | `VITE_API_URL` | The API's origin (required for a split; unset builds the same-origin app). |
 | `VITE_AUTH_URL` | Supabase Auth's URL when it is not the API's (its origin is allowed in the policy below). Default: the API's origin. |
+| `VITE_HOSTED_LOGIN_ORIGIN` | The origin of the identity provider's hosted login token endpoint (`AUTH_HOSTED_LOGIN_TOKEN_URL`, [the contract](../contracts/hosted-login.md)), which the browser calls; its CORS rule must allow the app's origin. |
 | `VITE_STORAGE_ORIGIN` | The bucket's public origin (`S3_PUBLIC_ENDPOINT`) when files go to and from it by presigned URL. R2 and any `S3_PRESIGNED_URLS=false` setup need none. The bucket's CORS rule must allow the app's origin. |
 | `VITE_TURNSTILE` | `true` when the booking page shows Cloudflare Turnstile (`TURNSTILE_SITE_KEY`). |
 

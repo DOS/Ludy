@@ -12,11 +12,12 @@ import pg from 'pg';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { DomainError, Runtime, defineCommand, type CommandDef } from '@crove/kernel-runtime';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { DomainError, Runtime, defineCommand, type CommandDef } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -36,6 +37,7 @@ const SEALED = ['idNumber', 'dependents[].taxCode'];
 suite('sealed input on PostgreSQL (#2666)', () => {
   const dbName = `crove_test_sealed_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let pool: pg.Pool;
   let rt: Runtime;
   const seen: Record<string, string[]> = {};
@@ -130,7 +132,7 @@ suite('sealed input on PostgreSQL (#2666)', () => {
   ];
 
   async function withAdmin<T>(fn: (admin: pg.Client) => Promise<T>): Promise<T> {
-    const admin = new pg.Client({ connectionString: adminUrl });
+    const admin = createDbClient({ connectionString: adminUrl }, dbIds);
     await admin.connect();
     try {
       return await fn(admin);
@@ -146,7 +148,7 @@ suite('sealed input on PostgreSQL (#2666)', () => {
         await c.query<{ s: string; t: string; c: string; type: string }>(
           `SELECT c.table_schema AS s, c.table_name AS t, c.column_name AS c, c.data_type AS type
            FROM information_schema.columns c JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name AND t.table_type = 'BASE TABLE'
-           WHERE c.table_schema LIKE 'crove\\_%' AND c.data_type IN ('text', 'character varying', 'character', 'jsonb', 'json', 'bytea', 'ARRAY', 'USER-DEFINED', 'numeric', 'bigint', 'integer', 'smallint', 'double precision')`,
+           WHERE (c.table_schema LIKE 'crove\\_%' OR c.table_schema LIKE 'ludy\\_%') AND c.data_type IN ('text', 'character varying', 'character', 'jsonb', 'json', 'bytea', 'ARRAY', 'USER-DEFINED', 'numeric', 'bigint', 'integer', 'smallint', 'double precision')`,
         )
       ).rows;
       const found: string[] = [];
@@ -197,10 +199,11 @@ suite('sealed input on PostgreSQL (#2666)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    url.username = 'crove_app';
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
+    url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     url.password = 'test-app-pw';
-    pool = createPool({ connectionString: url.toString(), max: 4 });
+    pool = createDbPool({ connectionString: url.toString(), max: 4 }, dbIds);
     rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...COMMANDS], queries: kernelQueries({ inboundDomain: null }) });
   }, 120_000);
 

@@ -3,7 +3,7 @@
 // and the order of the New list by it, a read-only sort of the page: most urgent first, threads of one intent keeping their order, no intent after them,
 // spam last.
 import { describe, expect, it } from 'vitest';
-import type { ConversationIntent } from '@crove/kernel-contract';
+import type { ConversationIntent } from '@ludy/kernel-contract';
 import { shownIntent, sortByIntent } from '../src/lib/conversation-intent.ts';
 
 const item = (id: string, intent: ConversationIntent | null = null) => ({ id, intent });

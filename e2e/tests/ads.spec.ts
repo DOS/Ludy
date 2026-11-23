@@ -8,7 +8,7 @@
 // "disconnected" state with Refresh off. Nothing here posts to the books or changes a campaign: Ads only reads.
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Locator, type Page } from '@playwright/test';
-import { sql } from '../lib/db.ts';
+import { exec, sql } from '../lib/db.ts';
 import { createOrg, newEmail, signInNewUser } from '../lib/session.ts';
 
 // The rules of the layout walk (layout.spec.ts): WCAG 2.2 AA, then landmarks and heading order by id.
@@ -24,7 +24,7 @@ async function problemsOf(page: Page, url: string): Promise<string[]> {
   const problems: string[] = [];
   for (const [width, theme] of [[1280, 'light'], [360, 'light'], [360, 'dark']] as const) {
     await page.setViewportSize({ width, height: 800 });
-    await page.evaluate((value) => localStorage.setItem('crove-theme', value), theme);
+    await page.evaluate((value) => localStorage.setItem('ludy-theme', value), theme);
     await page.goto(url);
     await expect(page.getByRole('region', { name: 'Tổng cộng' })).toBeVisible();
     await expect(page.locator('html')).toHaveClass(theme === 'dark' ? /\bdark\b/ : /^(?!.*\bdark\b)/);
@@ -48,6 +48,15 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
   const totals = page.getByRole('region', { name: 'Tổng cộng' });
   const settings = page.getByRole('form', { name: 'Cài đặt tài khoản quảng cáo' });
   const books = page.getByRole('region', { name: 'So với sổ sách' });
+  // The switches and forms are in the Ads settings, apart from the figures (#3640): one link opens them, one leads back.
+  const toSettings = async () => {
+    await page.getByTestId('ads-settings-link').click();
+    await expect(page.getByRole('heading', { name: 'Cài đặt quảng cáo', level: 1 })).toBeVisible();
+  };
+  const toFigures = async () => {
+    await page.getByTestId('ads-settings-back').click();
+    await expect(totals).toBeVisible();
+  };
 
   await test.step('Ads is an item of the Marketing group of the Engage app on the rail', async () => {
     await nav.getByRole('link', { name: 'Engage' }).click();
@@ -60,7 +69,7 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
 
   await test.step('with no account yet it says what Ads shows and offers a test account', async () => {
     await expect(page.getByText('Chưa có tài khoản quảng cáo nào')).toBeVisible();
-    await expect(page.getByText('không tạo, sửa hay tắt chiến dịch nào', { exact: false })).toBeVisible();
+    await expect(page.getByText('chỉ đọc số liệu cho tới khi bạn tự bật chạy quảng cáo', { exact: false })).toBeVisible();
     await expect(page.getByRole('form', { name: 'Kết nối tài khoản quảng cáo thử' })).toBeVisible();
     // Nothing is asked of a name left empty: the form says what is missing and nothing is connected.
     await page.getByRole('button', { name: 'Kết nối tài khoản thử' }).click();
@@ -75,13 +84,13 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
     await expect(page).toHaveURL(/\/ads\?account=[0-9a-f-]{36}/);
     // The sandbox says plainly that its figures are made up.
     await expect(page.getByText('Thử nghiệm (số liệu mẫu)')).toBeVisible();
-    const rows = sql<{ provider: string }>(`SELECT a.provider FROM crove_ads.ad_account a JOIN crove_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'`, { slug });
+    const rows = sql<{ provider: string }>(`SELECT a.provider FROM ludy_ads.ad_account a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'`, { slug });
     expect(rows).toEqual([{ provider: 'sandbox_ads' }]);
   });
 
   await test.step('the worker reads the first figures within seconds and the screen follows by itself', async () => {
     // The platform's currency and time zone arrive with the first read, in place of "syncing for the first time".
-    await expect(page.getByText('Tiền tệ VND, múi giờ Asia/Ho_Chi_Minh')).toBeVisible({ timeout: 90_000 });
+    await expect(page.getByText('Tiền tệ VND, giờ Việt Nam (UTC+7)')).toBeVisible({ timeout: 90_000 });
     // The whole history the app keeps, so every slice of the first read counts, whatever day it is.
     await page.getByLabel('Khoảng thời gian').selectOption('last13Months');
     await expect(totals).toBeVisible();
@@ -96,7 +105,7 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
     // The platform still revises its latest days: the screen says which are not final, in words.
     await expect(page.getByRole('region', { name: 'Theo ngày' }).getByText('chưa chốt', { exact: true }).first()).toBeVisible();
     const stored = sql<{ days: number }>(
-      `SELECT count(*)::int AS days FROM crove_ads.ad_spend_day d JOIN crove_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug' AND d.level = 'account'`,
+      `SELECT count(*)::int AS days FROM ludy_ads.ad_spend_day d JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug' AND d.level = 'account'`,
       { slug },
     );
     expect(stored[0]?.days).toBeGreaterThan(30);
@@ -108,13 +117,17 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
   });
 
   await test.step('choose purchases as the result: the results and the cost per result appear', async () => {
+    // The prompt takes the owner to the settings, where the result kind is chosen; the figures are read again on the way back.
+    await totals.getByRole('button', { name: 'Chọn loại kết quả' }).click();
+    await expect(settings).toBeVisible();
     await settings.getByLabel('Loại kết quả được tính').selectOption('purchase');
     await settings.getByRole('button', { name: 'Lưu cài đặt' }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Đã lưu cài đặt tài khoản quảng cáo.' })).toBeVisible();
+    await toFigures();
     await expect(stat(totals, 'Kết quả')).toHaveText(/[1-9]/);
     await expect(totals.getByText('Mua hàng', { exact: true })).toBeVisible();
     await expect(stat(totals, 'Chi phí mỗi kết quả')).toHaveText(/[1-9]/);
-    const rows = sql<{ result_kind: string | null }>(`SELECT a.result_kind FROM crove_ads.ad_account a JOIN crove_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'`, { slug });
+    const rows = sql<{ result_kind: string | null }>(`SELECT a.result_kind FROM ludy_ads.ad_account a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'`, { slug });
     expect(rows).toEqual([{ result_kind: 'purchase' }]);
   });
 
@@ -125,6 +138,7 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
   });
 
   await test.step('a code that is not an account is refused on the spot', async () => {
+    await toSettings();
     await settings.getByLabel('Tài khoản chi phí quảng cáo trong sổ').fill('64');
     await settings.getByRole('button', { name: 'Lưu cài đặt' }).click();
     await expect(settings.getByText('Mã tài khoản gồm 3 đến 10 chữ số', { exact: false })).toBeVisible();
@@ -133,38 +147,115 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
   await test.step('with the advertising expense account, each month with spend sits beside the books, and the difference is shown', async () => {
     await settings.getByLabel('Tài khoản chi phí quảng cáo trong sổ').fill('6421');
     await settings.getByRole('button', { name: 'Lưu cài đặt' }).click();
+    await toFigures();
     await expect(books.getByRole('columnheader', { name: 'Nền tảng báo' })).toBeVisible();
     await expect(books.getByRole('columnheader', { name: 'Đã ghi sổ' })).toBeVisible();
     await expect(books.getByRole('columnheader', { name: 'Chênh lệch' })).toBeVisible();
     await expect.poll(() => books.getByRole('row').count(), { message: 'a row per month with spend' }).toBeGreaterThan(1);
     // The books hold nothing for advertising yet, so the whole spend is the difference: shown, not explained away.
     await expect(books.getByText('không sửa sổ sách và không đoán nguyên nhân', { exact: false })).toBeVisible();
-    const rows = sql<{ expense_account_code: string | null }>(`SELECT a.expense_account_code FROM crove_ads.ad_account a JOIN crove_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'`, { slug });
+    const rows = sql<{ expense_account_code: string | null }>(`SELECT a.expense_account_code FROM ludy_ads.ad_account a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'`, { slug });
     expect(rows).toEqual([{ expense_account_code: '6421' }]);
+  });
+
+  await test.step('a month with spend and no invoice or receipt says so, and points to the Inbox (slice D1)', async () => {
+    await expect(books.getByRole('columnheader', { name: 'Chứng từ' })).toBeVisible();
+    // The range is the last 13 months, so several months have spend and none has a document yet.
+    await expect(books.getByRole('cell', { name: /Chưa có chứng từ/ }).first()).toBeVisible();
+    await expect(books.getByRole('link', { name: 'Thêm chứng từ' }).first()).toHaveAttribute('href', `/o/${slug}/inbox`);
+    await expect(books.getByText('chỉ đếm: không viết chứng từ và không ghi bút toán', { exact: false })).toBeVisible();
+    await expect(books.getByRole('cell', { name: /^\d+ chứng từ$/ })).toHaveCount(0);
+  });
+
+  await test.step('a document from a seller named like the platform is counted for its month and no other', async () => {
+    // A recorded purchase invoice of the sandbox platform dated today, in the account's legal entity, with its own
+    // journal entry (the database refuses a document without one), written as the superuser like the other seeds.
+    exec(
+      `WITH acc AS (
+         SELECT t.org_id, a.legal_entity_id FROM ludy_ads.ad_account a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'
+       ), seller AS (
+         INSERT INTO ludy_kernel.party (org_id, name, kind) SELECT org_id, 'Sandbox Ads Pte. Ltd.', 'organization' FROM acc RETURNING org_id, id
+       ), doc AS (
+         INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
+         SELECT seller.org_id, seller.id, 'C26TAA', '1', (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'VND', 100000, 0, 100000, 'purchase', acc.legal_entity_id
+         FROM seller JOIN acc USING (org_id) RETURNING org_id, id, party_id, invoice_date, legal_entity_id
+       ), entry AS (
+         INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id)
+         SELECT org_id, invoice_date, 'HĐ Sandbox Ads', 'finance.purchase_document', id, legal_entity_id FROM doc RETURNING org_id, id, legal_entity_id
+       )
+       INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id)
+       SELECT entry.org_id, entry.id, l.line_no, l.account_code, l.debit, l.credit, doc.party_id, entry.legal_entity_id
+       FROM entry JOIN doc USING (org_id)
+       CROSS JOIN (VALUES (1, '6421', 100000, 0), (2, '331', 0, 100000)) AS l(line_no, account_code, debit, credit)`,
+      { slug },
+    );
+    await page.reload();
+    await expect(books.getByRole('cell', { name: '1 chứng từ' })).toHaveCount(1);
+    // The other months still have none.
+    await expect(books.getByRole('cell', { name: /Chưa có chứng từ/ }).first()).toBeVisible();
+  });
+
+  await test.step('the bank and card lines that paid the platform are listed under the months, and a month with none says so (slice D2)', async () => {
+    const lines = page.getByRole('group', { name: 'Dòng ngân hàng và thẻ đã trả cho nền tảng' });
+    await expect(lines).toBeVisible();
+    await expect(lines.getByText('Chưa có dòng ngân hàng hay thẻ nào').first()).toBeVisible();
+    await expect(lines.getByText(/\d+ dòng, đã trả/)).toHaveCount(0);
+    // A statement line on a bank account of the entity naming the platform, dated today, written as the superuser like the other seeds.
+    exec(
+      `INSERT INTO ludy_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount, legal_entity_id)
+       SELECT t.org_id, '1121', gen_random_uuid(), 1, (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'THE VISA SANDBOX ADS 0042', -300000, a.legal_entity_id
+       FROM ludy_ads.ad_account a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug'`,
+      { slug },
+    );
+    await page.reload();
+    await expect(lines.getByText(/^1 dòng, đã trả/)).toHaveCount(1);
+    await lines.getByText(/^1 dòng, đã trả/).click();
+    // The router writes a digits-only account in quotes (account=%221121%22), which the bank screen reads back as the string.
+    await expect(lines.getByRole('link', { name: 'THE VISA SANDBOX ADS 0042' })).toHaveAttribute('href', new RegExp(`/o/${slug}/bank\\?account=(%22)?1121(%22)?&month=\\d{4}-\\d{2}$`));
+    await expect(lines.getByText('Chưa có dòng ngân hàng hay thẻ nào').first()).toBeVisible();
+  });
+
+  await test.step('a connection that ends in a few days says so, with the date, ahead of the end (#3476)', async () => {
+    await expect(page.getByText('Kết nối với nền tảng quảng cáo hết hạn vào')).toHaveCount(0);
+    // The sandbox platform has no token life of its own; a Meta connection records about 60 days, so set 5 days ahead as the superuser.
+    exec(
+      `UPDATE ludy_kernel.channel_connection c SET expires_at = now() + interval '5 days'
+       FROM ludy_ads.ad_account a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id
+       WHERE c.org_id = a.org_id AND c.id = a.channel_connection_id AND t.slug = :'slug'`,
+      { slug },
+    );
+    await page.reload();
+    await expect(page.getByText('Kết nối với nền tảng quảng cáo hết hạn vào')).toBeVisible();
+    await expect(page.getByText('Hãy kết nối lại trước ngày đó để số liệu không bị dừng.')).toBeVisible();
   });
 
   await test.step('the screen passes an axe scan with data, at desktop and phone width, in both themes', async () => {
     expect(await problemsOf(page, page.url())).toEqual([]);
     await page.setViewportSize({ width: 1280, height: 720 });
-    await page.evaluate(() => localStorage.setItem('crove-theme', 'light'));
+    await page.evaluate(() => localStorage.setItem('ludy-theme', 'light'));
   });
 
   await test.step('a second test account, in dollars, is not set beside the books in dong', async () => {
     await page.goto(`/o/${slug}/ads`);
+    await toSettings();
     await page.getByRole('button', { name: 'Kết nối tài khoản thử khác' }).click();
     const form = page.getByRole('form', { name: 'Kết nối tài khoản quảng cáo thử' });
     await form.getByLabel('Tên tài khoản quảng cáo').fill('Quảng cáo bằng đô la');
     await form.getByLabel('Đơn vị tiền').selectOption('USD');
     await form.getByRole('button', { name: 'Kết nối tài khoản thử' }).click();
-    await expect(page).toHaveURL(/\/ads\?account=[0-9a-f-]{36}/);
+    // The new account is shown, still in the settings; the figures are one click back.
+    await expect(page).toHaveURL(/\/ads\?.*account=[0-9a-f-]{36}/);
+    await toFigures();
     await expect(page.getByText('Tiền tệ USD, múi giờ America/Los_Angeles')).toBeVisible({ timeout: 90_000 });
     // Each account is picked from the list, and the address keeps the pick.
     const picker = page.getByLabel('Tài khoản quảng cáo', { exact: true });
     await expect(picker.locator('option')).toHaveCount(2);
     await page.getByLabel('Khoảng thời gian').selectOption('last13Months');
     await expect(stat(totals, 'Chi phí quảng cáo')).toHaveText(/[1-9]/, { timeout: 60_000 });
+    await toSettings();
     await settings.getByLabel('Tài khoản chi phí quảng cáo trong sổ').fill('6421');
     await settings.getByRole('button', { name: 'Lưu cài đặt' }).click();
+    await toFigures();
     await expect(books.getByText('Sổ sách ghi bằng đồng, còn tài khoản này tính bằng USD', { exact: false })).toBeVisible();
     await expect(books.getByRole('table')).toHaveCount(0);
     // Back to the account in dong: its comparison is there again.
@@ -184,20 +275,27 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
   });
 
   await test.step('Disconnect asks first, keeps the stored figures readable, and leaves the account quiet and not refreshable', async () => {
-    // Ads is the only place to disconnect an ad account: the channels screen does not list it.
+    // The Ads settings are the only place to disconnect an ad account: the channels screen does not list it, and the figures screen has no such button.
     const trigger = page.getByRole('button', { name: 'Ngắt kết nối', exact: true });
     const dialog = page.getByRole('dialog', { name: 'Ngắt kết nối tài khoản quảng cáo này?' });
+    await expect(trigger).toHaveCount(0);
+    await toSettings();
     await trigger.click();
     await expect(dialog.getByText('Số liệu đã lưu vẫn được giữ để xem lại.', { exact: false })).toBeVisible();
     // Cancel leaves everything as it was.
     await dialog.getByRole('button', { name: 'Hủy' }).click();
     await expect(dialog).toHaveCount(0);
+    await toFigures();
     await expect(page.getByText('Đã ngắt kết nối', { exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Làm mới ngay' })).toBeEnabled();
 
+    await toSettings();
     await trigger.click();
     await dialog.getByRole('button', { name: 'Ngắt kết nối', exact: true }).click();
     await expect(page.getByRole('status').filter({ hasText: 'Đã ngắt kết nối tài khoản quảng cáo.' })).toBeVisible();
+    // Once disconnected the button is gone from the settings too.
+    await expect(trigger).toHaveCount(0);
+    await toFigures();
 
     // A quiet "disconnected" state: the account stays in the picker, Refresh is off, and nothing says it is live.
     await expect(page.getByText('Đã ngắt kết nối', { exact: true })).toBeVisible();
@@ -206,7 +304,6 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
     await expect(page.getByText('Số liệu đã cập nhật đến')).toHaveCount(0);
     await expect(page.getByText('Lần cập nhật tiếp theo')).toHaveCount(0);
     await expect(page.getByText('Số liệu đã lưu đến hết ngày', { exact: false })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Ngắt kết nối', exact: true })).toHaveCount(0);
     await expect(page.getByLabel('Tài khoản quảng cáo', { exact: true }).locator('option')).toHaveCount(2);
 
     // The stored figures are still there to read, with their tables and the books strip.
@@ -216,9 +313,9 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
 
     // In the database only that connection is revoked, and no figure was dropped.
     const connections = sql<{ name: string; status: string }>(
-      `SELECT a.name, c.status FROM crove_ads.ad_account a
-         JOIN crove_kernel.channel_connection c ON c.org_id = a.org_id AND c.id = a.channel_connection_id
-         JOIN crove_kernel.tenant t ON t.org_id = a.org_id
+      `SELECT a.name, c.status FROM ludy_ads.ad_account a
+         JOIN ludy_kernel.channel_connection c ON c.org_id = a.org_id AND c.id = a.channel_connection_id
+         JOIN ludy_kernel.tenant t ON t.org_id = a.org_id
         WHERE t.slug = :'slug'`,
       { slug },
     );
@@ -230,9 +327,9 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
       ]),
     );
     const kept = sql<{ days: number }>(
-      `SELECT count(*)::int AS days FROM crove_ads.ad_spend_day d
-         JOIN crove_ads.ad_account a ON a.org_id = d.org_id AND a.id = d.ad_account_id
-         JOIN crove_kernel.tenant t ON t.org_id = d.org_id
+      `SELECT count(*)::int AS days FROM ludy_ads.ad_spend_day d
+         JOIN ludy_ads.ad_account a ON a.org_id = d.org_id AND a.id = d.ad_account_id
+         JOIN ludy_kernel.tenant t ON t.org_id = d.org_id
         WHERE t.slug = :'slug' AND a.name = 'Quảng cáo cửa hàng E2E' AND d.level = 'account'`,
       { slug },
     );

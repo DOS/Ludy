@@ -10,14 +10,22 @@ import {
   createBrowserLiveRecorder,
   createIndexedDbChunkStore,
   prepareCapture,
+  RECORDING_NOTICE,
+  stopReasonForUpload,
+  type RecordingStopReason,
   startLiveCapture,
   uploadAfterLive,
   type ChunkStore,
   type RecordingMeta,
-} from '@crove/meeting-recorder';
+} from '@ludy/meeting-recorder';
 import { capturePlan } from './capture-plan.ts';
-import { createClient, type Client } from './api.ts';
+import { createClient, LudyError, type Client } from './api.ts';
 import { consentBlocker, type ConsentMethod } from './consent.ts';
+import type { CaptureHeld } from './messages.ts';
+
+// How often a running capture tells the server it is alive (ADR-0055 slice 1, #4123; the server ends one it has not heard from for 90 seconds). The same 30 seconds as CAPTURE_HEARTBEAT_SECONDS of the contract, which
+// the extension does not import.
+const HEARTBEAT_MS = 30_000;
 
 export interface CaptureParams {
   address: string;
@@ -31,6 +39,8 @@ export interface CaptureParams {
   // Live notes (ADR-0052 L4a): a second, audio-only recorder sends pieces while recording; the final upload stays as it is.
   liveNotes: boolean;
   streamId: string;
+  // The tab's address, when the browser gave it: the server reads which call it names (nothing of it is stored).
+  joinUrl?: string;
 }
 
 export interface CaptureDeps {
@@ -51,18 +61,31 @@ export const browserDeps = (): CaptureDeps => ({
   now: () => Date.now(),
 });
 
-export type Failure = 'title' | 'consentMethod' | 'consentAgreed' | 'device' | 'store' | 'setup';
+// 'consentPolicy': the org is strict and refused the method (A2, #3160).
+// 'captureRunning': the server already has a capture of this call (CAPTURE_ALREADY_RUNNING), held by the kind of client in `held` since its time.
+export type Failure = 'title' | 'consentMethod' | 'consentAgreed' | 'consentPolicy' | 'device' | 'store' | 'setup' | 'captureRunning';
+
+// What the refusal says of the capture that holds the call: a kind and a time, or null when it says something else.
+export function heldOf(details: unknown): CaptureHeld | null {
+  if (typeof details !== 'object' || details === null) return null;
+  const { kind, since } = details as { kind?: unknown; since?: unknown };
+  return (kind === 'extension' || kind === 'app') && typeof since === 'string' && !Number.isNaN(new Date(since).getTime()) ? { kind, since } : null;
+}
 
 export interface Running {
   meetingId: string;
   startedAt: number;
   micMissing: boolean;
   elapsedMs(): number;
-  // Stops, saves the last chunk on the device and uploads; the copy is deleted only after the upload succeeded.
-  stop(): Promise<{ uploaded: boolean; meetingId: string; message?: string }>;
+  // Stops, saves the last chunk on the device and uploads; the copy is deleted only after the upload succeeded. `stopReason`
+  // is given only for a stop the member did not ask for (A1, #3159): the server keeps the code on the meeting.
+  stop(stopReason?: RecordingStopReason): Promise<{ uploaded: boolean; meetingId: string; message?: string }>;
+  // Called once when the recording ends without the member's click: the meeting tab closed or its capture was taken away, the
+  // recorder failed, or the device refused a chunk. The caller then stops with the reason, which uploads what was saved.
+  onLost(listener: (reason: RecordingStopReason) => void): void;
 }
 
-export async function startCapture(params: CaptureParams, deps: CaptureDeps = browserDeps()): Promise<{ ok: true; running: Running } | { ok: false; reason: Failure }> {
+export async function startCapture(params: CaptureParams, deps: CaptureDeps = browserDeps()): Promise<{ ok: true; running: Running } | { ok: false; reason: Failure; held?: CaptureHeld }> {
   const blocker = consentBlocker({ title: params.title, consentMethod: params.consentMethod, consentAgreed: params.consentAgreed });
   if (blocker) return { ok: false, reason: blocker };
   const plan = capturePlan({ streamId: params.streamId, keepVideo: params.keepVideo, isTypeSupported: (t) => MediaRecorder.isTypeSupported(t) });
@@ -70,10 +93,23 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
   const clock = createClock();
   const cleanups: Array<() => void> = [];
   let micMissing = false;
+  // A1 (#3159): a recording that ends without the member's click is reported once, with a code.
+  let stopRequested = false;
+  let lost: RecordingStopReason | null = null;
+  const lostListeners: Array<(reason: RecordingStopReason) => void> = [];
+  const fireLost = (reason: RecordingStopReason) => {
+    if (stopRequested || lost !== null) return;
+    lost = reason;
+    for (const listener of lostListeners) listener(reason);
+  };
+  // The meeting made for this start, if one was: a capture that fails after it leaves a meeting nobody records into (#3196).
+  let createdMeetingId: string | null = null;
   const prepared = await prepareCapture<MediaStream & { getTracks(): MediaStreamTrack[] }, MediaRecorder>({
     openStore: async () => void (await deps.store.list(params.orgId)),
     async getStream() {
       const tab = await deps.getTabStream(plan.tabConstraints);
+      // The tab's own tracks end when the tab is closed or its capture is taken away; the mix below would keep recording silence.
+      for (const track of tab.getTracks()) track.addEventListener?.('ended', () => fireLost('tab_closed'));
       const mic = await deps.getMicStream();
       micMissing = mic === null;
       // The tab goes quiet for the member when captured; it is played again through the mix's context.
@@ -92,7 +128,10 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
       // A video track exists only when the plan asked the tab for one.
       return new MediaStream([...mix.stream.getAudioTracks(), ...(plan.kind === 'video' ? tab.getVideoTracks() : [])]);
     },
-    createMeeting: async () => (await client.createMeeting({ title: params.title, keepVideo: params.keepVideo, consentMethod: params.consentMethod, liveNotes: params.liveNotes })).meetingId,
+    createMeeting: async () => {
+      createdMeetingId = (await client.createMeeting({ title: params.title, keepVideo: params.keepVideo, consentMethod: params.consentMethod, consentNoticeVersion: RECORDING_NOTICE.version, liveNotes: params.liveNotes, ...(params.joinUrl ? { joinUrl: params.joinUrl } : {}) })).meetingId;
+      return createdMeetingId;
+    },
     makeRecorder: (stream) => new MediaRecorder(stream, plan.mimeType ? { mimeType: plan.mimeType } : undefined),
     async begin(meetingId, recorder) {
       return beginRecording(deps.store, {
@@ -110,15 +149,44 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
   });
   if (prepared.status !== 'ready') {
     for (const cleanup of cleanups) cleanup();
+    // The meeting was made but the recorder never started: its recording ended (best effort, so the app's chip never waits for it).
+    if (createdMeetingId !== null) await client.recordingStopped({ meetingId: createdMeetingId, reason: 'unknown', lengthSeconds: 0 }).catch(() => undefined);
+    if (prepared.status === 'failed' && prepared.reason === 'setup' && prepared.error instanceof LudyError && prepared.error.code === 'CONSENT_METHOD_NOT_ALLOWED') return { ok: false, reason: 'consentPolicy' };
+    // Another capture of this call exists (ADR-0055 slice 1, #4123): no meeting was made, and the person is told which kind of client holds it and since when.
+    if (prepared.status === 'failed' && prepared.reason === 'setup' && prepared.error instanceof LudyError && prepared.error.code === 'CAPTURE_ALREADY_RUNNING') {
+      const held = heldOf(prepared.error.details);
+      return { ok: false, reason: 'captureRunning', ...(held ? { held } : {}) };
+    }
     return { ok: false, reason: prepared.status === 'aborted' ? 'setup' : prepared.reason };
   }
   const { recorder, writer, stream } = prepared;
   const startedAt = deps.now();
   clock.start(startedAt);
   const meetingId = writer.meta().meetingId;
-  recorder.ondataavailable = (event) => void writer.addChunk(event.data, clock.elapsedMs(deps.now())).catch(() => undefined);
-  const stopped = new Promise<void>((resolve) => recorder.addEventListener('stop', () => resolve(), { once: true }));
-  recorder.start(5000);
+  recorder.ondataavailable = (event) => void writer.addChunk(event.data, clock.elapsedMs(deps.now())).catch(() => fireLost('storage_full'));
+  const stopped = new Promise<void>((resolve) =>
+    recorder.addEventListener(
+      'stop',
+      () => {
+        // A stop nobody asked for (the browser or the device ended it).
+        fireLost('unknown');
+        resolve();
+      },
+      { once: true },
+    ),
+  );
+  recorder.addEventListener('error', () => fireLost('unknown'));
+  try {
+    recorder.start(5000);
+  } catch {
+    for (const track of stream.getTracks()) track.stop();
+    for (const cleanup of cleanups) cleanup();
+    void client.captureHeartbeat({ meetingId, end: true }).catch(() => undefined);
+    await client.recordingStopped({ meetingId, reason: 'unknown', lengthSeconds: 0 }).catch(() => undefined);
+    return { ok: false, reason: 'setup' };
+  }
+  // The capture tells the server it is alive; an answer of "not open" (another capture took the call over after a long silence) never stops this recording, and a failed beat is only missed.
+  const heartbeat = setInterval(() => void client.captureHeartbeat({ meetingId }).catch(() => undefined), HEARTBEAT_MS);
   // Live notes: never fails the recording; null when not ticked or when the live recorder cannot start.
   const live = startLiveCapture({
     enabled: params.liveNotes,
@@ -133,7 +201,17 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
       startedAt,
       micMissing,
       elapsedMs: () => clock.elapsedMs(deps.now()),
-      async stop() {
+      onLost(listener) {
+        if (lost !== null) listener(lost);
+        else lostListeners.push(listener);
+      },
+      async stop(stopReason) {
+        stopRequested = true;
+        // The capture is over now, not 90 seconds from now, so a new recording of the call is not refused by this one. Sent and not waited for: a stalled network must never hold up the stop or the upload.
+        clearInterval(heartbeat);
+        void client.captureHeartbeat({ meetingId, end: true }).catch(() => undefined);
+        // How it ended is saved with the recording, so even a retry from the popup later carries the right code.
+        await writer.markStopped(stopReason ?? 'user');
         clock.pause(deps.now());
         // The live recorder stops first and its last piece is taken before the devices are released.
         await live?.halt();
@@ -151,18 +229,36 @@ export async function startCapture(params: CaptureParams, deps: CaptureDeps = br
   };
 }
 
+// The reason code goes with the upload only when the recording did not end by the member's click.
+const stopReasonOf = (meta: RecordingMeta): { stopReason?: RecordingStopReason } => {
+  const stopReason = stopReasonForUpload(meta);
+  return stopReason ? { stopReason } : {};
+};
+
+// The recording ended and no media reached the server: tell it, best effort, so the app's recording chip lets go at once (#3196). A stop the member asked
+// for carries no code; any other carries its code ('unknown' when nobody saw it end). Never throws: the server ignores it when a recording exists.
+export async function reportEnded(client: Client, meta: RecordingMeta): Promise<void> {
+  const reason = stopReasonForUpload(meta);
+  // The server takes at most a day (a longer one would be refused and the report lost).
+  const lengthSeconds = Math.min(24 * 3600, Math.max(0, Math.round(meta.elapsedMs / 1000)));
+  await client.recordingStopped({ meetingId: meta.meetingId, ...(reason ? { reason } : {}), lengthSeconds }).catch(() => undefined);
+}
+
 // The saved recording to the meeting; the device copy goes only after the server has it.
 export async function uploadSaved(deps: Pick<CaptureDeps, 'store'>, client: Client, uploads: 'presigned' | 'direct', meta: RecordingMeta): Promise<{ ok: true } | { ok: false; message: string }> {
   try {
     const recording = await assembleRecording(deps.store, meta);
     if (!recording) {
       await deps.store.remove(meta.id);
+      await reportEnded(client, meta);
       return { ok: false, message: 'Không có âm thanh nào được lưu' };
     }
-    await client.uploadMedia({ meetingId: meta.meetingId, kind: meta.kind, file: recording.file, lengthSeconds: recording.lengthSeconds, uploads });
+    await client.uploadMedia({ meetingId: meta.meetingId, kind: meta.kind, file: recording.file, lengthSeconds: recording.lengthSeconds, uploads, ...stopReasonOf(meta) });
     await deps.store.remove(meta.id);
     return { ok: true };
   } catch (error) {
+    // The copy stays on the device for a retry, but the recording itself is over.
+    await reportEnded(client, meta);
     return { ok: false, message: error instanceof Error ? error.message : 'Không tải lên được' };
   }
 }

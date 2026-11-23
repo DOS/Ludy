@@ -1,12 +1,12 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
-import { useState } from 'react';
-import { useTranslations } from 'use-intl';
-import type { VAT_RATES, VAT_WARNINGS } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { TableCell, TableRow } from '@crove/ui/components/table';
+import { useState, type ReactNode } from 'react';
+import { useLocale, useTranslations } from 'use-intl';
+import { vatDueDate, vatLateFacts, vatLateKey, vatLateTemplate, type VAT_RATES, type VAT_WARNINGS } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { AmountInput } from '../components/amount-input.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { SalesNumberGaps } from '../components/sales-number-gaps.tsx';
@@ -25,10 +25,13 @@ import {
   deductParams,
   defaultPeriod,
   periodChoiceOf,
+  roundDong,
   periodKey,
   periodSearch,
   switchKind,
   wholeDong,
+  INDICATOR_GLOSS,
+  vatResultOf,
   yearOptions,
   type DeductChoice,
   type PeriodChoice,
@@ -42,12 +45,17 @@ type Warning = (typeof VAT_WARNINGS)[number];
 interface Invoice {
   id: string;
   issueDate: string;
+  // The day of the sale when the invoice is later than it (#3535).
+  saleDate?: string | null;
   series: string;
   number: string;
   partyName: string;
   partyTaxCode: string | null;
   rates: Array<{ rate: Rate; taxable: string; vat: string }>;
   warnings: Warning[];
+  // A replacement or an adjustment invoice (#916): the invoice it corrects, and which date its period follows.
+  correction?: { kind: 'replacement' | 'adjustment'; series: string; number: string; basis: 'issue_date' | 'posting_date' } | null;
+  postingDate?: string;
 }
 
 // A money cell: right-aligned with tabular figures, under a header DataTable aligns the same way (DESIGN.md §4.3, #2001).
@@ -61,7 +69,10 @@ export function InvoiceTable({ invoices, partyLabel }: { invoices: Invoice[]; pa
       {invoices.flatMap((invoice) =>
         invoice.rates.map((rate, i) => (
           <TableRow key={`${invoice.id}-${rate.rate}`}>
-            <TableCell className="px-4 py-3 text-muted-foreground">{i === 0 ? f.date(invoice.issueDate) : ''}</TableCell>
+            <TableCell className="px-4 py-3 text-muted-foreground">
+              {i === 0 ? f.date(invoice.issueDate) : ''}
+              {i === 0 && invoice.saleDate && <span className="block text-xs text-subtle-foreground">{t('saleOn', { date: f.date(invoice.saleDate) })}</span>}
+            </TableCell>
             <TableCell className="px-4 py-3 font-mono text-xs text-foreground">
               {i === 0 ? `${invoice.series ? `${invoice.series}-` : ''}${invoice.number}` : ''}
             </TableCell>
@@ -86,6 +97,13 @@ export function InvoiceTable({ invoices, partyLabel }: { invoices: Invoice[]; pa
                   ))}
                 </div>
               )}
+              {/* What a correction invoice corrects and why it counts in this period (#916): a plain note the accountant can read and question, not a warning. */}
+              {i === 0 && invoice.correction && (
+                <p className="mt-1 text-xs text-subtle-foreground" data-testid="vat-correction-note">
+                  {t(`correction.${invoice.correction.kind}`, { original: `${invoice.correction.series ? `${invoice.correction.series}-` : ''}${invoice.correction.number}` })}
+                  {invoice.correction.kind === 'adjustment' ? ` · ${invoice.correction.basis === 'posting_date' && invoice.postingDate ? t('correction.byPostingDate', { date: f.date(invoice.postingDate) }) : t('correction.byIssueDate')}` : ''}
+                </p>
+              )}
             </TableCell>
           </TableRow>
         )),
@@ -96,6 +114,84 @@ export function InvoiceTable({ invoices, partyLabel }: { invoices: Invoice[]; pa
 
 type VatReport = Awaited<ReturnType<typeof client.vat.period>>;
 type PaymentCheck = VatReport['paymentChecks']['items'][number];
+
+// The coworker's sentence on the late sales of the working (#3540): each late invoice and the period of its sale. The template is built from the lists below with no model, so it shows
+// with AI off, spent or refused (the server drops a sentence that names an invoice or period not in the lists). A coworker sentence that came back used goes above it and never states a
+// status: the template always stays, because whether an invoice needs a supplementary declaration is the one fact a person acts on, and only code states it.
+// It reads and names only: nothing is declared or posted, and a person decides the supplementary declaration. `version` is when the lists were read, so the sentence is asked again
+// whenever they are (the server keeps one by its facts, so asking again over unchanged lists costs no model call).
+export function LateSummary({ data, legalEntityId, ready, version }: { data: Pick<VatReport, 'period' | 'supplementary' | 'lateSales'>; legalEntityId: string | undefined; ready: boolean; version: number }) {
+  const t = useTranslations('vat');
+  const lang = useLocale() === 'en' ? 'en' : 'vi';
+  const facts = vatLateFacts(data);
+  const base = orpc.vat.explain.queryOptions({ input: { period: data.period.period, legalEntityId, lang } });
+  const explain = useQuery({ ...base, queryKey: [...base.queryKey, version], enabled: ready && facts.length > 0, staleTime: Infinity, retry: false });
+  const template = vatLateTemplate(facts, lang);
+  if (template === null) return null;
+  // The coworker sentence only when it was written from the lists on screen (the server read them again for it).
+  const text = explain.data?.ai === 'used' && explain.data.text && explain.data.key === vatLateKey(facts) ? explain.data.text : template;
+  return (
+    <section aria-labelledby="vat-late-summary-title" data-testid="vat-late-summary" className="rounded-lg border border-border p-4">
+      <h2 id="vat-late-summary-title" className="text-xs font-medium text-muted-foreground">
+        {t('lateSummary.title')}
+      </h2>
+      {text !== template ? (
+        <p className="mt-1 text-sm text-foreground" data-testid="vat-late-summary-sentence">
+          {text}
+        </p>
+      ) : null}
+      <p className="mt-1 text-sm text-foreground" data-testid="vat-late-summary-status">
+        {template}
+      </p>
+      <p className="mt-2 text-xs text-subtle-foreground">{t('lateSummary.note')}</p>
+    </section>
+  );
+}
+
+// The sales of this period that must go in a supplementary return (#3535): issued after the period was locked or its return filed, for a sale made in it. Not in the figures above.
+export function SupplementaryItems({ data }: { data: Pick<VatReport, 'supplementary'> }) {
+  const t = useTranslations('vat');
+  const f = useFormat();
+  if (data.supplementary.documents.length === 0) return null;
+  return (
+    <section aria-labelledby="vat-supplementary-title" data-testid="vat-supplementary">
+      <h2 id="vat-supplementary-title" className="mb-1 text-base font-semibold text-foreground">
+        {t('supplementary.title', { count: f.number(data.supplementary.documents.length) })}
+      </h2>
+      <p className="mb-2 text-sm text-muted-foreground">{t('supplementary.hint', { vat: f.money(data.supplementary.totals.vat) })}</p>
+      <InvoiceTable invoices={data.supplementary.documents} partyLabel={t('columns.buyer')} />
+    </section>
+  );
+}
+
+// The sales invoiced in this period for a sale of an earlier one (#3535): counted in the period of the sale, listed here so none goes unseen.
+export function LateSales({ data }: { data: Pick<VatReport, 'lateSales'> }) {
+  const t = useTranslations('vat');
+  const f = useFormat();
+  if (data.lateSales.length === 0) return null;
+  return (
+    <section aria-labelledby="vat-late-sales-title" data-testid="vat-late-sales">
+      <h2 id="vat-late-sales-title" className="mb-1 text-base font-semibold text-foreground">
+        {t('lateSales.title', { count: f.number(data.lateSales.length) })}
+      </h2>
+      <p className="mb-2 text-sm text-muted-foreground">{t('lateSales.hint')}</p>
+      <DataTable numeric={[4]} head={[t('columns.number'), t('columns.buyer'), t('lateSales.saleDate'), t('lateSales.originalPeriod'), t('columns.vat'), t('columns.notes')]}>
+        {data.lateSales.map((sale) => (
+          <TableRow key={sale.documentId}>
+            <TableCell className="px-4 py-3 font-mono text-xs text-foreground">{`${sale.series ? `${sale.series}-` : ''}${sale.number}`}</TableCell>
+            <TableCell className="px-4 py-3 text-foreground">{sale.partyName}</TableCell>
+            <TableCell className="px-4 py-3 text-muted-foreground">{f.date(sale.saleDate)}</TableCell>
+            <TableCell className="px-4 py-3 text-foreground">{sale.originalPeriod}</TableCell>
+            <TableCell className={`${NUM} text-foreground`}>{f.money(sale.vatAmount)}</TableCell>
+            <TableCell className="px-4 py-3">
+              <Badge variant="warning">{sale.supplementary ? t('lateSales.supplementary') : t('lateSales.counted')}</Badge>
+            </TableCell>
+          </TableRow>
+        ))}
+      </DataTable>
+    </section>
+  );
+}
 
 // Input invoices that need proof of non-cash payment before their VAT is deducted (#917), with the accountant's marks.
 function PaymentChecks({ data, canMark, legalEntityId }: { data: VatReport; canMark: boolean; legalEntityId: string | undefined }) {
@@ -112,13 +208,13 @@ function PaymentChecks({ data, canMark, legalEntityId }: { data: VatReport; canM
     onSettled: () => queryClient.invalidateQueries({ queryKey: orpc.vat.period.key() }),
   });
   const status = (item: PaymentCheck) => (item.mark ? t(`outcome.${item.mark.outcome}`) : t('unchecked'));
+  // Nothing to check: no card (#3600).
+  if (checks.items.length === 0) return null;
   return (
     <section>
       <h2 className="mb-1 text-base font-semibold text-foreground">{t('title', { count: checks.items.length })}</h2>
       <p className="mb-2 text-xs text-subtle-foreground">{t('hint')}</p>
-      {checks.items.length === 0 ? (
-        <Empty title={t('empty')} />
-      ) : (
+      {
         <>
           <DataTable
             numeric={[2, 3]}
@@ -186,7 +282,7 @@ function PaymentChecks({ data, canMark, legalEntityId }: { data: VatReport; canM
             {t('summary', { atRisk: f.money(checks.vatAtRisk), notDeductible: f.money(checks.notDeductibleVat), unchecked: checks.unchecked })}
           </p>
         </>
-      )}
+      }
       {mark.error && <ErrorText>{errorMessage(mark.error)}</ErrorText>}
     </section>
   );
@@ -355,9 +451,78 @@ function FiledReturn({
   );
 }
 
+// The answer an owner opens this screen for (#3600), above the table: the period, the input and output VAT, what Ludy works out from them, the day the return is due, whether it is
+// filed, and the one action. Every figure is a decimal string from the report; the result is the form's own [35] - [25] - [22] and says it leaves [36] to [43] to the accountant.
+export function ResultStrip({
+  data,
+  carried,
+  fileDeduct25,
+  action,
+}: {
+  data: Pick<VatReport, 'period' | 'indicators' | 'filed' | 'paymentChecks'>;
+  carried: string | null;
+  // The [25] the HTKK file will hold (the accountant's choice in "Cách tính").
+  fileDeduct25: string;
+  action: ReactNode;
+}) {
+  const t = useTranslations('vat.strip');
+  const f = useFormat();
+  const amountOf = (code: string) => data.indicators.find((i) => i.code === code)?.amount ?? '0';
+  // A filed return speaks with its own [22] and [25]; otherwise [25] is the suggestion (the input VAT less what may not be deducted), whatever the XML file is set to write: the file is the
+  // accountant's to complete, the strip is the owner's first answer. An [22] that is not a whole number leaves no result rather than a wrong one.
+  const suggested25 = roundDong(data.paymentChecks.suggested25);
+  const c22 = data.filed ? data.filed.carriedIn : carried;
+  const c25 = data.filed ? data.filed.deductible : suggested25;
+  const result = c22 === null ? null : vatResultOf(amountOf('35'), c25, c22);
+  const due = vatDueDate(data.period.period);
+  return (
+    <section aria-labelledby="vat-strip-title" data-testid="vat-strip" className="rounded-lg border border-border bg-card p-4">
+      <h2 id="vat-strip-title" className="sr-only">
+        {t('title')}
+      </h2>
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div>
+          <p className="text-xs font-medium text-muted-foreground">{t(result?.kind ?? 'carried')}</p>
+          <p className="mt-1 text-3xl font-semibold tabular-nums text-foreground" data-testid="vat-strip-result" data-kind={result?.kind ?? 'unknown'}>
+            {result ? f.money(result.amount) : '-'}
+          </p>
+        </div>
+        <div className="md:shrink-0 [&>*]:w-full md:[&>*]:w-auto">{action}</div>
+      </div>
+      <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-sm md:grid-cols-5">
+        <div>
+          <dt className="text-xs text-muted-foreground">{t('period')}</dt>
+          <dd className="text-foreground">{`${f.date(data.period.from)} - ${f.date(data.period.to)}`}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">{t('inputVat')}</dt>
+          <dd className="tabular-nums text-foreground" data-testid="vat-strip-input">{f.money(amountOf('24'))}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">{t('outputVat')}</dt>
+          <dd className="tabular-nums text-foreground" data-testid="vat-strip-output">{f.money(amountOf('35'))}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">{t('deadline')}</dt>
+          <dd className="text-foreground" data-testid="vat-strip-deadline">{due ? f.date(due) : t('deadlineUnknown')}</dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted-foreground">{t('status')}</dt>
+          <dd>
+            {data.filed ? <Badge variant="success">{t('filed', { date: f.date(data.filed.markedAt.slice(0, 10)) })}</Badge> : <Badge variant="warning">{t('notFiled')}</Badge>}
+          </dd>
+        </div>
+      </dl>
+      <p className="mt-3 text-xs text-subtle-foreground">{data.filed ? t('basisFiled') : t('basis', { amount: f.money(suggested25) })}</p>
+      {!data.filed && fileDeduct25 !== suggested25 && <p className="mt-1 text-xs text-warning">{t('fileNote', { amount: f.money(fileDeduct25) })}</p>}
+    </section>
+  );
+}
+
 export function VatPage() {
   const t = useTranslations('vat');
   const f = useFormat();
+  const locale = useLocale();
   // The org's tax code goes into the HTKK file (#332); without one the server refuses it, so the button waits for it.
   const org = useQuery(orpc.org.get.queryOptions());
   const taxCode = org.data?.taxCode ?? null;
@@ -406,6 +571,16 @@ export function VatPage() {
     kind: filing === 'quarter' ? t('filingQuarterly') : t('filingMonthly'),
     kindOne: filing === 'quarter' ? t('kindQuarter') : t('kindMonth'),
   });
+  const xmlButton = (
+    <Button
+      loading={exportXml.isPending}
+      size="lg"
+      onClick={() => exportXml.mutate()}
+      disabled={exportXml.isPending || !data || !taxCode || wrongKind || carried === null}
+      title={org.data && !taxCode ? t('exportXmlNeedsTaxCode') : wrongKind ? wrongKindText : undefined}>
+      {t('exportXml')}
+    </Button>
+  );
   const indexes = choice.kind === 'month' ? Array.from({ length: 12 }, (_, i) => i + 1) : [1, 2, 3, 4];
   const rateRows = data ? data.input.totals.byRate.map((input, i) => ({ input, output: data.output.totals.byRate[i] })) : [];
   // Sales at a rate Crove cannot place count in the totals but in no form indicator (issue #358).
@@ -417,20 +592,9 @@ export function VatPage() {
         title={t('title')}
         subtitle={t('subtitle')}
         actions={
-          <div className="flex flex-wrap gap-2">
-            <Button
-              loading={exportXml.isPending}
-              size="lg"
-              variant="outline"
-              onClick={() => exportXml.mutate()}
-              disabled={exportXml.isPending || !data || !taxCode || wrongKind || carried === null}
-              title={org.data && !taxCode ? t('exportXmlNeedsTaxCode') : wrongKind ? wrongKindText : undefined}>
-              {t('exportXml')}
-            </Button>
-            <Button loading={exportXlsx.isPending} size="lg" onClick={() => exportXlsx.mutate()} disabled={exportXlsx.isPending || !data}>
-              {t('export')}
-            </Button>
-          </div>
+          <Button loading={exportXlsx.isPending} size="lg" variant="outline" onClick={() => exportXlsx.mutate()} disabled={exportXlsx.isPending || !data}>
+            {t('export')}
+          </Button>
         }
       />
       {org.data && !taxCode && <p className="mb-4 text-sm text-muted-foreground">{t('exportXmlNeedsTaxCode')}</p>}
@@ -479,6 +643,12 @@ export function VatPage() {
         <ErrorText>{errorMessage(report.error)}</ErrorText>
       ) : data ? (
         <div className="space-y-8">
+          <ResultStrip
+            data={data}
+            carried={carried}
+            fileDeduct25={deductAmount(deduct, data.indicators.find((i) => i.code === '24')?.amount ?? '0', data.paymentChecks.suggested25)}
+            action={xmlButton}
+          />
           <CarryForward data={data} text={carriedText} onChange={(text) => setCarriedEdit(text === null ? null : { period, text })} />
           <section>
             <h2 className="mb-2 text-base font-semibold text-foreground">{t('indicatorsTitle')}</h2>
@@ -486,26 +656,32 @@ export function VatPage() {
               {data.indicators.map((indicator) => (
                 <TableRow key={indicator.code}>
                   <TableCell className="px-4 py-3 font-mono text-xs text-foreground">[{indicator.code}]</TableCell>
-                  <TableCell className="px-4 py-3 text-muted-foreground">{indicator.label}</TableCell>
+                  <TableCell className="px-4 py-3 text-muted-foreground">
+                    {indicator.label}
+                    {locale === 'en' && INDICATOR_GLOSS[indicator.code] && <span className="block text-xs text-subtle-foreground">{INDICATOR_GLOSS[indicator.code]}</span>}
+                  </TableCell>
                   <TableCell className={`${NUM} font-medium text-foreground`}>{f.money(indicator.amount)}</TableCell>
                 </TableRow>
               ))}
             </DataTable>
-            <p className="mt-2 text-xs text-subtle-foreground">{t('indicatorsNote')}</p>
-            <p className="mt-1 text-xs text-subtle-foreground">{t('xmlNote')}</p>
-            <label className="mt-2 block text-xs">
-              <span className="text-subtle-foreground">{t('xmlDeduct')}</span>
-              <NativeSelect aria-label={t('xmlDeduct')} className="mt-1 w-full max-w-md" value={deduct} onChange={(e) => setDeduct(e.target.value as DeductChoice)}>
-                {DEDUCT_CHOICES.map((c) => (
-                  <NativeSelectOption key={c} value={c}>
-                    {c === 'suggested' ? t('xmlDeductSuggested', { amount: f.money(data.paymentChecks.suggested25) }) : t(c === 'all' ? 'xmlDeductAll' : 'xmlDeductNone')}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </label>
-            {deduct === 'suggested' && data.paymentChecks.unchecked > 0 && (
-              <p className="mt-1 text-xs text-warning">{t('xmlDeductUnchecked', { count: data.paymentChecks.unchecked })}</p>
-            )}
+            <details className="mt-3 rounded-lg border border-border p-3" data-testid="vat-rules">
+              <summary className="cursor-pointer text-sm font-medium text-foreground">{t('rules.title')}</summary>
+              <p className="mt-2 text-xs text-subtle-foreground">{t('indicatorsNote')}</p>
+              <p className="mt-1 text-xs text-subtle-foreground">{t('xmlNote')}</p>
+              <label className="mt-2 block text-xs">
+                <span className="text-subtle-foreground">{t('xmlDeduct')}</span>
+                <NativeSelect aria-label={t('xmlDeduct')} className="mt-1 w-full max-w-md" value={deduct} onChange={(e) => setDeduct(e.target.value as DeductChoice)}>
+                  {DEDUCT_CHOICES.map((c) => (
+                    <NativeSelectOption key={c} value={c}>
+                      {c === 'suggested' ? t('xmlDeductSuggested', { amount: f.money(data.paymentChecks.suggested25) }) : t(c === 'all' ? 'xmlDeductAll' : 'xmlDeductNone')}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </label>
+              {deduct === 'suggested' && data.paymentChecks.unchecked > 0 && (
+                <p className="mt-1 text-xs text-warning">{t('xmlDeductUnchecked', { count: data.paymentChecks.unchecked })}</p>
+              )}
+            </details>
             {!isZeroAmount(otherSales) && <p className="mt-2 text-sm text-warning">{t('otherSales', { amount: f.money(otherSales) })}</p>}
           </section>
 
@@ -556,6 +732,12 @@ export function VatPage() {
               <InvoiceTable invoices={data.output.documents} partyLabel={t('columns.buyer')} />
             )}
           </section>
+
+          <LateSummary data={data} legalEntityId={entity.legalEntityId} ready={entity.ready} version={report.dataUpdatedAt} />
+
+          <SupplementaryItems data={data} />
+
+          <LateSales data={data} />
 
           <SalesNumberGaps period={period} legalEntityId={entity.legalEntityId} enabled={entity.ready && data.output.available} />
 

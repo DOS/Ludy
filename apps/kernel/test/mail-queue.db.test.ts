@@ -9,11 +9,11 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createMailMessage, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { DomainError, Runtime, defineCommand, type UserActor } from '@crove/kernel-runtime';
-import { createLogProvider, type MailProvider, type OutboundMail, type SendResult } from '@crove/mail';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createMailMessage, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { DomainError, Runtime, defineCommand, type UserActor } from '@ludy/kernel-runtime';
+import { createLogProvider, type MailProvider, type OutboundMail, type SendResult } from '@ludy/mail';
 import { MAIL_BULK_QUEUE, MAIL_SEND_QUEUE, purgeMail, runMailJob, sweepMail, type MailJob, type MailTemplates } from '../src/mail-queue.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -99,13 +99,13 @@ suite('queued mail (#548)', () => {
       async (c) =>
         (
           await c.query<{ status: string; attempts: number; provider_message_id: string | null; error_code: string | null; to_address: string | null; subject: string | null; payload: unknown; to_hash: string }>(
-            'SELECT status, attempts, provider_message_id, error_code, to_address, subject, payload, to_hash FROM crove_kernel.mail_message WHERE id = $1',
+            'SELECT status, attempts, provider_message_id, error_code, to_address, subject, payload, to_hash FROM ludy_kernel.mail_message WHERE id = $1',
             [id],
           )
         ).rows[0],
     );
   const calls = (id: string) =>
-    admin(async (c) => (await c.query<{ key: string; state: string; error_kind: string | null }>('SELECT key, state, error_kind FROM crove_kernel.external_call WHERE key LIKE $1 ORDER BY key', [`mail:${id}:%`])).rows);
+    admin(async (c) => (await c.query<{ key: string; state: string; error_kind: string | null }>('SELECT key, state, error_kind FROM ludy_kernel.external_call WHERE key LIKE $1 ORDER BY key', [`mail:${id}:%`])).rows);
   // The sweep with a stand-in for pg-boss.
   async function sweep(mailer: MailProvider) {
     const jobs: { queue: string; data: MailJob }[] = [];
@@ -122,15 +122,15 @@ suite('queued mail (#548)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     db = createDb(pool);
     workerDb = createDb(workerPool);
     const registry = { commands: [...kernelCommands, queueTest], queries: kernelQueries({ inboundDomain: null }) };
@@ -155,7 +155,7 @@ suite('queued mail (#548)', () => {
   it('holds queued mail while the deployment-wide mail switch is engaged, and sends it once released', async () => {
     const id = await queue('giu@example.vn', 'transactional');
     const { mailer, sent } = scripted([{ status: 'accepted', providerMessageId: 'em_held' }]);
-    const set = (engaged: boolean) => admin((c) => c.query(`SELECT crove_kernel.global_kill_switch_set('mail', $1, 'diễn tập', 'ops')`, [engaged]));
+    const set = (engaged: boolean) => admin((c) => c.query(`SELECT ludy_kernel.global_kill_switch_set('mail', $1, 'diễn tập', 'ops')`, [engaged]));
     await set(true);
     try {
       expect(await sweep(mailer)).toEqual([]);
@@ -184,7 +184,7 @@ suite('queued mail (#548)', () => {
     expect(await runMailJob(deps(mailer), { orgId, messageId: invoice })).toEqual({ action: 'recorded', outcome: 'sent', code: null });
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ to: 'khach@example.vn', subject: 'Báo cáo tuần', text: 'Tiếp cận 1200\nhttps://crove.example' });
-    expect(sent[0]?.messageId).toMatch(/^<[0-9a-f-]{36}@crove\.invalid>$/);
+    expect(sent[0]?.messageId).toMatch(/^<[0-9a-f-]{36}@ludy\.invalid>$/);
     expect(sent[0]?.returnPath).toMatch(/^bounce\+[^@]+@in\.crove\.example$/);
     expect(await row(invoice)).toMatchObject({ status: 'sent', attempts: 1, provider_message_id: 'em_1', error_code: null });
     expect(await calls(invoice)).toEqual([{ key: `mail:${invoice}:1`, state: 'succeeded', error_kind: null }]);
@@ -199,13 +199,13 @@ suite('queued mail (#548)', () => {
   it('puts a campaign behind every other mail in a pass, and takes an unsendable mail out of the queue', async () => {
     const campaign = [await queue('a@example.vn', 'marketing'), await queue('b@example.vn', 'marketing'), await queue('c@example.vn', 'marketing')];
     const invoice = await queue('hoa-don@example.vn', 'transactional');
-    const { rows } = await workerPool.query<{ message_id: string }>('SELECT message_id FROM crove_kernel.mail_queued_due(2, 600, false)');
+    const { rows } = await workerPool.query<{ message_id: string }>('SELECT message_id FROM ludy_kernel.mail_queued_due(2, 600, false)');
     const due = rows.map((r) => r.message_id);
     expect(due).toContain(invoice);
     expect(due.filter((id) => campaign.includes(id)).length).toBeLessThan(2);
 
     // A queued mail that lost its address (an erasure) fails once instead of coming back every pass.
-    await backdate('UPDATE crove_kernel.mail_message SET to_address = NULL WHERE id = $1', [invoice]);
+    await backdate('UPDATE ludy_kernel.mail_message SET to_address = NULL WHERE id = $1', [invoice]);
     const { mailer, sent } = scripted([]);
     expect(await runMailJob(deps(mailer), { orgId, messageId: invoice })).toEqual({ action: 'none', reason: 'NO_ADDRESS' });
     expect(sent).toHaveLength(0);
@@ -230,7 +230,7 @@ suite('queued mail (#548)', () => {
     expect(await runMailJob(deps(unknown.mailer), { orgId, messageId: id })).toEqual({ action: 'recorded', outcome: 'ambiguous', code: 'HTTP_502' });
     expect(await runMailJob(deps(unknown.mailer), { orgId, messageId: news })).toMatchObject({ outcome: 'ambiguous' });
     expect(await calls(id)).toEqual([{ key: `mail:${id}:1`, state: 'ambiguous', error_kind: 'unknown' }]);
-    await backdate("UPDATE crove_kernel.mail_message SET updated_at = now() - interval '10 minutes' WHERE id = ANY ($1)", [[id, news]]);
+    await backdate("UPDATE ludy_kernel.mail_message SET updated_at = now() - interval '10 minutes' WHERE id = ANY ($1)", [[id, news]]);
 
     // SMTP cannot dedupe: nothing is sent again, and a job that runs anyway is refused.
     const smtp = scripted([], 'never');
@@ -277,7 +277,7 @@ suite('queued mail (#548)', () => {
     const lost = await queue('khach2@example.vn', 'transactional', 'kernel.mail_test_pdf');
     const unknown = scripted([{ status: 'unknown', code: 'http_502' }], 'idempotent');
     expect(await runMailJob(withTemplates(unknown.mailer), { orgId, messageId: lost })).toMatchObject({ outcome: 'ambiguous' });
-    await backdate("UPDATE crove_kernel.mail_message SET updated_at = now() - interval '10 minutes' WHERE id = $1", [lost]);
+    await backdate("UPDATE ludy_kernel.mail_message SET updated_at = now() - interval '10 minutes' WHERE id = $1", [lost]);
     const retry = scripted([{ status: 'accepted', providerMessageId: 'em_pdf2' }], 'idempotent');
     expect(await runMailJob(withTemplates(retry.mailer), { orgId, messageId: lost })).toMatchObject({ outcome: 'sent' });
     expect(Buffer.from(retry.sent[0]?.attachments?.[0]?.content as Uint8Array)).toEqual(Buffer.from(unknown.sent[0]?.attachments?.[0]?.content as Uint8Array));
@@ -292,7 +292,7 @@ suite('queued mail (#548)', () => {
     // Not stale yet: left alone.
     await sweep(mailer);
     expect(await row(id)).toMatchObject({ status: 'sending' });
-    await backdate("UPDATE crove_kernel.external_call SET started_at = now() - interval '20 minutes' WHERE key = $1", [`mail:${id}:1`]);
+    await backdate("UPDATE ludy_kernel.external_call SET started_at = now() - interval '20 minutes' WHERE key = $1", [`mail:${id}:1`]);
     await sweep(mailer);
     expect(await row(id)).toMatchObject({ status: 'ambiguous', error_code: 'WORKER_LOST' });
     expect(await calls(id)).toEqual([{ key: `mail:${id}:1`, state: 'ambiguous', error_kind: 'unknown' }]);
@@ -311,7 +311,7 @@ suite('queued mail (#548)', () => {
     const refused = await queue('khong-co@example.vn');
     expect(await runMailJob(deps(mailer), { orgId, messageId: refused })).toEqual({ action: 'recorded', outcome: 'failed', code: 'SMTP_550' });
     expect(await calls(refused)).toEqual([{ key: `mail:${refused}:1`, state: 'failed', error_kind: 'bad_request' }]);
-    const stop = await admin(async (c) => (await c.query<{ scope: string; reason: string }>('SELECT scope, reason FROM crove_kernel.mail_suppression WHERE source_message_id = $1', [refused])).rows);
+    const stop = await admin(async (c) => (await c.query<{ scope: string; reason: string }>('SELECT scope, reason FROM ludy_kernel.mail_suppression WHERE source_message_id = $1', [refused])).rows);
     expect(stop).toEqual([{ scope: 'all', reason: 'hard_bounce' }]);
     expect(await row(off)).toMatchObject({ status: 'failed', error_code: 'MAIL_OFF' });
   });
@@ -322,7 +322,7 @@ suite('queued mail (#548)', () => {
     const { mailer } = scripted([]);
     await runMailJob(deps(mailer), { orgId, messageId: old });
     await runMailJob(deps(mailer), { orgId, messageId: recent });
-    await backdate("UPDATE crove_kernel.mail_message SET created_at = now() - interval '14 months', updated_at = now() - interval '31 days' WHERE id = $1", [old]);
+    await backdate("UPDATE ludy_kernel.mail_message SET created_at = now() - interval '14 months', updated_at = now() - interval '31 days' WHERE id = $1", [old]);
     const before = await row(old);
     const cleared = await purgeMail(workerDb);
     expect(cleared['kernel.mail_message.address']).toBeGreaterThanOrEqual(1);
@@ -345,18 +345,18 @@ suite('queued mail (#548)', () => {
       async (c) =>
         (
           await c.query<{ routine_name: string; grantee: string }>(
-            "SELECT routine_name, grantee FROM information_schema.role_routine_grants WHERE routine_schema = 'crove_kernel' AND routine_name IN ('mail_queued_due', 'mail_retention_purge') AND grantee <> 'postgres' ORDER BY 1, 2",
+            "SELECT routine_name, grantee FROM information_schema.role_routine_grants WHERE routine_schema = 'ludy_kernel' AND routine_name IN ('mail_queued_due', 'mail_retention_purge') AND grantee <> 'postgres' ORDER BY 1, 2",
           )
         ).rows,
     );
     expect(grants).toEqual([
-      { routine_name: 'mail_queued_due', grantee: 'crove_worker' },
-      { routine_name: 'mail_retention_purge', grantee: 'crove_worker' },
+      { routine_name: 'mail_queued_due', grantee: 'ludy_worker' },
+      { routine_name: 'mail_retention_purge', grantee: 'ludy_worker' },
     ]);
     const app = new pg.Client({ connectionString: pool.options.connectionString });
     await app.connect();
     try {
-      await expect(app.query('SELECT * FROM crove_kernel.mail_queued_due(10, 600, true)')).rejects.toMatchObject({ code: '42501' });
+      await expect(app.query('SELECT * FROM ludy_kernel.mail_queued_due(10, 600, true)')).rejects.toMatchObject({ code: '42501' });
     } finally {
       await app.end();
     }

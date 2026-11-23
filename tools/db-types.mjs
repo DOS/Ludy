@@ -37,11 +37,11 @@ const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const MIGRATIONS = join(ROOT, 'supabase/migrations');
 const OUTPUT = 'packages/db/src/generated/database.ts';
 
-// Schemas whose tables the kernel and modules query through Kysely. crove_meta (the migration ledger) is read with
-// raw SQL only; crove_jobs belongs to pg-boss.
-const SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_ads', 'crove_hr', 'crove_meetings'];
+// Schemas whose tables the kernel and modules query through Kysely. ludy_meta (the migration ledger) is read with
+// raw SQL only; ludy_jobs belongs to pg-boss.
+const SCHEMAS = ['ludy_kernel', 'ludy_finance', 'ludy_social', 'ludy_crm', 'ludy_notes', 'ludy_ads', 'ludy_hr', 'ludy_meetings', 'ludy_projects', 'ludy_sign'];
 // The role tenant code runs as (packages/db/src/context); a table it cannot SELECT gets no type.
-const TENANT_ROLE = 'crove_tenant';
+const TENANT_ROLE = 'ludy_tenant';
 // The write type of a column TENANT_ROLE may not write; exported so schema.ts keeps it through a refinement.
 const NOT_GRANTED = 'NotGranted';
 const notGranted = {
@@ -78,8 +78,8 @@ const TYPE_MAP = {
 };
 
 const pascal = (name) => name.replace(/(^|_)([a-z0-9])/g, (_, __, c) => c.toUpperCase());
-// crove_kernel.tenant -> KernelTenantTable: unique across schemas, which may reuse a table name.
-const tableInterface = (schema, table) => `${pascal(schema.replace(/^crove_/, ''))}${pascal(table)}Table`;
+// ludy_kernel.tenant -> KernelTenantTable: unique across schemas, which may reuse a table name.
+const tableInterface = (schema, table) => `${pascal(schema.replace(/^(?:crove|ludy)_/, ''))}${pascal(table)}Table`;
 const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 
 // The column's base type from the type map (through a domain to its base type), ignoring Kanel's identifier types
@@ -162,7 +162,7 @@ function singleFile(outputPath, writable) {
             typeImports: kysely.map((name) => ({ name, isDefault: false, path: 'kysely', isAbsolute: true, importAsType: true })),
             exportAs: 'named',
           });
-        } else if (declaration.declarationType === 'interface' && /^Crove[A-Za-z]+Schema$/.test(declaration.name)) {
+        } else if (declaration.declarationType === 'interface' && /^(?:Crove|Ludy)[A-Za-z]+Schema$/.test(declaration.name)) {
           schemaInterfaces.push({
             ...declaration,
             properties: [...declaration.properties].sort(byName),
@@ -240,9 +240,9 @@ async function tenantPrivileges(dbUrl) {
 }
 
 async function main() {
-  const adminUrl = process.env.CROVE_TEST_ADMIN_URL;
-  if (!adminUrl) throw new Error('db-types: set CROVE_TEST_ADMIN_URL to a superuser URL on PostgreSQL 17');
-  const dbName = `crove_types_${Date.now()}_${randomBytes(4).toString('hex')}`;
+  const adminUrl = process.env.LUDY_TEST_ADMIN_URL ?? process.env.CROVE_TEST_ADMIN_URL;
+  if (!adminUrl) throw new Error('db-types: set LUDY_TEST_ADMIN_URL (or CROVE_TEST_ADMIN_URL) to a superuser URL on PostgreSQL 17');
+  const dbName = `ludy_types_${Date.now()}_${randomBytes(4).toString('hex')}`;
   const url = new URL(adminUrl);
   url.pathname = `/${dbName}`;
   const dbUrl = url.toString();
@@ -254,7 +254,7 @@ async function main() {
   let created = false;
   try {
     await dropStale(admin);
-    work = mkdtempSync(join(tmpdir(), 'crove-db-types-'));
+    work = mkdtempSync(join(tmpdir(), 'ludy-db-types-'));
     await admin.query(`CREATE DATABASE ${dbName}`);
     created = true;
     await migrate({ adminUrl: dbUrl, dir: MIGRATIONS });
@@ -305,7 +305,7 @@ async function main() {
 
 // A run killed before its finally (Ctrl-C) leaves its database behind; the next run drops those older than an hour.
 async function dropStale(admin) {
-  const { rows } = await admin.query("SELECT datname FROM pg_catalog.pg_database WHERE datname ~ '^crove_types_[0-9]+_[0-9a-f]{8}$'");
+  const { rows } = await admin.query("SELECT datname FROM pg_catalog.pg_database WHERE datname ~ '^(?:crove|ludy)_types_[0-9]+_[0-9a-f]{8}$'");
   for (const { datname } of rows) {
     if (Date.now() - Number(datname.split('_')[2]) > 3_600_000) {
       // Another run may be dropping it at the same time; a leftover is not worth failing this run.

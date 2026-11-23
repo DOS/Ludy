@@ -1,15 +1,15 @@
 // The org's MISA SME item and warehouse codes for stock purchases (issue #1398), editable in Settings. The goods
 // purchase export (GET /api/export/misa/goods-purchases.xlsx) fills "Mã hàng (*)" and "Kho" from them; an account
-// without codes takes its nearest parent's, else the defaults (@crove/kernel-contract misa-goods.ts).
+// without codes takes its nearest parent's, else the defaults (@ludy/kernel-contract misa-goods.ts).
 // - finance.misa_goods_codes.list: every member reads them, as every member may export.
 // - finance.misa_goods_code.set / .remove: owners and admins set and clear one account's codes. R1: they change no
 //   amount and no posted entry, only what the next export writes, and each is undone by the other.
 // The database holds the same formats (20261102050000_crove_finance_misa_goods_codes.sql); the checks here come first
 // so the refusal says what to do.
 import { z } from 'zod';
-import { isStockAccount, zAccountCode, zMisaCode, type MisaGoodsCode } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { isStockAccount, zAccountCode, zMisaCode, type MisaGoodsCode } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { chartAccounts } from './accounts.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -23,7 +23,7 @@ export const misaGoodsCodesList = defineQuery({
   access: ALL,
   handler: async (ctx): Promise<MisaGoodsCode[]> => {
     const rows = await ctx.trx
-      .selectFrom('crove_finance.misa_goods_code')
+      .selectFrom('ludy_finance.misa_goods_code')
       .select(['account_code', 'item_code', 'warehouse_code', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .orderBy('account_code')
@@ -56,7 +56,7 @@ export const setMisaGoodsCode = defineCommand({
     await assertStockAccount(ctx, accountCode);
     const by = ctx.actor.type === 'user' ? ctx.actor.userId : null;
     const existing = await ctx.trx
-      .selectFrom('crove_finance.misa_goods_code')
+      .selectFrom('ludy_finance.misa_goods_code')
       .select(['id', 'item_code', 'warehouse_code'])
       .where('org_id', '=', ctx.orgId)
       .where('account_code', '=', accountCode)
@@ -65,7 +65,7 @@ export const setMisaGoodsCode = defineCommand({
     let updatedAt: Date;
     if (existing) {
       const row = await ctx.trx
-        .updateTable('crove_finance.misa_goods_code')
+        .updateTable('ludy_finance.misa_goods_code')
         .set({ item_code: itemCode, warehouse_code: warehouseCode, updated_by: by, updated_at: new Date() })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', existing.id)
@@ -74,7 +74,7 @@ export const setMisaGoodsCode = defineCommand({
       updatedAt = new Date(row.updated_at);
     } else {
       const row = await ctx.trx
-        .insertInto('crove_finance.misa_goods_code')
+        .insertInto('ludy_finance.misa_goods_code')
         .values({ org_id: ctx.orgId, account_code: accountCode, item_code: itemCode, warehouse_code: warehouseCode, updated_by: by })
         .returning('updated_at')
         .executeTakeFirstOrThrow()
@@ -105,7 +105,7 @@ export const removeMisaGoodsCode = defineCommand({
   access: MANAGERS,
   handler: async (ctx, { accountCode }) => {
     const removed = await ctx.trx
-      .deleteFrom('crove_finance.misa_goods_code')
+      .deleteFrom('ludy_finance.misa_goods_code')
       .where('org_id', '=', ctx.orgId)
       .where('account_code', '=', accountCode)
       .returning(['item_code', 'warehouse_code'])

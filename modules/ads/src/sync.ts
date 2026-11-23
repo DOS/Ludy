@@ -9,8 +9,8 @@
 // whole counts, one row per object and day), and refuses the whole window rather than store part of it.
 import { Decimal } from 'decimal.js';
 import { z } from 'zod';
-import { ADS_BACKFILL_MONTHS, isAdProviderId, zAdsSyncFailure, zAdsSyncRecord, zId, type AdDailyRowInput } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { ADS_BACKFILL_MONTHS, isAdProviderId, zAdsSyncFailure, zAdsSyncRecord, zId, type AdDailyRowInput } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { addMonths, nextSettledThrough, todayIn } from './domain.ts';
 
 function assertSystem(ctx: CommandContext): void {
@@ -45,8 +45,8 @@ export const adsSyncTarget = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<AdsSyncTarget | null> => {
     const row = await ctx.trx
-      .selectFrom('crove_ads.ad_account as a')
-      .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
+      .selectFrom('ludy_ads.ad_account as a')
+      .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
       .select(['a.id', 'a.provider', 'a.currency', 'a.time_zone', 'a.backfill_from', 'a.settled_through', 'a.next_run_at', 'c.status', 'c.updated_at'])
       .where('a.org_id', '=', ctx.orgId)
       .where('a.channel_connection_id', '=', input.connectionId)
@@ -90,8 +90,8 @@ export const adsSyncRecord = defineCommand({
   handler: async (ctx, input): Promise<{ rows: number; removed: number; settledThrough: string | null }> => {
     assertSystem(ctx);
     const account = await ctx.trx
-      .selectFrom('crove_ads.ad_account as a')
-      .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
+      .selectFrom('ludy_ads.ad_account as a')
+      .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
       .select(['a.id', 'a.legal_entity_id', 'a.currency', 'a.backfill_from', 'a.settled_through', 'a.external_account_id', 'c.status'])
       .where('a.org_id', '=', ctx.orgId)
       .where('a.id', '=', input.adAccountId)
@@ -117,7 +117,7 @@ export const adsSyncRecord = defineCommand({
     for (let i = 0; i < rows.length; i += CHUNK) {
       const chunk = rows.slice(i, i + CHUNK);
       await ctx.trx
-        .insertInto('crove_ads.ad_spend_day')
+        .insertInto('ludy_ads.ad_spend_day')
         .values(
           chunk.map((r) => ({
             org_id: ctx.orgId,
@@ -146,13 +146,13 @@ export const adsSyncRecord = defineCommand({
             reach: eb.ref('excluded.reach'),
             results: eb.ref('excluded.results'),
             fetched_at: eb.ref('excluded.fetched_at'),
-          })).where('crove_ads.ad_spend_day.settled_at', 'is', null),
+          })).where('ludy_ads.ad_spend_day.settled_at', 'is', null),
         )
         .execute();
     }
     // A day of the window the platform no longer reports (and that is not final) goes; so does history past 13 months.
     const gone = await ctx.trx
-      .deleteFrom('crove_ads.ad_spend_day')
+      .deleteFrom('ludy_ads.ad_spend_day')
       .where('org_id', '=', ctx.orgId)
       .where('ad_account_id', '=', account.id)
       .where('day', '>=', window.from)
@@ -161,10 +161,10 @@ export const adsSyncRecord = defineCommand({
       .where('fetched_at', '<', started)
       .returning('id')
       .execute();
-    await ctx.trx.deleteFrom('crove_ads.ad_spend_day').where('org_id', '=', ctx.orgId).where('ad_account_id', '=', account.id).where('day', '<', horizon).execute();
+    await ctx.trx.deleteFrom('ludy_ads.ad_spend_day').where('org_id', '=', ctx.orgId).where('ad_account_id', '=', account.id).where('day', '<', horizon).execute();
     if (settled !== null) {
       await ctx.trx
-        .updateTable('crove_ads.ad_spend_day')
+        .updateTable('ludy_ads.ad_spend_day')
         .set({ settled_at: started })
         .where('org_id', '=', ctx.orgId)
         .where('ad_account_id', '=', account.id)
@@ -173,7 +173,7 @@ export const adsSyncRecord = defineCommand({
         .execute();
     }
     await ctx.trx
-      .updateTable('crove_ads.ad_account')
+      .updateTable('ludy_ads.ad_account')
       .set({
         currency: details.currency,
         time_zone: details.timeZone,
@@ -188,7 +188,7 @@ export const adsSyncRecord = defineCommand({
       .where('id', '=', account.id)
       .execute();
     await ctx.trx
-      .insertInto('crove_ads.ad_sync_run')
+      .insertInto('ludy_ads.ad_sync_run')
       .values({ org_id: ctx.orgId, ad_account_id: account.id, legal_entity_id: account.legal_entity_id, status: 'ok', window_from: window.from, window_to: window.to, rows_written: rows.length })
       .execute();
     ctx.audit({ adAccountId: account.id, from: window.from, to: window.to, rows: rows.length, removed: gone.length, settledThrough: settled });
@@ -206,7 +206,7 @@ export const adsSyncRecordFailure = defineCommand({
   handler: async (ctx, input): Promise<{ adAccountId: string }> => {
     assertSystem(ctx);
     const account = await ctx.trx
-      .selectFrom('crove_ads.ad_account')
+      .selectFrom('ludy_ads.ad_account')
       .select(['id', 'legal_entity_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.adAccountId)
@@ -217,13 +217,13 @@ export const adsSyncRecordFailure = defineCommand({
     const retryAt =
       input.errorKind === 'rate_limited' && input.retryAt ? new Date(Math.min(Date.parse(input.retryAt), ctx.now.getTime() + RETRY_MAX_MS)) : null;
     await ctx.trx
-      .updateTable('crove_ads.ad_account')
+      .updateTable('ludy_ads.ad_account')
       .set({ last_run_at: ctx.now, last_error_kind: input.errorKind, next_run_at: retryAt, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', account.id)
       .execute();
     await ctx.trx
-      .insertInto('crove_ads.ad_sync_run')
+      .insertInto('ludy_ads.ad_sync_run')
       .values({
         org_id: ctx.orgId,
         ad_account_id: account.id,

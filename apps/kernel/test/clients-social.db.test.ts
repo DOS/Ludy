@@ -11,12 +11,12 @@ import pg from 'pg';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { zClientOverviews } from '@crove/kernel-contract';
-import { clientOverviews, createOrg, kernelCommands, kernelQueries, upsertIdentity, type ClientOverview } from '@crove/kernel';
-import { Runtime, defineQuery } from '@crove/kernel-runtime';
-import { AGENDA_STATUSES, socialCommands, socialOverviewContributions, socialQueries, type PostView, type SocialClientFigures } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { zClientOverviews } from '@ludy/kernel-contract';
+import { clientOverviews, createOrg, kernelCommands, kernelQueries, upsertIdentity, type ClientOverview } from '@ludy/kernel';
+import { Runtime, defineQuery } from '@ludy/kernel-runtime';
+import { AGENDA_STATUSES, socialCommands, socialOverviewContributions, socialQueries, type PostView, type SocialClientFigures } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -53,7 +53,7 @@ suite('Social figures on the multi-client home on PostgreSQL (#1261)', () => {
   async function connection(orgId: string, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, name, owner]),
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, name, owner]),
     );
     return id;
   }
@@ -105,9 +105,9 @@ suite('Social figures on the multi-client home on PostgreSQL (#1261)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 6 });
     db = createDb(pool);
@@ -117,11 +117,11 @@ suite('Social figures on the multi-client home on PostgreSQL (#1261)', () => {
     freelancer = await person('freelancer');
     ({ orgId: anBinh } = await createOrg(rt, asUser(owner), 'Công ty An Bình'));
     ({ orgId: binhMinh } = await createOrg(rt, asUser(owner), 'Công ty Bình Minh'));
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [anBinh, freelancer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [anBinh, freelancer]));
     for (const key of Object.keys(ch) as (keyof typeof ch)[]) ch[key] = await connection(anBinh, `Kênh ${key.toUpperCase()}`);
     // C waits for the client's approval on a review link (#770); D's sign-in expired and E's broke.
     await exec(owner, 'social.channel.set_client_approval', { connectionId: ch.c, clientApproval: true });
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = CASE WHEN id = $1 THEN 'expired' ELSE 'error' END WHERE id IN ($1, $2)", [ch.d, ch.e]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = CASE WHEN id = $1 THEN 'expired' ELSE 'error' END WHERE id IN ($1, $2)", [ch.d, ch.e]));
     await exec(owner, 'social.channel_access.set', { userId: freelancer, channelConnectionIds: [ch.a, ch.d] });
 
     // In review: the freelancer's post on A, the owner's on B, and one on C the team approved that waits for the client.
@@ -132,7 +132,7 @@ suite('Social figures on the multi-client home on PostgreSQL (#1261)', () => {
     await exec(owner, 'social.variant.decide', { postId: forClient, decision: 'approved', variants: seen(await query<PostView>(owner, 'social.post.get', { postId: forClient })) });
     // A post on A and B whose B channel failed: it needs attention, but not for the freelancer, who cannot see B.
     const failed = await post(owner, [ch.a, ch.b], 'Bài lỗi trên B');
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'failed', error_code = 'TOKEN_EXPIRED' WHERE post_id = $1 AND channel_connection_id = $2", [failed, ch.b]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'failed', error_code = 'TOKEN_EXPIRED' WHERE post_id = $1 AND channel_connection_id = $2", [failed, ch.b]));
     // Scheduled in the next 7 days on A and on B, and one later on B: the agenda's lines.
     const scheduled = async (connection: string, body: string, days: number) => {
       const postId = await post(owner, [connection], body);
@@ -150,7 +150,7 @@ suite('Social figures on the multi-client home on PostgreSQL (#1261)', () => {
     const outA = await post(owner, [ch.a], 'Bài đã đăng trên A');
     const outB = await post(owner, [ch.b], 'Bài đã đăng trên B');
     const published = async (postId: string, daysAgo: number) =>
-      admin(async (c) => (await c.query<{ at: Date }>("UPDATE crove_social.post_variant SET status = 'published', published_at = now() - make_interval(days => $2) WHERE post_id = $1 RETURNING published_at AS at", [postId, daysAgo])).rows[0]?.at.toISOString() ?? '');
+      admin(async (c) => (await c.query<{ at: Date }>("UPDATE ludy_social.post_variant SET status = 'published', published_at = now() - make_interval(days => $2) WHERE post_id = $1 RETURNING published_at AS at", [postId, daysAgo])).rows[0]?.at.toISOString() ?? '');
     at.lastByFreelancer = await published(outA, 3);
     at.lastByOwner = await published(outB, 1);
   });

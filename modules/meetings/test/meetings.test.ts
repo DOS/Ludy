@@ -26,16 +26,19 @@ describe('meetings manifest and constants', () => {
   it('exposes the expected manifest properties', () => {
     expect(meetingsManifest.id).toBe('meetings');
     expect(meetingsManifest.dependsOn).toEqual(['kernel']);
-    expect(meetingsManifest.tables.crove_meetings.meeting).toBeDefined();
-    expect(meetingsManifest.tables.crove_meetings.meeting_reader).toBeDefined();
-    expect(meetingsManifest.tables.crove_meetings.audio_segment).toBeDefined();
-    expect(meetingsManifest.tables.crove_meetings.meeting_video).toBeDefined();
-    expect(meetingsManifest.tables.crove_meetings.media_key).toBeDefined();
-    expect(meetingsManifest.routes).toHaveLength(3);
+    expect(meetingsManifest.tables.ludy_meetings.meeting).toBeDefined();
+    expect(meetingsManifest.tables.ludy_meetings.meeting_reader).toBeDefined();
+    expect(meetingsManifest.tables.ludy_meetings.audio_segment).toBeDefined();
+    expect(meetingsManifest.tables.ludy_meetings.meeting_video).toBeDefined();
+    expect(meetingsManifest.tables.ludy_meetings.media_key).toBeDefined();
+    expect(meetingsManifest.routes).toHaveLength(4);
     expect(meetingsManifest.routes[0].path).toBe('meetings');
     expect(meetingsManifest.routes[1].path).toBe('meetings/record');
     expect(meetingsManifest.routes[2].path).toBe('meetings/$id');
-    expect(meetingsManifest.nav).toEqual([]);
+    // The printable minutes, outside the org's frame (A4, #3162).
+    expect(meetingsManifest.routes[3].path).toBe('print/meeting-minutes/$id');
+    // One menu item, in the Cộng tác app next to the team's tasks and notes (#3225).
+    expect(meetingsManifest.nav).toEqual([{ app: 'teamwork', group: 'work', path: 'meetings', label: 'meetings' }]);
   });
 
   it('exposes MEETING columns and sensitive media_key configuration', () => {
@@ -47,7 +50,7 @@ describe('meetings manifest and constants', () => {
     expect(MEETING['audio_retention_date']).toBe('internal');
     expect(MEETING['title']).toBe('pii');
 
-    const mediaKey = meetingsManifest.tables.crove_meetings.media_key;
+    const mediaKey = meetingsManifest.tables.ludy_meetings.media_key;
     expect(mediaKey['wrapped_key']).toBe('sensitive');
   });
 
@@ -67,6 +70,7 @@ describe('meetings commands and queries construction', () => {
     expect(names).toEqual([
       'meetings.meeting.create',
       'meetings.media.record',
+      'meetings.meeting.recording_stopped',
       'meetings.meeting.delete',
       'meetings.meeting.owner_delete',
       'meetings.meeting.owner_list',
@@ -74,14 +78,17 @@ describe('meetings commands and queries construction', () => {
       'meetings.reader.remove',
       'meetings.media_key.reseal',
       'meetings.settings.set',
+      'meetings.consent_policy.set',
       'meetings.retention.shred',
       'meetings.shred.replay',
       'meetings.media.discard',
       'meetings.transcript.draft_store',
       'meetings.transcript.correct',
+      'meetings.transcript.redact',
       'meetings.transcript.start',
       'meetings.transcript.cancel',
       'meetings.transcript.copy_result',
+      'meetings.minutes.set_template',
       'meetings.summary.save',
       'meetings.action_item.create',
       'meetings.action_item.edit',
@@ -89,18 +96,70 @@ describe('meetings commands and queries construction', () => {
       'meetings.result.publish',
       'meetings.action_item.accept',
       'meetings.action_item.accept_clean',
+      'meetings.notes.save',
+      'meetings.chapters.save',
+      'meetings.chapters.start',
+      'meetings.title.start',
+      'meetings.meeting.rename',
+      'meetings.commitments.start',
       'meetings.summary.copy_result',
+      'meetings.chapters.copy_result',
+      'meetings.speaker.name',
+      'meetings.series.set',
+      'meetings.series.nudge',
+      'meetings.template.create',
+      'meetings.template.update',
+      'meetings.template.archive',
+      'meetings.glossary.add',
+      'meetings.glossary.update',
+      'meetings.glossary.remove',
       'meetings.draft.review',
       'meetings.summary.start',
+      'meetings.summary.ready',
+      'meetings.summary.ready_notice',
+      'meetings.translation.copy_result',
+      'meetings.translate.start',
+      'meetings.translation.transcript_start',
+      'meetings.translation.transcript_stop',
+      'meetings.ask.start',
+      'meetings.brief.start',
+      'meetings.digest.start',
+      'meetings.morning.set',
+      'meetings.morning.notice',
+      'meetings.assignee.start',
+      'meetings.adherence.start',
+      'meetings.agenda.set_read_events',
+      'meetings.agenda.clear',
+      'meetings.agenda.link',
+      'meetings.agenda.replace',
+      'meetings.chat.channel_save',
+      'meetings.chat.channel_remove',
+      'meetings.chat.post',
+      'meetings.chat.queued',
+      'meetings.chat.record',
+      'meetings.chat.reseal',
       'meetings.link.add',
       'meetings.link.remove',
       'meetings.followup.send',
+      'meetings.followup.note_start',
       'meetings.live.chunk',
+      'meetings.capture.heartbeat',
+      'meetings.live.assemble_record',
       'meetings.live.start',
       'meetings.live.stop',
       'meetings.live.notes_start',
       'meetings.live.tick',
       'meetings.live.notes_copy',
+      'meetings.hook.set',
+      'meetings.hook.rotate_secret',
+      'meetings.hook.clear',
+      'meetings.hook.test',
+      'meetings.hooks.switch.set',
+      'meetings.hook.queued',
+      'meetings.hook.record',
+      'meetings.import.start',
+      'meetings.import.discard_empty',
+      'meetings.import.take_transcript',
     ]);
 
     expect(meetingMediaRecord.name).toBe('meetings.media.record');
@@ -115,23 +174,76 @@ describe('meetings commands and queries construction', () => {
       'meetings.meeting.list',
       'meetings.meeting.get',
       'meetings.meeting.extension_status',
+      'meetings.meeting.recording_now',
       'meetings.meeting.audio_read',
       'meetings.meeting.video_read',
       'meetings.meeting.media_meta',
       'meetings.settings.get',
+      'meetings.consent_policy.get',
       'meetings.media.orphan_keys',
       'meetings.transcript.get',
+      'meetings.transcript.redact_candidates',
       'meetings.search',
       'meetings.transcript.status',
       'meetings.result.get',
       'meetings.action_item.source',
+      'meetings.notes.get',
+      'meetings.chapters.get',
+      'meetings.chapters.status',
+      'meetings.title.status',
+      'meetings.commitments.status',
+      'meetings.notes.preview',
+      'meetings.summary.attendees',
+      'meetings.speaker.suggestions',
+      'meetings.series.open_items',
+      'meetings.template.list',
+      'meetings.glossary.list',
+      'meetings.glossary.for_meeting',
       'meetings.summary.status',
+      'meetings.translation.source',
+      'meetings.translation.status',
+      'meetings.translation.get',
+      'meetings.translation.transcript_status',
+      'meetings.translation.transcript_source',
+      'meetings.translation.transcript_get',
+      'meetings.ask.lines',
+      'meetings.ask.status',
+      'meetings.brief.facts',
+      'meetings.brief.status',
+      'meetings.digest.facts',
+      'meetings.digest.status',
+      'meetings.today.facts',
+      'meetings.morning.get',
+      'meetings.assignee.facts',
+      'meetings.assignee.status',
+      'meetings.adherence.agenda',
+      'meetings.adherence.facts',
+      'meetings.adherence.status',
+      'meetings.agenda.list',
+      'meetings.agenda.next',
+      'meetings.agenda.suggest',
+      'meetings.chat.channels',
+      'meetings.chat.preview',
+      'meetings.chat.status',
+      'meetings.chat.delivery',
+      'meetings.chat.target',
       'meetings.link.list',
       'meetings.link.by_target',
       'meetings.link.suggest',
       'meetings.followup.draft',
+      'meetings.followup.note_status',
       'meetings.live.status',
       'meetings.live.notes_input',
+      'meetings.live.assemble_plan',
+      'meetings.hook.get',
+      'meetings.hook.delivery',
+      'meetings.hook.target',
+      'meetings.mcp.list',
+      'meetings.mcp.minutes',
+      'meetings.mcp.open_actions',
+      'meetings.mcp.series_open_items',
+      'meetings.mcp.decisions',
+      'meetings.mcp.search',
     ]);
 
     expect(meetingList.name).toBe('meetings.meeting.list');

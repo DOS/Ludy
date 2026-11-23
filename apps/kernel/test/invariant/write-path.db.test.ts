@@ -12,11 +12,12 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -33,6 +34,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('one write path on PostgreSQL (#680)', () => {
   const dbName = `crove_test_write_path_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let pool: pg.Pool | undefined;
   let runtime: Runtime;
   let owner = '';
@@ -40,7 +42,7 @@ suite('one write path on PostgreSQL (#680)', () => {
 
   // A query and a command that insert the same kind of row on ctx.trx.
   const party = (ctx: QueryContext) =>
-    ctx.trx.insertInto('crove_kernel.party').values({ org_id: ctx.orgId, name: `write-path ${randomUUID()}` }).returning('id').executeTakeFirstOrThrow();
+    ctx.trx.insertInto('ludy_kernel.party').values({ org_id: ctx.orgId, name: `write-path ${randomUUID()}` }).returning('id').executeTakeFirstOrThrow();
   const writingQuery = defineQuery({ name: 'test.write_path.query_writes', input: z.object({}), access: ['owner'], handler: (ctx) => party(ctx) });
   const writingCommand = defineCommand({ sideEffect: 'none', name: 'test.write_path.command_writes', input: z.object({}), risk: 'R0', access: ['owner'], handler: (ctx) => party(ctx) });
 
@@ -53,11 +55,12 @@ suite('one write path on PostgreSQL (#680)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     appUrl.password = 'test-app-pw';
-    pool = createPool({ connectionString: appUrl.toString(), max: 2 });
+    pool = createDbPool({ connectionString: appUrl.toString(), max: 2 }, dbIds);
     const db = createDb(pool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, writingCommand], queries: [...kernelQueries({ inboundDomain: null }), writingQuery] });
     owner = await upsertIdentity(db, { issuer: 'write-path.test', subject: randomUUID(), email: `owner-${randomUUID()}@write-path.test`, name: null });
@@ -74,7 +77,7 @@ suite('one write path on PostgreSQL (#680)', () => {
   });
 
   it('lets login roles write only tables under row-level security, and pg-boss for the worker', async () => {
-    const admin = new pg.Client({ connectionString: adminUrl });
+    const admin = createDbClient({ connectionString: adminUrl }, dbIds);
     await admin.connect();
     try {
       const { rows: roles } = await admin.query<{ rolname: string }>(`SELECT rolname FROM pg_catalog.pg_roles WHERE rolname = ANY($1::text[])`, [LOGIN_ROLES]);
@@ -121,7 +124,7 @@ suite('one write path on PostgreSQL (#680)', () => {
   it('runs a query READ ONLY: a query that writes is refused, the same write in a command commits', async () => {
     const actor = { type: 'user' as const, userId: owner, aal: 'aal1' as const };
     const count = async () => {
-      const admin = new pg.Client({ connectionString: adminUrl });
+      const admin = createDbClient({ connectionString: adminUrl }, dbIds);
       await admin.connect();
       try {
         return (await admin.query<{ n: number }>(`SELECT pg_catalog.count(*)::int AS n FROM crove_kernel.party WHERE org_id = $1`, [orgId])).rows[0]?.n;

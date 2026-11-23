@@ -27,6 +27,8 @@ test('review shortcuts, then approve several proposals under one step-up', async
     await expect(page).toHaveURL(/\/login$/);
     await signUp(page, email);
     await createOrg(page, 'Công ty Duyệt hàng loạt');
+    // A new org opens on the overview (#3225); the uploads are on the Inbox.
+    await page.goto(page.url().replace(/\/overview$/, '/inbox'));
     await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
     await page.locator('input[type=file]').setInputFiles(NUMBERS.map(invoice));
     // The worker reads each XML and raises its proposal; the Inbox polls every few seconds.
@@ -66,11 +68,12 @@ test('review shortcuts, then approve several proposals under one step-up', async
     await expect(page.getByRole('heading', { name: SELLER })).toBeVisible();
     await confirmUnverifiedSignature(page);
     await expect(page.getByRole('button', { name: 'Duyệt và ghi sổ' })).toBeEnabled();
-    // A asks for the same approval as the button: without a second factor, the step-up prompt.
+    // A asks for the same approval as the button: without a second factor, the step-up dialog (#3599). Escape drops the request and focus goes back to the approve button.
     await page.keyboard.press('a');
-    await expect(page.getByText('Đang chờ: duyệt và ghi sổ chứng từ này.')).toBeVisible();
-    await page.getByRole('button', { name: 'Hủy thao tác' }).click();
+    await expect(page.getByRole('dialog').getByText('Đang chờ: duyệt và ghi sổ chứng từ này.')).toBeVisible();
+    await page.keyboard.press('Escape');
     await expect(page.getByText('Đang chờ: duyệt và ghi sổ chứng từ này.')).toBeHidden();
+    await expect(page.getByRole('button', { name: 'Duyệt và ghi sổ' })).toBeFocused();
     await page.keyboard.press('e');
     await expect(page.getByRole('combobox', { name: 'Tài khoản nợ cho dòng 1' })).toBeFocused();
     // Typing in a field is never a shortcut.
@@ -90,7 +93,7 @@ test('review shortcuts, then approve several proposals under one step-up', async
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/ledger$`));
     await page.keyboard.press('Control+k');
-    await palette.fill('chung tu cho');
+    await palette.fill('cho duyet');
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
   });
@@ -115,12 +118,12 @@ test('review shortcuts, then approve several proposals under one step-up', async
   });
 
   await test.step('each proposal has its own approval row, all under the one step-up', async () => {
-    const [org] = sql<{ org_id: string }>(`SELECT org_id FROM crove_kernel.tenant WHERE slug = :'slug'`, { slug });
+    const [org] = sql<{ org_id: string }>(`SELECT org_id FROM ludy_kernel.tenant WHERE slug = :'slug'`, { slug });
     if (!org) throw new Error(`org ${slug} not found`);
     const vars = { org: org.org_id };
     const approvals = sql<{ outcome: string; aal: string; mfa_at: string | null; target_id: string | null }>(
       `SELECT outcome, detail->>'aal' AS aal, detail->>'mfaAt' AS mfa_at, target_id
-         FROM crove_kernel.audit_event WHERE org_id = :'org' AND command = 'kernel.proposal.approve' AND outcome = 'ok'`,
+         FROM ludy_kernel.audit_event WHERE org_id = :'org' AND command = 'kernel.proposal.approve' AND outcome = 'ok'`,
       vars,
     );
     expect(approvals).toHaveLength(NUMBERS.length);
@@ -129,14 +132,14 @@ test('review shortcuts, then approve several proposals under one step-up', async
     expect(new Set(approvals.map((a) => a.mfa_at)).size).toBe(1);
     const batches = sql<{ outcome: string; code: string | null; approved: number | null }>(
       `SELECT outcome, detail->>'code' AS code, (detail->>'approved')::int AS approved
-         FROM crove_kernel.audit_event WHERE org_id = :'org' AND command = 'kernel.proposal.approve_many' ORDER BY occurred_at, id`,
+         FROM ludy_kernel.audit_event WHERE org_id = :'org' AND command = 'kernel.proposal.approve_many' ORDER BY occurred_at, id`,
       vars,
     );
     expect(batches).toEqual([
       { outcome: 'denied', code: 'STEP_UP_REQUIRED', approved: null },
       { outcome: 'ok', code: null, approved: NUMBERS.length },
     ]);
-    const documents = sql<{ invoice_number: string }>(`SELECT invoice_number FROM crove_finance.purchase_document WHERE org_id = :'org' ORDER BY invoice_number`, vars);
+    const documents = sql<{ invoice_number: string }>(`SELECT invoice_number FROM ludy_finance.purchase_document WHERE org_id = :'org' ORDER BY invoice_number`, vars);
     expect(documents.map((d) => d.invoice_number)).toEqual(NUMBERS.map(String));
   });
 });

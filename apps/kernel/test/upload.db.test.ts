@@ -9,9 +9,9 @@ import { BucketVersioningStatus, CreateBucketCommand, PutBucketVersioningCommand
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { buildKernelCommands, kernelCommands, kernelQueries } from '@crove/kernel';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { buildKernelCommands, kernelCommands, kernelQueries } from '@ludy/kernel';
 import {
   BlobConflictError,
   BlobNotFoundError,
@@ -26,8 +26,8 @@ import {
   type BlobStore,
   type DirectTransfers,
   type PresignedUpload,
-} from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+} from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { ConcurrencyLimiter } from '../src/concurrency.ts';
 import { loadConfig } from '../src/config.ts';
@@ -36,7 +36,7 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
-const S3_URL = process.env.CROVE_TEST_S3_URL;
+const S3_URL = process.env.LUDY_TEST_S3_URL ?? process.env.CROVE_TEST_S3_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const FIXTURE = new Uint8Array(readFileSync(new URL('../../extract/test/fixtures/einvoice-basic.xml', import.meta.url)));
 const SECRET = 'test-only-jwt-secret-for-uploads-0123456789';
@@ -237,12 +237,12 @@ suite.each(backends)('staged uploads on PostgreSQL and $name (issue #109)', (bac
     call(`/api/files/uploads/${uploadId}/complete`, name, { json: { filename } });
 
   const grant = (uploadId: string) =>
-    admin(async (c) => (await c.query<{ staging_key: string; used_at: Date | null }>('SELECT staging_key, used_at FROM crove_kernel.file_upload WHERE id = $1', [uploadId])).rows[0]);
+    admin(async (c) => (await c.query<{ staging_key: string; used_at: Date | null }>('SELECT staging_key, used_at FROM ludy_kernel.file_upload WHERE id = $1', [uploadId])).rows[0]);
 
   const files = () =>
     admin(async (c) =>
       (await c.query<{ id: string; sha256: string; storage_key: string; generation: string | null }>(
-        'SELECT id, sha256, storage_key, generation FROM crove_kernel.file WHERE org_id = $1 ORDER BY created_at',
+        'SELECT id, sha256, storage_key, generation FROM ludy_kernel.file WHERE org_id = $1 ORDER BY created_at',
         [orgId],
       )).rows,
     );
@@ -260,9 +260,9 @@ suite.each(backends)('staged uploads on PostgreSQL and $name (issue #109)', (bac
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 6 });
     const db = createDb(pool);
@@ -344,7 +344,7 @@ suite.each(backends)('staged uploads on PostgreSQL and $name (issue #109)', (bac
       await c.query('BEGIN');
       // Past the guard trigger, as only a superuser can: the grant was issued 10 minutes ago.
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query("UPDATE crove_kernel.file_upload SET created_at = now() - interval '10 minutes', expires_at = now() - interval '5 minutes' WHERE id = $1", [form.uploadId]);
+      await c.query("UPDATE ludy_kernel.file_upload SET created_at = now() - interval '10 minutes', expires_at = now() - interval '5 minutes' WHERE id = $1", [form.uploadId]);
       await c.query('COMMIT');
     });
     const before = await files();
@@ -382,10 +382,10 @@ suite.each(backends)('staged uploads on PostgreSQL and $name (issue #109)', (bac
     const done = await call(`/api/files/uploads/${form.uploadId}/complete`, 'owner', { json: { filename: 'anh.png', purpose: 'social' } });
     expect(done.status).toBe(200);
     const { fileId } = (await done.json()) as { fileId: string };
-    const row = await admin(async (c) => (await c.query<{ source: string; content_type: string }>('SELECT source, content_type FROM crove_kernel.file WHERE id = $1', [fileId])).rows[0]);
+    const row = await admin(async (c) => (await c.query<{ source: string; content_type: string }>('SELECT source, content_type FROM ludy_kernel.file WHERE id = $1', [fileId])).rows[0]);
     expect(row).toEqual({ source: 'social', content_type: 'image/png' });
     // Its size is read from its header (#636); these bytes have none, so it is stored without one.
-    const size = (id: string) => admin(async (c) => (await c.query<{ image_width: number | null; image_height: number | null }>('SELECT image_width, image_height FROM crove_kernel.file WHERE id = $1', [id])).rows[0]);
+    const size = (id: string) => admin(async (c) => (await c.query<{ image_width: number | null; image_height: number | null }>('SELECT image_width, image_height FROM ludy_kernel.file WHERE id = $1', [id])).rows[0]);
     expect(await size(fileId)).toEqual({ image_width: null, image_height: null });
     const header = Buffer.alloc(33);
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(header, 0);
@@ -402,9 +402,9 @@ suite.each(backends)('staged uploads on PostgreSQL and $name (issue #109)', (bac
     const sizedId = ((await sizedDone.json()) as { fileId: string }).fileId;
     expect(await size(sizedId)).toEqual({ image_width: 1080, image_height: 1350 });
     // Like every column of a file row, it never changes afterwards.
-    await expect(admin((c) => c.query('UPDATE crove_kernel.file SET image_width = 1 WHERE id = $1', [sizedId]))).rejects.toMatchObject({ code: '42501' });
+    await expect(admin((c) => c.query('UPDATE ludy_kernel.file SET image_width = 1 WHERE id = $1', [sizedId]))).rejects.toMatchObject({ code: '42501' });
     // No extraction is queued for it.
-    const events = await admin(async (c) => (await c.query("SELECT 1 FROM crove_kernel.outbox_event WHERE type = 'kernel.file.ingested' AND payload->>'fileId' = $1", [fileId])).rowCount);
+    const events = await admin(async (c) => (await c.query("SELECT 1 FROM ludy_kernel.outbox_event WHERE type = 'kernel.file.ingested' AND payload->>'fileId' = $1", [fileId])).rowCount);
     expect(events).toBe(0);
 
     const xml = await begin();
@@ -425,11 +425,11 @@ suite.each(backends)('staged uploads on PostgreSQL and $name (issue #109)', (bac
     const done = await call(`/api/files/uploads/${form.uploadId}/complete`, 'pdfer', { json: { filename: 'bao-gia-q4.pdf', purpose: 'social' } });
     expect(done.status).toBe(200);
     const { fileId } = (await done.json()) as { fileId: string };
-    const row = await admin(async (c) => (await c.query('SELECT source, content_type, filename, image_width, image_height FROM crove_kernel.file WHERE id = $1', [fileId])).rows[0]);
+    const row = await admin(async (c) => (await c.query('SELECT source, content_type, filename, image_width, image_height FROM ludy_kernel.file WHERE id = $1', [fileId])).rows[0]);
     expect(row).toEqual({ source: 'social', content_type: 'application/pdf', filename: 'bao-gia-q4.pdf', image_width: null, image_height: null });
-    const events = await admin(async (c) => (await c.query("SELECT 1 FROM crove_kernel.outbox_event WHERE type = 'kernel.file.ingested' AND payload->>'fileId' = $1", [fileId])).rowCount);
+    const events = await admin(async (c) => (await c.query("SELECT 1 FROM ludy_kernel.outbox_event WHERE type = 'kernel.file.ingested' AND payload->>'fileId' = $1", [fileId])).rowCount);
     expect(events).toBe(0);
-    const extractions = await admin(async (c) => (await c.query('SELECT 1 FROM crove_kernel.extraction WHERE file_id = $1', [fileId])).rowCount);
+    const extractions = await admin(async (c) => (await c.query('SELECT 1 FROM ludy_kernel.extraction WHERE file_id = $1', [fileId])).rowCount);
     expect(extractions).toBe(0);
 
     // A name and a type that say PDF do not make one: the bytes decide.
@@ -455,7 +455,7 @@ suite.each(backends)('staged uploads on PostgreSQL and $name (issue #109)', (bac
     const done = await call(`/api/files/uploads/${form.uploadId}/complete`, 'owner', { json: { filename: 'khai-truong.mp4', purpose: 'social' } });
     expect(done.status).toBe(200);
     const { fileId } = (await done.json()) as { fileId: string };
-    const row = await admin(async (c) => (await c.query('SELECT source, content_type, duration_ms, filename FROM crove_kernel.file WHERE id = $1', [fileId])).rows[0]);
+    const row = await admin(async (c) => (await c.query('SELECT source, content_type, duration_ms, filename FROM ludy_kernel.file WHERE id = $1', [fileId])).rows[0]);
     expect(row).toEqual({ source: 'social', content_type: 'video/mp4', duration_ms: '12500', filename: 'khai-truong.mp4' });
 
     // A video is never taken as a document, and one without a movie header is refused.
@@ -479,7 +479,7 @@ suite.each(backends)('staged uploads on PostgreSQL and $name (issue #109)', (bac
       return call(`/api/files/uploads/${form.uploadId}/complete`, 'owner', { json: { filename, purpose } });
     };
     const ingested = (fileId: string) =>
-      admin(async (c) => (await c.query("SELECT 1 FROM crove_kernel.outbox_event WHERE type = 'kernel.file.ingested' AND payload->>'fileId' = $1", [fileId])).rowCount);
+      admin(async (c) => (await c.query("SELECT 1 FROM ludy_kernel.outbox_event WHERE type = 'kernel.file.ingested' AND payload->>'fileId' = $1", [fileId])).rowCount);
     // A document first: its bytes cannot become a post image.
     const doc = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, ...Buffer.from(randomUUID())]);
     expect((await upload(doc, 'hoa-don.jpg', 'document')).status).toBe(200);
@@ -539,7 +539,7 @@ suite.each(backends)('staged uploads on PostgreSQL and $name (issue #109)', (bac
       await c.query('BEGIN');
       // A row from before ADR-0013 (no generation), past the guard trigger as only a superuser can.
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query('UPDATE crove_kernel.file SET generation = NULL WHERE id = $1', [fileId]);
+      await c.query('UPDATE ludy_kernel.file SET generation = NULL WHERE id = $1', [fileId]);
       await c.query('COMMIT');
     });
     await backend.overwrite(row?.storage_key ?? '', new TextEncoder().encode('<HDon>swapped</HDon>'));
@@ -551,7 +551,7 @@ suite.each(backends)('staged uploads on PostgreSQL and $name (issue #109)', (bac
   it('caps open grants per user', async () => {
     const open = await admin(async (c) =>
       Number((await c.query<{ n: string }>(
-        "SELECT count(*) AS n FROM crove_kernel.file_upload f JOIN crove_kernel.user_account u ON u.id = f.created_by WHERE f.org_id = $1 AND u.email LIKE 'member-%' AND used_at IS NULL AND expires_at > now()",
+        "SELECT count(*) AS n FROM ludy_kernel.file_upload f JOIN ludy_kernel.user_account u ON u.id = f.created_by WHERE f.org_id = $1 AND u.email LIKE 'member-%' AND used_at IS NULL AND expires_at > now()",
         [orgId],
       )).rows[0]?.n),
     );
@@ -639,7 +639,7 @@ suite.each(backends)('staged uploads on PostgreSQL and $name (issue #109)', (bac
         await c.query('BEGIN');
         await c.query('SET LOCAL session_replication_role = replica');
         await c.query(
-          "UPDATE crove_kernel.file_upload SET created_at = created_at - interval '2 minutes', expires_at = expires_at - interval '2 minutes', used_at = used_at - interval '2 minutes' WHERE id = ANY($1::uuid[])",
+          "UPDATE ludy_kernel.file_upload SET created_at = created_at - interval '2 minutes', expires_at = expires_at - interval '2 minutes', used_at = used_at - interval '2 minutes' WHERE id = ANY($1::uuid[])",
           [ids],
         );
         await c.query('COMMIT');

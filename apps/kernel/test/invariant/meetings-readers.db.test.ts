@@ -6,7 +6,9 @@
 // - an attendee, owner, and admin read and write no draft result rows (stage = 'draft'), only the meeting recorder does;
 // - no non-owner role or PUBLIC has any table or column privilege on crove_meetings.media_key;
 // - worker and admin SECURITY DEFINER functions in crove_meetings pin search_path = pg_catalog, pg_temp, grant no EXECUTE to PUBLIC,
-//   and return only allowed metadata scalar or table column types, never meeting text.
+//   and return only allowed metadata scalar or table column types, never meeting text. One narrow, locked exception (owner decision of 2026-11-15, A6, #3164, extended by one function
+//   the same day for B4, #3168; one for #3499, the term list of names for transcription; and one for #4043, the org glossary terms for the recorder's text features, owner decision of 2026-11-20 UTC / 2026-11-21 +07:00): seven named functions of the minutes webhook, of the minutes posted to Slack and Teams, of the transcription names and of the recorder's glossary read, named columns of named types, executable by named roles alone
+//   (fixtures/definer-return-types.ts).
 // While crove_meetings tables do not exist yet (to_regclass is null), the tests pass cleanly with zero skipped tests.
 // Staged table arrival across M2 (#2576), M4 (#2578), and M6 (#2580) is tested with explicit assertions and zero skipped tests.
 // Part of the invariant suite; it imports package code under test, never helpers from outside test/invariant/.
@@ -15,61 +17,25 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { BODY_FUNCTIONS, HOOK_DEFINER_EXECUTORS, HOOK_DEFINER_TEXT, validateDefinerReturnType } from './fixtures/definer-return-types.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const SYSTEM = { type: 'system' as const, component: 'kernel.agent' };
 const suite = ADMIN ? describe : describe.skip;
 
-function validateDefinerReturnType(rawRetType: string): { ok: boolean; reason?: string } {
-  const norm = rawRetType.toLowerCase().trim();
-  if (norm === 'trigger') return { ok: true };
-  const stripped = norm.replace(/^setof\s+/, '');
-  const ALLOWED_SCALARS = new Set([
-    'void',
-    'uuid',
-    'boolean',
-    'integer',
-    'bigint',
-    'smallint',
-    'timestamp with time zone',
-    'date',
-    'bytea',
-  ]);
-  if (ALLOWED_SCALARS.has(stripped)) {
-    return { ok: true };
-  }
-  const tableMatch = stripped.match(/^table\s*\((.*)\)$/);
-  if (tableMatch) {
-    const cols = tableMatch[1]!.split(',').map((c) => c.trim()).filter(Boolean);
-    if (cols.length === 0) return { ok: false, reason: 'empty TABLE(...) definition' };
-    for (const col of cols) {
-      const parts = col.split(/\s+/);
-      const colName = parts[0];
-      const colType = parts.slice(1).join(' ');
-      if (ALLOWED_SCALARS.has(colType)) {
-        continue;
-      }
-      if ((colType === 'text' || colType === 'varchar' || colType === 'character varying') && (colName === 'key_id' || colName === 'kind')) {
-        continue;
-      }
-      return { ok: false, reason: `disallowed column in TABLE(...): ${col} (type ${colType} not permitted for ${colName})` };
-    }
-    return { ok: true };
-  }
-  return { ok: false, reason: `disallowed return type: ${rawRetType}` };
-}
-
 suite('meeting notes readers and permissions on PostgreSQL (#2575, ADR-0047)', () => {
   const dbName = `crove_test_meetings_readers_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   const pools: pg.Pool[] = [];
@@ -92,7 +58,7 @@ suite('meeting notes readers and permissions on PostgreSQL (#2575, ADR-0047)', (
   const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -103,7 +69,7 @@ suite('meeting notes readers and permissions on PostgreSQL (#2575, ADR-0047)', (
 
   // Runs fn as a login role in a context, always rolled back.
   async function inContext<T>(url: string, enter: (c: pg.Client) => Promise<unknown>, fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: url });
+    const c = createDbClient({ connectionString: url }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -205,17 +171,18 @@ suite('meeting notes readers and permissions on PostgreSQL (#2575, ADR-0047)', (
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = username;
+      url.username = dbIds ? dbIds.roleName(username) : username;
       url.password = password;
       return url.toString();
     };
     appUrl = login('crove_app', 'test-app-pw');
     workerUrl = login('crove_worker', 'test-worker-pw');
     const runtimeFor = (url: string) => {
-      const pool = createPool({ connectionString: url, max: 4 });
+      const pool = createDbPool({ connectionString: url, max: 4 }, dbIds);
       pools.push(pool);
       const db = createDb(pool);
       return {
@@ -880,8 +847,31 @@ suite('meeting notes readers and permissions on PostgreSQL (#2575, ADR-0047)', (
     for (const fn of rows) {
       expect(fn.proconfig, `${fn.proname} must pin search_path to pg_catalog, pg_temp`).toContain('search_path=pg_catalog, pg_temp');
       expect(fn.hasPublicExec, `${fn.proname} must not grant EXECUTE to PUBLIC`).toBe(false);
-      const val = validateDefinerReturnType(fn.rettype);
+      const val = validateDefinerReturnType(fn.rettype, fn.proname);
       expect(val.ok, `${fn.proname}: ${val.reason}`).toBe(true);
     }
+  });
+
+  // The exception is locked to its roles: each of the seven functions that exists is executable by the roles named for it and by no other (PUBLIC, crove_tenant, crove_definer_tenant and
+  // the other login role included), and nothing outside the seven returns a column named body.
+  it('grants the seven definers that return text (the minutes webhook, the minutes posted to a channel, the names for transcription and the recorder glossary) to their own role alone', async () => {
+    const { rows } = await admin((c) =>
+      c.query<{ proname: string; grantees: string[]; rettype: string }>(
+        `SELECT p.proname,
+                pg_get_function_result(p.oid) AS rettype,
+                COALESCE((SELECT array_agg(DISTINCT (CASE WHEN x.grantee = 0 THEN 'PUBLIC' ELSE (SELECT r.rolname FROM pg_roles r WHERE r.oid = x.grantee)::text END)::text)
+                          FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) x WHERE x.grantee <> p.proowner), '{}'::text[]) AS grantees
+         FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+         WHERE n.nspname = 'crove_meetings' AND p.prosecdef = true`,
+      ),
+    );
+    const present = rows.filter((r) => Object.hasOwn(HOOK_DEFINER_TEXT, r.proname));
+    for (const fn of present) {
+      expect([...fn.grantees].sort(), `${fn.proname} is executable by ${HOOK_DEFINER_EXECUTORS[fn.proname]?.join(', ')} alone`).toEqual([...(HOOK_DEFINER_EXECUTORS[fn.proname] ?? [])].sort());
+    }
+    // A function that has text columns only by the exception: one that does not return `body` is not hook_delivery_get, and none other may.
+    for (const fn of rows.filter((r) => /\bbody\b/i.test(r.rettype))) expect(BODY_FUNCTIONS, `only ${BODY_FUNCTIONS.join(' and ')} return a body column, not ${fn.proname}`).toContain(fn.proname);
+    // The same names in another schema or a new function of the same module do not widen the list: the allowlist has exactly these seven.
+    expect(Object.keys(HOOK_DEFINER_TEXT).sort()).toEqual(['chat_post_get', 'glossary_for_recorder', 'hook_delivery_get', 'hook_for_publish', 'hook_get', 'hook_target', 'terms_for_member_vy']);
   });
 });

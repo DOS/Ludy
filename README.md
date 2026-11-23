@@ -139,7 +139,7 @@ The defaults are for local use. Before anyone else can reach your instance, copy
 
 Not yet checked on a real company's books by an accountant, nor filed through HTKK or eTax: that is the pilot's job (see the roadmap).
 
-**Social** (module `social`, part of Ludy Engage): compose, client review links, queues, exactly-once publishing, AI drafts, metrics, media library. Live connections to Meta and Zalo OA wait for the platforms' developer apps.
+**Engage: Inbox & Posts** (module `social`, part of Ludy Engage): compose, client review links, queues, exactly-once publishing, AI drafts, metrics, media library. Live connections to Meta and Zalo OA wait for the platforms' developer apps.
 
 **Bookings** (module `crm`): booking pages, event types, working hours and days off.
 
@@ -183,7 +183,7 @@ Later, not scheduled: two-way external calendars and meeting links for bookings,
 | File parsing sandbox | `EXTRACT_URL` on the kernel (Compose sets it). `crove-extract` takes no secrets: its image refuses to start with any variable outside its allowlist (its `EXTRACT_*` settings, `HOST`, `PORT`, `NODE_ENV` and what the container runtime sets), whatever `NODE_ENV` says. On Kubernetes set `enableServiceLinks: false` on its pod, or the injected `*_SERVICE_HOST` and `*_PORT` variables refuse the start |
 | Realtime updates | `GET /api/stream` (SSE) tells the app which records changed, so screens refresh without polling. Each API process keeps one `LISTEN` connection to `DATABASE_LISTEN_URL` (default `DATABASE_URL`), which must be direct or session mode, never a transaction-mode pooler. `STREAM_MAX_CONNECTIONS` (default 500 per process, `0` turns streams off and the app polls), `STREAM_MAX_PER_USER` (default 5), `STREAM_RECHECK_SECONDS` (default 30: how often an open stream re-checks the session and membership), `STREAM_RECHECK_CONCURRENCY` (default 3: re-checks running at once per process; the others wait). The listener sends itself a `NOTIFY` every 30 s and reconnects when it does not come back within 10 s, so a URL that cannot deliver notifications never opens streams. Failed ticket redeems are capped per client address (20 a minute, then 429), so set `TRUSTED_PROXY_HOPS` behind a reverse proxy. A reverse proxy in front must not buffer `text/event-stream` responses (Ludy sends `X-Accel-Buffering: no`) and must allow idle reads of at least 30 s (a heartbeat goes out every 25 s) |
 | Database pooling | `DB_RESET_ON_RELEASE` (default `true`: each pooled connection's session is reset before reuse); set `false` only behind a transaction-mode pooler such as PgBouncer or Supavisor, whose own reset then governs (plan §3.3) |
-| Sessions and MFA | `AUTH_ISSUER` (required), `AUTH_SESSION_CHECK`, `AUTH_STEP_UP` (default `required`: approving and membership changes ask for a two-factor code from the last 5 minutes; users enable two-factor under Settings); without Compose, run the image's `auth-grants` role after Supabase Auth's first start (once its migrations are done), after each Supabase Auth upgrade and after each Ludy upgrade (a release may read another Supabase Auth column; until then requests get 503 and `/readyz` reports `auth_grants`). With a remote Supabase Auth (`AUTH_SESSION_CHECK=jwt`, the default without `AUTH_UPSTREAM_URL`), set `PUBLIC_AUTH_URL` (and `PUBLIC_AUTH_ANON_KEY` for hosted Supabase): R3 actions are confirmed live there, and a sign-out outside Ludy takes effect when the access token expires (ADR-0028) |
+| Sessions and MFA | `AUTH_ISSUER` (required), `AUTH_SESSION_CHECK`, `AUTH_STEP_UP` (default `required`: approving and membership changes ask for a two-factor code from the last 5 minutes; users enable two-factor under Settings); without Compose, run the image's `auth-grants` role after Supabase Auth's first start (once its migrations are done), after each Supabase Auth upgrade and after each Ludy upgrade (a release may read another Supabase Auth column; until then requests get 503 and `/readyz` reports `auth_grants`). With a remote Supabase Auth (`AUTH_SESSION_CHECK=jwt`, the default without `AUTH_UPSTREAM_URL`), set `PUBLIC_AUTH_URL` (and `PUBLIC_AUTH_ANON_KEY` for hosted Supabase): R3 actions are confirmed live there, and a sign-out outside Ludy takes effect when the access token expires (ADR-0028); `AUTH_ALLOWED_EMAILS` (addresses and `@domain` entries) limits who may use the deployment when that provider serves other people too ([docs/self-host](docs/self-host/README.md), "Your own identity provider") |
 
 See [`.env.example`](./.env.example) for the full list.
 
@@ -323,9 +323,15 @@ apps/extract       crove-extract: the file parsing sandbox and every parser, e-i
 packages/extract-contract  limits, schemas and the worker's client for crove-extract
 packages/l10n-vn   Vietnamese invoice checks, tax codes, TT133 accounting rules (no parser)
 packages/agent     AI extraction (only package that talks to a model)
-modules/finance    purchase invoices, journal entries, export
-modules/social     compose, approve, schedule and publish posts
-modules/crm        booking pages: event types hosted by members (calendar plan)
+modules/finance    accounting, AI Inbox, invoices, vouchers, bank matching, tax & ledger reports
+modules/social     Engage Inbox & Posts: compose, approve, schedule and publish posts
+modules/crm        Engage CRM: contacts, companies, deals, quotes and booking pages
+modules/ads        Engage Marketing ads spend, results and cost metrics
+modules/notes      Teamwork personal and shared notes linked to business records
+modules/projects   Teamwork project and task boards
+modules/meetings   Teamwork AI meeting notes, recordings and transcripts
+modules/hr         HR & payroll: employees, contracts, leave, runs and declarations
+modules/sign       eSign PDF envelopes, templates, Zalo/email signing and offline verify
 supabase/migrations  the only place for schema changes
 ```
 
@@ -349,7 +355,7 @@ Fixtures live in `packages/agent/test/fixtures/extraction` (`<id>.txt` document 
 
 ## About the name
 
-Ludy was called Crove until October 2026. The code keeps that name as its code name `crove`: the `@crove/*` packages, the `crove_*` database schemas and roles, the `CROVE_*` settings, the compose services and images (`crove`, `crove-extract`) and the `[Crove]` prefix of logs and alerts. Renaming them would break every existing deployment's database, settings and scripts for no change users can see. The repository is still `DOS/Ludy` for now.
+Ludy was called Crove until October 2026. Workspace packages use `@ludy/*`; remaining internal identifiers (the `crove_*` database schemas and roles, the `CROVE_*` settings, the compose services and images `crove`, `crove-extract`, and log/alert prefixes) are migrating to `ludy` in [#1682](https://github.com/DOS/Ludy/issues/1682). The repository is `DOS/Ludy`.
 
 ## License
 

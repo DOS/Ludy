@@ -52,7 +52,7 @@ export interface TableWrite {
 }
 
 // A TableWrite built from a module's manifest, so the classes are the manifest's and a column the table does not have
-// fails typecheck: tableWrite(kernelManifest.tables, 'crove_kernel', 'task', ['status']).
+// fails typecheck: tableWrite(kernelManifest.tables, 'ludy_kernel', 'task', ['status']).
 export function tableWrite<
   const T extends ModuleManifest['tables'],
   const S extends keyof T & string,
@@ -83,7 +83,7 @@ export function auditValue<T extends TableColumns, V>(table: T, column: keyof T 
 }
 
 // A permission the module owns (plan §5.2, §4.6, #1630). Its key is `<module id>.<name>`. A member holds it through an
-// org-wide assignment of one of its default roles, which are the crove_kernel.role_permission rows the migrations seed
+// org-wide assignment of one of its default roles, which are the ludy_kernel.role_permission rows the migrations seed
 // for it (a declaration, not a grant: the test fails when the two differ). The base roles of tenant_member.role (owner,
 // admin) are never listed: who passes a command by base role is the command's `access`, and who approves by base role
 // is the approval policy. The risk is the highest risk of the commands that name the permission.
@@ -103,6 +103,8 @@ export interface RouteDeclaration {
   readonly permission?: string;
   // The app of a screen no menu item names, reached from inside that app (the guide), so a deep link opens with it.
   readonly app?: string;
+  // A screen that is a tab of a menu item (or reached from inside an app) and that the command palette (Ctrl K) finds under this label, a key of the app's `nav` messages (#3225).
+  readonly find?: string;
   // A screen that serves several modules at once (the reports, one tab for each). It opens, and its menu item shows,
   // where any of these modules runs, in place of the module that declares it; each part of the screen still asks for
   // its own module (an API call of a module that is not installed answers not installed).
@@ -114,9 +116,11 @@ export interface RouteDeclaration {
 // under `nav` in the app's messages, in Vietnamese and English; apps are listed in the order their items first appear,
 // and an app's groups in the order the shell fixes for it (apps/app/src/lib/apps.ts), because one app's groups come
 // from several modules.
+// An item with no app sits in the shell's own places (#3225): `top` is the overview, first in the switcher, `bell` the notifications bell and `foot` the org's own screens (Settings) at its foot.
 export type NavDeclaration =
-  | { readonly app: string; readonly group: string; readonly path: string; readonly label: string }
-  | { readonly app: null; readonly path: string; readonly label: string };
+  // `modules`: the item shows only where one of these modules runs, when its screen is another module's (the kernel's Inbox, in Finance's menu as "Chứng từ").
+  | { readonly app: string; readonly group: string; readonly path: string; readonly label: string; readonly modules?: readonly string[] }
+  | { readonly app: null; readonly rail: 'top' | 'bell' | 'foot'; readonly path: string; readonly label: string };
 
 // A screen of the app outside /o/$slug (#1660): a share target, an OAuth callback, a link sent outside the org. A
 // deployment without the module answers it not found, as the API answers its calls, and every route of the app's
@@ -130,7 +134,7 @@ export interface OutsideRouteDeclaration {
 }
 
 // A module's screens and menu items. They are data with no server code, so the app's bundle reads them from
-// @crove/kernel-contract (MODULE_SCREENS in screens.ts) and each module's manifest names its own entry there.
+// @ludy/kernel-contract (MODULE_SCREENS in screens.ts) and each module's manifest names its own entry there.
 export interface ModuleScreens {
   readonly routes: readonly RouteDeclaration[];
   // Its screens outside /o/$slug, when it has any.
@@ -141,7 +145,7 @@ export interface ModuleScreens {
 // How an entity's changes are recorded (plan §5.2 `audit`, #1656):
 // - command: every change is a command, recorded in audit_event (and the WORM stream) with the record as its target;
 //   the row itself may be updated.
-// - append_only: as command, and the row is never updated or deleted (the table carries crove_kernel.make_append_only's
+// - append_only: as command, and the row is never updated or deleted (the table carries ludy_kernel.make_append_only's
 //   trigger), so the table is its own history: a correction is a new row, such as a reversal or a void.
 export type EntityAudit = 'command' | 'append_only';
 

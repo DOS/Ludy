@@ -8,11 +8,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, type DuplicateResult, type PostView } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, type DuplicateResult, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -44,7 +44,7 @@ suite('social copies of many posts moved by days or weeks on PostgreSQL (#1192)'
   async function connection(o: { orgId: string; owner: string }, provider = 'sandbox') {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         provider,
@@ -60,7 +60,7 @@ suite('social copies of many posts moved by days or weeks on PostgreSQL (#1192)'
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const member = await person('member');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]));
     const base = { orgId, owner };
     return { ...base, member, a: await connection(base), b: await connection(base) };
   }
@@ -69,8 +69,8 @@ suite('social copies of many posts moved by days or weeks on PostgreSQL (#1192)'
   const get = (o: Org, postId: string, user = o.owner) => rt.query<PostView>('social.post.get', { postId }, { actor: asUser(user), orgId: o.orgId });
   const duplicate = (o: Org, user: string, postId: string, scheduledAt?: string | null) => exec<DuplicateResult>(o, user, 'social.post.duplicate', { postId, ...(scheduledAt === undefined ? {} : { scheduledAt }) });
   const copiesOf = (o: Org, postId: string) =>
-    admin(async (c) => (await c.query<{ post_id: string }>("SELECT detail->>'post_id' AS post_id FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.post.duplicate' AND outcome = 'ok' AND detail->>'copy_of' = $2", [o.orgId, postId])).rows.map((r) => r.post_id));
-  const postCount = (o: Org) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_social.post WHERE org_id = $1', [o.orgId])).rows[0]?.n));
+    admin(async (c) => (await c.query<{ post_id: string }>("SELECT detail->>'post_id' AS post_id FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.post.duplicate' AND outcome = 'ok' AND detail->>'copy_of' = $2", [o.orgId, postId])).rows.map((r) => r.post_id));
+  const postCount = (o: Org) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_social.post WHERE org_id = $1', [o.orgId])).rows[0]?.n));
   const approveAll = async (o: Org, postId: string) => {
     const view = await get(o, postId);
     await exec(o, o.owner, 'social.variant.decide', { postId, decision: 'approved', variants: view.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
@@ -85,9 +85,9 @@ suite('social copies of many posts moved by days or weeks on PostgreSQL (#1192)'
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -159,14 +159,14 @@ suite('social copies of many posts moved by days or weeks on PostgreSQL (#1192)'
 
     // Channel A disconnected: B is still connected, but not the member's, so nothing is copied.
     const before = await postCount(o);
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [o.a]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [o.a]));
     await expect(duplicate(o, o.member, both.postId, new Date(Date.now() + WEEK).toISOString())).rejects.toMatchObject({ code: 'NOTHING_TO_DUPLICATE', status: 409 });
     // A post on B alone is not theirs to copy at all.
     const onB = await exec<{ postId: string }>(o, o.owner, 'social.post.create', { body: 'Chỉ kênh B', channels: [{ connectionId: o.b }] });
     await expect(duplicate(o, o.member, onB.postId)).rejects.toMatchObject({ code: 'CHANNEL_NOT_ALLOWED', status: 403 });
     expect(await postCount(o)).toBe(before + 1);
     // Every channel gone for everyone.
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [o.b]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [o.b]));
     await expect(duplicate(o, o.owner, onB.postId)).rejects.toMatchObject({ code: 'NOTHING_TO_DUPLICATE' });
     expect(await postCount(o)).toBe(before + 1);
   });
@@ -197,7 +197,7 @@ suite('social copies of many posts moved by days or weeks on PostgreSQL (#1192)'
       ['draft', [], null, null],
     ]);
     // No channel has a time of its own: the planned time is the post's, for a person to schedule once approved.
-    const own = await admin(async (c) => (await c.query<{ scheduled_at: Date | null }>('SELECT scheduled_at FROM crove_social.post_variant WHERE post_id = $1', [copy.id])).rows);
+    const own = await admin(async (c) => (await c.query<{ scheduled_at: Date | null }>('SELECT scheduled_at FROM ludy_social.post_variant WHERE post_id = $1', [copy.id])).rows);
     expect(own.map((r) => r.scheduled_at)).toEqual([null, null]);
     await expect(exec(o, o.owner, 'social.variant.schedule', { postId: copy.id, at: planned })).rejects.toBeDefined();
     // Once sent to review and approved, it schedules as any post.
@@ -214,8 +214,8 @@ suite('social copies of many posts moved by days or weeks on PostgreSQL (#1192)'
     const { postId } = await exec<{ postId: string }>(o, o.owner, 'social.post.create', { body: 'Thực đơn thứ Hai', channels: [{ connectionId: x }, { connectionId: o.a }] });
     await admin((c) =>
       c.query(
-        `UPDATE crove_social.post_variant v SET status = 'published', published_at = now() - interval '6 days', content_frozen = true, body = coalesce(v.body, p.body), external_post_id = 'x-' || v.id
-           FROM crove_social.post p WHERE p.org_id = v.org_id AND p.id = v.post_id AND v.post_id = $1`,
+        `UPDATE ludy_social.post_variant v SET status = 'published', published_at = now() - interval '6 days', content_frozen = true, body = coalesce(v.body, p.body), external_post_id = 'x-' || v.id
+           FROM ludy_social.post p WHERE p.org_id = v.org_id AND p.id = v.post_id AND v.post_id = $1`,
         [postId],
       ),
     );

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { zId } from './schemas.ts';
 
 // Built-in roles a member can hold on top of their base role (issue #1279, plan §4.6). The same list as the database's
-// crove_kernel.role rows (roles.db.test.ts checks it). An org-wide role covers the whole org; external_accountant names
+// ludy_kernel.role rows (roles.db.test.ts checks it). An org-wide role covers the whole org; external_accountant names
 // one legal entity per assignment, and a member or viewer who holds only such assignments sees only those entities.
 //   finance.chief_accountant  approves the ledger's proposals (P12), unlocks a period (ADR-0021) and marks the VAT
 //                             return filed (#1508);

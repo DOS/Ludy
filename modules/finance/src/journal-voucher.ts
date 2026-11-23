@@ -15,11 +15,13 @@ import {
   journalVoucherCode,
   zJournalVoucherProposal,
   zJournalVoucherRequest,
+  zSurplusResolutionRequest,
   type JournalVoucherProposal,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
-import { journalIsBalanced } from '@crove/l10n-vn';
+  type JournalVoucherRequest,
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
+import { journalIsBalanced } from '@ludy/l10n-vn';
 import { assertUsableAccounts } from './accounts.ts';
 import {
   JOURNAL_VOUCHER_LABEL,
@@ -33,7 +35,9 @@ import {
 } from './domain/journal-voucher.ts';
 import { postNewEntry } from './ledger.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
+import { refuseSecondFeeAccrual } from './marketplace-fee-accrual-guard.ts';
 import { dateLabel, periodLockedThrough } from './period-lock.ts';
+import { checkSurplusVoucher, surplusVoucherRequest } from './stock-surplus.ts';
 
 const REQUESTERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 
@@ -54,7 +58,7 @@ export async function checkJournalVoucherLines(ctx: QueryContext, lines: Readonl
   const ids = [...new Set(lines.flatMap((l) => (l.partyId ? [l.partyId] : [])))];
   const parties = new Map<string, { id: string; name: string; tax_code: string | null }>();
   if (ids.length > 0) {
-    let query = ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', 'in', ids);
+    let query = ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', 'in', ids);
     if (lock) query = query.forShare();
     for (const p of await query.execute()) parties.set(p.id, p);
   }
@@ -64,15 +68,27 @@ export async function checkJournalVoucherLines(ctx: QueryContext, lines: Readonl
 
 export const prepareJournalVoucher = defineCommand({
   name: 'finance.journal_voucher.prepare',
-  input: zJournalVoucherRequest,
+  // A voucher as entered, or the resolution of the surplus of a count (#3712 slice 2a): that one names a count and an account, and the lines come from the books (stock-surplus.ts).
+  input: z.union([zJournalVoucherRequest, zSurplusResolutionRequest]),
   risk: 'R1',
   sideEffect: 'internal',
   access: REQUESTERS,
-  handler: async (ctx, input) => {
+  handler: async (ctx, raw) => {
+    let input: JournalVoucherRequest;
+    let surplusCountId: string | null = null;
+    if ('surplus' in raw) {
+      const asked = await surplusVoucherRequest(ctx, raw);
+      input = asked.request;
+      surplusCountId = asked.surplusCountId;
+    } else {
+      input = raw;
+    }
     const lines = input.lines.map((l) => ({ ...l, partyId: l.partyId ?? null }));
     const parties = await checkJournalVoucherLines(ctx, lines, false);
     // The legal entity whose books the voucher goes to (#1280), stored with the proposal so the approver posts it there.
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
+    // A month-end accrual of platform fees (a key in the description, slice F of #2516): one standing at a time, one waiting per platform and month.
+    await refuseSecondFeeAccrual(ctx, legalEntityId, input.description);
     // A month already locked (in that entity) is refused now, while the user is still on the form; the posting guard
     // refuses it again when the proposal is approved, with a lock made since.
     const lockedThrough = await periodLockedThrough(ctx, legalEntityId);
@@ -97,6 +113,7 @@ export const prepareJournalVoucher = defineCommand({
       }),
       total: journalVoucherTotal(lines),
       legalEntityId,
+      ...(surplusCountId === null ? {} : { surplusCountId }),
     };
     // The payload is stored as the proposal and parsed again with this schema when it is approved. One the schema
     // refuses (a party whose stored name is longer than a voucher holds, say) could never be approved, so it is
@@ -124,6 +141,11 @@ export async function postJournalVoucher(
   stockClosingMonth: string | null = null,
   stockCountId: string | null = null,
   payrollRunId: string | null = null,
+  settlementId: string | null = null,
+  payout: { settlementId: string; bankLineId: string } | null = null,
+  feeDocumentId: string | null = null,
+  settlementMonth: string | null = null,
+  surplusCountId: string | null = null,
 ) {
   if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
   const legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId);
@@ -131,7 +153,7 @@ export async function postJournalVoucher(
   const journal = buildJournalVoucherJournal(payload);
   if (!journalIsBalanced(journal)) throw new DomainError('UNBALANCED', 422, 'Bút toán không cân');
   const voucher = await ctx.trx
-    .insertInto('crove_finance.journal_voucher')
+    .insertInto('ludy_finance.journal_voucher')
     .values({
       org_id: ctx.orgId,
       legal_entity_id: legalEntityId,
@@ -144,6 +166,16 @@ export async function postJournalVoucher(
       ...(stockCountId === null ? {} : { stock_count_id: stockCountId }),
       // The column of a pay run's posting is written only for one, as the others.
       ...(payrollRunId === null ? {} : { payroll_run_id: payrollRunId }),
+      // The column of a marketplace settlement's posting is written only for one, as the others.
+      ...(settlementId === null ? {} : { settlement_id: settlementId }),
+      // A settlement's posting is one voucher per month of delivery (YYYY-MM), stored as the first day of the month.
+      ...(settlementMonth === null ? {} : { settlement_month: `${settlementMonth}-01` }),
+      // The columns of a platform payout's posting are written only for one, as the others.
+      ...(payout === null ? {} : { payout_settlement_id: payout.settlementId, payout_bank_line_id: payout.bankLineId }),
+      // The column of a marketplace fee clearing is written only for one, as the others.
+      ...(feeDocumentId === null ? {} : { fee_document_id: feeDocumentId }),
+      // The column of the resolution of a count's surplus is written only for one, as the others.
+      ...(surplusCountId === null ? {} : { surplus_count_id: surplusCountId }),
       created_by: ctx.actor.type === 'user' ? ctx.actor.userId : null,
     })
     .returning(['id', 'number'])
@@ -165,7 +197,7 @@ export async function postJournalVoucher(
       memo: j.memo,
     })),
   });
-  ctx.audit({ number: voucher.number, total, lines: payload.lines.length, legal_entity_id: legalEntityId, ...(closingYear ? { closingYear } : {}), ...(stockClosingMonth ? { stockClosingMonth } : {}), ...(stockCountId ? { stockCountId } : {}), ...(payrollRunId ? { payrollRunId } : {}) });
+  ctx.audit({ number: voucher.number, total, lines: payload.lines.length, legal_entity_id: legalEntityId, ...(closingYear ? { closingYear } : {}), ...(stockClosingMonth ? { stockClosingMonth } : {}), ...(stockCountId ? { stockCountId } : {}), ...(payrollRunId ? { payrollRunId } : {}), ...(settlementId ? { settlementId } : {}), ...(payout ? { payoutSettlementId: payout.settlementId, bankLineId: payout.bankLineId } : {}), ...(feeDocumentId ? { feeDocumentId } : {}) });
   await ctx.activity('finance.journal_voucher', voucher.id, 'journal_voucher.recorded', `Ghi sổ ${JOURNAL_VOUCHER_LABEL.toLowerCase()} ${code}`);
   await ctx.emit('finance.journal_voucher.recorded', { voucherId: voucher.id, journalEntryId, number: voucher.number });
   return { voucherId: voucher.id, journalEntryId, code };
@@ -184,9 +216,13 @@ export const recordJournalVoucher = defineCommand({
     // The stored payload is checked as if new: a sub-account deactivated or a party gone since it was asked for is
     // refused here. The total is the lines' sum, never taken from the payload as is.
     await checkJournalVoucherLines(ctx, lines, true);
+    // Asked again at the approval: an accrual posted since the request, or another proposal of the same accrual, refuses this one.
+    if (payload.legalEntityId) await refuseSecondFeeAccrual(ctx, payload.legalEntityId, payload.description, ctx.proposalId);
     if (journalVoucherTotal(lines) !== payload.total) {
       throw new DomainError('JOURNAL_VOUCHER_INVALID', 422, 'Tổng số tiền không khớp các dòng của phiếu', { problems: ['TOTAL_MISMATCH'] });
     }
-    return postJournalVoucher(ctx, payload);
+    // The resolution of a count's surplus (stock-surplus.ts): the amount is worked out again from the count and a proposal that is not exactly that voucher is refused.
+    await checkSurplusVoucher(ctx, payload, ctx.proposalId);
+    return postJournalVoucher(ctx, payload, null, null, null, null, null, null, null, null, payload.surplusCountId ?? null);
   },
 });

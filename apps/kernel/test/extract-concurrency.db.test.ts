@@ -6,15 +6,15 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { InvoiceExtractor } from '@crove/agent';
-import { createExtractApp } from '@crove/extract';
-import { createDb, createPool, type Db } from '@crove/db';
-import { createExtractClient, type ExtractClient } from '@crove/extract-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import type { ParsedInvoice } from '@crove/l10n-vn';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import type { InvoiceExtractor } from '@ludy/agent';
+import { createExtractApp } from '@ludy/extract';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { createExtractClient, type ExtractClient } from '@ludy/extract-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import type { ParsedInvoice } from '@ludy/l10n-vn';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { startWorker } from '../src/worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -115,20 +115,20 @@ suite('parallel extraction on PostgreSQL (#2119)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const loginUrl = (username: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = username;
       u.password = password;
       return u.toString();
     };
-    workerUrl = loginUrl('crove_worker', 'test-worker-pw');
+    workerUrl = loginUrl('ludy_worker', 'test-worker-pw');
     const register = (target: Db) =>
       new Runtime(target, { manifests: TEST_MANIFESTS }).register({
         commands: [...kernelCommands, ...financeCommands],
         queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries],
       });
-    pool = createPool({ connectionString: loginUrl('crove_app', 'test-app-pw'), max: 4 });
+    pool = createPool({ connectionString: loginUrl('ludy_app', 'test-app-pw'), max: 4 });
     runtime = register(createDb(pool));
     workerPool = createPool({ connectionString: workerUrl, max: 8 });
     workerDb = createDb(workerPool);

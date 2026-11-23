@@ -11,15 +11,15 @@ import { fileURLToPath } from 'node:url';
 import { crc32, deflateSync } from 'node:zlib';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { InvoiceExtractor } from '@crove/agent';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createExtractApp } from '@crove/extract';
-import { createExtractClient, type ExtractClient } from '@crove/extract-contract';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { parseTaxCode } from '@crove/l10n-vn';
-import { extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
+import { InvoiceExtractor } from '@ludy/agent';
+import { createDb, type Db } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createExtractApp } from '@ludy/extract';
+import { createExtractClient, type ExtractClient } from '@ludy/extract-contract';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { parseTaxCode } from '@ludy/l10n-vn';
+import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
 import {
   CASES,
   FAKE_TAX_CODES,
@@ -33,6 +33,7 @@ import {
   type InjectionCase,
 } from './fixtures/injection-cases.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -163,6 +164,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('prompt-injection red team for document extraction (#893)', () => {
   const dbName = `crove_test_redteam_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let pool: pg.Pool;
   let workerPool: pg.Pool;
   let runtime: Runtime;
@@ -178,7 +180,7 @@ suite('prompt-injection red team for document extraction (#893)', () => {
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = createDbClient({ connectionString: adminUrl }, dbIds);
     await client.connect();
     try {
       return await fn(client);
@@ -237,19 +239,20 @@ suite('prompt-injection red team for document extraction (#893)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const login = (username: string, password: string) => {
       const u = new URL(adminUrl);
-      u.username = username;
+      u.username = dbIds ? dbIds.roleName(username) : username;
       u.password = password;
       return u.toString();
     };
     const register = (target: Db) =>
       new Runtime(target, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] });
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
+    pool = createDbPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 }, dbIds);
     const db = createDb(pool);
     runtime = register(db);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createDbPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 }, dbIds);
     worker = register(createDb(workerPool));
     owner = await upsertIdentity(db, { issuer: 'test', subject: 'redteam-owner-a', email: 'owner-a@redteam.test', name: null });
     ownerB = await upsertIdentity(db, { issuer: 'test', subject: 'redteam-owner-b', email: 'owner-b@redteam.test', name: null });

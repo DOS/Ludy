@@ -4,45 +4,41 @@
 // moves and deletes deals; owners and admins edit the stages; a viewer reads. The board is the default on a wide screen,
 // the list on a phone. Amounts are decimal strings and are shown as the reader's language groups them.
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
+import { Link, useParams } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { DEAL_LOST_REASON_MAX, type Deal, type DealCursor, type FilterAst, type PipelineStage, type SavedViewSort } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect } from '@crove/ui/components/native-select';
-import { TableCell, TableRow } from '@crove/ui/components/table';
-import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
-import { DealBookings } from '../components/booking-deal.tsx';
-import { LinkedMeetings, meetingsInstalled } from '../components/linked-meetings.tsx';
+import { DEAL_LOST_REASON_MAX, type Deal, type DealCursor, type FilterAst, type PipelineStage, type SavedViewSort } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button, buttonVariants } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect } from '@ludy/ui/components/native-select';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
+import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
-import { DealBoard } from '../components/deal-board.tsx';
+import { DealBoard, DealsEmpty } from '../components/deal-board.tsx';
 import { DealFilterBar } from '../components/deal-filter-bar.tsx';
-import { DealForm, refreshDeals, type Member } from '../components/deal-form.tsx';
-import { DealQuotes } from '../components/deal-quotes.tsx';
+import { DealPartyDuplicate, refreshDeals, type Member } from '../components/deal-form.tsx';
+import { DealSheet, type DealSheetTarget } from '../components/deal-sheet.tsx';
 import { DealNextSteps, useNextStepCount } from '../components/deal-next-steps.tsx';
-import { DealStaleSetting } from '../components/deal-stale-setting.tsx';
-import { PipelineSettings } from '../components/pipeline-settings.tsx';
+import { SALES_PROCESS_ID } from '../components/sales-process-card.tsx';
 import { DataTable, Empty, ErrorText, Field, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { ViewTabs, type ViewState } from '../components/view-tabs.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { EMPTY_DEAL_FILTER, astToDealFilter, dealFilterToAst, type DealFilterState } from '../lib/deal-filter.ts';
-import { formatMoney } from '../lib/format.ts';
+import { isDealOverdue, isEmptyBoard, readDealView, showAllClosed, withDealView, type DealView } from '../lib/deal-board.ts';
+import { formatDate, formatMoney } from '../lib/format.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
+import { AiWrittenBadge } from '../components/ai-written-badge.tsx';
 
 const refresh = refreshDeals;
 const SCOPE = 'crm.deal';
 // The search waits for a pause in typing, so one request goes out per word and not per key.
 const SEARCH_PAUSE_MS = 300;
 
-function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal: Deal; stages: readonly PipelineStage[]; members: readonly Member[]; canEdit: boolean; canDelete: boolean; columns: number }) {
+function DealRow({ deal, stages, members, canEdit, canDelete, columns, onOpen }: { deal: Deal; stages: readonly PipelineStage[]; members: readonly Member[]; canEdit: boolean; canDelete: boolean; columns: number; onOpen: () => void }) {
   const t = useTranslations('deals');
   const { locale } = useLocaleSetting();
-  const [editing, setEditing] = useState(false);
-  const [quoting, setQuoting] = useState(false);
-  const [meetingsOpen, setMeetingsOpen] = useState(false);
-  const [bookingsOpen, setBookingsOpen] = useState(false);
   // A move into a lost stage asks for an optional reason first.
   const [losing, setLosing] = useState<PipelineStage | null>(null);
   const [reason, setReason] = useState('');
@@ -57,7 +53,7 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal:
   );
   const remove = useMutation(orpc.crm.deals.delete.mutationOptions({ onSuccess: () => void refresh() }));
   const owner = members.find((m) => m.userId === deal.ownerUserId);
-  const overdue = deal.stageKind === 'open' && deal.expectedClose !== null && deal.expectedClose < new Date().toISOString().slice(0, 10);
+  const overdue = isDealOverdue(deal);
   const pick = (stageId: string) => {
     const stage = stages.find((s) => s.id === stageId);
     if (!stage || stage.id === deal.stageId) return;
@@ -68,34 +64,25 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal:
     <>
       <TableRow data-testid="deal-row">
         <TableCell className="px-4 text-sm">
-          <p className="font-medium text-foreground">
+          {/* The deal opens in its side sheet: details, quotes, bookings and meetings (#3648). */}
+          <button type="button" onClick={onOpen} data-testid="deal-row-open" className="rounded-sm text-left font-medium text-foreground outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50">
             {deal.title}
-            {deal.followUp && (
-              <>
-                {' '}
-                <Badge variant="warning" data-testid="follow-up-badge">
-                  {t('followUp')}
-                </Badge>
-              </>
-            )}
-          </p>
+          </button>{' '}
+          <AiWrittenBadge actorOrigin={deal.actorOrigin} tainted={deal.tainted} />
+          {deal.followUp && (
+            <>
+              {' '}
+              <Badge variant="warning" data-testid="follow-up-badge">
+                {t('followUp')}
+              </Badge>
+            </>
+          )}
           {deal.lostReason && <p className="text-xs text-muted-foreground">{t('lostReason', { reason: deal.lostReason })}</p>}
-          <Button size="sm" variant="ghost" className="-ml-2 mt-1" onClick={() => setQuoting((q) => !q)} aria-expanded={quoting} data-testid="deal-quotes-toggle">
-            {t('quotes')}
-          </Button>
-          {meetingsInstalled() && (
-            <Button size="sm" variant="ghost" className="mt-1" onClick={() => setMeetingsOpen((o) => !o)} aria-expanded={meetingsOpen} data-testid="deal-meetings-toggle">
-              {t('meetings')}
-            </Button>
-          )}
-          {/* The deal's bookings and "Đặt lịch" (#3103); a viewer reads no booking, so has no button. */}
-          {canEdit && (
-            <Button size="sm" variant="ghost" className="mt-1" onClick={() => setBookingsOpen((o) => !o)} aria-expanded={bookingsOpen} data-testid="deal-bookings-toggle">
-              {t('bookings')}
-            </Button>
-          )}
         </TableCell>
-        <TableCell className="px-4 text-sm">{deal.partyName}</TableCell>
+        <TableCell className="px-4 text-sm">
+          {deal.partyName}
+          <DealPartyDuplicate deal={deal} canEdit={canEdit} />
+        </TableCell>
         <TableCell className="px-4 text-sm">
           {canEdit ? (
             <NativeSelect size="sm" aria-label={t('stageOf', { title: deal.title })} value={deal.stageId} disabled={move.isPending} onChange={(e) => pick(e.target.value)}>
@@ -110,12 +97,18 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal:
           )}
         </TableCell>
         <TableCell className="px-4 text-right text-sm tabular-nums">{formatMoney(deal.amount, locale, deal.currency)}</TableCell>
-        <TableCell className={`px-4 text-sm ${overdue ? 'text-destructive' : ''}`}>{deal.expectedClose ?? ''}</TableCell>
-        <TableCell className="px-4 text-sm">{owner ? (owner.displayName ?? owner.email) : ''}</TableCell>
+        <TableCell data-label={t('columns.expectedClose')} className={`px-4 text-sm ${overdue ? 'text-destructive' : ''}`}>
+          {deal.expectedClose ? formatDate(deal.expectedClose, locale) : ''}
+          {/* The word, not only the colour (#3649). */}
+          {overdue && <span className="ml-1 font-medium">{t('overdue')}</span>}
+        </TableCell>
+        <TableCell data-label={t('columns.owner')} className="px-4 text-sm">
+          {owner ? (owner.displayName ?? owner.email) : ''}
+        </TableCell>
         {canEdit && (
           <TableCell className="px-4">
             <div className="flex flex-wrap gap-1">
-              <Button size="sm" variant="outline" onClick={() => setEditing((e) => !e)} aria-expanded={editing}>
+              <Button size="sm" variant="outline" onClick={onOpen} aria-label={t('editOf', { title: deal.title })}>
                 {t('edit')}
               </Button>
               {canDelete && (
@@ -164,54 +157,18 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal:
           </TableCell>
         </TableRow>
       )}
-      {meetingsOpen && (
-        <TableRow>
-          <TableCell colSpan={columns} className="px-4 py-3">
-            <LinkedMeetings kind="deal" targetId={deal.id} />
-          </TableCell>
-        </TableRow>
-      )}
-      {bookingsOpen && (
-        <TableRow>
-          <TableCell colSpan={columns} className="px-4 py-3">
-            <DealBookings deal={deal} canEdit={canEdit} />
-          </TableCell>
-        </TableRow>
-      )}
-      {quoting && (
-        <TableRow>
-          <TableCell colSpan={columns} className="px-4 py-3">
-            <DealQuotes deal={deal} canEdit={canEdit} onClose={() => setQuoting(false)} />
-          </TableCell>
-        </TableRow>
-      )}
-      {editing && (
-        <TableRow>
-          <TableCell colSpan={columns} className="px-4 py-3">
-            <DealForm key={deal.version} deal={deal} members={members} onDone={() => setEditing(false)} />
-          </TableCell>
-        </TableRow>
-      )}
     </>
   );
 }
 
-type View = 'board' | 'list' | 'next';
-// The board is the default where there is room for columns; on a phone the list is. A link to `?tab=next` (the Home list) opens the next steps.
+type View = DealView;
+// The board is the default where there is room for columns; on a phone the list is. The view in use is in the address (`?tab=`), so a reload keeps it, and the Home list links to `?tab=next`.
 const wideScreen = (): boolean => {
   try {
     return window.matchMedia('(min-width: 640px)').matches;
   } catch {
     return true;
   }
-};
-const firstView = (): View => {
-  try {
-    if (new URLSearchParams(window.location.search).get('tab') === 'next') return 'next';
-  } catch {
-    // No address to read: the default view.
-  }
-  return wideScreen() ? 'board' : 'list';
 };
 
 export function DealsPage() {
@@ -221,9 +178,23 @@ export function DealsPage() {
   const canEdit = role === 'owner' || role === 'admin' || role === 'member';
   const members = org.data?.members ?? [];
   const canManage = role === 'owner' || role === 'admin';
-  const [adding, setAdding] = useState(false);
-  const [settings, setSettings] = useState(false);
-  const [view, setView] = useState<View>(firstView);
+  const [sheet, setSheet] = useState<DealSheetTarget | null>(null);
+  const { slug } = useParams({ strict: false }) as { slug: string };
+  const [view, setViewState] = useState<View>(() => {
+    try {
+      return readDealView(window.location.search) ?? (wideScreen() ? 'board' : 'list');
+    } catch {
+      return 'board';
+    }
+  });
+  const setView = (next: View) => {
+    setViewState(next);
+    try {
+      window.history.replaceState(window.history.state, '', `${window.location.pathname}${withDealView(window.location.search, next)}${window.location.hash}`);
+    } catch {
+      // No address to write: the view is kept in this page only.
+    }
+  };
   const nextCount = useNextStepCount();
   const stages = useQuery(orpc.crm.pipeline.stages.queryOptions({ input: {} }));
   // The first member to open the screen in an org with no pipeline gets the default stages.
@@ -262,6 +233,9 @@ export function DealsPage() {
     }),
   });
   const rows = deals.data?.pages.flatMap((p) => p.items) ?? [];
+  // An org with no deal sees one action, the empty state's: the header's "Thêm cơ hội" waits until there is a deal (#3647). The board's answer is the one DealBoard reads.
+  const plainBoard = useQuery({ ...orpc.crm.deals.board.queryOptions({ input: {} }), enabled: view === 'board' });
+  const noDeals = view === 'board' ? !filtered && !plainBoard.error && isEmptyBoard(plainBoard.data) : view === 'list' && !filtered && !deals.isPending && !stages.isPending && !deals.error && !stages.error && rows.length === 0;
   const head = [t('columns.title'), t('columns.party'), t('columns.stage'), t('columns.amount'), t('columns.expectedClose'), t('columns.owner'), ...(canEdit ? [''] : [])];
   const stageList = stages.data ?? [];
 
@@ -281,49 +255,61 @@ export function DealsPage() {
                 </TabsTrigger>
               </TabsList>
             </Tabs>
-            {canManage && (
-              <Button variant="outline" onClick={() => setSettings((s) => !s)} aria-expanded={settings}>
-                {t('view.settings')}
-              </Button>
-            )}
-            {canEdit && (
-              <Button onClick={() => setAdding((a) => !a)} aria-expanded={adding}>
+            {canEdit && !noDeals && (
+              <Button onClick={() => setSheet({ kind: 'new' })}>
                 {t('add')}
               </Button>
             )}
           </div>
         }
       />
-      {settings && canManage && (
-        <div className="mb-4 space-y-4">
-          <PipelineSettings />
-          <DealStaleSetting />
-        </div>
-      )}
-      {adding && (
-        <div className="mb-4">
-          <DealForm deal={null} members={members} onDone={() => setAdding(false)} />
-        </div>
-      )}
       {view === 'next' ? (
         <DealNextSteps canEdit={canEdit} />
       ) : (
         <>
-      <ViewTabs scope={SCOPE} filters={filters} sort={sort} onApply={applyView} />
-      <DealFilterBar bar={bar} setBar={setBar} sort={sort} setSort={setSort} stages={stageList} members={members} />
+      {!noDeals && <ViewTabs scope={SCOPE} filters={filters} sort={sort} onApply={applyView} />}
+      {!noDeals && (
+        <DealFilterBar
+          bar={bar}
+          setBar={setBar}
+          sort={sort}
+          setSort={setSort}
+          stages={stageList}
+          members={members}
+          view={view === 'board' ? 'board' : 'list'}
+          extra={
+            canManage ? (
+              <Link to="/o/$slug/settings/sales" params={{ slug }} hash={SALES_PROCESS_ID} className={buttonVariants({ variant: 'link', size: 'sm' })}>
+                {t('editStages')}
+              </Link>
+            ) : undefined
+          }
+        />
+      )}
       {view === 'board' ? (
-        <DealBoard members={members} canEdit={canEdit} filters={applied.all.length > 0 ? applied : undefined} />
+        <DealBoard
+          members={members}
+          canEdit={canEdit}
+          onAdd={() => setSheet({ kind: 'new' })}
+          onOpen={(deal) => setSheet({ kind: 'deal', deal })}
+          filters={applied.all.length > 0 ? applied : undefined}
+          onShowAll={(kind) => {
+            setBar(showAllClosed(kind));
+            setSort(null);
+            setView('list');
+          }}
+        />
       ) : deals.isPending || stages.isPending ? (
         <TableSkeleton columns={6} />
       ) : (deals.error || stages.error) && rows.length === 0 ? (
         <ErrorText>{errorMessage(deals.error ?? stages.error)}</ErrorText>
       ) : rows.length === 0 ? (
-        <Empty title={filtered ? t('filters.noMatch') : t('empty')} hint={filtered ? undefined : canEdit ? t('emptyHint') : undefined} />
+        filtered ? <Empty title={t('filters.noMatch')} /> : <DealsEmpty title={t('empty')} hint={canEdit ? t('emptyHint') : undefined} canEdit={canEdit} onAdd={() => setSheet({ kind: 'new' })} />
       ) : (
         <>
-          <DataTable head={head} numeric={[3]}>
+          <DataTable head={head} numeric={[3]} stacked>
             {rows.map((d) => (
-              <DealRow key={d.id} deal={d} stages={stageList} members={members} canEdit={canEdit} canDelete={d.canDelete} columns={head.length} />
+              <DealRow key={d.id} deal={d} stages={stageList} members={members} canEdit={canEdit} canDelete={d.canDelete} columns={head.length} onOpen={() => setSheet({ kind: 'deal', deal: d })} />
             ))}
           </DataTable>
           {deals.hasNextPage && (
@@ -337,6 +323,7 @@ export function DealsPage() {
       )}
         </>
       )}
+      {sheet && <DealSheet target={sheet} members={members} canEdit={canEdit} onClose={() => setSheet(null)} />}
     </>
   );
 }

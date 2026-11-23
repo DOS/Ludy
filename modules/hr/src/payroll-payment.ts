@@ -7,22 +7,14 @@
 //
 // `hr.payroll.payment.verify` is what finance's record command compares the stored proposal with, in the approver's context, so a proposal row written some other way than by the preparer
 // (raw SQL) cannot pay lines the run does not hold.
-import { PAYROLL_PAYMENT_COMMAND, zHrPaymentAmounts, zHrPaymentRequest, zHrPaymentVerify, type HrRunPaymentAmounts, type PayrollPaymentKind } from '@crove/kernel-contract';
-import { isCashOverLimit, money, toMoney, type Obligation } from '@crove/l10n-vn';
+import { PAYROLL_PAYMENT_COMMAND, zHrPaymentAmounts, zHrPaymentRequest, zHrPaymentVerify, type HrRunPaymentAmounts, type PayrollPaymentKind } from '@ludy/kernel-contract';
+import { isCashOverLimit, money, payrollPaymentReason, toMoney, type Obligation } from '@ludy/l10n-vn';
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
-import { buildRunPosting, buildRunPostingFromTotals, groupProblem, monthLabel, type StoredGroup } from './payroll-posting.ts';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
+import { buildRunPosting, buildRunPostingFromTotals, groupProblem, type StoredGroup } from './payroll-posting.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
-
-// Words of the reason on the voucher (lý do chi): the month and what is paid, never a name.
-const REASON: Record<PayrollPaymentKind, (month: string) => string> = {
-  net_pay: (month) => `Chi lương tháng ${monthLabel(month)}`,
-  insurance: (month) => `Nộp bảo hiểm xã hội, y tế, thất nghiệp tháng ${monthLabel(month)}`,
-  union: (month) => `Nộp kinh phí công đoàn tháng ${monthLabel(month)}`,
-  tax: (month) => `Nộp thuế thu nhập cá nhân tháng ${monthLabel(month)}`,
-};
 
 // The obligation of the kind in the run's entry, or a refusal when the run owes nothing of that kind (no union fee, no tax withheld).
 function obligationOf(obligations: readonly Obligation[], kind: PayrollPaymentKind): Obligation {
@@ -50,7 +42,7 @@ export const preparePayrollPayment = defineCommand({
     const obligation = obligationOf(result.obligations, input.kind);
     // One open proposal per run and kind: another still open ends it, and one already paid is refused by finance's check (a rejected or expired one does not).
     const open = await ctx.trx
-      .selectFrom('crove_kernel.proposal')
+      .selectFrom('ludy_kernel.proposal')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('command', '=', PAYROLL_PAYMENT_COMMAND)
@@ -61,7 +53,7 @@ export const preparePayrollPayment = defineCommand({
       .executeTakeFirst();
     if (open) throw new DomainError('HR_PAYMENT_OPEN', 409, 'Khoản này của bảng lương đã có một đề xuất chi đang chờ duyệt');
     const cashLarge = cashLargeOf(input.kind, nets);
-    const reason = REASON[input.kind](payrollRun.month);
+    const reason = payrollPaymentReason(input.kind, payrollRun.month);
     const draft = await ctx.run<{ kind: string; command: string; title: string; payload: Record<string, unknown> }>('finance.payroll_payment.prepare', {
       runId: input.runId,
       paymentKind: input.kind,
@@ -114,7 +106,7 @@ export const verifyPayrollPayment = defineCommand({
 });
 
 // The amount of each payment of the approved runs asked for, for the matching of a bank statement line with a payment (#2532). Owners and admins, who are the ones that ask for a payment. It reads the
-// run's totals by cost department (crove_hr.payroll_run_totals, in the caller's own context), never a line, and gives a run only when the same checks the verification makes hold: a run that is not
+// run's totals by cost department (ludy_hr.payroll_run_totals, in the caller's own context), never a line, and gives a run only when the same checks the verification makes hold: a run that is not
 // approved, that has an adjustment made before its split was kept, a line not calculated, a department or fund the posting does not know or per-fund sums that do not add to the insurance, or a figure the sums cannot be trusted for is not offered (asking for its payment says why). The amounts equal the obligations of the run's
 // entry (a test ties them): the net pay, the insurance (what employees and the employer owe), the union fee and the tax.
 export const payrollPaymentAmounts = defineQuery({
@@ -125,7 +117,7 @@ export const payrollPaymentAmounts = defineQuery({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const out: HrRunPaymentAmounts[] = [];
     for (const runId of new Set(runIds)) {
-      const { rows } = await sql<{ totals: unknown }>`SELECT crove_hr.payroll_run_totals(${runId}::uuid) AS totals`.execute(ctx.trx);
+      const { rows } = await sql<{ totals: unknown }>`SELECT ludy_hr.payroll_run_totals(${runId}::uuid) AS totals`.execute(ctx.trx);
       const t = rows[0]?.totals as
         | { month: string; status: string; counts: Record<string, number>; groups: StoredGroup[] }
         | null

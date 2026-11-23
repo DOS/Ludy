@@ -4,9 +4,9 @@
 // admins read and set them; a threshold the org never set is `null` and the default of flags.ts applies, so a safer default reaches every org
 // that left it. Changing a threshold only changes which flags the rules raise: it moves no money and changes no campaign (R1, internal).
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { zAdsFlagSetting, type AdsFlagSettings } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { zAdsFlagSetting, type AdsFlagSettings } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { DEFAULT_FLAG_THRESHOLDS, type FlagSetting } from './flags.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
@@ -14,7 +14,7 @@ const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 // The org's row as the rules read it. No row is every threshold unset.
 export async function flagSettingOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>): Promise<{ set: FlagSetting; setAt: Date | null }> {
   const row = await ctx.trx
-    .selectFrom('crove_ads.ad_flag_setting')
+    .selectFrom('ludy_ads.ad_flag_setting')
     .select(['pace_min_days', 'day_factor', 'cpr_factor', 'cpr_min_results', 'cpr_min_history_days', 'updated_at'])
     .where('org_id', '=', ctx.orgId)
     .orderBy('id')
@@ -61,7 +61,7 @@ export const adsFlagSettingsSet = defineCommand({
       cpr_min_history_days: input.cprMinHistoryDays,
     };
     await ctx.trx
-      .insertInto('crove_ads.ad_flag_setting')
+      .insertInto('ludy_ads.ad_flag_setting')
       .values({ org_id: ctx.orgId, ...values, set_by: me })
       .onConflict((oc) => oc.column('org_id').doUpdateSet({ ...values, set_by: me, updated_at: ctx.now }))
       .execute();

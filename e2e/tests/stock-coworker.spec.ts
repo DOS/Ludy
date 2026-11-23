@@ -20,7 +20,8 @@ test('with AI off the coworker says so, the line is assigned by hand, and nothin
   const nav = page.getByRole('navigation');
 
   await test.step('post an invoice whose first line is on 156, so it is a goods line that matches no item', async () => {
-    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
     await page.getByRole('link', { name: SELLER }).click();
@@ -40,7 +41,7 @@ test('with AI off the coworker says so, the line is assigned by hand, and nothin
   });
 
   await test.step('on the stock screen the line waits; nothing is running low, so there is no such section', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Hàng hóa' }).click();
     await expect(page.getByRole('heading', { name: 'Hàng hóa' })).toBeVisible();
     await expect(page.getByTestId('stock-unassigned-line')).toHaveCount(1);
@@ -71,15 +72,15 @@ test('with AI off the coworker says so, the line is assigned by hand, and nothin
   });
 
   await test.step('Home has no running-low item either', async () => {
-    await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tổng quan', exact: true }).click();
     await expect(page.getByText('sắp hết, nên đặt thêm')).toHaveCount(0);
   });
 });
 
 // The rows are written by the database owner with triggers off: the books insist that a document is posted with its entry, which this screen does not look at.
-const ORG = `(SELECT org_id FROM crove_kernel.tenant WHERE slug = :'slug')`;
-const ENTITY = `(SELECT l.id FROM crove_kernel.legal_entity l WHERE l.org_id = ${ORG} AND l.is_default)`;
-const ITEM = `(SELECT id FROM crove_finance.stock_item WHERE org_id = ${ORG} AND code = 'A1')`;
+const ORG = `(SELECT org_id FROM ludy_kernel.tenant WHERE slug = :'slug')`;
+const ENTITY = `(SELECT l.id FROM ludy_kernel.legal_entity l WHERE l.org_id = ${ORG} AND l.is_default)`;
+const ITEM = `(SELECT id FROM ludy_finance.stock_item WHERE org_id = ${ORG} AND code = 'A1')`;
 
 test('an item that sells faster than it lasts shows as running low, with the supplier, and its reorder message is a template to edit when AI is off', async ({ page }) => {
   await page.goto('/');
@@ -88,7 +89,7 @@ test('an item that sells faster than it lasts shows as running low, with the sup
   const nav = page.getByRole('navigation');
 
   await test.step('an item bought from a supplier 60 days ago and sold at a unit a day since: ten are left, ten days of sales', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Hàng hóa' }).click();
     await page.getByTestId('stock-new').click();
     const form = page.getByTestId('stock-item-form');
@@ -99,15 +100,15 @@ test('an item that sells faster than it lasts shows as running low, with the sup
     await expect(page.getByTestId('stock-item')).toHaveCount(1);
     exec(
       `SET session_replication_role = replica;
-       INSERT INTO crove_kernel.party (org_id, id, name, email) VALUES (${ORG}, :'supplier'::uuid, 'Nhà cung cấp Phương Nam', 'ncc@example.com');
-       INSERT INTO crove_kernel.party (org_id, id, name) VALUES (${ORG}, :'customer'::uuid, 'Khách lẻ');
-       INSERT INTO crove_finance.purchase_document (org_id, id, legal_entity_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction) VALUES
+       INSERT INTO ludy_kernel.party (org_id, id, name, email) VALUES (${ORG}, :'supplier'::uuid, 'Nhà cung cấp Phương Nam', 'ncc@example.com');
+       INSERT INTO ludy_kernel.party (org_id, id, name) VALUES (${ORG}, :'customer'::uuid, 'Khách lẻ');
+       INSERT INTO ludy_finance.purchase_document (org_id, id, legal_entity_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction) VALUES
          (${ORG}, :'buy'::uuid, ${ENTITY}, :'supplier'::uuid, 'AA', '000001', current_date - 60, 100, 0, 100, 'purchase'),
          (${ORG}, :'sell'::uuid, ${ENTITY}, :'customer'::uuid, 'AA', '000002', current_date - 10, 100, 0, 100, 'sale');
-       INSERT INTO crove_finance.purchase_line (org_id, document_id, line_no, description, unit, quantity, amount, debit_account, credit_account) VALUES
+       INSERT INTO ludy_finance.purchase_line (org_id, document_id, line_no, description, unit, quantity, amount, debit_account, credit_account) VALUES
          (${ORG}, :'buy'::uuid, 1, 'Áo thun trắng M', 'cái', 66, 100, '156', NULL::text),
          (${ORG}, :'sell'::uuid, 1, 'Áo thun trắng M', 'cái', 56, 100, NULL::text, '5111');
-       INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES
+       INSERT INTO ludy_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES
          (${ORG}, ${ENTITY}, ${ITEM}, current_date - 60, 66, 'document_line', :'buy'::uuid, 1, 1),
          (${ORG}, ${ENTITY}, ${ITEM}, current_date - 10, -56, 'document_line', :'sell'::uuid, 1, 1)`,
       { slug, supplier: randomUUID(), customer: randomUUID(), buy: randomUUID(), sell: randomUUID() },
@@ -158,7 +159,7 @@ test('an item that sells faster than it lasts shows as running low, with the sup
   });
 
   await test.step('Home counts the item for the people who can act', async () => {
-    await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tổng quan', exact: true }).click();
     await expect(page.getByText('1 mặt hàng sắp hết, nên đặt thêm')).toBeVisible();
   });
 });

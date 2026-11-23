@@ -5,11 +5,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, type ActivityItem, type PostView } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, type ActivityItem, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -43,7 +43,7 @@ suite('social post comments and activity on PostgreSQL (#582)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const roles: Record<'member' | 'viewer', string> = { member: await person('member'), viewer: await person('viewer') };
     for (const [role, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
     }
     return { orgId, owner, ...roles };
   }
@@ -52,7 +52,7 @@ suite('social post comments and activity on PostgreSQL (#582)', () => {
     const id = randomUUID();
     await admin((c) =>
       c.query(
-        'INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
+        'INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
         [orgId, id, provider, `acct-${id.slice(0, 8)}`, 'Kênh thử', owner],
       ),
     );
@@ -72,9 +72,9 @@ suite('social post comments and activity on PostgreSQL (#582)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -138,7 +138,7 @@ suite('social post comments and activity on PostgreSQL (#582)', () => {
     expect(edited).toMatchObject({ body: 'Bản sửa' });
     expect(edited?.editedAt).not.toBeNull();
 
-    await admin((c) => c.query("UPDATE crove_social.post_comment SET created_at = now() - interval '16 minutes' WHERE id = $1", [commentId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_comment SET created_at = now() - interval '16 minutes' WHERE id = $1", [commentId]));
     await expect(exec(o, o.member, 'social.post_comment.edit', { commentId, body: 'Muộn' })).rejects.toMatchObject({ code: 'COMMENT_EDIT_CLOSED' });
     expect((await activity(o, o.member, postId)).find((i) => i.id === commentId)).toMatchObject({ body: 'Bản sửa', editable: false });
   });
@@ -155,7 +155,7 @@ suite('social post comments and activity on PostgreSQL (#582)', () => {
     const grants = await admin(async (c) =>
       (
         await c.query<{ privilege_type: string }>(
-          "SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'post_comment' ORDER BY 1",
+          "SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'ludy_tenant' AND table_schema = 'ludy_social' AND table_name = 'post_comment' ORDER BY 1",
         )
       ).rows.map((r) => r.privilege_type),
     );
@@ -163,7 +163,7 @@ suite('social post comments and activity on PostgreSQL (#582)', () => {
     const columns = await admin(async (c) =>
       (
         await c.query<{ column_name: string }>(
-          "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'post_comment' AND privilege_type = 'UPDATE' ORDER BY 1",
+          "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'ludy_tenant' AND table_schema = 'ludy_social' AND table_name = 'post_comment' AND privilege_type = 'UPDATE' ORDER BY 1",
         )
       ).rows.map((r) => r.column_name),
     );
@@ -173,25 +173,25 @@ suite('social post comments and activity on PostgreSQL (#582)', () => {
       admin(async (c) => {
         await c.query('BEGIN');
         try {
-          await c.query('SET LOCAL ROLE crove_tenant');
+          await c.query('SET LOCAL ROLE ludy_tenant');
           await c.query(statement, params);
         } finally {
           await c.query('ROLLBACK');
         }
       });
-    await expect(asTenant('UPDATE crove_social.post_comment SET author_user_id = $1 WHERE id = $2', [o.owner, commentId])).rejects.toThrow(/permission denied/);
-    await expect(asTenant('UPDATE crove_social.post_comment SET created_at = now() WHERE id = $1', [commentId])).rejects.toThrow(/permission denied/);
-    await expect(asTenant('DELETE FROM crove_social.post_comment WHERE id = $1', [commentId])).rejects.toThrow(/permission denied/);
+    await expect(asTenant('UPDATE ludy_social.post_comment SET author_user_id = $1 WHERE id = $2', [o.owner, commentId])).rejects.toThrow(/permission denied/);
+    await expect(asTenant('UPDATE ludy_social.post_comment SET created_at = now() WHERE id = $1', [commentId])).rejects.toThrow(/permission denied/);
+    await expect(asTenant('DELETE FROM ludy_social.post_comment WHERE id = $1', [commentId])).rejects.toThrow(/permission denied/);
     // Resolved at and by go together, whoever writes them.
-    await expect(admin((c) => c.query('UPDATE crove_social.post_comment SET resolved_at = now() WHERE id = $1', [commentId]))).rejects.toThrow(/post_comment_resolved_check/);
-    await expect(admin((c) => c.query('UPDATE crove_social.post_comment SET resolved_by = $1 WHERE id = $2', [o.owner, commentId]))).rejects.toThrow(/post_comment_resolved_check/);
+    await expect(admin((c) => c.query('UPDATE ludy_social.post_comment SET resolved_at = now() WHERE id = $1', [commentId]))).rejects.toThrow(/post_comment_resolved_check/);
+    await expect(admin((c) => c.query('UPDATE ludy_social.post_comment SET resolved_by = $1 WHERE id = $2', [o.owner, commentId]))).rejects.toThrow(/post_comment_resolved_check/);
   });
 
   it('lets the comment author, the post author or assignee, and owners and admins resolve and reopen a comment (#1168)', async () => {
     const o = await org();
     const [adminUser, assignee, bystander] = [await person('admin'), await person('assignee'), await person('bystander')];
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member')", [o.orgId, adminUser, assignee, bystander]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member')", [o.orgId, adminUser, assignee, bystander]),
     );
     const conn = await connection(o.orgId, o.owner);
     // The member writes the post; the owner, the assignee and another member comment on it.
@@ -206,7 +206,7 @@ suite('social post comments and activity on PostgreSQL (#582)', () => {
     await expect(exec(o, o.viewer, 'social.post_comment.resolve', { commentId: byOwner })).rejects.toMatchObject({ status: 403 });
     await expect(exec(o, bystander, 'social.post_comment.resolve', { commentId: byOwner })).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
     // The post's author resolves the owner's note; the text and the edit stamp stay as they were.
-    const textOf = () => admin(async (c) => (await c.query('SELECT body, edited_at FROM crove_social.post_comment WHERE id = $1', [byOwner])).rows[0]);
+    const textOf = () => admin(async (c) => (await c.query('SELECT body, edited_at FROM ludy_social.post_comment WHERE id = $1', [byOwner])).rows[0]);
     const before = await textOf();
     const done = await exec<{ resolvedAt: string; resolvedBy: string }>(o, o.member, 'social.post_comment.resolve', { commentId: byOwner });
     expect(done).toMatchObject({ commentId: byOwner, postId, resolvedBy: o.member });
@@ -235,7 +235,7 @@ suite('social post comments and activity on PostgreSQL (#582)', () => {
     const audited = await admin(async (c) =>
       (
         await c.query<{ target_type: string; target_id: string }>(
-          "SELECT target_type, target_id FROM crove_kernel.audit_event WHERE org_id = $1 AND command IN ('social.post_comment.resolve', 'social.post_comment.reopen') AND outcome = 'ok'",
+          "SELECT target_type, target_id FROM ludy_kernel.audit_event WHERE org_id = $1 AND command IN ('social.post_comment.resolve', 'social.post_comment.reopen') AND outcome = 'ok'",
           [o.orgId],
         )
       ).rows,
@@ -251,7 +251,7 @@ suite('social post comments and activity on PostgreSQL (#582)', () => {
     // Editing stays the author's, within 15 minutes, resolved or not.
     await exec(o, o.owner, 'social.post_comment.edit', { commentId: byOwner, body: 'Thêm giá cũ, gạch ngang' });
     await expect(exec(o, o.member, 'social.post_comment.edit', { commentId: byOwner, body: 'x' })).rejects.toMatchObject({ status: 403 });
-    await admin((c) => c.query("UPDATE crove_social.post_comment SET created_at = now() - interval '16 minutes' WHERE id = $1", [byOwner]));
+    await admin((c) => c.query("UPDATE ludy_social.post_comment SET created_at = now() - interval '16 minutes' WHERE id = $1", [byOwner]));
     await expect(exec(o, o.owner, 'social.post_comment.edit', { commentId: byOwner, body: 'Muộn' })).rejects.toMatchObject({ code: 'COMMENT_EDIT_CLOSED' });
     // A comment of another org is not found.
     const stranger = await org();

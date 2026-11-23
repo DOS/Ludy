@@ -3,12 +3,13 @@
 // local; the session status check runs later, in the request transaction (Runtime + SessionStatusSource), and R3
 // commands confirm the token live with Supabase Auth when the session check does not read Auth (jwt).
 import { createRemoteJWKSet, decodeJwt, jwtVerify, type JWTPayload, type JWTVerifyGetKey } from 'jose';
-import type { Db } from '@crove/db';
-import { resolveIdentity } from '@crove/kernel';
-import { DomainError, toDomainError, type Aal, type UserActor } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { resolveIdentity } from '@ludy/kernel';
+import { DomainError, toDomainError, type Aal, type UserActor } from '@ludy/kernel-runtime';
 import type { Config } from './config.ts';
+import { createAccountEmailAccess, createEmailAccess } from './auth-access.ts';
 import { createLiveCheck, type LiveCheck } from './sessions.ts';
-import { isExtensionBearer, verifyExtensionBearer, type ExtensionIdentity } from './auth-extension.ts';
+import { extensionTokenAccountEmail, isExtensionBearer, verifyExtensionBearer, type ExtensionIdentity } from './auth-extension.ts';
 
 export interface AuthUser {
   userId: string;
@@ -49,7 +50,7 @@ interface SupabaseClaims extends JWTPayload {
   session_id?: unknown;
   is_anonymous?: unknown;
   amr?: unknown;
-  user_metadata?: { full_name?: unknown; name?: unknown };
+  user_metadata?: { full_name?: unknown; name?: unknown; email_verified?: unknown };
 }
 
 // `amr` methods that prove a second factor: TOTP, phone (SMS or voice) and WebAuthn, in the spellings Supabase
@@ -130,13 +131,27 @@ export function bearerIssuedToOAuthClient(authorization: string | null | undefin
   return issuedToOAuthClient(claims);
 }
 
+const BUNDLED_AUTH_ISSUERS: readonly [string, string] = ['ludy-auth', 'crove-auth'];
+
+function acceptedIssuers(configured: string): string | string[] {
+  return BUNDLED_AUTH_ISSUERS.includes(configured) ? [...BUNDLED_AUTH_ISSUERS] : configured;
+}
+
+// Canonicalizes bundled issuers so ludy-auth and crove-auth tokens map to one user_account row.
+export function canonicalIdentityIssuer(configured: string, verifiedIssuer: string): string {
+  return BUNDLED_AUTH_ISSUERS.includes(configured) && BUNDLED_AUTH_ISSUERS.includes(verifiedIssuer)
+    ? configured
+    : verifiedIssuer;
+}
+
 // Signature, algorithm family, issuer, audience and expiry, then the claims Crove relies on. Every failure is 401:
 // OAUTH_CLIENT_TOKEN_REFUSED for a token issued to an OAuth client, UNAUTHENTICATED otherwise.
 export function createTokenVerifier(config: Config, keys: { jwks?: JWTVerifyGetKey } = {}) {
   const jwks = keys.jwks ?? (config.AUTH_JWKS_URL ? createRemoteJWKSet(new URL(config.AUTH_JWKS_URL), { cacheMaxAge: 10 * 60_000 }) : null);
+  const emailAccess = createEmailAccess(config.AUTH_ALLOWED_EMAILS);
   const secret = config.AUTH_JWT_SECRET ? new TextEncoder().encode(config.AUTH_JWT_SECRET) : null;
   const options = {
-    issuer: config.AUTH_ISSUER,
+    issuer: acceptedIssuers(config.AUTH_ISSUER),
     audience: config.AUTH_AUDIENCE,
     requiredClaims: ['iss', 'aud', 'exp', 'sub', 'session_id'],
     clockTolerance: CLOCK_TOLERANCE_S,
@@ -161,6 +176,8 @@ export function createTokenVerifier(config: Config, keys: { jwks?: JWTVerifyGetK
     if (typeof email !== 'string' || email.trim() === '') throw invalid();
     if (typeof sessionId !== 'string' || !UUID.test(sessionId)) throw invalid();
     if (typeof claims.exp !== 'number' || !Number.isFinite(claims.exp)) throw invalid();
+    // After every claim check and before any database work: a refused address never gets a user account.
+    emailAccess(email, claims.user_metadata?.email_verified);
     const meta = claims.user_metadata;
     const name = typeof meta?.full_name === 'string' ? meta.full_name : typeof meta?.name === 'string' ? meta.name : null;
     return {
@@ -196,12 +213,20 @@ export function createAuthenticator(
 ) {
   // Caches only the identity mapping; no authorization decision. Assurance and session come from every token.
   const cache = new Map<string, { user: Pick<AuthUser, 'userId' | 'email' | 'name'>; expires: number }>();
+  // AUTH_ALLOWED_EMAILS for the credential that carries no email (issue #3223); null while the list is unset.
+  const accountAccess = createAccountEmailAccess(config.AUTH_ALLOWED_EMAILS);
 
   return async function authenticate(header: string | undefined): Promise<AuthUser> {
     const token = header?.startsWith('Bearer ') ? header.slice(7).trim() : null;
     if (!token) throw new DomainError('UNAUTHENTICATED', 401, 'Bạn cần đăng nhập');
     // The Ludy extension's own kind of credential (issue #2582): never a JWT, never the identity cache.
     if (isExtensionBearer(token)) {
+      // With AUTH_ALLOWED_EMAILS set: the owner's email against the list, before verifyExtensionBearer, which stamps last_used_at (a refusal writes nothing).
+      // A token no row has gives no email and falls through to the 401 below, as before.
+      if (accountAccess) {
+        const email = await extensionTokenAccountEmail(db, token);
+        if (email !== null) accountAccess(email);
+      }
       const extension = await verifyExtensionBearer(db, token);
       return { userId: extension.userId, email: '', name: null, aal: 'aal1', sessionId: '', mfaAt: null, extension };
     }
@@ -215,13 +240,14 @@ export function createAuthenticator(
       tokenExp: verified.expiresAt,
       ...(confirmLive ? { confirmLive } : {}),
     };
-    const key = `${verified.issuer}|${verified.subject}`;
+    const issuer = canonicalIdentityIssuer(config.AUTH_ISSUER, verified.issuer);
+    const key = `${issuer}|${verified.subject}`;
     const hit = cache.get(key);
     if (hit && hit.expires > Date.now() && hit.user.email === verified.email) return { ...hit.user, ...perToken };
     // Checked first: a revoked, signed-out or disabled session never updates the account's email or name.
     const userId = await withDomainErrors(() =>
       resolveIdentity(db, {
-        issuer: verified.issuer,
+        issuer,
         subject: verified.subject,
         email: verified.email,
         name: verified.name,

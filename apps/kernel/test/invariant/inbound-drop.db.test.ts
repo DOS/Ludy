@@ -8,12 +8,13 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb, type Db } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -25,6 +26,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('inbound drop count invariants on PostgreSQL', () => {
   const dbName = `crove_test_dropinv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   let pool: pg.Pool;
@@ -52,7 +54,7 @@ suite('inbound drop count invariants on PostgreSQL', () => {
   }
 
   async function withClient<T>(url: string, fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: url });
+    const c = createDbClient({ connectionString: url }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -99,16 +101,17 @@ suite('inbound drop count invariants on PostgreSQL', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const loginUrl = (username: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = username;
+      url.username = dbIds ? dbIds.roleName(username) : username;
       url.password = password;
       return url.toString();
     };
     appUrl = loginUrl('crove_app', 'test-app-pw');
     workerUrl = loginUrl('crove_worker', 'test-worker-pw');
-    pool = createPool({ connectionString: appUrl, max: 4 });
+    pool = createDbPool({ connectionString: appUrl, max: 4 }, dbIds);
     db = createDb(pool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: 'in.test' }) });
     for (const name of Object.keys(users) as Array<keyof typeof users>) {
@@ -192,7 +195,7 @@ suite('inbound drop count invariants on PostgreSQL', () => {
       const { rows: grants } = await c.query<{ role: string; op: string }>(
         `SELECT r.rolname AS role, p AS op
          FROM pg_roles r, unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) p
-         WHERE r.rolname LIKE 'crove\\_%' AND has_table_privilege(r.oid, 'crove_kernel.inbound_drop'::regclass, p)
+         WHERE ((r.rolname LIKE 'crove\\_%' OR r.rolname LIKE 'ludy\\_%') AND r.rolname NOT LIKE '%\\_test\\_%' AND r.rolname NOT LIKE 'crove\\_test%' AND r.rolname NOT LIKE 'ludy\\_test%' AND r.rolname <> 'ludy_migrate_test') AND has_table_privilege(r.oid, 'crove_kernel.inbound_drop'::regclass, p)
          ORDER BY 1, 2`,
       );
       const { rows: table } = await c.query<{ rls: boolean; policies: number }>(

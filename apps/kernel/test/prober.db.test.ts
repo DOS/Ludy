@@ -1,4 +1,4 @@
-// Prober and alerting (plan §4.13, issue #39) against a real PostgreSQL 17: health() as crove_prober, the worker
+// Prober and alerting (plan §4.13, issue #39) against a real PostgreSQL 17: health() as ludy_prober, the worker
 // heartbeat, and a probe that delivers its alert to a real HTTP webhook. The privilege checks are in the invariant
 // suite (test/invariant/prober.db.test.ts). Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops
 // its own database.
@@ -9,10 +9,10 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { PgBoss } from 'pg-boss';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, type BlobStore } from '@crove/kernel-runtime';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, type BlobStore } from '@ludy/kernel-runtime';
 import { AVAILABLE_MODULES, loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { EXIT, evaluateHealth, probeOnce, readHealth, runProber, type ProberConfig } from '../src/prober.ts';
@@ -78,11 +78,11 @@ suite('prober on PostgreSQL', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw', crove_prober: 'test-prober-pw' });
-    proberUrl = login('crove_prober', 'test-prober-pw');
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw', ludy_prober: 'test-prober-pw' });
+    proberUrl = login('ludy_prober', 'test-prober-pw');
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     workerDb = createDb(workerPool);
-    appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 2 });
+    appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 2 });
     const appDb = createDb(appPool);
     const runtime = new Runtime(appDb, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
     const owner = await upsertIdentity(appDb, { issuer: 'prober-test', subject: 'owner', email: 'owner@prober.test', name: null });
@@ -123,14 +123,14 @@ suite('prober on PostgreSQL', () => {
       job_oldest_queued_age_seconds: null,
       dead_letter_count: 0,
       worker_heartbeat_age_seconds: null,
-      // pg_notification_queue_usage(), which crove_prober may call like any core function (issue #281).
+      // pg_notification_queue_usage(), which ludy_prober may call like any core function (issue #281).
       notify_queue_usage: 0,
     });
     expect(evaluateHealth(health, limits, 3600).map((f) => f.check)).toEqual(['heartbeat']);
   });
 
   it('reports a missing job schema', async () => {
-    // The vendored migration creates crove_jobs (#25); hide it to see what an incomplete migrate looks like.
+    // The vendored migration creates ludy_jobs (#25); hide it to see what an incomplete migrate looks like.
     const admin = new pg.Client({ connectionString: adminUrl });
     await admin.connect();
     try {
@@ -148,7 +148,7 @@ suite('prober on PostgreSQL', () => {
     const event = (reason: string | null, age: string) =>
       admin((c) =>
         c.query(
-          `INSERT INTO crove_kernel.outbox_event (org_id, type, payload, created_at)
+          `INSERT INTO ludy_kernel.outbox_event (org_id, type, payload, created_at)
            VALUES ($1, 'kernel.file.read_failed', $2::jsonb, now() - $3::interval)`,
           [orgId, JSON.stringify(reason === null ? { fileId: randomUUID(), version: 1 } : { fileId: randomUUID(), version: 1, reason }), age],
         ),
@@ -179,14 +179,14 @@ suite('prober on PostgreSQL', () => {
       // A first batch written two days ago, whose window ended three hours ago, and an audit event of two hours ago
       // after it (backdated, its stamp trigger set aside for this one insert): the archive is two hours behind.
       await c.query(
-        `INSERT INTO crove_kernel.archive_batch (seq, window_from, window_to, row_count, batch_sha256, chain_sha256, object_key, written_at)
+        `INSERT INTO ludy_kernel.archive_batch (seq, window_from, window_to, row_count, batch_sha256, chain_sha256, object_key, written_at)
          VALUES (1, '-infinity', now() - interval '3 hours', 0, $1, $1, 'chain/v1/000000000001.json', now() - interval '2 days')`,
         [hash],
       );
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
       await c.query(
-        `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, command, command_id, outcome, input_sha256)
+        `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, command, command_id, outcome, input_sha256)
          VALUES ($1, now() - interval '2 hours', 'system', 'test.backdated', $2, 'ok', $3)`,
         [orgId, randomUUID(), hash],
       );
@@ -199,8 +199,8 @@ suite('prober on PostgreSQL', () => {
     await admin((c) =>
       // The next batch reaches past now: every row anchored.
       c.query(
-        `INSERT INTO crove_kernel.archive_batch (seq, window_from, window_to, row_count, batch_sha256, chain_sha256, object_key, written_at)
-         SELECT 2, b.window_to, now() + interval '1 hour', 1, $1, $1, 'chain/v1/000000000002.json', now() FROM crove_kernel.archive_batch b WHERE b.seq = 1`,
+        `INSERT INTO ludy_kernel.archive_batch (seq, window_from, window_to, row_count, batch_sha256, chain_sha256, object_key, written_at)
+         SELECT 2, b.window_to, now() + interval '1 hour', 1, $1, $1, 'chain/v1/000000000002.json', now() FROM ludy_kernel.archive_batch b WHERE b.seq = 1`,
         [hash],
       ),
     );
@@ -211,12 +211,12 @@ suite('prober on PostgreSQL', () => {
     expect(evaluateHealth(anchored, archive, 3600).map((f) => f.check)).toContain('archive_verify');
     // A run that failed resets nothing: a verifier that keeps failing alerts as stale too.
     await admin((c) =>
-      c.query(`INSERT INTO crove_kernel.archive_verification (ok, batches, rows_checked, problems, verified_at) VALUES (false, 1, 0, '[]', now() - interval '10 minutes')`),
+      c.query(`INSERT INTO ludy_kernel.archive_verification (ok, batches, rows_checked, problems, verified_at) VALUES (false, 1, 0, '[]', now() - interval '10 minutes')`),
     );
     const failing = await readHealth(proberUrl, 3600);
     expect(failing.archive_verify_age_seconds).toBeGreaterThan(2 * 86_400 - 60);
     expect(evaluateHealth(failing, archive, 3600).map((f) => f.check)).toContain('archive_verify');
-    await admin((c) => c.query(`INSERT INTO crove_kernel.archive_verification (ok, batches, rows_checked, verified_at) VALUES (true, 1, 0, now() - interval '1 hour')`));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.archive_verification (ok, batches, rows_checked, verified_at) VALUES (true, 1, 0, now() - interval '1 hour')`));
     const verified = await readHealth(proberUrl, 3600);
     expect(verified.archive_verify_age_seconds).toBeGreaterThan(3500);
     expect(verified.archive_verify_age_seconds).toBeLessThan(3700);
@@ -236,13 +236,13 @@ suite('prober on PostgreSQL', () => {
   it('measures the relay backlog, queued jobs, dead letters and heartbeats', async () => {
     await admin(async (c) => {
       await c.query(
-        `WITH e AS (INSERT INTO crove_kernel.outbox_event (org_id, type, payload, created_at)
+        `WITH e AS (INSERT INTO ludy_kernel.outbox_event (org_id, type, payload, created_at)
                     VALUES ($1, 'test.health', '{}', now() - interval '10 minutes') RETURNING org_id, id)
-         INSERT INTO crove_kernel.outbox_pending (org_id, event_id) SELECT org_id, id FROM e`,
+         INSERT INTO ludy_kernel.outbox_pending (org_id, event_id) SELECT org_id, id FROM e`,
         [orgId],
       );
       await c.query(
-        `INSERT INTO crove_kernel.inbound_pending (blob_id, raw_sha256, size_bytes, received_at)
+        `INSERT INTO ludy_kernel.inbound_pending (blob_id, raw_sha256, size_bytes, received_at)
          VALUES (repeat('a', 64), repeat('b', 64), 10, now() - interval '20 minutes')`,
       );
     });
@@ -260,7 +260,7 @@ suite('prober on PostgreSQL', () => {
       await c.query(`UPDATE ${JOB_SCHEMA}.job SET state = 'failed', completed_on = now() - interval '30 seconds' WHERE id = $1`, [deadNow]);
       await c.query(`UPDATE ${JOB_SCHEMA}.job SET state = 'failed', completed_on = now() - interval '2 hours' WHERE id = $1`, [deadOld]);
       // A beat from another instance, long ago: the freshest heartbeat counts.
-      await c.query(`INSERT INTO crove_kernel.worker_heartbeat (instance, beat_at) VALUES ('worker-old', now() - interval '1 day')`);
+      await c.query(`INSERT INTO ludy_kernel.worker_heartbeat (instance, beat_at) VALUES ('worker-old', now() - interval '1 day')`);
     });
     expect([late, fresh, notDue].every(Boolean)).toBe(true);
 
@@ -275,7 +275,7 @@ suite('prober on PostgreSQL', () => {
     expect((await readHealth(proberUrl, 1)).dead_letter_count).toBe(1);
 
     // The worker stops beating.
-    await admin((c) => c.query(`UPDATE crove_kernel.worker_heartbeat SET beat_at = now() - interval '10 minutes' WHERE instance = 'worker-a'`));
+    await admin((c) => c.query(`UPDATE ludy_kernel.worker_heartbeat SET beat_at = now() - interval '10 minutes' WHERE instance = 'worker-a'`));
     const stale = await readHealth(proberUrl, 3600);
     expect(stale.worker_heartbeat_age_seconds).toBeGreaterThanOrEqual(600);
     expect(evaluateHealth(stale, limits, 3600).map((f) => f.check)).toEqual(['outbox', 'inbound', 'job_age', 'dead_letters', 'heartbeat']);
@@ -296,10 +296,10 @@ suite('prober on PostgreSQL', () => {
     await beat(workerDb, 'worker-b', ['kernel', 'finance']);
     expect(await queued()).toEqual({ jobs: 2, aged: true });
     // It dies (no clean stop) while worker-a keeps beating: its finance queues still count, for 7 days (#1887).
-    await admin((c) => c.query(`UPDATE crove_kernel.worker_heartbeat SET beat_at = now() - interval '6 days' WHERE instance = 'worker-b'`));
+    await admin((c) => c.query(`UPDATE ludy_kernel.worker_heartbeat SET beat_at = now() - interval '6 days' WHERE instance = 'worker-b'`));
     expect(await queued()).toEqual({ jobs: 2, aged: true });
     expect((await readHealth(proberUrl, 3600)).worker_heartbeat_age_seconds).toBeLessThan(60);
-    await admin((c) => c.query(`UPDATE crove_kernel.worker_heartbeat SET beat_at = now() - interval '8 days' WHERE instance = 'worker-b'`));
+    await admin((c) => c.query(`UPDATE ludy_kernel.worker_heartbeat SET beat_at = now() - interval '8 days' WHERE instance = 'worker-b'`));
     expect(await queued()).toEqual({ jobs: 0, aged: false });
     // A clean stop (the worker's last beat records no modules) drops them out at once.
     await beat(workerDb, 'worker-b', ['kernel', 'finance']);
@@ -320,27 +320,27 @@ suite('prober on PostgreSQL', () => {
     await beat(workerDb, 'worker-a', []);
     expect(await queued()).toEqual({ jobs: 2, aged: true });
     await beat(workerDb, 'worker-a', ['kernel']);
-    await admin((c) => c.query(`DELETE FROM crove_kernel.worker_heartbeat WHERE instance = 'worker-b'`));
+    await admin((c) => c.query(`DELETE FROM ludy_kernel.worker_heartbeat WHERE instance = 'worker-b'`));
     expect(await queued()).toEqual({ jobs: 0, aged: false });
     // A live worker of an older release, which records no modules: every queue counts, as before.
-    await admin((c) => c.query(`INSERT INTO crove_kernel.worker_heartbeat (instance, beat_at) VALUES ('worker-legacy', now())`));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.worker_heartbeat (instance, beat_at) VALUES ('worker-legacy', now())`));
     expect(await queued()).toEqual({ jobs: 2, aged: true });
     // An older release on the same host (a rollback) beats through worker_beat(text): its row loses the modules this
     // release recorded, so every queue counts (Codex review).
-    await admin((c) => c.query(`DELETE FROM crove_kernel.worker_heartbeat WHERE instance = 'worker-legacy'`));
+    await admin((c) => c.query(`DELETE FROM ludy_kernel.worker_heartbeat WHERE instance = 'worker-legacy'`));
     expect(await queued()).toEqual({ jobs: 0, aged: false });
-    const worker = new pg.Client({ connectionString: login('crove_worker', 'test-worker-pw') });
+    const worker = new pg.Client({ connectionString: login('ludy_worker', 'test-worker-pw') });
     await worker.connect();
     try {
-      await worker.query(`SELECT crove_kernel.worker_beat('worker-a')`);
+      await worker.query(`SELECT ludy_kernel.worker_beat('worker-a')`);
     } finally {
       await worker.end();
     }
     expect(await queued()).toEqual({ jobs: 2, aged: true });
     await beat(workerDb, 'worker-a', ['kernel']);
-    await admin((c) => c.query(`INSERT INTO crove_kernel.worker_heartbeat (instance, beat_at) VALUES ('worker-legacy', now())`));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.worker_heartbeat (instance, beat_at) VALUES ('worker-legacy', now())`));
     // Silent for over an hour, it no longer counts; nor does the day-old 'worker-old' (also without modules).
-    await admin((c) => c.query(`UPDATE crove_kernel.worker_heartbeat SET beat_at = now() - interval '2 hours' WHERE instance = 'worker-legacy'`));
+    await admin((c) => c.query(`UPDATE ludy_kernel.worker_heartbeat SET beat_at = now() - interval '2 hours' WHERE instance = 'worker-legacy'`));
     expect(await queued()).toEqual({ jobs: 0, aged: false });
     // Nothing was deleted: the jobs are still there.
     const [left] = await admin(async (c) => (await c.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${JOB_SCHEMA}.job WHERE name = $1 AND state = 'created'`, [QUEUES.extract])).rows);
@@ -350,15 +350,15 @@ suite('prober on PostgreSQL', () => {
     const prober = new pg.Client({ connectionString: proberUrl });
     await prober.connect();
     try {
-      await expect(prober.query(`SELECT crove_kernel.worker_beat('x', ARRAY['kernel'])`)).rejects.toMatchObject({ code: '42501' });
+      await expect(prober.query(`SELECT ludy_kernel.worker_beat('x', ARRAY['kernel'])`)).rejects.toMatchObject({ code: '42501' });
     } finally {
       await prober.end();
     }
     // As the test above left it: worker-a works every module and stopped beating ten minutes ago.
     await beat(workerDb, 'worker-a', ALL_MODULES);
     await admin(async (c) => {
-      await c.query(`DELETE FROM crove_kernel.worker_heartbeat WHERE instance = 'worker-legacy'`);
-      await c.query(`UPDATE crove_kernel.worker_heartbeat SET beat_at = now() - interval '10 minutes' WHERE instance = 'worker-a'`);
+      await c.query(`DELETE FROM ludy_kernel.worker_heartbeat WHERE instance = 'worker-legacy'`);
+      await c.query(`UPDATE ludy_kernel.worker_heartbeat SET beat_at = now() - interval '10 minutes' WHERE instance = 'worker-a'`);
     });
   });
 
@@ -367,10 +367,11 @@ suite('prober on PostgreSQL', () => {
     expect(await probeOnce(proberConfig(), quiet)).toBe(EXIT.unhealthy);
     expect(received).toHaveLength(1);
     expect(received[0]?.path).toBe('/hook/secret');
-    const body = received[0]?.body as { text: string; crove: { kind: string; findings: Array<{ check: string }>; health: Record<string, unknown> } };
-    expect(body.text).toMatch(/^\[Crove\] ALERT on prober-test: 5 health check\(s\) failed\./);
-    expect(body.crove.kind).toBe('alert');
-    expect(body.crove.findings.map((f) => f.check)).toEqual(['outbox', 'inbound', 'job_age', 'dead_letters', 'heartbeat']);
+    const body = received[0]?.body as { text: string; ludy: { kind: string; findings: Array<{ check: string }>; health: Record<string, unknown> }; crove: { kind: string; findings: Array<{ check: string }>; health: Record<string, unknown> } };
+    expect(body.text).toMatch(/^\[Ludy\] ALERT on prober-test: 5 health check\(s\) failed\./);
+    expect(body.ludy.kind).toBe('alert');
+    expect(body.ludy.findings.map((f) => f.check)).toEqual(['outbox', 'inbound', 'job_age', 'dead_letters', 'heartbeat']);
+    expect(body.crove).toEqual(body.ludy);
     // Aggregates only: no org id or payload leaves the database.
     expect(JSON.stringify(body)).not.toContain(orgId);
     expect(Object.keys(body.crove.health).sort()).toEqual([
@@ -398,16 +399,16 @@ suite('prober on PostgreSQL', () => {
     expect(received).toEqual([
       {
         path: '/hook/secret',
-        body: { text: '[Crove] Test alert from office: alert delivery works.', content: '[Crove] Test alert from office: alert delivery works.', crove: expect.objectContaining({ kind: 'test', severity: 'info' }) },
+        body: { text: '[Ludy] Test alert from office: alert delivery works.', content: '[Ludy] Test alert from office: alert delivery works.', ludy: expect.objectContaining({ kind: 'test', severity: 'info' }), crove: expect.objectContaining({ kind: 'test', severity: 'info' }) },
       },
     ]);
   });
 
   it('exits 2 and alerts when the database refuses the login, and refuses to probe as a superuser', async () => {
     received.length = 0;
-    expect(await probeOnce(proberConfig({ databaseUrl: login('crove_prober', 'wrong-password') }), quiet)).toBe(EXIT.probeFailed);
+    expect(await probeOnce(proberConfig({ databaseUrl: login('ludy_prober', 'wrong-password') }), quiet)).toBe(EXIT.probeFailed);
     expect(received[0]?.body).toMatchObject({ crove: { kind: 'alert', findings: [{ check: 'probe' }] } });
-    await expect(readHealth(adminUrl, 3600)).rejects.toThrow(/refusing to probe as .*connect PROBER_DATABASE_URL as crove_prober/);
+    await expect(readHealth(adminUrl, 3600)).rejects.toThrow(/refusing to probe as .*connect PROBER_DATABASE_URL as ludy_prober/);
   });
 
   // #1952 (plan §3.5): an API process of its own is ready only while every live worker runs its build or a newer one,
@@ -431,7 +432,7 @@ suite('prober on PostgreSQL', () => {
       return { status: response.status, body: await response.json() };
     };
     const notReady = { status: 503, body: { ready: false, reason: 'worker_build' } };
-    await admin((c) => c.query('DELETE FROM crove_kernel.worker_heartbeat'));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.worker_heartbeat'));
     // No live worker: the prober's heartbeat alert, not a reason to take the API out of rotation.
     expect(await ready()).toEqual({ status: 200, body: { ready: true } });
     await beat(workerDb, 'worker-a', ['kernel'], { id: 'aaaa', time: API });
@@ -446,7 +447,7 @@ suite('prober on PostgreSQL', () => {
     expect(await ready()).toEqual({ status: 200, body: { ready: true } });
     await beat(workerDb, 'worker-b', ['kernel'], { id: 'bbbb', time: '2026-10-31T23:59:59+00:00' });
     expect(await ready()).toEqual(notReady);
-    await admin((c) => c.query(`UPDATE crove_kernel.worker_heartbeat SET beat_at = now() - interval '91 seconds' WHERE instance = 'worker-b'`));
+    await admin((c) => c.query(`UPDATE ludy_kernel.worker_heartbeat SET beat_at = now() - interval '91 seconds' WHERE instance = 'worker-b'`));
     expect(await ready()).toEqual({ status: 200, body: { ready: true } });
     // A newer worker is fine.
     await beat(workerDb, 'worker-c', ['kernel'], { id: 'cccc', time: '2026-11-02T00:00:00+00:00' });
@@ -457,29 +458,29 @@ suite('prober on PostgreSQL', () => {
     // A rollback on the same host: the older release's beat (two arguments, or one) clears the build this one recorded.
     await beat(workerDb, 'worker-c', ['kernel'], { id: 'cccc', time: '2026-11-02T00:00:00+00:00' });
     expect(await ready()).toEqual({ status: 200, body: { ready: true } });
-    const worker = new pg.Client({ connectionString: login('crove_worker', 'test-worker-pw') });
+    const worker = new pg.Client({ connectionString: login('ludy_worker', 'test-worker-pw') });
     await worker.connect();
     try {
-      await worker.query(`SELECT crove_kernel.worker_beat('worker-c', ARRAY['kernel'])`);
+      await worker.query(`SELECT ludy_kernel.worker_beat('worker-c', ARRAY['kernel'])`);
       expect(await ready()).toEqual(notReady);
       await beat(workerDb, 'worker-c', ['kernel'], { id: 'cccc', time: '2026-11-02T00:00:00+00:00' });
-      await worker.query(`SELECT crove_kernel.worker_beat('worker-c')`);
+      await worker.query(`SELECT ludy_kernel.worker_beat('worker-c')`);
       expect(await ready()).toEqual(notReady);
       // A build id that is not one is refused, as CROVE_BUILD is at boot.
-      await expect(worker.query(`SELECT crove_kernel.worker_beat('worker-c', ARRAY['kernel'], 'a b', now())`)).rejects.toThrow(/WORKER_BEAT_BUILD_INVALID/);
+      await expect(worker.query(`SELECT ludy_kernel.worker_beat('worker-c', ARRAY['kernel'], 'a b', now())`)).rejects.toThrow(/WORKER_BEAT_BUILD_INVALID/);
     } finally {
       await worker.end();
     }
     // The API's role reads counts only: no instance, build or module reaches it.
-    const app = new pg.Client({ connectionString: login('crove_app', 'test-app-pw') });
+    const app = new pg.Client({ connectionString: login('ludy_app', 'test-app-pw') });
     await app.connect();
     try {
-      const { rows } = await app.query(`SELECT * FROM crove_kernel.worker_build_lag($1::timestamptz)`, [API]);
+      const { rows } = await app.query(`SELECT * FROM ludy_kernel.worker_build_lag($1::timestamptz)`, [API]);
       expect(rows).toEqual([{ live: 2, older: 1 }]);
-      await expect(app.query('SELECT * FROM crove_kernel.worker_heartbeat')).rejects.toThrow(/permission denied/);
+      await expect(app.query('SELECT * FROM ludy_kernel.worker_heartbeat')).rejects.toThrow(/permission denied/);
     } finally {
       await app.end();
     }
-    await admin((c) => c.query('DELETE FROM crove_kernel.worker_heartbeat'));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.worker_heartbeat'));
   });
 });

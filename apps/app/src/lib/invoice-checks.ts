@@ -2,7 +2,7 @@
 // Vietnamese sentence they were written with; the SPA words the code in the reader's language. A check written before
 // #677 has no code, and a code this SPA does not know (or one missing a parameter) keeps its stored sentence.
 // test/invoice-checks.test.ts checks that every code of INVOICE_CHECK_CODES is worded here.
-import { INVOICE_CHECK_CODES, type Check, type InvoiceCheckCode } from '@crove/kernel-contract';
+import { INVOICE_CHECK_CODES, type Check, type InvoiceCheckCode } from '@ludy/kernel-contract';
 import type { Translate } from '../i18n/runtime.ts';
 
 export function isInvoiceCheckCode(code: string | undefined): code is InvoiceCheckCode {
@@ -60,6 +60,8 @@ export function invoiceCheckMessage(check: Check, t: Translate, format: { money:
       return amountSentence(t, p, money);
     case 'anomaly_cash.payroll_limit':
       return has('count') ? t('invoiceChecks.anomaly_cash.payrollLimit', { count: p.count ?? '' }) : check.message;
+    case 'anomaly_payroll.active_payment':
+      return has('accounts') ? t('invoiceChecks.anomaly_payroll.activePayment', { accounts: p.accounts ?? '' }) : check.message;
     case 'anomaly_price.jump':
       return has('item', 'usual', 'current', 'percent')
         ? t('invoiceChecks.anomaly_price.jump', { item: p.item ?? '', usual: money(p.usual ?? ''), current: money(p.current ?? ''), percent: p.percent ?? '' })

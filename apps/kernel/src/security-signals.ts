@@ -1,5 +1,5 @@
 // Detective security alerts (issue #996, plan §7.8 "Detective controls (with alerts)"). Every few minutes the worker
-// asks crove_kernel.security_signals (worker only) for the signals worth an alert now, logs each as an ALERT line and,
+// asks ludy_kernel.security_signals (worker only) for the signals worth an alert now, logs each as an ALERT line and,
 // when ALERT_WEBHOOK_URL is set, posts it to the same chat as the prober's alerts:
 //   actor_many_orgs   one user acting in more orgs than SECURITY_ALERT_ORG_THRESHOLD within the window;
 //   refusal_spike     more refusals across the deployment than SECURITY_ALERT_REFUSAL_THRESHOLD within the window;
@@ -10,7 +10,7 @@
 // repeat interval. Messages hold ids and counts only: no email, name or token. The schema-change alerts also name the
 // database role, the command and the first changed object, never the statement text.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
+import type { Db } from '@ludy/db';
 import { postMessage, type WebhookTarget } from './alert.ts';
 
 export const SECURITY_SWEEP_MS = 5 * 60_000;
@@ -66,7 +66,7 @@ export async function sweepSecuritySignals(deps: SecurityAlertDeps): Promise<num
   const log = deps.log ?? ((line: string) => console.warn(line));
   const { rows } = await sql<{ signal: SecuritySignal['signal']; subject: string; value: string; org_id: string | null; detail: string | null }>`
     SELECT signal, subject, value::text AS value, org_id, detail
-    FROM crove_kernel.security_signals(${thresholds.windowSeconds}::int, ${thresholds.orgThreshold}::int, ${thresholds.refusalThreshold}::int, ${thresholds.repeatSeconds}::int)`.execute(
+    FROM ludy_kernel.security_signals(${thresholds.windowSeconds}::int, ${thresholds.orgThreshold}::int, ${thresholds.refusalThreshold}::int, ${thresholds.repeatSeconds}::int)`.execute(
     deps.workerDb,
   );
   for (const row of rows) {
@@ -74,8 +74,9 @@ export async function sweepSecuritySignals(deps: SecurityAlertDeps): Promise<num
     const text = securityAlertText(signal, thresholds);
     log(`[security] ALERT ${signal.signal}: ${text}`);
     if (!deps.target?.webhookUrl) continue;
+    // Keep [Crove] subject prefix until #3969 widens protected ddl-watch.db.test.ts; switch to [Ludy] in #3970/#3972.
     const delivery = await postMessage(
-      { text: `[Crove] Security alert from ${deps.target.instance}: ${text}`, crove: { kind: 'security', instance: deps.target.instance, ...signal } },
+      { text: `[Crove] Security alert from ${deps.target.instance}: ${text}`, ludy: { kind: 'security', instance: deps.target.instance, ...signal } },
       { webhookUrl: deps.target.webhookUrl, format: deps.target.webhookFormat, telegramChatId: deps.target.telegramChatId, fetch: deps.fetch },
     );
     if (!delivery.ok) log(`[security] could not post the alert: ${delivery.error ?? 'unknown error'}`);

@@ -4,7 +4,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { EventType } from '@crove/kernel-contract';
+import type { EventType } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 
@@ -47,7 +47,7 @@ function card(role: 'owner' | 'member' | 'viewer'): string {
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
       <IntlProvider locale="en" messages={catalog('en')}>
-        <EventTypesCard members={members} me={ME} role={role} />
+        <EventTypesCard slug="acme" members={members} me={ME} role={role} />
       </IntlProvider>
     </QueryClientProvider>,
   );
@@ -72,9 +72,11 @@ describe('EventTypesCard', () => {
     const member = card('member').split('<li').slice(1);
     expect(member[0]).toContain(`>${en.eventTypes.edit}<`);
     expect(member[1]).not.toContain(`>${en.eventTypes.edit}<`);
-    expect(card('member')).toContain(`aria-label="${en.eventTypes.addTitle}"`);
+    // Adding is a button that opens a panel (#3608); nothing is open under the list.
+    expect(card('member')).toContain(`>${en.eventTypes.addTitle}<`);
+    expect(card('member')).not.toContain('<form');
     const viewer = card('viewer');
     expect(viewer).not.toContain(`>${en.eventTypes.edit}<`);
-    expect(viewer).not.toContain(`aria-label="${en.eventTypes.addTitle}"`);
+    expect(viewer).not.toContain(`>${en.eventTypes.addTitle}<`);
   });
 });

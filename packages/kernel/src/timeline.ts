@@ -7,9 +7,9 @@
 // le_scope policy, #1716).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, type TimelineEntry } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { zId, type TimelineEntry } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 // The most entries one timeline shows, and the most records it follows.
@@ -30,7 +30,7 @@ export const proposalTimeline = defineQuery({
   access: ALL,
   handler: async (ctx, input): Promise<{ items: TimelineEntry[]; more: boolean }> => {
     const proposal = await ctx.trx
-      .selectFrom('crove_kernel.proposal')
+      .selectFrom('ludy_kernel.proposal')
       .select(['id', 'source_file_id', 'created_at', 'result'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
@@ -40,7 +40,7 @@ export const proposalTimeline = defineQuery({
     // time): its own command's row names it in proposal_id, the commands its edit and execution run in
     // detail.under_proposal (#1706). Only successful commands: a refused one changed nothing.
     const { rows: targets } = await sql<{ target_type: string; target_id: string }>`
-      SELECT DISTINCT target_type, target_id FROM crove_kernel.audit_event
+      SELECT DISTINCT target_type, target_id FROM ludy_kernel.audit_event
       WHERE org_id = ${ctx.orgId}::uuid AND occurred_at >= ${proposal.created_at}
         AND (proposal_id = ${proposal.id}::uuid OR detail ->> 'under_proposal' = ${proposal.id}::uuid::text)
         AND outcome = 'ok' AND target_type IS NOT NULL AND target_id IS NOT NULL
@@ -56,9 +56,9 @@ export const proposalTimeline = defineQuery({
       if (typeof id === 'string' && UUID.test(id)) add(type, id.toLowerCase());
     }
     const list = [...records.values()];
-    const { rows } = await sql<{ id: string; record_type: string; kind: string; summary: string; actor_id: string | null; agent_id: string | null; occurred_at: Date }>`
-      SELECT a.id, a.record_type, a.kind, a.summary, a.actor_id, a.agent_id, a.occurred_at
-      FROM crove_kernel.activity a
+    const { rows } = await sql<{ id: string; record_type: string; kind: string; summary: string; actor_id: string | null; agent_id: string | null; occurred_at: Date; actor_origin: 'ui' | 'mcp' }>`
+      SELECT a.id, a.record_type, a.kind, a.summary, a.actor_id, a.agent_id, a.occurred_at, a.actor_origin
+      FROM ludy_kernel.activity a
       JOIN unnest(${list.map((r) => r.type)}::text[], ${list.map((r) => r.id)}::uuid[]) AS r(record_type, record_id)
         ON a.record_type = r.record_type AND a.record_id = r.record_id
       WHERE a.org_id = ${ctx.orgId}::uuid
@@ -76,6 +76,7 @@ interface ActivityRow {
   actor_id: string | null;
   agent_id: string | null;
   occurred_at: Date;
+  actor_origin: 'ui' | 'mcp';
 }
 
 // The newest TIMELINE_LIMIT of the rows (newest first, one more than the limit to know whether there are more), oldest
@@ -88,11 +89,11 @@ async function timelineOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, rows: readon
   const agents = [...new Set(shown.map((r) => r.agent_id).filter((a): a is string => a !== null))];
   if (users.length > 0) {
     const { rows: people } = await sql<{ user_id: string; email: string; display_name: string | null }>`
-      SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${users}::uuid[])`.execute(ctx.trx);
+      SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${users}::uuid[])`.execute(ctx.trx);
     for (const p of people) names.set(p.user_id, p.display_name ?? p.email);
   }
   if (agents.length > 0) {
-    const found = await ctx.trx.selectFrom('crove_kernel.agent').select(['id', 'display_name']).where('org_id', '=', ctx.orgId).where('id', 'in', agents).execute();
+    const found = await ctx.trx.selectFrom('ludy_kernel.agent').select(['id', 'display_name']).where('org_id', '=', ctx.orgId).where('id', 'in', agents).execute();
     for (const a of found) names.set(a.id, a.display_name);
   }
   return {
@@ -104,6 +105,7 @@ async function timelineOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, rows: readon
       summary: r.summary,
       actorType: r.agent_id ? 'agent' : r.actor_id ? 'user' : 'system',
       actorName: names.get(r.agent_id ?? r.actor_id ?? '') ?? null,
+      actorOrigin: r.actor_origin,
     })),
     more: rows.length > TIMELINE_LIMIT,
   };
@@ -118,11 +120,11 @@ export const partyTimeline = defineQuery({
   input: z.object({ partyId: zId }),
   access: ALL,
   handler: async (ctx, input): Promise<{ items: TimelineEntry[]; more: boolean }> => {
-    const party = await ctx.trx.selectFrom('crove_kernel.party').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.partyId).executeTakeFirst();
+    const party = await ctx.trx.selectFrom('ludy_kernel.party').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.partyId).executeTakeFirst();
     if (!party) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy liên hệ');
     const { rows } = await sql<ActivityRow>`
-      SELECT a.id, a.record_type, a.kind, a.summary, a.actor_id, a.agent_id, a.occurred_at
-      FROM crove_kernel.activity a
+      SELECT a.id, a.record_type, a.kind, a.summary, a.actor_id, a.agent_id, a.occurred_at, a.actor_origin
+      FROM ludy_kernel.activity a
       WHERE a.org_id = ${ctx.orgId}::uuid AND a.record_type = 'kernel.party' AND a.record_id = ${party.id}::uuid
       ORDER BY a.occurred_at DESC, a.id DESC
       LIMIT ${TIMELINE_LIMIT + 1}`.execute(ctx.trx);

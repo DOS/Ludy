@@ -16,13 +16,14 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb, type Db } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { RESTORE_REPORT_EXIT, numberReseedCommand, runRestoreReport } from '../../src/restore-report.ts';
 import { LocalArchiveStore, RESTORE_ACK_PREFIX, archiveKey, verifyArchive, writeArchive, type RestoreAck } from '../../src/worm.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -42,22 +43,23 @@ suite('WORM verifier after a restore on PostgreSQL (#2020)', () => {
   let orgId = '';
   let userId = '';
   const pools: pg.Pool[] = [];
+  let dbIds: DbIdentifiers | undefined;
 
   const urlOf = (name: string, user?: [string, string]) => {
     const url = new URL(ADMIN as string);
     url.pathname = `/${name}`;
-    if (user) [url.username, url.password] = user;
+    if (user) [url.username, url.password] = [dbIds ? dbIds.roleName(user[0]) : user[0], user[1]];
     return url.toString();
   };
   const APP: [string, string] = ['crove_app', 'test-app-pw'];
   const WORKER: [string, string] = ['crove_worker', 'test-worker-pw'];
   function dbFor(name: string, user: [string, string]): Db {
-    const pool = createPool({ connectionString: urlOf(name, user), max: 2 });
+    const pool = createDbPool({ connectionString: urlOf(name, user), max: 2 }, dbIds);
     pools.push(pool);
     return createDb(pool);
   }
   async function client<T>(url: string, fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: url });
+    const c = createDbClient({ connectionString: url }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -110,7 +112,8 @@ suite('WORM verifier after a restore on PostgreSQL (#2020)', () => {
   beforeAll(async () => {
     await client(ADMIN as string, (c) => c.query(`CREATE DATABASE ${dbName}`));
     await migrate({ adminUrl: urlOf(dbName), dir: MIGRATIONS });
-    await setRolePasswords(urlOf(dbName), { crove_app: APP[1], crove_worker: WORKER[1] });
+    dbIds = await resolveDbIdentifiers(urlOf(dbName));
+    await setActiveRolePasswords(urlOf(dbName), { crove_app: APP[1], crove_worker: WORKER[1] }, dbIds);
     const db = dbFor(dbName, APP);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
     userId = await upsertIdentity(db, { issuer: 'test', subject: 'worm-restore', email: 'worm-restore@example.com', name: null });

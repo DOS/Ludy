@@ -14,9 +14,9 @@
 //   a log line. Telegram itself allows a bot about 20 messages a minute in one group and answers 429 beyond.
 // - A failure is logged without the target or the platform's text, and never touches the mail notifications, which
 //   run in their own job, or the outbox relay.
-import { discordChatTargetOf, DiscordError, sendDiscordText, sendTelegramText, telegramChatTargetOf, TelegramError, type DiscordChatTarget, type Fetch, type TelegramChatTarget } from '@crove/channel';
-import { CHAT_ALERT_PROVIDER, type ChatAlertFacts, type ChatAlertTarget, type ChatAlertTestCode, type SealedChatAlert } from '@crove/mod-social';
-import { CredentialError, DomainError, type Actor, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import { discordChatTargetOf, DiscordError, sendDiscordText, sendTelegramText, telegramChatTargetOf, TelegramError, type DiscordChatTarget, type Fetch, type TelegramChatTarget } from '@ludy/channel';
+import { CHAT_ALERT_PROVIDER, type ChatAlertFacts, type ChatAlertTarget, type ChatAlertTestCode, type SealedChatAlert } from '@ludy/mod-social';
+import { CredentialError, DomainError, type Actor, type CredentialBroker, type Runtime } from '@ludy/kernel-runtime';
 import { DEFAULT_BRAND_NAME } from './config.ts';
 
 export const CHAT_ALERT_PER_MINUTE = 30;
@@ -74,6 +74,10 @@ export function chatAlertText(facts: ChatAlertFacts, options: { publicUrl: strin
       line = `${post(true)}${on('trên')} đang chờ duyệt`;
       break;
     case 'failed':
+      if (facts.count !== undefined) {
+        line = `${facts.count} bài không đăng được vì đã quá giờ hẹn`;
+        break;
+      }
       line = facts.event === 'social.variant.needs_attention' ? `${post(true)}${on('trên')} cần bạn kiểm tra` : `${post(true)} không đăng được${on('lên')}`;
       break;
     case 'published':
@@ -87,7 +91,9 @@ export function chatAlertText(facts: ChatAlertFacts, options: { publicUrl: strin
     }
   }
   const base = options.publicUrl.trim().replace(/\/+$/, '');
-  return base ? `${line}: ${base}/o/${facts.slug}/social/${facts.postId}` : `${line}.`;
+  // A combined alert (no post) opens the posts that need a person.
+  const path = facts.postId === null ? `social?tab=attention` : `social/${facts.postId}`;
+  return base ? `${line}: ${base}/o/${facts.slug}/${path}` : `${line}.`;
 }
 
 // ---------------------------------------------------------------------------

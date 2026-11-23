@@ -21,8 +21,8 @@ import type { AddressInfo } from 'node:net';
 import { join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { EgressError, egressFetch, guardedRequest, type EgressOptions } from '@crove/kernel-runtime';
-import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ, kernelCommands } from '@crove/kernel';
+import { EgressError, egressFetch, guardedRequest, type EgressOptions } from '@ludy/kernel-runtime';
+import { DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLIER_BANK_CHANGED_READ, kernelCommands } from '@ludy/kernel';
 import { QUEUES, queueEgress } from '../../src/jobs-schema.ts';
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
@@ -268,6 +268,9 @@ const RULES = [DEAL_WITHOUT_INVOICE_READ, RECEIVABLE_WITH_OPEN_DEAL_READ, SUPPLI
 // An item's key is its rule's short name and the ids it is about: lower-case words, then ids, never anything a person typed.
 const KEY_RE = /^[a-z]+(_[a-z]+)*(:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}){1,3}$/;
 const TYPES = ['signal.fired', 'schedule.due', 'ping'];
+// The type that may join the set (#3803, owner approval 2026-11-18, Meetings PO design review): sent to a company grant when the minutes of an org-visible meeting are published. Optional here so each
+// side can land on its own: a follow-up makes it required. Its body carries exactly two data keys, an id and an instant, and nothing a person typed (no title, no text, no name).
+const OPTIONAL_TYPES = ['meetings.minutes_published'];
 const SEVERITIES = ['info', 'warn', 'block'];
 const TOP_KEYS = ['id', 'type', 'created_at', 'org', 'grant', 'data'];
 const ITEM_KEYS = ['rule', 'key', 'severity', 'party_id', 'deal_id', 'invoice_id', 'amount', 'currency', 'due_on', 'days'];
@@ -281,11 +284,15 @@ function bodyProblems(body: unknown): string[] {
   for (const k of Object.keys(body)) if (!TOP_KEYS.includes(k)) out.push(`unknown key ${k}`);
   for (const k of ['id', 'org', 'grant']) if (typeof body[k] !== 'string' || !UUID_RE.test(body[k])) out.push(`${k} is not an id`);
   if (typeof body.created_at !== 'string' || !INSTANT_RE.test(body.created_at)) out.push('created_at is not an instant');
-  if (typeof body.type !== 'string' || !TYPES.includes(body.type)) out.push('type is not an event type');
+  if (typeof body.type !== 'string' || !(TYPES.includes(body.type) || OPTIONAL_TYPES.includes(body.type))) out.push('type is not an event type');
   const data = body.data;
   if (!isObject(data)) return [...out, 'data is not an object'];
   if (body.type === 'ping') {
     if (Object.keys(data).length > 0) out.push('a ping carries no data');
+  } else if (body.type === 'meetings.minutes_published') {
+    for (const k of Object.keys(data)) if (k !== 'meeting_id' && k !== 'published_at') out.push(`unknown data key ${k}`);
+    if (typeof data.meeting_id !== 'string' || !UUID_RE.test(data.meeting_id)) out.push('meeting_id is not an id');
+    if (typeof data.published_at !== 'string' || !INSTANT_RE.test(data.published_at)) out.push('published_at is not an instant');
   } else if (body.type === 'schedule.due') {
     for (const k of Object.keys(data)) if (k !== 'date') out.push(`unknown data key ${k}`);
     if (typeof data.date !== 'string' || !DATE_RE.test(data.date)) out.push('date is not a date');
@@ -323,6 +330,8 @@ const VALID = [
   { ...base, type: 'schedule.due', data: { date: '2026-11-12' } },
   { ...base, type: 'ping', data: {} },
 ];
+// The optional type's body, which the builder may or may not make yet: if it makes one, it is exactly this.
+const OPTIONAL_VALID = [{ ...base, type: 'meetings.minutes_published', data: { meeting_id: UUID, published_at: '2026-11-12T02:59:58.123Z' } }];
 // What a body must refuse, each with the thing that must not cross.
 const HOSTILE: Array<[string, unknown]> = [
   ['a name beside the ids', { ...VALID[0], data: { items: [{ ...item, party_name: 'Công ty TNHH Nguyễn Văn A' }] } }],
@@ -341,11 +350,21 @@ const HOSTILE: Array<[string, unknown]> = [
   ['a ping with data', { ...VALID[2], data: { note: 'x' } }],
   ['an unknown event type', { ...VALID[1], type: 'note.created' }],
   ['a date with text', { ...VALID[1], data: { date: 'thứ hai 12/11' } }],
+  // The optional type carries two ids and instants, never a title, a summary or a name, and never the camelCase of the issue's first draft (the body is snake_case throughout).
+  ['a title beside the meeting id', { ...OPTIONAL_VALID[0], data: { meeting_id: UUID, published_at: '2026-11-12T02:59:58.123Z', title: 'Nguyen Van A họp giá' } }],
+  ['a summary in the minutes event', { ...OPTIONAL_VALID[0], data: { meeting_id: UUID, published_at: '2026-11-12T02:59:58.123Z', summary: 'Hai khoản cần xem' } }],
+  ['the camelCase keys', { ...OPTIONAL_VALID[0], data: { meetingId: UUID, publishedAt: '2026-11-12T02:59:58.123Z' } }],
+  ['a name for the meeting id', { ...OPTIONAL_VALID[0], data: { meeting_id: 'Nguyen Van A', published_at: '2026-11-12T02:59:58.123Z' } }],
+  ['text for the published instant', { ...OPTIONAL_VALID[0], data: { meeting_id: UUID, published_at: 'thứ hai' } }],
+  ['a date for the published instant', { ...OPTIONAL_VALID[0], data: { meeting_id: UUID, published_at: '2026-11-12' } }],
+  ['no meeting id', { ...OPTIONAL_VALID[0], data: { published_at: '2026-11-12T02:59:58.123Z' } }],
+  ['items in the minutes event', { ...OPTIONAL_VALID[0], data: { items: [] } }],
+  ['a minutes event with a note at the top', { ...OPTIONAL_VALID[0], note: 'gọi lại khách' }],
 ];
 
 describe('what a wake-up body may carry (#3024)', () => {
   it('accepts the three bodies the design lists and refuses what must not cross, by the pinned shapes', () => {
-    for (const body of VALID) expect(bodyProblems(body), JSON.stringify(body)).toEqual([]);
+    for (const body of [...VALID, ...OPTIONAL_VALID]) expect(bodyProblems(body), JSON.stringify(body)).toEqual([]);
     for (const [name, body] of HOSTILE) expect(bodyProblems(body), name).not.toEqual([]);
   });
 
@@ -360,6 +379,19 @@ describe('what a wake-up body may carry (#3024)', () => {
       const parsed: unknown = JSON.parse(text);
       expect(bodyProblems(parsed), text).toEqual([]);
       expect(parsed).toEqual(body);
+    }
+    // The optional type: when the builder makes it, it makes exactly the pinned body; until then it refuses it (a throw), which the hostile loop below accepts as well.
+    for (const body of OPTIONAL_VALID) {
+      let text: string | null = null;
+      try {
+        text = wakeBody(body);
+      } catch {
+        text = null;
+      }
+      if (text !== null) {
+        expect(bodyProblems(JSON.parse(text) as unknown), text).toEqual([]);
+        expect(JSON.parse(text) as unknown).toEqual(body);
+      }
     }
     for (const [name, body] of HOSTILE) {
       // Refused (a throw) or reduced to a body that still fits: never a body that carries the hostile part.
@@ -425,7 +457,7 @@ function statements(table: string): string[] {
 function columnsOf(tables: readonly string[], table: string): Array<readonly [string, string]> {
   const out: Array<readonly [string, string]> = [];
   for (const st of tables) {
-    const create = st.match(new RegExp(`CREATE TABLE(?: IF NOT EXISTS)?\\s+crove_kernel\\.${table}\\s*\\(([\\s\\S]*)\\)\\s*$`, 'i'));
+    const create = st.match(new RegExp(`CREATE TABLE(?: IF NOT EXISTS)?\\s+(?:crove|ludy)_kernel\\.${table}\\s*\\(([\\s\\S]*)\\)\\s*$`, 'i'));
     if (create) {
       let depth = 0;
       let current = '';
@@ -444,7 +476,7 @@ function columnsOf(tables: readonly string[], table: string): Array<readonly [st
         if (m && !/^(primary|unique|foreign|check|constraint)$/i.test(m[1] as string)) out.push([m[1] as string, (m[2] as string).toLowerCase()]);
       }
     }
-    for (const m of st.matchAll(new RegExp(`ALTER TABLE\\s+(?:ONLY\\s+)?crove_kernel\\.${table}\\b[\\s\\S]*?ADD COLUMN(?: IF NOT EXISTS)?\\s+([a-z_][a-z0-9_]*)\\s+([a-z]+(?:\\[\\])?)`, 'gi'))) out.push([m[1] as string, (m[2] as string).toLowerCase()]);
+    for (const m of st.matchAll(new RegExp(`ALTER TABLE\\s+(?:ONLY\\s+)?(?:crove|ludy)_kernel\\.${table}\\b[\\s\\S]*?ADD COLUMN(?: IF NOT EXISTS)?\\s+([a-z_][a-z0-9_]*)\\s+([a-z]+(?:\\[\\])?)`, 'gi'))) out.push([m[1] as string, (m[2] as string).toLowerCase()]);
   }
   return out;
 }
@@ -452,8 +484,9 @@ function columnsOf(tables: readonly string[], table: string): Array<readonly [st
 // Row-level security as every tenant table has it: apply_tenant_rls, or, for a table no login role may touch (reached only by definers, like agent_grant), row-level
 // security enabled and the agent write guard installed.
 const rlsOk = (all: string, table: string): boolean =>
-  new RegExp(`apply_tenant_rls\\(\\s*'crove_kernel\\.${table}'`).test(all) ||
-  (new RegExp(`ALTER TABLE\\s+crove_kernel\\.${table}\\s+ENABLE ROW LEVEL SECURITY`, 'i').test(all) && new RegExp(`agent_write_guard_install\\(\\s*'crove_kernel\\.${table}'`).test(all));
+  new RegExp(`apply_tenant_rls\\(\\s*'(?:crove|ludy)_kernel\\.${table}'`).test(all) ||
+  (new RegExp(`ALTER TABLE\\s+(?:crove|ludy)_kernel\\.${table}\\s+ENABLE ROW LEVEL SECURITY`, 'i').test(all) &&
+    new RegExp(`agent_write_guard_install\\(\\s*'(?:crove|ludy)_kernel\\.${table}'`).test(all));
 
 describe('what the grant wake-up tables may hold (#3024)', () => {
   it('keeps a secret only sealed, in the two named columns, puts the wake-up table under row-level security and ties it to its grant', () => {
@@ -468,7 +501,7 @@ describe('what the grant wake-up tables may hold (#3024)', () => {
     }
     const all = tables.join('\n');
     expect(rlsOk(all, 'agent_grant_wake'), 'row-level security: apply_tenant_rls, or enabled with the agent write guard on a definer-only table').toBe(true);
-    expect(all, 'a foreign key to the grant, so revoking or expiring it reaches the wake-up').toMatch(/REFERENCES\s+crove_kernel\.agent_grant\s*\(/i);
+    expect(all, 'a foreign key to the grant, so revoking or expiring it reaches the wake-up').toMatch(/REFERENCES\s+(?:crove|ludy)_kernel\.agent_grant\s*\(/i);
   });
 
   it('keeps the delivery rows free of any secret column and under row-level security', () => {

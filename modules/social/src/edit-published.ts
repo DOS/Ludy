@@ -12,9 +12,9 @@
 // An unclear answer goes to a person, who checks the platform and asks again: nothing asks again by itself.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { SOCIAL_REVIEW_CHECKS_MAX, zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { SOCIAL_REVIEW_CHECKS_MAX, zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { effectiveContent } from './domain/approval.ts';
 import { editRefusal } from './domain/channels.ts';
 import { callRevision, publishCallKey } from './domain/publish.ts';
@@ -54,7 +54,7 @@ export async function editCallsOf(trx: Trx, orgId: string, variants: readonly Ed
   if (variants.length === 0) return out;
   const prefixes = variants.map(editPrefix);
   const { rows } = await sql<EditCall>`
-    SELECT key, state, external_ref, error_code, started_at, finished_at, request_hash FROM crove_kernel.external_call
+    SELECT key, state, external_ref, error_code, started_at, finished_at, request_hash FROM ludy_kernel.external_call
     WHERE org_id = ${orgId}::uuid
       AND (key = ANY(${prefixes}::text[]) OR key LIKE ANY(${prefixes.map((p) => `${p}\\_%`)}::text[]))
     ORDER BY started_at, key`.execute(trx);
@@ -98,7 +98,7 @@ async function lockVariant(ctx: CommandContext, variantId: string): Promise<{ po
   const v = (await lockVariants(ctx.trx, ctx.orgId, postId)).find((x) => x.id === variantId);
   if (!v) throw new DomainError('VARIANT_NOT_FOUND', 404, 'Không tìm thấy kênh này của bài đăng');
   const edit = await ctx.trx
-    .selectFrom('crove_social.post_variant')
+    .selectFrom('ludy_social.post_variant')
     .select(['edit_body', 'edit_content_hash', 'edit_requested_at', 'edit_requested_by', 'edit_state', 'edit_error_code'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', v.id)
@@ -189,7 +189,7 @@ export const variantEditPublished = defineCommand({
     const content = effectiveContent(base(post), overrides(next), next.content_frozen, settingsOf(next));
     // The person's approval of the new content, under the revision it takes once the platform confirms it.
     await ctx.trx
-      .insertInto('crove_social.post_approval')
+      .insertInto('ludy_social.post_approval')
       .values({
         org_id: ctx.orgId,
         post_id: post.id,
@@ -225,7 +225,7 @@ export const variantEditPublished = defineCommand({
 async function shortLinkOf(ctx: CommandContext, v: VariantRow, target: string | null): Promise<{ code: string; target: string } | undefined> {
   if (!target) return undefined;
   const row = await ctx.trx
-    .selectFrom('crove_social.short_link')
+    .selectFrom('ludy_social.short_link')
     .select(['code', 'target_url'])
     .where('org_id', '=', ctx.orgId)
     .where('variant_id', '=', v.id)
@@ -274,12 +274,12 @@ export const editBegin = defineCommand({
     const callKey = publishCallKey(v.id, callRevision(v), v.attempt, stepName);
     // Idempotent: the same text set twice shows once.
     await ctx.trx
-      .insertInto('crove_kernel.external_call')
+      .insertInto('ludy_kernel.external_call')
       .values({ org_id: ctx.orgId, key: callKey, module: 'social', target: v.provider, step: stepName, retry_safety: 'idempotent', request_hash: v.edit_content_hash, started_at: ctx.now })
       .execute();
     const sent = outgoing(post, next);
     const shortLink = await shortLinkOf(ctx, v, sent.content.linkUrl);
-    const connection = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('scopes').where('org_id', '=', ctx.orgId).where('id', '=', v.channel_connection_id).executeTakeFirst();
+    const connection = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('scopes').where('org_id', '=', ctx.orgId).where('id', '=', v.channel_connection_id).executeTakeFirst();
     const scopes = connection ? [...connection.scopes] : [];
     return { action: 'call', variantId: v.id, provider: v.provider, connectionId: v.channel_connection_id, callKey, externalId: v.external_post_id, scopes, ...sent, ...(shortLink ? { shortLink } : {}) };
   },
@@ -307,7 +307,7 @@ async function confirm(ctx: CommandContext, post: PostRow, v: VariantRow & EditC
 // sent, signature included): null when no approval of that hash gives back exactly that content.
 async function olderAsk(ctx: CommandContext, post: PostRow, v: VariantRow, hash: string): Promise<{ body: string; by: string; hash: string } | null> {
   const rows = await ctx.trx
-    .selectFrom('crove_social.post_approval')
+    .selectFrom('ludy_social.post_approval')
     .select(['snapshot', 'decided_by'])
     .where('org_id', '=', ctx.orgId)
     .where('variant_id', '=', v.id)
@@ -343,6 +343,7 @@ export type EditRecord = z.infer<typeof zEditResult>;
 // and the post a version of it, the person's; the call keys stay named by the revision it went out under.
 export const editRecord = defineCommand({
   name: 'social.edit.record',
+  runsWhenOff: "records the platform's answer to a call already made, so its outcome is not lost when the app is switched off",
   input: z.strictObject({ variantId: zId, callKey: z.string().min(1).max(300), result: zEditResult }),
   risk: 'R1',
   sideEffect: 'internal',
@@ -359,7 +360,7 @@ export const editRecord = defineCommand({
     const errorCode = r.kind === 'edited' ? null : r.kind === 'unknown' ? (r.code ?? 'OUTCOME_UNKNOWN') : (r.code ?? null);
     const errorKind = r.kind === 'edited' ? null : r.kind === 'unknown' ? 'unknown' : r.kind === 'blocked' ? (r.code === 'CHANNEL_NOT_ACTIVE' ? 'token_expired' : 'permission') : r.error;
     await ctx.trx
-      .updateTable('crove_kernel.external_call')
+      .updateTable('ludy_kernel.external_call')
       .set({ state, error_kind: errorKind, error_code: errorCode, ...(state === 'ambiguous' ? {} : { finished_at: ctx.now }), updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('key', '=', input.callKey)

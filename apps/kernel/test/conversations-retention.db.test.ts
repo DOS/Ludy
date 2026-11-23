@@ -7,13 +7,13 @@ import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { platformUserHash } from '@crove/ad-platform';
-import { sandboxNoticeBody } from '@crove/channel';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { ConversationDetail, ConversationEvent, ConversationRetention } from '@crove/kernel-contract';
-import { CredentialVault, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
+import { platformUserHash } from '@ludy/ad-platform';
+import { sandboxNoticeBody } from '@ludy/channel';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { ConversationDetail, ConversationEvent, ConversationRetention } from '@ludy/kernel-contract';
+import { CredentialVault, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
 import { purgeExpiredConversations, runConversationDeletions, runConversationIntake } from '../src/conversations-worker.ts';
 import { acceptMetaDeletion, metaDeletionStatus, renderMetaDeletionStatus } from '../src/meta-deletion.ts';
 import { createAuthenticator } from '../src/auth.ts';
@@ -71,7 +71,7 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
     const client = new pg.Client({ connectionString: appUrl });
     await client.connect();
     try {
-      await client.query('SELECT crove_kernel.conversation_inbound_enqueue($1, $2)', ['sandbox', body]);
+      await client.query('SELECT ludy_kernel.conversation_inbound_enqueue($1, $2)', ['sandbox', body]);
     } finally {
       await client.end();
     }
@@ -84,7 +84,7 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
     const [owner, adm, lan, viewer] = [await user('owner'), await user('admin'), await user('lan'), await user('viewer')];
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     await admin(async (c) => {
-      await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adm, lan, viewer]);
+      await c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adm, lan, viewer]);
     });
     const accountId = `sandbox-${randomUUID().slice(0, 8)}`;
     const sealed = vault.seal(JSON.stringify({ accessToken: `sbx_${randomBytes(24).toString('base64url')}` }), { orgId, provider: 'sandbox', externalAccountId: accountId });
@@ -101,13 +101,13 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
     const ev: ConversationEvent = { kind: 'comment_thread', threadId, postId: 'post-1', messageId: `m-${randomUUID().slice(0, 8)}`, direction: 'in', contact: { id: customer, name: `Khách ${customer}` }, text, at: new Date().toISOString() };
     await park(sandboxNoticeBody({ accountId: o.accountId, events: [ev] }));
     await intake();
-    const [row] = await rows<{ id: string }>('SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, threadId]);
+    const [row] = await rows<{ id: string }>('SELECT id FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, threadId]);
     const id = (row as { id: string }).id;
-    if (months > 0) await rows(`UPDATE crove_kernel.conversation SET last_message_at = now() - make_interval(months => $2, days => 3), opened_at = now() - make_interval(months => $2, days => 3) WHERE org_id = $1 AND id = $3`, [o.orgId, months, id]);
+    if (months > 0) await rows(`UPDATE ludy_kernel.conversation SET last_message_at = now() - make_interval(months => $2, days => 3), opened_at = now() - make_interval(months => $2, days => 3) WHERE org_id = $1 AND id = $3`, [o.orgId, months, id]);
     return id;
   }
-  const threads = async (o: Org) => (await rows<{ external_thread_id: string }>('SELECT external_thread_id FROM crove_kernel.conversation WHERE org_id = $1 ORDER BY external_thread_id', [o.orgId])).map((r) => r.external_thread_id);
-  const count = async (table: string, o: Org) => Number((await rows<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.${table} WHERE org_id = $1`, [o.orgId]))[0]?.n);
+  const threads = async (o: Org) => (await rows<{ external_thread_id: string }>('SELECT external_thread_id FROM ludy_kernel.conversation WHERE org_id = $1 ORDER BY external_thread_id', [o.orgId])).map((r) => r.external_thread_id);
+  const count = async (table: string, o: Org) => Number((await rows<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.${table} WHERE org_id = $1`, [o.orgId]))[0]?.n);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -118,15 +118,15 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     appUrl = app.toString();
     pool = createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
     const w = new URL(adminUrl);
-    w.username = 'crove_worker';
+    w.username = 'ludy_worker';
     w.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: w.toString(), max: 2 });
     workerDb = createDb(workerPool);
@@ -160,7 +160,7 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       expect(await rt.query('kernel.conversation.retention', {}, { actor: asUser(o.lan), orgId: o.orgId })).toEqual({ retentionMonths: null, isDefault: false });
       expect(await count('conversation_setting', o)).toBe(1);
       // The audit row says what was chosen, nothing else.
-      const [audit] = await rows<{ detail: { retention_months: number | null } }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.retention_set' AND outcome = 'ok' ORDER BY id DESC LIMIT 1", [o.orgId]);
+      const [audit] = await rows<{ detail: { retention_months: number | null } }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.retention_set' AND outcome = 'ok' ORDER BY id DESC LIMIT 1", [o.orgId]);
       expect(audit?.detail).toMatchObject({ retention_months: null });
     });
 
@@ -194,7 +194,7 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       await rt.execute('kernel.conversation.note', { conversationId: aOld, body: 'Ghi chú nội bộ' }, { actor: asUser(a.lan), orgId: a.orgId });
       await rt.execute('kernel.conversation.mark_read', { conversationId: aOld, seq: 1 }, { actor: asUser(a.owner), orgId: a.orgId });
       expect(await count('conversation_note', a)).toBe(1);
-      const dueBefore = (await workerPool.query<{ org_id: string }>('SELECT org_id FROM crove_kernel.conversation_purge_due($1)', [1000])).rows.map((r) => r.org_id);
+      const dueBefore = (await workerPool.query<{ org_id: string }>('SELECT org_id FROM ludy_kernel.conversation_purge_due($1)', [1000])).rows.map((r) => r.org_id);
       expect(dueBefore).toEqual(expect.arrayContaining([a.orgId, b.orgId]));
       expect(dueBefore).not.toContain(c.orgId);
       const purged = await purgeExpiredConversations({ runtime: worker, workerDb });
@@ -206,17 +206,17 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       expect(await count('conversation_note', a)).toBe(0);
       expect(await count('conversation_read', a)).toBe(0);
       expect(await count('conversation_message', a)).toBe(1);
-      expect((await rows<{ external_user_id: string }>('SELECT external_user_id FROM crove_kernel.conversation_identity WHERE org_id = $1', [a.orgId])).map((r) => r.external_user_id)).toEqual(['u-new']);
+      expect((await rows<{ external_user_id: string }>('SELECT external_user_id FROM ludy_kernel.conversation_identity WHERE org_id = $1', [a.orgId])).map((r) => r.external_user_id)).toEqual(['u-new']);
       expect(await count('conversation_identity', c)).toBe(1);
       // The audit row of the purge carries counts and the retention, never a word a customer wrote.
-      const audit = await rows<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.purge_expired' AND outcome = 'ok'", [a.orgId]);
+      const audit = await rows<{ detail: unknown }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.purge_expired' AND outcome = 'ok'", [a.orgId]);
       expect(audit).toHaveLength(1);
       const text = JSON.stringify(audit[0]?.detail);
       expect(text).toContain('"threads":1');
       for (const word of ['Tin nhắn cũ', 'Ghi chú nội bộ', 'Khách u-old', 'u-old']) expect(text).not.toContain(word);
       // A second pass finds nothing more, and an org that keeps everything is never listed as due.
       expect(await purgeExpiredConversations({ runtime: worker, workerDb })).toBe(0);
-      expect((await workerPool.query<{ org_id: string }>('SELECT org_id FROM crove_kernel.conversation_purge_due($1)', [1000])).rows.map((r) => r.org_id)).not.toContain(c.orgId);
+      expect((await workerPool.query<{ org_id: string }>('SELECT org_id FROM ludy_kernel.conversation_purge_due($1)', [1000])).rows.map((r) => r.org_id)).not.toContain(c.orgId);
     });
 
     it('works in batches, tells the caller when more is left, and is the system’s alone', async () => {
@@ -229,7 +229,41 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       expect(second).toMatchObject({ threads: 1, more: false });
       expect(await threads(o)).toEqual([]);
       // The listing of due orgs is the worker login's alone.
-      await expect(pool.query('SELECT * FROM crove_kernel.conversation_purge_due(10)')).rejects.toMatchObject({ code: '42501' });
+      await expect(pool.query('SELECT * FROM ludy_kernel.conversation_purge_due(10)')).rejects.toMatchObject({ code: '42501' });
+    });
+
+    it('visits an org that keeps threads forever when an identity nobody names has sat for a day, and sweeps it (#4381)', async () => {
+      const keep = await org();
+      const fresh = await org();
+      const named = await org();
+      for (const o of [keep, fresh, named]) await rt.execute('kernel.conversation.retention_set', { retentionMonths: null }, { actor: asUser(o.owner), orgId: o.orgId });
+      // Keep: a thread (its customer is named) and an identity no thread or message names, a day and more old. Fresh: such an identity made just now. Named: only the customer of a thread, however old.
+      // The kept thread is 30 months old: the visit through the new branch must leave an old thread of a keep-forever org alone.
+      await thread(keep, 'k-1', 'Tin của khách giữ', 'u-kept', 30);
+      const orphan = randomUUID();
+      const identity = (o: Org, id: string, who: string) => rows("INSERT INTO ludy_kernel.conversation_identity (org_id, id, provider, external_user_id, display_name) VALUES ($1, $2, 'sandbox', $3, 'Khách mồ côi')", [o.orgId, id, who]);
+      await identity(keep, orphan, 'u-orphan');
+      await identity(fresh, randomUUID(), 'u-fresh');
+      await thread(named, 'n-1', 'Tin của khách có luồng', 'u-named');
+      await rows("UPDATE ludy_kernel.conversation_identity SET created_at = now() - interval '3 days', updated_at = now() - interval '3 days' WHERE org_id = ANY ($1::uuid[])", [[keep.orgId, named.orgId]]);
+      const due = async () => (await workerPool.query<{ org_id: string }>('SELECT org_id FROM ludy_kernel.conversation_purge_due($1)', [1000])).rows.map((r) => r.org_id);
+      const before = await due();
+      expect(before).toContain(keep.orgId);
+      // Not listed: an identity made a moment ago (an intake about to give it a thread), and one a thread names.
+      expect(before).not.toContain(fresh.orgId);
+      expect(before).not.toContain(named.orgId);
+      // The purge visits the org and sweeps the identity, whatever the retention; the thread and its customer stay.
+      expect(await purgeExpiredConversations({ runtime: worker, workerDb })).toBe(0);
+      expect((await rows<{ external_user_id: string }>('SELECT external_user_id FROM ludy_kernel.conversation_identity WHERE org_id = $1', [keep.orgId])).map((r) => r.external_user_id)).toEqual(['u-kept']);
+      expect(await threads(keep)).toEqual(['k-1']);
+      expect(await count('conversation_identity', fresh)).toBe(1);
+      expect(await due()).not.toContain(keep.orgId);
+      // A person who only replied in a thread is named by that message, so their identity is not an orphan either.
+      const replier = randomUUID();
+      await identity(named, replier, 'u-replier');
+      await rows("UPDATE ludy_kernel.conversation_message SET author_identity_id = $2 WHERE org_id = $1 AND direction = 'in'", [named.orgId, replier]);
+      await rows("UPDATE ludy_kernel.conversation_identity SET updated_at = now() - interval '3 days' WHERE org_id = $1 AND id = $2", [named.orgId, replier]);
+      expect(await due()).not.toContain(named.orgId);
     });
 
     it('purges after the retention is shortened, and not before it', async () => {
@@ -260,7 +294,7 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       expect(await threads(o)).toEqual(['e-3']);
       expect(await count('conversation_note', o)).toBe(0);
       // The erased customer's identity stays as a tombstone with no name; the other customer's is untouched.
-      const people = await rows<{ external_user_id: string; display_name: string | null; erased: boolean }>('SELECT external_user_id, display_name, erased_at IS NOT NULL AS erased FROM crove_kernel.conversation_identity WHERE org_id = $1 ORDER BY external_user_id', [o.orgId]);
+      const people = await rows<{ external_user_id: string; display_name: string | null; erased: boolean }>('SELECT external_user_id, display_name, erased_at IS NOT NULL AS erased FROM ludy_kernel.conversation_identity WHERE org_id = $1 ORDER BY external_user_id', [o.orgId]);
       // The tombstone keeps no platform id, only a keyed hash of it: the id is nowhere in the identity row.
       expect(people).toEqual([
         { external_user_id: expect.stringMatching(/^erased:k1:[0-9a-f]{64}$/), display_name: null, erased: true },
@@ -272,7 +306,7 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       await intake();
       expect(await threads(o)).toEqual(['e-3']);
       // The audit row has counts and the kind, nothing of the customer.
-      const [audit] = await rows<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.erase_contact' AND outcome = 'ok'", [o.orgId]);
+      const [audit] = await rows<{ detail: unknown }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.erase_contact' AND outcome = 'ok'", [o.orgId]);
       const text = JSON.stringify(audit?.detail);
       for (const word of ['0912345678', 'u-erase', 'Khách u-erase', 'hay hỏi giá']) expect(text).not.toContain(word);
       // Erased means erased: the thread is gone for a second try, and one org's owner cannot reach another org's thread.
@@ -283,10 +317,10 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       await thread(o, 'e-4', 'Tôi quay lại', 'u-erase');
       expect(await threads(o)).toEqual(['e-3', 'e-4']);
       // A tombstone older than 30 days is dropped by the retention job, and its identity goes when no thread names it.
-      await rows("UPDATE crove_kernel.conversation_identity SET erased_at = now() - interval '31 days' WHERE org_id = $1 AND external_user_id = 'u-other'", [o.orgId]);
-      await rows("DELETE FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = 'e-3'", [o.orgId]);
+      await rows("UPDATE ludy_kernel.conversation_identity SET erased_at = now() - interval '31 days' WHERE org_id = $1 AND external_user_id = 'u-other'", [o.orgId]);
+      await rows("DELETE FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = 'e-3'", [o.orgId]);
       await purgeExpiredConversations({ runtime: worker, workerDb });
-      const left = (await rows<{ external_user_id: string }>('SELECT external_user_id FROM crove_kernel.conversation_identity WHERE org_id = $1 ORDER BY 1', [o.orgId])).map((r) => r.external_user_id);
+      const left = (await rows<{ external_user_id: string }>('SELECT external_user_id FROM ludy_kernel.conversation_identity WHERE org_id = $1 ORDER BY 1', [o.orgId])).map((r) => r.external_user_id);
       expect(left).toContain('u-erase');
       expect(left).not.toContain('u-other');
     });
@@ -299,7 +333,7 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       await thread(o, 'y-thread', 'X trả lời trong bình luận của Y', 'u-x');
       await thread(o, 'y-thread', 'Y trả lời tiếp', 'u-y');
       const own = await thread(o, 'x-own', 'X mở bình luận riêng', 'u-x');
-      const bodies = async () => (await rows<{ body: string }>('SELECT body FROM crove_kernel.conversation_message WHERE org_id = $1 AND conversation_id = $2 ORDER BY seq', [o.orgId, opened])).map((r) => r.body);
+      const bodies = async () => (await rows<{ body: string }>('SELECT body FROM ludy_kernel.conversation_message WHERE org_id = $1 AND conversation_id = $2 ORDER BY seq', [o.orgId, opened])).map((r) => r.body);
       expect(await bodies()).toHaveLength(3);
       const res = await rt.execute<{ threads: number; messages: number }>('kernel.conversation.erase_contact', { conversationId: own, confirm: true }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
       // X's own thread (one message) and X's reply in Y's thread.
@@ -307,7 +341,7 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       expect(await bodies()).toEqual(['Y mở bình luận', 'Y trả lời tiếp']);
       expect(await threads(o)).toEqual(['y-thread']);
       // Y's identity is untouched, and X's replay in Y's thread (dated before the erasure) is refused.
-      const x = await rows<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.conversation_message WHERE org_id = $1 AND author_identity_id IS NOT NULL", [o.orgId]);
+      const x = await rows<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.conversation_message WHERE org_id = $1 AND author_identity_id IS NOT NULL", [o.orgId]);
       expect(x[0]?.n).toBe('2');
       const replay: ConversationEvent = { kind: 'comment_thread', threadId: 'y-thread', postId: 'post-1', messageId: 'replay-x', direction: 'in', contact: { id: 'u-x', name: 'Khách u-x' }, text: 'X trả lời trong bình luận của Y', at: new Date(Date.now() - 60_000).toISOString() };
       await park(sandboxNoticeBody({ accountId: o.accountId, events: [replay] }));
@@ -321,21 +355,21 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       const o = await org();
       const opened = await thread(o, 'only-1', 'Y mở bình luận', 'u-y2');
       await thread(o, 'only-1', 'Z chỉ trả lời', 'u-z');
-      const [reply] = await rows<{ id: string }>("SELECT m.id FROM crove_kernel.conversation_message m WHERE m.org_id = $1 AND m.conversation_id = $2 AND m.body = 'Z chỉ trả lời'", [o.orgId, opened]);
+      const [reply] = await rows<{ id: string }>("SELECT m.id FROM ludy_kernel.conversation_message m WHERE m.org_id = $1 AND m.conversation_id = $2 AND m.body = 'Z chỉ trả lời'", [o.orgId, opened]);
       // Z has no thread of their own, but is named by what they wrote: the identity is not an orphan.
       await rt.execute('kernel.conversation.retention_set', { retentionMonths: 6 }, { actor: asUser(o.owner), orgId: o.orgId });
       await purgeExpiredConversations({ runtime: worker, workerDb });
-      expect((await rows('SELECT 1 FROM crove_kernel.conversation_identity WHERE org_id = $1 AND external_user_id = $2', [o.orgId, 'u-z']))).toHaveLength(1);
+      expect((await rows('SELECT 1 FROM ludy_kernel.conversation_identity WHERE org_id = $1 AND external_user_id = $2', [o.orgId, 'u-z']))).toHaveLength(1);
       // A message that is not a customer's, or not in the thread, names nobody.
       await expect(rt.execute('kernel.conversation.erase_contact', { conversationId: opened, messageId: randomUUID(), confirm: true }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toMatchObject({ status: 404 });
       const res = await rt.execute<{ threads: number; messages: number }>('kernel.conversation.erase_contact', { conversationId: opened, messageId: reply?.id, confirm: true }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
       expect(res).toEqual({ threads: 0, messages: 1 });
-      expect((await rows<{ body: string }>('SELECT body FROM crove_kernel.conversation_message WHERE org_id = $1 AND conversation_id = $2', [o.orgId, opened])).map((m) => m.body)).toEqual(['Y mở bình luận']);
+      expect((await rows<{ body: string }>('SELECT body FROM ludy_kernel.conversation_message WHERE org_id = $1 AND conversation_id = $2', [o.orgId, opened])).map((m) => m.body)).toEqual(['Y mở bình luận']);
       // The second erasure of a customer who came back within the tombstone's 30 days replaces the tombstone and goes through.
       const back = await thread(o, 'back-1', 'Z quay lại', 'u-z');
       const again = await rt.execute<{ threads: number; messages: number }>('kernel.conversation.erase_contact', { conversationId: back, confirm: true }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
       expect(again).toEqual({ threads: 1, messages: 1 });
-      expect(await rows("SELECT 1 FROM crove_kernel.conversation_identity WHERE org_id = $1 AND external_user_id LIKE 'erased:%' AND erased_at IS NOT NULL", [o.orgId])).toHaveLength(1);
+      expect(await rows("SELECT 1 FROM ludy_kernel.conversation_identity WHERE org_id = $1 AND external_user_id LIKE 'erased:%' AND erased_at IS NOT NULL", [o.orgId])).toHaveLength(1);
     });
 
     it('counts the messages a thread holds when it is deleted, not its highest number', async () => {
@@ -359,7 +393,7 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       const before = await read();
       expect(before.map((m) => [m.body, m.authorTail])).toEqual([['Y mở bình luận', 'u-y9'], ['X trả lời', 'u-x9']]);
       // Erasure from X's reply, whatever its state (a removed reply keeps its author too, so the screen offers it).
-      const [reply] = await rows<{ id: string }>("SELECT id FROM crove_kernel.conversation_message WHERE org_id = $1 AND conversation_id = $2 AND body = 'X trả lời'", [o.orgId, opened]);
+      const [reply] = await rows<{ id: string }>("SELECT id FROM ludy_kernel.conversation_message WHERE org_id = $1 AND conversation_id = $2 AND body = 'X trả lời'", [o.orgId, opened]);
       expect(reply?.id).toBeDefined();
       const res = await rt.execute<{ threads: number; messages: number }>('kernel.conversation.erase_contact', { conversationId: opened, messageId: reply?.id, confirm: true }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
       expect(res.messages).toBe(1);
@@ -382,9 +416,9 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
     it('does not link a code to a request that is closed, and says so', async () => {
       const code = randomBytes(16).toString('hex');
       const done = randomBytes(16).toString('hex');
-      await pool.query('SELECT crove_kernel.conversation_deletion_enqueue($1, $2)', [code, 'a'.repeat(64)]);
-      await workerPool.query('SELECT crove_kernel.conversation_deletion_complete($1, 0)', [code]);
-      expect((await pool.query('SELECT crove_kernel.conversation_deletion_link($1, $2) AS linked', [code, done])).rows[0].linked).toBe(false);
+      await pool.query('SELECT ludy_kernel.conversation_deletion_enqueue($1, $2)', [code, 'a'.repeat(64)]);
+      await workerPool.query('SELECT ludy_kernel.conversation_deletion_complete($1, 0)', [code]);
+      expect((await pool.query('SELECT ludy_kernel.conversation_deletion_link($1, $2) AS linked', [code, done])).rows[0].linked).toBe(false);
     });
   });
 
@@ -394,18 +428,18 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       return `${createHmac('sha256', secret).update(encoded).digest('base64url')}.${encoded}`;
     };
     const form = (signedRequest: string) => new URLSearchParams({ signed_request: signedRequest }).toString();
-    const requests = async () => Number((await rows<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.conversation_deletion_request'))[0]?.n);
+    const requests = async () => Number((await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.conversation_deletion_request'))[0]?.n);
 
     it('erases the conversations of the connections that person granted, in every org, and leaves the rest', async () => {
       const a = await org();
       const b = await org();
       const hash = platformUserHash(SECRET, '7001');
-      await rows('UPDATE crove_kernel.channel_connection SET granted_by_hash = $1 WHERE org_id = ANY ($2) AND id = ANY ($3)', [hash, [a.orgId, b.orgId], [a.connectionId, b.connectionId]]);
+      await rows('UPDATE ludy_kernel.channel_connection SET granted_by_hash = $1 WHERE org_id = ANY ($2) AND id = ANY ($3)', [hash, [a.orgId, b.orgId], [a.connectionId, b.connectionId]]);
       await thread(a, 'cb-a1', 'Bình luận ở org a', 'u-cb1');
       await thread(b, 'cb-b1', 'Bình luận ở org b', 'u-cb2');
       // Another org's connection granted by someone else is not touched.
       const c = await org();
-      await rows('UPDATE crove_kernel.channel_connection SET granted_by_hash = $1 WHERE org_id = $2', [platformUserHash(SECRET, '7002'), c.orgId]);
+      await rows('UPDATE ludy_kernel.channel_connection SET granted_by_hash = $1 WHERE org_id = $2', [platformUserHash(SECRET, '7002'), c.orgId]);
       await thread(c, 'cb-c1', 'Bình luận của người khác cấp quyền', 'u-cb3');
 
       const api = rt;
@@ -422,7 +456,7 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       const code = (accepted as { code: string }).code;
       expect(code).toMatch(/^[0-9a-f]{32}$/);
       // Only the keyed hash is stored; the Meta user id is not anywhere.
-      const [stored] = await rows<{ user_hash: string }>('SELECT user_hash FROM crove_kernel.conversation_deletion_request WHERE code = $1', [code]);
+      const [stored] = await rows<{ user_hash: string }>('SELECT user_hash FROM ludy_kernel.conversation_deletion_request WHERE code = $1', [code]);
       expect(stored?.user_hash).toBe(hash);
       // A replay while the request is open gets the same code and no second row.
       expect(await acceptMetaDeletion(api, { conversations: SECRET }, form(signed('7001')))).toEqual({ status: 200, code });
@@ -437,12 +471,12 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       expect(await count('conversation_identity', a)).toBe(0);
       expect(await threads(c)).toEqual(['cb-c1']);
       // The connection no longer holds a credential, and its row stays for the books.
-      const [conn] = await rows<{ status: string }>('SELECT status FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId]);
+      const [conn] = await rows<{ status: string }>('SELECT status FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId]);
       expect(conn?.status).not.toBe('active');
       expect(await metaDeletionStatus(api, code)).toMatchObject({ connections: 2 });
       expect(renderMetaDeletionStatus(await metaDeletionStatus(api, code))).toContain('đã được xóa');
       // The audit row names the connection and counts, not the comment.
-      const audit = JSON.stringify((await rows<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.erase_connection'", [a.orgId]))[0]?.detail);
+      const audit = JSON.stringify((await rows<{ detail: unknown }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.erase_connection'", [a.orgId]))[0]?.detail);
       expect(audit).not.toContain('Bình luận ở org a');
       // Run again, nothing changes (idempotent), and an unknown code has no page.
       expect(await runConversationDeletions({ runtime: worker, workerDb })).toBe(0);
@@ -453,7 +487,7 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
     it('lets the owner keep a connection by taking it over: a reconnect forgets who granted it before', async () => {
       const o = await org();
       const hash = platformUserHash(SECRET, '7501');
-      await rows('UPDATE crove_kernel.channel_connection SET granted_by_hash = $1 WHERE org_id = $2 AND id = $3', [hash, o.orgId, o.connectionId]);
+      await rows('UPDATE ludy_kernel.channel_connection SET granted_by_hash = $1 WHERE org_id = $2 AND id = $3', [hash, o.orgId, o.connectionId]);
       await thread(o, 'keep-1', 'Giữ lại', 'u-keep');
       const sealed = vault.seal(JSON.stringify({ accessToken: `sbx_${randomBytes(24).toString('base64url')}` }), { orgId: o.orgId, provider: 'sandbox', externalAccountId: o.accountId });
       const again = await rt.execute<{ connectionId: string; reconnected: boolean }>(
@@ -462,7 +496,7 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
         { actor: asUser(o.owner), orgId: o.orgId },
       );
       expect(again).toMatchObject({ connectionId: o.connectionId, reconnected: true });
-      expect((await rows<{ granted_by_hash: string | null }>('SELECT granted_by_hash FROM crove_kernel.channel_connection WHERE id = $1', [o.connectionId]))[0]?.granted_by_hash).toBeNull();
+      expect((await rows<{ granted_by_hash: string | null }>('SELECT granted_by_hash FROM ludy_kernel.channel_connection WHERE id = $1', [o.connectionId]))[0]?.granted_by_hash).toBeNull();
       const accepted = await acceptMetaDeletion(rt, { conversations: SECRET }, form(signed('7501')));
       expect(accepted.status).toBe(200);
       await runConversationDeletions({ runtime: worker, workerDb });
@@ -478,43 +512,43 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
 
     it('fans a request out to the Ads side and the conversation side under one code when one app serves both', async () => {
       const o = await org();
-      await rows('UPDATE crove_kernel.channel_connection SET granted_by_hash = $1 WHERE org_id = $2', [platformUserHash(SECRET, '8001'), o.orgId]);
+      await rows('UPDATE ludy_kernel.channel_connection SET granted_by_hash = $1 WHERE org_id = $2', [platformUserHash(SECRET, '8001'), o.orgId]);
       await thread(o, 'fan-1', 'Bình luận', 'u-fan');
       const accepted = await acceptMetaDeletion(rt, { ads: SECRET, conversations: SECRET }, form(signed('8001')));
       expect(accepted.status).toBe(200);
       const code = (accepted as { code: string }).code;
-      expect(await rows('SELECT 1 FROM crove_ads.deletion_request WHERE code = $1', [code])).toHaveLength(1);
-      expect(await rows('SELECT 1 FROM crove_kernel.conversation_deletion_request WHERE code = $1', [code])).toHaveLength(1);
+      expect(await rows('SELECT 1 FROM ludy_ads.deletion_request WHERE code = $1', [code])).toHaveLength(1);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation_deletion_request WHERE code = $1', [code])).toHaveLength(1);
       // Complete only when both sides are: the conversation side finishes first, the page still says it is being handled.
       await runConversationDeletions({ runtime: worker, workerDb });
       expect(await metaDeletionStatus(rt, code)).toMatchObject({ completedAt: null });
-      await workerPool.query('SELECT crove_ads.deletion_request_complete($1, 0)', [code]);
+      await workerPool.query('SELECT ludy_ads.deletion_request_complete($1, 0)', [code]);
       expect(await metaDeletionStatus(rt, code)).toMatchObject({ connections: 1, accounts: 0 });
       expect((await metaDeletionStatus(rt, code))?.completedAt).not.toBeNull();
       expect(renderMetaDeletionStatus(await metaDeletionStatus(rt, code))).toContain('đã được xóa');
       // A different app on each side: a request signed by one secret reaches only that side.
       const second = await acceptMetaDeletion(rt, { ads: 'the-ads-app-secret', conversations: SECRET }, form(signed('8002')));
       const code2 = (second as { code: string }).code;
-      expect(await rows('SELECT 1 FROM crove_ads.deletion_request WHERE code = $1', [code2])).toHaveLength(0);
-      expect(await rows('SELECT 1 FROM crove_kernel.conversation_deletion_request WHERE code = $1', [code2])).toHaveLength(1);
+      expect(await rows('SELECT 1 FROM ludy_ads.deletion_request WHERE code = $1', [code2])).toHaveLength(0);
+      expect(await rows('SELECT 1 FROM ludy_kernel.conversation_deletion_request WHERE code = $1', [code2])).toHaveLength(1);
     });
 
     it('links the two sides under one answer when the person’s earlier request is still open on one of them, so the page waits for both', async () => {
       const o = await org();
-      await rows('UPDATE crove_kernel.channel_connection SET granted_by_hash = $1 WHERE org_id = $2', [platformUserHash(SECRET, '8101'), o.orgId]);
+      await rows('UPDATE ludy_kernel.channel_connection SET granted_by_hash = $1 WHERE org_id = $2', [platformUserHash(SECRET, '8101'), o.orgId]);
       await thread(o, 'link-1', 'Bình luận', 'u-link');
       // The Ads side already holds an open request of this person, under its own code.
       const adsCode = randomBytes(16).toString('hex');
-      await pool.query('SELECT crove_ads.deletion_request_enqueue($1, $2)', [adsCode, platformUserHash(SECRET, '8101')]);
+      await pool.query('SELECT ludy_ads.deletion_request_enqueue($1, $2)', [adsCode, platformUserHash(SECRET, '8101')]);
       const accepted = await acceptMetaDeletion(rt, { ads: SECRET, conversations: SECRET }, form(signed('8101')));
       expect(accepted).toEqual({ status: 200, code: adsCode });
-      const [conv] = await rows<{ code: string }>('SELECT code FROM crove_kernel.conversation_deletion_request WHERE $1 = ANY (sibling_codes)', [adsCode]);
+      const [conv] = await rows<{ code: string }>('SELECT code FROM ludy_kernel.conversation_deletion_request WHERE $1 = ANY (sibling_codes)', [adsCode]);
       expect(conv?.code).not.toBe(adsCode);
       // The conversation side finishes first: either code still says it is being handled, until the Ads side is done too.
       await runConversationDeletions({ runtime: worker, workerDb });
       expect(await metaDeletionStatus(rt, adsCode)).toMatchObject({ completedAt: null });
       expect(await metaDeletionStatus(rt, conv?.code as string)).toMatchObject({ completedAt: null });
-      await workerPool.query('SELECT crove_ads.deletion_request_complete($1, 0)', [adsCode]);
+      await workerPool.query('SELECT ludy_ads.deletion_request_complete($1, 0)', [adsCode]);
       expect((await metaDeletionStatus(rt, adsCode))?.completedAt).not.toBeNull();
       expect((await metaDeletionStatus(rt, conv?.code as string))?.completedAt).not.toBeNull();
     });
@@ -543,12 +577,12 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
     });
 
     it('keeps the deletion tables out of every tenant role’s reach, and the worker’s definers off the API login', async () => {
-      await expect(pool.query('SELECT * FROM crove_kernel.conversation_deletion_request')).rejects.toMatchObject({ code: '42501' });
-      await expect(pool.query('SELECT * FROM crove_kernel.conversation_deletion_claim(10)')).rejects.toMatchObject({ code: '42501' });
-      await expect(pool.query('SELECT crove_kernel.conversation_deletion_complete($1, 0)', ['0'.repeat(32)])).rejects.toMatchObject({ code: '42501' });
-      await expect(pool.query('SELECT crove_kernel.conversation_deletion_defer($1)', ['0'.repeat(32)])).rejects.toMatchObject({ code: '42501' });
-      await expect(workerPool.query('SELECT crove_kernel.conversation_deletion_enqueue($1, $2)', ['0'.repeat(32), '0'.repeat(64)])).rejects.toMatchObject({ code: '42501' });
-      await expect(pool.query('SELECT crove_kernel.conversation_deletion_enqueue($1, $2)', ['nope', '0'.repeat(64)])).rejects.toMatchObject({ code: '22P02' });
+      await expect(pool.query('SELECT * FROM ludy_kernel.conversation_deletion_request')).rejects.toMatchObject({ code: '42501' });
+      await expect(pool.query('SELECT * FROM ludy_kernel.conversation_deletion_claim(10)')).rejects.toMatchObject({ code: '42501' });
+      await expect(pool.query('SELECT ludy_kernel.conversation_deletion_complete($1, 0)', ['0'.repeat(32)])).rejects.toMatchObject({ code: '42501' });
+      await expect(pool.query('SELECT ludy_kernel.conversation_deletion_defer($1)', ['0'.repeat(32)])).rejects.toMatchObject({ code: '42501' });
+      await expect(workerPool.query('SELECT ludy_kernel.conversation_deletion_enqueue($1, $2)', ['0'.repeat(32), '0'.repeat(64)])).rejects.toMatchObject({ code: '42501' });
+      await expect(pool.query('SELECT ludy_kernel.conversation_deletion_enqueue($1, $2)', ['nope', '0'.repeat(64)])).rejects.toMatchObject({ code: '22P02' });
     });
   });
 

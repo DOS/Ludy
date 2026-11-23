@@ -8,11 +8,11 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { ORG_HEADER } from '@crove/kernel-contract';
-import { createOrg, upsertIdentity } from '@crove/kernel';
-import { DomainError, Runtime, defineCommand, defineQuery, sha256Hex, type BlobStore, type Lookup } from '@crove/kernel-runtime';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { ORG_HEADER } from '@ludy/kernel-contract';
+import { createOrg, upsertIdentity } from '@ludy/kernel';
+import { DomainError, Runtime, defineCommand, defineQuery, sha256Hex, type BlobStore, type Lookup } from '@ludy/kernel-runtime';
 import type { AuthUser } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { QUEUES } from '../src/jobs-schema.ts';
@@ -112,15 +112,15 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const loginUrl = (username: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = username;
       u.password = password;
       return u.toString();
     };
-    appUrl = loginUrl('crove_app', 'test-app-pw');
-    workerUrl = loginUrl('crove_worker', 'test-worker-pw');
+    appUrl = loginUrl('ludy_app', 'test-app-pw');
+    workerUrl = loginUrl('ludy_worker', 'test-worker-pw');
     const service = await startExtractService();
     stopExtract = service.stop;
     extractUrl = service.url;
@@ -143,8 +143,8 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
   });
 
   it('applies migrations to every schema, whatever CROVE_MODULES says', async () => {
-    const schemas = await adminQuery<{ nspname: string }>("SELECT nspname FROM pg_namespace WHERE nspname IN ('crove_kernel', 'crove_finance', 'crove_crm', 'crove_ads')");
-    expect(schemas.map((s) => s.nspname).sort()).toEqual(['crove_ads', 'crove_crm', 'crove_finance', 'crove_kernel']);
+    const schemas = await adminQuery<{ nspname: string }>("SELECT nspname FROM pg_namespace WHERE nspname IN ('ludy_kernel', 'ludy_finance', 'ludy_crm', 'ludy_ads')");
+    expect(schemas.map((s) => s.nspname).sort()).toEqual(['ludy_ads', 'ludy_crm', 'ludy_finance', 'ludy_kernel']);
   });
 
   it('registers only the enabled modules', () => {
@@ -213,7 +213,7 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
     const day = new Date(Date.now() + 5 * 86_400_000).toISOString().slice(0, 10);
     await runtime.execute('kernel.calendar.hours.save', { timeZone: 'Asia/Ho_Chi_Minh', windows: [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, start: 0, end: 1440 })) }, { actor, orgId });
     await runtime.execute('kernel.calendar.event.add', { startsAt: `${day}T03:00:00.000Z`, endsAt: `${day}T04:00:00.000Z`, timeZone: 'Asia/Ho_Chi_Minh', title: 'Họp nội bộ', kind: 'manual' }, { actor, orgId });
-    const events = await adminQuery<{ title: string; kind: string }>("SELECT title, kind FROM crove_kernel.calendar_event WHERE org_id = $1 AND title = 'Họp nội bộ'", [orgId]);
+    const events = await adminQuery<{ title: string; kind: string }>("SELECT title, kind FROM ludy_kernel.calendar_event WHERE org_id = $1 AND title = 'Họp nội bộ'", [orgId]);
     expect(events).toEqual([{ title: 'Họp nội bộ', kind: 'manual' }]);
     await expect(runtime.execute('crm.booking.link_deal', { bookingId: randomUUID(), dealId: randomUUID() }, { actor, orgId })).rejects.toMatchObject({ code: 'COMMAND_NOT_FOUND', status: 404 });
     await expect(runtime.execute('crm.booking.unlink_deal', { bookingId: randomUUID() }, { actor, orgId })).rejects.toMatchObject({ code: 'COMMAND_NOT_FOUND' });
@@ -258,8 +258,8 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
     // As an earlier run with finance and notes left them (#1471): their cron schedules, and a tick each queued.
     const crons = [QUEUES.periodBalanceVerify, QUEUES.crmImportExpire, QUEUES.crmDealStale, QUEUES.notesTrash, QUEUES.notesRemind, QUEUES.adsSync];
     for (const queue of crons) {
-      await adminQuery("INSERT INTO crove_jobs.schedule (name, cron) VALUES ($1, '0 3 * * *') ON CONFLICT DO NOTHING", [queue]);
-      await adminQuery('INSERT INTO crove_jobs.job (name) VALUES ($1)', [queue]);
+      await adminQuery("INSERT INTO ludy_jobs.schedule (name, cron) VALUES ($1, '0 3 * * *') ON CONFLICT DO NOTHING", [queue]);
+      await adminQuery('INSERT INTO ludy_jobs.job (name) VALUES ($1)', [queue]);
     }
     const stop = await kernel.start('all');
     try {
@@ -316,19 +316,19 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
       // The worker relays the upload's event but queues no finance job: the file is stored and stays unread.
       const deadline = Date.now() + 30_000;
       for (;;) {
-        const [pending] = await adminQuery<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.outbox_pending');
+        const [pending] = await adminQuery<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.outbox_pending');
         if (pending?.n === '0') break;
         if (Date.now() > deadline) throw new Error('the worker did not drain the outbox');
         await new Promise((resolve) => setTimeout(resolve, 200));
       }
-      const [jobs] = await adminQuery<{ n: string }>('SELECT count(*)::text AS n FROM crove_jobs.job WHERE name = $1', [QUEUES.extract]);
+      const [jobs] = await adminQuery<{ n: string }>('SELECT count(*)::text AS n FROM ludy_jobs.job WHERE name = $1', [QUEUES.extract]);
       expect(jobs?.n).toBe('0');
-      const runs = await adminQuery<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.extraction');
+      const runs = await adminQuery<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.extraction');
       expect(runs[0]?.n).toBe('0');
       // Nor does it keep the finance and notes cron jobs: their schedules are taken off and their queued ticks dropped (#1471).
-      const [scheduled] = await adminQuery<{ n: string }>('SELECT count(*)::text AS n FROM crove_jobs.schedule WHERE name = ANY ($1)', [crons]);
+      const [scheduled] = await adminQuery<{ n: string }>('SELECT count(*)::text AS n FROM ludy_jobs.schedule WHERE name = ANY ($1)', [crons]);
       expect(scheduled?.n).toBe('0');
-      const [ticks] = await adminQuery<{ n: string }>("SELECT count(*)::text AS n FROM crove_jobs.job WHERE name = ANY ($1) AND state = 'created'", [crons]);
+      const [ticks] = await adminQuery<{ n: string }>("SELECT count(*)::text AS n FROM ludy_jobs.job WHERE name = ANY ($1) AND state = 'created'", [crons]);
       expect(ticks?.n).toBe('0');
     } finally {
       await stop();
@@ -381,9 +381,9 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
       const board = await rpc<{ columns: { stage: { name: string }; count: number }[] }>('crm/deals/board');
       expect(board.body.columns.find((c) => c.stage.name === 'Mới')?.count).toBe(1);
       // The import sweep and the stale-deal rule are scheduled with the module.
-      const [scheduled] = await adminQuery<{ n: string }>('SELECT count(*)::text AS n FROM crove_jobs.schedule WHERE name = $1', [QUEUES.crmImportExpire]);
+      const [scheduled] = await adminQuery<{ n: string }>('SELECT count(*)::text AS n FROM ludy_jobs.schedule WHERE name = $1', [QUEUES.crmImportExpire]);
       expect(scheduled?.n).toBe('1');
-      const [staleScheduled] = await adminQuery<{ n: string }>('SELECT count(*)::text AS n FROM crove_jobs.schedule WHERE name = $1', [QUEUES.crmDealStale]);
+      const [staleScheduled] = await adminQuery<{ n: string }>('SELECT count(*)::text AS n FROM ludy_jobs.schedule WHERE name = $1', [QUEUES.crmDealStale]);
       expect(staleScheduled?.n).toBe('1');
     } finally {
       await stop();

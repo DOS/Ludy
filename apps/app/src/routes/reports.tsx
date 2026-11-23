@@ -4,18 +4,19 @@
 // shows what its own screen already reads (components/report-panels.tsx); nothing is written here. ?area= keeps the tab.
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
+import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { AdsPanel, ConversationsPanel, PostsPanel, QuotesPanel, SalesPanel } from '../components/report-panels.tsx';
 import { Empty, PageHeader } from '../components/ui.tsx';
-import { getConfig } from '../lib/auth.ts';
 import { reportTabs, shownTab, type ReportsSearch, type ReportTab } from '../lib/reports.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 export function ReportsPage() {
   const t = useTranslations('reports');
   const navigate = useNavigate();
   const { slug } = useParams({ strict: false }) as { slug: string };
   const search: ReportsSearch = useSearch({ strict: false });
-  const tabs = reportTabs(getConfig().modules);
+  useModulesVersion(); // the apps of the org can change while this screen is open
+  const tabs = reportTabs(installedModules());
   const tab = shownTab(tabs, search.area);
   return (
     <div>
@@ -36,7 +37,13 @@ export function ReportsPage() {
           {tab === 'conversations' && <ConversationsPanel slug={slug} />}
           {tab === 'sales' && <SalesPanel slug={slug} />}
           {tab === 'quotes' && <QuotesPanel slug={slug} />}
-          {tab === 'posts' && <PostsPanel slug={slug} />}
+          {tab === 'posts' && (
+            <PostsPanel
+              slug={slug}
+              labelId={search.label}
+              onLabel={(label) => void navigate({ to: '/o/$slug/reports', params: { slug }, search: label ? { area: 'posts' as const, label } : { area: 'posts' as const }, replace: true })}
+            />
+          )}
           {tab === 'ads' && <AdsPanel slug={slug} />}
         </div>
       )}

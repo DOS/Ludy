@@ -7,12 +7,12 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { SandboxPublisher, type Publisher, type PublishInput, type PublishResult } from '@crove/channel';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
-import { HELD_TOO_LONG, runCommentJob, runPublishJob, socialCommands, socialQueries, type NotificationItem, type PostView, type PublishHoldView } from '@crove/mod-social';
+import { SandboxPublisher, type Publisher, type PublishInput, type PublishResult } from '@ludy/channel';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
+import { HELD_TOO_LONG, runCommentJob, runPublishJob, socialCommands, socialQueries, type NotificationItem, type PostView, type PublishHoldView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -58,7 +58,7 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     const { orgId } = await createOrg(api, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const people = { admin: await person('admin'), member: await person('member'), viewer: await person('viewer') };
     for (const [role, id] of Object.entries(people)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
     }
     return { orgId, owner, ...people };
   }
@@ -93,9 +93,9 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     const ago = options.ago ?? '1 second';
     if (options.queue) {
       await exec(o, 'social.queue.set', { connectionId, timeZone: 'Asia/Ho_Chi_Minh', slots: [{ weekday: 1, minute: 540 }] });
-      await admin((c) => c.query('UPDATE crove_social.post_variant SET scheduled_at = NULL, queue_slot_at = now() - $2::interval WHERE post_id = $1', [postId, ago]));
+      await admin((c) => c.query('UPDATE ludy_social.post_variant SET scheduled_at = NULL, queue_slot_at = now() - $2::interval WHERE post_id = $1', [postId, ago]));
     } else {
-      await admin((c) => c.query('UPDATE crove_social.post_variant SET scheduled_at = now() - $2::interval WHERE post_id = $1', [postId, ago]));
+      await admin((c) => c.query('UPDATE ludy_social.post_variant SET scheduled_at = now() - $2::interval WHERE post_id = $1', [postId, ago]));
     }
     return { postId, id: post.variants[0]?.id as string };
   }
@@ -106,24 +106,24 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     const v = (await get(o, postId)).variants[0];
     return { status: v?.status, code: v?.error?.code ?? null };
   };
-  const due = () => admin(async (c) => (await c.query<{ variant_id: string }>("SELECT variant_id FROM crove_social.publish_due(1000, 600, ARRAY['sandbox'])")).rows.map((r) => r.variant_id));
+  const due = () => admin(async (c) => (await c.query<{ variant_id: string }>("SELECT variant_id FROM ludy_social.publish_due(1000, 600, ARRAY['sandbox'])")).rows.map((r) => r.variant_id));
   // One sweep as the worker runs it: a publish job for every variant the scan finds, of the orgs given.
   async function sweep(platform: Publisher, orgs: readonly Org[]) {
     const ids = new Set(await due());
     for (const o of orgs) {
-      const mine = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_social.post_variant WHERE org_id = $1', [o.orgId])).rows.map((r) => r.id));
+      const mine = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_social.post_variant WHERE org_id = $1', [o.orgId])).rows.map((r) => r.id));
       for (const id of mine) if (ids.has(id)) await run(o, id, platform);
     }
   }
 
   async function deliver(o: Org, type: string) {
-    const { rows } = await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY created_at, id', [o.orgId, type]));
+    const { rows } = await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY created_at, id', [o.orgId, type]));
     for (const e of rows) await worker.execute('social.notification.dispatch', { eventId: e.id }, { actor: system, orgId: o.orgId });
     return rows.length;
   }
   // What a command audited, for the runs that wrote a hold or a release.
   const auditOf = (o: Org, command: string) =>
-    admin(async (c) => (await c.query<{ detail: { reason: string; held_too_long?: number } }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND detail ? 'hold_id' ORDER BY occurred_at, id", [o.orgId, command])).rows.map((r) => r.detail));
+    admin(async (c) => (await c.query<{ detail: { reason: string; held_too_long?: number } }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND detail ? 'hold_id' ORDER BY occurred_at, id", [o.orgId, command])).rows.map((r) => r.detail));
   const notices = async (o: Org, user: string) =>
     (await api.query<{ items: NotificationItem[] }>('social.notification.list', {}, { actor: asUser(user), orgId: o.orgId })).items.filter((n) => n.kind === 'publishing_hold').map((n) => n.detail);
 
@@ -136,15 +136,15 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 4 });
     appDb = createDb(appPool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     api = new Runtime(appDb, { manifests: TEST_MANIFESTS }).register(registry);
@@ -219,13 +219,61 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
       expect(await status(o, v.postId)).toEqual({ status: 'scheduled', code: null });
     }
     expect(platform.sent).toHaveLength(0);
-    expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_kernel.external_call WHERE org_id = $1', [o.orgId])).rowCount)).toBe(0);
+    expect(await admin(async (c) => (await c.query('SELECT 1 FROM ludy_kernel.external_call WHERE org_id = $1', [o.orgId])).rowCount)).toBe(0);
 
     // Another org's post goes out.
     await sweep(platform, [o, other]);
     expect((await get(other, elsewhere.postId)).status).toBe('published');
     expect(platform.sent).toHaveLength(1);
     await exec(o, 'social.publishing.release', {});
+  });
+
+  it('never publishes a post more than an hour past its time, whatever kept it: it fails for a person (HELD_TOO_LONG) and the team is told (ADR-0053, C3c)', async () => {
+    const o = await org();
+    const platform = new Counting();
+    const recent = await duePost(o, { ago: '5 minutes' });
+    const stale = await duePost(o, { ago: '2 hours' });
+    const staleQueued = await duePost(o, { queue: true, ago: '90 minutes' });
+    // The job begins each: the late ones fail without a call, the recent one goes out.
+    for (const v of [stale, staleQueued]) expect(await run(o, v.id, platform)).toEqual({ action: 'none', reason: 'too_late' });
+    expect(await run(o, recent.id, platform)).toMatchObject({ action: 'call' });
+    for (const v of [stale, staleQueued]) expect(await status(o, v.postId)).toEqual({ status: 'failed', code: HELD_TOO_LONG });
+    // Only the recent one reached the platform.
+    expect(platform.sent).toHaveLength(1);
+    const failedEvents = await admin(async (c) => (await c.query<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.failed'", [o.orgId])).rows[0]?.n);
+    expect(failedEvents).toBe('2');
+    // Run again: they are failed, so nothing more happens and no second notice.
+    expect(await run(o, stale.id, platform)).toMatchObject({ action: 'none' });
+    expect(await admin(async (c) => (await c.query<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.variant.failed'", [o.orgId])).rows[0]?.n)).toBe('2');
+  });
+
+  it('keeps a post going whose original time is old but whose retry time is recent: lateness is measured from the retry', async () => {
+    const o = await org();
+    const platform = new Counting();
+    const retried = await duePost(o, { ago: '3 hours' });
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET error_retry_at = now() - interval '5 minutes' WHERE id = $1", [retried.id]));
+    expect(await run(o, retried.id, platform)).toMatchObject({ action: 'call' });
+    expect(platform.sent).toHaveLength(1);
+  });
+
+  it('a queued post that waited paused on its channel is held by a queue paused meanwhile, and fails for a person once the queue is on again over an hour late', async () => {
+    const o = await org();
+    const platform = new Counting();
+    const queued = await duePost(o, { queue: true, ago: '2 hours' });
+    const connectionId = (await admin(async (c) => (await c.query<{ id: string }>('SELECT channel_connection_id AS id FROM ludy_social.post_variant WHERE id = $1', [queued.id])).rows[0]?.id)) as string;
+    // Paused on an expired channel, which was reconnected since (its recorded version differs); then an admin paused the queue.
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'paused', paused_connection_version = '2000-01-01T00:00:00Z' WHERE id = $1", [queued.id]));
+    const queue = (paused: boolean) => exec(o, 'social.queue.set', { connectionId, timeZone: 'Asia/Ho_Chi_Minh', slots: [{ weekday: 1, minute: 540 }], paused }, o.admin);
+    await queue(true);
+    expect(await run(o, queued.id, platform)).toEqual({ action: 'none', reason: 'resumed' });
+    expect(await run(o, queued.id, platform)).toEqual({ action: 'none', reason: 'queue_paused' });
+    expect(platform.sent).toHaveLength(0);
+    expect(await status(o, queued.postId)).toEqual({ status: 'scheduled', code: null });
+    // The queue on again, the post more than an hour past its slot: it waits for a person, and nothing was sent.
+    await queue(false);
+    expect(await run(o, queued.id, platform)).toEqual({ action: 'none', reason: 'too_late' });
+    expect(await status(o, queued.postId)).toEqual({ status: 'failed', code: HELD_TOO_LONG });
+    expect(platform.sent).toHaveLength(0);
   });
 
   it('on release publishes the due posts exactly once, and leaves one more than an hour past its time to a person', async () => {
@@ -265,6 +313,69 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     expect(platform.sent).toHaveLength(3);
   });
 
+  it('fails the posts that are over an hour late in one step and tells the team once, with the count (#3462)', async () => {
+    const o = await org();
+    const platform = new Counting();
+    const late = [await duePost(o, { ago: '2 hours' }), await duePost(o, { ago: '3 hours' }), await duePost(o, { queue: true, ago: '90 minutes' })];
+    const recent = await duePost(o, { ago: '5 minutes' });
+    const failLate = (org: Org) => worker.execute<{ failed: number; variantIds: string[] }>('social.publish.fail_late', {}, { actor: system, orgId: org.orgId });
+    const events = (org: Org, type: string) => admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>('SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY created_at, id', [org.orgId, type])).rows.map((r) => r.payload));
+
+    const hasLate = (org: Org) => worker.query<boolean>('social.publish.has_late', {}, { actor: system, orgId: org.orgId });
+    // A person cannot run it, or ask it.
+    await expect(exec(o, 'social.publish.fail_late', {})).rejects.toMatchObject({ status: 403 });
+    await expect(api.query('social.publish.has_late', {}, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
+    expect(await hasLate(o)).toBe(true);
+    // A live hold is left to its release.
+    await exec(o, 'social.publishing.hold', { reason: 'Ngày quốc tang' }, o.admin);
+    expect(await hasLate(o)).toBe(false);
+    expect(await failLate(o)).toEqual({ failed: 0, variantIds: [] });
+    await exec(o, 'social.publishing.release', {}, o.admin);
+    // The release failed them already: nothing is left for the sweep step. Make them late again to try it.
+    for (const v of late) await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'scheduled', error_code = NULL, error_kind = NULL WHERE id = $1", [v.id]));
+
+    const done = await failLate(o);
+    expect(done.failed).toBe(3);
+    expect(done.variantIds.sort()).toEqual(late.map((v) => v.id).sort());
+    for (const v of late) expect(await status(o, v.postId)).toEqual({ status: 'failed', code: HELD_TOO_LONG });
+    expect(await status(o, recent.postId)).toEqual({ status: 'scheduled', code: null });
+    // One event for the three, no per-post failed notice; a second run finds nothing.
+    expect(await events(o, 'social.publishing.late_failed')).toEqual([{ count: 3, authors: [o.owner] }]);
+    expect(await events(o, 'social.variant.failed')).toEqual([]);
+    expect(await failLate(o)).toEqual({ failed: 0, variantIds: [] });
+    expect(await hasLate(o)).toBe(false);
+    // The owners, admins and the author are told once; a member who wrote none is not.
+    expect(await deliver(o, 'social.publishing.late_failed')).toBe(1);
+    const told = async (user: string) => (await api.query<{ items: NotificationItem[] }>('social.notification.list', {}, { actor: asUser(user), orgId: o.orgId })).items.filter((n) => n.kind === 'failed' && n.detail.late);
+    for (const user of [o.owner, o.admin]) expect((await told(user)).map((n) => [n.postId, n.detail.count])).toEqual([[null, '3']]);
+    expect(await told(o.member)).toEqual([]);
+    // The late ones never go out by themselves, and the recent one still does.
+    await sweep(platform, [o]);
+    expect(platform.sent).toHaveLength(1);
+
+    // One late post fails with the ordinary notice, as before.
+    const single = await org();
+    const one = await duePost(single, { ago: '2 hours' });
+    expect((await failLate(single)).failed).toBe(1);
+    expect(await events(single, 'social.variant.failed')).toEqual([{ post_id: one.postId, variant_id: one.id }]);
+    expect(await events(single, 'social.publishing.late_failed')).toEqual([]);
+
+    // One post late on two channels is still one post: each channel's ordinary notice, which opens the post.
+    const two = await org();
+    const first = await duePost(two, { ago: '2 hours' });
+    const secondConnection = await connect(two);
+    await admin(async (c) => {
+      await c.query(
+        `INSERT INTO ludy_social.post_variant (org_id, id, post_id, channel_connection_id, provider, status, revision, content_hash, scheduled_at)
+         SELECT org_id, gen_random_uuid(), post_id, $2, provider, status, revision, content_hash, scheduled_at FROM ludy_social.post_variant WHERE id = $1`,
+        [first.id, secondConnection],
+      );
+    });
+    expect((await failLate(two)).failed).toBe(2);
+    expect(await events(two, 'social.variant.failed')).toHaveLength(2);
+    expect(await events(two, 'social.publishing.late_failed')).toEqual([]);
+  });
+
   it('runs no first comment, repost, auto-reply or evergreen repost while held (#587, #773, #393)', async () => {
     const o = await org();
     const platform = new Counting();
@@ -274,10 +385,10 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     // Published before the hold, the first comment's job left for later (the worker stopped after the post).
     const noComment: Publisher = { provider: 'sandbox', publishSafety: platform.publishSafety, publish: (i) => platform.publish(i), reconcile: (i) => platform.reconcile(i) };
     for (const v of [commented, reposted, replied]) expect(await run(o, v.id, noComment)).toMatchObject({ status: 'published' });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET published_at = now() - interval '2 hours' WHERE id = $1", [reposted.id]));
-    await admin((c) => c.query("UPDATE crove_social.post SET evergreen_days = 7 WHERE id = $1", [commented.postId]));
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET published_at = now() - interval '8 days' WHERE id = $1", [commented.id]));
-    const evergreenDue = () => admin(async (c) => (await c.query<{ post_id: string }>('SELECT post_id FROM crove_social.evergreen_due(500, ARRAY[]::uuid[])')).rows.map((r) => r.post_id));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET published_at = now() - interval '2 hours' WHERE id = $1", [reposted.id]));
+    await admin((c) => c.query("UPDATE ludy_social.post SET evergreen_days = 7 WHERE id = $1", [commented.postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET published_at = now() - interval '8 days' WHERE id = $1", [commented.id]));
+    const evergreenDue = () => admin(async (c) => (await c.query<{ post_id: string }>('SELECT post_id FROM ludy_social.evergreen_due(500, ARRAY[]::uuid[])')).rows.map((r) => r.post_id));
     expect(await evergreenDue()).toContain(commented.postId);
 
     await exec(o, 'social.publishing.hold', { reason: 'Sự cố' });
@@ -287,9 +398,9 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     expect(await evergreenDue()).not.toContain(commented.postId);
     expect(await worker.execute('social.post.repost_evergreen', { postId: commented.postId }, { actor: system, orgId: o.orgId })).toEqual({ postId: null });
     expect(platform.comments).toHaveLength(0);
-    const after = await admin(async (c) => (await c.query<{ key: string }>("SELECT key FROM crove_kernel.external_call WHERE org_id = $1 AND step <> 'publish'", [o.orgId])).rows);
+    const after = await admin(async (c) => (await c.query<{ key: string }>("SELECT key FROM ludy_kernel.external_call WHERE org_id = $1 AND step <> 'publish'", [o.orgId])).rows);
     expect(after).toEqual([]);
-    expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_social.post WHERE repost_of = $1', [commented.postId])).rowCount)).toBe(0);
+    expect(await admin(async (c) => (await c.query('SELECT 1 FROM ludy_social.post WHERE repost_of = $1', [commented.postId])).rowCount)).toBe(0);
 
     // After the release each goes, once.
     await exec(o, 'social.publishing.release', {});
@@ -331,7 +442,7 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     const sha = fileId.replaceAll('-', '').padEnd(64, '0');
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, image_width, image_height)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, image_width, image_height)
          VALUES ($1, $2, $3, $4, $5, 'anh.jpg', 'image/jpeg', 200000, 'social', 1080, 1350)`,
         [o.orgId, fileId, sha, `org/${o.orgId}/${sha}`, `content:${sha}`],
       ),
@@ -341,13 +452,13 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     const post = await get(o, postId);
     await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
     await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
     const id = post.variants[0]?.id as string;
     const job = () => runPublishJob({ runtime: worker, broker: vault, publishers: { instagram }, callTimeoutMs: 2_000 }, o.orgId, id, 'instagram');
     // Sent before the hold, still processing when it comes.
     expect(await job()).toEqual({ action: 'call', status: 'processing' });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET next_check_at = now() - interval '1 second' WHERE id = $1", [id]));
-    const dueIg = () => admin(async (c) => (await c.query<{ variant_id: string }>("SELECT variant_id FROM crove_social.publish_due(1000, 600, ARRAY['instagram'])")).rows.map((r) => r.variant_id));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET next_check_at = now() - interval '1 second' WHERE id = $1", [id]));
+    const dueIg = () => admin(async (c) => (await c.query<{ variant_id: string }>("SELECT variant_id FROM ludy_social.publish_due(1000, 600, ARRAY['instagram'])")).rows.map((r) => r.variant_id));
     expect(await dueIg()).toContain(id);
 
     await exec(o, 'social.publishing.hold', { reason: 'Ngày quốc tang' });
@@ -379,7 +490,7 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
     };
     const v = await duePost(o);
     expect(await run(o, v.id, pending)).toEqual({ action: 'call', status: 'processing' });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET next_check_at = now() - interval '1 second' WHERE id = $1", [v.id]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET next_check_at = now() - interval '1 second' WHERE id = $1", [v.id]));
     await exec(o, 'social.publishing.hold', { reason: 'Sự cố' });
     // The scan leaves it for after the release; a job that runs anyway records the post that is already out.
     expect(await due()).not.toContain(v.id);
@@ -400,8 +511,8 @@ suite('social publishing hold on PostgreSQL (#946)', () => {
       admin(async (c) => {
         await c.query('BEGIN');
         try {
-          await c.query('SET LOCAL ROLE crove_tenant');
-          await c.query('UPDATE crove_social.publish_hold SET reason = $1', ['x']);
+          await c.query('SET LOCAL ROLE ludy_tenant');
+          await c.query('UPDATE ludy_social.publish_hold SET reason = $1', ['x']);
         } finally {
           await c.query('ROLLBACK');
         }

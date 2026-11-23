@@ -1,9 +1,57 @@
 /* Theme tokens, base styles and the component classes come from the design system; Tailwind finds the app's own
    class names from the app root. */
-@import '@crove/ui/globals.css';
+@import '@ludy/ui/globals.css';
 
 html,
 body,
 #root {
   height: 100%;
+}
+
+/* The printable minutes of a meeting (Meetings A4, #3162): A4 with office margins, on a named page so no other printable page changes. The page is outside the org's frame, so only the sheet and no toolbar reach the paper. */
+@page minutes {
+  size: A4;
+  margin: 18mm 15mm;
+}
+/* Wide declaration schedules (D02-LT, 05/KK-TNCN, 05/QTT-TNCN, 03/TNCN, labor register, 01/PLI; #2748): landscape paper, unclipped scroll boxes, wrapped headers, compact cells. */
+@page declaration {
+  size: landscape;
+  margin: 10mm;
+}
+@media print {
+  .minutes-sheet {
+    page: minutes;
+  }
+  .declaration-sheet {
+    page: declaration;
+  }
+  .declaration-sheet .overflow-hidden {
+    overflow: visible;
+  }
+  .declaration-sheet [data-slot='table-container'] {
+    max-height: none;
+    overflow: visible;
+  }
+  .declaration-sheet [data-slot='table'] {
+    min-width: 0;
+    width: 100%;
+    font-size: 9px;
+    line-height: 1.25;
+  }
+  .declaration-sheet [data-slot='table-header'] {
+    position: static;
+    display: table-header-group;
+  }
+  .declaration-sheet [data-slot='table-head'] {
+    height: auto;
+  }
+  .declaration-sheet [data-slot='table-head'],
+  .declaration-sheet [data-slot='table-cell'] {
+    padding: 4px 5px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .declaration-sheet [data-slot='table-row'] {
+    break-inside: avoid;
+  }
 }

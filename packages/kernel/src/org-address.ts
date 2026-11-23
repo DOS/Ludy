@@ -5,11 +5,11 @@
 // one line: runs of whitespace (line breaks included) become one space; other control characters are refused, as the
 // column's CHECK constraint refuses them.
 import { z } from 'zod';
-import { auditValue } from '@crove/kernel-contract';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { auditValue } from '@ludy/kernel-contract';
+import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { kernelManifest } from './manifest.ts';
 
-const TENANT = kernelManifest.tables.crove_kernel.tenant;
+const TENANT = kernelManifest.tables.ludy_kernel.tenant;
 
 export const ADDRESS_MAX_LENGTH = 500;
 
@@ -32,9 +32,9 @@ export const setAddress = defineCommand({
     if (address === undefined) {
       throw new DomainError('INVALID_ADDRESS', 422, `Địa chỉ không hợp lệ: một dòng, tối đa ${ADDRESS_MAX_LENGTH} ký tự`);
     }
-    const before = await ctx.trx.selectFrom('crove_kernel.tenant').select('address').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const before = await ctx.trx.selectFrom('ludy_kernel.tenant').select('address').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     if (before.address !== address) {
-      await ctx.trx.updateTable('crove_kernel.tenant').set({ address }).where('org_id', '=', ctx.orgId).execute();
+      await ctx.trx.updateTable('ludy_kernel.tenant').set({ address }).where('org_id', '=', ctx.orgId).execute();
       await ctx.activity('kernel.tenant', ctx.orgId, 'org.address_changed', address ? 'Cập nhật địa chỉ của tổ chức' : 'Xóa địa chỉ của tổ chức');
     }
     const changed = before.address !== address;
@@ -58,10 +58,10 @@ export const setContactEmail = defineCommand({
   access: ['owner', 'admin'],
   handler: async (ctx, input) => {
     const email = input.email === null ? null : input.email.trim().toLowerCase();
-    const before = await ctx.trx.selectFrom('crove_kernel.tenant').select('contact_email').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const before = await ctx.trx.selectFrom('ludy_kernel.tenant').select('contact_email').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     const changed = before.contact_email !== email;
     if (changed) {
-      await ctx.trx.updateTable('crove_kernel.tenant').set({ contact_email: email }).where('org_id', '=', ctx.orgId).execute();
+      await ctx.trx.updateTable('ludy_kernel.tenant').set({ contact_email: email }).where('org_id', '=', ctx.orgId).execute();
       await ctx.activity('kernel.tenant', ctx.orgId, 'org.contact_email_changed', email ? 'Cập nhật email liên hệ của tổ chức' : 'Xóa email liên hệ của tổ chức');
     }
     ctx.audit({ changed, cleared: email === null });

@@ -8,12 +8,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { StockCount } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { StockCount } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -51,7 +51,7 @@ suite('the count of stock (#2513, part b)', () => {
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty Kiểm kê ${randomUUID().slice(0, 6)}`);
     const [adminUser, member, viewer] = await Promise.all([identity('admin'), identity('member'), identity('viewer')]);
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]));
     return { orgId, owner, admin: adminUser, member, viewer };
   }
   const execute = <T>(o: Org, name: string, input: unknown, user = o.member) => rt.execute<T>(name, input, { actor: asMfa(user), orgId: o.orgId, idempotencyKey: randomUUID() });
@@ -59,13 +59,13 @@ suite('the count of stock (#2513, part b)', () => {
   const makeItem = (o: Org, code: string) =>
     execute<{ id: string }>(o, 'finance.stock_item.save', { itemId: null, legalEntityId: null, code, name: `Hàng ${code}`, unit: 'cái', stockAccount: '156', trade: 'goods' }).then((r) => r.id);
   const move = (o: Org, item: string, date: string, quantity: string) =>
-    rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, $4, 'manual') RETURNING id", [o.orgId, item, date, quantity]).then((r) => r[0]?.id as string);
-  const entityOf = async (o: Org) => (await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]))[0]?.id ?? '';
+    rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, $4, 'manual') RETURNING id", [o.orgId, item, date, quantity]).then((r) => r[0]?.id as string);
+  const entityOf = async (o: Org) => (await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]))[0]?.id ?? '';
   // What an earlier close left: a closed month holding `item` with five on hand worth 500 (the rows are written by the database owner).
   async function seedClosed(o: Org, month: string, item: string) {
-    const [period] = await rows<{ id: string }>('INSERT INTO crove_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, $3, 0) RETURNING id', [o.orgId, await entityOf(o), `${month}-01`]);
+    const [period] = await rows<{ id: string }>('INSERT INTO ludy_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, $3, 0) RETURNING id', [o.orgId, await entityOf(o), `${month}-01`]);
     await rows(
-      `INSERT INTO crove_finance.stock_period_item (org_id, period_id, item_id, opening_quantity, opening_value, in_quantity, in_value, out_quantity, out_value, closing_quantity, closing_value, unit_cost)
+      `INSERT INTO ludy_finance.stock_period_item (org_id, period_id, item_id, opening_quantity, opening_value, in_quantity, in_value, out_quantity, out_value, closing_quantity, closing_value, unit_cost)
        VALUES ($1, $2, $3, 0, 0, 5, 500, 0, 0, 5, 500, 100)`,
       [o.orgId, period?.id, item],
     );
@@ -91,9 +91,9 @@ suite('the count of stock (#2513, part b)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     db = createDb(pool);
@@ -140,7 +140,7 @@ suite('the count of stock (#2513, part b)', () => {
     const posted = await approve(o, proposalId);
     expect(posted).toMatchObject({ voucherId: expect.any(String), journalEntryId: expect.any(String), countId });
     const lines = await rows<{ account_code: string; debit: string; credit: string }>(
-      'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY account_code, credit',
+      'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit FROM ludy_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY account_code, credit',
       [o.orgId, posted.journalEntryId],
     );
     expect(lines).toEqual([
@@ -150,13 +150,13 @@ suite('the count of stock (#2513, part b)', () => {
       { account_code: '3381', debit: '0', credit: '150' },
       { account_code: '632', debit: '40', credit: '0' },
     ]);
-    const [entry] = await rows<{ entry_date: string }>('SELECT entry_date::text AS entry_date FROM crove_finance.journal_entry WHERE org_id = $1 AND id = $2', [o.orgId, posted.journalEntryId]);
+    const [entry] = await rows<{ entry_date: string }>('SELECT entry_date::text AS entry_date FROM ludy_finance.journal_entry WHERE org_id = $1 AND id = $2', [o.orgId, posted.journalEntryId]);
     expect(entry?.entry_date).toBe('2026-09-30');
-    const [voucher] = await rows<{ stock_count_id: string; proposal_id: string }>('SELECT stock_count_id, proposal_id FROM crove_finance.journal_voucher WHERE org_id = $1 AND id = $2', [o.orgId, posted.voucherId]);
+    const [voucher] = await rows<{ stock_count_id: string; proposal_id: string }>('SELECT stock_count_id, proposal_id FROM ludy_finance.journal_voucher WHERE org_id = $1 AND id = $2', [o.orgId, posted.voucherId]);
     expect(voucher).toEqual({ stock_count_id: countId, proposal_id: proposalId });
     // The adjustments: one per item that differs, dated the day of the count, with their value signed like their quantity.
     const adjustments = await rows<{ item_id: string; move_date: string; quantity: string; amount: string }>(
-      "SELECT item_id, move_date::text AS move_date, quantity::bigint::text AS quantity, amount::bigint::text AS amount FROM crove_finance.stock_move WHERE org_id = $1 AND source_type = 'count' ORDER BY quantity",
+      "SELECT item_id, move_date::text AS move_date, quantity::bigint::text AS quantity, amount::bigint::text AS amount FROM ludy_finance.stock_move WHERE org_id = $1 AND source_type = 'count' ORDER BY quantity",
       [o.orgId],
     );
     expect(adjustments).toEqual([
@@ -177,10 +177,10 @@ suite('the count of stock (#2513, part b)', () => {
     expect(september.find((r) => r.itemId === b)).toMatchObject({ closingQuantity: '3', closingValue: '150' });
     // Confirmed once, and an adjustment is not reversed: the count that was wrong is put right by a new one.
     await expect(ask(o, countId)).rejects.toMatchObject({ code: 'STOCK_COUNT_NOT_DRAFT' });
-    const [adjustment] = await rows<{ id: string }>("SELECT id FROM crove_finance.stock_move WHERE org_id = $1 AND source_type = 'count' AND item_id = $2", [o.orgId, a]);
+    const [adjustment] = await rows<{ id: string }>("SELECT id FROM ludy_finance.stock_move WHERE org_id = $1 AND source_type = 'count' AND item_id = $2", [o.orgId, a]);
     await expect(execute(o, 'finance.stock_move.reverse', { moveId: adjustment?.id })).rejects.toMatchObject({ code: 'STOCK_MOVE_COUNT' });
     await expect(
-      rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, reverses_move_id) VALUES ($1, $2, '2026-10-02', 2, 'reversal', $3)", [o.orgId, a, adjustment?.id]),
+      rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type, reverses_move_id) VALUES ($1, $2, '2026-10-02', 2, 'reversal', $3)", [o.orgId, a, adjustment?.id]),
     ).rejects.toThrow(/STOCK_MOVE_COUNT/);
   });
 
@@ -203,9 +203,9 @@ suite('the count of stock (#2513, part b)', () => {
       rt.execute('kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: posted.journalEntryId, entryDate: '2026-10-15', reason: 'Ghi nhầm' } }, { actor: asUser(o.member), orgId: o.orgId, idempotencyKey: randomUUID() }),
     ).rejects.toMatchObject({ code: 'STOCK_COUNT_ENTRY' });
     // An adjustment of the line that made none, written afterwards by a raw session, is not covered by the voucher: it fails at its own commit.
-    const [line] = await rows<{ id: string }>('SELECT id FROM crove_finance.stock_count_line WHERE org_id = $1 AND count_id = $2 AND item_id = $3', [o.orgId, countId, c]);
+    const [line] = await rows<{ id: string }>('SELECT id FROM ludy_finance.stock_count_line WHERE org_id = $1 AND count_id = $2 AND item_id = $3', [o.orgId, countId, c]);
     await expect(
-      rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, count_line_id, amount) VALUES ($1, $2, '2026-09-30', 1000, 'count', $3, 1000000)", [o.orgId, c, line?.id]),
+      rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type, count_line_id, amount) VALUES ($1, $2, '2026-09-30', 1000, 'count', $3, 1000000)", [o.orgId, c, line?.id]),
     ).rejects.toThrow(/STOCK_COUNT_VOUCHER/);
     expect(await onHand(o, c)).toBe('2');
   });
@@ -234,7 +234,7 @@ suite('the count of stock (#2513, part b)', () => {
     expect(await execute(o, 'finance.stock_count.confirm_empty', { countId: same })).toEqual({ id: same });
     const [done] = await counts(o);
     expect(done).toMatchObject({ id: same, status: 'confirmed', voucherId: null });
-    expect(await rows("SELECT 1 FROM crove_finance.stock_move WHERE org_id = $1 AND source_type = 'count'", [o.orgId])).toEqual([]);
+    expect(await rows("SELECT 1 FROM ludy_finance.stock_move WHERE org_id = $1 AND source_type = 'count'", [o.orgId])).toEqual([]);
     // A proposal is refused when a move dated before the day of the count was written after it was asked for: the book quantity it was built on is gone.
     const stale = await count(o, '2026-09-20', [{ itemId: item, countedQuantity: '4' }]);
     const request = await ask(o, stale);
@@ -250,36 +250,36 @@ suite('the count of stock (#2513, part b)', () => {
     await move(o, item, '2026-08-05', '5');
     await seedClosed(o, '2026-08', item);
     const countId = await count(o, '2026-09-10', [{ itemId: item, countedQuantity: '3' }]);
-    const [line] = await rows<{ id: string }>('SELECT id FROM crove_finance.stock_count_line WHERE org_id = $1 AND count_id = $2', [o.orgId, countId]);
+    const [line] = await rows<{ id: string }>('SELECT id FROM ludy_finance.stock_count_line WHERE org_id = $1 AND count_id = $2', [o.orgId, countId]);
     // An adjustment of a count that is a draft is refused.
     await expect(
-      rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, count_line_id, amount) VALUES ($1, $2, '2026-09-10', -2, 'count', $3, -200)", [o.orgId, item, line?.id]),
+      rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type, count_line_id, amount) VALUES ($1, $2, '2026-09-10', -2, 'count', $3, -200)", [o.orgId, item, line?.id]),
     ).rejects.toThrow(/STOCK_COUNT_MOVE/);
     // A count confirmed with no voucher takes no adjustment: the guard wants the voucher that posted the difference behind every one.
     const c = new pg.Client({ connectionString: adminUrl });
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query("UPDATE crove_finance.stock_count SET status = 'confirmed', confirmed_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, countId]);
+      await c.query("UPDATE ludy_finance.stock_count SET status = 'confirmed', confirmed_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, countId]);
       await expect(
-        c.query("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, count_line_id, amount) VALUES ($1, $2, '2026-09-10', -2, 'count', $3, -200)", [o.orgId, item, line?.id]),
+        c.query("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type, count_line_id, amount) VALUES ($1, $2, '2026-09-10', -2, 'count', $3, -200)", [o.orgId, item, line?.id]),
       ).rejects.toThrow(/STOCK_COUNT_MOVE/);
       await c.query('ROLLBACK');
     } finally {
       await c.end();
     }
     // The failed confirmation left nothing: the count is still a draft, and its line is still the person's to change while it is.
-    expect((await rows<{ status: string }>('SELECT status FROM crove_finance.stock_count WHERE org_id = $1 AND id = $2', [o.orgId, countId]))[0]?.status).toBe('draft');
-    await rows('UPDATE crove_finance.stock_count_line SET counted_quantity = 4 WHERE org_id = $1 AND id = $2', [o.orgId, line?.id]);
+    expect((await rows<{ status: string }>('SELECT status FROM ludy_finance.stock_count WHERE org_id = $1 AND id = $2', [o.orgId, countId]))[0]?.status).toBe('draft');
+    await rows('UPDATE ludy_finance.stock_count_line SET counted_quantity = 4 WHERE org_id = $1 AND id = $2', [o.orgId, line?.id]);
     // A cancelled or confirmed count and its lines are frozen.
     await execute(o, 'finance.stock_count.cancel', { countId });
-    await expect(rows("UPDATE crove_finance.stock_count SET note = 'x' WHERE org_id = $1 AND id = $2", [o.orgId, countId])).rejects.toThrow(/STOCK_COUNT_FROZEN/);
-    await expect(rows('UPDATE crove_finance.stock_count_line SET counted_quantity = 1 WHERE org_id = $1 AND id = $2', [o.orgId, line?.id])).rejects.toThrow(/STOCK_COUNT_FROZEN/);
+    await expect(rows("UPDATE ludy_finance.stock_count SET note = 'x' WHERE org_id = $1 AND id = $2", [o.orgId, countId])).rejects.toThrow(/STOCK_COUNT_FROZEN/);
+    await expect(rows('UPDATE ludy_finance.stock_count_line SET counted_quantity = 1 WHERE org_id = $1 AND id = $2', [o.orgId, line?.id])).rejects.toThrow(/STOCK_COUNT_FROZEN/);
     // A closed month takes no adjustment either: the stock guard is the same for every source.
     const entity = await entityOf(o);
-    await rows('INSERT INTO crove_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, $3, 0)', [o.orgId, entity, '2026-09-01']);
+    await rows('INSERT INTO ludy_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, $3, 0)', [o.orgId, entity, '2026-09-01']);
     await expect(
-      rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, count_line_id, amount) VALUES ($1, $2, '2026-09-20', 1, 'count', $3, 100)", [o.orgId, item, randomUUID()]),
+      rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type, count_line_id, amount) VALUES ($1, $2, '2026-09-20', 1, 'count', $3, 100)", [o.orgId, item, randomUUID()]),
     ).rejects.toThrow(/STOCK_PERIOD_CLOSED/);
   });
 });

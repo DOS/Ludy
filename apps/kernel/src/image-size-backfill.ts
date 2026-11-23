@@ -3,8 +3,8 @@
 // against its sha256) and records the size once. It walks the files by id after a cursor kept in memory, so a header
 // that cannot be read is tried again only on the next round, a day later, never holding the others.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { BlobIntegrityError, BlobNotFoundError, BlobTooLargeError, readVerified, type BlobStore, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { BlobIntegrityError, BlobNotFoundError, BlobTooLargeError, readVerified, type BlobStore, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { imageSize } from './media-probe.ts';
 
 export const IMAGE_SIZE_SWEEP_MS = 10 * 60_000;
@@ -26,7 +26,7 @@ export async function backfillImageSizes(deps: { runtime: Runtime; workerDb: Db;
   const now = Date.now();
   if (now < state.pausedUntil) return { recorded: 0, unreadable: 0 };
   const { rows } = await sql<{ org_id: string; file_id: string; storage_key: string; generation: string | null; sha256: string; content_type: string }>`
-    SELECT org_id, file_id, storage_key, generation, sha256, content_type FROM crove_kernel.image_size_due(${state.after}::uuid, ${BATCH}::int)`.execute(deps.workerDb);
+    SELECT org_id, file_id, storage_key, generation, sha256, content_type FROM ludy_kernel.image_size_due(${state.after}::uuid, ${BATCH}::int)`.execute(deps.workerDb);
   const out = { recorded: 0, unreadable: 0 };
   // A failure that is not a header Crove cannot read (storage or the database away): the round does not end on it,
   // so those files are tried again on the next pass rather than a day later.

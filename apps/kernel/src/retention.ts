@@ -1,9 +1,9 @@
-// Retention purges (issue #38, plan §4.9): the worker runs crove_kernel.retention_purge() on a pg-boss schedule,
+// Retention purges (issue #38, plan §4.9): the worker runs ludy_kernel.retention_purge() on a pg-boss schedule,
 // one batch per call, until no store has expired rows left or the run's batch budget is spent.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { EXPORT_EXPIRY_GRACE_HOURS } from '@crove/kernel';
-import type { BlobStore, ListedBlob, ListPrefix, Runtime, StagingSweep } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { EXPORT_EXPIRY_GRACE_HOURS } from '@ludy/kernel';
+import type { BlobStore, ListedBlob, ListPrefix, Runtime, StagingSweep } from '@ludy/kernel-runtime';
 import { opsAlert } from './ops-alert.ts';
 
 // Where an ALERT line goes: the operational alerts (log and webhook, #1993) when the job logs to the console, else the
@@ -41,7 +41,7 @@ export async function runRetention(workerDb: Db, batch = RETENTION_BATCH, log: P
   const deleted: Record<string, number> = {};
   let remaining: string[] = [];
   for (let i = 0; i < MAX_BATCHES_PER_RUN; i++) {
-    const { rows } = await sql<PurgeRow>`SELECT store, deleted, more FROM crove_kernel.retention_purge(${batch}::int)`.execute(workerDb);
+    const { rows } = await sql<PurgeRow>`SELECT store, deleted, more FROM ludy_kernel.retention_purge(${batch}::int)`.execute(workerDb);
     for (const row of rows) deleted[row.store] = (deleted[row.store] ?? 0) + row.deleted;
     remaining = rows.filter((r) => r.more).map((r) => r.store);
     const stuck = rows.filter((r) => r.more && r.deleted === 0).map((r) => r.store);
@@ -109,6 +109,9 @@ const BLOB_DELETES_IN_FLIGHT = 10;
 // Export blobs younger than this are never deleted, recorded or not: an export being written has not been recorded
 // yet. Older ones go unless a record that has not expired lists them.
 const EXPORT_UNRECORDED_MAX_AGE_MS = 2 * 86_400_000;
+// The temporary sealed video of an upload read only for its audio (tmp/<org_id>/<sha256>, #3341) is deleted by the request that made it, in its `finally`. One left by a crash is swept once it is this old: the
+// longest request that can own one (an upload up to the video cap, then crove-media's extraction) is far shorter, so a younger object may still be in use. Nothing references a tmp/ object, so none is kept.
+export const TMP_BLOB_MAX_AGE_HOURS = 6;
 // The pg-boss queue of inbound mail (worker.ts QUEUES.inbound).
 const INBOUND_QUEUE = 'kernel-inbound-email';
 
@@ -170,14 +173,14 @@ async function sweepPrefix(store: BlobStore, options: SweepOptions): Promise<Blo
 }
 
 /**
- * Of the given raw inbound blobs, the keys still waiting for the worker: a row in crove_kernel.inbound_pending (read
+ * Of the given raw inbound blobs, the keys still waiting for the worker: a row in ludy_kernel.inbound_pending (read
  * through the worker-only definer inbound_pending_blobs) or a live pg-boss job of the inbound queue. The pending rows
  * are read first: the relay sends the job before it commits the claim that deletes the row, so a blob is always in at
  * least one of the two places this order reads.
  */
-export async function referencedInboundBlobs(workerDb: Db, keys: readonly string[], jobSchema = 'crove_jobs'): Promise<Set<string>> {
+export async function referencedInboundBlobs(workerDb: Db, keys: readonly string[], jobSchema = 'ludy_jobs'): Promise<Set<string>> {
   const ids = keys.map((k) => k.slice('inbound/'.length));
-  const pending = await sql<{ blob_id: string }>`SELECT crove_kernel.inbound_pending_blobs(${ids}::text[]) AS blob_id`.execute(workerDb);
+  const pending = await sql<{ blob_id: string }>`SELECT ludy_kernel.inbound_pending_blobs(${ids}::text[]) AS blob_id`.execute(workerDb);
   const live = await sql<{ blob_id: string }>`
     SELECT j.data->>'blobId' AS blob_id FROM ${sql.table(`${jobSchema}.job`)} j
     WHERE j.name = ${INBOUND_QUEUE} AND j.state IN ('created', 'retry', 'active') AND j.data->>'blobId' = ANY (${ids}::text[])`.execute(workerDb);
@@ -197,6 +200,24 @@ export async function sweepInboundBlobs(
     label: 'inbound blobs',
     cutoff: new Date(now.getTime() - (limits.maxAgeDays ?? INBOUND_BLOB_MAX_AGE_DAYS) * 86_400_000),
     referenced: (blobs) => referencedInboundBlobs(workerDb, blobs.map((b) => b.key)),
+    log,
+    pageSize: limits.pageSize ?? BLOB_SWEEP_PAGE,
+    maxPages: limits.maxPages ?? BLOB_SWEEP_MAX_PAGES,
+  });
+}
+
+/** Deletes temporary sealed videos (tmp/<org_id>/...) older than TMP_BLOB_MAX_AGE_HOURS that a crashed request left behind (#3341). Nothing references them, so every old one goes; the live ones are younger. */
+export async function sweepTmpBlobs(
+  store: BlobStore,
+  now: Date = new Date(),
+  log: Pick<Console, 'log' | 'error'> = console,
+  limits: { pageSize?: number; maxPages?: number; maxAgeHours?: number } = {},
+): Promise<BlobSweep | null> {
+  return sweepPrefix(store, {
+    prefix: 'tmp/',
+    label: 'temporary video blobs',
+    cutoff: new Date(now.getTime() - (limits.maxAgeHours ?? TMP_BLOB_MAX_AGE_HOURS) * 3_600_000),
+    referenced: async () => new Set<string>(),
     log,
     pageSize: limits.pageSize ?? BLOB_SWEEP_PAGE,
     maxPages: limits.maxPages ?? BLOB_SWEEP_MAX_PAGES,

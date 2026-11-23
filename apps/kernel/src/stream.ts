@@ -1,6 +1,6 @@
 // Realtime invalidation over SSE (issue #69, plan §2 Realtime, §4.11 and §9).
 //
-// Writes to the records the SPA shows send `NOTIFY crove_stream, '<org_id> <type> <id>'` from a trigger
+// Writes to the records the SPA shows send `NOTIFY ludy_stream, '<org_id> <type> <id>'` from a trigger
 // (20261018140000_crove_kernel_stream_invalidation.sql), and rows that belong to one legal entity add it:
 // `<org_id> <type> <id> <legal_entity_id>` (20261103080000 and 20261103090000 *_stream_legal_entity.sql, #1692), and a
 // member's own row (a notification, a to-do, a note) names its recipient last, `... @<user_id>`, and a shared note adds
@@ -29,10 +29,10 @@
 // so a burst of hints for a busy org never takes more than that many connections of the API pool.
 import { createHash, randomBytes } from 'node:crypto';
 import pg from 'pg';
-import { STREAM_HINT_TYPES, type StreamCloseReason, type StreamHint, type StreamHintType } from '@crove/kernel-contract';
-import { DomainError, type Aal, type UserActor } from '@crove/kernel-runtime';
+import { STREAM_HINT_TYPES, type StreamCloseReason, type StreamHint, type StreamHintType } from '@ludy/kernel-contract';
+import { DomainError, type Aal, type UserActor } from '@ludy/kernel-runtime';
 
-export const STREAM_CHANNEL = 'crove_stream';
+export const STREAM_CHANNEL = 'ludy_stream';
 // The query every check runs (packages/kernel/src/queries.ts).
 export const STREAM_CHECK_QUERY = 'kernel.stream.check';
 // A ticket is redeemed within seconds of being issued; the SPA opens the stream right away.
@@ -58,7 +58,7 @@ const TYPES: ReadonlySet<string> = new Set(STREAM_HINT_TYPES);
 const TICKET = /^[A-Za-z0-9_-]{43}$/;
 
 // The hints about one member's own rows, which only that member may read (own_notification, todo_read, note_read): each
-// names its recipient and reaches only the streams of that user. crove_kernel.stream_notify names the same types
+// names its recipient and reaches only the streams of that user. ludy_kernel.stream_notify names the same types
 // (20261104000000_crove_kernel_stream_notes_audience.sql).
 export const RECIPIENT_HINT_TYPES: ReadonlySet<StreamHintType> = new Set<StreamHintType>(['notification', 'todo', 'note']);
 // The hints that may add `+shared`: a shared note, which the members who read the org's shared notes may hear too.
@@ -68,6 +68,31 @@ const SHARED_HINT_TYPES: ReadonlySet<StreamHintType> = new Set<StreamHintType>([
 // (#1703). stream-legal-entity.db.test.ts checks this list against the catalog, so a table that becomes entity-scoped
 // fails it until its type is added here.
 export const ENTITY_HINT_TYPES: ReadonlySet<StreamHintType> = new Set<StreamHintType>(['journal_entry', 'document', 'extraction', 'notification', 'proposal']);
+
+// The app each hint type belongs to (ADR-0053): a stream of an org that switched the app off, or does not hold it, hears nothing of its entities. file, extraction,
+// proposal and notification are the kernel's, and org_apps tells every stream that the apps changed. A type missing here fails the build (the Record is total).
+export const HINT_APPS: Readonly<Record<StreamHintType, string>> = {
+  proposal: 'kernel',
+  file: 'kernel',
+  extraction: 'kernel',
+  journal_entry: 'finance',
+  document: 'finance',
+  social_post: 'social',
+  social_notification: 'social',
+  notification: 'kernel',
+  note: 'notes',
+  todo: 'notes',
+  org_apps: 'kernel',
+  crm_deal: 'crm',
+  crm_party: 'crm',
+};
+// The apps whose hints a stream filters: the ones with entities on the stream.
+export const STREAM_FILTERED_APPS: readonly string[] = [...new Set(Object.values(HINT_APPS).filter((app) => app !== 'kernel'))];
+
+// Whether the stream's scope says the app of this hint type is off for the org.
+export function appOffFor(scope: StreamScope, type: StreamHintType): boolean {
+  return scope.appsOff?.has(HINT_APPS[type]) === true;
+}
 
 // Whether a hint of this type may go on with this entity (undefined: none named): a type of ENTITY_HINT_TYPES needs one.
 export function entityNamed(type: StreamHintType, legalEntityId: string | undefined): boolean {
@@ -117,7 +142,8 @@ export function parseHint(payload: string): ParsedHint | null {
 
 // The legal entities a stream may hear about: every entity of the org, or exactly these (none for an empty set); and
 // whether it may hear about other members' shared notes (absent: it may not).
-export type StreamScope = ({ all: true } | { all: false; entities: ReadonlySet<string> }) & { sharedNotes?: boolean };
+// appsOff: the apps (of STREAM_FILTERED_APPS) the org does not have on now, so a stream does not push their hints; absent: none is off.
+export type StreamScope = ({ all: true } | { all: false; entities: ReadonlySet<string> }) & { sharedNotes?: boolean; appsOff?: ReadonlySet<string> };
 export const ALL_ENTITIES: StreamScope = { all: true };
 
 // The scope a kernel.stream.check result grants (packages/kernel/src/queries.ts: `legalEntities` is '*' or a list of
@@ -494,6 +520,7 @@ export class StreamConnection implements HubSubscriber {
   private resyncPending = false;
   private sinceCheck = 0;
   private checking = false;
+  private recheckAgain = false;
   private closed = false;
   private flushQueued = false;
   private readonly timers: NodeJS.Timeout[] = [];
@@ -540,8 +567,15 @@ export class StreamConnection implements HubSubscriber {
   // app's poll covers it.
   hint(hint: StreamHint, legalEntityId?: string, userId?: string, shared = false): void {
     if (this.closed) return;
+    if (appOffFor(this.scope, hint.type)) return;
     if (!forRecipient(this.scope, this.userId, hint.type, userId, shared)) return;
     if (!entityNamed(hint.type, legalEntityId)) return;
+    // The apps changed: check again before this hint goes out, so the filter above is the new set when the app reads kernel.org.apps.
+    if (hint.type === 'org_apps') {
+      this.sinceCheck = this.recheckEvery;
+      // A check already running may have read the apps before the switch committed: it is followed by one more before anything is sent.
+      if (this.checking) this.recheckAgain = true;
+    }
     if (!inScope(this.scope, legalEntityId)) return;
     if (!this.resyncPending) {
       // Keyed by the entity too: an extraction hint carries its file's id, and two readings of one file may belong to
@@ -583,6 +617,7 @@ export class StreamConnection implements HubSubscriber {
       }
       const [key, held] = this.pending.entries().next().value as [string, HeldHint];
       this.pending.delete(key);
+      if (appOffFor(this.scope, held.hint.type)) continue;
       if (!inScope(this.scope, held.legalEntityId)) continue;
       if (!forRecipient(this.scope, this.userId, held.hint.type, held.userId, held.shared)) continue;
       this.sinceCheck++;
@@ -619,6 +654,12 @@ export class StreamConnection implements HubSubscriber {
     }
     if (scope) this.scope = scope;
     this.checking = false;
+    // The apps changed while this check ran: ask again, and let the hints wait for that answer.
+    if (this.recheckAgain && !this.closed) {
+      this.recheckAgain = false;
+      void this.recheck();
+      return;
+    }
     this.sinceCheck = 0;
     this.flush();
   }
@@ -696,7 +737,7 @@ export function createDbTicketStore(pool: pg.Pool, options: { ttlSeconds?: numbe
       // stream_ticket_issue answers false both for an expired token and for the per-user limit. `expired` repeats its
       // token test in the same statement: now() is the transaction's start in both, so the two always agree.
       const { rows } = await pool.query<{ ok: boolean; expired: boolean }>(
-        `SELECT crove_kernel.stream_ticket_issue($1, $2::uuid, $3::uuid, $4::uuid, $5, $6::bigint, pg_catalog.to_timestamp($7::double precision), $8::integer, $9::integer) AS ok,
+        `SELECT ludy_kernel.stream_ticket_issue($1, $2::uuid, $3::uuid, $4::uuid, $5, $6::bigint, pg_catalog.to_timestamp($7::double precision), $8::integer, $9::integer) AS ok,
                 pg_catalog.to_timestamp($7::double precision) <= pg_catalog.now() AS expired`,
         [hash, b.userId, b.orgId, b.sessionId, b.aal, b.mfaAt, b.tokenExp, ttl, perUser],
       );
@@ -714,7 +755,7 @@ export function createDbTicketStore(pool: pg.Pool, options: { ttlSeconds?: numbe
         token_exp: string;
       }>(
         `SELECT user_id, org_id, session_id, aal, mfa_at::text AS mfa_at, pg_catalog.date_part('epoch', token_expires_at)::text AS token_exp
-         FROM crove_kernel.stream_ticket_redeem($1)`,
+         FROM ludy_kernel.stream_ticket_redeem($1)`,
         [hash],
       );
       const row = rows[0];

@@ -1,48 +1,68 @@
 // Each module's screens in the app and its menu items (plan §5.2 `routes` and `nav`, DESIGN.md §9, ADR-0031, #1652).
 // Every module's manifest names its entry here (`...MODULE_SCREENS.crm`), and the app's shell builds its apps, menus,
 // command palette and module guard from this list, so the shell names no module's screen itself. They live in
-// @crove/kernel-contract because the app's bundle already reads it and it carries no server code.
+// @ludy/kernel-contract because the app's bundle already reads it and it carries no server code.
 // apps/app/test/module-screens.test.ts fails when a route of the app's router, under /o/$slug or outside it (#1660),
 // has no entry or two, or a label has no message in Vietnamese or English; apps/kernel/test/manifest-screens.test.ts fails when a manifest drifts
 // from its entry or a route names an undeclared permission. Modules are in the order of the app switcher.
+import type { ModuleId } from './apps.ts';
 import type { ModuleScreens } from './manifest.ts';
 
 const KERNEL_SCREENS = {
   routes: [
-    // What waits for the user in this org today (#1249), first in the menu; opening an org still lands on its Inbox.
+    // What waits for the user in this org today (#1249): the landing page of an org (#3225), first in the app switcher and an app of no one.
     { path: 'overview' },
-    { path: 'inbox' },
-    { path: 'inbox/$id' },
-    // In-app notifications of the kernel and finance (#671), with the unread count.
+    // The AI Inbox of proposals: the first tab ("Chờ duyệt") of Tài chính > Chứng từ (#3225), where finance runs.
+    { path: 'inbox', app: 'finance', find: 'inbox' },
+    { path: 'inbox/$id', app: 'finance' },
+    // In-app notifications of the kernel and finance (#671), with the unread count: the bell of the shell, not an app (#3225).
     { path: 'notifications' },
-    // AI agents and tasks (ADR-0029) belong to the kernel, so every deployment has them.
+    // The team's tasks (ADR-0029) are in Cộng tác; the AI agents are in Ludy AI, with the AI use and the connections of other AI tools (#3225).
     { path: 'tasks' },
-    { path: 'tasks/$id' },
+    { path: 'tasks/$id', app: 'teamwork' },
     { path: 'agents' },
+    { path: 'ai-usage' },
+    { path: 'ai-connections' },
     { path: 'settings' },
+    // The other tabs of Settings (#3589), each with its own address; the first tab is `settings` itself. Ctrl K finds each by its tab name. The accounting tab opens where finance runs, the
+    // connections tab (the bank feed, the e-invoice provider, the bank account numbers) where finance runs, and the sales and quotes tabs (the deal board, the quotes) where crm runs.
+    { path: 'settings/members', find: 'settingsMembers' },
+    { path: 'settings/apps', find: 'settingsApps' },
+    { path: 'settings/bookings', find: 'settingsBookings' },
+    { path: 'settings/sales', find: 'settingsSales', modules: ['crm'] },
+    { path: 'settings/quotes', find: 'settingsQuotes', modules: ['crm'] },
+    { path: 'settings/accounting', find: 'settingsAccounting', modules: ['finance'] },
+    { path: 'settings/connections', find: 'settingsConnections', modules: ['finance'] },
+    { path: 'settings/notifications', find: 'settingsNotifications' },
+    { path: 'settings/security', find: 'settingsSecurity' },
+    { path: 'settings/data', find: 'settingsData' },
     // The audit log (#672): owners and admins only, which the page checks and the server enforces.
     { path: 'audit' },
     { path: 'personal-data' },
   ],
   // Signing in and the screens before an org: the landing redirect, the home of several orgs, sign-in, the second
   // factor, a password reset, an invite to accept and a new org.
-  outside: [{ path: '/' }, { path: '/clients' }, { path: '/login' }, { path: '/mfa' }, { path: '/reset-password' }, { path: '/-/invite' }, { path: '/-/extension/connect' }, { path: '/oauth/interaction/$uid' }, { path: '/onboarding' }, { path: '/calendar/oauth/$provider/callback' }],
+  outside: [{ path: '/' }, { path: '/clients' }, { path: '/login' }, { path: '/mfa' }, { path: '/reset-password' }, { path: '/-/invite' }, { path: '/-/extension/connect' }, { path: '/oauth/interaction/$uid' }, { path: '/onboarding' }, { path: '/calendar/oauth/$provider/callback' }, { path: '/meetings/oauth/$provider/callback' }, { path: '/marketplace/oauth/$provider/callback' }],
   nav: [
-    { app: 'home', group: 'work', path: 'overview', label: 'overview' },
-    { app: 'home', group: 'work', path: 'inbox', label: 'inbox' },
-    { app: 'home', group: 'work', path: 'notifications', label: 'alerts' },
-    { app: 'home', group: 'work', path: 'tasks', label: 'tasks' },
+    { app: null, rail: 'top', path: 'overview', label: 'overview' },
+    { app: null, rail: 'bell', path: 'notifications', label: 'alerts' },
+    { app: 'teamwork', group: 'work', path: 'tasks', label: 'tasks' },
+    // The Inbox is Finance's "Chứng từ" (its first tab is "Chờ duyệt"): shown where finance runs.
+    { app: 'finance', group: 'books', path: 'inbox', label: 'documents', modules: ['finance'] },
+    { app: 'ai', group: 'ai', path: 'agents', label: 'agents' },
+    { app: 'ai', group: 'ai', path: 'ai-usage', label: 'aiUsage' },
+    { app: 'ai', group: 'ai', path: 'ai-connections', label: 'aiConnections' },
     // The org's own screens, under every app.
-    { app: null, path: 'agents', label: 'agents' },
-    { app: null, path: 'settings', label: 'settings' },
+    { app: null, rail: 'foot', path: 'settings', label: 'settings' },
   ],
 } as const satisfies ModuleScreens;
 
 const FINANCE_SCREENS = {
   routes: [
-    // The Tổng quan of the Kế toán app (#2631): the cash, the profit, what customers owe and what is owed, first in its menu and where opening the app lands.
+    // The Tổng quan of the Tài chính app (#2631, #3225): the cash, the profit, what customers owe and what is owed, first in its menu and where opening the app lands.
     { path: 'accounting' },
-    { path: 'documents' },
+    // The list of the documents: the second tab of Chứng từ, after the Inbox's "Chờ duyệt".
+    { path: 'documents', app: 'finance', find: 'documentsAll' },
     { path: 'journal' },
     // Opening balances from Excel (#320), reached from the journal.
     { path: 'bank/matched' },
@@ -52,37 +72,37 @@ const FINANCE_SCREENS = {
     { path: 'sales-invoices' },
     // The items of stock, their moves and the goods lines not yet assigned to an item (#2512).
     { path: 'stock' },
-    // Where each platform's money stands in the books: the Sàn screen (#2516). Reached from the stock screen, not the menu: each app's menu fits a 1366x768 window without scrolling (e2e layout).
-    { path: 'marketplace' },
+    // The books of a household business (#2517): reached from Settings (Pháp nhân) for an entity of kind household, and found with Ctrl K.
+    { path: 'household', app: 'finance', find: 'household' },
+    // Where each platform's money stands in the books: the Sàn screen (#2516), the second tab of Hàng hóa and found with Ctrl K.
+    { path: 'marketplace', app: 'finance', find: 'marketplace' },
     { path: 'bank' },
     { path: 'fixed-assets' },
     { path: 'ledger' },
     { path: 'vat' },
-    { path: 'portal-invoices' },
+    // The tax portal's list: the second tab of Thuế, after the VAT return.
+    { path: 'portal-invoices', app: 'finance', find: 'portalList' },
     { path: 'customers' },
-    // The overdue customers and the reminder mails a person sends (#2488).
-    { path: 'payment-reminders' },
+    // The overdue customers and the reminder mails a person sends (#2488): the second tab of Khách hàng.
+    { path: 'payment-reminders', app: 'finance', find: 'paymentReminders' },
     { path: 'vendors' },
     // The Vietnamese quick guide (issue #310), linked from the empty Inbox; it walks through finance screens.
-    { path: 'guide', app: 'accounting' },
+    { path: 'guide', app: 'finance' },
   ],
+  // The menu of Tài chính (#3225): the overview and the documents first, then Bán hàng, Mua hàng and Sổ sách & Thuế, each a short list (apps/app/src/lib/apps.ts fixes the order). The
+  // Inbox is the kernel's, shown in the first group as "Chứng từ".
   nav: [
-    { app: 'accounting', group: 'books', path: 'accounting', label: 'accountingOverview' },
-    { app: 'accounting', group: 'books', path: 'documents', label: 'documents' },
-    { app: 'accounting', group: 'books', path: 'journal', label: 'journal' },
-    { app: 'accounting', group: 'books', path: 'vouchers', label: 'vouchers' },
-    { app: 'accounting', group: 'books', path: 'sales-invoices', label: 'salesInvoices' },
-    { app: 'accounting', group: 'books', path: 'stock', label: 'stock' },
-    { app: 'accounting', group: 'books', path: 'bank', label: 'bank' },
-    { app: 'accounting', group: 'books', path: 'fixed-assets', label: 'fixedAssets' },
-    { app: 'accounting', group: 'books', path: 'ledger', label: 'ledger' },
-    // The VAT and the tax portal's list, then the customers, their reminders and the vendors: in the one group of the app, because a headed group each made the menu longer than a
-    // 1366x768 window holds once "Hàng hóa" joined it.
-    { app: 'accounting', group: 'books', path: 'vat', label: 'vat' },
-    { app: 'accounting', group: 'books', path: 'portal-invoices', label: 'portalList' },
-    { app: 'accounting', group: 'books', path: 'customers', label: 'customers' },
-    { app: 'accounting', group: 'books', path: 'payment-reminders', label: 'paymentReminders' },
-    { app: 'accounting', group: 'books', path: 'vendors', label: 'vendors' },
+    { app: 'finance', group: 'books', path: 'accounting', label: 'accountingOverview' },
+    { app: 'finance', group: 'books', path: 'vouchers', label: 'vouchers' },
+    { app: 'finance', group: 'books', path: 'bank', label: 'bank' },
+    { app: 'finance', group: 'sell', path: 'sales-invoices', label: 'salesInvoices' },
+    { app: 'finance', group: 'sell', path: 'customers', label: 'customers' },
+    { app: 'finance', group: 'sell', path: 'stock', label: 'stock' },
+    { app: 'finance', group: 'buy', path: 'vendors', label: 'vendors' },
+    { app: 'finance', group: 'ledger', path: 'journal', label: 'journal' },
+    { app: 'finance', group: 'ledger', path: 'ledger', label: 'ledger' },
+    { app: 'finance', group: 'ledger', path: 'fixed-assets', label: 'fixedAssets' },
+    { app: 'finance', group: 'ledger', path: 'vat', label: 'tax' },
   ],
 } as const satisfies ModuleScreens;
 
@@ -97,6 +117,7 @@ const SOCIAL_SCREENS = {
     { path: 'social/ideas' },
     { path: 'social/feeds' },
     { path: 'social/bio' },
+    // The updates of the posts: the second tab of Bài đăng (#3225).
     { path: 'social/notifications' },
     // The Inbox (CV3, #2306): comments and private messages together, in three panes. The path `inbox` is the kernel's documents Inbox, so Social's is
     // under `social/`. The comment inbox of CV1 (#2303) keeps its address and redirects here.
@@ -119,15 +140,16 @@ const SOCIAL_SCREENS = {
     { path: '/-/review', public: true },
     { path: '/-/report', public: true },
   ],
-  // One app, "Ludy Engage" (app id `social`, #2435), with four groups in the order apps/app/src/lib/apps.ts fixes: Hộp thư (`inbox`), Khách hàng & Bán
-  // hàng (`sales`, the crm module's), Marketing (`marketing`: posts here, Ads from its module) and Báo cáo (`reports`, a single item).
+  // One app, "Engage" (app id `engage`, #2435, #3225), with four groups in the order apps/app/src/lib/apps.ts fixes: Hộp thư (`inbox`), CRM (`crm`, the crm module's),
+  // Marketing (`marketing`: posts here, Ads from its module) and Báo cáo (`reports`, a single item).
   nav: [
     // The Hộp thư group (CV3): one Inbox, shown when this module is enabled, with the comments of the org's posts and the private
     // messages together (a private message only to those who may read it).
-    { app: 'social', group: 'inbox', path: 'social/inbox', label: 'socialInbox' },
-    { app: 'social', group: 'marketing', path: 'social', label: 'social' },
-    { app: 'social', group: 'marketing', path: 'social/notifications', label: 'notifications' },
-    { app: 'social', group: 'reports', path: 'reports', label: 'reports' },
+    { app: 'engage', group: 'inbox', path: 'social/inbox', label: 'socialInbox' },
+    // The post updates are a tab of Bài đăng, not an item of their own.
+    { app: 'engage', group: 'marketing', path: 'social', label: 'social' },
+    { app: 'engage', group: 'marketing', path: 'social/notifications', label: 'socialNotifications' },
+    { app: 'engage', group: 'reports', path: 'reports', label: 'reports' },
   ],
 } as const satisfies ModuleScreens;
 
@@ -142,32 +164,32 @@ const CRM_SCREENS = {
     { path: 'contacts/import' },
     // The companies, apart from the people (#2438): the same parties, the kind `organization`.
     { path: 'companies' },
-    { path: 'crm' },
-    { path: 'crm/bookings' },
-    { path: 'crm/deals' },
-    { path: 'crm/contacts' },
-    { path: 'crm/contacts/import' },
+    { path: 'crm', app: 'engage' },
+    { path: 'crm/bookings', app: 'engage' },
+    { path: 'crm/deals', app: 'engage' },
+    { path: 'crm/contacts', app: 'engage' },
+    { path: 'crm/contacts/import', app: 'engage' },
   ],
   // The public booking page (#1318) and a sent quote's page (#2694), no account.
   outside: [{ path: '/-/b/$org/$type', public: true }, { path: '/-/quote', public: true }],
   nav: [
     // The contacts: the org's parties with search, filters and saved views (K4, #2228).
-    { app: 'social', group: 'sales', path: 'contacts', label: 'contacts' },
+    { app: 'engage', group: 'crm', path: 'contacts', label: 'contacts' },
     // The companies the people work at (#2438).
-    { app: 'social', group: 'sales', path: 'companies', label: 'companies' },
+    { app: 'engage', group: 'crm', path: 'companies', label: 'companies' },
     // The deals of the org's one pipeline (#2225, docs/plan/crm.md).
-    { app: 'social', group: 'sales', path: 'deals', label: 'deals' },
-    { app: 'social', group: 'sales', path: 'bookings', label: 'bookings' },
+    { app: 'engage', group: 'crm', path: 'deals', label: 'deals' },
+    { app: 'engage', group: 'crm', path: 'bookings', label: 'bookings' },
   ],
 } as const satisfies ModuleScreens;
 
-// Members' notes (#1671, notes plan §3.10): the notes screen (?note= opens one), in the Home app beside the team's tasks.
+// Members' notes (#1671, notes plan §3.10): the notes screen (?note= opens one), in Cộng tác beside the team's tasks (#3225).
 // My work (#1673): the member's own to-dos, after it.
 const NOTES_SCREENS = {
   routes: [{ path: 'notes' }, { path: 'my-work' }],
   nav: [
-    { app: 'home', group: 'work', path: 'notes', label: 'notes' },
-    { app: 'home', group: 'work', path: 'my-work', label: 'myWork' },
+    { app: 'teamwork', group: 'work', path: 'notes', label: 'notes' },
+    { app: 'teamwork', group: 'work', path: 'my-work', label: 'myWork' },
   ],
 } as const satisfies ModuleScreens;
 
@@ -175,31 +197,60 @@ const NOTES_SCREENS = {
 // after the posts (#2435). Its module's own entry, so the item shows only where the deployment runs the module; with Social off the app
 // still shows, with this item alone.
 const ADS_SCREENS = {
-  routes: [{ path: 'ads' }, { path: 'ads/campaigns' }],
-  nav: [
-    { app: 'social', group: 'marketing', path: 'ads', label: 'ads' },
-    // The campaign builder (W1c, #2295): drafts, the AI coworker's drafts and the requests for approval; an item of its own, after the figures.
-    { app: 'social', group: 'marketing', path: 'ads/campaigns', label: 'adsCampaigns' },
-  ],
+  // The campaign builder (W1c, #2295): drafts, the AI coworker's drafts and the requests for approval; the second tab of Quảng cáo, after the figures (#3225).
+  routes: [{ path: 'ads' }, { path: 'ads/campaigns', find: 'adsCampaigns' }],
+  nav: [{ app: 'engage', group: 'marketing', path: 'ads', label: 'ads' }],
 } as const satisfies ModuleScreens;
 
 // HR (#2530, payroll plan 6.1): the people payroll is run for, in an app of its own (Ludy Nhân sự, owner decision 2026-11-04). Owners and admins only, which the database's policies and
 // every query enforce; the item is hidden from everyone else by the app's role check.
 const HR_SCREENS = {
-  routes: [{ path: 'hr/employees' }, { path: 'hr/payroll' }, { path: 'hr/declarations' }, { path: 'hr/bank-templates' }],
+  // The bank templates of the salary file are the second tab of Bảng lương (#3225).
+  routes: [{ path: 'hr/employees' }, { path: 'hr/attendance' }, { path: 'hr/recruiting' }, { path: 'hr/payroll' }, { path: 'hr/declarations' }, { path: 'hr/bank-templates', find: 'bankTemplates' }, { path: 'hr/my' }],
   nav: [
     { app: 'hr', group: 'people', path: 'hr/employees', label: 'employees' },
+    { app: 'hr', group: 'people', path: 'hr/attendance', label: 'hrAttendance' },
+    { app: 'hr', group: 'people', path: 'hr/recruiting', label: 'recruiting' },
     { app: 'hr', group: 'people', path: 'hr/payroll', label: 'payroll' },
     { app: 'hr', group: 'people', path: 'hr/declarations', label: 'declarations' },
-    { app: 'hr', group: 'people', path: 'hr/bank-templates', label: 'bankTemplates' },
+    { app: 'hr', group: 'people', path: 'hr/my', label: 'hrMy' },
   ],
 } as const satisfies ModuleScreens;
 
-// AI Meeting Notes (issue #2576, ADR-0047, meetings plan M2): accessed through Cuoc hop tab inside Ludy Notes;
-// the in-app recorder at /o/$slug/meetings/record (M7, #2581); individual meetings at /o/$slug/meetings/$id. No navbar item on the rail.
+// AI Meeting Notes (issue #2576, ADR-0047, meetings plan M2): "Cuộc họp" is an item of Cộng tác (#3225); the Cuộc họp tab inside Ghi chú stays; the in-app recorder at /o/$slug/meetings/record (M7, #2581)
+// and individual meetings at /o/$slug/meetings/$id belong to the same app. The printable minutes ("Xem biên bản", A4, #3162) are outside the org's frame so only the sheet reaches the paper.
 export const MEETINGS_SCREENS = {
-  routes: [{ path: 'meetings' }, { path: 'meetings/record' }, { path: 'meetings/$id' }],
-  nav: [],
+  routes: [{ path: 'meetings' }, { path: 'meetings/record' }, { path: 'meetings/$id' }, { path: 'print/meeting-minutes/$id' }],
+  nav: [{ app: 'teamwork', group: 'work', path: 'meetings', label: 'meetings' }],
+} as const satisfies ModuleScreens;
+
+// Projects and a task board on kernel tasks (issue #2591, ADR-0048, projects plan P2): in Cộng tác beside Tasks, Notes and My work (#3225).
+export const PROJECTS_SCREENS = {
+  routes: [{ path: 'projects' }, { path: 'projects/$id' }],
+  outside: [{ path: '/-/roadmap/$orgSlug/$boardSlug', public: true }],
+  nav: [{ app: 'teamwork', group: 'work', path: 'projects', label: 'projects' }],
+} as const satisfies ModuleScreens;
+
+// eSign (docs/plan/esign.md, #3325, #3526, #3551, #3554, #3820): Ky ket / eSign app in the switcher plus public signing links /-/sign, /-/sign/d, and /-/sign/p/$orgSlug.
+export const SIGN_SCREENS = {
+  routes: [
+    { path: 'sign/envelopes' },
+    { path: 'sign/envelopes/$id', app: 'sign' },
+    { path: 'sign/templates' },
+    { path: 'sign/verify' },
+    { path: 'sign/settings' },
+  ],
+  outside: [
+    { path: '/-/sign', public: true },
+    { path: '/-/sign/d', public: true },
+    { path: '/-/sign/p/$orgSlug', public: true },
+  ],
+  nav: [
+    { app: 'sign', group: 'sign', path: 'sign/envelopes', label: 'signEnvelopes' },
+    { app: 'sign', group: 'sign', path: 'sign/templates', label: 'signTemplates' },
+    { app: 'sign', group: 'sign', path: 'sign/verify', label: 'signVerify' },
+    { app: 'sign', group: 'sign', path: 'sign/settings', label: 'signSettings' },
+  ],
 } as const satisfies ModuleScreens;
 
 export const MODULE_SCREENS = {
@@ -211,4 +262,6 @@ export const MODULE_SCREENS = {
   crm: CRM_SCREENS,
   notes: NOTES_SCREENS,
   meetings: MEETINGS_SCREENS,
-} as const;
+  projects: PROJECTS_SCREENS,
+  sign: SIGN_SCREENS,
+} as const satisfies Record<ModuleId, ModuleScreens>;

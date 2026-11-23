@@ -2,8 +2,8 @@
 // (#314), opened into files of its own. Shared by files.recent and files.batch.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { ARCHIVE_ENTRY_REASONS, zId, zStatementSummary, type FileStatus } from '@crove/kernel-contract';
-import type { QueryContext } from '@crove/kernel-runtime';
+import { ARCHIVE_ENTRY_REASONS, zId, zStatementSummary, type FileStatus } from '@ludy/kernel-contract';
+import type { QueryContext } from '@ludy/kernel-runtime';
 import { EDITOR_ROLES } from './approval.ts';
 import { MAX_EXTRACTION_VERSIONS, REEXTRACT_STALE_MINUTES, STALE_RUN_ERROR, voidedProposals } from './extraction.ts';
 import { isArchiveType } from './files.ts';
@@ -60,7 +60,7 @@ async function memberNames(ctx: QueryContext, userIds: readonly string[]): Promi
   const names = new Map<string, string>();
   if (userIds.length === 0) return names;
   const { rows } = await sql<{ user_id: string; email: string; display_name: string | null }>`
-    SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${[...userIds]}::uuid[])`.execute(ctx.trx);
+    SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${[...userIds]}::uuid[])`.execute(ctx.trx);
   for (const p of rows) names.set(p.user_id, p.display_name ?? p.email);
   return names;
 }
@@ -72,7 +72,7 @@ async function statementDecisions(ctx: QueryContext, fileIds: readonly string[])
   const out = new Map<string, NonNullable<NonNullable<FileStatus['statement']>['decidedBy']>>();
   if (fileIds.length === 0) return out;
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.audit_event')
+    .selectFrom('ludy_kernel.audit_event')
     .select(['target_id', 'actor_id', 'occurred_at'])
     .where('org_id', '=', ctx.orgId)
     .where('command', '=', 'kernel.extraction.statement_state')
@@ -91,7 +91,7 @@ async function statementDecisions(ctx: QueryContext, fileIds: readonly string[])
 }
 
 // The caller's context sees every legal entity (the wildcard in enter_context's le_scope); fetched once per statement.
-export const seesEveryEntity = sql<boolean>`coalesce('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]), false)`;
+export const seesEveryEntity = sql<boolean>`coalesce('*' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]), false)`;
 // Who may read a forwarded mail and its sender, as kernel.inbound.recent: those who write posts, and only in a context
 // that sees every legal entity, as a mail has no entity.
 const MAIL_READER_ROLES: readonly string[] = ['owner', 'admin', 'member'];
@@ -103,7 +103,7 @@ async function senderAddresses(ctx: QueryContext, files: ReadonlyArray<{ fileId:
   const out = new Map<string, string>();
   if (files.length === 0 || ctx.actor.type !== 'user' || ctx.role === null || !MAIL_READER_ROLES.includes(ctx.role)) return out;
   const messages = await ctx.trx
-    .selectFrom('crove_kernel.inbound_message')
+    .selectFrom('ludy_kernel.inbound_message')
     .select(['id', 'from_address'])
     .where('org_id', '=', ctx.orgId)
     .where('id', 'in', [...new Set(files.map((f) => f.messageId))])
@@ -134,11 +134,11 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
   // Per file: its newest extraction run and its newest proposal (a file read again after a rejection has more
   // than one).
   let query = ctx.trx
-    .selectFrom('crove_kernel.file as f')
+    .selectFrom('ludy_kernel.file as f')
     .leftJoinLateral(
       (eb) =>
         eb
-          .selectFrom('crove_kernel.extraction as x')
+          .selectFrom('ludy_kernel.extraction as x')
           .select([
             'x.status',
             'x.error',
@@ -168,7 +168,7 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
     .leftJoinLateral(
       (eb) =>
         eb
-          .selectFrom('crove_kernel.proposal as q')
+          .selectFrom('ludy_kernel.proposal as q')
           .select([
             'q.id',
             'q.status',
@@ -176,7 +176,7 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
             'q.decided_at',
             // The file the proposal's current revision was read from (#2269): not this one when the original XML of an invoice
             // first read from this PDF took the proposal's place.
-            sql<string | null>`(SELECT xr.file_id FROM crove_kernel.extraction xr WHERE xr.org_id = q.org_id AND xr.id = q.extraction_id)`.as('read_from_file'),
+            sql<string | null>`(SELECT xr.file_id FROM ludy_kernel.extraction xr WHERE xr.org_id = q.org_id AND xr.id = q.extraction_id)`.as('read_from_file'),
           ])
           .whereRef('q.org_id', '=', 'f.org_id')
           // The proposals read from the file, and the one revised from its reading (the original of a PDF's invoice, #2269):
@@ -184,8 +184,8 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
           // the proposal it is the evidence of.
           .where(
             sql<boolean>`(q.source_file_id = f.id
-              OR q.extraction_id IN (SELECT xe.id FROM crove_kernel.extraction xe WHERE xe.org_id = f.org_id AND xe.file_id = f.id)
-              OR q.id IN (SELECT xo.original_of_proposal_id FROM crove_kernel.extraction xo WHERE xo.org_id = f.org_id AND xo.file_id = f.id AND xo.original_of_proposal_id IS NOT NULL))`,
+              OR q.extraction_id IN (SELECT xe.id FROM ludy_kernel.extraction xe WHERE xe.org_id = f.org_id AND xe.file_id = f.id)
+              OR q.id IN (SELECT xo.original_of_proposal_id FROM ludy_kernel.extraction xo WHERE xo.org_id = f.org_id AND xo.file_id = f.id AND xo.original_of_proposal_id IS NOT NULL))`,
           )
           .orderBy('q.created_at', 'desc')
           .orderBy('q.id', 'desc')
@@ -218,19 +218,19 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
       'p.read_from_file',
       // Kept for the org's next daily budget (#675): a deferral of the file that is not due yet.
       sql<boolean>`EXISTS (
-        SELECT 1 FROM crove_kernel.usage_deferral d
+        SELECT 1 FROM ludy_kernel.usage_deferral d
         WHERE d.org_id = f.org_id AND d.subject_type = 'file' AND d.subject_id = f.id::text AND d.retry_at > pg_catalog.now()
       )`.as('waiting'),
       // Waiting for the AI budget of the month, not the day's limit (#2382).
       sql<boolean>`EXISTS (
-        SELECT 1 FROM crove_kernel.usage_deferral d
+        SELECT 1 FROM ludy_kernel.usage_deferral d
         WHERE d.org_id = f.org_id AND d.subject_type = 'file' AND d.subject_id = f.id::text AND d.retry_at > pg_catalog.now() AND d.metric = 'ai_budget'
       )`.as('waiting_ai_budget'),
     ])
     .where('f.org_id', '=', ctx.orgId)
     // Images of Social posts (#372) and import spreadsheets (#465) are not documents, unless the same bytes were also
-    // uploaded as one and read. Encrypted meeting media (#2576) is never a document: only the meeting's readers may know it exists.
-    .where((eb) => eb.or([eb('f.source', 'not in', ['social', 'import', 'meeting_audio', 'meeting_video']), eb('e.status', 'is not', null)]));
+    // uploaded as one and read. Encrypted meeting media (#2576) eSign artifacts (#3323) and the signed agreement of an invoice correction (#2504) are never accounting documents.
+    .where((eb) => eb.or([eb('f.source', 'not in', ['social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate', 'sign_attachment', 'agreement']), eb('e.status', 'is not', null)]));
   if ('ids' in filter) query = query.where('f.id', 'in', [...filter.ids]);
   else if ('staged' in filter) query = query.where(sql<boolean>`(e.statement ->> 'state') = 'staged'`).orderBy('f.created_at', 'desc').limit(filter.staged);
   else query = query.orderBy('f.created_at', 'desc').limit(filter.recent);
@@ -257,7 +257,7 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
   const entityIds = [...new Set(statementRows.flatMap((r) => (r.run_entity_id ? [r.run_entity_id] : [])))];
   const entities = new Map<string, string>();
   if (entityIds.length > 0) {
-    const found = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', entityIds).execute();
+    const found = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', entityIds).execute();
     for (const e of found) entities.set(e.id, e.name);
   }
   const known: StatementContext = { decisions, entities, uploaders, senders: await senderAddresses(ctx, statementRows.flatMap((r) => (r.source === 'email' && r.inbound_message_id ? [{ fileId: r.id, messageId: r.inbound_message_id }] : []))) };
@@ -342,7 +342,7 @@ export async function archiveEntries(ctx: QueryContext, slices: ReadonlyArray<{ 
   const { rows } = await sql<{ file_id: string; entries: unknown }>`
     SELECT x.file_id, pg_catalog.jsonb_path_query_array(x.result, '$.entries[0 to $last]', pg_catalog.jsonb_build_object('last', s.n - 1)) AS entries
     FROM ROWS FROM (pg_catalog.unnest(${wanted.map((s) => s.fileId)}::uuid[]), pg_catalog.unnest(${wanted.map((s) => s.limit)}::int[])) AS s(file_id, n)
-    JOIN crove_kernel.extraction x ON x.org_id = ${ctx.orgId}::uuid AND x.file_id = s.file_id AND x.method = 'archive' AND x.status = 'done'`.execute(ctx.trx);
+    JOIN ludy_kernel.extraction x ON x.org_id = ${ctx.orgId}::uuid AND x.file_id = s.file_id AND x.method = 'archive' AND x.status = 'done'`.execute(ctx.trx);
   const out = new Map<string, StoredArchiveEntry[]>();
   for (const row of rows) {
     const parsed = z.array(zStoredArchiveEntry).safeParse(row.entries);

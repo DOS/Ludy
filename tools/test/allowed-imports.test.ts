@@ -196,7 +196,7 @@ describe('allowed imports (plan §5.4, G5)', () => {
       // 'ai' as a value, a key or SQL text.
       ['modules/social/src/posts.ts', "origin: z.enum(['human', 'ai']).optional(),\ntainted: input.origin === 'ai',"],
       ['apps/app/src/x.tsx', "{row.ai && <Badge>{t('ai')}</Badge>}"],
-      ['modules/finance/src/extract.ts', "sql`SELECT crove_kernel.global_kill_switch_on('ai') AS on`"],
+      ['modules/finance/src/extract.ts', "sql`SELECT ludy_kernel.global_kill_switch_on('ai') AS on`"],
       ['tools/ops/kill-switch.mjs', "const KEYS = ['ai', 'mail'];\nexpect(parseArgs(['ai', 'on'])).toEqual({ key: 'ai' });"],
       ['vitest.config.ts', "name: 'ai',"],
       // Look-alike names and prose.

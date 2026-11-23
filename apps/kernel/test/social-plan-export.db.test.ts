@@ -7,11 +7,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, type PlanRow, type PostView } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, type PlanRow, type PostView } from '@ludy/mod-social';
 import { parseCsv } from '../../app/src/lib/bank-statement.ts';
 import { importRows } from '../../app/src/lib/social-import.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -53,7 +53,7 @@ suite('social content plan export on PostgreSQL (#978)', () => {
     const { orgId } = await createOrg(rt, asUser(owner.id), `Org ${randomUUID().slice(0, 6)}`);
     const roles = { admin: await person('admin'), member: await person('member'), viewer: await person('viewer') };
     for (const [role, p] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, p.id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, p.id, role]));
     }
     return { orgId, owner: owner.id, admin: roles.admin.id, member: roles.member.id, viewer: roles.viewer.id, memberEmail: roles.member.email };
   }
@@ -61,7 +61,7 @@ suite('social content plan export on PostgreSQL (#978)', () => {
   async function connection(o: Org, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         'sandbox',
@@ -110,10 +110,10 @@ suite('social content plan export on PostgreSQL (#978)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -156,7 +156,7 @@ suite('social content plan export on PostgreSQL (#978)', () => {
     const file = await exportPlan(a, a.member, { ...range, timeZone: 'Asia/Ho_Chi_Minh' });
     expect(file.truncated).toBe(false);
     expect(file.rows).toBeNull();
-    expect(file.filename).toBe(`crove-ke-hoach-${base.toISOString().slice(0, 7)}.csv`);
+    expect(file.filename).toBe(`ludy-ke-hoach-${base.toISOString().slice(0, 7)}.csv`);
     expect(file.csv?.startsWith('\uFEFF')).toBe(true);
     const day = (offset: number) => new Date(base.getTime() + offset * DAY).toISOString().slice(0, 10);
     expect(lines(file.csv)).toEqual([
@@ -199,7 +199,7 @@ suite('social content plan export on PostgreSQL (#978)', () => {
     const out = await create(a, { body: 'Đã đăng', at: new Date(base.getTime() + 30 * HOUR), channels: [quanA] });
     const variantId = out.variants[0]?.variantId as string;
     await admin((c) =>
-      c.query("UPDATE crove_social.post_variant SET status = 'published', published_at = $2, content_frozen = true, body = 'Bản đã đăng' WHERE org_id = $1 AND id = $3", [
+      c.query("UPDATE ludy_social.post_variant SET status = 'published', published_at = $2, content_frozen = true, body = 'Bản đã đăng' WHERE org_id = $1 AND id = $3", [
         a.orgId,
         new Date(base.getTime() + 2 * DAY + 4 * HOUR),
         variantId,
@@ -207,7 +207,7 @@ suite('social content plan export on PostgreSQL (#978)', () => {
     );
     const print = await exportPlan(a, a.member, { ...range, timeZone: 'UTC', format: 'print' });
     expect(print.rows?.at(-1)).toMatchObject({ variantId, status: 'published', body: 'Bản đã đăng', at: new Date(base.getTime() + 2 * DAY + 4 * HOUR).toISOString() });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'cancelled' WHERE org_id = $1 AND id = $2", [a.orgId, variantId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'cancelled' WHERE org_id = $1 AND id = $2", [a.orgId, variantId]));
   });
 
   it("never holds another org's posts, and is for members and above over at most 92 days", async () => {
@@ -230,7 +230,7 @@ suite('social content plan export on PostgreSQL (#978)', () => {
   it('audits every export with its counts only', async () => {
     const audits = await admin(
       async (c) =>
-        (await c.query<{ actor_id: string; detail: Record<string, unknown> }>("SELECT actor_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.plan.export' AND outcome = 'ok' ORDER BY occurred_at, id", [a.orgId]))
+        (await c.query<{ actor_id: string; detail: Record<string, unknown> }>("SELECT actor_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.plan.export' AND outcome = 'ok' ORDER BY occurred_at, id", [a.orgId]))
           .rows,
     );
     expect(audits.length).toBeGreaterThanOrEqual(8);
@@ -287,7 +287,7 @@ suite('social content plan export on PostgreSQL (#978)', () => {
     // The first 500 by time: the last one left out is the 501st.
     expect(file.csv).toContain('Bài 500,');
     expect(file.csv).not.toContain('Bài 501,');
-    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.plan.export'", [big.orgId])).rows);
+    const audit = await admin(async (c) => (await c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.plan.export'", [big.orgId])).rows);
     expect(audit.map((x) => x.detail)).toEqual([expect.objectContaining({ rows: 500, truncated: true })]);
   }, 180_000);
 });

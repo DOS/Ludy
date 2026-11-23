@@ -6,9 +6,9 @@
 // notification dispatch turns into one item per reviewer.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { Db } from '@crove/db';
-import { DomainError, defineCommand, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { Db } from '@ludy/db';
+import { DomainError, defineCommand, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { lockPost } from './variants.ts';
 
 const ACTOR: SystemActor = { type: 'system', component: 'social.reminders' };
@@ -58,7 +58,7 @@ export const reviewRemind = defineCommand({
     // so the worker's scan (oldest review first) moves past it instead of finding it again on every pass.
     if (post.archived_at !== null) {
       const marked = await ctx.trx
-        .updateTable('crove_social.post_variant')
+        .updateTable('ludy_social.post_variant')
         .set((eb) => ({ reminded_waiting_at: eb.fn.coalesce('reminded_waiting_at', eb.val(ctx.now)), reminded_due_at: eb.fn.coalesce('reminded_due_at', eb.val(ctx.now)) }))
         .where('org_id', '=', ctx.orgId)
         .where('post_id', '=', post.id)
@@ -70,9 +70,9 @@ export const reviewRemind = defineCommand({
     }
     const { rows } = await sql<{ id: string; review_since: Date | null; reminded_waiting_at: Date | null; reminded_due_at: Date | null; at: Date | null }>`
       SELECT v.id, v.review_since, v.reminded_waiting_at, v.reminded_due_at, coalesce(v.queue_slot_at, v.scheduled_at, p.scheduled_at) AS at
-      FROM crove_social.post_variant v
-      JOIN crove_social.post p ON p.org_id = v.org_id AND p.id = v.post_id
-      LEFT JOIN crove_social.channel_policy cp ON cp.org_id = v.org_id AND cp.channel_connection_id = v.channel_connection_id
+      FROM ludy_social.post_variant v
+      JOIN ludy_social.post p ON p.org_id = v.org_id AND p.id = v.post_id
+      LEFT JOIN ludy_social.channel_policy cp ON cp.org_id = v.org_id AND cp.channel_connection_id = v.channel_connection_id
       WHERE v.org_id = ${ctx.orgId} AND v.post_id = ${post.id} AND v.status = 'in_review' AND coalesce(cp.review_reminders, true)
       ORDER BY v.id`.execute(ctx.trx);
     const due = rows.map((r) => ({ id: r.id, ...remindersDue({ reviewSince: r.review_since, remindedWaitingAt: r.reminded_waiting_at, remindedDueAt: r.reminded_due_at, at: r.at }, ctx.now) }));
@@ -82,7 +82,7 @@ export const reviewRemind = defineCommand({
     const stage: ReminderStage = touched.some((d) => d.due) ? 'due' : 'waiting';
     for (const d of touched) {
       await ctx.trx
-        .updateTable('crove_social.post_variant')
+        .updateTable('ludy_social.post_variant')
         .set({ ...(d.waiting ? { reminded_waiting_at: ctx.now } : {}), ...(d.due ? { reminded_due_at: ctx.now } : {}) })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', d.id)
@@ -95,10 +95,12 @@ export const reviewRemind = defineCommand({
 
 // One pass: each post with a reminder due gets it.
 export async function sweepReminders(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {
-  const { rows } = await sql<{ org_id: string; post_id: string }>`SELECT org_id, post_id FROM crove_social.review_reminders_due(${REMINDER_LIMIT}::int)`.execute(deps.workerDb);
+  const { rows } = await sql<{ org_id: string; post_id: string }>`SELECT org_id, post_id FROM ludy_social.review_reminders_due(${REMINDER_LIMIT}::int)`.execute(deps.workerDb);
   let sent = 0;
   for (const row of rows) {
     try {
+      // An app that is off for the org (ADR-0053) has nothing to do here: no call, no refusal row, no line in the log.
+      if (!(await deps.runtime.appOn(row.org_id, 'social'))) continue;
       const done = await deps.runtime.execute<{ stage: ReminderStage | null }>('social.review.remind', { postId: row.post_id }, { actor: ACTOR, orgId: row.org_id });
       if (done.stage) sent += 1;
     } catch (error) {

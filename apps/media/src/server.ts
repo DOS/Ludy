@@ -35,6 +35,8 @@ export interface MediaAppOptions {
   bodyIdleTimeoutMs?: number;
   bodyTimeoutMs?: number;
   maxInputBytes?: number;
+  // The input cap of the audio endpoints (default MEDIA_LIMITS.maxAudioBytes); a test hook so the audio and video caps can be told apart in small payloads.
+  maxAudioBytes?: number;
   processTimeoutMs?: number;
 
   // Custom runners for testing HTTP/concurrency layers independently of ffmpeg
@@ -207,13 +209,14 @@ export function createMediaApp(options: MediaAppOptions = {}): Hono {
   const concurrency = options.concurrency ?? MEDIA_TIMING.concurrency;
   const maxQueue = options.maxQueue ?? MEDIA_TIMING.maxQueue;
   const maxInputBytes = options.maxInputBytes ?? MEDIA_LIMITS.maxVideoBytes;
+  const maxAudioBytes = Math.min(maxInputBytes, options.maxAudioBytes ?? MEDIA_LIMITS.maxAudioBytes);
   const bodyIdleTimeoutMs = options.bodyIdleTimeoutMs ?? MEDIA_TIMING.bodyIdleTimeoutMs;
   const bodyTimeoutMs = options.bodyTimeoutMs ?? MEDIA_TIMING.bodyTimeoutMs;
   const processTimeoutMs = options.processTimeoutMs ?? MEDIA_TIMING.processTimeoutMs;
 
   const acquire = createLimiter(concurrency, maxQueue);
 
-  app.get('/healthz', (c) => c.json({ ok: true, service: 'crove-media' }, 200));
+  app.get('/healthz', (c) => c.json({ ok: true, service: 'ludy-media' }, 200));
 
   async function handleOperation<T>(
     c: Context,
@@ -293,9 +296,10 @@ export function createMediaApp(options: MediaAppOptions = {}): Hono {
     }),
   );
 
-  app.post('/normalize', (c) => {
+  // /normalize takes audio, so its input is capped at the audio size. /extract-audio is the same work on a recording that may carry a
+  // video track (a local Zoom or Teams MP4): only the cap differs, the result is the same mono Opus and the video is never returned.
+  const normalizeHandler = (c: Context, maxBytes: number) => {
     const bitrateKbps = parseBitrate(c.req.query('bitrate_kbps'));
-    const maxBytes = Math.min(maxInputBytes, MEDIA_LIMITS.maxAudioBytes);
     return handleOperation(c, maxBytes, async (inputPath, dir, signal) => {
       if (options.runNormalize) {
         const bytes = readFileSync(inputPath);
@@ -304,13 +308,16 @@ export function createMediaApp(options: MediaAppOptions = {}): Hono {
       const outputPath = join(dir, 'normalized.opus');
       return normalizeAudioFile(inputPath, outputPath, { signal, bitrateKbps, timeoutMs: processTimeoutMs });
     });
-  });
+  };
+
+  app.post('/normalize', (c) => normalizeHandler(c, maxAudioBytes));
+
+  app.post('/extract-audio', (c) => normalizeHandler(c, maxInputBytes));
 
   app.post('/split', (c) => {
     const maxSegmentSeconds = parseSegmentSeconds(c.req.query('max_segment_seconds'));
     const bitrateKbps = parseBitrate(c.req.query('bitrate_kbps'));
-    const maxBytes = Math.min(maxInputBytes, MEDIA_LIMITS.maxAudioBytes);
-    return handleOperation(c, maxBytes, async (inputPath, dir, signal) => {
+    return handleOperation(c, maxAudioBytes, async (inputPath, dir, signal) => {
       if (options.runSplit) {
         const bytes = readFileSync(inputPath);
         return options.runSplit(bytes, signal, { maxSegmentSeconds, bitrateKbps });

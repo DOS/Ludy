@@ -12,9 +12,9 @@
 // or drops it.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole, SocialVariantStatus } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole, SocialVariantStatus } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { approvalCovers, effectiveContent, type BaseContent } from './domain/approval.ts';
 import { shortOfPolicy } from './policy.ts';
 import { PUBLISH_LIMITS, SENT_TO_APP, SHARED_LIMIT_PROVIDERS, STATUS_PUBLISHES, isProvider, limitWait, WORDPRESS_DRAFT, WORDPRESS_PENDING } from './domain/channels.ts';
@@ -44,7 +44,7 @@ import {
   type VariantRow,
 } from './variants.ts';
 import { agentTaskOf } from './agent.ts';
-import { publishingHeld } from './publish-hold.ts';
+import { HELD_TOO_LONG, HELD_TOO_LONG_MS, publishingHeld } from './publish-hold.ts';
 import { refuseChannels } from './channel-access.ts';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
@@ -60,7 +60,7 @@ export const MAX_QUOTA_WAITS = 24;
 const MAX_RETRY_DELAY_MS = 60 * 60_000;
 // A pending post whose status check cannot be answered is checked again after this long.
 const STATUS_RECHECK_MS = 60_000;
-// An ambiguous variant waits this long before its reconcile asks the platform (crove_social.publish_due waits as long),
+// An ambiguous variant waits this long before its reconcile asks the platform (ludy_social.publish_due waits as long),
 // so the platform has had time to show a post that went through.
 export const RECONCILE_WAIT_MS = 60_000;
 // A post still processing on the platform this long after its call is reconciled: found, or a person decides.
@@ -126,7 +126,7 @@ interface CallRow {
 
 async function callRow(ctx: CommandContext, key: string): Promise<CallRow | undefined> {
   return ctx.trx
-    .selectFrom('crove_kernel.external_call')
+    .selectFrom('ludy_kernel.external_call')
     .select(['state', 'calls', 'started_at'])
     .where('org_id', '=', ctx.orgId)
     .where('key', '=', key)
@@ -138,7 +138,7 @@ async function callRow(ctx: CommandContext, key: string): Promise<CallRow | unde
 // a later answer for the same key (a reconcile after a pending submission went through) leaves it as it is.
 async function setCall(ctx: CommandContext, key: string, values: Record<string, unknown>): Promise<void> {
   await ctx.trx
-    .updateTable('crove_kernel.external_call')
+    .updateTable('ludy_kernel.external_call')
     .set({ ...values, updated_at: ctx.now })
     .where('org_id', '=', ctx.orgId)
     .where('key', '=', key)
@@ -153,7 +153,7 @@ async function startCall(ctx: CommandContext, v: VariantRow, key: string, safety
     return existing.started_at;
   }
   await ctx.trx
-    .insertInto('crove_kernel.external_call')
+    .insertInto('ludy_kernel.external_call')
     .values({ org_id: ctx.orgId, key, module: 'social', target: v.provider, step: PUBLISH_STEP, retry_safety: safety, request_hash: v.content_hash, started_at: ctx.now })
     .execute();
   return ctx.now;
@@ -198,7 +198,7 @@ const withSentLink = (v: VariantRow, content: BaseContent): BaseContent => ({ ..
 const postLinkOf = (v: VariantRow, content: BaseContent) => ({ plain: content.linkUrl, sent: withSentLink(v, content).linkUrl });
 
 async function lockVariant(ctx: CommandContext, variantId: string): Promise<{ post: PostRow; v: VariantRow } | null> {
-  const found = await ctx.trx.selectFrom('crove_social.post_variant').select('post_id').where('org_id', '=', ctx.orgId).where('id', '=', variantId).executeTakeFirst();
+  const found = await ctx.trx.selectFrom('ludy_social.post_variant').select('post_id').where('org_id', '=', ctx.orgId).where('id', '=', variantId).executeTakeFirst();
   if (!found) return null;
   const post = await lockPost(ctx.trx, ctx.orgId, found.post_id);
   const v = (await lockVariants(ctx.trx, ctx.orgId, post.id)).find((x) => x.id === variantId);
@@ -247,7 +247,7 @@ interface ConnectionState {
 // lock 'update' where the same transaction may go on to update the connection (mark_expired): a share lock upgraded
 // later would deadlock two jobs of one channel.
 async function connectionOf(ctx: CommandContext, connectionId: string, lock: 'share' | 'update' = 'share'): Promise<ConnectionState | null> {
-  const q = ctx.trx.selectFrom('crove_kernel.channel_connection').select(['status', 'updated_at', 'scopes']).where('org_id', '=', ctx.orgId).where('id', '=', connectionId);
+  const q = ctx.trx.selectFrom('ludy_kernel.channel_connection').select(['status', 'updated_at', 'scopes']).where('org_id', '=', ctx.orgId).where('id', '=', connectionId);
   const row = await (lock === 'update' ? q.forUpdate() : q.forShare()).executeTakeFirst();
   return row ? { status: row.status, updatedAt: row.updated_at, scopes: row.scopes } : null;
 }
@@ -257,8 +257,8 @@ async function connectionOf(ctx: CommandContext, connectionId: string, lock: 'sh
 async function pauseOnChannel(ctx: CommandContext, v: VariantRow, values: Record<string, unknown>): Promise<void> {
   await move(ctx, v, { type: 'pause' }, values);
   await sql`
-    UPDATE crove_social.post_variant SET paused_connection_version = (
-      SELECT c.updated_at FROM crove_kernel.channel_connection c WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ${v.channel_connection_id}::uuid)
+    UPDATE ludy_social.post_variant SET paused_connection_version = (
+      SELECT c.updated_at FROM ludy_kernel.channel_connection c WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ${v.channel_connection_id}::uuid)
     WHERE org_id = ${ctx.orgId}::uuid AND id = ${v.id}::uuid`.execute(ctx.trx);
 }
 
@@ -273,7 +273,7 @@ async function channelChanged(ctx: CommandContext, connectionId: string, version
 async function queuePaused(ctx: CommandContext, v: VariantRow): Promise<boolean> {
   if (v.error_retry_at || v.scheduled_at || !v.queue_slot_at) return false;
   const q = await ctx.trx
-    .selectFrom('crove_social.queue')
+    .selectFrom('ludy_social.queue')
     .select('paused')
     .where('org_id', '=', ctx.orgId)
     .where('channel_connection_id', '=', v.channel_connection_id)
@@ -295,12 +295,12 @@ async function limitedUntil(ctx: CommandContext, v: VariantRow): Promise<Date | 
     shared.length === 0
       ? sql`pv.channel_connection_id = ${v.channel_connection_id}::uuid`
       : sql`pv.channel_connection_id IN (
-          SELECT cc.id FROM crove_kernel.channel_connection cc
-          JOIN crove_kernel.channel_connection mine ON mine.org_id = cc.org_id AND mine.id = ${v.channel_connection_id}::uuid
+          SELECT cc.id FROM ludy_kernel.channel_connection cc
+          JOIN ludy_kernel.channel_connection mine ON mine.org_id = cc.org_id AND mine.id = ${v.channel_connection_id}::uuid
           WHERE cc.org_id = ${ctx.orgId}::uuid AND (cc.id = mine.id OR (cc.provider = ANY(${[...shared]}::text[]) AND cc.connected_by = mine.connected_by)))`;
   const { rows } = await sql<{ started_at: Date }>`
-    SELECT c.started_at FROM crove_kernel.external_call c
-    JOIN crove_social.post_variant pv ON pv.org_id = c.org_id AND pv.id::text = split_part(c.key, ':', 2)
+    SELECT c.started_at FROM ludy_kernel.external_call c
+    JOIN ludy_social.post_variant pv ON pv.org_id = c.org_id AND pv.id::text = split_part(c.key, ':', 2)
     WHERE c.org_id = ${ctx.orgId}::uuid AND c.module = 'social' AND c.step = ${PUBLISH_STEP} AND c.started_at > ${since}
       AND c.state <> 'failed' AND ${channels} AND pv.id <> ${v.id}::uuid
     ORDER BY c.started_at DESC LIMIT ${limit.count}`.execute(ctx.trx);
@@ -348,6 +348,14 @@ export const publishBegin = defineCommand({
           break;
         }
         if (await queuePaused(ctx, v)) return none('queue_paused');
+        // Too late to go out by itself (ADR-0053 section 4, C3c): its time passed more than an hour ago, while the org's Social was off, a hold was on or the worker was
+        // down. It fails with HELD_TOO_LONG and waits for a person (publish now, edit or cancel), as after a hold; the team is told as for any failed channel.
+        if (now - due.getTime() > HELD_TOO_LONG_MS) {
+          await move(ctx, v, { type: 'held_too_long' }, { ...NO_ERROR, error_code: HELD_TOO_LONG });
+          await ctx.emit('social.variant.failed', { post_id: post.id, variant_id: v.id });
+          result = none('too_late');
+          break;
+        }
         const connection = await connectionOf(ctx, v.channel_connection_id);
         if (connection?.status !== 'active') {
           // A disconnected channel never comes back (connecting the account again makes a new connection); an expired
@@ -416,9 +424,11 @@ export const publishBegin = defineCommand({
         // attempt goes out. Compared as stored values, so no clock decides it.
         const connection = await connectionOf(ctx, v.channel_connection_id);
         const { rows } = await sql<{ version: Date | null }>`
-          SELECT paused_connection_version AS version FROM crove_social.post_variant WHERE org_id = ${ctx.orgId}::uuid AND id = ${v.id}::uuid`.execute(ctx.trx);
+          SELECT paused_connection_version AS version FROM ludy_social.post_variant WHERE org_id = ${ctx.orgId}::uuid AND id = ${v.id}::uuid`.execute(ctx.trx);
         const pausedAt = rows[0]?.version ?? null;
         if (connection?.status !== 'active' || (pausedAt !== null && pausedAt.getTime() === connection.updatedAt.getTime())) return none('paused');
+        // Back to scheduled with its own time: a queue paused meanwhile still holds it (queuePaused reads a variant with no retry time), and one that waited over an hour
+        // fails at its next begin (HELD_TOO_LONG), for a person. A resume by the automatic token refresh is not a person's act, so it never sends an old post.
         await move(ctx, v, { type: 'resume' }, { ...NO_ERROR, paused_connection_version: null });
         result = none('resumed');
         break;
@@ -472,6 +482,7 @@ function retryDelay(attempt: number): number {
 
 export const publishRecord = defineCommand({
   name: 'social.publish.record',
+  runsWhenOff: "records the platform's answer to a call already made, so its outcome is not lost when the app is switched off",
   input: z.strictObject({
     variantId: zId,
     callKey: z.string().min(1).max(500),

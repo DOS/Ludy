@@ -1,0 +1,418 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Shared case table for ludy_kernel.text_detect and ludy_kernel.text_redact_spans (#4001, Slice 1):
+// covers real values across all five structured kinds and near-misses that must stay undetected.
+import { enterpriseCheckDigit } from '@ludy/l10n-vn';
+
+const SYNTHETIC_MST_PREFIX = '590000001';
+const SYNTHETIC_MST_CHECK = enterpriseCheckDigit(SYNTHETIC_MST_PREFIX);
+if (SYNTHETIC_MST_CHECK === null) {
+  throw new Error('Synthetic MST prefix must yield a valid check digit');
+}
+const SYNTHETIC_MST_VALID = `${SYNTHETIC_MST_PREFIX}${SYNTHETIC_MST_CHECK}`;
+const SYNTHETIC_MST_INVALID = `${SYNTHETIC_MST_PREFIX}${(SYNTHETIC_MST_CHECK + 1) % 10}`;
+
+export const REDACTION_KINDS = ['email', 'phone', 'national_id', 'tax_code', 'bank_account'] as const;
+export type RedactionKind = (typeof REDACTION_KINDS)[number];
+
+export interface ExpectedDetection {
+  kind: RedactionKind;
+  matchText: string;
+}
+
+export interface PiiDetectCase {
+  name: string;
+  text: string;
+  expected: readonly ExpectedDetection[];
+}
+
+export const PII_DETECT_CASES: readonly PiiDetectCase[] = [
+  // --- Emails ---
+  {
+    name: 'standard email in Vietnamese sentence',
+    text: 'Đã gửi báo giá cho khach.hang@congty.example hôm nay.',
+    expected: [{ kind: 'email', matchText: 'khach.hang@congty.example' }],
+  },
+  {
+    name: 'uppercase email and punctuation wrapping',
+    text: 'Liên hệ AB@X.EXAMPLE, hoặc <a.b+tag@sub.example.com>; (support@ludy.example).',
+    expected: [
+      { kind: 'email', matchText: 'AB@X.EXAMPLE' },
+      { kind: 'email', matchText: 'a.b+tag@sub.example.com' },
+      { kind: 'email', matchText: 'support@ludy.example' },
+    ],
+  },
+  {
+    name: 'non-ASCII Latin email and apostrophe in local part',
+    text: "Gửi đặng@x.example và o'brien@example.com nhé.",
+    expected: [
+      { kind: 'email', matchText: 'đặng@x.example' },
+      { kind: 'email', matchText: "o'brien@example.com" },
+    ],
+  },
+  {
+    name: 'email wrapped in single quotes, backticks, or curly quotes',
+    text: "Mail là 'ab@x.example', `cd@y.example`, “ef@z.example”…",
+    expected: [
+      { kind: 'email', matchText: 'ab@x.example' },
+      { kind: 'email', matchText: 'cd@y.example' },
+      { kind: 'email', matchText: 'ef@z.example' },
+    ],
+  },
+  {
+    name: 'email with digit local part is detected as email, not digits',
+    text: 'Tài khoản 0912345678@congty.example đã nhận.',
+    expected: [{ kind: 'email', matchText: '0912345678@congty.example' }],
+  },
+  {
+    name: 'preceding digit group separated by a space does not swallow numeric-local email',
+    text: 'Mã 1234 5678@x.example và 1234 5678.90@x.example đã gửi.',
+    expected: [
+      { kind: 'email', matchText: '5678@x.example' },
+      { kind: 'email', matchText: '5678.90@x.example' },
+    ],
+  },
+  {
+    name: 'complete phone followed by space and numeric-local email keeps both spans',
+    text: 'Gọi 0912345678 5678@x.example.',
+    expected: [
+      { kind: 'phone', matchText: '0912345678' },
+      { kind: 'email', matchText: '5678@x.example' },
+    ],
+  },
+  {
+    name: 'unquoted email local part ending in a hyphen stays detected without grabbing wrappers',
+    text: "Mail ops-@example.com, 'ops-@example.com', `a.ops-@example.com`.",
+    expected: [
+      { kind: 'email', matchText: 'ops-@example.com' },
+      { kind: 'email', matchText: 'ops-@example.com' },
+      { kind: 'email', matchText: 'a.ops-@example.com' },
+    ],
+  },
+  {
+    name: 'adjacent overlapping at-chains avoid duplicate overlapping email spans',
+    text: 'a@b.example@c.example@d.example, a@b.example!c@d.example.',
+    expected: [
+      { kind: 'email', matchText: 'a@b.example' },
+      { kind: 'email', matchText: 'c.example@d.example' },
+      { kind: 'email', matchText: 'a@b.example' },
+    ],
+  },
+  {
+    name: 'email with punycode label on reserved example TLD',
+    text: 'Liên hệ admin@xn--ng-jia.example để kiểm tra.',
+    expected: [{ kind: 'email', matchText: 'admin@xn--ng-jia.example' }],
+  },
+  {
+    name: 'emails with single-segment and hyphenated multi-segment punycode TLDs (#4375)',
+    text: 'Gửi admin@example.xn--fiqs8s, hoa@xn--ng-jia.xn--vermgensberater-ctb, OPS@SUB.XN--NG-JIA.XN--FOO-BAR-123 và 0912345678@example.xn--vermgensberater-ctb.',
+    expected: [
+      { kind: 'email', matchText: 'admin@example.xn--fiqs8s' },
+      { kind: 'email', matchText: 'hoa@xn--ng-jia.xn--vermgensberater-ctb' },
+      { kind: 'email', matchText: 'OPS@SUB.XN--NG-JIA.XN--FOO-BAR-123' },
+      { kind: 'email', matchText: '0912345678@example.xn--vermgensberater-ctb' },
+    ],
+  },
+
+  // --- Vietnamese & international phones ---
+  {
+    name: 'VN mobile with spaces, dots, dashes, brackets',
+    text: 'Gọi 0912 345 678, 0912.345.678, 091-234-5678 hoặc (091) 234 5678.',
+    expected: [
+      { kind: 'phone', matchText: '0912 345 678' },
+      { kind: 'phone', matchText: '0912.345.678' },
+      { kind: 'phone', matchText: '091-234-5678' },
+      { kind: 'phone', matchText: '(091) 234 5678' },
+    ],
+  },
+  {
+    name: 'VN mobile prefixes 03, 05, 07, 08, 09',
+    text: '0321234567, 0561234567, 0791234567, 0881234567, 0901234567',
+    expected: [
+      { kind: 'phone', matchText: '0321234567' },
+      { kind: 'phone', matchText: '0561234567' },
+      { kind: 'phone', matchText: '0791234567' },
+      { kind: 'phone', matchText: '0881234567' },
+      { kind: 'phone', matchText: '0901234567' },
+    ],
+  },
+  {
+    name: 'VN mobile with +84, +84 (0), 84, and 0084',
+    text: 'Zalo +84 912 345 678, +84 (0) 912 345 678, (+84) 912 345 678, 84912345678, 0084 912 345 678.',
+    expected: [
+      { kind: 'phone', matchText: '+84 912 345 678' },
+      { kind: 'phone', matchText: '+84 (0) 912 345 678' },
+      { kind: 'phone', matchText: '(+84) 912 345 678' },
+      { kind: 'phone', matchText: '84912345678' },
+      { kind: 'phone', matchText: '0084 912 345 678' },
+    ],
+  },
+  {
+    name: 'VN mobile and landline with trunk-zero, dot-grouped, and round-zero variants',
+    text: '0084 (0) 912 345 678, (+84) (0) 912 345 678, +84 0912 345 678, +84 (028) 3829 1234, +84 (091) 234 5678, +84.912.345.678, +84 911 100 000, SĐT 84.912.345.678, SĐT 842838000000.',
+    expected: [
+      { kind: 'phone', matchText: '0084 (0) 912 345 678' },
+      { kind: 'phone', matchText: '(+84) (0) 912 345 678' },
+      { kind: 'phone', matchText: '+84 0912 345 678' },
+      { kind: 'phone', matchText: '+84 (028) 3829 1234' },
+      { kind: 'phone', matchText: '+84 (091) 234 5678' },
+      { kind: 'phone', matchText: '+84.912.345.678' },
+      { kind: 'phone', matchText: '+84 911 100 000' },
+      { kind: 'phone', matchText: '84.912.345.678' },
+      { kind: 'phone', matchText: '842838000000' },
+    ],
+  },
+  {
+    name: 'VN landline with 024, (028), +84 28, and 8424',
+    text: '(028) 3829.1234, 024 3826 0000, +84 28 3829 1234, 842438260000, (0251) 382 1234.',
+    expected: [
+      { kind: 'phone', matchText: '(028) 3829.1234' },
+      { kind: 'phone', matchText: '024 3826 0000' },
+      { kind: 'phone', matchText: '+84 28 3829 1234' },
+      { kind: 'phone', matchText: '842438260000' },
+      { kind: 'phone', matchText: '(0251) 382 1234' },
+    ],
+  },
+  {
+    name: 'international phone numbers (+1, +44, +65, 001, NANP)',
+    text: 'Call +1 (415) 555-0100, +44 20 7946 0958, +65 9123 4567, 001 415 555 0100, or (415) 555-0199.',
+    expected: [
+      { kind: 'phone', matchText: '+1 (415) 555-0100' },
+      { kind: 'phone', matchText: '+44 20 7946 0958' },
+      { kind: 'phone', matchText: '+65 9123 4567' },
+      { kind: 'phone', matchText: '001 415 555 0100' },
+      { kind: 'phone', matchText: '(415) 555-0199' },
+    ],
+  },
+  {
+    name: 'phone with no-break spaces and numbered list lines',
+    text: '1. 0912\u00a0345\u202f678\n2. 0987654321',
+    expected: [
+      { kind: 'phone', matchText: '0912\u00a0345\u202f678' },
+      { kind: 'phone', matchText: '0987654321' },
+    ],
+  },
+  {
+    name: 'phone wrapped in outer parentheses preserves outer parentheses',
+    text: 'Số anh ấy (0912 345 678) đang bận.',
+    expected: [{ kind: 'phone', matchText: '0912 345 678' }],
+  },
+  {
+    name: 'phone followed by Vietnamese word starting with d with stroke (để/đi)',
+    text: 'Gọi 0912 345 678 để xác nhận.',
+    expected: [{ kind: 'phone', matchText: '0912 345 678' }],
+  },
+
+  // --- Tax codes (MST) & National IDs (CCCD/CMND) ---
+  {
+    name: '10-digit enterprise MST and 13-digit branch MST',
+    text: 'MST 0101234564 được cấp, chi nhánh 0101234567-001 và MST 3601234565.',
+    expected: [
+      { kind: 'tax_code', matchText: '0101234564' },
+      { kind: 'tax_code', matchText: '0101234567-001' },
+      { kind: 'tax_code', matchText: '3601234565' },
+    ],
+  },
+  {
+    name: '10-digit MST checksum disambiguates unlabelled tax code vs bank account',
+    text: `Xuất hóa đơn cho ${SYNTHETIC_MST_VALID}, còn số ${SYNTHETIC_MST_INVALID} không phải MST.`,
+    expected: [
+      { kind: 'tax_code', matchText: SYNTHETIC_MST_VALID },
+      { kind: 'bank_account', matchText: SYNTHETIC_MST_INVALID },
+    ],
+  },
+  {
+    name: '12-digit national ID (CCCD) in plain and grouped spellings',
+    text: 'CCCD số 079091001234, Hà Nội 001090001234, tách nhóm 079 091 001 234 và CCCD 000 091 777 665.',
+    expected: [
+      { kind: 'national_id', matchText: '079091001234' },
+      { kind: 'national_id', matchText: '001090001234' },
+      { kind: 'national_id', matchText: '079 091 001 234' },
+      { kind: 'national_id', matchText: '000 091 777 665' },
+    ],
+  },
+  {
+    name: '9-digit legacy CMND with one-word or two-word label',
+    text: 'CMND cũ 240912345 cấp tại Đồng Nai, CMND cũ số 412345678.',
+    expected: [
+      { kind: 'national_id', matchText: '240912345' },
+      { kind: 'national_id', matchText: '412345678' },
+    ],
+  },
+  {
+    name: 'explicitly hinted dot-grouped and 840-prefixed bank accounts',
+    text: 'STK 123.456.789, STK 840912345678.',
+    expected: [
+      { kind: 'bank_account', matchText: '123.456.789' },
+      { kind: 'bank_account', matchText: '840912345678' },
+    ],
+  },
+
+  // --- Bank accounts & card numbers ---
+  {
+    name: 'long bank accounts (13 to 20 digits) and card numbers (15 to 19 digits)',
+    text: 'STK 0011001234567, Techcombank 19034567890123, thẻ 4532 1234 5678 9012, Amex 3782 822463 10005, ảo 97042292123456789012.',
+    expected: [
+      { kind: 'bank_account', matchText: '0011001234567' },
+      { kind: 'bank_account', matchText: '19034567890123' },
+      { kind: 'bank_account', matchText: '4532 1234 5678 9012' },
+      { kind: 'bank_account', matchText: '3782 822463 10005' },
+      { kind: 'bank_account', matchText: '97042292123456789012' },
+    ],
+  },
+  {
+    name: '8-digit and 10-digit and 12-digit bank accounts with bank context',
+    text: 'STK ACB 12345678, Tài khoản VND: 108001234567, STK 0912 3456 78 90, STK 20261121.',
+    expected: [
+      { kind: 'bank_account', matchText: '12345678' },
+      { kind: 'bank_account', matchText: '108001234567' },
+      { kind: 'bank_account', matchText: '0912 3456 78 90' },
+      { kind: 'bank_account', matchText: '20261121' },
+    ],
+  },
+  {
+    name: 'explicitly hinted currency-suffixed and Vietnamese dong-compound spans stay detected',
+    text: 'STK 19034567890123 VND, Tài khoản 108001234567 USD, STK 0011001234567 VND, SĐT 0912 345 678 đồng ý chưa, CCCD 079091001234 đồng thời gửi mail, STK 19034567890123 đồng ý chuyển, 108001234567 đồng hồ.',
+    expected: [
+      { kind: 'bank_account', matchText: '19034567890123' },
+      { kind: 'bank_account', matchText: '108001234567' },
+      { kind: 'bank_account', matchText: '0011001234567' },
+      { kind: 'phone', matchText: '0912 345 678' },
+      { kind: 'national_id', matchText: '079091001234' },
+      { kind: 'bank_account', matchText: '19034567890123' },
+      { kind: 'bank_account', matchText: '108001234567' },
+    ],
+  },
+  {
+    name: 'Vietnamese tin prose (with and without diacritics) does not trigger tax_code while uppercase TIN does',
+    text: 'Nhắn tin 0912 345 678, Thông tin 079091001234, NHAN TIN 12345678, BAN TIN 12345678, TIN 12345678.',
+    expected: [
+      { kind: 'phone', matchText: '0912 345 678' },
+      { kind: 'national_id', matchText: '079091001234' },
+      { kind: 'tax_code', matchText: '12345678' },
+    ],
+  },
+  {
+    name: '11-digit number does not extract a 10-digit phone inside it',
+    text: 'Mã 09123456789 và 10912345678.',
+    expected: [
+      { kind: 'bank_account', matchText: '09123456789' },
+      { kind: 'bank_account', matchText: '10912345678' },
+    ],
+  },
+  {
+    name: 'digit-ending URLs followed by single inline space detect trailing phone (#4375)',
+    text: 'Join https://zoom.us/j/84212345678 0912345678, https://meet.example.com/12345678 0900000001, https://zoom.us/j/84212345678 0912 345 678, http://meet.example.com/12345678\u00a00321234567 và https://example.com/999?id=1 0987654321.',
+    expected: [
+      { kind: 'phone', matchText: '0912345678' },
+      { kind: 'phone', matchText: '0900000001' },
+      { kind: 'phone', matchText: '0912 345 678' },
+      { kind: 'phone', matchText: '0321234567' },
+      { kind: 'phone', matchText: '0987654321' },
+    ],
+  },
+  {
+    name: 'punycode URL suppresses internal digits while detecting trailing phone and email (#4375)',
+    text: 'Xem https://xn--ng-jia.xn--vermgensberater-ctb/0912345678 và https://xn--ng-jia.xn--fiqs8s/84212345678 0912345678 hoặc mail@xn--ng-jia.xn--fiqs8s.',
+    expected: [
+      { kind: 'phone', matchText: '0912345678' },
+      { kind: 'email', matchText: 'mail@xn--ng-jia.xn--fiqs8s' },
+    ],
+  },
+  {
+    name: 'tax prefixes support title-case So alongside lowercase and uppercase forms (#4375)',
+    text: `Số MST: 5900000018, Số MST: ${SYNTHETIC_MST_VALID}, TIN Số: 12345678, TIN số: 12345678, TIN SỐ: 12345678, TIN So: 12345678, TIN so: 12345678, TIN SO: 12345678, TIN Số 0912345678.`,
+    expected: [
+      { kind: 'tax_code', matchText: '5900000018' },
+      { kind: 'tax_code', matchText: SYNTHETIC_MST_VALID },
+      { kind: 'tax_code', matchText: '12345678' },
+      { kind: 'tax_code', matchText: '12345678' },
+      { kind: 'tax_code', matchText: '12345678' },
+      { kind: 'tax_code', matchText: '12345678' },
+      { kind: 'tax_code', matchText: '12345678' },
+      { kind: 'tax_code', matchText: '12345678' },
+      { kind: 'tax_code', matchText: '0912345678' },
+    ],
+  },
+
+  // --- Mixed spans and Unicode code-point offset alignment ---
+  {
+    name: 'mixed kinds with emojis and Vietnamese diacritics before matches',
+    text: '📞 0912 345 678 😀 mail đặng@x.example, CCCD 079091001234, STK 19034567890123.',
+    expected: [
+      { kind: 'phone', matchText: '0912 345 678' },
+      { kind: 'email', matchText: 'đặng@x.example' },
+      { kind: 'national_id', matchText: '079091001234' },
+      { kind: 'bank_account', matchText: '19034567890123' },
+    ],
+  },
+
+  // --- Near-misses: MUST return empty ---
+  {
+    name: 'near-miss: prices with dot thousands, comma thousands, positive deltas, and currency units',
+    text: 'Tổng 100.000.000, +100.000.000, hợp đồng 1.250.000.000 đ, +100.000.000 đ, tạm ứng 50,000 VND, 50000000 VND, +50000000 VND, 100000000, +100000000, 15000000đ, 15000000 đồng, $123456789, VND 123456789, USD +12345678, 100 000 000.',
+    expected: [],
+  },
+  {
+    name: 'near-miss: Vietnamese thong tin prefix (with and without diacritics) stays ignored',
+    text: 'Thông tin 100.000.000, Thông tin 100000000, Thông tin 192.168.1.100, Thông tin 12345678, Thông tin 20261121132157, THÔNG TIN 100000000, THONG TIN 100000000, NHAN TIN 12345678.',
+    expected: [],
+  },
+  {
+    name: 'near-miss: years, year ranges, and short counts',
+    text: 'Năm 2026, giai đoạn 2025-2026, có 3 nhóm, 12 người, 500 sản phẩm, phòng 1234567, mã 0123456.',
+    expected: [],
+  },
+  {
+    name: 'near-miss: dates in slash, dash, dot, space, and compact formats',
+    text: 'Ngày 21/11/2026, hạn 21-11-2026, 2026-11-21, 21.11.2026, 20261121, 11-21-2026, lúc 01 02 2025 12.',
+    expected: [],
+  },
+  {
+    name: 'near-miss: percentages, ISO and space-separated timestamps, and decimals',
+    text: 'Tăng 15%, thuế 12.5%, 12345678%, 100000000 %, lúc 09:30:00, 2026-11-21T13:21:57Z, 2026-11-21 13:21:57, 2026-11-21 10:00:00, 11-21-2026 13:21:57, 09-12-2025 13:00, 20261121132157, pi 3.14159265, +3.14159265, 1234567.89.',
+    expected: [],
+  },
+  {
+    name: 'near-miss: meeting numbers, Zoom links, UUIDs, IPv4, negative and overlong plus numbers',
+    text: 'Cuộc họp số 42, meeting #123, Zoom ID 842 1234 5678, id cuộc họp 912 3456 7890, https://zoom.us/j/84212345678, https://example.com/0912345678, https://example.com/a?phone=0912345678&ok=1, https://zoom.us/j/84212345678/0912345678, https://example.com/84212345678-0912345678, 550e8400-e29b-41d4-a716-446655440000, IP 192.168.1.100, 255.255.255.0, lỗ -123456789, mã +1234567890123456.',
+    expected: [],
+  },
+  {
+    name: 'near-miss: Vietnamese tin prose with title-case So stays excluded (#4375)',
+    text: 'Thông tin Số 12345678, THÔNG TIN Số: 12345678, THÔNG TIN SỐ: 12345678, Tin Số: 12345678, Bản TIN Số: 12345678.',
+    expected: [],
+  },
+  {
+    name: 'near-miss: malformed punycode TLDs with leading, trailing, or consecutive bare hyphens stay undetected (#4375)',
+    text: 'bad@example.xn--, bad@example.xn---, bad@example.xn---abc, bad@example.xn--fiqs8s-, bad@example.xn--foo-bar-, bad@example.xn--foo--bar, bad@example.xn--fiqs8s.123.',
+    expected: [],
+  },
+  {
+    name: 'near-miss: unlabelled 8-digit numbers, 21+ digit runs, and non-ASCII digits',
+    text: 'Mã đơn 12345678, hotline 1900 1234, chuỗi dài 123456789012345678901, số Ả Rập ٠٩١٢٣٤٥٦٧٨ và ０９１２３４５６７８.',
+    expected: [],
+  },
+  {
+    name: 'near-miss: invalid email lookalikes and identifier tokens',
+    text: 'họp @ 9.30, a@b, @.@., ab@x.example.123, cab..ab@x.example, id0912345678, 0912345678px, 1234567890@localhost.',
+    expected: [],
+  },
+  {
+    name: 'long http(s) URL path beyond 256 chars stays suppressed while trailing delimited phone is detected',
+    text: `https://example.com/${'a'.repeat(320)}/0912345678, gọi 0987654321; <https://example.com/${'b'.repeat(300)}/0912345678> 0321234567`,
+    expected: [
+      { kind: 'phone', matchText: '0987654321' },
+      { kind: 'phone', matchText: '0321234567' },
+    ],
+  },
+  {
+    name: 'near-miss: spaced numeric columns and newline-split digit runs stay separated',
+    text: 'Mã 1234  567890, cột 0321  123456, Gọi 0912\n345 678.',
+    expected: [],
+  },
+  {
+    name: 'near-miss: plain Vietnamese prose with no numbers or emails',
+    text: 'Chúng ta thống nhất gửi biên bản họp cho các thành viên vào sáng mai.',
+    expected: [],
+  },
+];

@@ -6,12 +6,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { SIGNAL_PARTIAL_VIEW_CODE, zFinanceSalesSignals, type FinanceSalesSignal } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { SIGNAL_PARTIAL_VIEW_CODE, zFinanceSalesSignals, type FinanceSalesSignal } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -43,31 +43,31 @@ suite('finance.signals.sales on PostgreSQL (#2967)', () => {
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const [member, viewer, branchMember] = [await identity('member'), await identity('viewer'), await identity('branch')];
-    const entity = (await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
-    const branch = (await rows<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id", [orgId, owner]))[0]?.id as string;
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer'), ($1, $4, 'member')", [orgId, member, viewer, branchMember]);
+    const entity = (await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
+    const branch = (await rows<{ id: string }>("INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id", [orgId, owner]))[0]?.id as string;
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer'), ($1, $4, 'member')", [orgId, member, viewer, branchMember]);
     // The branch member keeps the branch's books only (an entity-scoped assignment narrows the context's entity scope).
-    await rows("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [orgId, branchMember, branch, owner]);
+    await rows("INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [orgId, branchMember, branch, owner]);
     const signals = (user: string, partyIds: string[]) => rt.query<FinanceSalesSignal[]>('finance.signals.sales', { partyIds }, { actor: asUser(user), orgId });
-    const party = (name: string) => rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
+    const party = (name: string) => rows<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
     // A recorded invoice with its entry (Dr 131, Cr 511 for a sale; the entry is what the books hold, the read looks at the document).
     async function invoice(partyId: string, number: string, date: string, total: string, direction: 'sale' | 'purchase' = 'sale', legalEntity: string = entity): Promise<string> {
       const doc = randomUUID();
       await admin(async (c) => {
         await c.query('BEGIN');
         await c.query(
-          `INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
+          `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
            VALUES ($1, $2, $3, 'C26TAA', $4, $5, 'VND', $6, 0, $6, $7, $8)`,
           [orgId, doc, partyId, number, date, total, direction, legalEntity],
         );
         const entry = randomUUID();
         await c.query(
-          `INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, $4, 'finance.purchase_document', $5, $6)`,
+          `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, $4, 'finance.purchase_document', $5, $6)`,
           [orgId, entry, date, `HĐ ${number}`, doc, legalEntity],
         );
         const [debit, credit] = direction === 'sale' ? ['131', '511'] : ['156', '331'];
         await c.query(
-          `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id)
+          `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id)
            VALUES ($1, $2, 1, $5, $3, 0, $4, $6), ($1, $2, 2, $7, 0, $3, $4, $6)`,
           [orgId, entry, total, partyId, debit, legalEntity, credit],
         );
@@ -79,7 +79,7 @@ suite('finance.signals.sales on PostgreSQL (#2967)', () => {
     const voidIt = (docId: string) =>
       admin(async (c) => {
         await c.query("SET session_replication_role = 'replica'");
-        await c.query("INSERT INTO crove_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason) VALUES ($1, $2, $3, 'sai')", [orgId, docId, randomUUID()]);
+        await c.query("INSERT INTO ludy_finance.purchase_document_void (org_id, document_id, reversal_entry_id, reason) VALUES ($1, $2, $3, 'sai')", [orgId, docId, randomUUID()]);
       });
     return { orgId, owner, member, viewer, branchMember, entity, branch, signals, party, invoice, voidIt };
   }
@@ -93,9 +93,9 @@ suite('finance.signals.sales on PostgreSQL (#2967)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     db = createDb(pool);
@@ -143,7 +143,7 @@ suite('finance.signals.sales on PostgreSQL (#2967)', () => {
     const o = await org();
     const kept = await o.party('A');
     const dup = await o.party('A (trùng)');
-    await rows('UPDATE crove_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, dup, kept]);
+    await rows('UPDATE ludy_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, dup, kept]);
     await o.invoice(dup, '1', '2026-11-03', '1000000');
     await o.invoice(kept, '2', '2026-11-04', '1000000');
     const both = await o.signals(o.owner, [kept, dup]);

@@ -12,12 +12,12 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { HR_ERASED_NAME, vietnamToday, type HrEmployee, type HrEmployeeErased, type HrEmployeeSummary, type HrWritten } from '@crove/kernel-contract';
-import { CredentialVault, DomainError, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, type CommandDef, type QueryDef } from '@crove/kernel-runtime';
-import { hrCommands, hrQueries, retentionEnds } from '@crove/mod-hr';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { HR_ERASED_NAME, vietnamToday, type HrEmployee, type HrEmployeeErased, type HrEmployeeSummary, type HrWritten } from '@ludy/kernel-contract';
+import { CredentialVault, DomainError, Runtime, STEP_UP_MAX_AGE_S, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, type CommandDef, type QueryDef } from '@ludy/kernel-runtime';
+import { hrCommands, hrQueries, retentionEnds } from '@ludy/mod-hr';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -53,9 +53,9 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     input: z.object({}),
     access: ['owner', 'admin', 'member', 'viewer'],
     handler: async (ctx) => {
-      const employees = await ctx.trx.selectFrom('crove_hr.payroll_employee').select('id').where('org_id', '=', ctx.orgId).execute();
-      const employments = await ctx.trx.selectFrom('crove_hr.payroll_employment').select('id').where('org_id', '=', ctx.orgId).execute();
-      const dependents = await ctx.trx.selectFrom('crove_hr.payroll_dependent').select('id').where('org_id', '=', ctx.orgId).execute();
+      const employees = await ctx.trx.selectFrom('ludy_hr.payroll_employee').select('id').where('org_id', '=', ctx.orgId).execute();
+      const employments = await ctx.trx.selectFrom('ludy_hr.payroll_employment').select('id').where('org_id', '=', ctx.orgId).execute();
+      const dependents = await ctx.trx.selectFrom('ludy_hr.payroll_dependent').select('id').where('org_id', '=', ctx.orgId).execute();
       return { employees: employees.length, employments: employments.length, dependents: dependents.length };
     },
   }) as QueryDef<unknown, unknown>;
@@ -67,7 +67,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     access: ['owner', 'admin', 'member', 'viewer'],
     writes: [],
     handler: async (ctx, input) => {
-      await ctx.trx.insertInto('crove_hr.payroll_employee').values({ org_id: ctx.orgId, legal_entity_id: input.legalEntityId, display_name: 'Not allowed' }).execute();
+      await ctx.trx.insertInto('ludy_hr.payroll_employee').values({ org_id: ctx.orgId, legal_entity_id: input.legalEntityId, display_name: 'Not allowed' }).execute();
       return {};
     },
   }) as CommandDef<unknown, unknown>;
@@ -79,7 +79,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     access: 'system',
     writes: [],
     handler: async (ctx) => {
-      const rows = await ctx.trx.selectFrom('crove_hr.payroll_employee').select('id').where('org_id', '=', ctx.orgId).execute();
+      const rows = await ctx.trx.selectFrom('ludy_hr.payroll_employee').select('id').where('org_id', '=', ctx.orgId).execute();
       return { employees: rows.length };
     },
   }) as CommandDef<unknown, unknown>;
@@ -101,7 +101,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
         await c.query<{ s: string; t: string; c: string; type: string }>(
           `SELECT c.table_schema AS s, c.table_name AS t, c.column_name AS c, c.data_type AS type
              FROM information_schema.columns c JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name AND t.table_type = 'BASE TABLE'
-            WHERE c.table_schema LIKE 'crove\\_%' AND c.data_type IN ('text', 'character varying', 'character', 'jsonb', 'json', 'bytea', 'ARRAY', 'USER-DEFINED', 'numeric', 'bigint', 'integer', 'smallint', 'double precision')`,
+            WHERE (c.table_schema LIKE 'ludy\\_%' OR c.table_schema LIKE 'crove\\_%') AND c.data_type IN ('text', 'character varying', 'character', 'jsonb', 'json', 'bytea', 'ARRAY', 'USER-DEFINED', 'numeric', 'bigint', 'integer', 'smallint', 'double precision')`,
         )
       ).rows;
       const found: string[] = [];
@@ -124,14 +124,14 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     const viewer = await person('viewer');
     const { orgId } = await createOrg(rt, asUser(owner), `Nhân sự ${tag}`);
     await withAdmin((c) =>
-      c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, admin, member, viewer]),
+      c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, admin, member, viewer]),
     );
     const exec = <O>(userId: string, name: string, input: unknown = {}, actor: ReturnType<typeof asUser> | ReturnType<typeof asMfa> = asUser(userId)) => rt.execute<O>(name, input, { actor, orgId });
     const query = <O>(userId: string, name: string, input: unknown = {}) => rt.query<O>(name, input, { actor: asUser(userId), orgId });
     const add = (userId: string, extra: Record<string, unknown> = {}) =>
       exec<HrWritten>(userId, 'hr.payroll.employee.add', { displayName: NAME, address: ADDRESS, identityNumber: IDENTITY, accountNumber: ACCOUNT, employment: TERMS, ...extra });
     const audits = (command: string) =>
-      withAdmin(async (c) => (await c.query<{ outcome: string; detail: unknown }>('SELECT outcome, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY id', [orgId, command])).rows);
+      withAdmin(async (c) => (await c.query<{ outcome: string; detail: unknown }>('SELECT outcome, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY id', [orgId, command])).rows);
     return { orgId, owner, admin, member, viewer, exec, query, add, audits };
   }
 
@@ -144,8 +144,8 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    url.username = 'crove_app';
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     rt = new Runtime(createDb(pool), {
@@ -203,7 +203,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
       // Even a caller the module's own lists would admit sees no row and cannot write one: the database's owner_admin policy.
       expect(await o.query(who, 't2530.peek')).toEqual({ employees: 0, employments: 0, dependents: 0 });
     }
-    const entity = await withAdmin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId])).rows[0]?.id as string);
+    const entity = await withAdmin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId])).rows[0]?.id as string);
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       for (const who of [o.member, o.viewer]) await expect(o.exec(who, 't2530.insert', { legalEntityId: entity })).rejects.toBeInstanceOf(DomainError);
@@ -226,7 +226,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     await o.query(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId });
     expect((await o.audits('hr.payroll.employee.list')).map((a) => a.outcome)).toEqual(['ok', 'ok']);
     expect((await o.audits('hr.payroll.employee.get')).map((a) => a.outcome)).toEqual(['ok']);
-    const all = await withAdmin(async (c) => (await c.query<{ row: string }>('SELECT audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1', [o.orgId])).rows.map((r) => r.row).join('\n'));
+    const all = await withAdmin(async (c) => (await c.query<{ row: string }>('SELECT audit_event::text AS row FROM ludy_kernel.audit_event WHERE org_id = $1', [o.orgId])).rows.map((r) => r.row).join('\n'));
     for (const needle of [...NEEDLES, NAME, ADDRESS, '15000000']) expect(all, needle).not.toContain(needle);
     // What the add's own audit row says: ids, flags and a marker for each classified value.
     const [added] = await o.audits('hr.payroll.employee.add');
@@ -238,11 +238,11 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     const created = await o.add(o.owner);
     await o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, identityNumber: '012 987 654 321' });
     expect(await hits()).toEqual([]);
-    const row = await withAdmin(async (c) => (await c.query<{ national_id_sealed: string; bank_account_sealed: string }>('SELECT national_id_sealed, bank_account_sealed FROM crove_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]);
+    const row = await withAdmin(async (c) => (await c.query<{ national_id_sealed: string; bank_account_sealed: string }>('SELECT national_id_sealed, bank_account_sealed FROM ludy_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]);
     expect(row?.national_id_sealed).toMatch(/^crove:s1:/);
     expect(row?.bank_account_sealed).toMatch(/^crove:s1:/);
     // A plain number cannot be written into a sealed column, even by a statement that bypasses the commands.
-    await expect(withAdmin((c) => c.query("UPDATE crove_hr.payroll_employee SET national_id_sealed = '079123456789' WHERE id = $1", [created.employeeId]))).rejects.toMatchObject({ code: '23514' });
+    await expect(withAdmin((c) => c.query("UPDATE ludy_hr.payroll_employee SET national_id_sealed = '079123456789' WHERE id = $1", [created.employeeId]))).rejects.toMatchObject({ code: '23514' });
     // The edit changed the identity number only.
     const detail = await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId });
     expect(detail).toMatchObject({ identityNumber: '012 987 654 321', accountNumber: ACCOUNT });
@@ -255,10 +255,10 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     const created = await o.add(o.owner, { birthDate: '1990-05-17', taxCode: TAX, insuranceNumber: INS });
     // Both numbers are sealed: neither text is in any column of any crove table, and the stored text is a sealed value that opens at its own place only.
     expect(await hits([TAX, INS])).toEqual([]);
-    const row = await withAdmin(async (c) => (await c.query<{ tax_code_sealed: string; insurance_number_sealed: string; birth_date: string }>('SELECT tax_code_sealed, insurance_number_sealed, birth_date::text FROM crove_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]);
+    const row = await withAdmin(async (c) => (await c.query<{ tax_code_sealed: string; insurance_number_sealed: string; birth_date: string }>('SELECT tax_code_sealed, insurance_number_sealed, birth_date::text FROM ludy_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]);
     expect(row?.tax_code_sealed).toMatch(/^crove:s1:/);
     expect(row?.insurance_number_sealed).toMatch(/^crove:s1:/);
-    await expect(withAdmin((c) => c.query(`UPDATE crove_hr.payroll_employee SET tax_code_sealed = '${TAX}' WHERE id = $1`, [created.employeeId]))).rejects.toMatchObject({ code: '23514' });
+    await expect(withAdmin((c) => c.query(`UPDATE ludy_hr.payroll_employee SET tax_code_sealed = '${TAX}' WHERE id = $1`, [created.employeeId]))).rejects.toMatchObject({ code: '23514' });
     expect(await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId })).toMatchObject({ birthDate: '1990-05-17', taxCode: TAX, insuranceNumber: INS, finalizationAuthorizedYears: [] });
     // The audit row of the add holds flags, never a value.
     const [added] = await o.audits('hr.payroll.employee.add');
@@ -268,9 +268,10 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     for (const bad of [{ taxCode: '000000' }, { taxCode: '12345678901' }, { taxCode: 'AB12345678' }, { insuranceNumber: '000000' }, { insuranceNumber: 'SI-1234567890' }, { birthDate: '1899-12-31' }, { birthDate: '2999-01-01' }]) {
       await expect(o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, ...bad }), JSON.stringify(bad)).rejects.toMatchObject({ code: 'VALIDATION' });
     }
-    // An edit changes and clears them; the authorization is a list of years, each once, sorted; an admin may set it, a member may not; a year that has not begun is refused.
+    // An edit changes and clears them (including clearing birthDate back to null); the authorization is a list of years, each once, sorted; an admin may set it, a member may not; a year that has not begun is refused.
     const INS2 = '123456789012';
-    await o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, taxCode: null, insuranceNumber: INS2 });
+    await o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, taxCode: null, insuranceNumber: INS2, birthDate: null });
+    expect(await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId })).toMatchObject({ birthDate: null, taxCode: null, insuranceNumber: INS2 });
     const year = Number(vietnamToday().slice(0, 4));
     await o.exec(o.admin, 'hr.payroll.employee.finalization.set', { employeeId: created.employeeId, year, authorized: true });
     await o.exec(o.owner, 'hr.payroll.employee.finalization.set', { employeeId: created.employeeId, year, authorized: true });
@@ -305,8 +306,8 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
       ['2026-07-01', '18000000.00'],
       ['2026-01-01', '15000000.00'],
     ]);
-    await expect(withAdmin((c) => c.query("UPDATE crove_hr.payroll_employment SET base_wage = 1 WHERE employee_id = $1", [created.employeeId]))).rejects.toThrow(/append-only/);
-    await expect(withAdmin((c) => c.query('DELETE FROM crove_hr.payroll_employment WHERE employee_id = $1', [created.employeeId]))).rejects.toThrow(/append-only/);
+    await expect(withAdmin((c) => c.query("UPDATE ludy_hr.payroll_employment SET base_wage = 1 WHERE employee_id = $1", [created.employeeId]))).rejects.toThrow(/append-only/);
+    await expect(withAdmin((c) => c.query('DELETE FROM ludy_hr.payroll_employment WHERE employee_id = $1', [created.employeeId]))).rejects.toThrow(/append-only/);
   });
 
   it('adds and ends dependents and ends an employee, with the refusals', async () => {
@@ -367,7 +368,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     expect(await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId })).toMatchObject({ bankCode: null });
     // The database refuses what the commands do not (a lower-case or padded code).
     for (const bad of ['vcb', ' VCB', 'V', '']) {
-      await expect(withAdmin((c) => c.query('UPDATE crove_hr.payroll_employee SET bank_code = $2 WHERE id = $1', [created.employeeId, bad])), JSON.stringify(bad)).rejects.toMatchObject({ code: '23514' });
+      await expect(withAdmin((c) => c.query('UPDATE ludy_hr.payroll_employee SET bank_code = $2 WHERE id = $1', [created.employeeId, bad])), JSON.stringify(bad)).rejects.toMatchObject({ code: '23514' });
     }
     // The audit rows say that a bank was set or changed, never which.
     const added = (await o.audits('hr.payroll.employee.add'))[0];
@@ -393,10 +394,10 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     // Within the retention: refused, with the day it runs out.
     await expect(erase()).rejects.toMatchObject({ code: 'HR_RETENTION_NOT_PASSED', message: expect.stringContaining(retentionEnds('2026-08-31')) });
     // The boundary: left exactly ten years ago, today is the last day it is kept; a day later it can go.
-    const leftOn = (years: string) => withAdmin((c) => c.query(`UPDATE crove_hr.payroll_employee SET ended_on = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '${years}')::date WHERE id = $1`, [created.employeeId]));
+    const leftOn = (years: string) => withAdmin((c) => c.query(`UPDATE ludy_hr.payroll_employee SET ended_on = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '${years}')::date WHERE id = $1`, [created.employeeId]));
     await leftOn('10 years');
     await expect(erase()).rejects.toMatchObject({ code: 'HR_RETENTION_NOT_PASSED' });
-    const before = await withAdmin(async (c) => (await c.query<{ national_id_sealed: string; bank_account_sealed: string }>('SELECT national_id_sealed, bank_account_sealed FROM crove_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]);
+    const before = await withAdmin(async (c) => (await c.query<{ national_id_sealed: string; bank_account_sealed: string }>('SELECT national_id_sealed, bank_account_sealed FROM ludy_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]);
     // The date moved: the person left ten years and a day ago.
     await leftOn('10 years 1 day');
     const result = await erase();
@@ -404,7 +405,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     expect(result.cleared).toContain('name');
     expect(result.cleared).toContain('bank');
     // The bank's name is cleared in the row too, not only hidden by the read.
-    expect(await withAdmin(async (c) => (await c.query<{ bank_code: string | null }>('SELECT bank_code FROM crove_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]?.bank_code)).toBeNull();
+    expect(await withAdmin(async (c) => (await c.query<{ bank_code: string | null }>('SELECT bank_code FROM ludy_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]?.bank_code)).toBeNull();
     expect(result.kept.length).toBeGreaterThan(0);
     // The record reads as erased: no name, no address, no dependent's name, no numbers; the terms stay as amounts.
     const detail = await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId });
@@ -413,9 +414,9 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     expect(detail.employments).toHaveLength(1);
     expect(detail.employments[0]?.baseWage).toBe('15000000.00');
     // The sealed text is byte for byte as it was; the key that opens it is gone.
-    const after = await withAdmin(async (c) => (await c.query<{ national_id_sealed: string; bank_account_sealed: string }>('SELECT national_id_sealed, bank_account_sealed FROM crove_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]);
+    const after = await withAdmin(async (c) => (await c.query<{ national_id_sealed: string; bank_account_sealed: string }>('SELECT national_id_sealed, bank_account_sealed FROM ludy_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0]);
     expect(after).toEqual(before);
-    expect(await withAdmin(async (c) => (await c.query("SELECT 1 FROM crove_kernel.subject_key WHERE org_id = $1 AND ref = $2", [o.orgId, `employee:${created.employeeId}`])).rowCount)).toBe(0);
+    expect(await withAdmin(async (c) => (await c.query("SELECT 1 FROM ludy_kernel.subject_key WHERE org_id = $1 AND ref = $2", [o.orgId, `employee:${created.employeeId}`])).rowCount)).toBe(0);
     // Nothing about the person is found anywhere, and the record cannot be changed again.
     expect(await hits()).toEqual([]);
     // The name, the address and the dependent's name are in no column of any crove table (the audit rows hold markers, the rows hold the placeholder).
@@ -425,5 +426,36 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     await expect(o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, accountNumber: '0071009999999' })).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED' });
     await expect(o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, bankCode: 'TCB' })).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED' });
     await expect(erase()).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED' });
+  });
+
+  it('refuses hr.payroll.employee.erase without a fresh second factor even when retention has passed (#2691 N4)', async () => {
+    const o = await org();
+    const created = await o.add(o.owner, { bankCode: 'VCB' });
+    await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: created.employeeId, endedOn: '2026-08-31' });
+    await withAdmin((c) =>
+      c.query(`UPDATE ludy_hr.payroll_employee SET ended_on = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date WHERE id = $1`, [created.employeeId]),
+    );
+
+    // Owner with aal1 (no second factor) -> 403 STEP_UP_REQUIRED.
+    await expect(o.exec(o.owner, 'hr.payroll.employee.erase', { employeeId: created.employeeId }, asUser(o.owner))).rejects.toMatchObject({
+      code: 'STEP_UP_REQUIRED',
+      status: 403,
+    });
+
+    // Owner with stale aal2 (older than the 5-minute step-up window) -> 403 STEP_UP_REQUIRED.
+    const staleMfa = { ...asMfa(o.owner), mfaAt: Math.floor(Date.now() / 1000) - STEP_UP_MAX_AGE_S - 60 };
+    await expect(o.exec(o.owner, 'hr.payroll.employee.erase', { employeeId: created.employeeId }, staleMfa)).rejects.toMatchObject({
+      code: 'STEP_UP_REQUIRED',
+      status: 403,
+    });
+
+    // Row, subject key, display_name, and sealed identity/bank numbers remain intact and readable by the owner.
+    const row = await withAdmin(async (c) =>
+      (await c.query<{ erased_at: Date | null; display_name: string }>('SELECT erased_at, display_name FROM ludy_hr.payroll_employee WHERE id = $1', [created.employeeId])).rows[0],
+    );
+    expect(row).toEqual({ erased_at: null, display_name: NAME });
+    expect(await withAdmin(async (c) => (await c.query('SELECT 1 FROM ludy_kernel.subject_key WHERE org_id = $1 AND ref = $2', [o.orgId, `employee:${created.employeeId}`])).rowCount)).toBe(1);
+    const detail = await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId });
+    expect(detail).toMatchObject({ erased: false, displayName: NAME, identityNumber: IDENTITY, accountNumber: ACCOUNT });
   });
 });

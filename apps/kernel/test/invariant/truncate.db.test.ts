@@ -8,7 +8,8 @@
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { migrate } from '@crove/db/migrate';
+import { migrate } from '@ludy/db/migrate';
+import { createDbClient, resolveDbIdentifiers, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -18,6 +19,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('no TRUNCATE for Crove roles', () => {
   const dbName = `crove_test_truncate_inv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -28,6 +30,7 @@ suite('no TRUNCATE for Crove roles', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
+    dbIds = await resolveDbIdentifiers(adminUrl);
   });
 
   afterAll(async () => {
@@ -39,15 +42,15 @@ suite('no TRUNCATE for Crove roles', () => {
   });
 
   it('grants TRUNCATE on no table of a crove_* schema to any Crove role, directly or through a role it can act as', async () => {
-    const admin = new pg.Client({ connectionString: adminUrl });
+    const admin = createDbClient({ connectionString: adminUrl }, dbIds);
     await admin.connect();
     try {
-      const { rows: roles } = await admin.query<{ rolname: string }>(`SELECT rolname FROM pg_catalog.pg_roles WHERE rolname LIKE 'crove\\_%' ORDER BY rolname`);
+      const { rows: roles } = await admin.query<{ rolname: string }>(`SELECT rolname FROM pg_catalog.pg_roles WHERE ((rolname LIKE 'crove\\_%' OR rolname LIKE 'ludy\\_%') AND rolname NOT LIKE '%\\_test\\_%' AND rolname NOT LIKE 'crove\\_test%' AND rolname NOT LIKE 'ludy\\_test%' AND rolname <> 'ludy_migrate_test') ORDER BY rolname`);
       // The login, group, definer-owner and module roles all exist after the migrations.
       expect(roles.map((r) => r.rolname)).toEqual(expect.arrayContaining(['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant']));
       const { rows: tables } = await admin.query<{ n: number }>(
         `SELECT count(*)::int AS n FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-         WHERE n.nspname LIKE 'crove\\_%' AND c.relkind IN ('r', 'p')`,
+         WHERE (n.nspname LIKE 'crove\\_%' OR n.nspname LIKE 'ludy\\_%') AND c.relkind IN ('r', 'p')`,
       );
       expect(tables[0]?.n).toBeGreaterThan(40);
       // has_table_privilege counts privileges a role holds through the roles it inherits; a role it may only SET ROLE
@@ -57,7 +60,7 @@ suite('no TRUNCATE for Crove roles', () => {
          FROM pg_catalog.pg_class c
          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
          CROSS JOIN pg_catalog.pg_roles r
-         WHERE n.nspname LIKE 'crove\\_%' AND c.relkind IN ('r', 'p') AND r.rolname LIKE 'crove\\_%'
+         WHERE (n.nspname LIKE 'crove\\_%' OR n.nspname LIKE 'ludy\\_%') AND c.relkind IN ('r', 'p') AND ((r.rolname LIKE 'crove\\_%' OR r.rolname LIKE 'ludy\\_%') AND r.rolname NOT LIKE '%\\_test\\_%' AND r.rolname NOT LIKE 'crove\\_test%' AND r.rolname NOT LIKE 'ludy\\_test%' AND r.rolname <> 'ludy_migrate_test')
            AND pg_catalog.has_table_privilege(r.oid, c.oid, 'TRUNCATE')
          ORDER BY 1, 2`,
       );
@@ -66,7 +69,7 @@ suite('no TRUNCATE for Crove roles', () => {
       const { rows: publicGrants } = await admin.query<{ table: string }>(
         `SELECT n.nspname || '.' || c.relname AS table
          FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace, pg_catalog.aclexplode(c.relacl) a
-         WHERE n.nspname LIKE 'crove\\_%' AND a.grantee = 0 AND a.privilege_type = 'TRUNCATE'`,
+         WHERE (n.nspname LIKE 'crove\\_%' OR n.nspname LIKE 'ludy\\_%') AND a.grantee = 0 AND a.privilege_type = 'TRUNCATE'`,
       );
       expect(publicGrants).toEqual([]);
     } finally {

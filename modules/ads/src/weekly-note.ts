@@ -6,9 +6,9 @@
 import { Decimal } from 'decimal.js';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import type { AdsWeeklyCampaignMove, AdsWeeklyNote, AdsWeeklyPlatformNote } from '@crove/kernel-contract';
-import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import type { AdsWeeklyCampaignMove, AdsWeeklyNote, AdsWeeklyPlatformNote } from '@ludy/kernel-contract';
+import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { addDays, costPerResult, resultsText, spendText, todayIn } from './domain.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -276,7 +276,7 @@ const day = (value: Date | string | null): string | null =>
 
 export async function loadWeeklyNotes(ctx: Pick<QueryContext, 'trx' | 'orgId'>, now: Date): Promise<AdsWeeklyNote[]> {
   const accounts = await ctx.trx
-    .selectFrom('crove_ads.ad_account')
+    .selectFrom('ludy_ads.ad_account')
     .select(['id', 'name', 'provider', 'currency', 'time_zone', 'result_kind', 'synced_through'])
     .where('org_id', '=', ctx.orgId)
     .orderBy('name')
@@ -293,8 +293,8 @@ export async function loadWeeklyNotes(ctx: Pick<QueryContext, 'trx' | 'orgId'>, 
 
   const accountDays = (
     await ctx.trx
-      .selectFrom('crove_ads.ad_spend_day as d')
-      .innerJoin('crove_ads.ad_account as a', (j) =>
+      .selectFrom('ludy_ads.ad_spend_day as d')
+      .innerJoin('ludy_ads.ad_account as a', (j) =>
         j.onRef('a.org_id', '=', 'd.org_id').onRef('a.id', '=', 'd.ad_account_id').onRef('a.legal_entity_id', '=', 'd.legal_entity_id'),
       )
       .select([
@@ -312,8 +312,8 @@ export async function loadWeeklyNotes(ctx: Pick<QueryContext, 'trx' | 'orgId'>, 
 
   const campaignDays = (
     await ctx.trx
-      .selectFrom('crove_ads.ad_spend_day as d')
-      .innerJoin('crove_ads.ad_account as a', (j) =>
+      .selectFrom('ludy_ads.ad_spend_day as d')
+      .innerJoin('ludy_ads.ad_account as a', (j) =>
         j.onRef('a.org_id', '=', 'd.org_id').onRef('a.id', '=', 'd.ad_account_id').onRef('a.legal_entity_id', '=', 'd.legal_entity_id'),
       )
       .select(['d.ad_account_id', 'd.external_object_id', 'd.object_name', 'd.day', sql<string>`d.spend::text`.as('spend')])

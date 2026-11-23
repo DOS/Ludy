@@ -11,12 +11,13 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, type AgentActor } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, type AgentActor } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -27,6 +28,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('delegation and escalation within the task legal entity on PostgreSQL (#1788)', () => {
   const dbName = `crove_test_task_scope_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   const pools: pg.Pool[] = [];
   let app: Runtime;
   let worker: Runtime;
@@ -44,7 +46,7 @@ suite('delegation and escalation within the task legal entity on PostgreSQL (#17
   const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -102,9 +104,9 @@ suite('delegation and escalation within the task legal entity on PostgreSQL (#17
   // trigger alone decides. Always rolled back.
   async function rawChild(actor: AgentActor, parentId: string, kind: 'delegation' | 'escalation', assignee: string | null) {
     const url = new URL(adminUrl);
-    url.username = 'crove_worker';
+    url.username = dbIds ? dbIds.roleName('crove_worker') : 'crove_worker';
     url.password = 'test-worker-pw';
-    const c = new pg.Client({ connectionString: url.toString() });
+    const c = createDbClient({ connectionString: url.toString() }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -135,12 +137,13 @@ suite('delegation and escalation within the task legal entity on PostgreSQL (#17
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const runtimeFor = (user: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = user;
+      url.username = dbIds ? dbIds.roleName(user) : user;
       url.password = password;
-      const pool = createPool({ connectionString: url.toString(), max: 4 });
+      const pool = createDbPool({ connectionString: url.toString(), max: 4 }, dbIds);
       pools.push(pool);
       return new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -298,9 +301,9 @@ suite('delegation and escalation within the task legal entity on PostgreSQL (#17
 
     const agent = await liveAgent([branch], null);
     const url = new URL(adminUrl);
-    url.username = 'crove_worker';
+    url.username = dbIds ? dbIds.roleName('crove_worker') : 'crove_worker';
     url.password = 'test-worker-pw';
-    const c = new pg.Client({ connectionString: url.toString() });
+    const c = createDbClient({ connectionString: url.toString() }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -373,9 +376,9 @@ suite('delegation and escalation within the task legal entity on PostgreSQL (#17
     // An agent that reads both entities asks for each holder.
     const agent = await liveAgent([branch, defaultEntity], null);
     const url = new URL(adminUrl);
-    url.username = 'crove_worker';
+    url.username = dbIds ? dbIds.roleName('crove_worker') : 'crove_worker';
     url.password = 'test-worker-pw';
-    const c = new pg.Client({ connectionString: url.toString() });
+    const c = createDbClient({ connectionString: url.toString() }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -438,9 +441,9 @@ suite('delegation and escalation within the task legal entity on PostgreSQL (#17
     });
 
     const url = new URL(adminUrl);
-    url.username = 'crove_worker';
+    url.username = dbIds ? dbIds.roleName('crove_worker') : 'crove_worker';
     url.password = 'test-worker-pw';
-    const c = new pg.Client({ connectionString: url.toString() });
+    const c = createDbClient({ connectionString: url.toString() }, dbIds);
     await c.connect();
     const inSystem = async <T>(org: string, fn: (covers: (user: string, entity: string | null) => Promise<boolean | undefined>) => Promise<T>) => {
       await c.query('BEGIN');

@@ -5,11 +5,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -55,7 +55,7 @@ suite('social metrics against the window before (#947)', () => {
   async function connection(orgId: string, owner: string, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, name, owner]),
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, name, owner]),
     );
     return id;
   }
@@ -67,17 +67,17 @@ suite('social metrics against the window before (#947)', () => {
   async function published(o: { orgId: string; owner: string }, conn: string, daysAgo: number, metrics: Record<string, unknown>, clicks?: Record<number, number>) {
     const { postId } = await exec<{ postId: string }>(o, 'social.post.create', { body: `Bài ${daysAgo} ngày trước`, channels: [{ connectionId: conn }] });
     await admin(async (c) => {
-      const { rows } = await c.query<{ id: string }>("UPDATE crove_social.post_variant SET status = 'published', published_at = now() - make_interval(days => $2) WHERE post_id = $1 RETURNING id", [postId, daysAgo]);
+      const { rows } = await c.query<{ id: string }>("UPDATE ludy_social.post_variant SET status = 'published', published_at = now() - make_interval(days => $2) WHERE post_id = $1 RETURNING id", [postId, daysAgo]);
       const id = rows[0]?.id;
-      await c.query("INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics, captured_at) VALUES ($1, $2, 'old', '{\"reach\": 1}', now() - interval '2 days')", [o.orgId, id]);
-      await c.query("INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, 'new', $3)", [o.orgId, id, JSON.stringify(metrics)]);
+      await c.query("INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics, captured_at) VALUES ($1, $2, 'old', '{\"reach\": 1}', now() - interval '2 days')", [o.orgId, id]);
+      await c.query("INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, 'new', $3)", [o.orgId, id, JSON.stringify(metrics)]);
       if (clicks !== undefined) {
         const link = await c.query<{ id: string }>(
-          "INSERT INTO crove_social.short_link (org_id, code, variant_id, revision, post_id, target_url) VALUES ($1, $2, $3, 1, $4, 'https://shop.example/') RETURNING id",
+          "INSERT INTO ludy_social.short_link (org_id, code, variant_id, revision, post_id, target_url) VALUES ($1, $2, $3, 1, $4, 'https://shop.example/') RETURNING id",
           [o.orgId, randomUUID().replace(/-/g, '').slice(0, 12), id, postId],
         );
         for (const [ago, n] of Object.entries(clicks)) {
-          await c.query('INSERT INTO crove_social.short_link_click (org_id, short_link_id, day, clicks) VALUES ($1, $2, current_date - $3::int, $4)', [o.orgId, link.rows[0]?.id, Number(ago), n]);
+          await c.query('INSERT INTO ludy_social.short_link_click (org_id, short_link_id, day, clicks) VALUES ($1, $2, current_date - $3::int, $4)', [o.orgId, link.rows[0]?.id, Number(ago), n]);
         }
       }
     });
@@ -96,16 +96,16 @@ suite('social metrics against the window before (#947)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] });
     // The metrics sweep's own queries run as the worker.
     const asWorker = new URL(adminUrl);
-    asWorker.username = 'crove_worker';
+    asWorker.username = 'ludy_worker';
     asWorker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorker.toString(), max: 2 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] });
@@ -219,11 +219,11 @@ suite('social metrics against the window before (#947)', () => {
         const fileId = randomUUID();
         const sha = randomUUID().replace(/-/g, '').padEnd(64, '0');
         await c.query(
-          "INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'tep', $5, 10, 'upload')",
+          "INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'tep', $5, 10, 'upload')",
           [o.orgId, fileId, sha, `org/${o.orgId}/${sha}`, contentType],
         );
         const { rows } = await c.query<{ id: string }>(
-          "UPDATE crove_social.post_variant SET provider = 'instagram', external_post_id = '17900000000000001', media = $2, settings = $3 WHERE post_id = $1 RETURNING id",
+          "UPDATE ludy_social.post_variant SET provider = 'instagram', external_post_id = '17900000000000001', media = $2, settings = $3 WHERE post_id = $1 RETURNING id",
           [postId, JSON.stringify([{ fileId }]), JSON.stringify(settings)],
         );
         return rows[0]?.id as string;

@@ -1,6 +1,6 @@
 // Reordering a channel's queue from the app (#1020): the date range a shuffle takes, and which channels of a post can
 // be moved to the front. The commands decide; these only keep the buttons and the range honest.
-import { zonedToEpoch } from '@crove/mod-social/contract';
+import { zonedToEpoch } from '@ludy/mod-social/contract';
 
 const DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
 

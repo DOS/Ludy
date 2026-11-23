@@ -32,6 +32,8 @@ export const zMeetingTextCount = z.object({
   results: z.number().int(),
   items: z.number().int(),
   titles: z.number().int(),
+  // The recorder's own rough notes (A5, #3163) that mention the value, private to them: present only when there are some, so an answer without notes reads as it always did.
+  notes: z.number().int().optional(),
 });
 export type MeetingTextCount = z.infer<typeof zMeetingTextCount>;
 
@@ -55,6 +57,8 @@ export type PersonalDataResult = z.infer<typeof zPersonalDataResult>;
 export const zPersonalDataErasure = z.object({
   erased: z.array(z.object({ column: z.string(), rows: z.number().int() })),
   kept: z.array(z.object({ column: z.string(), rows: z.number().int(), reason: z.string() })),
+  // The rough notes (A5, #3163) the erasure changed, per recorder: counts only. Present only when some were changed.
+  meetingNotes: z.array(z.object({ recorderUserId: z.string(), notes: z.number().int() })).optional(),
 });
 export type PersonalDataErasure = z.infer<typeof zPersonalDataErasure>;
 

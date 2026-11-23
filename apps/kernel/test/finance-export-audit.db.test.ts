@@ -11,11 +11,11 @@ import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { DomainError, Runtime, defineCommand, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { DomainError, Runtime, defineCommand, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -25,7 +25,7 @@ const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-export-audit-0123456789';
 const ISSUER = 'crove-auth';
-const EXPORT_COMMANDS = ['finance.journal.export', 'finance.vat.export', 'finance.ledger.export', 'finance.statements.export', 'finance.fixed_asset.export', 'finance.stock.export'];
+const EXPORT_COMMANDS = ['finance.journal.export', 'finance.vat.export', 'finance.ledger.export', 'finance.statements.export', 'finance.fixed_asset.export', 'finance.stock.export', 'finance.household.export'];
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 class MemoryStore implements BlobStore {
@@ -65,6 +65,8 @@ suite('finance exports: no audit row, no download (#365)', () => {
   let app: ReturnType<typeof createHttpApp>;
   let slug = '';
   let orgId = '';
+  let household = '';
+  let percentageHousehold = '';
   const owner = { subject: randomUUID(), email: 'owner@export-audit.test', session: randomUUID() };
 
   const token = () =>
@@ -86,9 +88,9 @@ suite('finance exports: no audit row, no download (#365)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     const db: Db = createDb(pool);
@@ -115,6 +117,23 @@ suite('finance exports: no audit row, no download (#365)', () => {
     const body = (await created.json()) as { json: { slug: string; orgId: string } };
     slug = body.json.slug;
     orgId = body.json.orgId;
+    // The household sales book needs an entity of kind household whose profile requires S1a (#2517); without it the route refuses before the export command runs.
+    household = randomUUID();
+    const admin = new pg.Client({ connectionString: adminUrl });
+    await admin.connect();
+    try {
+      const owner = (await admin.query<{ user_id: string }>("SELECT user_id FROM ludy_kernel.tenant_member WHERE org_id = $1 AND role = 'owner'", [orgId])).rows[0]?.user_id;
+      await admin.query("INSERT INTO ludy_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Hộ kinh doanh Xuất file', 'household', $3)", [orgId, household, owner]);
+      await admin.query("INSERT INTO ludy_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group) VALUES ($1, $2, '2026-01-01', 1)", [orgId, household]);
+      // The 01/CNKD worksheet (#2518) needs a household on the percentage method, and its Excel needs rows the accountant confirmed: later dated rows from 2026-10-01, so Q4 is exportable and Q3 is not.
+      percentageHousehold = randomUUID();
+      await admin.query("INSERT INTO ludy_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Hộ kinh doanh Tờ khai', 'household', $3)", [orgId, percentageHousehold, owner]);
+      await admin.query("INSERT INTO ludy_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method) VALUES ($1, $2, '2026-01-01', 2, 'percentage')", [orgId, percentageHousehold]);
+      await admin.query("INSERT INTO ludy_finance.household_return_form_version (form, version, effective_from, name, pit_methods, source, status) VALUES ('01/CNKD', '2026.2', DATE '2026-10-01', 'Tờ khai 01/CNKD', ARRAY['percentage'], 'test', 'confirmed') ON CONFLICT DO NOTHING");
+      await admin.query("INSERT INTO ludy_finance.household_trade_rate (trade, effective_from, vat_percent, pit_percent, source, status) VALUES ('goods', DATE '2026-10-01', 1, 0.5, 'test', 'confirmed') ON CONFLICT DO NOTHING");
+    } finally {
+      await admin.end();
+    }
     // The HTKK XML needs the org's tax code; without it the route refuses before the export command runs.
     const taxCode = await app.request('/api/rpc/org/setTaxCode', {
       method: 'POST',
@@ -156,12 +175,42 @@ suite('finance exports: no audit row, no download (#365)', () => {
     expect(await response.json()).toMatchObject({ code: 'INTERNAL' });
   });
 
+  it('answers an error, not a file, for the household sales book', async () => {
+    reached.length = 0;
+    const response = await app.request(`/api/export/household-s1a.xlsx?legalEntityId=${household}&period=2026-09`, { headers: { authorization: `Bearer ${await token()}`, 'x-crove-org': slug } });
+    expect(reached).toEqual(['finance.household.export']);
+    expect(response.status).toBe(500);
+    expect(response.headers.get('content-type')).not.toBe(XLSX);
+    expect(response.headers.get('content-disposition')).toBeNull();
+    expect(await response.json()).toMatchObject({ code: 'INTERNAL' });
+  });
+
+  it('answers an error, not a file, for the 01/CNKD worksheet when the audit row cannot be written', async () => {
+    reached.length = 0;
+    const response = await app.request(`/api/export/household-cnkd.xlsx?legalEntityId=${percentageHousehold}&year=2026&quarter=4`, { headers: { authorization: `Bearer ${await token()}`, 'x-crove-org': slug } });
+    expect(reached).toEqual(['finance.household.export']);
+    expect(response.status).toBe(500);
+    expect(response.headers.get('content-type')).not.toBe(XLSX);
+    expect(response.headers.get('content-disposition')).toBeNull();
+    expect(await response.json()).toMatchObject({ code: 'INTERNAL' });
+  });
+
+  it('does not refuse the 01/CNKD worksheet while a row behind it is unconfirmed (its figures are labelled): the audit write is reached before any file (#2518)', async () => {
+    reached.length = 0;
+    const response = await app.request(`/api/export/household-cnkd.xlsx?legalEntityId=${percentageHousehold}&year=2026&quarter=3`, { headers: { authorization: `Bearer ${await token()}`, 'x-crove-org': slug } });
+    expect(reached).toEqual(['finance.household.export']);
+    expect(response.status).toBe(500);
+    expect(response.headers.get('content-type')).not.toBe(XLSX);
+    expect(response.headers.get('content-disposition')).toBeNull();
+    expect(await response.json()).toMatchObject({ code: 'INTERNAL' });
+  });
+
   it('never records a failed export as done', async () => {
     const client = new pg.Client({ connectionString: adminUrl });
     await client.connect();
     try {
       const { rows } = await client.query<{ command: string; outcome: string }>(
-        `SELECT command, outcome FROM crove_kernel.audit_event WHERE org_id = $1 AND command = ANY($2::text[])`,
+        `SELECT command, outcome FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = ANY($2::text[])`,
         [orgId, EXPORT_COMMANDS],
       );
       expect(rows.filter((r) => r.outcome === 'ok')).toEqual([]);

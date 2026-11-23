@@ -82,8 +82,12 @@ describe('parseVouchersSearch', () => {
 });
 
 describe('parseTasksSearch and parseInboxSearch', () => {
-  it('keep a known tab and drop anything else', () => {
+  it('keep a known tab and project filter and drop anything else', () => {
+    const projectId = '10000000-0000-4000-8000-000000000001';
     expect(parseTasksSearch({ filter: 'mine' })).toEqual({ filter: 'mine' });
+    expect(parseTasksSearch({ filter: 'mine', project: projectId.toUpperCase() })).toEqual({ filter: 'mine', project: projectId });
+    expect(parseTasksSearch({ project: 'none' })).toEqual({ project: 'none' });
+    expect(parseTasksSearch({ project: 'not-a-uuid' })).toEqual({});
     expect(parseTasksSearch({ filter: 'done' })).toEqual({});
     expect(parseInboxSearch({ status: 'expired' })).toEqual({ status: 'expired' });
     expect(parseInboxSearch({ status: 'approved', tab: 'executed' })).toEqual({});

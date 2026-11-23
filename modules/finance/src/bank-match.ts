@@ -12,8 +12,11 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import {
+  MARKETPLACE_PAYOUT_COMMAND,
   PAYROLL_PAYMENT_COMMAND,
+  SUPPLIER_PAYMENT_SETTLE_COMMAND,
   VOUCHER_COMMAND,
+  journalVoucherCode,
   defaultCounterAccount,
   voucherCode,
   zAccountCode,
@@ -30,14 +33,15 @@ import {
   type HrRunPaymentAmounts,
   type PayrollPaymentKind,
   type VoucherType,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { Decimal } from '@crove/l10n-vn';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
+import { Decimal } from '@ludy/l10n-vn';
 import { learnedParties } from './bank-rules.ts';
 import { matchLine, type MatchCandidate } from './domain/bank-match.ts';
 import { VOUCHER_SOURCE } from './domain/cash-voucher.ts';
 import { JOURNAL_VOUCHER_SOURCE } from './domain/journal-voucher.ts';
+import { payoutVouchersOfLines } from './marketplace-payout-line.ts';
 import { ledgerPeriod } from './domain/ledger-reports.ts';
 import { payrollPaymentMention } from './domain/bank-payroll.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -76,7 +80,7 @@ export interface StoredBankLine {
 export async function findBankLines(ctx: QueryContext, ids: readonly string[]): Promise<StoredBankLine[]> {
   if (ids.length === 0) return [];
   const rows = await ctx.trx
-    .selectFrom('crove_finance.bank_line')
+    .selectFrom('ludy_finance.bank_line')
     .select(['id', 'bank_account', 'value_date', 'description', 'amount', 'running_balance', 'bank_ref', 'counterparty_account', 'ambiguous', 'import_id', 'legal_entity_id'])
     .where('org_id', '=', ctx.orgId)
     .where('id', 'in', ids)
@@ -101,9 +105,10 @@ export async function findBankLine(ctx: QueryContext, id: string): Promise<Store
   return (await findBankLines(ctx, [id]))[0] ?? null;
 }
 
-// The same transaction lock the database's check takes when a voucher of the line is posted (20261020130000).
+// The same transaction lock the database's check takes when a voucher of the line is posted (20261020130000). The database builds the key from the uuid's own text (lower case), and the contract's
+// zId keeps the letter case it is given, so the id is lowered here: an upper case id in a stored proposal and the lower case one of the table take the same lock (#2516).
 export const lockBankLine = (ctx: QueryContext, id: string) =>
-  sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_finance.bank_line:${ctx.orgId}:${id}`}, 0))`.execute(ctx.trx);
+  sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`ludy_finance.bank_line:${ctx.orgId}:${id.toLowerCase()}`}, 0))`.execute(ctx.trx);
 
 // The state of each of the lines: the posted voucher whose entry is not reversed, else a pending voucher proposal,
 // else open.
@@ -111,22 +116,23 @@ export async function bankLineStates(ctx: QueryContext, ids: readonly string[]):
   const states = new Map<string, BankLineState>(ids.map((id) => [id, { status: 'open' }]));
   if (ids.length === 0) return states;
   const settled = await ctx.trx
-    .selectFrom('crove_finance.cash_voucher as v')
-    .innerJoin('crove_finance.journal_entry as e', (join) =>
+    .selectFrom('ludy_finance.cash_voucher as v')
+    .innerJoin('ludy_finance.journal_entry as e', (join) =>
       join.onRef('e.org_id', '=', 'v.org_id').onRef('e.source_id', '=', 'v.id').on('e.source_type', '=', VOUCHER_SOURCE).on('e.reverses_entry_id', 'is', null).on(latestRevision('e')),
     )
-    .leftJoin('crove_finance.journal_entry as r', (join) => join.onRef('r.org_id', '=', 'e.org_id').onRef('r.reverses_entry_id', '=', 'e.id'))
+    .leftJoin('ludy_finance.journal_entry as r', (join) => join.onRef('r.org_id', '=', 'e.org_id').onRef('r.reverses_entry_id', '=', 'e.id'))
     .select(['v.id', 'v.bank_line_id', 'v.voucher_type', 'v.number'])
     .where('v.org_id', '=', ctx.orgId)
     .where('v.bank_line_id', 'in', ids)
     .where('r.id', 'is', null)
     .execute();
   const proposed = await ctx.trx
-    .selectFrom('crove_kernel.proposal')
+    .selectFrom('ludy_kernel.proposal')
     .select(['id', sql<string>`payload->>'bankLineId'`.as('line_id')])
     .where('org_id', '=', ctx.orgId)
     // A payment voucher of a pay run (#2532) settles a bank line too, so its pending proposal counts as proposed.
-    .where('command', 'in', [VOUCHER_COMMAND, PAYROLL_PAYMENT_COMMAND])
+    // A supplier payment's settlement (#3700 S3c) holds its line too: a second voucher for the same line cannot be requested while it waits, so the one approved first cannot starve the other.
+    .where('command', 'in', [VOUCHER_COMMAND, PAYROLL_PAYMENT_COMMAND, MARKETPLACE_PAYOUT_COMMAND, SUPPLIER_PAYMENT_SETTLE_COMMAND])
     .where('status', '=', 'pending')
     .where(sql<string>`payload->>'bankLineId'`, 'in', ids)
     .orderBy('created_at')
@@ -135,6 +141,8 @@ export async function bankLineStates(ctx: QueryContext, ids: readonly string[]):
   for (const v of settled) {
     if (v.bank_line_id) states.set(v.bank_line_id, { status: 'matched', voucherId: v.id, code: voucherCode(v.voucher_type as VoucherType, v.number) });
   }
+  // A platform's payout (#2516) settles a line too: the general voucher that names it, shown as matched with its own code (NVK).
+  for (const v of await payoutVouchersOfLines(ctx, ids)) states.set(v.bankLineId, { status: 'matched', voucherId: v.id, code: journalVoucherCode(v.number) });
   return states;
 }
 
@@ -190,7 +198,7 @@ export async function checkBankLineVoucher(
 type PartyRow = { id: string; name: string; tax_code: string | null };
 
 export const readParties = (ctx: QueryContext): Promise<PartyRow[]> =>
-  ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).execute();
+  ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).execute();
 
 // The voucher a line makes and the party it is probably about, given the org's parties. withBalances: false leaves out
 // the open-balance reason (its query is the costliest, and only finance.bank.line_voucher shows it). Invoices and
@@ -213,8 +221,8 @@ export async function lineMatchFor(
   const inflow = type === 'bank_credit';
   // Sales for money in, purchases for money out, of exactly the line's amount, not voided, issued by the line's date.
   const invoices = await ctx.trx
-    .selectFrom('crove_finance.purchase_document as d')
-    .leftJoin('crove_finance.purchase_document_void as x', (join) => join.onRef('x.org_id', '=', 'd.org_id').onRef('x.document_id', '=', 'd.id'))
+    .selectFrom('ludy_finance.purchase_document as d')
+    .leftJoin('ludy_finance.purchase_document_void as x', (join) => join.onRef('x.org_id', '=', 'd.org_id').onRef('x.document_id', '=', 'd.id'))
     .select(['d.party_id', 'd.invoice_series', 'd.invoice_number', 'd.total'])
     .where('d.org_id', '=', ctx.orgId)
     .where('d.legal_entity_id', '=', line.legalEntityId)
@@ -231,8 +239,8 @@ export async function lineMatchFor(
   const balances = !withBalances
     ? []
     : await ctx.trx
-        .selectFrom('crove_finance.journal_line as l')
-        .innerJoin('crove_finance.journal_entry as e', (join) => join.onRef('e.org_id', '=', 'l.org_id').onRef('e.id', '=', 'l.entry_id'))
+        .selectFrom('ludy_finance.journal_line as l')
+        .innerJoin('ludy_finance.journal_entry as e', (join) => join.onRef('e.org_id', '=', 'l.org_id').onRef('e.id', '=', 'l.entry_id'))
         .select(['l.party_id', side.as('balance')])
         .where('l.org_id', '=', ctx.orgId)
         .where('l.legal_entity_id', '=', line.legalEntityId)
@@ -309,7 +317,7 @@ export const bankSuggestions = defineQuery({
     // The lines of one legal entity (#1280).
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     const ids = await ctx.trx
-      .selectFrom('crove_finance.bank_line')
+      .selectFrom('ludy_finance.bank_line')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', legalEntityId)
@@ -348,7 +356,7 @@ export const bankOpenLines = defineQuery({
   handler: async (ctx, input): Promise<BankOpenLines> => {
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     const rows = await ctx.trx
-      .selectFrom('crove_finance.bank_line as l')
+      .selectFrom('ludy_finance.bank_line as l')
       .select([
         'l.bank_account',
         sql<string>`pg_catalog.count(*)`.as('open'),
@@ -360,15 +368,15 @@ export const bankOpenLines = defineQuery({
       .where(({ not, exists, selectFrom }) =>
         not(
           exists(
-            selectFrom('crove_finance.cash_voucher as v')
-              .innerJoin('crove_finance.journal_entry as e', (join) =>
+            selectFrom('ludy_finance.cash_voucher as v')
+              .innerJoin('ludy_finance.journal_entry as e', (join) =>
                 join.onRef('e.org_id', '=', 'v.org_id').onRef('e.source_id', '=', 'v.id').on('e.source_type', '=', VOUCHER_SOURCE).on('e.reverses_entry_id', 'is', null).on(latestRevision('e')),
               )
               .select('v.id')
               .whereRef('v.org_id', '=', 'l.org_id')
               .whereRef('v.bank_line_id', '=', 'l.id')
               .where(({ not, exists, selectFrom }) =>
-                not(exists(selectFrom('crove_finance.journal_entry as r').select('r.id').whereRef('r.org_id', '=', 'e.org_id').whereRef('r.reverses_entry_id', '=', 'e.id'))),
+                not(exists(selectFrom('ludy_finance.journal_entry as r').select('r.id').whereRef('r.org_id', '=', 'e.org_id').whereRef('r.reverses_entry_id', '=', 'e.id'))),
               ),
           ),
         ),
@@ -376,10 +384,10 @@ export const bankOpenLines = defineQuery({
       .where(({ not, exists, selectFrom }) =>
         not(
           exists(
-            selectFrom('crove_kernel.proposal as p')
+            selectFrom('ludy_kernel.proposal as p')
               .select('p.id')
               .whereRef('p.org_id', '=', 'l.org_id')
-              .where('p.command', 'in', [VOUCHER_COMMAND, PAYROLL_PAYMENT_COMMAND])
+              .where('p.command', 'in', [VOUCHER_COMMAND, PAYROLL_PAYMENT_COMMAND, SUPPLIER_PAYMENT_SETTLE_COMMAND])
               .where('p.status', '=', 'pending')
               .where(sql`p.payload->>'bankLineId'`, '=', sql`l.id::text`),
           ),
@@ -411,8 +419,8 @@ export const bankPayrollMatch = defineQuery({
     if (((await bankLineStates(ctx, [line.id])).get(line.id)?.status ?? 'open') !== 'open') return none;
     // A run whose posting was reversed is not offered (#2854): its entry has a reversal, so there is nothing left to pay against.
     const posted = await ctx.trx
-      .selectFrom('crove_finance.journal_voucher as j')
-      .innerJoin('crove_finance.journal_entry as e', (join) =>
+      .selectFrom('ludy_finance.journal_voucher as j')
+      .innerJoin('ludy_finance.journal_entry as e', (join) =>
         join.onRef('e.org_id', '=', 'j.org_id').onRef('e.source_id', '=', 'j.id').on('e.source_type', '=', JOURNAL_VOUCHER_SOURCE).on('e.reverses_entry_id', 'is', null).on(latestRevision('e')),
       )
       .select('j.payroll_run_id')
@@ -420,7 +428,7 @@ export const bankPayrollMatch = defineQuery({
       .where('j.legal_entity_id', '=', line.legalEntityId)
       .where('j.payroll_run_id', 'is not', null)
       .where(({ not, exists, selectFrom }) =>
-        not(exists(selectFrom('crove_finance.journal_entry as r').select('r.id').whereRef('r.org_id', '=', 'e.org_id').whereRef('r.reverses_entry_id', '=', 'e.id'))),
+        not(exists(selectFrom('ludy_finance.journal_entry as r').select('r.id').whereRef('r.org_id', '=', 'e.org_id').whereRef('r.reverses_entry_id', '=', 'e.id'))),
       )
       // The newest 24 runs: a run has one live posting voucher (a reversed one is left out above), so a voucher here is a run. Older unpaid runs are not offered; two years of months is the window (#2918).
       .orderBy('j.voucher_date', 'desc')
@@ -431,7 +439,7 @@ export const bankPayrollMatch = defineQuery({
     // What is paid or asked for already, by run and kind. A payment voucher that was reversed does not hold its kind (#2854), so it is offered again.
     const taken = new Set<string>();
     const paid = await ctx.trx
-      .selectFrom('crove_finance.cash_voucher as v')
+      .selectFrom('ludy_finance.cash_voucher as v')
       .select(['v.payroll_run_id', 'v.payroll_payment_kind'])
       .where('v.org_id', '=', ctx.orgId)
       .where('v.payroll_run_id', 'in', runIds)
@@ -439,7 +447,7 @@ export const bankPayrollMatch = defineQuery({
       .execute();
     for (const v of paid) taken.add(`${v.payroll_run_id}:${v.payroll_payment_kind}`);
     const open = await ctx.trx
-      .selectFrom('crove_kernel.proposal')
+      .selectFrom('ludy_kernel.proposal')
       .select(sql<string>`request_input ->> 'runId'`.as('run_id'))
       .select(sql<string>`request_input ->> 'kind'`.as('kind'))
       .where('org_id', '=', ctx.orgId)

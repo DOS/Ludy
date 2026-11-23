@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { PgBoss } from 'pg-boss';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { jobKey } from '../src/job-keys.ts';
 import { JOB_SCHEMA, MAIL_QUEUES, QUEUES, socialPublishQueue } from '../src/jobs-schema.ts';
 
@@ -30,9 +30,9 @@ suite('job keys across orgs (#1694)', () => {
     url.pathname = `/${dbName}`;
     const adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     // As the worker sends them.
-    url.username = 'crove_worker';
+    url.username = 'ludy_worker';
     url.password = 'test-worker-pw';
     pool = new pg.Pool({ connectionString: url.toString(), max: 2 });
     boss = new PgBoss({ connectionString: url.toString(), schema: JOB_SCHEMA, migrate: false, createSchema: false, supervise: false, schedule: false });

@@ -1,0 +1,24 @@
+{
+  "name": "@ludy/mod-projects",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "description": "Projects and a task board on kernel tasks (plan docs/plan/projects.md, ADR-0048)",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@ludy/db": "workspace:*",
+    "@ludy/kernel": "workspace:*",
+    "@ludy/kernel-contract": "workspace:*",
+    "@ludy/kernel-runtime": "workspace:*",
+    "@ludy/l10n-vn": "workspace:*",
+    "kysely": "catalog:",
+    "zod": "catalog:"
+  }
+}

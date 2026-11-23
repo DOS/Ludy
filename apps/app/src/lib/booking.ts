@@ -1,6 +1,6 @@
 // Helpers for the public booking page (issue #1318): the free slots grouped by day and shown in the visitor's own time
 // zone, the week the page reads, and the visitor's zone itself.
-import { BOOKING_MANAGE_TOKEN, zonedDate, zonedInstant, type BookingPage } from '@crove/kernel-contract';
+import { BOOKING_MANAGE_TOKEN, zonedDate, zonedInstant, type BookingPage } from '@ludy/kernel-contract';
 import type { Locale } from '../i18n/locale.ts';
 
 export type Slot = BookingPage['slots'][number];
@@ -12,6 +12,34 @@ export function visitorTimeZone(): string {
   } catch {
     return 'Asia/Ho_Chi_Minh';
   }
+}
+
+/** Vietnam's zone, the one a customer in Vietnam reads times in and is never told the name of (#3646). */
+export const VIETNAM_ZONE = 'Asia/Ho_Chi_Minh';
+const VIETNAM_ZONES: readonly string[] = [VIETNAM_ZONE, 'Asia/Saigon'];
+export const isVietnamZone = (zone: string): boolean => VIETNAM_ZONES.includes(zone);
+
+/** "GMT+9" or "GMT+5:30": a zone's offset from Greenwich at `at`, as people say it; "GMT" for UTC itself; empty where the browser cannot tell. */
+export function zoneOffset(zone: string, at: number): string {
+  try {
+    const part = new Intl.DateTimeFormat('en-GB', { timeZone: zone, timeZoneName: 'shortOffset' }).formatToParts(new Date(at)).find((p) => p.type === 'timeZoneName');
+    const value = part?.value ?? '';
+    return value === 'GMT+0' || value === 'GMT-0' ? 'GMT' : value;
+  } catch {
+    return '';
+  }
+}
+
+/** The offset of the week on screen: "GMT-5", or "GMT-5 / GMT-4" for a week that holds the clocks changing. */
+export function weekOffset(zone: string, range: { from: string; to: string }): string {
+  const first = zoneOffset(zone, Date.parse(range.from));
+  const last = zoneOffset(zone, Date.parse(range.to) - 1);
+  return first === last ? first : `${first} / ${last}`;
+}
+
+/** "New York" for "America/New_York": the place of a zone, without the region and the underscores of its IANA name. */
+export function zonePlace(zone: string): string {
+  return (zone.split('/').pop() ?? zone).replaceAll('_', ' ');
 }
 
 /**
@@ -53,3 +81,18 @@ export function manageTokenOf(hash: string): string | null {
   const value = new URLSearchParams(hash.replace(/^#/, '')).get('m');
   return value && BOOKING_MANAGE_TOKEN.test(value) ? value : null;
 }
+
+/**
+ * The address of a type's public booking page. With a deal (#3103) the address names it, so the client's booking arrives linked to the deal; the server keeps the
+ * link only when it is a deal of the org, and the page shows the client nothing of it.
+ */
+export const bookingLinkOf = (origin: string, org: string, type: string, dealId?: string) =>
+  `${origin}/-/b/${encodeURIComponent(org)}/${encodeURIComponent(type)}${dealId ? `?deal=${encodeURIComponent(dealId)}` : ''}`;
+
+/** The app's own origin, where the public booking page lives; empty where there is no window (a server render in a test). */
+export const appOrigin = () => (typeof window === 'undefined' ? '' : window.location.origin);
+
+/** The id of the card in Settings that holds the working hours and the event types: "Cài đặt lịch hẹn" links to it. */
+export const BOOKING_SETTINGS_ID = 'booking-settings';
+/** The id of the event types card in Settings: "Tạo loại lịch hẹn" links to it. */
+export const BOOKING_EVENT_TYPES_ID = 'booking-event-types';

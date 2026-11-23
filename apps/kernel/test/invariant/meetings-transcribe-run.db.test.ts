@@ -11,13 +11,14 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, memberVyRuntime } from '@crove/kernel-runtime';
-import { meetingsCommands, meetingsQueries, setTranscribeEnabled, encodeTranscriptResult } from '@crove/mod-meetings';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, memberVyRuntime } from '@ludy/kernel-runtime';
+import { meetingsCommands, meetingsQueries, setTranscribeEnabled, encodeTranscriptResult } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, rawQuery, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -28,6 +29,7 @@ const TRIGGER_FN = 'crove_meetings.meeting_discard_transcribe()';
 suite('the recorder\'s transcription run (#2578)', () => {
   const dbName = `crove_test_inv_transcribe_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   const pools: pg.Pool[] = [];
@@ -42,7 +44,7 @@ suite('the recorder\'s transcription run (#2578)', () => {
   const code = (promise: Promise<unknown>) => promise.then(() => null, (error: unknown) => (error as { code?: string; message?: string }).code ?? (error as Error).message);
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -84,17 +86,18 @@ suite('the recorder\'s transcription run (#2578)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = username;
+      url.username = dbIds ? dbIds.roleName(username) : username;
       url.password = password;
       return url.toString();
     };
     appUrl = login('crove_app', 'test-app-pw');
     workerUrl = login('crove_worker', 'test-worker-pw');
-    const appPool = createPool({ connectionString: appUrl, max: 3 });
-    const workerPool = createPool({ connectionString: workerUrl, max: 4 });
+    const appPool = createDbPool({ connectionString: appUrl, max: 3 }, dbIds);
+    const workerPool = createDbPool({ connectionString: workerUrl, max: 4 }, dbIds);
     pools.push(appPool, workerPool);
     setTranscribeEnabled(true);
     const register = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
@@ -147,7 +150,7 @@ suite('the recorder\'s transcription run (#2578)', () => {
   // the member, the run or the org from another connection AFTER a successful entry); the definer is then called and the message of its refusal is returned.
   async function afterEntry(who: string, meeting: string, mutate: () => Promise<unknown>): Promise<string | null> {
     const run = runs[who] as { agentId: string; runId: string };
-    const c = new pg.Client({ connectionString: workerUrl });
+    const c = createDbClient({ connectionString: workerUrl }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN READ ONLY');
@@ -171,14 +174,40 @@ suite('the recorder\'s transcription run (#2578)', () => {
     expect(info.rows[0]).toMatchObject({ definer: true, config: ['search_path=pg_catalog, pg_temp'] });
     const trigger = await admin((c) => c.query<{ definer: boolean; config: string[] }>(`SELECT prosecdef AS definer, proconfig AS config FROM pg_proc WHERE oid = '${TRIGGER_FN}'::regprocedure`));
     expect(trigger.rows[0]).toEqual({ definer: true, config: ['search_path=pg_catalog, pg_temp'] });
-    const roles = (await admin((c) => c.query<{ rolname: string }>(`SELECT rolname FROM pg_roles WHERE rolname LIKE 'crove\\_%' AND NOT rolsuper ORDER BY 1`))).rows.map((r) => r.rolname);
-    expect(roles, 'the matrix covers the roles of the stack').toEqual(expect.arrayContaining(['crove_app', 'crove_tenant', 'crove_worker', 'crove_definer_tenant']));
-    for (const role of ['public', ...roles]) {
-      const privilege = await admin((c) => c.query<{ door: boolean; trig: boolean }>(`SELECT has_function_privilege($1, '${FN}', 'EXECUTE') AS door, has_function_privilege($1, '${TRIGGER_FN}', 'EXECUTE') AS trig`, [role]));
-      expect(privilege.rows[0], `privileges of ${role}`).toEqual({ door: role === 'crove_worker', trig: false });
+    const activeWorker = dbIds ? dbIds.role('worker') : 'crove_worker';
+    const activeFn = dbIds ? dbIds.rewriteSql(FN) : FN;
+    const activeTriggerFn = dbIds ? dbIds.rewriteSql(TRIGGER_FN) : TRIGGER_FN;
+    const roles = (
+      await admin((c) =>
+        rawQuery<{ rolname: string; door: boolean; trig: boolean; is_worker_allowed: boolean }>(
+          c,
+          `SELECT r.rolname,
+                  pg_catalog.has_function_privilege(r.oid, $1::regprocedure, 'EXECUTE') AS door,
+                  pg_catalog.has_function_privilege(r.oid, $2::regprocedure, 'EXECUTE') AS trig,
+                  (r.rolname = $3 OR (r.rolname = 'crove_worker' AND pg_catalog.pg_has_role(r.oid, $3, 'MEMBER'))) AS is_worker_allowed
+           FROM pg_catalog.pg_roles r
+           WHERE ((r.rolname LIKE 'crove\\_%' OR r.rolname LIKE 'ludy\\_%') AND r.rolname NOT LIKE '%\\_test\\_%' AND r.rolname NOT LIKE 'crove\\_test%' AND r.rolname NOT LIKE 'ludy\\_test%' AND r.rolname <> 'ludy_migrate_test') AND NOT r.rolsuper
+           ORDER BY r.rolname`,
+          [activeFn, activeTriggerFn, activeWorker],
+        ),
+      )
+    ).rows;
+    const expectedStackRoles = ['crove_app', 'crove_tenant', 'crove_worker', 'crove_definer_tenant'].map((r) => (dbIds ? dbIds.roleName(r) : r));
+    expect(roles.map((r) => r.rolname), 'the matrix covers the roles of the stack').toEqual(expect.arrayContaining(expectedStackRoles));
+    const publicPrivilege = await admin((c) =>
+      rawQuery<{ door: boolean; trig: boolean }>(
+        c,
+        `SELECT pg_catalog.has_function_privilege('public', $1::regprocedure, 'EXECUTE') AS door,
+                pg_catalog.has_function_privilege('public', $2::regprocedure, 'EXECUTE') AS trig`,
+        [activeFn, activeTriggerFn],
+      ),
+    );
+    expect(publicPrivilege.rows[0], 'privileges of public').toEqual({ door: false, trig: false });
+    for (const row of roles) {
+      expect({ door: row.door, trig: row.trig }, `privileges of ${row.rolname}`).toEqual({ door: row.is_worker_allowed, trig: false });
     }
     // A real call as every role: the connection is the superuser's, SET ROLE makes the role the one that is asked for EXECUTE.
-    for (const role of roles) {
+    for (const { rolname: role, is_worker_allowed: workerAllowed } of roles) {
       const c = new pg.Client({ connectionString: adminUrl });
       await c.connect();
       try {
@@ -186,7 +215,7 @@ suite('the recorder\'s transcription run (#2578)', () => {
           await c.query('BEGIN');
           await c.query(`SET LOCAL ROLE ${role}`);
           try {
-            await c.query(text, params);
+            await c.query(dbIds ? dbIds.rewriteSql(text) : text, params);
             return null;
           } catch (error) {
             return (error as pg.DatabaseError).code;
@@ -195,7 +224,7 @@ suite('the recorder\'s transcription run (#2578)', () => {
           }
         };
         expect(await attempt(`SELECT crove_meetings.meeting_discard_transcribe()`), `${role} calls the trigger function`).toBe('42501');
-        if (role !== 'crove_worker') expect(await attempt(`SELECT * FROM crove_meetings.audio_for_member_vy($1::uuid, $2::uuid)`, [orgId, meetings.mine]), `${role} calls the audio door`).toBe('42501');
+        if (!workerAllowed) expect(await attempt(`SELECT * FROM crove_meetings.audio_for_member_vy($1::uuid, $2::uuid)`, [orgId, meetings.mine]), `${role} calls the audio door`).toBe('42501');
       } finally {
         await c.end();
       }
@@ -205,7 +234,7 @@ suite('the recorder\'s transcription run (#2578)', () => {
   it('refuses, with the function\'s own codes, the system context, no context and a real user context', async () => {
     const door = `SELECT * FROM crove_meetings.audio_for_member_vy($1::uuid, $2::uuid)`;
     const as = async (url: string, enter: ((c: pg.Client) => Promise<unknown>) | null): Promise<string | null> => {
-      const c = new pg.Client({ connectionString: url });
+      const c = createDbClient({ connectionString: url }, dbIds);
       await c.connect();
       try {
         await c.query('BEGIN');
@@ -286,7 +315,7 @@ suite('the recorder\'s transcription run (#2578)', () => {
     await expireRun(runs.other?.runId as string);
     const enterError = async (who: string): Promise<string> => {
       const run = runs[who] as { agentId: string; runId: string };
-      const c = new pg.Client({ connectionString: workerUrl });
+      const c = createDbClient({ connectionString: workerUrl }, dbIds);
       await c.connect();
       try {
         await c.query('BEGIN');
@@ -311,7 +340,7 @@ suite('the recorder\'s transcription run (#2578)', () => {
     runs.extra = await startRun('extra', meetings.extras as string);
     expect(await code(vy('extra').execute('kernel.member_vy.meeting_audio.open', { meetingId: meetings.extras }))).toBeNull();
     const run = runs.extra as { agentId: string; runId: string };
-    const c = new pg.Client({ connectionString: workerUrl });
+    const c = createDbClient({ connectionString: workerUrl }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');

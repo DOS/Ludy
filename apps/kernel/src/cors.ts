@@ -7,15 +7,15 @@
 // cookies: the answer never sets Access-Control-Allow-Credentials, and the browser sends no cookie on these requests.
 // With the list empty (the default, and every same-origin deployment) the middleware does nothing.
 import type { MiddlewareHandler } from 'hono';
-import { ORG_HEADER } from '@crove/kernel-contract';
-import { INVITE_TOKEN_HEADER } from './auth-signup-policy.ts';
+import { LEGACY_ORG_HEADER, ORG_HEADER, ROADMAP_VOTER_HEADER } from '@ludy/kernel-contract';
+import { INVITE_TOKEN_HEADER, LEGACY_INVITE_TOKEN_HEADER } from './auth-signup-policy.ts';
 
 export const CORS_MAX_ORIGINS = 10;
 
 // The request headers the web app sends cross-origin: the session and org headers, JSON bodies, the invite token of a
-// sign-up (#563), the headers Supabase's auth client adds (`apikey`, `x-client-info`, `x-supabase-api-version`) and the
-// no-cache pair a browser adds to a fetch with `cache: 'no-store'`.
-const ALLOWED_HEADERS = ['authorization', 'content-type', ORG_HEADER, INVITE_TOKEN_HEADER, 'apikey', 'x-client-info', 'x-supabase-api-version', 'cache-control', 'pragma'];
+// sign-up (#563), the public roadmap OTP voter claim header (#4399), the headers Supabase's auth client adds
+// (`apikey`, `x-client-info`, `x-supabase-api-version`) and the no-cache pair a browser adds to a fetch with `cache: 'no-store'`.
+const ALLOWED_HEADERS = ['authorization', 'content-type', ORG_HEADER, LEGACY_ORG_HEADER, INVITE_TOKEN_HEADER, LEGACY_INVITE_TOKEN_HEADER, ROADMAP_VOTER_HEADER, 'apikey', 'x-client-info', 'x-supabase-api-version', 'cache-control', 'pragma'];
 const ALLOWED_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
 // The response headers a page may read: the request id for a report, Retry-After for a busy answer and a download's
 // name and size.
@@ -57,7 +57,7 @@ const UPSTREAM_CORS = /^access-control-/i;
 // Routes a browser page never calls: the providers' and the mail relay's webhooks authenticate by signature or secret and
 // get no CORS headers, so a page of an allowed origin cannot read what they answer. The same for a meeting video's ticket
 // stream (#2703): a media element plays it without reading it, and no script has a reason to.
-const NO_CORS = /^\/(?:webhooks\/|api\/inbound\/|api\/bank-feed\/|api\/meetings\/[^/]+\/video\/stream$)/;
+const NO_CORS = /^\/(?:webhooks\/|api\/inbound\/|api\/bank-feed\/|api\/marketplace\/[^/]+\/webhook\/|api\/meetings\/[^/]+\/video\/stream$)/;
 
 export function corsMiddleware(allowed: readonly string[]): MiddlewareHandler {
   if (allowed.length === 0) return async (_c, next) => next();

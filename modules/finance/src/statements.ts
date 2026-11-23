@@ -17,9 +17,9 @@
 // needed however long the history is.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { zId, zLedgerPeriod } from '@crove/kernel-contract';
-import { defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { zId, zLedgerPeriod } from '@ludy/kernel-contract';
+import { defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { chartAccounts } from './accounts.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { ledgerPeriod, type LedgerPeriod } from './domain/ledger-reports.ts';
@@ -108,8 +108,8 @@ export function asEntries(rows: BalanceRow[], date: string, legalEntityId: strin
 // party and reversal. `withoutClosing` leaves out every entry that has a line on the year-end closing account.
 export function balances(ctx: QueryContext, legalEntityId: string, from: string | null, to: string, withoutClosing: boolean) {
   let query = ctx.trx
-    .selectFrom('crove_finance.journal_line as l')
-    .innerJoin('crove_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
+    .selectFrom('ludy_finance.journal_line as l')
+    .innerJoin('ludy_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
     .select(['l.account_code', 'l.party_id'])
     .select((eb) => [
       eb('j.reverses_entry_id', 'is not', null).as('reversal'),
@@ -124,7 +124,7 @@ export function balances(ctx: QueryContext, legalEntityId: string, from: string 
     query = query.where(({ not, exists, selectFrom }) =>
       not(
         exists(
-          selectFrom('crove_finance.journal_line as c')
+          selectFrom('ludy_finance.journal_line as c')
             .select(sql<number>`1`.as('one'))
             .whereRef('c.org_id', '=', 'j.org_id')
             .whereRef('c.entry_id', '=', 'j.id')
@@ -170,7 +170,7 @@ async function unmappedRows(ctx: QueryContext, unmapped: UnmappedBalance[]): Pro
   const partyIds = [...new Set(unmapped.flatMap((u) => (u.partyId ? [u.partyId] : [])))];
   const parties = new Map<string, string>();
   if (partyIds.length > 0) {
-    for (const p of await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', partyIds).execute()) {
+    for (const p of await ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', partyIds).execute()) {
       parties.set(p.id, p.name);
     }
   }

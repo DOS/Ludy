@@ -7,10 +7,10 @@
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { SESSION_RESET_SQL, createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { SESSION_RESET_SQL, createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
@@ -18,28 +18,28 @@ const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const ROUNDS = 5;
 
-const suite = ADMIN && process.env.CROVE_BENCH === '1' ? describe : describe.skip;
+const suite = ADMIN && (process.env.LUDY_BENCH ?? process.env.CROVE_BENCH) === '1' ? describe : describe.skip;
 
 // The per-call re-check a later migration could add (§4.5): the context's member must still be a member of the
 // still-active org; a system context needs the org still active. Same contract as ctx_verified() otherwise.
 const RECHECK_BODY = `
 DECLARE
-  v_ctx text := coalesce(pg_catalog.current_setting('crove.ctx', true), '');
-  v_seal text := coalesce(pg_catalog.current_setting('crove.ctx_seal', true), '');
+  v_ctx text := coalesce(pg_catalog.current_setting('ludy.ctx', true), '');
+  v_seal text := coalesce(pg_catalog.current_setting('ludy.ctx_seal', true), '');
   v jsonb;
 BEGIN
   IF v_ctx = '' AND v_seal = '' THEN
     RETURN NULL;
   END IF;
-  IF v_ctx = '' OR v_seal = '' OR v_seal IS DISTINCT FROM crove_kernel.ctx_mac(v_ctx) THEN
+  IF v_ctx = '' OR v_seal = '' OR v_seal IS DISTINCT FROM ludy_kernel.ctx_mac(v_ctx) THEN
     RAISE EXCEPTION 'CONTEXT_SEAL_INVALID' USING ERRCODE = '42501';
   END IF;
   v := v_ctx::jsonb;
   IF v ->> 'actor' = 'user' THEN
-    PERFORM 1 FROM crove_kernel.tenant_member m JOIN crove_kernel.tenant t ON t.org_id = m.org_id
+    PERFORM 1 FROM ludy_kernel.tenant_member m JOIN ludy_kernel.tenant t ON t.org_id = m.org_id
     WHERE m.org_id = (v ->> 'org')::uuid AND m.user_id = (v ->> 'user')::uuid AND t.status = 'active';
   ELSE
-    PERFORM 1 FROM crove_kernel.tenant t WHERE t.org_id = (v ->> 'org')::uuid AND t.status = 'active';
+    PERFORM 1 FROM ludy_kernel.tenant t WHERE t.org_id = (v ->> 'org')::uuid AND t.status = 'active';
   END IF;
   IF NOT FOUND THEN
     RETURN NULL;
@@ -89,8 +89,8 @@ suite('context cost micro-benchmark (#117)', () => {
 
   const transaction = async (c: pg.ClientBase) => {
     await c.query('BEGIN');
-    await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner, orgId)]);
-    await c.query('SELECT count(*) FROM crove_kernel.party');
+    await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner, orgId)]);
+    await c.query('SELECT count(*) FROM ludy_kernel.party');
     await c.query('COMMIT');
   };
 
@@ -103,9 +103,9 @@ suite('context cost micro-benchmark (#117)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
     setupPool = createPool({ connectionString: appUrl, max: 1 });
@@ -114,7 +114,7 @@ suite('context cost micro-benchmark (#117)', () => {
     owner = await upsertIdentity(db, { issuer: 'test', subject: 'bench-owner', email: 'owner@bench.test', name: null });
     orgId = (await createOrg(runtime, { type: 'user', userId: owner, aal: 'aal1' }, 'Bench')).orgId;
     await withAdmin((a) =>
-      a.query(`INSERT INTO crove_kernel.party (org_id, name) SELECT $1, 'party ' || g FROM generate_series(1, 50) g`, [orgId]),
+      a.query(`INSERT INTO ludy_kernel.party (org_id, name) SELECT $1, 'party ' || g FROM generate_series(1, 50) g`, [orgId]),
     );
   });
 
@@ -189,23 +189,23 @@ suite('context cost micro-benchmark (#117)', () => {
 
   it('measures a per-call membership re-check against the seal-only check', async () => {
     await withAdmin((a) =>
-      a.query(`CREATE OR REPLACE FUNCTION crove_kernel.ctx_verified_recheck() RETURNS jsonb LANGUAGE plpgsql STABLE
+      a.query(`CREATE OR REPLACE FUNCTION ludy_kernel.ctx_verified_recheck() RETURNS jsonb LANGUAGE plpgsql STABLE
                SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $f$${RECHECK_BODY}$f$;
-               GRANT EXECUTE ON FUNCTION crove_kernel.ctx_verified_recheck() TO crove_tenant`),
+               GRANT EXECUTE ON FUNCTION ludy_kernel.ctx_verified_recheck() TO ludy_tenant`),
     );
     const c = new pg.Client({ connectionString: appUrl });
     await c.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner, orgId)]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner, orgId)]);
       const { rows } = await c.query<{ a: unknown; b: unknown }>(
-        'SELECT crove_kernel.ctx_verified() AS a, crove_kernel.ctx_verified_recheck() AS b',
+        'SELECT ludy_kernel.ctx_verified() AS a, ludy_kernel.ctx_verified_recheck() AS b',
       );
       expect(rows[0]?.b).toEqual(rows[0]?.a);
-      const helper = await perCall(c, 'crove_kernel.ctx_org_id()');
-      const seal = await perCall(c, `(crove_kernel.ctx_verified() ->> 'org')::uuid`);
-      const recheck = await perCall(c, `(crove_kernel.ctx_verified_recheck() ->> 'org')::uuid`);
-      const floor = await perCall(c, `current_setting('crove.ctx', true)`);
+      const helper = await perCall(c, 'ludy_kernel.ctx_org_id()');
+      const seal = await perCall(c, `(ludy_kernel.ctx_verified() ->> 'org')::uuid`);
+      const recheck = await perCall(c, `(ludy_kernel.ctx_verified_recheck() ->> 'org')::uuid`);
+      const floor = await perCall(c, `current_setting('ludy.ctx', true)`);
       await c.query('COMMIT');
       report.push(
         `per helper call, inside the database: ctx_org_id() today ${helper.toFixed(2)} us; ctx_verified() ${seal.toFixed(2)} us;`,
@@ -216,13 +216,13 @@ suite('context cost micro-benchmark (#117)', () => {
       const n = 1000;
       const statement = async (fn: string) => {
         await c.query('BEGIN');
-        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner, orgId)]);
-        const us = await time(n, () => c.query(`SELECT count(*) FROM crove_kernel.party WHERE org_id = (SELECT (${fn}() ->> 'org')::uuid)`));
+        await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner, orgId)]);
+        const us = await time(n, () => c.query(`SELECT count(*) FROM ludy_kernel.party WHERE org_id = (SELECT (${fn}() ->> 'org')::uuid)`));
         await c.query('COMMIT');
         return us;
       };
-      const rls = await statement('crove_kernel.ctx_verified');
-      const rlsRecheck = await statement('crove_kernel.ctx_verified_recheck');
+      const rls = await statement('ludy_kernel.ctx_verified');
+      const rlsRecheck = await statement('ludy_kernel.ctx_verified_recheck');
       report.push(
         `per RLS statement with a round trip (50 rows): ${rls.toFixed(0)} us today, ${rlsRecheck.toFixed(0)} us with the re-check (+${(rlsRecheck - rls).toFixed(0)} us)`,
       );
@@ -241,7 +241,7 @@ suite('context cost micro-benchmark (#117)', () => {
     const CONCURRENCY = [1, 8, 32];
     const BACKGROUND_LOCKS = [0, 1000, 4000];
     const { rows: def } = await withAdmin((a) =>
-      a.query<{ def: string }>(`SELECT pg_get_functiondef('crove_kernel.context_reentry_guard()'::regprocedure) AS def`),
+      a.query<{ def: string }>(`SELECT pg_get_functiondef('ludy_kernel.context_reentry_guard()'::regprocedure) AS def`),
     );
     const original = def[0]?.def as string;
     expect(original).toContain('pg_locks');
@@ -251,7 +251,7 @@ suite('context cost micro-benchmark (#117)', () => {
 
     // Server-side loop, no round trips: one transaction per iteration, each one enter_context and COMMIT.
     const loop = (n: number) => `DO $d$ BEGIN FOR i IN 1..${n} LOOP
-        PERFORM crove_kernel.enter_context('${owner}'::uuid, '${orgId}'::uuid); COMMIT; END LOOP; END $d$`;
+        PERFORM ludy_kernel.enter_context('${owner}'::uuid, '${orgId}'::uuid); COMMIT; END LOOP; END $d$`;
     // A request-shaped transaction with round trips; its latency in microseconds.
     const timedTransaction = async (c: pg.Client) => {
       const start = process.hrtime.bigint();
@@ -282,7 +282,7 @@ suite('context cost micro-benchmark (#117)', () => {
           time(1, () => holder.query(`DO $d$ BEGIN FOR i IN 1..2000 LOOP ${statement}; END LOOP; END $d$`));
         const lookup =
           ((await lookupLoop(`PERFORM 1 FROM pg_catalog.pg_locks l WHERE l.locktype = 'advisory'
-              AND l.classid = 1129467734::oid AND l.objid = pg_backend_pid()::oid AND l.objsubid = 2
+              AND l.classid = 1280656473::oid AND l.objid = pg_backend_pid()::oid AND l.objsubid = 2
               AND l.pid = pg_backend_pid() AND l.granted`)) -
             (await lookupLoop('PERFORM 1'))) /
           2000;

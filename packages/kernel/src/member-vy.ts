@@ -11,17 +11,17 @@
 // Audit rows, activity and events carry ids, an enum and numbers, never text (decision 4): no body, title or subject text reaches them.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { tableWrite, zId } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { tableWrite, zId } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { kernelManifest } from './manifest.ts';
 
 const MEMBER_ROLES = ['owner', 'admin', 'member', 'viewer'] as const;
 
 // What the store command writes, declared (P04, #1710): the result's text and state, and in the member's own session the run it closes. In the
-// background (Vy in member mode) it writes the result alone; the worker closes the run afterwards (crove_kernel.member_vy_run_finish).
+// background (Vy in member mode) it writes the result alone; the worker closes the run afterwards (ludy_kernel.member_vy_run_finish).
 const STORE_WRITES = [
-  tableWrite(kernelManifest.tables, 'crove_kernel', 'member_vy_result', ['status', 'body', 'error_code', 'source_revision', 'private_read']),
-  tableWrite(kernelManifest.tables, 'crove_kernel', 'ai_run', ['status', 'finished_at', 'error', 'private_read']),
+  tableWrite(kernelManifest.tables, 'ludy_kernel', 'member_vy_result', ['status', 'body', 'error_code', 'source_revision', 'private_read']),
+  tableWrite(kernelManifest.tables, 'ludy_kernel', 'ai_run', ['status', 'finished_at', 'error', 'private_read']),
 ];
 
 // What a member may ask Vy for in stage A, with the module whose budget and kill switch it counts against and how long a run may live
@@ -29,6 +29,8 @@ const STORE_WRITES = [
 export const MEMBER_VY_FEATURES = {
   'notes.summary': { module: 'notes', expiryMinutes: 30 },
   'notes.todo_suggest': { module: 'notes', expiryMinutes: 30 },
+  'notes.todo_plan': { module: 'notes', expiryMinutes: 30 },
+  'notes.organize': { module: 'notes', expiryMinutes: 30 },
   // The recorder's Vy transcribing one meeting in the background (#2578, M4b): the longest run, so the 4 hour cap of the kernel.
   'meetings.transcribe': { module: 'meetings', expiryMinutes: 240 },
   // The recorder's Vy summarizing one meeting in the foreground (#2580, M6): one model call over the transcript, the member waiting for it.
@@ -39,6 +41,24 @@ export const MEMBER_VY_FEATURES = {
   // The running notes of a live-notes meeting (#3110): one model call over the new preview lines and the previous notes, the recorder's pane waiting for it. A run of its own,
   // because a member's Vy has one live run per feature and a window (meetings.live_notes) may be running.
   'meetings.live_summary': { module: 'meetings', expiryMinutes: 30 },
+  // The member's Vy translating the summary of a meeting in the foreground (meetings integrations E1, #3184): one model call, the member waiting for it, any reader for what they read; its own key, so it
+  // never cuts off a transcription, a summary or live notes (#3029).
+  'meetings.translate': { module: 'meetings', expiryMinutes: 30 },
+  // The member's Vy answering one question across the meetings the member reads, with a citation to a transcript line on every sentence (meetings integrations A3, #3161): one model call over at most 40 lines
+  // the member's own search found, the member waiting for it. Its own key, so it never cuts off a transcription, a summary, a translation or live notes (#3029). The run's result row holds counts only, never the answer.
+  'meetings.ask': { module: 'meetings', expiryMinutes: 30 },
+  'meetings.brief': { module: 'meetings', expiryMinutes: 30 },
+  'meetings.digest': { module: 'meetings', expiryMinutes: 30 },
+  'meetings.assignee': { module: 'meetings', expiryMinutes: 30 },
+  'meetings.adherence': { module: 'meetings', expiryMinutes: 30 },
+  'meetings.chapters': { module: 'meetings', expiryMinutes: 30 },
+  'meetings.title': { module: 'meetings', expiryMinutes: 30 },
+  // The recorder's Vy listing what each speaker of one meeting committed to or decided, from the transcript, in the foreground (#3954): one model call, the member waiting for it, the lines shown and never stored. Its own key, so it never cuts off a transcription, a summary, a translation, a question, a brief, chapters or a title (#3029).
+  'meetings.commitments': { module: 'meetings', expiryMinutes: 30 },
+  // The recorder's Vy drafting a personal-note follow-up email from the meeting's summary, decisions and action items (#4292): one model call, the member waiting for it, the text edited before send and never stored in vy_result (counts only).
+  'meetings.followup_note': { module: 'meetings', expiryMinutes: 30 },
+  'projects.tasks_from_note': { module: 'projects', expiryMinutes: 30 },
+  'projects.tasks_from_source': { module: 'projects', expiryMinutes: 30 },
 } as const;
 export type MemberVyFeature = keyof typeof MEMBER_VY_FEATURES;
 const FEATURE_KEYS = Object.keys(MEMBER_VY_FEATURES) as [MemberVyFeature, ...MemberVyFeature[]];
@@ -58,20 +78,20 @@ const aiOff = () =>
 // A kill switch that covers the org, the module or the member's Vy, or the operator's global switch for AI.
 async function stopped(ctx: Pick<CommandContext, 'trx' | 'orgId'>, module: string, agentId: string | null): Promise<boolean> {
   const { rows } = await sql<{ stopped: boolean }>`
-    SELECT crove_kernel.global_kill_switch_on('ai') OR EXISTS (
-      SELECT 1 FROM crove_kernel.kill_switch k
+    SELECT ludy_kernel.global_kill_switch_on('ai') OR EXISTS (
+      SELECT 1 FROM ludy_kernel.kill_switch k
       WHERE k.org_id = ${ctx.orgId}::uuid AND k.released_at IS NULL
         AND (k.scope = 'org' OR (k.scope = 'module' AND k.target = ${module}) OR (k.scope = 'agent' AND k.target = ${agentId}::text))) AS stopped`.execute(ctx.trx);
   return rows[0]?.stopped === true;
 }
 
 async function budgetSpent(ctx: Pick<CommandContext, 'trx' | 'orgId'>, module: string, agentId: string | null): Promise<boolean> {
-  const { rows } = await sql<{ spent: boolean }>`SELECT crove_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, ${module}, ${agentId}::uuid) AS spent`.execute(ctx.trx);
+  const { rows } = await sql<{ spent: boolean }>`SELECT ludy_kernel.ai_budget_exhausted(${ctx.orgId}::uuid, ${module}, ${agentId}::uuid) AS spent`.execute(ctx.trx);
   return rows[0]?.spent === true;
 }
 
 async function mayUseVy(ctx: Pick<CommandContext, 'trx'>): Promise<boolean> {
-  const { rows } = await sql<{ ok: boolean }>`SELECT crove_kernel.ctx_vy_use() AS ok`.execute(ctx.trx);
+  const { rows } = await sql<{ ok: boolean }>`SELECT ludy_kernel.ctx_vy_use() AS ok`.execute(ctx.trx);
   return rows[0]?.ok === true;
 }
 
@@ -80,13 +100,13 @@ async function mayUseVy(ctx: Pick<CommandContext, 'trx'>): Promise<boolean> {
 export async function cancelMemberVyRuns(ctx: Pick<CommandContext, 'trx'>, filter: { agentIds?: readonly string[]; userId?: string; module?: string }, reason: string): Promise<number> {
   const agents = filter.agentIds && filter.agentIds.length > 0 ? `{${filter.agentIds.join(',')}}` : null;
   const { rows } = await sql<{ n: string }>`
-    SELECT crove_kernel.member_vy_runs_cancel(${agents}::uuid[], ${filter.userId ?? null}::uuid, ${filter.module ?? null}::text, ${reason}::text) AS n`.execute(ctx.trx);
+    SELECT ludy_kernel.member_vy_runs_cancel(${agents}::uuid[], ${filter.userId ?? null}::uuid, ${filter.module ?? null}::text, ${reason}::text) AS n`.execute(ctx.trx);
   return Number(rows[0]?.n ?? 0);
 }
 
 // After a change that can take vy.use away from a member (a deny, a revoked role, a demotion): their live runs end unless they still hold it.
 export async function cancelMemberVyRunsUnlessAllowed(ctx: Pick<CommandContext, 'trx' | 'orgId'>, userId: string, reason: string): Promise<number> {
-  const { rows } = await sql<{ ok: boolean }>`SELECT crove_kernel.member_has_permission(${ctx.orgId}::uuid, ${userId}::uuid, 'vy.use') AS ok`.execute(ctx.trx);
+  const { rows } = await sql<{ ok: boolean }>`SELECT ludy_kernel.member_has_permission(${ctx.orgId}::uuid, ${userId}::uuid, 'vy.use') AS ok`.execute(ctx.trx);
   return rows[0]?.ok === true ? 0 : cancelMemberVyRuns(ctx, { userId }, reason);
 }
 
@@ -101,7 +121,7 @@ export const memberVyRunStart = defineCommand({
     if (!(await mayUseVy(ctx))) throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
     const feature = MEMBER_VY_FEATURES[input.feature];
     let agent = await ctx.trx
-      .selectFrom('crove_kernel.agent')
+      .selectFrom('ludy_kernel.agent')
       .select(['id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('kind', '=', 'member_vy')
@@ -111,7 +131,7 @@ export const memberVyRunStart = defineCommand({
     if ((await stopped(ctx, feature.module, agent?.id ?? null)) || (await budgetSpent(ctx, feature.module, agent?.id ?? null))) throw aiOff();
     if (!agent) {
       agent = await ctx.trx
-        .insertInto('crove_kernel.agent')
+        .insertInto('ludy_kernel.agent')
         .values({ org_id: ctx.orgId, template_key: 'kernel.member_vy', display_name: 'Vy', kind: 'member_vy', member_user_id: userId, created_by: userId })
         .returning(['id', 'status'])
         .executeTakeFirstOrThrow();
@@ -122,7 +142,7 @@ export const memberVyRunStart = defineCommand({
     // carried over (#3058): never a superseded run beside a ready result. The run row is locked first, then its result (the order of the store and the finish), and the result is
     // read in a statement of its own, so a store in progress is waited for and its committed result seen.
     const live = await ctx.trx
-      .selectFrom('crove_kernel.ai_run')
+      .selectFrom('ludy_kernel.ai_run')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('agent_id', '=', agent.id)
@@ -133,7 +153,7 @@ export const memberVyRunStart = defineCommand({
       .execute();
     for (const old of live) {
       const stored = await ctx.trx
-        .selectFrom('crove_kernel.member_vy_result')
+        .selectFrom('ludy_kernel.member_vy_result')
         .select(['status', 'private_read'])
         .where('org_id', '=', ctx.orgId)
         .where('run_id', '=', old.id)
@@ -142,7 +162,7 @@ export const memberVyRunStart = defineCommand({
         .executeTakeFirst();
       if (stored?.status === 'ready') {
         await ctx.trx
-          .updateTable('crove_kernel.ai_run')
+          .updateTable('ludy_kernel.ai_run')
           .set({ status: 'succeeded', finished_at: ctx.now, error: null, ...(stored.private_read ? { private_read: true } : {}) })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', old.id)
@@ -150,7 +170,7 @@ export const memberVyRunStart = defineCommand({
           .execute();
       } else {
         await ctx.trx
-          .updateTable('crove_kernel.ai_run')
+          .updateTable('ludy_kernel.ai_run')
           .set({ status: 'cancelled', finished_at: ctx.now, error: 'RUN_SUPERSEDED' })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', old.id)
@@ -165,7 +185,7 @@ export const memberVyRunStart = defineCommand({
     let run: { id: string };
     try {
       run = await ctx.trx
-        .insertInto('crove_kernel.ai_run')
+        .insertInto('ludy_kernel.ai_run')
         .values({ org_id: ctx.orgId, agent_id: agent.id, module: feature.module, feature: input.feature, status: 'running', tainted: true, started_at: ctx.now, expires_at: expiresAt })
         .returning('id')
         .executeTakeFirstOrThrow();
@@ -179,7 +199,7 @@ export const memberVyRunStart = defineCommand({
     }
     await sql`RELEASE SAVEPOINT member_vy_run_start`.execute(ctx.trx);
     const result = await ctx.trx
-      .insertInto('crove_kernel.member_vy_result')
+      .insertInto('ludy_kernel.member_vy_result')
       .values({
         org_id: ctx.orgId,
         member_user_id: userId,
@@ -212,7 +232,7 @@ export const memberVyRunCancel = defineCommand({
   handler: async (ctx, input): Promise<{ cancelled: boolean }> => {
     const userId = requireUser(ctx);
     const agent = await ctx.trx
-      .selectFrom('crove_kernel.agent')
+      .selectFrom('ludy_kernel.agent')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('kind', '=', 'member_vy')
@@ -224,7 +244,7 @@ export const memberVyRunCancel = defineCommand({
     // leave a cancelled run beside a ready result, which the finish definer says never to record. So the result is read after the lock, in a statement of its own (READ COMMITTED
     // sees what the store committed), and a result that is no longer running leaves the run to the worker's finish: `cancelled: false`.
     const run = await ctx.trx
-      .selectFrom('crove_kernel.ai_run')
+      .selectFrom('ludy_kernel.ai_run')
       .select(['id', 'feature'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.runId)
@@ -234,7 +254,7 @@ export const memberVyRunCancel = defineCommand({
       .executeTakeFirst();
     if (!run) return { cancelled: false };
     const result = await ctx.trx
-      .selectFrom('crove_kernel.member_vy_result')
+      .selectFrom('ludy_kernel.member_vy_result')
       .select('status')
       .where('org_id', '=', ctx.orgId)
       .where('run_id', '=', input.runId)
@@ -242,7 +262,7 @@ export const memberVyRunCancel = defineCommand({
       .executeTakeFirst();
     if (result && result.status !== 'running') return { cancelled: false };
     await ctx.trx
-      .updateTable('crove_kernel.ai_run')
+      .updateTable('ludy_kernel.ai_run')
       .set({ status: 'cancelled', finished_at: ctx.now, error: 'RUN_CANCELLED' })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.runId)
@@ -250,7 +270,7 @@ export const memberVyRunCancel = defineCommand({
       .where('status', '=', 'running')
       .execute();
     await ctx.trx
-      .updateTable('crove_kernel.member_vy_result')
+      .updateTable('ludy_kernel.member_vy_result')
       .set({ status: 'failed', error_code: 'RUN_CANCELLED' })
       .where('org_id', '=', ctx.orgId)
       .where('run_id', '=', input.runId)
@@ -287,8 +307,8 @@ export const memberVyResultStore = defineCommand({
     if (!background && !(await mayUseVy(ctx))) throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
     // The run must be this member's own Vy run, still running and not expired, and have its result row waiting.
     const run = await ctx.trx
-      .selectFrom('crove_kernel.ai_run as r')
-      .innerJoin('crove_kernel.agent as a', (j) => j.onRef('a.org_id', '=', 'r.org_id').onRef('a.id', '=', 'r.agent_id'))
+      .selectFrom('ludy_kernel.ai_run as r')
+      .innerJoin('ludy_kernel.agent as a', (j) => j.onRef('a.org_id', '=', 'r.org_id').onRef('a.id', '=', 'r.agent_id'))
       .select(['r.id', 'r.module', 'r.agent_id', 'r.status', 'r.expires_at'])
       .where('r.org_id', '=', ctx.orgId)
       .where('r.id', '=', input.runId)
@@ -298,7 +318,7 @@ export const memberVyResultStore = defineCommand({
       .executeTakeFirst();
     const result = run
       ? await ctx.trx
-          .selectFrom('crove_kernel.member_vy_result')
+          .selectFrom('ludy_kernel.member_vy_result')
           .select(['id', 'subject_type', 'subject_id', 'status'])
           .where('org_id', '=', ctx.orgId)
           .where('run_id', '=', input.runId)
@@ -318,7 +338,7 @@ export const memberVyResultStore = defineCommand({
     // Each update is guarded by the status it expects and must touch exactly one row: a cancel that committed between the checks above and here
     // (the run row is locked FOR UPDATE, in the order the cancel definer takes its locks: run, then result) leaves nothing to write.
     const wrote = await ctx.trx
-      .updateTable('crove_kernel.member_vy_result')
+      .updateTable('ludy_kernel.member_vy_result')
       .set(
         outcome.status === 'ready'
           ? { status: 'ready', body: outcome.body, error_code: null, source_revision: outcome.sourceRevision ?? null, private_read: privateRead }
@@ -332,7 +352,7 @@ export const memberVyResultStore = defineCommand({
     const closed = background
       ? null
       : await ctx.trx
-          .updateTable('crove_kernel.ai_run')
+          .updateTable('ludy_kernel.ai_run')
           .set({ status: outcome.status === 'ready' ? 'succeeded' : 'failed', finished_at: ctx.now, error: outcome.status === 'failed' ? outcome.errorCode : null, private_read: privateRead })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', run.id)
@@ -359,7 +379,7 @@ export const memberVyMemorySave = defineCommand({
     const userId = requireUser(ctx);
     if (input.id) {
       const updated = await ctx.trx
-        .updateTable('crove_kernel.member_vy_memory')
+        .updateTable('ludy_kernel.member_vy_memory')
         .set({ body: input.body, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.id)
@@ -371,7 +391,7 @@ export const memberVyMemorySave = defineCommand({
       return { id: updated.id };
     }
     const created = await ctx.trx
-      .insertInto('crove_kernel.member_vy_memory')
+      .insertInto('ludy_kernel.member_vy_memory')
       .values({ org_id: ctx.orgId, member_user_id: userId, body: input.body })
       .returning('id')
       .executeTakeFirstOrThrow();
@@ -390,7 +410,7 @@ export const memberVyMemoryDelete = defineCommand({
   handler: async (ctx, input): Promise<{ deleted: boolean }> => {
     const userId = requireUser(ctx);
     const gone = await ctx.trx
-      .deleteFrom('crove_kernel.member_vy_memory')
+      .deleteFrom('ludy_kernel.member_vy_memory')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
       .where('member_user_id', '=', userId)
@@ -408,7 +428,7 @@ export const memberVyResultGet = defineQuery({
   handler: async (ctx: QueryContext, input) => {
     const userId = requireUser(ctx);
     const row = await ctx.trx
-      .selectFrom('crove_kernel.member_vy_result')
+      .selectFrom('ludy_kernel.member_vy_result')
       .select(['id', 'run_id', 'feature', 'subject_type', 'subject_id', 'status', 'error_code', 'source_revision', 'body', 'tainted', 'private_read', 'created_at', 'expires_at'])
       .where('org_id', '=', ctx.orgId)
       .where('run_id', '=', input.runId)
@@ -443,8 +463,8 @@ export const memberVyRunLive = defineQuery({
   handler: async (ctx: QueryContext, input): Promise<{ live: boolean }> => {
     const userId = requireUser(ctx);
     let query = ctx.trx
-      .selectFrom('crove_kernel.member_vy_result as v')
-      .innerJoin('crove_kernel.ai_run as r', (j) => j.onRef('r.org_id', '=', 'v.org_id').onRef('r.id', '=', 'v.run_id'))
+      .selectFrom('ludy_kernel.member_vy_result as v')
+      .innerJoin('ludy_kernel.ai_run as r', (j) => j.onRef('r.org_id', '=', 'v.org_id').onRef('r.id', '=', 'v.run_id'))
       .select('v.id')
       .where('v.org_id', '=', ctx.orgId)
       .where('v.member_user_id', '=', userId)
@@ -466,8 +486,8 @@ export const memberVyRunLatest = defineQuery({
   handler: async (ctx: QueryContext, input): Promise<{ runId: string; state: 'running' | 'ready' | 'failed'; errorCode: string | null; expiresAt: string } | null> => {
     const userId = requireUser(ctx);
     const row = await ctx.trx
-      .selectFrom('crove_kernel.member_vy_result as v')
-      .leftJoin('crove_kernel.ai_run as r', (j) => j.onRef('r.org_id', '=', 'v.org_id').onRef('r.id', '=', 'v.run_id'))
+      .selectFrom('ludy_kernel.member_vy_result as v')
+      .leftJoin('ludy_kernel.ai_run as r', (j) => j.onRef('r.org_id', '=', 'v.org_id').onRef('r.id', '=', 'v.run_id'))
       .select(['v.run_id', 'v.status', 'v.error_code', 'v.expires_at', 'r.status as run_status', 'r.expires_at as run_expires_at'])
       .where('v.org_id', '=', ctx.orgId)
       .where('v.member_user_id', '=', userId)
@@ -495,7 +515,7 @@ export const memberVyMemoryList = defineQuery({
   handler: async (ctx: QueryContext) => {
     const userId = requireUser(ctx);
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.member_vy_memory')
+      .selectFrom('ludy_kernel.member_vy_memory')
       .select(['id', 'body', 'created_at', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .where('member_user_id', '=', userId)
@@ -509,7 +529,7 @@ export const memberVyMemoryList = defineQuery({
 // never from the input, so a cap cannot be dodged with another agent id or null, and spend is never charged to another member's agent.
 async function ownAgent(ctx: Pick<QueryContext, 'trx' | 'orgId'>, userId: string): Promise<string | null> {
   const row = await ctx.trx
-    .selectFrom('crove_kernel.agent')
+    .selectFrom('ludy_kernel.agent')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('kind', '=', 'member_vy')
@@ -518,11 +538,17 @@ async function ownAgent(ctx: Pick<QueryContext, 'trx' | 'orgId'>, userId: string
   return row?.id ?? null;
 }
 
+// At most 1e9, six decimals (the cap the Platform PO asked for); anything else is refused by the input check.
+const PROJECTED_COST = z.string().regex(/^(?:\d{1,9}(?:\.\d{1,6})?|1000000000(?:\.0{1,6})?)$/);
+const ZERO_COST = /^0+(?:\.0+)?$/;
+
 export type MemberVyMeterCheck = { allowed: true } | { allowed: false; scope: 'org' | 'module' | 'agent'; retryAt: string };
 
 export const memberVyMeterCheck = defineQuery({
   name: 'kernel.member_vy.meter.check',
-  input: z.object({ feature: z.enum(FEATURE_KEYS) }),
+  // A call that knows its cost (a transcript translation chunk, #3185) also sends that `projectedCost`, and the check refuses it before the call is made when it would REACH a
+  // hard-stop budget: the rule of run.check below (spent + projected >= the limit), here for the member's own request. A missing or zero projection is the check as it was.
+  input: z.object({ feature: z.enum(FEATURE_KEYS), projectedCost: PROJECTED_COST.optional() }),
   access: MEMBER_ROLES,
   handler: async (ctx: QueryContext, input): Promise<MemberVyMeterCheck> => {
     const userId = requireUser(ctx);
@@ -534,18 +560,20 @@ export const memberVyMeterCheck = defineQuery({
     ).rows[0]?.retry_at.toISOString() as string;
     // The four kill switches: the org's, the module's, the agent's and the operator's global switch for AI.
     const { rows: switches } = await sql<{ scope: 'org' | 'module' | 'agent' | null; global: boolean }>`
-      SELECT (SELECT k.scope FROM crove_kernel.kill_switch k
+      SELECT (SELECT k.scope FROM ludy_kernel.kill_switch k
               WHERE k.org_id = ${ctx.orgId}::uuid AND k.released_at IS NULL
                 AND (k.scope = 'org' OR (k.scope = 'module' AND k.target = ${module}) OR (k.scope = 'agent' AND k.target = ${agentId}::text))
               ORDER BY CASE k.scope WHEN 'agent' THEN 0 WHEN 'module' THEN 1 ELSE 2 END LIMIT 1) AS scope,
-             crove_kernel.global_kill_switch_on('ai') AS global`.execute(ctx.trx);
+             ludy_kernel.global_kill_switch_on('ai') AS global`.execute(ctx.trx);
     if (switches[0]?.scope) return { allowed: false, scope: switches[0].scope, retryAt };
     if (switches[0]?.global) return { allowed: false, scope: 'org', retryAt };
+    // The sum is decimal arithmetic in the database (numeric), never a JS number; no projection counts as zero (the entry's own rule: spent >= limit).
+    const projected = input.projectedCost === undefined || ZERO_COST.test(input.projectedCost) ? '0' : input.projectedCost;
     const { rows } = await sql<{ scope: 'org' | 'module' | 'agent' | null }>`
-      SELECT (SELECT b.scope FROM crove_kernel.budget_policy b
+      SELECT (SELECT b.scope FROM ludy_kernel.budget_policy b
               WHERE b.org_id = ${ctx.orgId}::uuid AND b.hard_stop
                 AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${module}) OR (b.scope = 'agent' AND b.target = ${agentId}::text))
-                AND crove_kernel.ai_budget_spent(b.org_id, b.scope, b.target) >= b.monthly_limit
+                AND ludy_kernel.ai_budget_spent(b.org_id, b.scope, b.target) + ${projected}::numeric >= b.monthly_limit
               ORDER BY CASE b.scope WHEN 'agent' THEN 0 WHEN 'module' THEN 1 ELSE 2 END LIMIT 1) AS scope`.execute(ctx.trx);
     return rows[0]?.scope ? { allowed: false, scope: rows[0].scope, retryAt } : { allowed: true };
   },
@@ -568,7 +596,7 @@ export const memberVyMeterRecord = defineCommand({
     if (!agentId) throw new DomainError('VY_NOT_ALLOWED', 403, 'Bạn chưa được phép làm việc với Vy');
     const module = MEMBER_VY_FEATURES[input.feature].module;
     await ctx.trx
-      .insertInto('crove_kernel.org_usage')
+      .insertInto('ludy_kernel.org_usage')
       .values({ org_id: ctx.orgId, metric: 'ai_cost', amount: input.cost, feature: input.feature, module, agent_id: agentId, input_tokens: input.inputTokens, output_tokens: input.outputTokens })
       .execute();
     ctx.audit({ feature: input.feature, module, agent: agentId, inputTokens: input.inputTokens, outputTokens: input.outputTokens, cost: input.cost });
@@ -577,7 +605,7 @@ export const memberVyMeterRecord = defineCommand({
 });
 
 // The fixed words a background run of a member's Vy may close under (ai_run.error): the codes its callers emit and nothing else (#2822 part 3b). The database
-// holds the same list (crove_kernel.member_vy_run_error_code_ok, migration 20261215020000) and refuses any other; a unit test ties the two together. A caller maps a
+// holds the same list (ludy_kernel.member_vy_run_error_code_ok, migration 20261215020000) and refuses any other; a unit test ties the two together. A caller maps a
 // failure it has no word for to TRANSCRIBE_FAILED (failureCode in apps/kernel/src/meetings-transcribe.ts), never invents one.
 export const MEMBER_VY_RUN_ERROR_CODES = [
   'AGENT_FORBIDDEN',
@@ -612,12 +640,12 @@ export const MEMBER_VY_RUN_ERROR_CODES = [
 export type MemberVyRunErrorCode = (typeof MEMBER_VY_RUN_ERROR_CODES)[number];
 
 // The worker closes the run of a member's background Vy after the member-mode store wrote the result (the context of a member never writes ai_run):
-// the system command of the worker login, through crove_kernel.member_vy_run_finish, which refuses every other caller and answers whether it closed a
+// the system command of the worker login, through ludy_kernel.member_vy_run_finish, which refuses every other caller and answers whether it closed a
 // run that was still running. The status and the code are fixed words, never text (the definer checks the code's shape).
 export const memberVyRunFinish = defineCommand({
   name: 'kernel.member_vy.run.finish',
   // The status is left out to have it derived from the result (a ready result succeeded, anything else failed); only a cancel says so. The code is one of
-  // the definer's fixed words (crove_kernel.member_vy_run_error_code_ok), which refuses any other.
+  // the definer's fixed words (ludy_kernel.member_vy_run_error_code_ok), which refuses any other.
   input: z.object({ runId: zId, status: z.enum(['succeeded', 'failed', 'cancelled']).optional(), errorCode: z.enum(MEMBER_VY_RUN_ERROR_CODES).nullable() }),
   risk: 'R1',
   sideEffect: 'internal',
@@ -625,7 +653,7 @@ export const memberVyRunFinish = defineCommand({
   target: (input) => ({ type: 'kernel.ai_run', id: input.runId }),
   handler: async (ctx, input): Promise<{ closed: boolean }> => {
     const { rows } = await sql<{ closed: boolean }>`
-      SELECT crove_kernel.member_vy_run_finish(${input.runId}::uuid, ${input.status ?? null}::text, ${input.errorCode}::text) AS closed`.execute(ctx.trx);
+      SELECT ludy_kernel.member_vy_run_finish(${input.runId}::uuid, ${input.status ?? null}::text, ${input.errorCode}::text) AS closed`.execute(ctx.trx);
     const closed = rows[0]?.closed === true;
     ctx.audit({ run_id: input.runId, status: input.status ?? 'derived', closed });
     return { closed };
@@ -642,9 +670,6 @@ export const memberVyRunFinish = defineCommand({
 // run's result (its own entry) would be refused, so the paid text would be thrown away. Only hard stops count, as in ai_budget_exhausted; a soft budget never refuses. The module
 // and the agent are the run's own, from the sealed context and never from the input, so a call cannot name another target to dodge a budget. A missing or zero projection is the
 // entry's check alone. The sum is decimal arithmetic in the database (numeric), never a JS number. A refusal is the entry's own code, BUDGET_EXHAUSTED, naming the scope as meter.check does.
-// At most 1e9, six decimals (the cap the Platform PO asked for); anything else is refused by the input check.
-const PROJECTED_COST = z.string().regex(/^(?:\d{1,9}(?:\.\d{1,6})?|1000000000(?:\.0{1,6})?)$/);
-const ZERO_COST = /^0+(?:\.0+)?$/;
 
 export const memberVyRunCheck = defineQuery({
   name: 'kernel.member_vy.run.check',
@@ -657,10 +682,10 @@ export const memberVyRunCheck = defineQuery({
     if (!ctx.memberVy) throw new DomainError('FORBIDDEN', 403, 'Chỉ lượt chạy nền của Vy mới kiểm tra được chi phí dự kiến', { rule: 'member_vy_context' });
     const { module, agentId } = ctx.memberVy;
     const { rows } = await sql<{ scope: 'org' | 'module' | 'agent' | null }>`
-      SELECT (SELECT b.scope FROM crove_kernel.budget_policy b
+      SELECT (SELECT b.scope FROM ludy_kernel.budget_policy b
               WHERE b.org_id = ${ctx.orgId}::uuid AND b.hard_stop
                 AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${module}) OR (b.scope = 'agent' AND b.target = ${agentId}::text))
-                AND crove_kernel.ai_budget_spent(b.org_id, b.scope, b.target) + ${projected}::numeric >= b.monthly_limit
+                AND ludy_kernel.ai_budget_spent(b.org_id, b.scope, b.target) + ${projected}::numeric >= b.monthly_limit
               ORDER BY CASE b.scope WHEN 'agent' THEN 0 WHEN 'module' THEN 1 ELSE 2 END LIMIT 1) AS scope`.execute(ctx.trx);
     const scope = rows[0]?.scope;
     if (scope) throw new DomainError('BUDGET_EXHAUSTED', 422, 'Vy đã hết ngân sách tháng này', { scope });
@@ -669,14 +694,14 @@ export const memberVyRunCheck = defineQuery({
 });
 
 // The pieces of the recorder's own recording that are going on now, for the recorder's own live notes run (ADR-0052 L4a, #3110). The same shape and the same rules as the
-// finished audio below: the database function crove_meetings.live_for_member_vy is the gate (this run's own context, the meeting its result row names, the run's member the
+// finished audio below: the database function ludy_meetings.live_for_member_vy is the gate (this run's own context, the meeting its result row names, the run's member the
 // recorder and active, the meeting opted into live notes and inside its audio period), each piece carries its own wrapped key (media_key kind live:<seq>, #3109) and never
 // plaintext, and the file rows are then read by exactly the ids it returned. An empty answer is not an error: the window simply has nothing new yet.
 async function openLivePieces(ctx: CommandContext, meetingId: string, afterSeq: number, limit: number) {
   type Row = { seq: number; length_seconds: number; start_offset_seconds: number; file_id: string; is_english: boolean; key_id: string; wrapped_key: Buffer };
   let rows: Row[];
   try {
-    rows = (await sql<Row>`SELECT * FROM crove_meetings.live_for_member_vy(${ctx.orgId}::uuid, ${meetingId}::uuid, ${afterSeq}::int, ${limit}::int)`.execute(ctx.trx)).rows;
+    rows = (await sql<Row>`SELECT * FROM ludy_meetings.live_for_member_vy(${ctx.orgId}::uuid, ${meetingId}::uuid, ${afterSeq}::int, ${limit}::int)`.execute(ctx.trx)).rows;
   } catch (error: unknown) {
     const code = /MEETINGS_(RUN_REQUIRED|NOT_RECORDER|KEY_SHREDDED|WORKER_ONLY)/.exec(error instanceof Error ? error.message : '')?.[0];
     if (code === 'MEETINGS_KEY_SHREDDED') throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Khóa giải mã của bản ghi đã bị hủy');
@@ -685,7 +710,7 @@ async function openLivePieces(ctx: CommandContext, meetingId: string, afterSeq: 
   }
   const files = rows.length
     ? await ctx.trx
-        .selectFrom('crove_kernel.file')
+        .selectFrom('ludy_kernel.file')
         .select(['id', 'storage_key', 'generation', 'size_bytes', 'sha256', 'content_type'])
         .where('org_id', '=', ctx.orgId)
         .where(
@@ -723,7 +748,7 @@ async function openLivePieces(ctx: CommandContext, meetingId: string, afterSeq: 
 }
 
 // The recorder's own recording, for the recorder's own transcription run (ADR-0049 decision 8, #2578): the file ids, the order, the offsets and lengths and the
-// wrapped key of ONE meeting's audio, never plaintext (the worker fetches and decrypts). The database function crove_meetings.audio_for_member_vy is the gate:
+// wrapped key of ONE meeting's audio, never plaintext (the worker fetches and decrypts). The database function ludy_meetings.audio_for_member_vy is the gate:
 // it answers only in this run's own context, for the meeting the run's result row names, when the run's member is that meeting's recorder and is active. The
 // file rows (visible to every member of the org) are then read by exactly the ids it returned. It is a command, not a query, so that the read is audited (ids and
 // a count; the runtime audits no read of a member-scoped context, and a sensitive query is refused to an agent): the one memberVy command beside the store.
@@ -744,7 +769,7 @@ export const memberVyMeetingAudioOpen = defineCommand({
     type Row = { segment_order: number; start_offset_seconds: number; length_seconds: number; file_id: string; is_english: boolean; key_id: string; wrapped_key: Buffer };
     let rows: Row[];
     try {
-      rows = (await sql<Row>`SELECT * FROM crove_meetings.audio_for_member_vy(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx)).rows;
+      rows = (await sql<Row>`SELECT * FROM ludy_meetings.audio_for_member_vy(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx)).rows;
     } catch (error: unknown) {
       const code = /MEETINGS_(RUN_REQUIRED|NOT_RECORDER|KEY_SHREDDED|WORKER_ONLY|AUDIO_EXPIRED)/.exec(error instanceof Error ? error.message : '')?.[0];
       if (code === 'MEETINGS_KEY_SHREDDED' || code === 'MEETINGS_AUDIO_EXPIRED') throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Khóa giải mã của bản ghi đã bị hủy');
@@ -754,15 +779,19 @@ export const memberVyMeetingAudioOpen = defineCommand({
     const first = rows[0];
     if (!first) throw new DomainError('AUDIO_NOT_FOUND', 404, 'Cuộc họp này chưa có âm thanh');
     const files = await ctx.trx
-      .selectFrom('crove_kernel.file')
+      .selectFrom('ludy_kernel.file')
       .select(['id', 'storage_key', 'generation', 'size_bytes', 'sha256', 'content_type'])
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', rows.map((r) => r.file_id))
       .execute();
     const byId = new Map(files.map((f) => [f.id, f]));
+    // The names that may be spoken (#3499): the recorder's own people and the linked party, behind the same gate as the audio (the function runs it again). Raw text people typed: the
+    // transcription client cuts and cleans it (normalizeTerms) before anything leaves, and it is never stored or audited here.
+    const terms = (await sql<{ term: string }>`SELECT term FROM ludy_meetings.terms_for_member_vy(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx)).rows.map((r) => r.term);
     ctx.audit({ runId: ctx.memberVy.runId, subjectId: input.meetingId, count: rows.length });
     return {
       language: first.is_english ? 'en' : 'vi',
+      terms,
       keyId: first.key_id,
       wrappedKey: first.wrapped_key,
       segments: rows.map((r) => {
@@ -786,7 +815,7 @@ export const memberVyMeetingAudioOpen = defineCommand({
 
 // The sweeps of a member's private Vy data (ADR-0049 decision 3, #2822), the system commands of the worker's daily member-vy-sweep job: results past
 // their expires_at, and a former member's results and memory. Both reach the rows only through definers that answer a count, never text; the audit
-// carries counts and ids. The worker finds the orgs and the users to ask about through crove_kernel.member_vy_results_due and member_vy_former_members_due.
+// carries counts and ids. The worker finds the orgs and the users to ask about through ludy_kernel.member_vy_results_due and member_vy_former_members_due.
 // The sweep commands run as the worker's system actor only: the access list already says so, and the handler says it again, so a loosened access never opens them to a person.
 function requireSystem(ctx: Pick<CommandContext, 'actor'>): void {
   if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình nền mới dọn được dữ liệu riêng của Vy');
@@ -806,7 +835,7 @@ export const memberVyResultsExpire = defineCommand({
     requireSystem(ctx);
     let removed = 0;
     for (let batch = 0; batch < EXPIRE_MAX_BATCHES; batch += 1) {
-      const { rows } = await sql<{ n: string }>`SELECT crove_kernel.member_vy_results_expire(${EXPIRE_BATCH}::int) AS n`.execute(ctx.trx);
+      const { rows } = await sql<{ n: string }>`SELECT ludy_kernel.member_vy_results_expire(${EXPIRE_BATCH}::int) AS n`.execute(ctx.trx);
       const n = Number(rows[0]?.n ?? 0);
       removed += n;
       if (n < EXPIRE_BATCH) break;
@@ -824,12 +853,127 @@ export const memberVyMemberDataPurge = defineCommand({
   access: 'system',
   handler: async (ctx, input): Promise<{ removed: number }> => {
     requireSystem(ctx);
-    const { rows } = await sql<{ n: string }>`SELECT crove_kernel.member_vy_member_data_purge(${ctx.orgId}::uuid, ${input.userId}::uuid) AS n`.execute(ctx.trx);
+    const { rows } = await sql<{ n: string }>`SELECT ludy_kernel.member_vy_member_data_purge(${ctx.orgId}::uuid, ${input.userId}::uuid) AS n`.execute(ctx.trx);
     const removed = Number(rows[0]?.n ?? 0);
     ctx.audit({ userId: input.userId, removed });
     return { removed };
   },
 });
 
-export const memberVyCommands = [memberVyRunStart, memberVyRunCancel, memberVyResultStore, memberVyMemorySave, memberVyMemoryDelete, memberVyMeterRecord, memberVyRunFinish, memberVyMeetingAudioOpen, memberVyResultsExpire, memberVyMemberDataPurge];
+const SUBJECT_DROP_WRITES = [
+  tableWrite(kernelManifest.tables, 'ludy_kernel', 'ai_run', ['status', 'finished_at', 'error', 'private_read']),
+  tableWrite(kernelManifest.tables, 'ludy_kernel', 'member_vy_result', ['org_id', 'id']),
+];
+
+// Drops the calling member's own saved Vy results (and cancels any still-running runs) for one subject,
+// e.g. when a draft meeting is redacted so unredacted private results cannot be re-copied later (#4001).
+// User-only R1 internal command; holds no memberVy flag and locks ai_run before member_vy_result.
+export const memberVySubjectResultsDrop = defineCommand({
+  name: 'kernel.member_vy.subject_results.drop',
+  input: z.strictObject({
+    subjectType: z.string().regex(/^[a-z][a-z0-9_.-]{0,99}$/),
+    subjectId: zId,
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBER_ROLES,
+  writes: SUBJECT_DROP_WRITES,
+  handler: async (ctx, input): Promise<{ subjectType: string; subjectId: string; cancelled: number; removed: number }> => {
+    const userId = requireUser(ctx);
+    let cancelled = 0;
+    let removed = 0;
+    const runById = new Map<string, { id: string; status: string }>();
+    let maxLockedRunId: string | null = null;
+    for (let pass = 0; pass < 5; pass += 1) {
+      const seenRunIds = [...runById.keys()];
+      const { rows: runs } = await sql<{ id: string; status: string }>`
+        SELECT r.id, r.status
+        FROM ludy_kernel.ai_run r
+        JOIN ludy_kernel.agent a
+          ON a.org_id = r.org_id
+         AND a.id = r.agent_id
+         AND a.kind = 'member_vy'
+         AND a.member_user_id = ${userId}::uuid
+        WHERE r.org_id = ${ctx.orgId}::uuid
+          ${seenRunIds.length > 0 ? sql`AND NOT (r.id = ANY(${sql.val(seenRunIds)}::uuid[]))` : sql``}
+          ${maxLockedRunId !== null ? sql`AND r.id > ${maxLockedRunId}::uuid` : sql``}
+          AND r.id IN (
+            SELECT v.run_id
+            FROM ludy_kernel.member_vy_result v
+            WHERE v.org_id = ${ctx.orgId}::uuid
+              AND v.member_user_id = ${userId}::uuid
+              AND v.subject_type = ${input.subjectType}
+              AND v.subject_id = ${input.subjectId}::uuid
+          )
+        ORDER BY r.id
+        FOR UPDATE OF r`.execute(ctx.trx);
+      for (const r of runs) {
+        const normalizedId = r.id.toLowerCase();
+        runById.set(normalizedId, { id: normalizedId, status: r.status });
+        if (maxLockedRunId === null || normalizedId > maxLockedRunId) {
+          maxLockedRunId = normalizedId;
+        }
+      }
+
+      const { rows: results } = await sql<{ id: string; run_id: string; status: string; private_read: boolean }>`
+        SELECT v.id, v.run_id, v.status, v.private_read
+        FROM ludy_kernel.member_vy_result v
+        WHERE v.org_id = ${ctx.orgId}::uuid
+          AND v.member_user_id = ${userId}::uuid
+          AND v.subject_type = ${input.subjectType}
+          AND v.subject_id = ${input.subjectId}::uuid
+        ORDER BY v.id`.execute(ctx.trx);
+
+      const missingRunIds = [...new Set(results.filter((v) => !runById.has(v.run_id.toLowerCase())).map((v) => v.run_id.toLowerCase()))];
+      if (missingRunIds.length > 0) {
+        if ((maxLockedRunId !== null && missingRunIds.some((id) => id <= maxLockedRunId!)) || pass === 4) {
+          throw new DomainError('VY_RUN_BUSY', 409, 'A private Vy run for this item just started; try again');
+        }
+        continue;
+      }
+
+      const eligible = results.filter((v) => runById.has(v.run_id.toLowerCase()));
+      if (eligible.length > 0) {
+        const resultIds = eligible.map((r) => r.id);
+        await sql`
+          SELECT v.id
+          FROM ludy_kernel.member_vy_result v
+          WHERE v.org_id = ${ctx.orgId}::uuid AND v.id = ANY(${sql.val(resultIds)}::uuid[])
+          ORDER BY v.id
+          FOR UPDATE OF v`.execute(ctx.trx);
+
+        for (const v of eligible) {
+          const run = runById.get(v.run_id.toLowerCase());
+          if (!run || run.status !== 'running') continue;
+          if (v.status === 'ready') {
+            await sql`
+              UPDATE ludy_kernel.ai_run
+              SET status = 'succeeded', finished_at = pg_catalog.now(), error = NULL, private_read = private_read OR ${v.private_read}
+              WHERE org_id = ${ctx.orgId}::uuid AND id = ${v.run_id}::uuid AND status = 'running'`.execute(ctx.trx);
+            run.status = 'succeeded';
+          } else {
+            const res = await sql`
+              UPDATE ludy_kernel.ai_run
+              SET status = 'cancelled', finished_at = pg_catalog.now(), error = 'SUBJECT_REDACTED'
+              WHERE org_id = ${ctx.orgId}::uuid AND id = ${v.run_id}::uuid AND status = 'running'`.execute(ctx.trx);
+            cancelled += Number(res.numAffectedRows ?? 0);
+            run.status = 'cancelled';
+          }
+        }
+
+        const del = await sql`
+          DELETE FROM ludy_kernel.member_vy_result v
+          WHERE v.org_id = ${ctx.orgId}::uuid
+            AND v.member_user_id = ${userId}::uuid
+            AND v.id = ANY(${sql.val(resultIds)}::uuid[])`.execute(ctx.trx);
+        removed += Number(del.numAffectedRows ?? 0);
+      }
+      break;
+    }
+    ctx.audit({ subjectType: input.subjectType, subjectId: input.subjectId, cancelled, removed });
+    return { subjectType: input.subjectType, subjectId: input.subjectId, cancelled, removed };
+  },
+});
+
+export const memberVyCommands = [memberVyRunStart, memberVyRunCancel, memberVyResultStore, memberVyMemorySave, memberVyMemoryDelete, memberVyMeterRecord, memberVyRunFinish, memberVyMeetingAudioOpen, memberVyResultsExpire, memberVyMemberDataPurge, memberVySubjectResultsDrop];
 export const memberVyQueries = [memberVyResultGet, memberVyMemoryList, memberVyMeterCheck, memberVyRunCheck, memberVyRunLive, memberVyRunLatest];

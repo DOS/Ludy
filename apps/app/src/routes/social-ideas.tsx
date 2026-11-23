@@ -7,14 +7,14 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import { Button, buttonVariants } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { Textarea } from '@crove/ui/components/textarea';
-import { cn } from '@crove/ui/lib/utils';
+import { Button, buttonVariants } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { Textarea } from '@ludy/ui/components/textarea';
+import { cn } from '@ludy/ui/lib/utils';
 import { useChannelScope } from '../components/social-channel-access.tsx';
 import { LabelChip, useLabels, type SocialLabel } from '../components/social-labels.tsx';
 import { MediaField, Thumb, type MediaItem } from '../components/social-media.tsx';
@@ -94,7 +94,7 @@ function SuggestPanel({ labels, onClose }: { labels: readonly SocialLabel[]; onC
   return (
     <Card className="block space-y-4 p-4" role="region" aria-label={t('title')}>
       <div>
-        <h3 className="text-sm font-medium text-foreground">{t('title')}</h3>
+        <h2 className="text-sm font-medium text-foreground">{t('title')}</h2>
         <p className="text-xs text-subtle-foreground">{t('hint')}</p>
       </div>
       <form
@@ -354,10 +354,10 @@ function Column({ stage, ideas, labels, canWrite }: { stage: IdeaStage; ideas: r
   const t = useTranslations('social.ideas');
   return (
     <section aria-label={t(`stages.${stage}`)} className="min-w-0 space-y-2 rounded-xl bg-muted/40 p-2">
-      <h3 className="flex items-center justify-between px-1 text-sm font-medium text-foreground">
+      <h2 className="flex items-center justify-between px-1 text-sm font-medium text-foreground">
         {t(`stages.${stage}`)}
         <span className="text-xs text-subtle-foreground tabular-nums">{ideas.length}</span>
-      </h3>
+      </h2>
       {ideas.length === 0 ? <p className="px-1 py-3 text-xs text-subtle-foreground">{t(`emptyStage.${stage}`)}</p> : ideas.map((i) => <IdeaCard key={i.id} idea={i} labels={labels} canWrite={canWrite} />)}
     </section>
   );
@@ -406,16 +406,17 @@ export function SocialIdeasPage() {
       {suggesting && <SuggestPanel labels={labels} onClose={() => setSuggesting(false)} />}
       {adding && (
         <Card className="block p-4">
-          <h3 className="mb-3 text-sm font-medium text-foreground">{t('new')}</h3>
+          <h2 className="mb-3 text-sm font-medium text-foreground">{t('new')}</h2>
           <IdeaForm id="idea-new" initial={EMPTY} labels={labels} onSave={(d) => create.mutate(d)} onCancel={() => setAdding(false)} pending={create.isPending} error={create.error} />
         </Card>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex gap-1" role="tablist">
-          <Button size="sm" role="tab" aria-selected={!archived} variant={archived ? 'ghost' : 'secondary'} onClick={() => setArchived(false)}>
+        {/* Two views of the same ideas, with no panel of their own: a pressed button, not a tab (SO-29, #3659). */}
+        <div className="flex gap-1" role="group" aria-label={t('viewLabel')}>
+          <Button size="sm" aria-pressed={!archived} variant={archived ? 'ghost' : 'secondary'} onClick={() => setArchived(false)}>
             {t('board')}
           </Button>
-          <Button size="sm" role="tab" aria-selected={archived} variant={archived ? 'secondary' : 'ghost'} onClick={() => setArchived(true)}>
+          <Button size="sm" aria-pressed={archived} variant={archived ? 'secondary' : 'ghost'} onClick={() => setArchived(true)}>
             {t('archived')}
           </Button>
         </div>
@@ -436,7 +437,15 @@ export function SocialIdeasPage() {
         <ErrorText>{errorMessage(list.error)}</ErrorText>
       ) : archived ? (
         ideas.length === 0 ? (
-          <Empty title={t('emptyArchive')} hint={t('emptyArchiveHint')} />
+          <Empty
+            title={t('emptyArchive')}
+            hint={t('emptyArchiveHint')}
+            action={
+              <Button size="lg" onClick={() => setArchived(false)}>
+                {t('board')}
+              </Button>
+            }
+          />
         ) : (
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {ideas.map((i) => (

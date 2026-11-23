@@ -9,7 +9,8 @@ umask 077
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CROVE_DIR="${CROVE_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+LUDY_DIR="${LUDY_DIR:-${CROVE_DIR:-$(cd "$SCRIPT_DIR/../.." && pwd)}}"
+CROVE_DIR="$LUDY_DIR"
 
 # The MinIO client, from the same pinned image as the MinIO in docker-compose.split.yml (AGENTS.md, "Updating
 # pinned images").
@@ -203,8 +204,8 @@ sealed_size() {
   echo $((28 + $1 + chunks * 16))
 }
 
-# docker compose in CROVE_DIR, so it reads the same .env, COMPOSE_FILE and COMPOSE_PROJECT_NAME as the stack.
-dc() { (cd "$CROVE_DIR" && docker compose "$@"); }
+# docker compose in LUDY_DIR, so it reads the same .env, COMPOSE_FILE and COMPOSE_PROJECT_NAME as the stack.
+dc() { (cd "$LUDY_DIR" && docker compose "$@"); }
 
 # psql as the superuser inside the db container, over its local socket. Extra arguments go to psql.
 db_psql() { dc exec -T db psql -X -q -v ON_ERROR_STOP=1 -U postgres "$@"; }
@@ -268,7 +269,7 @@ set_mc_hosts() {
 # config`), one per line. restore.sh compares them with its own settings.
 stack_setting() { dc config 2>/dev/null | sed -n "s/^      $1: *//p" | sed 's/^"\(.*\)"$/\1/' | sort -u; }
 
-# The row count of every table, as "schema.table<TAB>count" sorted by name, except crove_kernel.context_key, whose
+# The row count of every table, as "schema.table<TAB>count" sorted by name, except ludy_kernel.context_key, whose
 # rows a backup leaves out on purpose (docs/runbooks/context-key-rotation.md). Run as the superuser, so row level
 # security hides nothing. backup.sh runs it in the dump's snapshot, restore.sh on the restored database.
 COUNTS_SQL="COPY (
@@ -278,13 +279,13 @@ COUNTS_SQL="COPY (
     FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
    WHERE c.relkind IN ('r', 'p')
      AND n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\\_%'
-     AND (n.nspname, c.relname) <> ('crove_kernel', 'context_key')
+     AND (n.nspname, c.relname) NOT IN (('ludy_kernel', 'context_key'), ('crove_kernel', 'context_key'))
    ORDER BY 1
 ) TO STDOUT"
 
 # Every file row's blob reference, as "storage_key<TAB>sha256<TAB>generation".
 FILE_REFS_SQL="COPY (
-  SELECT storage_key, sha256, coalesce(generation, '') FROM crove_kernel.file
+  SELECT storage_key, sha256, coalesce(generation, '') FROM ludy_kernel.file
    ORDER BY storage_key
 ) TO STDOUT"
 

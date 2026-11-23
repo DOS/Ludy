@@ -8,13 +8,13 @@
 //   broker for the binding (org, provider, account) and passes the envelope, which the credential_put definer
 //   stores. Connecting an account that is already connected replaces its tokens on the same connection row.
 // - Only the worker reads a credential back (kernel.channel.credential, system actor, credential_get granted to
-//   crove_worker alone), and only while the member who connected the account is still in the org.
+//   ludy_worker alone), and only while the member who connected the account is still in the org.
 import { createHash, randomBytes } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { isAdProviderId, isAdWriteProviderId, zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { isAdProviderId, isAdWriteProviderId, zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
@@ -93,7 +93,7 @@ export const channelConnect = defineCommand({
     // Reconnecting a live connection of the same account keeps its row; a revoked one is history and stays. The
     // member who reconnects becomes its connector, so the credential lives on their membership from now on.
     const existing = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['id', 'chat_state'])
       .where('org_id', '=', ctx.orgId)
       .where('provider', '=', input.provider)
@@ -103,13 +103,13 @@ export const channelConnect = defineCommand({
       .executeTakeFirst();
     let id: string;
     if (existing) {
-      await ctx.trx.updateTable('crove_kernel.channel_connection').set(values).where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
+      await ctx.trx.updateTable('ludy_kernel.channel_connection').set(values).where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
       id = existing.id;
       // A Telegram connection that answers chats gets a new hook, and so a new secret, with its new token (#3132): the webhook is set again by a job,
       // with the token that was just sealed, and the old hook stays valid until then. A connection being turned off stays as it is.
       if (input.provider === 'telegram' && (existing.chat_state === 'on' || existing.chat_state === 'enabling')) {
         await ctx.trx
-          .updateTable('crove_kernel.channel_connection')
+          .updateTable('ludy_kernel.channel_connection')
           .set({ chat_hook_next: newChatHook(), chat_state: 'enabling', chat_error: null, chat_changed_at: ctx.now })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', id)
@@ -118,13 +118,22 @@ export const channelConnect = defineCommand({
       }
     } else {
       const row = await ctx.trx
-        .insertInto('crove_kernel.channel_connection')
+        .insertInto('ludy_kernel.channel_connection')
         .values({ org_id: ctx.orgId, provider: input.provider, external_account_id: input.externalAccountId, ...values })
         .returning('id')
-        .executeTakeFirstOrThrow();
+        .executeTakeFirstOrThrow()
+        .catch((error: unknown) => {
+          // A WhatsApp number is connected by a pasted token, which proves no more than that its holder may call the number, so one org holds it at a time:
+          // a second org would otherwise receive every message the first org's customers send (the intake finds each connection of the account).
+          const pg = error as { code?: string; constraint?: string } | null;
+          if (pg?.code === '23505' && pg.constraint === 'channel_connection_whatsapp_account_uq') {
+            throw new DomainError('CHANNEL_ACCOUNT_TAKEN', 409, 'Số WhatsApp này đang được một tổ chức khác kết nối. Hãy ngắt kết nối ở đó trước khi kết nối lại ở đây');
+          }
+          throw error;
+        });
       id = row.id;
     }
-    await sql`SELECT crove_kernel.credential_put(${id}::uuid, ${input.credential.keyId}, decode(${input.credential.envelope}, 'base64'))`
+    await sql`SELECT ludy_kernel.credential_put(${id}::uuid, ${input.credential.keyId}, decode(${input.credential.envelope}, 'base64'))`
       .execute(ctx.trx)
       .catch(credentialError);
     ctx.audit({ connection_id: id, provider: input.provider, reconnected: Boolean(existing) });
@@ -145,7 +154,7 @@ export const channelDisconnect = defineCommand({
   handler: async (ctx, input) => {
     requireUser(ctx);
     const row = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['status', 'provider', 'chat_state'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -160,17 +169,17 @@ export const channelDisconnect = defineCommand({
     }
     if (row.status !== 'revoked') {
       await ctx.trx
-        .updateTable('crove_kernel.channel_connection')
+        .updateTable('ludy_kernel.channel_connection')
         // A Telegram connection that answered chats gives its hook up too (#3132): the webhook at Telegram is left to be removed in BotFather, and a
         // notice that still comes in on it finds no connection and is dropped.
-        .set({ status: 'revoked', status_reason: input.reason ?? 'disconnected', updated_at: ctx.now, chat_state: 'off', chat_hook: null, chat_hook_next: null, chat_bot_id: null })
+        .set({ status: 'revoked', status_reason: input.reason ?? 'disconnected', updated_at: ctx.now, chat_state: 'off', chat_hook: null, chat_hook_next: null, chat_bot_id: null, chat_business: '[]' })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.connectionId)
         .execute();
       await ctx.emit('kernel.channel.disconnected', { connection_id: input.connectionId, provider: row.provider });
     }
     // Forget the tokens even when the row was already revoked: a disconnect leaves nothing to decrypt.
-    await sql`SELECT crove_kernel.credential_drop(${input.connectionId}::uuid)`.execute(ctx.trx).catch(credentialError);
+    await sql`SELECT ludy_kernel.credential_drop(${input.connectionId}::uuid)`.execute(ctx.trx).catch(credentialError);
     return { connectionId: input.connectionId, status: 'revoked' as const };
   },
 });
@@ -189,7 +198,7 @@ export const channelMarkExpired = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
     const row = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['status', 'provider', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -200,7 +209,7 @@ export const channelMarkExpired = defineCommand({
     // Compared at millisecond precision, the precision the caller read it at.
     if (input.ifVersion && Math.floor(row.updated_at.getTime()) !== Date.parse(input.ifVersion)) return { connectionId: input.connectionId, status: row.status };
     await ctx.trx
-      .updateTable('crove_kernel.channel_connection')
+      .updateTable('ludy_kernel.channel_connection')
       .set({ status: 'expired', status_reason: input.reason, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -225,7 +234,7 @@ export const channelRevokeByPlatform = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
     const row = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['status', 'provider'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -234,7 +243,7 @@ export const channelRevokeByPlatform = defineCommand({
     if (!row) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
     if (row.status !== 'revoked') {
       await ctx.trx
-        .updateTable('crove_kernel.channel_connection')
+        .updateTable('ludy_kernel.channel_connection')
         // The ad account's name and the permissions its token held go with the token: what a revoked connection keeps is its
         // platform id and the time it closed.
         .set({ status: 'revoked', status_reason: input.reason ?? 'platform_deletion', display_name: 'Deleted', scopes: [], updated_at: ctx.now })
@@ -243,7 +252,7 @@ export const channelRevokeByPlatform = defineCommand({
         .execute();
       await ctx.emit('kernel.channel.disconnected', { connection_id: input.connectionId, provider: row.provider });
     }
-    await sql`SELECT crove_kernel.credential_drop(${input.connectionId}::uuid)`.execute(ctx.trx).catch(credentialError);
+    await sql`SELECT ludy_kernel.credential_drop(${input.connectionId}::uuid)`.execute(ctx.trx).catch(credentialError);
     return { connectionId: input.connectionId, status: 'revoked' as const };
   },
 });
@@ -264,7 +273,7 @@ export const channelCloseOrphan = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
     const row = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['status', 'provider'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -273,16 +282,16 @@ export const channelCloseOrphan = defineCommand({
     if (!row) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
     if (!isAdWriteProviderId(row.provider)) throw new DomainError('CHANNEL_NOT_ORPHAN', 409, 'Chỉ kết nối chạy quảng cáo mới đóng được theo cách này');
     if (row.status === 'revoked') return { connectionId: input.connectionId, closed: false };
-    const { rows } = await sql<{ gone: boolean }>`SELECT crove_kernel.channel_connector_gone(${input.connectionId}::uuid) AS gone`.execute(ctx.trx);
+    const { rows } = await sql<{ gone: boolean }>`SELECT ludy_kernel.channel_connector_gone(${input.connectionId}::uuid) AS gone`.execute(ctx.trx);
     if (rows[0]?.gone !== true) return { connectionId: input.connectionId, closed: false };
     await ctx.trx
-      .updateTable('crove_kernel.channel_connection')
+      .updateTable('ludy_kernel.channel_connection')
       .set({ status: 'revoked', status_reason: 'member_left', updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .execute();
     await ctx.emit('kernel.channel.disconnected', { connection_id: input.connectionId, provider: row.provider });
-    await sql`SELECT crove_kernel.credential_drop(${input.connectionId}::uuid)`.execute(ctx.trx).catch(credentialError);
+    await sql`SELECT ludy_kernel.credential_drop(${input.connectionId}::uuid)`.execute(ctx.trx).catch(credentialError);
     ctx.audit({ connection_id: input.connectionId, provider: row.provider });
     return { connectionId: input.connectionId, closed: true };
   },
@@ -323,7 +332,7 @@ export const channelOAuthBegin = defineCommand({
   handler: async (ctx, input) => {
     requireUser(ctx);
     const { rows } = await sql<{ id: string }>`
-      SELECT crove_kernel.oauth_state_create(${input.provider}, ${input.stateHash}, ${input.codeVerifier}, ${OAUTH_ATTEMPT_SECONDS}::integer) AS id`
+      SELECT ludy_kernel.oauth_state_create(${input.provider}, ${input.stateHash}, ${input.codeVerifier}, ${OAUTH_ATTEMPT_SECONDS}::integer) AS id`
       .execute(ctx.trx)
       .catch(oauthError);
     const attemptId = rows[0]?.id;
@@ -343,7 +352,7 @@ export const channelOAuthConsume = defineCommand({
   handler: async (ctx, input) => {
     requireUser(ctx);
     const { rows } = await sql<{ code_verifier: string | null }>`
-      SELECT code_verifier FROM crove_kernel.oauth_state_consume(${input.provider}, ${input.stateHash})`
+      SELECT code_verifier FROM ludy_kernel.oauth_state_consume(${input.provider}, ${input.stateHash})`
       .execute(ctx.trx)
       .catch(oauthError);
     if (rows.length !== 1) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
@@ -371,7 +380,7 @@ export const channelRefresh = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
     const row = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['status', 'provider', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -382,11 +391,11 @@ export const channelRefresh = defineCommand({
     if (row.status !== 'active' || Math.floor(row.updated_at.getTime()) !== Date.parse(input.ifVersion)) {
       return { connectionId: input.connectionId, refreshed: false };
     }
-    await sql`SELECT crove_kernel.credential_put(${input.connectionId}::uuid, ${input.credential.keyId}, decode(${input.credential.envelope}, 'base64'))`
+    await sql`SELECT ludy_kernel.credential_put(${input.connectionId}::uuid, ${input.credential.keyId}, decode(${input.credential.envelope}, 'base64'))`
       .execute(ctx.trx)
       .catch(credentialError);
     await ctx.trx
-      .updateTable('crove_kernel.channel_connection')
+      .updateTable('ludy_kernel.channel_connection')
       .set({ expires_at: input.expiresAt, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -411,7 +420,7 @@ export const channelReseal = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
     const row = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['status', 'provider'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -419,14 +428,14 @@ export const channelReseal = defineCommand({
       .executeTakeFirst();
     if (!row || row.status !== 'active') return { connectionId: input.connectionId, resealed: false };
     const { rows } = await sql<{ key_id: string; envelope_sha256: string }>`
-      SELECT key_id, encode(sha256(envelope), 'hex') AS envelope_sha256 FROM crove_kernel.credential_get(${input.connectionId}::uuid)`
+      SELECT key_id, encode(sha256(envelope), 'hex') AS envelope_sha256 FROM ludy_kernel.credential_get(${input.connectionId}::uuid)`
       .execute(ctx.trx)
       .catch(credentialError);
     const stored = rows[0];
     if (!stored || stored.key_id !== input.fromKeyId || stored.envelope_sha256 !== input.fromEnvelopeSha256 || input.fromKeyId === input.credential.keyId) {
       return { connectionId: input.connectionId, resealed: false };
     }
-    await sql`SELECT crove_kernel.credential_put(${input.connectionId}::uuid, ${input.credential.keyId}, decode(${input.credential.envelope}, 'base64'))`
+    await sql`SELECT ludy_kernel.credential_put(${input.connectionId}::uuid, ${input.credential.keyId}, decode(${input.credential.envelope}, 'base64'))`
       .execute(ctx.trx)
       .catch(credentialError);
     // Key ids only: they name a key without revealing it.
@@ -452,6 +461,9 @@ export interface ChannelConnectionView {
   chatError: string | null;
   // When the state last changed: a switch standing for minutes was lost, and the screen offers it again.
   chatChangedAt: string | null;
+  // The business accounts a Telegram bot is connected to (#3191), for the screen to name: `ref` is a short fingerprint a member of the org may name to
+  // allow or stop an account, never the platform's id.
+  chatBusiness: Array<{ ref: string; name: string | null; username: string | null; enabled: boolean; canReply: boolean; approved: boolean }>;
 }
 
 const iso = (d: Date | string | null) => (d === null ? null : new Date(d).toISOString());
@@ -459,12 +471,12 @@ const iso = (d: Date | string | null) => (d === null ? null : new Date(d).toISOS
 // The org's connections, live ones first. Never a credential: the columns are listed, not selected with *.
 export const channelsList = defineQuery({
   name: 'kernel.channel.list',
-  input: z.object({ includeRevoked: z.boolean().optional(), includeEmail: z.boolean().optional() }),
+  input: z.object({ includeRevoked: z.boolean().optional(), includeEmail: z.boolean().optional(), includeMessaging: z.boolean().optional() }),
   access: ALL,
   handler: async (ctx: QueryContext, input): Promise<ChannelConnectionView[]> => {
     let q = ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
-      .select(['id', 'provider', 'external_account_id', 'display_name', 'scopes', 'status', 'status_reason', 'connected_by', 'expires_at', 'connected_at', 'chat_state', 'chat_error', 'chat_changed_at'])
+      .selectFrom('ludy_kernel.channel_connection')
+      .select(['id', 'provider', 'external_account_id', 'display_name', 'scopes', 'status', 'status_reason', 'connected_by', 'expires_at', 'connected_at', 'chat_state', 'chat_error', 'chat_changed_at', 'chat_business'])
       .where('org_id', '=', ctx.orgId)
       // Social and messaging channels only: a bank feed's connection (provider bank_..., ADR-0039) is the finance
       // module's, listed with its accounts by finance.bank_feed.accounts. Left out before the limit, so they never
@@ -477,9 +489,14 @@ export const channelsList = defineQuery({
       .where('provider', 'not like', 'einvoice\\_%')
       // Nor a marketplace seller account's (provider marketplace_..., ADR-0045 point 7): its external account id names the legal entity, which only the finance module's list shows.
       .where('provider', 'not like', 'marketplace\\_%')
+      // Nor an accounting software connection's (provider accounting_..., #3875): the finance module lists it; the entity it is for is in its external account id.
+      .where('provider', 'not like', 'accounting\\_%')
       // Nor the Inbox's email connection (#2439): it is made by the first customer mail and is not a place to publish. The screen that limits which
       // channels a member may read (includeEmail) lists it, since reading email is one of those channels.
-      .where('provider', input.includeEmail ? 'is not' : '<>', input.includeEmail ? null : 'email');
+      .where('provider', input.includeEmail ? 'is not' : '<>', input.includeEmail ? null : 'email')
+      // Nor a messaging-only channel's (WhatsApp, #3131), which never publishes: the composer and every Social picker would offer a channel nothing can post to.
+      // The Channels screen and the Inbox ask for it (includeMessaging), and a member's channel access list (includeEmail) has it with the rest.
+      .where('provider', input.includeEmail || input.includeMessaging ? 'is not' : '<>', input.includeEmail || input.includeMessaging ? null : 'whatsapp');
     if (!input.includeRevoked) q = q.where('status', '<>', 'revoked');
     const rows = await q.orderBy(sql`status = 'revoked'`).orderBy('connected_at', 'desc').limit(500).execute();
     return rows.map((r) => ({
@@ -496,6 +513,7 @@ export const channelsList = defineQuery({
       chatState: r.chat_state as ChannelConnectionView['chatState'],
       chatError: r.chat_error,
       chatChangedAt: iso(r.chat_changed_at),
+      chatBusiness: parseBusinessAccounts(r.chat_business).map((a) => ({ ref: businessRef(a.id), name: a.name, username: a.username, enabled: a.enabled, canReply: a.canReply, approved: a.approved })),
     }));
   },
 });
@@ -516,7 +534,7 @@ export const channelCredential = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<SealedChannelCredential> => {
     const { rows } = await sql<{ key_id: string; envelope: Buffer; provider: string; external_account_id: string }>`
-      SELECT key_id, envelope, provider, external_account_id FROM crove_kernel.credential_get(${input.connectionId}::uuid)`
+      SELECT key_id, envelope, provider, external_account_id FROM ludy_kernel.credential_get(${input.connectionId}::uuid)`
       .execute(ctx.trx)
       .catch(credentialError);
     const row = rows[0];
@@ -561,7 +579,7 @@ export const channelTelegramChatSet = defineCommand({
   handler: async (ctx, input): Promise<{ chatState: ChatState }> => {
     requireUser(ctx);
     const row = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['provider', 'status', 'chat_state', 'chat_changed_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -573,7 +591,7 @@ export const channelTelegramChatSet = defineCommand({
     const stale = row.chat_changed_at === null || ctx.now.getTime() - row.chat_changed_at.getTime() > CHAT_RETRY_AFTER_MS;
     const update = (set: Record<string, unknown>) =>
       ctx.trx
-        .updateTable('crove_kernel.channel_connection')
+        .updateTable('ludy_kernel.channel_connection')
         .set({ ...set, chat_changed_at: ctx.now } as never)
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.connectionId)
@@ -589,7 +607,7 @@ export const channelTelegramChatSet = defineCommand({
     }
     if (state === 'off') {
       // Nothing is set at Telegram: only a failed attempt's message is cleared.
-      await ctx.trx.updateTable('crove_kernel.channel_connection').set({ chat_error: null }).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
+      await ctx.trx.updateTable('ludy_kernel.channel_connection').set({ chat_error: null }).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
       return { chatState: 'off' };
     }
     if (row.status !== 'active') {
@@ -624,7 +642,7 @@ export const channelTelegramChatWork = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<TelegramChatWork> => {
     const row = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['provider', 'status', 'chat_state', 'chat_hook', 'chat_hook_next'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -639,7 +657,7 @@ export const channelTelegramChatWork = defineQuery({
           : null;
     if (!hook) return { action: 'none' };
     const others = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select('chat_bot_id')
       .where('org_id', '=', ctx.orgId)
       .where('id', '<>', input.connectionId)
@@ -665,7 +683,7 @@ export const channelTelegramChatRecord = defineCommand({
   target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
   handler: async (ctx, input): Promise<{ applied: boolean; hookChanged: boolean; chatState: ChatState | null }> => {
     const row = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['chat_state', 'chat_hook', 'chat_hook_next'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
@@ -676,7 +694,7 @@ export const channelTelegramChatRecord = defineCommand({
     if (!row) return skipped();
     const set = (values: Record<string, unknown>) =>
       ctx.trx
-        .updateTable('crove_kernel.channel_connection')
+        .updateTable('ludy_kernel.channel_connection')
         .set({ ...values, chat_changed_at: ctx.now } as never)
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.connectionId)
@@ -705,5 +723,146 @@ export const channelTelegramChatRecord = defineCommand({
   },
 });
 
-export const channelCommands = [channelConnect, channelDisconnect, channelMarkExpired, channelRevokeByPlatform, channelCloseOrphan, channelOAuthBegin, channelOAuthConsume, channelRefresh, channelReseal, channelTelegramChatSet, channelTelegramChatRecord];
-export const channelQueries = [channelsList, channelCredential, channelTelegramChatWork];
+// ---------------------------------------------------------------------------------------------------------------------
+// Telegram Business mode (#3191, plan section 4.2). An owner with Telegram Premium connects the bot to their own account in Telegram's settings; Telegram
+// then sends `business_connection` updates (connected, edited, disconnected), and the bot receives that account's customer chats. The connections a
+// bot has are kept on the connection as a small list, written only from such an update the webhook route verified; the core stores a business message
+// only while the list says its business connection is enabled.
+// ---------------------------------------------------------------------------------------------------------------------
+
+const zBusinessAccount = z.strictObject({
+  // Telegram's business connection id: printable ASCII, no space.
+  id: z.string().regex(/^[!-~]{1,100}$/),
+  // The business account's own Telegram user id.
+  userId: z.string().regex(/^-?\d{1,20}$/),
+  name: z.string().max(200).nullable(),
+  // The account's @username, unique on Telegram: what lets an owner tell their own account from a stranger who wears the same name.
+  username: z.string().regex(/^[A-Za-z0-9_]{1,64}$/).nullable(),
+  canReply: z.boolean(),
+  enabled: z.boolean(),
+  // An owner or admin of the org allowed this account's chats in. Telegram lets any Premium user connect a bot that has Business Mode on, so an account
+  // Telegram reports is not yet one the org chose: nothing of it is stored until a person allows it, and only a person can.
+  approved: z.boolean(),
+});
+export type TelegramBusinessAccount = z.infer<typeof zBusinessAccount>;
+// What Telegram tells of an account; whether the org allowed it is the org's, never Telegram's.
+const zBusinessReport = zBusinessAccount.omit({ approved: true });
+// A short fingerprint of an account's id for the screen to name it by (the id itself stays on the server).
+export const businessRef = (id: string): string => createHash('sha256').update(`telegram.business:${id}`).digest('hex').slice(0, 12);
+export const TELEGRAM_BUSINESS_ACCOUNTS_MAX = 10;
+
+// The accounts a connection holds. An entry that is not a whole account is dropped, never half read.
+export function parseBusinessAccounts(value: unknown): TelegramBusinessAccount[] {
+  const list = typeof value === 'string' ? safeJson(value) : value;
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((entry) => {
+    const parsed = zBusinessAccount.safeParse(entry);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+const safeJson = (text: string): unknown => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
+
+// Records what Telegram said about one business connection: a new account is added, a known one updated (also to disabled, which stops its messages
+// coming in). Only for a Telegram connection that is active and has chats on or being switched: anything else was sent to a hook that no longer
+// counts. At most TELEGRAM_BUSINESS_ACCOUNTS_MAX accounts: a new one when the list is full replaces the oldest disabled one, else is refused. The
+// audit row holds the state and the right, never an id or a name.
+export const channelTelegramBusinessRecord = defineCommand({
+  name: 'kernel.channel.telegram_business_record',
+  input: z.strictObject({ connectionId: zId, account: zBusinessReport }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
+  handler: async (ctx, input): Promise<{ applied: boolean }> => {
+    const row = await ctx.trx
+      .selectFrom('ludy_kernel.channel_connection')
+      .select(['provider', 'status', 'chat_state', 'chat_business'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row || row.provider !== 'telegram' || row.status !== 'active' || row.chat_state === 'off') return { applied: false };
+    const accounts = parseBusinessAccounts(row.chat_business);
+    const at = accounts.findIndex((a) => a.id === input.account.id);
+    // A new account is not allowed yet; one already known keeps what the org decided about it.
+    const account: TelegramBusinessAccount = { ...input.account, approved: at >= 0 ? (accounts[at] as TelegramBusinessAccount).approved : false };
+    let next: TelegramBusinessAccount[];
+    if (at >= 0) {
+      next = accounts.map((a, i) => (i === at ? account : a));
+    } else if (accounts.length < TELEGRAM_BUSINESS_ACCOUNTS_MAX) {
+      next = [...accounts, account];
+    } else {
+      // Full: a stranger's account must not keep the org's own out. The oldest account nobody allowed goes first, then the oldest allowed one that is off.
+      const gone = accounts.findIndex((a) => !a.approved) >= 0 ? accounts.findIndex((a) => !a.approved) : accounts.findIndex((a) => !a.enabled);
+      if (gone < 0) return { applied: false };
+      next = [...accounts.filter((_, i) => i !== gone), account];
+    }
+    await ctx.trx
+      .updateTable('ludy_kernel.channel_connection')
+      .set({ chat_business: JSON.stringify(next) })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .execute();
+    ctx.audit({ connection_id: input.connectionId, action: 'business', enabled: account.enabled, can_reply: account.canReply, approved: account.approved });
+    return { applied: true };
+  },
+});
+
+// An owner or admin allows an account's chats in, or stops them (#3191). Telegram lets any Premium user connect a bot that has Business Mode on, and
+// the bot's name is public, so the accounts Telegram reports are not the org's own until a person says so: a new one stores nothing until then, and
+// stopping one ends its messages at once. The account is named by `ref`, a fingerprint the screen was given; the audit row holds the choice and the ref.
+export const channelTelegramBusinessAllow = defineCommand({
+  name: 'kernel.channel.telegram_business_allow',
+  input: z.strictObject({ connectionId: zId, ref: z.string().regex(/^[0-9a-f]{12}$/), allow: z.boolean() }),
+  risk: 'R2',
+  sideEffect: 'internal',
+  access: ADMINS,
+  target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
+  handler: async (ctx, input): Promise<{ approved: boolean }> => {
+    requireUser(ctx);
+    const row = await ctx.trx
+      .selectFrom('ludy_kernel.channel_connection')
+      .select(['provider', 'chat_business'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
+    if (row.provider !== 'telegram') throw new DomainError('CHAT_NOT_SUPPORTED', 409, 'Kênh này không nhận tin nhắn riêng của khách');
+    const accounts = parseBusinessAccounts(row.chat_business);
+    const at = accounts.findIndex((a) => businessRef(a.id) === input.ref);
+    if (at < 0) throw new DomainError('BUSINESS_ACCOUNT_NOT_FOUND', 404, 'Không tìm thấy tài khoản Telegram Business này');
+    const next = accounts.map((a, i) => (i === at ? { ...a, approved: input.allow } : a));
+    await ctx.trx.updateTable('ludy_kernel.channel_connection').set({ chat_business: JSON.stringify(next) }).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
+    ctx.audit({ connection_id: input.connectionId, action: input.allow ? 'business_allow' : 'business_stop', ref: input.ref });
+    return { approved: input.allow };
+  },
+});
+
+// Whether a business message that named a connection Ludy may not know is to be looked up at Telegram (#3224): true only for an active Telegram connection
+// whose chats are not off and whose list holds no account with that id. A listed one, whether enabled, off or not yet allowed, is known: what Telegram told
+// is kept, and a person's choice is never replaced by a second look. Names nothing of the account.
+export const channelTelegramBusinessKnown = defineQuery({
+  name: 'kernel.channel.telegram_business_known',
+  input: z.strictObject({ connectionId: zId, id: z.string().regex(/^[!-~]{1,100}$/) }),
+  access: 'system',
+  handler: async (ctx, input): Promise<{ lookup: boolean }> => {
+    const row = await ctx.trx
+      .selectFrom('ludy_kernel.channel_connection')
+      .select(['provider', 'status', 'chat_state', 'chat_business'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .executeTakeFirst();
+    if (!row || row.provider !== 'telegram' || row.status !== 'active' || row.chat_state === 'off') return { lookup: false };
+    return { lookup: !parseBusinessAccounts(row.chat_business).some((a) => a.id === input.id) };
+  },
+});
+
+export const channelCommands = [channelConnect, channelDisconnect, channelMarkExpired, channelRevokeByPlatform, channelCloseOrphan, channelOAuthBegin, channelOAuthConsume, channelRefresh, channelReseal, channelTelegramChatSet, channelTelegramChatRecord, channelTelegramBusinessRecord, channelTelegramBusinessAllow];
+export const channelQueries = [channelsList, channelCredential, channelTelegramChatWork, channelTelegramBusinessKnown];

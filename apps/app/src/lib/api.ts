@@ -3,11 +3,25 @@ import { RPCLink } from '@orpc/client/fetch';
 import type { ContractRouterClient } from '@orpc/contract';
 import { createTanstackQueryUtils } from '@orpc/tanstack-query';
 import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query';
-import { DIRECT_UPLOAD_MAX_BYTES, MAX_IMPORT_BYTES, MAX_MEETING_AUDIO_BYTES, MAX_MEETING_VIDEO_BYTES, MAX_SOCIAL_VIDEO_BYTES, MAX_UPLOAD_BYTES, type contract, type UploadPurpose } from '@crove/kernel-contract';
+import type { RecordingStopReason } from '@ludy/meeting-recorder';
+import { mediaUploadQuery, needsAudioExtraction } from './meeting-upload.ts';
+import { DIRECT_UPLOAD_MAX_BYTES, ENEX_MAX_FILE_BYTES, HR_CV_MAX_BYTES, MAX_IMPORT_BYTES, MAX_MEETING_AUDIO_BYTES, MAX_MEETING_VIDEO_BYTES, MAX_SOCIAL_VIDEO_BYTES, MAX_UPLOAD_BYTES, NOTE_ATTACHMENT_MAX_BYTES, TODOIST_CSV_MAX_BYTES, type contract, type EnexImportResult, type HrCvExtractDraft, type HrCvExtractResponse, type NoteAttachment, type TodoistImportResult, type UploadPurpose } from '@ludy/kernel-contract';
 import { activeLocale, translator } from '../i18n/runtime.ts';
 import { apiUrl, serverOrigin } from './api-base.ts';
 import { accessToken, afterMfaRefusal, auth, getConfig, secondFactorStillOwed } from './auth.ts';
-import { ClientError, apiErrorFromResponse, describeError, isMfaRequired, isOrgAccessRevoked, isUnauthenticated, retryWhileBusy } from './errors.ts';
+import {
+  ClientError,
+  apiErrorFromResponse,
+  describeError,
+  isMfaRequired,
+  isModuleOff,
+  isOrgAccessRevoked,
+  isServerRefusal,
+  isStepUpRequired,
+  isUnauthenticated,
+  retryWhileBusy,
+} from './errors.ts';
+import { isNetworkFailure } from './network-error.ts';
 import { createSessionErrorHandler, rememberOrgLeft, requestHeaders, takeOrgLeft } from './org-access.ts';
 
 let currentOrg: string | null = null;
@@ -20,11 +34,11 @@ export function getCurrentOrg(): string | null {
   return currentOrg;
 }
 
-async function headers(): Promise<Record<string, string>> {
-  return requestHeaders(await accessToken(), currentOrg);
+async function headers(orgSlug: string | null = currentOrg): Promise<Record<string, string>> {
+  return requestHeaders(await accessToken(), orgSlug);
 }
 
-const link = new RPCLink({ url: `${serverOrigin()}/api/rpc`, headers });
+const link = new RPCLink({ url: `${serverOrigin()}/api/rpc`, headers: () => headers() });
 
 export const client: ContractRouterClient<typeof contract> = createORPCClient(link);
 export const orpc = createTanstackQueryUtils(client);
@@ -106,8 +120,16 @@ export function takeOrgLeftNotice() {
   return takeOrgLeft(sessionStore());
 }
 
-export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  const response = await fetch(apiUrl(path), { ...init, headers: { ...(await headers()), ...(init.headers as Record<string, string> | undefined) } });
+export async function apiFetch(
+  path: string,
+  init: RequestInit & { orgSlug?: string | null } = {},
+): Promise<Response> {
+  const { orgSlug, ...rest } = init;
+  const resolvedOrg = orgSlug === undefined ? currentOrg : orgSlug;
+  const response = await fetch(apiUrl(path), {
+    ...rest,
+    headers: { ...(await headers(resolvedOrg)), ...(rest.headers as Record<string, string> | undefined) },
+  });
   if (!response.ok) throw await apiErrorFromResponse(response);
   return response;
 }
@@ -145,6 +167,85 @@ export async function fetchFile(fileId: string): Promise<Blob> {
 // not read the thread gets a 404), and it is shown as an image only, from an object URL, never as a page.
 export async function fetchConversationImage(attachmentId: string): Promise<Blob> {
   return (await apiFetch(`/api/conversations/attachments/${attachmentId}`)).blob();
+}
+
+export async function uploadNoteAttachment(
+  noteId: string,
+  file: File,
+  orgSlug?: string | null,
+): Promise<NoteAttachment> {
+  if (file.size === 0) {
+    throw new ClientError('notes.attachments.emptyFile', (t) => t('notes.attachments.emptyFile'));
+  }
+  if (file.size > NOTE_ATTACHMENT_MAX_BYTES) {
+    throw new ClientError('notes.attachments.fileTooLarge', (t) =>
+      t('notes.attachments.fileTooLarge', { name: file.name || 'dinh-kem' }),
+    );
+  }
+  const form = new FormData();
+  form.append('file', file, file.name || 'dinh-kem');
+  const response = await retryWhileBusy(() =>
+    apiFetch(`/api/notes/${encodeURIComponent(noteId)}/attachments`, {
+      method: 'POST',
+      body: form,
+      ...(orgSlug === undefined ? {} : { orgSlug }),
+    }),
+  );
+  const data = (await response.json()) as { attachment: NoteAttachment };
+  return data.attachment;
+}
+
+export async function fetchNoteAttachmentBlob(
+  attachmentId: string,
+  orgSlug?: string | null,
+): Promise<Blob> {
+  const response = await apiFetch(`/api/notes/attachments/${encodeURIComponent(attachmentId)}`, orgSlug === undefined ? {} : { orgSlug });
+  return response.blob();
+}
+
+export async function importEvernoteEnex(
+  file: File,
+  options: { targetNotebookId?: string | null; ignoreFileNotebooks?: boolean; skipDuplicates?: boolean } = {},
+  orgSlug?: string | null,
+): Promise<EnexImportResult> {
+  if (file.size === 0) throw new ClientError('notes.import.invalidSizeEmpty', (t) => t('notes.import.invalidSizeEmpty'));
+  if (file.size > ENEX_MAX_FILE_BYTES) throw new ClientError('notes.import.invalidSizeLimit', (t) => t('notes.import.invalidSizeLimit'));
+  const form = new FormData();
+  form.append('file', file);
+  if (options.targetNotebookId) form.append('targetNotebookId', options.targetNotebookId);
+  if (options.ignoreFileNotebooks) form.append('ignoreFileNotebooks', 'true');
+  if (options.skipDuplicates) form.append('skipDuplicates', 'true');
+  const response = await retryWhileBusy(() =>
+    apiFetch('/api/notes/import/enex', {
+      method: 'POST',
+      body: form,
+      ...(orgSlug === undefined ? {} : { orgSlug }),
+    }),
+  );
+  return (await response.json()) as EnexImportResult;
+}
+
+export async function importTodoistCsv(
+  file: File,
+  options: { targetListId?: string | null; useInboxWhenNoList?: boolean; timeZone?: string; skipDuplicates?: boolean } = {},
+  orgSlug?: string | null,
+): Promise<TodoistImportResult> {
+  if (file.size === 0) throw new ClientError('myWork.import.invalidSizeEmpty', (t) => t('myWork.import.invalidSizeEmpty'));
+  if (file.size > TODOIST_CSV_MAX_BYTES) throw new ClientError('myWork.import.invalidSizeLimit', (t) => t('myWork.import.invalidSizeLimit'));
+  const form = new FormData();
+  form.append('file', file);
+  if (options.targetListId) form.append('targetListId', options.targetListId);
+  if (options.useInboxWhenNoList) form.append('useInboxWhenNoList', 'true');
+  if (options.timeZone) form.append('timeZone', options.timeZone);
+  if (options.skipDuplicates) form.append('skipDuplicates', 'true');
+  const response = await retryWhileBusy(() =>
+    apiFetch('/api/notes/import/todoist', {
+      method: 'POST',
+      body: form,
+      ...(orgSlug === undefined ? {} : { orgSlug }),
+    }),
+  );
+  return (await response.json()) as TodoistImportResult;
 }
 
 type Uploaded = { fileId: string; duplicate: boolean };
@@ -190,17 +291,22 @@ export async function uploadMeetingMedia(
   kind: 'audio' | 'video',
   file: File,
   lengthSeconds?: number,
+  // The recording stopped without the recorder's click (A1, #3159): the server keeps the code on the meeting.
+  stopReason?: RecordingStopReason,
 ): Promise<{ fileId: string }> {
-  const purpose = kind === 'audio' ? 'meeting_audio' : 'meeting_video';
+  // A video chosen as the audio (a local Zoom or Teams MP4) is sent with extract=audio: the server keeps only its audio and never stores the video (#3337).
+  // It is sized and staged as a video, since that is what is transferred.
+  const extractAudio = kind === 'audio' && needsAudioExtraction(file);
+  const purpose = kind === 'audio' && !extractAudio ? 'meeting_audio' : 'meeting_video';
   if (file.size > maxBytesFor(purpose)) throw tooLarge(file, purpose);
 
   if (getConfig().uploads === 'presigned') {
     const uploadId = await stageMediaUpload(file, purpose);
     const response = await retryWhileBusy(() =>
-      apiFetch(`/api/meetings/${meetingId}/media`, {
+      apiFetch(`/api/meetings/${meetingId}/media${extractAudio ? `?${mediaUploadQuery({ kind, extractAudio })}` : ''}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ uploadId, kind, ...(lengthSeconds !== undefined ? { lengthSeconds } : {}) }),
+        body: JSON.stringify({ uploadId, kind, ...(lengthSeconds !== undefined ? { lengthSeconds } : {}), ...(stopReason ? { stopReason } : {}) }),
       }),
     );
     return (await response.json()) as { fileId: string };
@@ -208,16 +314,41 @@ export async function uploadMeetingMedia(
 
   // The file itself as the request body (#2780): the server seals it as it arrives, so a large recording is never held whole
   // there (a multipart form is parsed whole). The kind and the length go in the query, because the body is only the file.
-  const query = new URLSearchParams({ kind });
-  if (lengthSeconds !== undefined) query.set('lengthSeconds', String(lengthSeconds));
+  const query = mediaUploadQuery({ kind, extractAudio, ...(lengthSeconds !== undefined ? { lengthSeconds } : {}), ...(stopReason ? { stopReason } : {}) });
   const response = await retryWhileBusy(() =>
-    apiFetch(`/api/meetings/${meetingId}/media?${query.toString()}`, {
+    apiFetch(`/api/meetings/${meetingId}/media?${query}`, {
       method: 'POST',
       headers: { 'content-type': /^(?:audio|video)\/[\w.+-]+$/.test(file.type) ? file.type : 'application/octet-stream' },
       body: file,
     }),
   );
   return (await response.json()) as { fileId: string };
+}
+
+// Claims the audio Ludy's worker copied from a meeting platform (meetings integrations C1, #3173): the same media route an upload ends at, with the recording's id in place of an upload id
+// and no bytes in the request. The server seals the staged file with the meeting key and records it; a row that is not staged, or is another member's, is refused there.
+export async function claimImportedMedia(meetingId: string, recordingId: string): Promise<{ fileId: string }> {
+  const response = await retryWhileBusy(() =>
+    apiFetch(`/api/meetings/${encodeURIComponent(meetingId)}/media`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ importId: recordingId, kind: 'audio' }),
+    }),
+  );
+  return (await response.json()) as { fileId: string };
+}
+
+// Claims the transcript Ludy's worker read from a meeting platform for a recording that has nothing else (C2, #3174): the server takes the staged lines, writes them as the recorder's draft (tainted, labelled
+// with the platform) and ends the meeting. Like claimImportedMedia, a row that is not staged, or is another member's, is refused there.
+export async function claimImportedTranscript(meetingId: string, recordingId: string): Promise<{ meetingId: string; stored: number }> {
+  const response = await retryWhileBusy(() =>
+    apiFetch(`/api/meetings/${encodeURIComponent(meetingId)}/transcript-import`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ importId: recordingId }),
+    }),
+  );
+  return (await response.json()) as { meetingId: string; stored: number };
 }
 
 // One piece of the audio of a live-notes meeting (ADR-0052 L4a, #3109): the raw bytes as the body, the seq and the length in
@@ -234,11 +365,24 @@ export async function sendLiveChunk(input: { meetingId: string; seq: number; len
   });
 }
 
+// Join the live pieces of a recording whose final upload never arrived (ADR-0052 L4a, #3126): the recorder's own click. The kernel reads the pieces in the recorder's
+// session, seals the join under a fresh audio key and answers how many pieces it joined and which numbers were missing.
+export async function assembleLivePieces(meetingId: string): Promise<{ meetingId: string; fileId: string; pieces: number; missing: number[]; lengthSeconds: number }> {
+  const response = await apiFetch(`/api/meetings/${encodeURIComponent(meetingId)}/live-assemble`, { method: 'POST' });
+  return (await response.json()) as { meetingId: string; fileId: string; pieces: number; missing: number[]; lengthSeconds: number };
+}
+
 // One file through a presigned staging upload (plan §7.6): a single-use form from the kernel, the bytes straight to
 // the bucket, then the kernel reads them back, hashes them and records the file.
-async function uploadStaged(file: File, purpose: UploadPurpose, legalEntityId?: string): Promise<Uploaded> {
+async function uploadStaged(
+  file: File,
+  purpose: UploadPurpose,
+  legalEntityId?: string,
+  orgSlug?: string | null,
+): Promise<Uploaded> {
   if (file.size > maxBytesFor(purpose)) throw tooLarge(file, purpose);
-  const grant = (await (await apiFetch('/api/files/uploads', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ purpose }) })).json()) as {
+  const orgOpt = orgSlug !== undefined ? { orgSlug } : {};
+  const grant = (await (await apiFetch('/api/files/uploads', { ...orgOpt, method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ purpose }) })).json()) as {
     uploadId: string;
     url: string;
     fields: Record<string, string>;
@@ -253,6 +397,7 @@ async function uploadStaged(file: File, purpose: UploadPurpose, legalEntityId?: 
   // A busy kernel refuses the completion without using the grant, so the same completion is retried.
   const response = await retryWhileBusy(() =>
     apiFetch(`/api/files/uploads/${grant.uploadId}/complete`, {
+      ...orgOpt,
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ filename: file.name, purpose, ...(legalEntityId ? { legalEntityId } : {}) }),
@@ -280,19 +425,39 @@ export async function uploadDocument(file: File, legalEntityId?: string): Promis
   return first;
 }
 
+// The signed agreement of an invoice correction (#2504): a PDF or the photo or scan of the signed paper, stored as an evidence file that is never read as an invoice. Returns its file id.
+export async function uploadAgreement(file: File): Promise<string> {
+  if (file.size > MAX_UPLOAD_BYTES) throw tooLarge(file, 'agreement');
+  const form = new FormData();
+  form.append('purpose', 'agreement');
+  form.append('file', file);
+  // The organization that starts the correction, kept for every try: a switch of organization while the upload waits on a busy retry must never store the agreement in another one.
+  const org = currentOrg;
+  const response = await retryWhileBusy(() => apiFetch('/api/files', { method: 'POST', body: form, orgSlug: org }));
+  const { files } = (await response.json()) as { files: Uploaded[] };
+  const first = files[0];
+  if (!first) throw new ClientError('inbox.storageUploadFailed', (t) => t('inbox.storageUploadFailed', { name: file.name }));
+  return first.fileId;
+}
+
 // purpose social: images for a Social post (#372); purpose import: a spreadsheet for a module's import (#465). Both are
 // stored but never read as documents.
-export async function uploadFiles(files: File[], purpose: UploadPurpose = 'document'): Promise<{ files: Uploaded[] }> {
+export async function uploadFiles(
+  files: File[],
+  purpose: UploadPurpose = 'document',
+  orgSlug?: string | null,
+): Promise<{ files: Uploaded[] }> {
   if (getConfig().uploads === 'presigned') {
     const results: Uploaded[] = [];
-    for (const file of files) results.push(await uploadStaged(file, purpose));
+    for (const file of files) results.push(await uploadStaged(file, purpose, undefined, orgSlug));
     return { files: results };
   }
+  const orgOpt = orgSlug !== undefined ? { orgSlug } : {};
   const send = async (batch: File[]) => {
     const form = new FormData();
     form.append('purpose', purpose);
     for (const file of batch) form.append('file', file);
-    return (await (await retryWhileBusy(() => apiFetch('/api/files', { method: 'POST', body: form }))).json()) as { files: Uploaded[] };
+    return (await (await retryWhileBusy(() => apiFetch('/api/files', { ...orgOpt, method: 'POST', body: form }))).json()) as { files: Uploaded[] };
   };
   // Social files go one per request, so a video's body stays within the server's limit.
   if (purpose !== 'social') return send(files);
@@ -300,4 +465,85 @@ export async function uploadFiles(files: File[], purpose: UploadPurpose = 'docum
   const results: Uploaded[] = [];
   for (const file of files) results.push(...(await send([file])).files);
   return { files: results };
+}
+
+const CV_EXTRACT_POLL_INTERVAL_MS = 800;
+const CV_EXTRACT_POLL_TIMEOUT_MS = 20_000;
+
+function isRetryableCvPollError(error: unknown): boolean {
+  if (
+    isUnauthenticated(error) ||
+    isMfaRequired(error) ||
+    isOrgAccessRevoked(error) ||
+    isStepUpRequired(error) ||
+    isModuleOff(error) ||
+    isServerRefusal(error)
+  ) {
+    return false;
+  }
+  const code = (error as { code?: unknown } | null)?.code;
+  const status = (error as { status?: unknown } | null)?.status;
+  return code === 'UPLOAD_BUSY' || (typeof status === 'number' && status >= 500) || isNetworkFailure(error);
+}
+
+export async function extractRecruitingCv(
+  file: File,
+  options: { openingId?: string; legalEntityId?: string; lang?: 'vi' | 'en'; useAi?: boolean; orgSlug?: string | null } = {},
+): Promise<HrCvExtractDraft> {
+  if (file.size === 0) {
+    throw new ClientError('hrRecruiting.cvExtract.emptyFile', (t) => t('hrRecruiting.cvExtract.emptyFile'));
+  }
+  if (file.size > HR_CV_MAX_BYTES) {
+    throw new ClientError('hrRecruiting.cvExtract.fileTooLarge', (t) => t('hrRecruiting.cvExtract.fileTooLarge'));
+  }
+  const form = new FormData();
+  form.append('file', file, file.name || 'cv');
+  if (options.openingId) form.append('openingId', options.openingId);
+  if (options.legalEntityId) form.append('legalEntityId', options.legalEntityId);
+  if (options.lang) form.append('lang', options.lang);
+  if (options.useAi === false) form.append('useAi', 'false');
+
+  const orgOpt = { orgSlug: options.orgSlug === undefined ? currentOrg : options.orgSlug };
+  const initialRes = await retryWhileBusy(() =>
+    apiFetch('/api/hr/recruiting/cv-extract', {
+      method: 'POST',
+      body: form,
+      ...orgOpt,
+    }),
+  );
+  let payload = (await initialRes.json()) as HrCvExtractResponse;
+  if (payload.status === 'ready') return payload.draft;
+
+  const params = new URLSearchParams();
+  if (options.openingId) params.set('openingId', options.openingId);
+  if (options.legalEntityId) params.set('legalEntityId', options.legalEntityId);
+  if (options.lang) params.set('lang', options.lang);
+  if (options.useAi === false) params.set('useAi', 'false');
+  const query = params.toString();
+  const pollPath = `/api/hr/recruiting/cv-extract/${encodeURIComponent(payload.jobId)}${query ? `?${query}` : ''}`;
+
+  const deadline = Date.now() + CV_EXTRACT_POLL_TIMEOUT_MS;
+  let lastTransientError: unknown = null;
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(CV_EXTRACT_POLL_INTERVAL_MS, remaining)));
+    try {
+      const pollRes = await apiFetch(pollPath, orgOpt);
+      lastTransientError = null;
+      payload = (await pollRes.json()) as HrCvExtractResponse;
+      if (payload.status === 'ready') return payload.draft;
+    } catch (error) {
+      if (!isRetryableCvPollError(error)) {
+        throw error;
+      }
+      lastTransientError = error;
+    }
+  }
+
+  if (lastTransientError !== null) {
+    throw lastTransientError;
+  }
+
+  throw new ClientError('hrRecruiting.cvExtract.timedOut', (t) => t('hrRecruiting.cvExtract.timedOut'));
 }

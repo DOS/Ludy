@@ -2,10 +2,11 @@
 // The pure rules of a campaign plan (W1, #2295): the days of a flight, the largest amount it can spend (decimal), what local validation says against
 // the caps in force and the switches, and the hash that binds a submitted plan.
 import { describe, expect, it } from 'vitest';
-import { zAdsCampaignPlan, type AdsCampaignPlanDraft } from '@crove/kernel-contract';
+import { zAdsCampaignPlan, type AdsCampaignPlanDraft } from '@ludy/kernel-contract';
 import { canonicalJson, completePlan, daysByMonth, flightDays, maxSpendOf, planHash, validatePlan, type PlanContext } from '../src/campaign-plan.ts';
 
 const account = '0190c4a1-0000-7000-8000-000000000001';
+const page = '0190c4a1-0000-7000-8000-0000000000aa';
 const plan: AdsCampaignPlanDraft = {
   name: 'Khuyến mãi cuối tuần',
   objective: 'traffic',
@@ -14,7 +15,7 @@ const plan: AdsCampaignPlanDraft = {
   endOn: '2026-11-18',
   targeting: { locations: [{ country: 'VN' }], ageMin: 22, ageMax: 45, gender: 'all', interests: ['Cà phê'] },
   linkUrl: 'https://example.com/khuyen-mai',
-  pageConnectionId: null,
+  pageConnectionId: page,
   sourcePostId: null,
   mediaFileId: null,
   variants: [{ headline: 'Giảm 20% cuối tuần', primaryText: 'Ghé quán hôm nay để nhận ưu đãi.', callToAction: 'learn_more' }],
@@ -64,11 +65,23 @@ describe('local validation of a plan', () => {
     expect(result).toEqual({ issues: [], maxSpend: '700000', days: 7 });
   });
 
-  it('lists what is still missing, in the order the builder asks for it, and a Messenger ad wants its Page', () => {
+  it('lists what is still missing, in the order the builder asks for it, and every ad wants its Page (#3864)', () => {
     const bare: AdsCampaignPlanDraft = { name: 'Mới', objective: 'traffic' };
-    expect(validatePlan(bare, context).issues.filter((i) => i.code === 'missing_field').map((i) => i.field)).toEqual(['dailyBudget', 'startOn', 'endOn', 'targeting', 'variants', 'linkUrl']);
-    expect(validatePlan({ ...bare, objective: 'messenger' }, context).issues.filter((i) => i.code === 'missing_field').map((i) => i.field)).toEqual(['dailyBudget', 'startOn', 'endOn', 'targeting', 'variants', 'pageConnectionId']);
+    const missing = (draft: AdsCampaignPlanDraft) => validatePlan(draft, context).issues.filter((i) => i.code === 'missing_field').map((i) => i.field);
+    expect(missing(bare)).toEqual(['dailyBudget', 'startOn', 'endOn', 'targeting', 'variants', 'linkUrl', 'pageConnectionId']);
+    expect(missing({ ...bare, objective: 'engagement' })).toEqual(['dailyBudget', 'startOn', 'endOn', 'targeting', 'variants', 'linkUrl', 'pageConnectionId']);
+    expect(missing({ ...bare, objective: 'messenger' })).toEqual(['dailyBudget', 'startOn', 'endOn', 'targeting', 'variants', 'pageConnectionId']);
     expect(validatePlan(bare, context).maxSpend).toBeNull();
+  });
+
+  it('refuses a Traffic or Engagement plan with no Page, as a launch would (page_required), and one whose Page is not an org connection (#3864)', () => {
+    for (const objective of ['traffic', 'engagement'] as const) {
+      expect(codes({ ...plan, objective, pageConnectionId: null })).toEqual(['error:missing_field']);
+      expect(codes({ ...plan, objective }, { pageOk: false })).toEqual(['error:page_not_found']);
+      expect(codes({ ...plan, objective }, { pageOk: true })).toEqual([]);
+    }
+    // The Page is part of the plan: with one, the plan is complete (the launch job needs it); without, it is not a submission.
+    expect(completePlan({ ...plan, pageConnectionId: null })?.pageConnectionId).toBeNull();
   });
 
   it('refuses a flight that starts in the past, ends before it starts or is too long, and allows the account’s today', () => {

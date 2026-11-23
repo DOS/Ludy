@@ -4,15 +4,17 @@
 // org (#1317). Entities are never deleted. The server enforces
 // every rule; the screen only offers what can succeed and shows the server's reason otherwise.
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { Link, useParams } from '@tanstack/react-router';
 import { useId, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { LEGAL_ENTITY_KINDS, normalizeTaxCode, type LegalEntity, type LegalEntityKind } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { ErrorText, FieldError, fieldControl, fieldHintId, focusFirstInvalid, RowsSkeleton, useFieldErrors } from '../components/ui.tsx';
+import { LEGAL_ENTITY_KINDS, normalizeTaxCode, type LegalEntity, type LegalEntityKind } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { FormDialog } from '../components/form-dialog.tsx';
+import { ErrorText, Field, FieldError, fieldControl, fieldHintId, focusFirstInvalid, RowsSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { parentChoices, parentName } from '../lib/legal-entities.ts';
 
@@ -128,6 +130,18 @@ function EntityForm({
   );
 }
 
+// The way to the books of a household business (#2517); a component of its own, so the router is read only for an entity of that kind.
+function HouseholdLink({ id }: { id: string }) {
+  const t = useTranslations('legalEntities');
+  const { slug } = useParams({ strict: false }) as { slug?: string };
+  if (!slug) return null;
+  return (
+    <Link to="/o/$slug/household" params={{ slug }} className="text-sm text-link hover:underline" data-testid={`household-link-${id}`}>
+      {t('booksLink')}
+    </Link>
+  );
+}
+
 function EntityRow({ entity, entities }: { entity: LegalEntity; entities: readonly LegalEntity[] }) {
   const t = useTranslations('legalEntities');
   const [editing, setEditing] = useState(false);
@@ -166,9 +180,12 @@ function EntityRow({ entity, entities }: { entity: LegalEntity; entities: readon
               {parent ? ` · ${t('under', { parent })}` : null}
             </p>
           </div>
-          <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(true)} aria-label={t('editOf', { name: entity.name })}>
-            {t('edit')}
-          </Button>
+          <div className="flex shrink-0 items-center gap-1">
+            {entity.kind === 'household' && <HouseholdLink id={entity.id} />}
+            <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(true)} aria-label={t('editOf', { name: entity.name })}>
+              {t('edit')}
+            </Button>
+          </div>
         </div>
       )}
       {update.error && <ErrorText>{errorMessage(update.error)}</ErrorText>}
@@ -176,24 +193,76 @@ function EntityRow({ entity, entities }: { entity: LegalEntity; entities: readon
   );
 }
 
-function AddEntity({ entities }: { entities: readonly LegalEntity[] }) {
+// Adding an entity is a dialog behind a button (#3608): the name first, then the kind, the tax code and the parent.
+export function AddEntityDialog({ entities, onClose }: { entities: readonly LegalEntity[]; onClose: () => void }) {
   const t = useTranslations('legalEntities');
-  // A new form after each add, so the fields start empty again.
-  const [round, setRound] = useState(0);
+  const [draft, setDraft] = useState<Draft>(() => draftOf(null));
+  const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((d) => ({ ...d, [key]: value }));
   const create = useMutation(
     orpc.legalEntities.create.mutationOptions({
       onSuccess: async () => {
-        setRound((r) => r + 1);
         await refresh();
+        onClose();
       },
     }),
   );
+  // The tax code is checked on leaving the field and on submit, its error under it (#1515); the server checks again.
+  const fields = useFieldErrors<'taxCode'>(() => (draft.taxCode.trim() && !normalizeTaxCode(draft.taxCode) ? t('taxCodeInvalid') : null));
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!draft.name.trim()) return;
+    if (!fields.checkAll(['taxCode'])) {
+      focusFirstInvalid(event.currentTarget);
+      return;
+    }
+    create.mutate(inputOf(draft));
+  };
   return (
-    <div className="mt-4">
-      <p className="text-xs font-medium text-muted-foreground">{t('addTitle')}</p>
-      <EntityForm key={round} entities={entities} entity={null} pending={create.isPending} submitLabel={t('add')} onSubmit={(d) => create.mutate(inputOf(d))} />
+    <FormDialog title={t('addTitle')} busy={create.isPending} dirty={draft.name.trim() !== '' || draft.taxCode.trim() !== '' || draft.kind !== 'branch' || draft.parentId !== ''} submitLabel={t('add')} submitDisabled={!draft.name.trim()} onClose={onClose} onSubmit={submit}>
+      <Field label={t('name')}>
+        {(control) => <Input {...control} required maxLength={200} placeholder={t('namePlaceholder')} value={draft.name} onChange={(e) => set('name', e.target.value)} />}
+      </Field>
+      <Field label={t('kind')}>
+        {(control) => (
+          <NativeSelect {...control} value={draft.kind} onChange={(e) => set('kind', e.target.value as LegalEntityKind)}>
+            {LEGAL_ENTITY_KINDS.map((k) => (
+              <NativeSelectOption key={k} value={k}>
+                {t(`kinds.${k}`)}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        )}
+      </Field>
+      <Field label={t('taxCode')} error={fields.of('taxCode')}>
+        {(control) => (
+          <Input
+            {...control}
+            className="font-mono"
+            maxLength={20}
+            placeholder={t('taxCodePlaceholder')}
+            value={draft.taxCode}
+            onChange={(e) => {
+              set('taxCode', e.target.value);
+              fields.edit('taxCode');
+            }}
+            onBlur={(e) => fields.blur('taxCode', e.target.value)}
+          />
+        )}
+      </Field>
+      <Field label={t('parent')}>
+        {(control) => (
+          <NativeSelect {...control} value={draft.parentId} onChange={(e) => set('parentId', e.target.value)}>
+            <NativeSelectOption value="">{t('noParent')}</NativeSelectOption>
+            {parentChoices(entities, null).map((e) => (
+              <NativeSelectOption key={e.id} value={e.id}>
+                {e.taxCode ? `${e.name} (${e.taxCode})` : e.name}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        )}
+      </Field>
       {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
-    </div>
+    </FormDialog>
   );
 }
 
@@ -201,6 +270,7 @@ function AddEntity({ entities }: { entities: readonly LegalEntity[] }) {
 export function LegalEntitiesCard() {
   const t = useTranslations('legalEntities');
   const entities = useQuery(orpc.legalEntities.list.queryOptions());
+  const [adding, setAdding] = useState(false);
   return (
     <Card className="block p-4" aria-label={t('title')}>
       <p className="text-sm font-medium text-muted-foreground">{t('title')}</p>
@@ -216,7 +286,12 @@ export function LegalEntitiesCard() {
               <EntityRow key={`${e.id}:${e.updatedAt}`} entity={e} entities={entities.data ?? []} />
             ))}
           </ul>
-          <AddEntity entities={entities.data ?? []} />
+          <div className="mt-4">
+            <Button type="button" variant="outline" size="sm" onClick={() => setAdding(true)}>
+              {t('addTitle')}
+            </Button>
+          </div>
+          {adding && <AddEntityDialog entities={entities.data ?? []} onClose={() => setAdding(false)} />}
         </>
       )}
     </Card>

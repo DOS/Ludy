@@ -10,12 +10,12 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AdAccountView, AdsChange, AdsSummary, AdsWriteState, LegalEntity } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChange, AdsCommitted, AdsSummary, AdsWriteState, LegalEntity } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { I18nProvider } from '../src/i18n/provider.tsx';
 import { catalog, setActiveLocale, translatorFor } from '../src/i18n/runtime.ts';
-import { adsChangeLine, adsChangeText } from '../src/lib/ads-change.ts';
+import { ADS_PREVIEW_CHARS, ADS_PREVIEW_LINES, adsChangeLine, adsChangePlan, adsChangeText, clampText, visibleBidi, type AdsPlanFormat } from '../src/lib/ads-change.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 
@@ -53,10 +53,14 @@ vi.mock('../src/lib/api.ts', async () => {
 });
 
 const { AdsBooksStrip } = await import('../src/components/ads-books-strip.tsx');
+const { AdsCommittedStrip } = await import('../src/components/ads-committed.tsx');
 const { AccountHeader, AdsEmpty, AdsSettingsCard, Breakdowns, ConnectGoogle, ConnectMeta, Totals } = await import('../src/routes/ads.tsx');
 const { AdsWeeklyNoteCard } = await import('../src/components/ads-weekly-note.tsx');
-const { AdsWriteCard, CapForm, isCapAmount } = await import('../src/components/ads-write.tsx');
+const { AdsWriteCard, CapForm, capAmountOf, isCapAmount } = await import('../src/components/ads-write.tsx');
 const { AdsProposalCard } = await import('../src/components/ads-proposal-card.tsx');
+const { AdsRunStatus } = await import('../src/components/ads-run-status.tsx');
+const { AdsCardError } = await import('../src/components/ads-card-error.tsx');
+const { AdsFlagSettingsCard } = await import('../src/components/ads-flag-settings.tsx');
 
 // useFormat() follows the app's active locale, not the IntlProvider below. Pinning it (and providing it through the app's
 // own provider) makes the money and dates in the markup the rendered language's on every runtime: left alone, it is read
@@ -175,11 +179,17 @@ describe('the empty Ads screen', () => {
     expect(html).not.toContain('<select');
   });
 
-  it.each([true, false])('says no ad platform is set up on a deployment without one (can manage: %s)', (canManage) => {
-    const html = empty(canManage, false);
-    expect(html).toContain(en.ads.noPlatform);
-    expect(html).not.toContain('<form');
-    expect(html).not.toContain('<button');
+  // #3640: only an owner or an admin can do anything about a deployment with no ad platform, so only they are told; a member reads the explanation and nothing else.
+  it('tells an owner or admin that no ad platform is turned on, with who to ask, and a member nothing they cannot act on', () => {
+    const owner = empty(true, false);
+    expect(owner).toContain(en.ads.noPlatform);
+    expect(owner).toContain('Ask whoever runs the system');
+    expect(owner).not.toContain('<form');
+    expect(owner).not.toContain('<button');
+    const member = empty(false, false);
+    expect(member).not.toContain(en.ads.noPlatform);
+    expect(member).toContain(en.ads.emptyTitle);
+    expect(member).not.toContain('<button');
   });
 
   it('has words in Vietnamese too', () => {
@@ -200,8 +210,9 @@ describe('the empty Ads screen where Meta ads is offered', () => {
     expect(html).toContain(`>${en.ads.connectMeta.title}<`);
     expect(buttonBefore(html, en.ads.connectMeta.action)).toBeDefined();
     expect(buttonBefore(html, en.ads.connectMeta.action)).not.toContain('disabled=""');
-    expect(html).toContain('ads_read');
-    expect(html).toContain('never creates or changes a campaign');
+    expect(html).toContain('only asks for permission to read ad reports');
+    expect(html).toContain('creates or changes no campaign unless you turn on running ads');
+    expect(html).not.toContain('ads_read');
     expect(html).toContain(en.ads.connectMeta.expiry);
     // Meta alone is a platform: no "no platform" notice, and no test form without the sandbox.
     expect(html).not.toContain(en.ads.noPlatform);
@@ -226,7 +237,7 @@ describe('the empty Ads screen where Meta ads is offered', () => {
 
   it.each([true, false])('offers no Meta button where the deployment has no Meta ads app (can manage: %s)', (canManage) => {
     const html = empty(canManage, false, false);
-    expect(html).toContain(en.ads.noPlatform);
+    expect(html.includes(en.ads.noPlatform)).toBe(canManage);
     expect(html).not.toContain(en.ads.connectMeta.action);
     expect(html).not.toContain('<button');
   });
@@ -241,7 +252,7 @@ describe('the empty Ads screen where Meta ads is offered', () => {
     const html = empty(true, false, true, 'vi');
     expect(buttonBefore(html, viMessages.ads.connectMeta.action)).toBeDefined();
     expect(html).toContain('Kết nối tài khoản quảng cáo Meta');
-    expect(html).toContain('ads_read');
+    expect(html).toContain('chỉ xin quyền đọc báo cáo quảng cáo');
     expect(html).toContain(viMessages.ads.connectMeta.expiry);
   });
 });
@@ -252,7 +263,7 @@ describe('the Meta connection button on its own', () => {
     expect(buttonBefore(html, en.ads.connectMeta.another)).toBeDefined();
     expect(html).not.toContain(`>${en.ads.connectMeta.title}<`);
     expect(html).not.toContain('<h2');
-    expect(html).toContain('ads_read');
+    expect(html).toContain('only asks for permission to read ad reports');
   });
 });
 
@@ -454,6 +465,40 @@ describe('running ads: the stops, the requests, the switches and the caps (#2294
     expect(accounts.split(`>${en.ads.write.accountRequest}<`)).toHaveLength(2);
   });
 
+  it('puts the whole plan of a waiting campaign launch behind an expander in the list, and none behind the other requests (#3296)', () => {
+    const launch: AdsChange = {
+      change: 'campaign_launch',
+      draftId: 'd1',
+      adAccountId: 'a1',
+      adAccountName: 'Shop',
+      amount: '700000',
+      currency: 'VND',
+      days: 7,
+      origin: 'human',
+      aiFields: [],
+      plan: {
+        name: 'Cà phê Mộc',
+        objective: 'messenger',
+        dailyBudget: '100000',
+        startOn: '2027-01-02',
+        endOn: '2027-01-08',
+        targeting: { locations: [{ country: 'VN' }], ageMin: 20, ageMax: 45, gender: 'all', interests: [] },
+        linkUrl: null,
+        pageConnectionId: null,
+        sourcePostId: null,
+        mediaFileId: null,
+        variants: [{ headline: 'Chi nhánh mới', primaryText: 'Ghé quán nhé.', callToAction: 'send_message' }],
+      },
+    };
+    const html = card(stateOf({ pending: [waiting('p1', launch), waiting('p2', { change: 'launches_unblock' })] }), 'owner');
+    expect(html.split('data-testid="ads-pending-plan"')).toHaveLength(2);
+    expect(html).toContain(`>${en.ads.change.plan.showPlan}<`);
+    expect(html).toContain('aria-label="Show the whole plan of “Cà phê Mộc”"');
+    expect(html).toContain(`>${en.ads.change.plan.audience}<`);
+    expect(html).toContain('Ghé quán nhé.');
+    expect(html).toContain('A conversation with your Facebook Page');
+  });
+
   it('lists the requests waiting for approval, one line each, with the cap and its earlier value, and a link to each Inbox item', () => {
     const pending = [
       waiting('p1', { change: 'write_enable' }),
@@ -615,7 +660,19 @@ describe('running ads: the stops, the requests, the switches and the caps (#2294
 
   it('accepts as a cap a decimal above zero with at most two decimals, as the server does', () => {
     for (const text of ['1', '5000000', '1.5', '20.50', ' 12 ', '0.01', '999999999999999']) expect(isCapAmount(text), text).toBe(true);
-    for (const text of ['', '0', '0.00', '00', '-1', '1.234', '1,5', '1e6', 'abc', '1.', '.5', '1000000000000000']) expect(isCapAmount(text), text).toBe(false);
+    for (const text of ['', '0', '0.00', '00', '-1', '1.2345', '1e6', 'abc', '1.', '.5', '1000000000000000']) expect(isCapAmount(text), text).toBe(false);
+  });
+
+  // #3641: a person types money the Vietnamese way, and the English one, and the cap is judged and sent as the canonical decimal string.
+  it('accepts "5.000.000" and "5,000,000" as well as "5000000", and says what to type when it is not an amount', () => {
+    for (const text of ['5.000.000', '5,000,000', '5 000 000', '1.234', '1,5', '5.000.000,50', '5,000,000.5', '20,5']) expect(isCapAmount(text), text).toBe(true);
+    for (const text of ['5.00.000', '1.234,567', '1,234.567', '5..000', '12abc', '0.000', '0,00']) expect(isCapAmount(text), text).toBe(false);
+    expect(capAmountOf('5.000.000')).toBe('5000000');
+    expect(capAmountOf('5,000,000')).toBe('5000000');
+    expect(capAmountOf('5.000.000,5')).toBe('5000000.5');
+    expect(capAmountOf('20,50')).toBe('20.50');
+    expect(en.ads.write.capAmountInvalid).toContain('5000000 or 5.000.000');
+    expect(viMessages.ads.write.capAmountInvalid).toContain('Nhập số tiền, ví dụ 5000000 hoặc 5.000.000');
   });
 
   describe('the connection that can run ads (W0b)', () => {
@@ -834,6 +891,253 @@ describe('the Inbox card of a request about running ads (#2294)', () => {
   });
 });
 
+// The whole plan on the approval card (#3296): every field from the stored plan, the texts as text, the longest cut with an expander.
+describe('the whole launch plan on the approval card (#3296)', () => {
+  const fmt: AdsPlanFormat = { money: (amount, currency) => `${amount} ${currency}`, date: (day) => day, country: (code) => (code === 'VN' ? 'Vietnam' : code) };
+  type Launch = Extract<AdsChange, { change: 'campaign_launch' }>;
+  const launch = (over: Partial<Launch['plan']> = {}, rest: Partial<Launch> = {}): Launch => ({
+    change: 'campaign_launch',
+    draftId: 'd1',
+    adAccountId: 'a1',
+    adAccountName: 'Shop',
+    amount: '700000',
+    currency: 'VND',
+    days: 7,
+    origin: 'human',
+    aiFields: [],
+    plan: {
+      name: 'Cà phê Mộc',
+      objective: 'engagement',
+      dailyBudget: '100000',
+      startOn: '2027-01-02',
+      endOn: '2027-01-08',
+      targeting: { locations: [{ country: 'VN', region: 'Hà Nội' }, { country: 'US' }], ageMin: 20, ageMax: 45, gender: 'female', interests: ['cà phê', 'bánh ngọt'] },
+      linkUrl: 'https://example.com/khai-truong',
+      pageConnectionId: null,
+      sourcePostId: null,
+      mediaFileId: null,
+      variants: [
+        { headline: 'Chi nhánh mới', primaryText: 'Ghé quán nhé.', callToAction: 'shop_now' },
+        { headline: 'Giảm giá', primaryText: 'Hôm nay.', callToAction: 'no_button' },
+      ],
+      ...over,
+    },
+    ...rest,
+  });
+
+  it('is only there for a campaign launch', () => {
+    const inEn = translatorFor('en');
+    expect(adsChangePlan({ change: 'write_enable' }, inEn, fmt)).toBeNull();
+    expect(adsChangePlan({ change: 'launches_unblock' }, inEn, fmt)).toBeNull();
+    expect(adsChangePlan({ change: 'account_enable', adAccountId: 'a1', adAccountName: 'Shop' }, inEn, fmt)).toBeNull();
+  });
+
+  it('reads the amount, the objective, the dates, the audience, the placements and each ad, in English', () => {
+    const view = adsChangePlan(launch(), translatorFor('en'), fmt)!;
+    expect(view.amount).toBe('700000 VND');
+    expect(view.spend).toBe('7 days, 100000 VND a day.');
+    expect(view.objective).toBe('Engagement');
+    expect(view.schedule).toBe('2027-01-02 to 2027-01-08, both days included.');
+    expect(view.audience).toEqual({ locations: 'Hà Nội, Vietnam; US', age: '20 to 45', gender: 'Women', interests: 'cà phê, bánh ngọt' });
+    expect(view.placements).toBe('Automatic: the platform chooses.');
+    expect(view.destination).toEqual({ shown: 'https://example.com/khai-truong', full: null });
+    expect(view.ads).toEqual([
+      { headline: { shown: 'Chi nhánh mới', full: null }, primaryText: { shown: 'Ghé quán nhé.', full: null }, button: 'Shop now' },
+      { headline: { shown: 'Giảm giá', full: null }, primaryText: { shown: 'Hôm nay.', full: null }, button: 'No button' },
+    ]);
+  });
+
+  it('reads the same plan in Vietnamese', () => {
+    const view = adsChangePlan(launch({ objective: 'traffic', targeting: { locations: [{ country: 'VN' }], ageMin: 18, ageMax: 65, gender: 'male', interests: [] } }), translatorFor('vi'), fmt)!;
+    expect(view.objective).toBe('Lượt truy cập');
+    expect(view.spend).toBe('7 ngày, mỗi ngày 100000 VND.');
+    expect(view.schedule).toBe('Từ 2027-01-02 đến 2027-01-08, tính cả hai ngày.');
+    expect(view.audience.age).toBe('Từ 18 đến 65');
+    expect(view.audience.gender).toBe('Nam');
+    expect(view.placements).toBe('Tự động: nền tảng chọn.');
+  });
+
+  it('says so when there is no interest, no region and no link (a Messenger plan), and when the audience is everyone', () => {
+    const inEn = translatorFor('en');
+    const view = adsChangePlan(launch({ objective: 'messenger', linkUrl: null, targeting: { locations: [{ country: 'VN' }], ageMin: 18, ageMax: 65, gender: 'all', interests: [] } }), inEn, fmt)!;
+    expect(view.audience).toEqual({ locations: 'Vietnam', age: '18 to 65', gender: 'All', interests: 'None chosen' });
+    expect(view.destination).toEqual({ shown: 'A conversation with your Facebook Page', full: null });
+    expect(view.objective).toBe('Messages');
+    const inVi = adsChangePlan(launch({ linkUrl: null, targeting: { locations: [{ country: 'VN' }], ageMin: 18, ageMax: 65, gender: 'all', interests: [] } }), translatorFor('vi'), fmt)!;
+    expect(inVi.audience.interests).toBe('Không chọn');
+    expect(inVi.destination.shown).toBe('Cuộc trò chuyện với Trang Facebook của bạn');
+  });
+
+  it('keeps the words of the plan the same keys in both languages', () => {
+    expect(Object.keys(viMessages.ads.change.plan).sort()).toEqual(Object.keys(en.ads.change.plan).sort());
+  });
+
+  it('cuts a long text with the whole kept for the expander, never mid-character, and leaves a short one alone', () => {
+    expect(clampText('Ghé quán nhé.')).toEqual({ shown: 'Ghé quán nhé.', full: null });
+    const long = 'x'.repeat(ADS_PREVIEW_CHARS + 50);
+    const cut = clampText(long);
+    expect(cut.full).toBe(long);
+    expect(cut.shown).toBe(`${'x'.repeat(ADS_PREVIEW_CHARS)}…`);
+    // A text of exactly the limit is not cut; an emoji (two UTF-16 units) is one character.
+    expect(clampText('y'.repeat(ADS_PREVIEW_CHARS)).full).toBeNull();
+    const emoji = clampText('😀'.repeat(ADS_PREVIEW_CHARS + 1));
+    expect(emoji.shown).toBe(`${'😀'.repeat(ADS_PREVIEW_CHARS)}…`);
+    expect(emoji.full).toBe('😀'.repeat(ADS_PREVIEW_CHARS + 1));
+  });
+
+  it('cuts a text of many short lines at the line limit, so a preview stays short', () => {
+    const many = Array.from({ length: 40 }, (_, i) => `dòng ${i}`).join('\n');
+    const cut = clampText(many);
+    expect(cut.full).toBe(many);
+    expect(cut.shown.split('\n')).toHaveLength(ADS_PREVIEW_LINES);
+    expect(cut.shown.endsWith('\u2026')).toBe(true);
+    expect(clampText('một\nhai\nba\nbốn').full).toBeNull();
+    expect(clampText('\n'.repeat(200)).shown.split('\n').length).toBeLessThanOrEqual(ADS_PREVIEW_LINES);
+  });
+
+  it('shows the invisible characters as codes too, and leaves the joiners that emoji need', () => {
+    expect(visibleBidi('a\u200Bb\u2060c\uFEFFd\u00ADe\u2028f')).toBe('a\u27e8U+200B\u27e9b\u27e8U+2060\u27e9c\u27e8U+FEFF\u27e9d\u27e8U+00AD\u27e9e\u27e8U+2028\u27e9f');
+    expect(visibleBidi('x\u{E0067}y')).toBe('x\u27e8U+E0067\u27e9y');
+    expect(visibleBidi('👨\u200D👩')).toBe('👨\u200D👩');
+  });
+
+  it('shows the characters that reorder text as visible codes instead of applying them', () => {
+    expect(visibleBidi('a‮b‬c‏d⁦e')).toBe('a⟨U+202E⟩b⟨U+202C⟩c⟨U+200F⟩d⟨U+2066⟩e');
+    expect(visibleBidi('plain')).toBe('plain');
+    const view = adsChangePlan(launch({ variants: [{ headline: 'Sale‮3202', primaryText: 'ok‏', callToAction: 'learn_more' }] }), translatorFor('en'), fmt)!;
+    expect(view.ads[0]!.headline.shown).toBe('Sale⟨U+202E⟩' + '3202');
+    expect(view.ads[0]!.primaryText.shown).toBe('ok⟨U+200F⟩');
+    // The title of the card says the name the same way.
+    expect(adsChangeText(launch({ name: 'A‮b' }), translatorFor('en'), fmt.money).title).toContain('A⟨U+202E⟩b');
+  });
+});
+
+describe('the Inbox card of a campaign launch (#3296)', () => {
+  const hostile = '<script>alert(1)</script><img src=x onerror=alert(2)> ' + 'dài '.repeat(100) + '‮';
+  const change = (over: Record<string, unknown> = {}): AdsChange => ({
+    change: 'campaign_launch',
+    draftId: 'd1',
+    adAccountId: 'a1',
+    adAccountName: 'Shop',
+    amount: '700000',
+    currency: 'VND',
+    days: 7,
+    origin: 'ai',
+    aiFields: ['targeting', 'variants'],
+    plan: {
+      name: 'Cà phê Mộc',
+      objective: 'traffic',
+      dailyBudget: '100000',
+      startOn: '2027-01-02',
+      endOn: '2027-01-08',
+      targeting: { locations: [{ country: 'VN' }], ageMin: 20, ageMax: 45, gender: 'all', interests: ['cà phê'] },
+      linkUrl: 'https://example.com/khai-truong',
+      pageConnectionId: null,
+      sourcePostId: null,
+      mediaFileId: null,
+      variants: [{ headline: 'Chi nhánh mới', primaryText: hostile, callToAction: 'learn_more' }],
+    },
+    ...over,
+  } as AdsChange);
+  const card = (c: AdsChange, locale: 'en' | 'vi' = 'en') => {
+    client.current.setQueryData(['ads', 'proposal', { id: 'p1' }], { change: c });
+    return render(<AdsProposalCard id="p1" title="t" slug="shop" />, locale);
+  };
+
+  it('lists the objective, the dates, the audience, the placements and each ad text, with the largest amount first and loudest', () => {
+    const html = card(change());
+    expect(html).toContain(`>${en.ads.change.plan.title}<`);
+    for (const label of ['objective', 'schedule', 'location', 'age', 'gender', 'interests', 'placements', 'destination']) {
+      expect(html, label).toContain(`>${en.ads.change.plan[label as 'objective']}<`);
+    }
+    expect(html).toContain('>Traffic<');
+    expect(html).toContain('Chi nhánh mới');
+    expect(html).toContain('https://example.com/khai-truong');
+    expect(html).toContain('>Button: Learn more<');
+    // The amount is the first thing in the card and the biggest type on it.
+    const amountAt = html.indexOf('data-testid="ads-plan-amount"');
+    expect(amountAt).toBeGreaterThan(-1);
+    expect(amountAt).toBeLessThan(html.indexOf('Approve the plan of the campaign'));
+    expect(amountAt).toBeLessThan(html.indexOf('data-testid="ads-plan"'));
+    expect(html).toMatch(/text-2xl font-bold[^>]*>[^<]*700,000/);
+    // The AI coworker's marker is still there, from the stored fields: the card computes nothing.
+    expect(html).toContain('Drafted by the AI coworker: the audience, the texts.');
+  });
+
+  it('shows hostile ad text as text: escaped, cut with an expander, its direction controls visible, the link not a link', () => {
+    const html = card(change());
+    expect(html).not.toContain('<script');
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).not.toContain('‮');
+    expect(html).toContain('⟨U+202E⟩');
+    expect(html).toContain('<details');
+    expect(html).toContain(`>${en.ads.change.plan.showAll}<`);
+    expect(html).not.toContain('href="https://example.com');
+    // The part before the expander is cut; the whole is behind it.
+    const shown = html.split('<details')[0]!;
+    expect(shown).not.toContain('⟨U+202E⟩');
+  });
+
+  it('has no expander for texts that fit', () => {
+    const html = card(change({ plan: { ...(change() as Extract<AdsChange, { change: 'campaign_launch' }>).plan, variants: [{ headline: 'Ngắn', primaryText: 'Gọn.', callToAction: 'sign_up' }] } }));
+    expect(html).not.toContain('<details');
+    expect(html).toContain('Gọn.');
+  });
+
+  it('speaks Vietnamese to a reader of Vietnamese', () => {
+    const html = card(change(), 'vi');
+    expect(html).toContain(`>${viMessages.ads.change.plan.title}<`);
+    expect(html).toContain(`>${viMessages.ads.change.plan.maxSpend}<`);
+    expect(html).toContain(`>${viMessages.ads.change.plan.placements}<`);
+    expect(html).toContain(viMessages.ads.change.plan.placementsAutomatic);
+  });
+
+  // #3675: a deployment with no launch writer (ADS_LIVE_LAUNCH off) holds the amount and creates nothing, so the card must not promise a launch.
+  describe('on a server that cannot launch (#3675)', () => {
+    const asked = (canLaunch: boolean | null, locale: 'en' | 'vi' = 'en') => {
+      client.current.setQueryData(['ads', 'proposal', { id: 'p1' }], { change: change(), canLaunch });
+      return render(<AdsProposalCard id="p1" title="t" slug="shop" />, locale);
+    };
+
+    it('says plainly that approving holds the amount and does not create the campaign, and promises no launch', () => {
+      const html = asked(false);
+      expect(html).toContain('data-testid="ads-no-launcher"');
+      expect(html).toContain(en.inboxDetail.adsNoLauncher);
+      expect(html).toContain('This server has not turned on running real ads, so the campaign is not created');
+      expect(html).not.toContain('Ludy holds');
+      expect(html).not.toContain('creates the campaign at the ad platform paused');
+      expect(html).toContain('If this server turns on running real ads later');
+      const vi = asked(false, 'vi');
+      expect(vi).toContain(viMessages.inboxDetail.adsNoLauncher);
+      expect(vi).toContain('chưa tạo chiến dịch');
+      expect(vi).not.toContain('tạo chiến dịch trên nền tảng quảng cáo ở trạng thái tạm dừng');
+    });
+
+    it('keeps the promise of a launch where the server can launch, and where it does not say', () => {
+      for (const answer of [true, null]) {
+        const html = asked(answer);
+        expect(html).not.toContain('data-testid="ads-no-launcher"');
+        expect(html).toContain('switches it on by itself from the start date');
+      }
+      // An older answer without the field reads as unknown, never as "cannot".
+      client.current.setQueryData(['ads', 'proposal', { id: 'p1' }], { change: change() });
+      expect(render(<AdsProposalCard id="p1" title="t" slug="shop" />)).not.toContain('data-testid="ads-no-launcher"');
+    });
+
+    it('says nothing about launching on a request that launches nothing', () => {
+      client.current.setQueryData(['ads', 'proposal', { id: 'p1' }], { change: { change: 'write_enable' }, canLaunch: null });
+      expect(render(<AdsProposalCard id="p1" title="t" slug="shop" />)).not.toContain('data-testid="ads-no-launcher"');
+    });
+  });
+
+  it('adds no plan to a change that has none', () => {
+    const html = card({ change: 'write_enable' });
+    expect(html).not.toContain('data-testid="ads-plan"');
+    expect(html).not.toContain('ads-plan-amount');
+  });
+});
+
 describe('the header of an ad account', () => {
   const header = (acc: AdAccountView, canRefresh = true) => render(<AccountHeader account={acc} canRefresh={canRefresh} onRequested={() => undefined} />);
   const inAnHour = () => new Date(Date.now() + 3_600_000).toISOString();
@@ -845,8 +1149,10 @@ describe('the header of an ad account', () => {
     expect(quiet).toContain(filled(en.ads.readOnly));
     expect(quiet).not.toContain(en.ads.canRunAds);
     const html = header(account({ provider: 'meta_ads', extraScopes: ['pages_manage_posts', 'pages_show_list'] }));
-    expect(html).toContain('can do more than read ad reports');
-    expect(html).toContain('pages_manage_posts, pages_show_list');
+    expect(html).toContain('beyond reading ad reports');
+    // The raw permission names are not shown to the owner (#3641); how many there are is.
+    expect(html).toContain('2 permissions');
+    expect(html).not.toContain('pages_manage_posts');
     // The note about extra permissions takes the place of the read-only line, not its company.
     expect(html).not.toContain(filled(en.ads.readOnly));
   });
@@ -884,7 +1190,7 @@ describe('the header of an ad account', () => {
     const html = header(account({ provider: 'meta_ads', name: 'Meta cửa hàng' }));
     expect(html).toContain('>Meta<');
     expect(html).not.toContain(en.ads.sandboxBadge);
-    expect(html).toContain('Currency VND, time zone Asia/Ho_Chi_Minh');
+    expect(html).toContain('Currency VND, Vietnam time (UTC+7)');
   });
 
   it('shows no platform badge for the sandbox other than its own', () => {
@@ -947,6 +1253,17 @@ describe('the header of an ad account', () => {
 describe('the totals of a period', () => {
   const totals = (s: AdsSummary, canManage = true) => render(<Totals summary={s} currency="VND" canManage={canManage} />);
 
+  // #3641 (AD-6): the figures say their own period and currency.
+  it('is headed with its own period, its dates and its currency', () => {
+    const html = render(<Totals summary={summary()} currency="VND" canManage period={{ kind: 'last3Months', from: '2026-08-01', to: '2026-10-31' }} />);
+    expect(html).toMatch(/Totals, [^<(]*\([^)]*to[^)]*\), VND/);
+    expect(html).toContain('VND');
+    const vi = render(<Totals summary={summary()} currency="VND" canManage period={{ kind: 'last3Months', from: '2026-08-01', to: '2026-10-31' }} />, 'vi');
+    expect(vi).toMatch(/Tổng cộng, [^<(]*\([^)]*đến[^)]*\), VND/);
+    // Without a period it is headed as before.
+    expect(totals(summary())).toContain('>Totals<');
+  });
+
   it('shows spend, impressions, clicks, the results of the chosen kind and the cost per result', () => {
     const html = totals(summary());
     for (const label of [en.ads.totals.spend, en.ads.totals.impressions, en.ads.totals.clicks, en.ads.totals.results, en.ads.totals.costPerResult]) expect(html).toContain(`>${label}<`);
@@ -1003,6 +1320,16 @@ describe('the tables of a period', () => {
     expect(html.match(new RegExp(`>${en.ads.columns.costPerResult}<`, 'g'))).toHaveLength(3);
   });
 
+  it('puts the results and their cost right after spend, so a phone that scrolls sideways does not hide them (AD-12)', () => {
+    const html = tables(summary());
+    const heads = [...html.matchAll(/<thead[^>]*>[\s\S]*?<\/thead>/g)].map((m) => [...m[0].matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((h) => h[1]));
+    expect(heads).toHaveLength(3);
+    const c = en.ads.columns;
+    expect(heads[0]).toEqual([c.month, c.spend, c.results, c.costPerResult, c.impressions, c.clicks]);
+    expect(heads[1]).toEqual([c.campaign, c.spend, c.results, c.costPerResult, c.impressions, c.clicks]);
+    expect(heads[2]).toEqual([c.day, c.spend, c.results, c.costPerResult, c.impressions, c.clicks, c.reach]);
+  });
+
   it('leaves the results columns out when no result kind is chosen', () => {
     const none = metric({ results: null, costPerResult: null });
     const html = tables(
@@ -1049,13 +1376,13 @@ describe('the books strip', () => {
     credit,
     closing: debit,
   });
-  const strip = (acc: Pick<AdAccountView, 'currency' | 'expenseAccountCode' | 'legalEntityId'>, seeds: Record<string, ReturnType<typeof ledger>> = {}, financeOn = true, list = months, todayMonth = '2026-11') => {
+  const strip = (acc: Pick<AdAccountView, 'currency' | 'expenseAccountCode' | 'legalEntityId' | 'provider'>, seeds: Record<string, ReturnType<typeof ledger>> = {}, financeOn = true, list = months, todayMonth = '2026-11', shellEntityId: string | undefined = acc.legalEntityId) => {
     for (const [period, data] of Object.entries(seeds)) {
       client.current.setQueryData(['ledger', 'account', { period, accountCode: acc.expenseAccountCode, legalEntityId: acc.legalEntityId }], data);
     }
-    return render(<AdsBooksStrip account={acc} months={list} todayMonth={todayMonth} financeOn={financeOn} />);
+    return render(<AdsBooksStrip account={acc} slug="acme" months={list} todayMonth={todayMonth} financeOn={financeOn} shellEntityId={shellEntityId} />);
   };
-  const vnd = { currency: 'VND', expenseAccountCode: '6421', legalEntityId: 'e1' };
+  const vnd = { currency: 'VND', expenseAccountCode: '6421', legalEntityId: 'e1', provider: 'sandbox_ads' };
 
   it('draws nothing where the finance module is not installed', () => {
     expect(strip(vnd, {}, false)).toBe('');
@@ -1118,6 +1445,213 @@ describe('the books strip', () => {
     expect(html).toContain('aria-busy="true"');
     expect(html).not.toContain(`>${en.ads.books.platform}<`);
   });
+
+  // The documents beside the months (slice D1): finance.documents.list for the days of the months with spend, in the
+  // account's legal entity. September and November have spend, October has none.
+  describe('the documents column', () => {
+    const doc = (partyName: string, issueDate: string, over: Record<string, unknown> = {}) => ({
+      id: `d-${partyName}-${issueDate}`,
+      direction: 'purchase',
+      partyId: 'p1',
+      partyName,
+      series: 'C26TAA',
+      number: '1',
+      issueDate,
+      subtotal: '100',
+      vatAmount: '0',
+      total: '100',
+      journalEntryId: null,
+      sourceFileId: null,
+      voided: null,
+      replacesDocumentId: null,
+      foreign: null,
+      corrects: null,
+      correctedBy: [],
+      ...over,
+    });
+    const seeded = { '2026-09': ledger('12000000.0000'), '2026-11': ledger('2000000.0000') };
+    const seedDocuments = (list: readonly unknown[], legalEntityId = 'e1') => {
+      client.current.setQueryData(['documents', 'list', { legalEntityId, from: '2026-09-01', to: '2026-11-30' }], list);
+    };
+
+    it('shows how many documents of the platform each month has, and the way to the Inbox for a month with none', () => {
+      seedDocuments([doc('Sandbox Ads Pte. Ltd.', '2026-09-30'), doc('SANDBOX ADS', '2026-10-05')]);
+      const html = strip(vnd, seeded);
+      expect(html).toContain(`>${en.ads.books.documents}<`);
+      // September has one document, and October (a document but no spend) is not listed.
+      expect(html).toContain('1 document');
+      expect(html).not.toContain('10/2026');
+      // November has spend and no document: said in words, with the way to upload one.
+      expect(html).toContain(`>${en.ads.books.documentMissing}<`);
+      expect(html).toContain(`href="/o/acme/inbox">${en.ads.books.documentUpload}<`);
+      expect(html.match(new RegExp(`>${en.ads.books.documentMissing}<`, 'g'))).toHaveLength(1);
+      expect(html).toContain('never writes a document or posts an entry');
+    });
+
+    it('does not count a seller of another name, a sale, or a voided document', () => {
+      seedDocuments([
+        doc('Công ty Văn phòng phẩm', '2026-09-03'),
+        doc('Sandbox Ads', '2026-09-04', { direction: 'sale' }),
+        doc('Sandbox Ads', '2026-09-05', { voided: { reversalEntryId: 'r1', reason: 'sai', voidedAt: '2026-09-06T00:00:00.000Z' } }),
+        doc('Sandbox Ads', '2026-11-02'),
+      ]);
+      const html = strip(vnd, seeded);
+      expect(html.match(new RegExp(`>${en.ads.books.documentMissing}<`, 'g'))).toHaveLength(1);
+      expect(html).toContain('1 document');
+    });
+
+    it('counts several documents in the plural', () => {
+      seedDocuments([doc('Sandbox Ads', '2026-09-03'), doc('Sandbox Ads', '2026-09-20', { number: '2' }), doc('Sandbox Ads', '2026-11-02')]);
+      expect(strip(vnd, seeded)).toContain('2 documents');
+    });
+
+    it('says it is checking while the documents load, and marks no month as missing yet', () => {
+      client.current.removeQueries({ queryKey: ['documents', 'list'] });
+      const html = strip(vnd, seeded);
+      expect(html).toContain(en.ads.books.documentsChecking);
+      expect(html).not.toContain(en.ads.books.documentMissing);
+    });
+
+    it('marks no month as missing from a full page of documents, which may have left some out, and says so', () => {
+      seedDocuments(Array.from({ length: 1000 }, (_, i) => doc('Công ty khác', '2026-10-01', { id: `x${i}` })));
+      const html = strip(vnd, seeded);
+      expect(html).not.toContain(en.ads.books.documentMissing);
+      expect(html).toContain(en.ads.books.documentsTooMany);
+    });
+
+    it('follows the account’s legal entity: another entity’s documents are another answer', () => {
+      seedDocuments([doc('Sandbox Ads', '2026-09-03'), doc('Sandbox Ads', '2026-11-03')], 'e2');
+      client.current.removeQueries({ queryKey: ['documents', 'list', { legalEntityId: 'e1', from: '2026-09-01', to: '2026-11-30' }] });
+      expect(strip(vnd, seeded)).toContain(en.ads.books.documentsChecking);
+      expect(strip({ ...vnd, legalEntityId: 'e2' }, { ...seeded })).toContain('1 document');
+    });
+
+    it('leaves the column out for a platform the app has no seller names for, and where the strip does not compare', () => {
+      client.current.removeQueries({ queryKey: ['documents', 'list'] });
+      const other = strip({ ...vnd, provider: 'other_ads' }, seeded);
+      expect(other).toContain(`>${en.ads.books.difference}<`);
+      expect(other).not.toContain(`>${en.ads.books.documents}<`);
+      expect(strip({ ...vnd, expenseAccountCode: null })).not.toContain(en.ads.books.documents);
+      expect(strip({ ...vnd, currency: 'USD' })).not.toContain(en.ads.books.documents);
+      expect(strip(vnd, {}, false)).toBe('');
+    });
+
+    it('has the same words in Vietnamese and writes no tax figure', () => {
+      seedDocuments([doc('Sandbox Ads', '2026-09-30')]);
+      strip(vnd, seeded);
+      const html = render(<AdsBooksStrip account={vnd} slug="acme" months={months} todayMonth="2026-11" financeOn shellEntityId="e1" />, 'vi');
+      expect(html).toContain(`>${viMessages.ads.books.documents}<`);
+      expect(html).toContain('1 chứng từ');
+      expect(html).toContain(`>${viMessages.ads.books.documentMissing}<`);
+      expect(html).not.toMatch(/VAT|GTGT/);
+      expect(Object.keys(viMessages.ads.books).sort()).toEqual(Object.keys(en.ads.books).sort());
+    });
+  });
+  // The bank and card lines that paid the platform (slice D2): finance.bank.platform_lines for the days of the months with
+  // spend, in the account's legal entity. September and November have spend, October has none.
+  describe('the bank and card lines', () => {
+    const bankLine = (id: string, date: string, description: string, amount: string, bankAccount = '1121') => ({ id, bankAccount, date, description, amount, state: { status: 'open' } });
+    const seeded = { '2026-09': ledger('12000000.0000'), '2026-11': ledger('2000000.0000') };
+    const bankKey = (legalEntityId = 'e1', terms: string[] = ['Sandbox Ads']) => ['bank', 'platformLines', { legalEntityId, from: '2026-09-01', to: '2026-11-30', terms }];
+    const seedLines = (lines: readonly unknown[], truncated = false, legalEntityId = 'e1') => {
+      client.current.setQueryData(bankKey(legalEntityId), { from: '2026-09-01', to: '2026-11-30', lines, truncated });
+    };
+    const reset = () => client.current.removeQueries({ queryKey: ['bank', 'platformLines'] });
+
+    it('lists each month’s lines with their date, account, amount and a link to the bank screen, and their total beside the spend', () => {
+      seedLines([bankLine('b1', '2026-09-30', 'SANDBOX ADS 1234 CARD', '-3000000'), bankLine('b2', '2026-09-02', 'Sandbox Ads Pte', '-1000000'), bankLine('b3', '2026-10-05', 'Sandbox Ads', '-400000')]);
+      const html = strip(vnd, seeded);
+      expect(html).toContain(`>${en.ads.bankLines.title}<`);
+      // September: two lines paid 4,000,000 against the 12,000,000 the platform reports.
+      expect(html).toMatch(/2 lines, paid[^<]*4[.,]000[.,]000/);
+      expect(html).toMatch(/The platform reports[^<]*12[.,]000[.,]000/);
+      expect(html).toContain('>SANDBOX ADS 1234 CARD<');
+      expect(html).toContain('href="/o/acme/bank"');
+      // October has a line and no spend, so it is not listed; November has spend and no line, and says so.
+      expect(html).not.toContain('>Sandbox Ads<');
+      expect(html.match(new RegExp(`>${en.ads.bankLines.none}<`, 'g'))).toHaveLength(1);
+      expect(html).toContain('never categorizes, matches or posts one');
+    });
+
+    it('nets a refund in the month’s total', () => {
+      seedLines([bankLine('b1', '2026-09-03', 'Sandbox Ads', '-500000'), bankLine('b2', '2026-09-10', 'Sandbox Ads refund', '100000')]);
+      expect(strip(vnd, seeded)).toMatch(/2 lines, paid[^<]*400[.,]000/);
+    });
+
+    it('says it is looking while the lines load, and marks no month as having none yet', () => {
+      reset();
+      const html = strip(vnd, seeded);
+      expect(html).toContain(en.ads.bankLines.checking);
+      expect(html).not.toContain(en.ads.bankLines.none);
+    });
+
+    it('marks no month as having none from a full page of lines, which may have left some out, and says so', () => {
+      seedLines([], true);
+      const html = strip(vnd, seeded);
+      expect(html).not.toContain(`>${en.ads.bankLines.none}<`);
+      expect(html).toContain('More than 500 lines name the platform');
+    });
+
+    it('does not present the total of a cut-off page as the month’s: it says at least, and puts nothing beside the spend', () => {
+      seedLines([bankLine('b1', '2026-09-03', 'Sandbox Ads', '-500000'), bankLine('b2', '2026-09-04', 'Sandbox Ads', '-500000')], true);
+      const html = strip(vnd, seeded);
+      expect(html).toMatch(/2 lines found, at least[^<]*1[.,]000[.,]000 paid/);
+      expect(html).not.toContain('The platform reports');
+      expect(html).not.toMatch(/2 lines, paid/);
+      expect(html).toContain('total of the oldest month may be incomplete');
+    });
+
+    it('opens the bank screen on a line only when the shell has chosen the account’s own legal entity', () => {
+      seedLines([bankLine('b1', '2026-09-03', 'Sandbox Ads', '-500000')]);
+      const own = strip(vnd, seeded);
+      expect(own).toContain('href="/o/acme/bank"');
+      expect(own).not.toContain(en.ads.bankLines.otherEntity);
+      // Another entity chosen, or none chosen yet (the list is still loading): no link, the description stays.
+      const elsewhere = strip(vnd, seeded, true, months, '2026-11', 'e2');
+      const unchosen = render(<AdsBooksStrip account={vnd} slug="acme" months={months} todayMonth="2026-11" financeOn shellEntityId={undefined} />);
+      for (const other of [elsewhere, unchosen]) {
+        expect(other).not.toContain('href="/o/acme/bank"');
+        expect(other).toContain('>Sandbox Ads<');
+        expect(other).toContain(en.ads.bankLines.otherEntity);
+      }
+    });
+
+    it('lists the lines of an account in dollars with their total in dong, and puts no figure beside them and shows no difference', () => {
+      seedLines([bankLine('b1', '2026-09-03', 'Sandbox Ads', '-2500000')]);
+      const html = strip({ ...vnd, currency: 'USD' }, seeded);
+      expect(html).toContain(`>${en.ads.bankLines.title}<`);
+      expect(html).toMatch(/1 line, paid[^<]*2[.,]500[.,]000/);
+      expect(html).toContain('the exchange rate and the card’s fee make the two figures differ');
+      expect(html).not.toContain('The platform reports');
+      expect(html).not.toContain('<table');
+      expect(html).not.toContain(`>${en.ads.books.difference}<`);
+    });
+
+    it('follows the account’s legal entity', () => {
+      reset();
+      seedLines([bankLine('b1', '2026-09-03', 'Sandbox Ads', '-2500000')], false, 'e2');
+      expect(strip(vnd, seeded)).toContain(en.ads.bankLines.checking);
+      expect(strip({ ...vnd, legalEntityId: 'e2' }, seeded)).toContain('1 line, paid');
+    });
+
+    it('leaves the section out where the strip does not compare, for a platform with no names, and where finance is off', () => {
+      reset();
+      expect(strip({ ...vnd, provider: 'other_ads' }, seeded)).not.toContain(en.ads.bankLines.title);
+      expect(strip({ ...vnd, expenseAccountCode: null })).not.toContain(en.ads.bankLines.title);
+      expect(strip(vnd, {}, false)).toBe('');
+    });
+
+    it('has the same words in Vietnamese, in the same keys, and writes no tax figure', () => {
+      seedLines([bankLine('b1', '2026-09-03', 'Sandbox Ads', '-2500000')]);
+      strip(vnd, seeded);
+      const html = render(<AdsBooksStrip account={vnd} slug="acme" months={months} todayMonth="2026-11" financeOn shellEntityId="e1" />, 'vi');
+      expect(html).toContain(`>${viMessages.ads.bankLines.title}<`);
+      expect(html).toMatch(/1 dòng, đã trả[^<]*2[.,]500[.,]000/);
+      expect(html).toContain(`>${viMessages.ads.bankLines.none}<`);
+      expect(html).not.toMatch(/VAT|GTGT/);
+      expect(Object.keys(viMessages.ads.bankLines).sort()).toEqual(Object.keys(en.ads.bankLines).sort());
+    });
+  });
 });
 
 describe('Google Ads connection, short refresh-token warning, and 7-day comparison note (#2220)', () => {
@@ -1128,9 +1662,8 @@ describe('Google Ads connection, short refresh-token warning, and 7-day comparis
     const withGoogle = render(<AdsEmpty canManage sandbox={false} google={{ slug: 'acme' }} entities={one} onConnected={() => undefined} />);
     expect(withGoogle).toContain(en.ads.connectGoogle.title);
     expect(withGoogle).toContain(en.ads.connectGoogle.action);
-    expect(withGoogle).toContain('https://www.googleapis.com/auth/adwords');
-    expect(withGoogle).toContain('customers:listAccessibleCustomers');
-    expect(withGoogle).toContain('googleAds:searchStream');
+    expect(withGoogle).toContain('single permission that covers both reading and writing');
+    expect(withGoogle).not.toMatch(/googleapis|adwords|customers:|googleAds:/);
 
     const reconnect = render(<ConnectGoogle slug="acme" another reconnect />, 'vi');
     expect(reconnect).toContain(viMessages.ads.connectGoogle.reconnect);
@@ -1139,12 +1672,31 @@ describe('Google Ads connection, short refresh-token warning, and 7-day comparis
   it('states Google’s read-only usage on the account header and warns when a Testing consent screen refresh token has an expiry date', () => {
     const active = render(<AccountHeader account={account({ provider: 'google_ads', connectionExpiresAt: '2026-11-09T00:00:00.000Z' })} canRefresh onRequested={() => undefined} />);
     expect(active).toContain('Google Ads');
-    expect(active).toContain('customers:listAccessibleCustomers');
-    expect(active).toContain('Testing mode issues 7-day tokens');
+    expect(active).toContain(filled(en.ads.googleReadOnly));
+    expect(active).toContain('This connection expires on');
+    expect(active).not.toMatch(/Testing|Production|Console|customers:/);
     expect(active).toContain('09/11/2026');
 
     const metaWithExpiry = render(<AccountHeader account={account({ provider: 'meta_ads', connectionExpiresAt: '2026-12-31T00:00:00.000Z' })} canRefresh onRequested={() => undefined} />);
     expect(metaWithExpiry).not.toContain('Testing mode issues 7-day tokens');
+  });
+
+  it('warns before a Meta connection ends, with the date, and says nothing for one that ends later, for Google, or for a paused account (#3476)', () => {
+    const inDays = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString();
+    const soon = render(<AccountHeader account={account({ provider: 'meta_ads', connectionExpiresAt: inDays(5) })} canRefresh onRequested={() => undefined} />);
+    expect(soon).toContain('The connection to the ad platform ends on');
+    expect(soon).toContain('Reconnect before then so the figures keep coming.');
+    expect(soon).not.toContain('Testing mode issues 7-day tokens');
+    expect(render(<AccountHeader account={account({ provider: 'meta_ads', connectionExpiresAt: inDays(40) })} canRefresh onRequested={() => undefined} />)).not.toContain('The connection to the ad platform ends on');
+    expect(render(<AccountHeader account={account({ provider: 'meta_ads', connectionExpiresAt: null })} canRefresh onRequested={() => undefined} />)).not.toContain('The connection to the ad platform ends on');
+    // Google keeps its own words, and a paused account says its own state instead.
+    const google = render(<AccountHeader account={account({ provider: 'google_ads', connectionExpiresAt: inDays(5) })} canRefresh onRequested={() => undefined} />);
+    expect(google).toContain('This connection expires on');
+    expect(google).not.toContain('The connection to the ad platform ends on');
+    expect(render(<AccountHeader account={account({ provider: 'meta_ads', connectionStatus: 'expired', connectionExpiresAt: inDays(5) })} canRefresh onRequested={() => undefined} />)).not.toContain('The connection to the ad platform ends on');
+    // The same words in Vietnamese.
+    const vi = render(<AccountHeader account={account({ provider: 'meta_ads', connectionExpiresAt: inDays(5) })} canRefresh onRequested={() => undefined} />, 'vi');
+    expect(vi).toContain('Kết nối với nền tảng quảng cáo hết hạn vào');
   });
 
   it('renders Uy’s 7-day side-by-side comparison note across Meta and Google when seeded, and nothing when empty', () => {
@@ -1206,7 +1758,7 @@ describe('Google Ads connection, short refresh-token warning, and 7-day comparis
       ],
     );
     const html = render(<AdsWeeklyNoteCard />, 'vi');
-    expect(html).toContain('Ghi chú so sánh 7 ngày của Uy');
+    expect(html).toContain('So sánh 7 ngày gần nhất, mọi tài khoản');
     expect(html).toContain('Meta');
     expect(html).toContain('Google Ads');
     expect(html).toContain('Brand Search VN');
@@ -1215,3 +1767,136 @@ describe('Google Ads connection, short refresh-token warning, and 7-day comparis
   });
 });
 
+
+describe('the committed spend of the month next to the actual spend (#3297)', () => {
+  const state = (writeEnabled: boolean): AdsWriteState => ({ writeEnabled, launchesBlocked: false, updatedAt: null, caps: [], pending: [], tokenRevokes: [] });
+  const line = (over: Partial<AdsCommitted['org']> = {}): AdsCommitted['org'] => ({ committed: '700000', cap: null, left: null, ...over });
+  const data = (over: Partial<AdsCommitted> = {}): AdsCommitted => ({ adAccountId: 'a1', month: '2026-11', currency: 'VND', hasCap: true, capCurrencyMismatch: false, account: line(), org: line(), ...over });
+  const strip = (committed: AdsCommitted | null, writeEnabled = true, locale: 'en' | 'vi' = 'en', acct = account()) => {
+    client.current.setQueryData(['ads', 'writeState'], state(writeEnabled));
+    client.current.removeQueries({ queryKey: ['ads', 'committed'] });
+    if (committed) client.current.setQueryData(['ads', 'committed', { adAccountId: 'a1', month: '2026-11' }], committed);
+    return render(<AdsCommittedStrip account={acct} month="2026-11" />, locale);
+  };
+
+  it('shows what is committed, the monthly cap and what is left, exactly, with the month', () => {
+    const html = strip(data({ account: line({ cap: '1000000', left: '300000' }), org: line() }));
+    expect(html).toContain('Committed for 11/2026');
+    expect(html).toContain(en.ads.committed.committed);
+    expect(html).toContain(en.ads.committed.cap);
+    expect(html).toContain(en.ads.committed.left);
+    expect(html).toContain('700,000');
+    expect(html).toContain('1,000,000');
+    expect(html).toContain('300,000');
+    // The org's line adds nothing here (the same launches), so it is not drawn twice.
+    expect(html).not.toContain(en.ads.committed.scopeOrg);
+  });
+
+  it('adds the org line when the org has a cap or counts launches of other accounts', () => {
+    const html = strip(data({ account: line(), org: line({ committed: '910000', cap: '2000000', left: '1090000' }) }));
+    expect(html).toContain(en.ads.committed.scopeAccount);
+    expect(html).toContain(en.ads.committed.scopeOrg);
+    expect(html).toContain('1,090,000');
+    expect(html).toContain(en.ads.committed.noMonthlyCap);
+  });
+
+  it('says it is over, not a negative room, when a cap was lowered under what is committed', () => {
+    const html = strip(data({ account: line({ cap: '500000', left: '-200000' }), org: line({ cap: '500000', left: '-200000' }) }));
+    expect(html).toContain(en.ads.committed.over);
+    expect(html).not.toContain(`>${en.ads.committed.left}<`);
+    expect(html).not.toContain('-200');
+    expect(html).toContain('200,000');
+  });
+
+  it('says no cap is set and that launches are refused until one is, in both languages', () => {
+    const none = data({ hasCap: false, account: line({ committed: '0' }), org: line({ committed: '0' }) });
+    const html = strip(none);
+    expect(html).toContain(en.ads.committed.noCap);
+    expect(html).not.toContain(en.ads.committed.cap);
+    const vn = strip(none, true, 'vi');
+    expect(vn).toContain(viMessages.ads.committed.noCap);
+    expect(viMessages.ads.committed.noCap).toContain('Chưa đặt hạn mức');
+    expect(viMessages.ads.committed.title).toBe('Đã cam kết tháng {month}');
+  });
+
+  it('says a cap in another currency blocks launches, in both languages, instead of a missing cap', () => {
+    const html = strip(data({ hasCap: false, capCurrencyMismatch: true }));
+    expect(html).toContain('ads-committed-cap-currency');
+    expect(html).not.toContain(en.ads.committed.noCap);
+    expect(html).toContain('VND');
+    expect(strip(data({ hasCap: false, capCurrencyMismatch: true }), true, 'vi')).toContain('khác với VND');
+  });
+
+  it('is hidden while running ads is off, and for an account whose currency is not read yet', () => {
+    expect(strip(data(), false)).toBe('');
+    expect(strip(data(), true, 'en', account({ currency: null }))).toBe('');
+  });
+});
+
+// #3640 (Engage audit AD-2, AD-3, AD-13, AD-14): the settings are apart from the figures, the empty screen has one primary action, the campaign page says when running ads is
+// off, and the cards of the settings load as shapes and fail with a retry.
+describe('the Ads settings apart from the working screen (#3640)', () => {
+  // The buttons of a rendering that carry the primary fill: a button that is the one action to take.
+  const primaryButtons = (html: string) => [...html.matchAll(/<button\b[^>]*>/g)].map((m) => m[0]).filter((b) => /\bbg-primary\b/.test(b));
+
+  it('shows one primary action on the empty screen when every platform is offered, the others are outline', () => {
+    const html = render(<AdsEmpty canManage sandbox meta={{ slug: 'acme' }} google={{ slug: 'acme' }} entities={one} onConnected={() => undefined} />);
+    expect(html).toContain(en.ads.connectMeta.action);
+    expect(html).toContain(en.ads.connectGoogle.action);
+    expect(html).toContain(`>${en.ads.connect}<`);
+    expect(primaryButtons(html)).toHaveLength(1);
+    // Google alone, or the test form alone, is the one action there.
+    expect(primaryButtons(render(<AdsEmpty canManage sandbox={false} google={{ slug: 'acme' }} entities={one} onConnected={() => undefined} />))).toHaveLength(1);
+    expect(primaryButtons(render(<AdsEmpty canManage sandbox entities={one} onConnected={() => undefined} />))).toHaveLength(1);
+  });
+
+  it('says the cost and results are next to the books and that running ads is turned on in the settings, not that Ludy only reads', () => {
+    expect(en.ads.subtitle).toContain('To run ads from Ludy, turn it on in Ads settings');
+    expect(viMessages.ads.subtitle).toBe('Chi phí và kết quả quảng cáo của bạn, cạnh sổ sách. Muốn chạy quảng cáo từ Ludy, bật ở Cài đặt quảng cáo.');
+    for (const text of [en.ads.subtitle, en.ads.emptyHint, viMessages.ads.subtitle, viMessages.ads.emptyHint]) expect(text).not.toMatch(/chỉ để xem|never creates, edits or pauses|không tạo, sửa hay tắt/);
+  });
+
+  it('draws a one-line status of running ads with a link to the settings, for owners and admins', () => {
+    client.current.setQueryData(['ads', 'writeState'], { writeEnabled: false, launchesBlocked: false, updatedAt: null, caps: [], pending: [], tokenRevokes: [] });
+    const off = render(<AdsRunStatus slug="acme" canManage />);
+    expect(off).toContain('data-testid="ads-run-status"');
+    expect(off).toContain('Running ads: off');
+    expect(off).toContain('href="/o/acme/ads"');
+    expect(off).toContain('>Open settings<');
+    expect(render(<AdsRunStatus slug="acme" canManage />, 'vi')).toContain('Chạy quảng cáo: đang tắt');
+    client.current.setQueryData(['ads', 'writeState'], { writeEnabled: true, launchesBlocked: false, updatedAt: null, caps: [], pending: [], tokenRevokes: [] });
+    expect(render(<AdsRunStatus slug="acme" canManage />)).toContain('Running ads: on');
+    // A member has no such line.
+    expect(render(<AdsRunStatus slug="acme" canManage={false} />)).toBe('');
+  });
+
+  it('tells the owner on the campaign page that running ads is off, and says nothing there once it is on', () => {
+    client.current.setQueryData(['ads', 'writeState'], { writeEnabled: false, launchesBlocked: false, updatedAt: null, caps: [], pending: [], tokenRevokes: [] });
+    const off = render(<AdsRunStatus slug="acme" canManage variant="campaigns" />);
+    expect(off).toContain(en.ads.adsSettings.campaignsOff);
+    expect(render(<AdsRunStatus slug="acme" canManage variant="campaigns" />, 'vi')).toContain(viMessages.ads.adsSettings.campaignsOff);
+    client.current.setQueryData(['ads', 'writeState'], { writeEnabled: true, launchesBlocked: false, updatedAt: null, caps: [], pending: [], tokenRevokes: [] });
+    expect(render(<AdsRunStatus slug="acme" canManage variant="campaigns" />)).toBe('');
+  });
+
+  it('draws the running-ads and threshold cards as skeletons while they load, never nothing', () => {
+    client.current.clear();
+    for (const html of [render(<AdsWriteCard role="owner" accounts={[]} slug="acme" />), render(<AdsFlagSettingsCard />)]) {
+      expect(html).toContain('aria-busy="true"');
+      expect(html).not.toBe('');
+    }
+  });
+
+  it('shows what failed with a retry button, in both languages', () => {
+    const html = render(<AdsCardError message="Mất kết nối" onRetry={() => undefined} />);
+    expect(html).toContain('Mất kết nối');
+    expect(html).toContain('data-testid="ads-card-retry"');
+    expect(html).toContain('>Try again<');
+    expect(render(<AdsCardError message="x" onRetry={() => undefined} />, 'vi')).toContain('>Thử lại<');
+  });
+
+  it('has the same keys of the settings words in both languages', () => {
+    expect(Object.keys(viMessages.ads.adsSettings).sort()).toEqual(Object.keys(en.ads.adsSettings).sort());
+    expect(Object.keys(viMessages.ads.adsSettings.status).sort()).toEqual(['off', 'on']);
+  });
+});

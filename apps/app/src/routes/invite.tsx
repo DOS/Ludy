@@ -2,8 +2,8 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
 import { CardSkeleton, ErrorText, Logo, ScreenTitle } from '../components/ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { signOut } from '../lib/session-actions.ts';
@@ -47,7 +47,7 @@ export function InvitePage() {
       onSuccess: async (org) => {
         forgetInvite();
         await queryClient.invalidateQueries();
-        await navigate({ to: '/o/$slug/inbox', params: { slug: org.slug } });
+        await navigate({ to: '/o/$slug/overview', params: { slug: org.slug } });
       },
     }),
   );

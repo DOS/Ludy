@@ -22,7 +22,8 @@ services:
       context: ${WAL_BUILD_CONTEXT:-tools/wal}
     image: ${WAL_DB_IMAGE:-crove-db:local}
     environment:
-      PGBACKREST_STANZA: crove
+      # Defaults to crove for existing stacks; set WAL_STANZA=ludy (with BACKUP_S3_PREFIX=ludy) during the Phase 3 cutover runbook.
+      PGBACKREST_STANZA: ${WAL_STANZA:-crove}
       PGBACKREST_PG1_PATH: /var/lib/postgresql/data
       PGBACKREST_REPO1_TYPE: s3
       PGBACKREST_REPO1_S3_BUCKET: ${BACKUP_S3_BUCKET:?set BACKUP_S3_BUCKET to the bucket the WAL goes to}

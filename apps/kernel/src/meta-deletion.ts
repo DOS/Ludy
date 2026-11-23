@@ -3,14 +3,14 @@
 // ads plan section 9 #2219, conversations plan CV6 #2305, separate write app #2366). The signed request is checked against each Meta
 // app secret the deployment holds (the read Ads app's, the write app's that runs ads, and the Pages app's, which may be one app or
 // several), and a verified one is fanned out: the Ads accounts the
-// person granted (crove_ads.deletion_request) and the conversations of the connections they granted
-// (crove_kernel.conversation_deletion_request) each get a request under the same confirmation code. The Meta user id and the body
+// person granted (ludy_ads.deletion_request) and the conversations of the connections they granted
+// (ludy_kernel.conversation_deletion_request) each get a request under the same confirmation code. The Meta user id and the body
 // are stored nowhere; each side keeps only the keyed hash its connections carry. The worker erases; the status page Meta shows the
 // person reads both sides by the code.
 import { randomBytes } from 'node:crypto';
 import { sql } from 'kysely';
-import { platformUserHash } from '@crove/ad-platform';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
+import { platformUserHash } from '@ludy/ad-platform';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
 import { verifySignedRequest, type AdsDeletionOutcome } from './ads-deletion.ts';
 
 export interface MetaDeletionApps {
@@ -54,8 +54,8 @@ export async function acceptMetaDeletion(runtime: Runtime, apps: MetaDeletionApp
         const hash = platformUserHash(t.secret, t.userId);
         const { rows } =
           t.side === 'ads'
-            ? await sql<{ code: string }>`SELECT crove_ads.deletion_request_enqueue(${fresh}, ${hash}) AS code`.execute(db)
-            : await sql<{ code: string }>`SELECT crove_kernel.conversation_deletion_enqueue(${fresh}, ${hash}) AS code`.execute(db);
+            ? await sql<{ code: string }>`SELECT ludy_ads.deletion_request_enqueue(${fresh}, ${hash}) AS code`.execute(db)
+            : await sql<{ code: string }>`SELECT ludy_kernel.conversation_deletion_enqueue(${fresh}, ${hash}) AS code`.execute(db);
         if (rows[0]?.code) out.push(rows[0].code);
       }
       return out;
@@ -66,7 +66,7 @@ export async function acceptMetaDeletion(runtime: Runtime, apps: MetaDeletionApp
     // conversations side's request is linked to it, so the status page of either code waits for both sides before it says "done".
     if (second && second !== first) {
       const linked = await runtime.orgless(async (db) => {
-        const { rows } = await sql<{ linked: boolean }>`SELECT crove_kernel.conversation_deletion_link(${second}, ${first}) AS linked`.execute(db);
+        const { rows } = await sql<{ linked: boolean }>`SELECT ludy_kernel.conversation_deletion_link(${second}, ${first}) AS linked`.execute(db);
         return rows[0]?.linked === true;
       });
       // Not linked (the request closed meanwhile, or too many codes hang on it): the answer is not given, Meta asks again, and the next
@@ -94,7 +94,7 @@ export async function metaDeletionStatus(runtime: Runtime, code: string): Promis
   if (!/^[0-9a-f]{32}$/.test(code)) return null;
   return runtime.orgless(async (db) => {
     const kernel = await sql<{ requested_at: Date; completed_at: Date | null; connections: number | null; ads_codes: string[] }>`
-      SELECT requested_at, completed_at, connections, ads_codes FROM crove_kernel.conversation_deletion_status(${code})`.execute(db);
+      SELECT requested_at, completed_at, connections, ads_codes FROM ludy_kernel.conversation_deletion_status(${code})`.execute(db);
     // The Ads side holds the code itself or, when the two sides differ, any of the codes the conversations request is linked to.
     const adsCodes = kernel.rows[0]?.ads_codes ?? [code];
     const adsRows: Array<{ requested_at: Date; completed_at: Date | null; accounts: number | null }> = [];
@@ -102,7 +102,7 @@ export async function metaDeletionStatus(runtime: Runtime, code: string): Promis
     // page must not call that deletion handled.
     for (const adsCode of adsCodes) {
       const found = await sql<{ requested_at: Date; completed_at: Date | null; accounts: number | null }>`
-        SELECT requested_at, completed_at, accounts FROM crove_ads.deletion_request_status(${adsCode})`.execute(db);
+        SELECT requested_at, completed_at, accounts FROM ludy_ads.deletion_request_status(${adsCode})`.execute(db);
       if (found.rows[0]) adsRows.push(found.rows[0]);
     }
     const k = kernel.rows[0];

@@ -17,7 +17,7 @@ async function deviceCopy(page: Page): Promise<{ chunkCount: number; chunks: num
   return page.evaluate(
     () =>
       new Promise<{ chunkCount: number; chunks: number }>((resolve, reject) => {
-        const open = indexedDB.open('crove-meeting-recordings');
+        const open = indexedDB.open('ludy-meeting-recordings');
         open.onerror = () => reject(open.error);
         open.onsuccess = () => {
           const db = open.result;
@@ -47,7 +47,7 @@ test('a recording survives a reload, is recovered from the device and uploaded, 
     await expect(start).toBeDisabled();
     await page.getByRole('checkbox', { name: /Tôi xác nhận đã thông báo/ }).click();
     await expect(start).toBeEnabled();
-    expect(sql(`SELECT 1 FROM crove_meetings.meeting m JOIN crove_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug })).toHaveLength(0);
+    expect(sql(`SELECT 1 FROM ludy_meetings.meeting m JOIN ludy_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug })).toHaveLength(0);
   });
 
   await test.step('record about 15 seconds of real microphone output', async () => {
@@ -55,12 +55,33 @@ test('a recording survives a reload, is recovered from the device and uploaded, 
     await expect(page.getByRole('status').filter({ hasText: 'Đang ghi' })).toBeVisible();
     // One chunk is stored every 5 seconds: three chunks are about 15 seconds.
     await expect.poll(async () => (await deviceCopy(page)).chunkCount, { timeout: 40_000 }).toBeGreaterThanOrEqual(3);
-    const meetings = sql<{ consent_method: string }>(`SELECT m.consent_method FROM crove_meetings.meeting m JOIN crove_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug });
+    const meetings = sql<{ consent_method: string }>(`SELECT m.consent_method FROM ludy_meetings.meeting m JOIN ludy_kernel.tenant t ON t.org_id = m.org_id WHERE t.slug = :'slug'`, { slug });
     expect(meetings).toEqual([{ consent_method: 'told_at_start' }]);
   });
 
-  await test.step('reload mid-recording: the saved part is still on the device', async () => {
+  await test.step('moving to another screen does not stop the recording, and the bar there has a Stop button (#3197)', async () => {
+    const before = (await deviceCopy(page)).chunkCount;
+    // An in-app link (no page load): the recorder screen unmounts, the recording goes on.
+    await page.getByRole('link', { name: 'Quay lại danh sách' }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/meetings$`));
+    const bar = page.getByTestId('recording-chip');
+    await expect(bar).toContainText('Đang ghi');
+    await expect(bar.getByRole('button', { name: 'Dừng' })).toBeVisible();
+    await expect.poll(async () => (await deviceCopy(page)).chunkCount, { timeout: 40_000 }).toBeGreaterThan(before);
+    // The bar leads back to the recorder screen, which shows the same running recording.
+    await bar.getByRole('link').click();
+    await expect(page.getByRole('status').filter({ hasText: 'Đang ghi' })).toBeVisible();
+  });
+
+  await test.step('reload mid-recording: the page asks first, and the saved part is still on the device', async () => {
+    // Closing or reloading would stop the microphone, so the browser is asked to confirm (beforeunload).
+    let asked = false;
+    page.once('dialog', (dialog) => {
+      asked = dialog.type() === 'beforeunload';
+      void dialog.accept();
+    });
     await page.reload();
+    expect(asked).toBe(true);
     await expect(page.getByRole('button', { name: 'Bắt đầu ghi' })).toBeVisible();
     expect((await deviceCopy(page)).chunks).toBeGreaterThanOrEqual(3);
   });
@@ -75,7 +96,7 @@ test('a recording survives a reload, is recovered from the device and uploaded, 
   });
 
   await test.step('the meeting has its audio, stored, and the device copy is gone', async () => {
-    const rows = sql<{ length_seconds: number }>(`SELECT s.length_seconds FROM crove_meetings.audio_segment s JOIN crove_kernel.tenant t ON t.org_id = s.org_id WHERE t.slug = :'slug'`, { slug });
+    const rows = sql<{ length_seconds: number }>(`SELECT s.length_seconds FROM ludy_meetings.audio_segment s JOIN ludy_kernel.tenant t ON t.org_id = s.org_id WHERE t.slug = :'slug'`, { slug });
     expect(rows).toHaveLength(1);
     expect(rows[0]!.length_seconds).toBeGreaterThanOrEqual(10);
     await expect(page.locator('audio')).toBeVisible({ timeout: 30_000 });

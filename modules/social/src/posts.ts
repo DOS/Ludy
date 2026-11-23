@@ -11,9 +11,10 @@
 // - Scheduling needs the variant's latest decision to be an approval of its current revision and hash.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { SOCIAL_IMAGE_TYPES, SOCIAL_QUEUE_SLOTS_MAX, SOCIAL_REVIEW_CHECKS_MAX, SOCIAL_VIDEO_TYPES, zId, zSocialMemberFilter } from '@crove/kernel-contract';
-import type { MemberRole, SocialDecision, SocialVariantStatus } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { SOCIAL_IMAGE_TYPES, SOCIAL_QUEUE_SLOTS_MAX, SOCIAL_REVIEW_CHECKS_MAX, SOCIAL_VIDEO_TYPES, zApprovedCall, zId, zSocialMemberFilter } from '@ludy/kernel-contract';
+import { requireApprover } from '@ludy/kernel';
+import type { MemberRole, SocialDecision, SocialVariantStatus } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { approvalCovers, approvalsInRound, effectiveContent, type BaseContent, type PostMedia } from './domain/approval.ts';
 import { COMMENT_RULES, coverOf, firstCommentOf, isProvider, linkCardThumbOf, threadPartsOf } from './domain/channels.ts';
 import { IMPORT_MEDIA_MAX } from './domain/plan-csv.ts';
@@ -38,6 +39,7 @@ import { assignCommands } from './assign.ts';
 import { assignReminderCommands } from './assign-reminders.ts';
 import { bulkEditCommands, bulkEditQueries } from './bulk-edit.ts';
 import { archiveCommands } from './archive.ts';
+import { mcpSocialQueries } from './mcp.ts';
 import { settingsFileProblem } from './cover-check.ts';
 import { bulkDraftCommands } from './bulk-drafts.ts';
 import { publishingCommands } from './publishing.ts';
@@ -140,7 +142,7 @@ const zChannel = z.strictObject({
 async function resolveMedia(ctx: CommandContext, list: z.infer<typeof zMedia>, kept: ReadonlySet<string> = new Set()): Promise<PostMedia[]> {
   if (list.length === 0) return [];
   const files = await ctx.trx
-    .selectFrom('crove_kernel.file')
+    .selectFrom('ludy_kernel.file')
     .select(['id', 'generation', 'content_type', 'size_bytes', 'source', 'duration_ms', 'image_width', 'image_height'])
     .where('org_id', '=', ctx.orgId)
     .where(
@@ -185,10 +187,10 @@ async function checkCover(ctx: CommandContext, provider: string, settings: Recor
 
 // Replaces a post's media rows with a list, positions from 1.
 export async function writePostMedia(ctx: CommandContext, postId: string, media: readonly PostMedia[]): Promise<void> {
-  await ctx.trx.deleteFrom('crove_social.post_media').where('org_id', '=', ctx.orgId).where('post_id', '=', postId).execute();
+  await ctx.trx.deleteFrom('ludy_social.post_media').where('org_id', '=', ctx.orgId).where('post_id', '=', postId).execute();
   if (media.length === 0) return;
   await ctx.trx
-    .insertInto('crove_social.post_media')
+    .insertInto('ludy_social.post_media')
     .values(media.map((m, i) => ({ org_id: ctx.orgId, post_id: postId, file_id: m.fileId, position: i + 1, alt_text: m.altText })))
     .execute();
 }
@@ -210,7 +212,7 @@ function requireUser(ctx: CommandContext): string {
 // The org's live connections among ids, with their provider; every id must be one.
 async function liveConnections(ctx: CommandContext, ids: readonly string[]): Promise<Map<string, string>> {
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.channel_connection')
+    .selectFrom('ludy_kernel.channel_connection')
     .select(['id', 'provider'])
     .where('org_id', '=', ctx.orgId)
     .where('id', 'in', [...ids])
@@ -260,7 +262,7 @@ export async function insertVariants(ctx: CommandContext, post: PostRow, channel
       media: own,
     };
     const inserted = await ctx.trx
-      .insertInto('crove_social.post_variant')
+      .insertInto('ludy_social.post_variant')
       .values({
         org_id: ctx.orgId,
         post_id: post.id,
@@ -306,21 +308,22 @@ export const zPostCreate = z.strictObject({
   ideaId: zId.optional(),
 });
 
-async function createPost(ctx: CommandContext, input: z.infer<typeof zPostCreate>) {
+// `actorOrigin` is who made the call: the app ('ui', every person's own create) or an MCP grant ('mcp', the one MCP draft command of mcp.ts, which passes origin 'ai').
+export async function createPost(ctx: CommandContext, input: z.infer<typeof zPostCreate>, actorOrigin: 'ui' | 'mcp' = 'ui') {
   const userId = requireUser(ctx);
   distinctConnections(input.channels);
   const media = await resolveMedia(ctx, input.media ?? []);
   const inserted = await ctx.trx
-    .insertInto('crove_social.post')
+    .insertInto('ludy_social.post')
     .values({
       org_id: ctx.orgId,
       body: input.body,
       title: input.title ?? null,
       link_url: input.linkUrl ?? null,
-      // The surface sets actor_origin once API and MCP clients exist; today every write comes from the app.
+      // A person's own create comes from the app; the MCP draft command says 'mcp' (the database refuses an MCP post that is not AI and tainted).
       origin: input.origin ?? 'human',
       tainted: input.origin === 'ai' || input.aiAssisted === true,
-      actor_origin: 'ui',
+      actor_origin: actorOrigin,
       author_user_id: userId,
       ...(input.timeZone ? { time_zone: input.timeZone } : {}),
       scheduled_at: input.scheduledAt ?? null,
@@ -330,7 +333,9 @@ async function createPost(ctx: CommandContext, input: z.infer<typeof zPostCreate
   await writePostMedia(ctx, inserted.id, media);
   const post: PostRow = { ...inserted, media };
   const variants = await insertVariants(ctx, post, input.channels, 0);
-  await ctx.emit('social.post.created', { post_id: post.id });
+  // A draft made over MCP emits no event: the grant's sealed context has no run to stamp one with, the database lets it write no outbox row, and nothing listens for the event yet (the person's own
+  // submit emits its own). The audit row of the command is the trail.
+  if (actorOrigin === 'ui') await ctx.emit('social.post.created', { post_id: post.id });
   return { post, variants, media };
 }
 
@@ -345,9 +350,32 @@ export const postCreate = defineCommand({
     // A draft of an idea kept from the AI's suggestions (#1181) is tainted like any AI help, whatever the client says.
     const ideaOrigin = input.ideaId ? await linkIdeaToPost(ctx, input.ideaId, post.id) : null;
     if (ideaOrigin === 'ai' && input.origin !== 'ai' && input.aiAssisted !== true) {
-      await ctx.trx.updateTable('crove_social.post').set({ tainted: true }).where('org_id', '=', ctx.orgId).where('id', '=', post.id).execute();
+      await ctx.trx.updateTable('ludy_social.post').set({ tainted: true }).where('org_id', '=', ctx.orgId).where('id', '=', post.id).execute();
     }
     ctx.audit({ post_id: post.id, variants: variants.length, media: media.length, origin: input.origin ?? 'human', ...(input.ideaId ? { idea_id: input.ideaId } : {}) });
+    return { postId: post.id, revision: post.revision, variants };
+  },
+});
+
+// The one command an MCP grant may run (#3227, plan section 3.8, owner decision 2026-11-14): a draft post for a person to review, made by an AI app. The input is the person's own create
+// without what only the server may set (the AI mark, the idea, media), so the limits are the same ones: the text 100,000 characters, the title 500, 20 channels, one variant per channel, a live
+// channel of the org. The post is `origin = ai`, `actor_origin = mcp` and tainted whatever the client sends (it cannot send them), lands as a draft exactly where the AI's drafts land, and
+// needs a person to send it to review and approve every channel before it can go out: this command submits, approves, schedules, publishes and deletes nothing. It runs in the grant's
+// sealed write context, where the database lets it insert the draft and its channels and nothing else. The endpoint takes the drafts budget (#386) before it runs, as for a person.
+// A channel of it is the channel and, at most, its own text and title: no media, no settings (the first comment, thread parts, auto-reply and removal time the publisher reads from them) and no link of its own.
+const zMcpDraftChannel = zChannel.pick({ connectionId: true, body: true, title: true });
+export const zMcpDraftCreate = zPostCreate.omit({ origin: true, aiAssisted: true, ideaId: true, media: true, channels: true }).extend({ channels: z.array(zMcpDraftChannel).min(1).max(MAX_CHANNELS_PER_POST) });
+export const mcpDraftCreate = defineCommand({
+  name: 'social.mcp.draft_create',
+  input: zMcpDraftCreate,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ['owner', 'admin'],
+  mcp: { scope: 'ludy.social.draft' },
+  handler: async (ctx, input) => {
+    if (ctx.actor.type !== 'user' || !ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP mới dùng được lệnh này');
+    const { post, variants } = await createPost(ctx, { ...input, origin: 'ai' }, 'mcp');
+    ctx.audit({ post_id: post.id, variants: variants.length, origin: 'ai', actor_origin: 'mcp' });
     return { postId: post.id, revision: post.revision, variants };
   },
 });
@@ -373,7 +401,7 @@ async function importLabels(ctx: CommandContext, names: readonly string[]): Prom
   const ids = new Map<string, string>();
   if (wanted.size === 0) return { ids, created: 0 };
   const found = await ctx.trx
-    .selectFrom('crove_social.label')
+    .selectFrom('ludy_social.label')
     .select(['id', 'name'])
     .where('org_id', '=', ctx.orgId)
     .where(sql<boolean>`lower(name) = ANY(${[...wanted.values()].map((n) => n.toLowerCase())}::text[])`)
@@ -426,7 +454,7 @@ export const postImport = defineCommand({
     );
     const connectionIds = [...new Set(input.posts.flatMap((row) => row.connectionIds))];
     const providers = new Map(
-      (await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['id', 'provider']).where('org_id', '=', ctx.orgId).where('id', 'in', connectionIds).execute()).map((c) => [c.id, c.provider]),
+      (await ctx.trx.selectFrom('ludy_kernel.channel_connection').select(['id', 'provider']).where('org_id', '=', ctx.orgId).where('id', 'in', connectionIds).execute()).map((c) => [c.id, c.provider]),
     );
     const labels = await importLabels(
       ctx,
@@ -561,7 +589,7 @@ async function editPost(ctx: CommandContext, post: PostRow, input: PostEdit): Pr
   if (mediaChanged) await writePostMedia(ctx, post.id, next.media);
   const revision = post.revision + 1;
   await ctx.trx
-    .updateTable('crove_social.post')
+    .updateTable('ludy_social.post')
     .set({ body: next.body, title: next.title, link_url: next.link_url, time_zone: next.time_zone, scheduled_at: next.scheduled_at, revision, updated_at: ctx.now, ...(input.aiAssisted ? { tainted: true } : {}) })
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', post.id)
@@ -658,7 +686,7 @@ export const variantUpdate = defineCommand({
     return withVersion(ctx, postId, async () => {
       const { revision, changed } = await editVariant(ctx, post, v, input);
       if (changed) {
-        if (input.aiAssisted) await ctx.trx.updateTable('crove_social.post').set({ tainted: true, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', postId).execute();
+        if (input.aiAssisted) await ctx.trx.updateTable('ludy_social.post').set({ tainted: true, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', postId).execute();
         await refreshPostStatus(ctx, postId);
       }
       return { variantId: v.id, revision, changed };
@@ -702,7 +730,7 @@ export const postRestoreVersion = defineCommand({
     const post = await lockPost(ctx.trx, ctx.orgId, input.postId);
     if (post.revision !== input.revision) throw new DomainError('STALE_REVISION', 409, 'Bài đăng đã được sửa ở nơi khác, hãy tải lại', { revision: post.revision });
     const version = await ctx.trx
-      .selectFrom('crove_social.post_version')
+      .selectFrom('ludy_social.post_version')
       .select(['id', 'number', 'body', 'title', 'link_url', 'media', 'variants'])
       .where('org_id', '=', ctx.orgId)
       .where('post_id', '=', post.id)
@@ -847,7 +875,7 @@ export const variantDecide = defineCommand({
       chosen.map((v) => v.id),
     );
     // Four-eyes (#740): on these channels the author approves nothing of their own post.
-    const author = (await ctx.trx.selectFrom('crove_social.post').select('author_user_id').where('org_id', '=', ctx.orgId).where('id', '=', post.id).executeTakeFirst())?.author_user_id ?? null;
+    const author = (await ctx.trx.selectFrom('ludy_social.post').select('author_user_id').where('org_id', '=', ctx.orgId).where('id', '=', post.id).executeTakeFirst())?.author_user_id ?? null;
     const foureyes = input.decision === 'approved' && author === userId ? await fourEyesOn(ctx.trx, ctx.orgId, chosen.map((v) => v.channel_connection_id)) : new Set<string>();
     // The client's approval (#770): on its channels, the team's last approval leaves the variant waiting for the client's
     // "Approved" on a review link, unless it was given for this content already.
@@ -876,7 +904,7 @@ export const variantDecide = defineCommand({
       const checklist = input.decision === 'approved' ? tickedChecklist(checks, v, saw.checks) : null;
       const content = effectiveContent(base(post), overrides(v), v.content_frozen, settingsOf(v));
       await ctx.trx
-        .insertInto('crove_social.post_approval')
+        .insertInto('ludy_social.post_approval')
         .values({
           org_id: ctx.orgId,
           post_id: post.id,
@@ -951,7 +979,7 @@ export const variantSchedule = defineCommand({
     const queues = new Map<string, QueueState | null>();
     if (input.queue) {
       const connections = await ctx.trx
-        .selectFrom('crove_social.post_variant')
+        .selectFrom('ludy_social.post_variant')
         .select('channel_connection_id')
         .distinct()
         .where('org_id', '=', ctx.orgId)
@@ -1100,7 +1128,7 @@ export const variantReschedule = defineCommand({
     refuseRemoveAtMisfit(v, at);
     // A variant waiting on a slot of a paused queue stays held by the pause: moving it to an exact time would let it go out.
     if (v.queue_slot_at && !v.scheduled_at && !v.error_retry_at) {
-      const queue = await ctx.trx.selectFrom('crove_social.queue').select('paused').where('org_id', '=', ctx.orgId).where('channel_connection_id', '=', v.channel_connection_id).executeTakeFirst();
+      const queue = await ctx.trx.selectFrom('ludy_social.queue').select('paused').where('org_id', '=', ctx.orgId).where('channel_connection_id', '=', v.channel_connection_id).executeTakeFirst();
       if (queue?.paused) throw new DomainError('QUEUE_PAUSED', 409, 'Hàng đợi của kênh này đang tạm dừng; hãy chạy lại hàng đợi hoặc bỏ lịch trước', { variantId: v.id });
     }
     // The earlier refusal and its retry time belong to the old time.
@@ -1165,13 +1193,13 @@ export const queueSet = defineCommand({
     // A slot kept for a content category names one of the org's labels (#745).
     const labelIds = [...new Set(input.slots.map((s) => s.labelId).filter((id): id is string => typeof id === 'string'))];
     if (labelIds.length > 0) {
-      const found = await ctx.trx.selectFrom('crove_social.label').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', labelIds).execute();
+      const found = await ctx.trx.selectFrom('ludy_social.label').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', labelIds).execute();
       if (found.length !== labelIds.length) throw new DomainError('LABEL_NOT_FOUND', 404, 'Không tìm thấy nhãn này');
     }
     // Create the row if missing (a concurrent first set waits here instead of failing on the unique key), then lock
     // it: schedule commands lock the same row before any variant.
     const missing = await ctx.trx
-      .insertInto('crove_social.queue')
+      .insertInto('ludy_social.queue')
       .values({ org_id: ctx.orgId, channel_connection_id: input.connectionId, time_zone: input.timeZone, paused: input.paused ?? false, low_days: input.lowDays ?? null })
       .onConflict((oc) => oc.columns(['org_id', 'channel_connection_id']).doNothing())
       .returning('id')
@@ -1182,7 +1210,7 @@ export const queueSet = defineCommand({
     if (before && input.lowDays !== undefined) {
       // Under the queue row's lock, which the low check takes too.
       await ctx.trx
-        .updateTable('crove_social.queue')
+        .updateTable('ludy_social.queue')
         .set({ low_days: input.lowDays, low_alerted_at: sql<Date | null>`CASE WHEN low_days IS NOT DISTINCT FROM ${input.lowDays}::int THEN low_alerted_at END` })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', before.id)
@@ -1190,16 +1218,16 @@ export const queueSet = defineCommand({
     }
     if (before) {
       await ctx.trx
-        .updateTable('crove_social.queue')
+        .updateTable('ludy_social.queue')
         .set({ time_zone: input.timeZone, paused: input.paused ?? before.paused, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', before.id)
         .execute();
-      await ctx.trx.deleteFrom('crove_social.queue_slot').where('org_id', '=', ctx.orgId).where('queue_id', '=', before.id).execute();
+      await ctx.trx.deleteFrom('ludy_social.queue_slot').where('org_id', '=', ctx.orgId).where('queue_id', '=', before.id).execute();
     }
     if (input.slots.length > 0) {
       await ctx.trx
-        .insertInto('crove_social.queue_slot')
+        .insertInto('ludy_social.queue_slot')
         .values(input.slots.map((s) => ({ org_id: ctx.orgId, queue_id: queueId, weekday: s.weekday, minute: s.minute, label: s.label ?? null, label_id: s.labelId ?? null })))
         .execute();
     }
@@ -1208,7 +1236,7 @@ export const queueSet = defineCommand({
     // post command locks a post before its variants. No new slot holder appears meanwhile: only schedule assigns
     // slots, and it waits for the queue row this command holds.
     const holderPosts = await ctx.trx
-      .selectFrom('crove_social.post_variant')
+      .selectFrom('ludy_social.post_variant')
       .select('post_id')
       .distinct()
       .where('org_id', '=', ctx.orgId)
@@ -1219,7 +1247,7 @@ export const queueSet = defineCommand({
       .execute();
     if (holderPosts.length > 0) {
       await ctx.trx
-        .selectFrom('crove_social.post')
+        .selectFrom('ludy_social.post')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where(
@@ -1232,7 +1260,7 @@ export const queueSet = defineCommand({
         .execute();
     }
     const holders = await ctx.trx
-      .selectFrom('crove_social.post_variant')
+      .selectFrom('ludy_social.post_variant')
       .select(['id', 'post_id', 'status', 'queue_slot_at'])
       .where('org_id', '=', ctx.orgId)
       .where('channel_connection_id', '=', input.connectionId)
@@ -1408,7 +1436,7 @@ async function viewPosts(ctx: QueryContext, requested: string[], options: { bann
   if (requested.length === 0) return [];
   const scope = await channelScope(ctx);
   const variants = await ctx.trx
-    .selectFrom('crove_social.post_variant')
+    .selectFrom('ludy_social.post_variant')
     .selectAll()
     .where('org_id', '=', ctx.orgId)
     .where('post_id', 'in', requested)
@@ -1418,10 +1446,10 @@ async function viewPosts(ctx: QueryContext, requested: string[], options: { bann
     .execute();
   const postIds = scope === null ? requested : requested.filter((id) => variants.some((v) => v.post_id === id));
   if (postIds.length === 0) return [];
-  const posts = await ctx.trx.selectFrom('crove_social.post').selectAll().where('org_id', '=', ctx.orgId).where('id', 'in', postIds).execute();
+  const posts = await ctx.trx.selectFrom('ludy_social.post').selectAll().where('org_id', '=', ctx.orgId).where('id', 'in', postIds).execute();
   const decisions = variants.length
     ? await ctx.trx
-        .selectFrom('crove_social.post_approval')
+        .selectFrom('ludy_social.post_approval')
         .select(['variant_id', 'decision', 'comment', 'decided_by', 'created_at', 'revision', 'content_hash', 'id'])
         .where('org_id', '=', ctx.orgId)
         .where(
@@ -1445,7 +1473,7 @@ async function viewPosts(ctx: QueryContext, requested: string[], options: { bann
   const pausedQueues = new Set(
     queued.length === 0
       ? []
-      : (await ctx.trx.selectFrom('crove_social.queue').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('channel_connection_id', 'in', queued).where('paused', '=', true).execute()).map(
+      : (await ctx.trx.selectFrom('ludy_social.queue').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('channel_connection_id', 'in', queued).where('paused', '=', true).execute()).map(
           (q) => q.channel_connection_id,
         ),
   );
@@ -1489,8 +1517,8 @@ async function viewPosts(ctx: QueryContext, requested: string[], options: { bann
     }),
   );
   const mediaRows = await ctx.trx
-    .selectFrom('crove_social.post_media as m')
-    .innerJoin('crove_kernel.file as f', (j) => j.onRef('f.org_id', '=', 'm.org_id').onRef('f.id', '=', 'm.file_id'))
+    .selectFrom('ludy_social.post_media as m')
+    .innerJoin('ludy_kernel.file as f', (j) => j.onRef('f.org_id', '=', 'm.org_id').onRef('f.id', '=', 'm.file_id'))
     .select(['m.post_id', 'm.file_id', 'm.alt_text', 'f.generation', 'f.content_type', 'f.size_bytes', 'f.duration_ms', 'f.image_width', 'f.image_height'])
     .where('m.org_id', '=', ctx.orgId)
     .where('m.post_id', 'in', postIds)
@@ -1510,7 +1538,7 @@ async function viewPosts(ctx: QueryContext, requested: string[], options: { bann
   const names = new Map<string, string>(
     pdfIds.size === 0
       ? []
-      : (await ctx.trx.selectFrom('crove_kernel.file').select(['id', 'filename']).where('org_id', '=', ctx.orgId).where('id', 'in', [...pdfIds]).execute()).map((r) => [r.id, r.filename] as const),
+      : (await ctx.trx.selectFrom('ludy_kernel.file').select(['id', 'filename']).where('org_id', '=', ctx.orgId).where('id', 'in', [...pdfIds]).execute()).map((r) => [r.id, r.filename] as const),
   );
   const labels = await labelsOfPosts(ctx.trx, ctx.orgId, postIds);
   const openComments = await openCommentsOf(ctx.trx, ctx.orgId, scope, postIds);
@@ -1689,7 +1717,7 @@ export const postReviewDiff = defineQuery({
       ids.length === 0
         ? []
         : await ctx.trx
-            .selectFrom('crove_social.post_approval')
+            .selectFrom('ludy_social.post_approval')
             .select(['id', 'variant_id', 'decision', 'decided_by', 'created_at', 'revision', 'content_hash', 'snapshot'])
             .where('org_id', '=', ctx.orgId)
             .where('post_id', '=', view.id)
@@ -1709,14 +1737,14 @@ export const postReviewDiff = defineQuery({
       ),
     ];
     const mimes = new Map(
-      fileIds.length === 0 ? [] : (await ctx.trx.selectFrom('crove_kernel.file').select(['id', 'content_type']).where('org_id', '=', ctx.orgId).where('id', 'in', fileIds).execute()).map((f) => [f.id, f.content_type]),
+      fileIds.length === 0 ? [] : (await ctx.trx.selectFrom('ludy_kernel.file').select(['id', 'content_type']).where('org_id', '=', ctx.orgId).where('id', 'in', fileIds).execute()).map((f) => [f.id, f.content_type]),
     );
-    // Names while they are members (crove_kernel.member_profiles answers only members of the org).
+    // Names while they are members (ludy_kernel.member_profiles answers only members of the org).
     const people = [...new Set(decisions.map((d) => d.decided_by))];
     const names = new Map<string, string>();
     if (people.length > 0) {
       const { rows } = await sql<{ user_id: string; email: string; display_name: string | null }>`
-        SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${people}::uuid[])`.execute(ctx.trx);
+        SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${people}::uuid[])`.execute(ctx.trx);
       for (const r of rows) names.set(r.user_id, r.display_name ?? r.email);
     }
     return {
@@ -1745,7 +1773,7 @@ export const postReviewDiff = defineQuery({
 
 // A post's taint (AI-drafted or AI-assisted), for the agent task its submission makes (#799); unknown counts as tainted.
 async function postTainted(ctx: CommandContext, postId: string): Promise<boolean> {
-  const row = await ctx.trx.selectFrom('crove_social.post').select('tainted').where('org_id', '=', ctx.orgId).where('id', '=', postId).executeTakeFirst();
+  const row = await ctx.trx.selectFrom('ludy_social.post').select('tainted').where('org_id', '=', ctx.orgId).where('id', '=', postId).executeTakeFirst();
   return row?.tainted ?? true;
 }
 
@@ -1784,11 +1812,11 @@ export const postPreReview = defineQuery({
     const [view] = await viewPosts(ctx, [input.postId], { duplicates: true });
     if (!view) throw new DomainError('POST_NOT_FOUND', 404, 'Không tìm thấy bài đăng này');
     const waiting = view.variants.filter((v) => v.status === 'in_review');
-    const voices = await ctx.trx.selectFrom('crove_social.brand_voice').select(['channel_connection_id', 'avoid_words']).where('org_id', '=', ctx.orgId).execute();
+    const voices = await ctx.trx.selectFrom('ludy_social.brand_voice').select(['channel_connection_id', 'avoid_words']).where('org_id', '=', ctx.orgId).execute();
     const names = new Map(
       (
         await ctx.trx
-          .selectFrom('crove_kernel.channel_connection')
+          .selectFrom('ludy_kernel.channel_connection')
           .select(['id', 'display_name'])
           .where('org_id', '=', ctx.orgId)
           .where(
@@ -1885,14 +1913,14 @@ export const queueGet = defineQuery({
     // Not the queue of a channel the caller may not use (#1081).
     if (!mayUse(await channelScope(ctx), input.connectionId)) throw channelNotAllowed([input.connectionId]);
     const queue = await ctx.trx
-      .selectFrom('crove_social.queue')
+      .selectFrom('ludy_social.queue')
       .select(['id', 'time_zone', 'paused', 'low_days', 'low_alerted_at'])
       .where('org_id', '=', ctx.orgId)
       .where('channel_connection_id', '=', input.connectionId)
       .executeTakeFirst();
     if (!queue) return { connectionId: input.connectionId, queueId: null, timeZone: null, paused: false, slots: [], nextFree: [], lowDays: null, low: false };
     const slots = await ctx.trx
-      .selectFrom('crove_social.queue_slot')
+      .selectFrom('ludy_social.queue_slot')
       .select(['weekday', 'minute', 'label', 'label_id', 'active'])
       .where('org_id', '=', ctx.orgId)
       .where('queue_id', '=', queue.id)
@@ -1944,15 +1972,15 @@ export const queueOpenSlots = defineQuery({
   handler: async (ctx, input) => {
     if (!mayUse(await channelScope(ctx), input.connectionId)) throw channelNotAllowed([input.connectionId]);
     const queue = await ctx.trx
-      .selectFrom('crove_social.queue')
+      .selectFrom('ludy_social.queue')
       .select(['id', 'time_zone', 'paused'])
       .where('org_id', '=', ctx.orgId)
       .where('channel_connection_id', '=', input.connectionId)
       .executeTakeFirst();
     if (!queue) return { connectionId: input.connectionId, timeZone: null, paused: false, slots: [], capped: false };
     const rows = await ctx.trx
-      .selectFrom('crove_social.queue_slot as s')
-      .leftJoin('crove_social.label as l', (j) => j.onRef('l.org_id', '=', 's.org_id').onRef('l.id', '=', 's.label_id'))
+      .selectFrom('ludy_social.queue_slot as s')
+      .leftJoin('ludy_social.label as l', (j) => j.onRef('l.org_id', '=', 's.org_id').onRef('l.id', '=', 's.label_id'))
       .select(['s.weekday', 's.minute', 's.label_id', 'l.name as label_name'])
       .where('s.org_id', '=', ctx.orgId)
       .where('s.queue_id', '=', queue.id)
@@ -1974,8 +2002,49 @@ export const queueOpenSlots = defineQuery({
   },
 });
 
+// The proposal-only twins of the two Social commands an AI coworker may ask for beyond a draft (epic #3857, E4 #3863; ADR-0051 decision 10): sending variants to review and scheduling them. A grant that
+// holds `ludy.engage.write` calls `social.post.submit_approved` or `social.variant.schedule_approved`; the call never runs, it leaves a pending proposal (tainted) that a person approves in Ludy,
+// and the approval runs the original as the approver, so the channel limits (#1081), the blocked words, the platform's rules and the queue's slots are judged then, on what stands then. The
+// payload is the original's own strict input.
+export const postSubmitApproved = defineCommand({
+  name: 'social.post.submit_approved',
+  input: zApprovedCall(postSubmit.input),
+  risk: 'R2',
+  sideEffect: 'external',
+  access: 'proposal',
+  proposalKind: 'social.post_submit',
+  mcp: { scope: 'ludy.engage.write', mode: 'proposal' },
+  target: (input) => ({ type: 'social.post', id: input.payload.postId }),
+  handler: async (ctx, input) => {
+    requireApprover(ctx);
+    const submitted = await ctx.run<Record<string, unknown>>('social.post.submit', input.payload);
+    ctx.audit({ approved_command: 'social.post.submit' });
+    return submitted;
+  },
+});
+
+export const variantScheduleApproved = defineCommand({
+  name: 'social.variant.schedule_approved',
+  input: zApprovedCall(variantSchedule.input),
+  risk: 'R2',
+  sideEffect: 'internal',
+  access: 'proposal',
+  proposalKind: 'social.variant_schedule',
+  mcp: { scope: 'ludy.engage.write', mode: 'proposal' },
+  target: (input) => ({ type: 'social.post', id: input.payload.postId }),
+  handler: async (ctx, input) => {
+    requireApprover(ctx);
+    const scheduled = await ctx.run<Record<string, unknown>>('social.variant.schedule', input.payload);
+    ctx.audit({ approved_command: 'social.variant.schedule' });
+    return scheduled;
+  },
+});
+
 export const socialCommands = [
+  postSubmitApproved,
+  variantScheduleApproved,
   postCreate,
+  mcpDraftCreate,
   postImport,
   postAddChannels,
   postUpdate,
@@ -2057,16 +2126,16 @@ export const mediaFile = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<{ storageKey: string; generation: string | null; sha256: string; contentType: string; filename: string }> => {
     const file = await ctx.trx
-      .selectFrom('crove_kernel.file as f')
+      .selectFrom('ludy_kernel.file as f')
       .select(['f.storage_key', 'f.generation', 'f.sha256', 'f.content_type', 'f.filename'])
       .where('f.org_id', '=', ctx.orgId)
       .where('f.id', '=', input.fileId)
       .where((eb) =>
         eb.or([
-          eb.exists(eb.selectFrom('crove_social.post_media as m').select('m.id').whereRef('m.org_id', '=', 'f.org_id').whereRef('m.file_id', '=', 'f.id')),
+          eb.exists(eb.selectFrom('ludy_social.post_media as m').select('m.id').whereRef('m.org_id', '=', 'f.org_id').whereRef('m.file_id', '=', 'f.id')),
           eb.exists(
             eb
-              .selectFrom('crove_social.post_variant as v')
+              .selectFrom('ludy_social.post_variant as v')
               .select('v.id')
               .whereRef('v.org_id', '=', 'f.org_id')
               .where(sql<boolean>`v.media @> jsonb_build_array(jsonb_build_object('fileId', ${input.fileId}::text))`),
@@ -2077,7 +2146,7 @@ export const mediaFile = defineQuery({
             eb('f.source', '=', 'social'),
             eb.exists(
             eb
-              .selectFrom('crove_social.post_variant as v')
+              .selectFrom('ludy_social.post_variant as v')
               .select('v.id')
               .whereRef('v.org_id', '=', 'f.org_id')
               .where(sql<boolean>`(lower(v.settings -> 'cover' ->> 'fileId') = lower(${input.fileId}::text) OR lower(v.settings -> 'linkCard' ->> 'thumbFileId') = lower(${input.fileId}::text))`),
@@ -2091,4 +2160,4 @@ export const mediaFile = defineQuery({
   },
 });
 
-export const socialQueries = [postGet, postReviewDiff, postPreReview, postList, queueGet, queueOpenSlots, mediaFile, ...metricsQueries, ...externalPostQueries, ...lateIdQueries, ...libraryQueries, ...mediaTagQueries, ...policyQueries, ...snippetQueries, ...savedViewQueries,...labelQueries, ...ideaQueries, ...feedQueries, ...reportScheduleQueries, ...brandVoiceQueries, ...watermarkQueries, ...reportBrandingQueries, ...chatAlertQueries, ...channelSetQueries, ...calendarNoteQueries, ...calendarFeedQueries, ...bioQueries, ...activityQueries, ...reviewLinkQueries, ...reviewInboxQueries, ...attentionInboxQueries, ...socialTodayQueries, ...clientOverviewQueries, ...reportLinkQueries, ...notificationQueries, ...pushQueries, ...linkPreviewQueries, ...channelOptionQueries, ...accountQueries, ...publishHoldQueries, ...versionQueries, ...teamReportQueries, ...goalQueries, ...periodSummaryQueries, ...bannedWordQueries, ...channelAccessQueries, ...reviewChecklistQueries, ...bulkEditQueries];
+export const socialQueries = [postGet, postReviewDiff, postPreReview, postList, queueGet, queueOpenSlots, mediaFile, ...metricsQueries, ...externalPostQueries, ...lateIdQueries, ...libraryQueries, ...mediaTagQueries, ...policyQueries, ...snippetQueries, ...savedViewQueries,...labelQueries, ...ideaQueries, ...feedQueries, ...reportScheduleQueries, ...brandVoiceQueries, ...watermarkQueries, ...reportBrandingQueries, ...chatAlertQueries, ...channelSetQueries, ...calendarNoteQueries, ...calendarFeedQueries, ...bioQueries, ...activityQueries, ...reviewLinkQueries, ...reviewInboxQueries, ...attentionInboxQueries, ...socialTodayQueries, ...clientOverviewQueries, ...reportLinkQueries, ...notificationQueries, ...pushQueries, ...linkPreviewQueries, ...channelOptionQueries, ...accountQueries, ...publishHoldQueries, ...versionQueries, ...teamReportQueries, ...goalQueries, ...periodSummaryQueries, ...bannedWordQueries, ...channelAccessQueries, ...reviewChecklistQueries, ...bulkEditQueries, ...mcpSocialQueries];

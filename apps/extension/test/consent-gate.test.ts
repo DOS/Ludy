@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Recording cannot start without the consent step: the gate refuses before any device is opened or any meeting created.
 import { describe, expect, it, vi } from 'vitest';
-import { CONSENT_METHODS as CONTRACT_METHODS } from '@crove/kernel-contract';
+import { CONSENT_METHODS as CONTRACT_METHODS, IMPORT_ONLY_CONSENT_METHODS } from '@ludy/kernel-contract';
 import { consentBlocker, CONSENT_METHODS } from '../src/consent.ts';
 import { startCapture, type CaptureDeps } from '../src/capture-run.ts';
 
@@ -21,8 +21,12 @@ describe('consent gate', () => {
     expect(consentBlocker(input)).toBe(expected);
   });
 
-  it('offers exactly the methods the kernel knows', () => {
-    expect([...CONSENT_METHODS]).toEqual([...CONTRACT_METHODS]);
+  it('offers exactly the methods the kernel knows, except the ones only an import may use', () => {
+    // An extension recording is live: the platform's own notice (`platform_notice`, C1 #3173) belongs to an import of a finished recording, so it is excluded on purpose.
+    expect(IMPORT_ONLY_CONSENT_METHODS).toEqual(['platform_notice']);
+    expect([...CONSENT_METHODS]).toEqual(CONTRACT_METHODS.filter((m) => !IMPORT_ONLY_CONSENT_METHODS.includes(m)));
+    expect([...CONSENT_METHODS]).not.toContain('platform_notice');
+    expect(consentBlocker({ ...ok, consentMethod: 'platform_notice' })).toBe('consentMethod');
   });
 
   it('startCapture opens no device, store or meeting without the consent', async () => {

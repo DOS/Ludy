@@ -2,7 +2,7 @@
 // The "Hôm nay cần bạn" item shape (#2383) every line's read returns.
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { TODAY_APPS, TODAY_KINDS, sortTodayItems, todayCurrency, zTodayItem, zTodayItemBase, zTodayItems, zTodayList, type TodayItem } from '../src/today.ts';
+import { TODAY_APPS, TODAY_KINDS, isTodayAnnotation, sortTodayItems, todayCount, todayCoworkerKey, todayCurrency, weeklyShownByDefault, zTodayItem, zTodayItemBase, zTodayCoworkers, zTodayItems, zTodayList, zTodayWeekly, zWeeklyFigures, type TodayItem } from '../src/today.ts';
 
 const item = (over: Record<string, unknown> = {}) => ({
   kind: 'proposal',
@@ -31,9 +31,9 @@ describe('TodayItem', () => {
     expect(typed.amount).toBe('1250000.50');
   });
 
-  it('knows the four kinds and the six apps', () => {
+  it('knows the four kinds and the nine apps', () => {
     expect([...TODAY_KINDS]).toEqual(['proposal', 'flag', 'message', 'deadline']);
-    expect([...TODAY_APPS]).toEqual(['finance', 'crm', 'notes', 'social', 'ads', 'conversations']);
+    expect([...TODAY_APPS]).toEqual(['finance', 'crm', 'notes', 'projects', 'social', 'ads', 'conversations', 'sign', 'hr']);
     for (const kind of TODAY_KINDS) expect(zTodayItem.safeParse(item({ kind })).success, kind).toBe(true);
     for (const app of TODAY_APPS) expect(zTodayItem.safeParse(item({ app })).success, app).toBe(true);
     expect(zTodayItem.safeParse(item({ kind: 'task' })).success).toBe(false);
@@ -150,9 +150,71 @@ describe('sortTodayItems', () => {
     expect(items).toEqual(copy);
   });
 
-  it('is the shape of the list answer, with a count of dropped items', () => {
-    expect(zTodayList.safeParse({ items: [item()], dropped: 0, truncated: 0, failed: 0 }).success).toBe(true);
-    expect(zTodayList.safeParse({ items: [], dropped: -1, truncated: 0, failed: 0 }).success).toBe(false);
+  it('is the shape of the list answer, with the coworkers\' names and a count of dropped items', () => {
+    const coworkers = { gm: 'Vy', finance: 'Ly', sales: 'Dy', marketing: 'Uy' };
+    expect(zTodayList.safeParse({ items: [item()], coworkers, dropped: 0, truncated: 0, failed: 0 }).success).toBe(true);
+    expect(zTodayList.safeParse({ items: [], coworkers, dropped: -1, truncated: 0, failed: 0 }).success).toBe(false);
+    // The names are part of the answer: a list without them, or with an empty or extra one, is refused.
+    expect(zTodayList.safeParse({ items: [], dropped: 0, truncated: 0, failed: 0 }).success).toBe(false);
+    expect(zTodayCoworkers.safeParse({ ...coworkers, finance: '' }).success).toBe(false);
+    expect(zTodayCoworkers.safeParse({ ...coworkers, system: 'Hy' }).success).toBe(false);
+  });
+
+  // Vy plan C1a (#3265): the coworker of an item is the coworker of its app.
+  it('names the coworker of each app: Ly finance, Dy crm and conversations, Uy social and ads, Vy for the rest', () => {
+    expect(todayCoworkerKey('finance')).toBe('finance');
+    expect(todayCoworkerKey('crm')).toBe('sales');
+    expect(todayCoworkerKey('conversations')).toBe('sales');
+    expect(todayCoworkerKey('social')).toBe('marketing');
+    expect(todayCoworkerKey('ads')).toBe('marketing');
+    expect(todayCoworkerKey('notes')).toBe('gm');
+    expect(todayCoworkerKey('projects')).toBe('gm');
+    expect(todayCoworkerKey('sign')).toBe('gm');
+    expect(todayCoworkerKey('hr')).toBe('finance');
+    // Every app has one of the four visible coworkers, never the hidden system one.
+    for (const app of TODAY_APPS) expect(['gm', 'finance', 'sales', 'marketing']).toContain(todayCoworkerKey(app));
   });
 });
 
+
+describe('"Tuần này" (#3257)', () => {
+  it('is shown by itself Monday to Wednesday, by the Vietnam calendar day', () => {
+    // 2026-11-16 is a Monday.
+    const week = ['2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20', '2026-11-21', '2026-11-22'].map(weeklyShownByDefault);
+    expect(week).toEqual([true, true, true, false, false, false, false]);
+    expect(weeklyShownByDefault('not a day')).toBe(false);
+  });
+
+  it('holds the figures to its shape: decimal strings for money, null for a group that cannot be opened, nothing else', () => {
+    const figures = { from: '2026-11-10', to: '2026-11-16', before: '2026-11-09', deals: null, money: { cash: { amount: '1.5', previous: '0' }, receivables: { amount: '0', previous: '0' }, payables: { amount: '0', previous: '0' } }, tasks: { late: 0 } };
+    expect(zWeeklyFigures.safeParse(figures).success).toBe(true);
+    expect(zWeeklyFigures.safeParse({ ...figures, money: { ...figures.money, cash: { amount: 1.5, previous: '0' } } }).success).toBe(false);
+    expect(zWeeklyFigures.safeParse({ ...figures, title: 'x' }).success).toBe(false);
+    expect(zTodayWeekly.safeParse({ figures, writtenBy: 'template', sentences: ['a'], budgetSpent: false, final: true }).success).toBe(true);
+  });
+});
+
+describe('todayCount (#3591)', () => {
+  // What finance.today answers for seven pending invoices of two vendors, each with a warning: the two groups, and the flag over the same seven.
+  const seven = [
+    zTodayItem.parse(item({ id: 'proposals:a', count: 4 })),
+    zTodayItem.parse(item({ id: 'proposals:b', count: 3 })),
+    zTodayItem.parse(item({ id: 'checks-warn:e', kind: 'flag', severity: 'warn', count: 7, annotates: 'proposal', href: '/inbox' })),
+  ];
+
+  it('counts seven things for seven invoices, with or without the flag that annotates them', () => {
+    expect(todayCount(seven)).toBe(7);
+    expect(todayCount(seven.filter((i) => !isTodayAnnotation(i)))).toBe(7);
+    expect(todayCount([])).toBe(0);
+  });
+
+  it('counts an item as what it groups, one when it has no count, and every other flag as its own', () => {
+    expect(todayCount([zTodayItem.parse(item({ id: 'a' })), zTodayItem.parse(item({ id: 'b', count: 4 })), zTodayItem.parse(item({ id: 'f', kind: 'flag', severity: 'warn', count: 2 }))])).toBe(7);
+  });
+
+  it('lets only a flag annotate', () => {
+    expect(zTodayItem.safeParse(item({ kind: 'flag', annotates: 'proposal', severity: 'warn' })).success).toBe(true);
+    expect(zTodayItem.safeParse(item({ kind: 'message', annotates: 'proposal' })).success).toBe(false);
+    expect(zTodayItem.safeParse(item({ kind: 'flag', annotates: 'invoice' })).success).toBe(false);
+  });
+});

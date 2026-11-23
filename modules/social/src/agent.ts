@@ -11,8 +11,8 @@
 // task points at the post (its source ref), whose page answers 404 to a member who may not see it, and the post
 // page's review panel shows the findings themselves to those who may (social.post.pre_review, channel-scoped).
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import { DomainError, type AgentProgram, type CommandContext } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import { DomainError, type AgentProgram, type CommandContext } from '@ludy/kernel-runtime';
 
 export const CONTENT_MANAGER_TEMPLATE = 'social.content_manager';
 // Tasks one run reviews at most; the rest wait for the next run.
@@ -34,7 +34,7 @@ export function preReviewTask(post: { id: string; tainted: boolean }, channels: 
 // The agent task of a post sent for review by any path (#816: evergreen repeats, publishing and policy re-submits as
 // well as a person's submit), read from the post; a post that cannot be read gives none, and its taint defaults to true.
 export async function agentTaskOf(ctx: Pick<CommandContext, 'trx' | 'orgId'>, postId: string, channels: number): Promise<ReturnType<typeof preReviewTask> | undefined> {
-  const post = await ctx.trx.selectFrom('crove_social.post').select(['id', 'tainted']).where('org_id', '=', ctx.orgId).where('id', '=', postId).executeTakeFirst();
+  const post = await ctx.trx.selectFrom('ludy_social.post').select(['id', 'tainted']).where('org_id', '=', ctx.orgId).where('id', '=', postId).executeTakeFirst();
   return post ? preReviewTask({ id: post.id, tainted: post.tainted ?? true }, channels) : undefined;
 }
 

@@ -2,13 +2,13 @@
 // §4.7 "Derived risk", #1563). Runtime.register() refuses a declared risk below the derived one; this test fails when a
 // command of any module declares none.
 import { describe, expect, it } from 'vitest';
-import { kernelCommands } from '@crove/kernel';
-import type { Db } from '@crove/db';
-import { Runtime, deriveRisk, type CommandDef } from '@crove/kernel-runtime';
-import { adsCommands } from '@crove/mod-ads';
-import { crmCommands } from '@crove/mod-crm';
-import { financeCommands } from '@crove/mod-finance';
-import { socialCommands } from '@crove/mod-social';
+import { kernelCommands } from '@ludy/kernel';
+import type { Db } from '@ludy/db';
+import { Runtime, deriveRisk, type CommandDef } from '@ludy/kernel-runtime';
+import { adsCommands } from '@ludy/mod-ads';
+import { crmCommands } from '@ludy/mod-crm';
+import { financeCommands } from '@ludy/mod-finance';
+import { socialCommands } from '@ludy/mod-social';
 import { orgPurgeCommand } from '../src/org-purge.ts';
 import { numberReseedCommand } from '../src/restore-report.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -90,9 +90,11 @@ describe('declared risk and side effects (#1563)', () => {
       'social.edit.begin',
       'social.gate.begin',
       'social.notification.dispatch',
+      'social.notification.dispatch_removal',
       'social.pin.begin',
       'social.playlist.begin',
       'social.publish.begin',
+      'social.publish.fail_late',
       'social.remove.begin',
       'social.report_branding.remove',
       'social.report_branding.save',
@@ -117,6 +119,9 @@ describe('declared risk and side effects (#1563)', () => {
       'finance.depreciation.record',
       'finance.journal.reverse',
       'finance.journal_voucher.record',
+      'finance.marketplace_settlement.record',
+      'finance.marketplace_payout.record',
+      'finance.marketplace_fee_clearing.record',
       'finance.opening_balance.post',
       'finance.payroll_payment.record',
       'finance.payroll_posting.record',
@@ -197,6 +202,14 @@ describe('the risk of the commands of running ads (#2294)', () => {
     }
   });
 
+  it('keeps the boost of a published post (W3, #3834) an R1 internal draft of owners, admins and members with no agent: the launch it leads to is still the R3 proposal command', () => {
+    expect(byName().get('ads.boost.draft')).toMatchObject({ risk: 'R1', sideEffect: 'internal', access: ['owner', 'admin', 'member'] });
+    expect(byName().get('ads.boost.draft')?.agent).toBeUndefined();
+    // The boost has no launch of its own: it writes the same draft and the same proposal command runs it.
+    expect([...byName().keys()].filter((name) => name.startsWith('ads.boost.'))).toEqual(['ads.boost.draft']);
+    expect(byName().get('ads.campaign.launch')).toMatchObject({ risk: 'R3', sideEffect: 'financial', access: 'proposal' });
+  });
+
   it('keeps the issue of a sales e-invoice (#2502) an R3 legal proposal command asked for through an R1 preparer of owners, admins and members, and no agent either', () => {
     expect(byName().get('finance.einvoice.issue')).toMatchObject({ risk: 'R3', sideEffect: 'legal', access: 'proposal' });
     expect(byName().get('finance.einvoice.prepare_issue')).toMatchObject({ risk: 'R1', sideEffect: 'internal', access: ['owner', 'admin', 'member'] });
@@ -214,8 +227,32 @@ describe('the risk of the commands of running ads (#2294)', () => {
     expect(byName().get('ads.launch.cancel')).toMatchObject({ risk: 'R2', sideEffect: 'external', access: ['owner', 'admin'] });
   });
 
+  // Managing a running ad (W4, #3835): what can start or raise spend (a resume, a raise, an extension) is an R3 financial proposal command approved like a launch and asked
+  // for through an R1 preparer; what only reduces or stops spend (a pause, an archive, a lower budget, a shorter schedule) and the cancel of a change never begun are the
+  // owner's or an admin's own R2 external commands; the job's two commands are the system's.
+  const MANAGE_APPROVED = ['ads.object.resume', 'ads.budget.raise', 'ads.schedule.extend'];
+  const MANAGE_PREPARERS = ['ads.object.prepare_resume', 'ads.budget.prepare_raise', 'ads.schedule.prepare_extend'];
+  const MANAGE_REDUCING = ['ads.object.pause', 'ads.object.archive', 'ads.budget.lower', 'ads.schedule.shorten', 'ads.manage.cancel'];
+
+  it('keeps a resume, a raise and an extension of a running ad (W4, #3835) R3 financial proposal commands, never a direct one', () => {
+    for (const name of MANAGE_APPROVED) expect(byName().get(name), name).toMatchObject({ risk: 'R3', sideEffect: 'financial', access: 'proposal' });
+  });
+
+  it('asks for each of them through an R1 internal preparer of owners and admins, which writes nothing', () => {
+    for (const name of MANAGE_PREPARERS) expect(byName().get(name), name).toMatchObject({ risk: 'R1', sideEffect: 'internal', access: ['owner', 'admin'] });
+  });
+
+  it('keeps a pause, an archive, a lower budget, a shorter schedule and the cancel of a change never begun R2 external, owners and admins', () => {
+    for (const name of MANAGE_REDUCING) expect(byName().get(name), name).toMatchObject({ risk: 'R2', sideEffect: 'external', access: ['owner', 'admin'] });
+  });
+
+  it('keeps the manage job’s begin an R2 external command and its record an R1 internal one, both the system’s alone', () => {
+    expect(byName().get('ads.manage.begin')).toMatchObject({ risk: 'R2', sideEffect: 'external', access: 'system' });
+    expect(byName().get('ads.manage.record')).toMatchObject({ risk: 'R1', sideEffect: 'internal', access: 'system' });
+  });
+
   it('lets no agent run any of them', () => {
-    for (const name of [...OPENING, ...PREPARERS, 'ads.write.disable', 'ads.account.disable_write', 'ads.pause_all', 'ads.cap.lower', 'ads.account.link_write', 'ads.account.disconnect', 'ads.account.forget_write', 'ads.launch.cancel']) {
+    for (const name of [...OPENING, ...PREPARERS, 'ads.write.disable', 'ads.account.disable_write', 'ads.pause_all', 'ads.cap.lower', 'ads.account.link_write', 'ads.account.disconnect', 'ads.account.forget_write', 'ads.launch.cancel', ...MANAGE_APPROVED, ...MANAGE_PREPARERS, ...MANAGE_REDUCING, 'ads.manage.begin', 'ads.manage.record']) {
       expect(byName().get(name)?.agent, name).toBeUndefined();
     }
   });

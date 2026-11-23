@@ -16,8 +16,8 @@
 // force is refused (BEFORE_OPENING_BALANCE), and the opening entry takes the org's period_lock row FOR UPDATE, so an
 // import and a posting in flight wait for each other and the second is refused if it breaks the rule.
 import { sql } from 'kysely';
-import { zOpeningBalanceImport, type OpeningBalanceImport } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { zOpeningBalanceImport, type OpeningBalanceImport } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { chartOfAccounts } from './accounts.ts';
 import { OPENING_BALANCE_SOURCE, checkOpeningBalance, type LedgerFacts, type OpeningCheck, type OpeningParty } from './domain/opening-balance.ts';
 import { postNewEntry } from './ledger.ts';
@@ -31,7 +31,7 @@ const POSTERS = ['owner', 'admin'] as const;
 // has its own opening entry).
 async function ledgerFacts(ctx: QueryContext, legalEntityId: string): Promise<LedgerFacts> {
   const opening = await ctx.trx
-    .selectFrom('crove_finance.journal_entry as e')
+    .selectFrom('ludy_finance.journal_entry as e')
     .select(['e.id', 'e.entry_date'])
     .where('e.org_id', '=', ctx.orgId)
     .where('e.legal_entity_id', '=', legalEntityId)
@@ -39,7 +39,7 @@ async function ledgerFacts(ctx: QueryContext, legalEntityId: string): Promise<Le
     .where(({ not, exists, selectFrom }) =>
       not(
         exists(
-          selectFrom('crove_finance.journal_entry as r')
+          selectFrom('ludy_finance.journal_entry as r')
             .select('r.id')
             .whereRef('r.org_id', '=', 'e.org_id')
             .whereRef('r.reverses_entry_id', '=', 'e.id'),
@@ -50,8 +50,8 @@ async function ledgerFacts(ctx: QueryContext, legalEntityId: string): Promise<Le
     .orderBy('e.id')
     .executeTakeFirst();
   const first = await ctx.trx
-    .selectFrom('crove_finance.journal_entry as e')
-    .leftJoin('crove_finance.journal_entry as o', (join) => join.onRef('o.org_id', '=', 'e.org_id').onRef('o.id', '=', 'e.reverses_entry_id'))
+    .selectFrom('ludy_finance.journal_entry as e')
+    .leftJoin('ludy_finance.journal_entry as o', (join) => join.onRef('o.org_id', '=', 'e.org_id').onRef('o.id', '=', 'e.reverses_entry_id'))
     .select((eb) => eb.fn.min('e.entry_date').as('first'))
     .where('e.org_id', '=', ctx.orgId)
     .where('e.legal_entity_id', '=', legalEntityId)

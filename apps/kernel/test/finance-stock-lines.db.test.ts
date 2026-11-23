@@ -8,12 +8,12 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import type { ExtractClient } from '@crove/extract-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -90,8 +90,8 @@ suite('stock from document lines (#2512)', () => {
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty Hàng ${randomUUID().slice(0, 6)}`);
     const [adminUser, member, viewer] = await Promise.all([identity('admin'), identity('member'), identity('viewer')]);
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]));
-    if (options.sellerOf) await admin((c) => c.query('UPDATE crove_kernel.tenant SET tax_code = $2 WHERE org_id = $1', [orgId, SELLER_TAX_CODE]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]));
+    if (options.sellerOf) await admin((c) => c.query('UPDATE ludy_kernel.tenant SET tax_code = $2 WHERE org_id = $1', [orgId, SELLER_TAX_CODE]));
     return { orgId, owner, admin: adminUser, member, viewer };
   }
   const execute = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.execute<T>(name, input, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
@@ -141,7 +141,7 @@ suite('stock from document lines (#2512)', () => {
       { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() },
     );
   }
-  const journal = (entryId: string) => rows<{ account_code: string; debit: string; credit: string }>('SELECT account_code, debit::text, credit::text FROM crove_finance.journal_line WHERE entry_id = $1 ORDER BY line_no', [entryId]);
+  const journal = (entryId: string) => rows<{ account_code: string; debit: string; credit: string }>('SELECT account_code, debit::text, credit::text FROM ludy_finance.journal_line WHERE entry_id = $1 ORDER BY line_no', [entryId]);
 
   beforeAll(async () => {
     extract = inProcessExtract();
@@ -153,16 +153,16 @@ suite('stock from document lines (#2512)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db) =>
       new Runtime(target, { manifests: TEST_MANIFESTS }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -341,8 +341,29 @@ suite('stock from document lines (#2512)', () => {
     // Its line cannot be assigned any more, and the database refuses a move of a line of a voided document whatever writes it.
     await expect(execute(o, 'finance.stock.assign', { documentId: posted.documentId, lineNo: 1, itemId: item })).rejects.toMatchObject({ code: 'STOCK_LINE_VOIDED' });
     await expect(
-      rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES ($1, $2, current_date, 1, 'document_line', $3, 2, 2)", [o.orgId, item, posted.documentId]),
+      rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES ($1, $2, current_date, 1, 'document_line', $3, 2, 2)", [o.orgId, item, posted.documentId]),
     ).rejects.toMatchObject({ code: '23514', message: expect.stringContaining('STOCK_LINE_VOIDED') });
+  });
+
+  it('takes the returns of a sale back too when its document is voided: the return first, then the sale, and nothing is left on hand', async () => {
+    const o = await org({ sellerOf: true });
+    const item = await makeItem(o);
+    await teach(o, item, LINE_TWO);
+    const posted = await post(o, invoice('7031'), '511');
+    const sale = (await moves(o, item)).find((m) => m.source === 'document_line') as Move;
+    expect(sale.quantity).toBe('-2');
+    await execute(o, 'finance.stock_move.return', { moveId: sale.id, quantity: '1' });
+    expect(await onHand(o, item)).toBe('-1');
+    const request = await execute<{ proposalId: string }>(o, 'kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: posted.journalEntryId, entryDate: '2026-10-20', reason: 'Lập nhầm' } }, o.admin);
+    await rt.execute('kernel.proposal.approve', { id: request.proposalId, revision: 1 }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    const list = await moves(o, item);
+    expect(list.filter((m) => m.source === 'sale_return').every((m) => m.reversed)).toBe(true);
+    expect(list.find((m) => m.source === 'document_line')?.reversed).toBe(true);
+    // The void is dated 20 October, before the return was written (today): the undo of the return is never dated before the return itself.
+    const back = list.find((m) => m.source === 'sale_return') as Move;
+    const undo = list.find((m) => m.source === 'reversal' && m.quantity === '-1') as Move;
+    expect(undo.date >= back.date).toBe(true);
+    expect(await onHand(o, item)).toBe('0');
   });
 
   it('writes the reversal of a void on today when its date is in a closed month, never back in it', async () => {
@@ -352,8 +373,8 @@ suite('stock from document lines (#2512)', () => {
     const posted = await post(o, invoice('7016'), '156');
     const month = String((await moves(o, item))[0]?.date).slice(0, 7);
     // The month of the document is closed after the document moved its stock (the rows a close leaves are written by the database owner).
-    const [entity] = await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]);
-    await rows('INSERT INTO crove_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, $3, 0)', [o.orgId, entity?.id, `${month}-01`]);
+    const [entity] = await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]);
+    await rows('INSERT INTO ludy_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, $3, 0)', [o.orgId, entity?.id, `${month}-01`]);
     const request = await execute<{ proposalId: string }>(o, 'kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: posted.journalEntryId, entryDate: `${month}-28`, reason: 'Nhập nhầm' } }, o.admin);
     await rt.execute('kernel.proposal.approve', { id: request.proposalId, revision: 1 }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
     const [today] = await rows<{ today: string }>("SELECT (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::text AS today");
@@ -378,18 +399,18 @@ suite('stock from document lines (#2512)', () => {
     const second = await execute<{ moveId: string }>(o, 'finance.stock.assign', { documentId: posted.documentId, lineNo: 2, itemId: right, teach: false });
     expect(await onHand(o, right)).toBe('2');
     expect((await unassigned(o)).map((l) => l.lineNo)).toEqual([1]);
-    expect((await rows<{ id: string; line_attempt: number | null }>("SELECT id, line_attempt FROM crove_finance.stock_move WHERE org_id = $1 AND source_type = 'document_line' ORDER BY line_attempt", [o.orgId])).map((r) => [r.id, r.line_attempt])).toEqual([
+    expect((await rows<{ id: string; line_attempt: number | null }>("SELECT id, line_attempt FROM ludy_finance.stock_move WHERE org_id = $1 AND source_type = 'document_line' ORDER BY line_attempt", [o.orgId])).map((r) => [r.id, r.line_attempt])).toEqual([
       [first.moveId, 1],
       [second.moveId, 2],
     ]);
     // A third assignment while the second stands is refused; the database also refuses a try that skips the reversal of the one before.
     await expect(execute(o, 'finance.stock.assign', { documentId: posted.documentId, lineNo: 2, itemId: wrong, teach: false })).rejects.toMatchObject({ code: 'STOCK_LINE_ASSIGNED' });
     await expect(
-      rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES ($1, $2, current_date, 1, 'document_line', $3, 2, 3)", [o.orgId, right, posted.documentId]),
+      rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES ($1, $2, current_date, 1, 'document_line', $3, 2, 3)", [o.orgId, right, posted.documentId]),
     ).rejects.toMatchObject({ message: expect.stringContaining('STOCK_LINE_ATTEMPT') });
     // The member made a move; removing them does not touch the append-only row it left.
     await expect(execute(o, 'kernel.member.remove', { userId: o.member })).resolves.toBeDefined();
-    expect((await rows<{ created_by: string | null }>('SELECT created_by FROM crove_finance.stock_move WHERE org_id = $1 AND id = $2', [o.orgId, first.moveId]))[0]?.created_by).toBe(o.member);
+    expect((await rows<{ created_by: string | null }>('SELECT created_by FROM ludy_finance.stock_move WHERE org_id = $1 AND id = $2', [o.orgId, first.moveId]))[0]?.created_by).toBe(o.member);
   });
 
   it('serializes an assignment with the void of its document: a voided document never keeps a move nothing reverses', async () => {
@@ -411,7 +432,7 @@ suite('stock from document lines (#2512)', () => {
     const made = await moves(o, item);
     const month = String(made[0]?.date).slice(0, 7);
     // A manual stock-out of five, later in the month.
-    await rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, -5, 'manual')", [o.orgId, item, `${month}-28`]);
+    await rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, -5, 'manual')", [o.orgId, item, `${month}-28`]);
     const report = (m: string, user = o.owner) => rt.query<Array<Record<string, unknown>>>('finance.stock.report', { month: m }, { actor: asUser(user), orgId: o.orgId });
     // The line's amount (2 packages at 500,000) comes in with its twenty units: 50,000 each, and five leave at that.
     expect(await report(month)).toEqual([
@@ -440,7 +461,7 @@ suite('stock from document lines (#2512)', () => {
   it("keeps one entity's stock apart from another's: an item of the other entity is refused for the line", async () => {
     const o = await org();
     const posted = await post(o, invoice('7012'), '156');
-    const other = (await rows<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, created_by) VALUES ($1, 'Pháp nhân phụ', $2) RETURNING id", [o.orgId, o.owner]))[0]?.id;
+    const other = (await rows<{ id: string }>("INSERT INTO ludy_kernel.legal_entity (org_id, name, created_by) VALUES ($1, 'Pháp nhân phụ', $2) RETURNING id", [o.orgId, o.owner]))[0]?.id;
     const item = await makeItem(o, { legalEntityId: other });
     await expect(execute(o, 'finance.stock.assign', { documentId: posted.documentId, lineNo: 1, itemId: item })).rejects.toMatchObject({ code: 'STOCK_ITEM_ENTITY_MISMATCH' });
   });

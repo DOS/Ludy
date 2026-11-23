@@ -2,14 +2,14 @@
 // entityProblems() is pure: manifest-entities.test.ts feeds it the commands' audit targets and planted mismatches;
 // manifest.db.test.ts adds the catalog: the columns of every table, the tables carrying the append-only trigger, and the
 // numbering calls of every trigger function. Each problem is one line naming what to change.
-import type { ModuleManifest } from '@crove/kernel-contract';
+import type { ModuleManifest } from '@ludy/kernel-contract';
 import { loadConfig } from '../src/config.ts';
 import { moduleDefinitions } from '../src/kernel.ts';
 import { orgPurgeCommand } from '../src/org-purge.ts';
 import { numberReseedCommand } from '../src/restore-report.ts';
 import type { Manifests } from './manifest-permissions.ts';
 
-// A doc type as crove_kernel.number_series' CHECK accepts it, optionally ending in `<column>` (EntityDeclaration).
+// A doc type as ludy_kernel.number_series' CHECK accepts it, optionally ending in `<column>` (EntityDeclaration).
 const DOC_TYPE = /^[a-z][a-z0-9_.]*(<[a-z_][a-z0-9_]*>)?$/;
 const NAME = /^[a-z][a-z0-9_]*$/;
 
@@ -18,7 +18,7 @@ export const NOT_ENTITIES: Readonly<Record<string, string>> = {
   'kernel.user': 'an account: a control-plane row (plan §3.6), which no module source may name',
 };
 
-// A series a trigger function numbers its table's rows in: crove_kernel.number_allocate(..., docType, ..., targetType, ...).
+// A series a trigger function numbers its table's rows in: ludy_kernel.number_allocate(..., docType, ..., targetType, ...).
 export interface NumberingCall {
   table: string;
   by: string;
@@ -59,11 +59,11 @@ export function stripSqlComments(body: string): string {
   return out;
 }
 
-// The arguments of every call of crove_kernel.number_allocate in a function body, split at top-level commas.
+// The arguments of every call of ludy_kernel.number_allocate in a function body, split at top-level commas.
 function allocateCalls(source: string): string[][] {
   const body = stripSqlComments(source);
   const calls: string[][] = [];
-  const marker = 'crove_kernel.number_allocate(';
+  const marker = 'ludy_kernel.number_allocate(';
   for (let at = body.indexOf(marker); at !== -1; at = body.indexOf(marker, at + 1)) {
     const args: string[] = [];
     let depth = 0;
@@ -94,7 +94,7 @@ export function numberingCalls(table: string, by: string, body: string): { calls
     const doc = /^'([a-z0-9_.]+)'(?:\s*\|\|\s*NEW\.([a-z_][a-z0-9_]*))?$/.exec(args[2] ?? '');
     const target = /^'([a-z0-9_.]+)'$/.exec(args[4] ?? '');
     if (!doc || !target || args.length !== 6) {
-      problems.push(`${by} on ${table}: cannot read its call of crove_kernel.number_allocate(${args.join(', ')}); write the doc type as a literal or a literal || NEW.<column>, and the target type as a literal`);
+      problems.push(`${by} on ${table}: cannot read its call of ludy_kernel.number_allocate(${args.join(', ')}); write the doc type as a literal or a literal || NEW.<column>, and the target type as a literal`);
       continue;
     }
     calls.push({ table, by, docType: doc[2] ? `${doc[1]}<${doc[2]}>` : (doc[1] as string), targetType: target[1] as string });
@@ -135,7 +135,8 @@ export function commandTargetTypes(): { uses: TargetUse[]; problems: string[] } 
   return { uses, problems };
 }
 
-const schemaOf = (manifest: ModuleManifest) => `crove_${manifest.id}`;
+const schemaOf = (manifest: ModuleManifest) =>
+  Object.hasOwn(manifest.tables, `ludy_${manifest.id}`) ? `ludy_${manifest.id}` : `crove_${manifest.id}`;
 
 // What does not hold:
 // - an entity whose type is not `<module id>.<entity>`, or that another entity also declares, or whose table another
@@ -177,7 +178,7 @@ export function entityProblems(manifests: Manifests, facts: CatalogFacts | null,
       }
       const appendOnly = facts.appendOnly.has(key);
       if ((e.audit === 'append_only') !== appendOnly) {
-        problems.push(`${file}: entity ${e.type} has audit: ${e.audit}, but ${key} ${appendOnly ? 'is' : 'is not'} append-only (crove_kernel.make_append_only)`);
+        problems.push(`${file}: entity ${e.type} has audit: ${e.audit}, but ${key} ${appendOnly ? 'is' : 'is not'} append-only (ludy_kernel.make_append_only)`);
       }
       if (e.numbering) {
         const column = /<([a-z_][a-z0-9_]*)>$/.exec(e.numbering.docType)?.[1];

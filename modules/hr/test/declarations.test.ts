@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
+import ExcelJS from 'exceljs';
+import { buildDeclarationWorkbook } from '../src/declaration-xlsx.ts';
 import {
   DECLARATION_NOTICE,
   DECLARATION_LAYOUTS,
@@ -8,6 +10,8 @@ import {
   buildD02Lt,
   buildD02LtListing,
   buildQuarterly,
+  buildQuarterlyListing,
+  fallbackTaxCode,
   quarterMonths,
   type DeclarationBreakdown,
   type DeclarationEmployer,
@@ -33,7 +37,7 @@ const person = (id: string, name: string, extra: Partial<DeclarationPerson> = {}
 });
 
 const FUNDS: InsuranceFundKey[] = ['retirement_death', 'sickness_maternity', 'work_accident', 'health', 'unemployment'];
-function breakdown(wage: string, mode: WithholdingMode = 'progressive', suspended: 'not_insured' | 'unpaid_leave' | null = null): DeclarationBreakdown {
+function breakdown(wage: string, mode: WithholdingMode = 'progressive', suspended: DeclarationBreakdown['insurance']['suspended'] = null): DeclarationBreakdown {
   return {
     insurance: { suspended, funds: FUNDS.map((fund) => ({ fund, wage: suspended ? '0' : wage, employee: '0', employer: '0' })) },
     tax: { mode, exemptMealCash: '0', exemptOvertime: '100000', exemptNightWork: '0', personalDeduction: '15500000', dependentDeduction: '0', pensionDeduction: '0', assessableIncome: '4500000' },
@@ -225,6 +229,156 @@ describe('the D02-LT of the month', () => {
     const bare = buildD02Lt({ month: '2026-09', employer, persons: [{ ...newHire, birthDate: null }, raised, same, leaver, probation], lines: current, previousLines: previous });
     expect(bare.sheets[0]?.rows[0]?.note).toContain('Thiếu ngày sinh');
   });
+
+  it('uses layout ludy-hr-d02lt/2 with position, workplace, and contractType between insuranceNumber and effectiveOn (#3437)', () => {
+    expect(DECLARATION_LAYOUTS.d02lt.version).toBe('ludy-hr-d02lt/2');
+    expect(doc.layout.version).toBe('ludy-hr-d02lt/2');
+    const cols = doc.sheets[0]?.columns ?? [];
+    const insIdx = cols.findIndex((c) => c.key === 'insuranceNumber');
+    const effIdx = cols.findIndex((c) => c.key === 'effectiveOn');
+    expect(effIdx).toBe(insIdx + 4);
+    expect(cols.slice(insIdx + 1, effIdx)).toEqual([
+      { key: 'position', header: 'Chức vụ, chức danh nghề', kind: 'text' },
+      { key: 'workplace', header: 'Phòng ban / nơi làm việc', kind: 'text' },
+      { key: 'contractType', header: 'Loại hợp đồng', kind: 'text' },
+    ]);
+    expect(doc.notes[0]).toBe('Nơi đăng ký khám chữa bệnh ban đầu chưa được lưu trong Ludy: nhập tay khi khai.');
+    expect(doc.notes.join(' ')).not.toContain('Chức danh, nơi làm việc, loại hợp đồng');
+    // Unset optional fields default cleanly to ''.
+    expect(rows[0]).toMatchObject({ position: '', workplace: '', contractType: '' });
+  });
+
+  it('resolves contractType by effective date across mid-year amendments, supports all 4 types, and blanks erased/unmatched rows (#3437)', async () => {
+    const hireUnderOne = person('1', 'An', {
+      startedOn: '2026-09-10',
+      position: 'Cộng tác viên',
+      workplace: 'Vận hành',
+      contracts: [
+        { effectiveFrom: '2026-09-10', contractType: 'under_one_month' },
+        { effectiveFrom: '2026-09-25', contractType: 'indefinite' },
+      ],
+    });
+    // Mid-year amendment: started fixed_term, converted to indefinite on 2026-06-01, then changed to none on 2026-09-15 before leaving 2026-09-20.
+    // On adjust (effectiveOn 2026-09-01) -> indefinite; on decrease (effectiveOn 2026-09-20) -> none.
+    const amendedLeaver = person('2', 'Bình', {
+      startedOn: '2025-01-01',
+      endedOn: '2026-09-20',
+      position: 'Trưởng nhóm',
+      workplace: 'Kinh doanh',
+      contracts: [
+        { effectiveFrom: '2025-01-01', contractType: 'fixed_term' },
+        { effectiveFrom: '2026-06-01', contractType: 'indefinite' },
+        { effectiveFrom: '2026-09-15', contractType: 'none' },
+      ],
+    });
+    // Fixed-term with future-only contract amendment not yet active on 2026-09-01 -> '' when effectiveFrom > effectiveOn.
+    const futureOnly = person('3', 'Chi', {
+      startedOn: '2025-01-01',
+      position: '=HYPERLINK("http://example.test","x")',
+      workplace: '+Kinh doanh',
+      contracts: [{ effectiveFrom: '2026-10-01', contractType: 'fixed_term' }],
+    });
+    // Fixed-term active as of 2026-09-01, plus erased/masked person with null/[] fields.
+    const fixedActive = person('4', 'Dũng', {
+      startedOn: '2026-01-01',
+      position: 'Kế toán viên',
+      workplace: null,
+      contracts: [
+        { effectiveFrom: '2026-01-01', contractType: 'fixed_term' },
+        { effectiveFrom: '2026-01-01', contractType: 'indefinite' },
+      ],
+    });
+    const fixedOnly = person('5', 'Em', {
+      startedOn: '2026-01-01',
+      position: 'Nhân viên',
+      workplace: 'Kho',
+      contracts: [{ effectiveFrom: '2026-01-01', contractType: 'fixed_term' }],
+    });
+    const erased = person('6', 'Đã xóa theo yêu cầu', {
+      startedOn: '2020-01-01',
+      position: null,
+      workplace: null,
+      contracts: [],
+    });
+
+    const prevLines = [
+      line('2', '2026-08', '0', { breakdown: breakdown('10000000') }),
+      line('3', '2026-08', '0', { breakdown: breakdown('10000000') }),
+      line('4', '2026-08', '0', { breakdown: breakdown('10000000') }),
+      line('5', '2026-08', '0', { breakdown: breakdown('10000000') }),
+      line('6', '2026-08', '0', { breakdown: breakdown('10000000') }),
+    ];
+    const currLines = [
+      line('1', '2026-09', '0', { breakdown: breakdown('8000000') }),
+      line('2', '2026-09', '0', { breakdown: breakdown('12000000') }),
+      line('3', '2026-09', '0', { breakdown: breakdown('11000000') }),
+      line('4', '2026-09', '0', { breakdown: breakdown('13000000') }),
+      line('5', '2026-09', '0', { breakdown: breakdown('14000000') }),
+      line('6', '2026-09', '0', { breakdown: breakdown('15000000') }),
+    ];
+
+    const res = buildD02Lt({
+      month: '2026-09',
+      employer,
+      persons: [hireUnderOne, amendedLeaver, futureOnly, fixedActive, fixedOnly, erased],
+      lines: currLines,
+      previousLines: prevLines,
+    });
+    const out = res.sheets[0]?.rows ?? [];
+    expect(out.find((r) => r.name === 'An' && r.movement === 'Tăng lao động')).toMatchObject({
+      position: 'Cộng tác viên',
+      workplace: 'Vận hành',
+      contractType: 'Dưới 1 tháng',
+      effectiveOn: '2026-09-10',
+    });
+    expect(out.find((r) => r.name === 'Bình' && r.movement === 'Điều chỉnh mức đóng')).toMatchObject({
+      position: 'Trưởng nhóm',
+      workplace: 'Kinh doanh',
+      contractType: 'Không xác định thời hạn',
+      effectiveOn: '2026-09-01',
+    });
+    expect(out.find((r) => r.name === 'Bình' && r.movement === 'Giảm lao động')).toMatchObject({
+      position: 'Trưởng nhóm',
+      workplace: 'Kinh doanh',
+      contractType: 'Không ký HĐLĐ',
+      effectiveOn: '2026-09-20',
+    });
+    expect(out.find((r) => r.name === 'Chi')).toMatchObject({
+      position: '=HYPERLINK("http://example.test","x")',
+      workplace: '+Kinh doanh',
+      contractType: '',
+    });
+    expect(out.find((r) => r.name === 'Dũng')).toMatchObject({
+      position: 'Kế toán viên',
+      workplace: '',
+      contractType: 'Không xác định thời hạn',
+    });
+    expect(out.find((r) => r.name === 'Em')).toMatchObject({
+      position: 'Nhân viên',
+      workplace: 'Kho',
+      contractType: 'Xác định thời hạn',
+    });
+    expect(out.find((r) => r.name === 'Đã xóa theo yêu cầu')).toMatchObject({
+      position: '',
+      workplace: '',
+      contractType: '',
+    });
+
+    // Verify ExcelJS workbook keeps formula-like position/workplace values as plain string cells.
+    const bytes = await buildDeclarationWorkbook(res, 'Ludy');
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer);
+    const cellValues: string[] = [];
+    wb.worksheets[0]?.eachRow((row) =>
+      row.eachCell((cell) => {
+        expect(cell.formula).toBeUndefined();
+        expect(cell.type).not.toBe(ExcelJS.ValueType.Formula);
+        if (typeof cell.value === 'string') cellValues.push(cell.value);
+      }),
+    );
+    expect(cellValues).toContain('=HYPERLINK("http://example.test","x")');
+    expect(cellValues).toContain('+Kinh doanh');
+  });
 });
 
 describe('corrections and edge cases a reviewer found', () => {
@@ -363,5 +517,168 @@ describe('what the second review found (#2533)', () => {
     const row = doc.sheets[0]?.rows[0];
     expect(doc.sheets[0]?.columns.find((c) => c.key === 'taxable')?.header).toBe('Tổng thu nhập chịu thuế');
     expect(row).toMatchObject({ gross: '25000000.00', taxable: '24900000.00' });
+  });
+});
+
+describe('CodeRabbit follow-ups (#2748)', () => {
+  const flatPay = (employeeId: string, month: string, pit: string): DeclarationLine => ({
+    ...line(employeeId, month, pit),
+    breakdown: breakdown('0', 'flat', 'not_insured'),
+  });
+  const flatAdj = (employeeId: string, month: string, pit: string, adjustsMonth?: string): DeclarationLine => ({
+    ...line(employeeId, month, pit),
+    kind: 'adjustment',
+    gross: '0',
+    employeeInsurance: '0',
+    employerInsurance: '0',
+    unionFee: '0',
+    taxableIncome: '0',
+    breakdown: null,
+    adjustsMonth: adjustsMonth ?? null,
+  });
+
+  it('(item 7) names negative flat-rate refund months on 03/TNCN even when net annual withholding is <= 0', () => {
+    const flatZero = person('1', 'Nguyễn Hoàn Đủ');
+    const flatNegative = person('2', 'Trần Hoàn Vượt');
+    const doc = buildCertificates({
+      year: 2026,
+      employer,
+      persons: [flatZero, flatNegative],
+      lines: [
+        flatPay('1', '2026-03', '500000'),
+        flatAdj('1', '2026-04', '-500000', '2026-03'),
+        flatPay('2', '2026-05', '300000'),
+        flatAdj('2', '2026-06', '-450000', '2026-05'),
+      ],
+    });
+    expect(doc.sheets[0]?.rows).toEqual([]);
+    const notes = doc.notes.join(' ');
+    expect(notes).toContain('Nguyễn Hoàn Đủ: tháng 2026-04 có điều chỉnh hoàn thuế 500000.00');
+    expect(notes).toContain('Trần Hoàn Vượt: tháng 2026-06 có điều chỉnh hoàn thuế 450000.00');
+  });
+
+  it('(item 8) adds missing approved-month warnings on D02-LT and 03/TNCN matching 05/KK and 05/QTT', () => {
+    const d02Missing = buildD02Lt({
+      month: '2026-08',
+      employer,
+      persons: [person('1', 'An')],
+      lines: [],
+      previousLines: null,
+      approvedMonths: ['2026-07'],
+    });
+    expect(d02Missing.notes[0]).toBe('Chưa có bảng lương đã duyệt của tháng 2026-08: số liệu của tháng chưa có.');
+
+    const d02Present = buildD02Lt({
+      month: '2026-08',
+      employer,
+      persons: [person('1', 'An')],
+      lines: [],
+      previousLines: ['2026-07'].length ? [] : null,
+      approvedMonths: ['2026-07', '2026-08'],
+    });
+    expect(d02Present.notes[0]).toBe('Nơi đăng ký khám chữa bệnh ban đầu chưa được lưu trong Ludy: nhập tay khi khai.');
+
+    const certMissing = buildCertificates({
+      year: 2026,
+      employer,
+      persons: [person('1', 'An')],
+      lines: [line('1', '2026-01', '100000')],
+      approvedMonths: ['2026-01', '2026-02'],
+    });
+    expect(certMissing.notes[0]).toContain('Chưa có bảng lương đã duyệt của tháng 2026-03, 2026-04');
+    expect(certMissing.notes[0]).toContain('2026-12: số liệu của năm chưa đủ.');
+  });
+
+  it('(item 10) builds quarterly, annual, certificate, and D02-LT declarations linearly at 5,000 staff / 60,000 lines', () => {
+    const count = 5000;
+    const months = Array.from({ length: 12 }, (_, i) => `2026-${String(i + 1).padStart(2, '0')}`);
+    const persons = Array.from({ length: count }, (_, i) =>
+      person(`e-${i}`, `Nhân viên ${String(i).padStart(4, '0')}`, { finalizationAuthorizedYears: i % 2 === 0 ? [2026] : [] }),
+    );
+    const lines: DeclarationLine[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const id = `e-${i}`;
+      const mode: WithholdingMode = i % 5 === 0 ? 'flat' : 'progressive';
+      for (const m of months) {
+        lines.push(line(id, m, '100000', { breakdown: breakdown('10000000', mode, mode === 'flat' ? 'not_insured' : null) }));
+      }
+    }
+    const start = performance.now();
+    const quarterly = buildQuarterly({ quarter: '2026-Q3', employer, persons, lines, approvedMonths: ['2026-07', '2026-08', '2026-09'] });
+    const annual = buildAnnual({ year: 2026, employer, persons, lines, approvedMonths: months });
+    const certs = buildCertificates({ year: 2026, employer, persons, lines, approvedMonths: months });
+    const d02 = buildD02Lt({ month: '2026-08', employer, persons, lines: lines.slice(0, count), previousLines: lines.slice(count, count * 2), approvedMonths: ['2026-07', '2026-08'] });
+    const elapsedMs = performance.now() - start;
+
+    expect(quarterly.sheets[1]?.rows).toHaveLength(4000);
+    expect(quarterly.sheets[2]?.rows).toHaveLength(1000);
+    expect(annual.sheets[1]?.rows).toHaveLength(2000);
+    expect(certs.sheets[0]?.rows).toHaveLength(2000 + 1000 * 12);
+    expect(d02.kind).toBe('d02lt');
+    expect(elapsedMs).toBeLessThan(15000);
+  });
+
+  it('(item 11) validates and normalizes nationalId fallback shapes as 10, 10-3, 13, or 12 digits and rejects passports/malformed values', () => {
+    expect(fallbackTaxCode('0123456789')).toBe('0123456789');
+    expect(fallbackTaxCode('0123456789-001')).toBe('0123456789-001');
+    expect(fallbackTaxCode('0123456789001')).toBe('0123456789-001');
+    expect(fallbackTaxCode('079 111 222 333')).toBe('079111222333');
+    expect(fallbackTaxCode('079.111.222.333')).toBe('079111222333');
+    expect(fallbackTaxCode('B1234567')).toBeNull();
+    expect(fallbackTaxCode('123456789')).toBeNull();
+    expect(fallbackTaxCode('079-111-222-333')).toBeNull();
+    expect(fallbackTaxCode(null)).toBeNull();
+  });
+
+  it('surfaces sickness/maternity BHXH suspension notes in D02-LT and 20% non-resident PIT in 05/KK-TNCN and 03/TNCN', () => {
+    const an = person('1', 'An');
+    const binh = person('2', 'Bình');
+    const guest = person('3', 'Guest', { taxCode: null, identityNumber: 'P9000001', insuranceNumber: null });
+    const d02 = buildD02Lt({
+      month: '2026-09',
+      employer,
+      persons: [an, binh],
+      lines: [
+        line('1', '2026-09', '0', { breakdown: breakdown('0', 'progressive', 'sickness_leave') }),
+        line('2', '2026-09', '0', { breakdown: breakdown('0', 'progressive', 'maternity_leave') }),
+      ],
+      previousLines: [
+        line('1', '2026-08', '0', { breakdown: breakdown('10000000') }),
+        line('2', '2026-08', '0', { breakdown: breakdown('10000000') }),
+      ],
+    });
+    const d02Notes = d02.notes.join(' ');
+    expect(d02Notes).toContain('2 người tạm dừng đóng bảo hiểm trong tháng');
+    expect(d02Notes).toContain('tổng ngày nghỉ không lương/hưởng BHXH từ 14 ngày làm việc (gồm nghỉ ốm đau hưởng BHXH)');
+    expect(d02Notes).toContain('tổng ngày nghỉ không lương/hưởng BHXH từ 14 ngày làm việc (gồm nghỉ thai sản hưởng BHXH)');
+
+    const nonResLine = line('3', '2026-09', '6000000', {
+      gross: '30000000',
+      taxableIncome: '30000000',
+      breakdown: breakdown('0', 'non_resident_flat', 'not_insured'),
+    });
+    const { document: kk, printed } = buildQuarterlyListing({
+      quarter: '2026-Q3',
+      employer,
+      persons: [guest],
+      lines: [nonResLine],
+      approvedMonths: ['2026-09'],
+    });
+    expect(printed.has('3')).toBe(true);
+    expect(kk.sheets[0]?.rows.find((r) => r.item === 'Trong đó: khấu trừ 10%')?.value).toBe('0');
+    expect(kk.sheets[0]?.rows.find((r) => r.item === 'Trong đó: khấu trừ 20% (không cư trú)')?.value).toBe('1');
+    expect(kk.sheets[2]?.rows).toEqual([]);
+    expect(kk.sheets[3]?.name).toBe('Khấu trừ 20% (không cư trú)');
+    expect(kk.sheets[3]?.rows[0]?.note).toContain('Không cư trú (20%)');
+    expect(kk.notes.join(' ')).toContain('cá nhân không cư trú khấu trừ 20%');
+
+    const certs = buildCertificates({
+      year: 2026,
+      employer,
+      persons: [guest],
+      lines: [nonResLine],
+      approvedMonths: ['2026-09'],
+    });
+    expect(certs.sheets[0]?.rows[0]?.note).toContain('Khấu trừ 20% (cá nhân không cư trú)');
   });
 });

@@ -10,9 +10,9 @@
 // token, list devices or revoke one.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { EXTENSION_SCOPE_IDS, zExtensionAuthorize, zExtensionTokenRevoke, zId, type ExtensionOrgTokenView, type ExtensionTokenView } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@crove/kernel-runtime';
+import { EXTENSION_SCOPE_IDS, zExtensionAuthorize, zExtensionTokenRevoke, zId, type ExtensionOrgTokenView, type ExtensionTokenView } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 // A viewer holds no feature's permission, so none may connect a device.
@@ -66,7 +66,7 @@ export const extensionCodeIssue = defineCommand({
       throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để kết nối tiện ích Ludy');
     }
     const { rows } = await sql<{ id: string }>`
-      SELECT crove_kernel.issue_extension_auth_code(
+      SELECT ludy_kernel.issue_extension_auth_code(
         decode(${input.codeHash}, 'hex'), ${input.codeChallenge}, 'S256', ${input.scopes}::text[], ${input.deviceName}, ${input.extensionId}::text) AS id`
       .execute(ctx.trx)
       .catch(extensionError);
@@ -104,7 +104,7 @@ export const extensionTokenRevoke = defineCommand({
   access: ALL,
   handler: async (ctx, input) => {
     requireUser(ctx);
-    const { rows } = await sql<{ revoked: boolean }>`SELECT crove_kernel.revoke_extension_token(${input.tokenId}::uuid) AS revoked`.execute(ctx.trx);
+    const { rows } = await sql<{ revoked: boolean }>`SELECT ludy_kernel.revoke_extension_token(${input.tokenId}::uuid) AS revoked`.execute(ctx.trx);
     // One answer for an unknown id, another member's device and one already revoked.
     if (rows[0]?.revoked !== true) throw new DomainError('EXTENSION_TOKEN_NOT_FOUND', 404, 'Không tìm thấy thiết bị này, hoặc đã được ngắt kết nối');
     ctx.audit({ tokenId: input.tokenId });
@@ -123,7 +123,7 @@ export const extensionTokenRevokeMember = defineCommand({
   access: DEVICE_ADMINS,
   handler: async (ctx, input) => {
     requireUser(ctx);
-    const { rows } = await sql<{ user_id: string | null }>`SELECT crove_kernel.revoke_extension_token_as_admin(${input.tokenId}::uuid) AS user_id`
+    const { rows } = await sql<{ user_id: string | null }>`SELECT ludy_kernel.revoke_extension_token_as_admin(${input.tokenId}::uuid) AS user_id`
       .execute(ctx.trx)
       .catch(extensionError);
     const userId = rows[0]?.user_id;
@@ -148,7 +148,7 @@ export const extensionTokenListOrg = defineQuery({
       expires_at: Date;
       last_used_at: Date | null;
       revoked_at: Date | null;
-    }>`SELECT id, user_id, device_name, scopes, created_at, expires_at, last_used_at, revoked_at FROM crove_kernel.list_extension_tokens_for_org()`
+    }>`SELECT id, user_id, device_name, scopes, created_at, expires_at, last_used_at, revoked_at FROM ludy_kernel.list_extension_tokens_for_org()`
       .execute(ctx.trx)
       .catch(extensionError);
     return rows.map((r) => ({
@@ -178,7 +178,7 @@ export const extensionTokenList = defineQuery({
       expires_at: Date;
       last_used_at: Date | null;
       revoked_at: Date | null;
-    }>`SELECT id, device_name, scopes, created_at, expires_at, last_used_at, revoked_at FROM crove_kernel.list_extension_tokens()`.execute(ctx.trx);
+    }>`SELECT id, device_name, scopes, created_at, expires_at, last_used_at, revoked_at FROM ludy_kernel.list_extension_tokens()`.execute(ctx.trx);
     return rows.map((r) => ({
       id: r.id,
       deviceName: r.device_name,

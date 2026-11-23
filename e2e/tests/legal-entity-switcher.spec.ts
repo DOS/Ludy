@@ -17,14 +17,16 @@ test('the finance screens follow the legal entity chosen in the sidebar', async 
   const switcher = page.getByRole('complementary').getByLabel('Pháp nhân', { exact: true });
 
   await test.step('with one legal entity there is nothing to choose', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Sổ sách' }).click();
+    await page.getByRole('tab', { name: 'Kết thúc kỳ' }).click();
     await expect(page.getByText('Chưa khóa sổ tháng nào.', { exact: false })).toBeVisible();
     await expect(switcher).toHaveCount(0);
   });
 
   await test.step('a second entity added in Settings shows the switcher at once', async () => {
     await nav.getByRole('link', { name: 'Cài đặt' }).click();
+    await page.getByRole('button', { name: 'Thêm pháp nhân' }).click();
     const add = page.getByRole('form', { name: 'Thêm pháp nhân' });
     await add.getByLabel('Tên pháp nhân').fill(BRANCH);
     await add.getByRole('button', { name: 'Thêm', exact: true }).click();
@@ -37,15 +39,16 @@ test('the finance screens follow the legal entity chosen in the sidebar', async 
   });
 
   await test.step('the Inbox is not kept per entity, so the switcher is not shown there', async () => {
-    await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await nav.getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
     await expect(switcher).toHaveCount(0);
   });
 
   await test.step('September locked in the second entity', async () => {
-    await nav.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await nav.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await nav.getByRole('link', { name: 'Sổ sách' }).click();
+    await page.getByRole('tab', { name: 'Kết thúc kỳ' }).click();
     await switcher.selectOption({ label: BRANCH });
     await expect(page.getByText('Chưa khóa sổ tháng nào.', { exact: false })).toBeVisible();
     await page.getByLabel('Tháng khóa sổ').fill('2026-09');
@@ -70,9 +73,9 @@ test('the finance screens follow the legal entity chosen in the sidebar', async 
   await test.step('the lock was recorded for the second entity', async () => {
     const rows = sql<{ month: string; entity: string }>(
       `SELECT a.detail->>'month' AS month, e.name AS entity
-       FROM crove_kernel.audit_event a
-       JOIN crove_kernel.tenant t ON t.org_id = a.org_id
-       JOIN crove_kernel.legal_entity e ON e.org_id = a.org_id AND e.id::text = a.detail->>'legalEntityId'
+       FROM ludy_kernel.audit_event a
+       JOIN ludy_kernel.tenant t ON t.org_id = a.org_id
+       JOIN ludy_kernel.legal_entity e ON e.org_id = a.org_id AND e.id::text = a.detail->>'legalEntityId'
        WHERE t.slug = :'slug' AND a.command = 'finance.period.lock' AND a.outcome = 'ok'`,
       { slug },
     );

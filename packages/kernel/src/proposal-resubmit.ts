@@ -7,8 +7,8 @@
 //   being read again; the approval checks the invoice again when it posts it.
 // An agent's proposal is not asked for again here: its causal chain belongs to the agent's run.
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { PROPOSAL_CO_AUTHOR_COMMANDS, actorRef, addAuthor, eligibleApprovers, parseAuthors } from './approval.ts';
 import { legalEntityMoveRefused, refuseWhileReextracting } from './extraction.ts';
 
@@ -30,6 +30,12 @@ export const PROPOSAL_PREPARERS = {
   'finance.payroll_posting.record': 'hr.payroll.posting.prepare',
   // The payment of a pay run's net pay or one of its remittances (#2532), built from the frozen run by the HR module's own command: an owner or an admin asks, an owner or an admin approves.
   'finance.payroll_payment.record': 'hr.payroll.payment.prepare',
+  // The posting of a stored marketplace settlement (#2516), built from its lines by finance's own command: a member asks, an owner or an admin approves.
+  'finance.marketplace_settlement.record': 'finance.marketplace_settlement.prepare',
+  // The posting of a platform's payout (#2516), built from the settlement's lines by finance's own command: a member asks, an owner or an admin approves.
+  'finance.marketplace_payout.record': 'finance.marketplace_payout.prepare',
+  // The clearing of the waiting fees by the platform's invoice (#2516), built by finance's own command: a member asks, an owner or an admin approves.
+  'finance.marketplace_fee_clearing.record': 'finance.marketplace_fee_clearing.prepare',
   // What opens the way to spend on an ad platform (ADR-0043 point 1, #2294): the org switch, an account's flag, a cap set or
   // raised, and launches opened again after a block. Owners and admins ask, owners and admins approve.
   'ads.write.enable': 'ads.write.prepare_enable',
@@ -38,8 +44,16 @@ export const PROPOSAL_PREPARERS = {
   'ads.launches.unblock': 'ads.launches.prepare_unblock',
   // A drafted campaign submitted for approval (ADR-0043, #2295, W1): the owner or an admin asks, an owner or an admin approves.
   'ads.campaign.launch': 'ads.campaign.prepare_launch',
+  // What can start or raise spend on a running ad (ADR-0043, #3835, W4): an owner or an admin asks, an owner or an admin approves.
+  'ads.object.resume': 'ads.object.prepare_resume',
+  'ads.budget.raise': 'ads.budget.prepare_raise',
+  'ads.schedule.extend': 'ads.schedule.prepare_extend',
   // A sales e-invoice draft asked to be issued (ADR-0044 point 3, #2502): a member asks, an owner or an admin approves.
   'finance.einvoice.issue': 'finance.einvoice.prepare_issue',
+  // A payment to a supplier approved in Ludy (#3113 S2), built from the invoice and the supplier's active account by finance's own command: an owner or an admin asks, an owner or an admin approves.
+  'finance.supplier_payment.record': 'finance.supplier_payment.prepare',
+  // The settlement of an approved supplier payment by its bank line (#3700 S3c), built from the payment and the line by finance's own command: an owner or an admin asks, an approver of postings approves.
+  'finance.supplier_payment.settle.record': 'finance.supplier_payment.settle.prepare',
 } as const;
 export type RequestableCommand = keyof typeof PROPOSAL_PREPARERS;
 export const REQUESTABLE = Object.keys(PROPOSAL_PREPARERS) as [RequestableCommand, ...RequestableCommand[]];
@@ -128,12 +142,12 @@ export const resubmitProposal = defineCommand({
     // Locked, so two requests to ask for it again serialize and the second finds the first's proposal.
     // A proposal read from a file: the file row first, as kernel.file.reextract locks it before the file's proposal, so
     // asking again and reading again in another entity (#1764) serialize instead of one waiting on the other's reading.
-    const fileOf = await ctx.trx.selectFrom('crove_kernel.proposal').select('source_file_id').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
+    const fileOf = await ctx.trx.selectFrom('ludy_kernel.proposal').select('source_file_id').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
     if (fileOf?.source_file_id) {
-      await ctx.trx.selectFrom('crove_kernel.file').select('id').where('org_id', '=', ctx.orgId).where('id', '=', fileOf.source_file_id).forUpdate().execute();
+      await ctx.trx.selectFrom('ludy_kernel.file').select('id').where('org_id', '=', ctx.orgId).where('id', '=', fileOf.source_file_id).forUpdate().execute();
     }
     const old = await ctx.trx
-      .selectFrom('crove_kernel.proposal')
+      .selectFrom('ludy_kernel.proposal')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
@@ -142,7 +156,7 @@ export const resubmitProposal = defineCommand({
     if (!old) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy đề xuất');
     if (old.status !== 'expired') throw new DomainError('PROPOSAL_NOT_EXPIRED', 409, 'Chỉ gửi lại được đề xuất đã hết hạn');
     const again = await ctx.trx
-      .selectFrom('crove_kernel.proposal')
+      .selectFrom('ludy_kernel.proposal')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('resubmitted_from', '=', old.id)
@@ -191,7 +205,7 @@ export const resubmitProposal = defineCommand({
     } else {
       // Only the file's newest proposal is asked for again, as kernel.file.reextract acts on it alone.
       const newest = await ctx.trx
-        .selectFrom('crove_kernel.proposal')
+        .selectFrom('ludy_kernel.proposal')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('source_file_id', '=', old.source_file_id)
@@ -225,7 +239,7 @@ export const resubmitProposal = defineCommand({
       };
     }
     const created = await ctx.trx
-      .insertInto('crove_kernel.proposal')
+      .insertInto('ludy_kernel.proposal')
       .values({
         org_id: ctx.orgId,
         ...content,

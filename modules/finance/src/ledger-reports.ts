@@ -6,9 +6,9 @@
 // Every posted entry counts, reversals included; the opening balance is every entry dated before the period.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { zAccountCode, zId, zLedgerPeriod } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { zAccountCode, zId, zLedgerPeriod } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { mergeChart, type OrgAccountRow, type Tt133AccountRow } from './accounts.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import {
@@ -85,17 +85,17 @@ async function loadLedgerData(ctx: QueryContext, periodText: string, legalEntity
   const period = ledgerPeriod(periodText);
   // The org's whole chart (#319): the TT133 accounts and the org's sub-accounts, inactive ones included (posted lines
   // may name them). A sub-account's parent is its parent_code, so it rolls up into its parent like a TT133 account.
-  const tt133 = ctx.trx.selectFrom('crove_finance.account').select(['code', 'name', 'parent_code']);
-  const own = ctx.trx.selectFrom('crove_finance.org_account').select(['code', 'name', 'parent_code', 'root_code', 'active']).where('org_id', '=', ctx.orgId);
+  const tt133 = ctx.trx.selectFrom('ludy_finance.account').select(['code', 'name', 'parent_code']);
+  const own = ctx.trx.selectFrom('ludy_finance.org_account').select(['code', 'name', 'parent_code', 'root_code', 'active']).where('org_id', '=', ctx.orgId);
 
   // A line of a party marked as a duplicate (#887) counts under the party kept.
   const kept = sql<string | null>`COALESCE(dp.duplicate_of, l.party_id)`;
 
   // The opening balance: the debits and credits of every entry dated before the period, per account and party.
   const opening = ctx.trx
-    .selectFrom('crove_finance.journal_line as l')
-    .innerJoin('crove_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
-    .leftJoin('crove_kernel.party as dp', (join) => join.onRef('dp.org_id', '=', 'l.org_id').onRef('dp.id', '=', 'l.party_id'))
+    .selectFrom('ludy_finance.journal_line as l')
+    .innerJoin('ludy_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
+    .leftJoin('ludy_kernel.party as dp', (join) => join.onRef('dp.org_id', '=', 'l.org_id').onRef('dp.id', '=', 'l.party_id'))
     .select('l.account_code')
     .select(kept.as('party_id'))
     .select((eb) => [eb.fn.sum<string>('l.debit').as('debit'), eb.fn.sum<string>('l.credit').as('credit')])
@@ -107,12 +107,12 @@ async function loadLedgerData(ctx: QueryContext, periodText: string, legalEntity
   // The period's lines in posting order; the purchase invoice an entry records gives its reference. The aggregate
   // below orders them again, which is what guarantees the order; sorting here first keeps that second sort cheap.
   const lines = ctx.trx
-    .selectFrom('crove_finance.journal_entry as j')
-    .innerJoin('crove_finance.journal_line as l', (join) => join.onRef('l.org_id', '=', 'j.org_id').onRef('l.entry_id', '=', 'j.id'))
-    .leftJoin('crove_finance.purchase_document as d', (join) =>
+    .selectFrom('ludy_finance.journal_entry as j')
+    .innerJoin('ludy_finance.journal_line as l', (join) => join.onRef('l.org_id', '=', 'j.org_id').onRef('l.entry_id', '=', 'j.id'))
+    .leftJoin('ludy_finance.purchase_document as d', (join) =>
       join.onRef('d.org_id', '=', 'j.org_id').onRef('d.id', '=', 'j.source_id').on('j.source_type', '=', 'finance.purchase_document'),
     )
-    .leftJoin('crove_kernel.party as dp', (join) => join.onRef('dp.org_id', '=', 'l.org_id').onRef('dp.id', '=', 'l.party_id'))
+    .leftJoin('ludy_kernel.party as dp', (join) => join.onRef('dp.org_id', '=', 'l.org_id').onRef('dp.id', '=', 'l.party_id'))
     .select(kept.as('party_id'))
     .select([
       'j.id',
@@ -139,7 +139,7 @@ async function loadLedgerData(ctx: QueryContext, periodText: string, legalEntity
 
   // The parties the opening balance and the lines name.
   const parties = ctx.trx
-    .selectFrom('crove_kernel.party')
+    .selectFrom('ludy_kernel.party')
     .select(['id', 'name', 'tax_code'])
     .where('org_id', '=', ctx.orgId)
     .where('id', 'in', sql<string>`(SELECT party_id FROM opening WHERE party_id IS NOT NULL UNION SELECT party_id FROM lines WHERE party_id IS NOT NULL)`);
@@ -198,14 +198,14 @@ async function loadLedgerData(ctx: QueryContext, periodText: string, legalEntity
 // ONE statement, as in loadLedgerData (#365).
 export async function yearTrialBalance(ctx: QueryContext, year: number, legalEntityId: string): Promise<TrialBalance> {
   const period = ledgerPeriod(String(year));
-  const tt133 = ctx.trx.selectFrom('crove_finance.account').select(['code', 'name', 'parent_code']);
-  const own = ctx.trx.selectFrom('crove_finance.org_account').select(['code', 'name', 'parent_code', 'root_code', 'active']).where('org_id', '=', ctx.orgId);
+  const tt133 = ctx.trx.selectFrom('ludy_finance.account').select(['code', 'name', 'parent_code']);
+  const own = ctx.trx.selectFrom('ludy_finance.org_account').select(['code', 'name', 'parent_code', 'root_code', 'active']).where('org_id', '=', ctx.orgId);
   const kept = sql<string | null>`COALESCE(dp.duplicate_of, l.party_id)`;
   const sums = (from: string | null, to: string) => {
     let q = ctx.trx
-      .selectFrom('crove_finance.journal_line as l')
-      .innerJoin('crove_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
-      .leftJoin('crove_kernel.party as dp', (join) => join.onRef('dp.org_id', '=', 'l.org_id').onRef('dp.id', '=', 'l.party_id'))
+      .selectFrom('ludy_finance.journal_line as l')
+      .innerJoin('ludy_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
+      .leftJoin('ludy_kernel.party as dp', (join) => join.onRef('dp.org_id', '=', 'l.org_id').onRef('dp.id', '=', 'l.party_id'))
       .select('l.account_code')
       .select(kept.as('party_id'))
       .select((eb) => [eb.fn.sum<string>('l.debit').as('debit'), eb.fn.sum<string>('l.credit').as('credit')])
@@ -265,6 +265,26 @@ function ledgerView(data: LedgerData, accountCode: string): AccountLedgerView {
     ...ledger,
     lines: ledger.lines.map(({ partyId, ...line }) => ({ ...line, partyName: partyId ? (data.parties.get(partyId)?.name ?? null) : null })),
   };
+}
+
+// Every account's lines of one legal entity for a period, from the same single statement as the other reports, for a book that groups them itself (the household's S2c expense detail, #2517):
+// the book and the ledger read one snapshot and cannot disagree. `account` is the general ledger of `accountCode` from that same statement, so a book can take its revenue and its expenses from one ledger state.
+export async function periodLinesOf(ctx: QueryContext, period: string, legalEntityId: string, accountCode: string): Promise<{ period: LedgerPeriod; lines: PeriodLine[]; account: AccountLedgerView }> {
+  const data = await loadLedgerData(ctx, period, legalEntityId);
+  return { period: data.period, lines: data.lines, account: ledgerView(data, accountCode) };
+}
+
+// The chart, the opening balance and the period's lines of one legal entity from the single ledger statement, for a book that works on several accounts' own balances (the household's S2e cash book, #2517).
+export async function periodDataOf(ctx: QueryContext, period: string, legalEntityId: string): Promise<{ period: LedgerPeriod; chart: ChartAccount[]; opening: OpeningBalance[]; lines: PeriodLine[] }> {
+  const { period: p, chart, opening, lines } = await loadLedgerData(ctx, period, legalEntityId);
+  return { period: p, chart, opening, lines };
+}
+
+// The general ledger of one account (and its sub-accounts) of one legal entity for a period, for a book that is a view of it (the household's sales book, #2517): the same read as
+// finance.ledger.account, so the book and the ledger cannot disagree.
+export async function accountLedgerOf(ctx: QueryContext, period: string, legalEntityId: string, accountCode: string): Promise<AccountLedgerView> {
+  const data = await loadLedgerData(ctx, period, legalEntityId);
+  return ledgerView(data, accountCode);
 }
 
 export const ledgerPeriodQuery = defineQuery({

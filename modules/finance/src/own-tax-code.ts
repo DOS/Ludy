@@ -2,8 +2,8 @@
 // issues invoices from a branch prints `<its 10-digit code>-NNN` as the seller, and those are its own sales. Both codes
 // are compared normalized (parseTaxCode, as kernel.org.set_tax_code stores the org's). An org whose own code is a
 // branch code owns only that code: the head office and the other branches are other taxpayers in its books.
-import type { QueryContext } from '@crove/kernel-runtime';
-import { parseTaxCode } from '@crove/l10n-vn';
+import type { QueryContext } from '@ludy/kernel-runtime';
+import { parseTaxCode } from '@ludy/l10n-vn';
 
 export function isOwnTaxCode(code: string | null | undefined, orgTaxCode: string | null | undefined): boolean {
   const party = parseTaxCode(code);
@@ -13,7 +13,7 @@ export function isOwnTaxCode(code: string | null | undefined, orgTaxCode: string
   return org.kind === 'enterprise' && party.kind === 'branch' && party.normalized.startsWith(`${org.normalized}-`);
 }
 
-// The org's own tax codes: the org's (crove_kernel.tenant.tax_code, which is the default entity's) and each legal entity's (#1278: a company with several entities
+// The org's own tax codes: the org's (ludy_kernel.tenant.tax_code, which is the default entity's) and each legal entity's (#1278: a company with several entities
 // issues invoices as each of them).
 export interface OwnTaxCodes {
   tenant: string | null;
@@ -40,8 +40,8 @@ export function readSeller(invoice: { seller: string | null | undefined; buyer: 
 // The codes as the writer's own policies show them: a scoped member sees the entities of their scope. With `lockTenant` the org's row and the entity rows are read FOR
 // SHARE until commit, in the order kernel.org.set_tax_code and kernel.legal_entity.update take them, so a concurrent change of a code waits for the posting.
 export async function loadOwnTaxCodes(ctx: Pick<QueryContext, 'trx' | 'orgId'>, options: { lockTenant?: boolean } = {}): Promise<OwnTaxCodes> {
-  let tenant = ctx.trx.selectFrom('crove_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId);
-  let entities = ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'tax_code']).where('org_id', '=', ctx.orgId);
+  let tenant = ctx.trx.selectFrom('ludy_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId);
+  let entities = ctx.trx.selectFrom('ludy_kernel.legal_entity').select(['id', 'tax_code']).where('org_id', '=', ctx.orgId);
   if (options.lockTenant) {
     tenant = tenant.forShare();
     entities = entities.forShare();

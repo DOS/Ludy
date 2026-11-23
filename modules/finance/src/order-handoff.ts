@@ -14,24 +14,28 @@ import {
   EINVOICE_DRAFT_MAX_LINES,
   ORDER_SOURCE_KIND,
   zEInvoiceDraftFromOrder,
+  zOrderLineInvoiceStates,
+  zOrderLineInvoiceStatesInput,
   zStockMoveFromOrderLine,
   type EInvoiceDraft,
+  type OrderLineInvoiceStates,
   type SalesOrderHandoff,
   type SalesOrderHandoffLine,
   type StockMoveFromOrderLineResult,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
-import { computeLineTotals, money, sumLineTotals } from '@crove/l10n-vn';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
+import { computeLineTotals, money, sumLineTotals } from '@ludy/l10n-vn';
 import { computeDraft } from './domain/einvoice-draft.ts';
 import { moveQuantity, movableQuantity, oppositeQuantity } from './domain/stock.ts';
 import { loadDraft, toDraftInput } from './einvoice-drafts.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
-import { loadItem, writeStockMove } from './stock.ts';
+import { loadItem, reverseLiveReturns, writeStockMove } from './stock.ts';
 import { matchLineItem } from './stock-lines.ts';
 
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
+const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
 const pgCode = (error: unknown) => (error as { code?: string } | null)?.code;
 
@@ -83,7 +87,7 @@ export const einvoiceDraftFromOrder = defineCommand({
     const claimed = new Set(
       (
         await ctx.trx
-          .selectFrom('crove_finance.einvoice_draft_line')
+          .selectFrom('ludy_finance.einvoice_draft_line')
           .select('source_line_no')
           .where('org_id', '=', ctx.orgId)
           .where('source_kind', '=', ORDER_SOURCE_KIND)
@@ -118,7 +122,7 @@ export const einvoiceDraftFromOrder = defineCommand({
 
     const today = await databaseToday(ctx.trx);
     const series = await ctx.trx
-      .selectFrom('crove_finance.einvoice_series')
+      .selectFrom('ludy_finance.einvoice_series')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', entity)
@@ -128,7 +132,7 @@ export const einvoiceDraftFromOrder = defineCommand({
     const draft = toDraftInput({
       date: today,
       seriesId: series?.id ?? null,
-      buyer: { kind: handoff.buyer.kind, partyId: null, taxCode: handoff.buyer.taxCode, name: handoff.buyer.name, address: handoff.buyer.address, email: handoff.buyer.email },
+      buyer: { kind: handoff.buyer.kind, partyId: null, taxCode: handoff.buyer.taxCode, name: handoff.buyer.name, address: handoff.buyer.address, email: handoff.buyer.email, identity: null },
       lines: chosen.map((l) => ({ description: l.description, unit: l.unit, quantity: l.quantity ?? '0', unitPrice: l.unitPrice ?? '0', vatRate: l.vatRate ?? '' })),
     });
     const computed = computeDraft(draft.lines);
@@ -141,7 +145,7 @@ export const einvoiceDraftFromOrder = defineCommand({
     const draftId = randomUUID();
     try {
       await ctx.trx
-        .insertInto('crove_finance.einvoice_draft')
+        .insertInto('ludy_finance.einvoice_draft')
         .values({
           org_id: ctx.orgId,
           id: draftId,
@@ -163,7 +167,7 @@ export const einvoiceDraftFromOrder = defineCommand({
         .execute();
       for (const [index, line] of computed.lines.entries()) {
         await ctx.trx
-          .insertInto('crove_finance.einvoice_draft_line')
+          .insertInto('ludy_finance.einvoice_draft_line')
           .values({
             org_id: ctx.orgId,
             legal_entity_id: entity,
@@ -217,7 +221,7 @@ export const stockMoveFromOrderLine = defineCommand({
     await lockOrderLine(ctx, handoff.orderId, lineNo);
 
     const forward = await ctx.trx
-      .selectFrom('crove_finance.stock_move')
+      .selectFrom('ludy_finance.stock_move')
       .select(['id', 'item_id', 'quantity', 'move_date'])
       .where('org_id', '=', ctx.orgId)
       .where('source_type', '=', 'crm_order_line')
@@ -225,7 +229,7 @@ export const stockMoveFromOrderLine = defineCommand({
       .where('crm_order_line_no', '=', lineNo)
       .executeTakeFirst();
     const reversal = forward
-      ? await ctx.trx.selectFrom('crove_finance.stock_move').select('id').where('org_id', '=', ctx.orgId).where('reverses_move_id', '=', forward.id).executeTakeFirst()
+      ? await ctx.trx.selectFrom('ludy_finance.stock_move').select('id').where('org_id', '=', ctx.orgId).where('reverses_move_id', '=', forward.id).executeTakeFirst()
       : undefined;
 
     if (action === 'return') {
@@ -233,6 +237,8 @@ export const stockMoveFromOrderLine = defineCommand({
       if (reversal) return { status: 'already_returned', moveId: reversal.id };
       const movedOn = typeof forward.move_date === 'string' ? forward.move_date : new Date(forward.move_date).toISOString().slice(0, 10);
       if (input.date < movedOn) throw new DomainError('ORDER_RETURN_BEFORE_DELIVERY', 422, 'Ngày hoàn hàng không được trước ngày giao hàng');
+      // A partial return of this delivery (#3712) is undone first: the whole line coming back takes the delivery with it, and the database does not reverse a sale move under a live return.
+      await reverseLiveReturns(ctx, forward.id, input.date);
       const id = await writeStockMove(ctx, { itemId: forward.item_id, date: input.date, quantity: oppositeQuantity(forward.quantity), source: { type: 'reversal', reversesMoveId: forward.id } });
       ctx.audit({ orderId: handoff.orderId, lineNo, action, moveId: id, reversesMoveId: forward.id });
       return { status: 'returned', moveId: id };
@@ -281,9 +287,9 @@ export interface OrderSource {
 // to its source and amount. A document line takes the source only when its number and its amount are the draft line's, so a line that was changed on the way to the books carries none.
 export async function orderSourcesOfInvoice(ctx: CommandContext, legalEntityId: string, series: string, number: string): Promise<Map<number, OrderSource & { amount: string }>> {
   const rows = await ctx.trx
-    .selectFrom('crove_finance.einvoice_draft as d')
-    .innerJoin('crove_finance.einvoice_series as s', (join) => join.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.series_id'))
-    .innerJoin('crove_finance.einvoice_draft_line as l', (join) => join.onRef('l.org_id', '=', 'd.org_id').onRef('l.draft_id', '=', 'd.id'))
+    .selectFrom('ludy_finance.einvoice_draft as d')
+    .innerJoin('ludy_finance.einvoice_series as s', (join) => join.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.series_id'))
+    .innerJoin('ludy_finance.einvoice_draft_line as l', (join) => join.onRef('l.org_id', '=', 'd.org_id').onRef('l.draft_id', '=', 'd.id'))
     .select(['l.line_no', 'l.amount', 'l.source_kind', 'l.source_id', 'l.source_line_no'])
     .where('d.org_id', '=', ctx.orgId)
     .where('d.legal_entity_id', '=', legalEntityId)
@@ -299,4 +305,40 @@ export async function orderSourcesOfInvoice(ctx: CommandContext, legalEntityId: 
   return sources;
 }
 
+// Which lines of these orders a draft holds, and whether the draft is issued (#3477, ADR-0050): the order screen's per-line label and the reason it does not offer to cancel a drafted
+// order. A hint for the screen, never the rule: `draft_from_order` still refuses a line twice (ORDER_LINE_ALREADY_INVOICED) and the cancel rule is the CRM's. It runs on the caller's
+// transaction, so the tables' own policies apply (organisation isolation and the legal-entity scope: a member limited to some entities sees only the drafts of those). An order is
+// asked by id and never listed, so this walks no draft and reconciles nothing. `issued` is the draft's `issued` state; every other state keeps the line held and reads `draft`
+// (a deleted draft took its lines with it, so its lines are not listed and read as open). Only ids, a line number and a state leave: no number, buyer, amount or text.
+export const einvoiceDraftOrderLines = defineQuery({
+  name: 'finance.einvoice_draft.order_lines',
+  input: zOrderLineInvoiceStatesInput,
+  access: ALL,
+  handler: async (ctx, input): Promise<OrderLineInvoiceStates> => {
+    const orderIds = [...new Set(input.orderIds)];
+    const rows = await ctx.trx
+      .selectFrom('ludy_finance.einvoice_draft_line as l')
+      .innerJoin('ludy_finance.einvoice_draft as d', (join) => join.onRef('d.org_id', '=', 'l.org_id').onRef('d.legal_entity_id', '=', 'l.legal_entity_id').onRef('d.id', '=', 'l.draft_id'))
+      .select(['l.source_id', 'l.source_line_no', 'd.state'])
+      .where('l.org_id', '=', ctx.orgId)
+      .where('l.source_kind', '=', ORDER_SOURCE_KIND)
+      .where('l.source_id', 'in', orderIds)
+      .orderBy('l.source_id')
+      .orderBy('l.source_line_no')
+      .execute();
+    const byOrder = new Map<string, Map<number, 'draft' | 'issued'>>();
+    for (const r of rows) {
+      if (r.source_id === null || r.source_line_no === null) continue;
+      const lines = byOrder.get(r.source_id) ?? new Map<number, 'draft' | 'issued'>();
+      // One draft line per order line (the unique index), so no line reads two states.
+      lines.set(r.source_line_no, r.state === 'issued' ? 'issued' : 'draft');
+      byOrder.set(r.source_id, lines);
+    }
+    return zOrderLineInvoiceStates.parse({
+      orders: [...byOrder].map(([orderId, lines]) => ({ orderId, lines: [...lines].map(([lineNo, state]) => ({ lineNo, state })).sort((a, b) => a.lineNo - b.lineNo) })),
+    });
+  },
+});
+
+export const orderHandoffQueries = [einvoiceDraftOrderLines];
 export const orderHandoffCommands = [einvoiceDraftFromOrder, stockMoveFromOrderLine];

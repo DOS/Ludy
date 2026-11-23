@@ -5,6 +5,7 @@
 // interests; automatic placements only; a daily budget and an end date. Nothing here calls a platform: the plan is local until W2 launches it.
 // Money is a decimal string in the account's currency, never a number.
 import { z } from 'zod';
+import { zAdsManageStateView } from './ads-manage.ts';
 import { zId, zLocalDate } from './schemas.ts';
 
 // The objectives of the first slice (owner Q4): none needs a pixel, a customer list or a lead form.
@@ -64,7 +65,7 @@ export const zAdsCampaignPlan = z.strictObject({
   targeting: zAdsTargeting,
   // Traffic and Engagement send people to a page; Messenger opens a conversation with the Page instead.
   linkUrl: z.url({ protocol: /^https$/ }).max(2000).nullable(),
-  // The Facebook Page of a Messenger ad, a channel connection of the org.
+  // The Facebook Page every ad runs as, a channel connection of the org. The launch job stops a plan without one (page_required), so local validation asks for it for every objective.
   pageConnectionId: zId.nullable(),
   // Where the creative comes from: a Social post of the org (its id is kept, never its text) and/or a file of the media library.
   sourcePostId: zId.nullable(),
@@ -156,6 +157,14 @@ export const zAdsLaunchView = z.object({
   windDown: z.object({ state: z.enum(['pending', 'done', 'gave_up']), code: z.string().nullable() }).nullable(),
   // The objects this launch has created on the ad platform so far, in creation order.
   objects: z.array(zAdsLaunchObjectView),
+  // The provider id of the launch's ad account (`meta_ads`, `sandbox_ads`), so the screen can name the platform it asked.
+  provider: z.string(),
+  // When Ludy last asked the platform for the states of these objects (#3419): the newest settled read of this launch, whether it worked or not; null for a launch never read.
+  statesReadAt: z.string().nullable(),
+  // Whether that last read worked; false says the states shown are the last known ones. null for a launch never read. Never carries the platform's own words.
+  statesReadOk: z.boolean().nullable(),
+  // The management state of a launch that is live (W4, #3835): what it holds now, its objects and the changes asked; absent before it is live.
+  manage: zAdsManageStateView.optional(),
 });
 export type AdsLaunchView = z.infer<typeof zAdsLaunchView>;
 export const zAdsLaunchCancelCall = z.strictObject({ launchId: zId, idempotencyKey: zId });

@@ -22,7 +22,7 @@ import {
   type ExtractClient,
   type ExtractFailure,
   type ExtractedPortalList,
-} from '@crove/extract-contract';
+} from '@ludy/extract-contract';
 import {
   MAX_IMPORT_BYTES,
   MAX_PORTAL_LISTS_PER_PERIOD,
@@ -35,13 +35,13 @@ import {
   type PortalListDirection,
   type PortalListView,
   type PortalReconciliation,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type QueryContext, type Runtime } from '@crove/kernel-runtime';
-import { isCalendarDate, parseTaxCode, toMoney, money } from '@crove/l10n-vn';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type QueryContext, type Runtime } from '@ludy/kernel-runtime';
+import { isCalendarDate, parseTaxCode, toMoney, money } from '@ludy/l10n-vn';
 import { portalStatus } from './domain/portal-status.ts';
 import { PORTAL_SYNC_CONTENT_TYPE, readSyncedList } from './domain/portal-api.ts';
-import { reconcilePortalList, type CroveInvoice, type PortalRow, type Reconciliation } from './domain/portal-reconcile.ts';
+import { reconcilePortalList, type LudyInvoice, type PortalRow, type Reconciliation } from './domain/portal-reconcile.ts';
 import { vatPeriod, type VatPeriod } from './domain/vat-return.ts';
 import { defaultLegalEntityId, resolveLegalEntity } from './legal-entity.ts';
 import { isOwnTaxCode } from './own-tax-code.ts';
@@ -77,7 +77,7 @@ export const portalListImport = defineCommand({
     vatPeriod(input.period);
     const direction: PortalListDirection = input.direction ?? 'purchase';
     const file = await ctx.trx
-      .selectFrom('crove_kernel.file')
+      .selectFrom('ludy_kernel.file')
       .select(['id', 'filename', 'content_type', 'size_bytes', 'source'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.fileId)
@@ -90,7 +90,7 @@ export const portalListImport = defineCommand({
     }
     if (Number(file.size_bytes) > MAX_IMPORT_BYTES) throw new DomainError('TOO_LARGE', 413, 'Tệp danh sách vượt quá 10 MB');
     // A purchase list is told apart from another company's or the sales list by the org's tax code (checkPortalList).
-    const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const tenant = await ctx.trx.selectFrom('ludy_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId).executeTakeFirst();
     if (!tenant?.tax_code) {
       throw new DomainError('TAX_CODE_REQUIRED', 409, 'Hãy nhập mã số thuế của công ty trong Cài đặt trước khi nhập danh sách hóa đơn từ cổng thuế');
     }
@@ -98,7 +98,7 @@ export const portalListImport = defineCommand({
     // Serializes imports of one period, so the count below and the unique index agree.
     await portalPeriodLock(ctx.orgId, legalEntityId, input.period).execute(ctx.trx);
     const active = await ctx.trx
-      .selectFrom('crove_finance.portal_invoice_list')
+      .selectFrom('ludy_finance.portal_invoice_list')
       .select(['id', 'file_id', 'legal_entity_id', 'direction'])
       .where('org_id', '=', ctx.orgId)
       .where('period', '=', input.period)
@@ -112,7 +112,7 @@ export const portalListImport = defineCommand({
       throw new DomainError('PORTAL_LIST_LIMIT', 409, `Mỗi kỳ nhập tối đa ${MAX_PORTAL_LISTS_PER_PERIOD} danh sách; hãy gỡ bớt danh sách cũ`);
     }
     const list = await ctx.trx
-      .insertInto('crove_finance.portal_invoice_list')
+      .insertInto('ludy_finance.portal_invoice_list')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: legalEntityId,
@@ -145,7 +145,7 @@ export const portalListRemove = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới gỡ được danh sách');
     const removed = await ctx.trx
-      .updateTable('crove_finance.portal_invoice_list')
+      .updateTable('ludy_finance.portal_invoice_list')
       .set({ removed_at: sql<Date>`pg_catalog.now()`, removed_by: ctx.actor.userId })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.listId)
@@ -166,9 +166,9 @@ export const portalListSource = defineQuery({
   access: 'system',
   handler: async (ctx, input) => {
     const row = await ctx.trx
-      .selectFrom('crove_finance.portal_invoice_list as l')
-      .innerJoin('crove_kernel.file as f', (join) => join.onRef('f.org_id', '=', 'l.org_id').onRef('f.id', '=', 'l.file_id'))
-      .innerJoin('crove_kernel.tenant as t', 't.org_id', 'l.org_id')
+      .selectFrom('ludy_finance.portal_invoice_list as l')
+      .innerJoin('ludy_kernel.file as f', (join) => join.onRef('f.org_id', '=', 'l.org_id').onRef('f.id', '=', 'l.file_id'))
+      .innerJoin('ludy_kernel.tenant as t', 't.org_id', 'l.org_id')
       .select(['l.id', 'l.status', 'l.period', 'l.direction', 'f.storage_key', 'f.generation', 'f.sha256', 'f.content_type', 't.tax_code'])
       .where('l.org_id', '=', ctx.orgId)
       .where('l.id', '=', input.listId)
@@ -233,7 +233,7 @@ export const portalListRecord = defineCommand({
   access: 'system',
   handler: async (ctx, input) => {
     const list = await ctx.trx
-      .selectFrom('crove_finance.portal_invoice_list')
+      .selectFrom('ludy_finance.portal_invoice_list')
       .select(['id', 'status', 'period', 'legal_entity_id', 'direction'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.listId)
@@ -246,7 +246,7 @@ export const portalListRecord = defineCommand({
     }
     const fail = async (error: string) => {
       await ctx.trx
-        .updateTable('crove_finance.portal_invoice_list')
+        .updateTable('ludy_finance.portal_invoice_list')
         .set({ status: 'failed', error, recorded_at: sql<Date>`pg_catalog.now()` })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', list.id)
@@ -262,7 +262,7 @@ export const portalListRecord = defineCommand({
     // period's imports and other records.
     await portalPeriodLock(ctx.orgId, list.legal_entity_id, list.period).execute(ctx.trx);
     const held = await ctx.trx
-      .selectFrom('crove_finance.portal_invoice_list')
+      .selectFrom('ludy_finance.portal_invoice_list')
       .select(sql<string>`coalesce(sum(row_count), 0)::text`.as('rows'))
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', list.legal_entity_id)
@@ -278,7 +278,7 @@ export const portalListRecord = defineCommand({
     }
     for (let i = 0; i < input.rows.length; i += ROW_INSERT_BATCH) {
       await ctx.trx
-        .insertInto('crove_finance.portal_invoice_row')
+        .insertInto('ludy_finance.portal_invoice_row')
         .values(
           input.rows.slice(i, i + ROW_INSERT_BATCH).map((r) => ({
             org_id: ctx.orgId,
@@ -303,7 +303,7 @@ export const portalListRecord = defineCommand({
         .execute();
     }
     await ctx.trx
-      .updateTable('crove_finance.portal_invoice_list')
+      .updateTable('ludy_finance.portal_invoice_list')
       .set({
         status: 'done',
         row_count: input.rows.length,
@@ -334,7 +334,7 @@ export const portalListRecord = defineCommand({
 
 async function periodLists(ctx: QueryContext, period: string, legalEntityId: string, direction: PortalListDirection): Promise<PortalListView[]> {
   const lists = await ctx.trx
-    .selectFrom('crove_finance.portal_invoice_list')
+    .selectFrom('ludy_finance.portal_invoice_list')
     .select(['id', 'period', 'direction', 'file_id', 'filename', 'status', 'error', 'row_count', 'list_from', 'list_to', 'skipped_count', 'skipped', 'own_sales_count', 'other_buyer_count', 'created_at'])
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', legalEntityId)
@@ -388,20 +388,20 @@ function addDays(date: string, days: number): string {
 // the portal row on series and number alone (reconcilePortalList does that only when exactly one portal invoice has
 // them, so two branches' invoices of the same series and number are flagged, never merged). The buyer is carried for
 // the screen.
-async function croveInvoices(
+async function ludyInvoices(
   ctx: QueryContext,
   from: string,
   to: string,
   period: { from: string; to: string },
   legalEntityId: string,
   direction: PortalListDirection,
-): Promise<CroveInvoice[]> {
+): Promise<LudyInvoice[]> {
   const sale = direction === 'sale';
   const documents = await ctx.trx
-    .selectFrom('crove_finance.purchase_document as d')
-    .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
-    .leftJoin('crove_kernel.proposal as q', (join) => join.onRef('q.org_id', '=', 'd.org_id').onRef('q.id', '=', 'd.proposal_id'))
-    .leftJoin('crove_finance.journal_entry as j', (join) =>
+    .selectFrom('ludy_finance.purchase_document as d')
+    .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
+    .leftJoin('ludy_kernel.proposal as q', (join) => join.onRef('q.org_id', '=', 'd.org_id').onRef('q.id', '=', 'd.proposal_id'))
+    .leftJoin('ludy_finance.journal_entry as j', (join) =>
       join.onRef('j.org_id', '=', 'd.org_id').onRef('j.source_id', '=', 'd.id').on('j.source_type', '=', 'finance.purchase_document').on(latestRevision('j')),
     )
     .select([
@@ -428,13 +428,13 @@ async function croveInvoices(
       ]),
     )
     .where(({ not, exists, selectFrom }) =>
-      not(exists(selectFrom('crove_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
+      not(exists(selectFrom('ludy_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
     )
     .limit(PORTAL_RECONCILE_LIMIT + 1)
     .execute();
   const isDefault = legalEntityId === (await defaultLegalEntityId(ctx));
   const proposals = await ctx.trx
-    .selectFrom('crove_kernel.proposal')
+    .selectFrom('ludy_kernel.proposal')
     .select(['id', 'payload', 'source_file_id'])
     .where('org_id', '=', ctx.orgId)
     .where(isDefault ? sql<boolean>`coalesce(payload ->> 'legalEntityId', ${legalEntityId}) = ${legalEntityId}` : sql<boolean>`payload ->> 'legalEntityId' = ${legalEntityId}`)
@@ -448,7 +448,7 @@ async function croveInvoices(
   if (documents.length + proposals.length > PORTAL_RECONCILE_LIMIT) {
     throw new DomainError('PERIOD_TOO_LARGE', 422, `Kỳ này có hơn ${PORTAL_RECONCILE_LIMIT} hóa đơn ${sale ? 'bán ra' : 'mua vào'}; hệ thống chưa đối chiếu được khối lượng này`);
   }
-  const out: CroveInvoice[] = documents.map((d) => ({
+  const out: LudyInvoice[] = documents.map((d) => ({
     kind: 'document',
     id: d.id,
     sellerTaxCode: sale ? null : d.tax_code,
@@ -521,7 +521,7 @@ export async function reconcilePeriod(
       ? []
       : (
           await ctx.trx
-            .selectFrom('crove_finance.portal_invoice_row')
+            .selectFrom('ludy_finance.portal_invoice_row')
             .select(['list_id', 'row_no', 'seller_tax_code', 'seller_name', 'buyer_tax_code', 'template', 'series', 'number', 'issue_date', 'currency', 'subtotal', 'vat_amount', 'total', 'status', 'status_label'])
             .where('org_id', '=', ctx.orgId)
             .where('list_id', 'in', done)
@@ -551,7 +551,7 @@ export async function reconcilePeriod(
   const from = addDays([period.from, dates[0] ?? period.from].sort()[0] ?? period.from, -31);
   const to = addDays([period.to, dates.at(-1) ?? period.to].sort().at(-1) ?? period.to, 31);
   // Without a list there is nothing to compare: Crove's invoices are not all reported as "not on the portal".
-  const reconciliation = done.length === 0 ? reconcilePortalList([], [], period) : reconcilePortalList(rows, await croveInvoices(ctx, from, to, period, legalEntityId, direction), period);
+  const reconciliation = done.length === 0 ? reconcilePortalList([], [], period) : reconcilePortalList(rows, await ludyInvoices(ctx, from, to, period, legalEntityId, direction), period);
   return { period, lists, reconciliation };
 }
 

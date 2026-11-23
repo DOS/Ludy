@@ -3,7 +3,7 @@
 // API login role; the token is the only credential, and nothing else of the org comes back.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { DomainError, readVerified, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { DomainError, readVerified, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
 import type { PageBrand } from './report-link.ts';
 
 export const REVIEW_VIEWS_PER_MINUTE = 60;
@@ -72,7 +72,7 @@ export async function reviewView(runtime: Runtime, body: unknown): Promise<Revie
   const input = zView.safeParse(body);
   if (!input.success) return null;
   return runtime.orgless(async (db) => {
-    const { rows } = await sql<{ page: ReviewPage | null }>`SELECT crove_social.review_link_view(${input.data.token}) AS page`.execute(db);
+    const { rows } = await sql<{ page: ReviewPage | null }>`SELECT ludy_social.review_link_view(${input.data.token}) AS page`.execute(db);
     return rows[0]?.page ?? null;
   });
 }
@@ -82,7 +82,7 @@ export async function reviewMedia(runtime: Runtime, body: unknown): Promise<{ id
   const input = zView.safeParse(body);
   if (!input.success) return null;
   return runtime.orgless(async (db) => {
-    const { rows } = await sql<{ media: { id: string; type: string }[][] | null }>`SELECT crove_social.review_link_media(${input.data.token}) AS media`.execute(db);
+    const { rows } = await sql<{ media: { id: string; type: string }[][] | null }>`SELECT ludy_social.review_link_media(${input.data.token}) AS media`.execute(db);
     return rows[0]?.media ?? null;
   });
 }
@@ -99,7 +99,7 @@ export async function reviewFile(
   const input = zFile.safeParse(body);
   if (!input.success) return null;
   const meta = await runtime.orgless(async (db) => {
-    const { rows } = await sql<{ file: { key: string; generation: string | null; sha256: string; type: string; size: string | number; filename: string } | null }>`SELECT crove_social.review_link_file(${input.data.token}, ${input.data.fileId}::uuid) AS file`.execute(db);
+    const { rows } = await sql<{ file: { key: string; generation: string | null; sha256: string; type: string; size: string | number; filename: string } | null }>`SELECT ludy_social.review_link_file(${input.data.token}, ${input.data.fileId}::uuid) AS file`.execute(db);
     return rows[0]?.file ?? null;
   });
   if (!meta) return null;
@@ -124,8 +124,8 @@ export async function reviewAnswer(runtime: Runtime, body: unknown): Promise<{ r
   return runtime.orgless(async (db) => {
     try {
       const { rows } = postId
-        ? await sql<{ done: { recorded: true } | null }>`SELECT crove_social.review_plan_feedback_add(${token}, ${postId}::uuid, ${name}, ${verdict}, ${text}) AS done`.execute(db)
-        : await sql<{ done: { recorded: true } | null }>`SELECT crove_social.review_feedback_add(${token}, ${name}, ${verdict}, ${text}) AS done`.execute(db);
+        ? await sql<{ done: { recorded: true } | null }>`SELECT ludy_social.review_plan_feedback_add(${token}, ${postId}::uuid, ${name}, ${verdict}, ${text}) AS done`.execute(db)
+        : await sql<{ done: { recorded: true } | null }>`SELECT ludy_social.review_feedback_add(${token}, ${name}, ${verdict}, ${text}) AS done`.execute(db);
       return rows[0]?.done ?? null;
     } catch (error) {
       const code = (error as { code?: unknown }).code;

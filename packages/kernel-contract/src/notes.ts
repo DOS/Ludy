@@ -7,9 +7,9 @@ import { zId } from './schemas.ts';
 
 export const NOTE_VISIBILITIES = ['private', 'org'] as const;
 export type NoteVisibility = (typeof NOTE_VISIBILITIES)[number];
-// The records a note links to (notes.md §3.4): the kernel's parties and files, and finance's documents and journal
-// entries and crm's bookings (#1672), which another module owns and may be off; meetings come later (N10).
-export const NOTE_LINK_TARGETS = ['kernel.party', 'kernel.file', 'finance.purchase_document', 'finance.journal_entry', 'crm.booking'] as const;
+// The records a note links to (notes.md §3.4): the kernel's parties, files and tasks, and targets owned by finance,
+// crm, projects (#1672, #2595) and meetings (#1679), which another module owns and may be off.
+export const NOTE_LINK_TARGETS = ['kernel.party', 'kernel.file', 'kernel.task', 'finance.purchase_document', 'finance.journal_entry', 'crm.booking', 'projects.project', 'meetings.meeting'] as const;
 export type NoteLinkTarget = (typeof NOTE_LINK_TARGETS)[number];
 // The lists of the notes screen (notes.md §3.10).
 export const NOTE_LIST_VIEWS = ['mine', 'shared', 'pinned', 'archived', 'trash'] as const;
@@ -17,43 +17,230 @@ export type NoteListView = (typeof NOTE_LIST_VIEWS)[number];
 
 export const NOTE_TITLE_MAX = 200;
 export const NOTE_BODY_MAX = 100_000;
+export const NOTE_TEMPLATE_NAME_MAX = 120;
+export const NOTE_VERSION_RETENTION = 20;
+export const NOTE_CLIP_SOURCE_URL_MAX = 2048;
 export const NOTE_TAGS_MAX = 20;
 export const NOTE_TAG_MAX = 40;
+export const NOTEBOOK_NAME_MAX = 120;
+export const NOTEBOOK_STACK_MAX = 80;
+export const NOTEBOOKS_MAX = 200;
 // Links one note keeps: each read of the note checks every link through its module (#1672).
 export const NOTE_LINKS_MAX = 50;
+// Isolated note attachments (#3561, docs/plan/notes-v2.md V2-5, owner decision A3): <= 25 MiB per file.
+export const NOTE_ATTACHMENT_MAX_BYTES = 26_214_400;
+export const NOTE_ATTACHMENTS_PER_NOTE_MAX = 50;
+export const NOTE_ATTACHMENT_FILENAME_MAX = 255;
+export const NOTE_ATTACHMENT_EXTRACTED_TEXT_MAX = 200_000;
+export const NOTE_ATTACHMENT_EXTRACT_STATUSES = ['pending', 'done', 'skipped', 'failed'] as const;
+export type NoteAttachmentExtractStatus = (typeof NOTE_ATTACHMENT_EXTRACT_STATUSES)[number];
+export const NOTE_ATTACHMENT_INLINE_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+  'application/pdf',
+  'audio/mpeg',
+  'audio/wav',
+  'audio/ogg',
+  'audio/mp4',
+  'audio/webm',
+] as const;
+export type NoteAttachmentInlineType = (typeof NOTE_ATTACHMENT_INLINE_TYPES)[number];
 // Days a deleted note stays in the trash, and a former member's private notes stay sealed (ADR-0037 §4).
 export const NOTE_TRASH_DAYS = 30;
 export const NOTE_MEMBER_PURGE_DAYS = 30;
 
 const zTitle = z.string().trim().min(1).max(NOTE_TITLE_MAX);
 const zBody = z.string().max(NOTE_BODY_MAX);
+const zNotebookName = z.string().trim().min(1).max(NOTEBOOK_NAME_MAX);
+const zNotebookStack = z.string().trim().min(1).max(NOTEBOOK_STACK_MAX);
 // Lower case, trimmed, each once, at most NOTE_TAGS_MAX.
 const zTags = z
   .array(z.string().trim().toLowerCase().min(1).max(NOTE_TAG_MAX))
   .max(NOTE_TAGS_MAX)
   .transform((tags) => [...new Set(tags)]);
+
+function hasControlChar(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+/** Validates and normalizes an http/https source URL for extension clips, returning null for unsafe or invalid values. */
+export function sanitizeClipSourceUrl(raw: string): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0 || trimmed.length > NOTE_CLIP_SOURCE_URL_MAX) return null;
+  if (hasControlChar(trimmed)) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.hostname.length === 0) return null;
+  if (parsed.username !== '' || parsed.password !== '') return null;
+  return parsed.toString();
+}
+
+export const zClipSourceUrl = z
+  .string()
+  .trim()
+  .min(1)
+  .max(NOTE_CLIP_SOURCE_URL_MAX)
+  .transform((raw, ctx) => {
+    const safe = sanitizeClipSourceUrl(raw);
+    if (!safe) {
+      ctx.addIssue({ code: 'custom', message: 'sourceUrl must be a valid http or https URL' });
+      return z.NEVER;
+    }
+    return safe;
+  });
+
+/** Builds a bounded Markdown body for an extension clip, safely escaping the validated source link. */
+export function formatClippedNoteBody(body: string, sourceUrl: string | null): string {
+  const cleanBody = body.replace(/\r\n?/g, '\n').replaceAll('\u0000', '').trim();
+  if (sourceUrl === null) {
+    return cleanBody.length > NOTE_BODY_MAX ? `${cleanBody.slice(0, NOTE_BODY_MAX - 3)}...` : cleanBody;
+  }
+  const safeLabel = sourceUrl.replace(/\\/g, '\\\\').replace(/\[/g, '\\[').replace(/\]/g, '\\]');
+  const safeHref = sourceUrl.replace(/\(/g, '%28').replace(/\)/g, '%29');
+  const sourceHeader = `[${safeLabel}](${safeHref})`;
+  if (cleanBody === '') return sourceHeader.slice(0, NOTE_BODY_MAX);
+  const prefix = `${sourceHeader}\n\n`;
+  const maxRest = NOTE_BODY_MAX - prefix.length;
+  if (maxRest <= 0) return sourceHeader.slice(0, NOTE_BODY_MAX);
+  const bounded = cleanBody.length > maxRest ? `${cleanBody.slice(0, Math.max(0, maxRest - 3))}...` : cleanBody;
+  return `${prefix}${bounded}`;
+}
+
 export const zNoteLinkTarget = z.strictObject({ targetType: z.enum(NOTE_LINK_TARGETS), targetId: zId });
 export type NoteLinkTargetInput = z.infer<typeof zNoteLinkTarget>;
 
+// Notebooks and 2-level stacks (#3559, notes-v2.md V2-4 / E1): private to their author or shared with the org.
+export const zNotebookCreate = z.strictObject({
+  name: zNotebookName,
+  stackName: zNotebookStack.nullable().default(null),
+  visibility: z.enum(NOTE_VISIBILITIES).default('private'),
+  pinned: z.boolean().default(false),
+});
+export type NotebookCreateInput = z.input<typeof zNotebookCreate>;
+
+export const zNotebookReorder = z.strictObject({
+  place: z.enum(['before', 'after']),
+  anchorId: zId,
+});
+export type NotebookReorderInput = z.input<typeof zNotebookReorder>;
+
+export const zNotebookUpdate = z
+  .strictObject({
+    notebookId: zId,
+    revision: z.number().int().positive(),
+    name: zNotebookName.optional(),
+    stackName: zNotebookStack.nullable().optional(),
+    visibility: z.enum(NOTE_VISIBILITIES).optional(),
+    pinned: z.boolean().optional(),
+    reorder: zNotebookReorder.optional(),
+  })
+  .refine(
+    (v) =>
+      v.name !== undefined ||
+      v.stackName !== undefined ||
+      v.visibility !== undefined ||
+      v.pinned !== undefined ||
+      v.reorder !== undefined,
+    { message: 'At least one notebook change is required' },
+  )
+  .refine((v) => !v.reorder || v.reorder.anchorId !== v.notebookId, {
+    message: 'A notebook is not moved next to itself',
+    path: ['reorder', 'anchorId'],
+  });
+export type NotebookUpdateInput = z.input<typeof zNotebookUpdate>;
+
+export const zNotebookRef = z.strictObject({ notebookId: zId });
+export const zNotebookWritten = z.object({ notebookId: z.string(), revision: z.number().int() });
+export type NotebookWritten = z.infer<typeof zNotebookWritten>;
+export const zNotebookDeleted = z.object({ notebookId: z.string() });
+export type NotebookDeleted = z.infer<typeof zNotebookDeleted>;
+
+export const zNotebookView = z.object({
+  id: z.string(),
+  authorUserId: z.string(),
+  mine: z.boolean(),
+  editable: z.boolean(),
+  visibility: z.enum(NOTE_VISIBILITIES),
+  name: z.string(),
+  stackName: z.string().nullable(),
+  pinned: z.boolean(),
+  sortKey: z.string(),
+  noteCount: z.number().int().nonnegative(),
+  revision: z.number().int(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type NotebookSummary = z.infer<typeof zNotebookView>;
+
+export const zNotebooksResponse = z.object({
+  notebooks: z.array(zNotebookView),
+  allCount: z.number().int().nonnegative(),
+  unfiledCount: z.number().int().nonnegative(),
+});
+export type NotebooksResponse = z.infer<typeof zNotebooksResponse>;
+
+export const zNoteBacklinksInput = z.strictObject({
+  noteId: zId,
+  limit: z.number().int().min(1).max(100).default(50),
+});
+export type NoteBacklinksInput = z.input<typeof zNoteBacklinksInput>;
+
 // A new note: private unless the caller shares it (a panel on a record shares by default, notes.md decision N-7),
-// optionally linked to one record at once.
+// optionally filed in a notebook and linked to one record at once.
 export const zNoteCreate = z.strictObject({
   title: zTitle,
   body: zBody.default(''),
   tags: zTags.default([]),
   visibility: z.enum(NOTE_VISIBILITIES).default('private'),
+  notebookId: zId.nullable().optional(),
+  tainted: z.boolean().optional(),
   link: zNoteLinkTarget.optional(),
 });
 export type NoteCreateInput = z.input<typeof zNoteCreate>;
-// The author's edit of the text, against the revision they read (NOTES.REVISION_CONFLICT when it moved on).
-export const zNoteUpdate = z.strictObject({ noteId: zId, revision: z.number().int().positive(), title: zTitle, body: zBody, tags: zTags });
+// Extension Quick Capture / Web Clipper (#3560): always stored private and tainted on the server.
+export const zNoteClip = z.strictObject({
+  title: zTitle,
+  body: zBody.default(''),
+  tags: zTags.default([]),
+  sourceUrl: zClipSourceUrl.nullable().optional(),
+});
+export type NoteClipInput = z.input<typeof zNoteClip>;
+// The author's edit of the text (or notebook assignment), against the revision they read (NOTE_REVISION_CONFLICT when it moved on).
+export const zNoteUpdate = z
+  .strictObject({
+    noteId: zId,
+    revision: z.number().int().positive(),
+    title: zTitle.optional(),
+    body: zBody.optional(),
+    tags: zTags.optional(),
+    notebookId: zId.nullable().optional(),
+  })
+  .refine(
+    (v) => v.title !== undefined || v.body !== undefined || v.tags !== undefined || v.notebookId !== undefined,
+    { message: 'At least one note field is required' },
+  );
 export type NoteUpdateInput = z.input<typeof zNoteUpdate>;
 export const zNoteSetVisibility = z.strictObject({ noteId: zId, visibility: z.enum(NOTE_VISIBILITIES) });
 export const zNoteRef = z.strictObject({ noteId: zId });
+export const zNoteFromMeetingSummary = z.strictObject({ meetingId: zId, title: zTitle.optional() });
+export type NoteFromMeetingSummaryInput = z.input<typeof zNoteFromMeetingSummary>;
 export const zNoteLinkAdd = z.strictObject({ noteId: zId, targetType: z.enum(NOTE_LINK_TARGETS), targetId: zId });
 export const zNoteLinkRemove = z.strictObject({ linkId: zId });
 export const zNoteList = z.strictObject({
   view: z.enum(NOTE_LIST_VIEWS),
+  notebookId: z.union([zId, z.literal('unfiled')]).optional(),
+  stackName: zNotebookStack.optional(),
   tag: z.string().trim().toLowerCase().min(1).max(NOTE_TAG_MAX).optional(),
   target: zNoteLinkTarget.optional(),
   limit: z.number().int().min(1).max(200).default(100),
@@ -71,6 +258,7 @@ export const zNoteSummary = z.object({
   id: z.string(),
   authorUserId: z.string(),
   mine: z.boolean(),
+  notebookId: z.string().nullable().optional(),
   visibility: z.enum(NOTE_VISIBILITIES),
   title: z.string(),
   tags: z.array(z.string()),
@@ -89,16 +277,126 @@ export type NoteSummary = z.infer<typeof zNoteSummary>;
 export const zNoteLinkView = z.object({ id: z.string(), targetType: z.enum(NOTE_LINK_TARGETS), targetId: z.string(), createdAt: z.string(), available: z.boolean() });
 export type NoteLink = z.infer<typeof zNoteLinkView>;
 
-export const zNote = zNoteSummary.extend({ body: z.string(), links: z.array(zNoteLinkView) });
-export type Note = z.infer<typeof zNote>;
+export const zNoteAttachment = z.object({
+  id: z.string(),
+  noteId: z.string(),
+  authorUserId: z.string(),
+  filename: z.string(),
+  contentType: z.string(),
+  sizeBytes: z.number().int(),
+  sha256: z.string(),
+  extractStatus: z.enum(NOTE_ATTACHMENT_EXTRACT_STATUSES),
+  createdAt: z.string(),
+});
+export type NoteAttachment = z.infer<typeof zNoteAttachment>;
 
-// A record's panel: its pinned notes, then the latest others (notes.md §3.10).
-export const zNoteRecordPanelView = z.object({ pinned: z.array(zNoteSummary), latest: z.array(zNoteSummary) });
-export type NoteRecordPanel = z.infer<typeof zNoteRecordPanelView>;
+export const zNoteAttachmentRef = z.strictObject({ attachmentId: zId });
+export type NoteAttachmentRefInput = z.input<typeof zNoteAttachmentRef>;
+
+export const zNoteAttachmentCreate = z.strictObject({
+  attachmentId: zId,
+  noteId: zId,
+  filename: z.string().trim().min(1).max(NOTE_ATTACHMENT_FILENAME_MAX),
+  contentType: z.string().trim().min(1).max(128),
+  sizeBytes: z.number().int().min(1).max(NOTE_ATTACHMENT_MAX_BYTES),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  storageKey: z.string().min(1).max(128),
+  extractStatus: z.enum(['pending', 'skipped']),
+});
+export type NoteAttachmentCreateInput = z.input<typeof zNoteAttachmentCreate>;
+
+export const zNoteAttachmentCreated = z.object({
+  attachmentId: z.string(),
+  noteId: z.string(),
+  extractStatus: z.enum(NOTE_ATTACHMENT_EXTRACT_STATUSES),
+  createdAt: z.string(),
+});
+export type NoteAttachmentCreated = z.infer<typeof zNoteAttachmentCreated>;
+
+export const zNoteAttachmentDeleted = z.object({
+  noteId: z.string(),
+  attachmentId: z.string(),
+});
+export type NoteAttachmentDeleted = z.infer<typeof zNoteAttachmentDeleted>;
+
+export const zNote = zNoteSummary.extend({
+  body: z.string(),
+  links: z.array(zNoteLinkView),
+  attachments: z.array(zNoteAttachment).optional(),
+});
+export type Note = z.infer<typeof zNote>;
 
 // How many private notes a member has, for an owner or admin before removing them (ADR-0037 §4). No text.
 export const zNotePrivateCount = z.object({ userId: z.string(), notes: z.number().int() });
 export type NotePrivateCount = z.infer<typeof zNotePrivateCount>;
+
+// Quick note templates and rolling 20-snapshot version history (#3562, Notes v2 E3).
+const zTemplateName = z.string().trim().min(1).max(NOTE_TEMPLATE_NAME_MAX);
+const zTemplateTitle = z.string().trim().max(NOTE_TITLE_MAX);
+
+export const zNoteTemplateCreate = z.strictObject({
+  name: zTemplateName,
+  title: zTemplateTitle.default(''),
+  body: zBody.default(''),
+  tags: zTags.default([]),
+  visibility: z.enum(NOTE_VISIBILITIES).default('private'),
+});
+export type NoteTemplateCreateInput = z.input<typeof zNoteTemplateCreate>;
+
+export const zNoteTemplateUpdate = z.strictObject({
+  templateId: zId,
+  revision: z.number().int().positive(),
+  name: zTemplateName,
+  title: zTemplateTitle,
+  body: zBody,
+  tags: zTags,
+  visibility: z.enum(NOTE_VISIBILITIES),
+});
+export type NoteTemplateUpdateInput = z.input<typeof zNoteTemplateUpdate>;
+
+export const zNoteTemplateRef = z.strictObject({ templateId: zId });
+export type NoteTemplateRefInput = z.input<typeof zNoteTemplateRef>;
+
+export const zNoteTemplateWritten = z.object({ templateId: z.string(), revision: z.number().int() });
+export type NoteTemplateWritten = z.infer<typeof zNoteTemplateWritten>;
+
+export const zNoteTemplateDeleted = z.object({ templateId: z.string() });
+export type NoteTemplateDeleted = z.infer<typeof zNoteTemplateDeleted>;
+
+export const zNoteTemplate = z.object({
+  id: z.string(),
+  authorUserId: z.string(),
+  mine: z.boolean(),
+  visibility: z.enum(NOTE_VISIBILITIES),
+  name: z.string(),
+  title: z.string(),
+  body: z.string(),
+  tags: z.array(z.string()),
+  revision: z.number().int(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type NoteTemplate = z.infer<typeof zNoteTemplate>;
+
+export const zNoteVersion = z.object({
+  id: z.string(),
+  noteId: z.string(),
+  authorUserId: z.string(),
+  revision: z.number().int(),
+  title: z.string(),
+  body: z.string(),
+  tags: z.array(z.string()),
+  tainted: z.boolean(),
+  createdAt: z.string(),
+});
+export type NoteVersion = z.infer<typeof zNoteVersion>;
+
+export const zNoteRestoreVersion = z.strictObject({
+  noteId: zId,
+  revision: z.number().int().positive(),
+  versionId: zId,
+});
+export type NoteRestoreVersionInput = z.input<typeof zNoteRestoreVersion>;
 
 // ---------------------------------------------------------------------------
 // Personal to-dos (#1673, notes.md §3.2, §3.8 and step N4): a member's own list, always private (ADR-0037). A to-do
@@ -121,6 +419,123 @@ export const TODO_TITLE_MAX = 300;
 export const TODO_DETAILS_MAX = 10_000;
 export const TODO_STEPS_MAX = 50;
 export const TODO_STEP_MAX = 300;
+export const TODO_PRIORITIES = [1, 2, 3, 4] as const;
+export type TodoPriority = (typeof TODO_PRIORITIES)[number];
+export const zTodoPriority = z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]);
+
+export const TODO_LIST_NAME_MAX = 120;
+export const TODO_LIST_SECTIONS_MAX = 50;
+export const TODO_LIST_SECTION_NAME_MAX = 100;
+export const TODO_LIST_SECTION_ID_MAX = 64;
+export const TODO_LISTS_MAX = 100;
+export const TODO_LIST_COLORS = ['slate', 'blue', 'emerald', 'amber', 'rose', 'violet'] as const;
+export type TodoListColor = (typeof TODO_LIST_COLORS)[number];
+export const TODO_LIST_SORTS = ['manual', 'priority'] as const;
+export type TodoListSort = (typeof TODO_LIST_SORTS)[number];
+
+export const zTodoSectionId = z
+  .string()
+  .trim()
+  .min(1)
+  .max(TODO_LIST_SECTION_ID_MAX)
+  .regex(/^[0-9A-Za-z_-]+$/);
+
+export const zTodoListSectionInput = z.strictObject({
+  id: zTodoSectionId.optional(),
+  name: z.string().trim().min(1).max(TODO_LIST_SECTION_NAME_MAX),
+});
+export type TodoListSectionInput = z.input<typeof zTodoListSectionInput>;
+
+export const zTodoListSection = z.strictObject({
+  id: zTodoSectionId,
+  name: z.string().trim().min(1).max(TODO_LIST_SECTION_NAME_MAX),
+});
+export type TodoListSection = z.infer<typeof zTodoListSection>;
+
+const uniqueSectionIds = (sections: ReadonlyArray<{ id?: string | undefined }>) => {
+  const ids = sections.map((s) => s.id).filter((id): id is string => id !== undefined);
+  return new Set(ids).size === ids.length;
+};
+const UNIQUE_SECTION_IDS = { message: 'Section ids must be unique', path: ['sections'] };
+
+const zTodoListSectionsInput = z.array(zTodoListSectionInput).max(TODO_LIST_SECTIONS_MAX).refine(uniqueSectionIds, UNIQUE_SECTION_IDS);
+
+export const zTodoListCreate = z.strictObject({
+  name: z.string().trim().min(1).max(TODO_LIST_NAME_MAX),
+  color: z.enum(TODO_LIST_COLORS).nullable().default(null),
+  sections: zTodoListSectionsInput.default([]),
+});
+export type TodoListCreateInput = z.input<typeof zTodoListCreate>;
+
+export const zTodoListUpdate = z.strictObject({
+  listId: zId,
+  revision: z.number().int().positive(),
+  name: z.string().trim().min(1).max(TODO_LIST_NAME_MAX),
+  color: z.enum(TODO_LIST_COLORS).nullable(),
+  sections: zTodoListSectionsInput,
+});
+export type TodoListUpdateInput = z.input<typeof zTodoListUpdate>;
+
+export const zTodoListRef = z.strictObject({ listId: zId });
+export const zTodoListWritten = z.object({ listId: z.string(), revision: z.number().int() });
+export type TodoListWritten = z.infer<typeof zTodoListWritten>;
+
+export const zTodoListView = z.object({
+  id: z.string(),
+  name: z.string(),
+  color: z.enum(TODO_LIST_COLORS).nullable(),
+  sections: z.array(zTodoListSection),
+  sortKey: z.string(),
+  openCount: z.number().int(),
+  revision: z.number().int(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type TodoListSummary = z.infer<typeof zTodoListView>;
+
+export const zTodoListsResponse = z.object({
+  lists: z.array(zTodoListView),
+  inboxCount: z.number().int(),
+});
+export type TodoListsResponse = z.infer<typeof zTodoListsResponse>;
+
+const zTodoTagFilter = z
+  .string()
+  .trim()
+  .min(1)
+  .max(NOTE_TAG_MAX)
+  .transform((t) => t.toLowerCase());
+
+const sectionNeedsList = (v: { listId?: string | null; sectionId?: string | null }) => v.sectionId == null || v.listId != null;
+const SECTION_NEEDS_LIST = { message: 'A section needs a list', path: ['sectionId'] };
+
+export const TODO_RECURRENCE_FREQS = ['daily', 'weekly', 'monthly'] as const;
+export type TodoRecurrenceFreq = (typeof TODO_RECURRENCE_FREQS)[number];
+export const TODO_RECURRENCE_INTERVAL_MAX = 365;
+export const TODO_RESCHEDULE_BATCH_MAX = 50;
+
+export const zTodoRecurrence = z
+  .strictObject({
+    freq: z.enum(TODO_RECURRENCE_FREQS),
+    interval: z.number().int().min(1).max(TODO_RECURRENCE_INTERVAL_MAX).default(1),
+    byWeekday: z.number().int().min(0).max(6).nullable().optional(),
+    byMonthDay: z
+      .number()
+      .int()
+      .refine((v) => v === -1 || (v >= 1 && v <= 31), 'byMonthDay must be 1..31 or -1')
+      .nullable()
+      .optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.freq !== 'weekly' && v.byWeekday !== undefined && v.byWeekday !== null) {
+      ctx.addIssue({ code: 'custom', path: ['byWeekday'], message: 'byWeekday is only allowed for weekly recurrence' });
+    }
+    if (v.freq !== 'monthly' && v.byMonthDay !== undefined && v.byMonthDay !== null) {
+      ctx.addIssue({ code: 'custom', path: ['byMonthDay'], message: 'byMonthDay is only allowed for monthly recurrence' });
+    }
+  });
+export type TodoRecurrence = z.infer<typeof zTodoRecurrence>;
+export type TodoRecurrenceInput = z.input<typeof zTodoRecurrence>;
 
 const zTodoTitle = z.string().trim().min(1).max(TODO_TITLE_MAX);
 const zTodoDetails = z.string().max(TODO_DETAILS_MAX);
@@ -141,19 +556,52 @@ export const TODO_REMIND_BEFORE_MINUTES = 30;
 export const zTodoReminder = z.union([z.enum(['auto', 'off']), z.strictObject({ at: z.iso.datetime({ offset: true }) })]);
 export type TodoReminder = z.infer<typeof zTodoReminder>;
 
-// A new to-do: the title, and optionally its details, steps and due day and time, in the caller's time zone.
+// A new to-do: the title, and optionally its details, steps, priority, tags, personal list/section, due day and time, and source note, in the caller's time zone.
 export const zTodoCreate = z
   .strictObject({
     title: zTodoTitle,
     details: zTodoDetails.default(''),
     checklist: zChecklist.default([]),
+    priority: zTodoPriority.default(4),
+    tags: zTags.default([]),
+    listId: zId.nullable().default(null),
+    sectionId: zTodoSectionId.nullable().default(null),
     dueOn: zDay.nullable().default(null),
     dueTime: zTime.nullable().default(null),
     timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
     reminder: zTodoReminder.default('auto'),
+    recurrence: zTodoRecurrence.nullable().optional(),
+    link: zNoteLinkTarget.optional(),
+    sourceNoteId: zId.optional(),
+  })
+  .refine(dueTimeNeedsDay, DUE_TIME_NEEDS_DAY)
+  .refine(sectionNeedsList, SECTION_NEEDS_LIST);
+export type TodoCreateInput = z.input<typeof zTodoCreate>;
+// Extension Quick Capture to-do (#3560): always stored private to its owner and tainted on the server.
+export const zTodoQuickCapture = z
+  .strictObject({
+    title: zTodoTitle,
+    details: zTodoDetails.default(''),
+    dueOn: zDay.nullable().default(null),
+    dueTime: zTime.nullable().default(null),
+    timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
+    reminder: zTodoReminder.default('auto'),
+    sourceUrl: zClipSourceUrl.nullable().optional(),
   })
   .refine(dueTimeNeedsDay, DUE_TIME_NEEDS_DAY);
-export type TodoCreateInput = z.input<typeof zTodoCreate>;
+export type TodoQuickCaptureInput = z.input<typeof zTodoQuickCapture>;
+
+/** Builds bounded details for an extension quick-captured to-do, prepending a validated source URL if present. */
+export function formatQuickCaptureDetails(details: string, sourceUrl: string | null): string {
+  const clean = details.replace(/\r\n?/g, '\n').replaceAll('\u0000', '').trim();
+  if (sourceUrl === null) return clean.slice(0, TODO_DETAILS_MAX);
+  if (clean === '') return sourceUrl.slice(0, TODO_DETAILS_MAX);
+  const prefix = `${sourceUrl}\n\n`;
+  const maxRest = TODO_DETAILS_MAX - prefix.length;
+  if (maxRest <= 0) return sourceUrl.slice(0, TODO_DETAILS_MAX);
+  const bounded = clean.length > maxRest ? `${clean.slice(0, Math.max(0, maxRest - 3))}...` : clean;
+  return `${prefix}${bounded}`;
+}
 // The owner's edit, against the revision they read (TODO_REVISION_CONFLICT when it moved on). Without `reminder` the
 // reminder stays as it was, unless it was the automatic one, or there was none for want of a due day, and the due day
 // or time moved: it then follows them.
@@ -164,22 +612,59 @@ export const zTodoUpdate = z
     title: zTodoTitle,
     details: zTodoDetails,
     checklist: zChecklist,
+    priority: zTodoPriority.optional(),
+    tags: zTags.optional(),
+    listId: zId.nullable().optional(),
+    sectionId: zTodoSectionId.nullable().optional(),
     dueOn: zDay.nullable(),
     dueTime: zTime.nullable(),
     timeZone: zTimeZone,
     reminder: zTodoReminder.optional(),
+    recurrence: zTodoRecurrence.nullable().optional(),
   })
-  .refine(dueTimeNeedsDay, DUE_TIME_NEEDS_DAY);
+  .refine(dueTimeNeedsDay, DUE_TIME_NEEDS_DAY)
+  .refine((v) => !(v.listId === null && v.sectionId != null), SECTION_NEEDS_LIST);
 export type TodoUpdateInput = z.input<typeof zTodoUpdate>;
 export const zTodoRef = z.strictObject({ todoId: zId });
+export const zTodoStoppedSibling = z.strictObject({
+  todoId: zId,
+  recurrence: zTodoRecurrence,
+});
+export type TodoStoppedSibling = z.infer<typeof zTodoStoppedSibling>;
+export const zTodoReopen = z.strictObject({
+  todoId: zId,
+  undoNextTodoId: zId.optional(),
+  expectedRevision: z.number().int().positive().optional(),
+  restoreRecurrence: zTodoRecurrence.optional(),
+  restoreSiblings: z.array(zTodoStoppedSibling).max(100).optional(),
+});
+export type TodoReopenInput = z.input<typeof zTodoReopen>;
+export const zTodoComplete = z.strictObject({
+  todoId: zId,
+  stopSeries: z.boolean().optional(),
+});
+export type TodoCompleteInput = z.input<typeof zTodoComplete>;
+export const zTodoReschedule = z.strictObject({
+  todoIds: z
+    .array(zId)
+    .min(1)
+    .max(TODO_RESCHEDULE_BATCH_MAX)
+    .transform((ids) => [...new Set(ids)]),
+  dueOn: zDay,
+});
+export type TodoRescheduleInput = z.input<typeof zTodoReschedule>;
 // Moves a to-do right before or right after another of the owner's (the anchor) in their own order.
 export const zTodoReorder = z
   .strictObject({ todoId: zId, place: z.enum(['before', 'after']), anchorId: zId })
   .refine((v) => v.todoId !== v.anchorId, { message: 'A to-do is not moved next to itself', path: ['anchorId'] });
 export type TodoReorderInput = z.input<typeof zTodoReorder>;
-// `q` keeps the to-dos whose title, details or steps hold every word, typed with or without Vietnamese marks.
+// `q` keeps the to-dos whose title, details, tags or steps hold every word, typed with or without Vietnamese marks.
 export const zTodoList = z.strictObject({
   view: z.enum(TODO_LIST_VIEWS),
+  listId: z.union([zId, z.literal('inbox')]).optional(),
+  tag: zTodoTagFilter.optional(),
+  priority: zTodoPriority.optional(),
+  sort: z.enum(TODO_LIST_SORTS).default('manual'),
   q: z.string().trim().min(1).max(200).optional(),
   limit: z.number().int().min(1).max(500).default(200),
 });
@@ -188,6 +673,27 @@ export type TodoListInput = z.input<typeof zTodoList>;
 // What a command returns: ids and the revision, never text (idempotency rows keep results, notes.md §3.5).
 export const zTodoWritten = z.object({ todoId: z.string(), revision: z.number().int() });
 export type TodoWritten = z.infer<typeof zTodoWritten>;
+export const zTodoCompleteResult = zTodoWritten.extend({
+  nextTodoId: z.string().nullable().optional(),
+  nextDueOn: z.string().nullable().optional(),
+  stoppedRecurrence: zTodoRecurrence.optional(),
+  stoppedSiblings: z.array(zTodoStoppedSibling).optional(),
+});
+export type TodoCompleteResult = z.infer<typeof zTodoCompleteResult>;
+export const zTodoRescheduled = z.object({
+  updated: z.number().int().nonnegative(),
+  todoIds: z.array(z.string()),
+});
+export type TodoRescheduled = z.infer<typeof zTodoRescheduled>;
+
+// The source note a to-do was made from (notes.md step N7): available says the caller can read the non-trashed
+// note now; false when it is trashed or another member's private note (never leaking its title).
+export const zTodoSourceNote = z.object({
+  id: z.string(),
+  title: z.string().nullable(),
+  available: z.boolean(),
+});
+export type TodoSourceNote = z.infer<typeof zTodoSourceNote>;
 
 // A to-do in a list, in the owner's order. `dueTime` is the due time on the wall clock of `timeZone`; `group` is the
 // My work group of an open to-do (null otherwise), and `overdue` says its day, or its time today, has passed.
@@ -195,6 +701,10 @@ export const zTodoSummary = z.object({
   id: z.string(),
   title: z.string(),
   status: z.enum(TODO_STATUSES),
+  priority: zTodoPriority,
+  tags: z.array(z.string()),
+  listId: z.string().nullable(),
+  sectionId: z.string().nullable(),
   dueOn: z.string().nullable(),
   dueAt: z.string().nullable(),
   dueTime: z.string().nullable(),
@@ -204,7 +714,12 @@ export const zTodoSummary = z.object({
   group: z.enum(TODO_DUE_GROUPS).nullable(),
   overdue: z.boolean(),
   steps: z.object({ done: z.number().int(), total: z.number().int() }),
+  sourceNoteId: z.string().nullable(),
+  sourceNote: zTodoSourceNote.nullable(),
   taskId: z.string().nullable(),
+  recurrence: zTodoRecurrence.nullable(),
+  seriesId: z.string().nullable(),
+  tainted: z.boolean(),
   revision: z.number().int(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -212,8 +727,24 @@ export const zTodoSummary = z.object({
   deletedAt: z.string().nullable(),
 });
 export type TodoSummary = z.infer<typeof zTodoSummary>;
-export const zTodo = zTodoSummary.extend({ details: z.string(), checklist: z.array(z.object({ text: z.string(), done: z.boolean() })) });
+export const zTodo = zTodoSummary.extend({
+  details: z.string(),
+  checklist: z.array(z.object({ text: z.string(), done: z.boolean() })),
+  links: z.array(zNoteLinkView),
+});
 export type Todo = z.infer<typeof zTodo>;
+
+// A record's panel: its pinned notes, the latest others, and the viewer's own linked private to-dos (notes.md §3.4, §3.10).
+export const zNoteRecordPanelView = z.object({
+  pinned: z.array(zNoteSummary),
+  latest: z.array(zNoteSummary),
+  todos: z.array(zTodoSummary),
+});
+export type NoteRecordPanel = z.infer<typeof zNoteRecordPanelView>;
+
+export const zTodoLinkAdd = z.strictObject({ todoId: zId, targetType: z.enum(NOTE_LINK_TARGETS), targetId: zId });
+export const zTodoLinkRemove = z.strictObject({ linkId: zId });
+export const zTodoLinkWritten = z.object({ todoId: z.string(), linkId: z.string() });
 
 // How many to-dos each member has, for an owner or admin before removing them (ADR-0037 §4). No text.
 export const zTodoCount = z.object({ userId: z.string(), todos: z.number().int() });
@@ -228,15 +759,28 @@ export const zTodoHandOver = z.strictObject({
   positionId: zId,
   title: zTodoTitle,
   description: zTodoDetails,
+  projectId: zId.optional(),
 });
 export type TodoHandOverInput = z.input<typeof zTodoHandOver>;
 export const zTodoHandedOver = zTodoWritten.extend({ taskId: z.string() });
 export type TodoHandedOver = z.infer<typeof zTodoHandedOver>;
 
-// "Việc của tôi" (notes.md §3.10, step N5): my open to-dos and the open tasks of the positions I hold, the tasks
-// grouped by their due day in the member's time zone.
-export const zMyWorkInput = z.strictObject({ timeZone: zTimeZone.default(DEFAULT_TIME_ZONE) });
+// "Việc của tôi" (notes.md §3.10, step N5; projects.md §4.3, step P3): my open to-dos and the open tasks of the
+// positions I hold, with each task's project when the projects module is active, grouped by due day in the member's time zone.
+export const zMyWorkInput = z.strictObject({
+  timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
+  projectId: z.union([zId, z.literal('none')]).optional(),
+  listId: z.union([zId, z.literal('inbox')]).optional(),
+  tag: zTodoTagFilter.optional(),
+  priority: zTodoPriority.optional(),
+  sort: z.enum(TODO_LIST_SORTS).default('manual'),
+});
 export type MyWorkInput = z.input<typeof zMyWorkInput>;
+export const zMyWorkTaskProject = z.object({
+  id: z.string(),
+  name: z.string(),
+});
+export type MyWorkTaskProject = z.infer<typeof zMyWorkTaskProject>;
 export const zMyWorkTask = z.object({
   id: z.string(),
   title: z.string(),
@@ -246,21 +790,120 @@ export const zMyWorkTask = z.object({
   group: z.enum(TODO_DUE_GROUPS),
   overdue: z.boolean(),
   tainted: z.boolean(),
+  steps: z.object({ done: z.number().int().nonnegative(), total: z.number().int().nonnegative() }).optional(),
+  project: zMyWorkTaskProject.nullable(),
 });
 export type MyWorkTask = z.infer<typeof zMyWorkTask>;
 // tasksTruncated: the kernel's task list was full, so older tasks of my positions may be missing.
-export const zMyWork = z.object({ todos: z.array(zTodoSummary), tasks: z.array(zMyWorkTask), tasksTruncated: z.boolean() });
+// projectsAvailable: projects module is installed and enabled for this org.
+// noSeatHint: member (non-owner, non-viewer) holds no active seat in a multi-member org.
+export const zMyWork = z.object({
+  todos: z.array(zTodoSummary),
+  tasks: z.array(zMyWorkTask),
+  tasksTruncated: z.boolean(),
+  projectsAvailable: z.boolean(),
+  noSeatHint: z.boolean(),
+});
 export type MyWork = z.infer<typeof zMyWork>;
 
 const DAY_MS = 86_400_000;
-const addDays = (day: string, n: number): string => new Date(Date.parse(`${day}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
+
+function parseLocalDateParts(date: string): [number, number, number] {
+  const [y, m, d] = date.split('-').map(Number);
+  return [y ?? 0, m ?? 1, d ?? 1];
+}
+
+function formatLocalDate(year: number, month: number, day: number): string {
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function daysInTodoMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function resolveTodoMonthlyDate(year: number, month: number, monthDay: number): string {
+  const day = monthDay === -1 ? daysInTodoMonth(year, month) : Math.min(monthDay, daysInTodoMonth(year, month));
+  return formatLocalDate(year, month, day);
+}
+
+/** Adds `n` calendar days to a `YYYY-MM-DD` local date. */
+export function addTodoLocalDays(day: string, n: number): string {
+  const [y, m, d] = parseLocalDateParts(day);
+  return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+}
+
+/** Sunday=0 .. Saturday=6 weekday of a `YYYY-MM-DD` calendar date. */
+export function weekdayOfTodoDate(day: string): number {
+  const [y, m, d] = parseLocalDateParts(day);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
+/** The next Monday strictly after `today` (`YYYY-MM-DD`). */
+export function nextMondayFrom(today: string): string {
+  const sunday0 = weekdayOfTodoDate(today);
+  // Sunday(0) -> +1, Monday(1) -> +7, Tuesday(2) -> +6, ..., Saturday(6) -> +2.
+  const offset = sunday0 === 0 ? 1 : 8 - sunday0;
+  return addTodoLocalDays(today, offset);
+}
+
+/** Strips unset optional keys from a validated recurrence rule for deterministic storage and comparison. */
+export function normalizeTodoRecurrence(rule: TodoRecurrence): TodoRecurrence {
+  if (rule.freq === 'daily') {
+    return { freq: 'daily', interval: rule.interval };
+  }
+  if (rule.freq === 'weekly') {
+    return {
+      freq: 'weekly',
+      interval: rule.interval,
+      ...(rule.byWeekday !== undefined && rule.byWeekday !== null ? { byWeekday: rule.byWeekday } : {}),
+    };
+  }
+  return {
+    freq: 'monthly',
+    interval: rule.interval,
+    ...(rule.byMonthDay !== undefined && rule.byMonthDay !== null ? { byMonthDay: rule.byMonthDay } : {}),
+  };
+}
+
+/** Parses stored JSONB recurrence safely, returning null when null or malformed. */
+export function parseTodoRecurrence(value: unknown): TodoRecurrence | null {
+  if (value === null || value === undefined) return null;
+  const parsed = zTodoRecurrence.safeParse(value);
+  return parsed.success ? normalizeTodoRecurrence(parsed.data) : null;
+}
+
+/** Computes the next local due date (`YYYY-MM-DD`) strictly after `anchorDate` for a recurring personal to-do. */
+export function nextTodoOccurrenceDate(rule: TodoRecurrence, anchorDate: string): string {
+  if (rule.freq === 'daily') {
+    return addTodoLocalDays(anchorDate, rule.interval);
+  }
+  if (rule.freq === 'weekly') {
+    if (rule.byWeekday === undefined || rule.byWeekday === null) {
+      return addTodoLocalDays(anchorDate, rule.interval * 7);
+    }
+    const afterWeekday = weekdayOfTodoDate(anchorDate);
+    const sundayOfAnchor = addTodoLocalDays(anchorDate, -afterWeekday);
+    const sameWeekCandidate = addTodoLocalDays(sundayOfAnchor, rule.byWeekday);
+    return sameWeekCandidate > anchorDate ? sameWeekCandidate : addTodoLocalDays(sameWeekCandidate, rule.interval * 7);
+  }
+  const [year, month, anchorDay] = parseLocalDateParts(anchorDate);
+  const targetDay = rule.byMonthDay ?? anchorDay;
+  if (rule.byMonthDay !== undefined && rule.byMonthDay !== null) {
+    const sameMonthCandidate = resolveTodoMonthlyDate(year, month, targetDay);
+    if (sameMonthCandidate > anchorDate) return sameMonthCandidate;
+  }
+  const totalMonths = year * 12 + (month - 1) + rule.interval;
+  const nextYear = Math.floor(totalMonths / 12);
+  const nextMonth = (totalMonths % 12) + 1;
+  return resolveTodoMonthlyDate(nextYear, nextMonth, targetDay);
+}
 
 /** The My work group of a due day, against today in the same time zone (both YYYY-MM-DD). */
 export function todoDueGroup(dueOn: string | null, today: string): TodoDueGroup {
   if (dueOn === null) return 'none';
   if (dueOn < today) return 'overdue';
   if (dueOn === today) return 'today';
-  return dueOn <= addDays(today, 7) ? 'next7' : 'later';
+  return dueOn <= addTodoLocalDays(today, 7) ? 'next7' : 'later';
 }
 
 /** The instant a to-do is due at: its day at `time` (HH:mm) on the wall clock of `timeZone`. */
@@ -280,6 +923,46 @@ export function todoLocalTime(at: Date, timeZone: string): string {
   const local = at.getTime() + zoneOffsetMs(timeZone, at.getTime());
   const minutes = Math.floor((((local % DAY_MS) + DAY_MS) % DAY_MS) / 60_000);
   return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+}
+
+/**
+ * Shifts a to-do's `dueOn`, `dueAt`, and `remindAt` to `nextDueOn` in `current.timeZone`:
+ * - preserves wall-clock `dueAt` time of day if `dueAt` was set;
+ * - keeps automatic reminders automatic on the new day/time, shifts custom reminders by the same lead duration
+ *   before the due instant (or local midnight if no time was set), or preserves local clock if previously dateless.
+ */
+export function shiftTodoSchedule(
+  current: { dueOn: string | null; dueAt: Date | null; timeZone: string; remindAt: Date | null },
+  nextDueOn: string,
+): { dueOn: string; dueAt: Date | null; remindAt: Date | null } {
+  const nextDueAt =
+    current.dueAt !== null ? todoDueInstant(nextDueOn, todoLocalTime(current.dueAt, current.timeZone), current.timeZone) : null;
+  if (current.remindAt === null) {
+    return { dueOn: nextDueOn, dueAt: nextDueAt, remindAt: null };
+  }
+  const autoBefore = todoAutoReminder({ dueOn: current.dueOn, dueAt: current.dueAt, timeZone: current.timeZone });
+  if (autoBefore !== null && current.remindAt.getTime() === autoBefore.getTime()) {
+    return {
+      dueOn: nextDueOn,
+      dueAt: nextDueAt,
+      remindAt: todoAutoReminder({ dueOn: nextDueOn, dueAt: nextDueAt, timeZone: current.timeZone }),
+    };
+  }
+  if (current.dueOn !== null) {
+    const beforeAnchor = current.dueAt ?? todoDueInstant(current.dueOn, '00:00', current.timeZone);
+    const nextAnchor = nextDueAt ?? todoDueInstant(nextDueOn, '00:00', current.timeZone);
+    const leadMs = beforeAnchor.getTime() - current.remindAt.getTime();
+    return {
+      dueOn: nextDueOn,
+      dueAt: nextDueAt,
+      remindAt: new Date(nextAnchor.getTime() - leadMs),
+    };
+  }
+  return {
+    dueOn: nextDueOn,
+    dueAt: nextDueAt,
+    remindAt: todoDueInstant(nextDueOn, todoLocalTime(current.remindAt, current.timeZone), current.timeZone),
+  };
 }
 
 /** Where a task due at `due` stands at `now` for a member in `timeZone`: its group by that day there, and whether it is late. */
@@ -306,6 +989,7 @@ export const zNotesExport = z.object({
   notes: z.array(
     z.object({
       id: z.string(),
+      notebookId: z.string().nullable().optional(),
       visibility: z.enum(NOTE_VISIBILITIES),
       title: z.string(),
       body: z.string(),
@@ -316,8 +1000,35 @@ export const zNotesExport = z.object({
       archivedAt: z.string().nullable(),
       deletedAt: z.string().nullable(),
       links: z.array(z.object({ targetType: z.string(), targetId: z.string() })),
+      attachments: z
+        .array(
+          z.object({
+            id: z.string(),
+            filename: z.string(),
+            contentType: z.string(),
+            sizeBytes: z.number().int(),
+            sha256: z.string(),
+            extractStatus: z.enum(NOTE_ATTACHMENT_EXTRACT_STATUSES),
+            createdAt: z.string(),
+          }),
+        )
+        .optional(),
     }),
   ),
+  notebooks: z
+    .array(
+      z.object({
+        id: z.string(),
+        visibility: z.enum(NOTE_VISIBILITIES),
+        name: z.string(),
+        stackName: z.string().nullable(),
+        pinned: z.boolean(),
+        sortKey: z.string(),
+        createdAt: z.string(),
+        updatedAt: z.string(),
+      }),
+    )
+    .optional(),
   todos: z.array(
     z.object({
       id: z.string(),
@@ -325,6 +1036,10 @@ export const zNotesExport = z.object({
       details: z.string(),
       checklist: z.array(z.object({ text: z.string(), done: z.boolean() })),
       status: z.enum(TODO_STATUSES),
+      priority: zTodoPriority,
+      tags: z.array(z.string()),
+      listId: z.string().nullable(),
+      sectionId: z.string().nullable(),
       dueOn: z.string().nullable(),
       dueAt: z.string().nullable(),
       timeZone: z.string(),
@@ -336,8 +1051,210 @@ export const zNotesExport = z.object({
       // The note it was made from and the team task it was handed over as, when there are.
       sourceNoteId: z.string().nullable(),
       taskId: z.string().nullable(),
+      recurrence: zTodoRecurrence.nullable(),
+      seriesId: z.string().nullable(),
+      links: z.array(z.object({ targetType: z.string(), targetId: z.string() })),
     }),
   ),
+  todoLists: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      color: z.enum(TODO_LIST_COLORS).nullable(),
+      sections: z.array(zTodoListSection),
+      sortKey: z.string(),
+      createdAt: z.string(),
+      updatedAt: z.string(),
+      deletedAt: z.string().nullable(),
+    }),
+  ),
+  templates: z
+    .array(
+      z.object({
+        id: z.string(),
+        visibility: z.enum(NOTE_VISIBILITIES),
+        name: z.string(),
+        title: z.string(),
+        body: z.string(),
+        tags: z.array(z.string()),
+        createdAt: z.string(),
+        updatedAt: z.string(),
+      }),
+    )
+    .optional(),
   truncated: z.boolean(),
 });
 export type NotesExport = z.infer<typeof zNotesExport>;
+
+// Member-scoped Vy for Notes (N8, #1677, ADR-0037, ADR-0049): summarize a readable note and suggest personal to-dos.
+export const NOTE_VY_DISABLED_REASONS = ['off', 'paused', 'budget', 'forbidden'] as const;
+export type NoteVyDisabledReason = (typeof NOTE_VY_DISABLED_REASONS)[number];
+
+export const zTodoPlanInput = z.strictObject({
+  timeZone: zTimeZone.optional(),
+  language: z.enum(['vi', 'en']).optional(),
+});
+export type TodoPlanInput = z.infer<typeof zTodoPlanInput>;
+
+export const zTodoPlanFocusItem = z.object({
+  todoId: zId,
+  title: z.string(),
+  priority: zTodoPriority,
+  dueOn: zDay.nullable(),
+  dueTime: zTime.nullable(),
+  overdue: z.boolean(),
+  reason: z.string(),
+  revision: z.number().int().min(1),
+});
+export type TodoPlanFocusItem = z.infer<typeof zTodoPlanFocusItem>;
+
+export const zTodoPlanRescheduleItem = z.object({
+  todoId: zId,
+  title: z.string(),
+  currentDueOn: zDay.nullable(),
+  dueOn: zDay,
+  reason: z.string(),
+  revision: z.number().int().min(1),
+});
+export type TodoPlanRescheduleItem = z.infer<typeof zTodoPlanRescheduleItem>;
+
+export const zTodoPlanResult = z.object({
+  state: z.enum(['ready', 'failed']),
+  runId: zId.nullable(),
+  today: zDay,
+  focus: z.array(zTodoPlanFocusItem),
+  reschedules: z.array(zTodoPlanRescheduleItem),
+  dropped: z.number().int().min(0),
+  errorCode: z.string().nullable(),
+});
+export type TodoPlanResult = z.infer<typeof zTodoPlanResult>;
+
+export const zNoteOrganizeInput = z.strictObject({
+  language: z.enum(['vi', 'en']).optional(),
+});
+export type NoteOrganizeInput = z.infer<typeof zNoteOrganizeInput>;
+
+export const zNoteOrganizeSuggestion = z.object({
+  noteId: zId,
+  title: z.string(),
+  visibility: z.enum(NOTE_VISIBILITIES),
+  revision: z.number().int().min(1),
+  existingTags: zTags,
+  notebookId: zId.nullable(),
+  notebookName: z.string().nullable(),
+  tags: zTags,
+  reason: z.string(),
+  canEditTags: z.boolean(),
+});
+export type NoteOrganizeSuggestion = z.infer<typeof zNoteOrganizeSuggestion>;
+
+export const zNoteOrganizeResult = z.object({
+  state: z.enum(['ready', 'failed']),
+  runId: zId.nullable(),
+  suggestions: z.array(zNoteOrganizeSuggestion),
+  dropped: z.number().int().min(0),
+  errorCode: z.string().nullable(),
+});
+export type NoteOrganizeResult = z.infer<typeof zNoteOrganizeResult>;
+
+export const zNoteVyStatus = z.object({
+  available: z.boolean(),
+  reason: z.enum(NOTE_VY_DISABLED_REASONS).nullable(),
+  resetOn: z.string().nullable(),
+});
+export type NoteVyStatus = z.infer<typeof zNoteVyStatus>;
+
+export const zNoteAiLanguage = z.enum(['vi', 'en']);
+export type NoteAiLanguage = z.infer<typeof zNoteAiLanguage>;
+
+export const zNoteSummarizeInput = z.strictObject({
+  noteId: zId,
+  language: zNoteAiLanguage.optional(),
+});
+export type NoteSummarizeInput = z.infer<typeof zNoteSummarizeInput>;
+
+export const zNoteSummarizeResult = z.object({
+  state: z.enum(['ready', 'failed']),
+  runId: z.string(),
+  noteId: z.string(),
+  noteRevision: z.number().int(),
+  stale: z.boolean(),
+  summary: z.string(),
+  bullets: z.array(z.string()),
+  dropped: z.number().int(),
+  errorCode: z.string().nullable(),
+});
+export type NoteSummarizeResult = z.infer<typeof zNoteSummarizeResult>;
+
+export const zNoteSuggestTodosInput = z.strictObject({
+  noteId: zId,
+  timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
+  language: zNoteAiLanguage.optional(),
+});
+export type NoteSuggestTodosInput = z.input<typeof zNoteSuggestTodosInput>;
+
+export const zNoteTodoSuggestion = z.object({
+  title: z.string(),
+  details: z.string(),
+  dueOn: z.string().nullable(),
+});
+export type NoteTodoSuggestion = z.infer<typeof zNoteTodoSuggestion>;
+
+export const zNoteSuggestTodosResult = z.object({
+  state: z.enum(['ready', 'failed']),
+  runId: z.string(),
+  noteId: z.string(),
+  noteRevision: z.number().int(),
+  stale: z.boolean(),
+  suggestions: z.array(zNoteTodoSuggestion),
+  dropped: z.number().int(),
+  errorCode: z.string().nullable(),
+});
+export type NoteSuggestTodosResult = z.infer<typeof zNoteSuggestTodosResult>;
+
+export const zNoteVyResults = z.object({
+  noteId: z.string(),
+  summary: zNoteSummarizeResult.nullable(),
+  todoSuggest: zNoteSuggestTodosResult.nullable(),
+});
+export type NoteVyResults = z.infer<typeof zNoteVyResults>;
+
+export const NOTE_ACCEPT_SUMMARY_MODES = ['replace', 'append'] as const;
+export type NoteAcceptSummaryMode = (typeof NOTE_ACCEPT_SUMMARY_MODES)[number];
+
+export const zNoteAcceptSummary = z.strictObject({
+  noteId: zId,
+  revision: z.number().int().positive(),
+  mode: z.enum(NOTE_ACCEPT_SUMMARY_MODES),
+  summary: z.string().trim().min(1).max(4_000),
+  bullets: z.array(z.string().trim().min(1).max(400)).max(10).default([]),
+  runId: zId.optional(),
+});
+export type NoteAcceptSummaryInput = z.input<typeof zNoteAcceptSummary>;
+
+export const zTodoAcceptSuggestionRow = z
+  .strictObject({
+    title: zTodoTitle,
+    details: zTodoDetails.default(''),
+    dueOn: zDay.nullable().default(null),
+    dueTime: zTime.nullable().default(null),
+    timeZone: zTimeZone.default(DEFAULT_TIME_ZONE),
+    reminder: zTodoReminder.default('auto'),
+  })
+  .refine(dueTimeNeedsDay, DUE_TIME_NEEDS_DAY);
+export type TodoAcceptSuggestionRow = z.input<typeof zTodoAcceptSuggestionRow>;
+
+export const zTodoAcceptSuggestions = z.strictObject({
+  noteId: zId,
+  noteRevision: z.number().int().positive(),
+  runId: zId.optional(),
+  items: z.array(zTodoAcceptSuggestionRow).min(1).max(10),
+});
+export type TodoAcceptSuggestionsInput = z.input<typeof zTodoAcceptSuggestions>;
+
+export const zTodoAcceptSuggestionsResult = z.object({
+  noteId: z.string(),
+  created: z.number().int(),
+  todoIds: z.array(z.string()),
+});
+export type TodoAcceptSuggestionsResult = z.infer<typeof zTodoAcceptSuggestionsResult>;

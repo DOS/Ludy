@@ -1,12 +1,12 @@
 // Tags on media library files (issue #904): members tag the org's post images and videos by product, campaign or
-// client brand, and the library filters by tag. crove_kernel.file never changes, so the tags live in
-// crove_social.media_tag; they go with their file. A tag is normalized (trimmed, inner spaces collapsed, case kept),
+// client brand, and the library filters by tag. ludy_kernel.file never changes, so the tags live in
+// ludy_social.media_tag; they go with their file. A tag is normalized (trimmed, inner spaces collapsed, case kept),
 // a file has each tag once whatever its case, and at most MAX_TAGS_PER_FILE.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { MAX_TAGS_PER_FILE, mediaTagProblem, normalizeMediaTag, normalizeMediaTags } from './domain/media-tags.ts';
 import { LIBRARY_MEDIA_TYPES } from './library.ts';
 
@@ -47,7 +47,7 @@ function requireUser(ctx: CommandContext): string {
 // time, so the count check below holds.
 async function lockLibraryFile(ctx: CommandContext, fileId: string) {
   const file = await ctx.trx
-    .selectFrom('crove_kernel.file')
+    .selectFrom('ludy_kernel.file')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', fileId)
@@ -56,13 +56,13 @@ async function lockLibraryFile(ctx: CommandContext, fileId: string) {
     .forKeyShare()
     .executeTakeFirst();
   if (!file) throw new DomainError('MEDIA_NOT_FOUND', 404, 'Không tìm thấy ảnh này trong thư viện');
-  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`crove_social.media_tag:${ctx.orgId}:${file.id}`}))`.execute(ctx.trx);
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`ludy_social.media_tag:${ctx.orgId}:${file.id}`}))`.execute(ctx.trx);
   return file;
 }
 
 // A file's tags by name (case aside).
 async function tagsOf(ctx: CommandContext, fileId: string): Promise<string[]> {
-  const rows = await ctx.trx.selectFrom('crove_social.media_tag').select('tag').where('org_id', '=', ctx.orgId).where('file_id', '=', fileId).orderBy(sql`lower(tag)`).orderBy('tag').execute();
+  const rows = await ctx.trx.selectFrom('ludy_social.media_tag').select('tag').where('org_id', '=', ctx.orgId).where('file_id', '=', fileId).orderBy(sql`lower(tag)`).orderBy('tag').execute();
   return rows.map((r) => r.tag);
 }
 
@@ -83,19 +83,19 @@ export const mediaTag = defineCommand({
       SELECT d.tag FROM (
         SELECT DISTINCT ON (lower(t.tag)) t.tag, t.n FROM unnest(${input.tags}::text[]) WITH ORDINALITY AS t(tag, n)
         WHERE NOT EXISTS (
-          SELECT 1 FROM crove_social.media_tag m WHERE m.org_id = ${ctx.orgId} AND m.file_id = ${file.id} AND lower(m.tag) = lower(t.tag)
+          SELECT 1 FROM ludy_social.media_tag m WHERE m.org_id = ${ctx.orgId} AND m.file_id = ${file.id} AND lower(m.tag) = lower(t.tag)
         )
         ORDER BY lower(t.tag), t.n
       ) d
       ORDER BY d.n`.execute(ctx.trx);
     const added = fresh.rows.map((r) => r.tag);
-    const count = await ctx.trx.selectFrom('crove_social.media_tag').select((eb) => eb.fn.countAll<string>().as('n')).where('org_id', '=', ctx.orgId).where('file_id', '=', file.id).executeTakeFirstOrThrow();
+    const count = await ctx.trx.selectFrom('ludy_social.media_tag').select((eb) => eb.fn.countAll<string>().as('n')).where('org_id', '=', ctx.orgId).where('file_id', '=', file.id).executeTakeFirstOrThrow();
     if (Number(count.n) + added.length > MAX_TAGS_PER_FILE) {
       throw new DomainError('MEDIA_TAG_LIMIT', 409, `Mỗi tệp gắn được tối đa ${MAX_TAGS_PER_FILE} thẻ`, { limit: MAX_TAGS_PER_FILE });
     }
     if (added.length > 0) {
       await ctx.trx
-        .insertInto('crove_social.media_tag')
+        .insertInto('ludy_social.media_tag')
         .values(added.map((tag) => ({ org_id: ctx.orgId, file_id: file.id, tag, created_by: userId, created_at: ctx.now })))
         .execute();
     }
@@ -116,7 +116,7 @@ export const mediaUntag = defineCommand({
     requireUser(ctx);
     const file = await lockLibraryFile(ctx, input.fileId);
     const done = await ctx.trx
-      .deleteFrom('crove_social.media_tag')
+      .deleteFrom('ludy_social.media_tag')
       .where('org_id', '=', ctx.orgId)
       .where('file_id', '=', file.id)
       .where(sql<boolean>`lower(tag) IN (SELECT lower(t) FROM unnest(${input.tags}::text[]) AS t)`)
@@ -135,8 +135,8 @@ export const mediaTags = defineQuery({
   handler: async (ctx): Promise<MediaTagCount[]> => {
     const rows = await sql<{ tag: string; files: string }>`
       SELECT min(t.tag) AS tag, count(DISTINCT t.file_id) AS files
-      FROM crove_social.media_tag t
-      JOIN crove_kernel.file f ON f.org_id = t.org_id AND f.id = t.file_id
+      FROM ludy_social.media_tag t
+      JOIN ludy_kernel.file f ON f.org_id = t.org_id AND f.id = t.file_id
       WHERE t.org_id = ${ctx.orgId} AND f.source = 'social' AND f.content_type IN (${sql.join([...LIBRARY_MEDIA_TYPES])})
       GROUP BY lower(t.tag)
       ORDER BY count(DISTINCT t.file_id) DESC, lower(t.tag), min(t.tag)

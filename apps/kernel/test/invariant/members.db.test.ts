@@ -9,17 +9,18 @@ import { sql } from 'kysely';
 import pg from 'pg';
 import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { DomainError, Runtime, defineCommand, toDomainError, type BlobStore } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, type Db } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { DomainError, Runtime, defineCommand, toDomainError, type BlobStore } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { createAuthenticator } from '../../src/auth.ts';
 import { loadConfig } from '../../src/config.ts';
 import { createHttpApp } from '../../src/http.ts';
 import { createSessionStatusSource } from '../../src/sessions.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -40,6 +41,7 @@ type Role = 'owner' | 'admin' | 'member' | 'viewer';
 suite('member role changes and removal on PostgreSQL (issue #36)', () => {
   const dbName = `crove_test_members_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let pool: pg.Pool;
   let db: Db;
   let runtime: Runtime;
@@ -48,7 +50,7 @@ suite('member role changes and removal on PostgreSQL (issue #36)', () => {
   const account = (name: string): Account => ({ subject: randomUUID(), email: `${name}-${randomUUID().slice(0, 8)}@members.test`, session: randomUUID(), userId: '' });
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = createDbClient({ connectionString: adminUrl }, dbIds);
     await client.connect();
     try {
       return await fn(client);
@@ -147,11 +149,12 @@ suite('member role changes and removal on PostgreSQL (issue #36)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     appUrl.password = 'test-app-pw';
-    pool = createPool({ connectionString: appUrl.toString(), max: 6 });
+    pool = createDbPool({ connectionString: appUrl.toString(), max: 6 }, dbIds);
     db = createDb(pool);
     // Session check "off" still checks Crove's own session record and membership in the request transaction.
     const config = loadConfig({
@@ -316,7 +319,7 @@ suite('member role changes and removal on PostgreSQL (issue #36)', () => {
           : rpc('org/removeMember', token, { userId: target.userId, idempotencyKey: randomUUID() }, slug);
 
       // Hold both owner rows so the two commands are certainly in flight together, then let them race.
-      const holder = new pg.Client({ connectionString: adminUrl });
+      const holder = createDbClient({ connectionString: adminUrl }, dbIds);
       await holder.connect();
       await holder.query('BEGIN');
       await holder.query("SELECT 1 FROM crove_kernel.tenant_member WHERE org_id = $1 AND role = 'owner' FOR UPDATE", [orgId]);
@@ -343,7 +346,7 @@ suite('member role changes and removal on PostgreSQL (issue #36)', () => {
         [z, 'owner'],
       ]);
       const [tokenX, tokenY] = await Promise.all([tokenFor(x, { mfa: true }), tokenFor(y, { mfa: true })]);
-      const holder = new pg.Client({ connectionString: adminUrl });
+      const holder = createDbClient({ connectionString: adminUrl }, dbIds);
       await holder.connect();
       await holder.query('BEGIN');
       await holder.query("SELECT 1 FROM crove_kernel.tenant_member WHERE org_id = $1 AND role = 'owner' FOR UPDATE", [orgId]);
@@ -382,7 +385,7 @@ suite('member role changes and removal on PostgreSQL (issue #36)', () => {
     expect(invited.status).toBe(200);
     const token = String(invited.body?.acceptPath).split('#')[1];
     // The other membership, inserted and not yet committed, from a separate connection.
-    const holder = new pg.Client({ connectionString: adminUrl });
+    const holder = createDbClient({ connectionString: adminUrl }, dbIds);
     await holder.connect();
     await holder.query('BEGIN');
     await holder.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [orgId, target.userId]);
@@ -444,9 +447,9 @@ suite('member role changes and removal on PostgreSQL (issue #36)', () => {
           access: ['owner'],
           handler: async (ctx, input) => {
             if (input.role) {
-              await ctx.trx.updateTable('crove_kernel.tenant_member').set({ role: input.role }).where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).execute();
+              await ctx.trx.updateTable('ludy_kernel.tenant_member').set({ role: input.role }).where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).execute();
             } else {
-              await ctx.trx.deleteFrom('crove_kernel.tenant_member').where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).execute();
+              await ctx.trx.deleteFrom('ludy_kernel.tenant_member').where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).execute();
             }
             return { ok: true };
           },
@@ -493,8 +496,8 @@ suite('member role changes and removal on PostgreSQL (issue #36)', () => {
   it('serializes the owner check: two transactions demoting the two owners at once leave exactly one', async () => {
     const { x, y } = await signInAll('x', 'y');
     const { orgId } = await orgWith(x, [[y, 'owner']]);
-    const tx = new pg.Client({ connectionString: adminUrl });
-    const ty = new pg.Client({ connectionString: adminUrl });
+    const tx = createDbClient({ connectionString: adminUrl }, dbIds);
+    const ty = createDbClient({ connectionString: adminUrl }, dbIds);
     await Promise.all([tx.connect(), ty.connect()]);
     try {
       // Each transaction demotes a different owner, so neither waits on the other's row, and each still sees the
@@ -504,7 +507,7 @@ suite('member role changes and removal on PostgreSQL (issue #36)', () => {
       await ty.query('BEGIN');
       await ty.query("UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2", [orgId, y.userId]);
       // Hold the org's check so both commits are certainly checking at the same time.
-      const holder = new pg.Client({ connectionString: adminUrl });
+      const holder = createDbClient({ connectionString: adminUrl }, dbIds);
       await holder.connect();
       await holder.query('BEGIN');
       await holder.query("SELECT pg_advisory_xact_lock(hashtextextended('kernel.tenant_member.owner:' || $1::text, 0))", [orgId]);

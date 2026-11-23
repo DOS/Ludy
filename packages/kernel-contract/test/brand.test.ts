@@ -3,15 +3,15 @@ import { describe, expect, it } from 'vitest';
 import { brandSlug } from '../src/index.ts';
 
 describe('brandSlug', () => {
-  it('keeps "crove" for the default name and spells any other in lower case ASCII with dashes', () => {
-    expect(brandSlug('Crove')).toBe('crove');
+  it('gives "ludy" for the default name and spells any other in lower case ASCII with dashes', () => {
+    expect(brandSlug('Ludy')).toBe('ludy');
     expect(brandSlug('Tên Mới')).toBe('ten-moi');
     expect(brandSlug('Đại Việt')).toBe('dai-viet');
     expect(brandSlug("Sổ Xanh & Co's (VN)")).toBe('so-xanh-co-s-vn');
   });
 
-  it('falls back to "crove" when nothing of the name is left', () => {
-    expect(brandSlug('...')).toBe('crove');
-    expect(brandSlug('')).toBe('crove');
+  it('falls back to "ludy" when nothing of the name is left', () => {
+    expect(brandSlug('...')).toBe('ludy');
+    expect(brandSlug('')).toBe('ludy');
   });
 });

@@ -1,6 +1,6 @@
 // The tax calendar of an org (issue #921): which recurring tax obligations apply to it, what is due soon or overdue,
-// and what a member marked done. The rules are data in @crove/kernel-contract (tax-calendar.ts); this module keeps the
-// org's choices (crove_kernel.tax_profile, one row per org) and the done marks (crove_kernel.tax_obligation_done).
+// and what a member marked done. The rules are data in @ludy/kernel-contract (tax-calendar.ts); this module keeps the
+// org's choices (ludy_kernel.tax_profile, one row per org) and the done marks (ludy_kernel.tax_obligation_done).
 //
 // Each legal entity files its own returns (#1496): a mark is one entity's, and the org's obligation for a period is done
 // once every legal entity the reader sees that owes it has marked it (taxDuesOf says which owe what). A reader limited
@@ -24,9 +24,9 @@ import {
   type TaxProfile,
   type TaxProfileSettings,
   type VatFilingPeriod,
-} from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
@@ -60,7 +60,7 @@ const vietnamDay = (at: Date) => new Date(at.getTime() + 7 * 3_600_000).toISOStr
 
 export async function readTaxProfile(ctx: Pick<QueryContext, 'trx' | 'orgId'>): Promise<StoredTaxProfile> {
   const row = await ctx.trx
-    .selectFrom('crove_kernel.tax_profile')
+    .selectFrom('ludy_kernel.tax_profile')
     .select(['obligations', 'pit_filing_period', 'fiscal_year_end_month', 'created_at'])
     .where('org_id', '=', ctx.orgId)
     .orderBy('created_at')
@@ -92,7 +92,7 @@ async function markRule(
   const viaFinance = ctx.installed('finance');
   let entities: readonly string[] = [];
   if (vat && user && viaFinance && !filer) {
-    const { rows } = await sql<{ entities: string[] | null }>`SELECT crove_kernel.ctx_permission_entities(${VAT_FILE_PERMISSION}) AS entities`.execute(ctx.trx);
+    const { rows } = await sql<{ entities: string[] | null }>`SELECT ludy_kernel.ctx_permission_entities(${VAT_FILE_PERMISSION}) AS entities`.execute(ctx.trx);
     entities = rows[0]?.entities ?? [];
   }
   return (obligation, legalEntityId) => {
@@ -115,7 +115,7 @@ export async function taxDuesOf(ctx: Pick<QueryContext, 'trx' | 'orgId' | 'actor
   if (dues.length === 0) return [];
   // The entities the reader sees, and the marks they made for these periods.
   const entities = await ctx.trx
-    .selectFrom('crove_kernel.legal_entity')
+    .selectFrom('ludy_kernel.legal_entity')
     .select(['id', 'name', 'is_default', 'created_at'])
     .where('org_id', '=', ctx.orgId)
     .orderBy('is_default', 'desc')
@@ -123,7 +123,7 @@ export async function taxDuesOf(ctx: Pick<QueryContext, 'trx' | 'orgId' | 'actor
     .execute();
   if (entities.length === 0) return [];
   const done = await ctx.trx
-    .selectFrom('crove_kernel.tax_obligation_done')
+    .selectFrom('ludy_kernel.tax_obligation_done')
     .select(['obligation', 'period', 'legal_entity_id'])
     .where('org_id', '=', ctx.orgId)
     .where('period', 'in', [...new Set(dues.map((d) => d.period))])
@@ -176,12 +176,12 @@ export const taxProfileSave = defineCommand({
       throw new DomainError('PIT_FILING_PERIOD_REQUIRED', 422, 'Hãy chọn kỳ khai thuế TNCN khấu trừ (tháng hoặc quý)');
     }
     const obligations = TAX_OBLIGATIONS.filter((o) => (input.obligations as readonly string[]).includes(o)) as TaxProfile['obligations'];
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`crove_kernel.tax_profile:${ctx.orgId}`}))`.execute(ctx.trx);
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`ludy_kernel.tax_profile:${ctx.orgId}`}))`.execute(ctx.trx);
     const before = await readTaxProfile(ctx);
     const values = { obligations, pit_filing_period: input.pitFilingPeriod, fiscal_year_end_month: input.fiscalYearEndMonth, updated_by: ctx.actor.userId, updated_at: ctx.now };
-    const updated = await ctx.trx.updateTable('crove_kernel.tax_profile').set(values).where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const updated = await ctx.trx.updateTable('ludy_kernel.tax_profile').set(values).where('org_id', '=', ctx.orgId).executeTakeFirst();
     if (Number(updated.numUpdatedRows) === 0) {
-      await ctx.trx.insertInto('crove_kernel.tax_profile').values({ org_id: ctx.orgId, ...values, created_at: ctx.now }).execute();
+      await ctx.trx.insertInto('ludy_kernel.tax_profile').values({ org_id: ctx.orgId, ...values, created_at: ctx.now }).execute();
     }
     const { since: _since, ...previous } = before;
     ctx.audit({ previous, profile: { obligations, pitFilingPeriod: input.pitFilingPeriod, fiscalYearEndMonth: input.fiscalYearEndMonth } });
@@ -190,10 +190,10 @@ export const taxProfileSave = defineCommand({
   },
 });
 
-// The legal entity a mark is for: the one named, checked against the caller's scope (crove_kernel.legal_entity is read
+// The legal entity a mark is for: the one named, checked against the caller's scope (ludy_kernel.legal_entity is read
 // through le_scope, so an entity outside it is not found), or the org's default entity as the caller sees it.
 async function markEntity(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityId: string | undefined): Promise<string> {
-  let q = ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId);
+  let q = ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId);
   q = legalEntityId === undefined ? q.where('is_default', '=', true) : q.where('id', '=', legalEntityId);
   const row = await q.executeTakeFirst();
   if (!row) throw new DomainError('LEGAL_ENTITY_NOT_FOUND', 422, 'Không tìm thấy pháp nhân này trong tổ chức');
@@ -229,7 +229,7 @@ export const taxObligationDone = defineCommand({
     const legalEntityId = await markEntity(ctx, input.legalEntityId);
     await assertMayMark(ctx, input.obligation, legalEntityId);
     const inserted = await ctx.trx
-      .insertInto('crove_kernel.tax_obligation_done')
+      .insertInto('ludy_kernel.tax_obligation_done')
       .values({ org_id: ctx.orgId, legal_entity_id: legalEntityId, obligation: input.obligation, period: input.period, done_by: ctx.actor.userId })
       .onConflict((oc) => oc.columns(['org_id', 'legal_entity_id', 'obligation', 'period']).doNothing())
       .returning('id')
@@ -254,7 +254,7 @@ export const taxObligationUndo = defineCommand({
     const legalEntityId = await markEntity(ctx, input.legalEntityId);
     await assertMayMark(ctx, input.obligation, legalEntityId);
     const removed = await ctx.trx
-      .deleteFrom('crove_kernel.tax_obligation_done')
+      .deleteFrom('ludy_kernel.tax_obligation_done')
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', legalEntityId)
       .where('obligation', '=', input.obligation)

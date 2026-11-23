@@ -1,4 +1,4 @@
-// Inbox items the system raises (#1720, plan §4.9 "pg-boss contract"): crove_kernel.inbox_item, one open row per org,
+// Inbox items the system raises (#1720, plan §4.9 "pg-boss contract"): ludy_kernel.inbox_item, one open row per org,
 // kind and key. kernel.job.dead_lettered: work of the org that failed its last retry. finance.invoice.original_needed
 // (#2286): a mail with no invoice attachment whose text held the seller's lookup link or code (see the end of this file).
 //
@@ -15,10 +15,11 @@
 // INBOX_ITEM_DISMISSED_KEEP_DAYS ago, and any raised INBOX_ITEM_KEEP_DAYS ago (kernel.inbox.prune).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { ORIGINAL_NEEDED_KIND, tableWrite, vietnamToday, zId, zLookupHint, type OriginalNeededItem, type RaisedInboxItem } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { ORIGINAL_NEEDED_KIND, tableWrite, vietnamToday, zId, zLookupHint, type OriginalNeededItem, type RaisedInboxItem } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { kernelManifest } from './manifest.ts';
+import { offAppsOf, proposalOfApp } from './org-apps.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 export const DEAD_LETTERED = 'kernel.job.dead_lettered';
@@ -62,12 +63,12 @@ export const jobDeadLetter = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
-  writes: [tableWrite(kernelManifest.tables, 'crove_kernel', 'inbox_item', ['org_id', 'kind', 'dedupe_key', 'detail', 'raised_at'])],
+  writes: [tableWrite(kernelManifest.tables, 'ludy_kernel', 'inbox_item', ['org_id', 'kind', 'dedupe_key', 'detail', 'raised_at'])],
   handler: async (ctx, input) => {
     const lastAt = ctx.now.toISOString();
     const detail = { queue: input.queue, jobId: input.jobId, retries: input.retries, failures: 1, lastAt } satisfies z.input<typeof zDeadLetterDetail>;
     const row = await ctx.trx
-      .insertInto('crove_kernel.inbox_item')
+      .insertInto('ludy_kernel.inbox_item')
       .values({ org_id: ctx.orgId, kind: DEAD_LETTERED, dedupe_key: deadLetterKey(input.queue, ctx.now), detail: JSON.stringify(detail), raised_at: ctx.now })
       // The open item of the queue and day (inbox_item_open_once): the latest job, and one more failure.
       .onConflict((oc) =>
@@ -77,7 +78,7 @@ export const jobDeadLetter = defineCommand({
           .doUpdateSet({
             detail: sql<string>`pg_catalog.jsonb_build_object(
               'queue', ${input.queue}::text, 'jobId', ${input.jobId}::text, 'retries', ${input.retries}::integer,
-              'failures', COALESCE((crove_kernel.inbox_item.detail ->> 'failures')::integer, 1) + 1, 'lastAt', ${lastAt}::text)`,
+              'failures', COALESCE((ludy_kernel.inbox_item.detail ->> 'failures')::integer, 1) + 1, 'lastAt', ${lastAt}::text)`,
           }),
       )
       .returning(['id', sql<number>`(detail ->> 'failures')::integer`.as('failures')])
@@ -97,25 +98,25 @@ export const inboxDismiss = defineCommand({
   sideEffect: 'internal',
   access: ['owner', 'admin'],
   target: (input) => ({ type: 'kernel.inbox_item', id: input.id }),
-  writes: [tableWrite(kernelManifest.tables, 'crove_kernel', 'inbox_item', ['dismissed_at', 'dismissed_by'])],
+  writes: [tableWrite(kernelManifest.tables, 'ludy_kernel', 'inbox_item', ['dismissed_at', 'dismissed_by'])],
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const done = await ctx.trx
-      .updateTable('crove_kernel.inbox_item')
+      .updateTable('ludy_kernel.inbox_item')
       .set({ dismissed_at: ctx.now, dismissed_by: ctx.actor.userId })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
       .where('dismissed_at', 'is', null)
       .executeTakeFirst();
     if (Number(done.numUpdatedRows) === 0) {
-      const exists = await ctx.trx.selectFrom('crove_kernel.inbox_item').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
+      const exists = await ctx.trx.selectFrom('ludy_kernel.inbox_item').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
       if (!exists) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy mục này trong Chứng từ chờ duyệt');
     }
     return { ok: true as const };
   },
 });
 
-// The daily retention run, in the system context of each org crove_kernel.inbox_item_prune_due names: the items
+// The daily retention run, in the system context of each org ludy_kernel.inbox_item_prune_due names: the items
 // dismissed INBOX_ITEM_DISMISSED_KEEP_DAYS ago and those raised INBOX_ITEM_KEEP_DAYS ago go.
 export const inboxPrune = defineCommand({
   name: 'kernel.inbox.prune',
@@ -123,11 +124,11 @@ export const inboxPrune = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
-  writes: [tableWrite(kernelManifest.tables, 'crove_kernel', 'inbox_item', ['org_id', 'id', 'kind', 'dedupe_key', 'detail', 'raised_at', 'dismissed_at', 'dismissed_by'])],
+  writes: [tableWrite(kernelManifest.tables, 'ludy_kernel', 'inbox_item', ['org_id', 'id', 'kind', 'dedupe_key', 'detail', 'raised_at', 'dismissed_at', 'dismissed_by'])],
   handler: async (ctx): Promise<{ removed: number }> => {
     const { dismissedBefore, raisedBefore } = inboxPruneCutoffs(ctx.now);
     const done = await ctx.trx
-      .deleteFrom('crove_kernel.inbox_item')
+      .deleteFrom('ludy_kernel.inbox_item')
       .where('org_id', '=', ctx.orgId)
       .where((eb) => eb.or([eb('dismissed_at', '<', dismissedBefore), eb('raised_at', '<', raisedBefore)]))
       .executeTakeFirst();
@@ -144,7 +145,7 @@ export const inboxRaised = defineQuery({
   access: ALL,
   handler: async (ctx): Promise<{ items: RaisedInboxItem[]; total: number }> => {
     if (ctx.actor.type !== 'user' || (ctx.role !== 'owner' && ctx.role !== 'admin')) return { items: [], total: 0 };
-    const open = ctx.trx.selectFrom('crove_kernel.inbox_item').where('org_id', '=', ctx.orgId).where('kind', '=', DEAD_LETTERED).where('dismissed_at', 'is', null);
+    const open = ctx.trx.selectFrom('ludy_kernel.inbox_item').where('org_id', '=', ctx.orgId).where('kind', '=', DEAD_LETTERED).where('dismissed_at', 'is', null);
     const rows = await open.select(['id', 'kind', 'detail', 'raised_at']).orderBy('raised_at', 'desc').orderBy('id', 'desc').limit(RAISED_ITEMS_MAX).execute();
     const { total } = await open.select((eb) => eb.fn.countAll<string>().as('total')).executeTakeFirstOrThrow();
     const items: RaisedInboxItem[] = [];
@@ -196,7 +197,7 @@ export async function raiseOriginalNeeded(ctx: CommandContext, mailKey: string, 
   let raised = 0;
   for (const [index, hint] of checked.entries()) {
     const row = await ctx.trx
-      .insertInto('crove_kernel.inbox_item')
+      .insertInto('ludy_kernel.inbox_item')
       .values({
         org_id: ctx.orgId,
         kind: ORIGINAL_NEEDED_KIND,
@@ -222,11 +223,11 @@ export const originalDismiss = defineCommand({
   sideEffect: 'internal',
   access: ['owner', 'admin', 'member'],
   target: (input) => ({ type: 'kernel.inbox_item', id: input.id }),
-  writes: [tableWrite(kernelManifest.tables, 'crove_kernel', 'inbox_item', ['dismissed_at', 'dismissed_by'])],
+  writes: [tableWrite(kernelManifest.tables, 'ludy_kernel', 'inbox_item', ['dismissed_at', 'dismissed_by'])],
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const done = await ctx.trx
-      .updateTable('crove_kernel.inbox_item')
+      .updateTable('ludy_kernel.inbox_item')
       .set({ dismissed_at: ctx.now, dismissed_by: ctx.actor.userId })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
@@ -235,7 +236,7 @@ export const originalDismiss = defineCommand({
       .executeTakeFirst();
     if (Number(done.numUpdatedRows) === 0) {
       const exists = await ctx.trx
-        .selectFrom('crove_kernel.inbox_item')
+        .selectFrom('ludy_kernel.inbox_item')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.id)
@@ -255,7 +256,9 @@ export const originalsList = defineQuery({
   access: ALL,
   handler: async (ctx): Promise<{ items: OriginalNeededItem[]; total: number }> => {
     if (ctx.actor.type !== 'user' || ctx.role === 'viewer') return { items: [], total: 0 };
-    const open = ctx.trx.selectFrom('crove_kernel.inbox_item').where('org_id', '=', ctx.orgId).where('kind', '=', ORIGINAL_NEEDED_KIND).where('dismissed_at', 'is', null);
+    // These items belong to Finance: while the org has it off they are not listed (and counted by kernel.inbox.hidden), and wait with their own rows (ADR-0053, slice e).
+    if ((await offAppsOf(ctx.trx, ctx.orgId)).includes('finance')) return { items: [], total: 0 };
+    const open = ctx.trx.selectFrom('ludy_kernel.inbox_item').where('org_id', '=', ctx.orgId).where('kind', '=', ORIGINAL_NEEDED_KIND).where('dismissed_at', 'is', null);
     const rows = await open.select(['id', 'detail', 'raised_at']).orderBy('raised_at', 'desc').orderBy('id', 'desc').limit(ORIGINAL_ITEMS_MAX).execute();
     const { total } = await open.select((eb) => eb.fn.countAll<string>().as('total')).executeTakeFirstOrThrow();
     const items: OriginalNeededItem[] = [];
@@ -269,5 +272,38 @@ export const originalsList = defineQuery({
   },
 });
 
+// How many waiting things the Inbox leaves out because their app is switched off for the org (ADR-0053 section 4, slice e): the pending proposals whose command belongs to an app that is off, and
+// Finance's open original-needed items while Finance is off. The Inbox shows one line with the number ("N việc đang chờ ở ứng dụng đã tắt"); the things keep their own expiry and cannot be approved
+// (the runtime answers MODULE_OFF for the command they would run). A member sees the count of what they could have seen: the proposal read is under the same row security as the list.
+export const inboxHidden = defineQuery({
+  name: 'kernel.inbox.hidden',
+  input: z.object({}),
+  access: ALL,
+  handler: async (ctx): Promise<{ count: number }> => {
+    if (ctx.actor.type !== 'user') return { count: 0 };
+    const off = await offAppsOf(ctx.trx, ctx.orgId);
+    if (off.length === 0) return { count: 0 };
+    const { n } = await ctx.trx
+      .selectFrom('ludy_kernel.proposal')
+      .select((eb) => eb.fn.countAll<string>().as('n'))
+      .where('org_id', '=', ctx.orgId)
+      .where('status', '=', 'pending')
+      .where(proposalOfApp(off))
+      .executeTakeFirstOrThrow();
+    let count = Number(n);
+    if (off.includes('finance') && ctx.role !== 'viewer') {
+      const { total } = await ctx.trx
+        .selectFrom('ludy_kernel.inbox_item')
+        .select((eb) => eb.fn.countAll<string>().as('total'))
+        .where('org_id', '=', ctx.orgId)
+        .where('kind', '=', ORIGINAL_NEEDED_KIND)
+        .where('dismissed_at', 'is', null)
+        .executeTakeFirstOrThrow();
+      count += Number(total);
+    }
+    return { count };
+  },
+});
+
 export const inboxItemCommands = [jobDeadLetter, inboxDismiss, inboxPrune, originalDismiss];
-export const inboxItemQueries = [inboxRaised, originalsList];
+export const inboxItemQueries = [inboxRaised, originalsList, inboxHidden];

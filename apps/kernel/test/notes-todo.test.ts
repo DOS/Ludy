@@ -2,8 +2,8 @@
 // zone, the tasks of My work, the hand-over's input, and the commands' access (no agent runs any of them, ADR-0029,
 // notes plan §3.5); the automatic reminder (#1675).
 import { describe, expect, it } from 'vitest';
-import { REBALANCE_AT, isSortKey, keyBetween, spreadKeys, taskStanding, todoAutoReminder, todoDueGroup, todoDueInstant, todoLocalTime, todoStanding, zTodoCreate, zTodoHandOver, zTodoReorder, zTodoUpdate } from '@crove/kernel-contract';
-import { TODO_DUE, myWork, notesCommands, notesQueries, todoCommands, todoHandOver, todoQueries, todoRemind } from '@crove/mod-notes';
+import { REBALANCE_AT, isSortKey, keyBetween, spreadKeys, taskStanding, todoAutoReminder, todoDueGroup, todoDueInstant, todoLocalTime, todoStanding, zTodoCreate, zTodoHandOver, zTodoListCreate, zTodoListUpdate, zTodoReorder, zTodoUpdate } from '@ludy/kernel-contract';
+import { TODO_DUE, myWork, notesCommands, notesQueries, todoCommands, todoHandOver, todoListCommands, todoListQueries, todoQueries, todoRemind } from '@ludy/mod-notes';
 
 describe('to-do order keys', () => {
   it('finds a key between any two, and at both ends', () => {
@@ -91,8 +91,36 @@ describe('to-do due days', () => {
     expect(zTodoCreate.safeParse({ title: 'x', dueTime: '09:00' }).success).toBe(false);
     expect(zTodoCreate.safeParse({ title: 'x', dueOn: '2026-11-05', dueTime: '24:00' }).success).toBe(false);
     expect(zTodoCreate.safeParse({ title: 'x', timeZone: 'Mars/Olympus' }).success).toBe(false);
-    expect(zTodoCreate.parse({ title: '  x  ' })).toEqual({ title: 'x', details: '', checklist: [], dueOn: null, dueTime: null, timeZone: 'Asia/Ho_Chi_Minh', reminder: 'auto' });
+    expect(zTodoCreate.parse({ title: '  x  ' })).toEqual({
+      title: 'x',
+      details: '',
+      checklist: [],
+      priority: 4,
+      tags: [],
+      listId: null,
+      sectionId: null,
+      dueOn: null,
+      dueTime: null,
+      timeZone: 'Asia/Ho_Chi_Minh',
+      reminder: 'auto',
+    });
     const id = '018f0000-0000-7000-8000-000000000001';
+    expect(zTodoCreate.parse({ title: 'Từ ghi chú', sourceNoteId: id }).sourceNoteId).toBe(id);
+    expect(zTodoCreate.safeParse({ title: 'Từ ghi chú', sourceNoteId: 'not-a-uuid' }).success).toBe(false);
+    expect(zTodoCreate.safeParse({ title: 'Mục lẻ', listId: null, sectionId: 'sec-1' }).success).toBe(false);
+    expect(zTodoCreate.parse({ title: 'Ưu tiên', priority: 1, tags: ['  THUE ', 'vip', 'thue'], listId: id, sectionId: 'sec-1' })).toMatchObject({
+      priority: 1,
+      tags: ['thue', 'vip'],
+      listId: id,
+      sectionId: 'sec-1',
+    });
+    expect(zTodoListCreate.parse({ name: 'Thuế', sections: [{ name: 'Đầu tuần' }] })).toEqual({
+      name: 'Thuế',
+      color: null,
+      sections: [{ name: 'Đầu tuần' }],
+    });
+    expect(zTodoListCreate.safeParse({ name: 'Trùng', sections: [{ id: 'a', name: '1' }, { id: 'a', name: '2' }] }).success).toBe(false);
+    expect(zTodoListUpdate.safeParse({ listId: id, revision: 1, name: 'Sửa', color: 'blue', sections: [] }).success).toBe(true);
     expect(zTodoReorder.safeParse({ todoId: id, place: 'before', anchorId: id }).success).toBe(false);
   });
 });
@@ -138,6 +166,16 @@ describe('to-do commands', () => {
       expect((def as { agent?: unknown }).agent, def.name).toBeUndefined();
     }
     for (const def of todoCommands) {
+      expect(def.access, def.name).toEqual(['owner', 'admin', 'member']);
+      expect(def.risk, def.name).toBe('R1');
+    }
+    for (const def of todoListCommands) expect(notesCommands).toContain(def);
+    for (const def of todoListQueries) expect(notesQueries).toContain(def);
+    for (const def of [...todoListCommands, ...todoListQueries]) {
+      expect(def.name.startsWith('notes.todo_list.'), def.name).toBe(true);
+      expect((def as { agent?: unknown }).agent, def.name).toBeUndefined();
+    }
+    for (const def of todoListCommands) {
       expect(def.access, def.name).toEqual(['owner', 'admin', 'member']);
       expect(def.risk, def.name).toBe('R1');
     }

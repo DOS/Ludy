@@ -1,10 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The monthly pay run of the HR module (issue #2531, docs/plan/payroll.md sections 6.2 and 6.3, ADR-0046): a run is one month of one legal entity, with a line per person. A line holds
-// the month's inputs (typed, or copied from last month where they recur) and the figures and breakdown the calculator of @crove/l10n-vn produced from them, stored as facts. A draft run
+// the month's inputs (typed, or copied from last month where they recur) and the figures and breakdown the calculator of @ludy/l10n-vn produced from them, stored as facts. A draft run
 // changes; an approved one never does (a correction is an adjustment line in a later run). Owners and admins only, and every read is a sensitive query.
 import { z } from 'zod';
 import { zAccountCode, zCashVoucherProposal, zId, zJournalVoucherProposal, zLocalDate } from './schemas.ts';
-import { zHrWage } from './hr.ts';
+import {
+  HR_LEAVE_CATEGORIES,
+  leaveBaselineMeetsCategoryFloor,
+  zHrAnnualLeaveBaseline,
+  zHrLaborRuleRef,
+  zHrWage,
+} from './hr.ts';
 
 export const HR_RUN_STATUSES = ['draft', 'approved', 'paid', 'closed'] as const;
 export type HrRunStatus = (typeof HR_RUN_STATUSES)[number];
@@ -23,19 +29,33 @@ export type HrDeductionKind = (typeof HR_DEDUCTION_KINDS)[number];
 export const HR_DEFAULT_WORKING_DAYS = '26';
 
 // The inputs of a month's line that recur from one month to the next, copied when a month is opened; every other input starts empty.
-export const HR_RECURRING_INPUTS = ['allowances', 'otherRegularPay', 'voluntaryPension', 'commitment', 'insured', 'contractTermMonths', 'withholdingRequested'] as const;
+export const HR_RECURRING_INPUTS = [
+  'allowances',
+  'otherRegularPay',
+  'voluntaryPension',
+  'commitment',
+  'insured',
+  'contractTermMonths',
+  'withholdingRequested',
+  'leaveCategory',
+  'standardAnnualDays',
+] as const;
 
 export const zHrMonth = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'YYYY-MM');
 // Days in whole or half units (unpaid leave, days not employed, the working days of the month) and hours of overtime: decimal strings, never JS numbers.
 export const zHrDays = z.string().regex(/^\d{1,2}(\.\d)?$/, 'days');
-const zHours = z.string().regex(/^\d{1,3}(\.\d{1,2})?$/, 'hours');
+export const zHrBhxhDays = z.string().regex(/^\d{1,2}(\.\d{1,2})?$/, 'bhxh days');
+export const zHrHours = z.string().regex(/^\d{1,3}(\.\d{1,2})?$/, 'hours');
+export const zHrWorkUnits = z.string().regex(/^\d{1,7}(\.\d{1,2})?$/, 'units');
+const zHrOvertimeEntry = z.strictObject({ dayKind: z.enum(HR_OVERTIME_DAY_KINDS), night: z.boolean(), hours: zHrHours });
 // A signed amount of an adjustment line.
 export const zHrSignedAmount = z.string().regex(/^-?\d{1,16}(\.\d{1,2})?$/, 'signed decimal string');
 const zLabel = z.string().trim().min(1).max(100);
 
-export const zHrPayrollInputs = z.strictObject({
+const zHrPayrollInputsObject = z.strictObject({
   // What recurs (copied from last month): the allowances with whether the contract names them with an amount, other regular pay, the voluntary pension, the commitment form,
-  // whether the person is insured (null: by the contract type), the term of a fixed-term contract in months, the person's request for withholding below the threshold.
+  // whether the person is insured (null: by the contract type), the term of a fixed-term contract in months, the person's request for withholding below the threshold,
+  // and the employee's statutory/contractual annual leave baseline for annual_leave_exceeded checks.
   allowances: z.array(z.strictObject({ label: zLabel, amount: zHrWage, type: z.enum(HR_ALLOWANCE_TYPES), namedInContract: z.boolean() })).max(20).default([]),
   otherRegularPay: zHrWage.default('0'),
   voluntaryPension: zHrWage.default('0'),
@@ -43,17 +63,56 @@ export const zHrPayrollInputs = z.strictObject({
   insured: z.boolean().nullable().default(null),
   contractTermMonths: z.number().int().min(1).max(36).nullable().default(null),
   withholdingRequested: z.boolean().default(false),
-  // What changed this month.
+  leaveCategory: z.enum(HR_LEAVE_CATEGORIES).default('standard'),
+  standardAnnualDays: zHrAnnualLeaveBaseline.nullable().default(null),
+  // What changed this month. `unpaidLeaveFromLedger` records whether `unpaidLeaveDays` was populated by `hr.payroll.run.sync_leave`
+  // (`true` = synced from ledger, `false` = manual/imported, `null` = pre-upgrade row whose provenance has not been stamped yet).
   unpaidLeaveDays: zHrDays.default('0'),
+  unpaidLeaveFromLedger: z.boolean().nullable().default(null),
   daysNotEmployed: zHrDays.default('0'),
-  overtime: z.array(z.strictObject({ dayKind: z.enum(HR_OVERTIME_DAY_KINDS), night: z.boolean(), hours: zHours })).max(30).default([]),
-  nightHours: zHours.default('0'),
+  workedHours: zHrHours.nullable().default(null),
+  pieceCount: zHrWorkUnits.nullable().default(null),
+  sicknessBhxhDays: zHrBhxhDays.default('0'),
+  sicknessBhxhFromLedger: z.boolean().nullable().default(null),
+  maternityBhxhDays: zHrBhxhDays.default('0'),
+  maternityBhxhFromLedger: z.boolean().nullable().default(null),
+  overtime: z.array(zHrOvertimeEntry).max(30).default([]),
+  overtimeFromRequests: z.boolean().nullable().default(null),
+  nightHours: zHrHours.default('0'),
   bonus: zHrWage.default('0'),
   advance: zHrWage.default('0'),
   deductions: z.array(z.strictObject({ label: zLabel, kind: z.enum(HR_DEDUCTION_KINDS), amount: zHrWage })).max(20).default([]),
 });
+
+export const zHrPayrollInputs = zHrPayrollInputsObject.refine(
+  (v) => v.standardAnnualDays === null || leaveBaselineMeetsCategoryFloor(v.leaveCategory, v.standardAnnualDays),
+  { message: 'standardAnnualDays cannot be below the statutory minimum for leaveCategory', path: ['standardAnnualDays'] },
+);
 export type HrPayrollInputs = z.output<typeof zHrPayrollInputs>;
 export type HrPayrollInputsInput = z.input<typeof zHrPayrollInputs>;
+
+const zHrLineInputsEdit = zHrPayrollInputsObject
+  .extend({
+    contractTermMonths: z.number().int().min(1).max(36).nullable().optional(),
+    leaveCategory: z.enum(HR_LEAVE_CATEGORIES).optional(),
+    standardAnnualDays: zHrAnnualLeaveBaseline.nullable().optional(),
+    unpaidLeaveFromLedger: z.boolean().nullable().optional(),
+    workedHours: zHrHours.nullable().optional(),
+    pieceCount: zHrWorkUnits.nullable().optional(),
+    sicknessBhxhDays: zHrBhxhDays.optional(),
+    sicknessBhxhFromLedger: z.boolean().nullable().optional(),
+    maternityBhxhDays: zHrBhxhDays.optional(),
+    maternityBhxhFromLedger: z.boolean().nullable().optional(),
+    overtime: z.array(zHrOvertimeEntry).max(30).optional(),
+    overtimeFromRequests: z.boolean().nullable().optional(),
+  })
+  .refine(
+    (v) =>
+      v.standardAnnualDays === null ||
+      v.standardAnnualDays === undefined ||
+      leaveBaselineMeetsCategoryFloor(v.leaveCategory ?? 'standard', v.standardAnnualDays),
+    { message: 'standardAnnualDays cannot be below the statutory minimum for leaveCategory', path: ['standardAnnualDays'] },
+  );
 
 export const zHrRunOpen = z.strictObject({ month: zHrMonth, workingDays: zHrDays.optional(), legalEntityId: zId.optional() });
 export type HrRunOpen = z.infer<typeof zHrRunOpen>;
@@ -62,10 +121,84 @@ export type HrRunRef = z.infer<typeof zHrRunRef>;
 // Recalculate every line of a draft from the employment terms and dependents as they are now (and add a person hired since); optionally with other working days.
 export const zHrRunRecalculate = z.strictObject({ runId: zId, workingDays: zHrDays.optional() });
 export type HrRunRecalculate = z.infer<typeof zHrRunRecalculate>;
-export const zHrLineInputsSet = z.strictObject({ lineId: zId, inputs: zHrPayrollInputs });
+export const zHrLineInputsSet = z.strictObject({ lineId: zId, inputs: zHrLineInputsEdit });
 export type HrLineInputsSet = z.input<typeof zHrLineInputsSet>;
+// Batch-update timekeeping fields on a draft run's pay lines while preserving allowances, bonuses, advances, deductions, and recurring terms.
+export const zHrRunImportTimekeeping = z.strictObject({
+  runId: zId,
+  rows: z
+    .array(
+      z.strictObject({
+        lineId: zId,
+        unpaidLeaveDays: zHrDays,
+        daysNotEmployed: zHrDays,
+        nightHours: zHrHours,
+        overtime: z.array(zHrOvertimeEntry).max(30).default([]),
+      }),
+    )
+    .min(1)
+    .max(200)
+    .refine((rows) => new Set(rows.map((r) => r.lineId)).size === rows.length, { message: 'duplicate lineId' }),
+});
+export type HrRunImportTimekeeping = z.input<typeof zHrRunImportTimekeeping>;
+// Prorated 13th-month salary preview & batch apply onto draft pay lines' `inputs.bonus` (#3375, plan section 7 & rows 3, 11).
+export const zHrWorkedMonths = z.union([
+  z.number().finite().min(0).max(12).refine((n) => /^\d+(\.\d{1,2})?$/.test(String(n)), 'workedMonths 0..12 with at most 2 decimals'),
+  z.string().trim().regex(/^(?:1[01](?:\.\d{1,2})?|12(?:\.0{1,2})?|[0-9](?:\.\d{1,2})?)$/, 'workedMonths 0..12'),
+]);
+export type HrWorkedMonths = z.infer<typeof zHrWorkedMonths>;
+
+export const zHrRunThirteenthMonthPreview = z.strictObject({
+  runId: zId,
+  year: z.number().int().min(2020).max(2100).optional(),
+  minDaysForMonth: z.number().int().min(1).max(31).default(15),
+  rows: z
+    .array(z.strictObject({ lineId: zId, workedMonths: zHrWorkedMonths }))
+    .max(200)
+    .refine((rows) => new Set(rows.map((r) => r.lineId)).size === rows.length, { message: 'duplicate lineId' })
+    .optional(),
+});
+export type HrRunThirteenthMonthPreview = z.input<typeof zHrRunThirteenthMonthPreview>;
+
+export const zHrThirteenthMonthPreviewRow = z.object({
+  lineId: zId,
+  employeeId: zId,
+  employeeName: z.string(),
+  baseWage: z.string(),
+  hireDate: z.string(),
+  endedOn: z.string().nullable(),
+  workedMonths: z.string(),
+  amount: z.string(),
+  existingBonus: z.string(),
+});
+export type HrThirteenthMonthPreviewRow = z.infer<typeof zHrThirteenthMonthPreviewRow>;
+
+export const zHrThirteenthMonthPreviewResult = z.object({
+  runId: zId,
+  year: z.number().int(),
+  minDaysForMonth: z.number().int(),
+  rows: z.array(zHrThirteenthMonthPreviewRow),
+  totalAmount: z.string(),
+  rulesUsed: z.array(zHrLaborRuleRef),
+});
+export type HrThirteenthMonthPreviewResult = z.infer<typeof zHrThirteenthMonthPreviewResult>;
+
+export const HR_THIRTEENTH_MONTH_MODES = ['replace', 'add'] as const;
+export type HrThirteenthMonthMode = (typeof HR_THIRTEENTH_MONTH_MODES)[number];
+
+export const zHrRunApplyThirteenthMonth = z.strictObject({
+  runId: zId,
+  year: z.number().int().min(2020).max(2100),
+  mode: z.enum(HR_THIRTEENTH_MONTH_MODES).default('replace'),
+  rows: z
+    .array(z.strictObject({ lineId: zId, workedMonths: zHrWorkedMonths }))
+    .min(1)
+    .max(200)
+    .refine((rows) => new Set(rows.map((r) => r.lineId)).size === rows.length, { message: 'duplicate lineId' }),
+});
+export type HrRunApplyThirteenthMonth = z.input<typeof zHrRunApplyThirteenthMonth>;
 // Approving is R3 (a fresh second factor). `fingerprint` is the one the sheet showed: if the figures have changed since, the approval is refused and the person looks again.
-// `acceptFlags` says the person has seen the lines whose checks failed (the minimum wage, the cap on deductions).
+// `acceptFlags` says the person has seen the lines whose checks failed (the minimum wage, the cap on deductions, the monthly overtime cap).
 export const zHrRunApprove = z.strictObject({ runId: zId, fingerprint: z.string().regex(/^[0-9a-f]{64}$/), acceptFlags: z.boolean().default(false) });
 export type HrRunApprove = z.input<typeof zHrRunApprove>;
 // The funds an insurance amount is split across (the same five a pay line's breakdown holds): the posting credits each group's payable account.
@@ -87,8 +220,9 @@ export const zHrLineAdjust = z.strictObject({
   funds: z.array(z.strictObject({ fund: z.enum(HR_INSURANCE_FUNDS), employee: zHrSignedAmount, employer: zHrSignedAmount })).max(HR_INSURANCE_FUNDS.length).default([]),
 });
 export type HrLineAdjust = z.input<typeof zHrLineAdjust>;
-export const zHrRunList = z.strictObject({ limit: z.number().int().min(1).max(120).default(24) });
+export const zHrRunList = z.strictObject({ limit: z.number().int().min(1).max(120).default(24), legalEntityId: zId.optional() });
 export type HrRunList = z.input<typeof zHrRunList>;
+export const zHrCoworkerAccess = z.strictObject({});
 export const zHrPayslipRef = z.strictObject({ lineId: zId });
 export type HrPayslipRef = z.infer<typeof zHrPayslipRef>;
 
@@ -123,10 +257,10 @@ export type HrRunSummary = z.infer<typeof zHrRunSummary>;
 
 // What the calculator's check says (the minimum wage, the cap on deductions), and the flags the sheet raises beside the figures: a failed check, a refused month, a person hired
 // or leaving this month (their days not employed are typed by the person).
-export const HR_LINE_FLAGS = ['check_minimum_wage', 'check_deduction_cap', 'refused', 'new_hire', 'ends_this_month', 'fixed_term_months_missing', 'net_below_minimum'] as const;
+export const HR_LINE_FLAGS = ['check_minimum_wage', 'check_deduction_cap', 'check_overtime_cap', 'refused', 'new_hire', 'ends_this_month', 'probation_ends_this_month', 'fixed_term_months_missing', 'net_below_minimum', 'severance_check', 'annual_leave_exceeded', 'work_permit_expiring', 'bhxh_suspended_regime', 'non_resident_flat_pit'] as const;
 export type HrLineFlag = (typeof HR_LINE_FLAGS)[number];
 
-export const zHrCheck = z.object({ id: z.enum(['minimum_wage', 'deduction_cap']), ok: z.boolean(), actual: z.string(), limit: z.string() });
+export const zHrCheck = z.object({ id: z.enum(['minimum_wage', 'deduction_cap', 'overtime_cap']), ok: z.boolean(), actual: z.string(), limit: z.string() });
 export type HrCheck = z.infer<typeof zHrCheck>;
 
 export const zHrRuleRef = z.object({ id: z.string(), kind: z.string(), key: z.string(), effectiveFrom: z.string(), status: z.enum(['confirmed', 'commentary']) });
@@ -146,10 +280,11 @@ export const zHrLineView = z.object({
   refusal: z.string().nullable(),
   inputs: z.record(z.string(), z.unknown()),
   figures: zHrRunFigures.nullable(),
-  // The calculator's breakdown (PayrollBreakdown of @crove/l10n-vn), null for an adjustment and a refused line.
+  // The calculator's breakdown (PayrollBreakdown of @ludy/l10n-vn), null for an adjustment and a refused line.
   breakdown: z.record(z.string(), z.unknown()).nullable(),
   checks: z.array(zHrCheck),
   flags: z.array(z.enum(HR_LINE_FLAGS)),
+  exceededAnnualDays: z.string().optional(),
   note: z.string().nullable(),
   // The month an adjustment corrects.
   adjustsMonth: z.string().nullable(),
@@ -254,8 +389,8 @@ export const zHrCoworkerAsk = z.strictObject({ runId: zId, lang: z.enum(['vi', '
 export type HrCoworkerAsk = z.infer<typeof zHrCoworkerAsk>;
 export const zHrCoworkerPayslipAsk = z.strictObject({ lineId: zId, lang: z.enum(['vi', 'en']).optional() });
 export type HrCoworkerPayslipAsk = z.infer<typeof zHrCoworkerPayslipAsk>;
-// A finding is what code found (the facts, written by code with the people's names put back), with the model's sentence only when it passed the checks. The findings come back in every state
-// of `ai`, so with AI off, busy, out of budget or refused the owner still sees every anomaly and every signal.
+// A finding is what code found (the facts, written by code with the people's names put back), with the model's sentence only when it passed the checks. Once the sheet has been read (AI off,
+// out of budget, failed or refused), every anomaly and every signal still comes back; a rate-limited call (`busy`) stops before the sensitive reads and returns an empty list.
 const zCoworkerItem = z.object({ id: z.string(), kind: z.string(), employeeId: zId.nullable(), facts: z.string(), text: z.string().nullable() });
 export const zHrCoworkerPrepared = z.object({
   ai: z.enum(HR_COWORKER_STATES),
@@ -280,7 +415,7 @@ export const HR_BANK_FILE_MAX_PEOPLE = 500;
 export const zHrBankFileQuery = z
   .strictObject({
     runId: zId,
-    // The bank the file is for: the CODE of a bank of the list `VN_BANKS` in @crove/l10n-vn (the download route's `bank` parameter carries it, #2897). One bank per file: it holds the people of the run
+    // The bank the file is for: the CODE of a bank of the list `VN_BANKS` in @ludy/l10n-vn (the download route's `bank` parameter carries it, #2897). One bank per file: it holds the people of the run
     // whose record names this bank. The field keeps its first name `bankName` so the route needs no change; the query checks the code against the list and refuses anything else (HR_BANK_UNKNOWN).
     bankName: z.string().trim().min(1).max(60),
     columns: z
@@ -330,3 +465,140 @@ export const zPayrollSettlement = z.strictObject({
   }),
 });
 export type PayrollSettlement = z.infer<typeof zPayrollSettlement>;
+
+// Continuous pre-lock payroll fluctuation preview and What-Changed diff (#4445, Stage 5E):
+// compares a draft run, finalized run, or current-month projected snapshot against the immediately
+// preceding approved/paid/closed run of the same legal entity. Read-only, owners and admins only.
+export const HR_PAYROLL_PREVIEW_MODES = ['draft_run', 'finalized_run', 'projected'] as const;
+export type HrPayrollPreviewMode = (typeof HR_PAYROLL_PREVIEW_MODES)[number];
+export const HR_PAYROLL_DIFF_REASONS = [
+  'new_hire',
+  'terminated',
+  'salary_change',
+  'leave_change',
+  'allowance_change',
+  'deduction_change',
+] as const;
+export type HrPayrollDiffReason = (typeof HR_PAYROLL_DIFF_REASONS)[number];
+
+const zPreviewTargetRef = {
+  runId: zId.optional(),
+  month: zHrMonth.optional(),
+  legalEntityId: zId.optional(),
+};
+
+export const zHrPayrollPreviewDiffAsk = z
+  .strictObject({
+    ...zPreviewTargetRef,
+    includeUnchanged: z.boolean().default(false),
+  })
+  .refine((v) => v.runId === undefined || (v.month === undefined && v.legalEntityId === undefined), {
+    message: 'runId cannot be combined with month or legalEntityId',
+    path: ['runId'],
+  });
+export type HrPayrollPreviewDiffAsk = z.input<typeof zHrPayrollPreviewDiffAsk>;
+
+export const zHrPayrollPreviewLineFigures = z.object({
+  gross: z.string(),
+  employeeInsurance: z.string(),
+  pit: z.string(),
+  otherDeductions: z.string(),
+  employeeDeductions: z.string(),
+  net: z.string(),
+  employerInsurance: z.string(),
+  unionFee: z.string(),
+  employerStatutory: z.string(),
+  employerCost: z.string(),
+  taxableIncome: z.string(),
+});
+export type HrPayrollPreviewLineFigures = z.infer<typeof zHrPayrollPreviewLineFigures>;
+
+export const zHrPayrollPreviewFigures = zHrPayrollPreviewLineFigures.extend({
+  headcount: z.number().int(),
+});
+export type HrPayrollPreviewFigures = z.infer<typeof zHrPayrollPreviewFigures>;
+
+export const zHrPayrollPreviewDeltas = z.object({
+  headcountDelta: z.number().int(),
+  grossDelta: z.string(),
+  employeeInsuranceDelta: z.string(),
+  pitDelta: z.string(),
+  otherDeductionDelta: z.string(),
+  employeeDeductionDelta: z.string(),
+  netDelta: z.string(),
+  employerInsuranceDelta: z.string(),
+  unionFeeDelta: z.string(),
+  employerStatutoryDelta: z.string(),
+  employerCostDelta: z.string(),
+  taxableIncomeDelta: z.string(),
+});
+export type HrPayrollPreviewDeltas = z.infer<typeof zHrPayrollPreviewDeltas>;
+
+export const zHrPayrollPreviewEmployeeDiff = z.object({
+  employeeId: zId,
+  employeeName: z.string(),
+  erased: z.boolean(),
+  changed: z.boolean(),
+  reasons: z.array(z.enum(HR_PAYROLL_DIFF_REASONS)),
+  prior: zHrPayrollPreviewLineFigures.nullable(),
+  current: zHrPayrollPreviewLineFigures.nullable(),
+  grossDelta: z.string(),
+  employeeInsuranceDelta: z.string(),
+  pitDelta: z.string(),
+  otherDeductionDelta: z.string(),
+  employeeDeductionDelta: z.string(),
+  netDelta: z.string(),
+  employerInsuranceDelta: z.string(),
+  unionFeeDelta: z.string(),
+  employerStatutoryDelta: z.string(),
+  employerCostDelta: z.string(),
+  priorLeaveDays: z.string().nullable(),
+  currentLeaveDays: z.string().nullable(),
+  hasRefused: z.boolean(),
+  hasFlags: z.boolean(),
+});
+export type HrPayrollPreviewEmployeeDiff = z.infer<typeof zHrPayrollPreviewEmployeeDiff>;
+
+export const zHrPayrollPreviewRunInfo = z.object({
+  runId: zId.nullable(),
+  month: zHrMonth,
+  status: z.enum(HR_RUN_STATUSES).nullable(),
+  approvedAt: z.string().nullable(),
+  headcount: z.number().int(),
+  refusedCount: z.number().int(),
+  flaggedCount: z.number().int(),
+});
+export type HrPayrollPreviewRunInfo = z.infer<typeof zHrPayrollPreviewRunInfo>;
+
+export const zHrPayrollPreviewDiff = z.object({
+  mode: z.enum(HR_PAYROLL_PREVIEW_MODES),
+  legalEntityId: zId,
+  legalEntityName: z.string(),
+  month: zHrMonth,
+  current: zHrPayrollPreviewRunInfo,
+  prior: zHrPayrollPreviewRunInfo.nullable(),
+  totals: zHrPayrollPreviewFigures,
+  priorTotals: zHrPayrollPreviewFigures.nullable(),
+  deltas: zHrPayrollPreviewDeltas,
+  unchangedCount: z.number().int(),
+  rows: z.array(zHrPayrollPreviewEmployeeDiff),
+});
+export type HrPayrollPreviewDiff = z.infer<typeof zHrPayrollPreviewDiff>;
+
+export const zHrPayrollDiffExplainAsk = z
+  .strictObject({
+    ...zPreviewTargetRef,
+    lang: z.enum(['vi', 'en']).optional(),
+  })
+  .refine((v) => v.runId === undefined || (v.month === undefined && v.legalEntityId === undefined), {
+    message: 'runId cannot be combined with month or legalEntityId',
+    path: ['runId'],
+  });
+export type HrPayrollDiffExplainAsk = z.input<typeof zHrPayrollDiffExplainAsk>;
+
+export const zHrPayrollDiffExplained = z.object({
+  ai: z.enum(HR_COWORKER_STATES),
+  text: z.string().nullable(),
+  deterministicText: z.string(),
+});
+export type HrPayrollDiffExplained = z.infer<typeof zHrPayrollDiffExplained>;

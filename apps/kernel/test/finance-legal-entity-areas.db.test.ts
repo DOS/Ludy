@@ -11,13 +11,13 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import type { ExtractClient } from '@crove/extract-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { BankStatementRow, CashVoucherPage, FixedAsset, JournalVoucherRequest, CashVoucherRequest } from '@crove/kernel-contract';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries, type JournalEntryView, type VatReport } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { BankStatementRow, CashVoucherPage, FixedAsset, JournalVoucherRequest, CashVoucherRequest } from '@ludy/kernel-contract';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { extractAndPropose, financeCommands, financeQueries, type JournalEntryView, type VatReport } from '@ludy/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -163,17 +163,17 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     const db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -195,9 +195,9 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
     expect(invite.status).toBe(200);
     expect((await rpc('invites/accept', member, { token: String(invite.body?.acceptPath).split('#')[1] }, null)).status).toBe(200);
     await admin(async (c) => {
-      defaultEntity = (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])).rows[0]?.id as string;
+      defaultEntity = (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])).rows[0]?.id as string;
       const add = async (name: string) =>
-        (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, $2, 'branch', $3) RETURNING id`, [org.orgId, name, owner.userId]))
+        (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, $2, 'branch', $3) RETURNING id`, [org.orgId, name, owner.userId]))
           .rows[0]?.id as string;
       branch = await add('Chi nhánh Đà Nẵng');
       hue = await add('Chi nhánh Huế');
@@ -219,9 +219,9 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
     const inDefault = await approve((await request('finance.voucher.record', payment('2026-10-03', '120000'))).proposalId);
     // Each entity numbers its own series.
     expect([inBranch.code, inDefault.code]).toEqual(['PC00001', 'PC00001']);
-    expect(await entityOf('crove_finance.cash_voucher', inBranch.voucherId as string)).toBe(branch);
-    expect(await entityOf('crove_finance.journal_entry', inBranch.journalEntryId)).toBe(branch);
-    expect(await entityOf('crove_finance.cash_voucher', inDefault.voucherId as string)).toBe(defaultEntity);
+    expect(await entityOf('ludy_finance.cash_voucher', inBranch.voucherId as string)).toBe(branch);
+    expect(await entityOf('ludy_finance.journal_entry', inBranch.journalEntryId)).toBe(branch);
+    expect(await entityOf('ludy_finance.cash_voucher', inDefault.voucherId as string)).toBe(defaultEntity);
 
     const branchVouchers = await runtime.query<CashVoucherPage>('finance.vouchers.list', { legalEntityId: branch }, as(member));
     expect(branchVouchers.items.map((v) => v.id)).toEqual([inBranch.voucherId]);
@@ -232,7 +232,7 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
 
     const journal = await approve((await request('finance.journal_voucher.record', nvk('2026-10-05', '450000', 'Trích trước tiền điện chi nhánh', branch))).proposalId);
     expect(journal.code).toBe('NVK00001');
-    expect(await entityOf('crove_finance.journal_voucher', journal.voucherId as string)).toBe(branch);
+    expect(await entityOf('ludy_finance.journal_voucher', journal.voucherId as string)).toBe(branch);
 
     // The journal, the ledger and search read one entity.
     const branchJournal = await runtime.query<JournalEntryView[]>('finance.journal.list', { legalEntityId: branch }, as(member));
@@ -262,7 +262,7 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
       legalEntityId: branch,
     };
     const posted = await runtime.execute<{ journalEntryId: string }>('finance.opening_balance.post', opening, { actor: asMfa(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() });
-    expect(await entityOf('crove_finance.journal_entry', posted.journalEntryId)).toBe(branch);
+    expect(await entityOf('ludy_finance.journal_entry', posted.journalEntryId)).toBe(branch);
     // The branch has its opening entry; the default entity still has none.
     expect(await runtime.query<{ openingEntry: unknown }>('finance.opening_balance.preview', opening, as(owner))).toMatchObject({ openingEntry: { id: posted.journalEntryId } });
     const { legalEntityId: _branch, ...plain } = opening;
@@ -275,14 +275,14 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
       { kind: 'prepaid_cost', name: 'Bàn ghế chi nhánh', cost: '1200000', assetAccount: '242', expenseAccount: '6422', startMonth: '2026-01', months: 12, legalEntityId: branch },
       as(member),
     );
-    expect(await entityOf('crove_finance.fixed_asset', asset.assetId)).toBe(branch);
+    expect(await entityOf('ludy_finance.fixed_asset', asset.assetId)).toBe(branch);
     expect((await runtime.query<FixedAsset[]>('finance.fixed_assets.list', { legalEntityId: branch }, as(member))).map((a) => a.id)).toEqual([asset.assetId]);
     expect(await runtime.query<FixedAsset[]>('finance.fixed_assets.list', {}, as(member))).toEqual([]);
     // The default entity's register has nothing to depreciate; the branch's month posts there.
     await expect(request('finance.depreciation.record', { month: '2026-01' })).rejects.toMatchObject({ code: 'DEPRECIATION_EMPTY' });
     const depreciated = await approve((await request('finance.depreciation.record', { month: '2026-01', legalEntityId: branch })).proposalId);
     expect(depreciated.code).toBe('NVK00002');
-    expect(await entityOf('crove_finance.journal_entry', depreciated.journalEntryId)).toBe(branch);
+    expect(await entityOf('ludy_finance.journal_entry', depreciated.journalEntryId)).toBe(branch);
     expect((await runtime.query<FixedAsset[]>('finance.fixed_assets.list', { legalEntityId: branch }, as(member)))[0]).toMatchObject({ posted: '100000', postedMonths: 1 });
   });
 
@@ -314,7 +314,7 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
     expect(await listedEntityOf(proposalId)).toBe(branch);
     const settled = await approve(proposalId);
     expect(settled.code).toBe('BN00001');
-    expect(await entityOf('crove_finance.cash_voucher', settled.voucherId as string)).toBe(branch);
+    expect(await entityOf('ludy_finance.cash_voucher', settled.voucherId as string)).toBe(branch);
   });
 
   it('records a purchase invoice in the entity it was uploaded in, never moved by a revision, with its VAT working and rules per entity', async () => {
@@ -329,7 +329,7 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
         as(owner),
       );
     // An entity that does not exist and one of another org answer the same, and store nothing (#1764).
-    const elsewhere = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id <> $1 LIMIT 1', [org.orgId])).rows[0]?.id);
+    const elsewhere = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id <> $1 LIMIT 1', [org.orgId])).rows[0]?.id);
     for (const hidden of [randomUUID(), ...(elsewhere ? [elsewhere] : [])]) {
       await expect(ingest(hidden)).rejects.toMatchObject({ code: 'LEGAL_ENTITY_NOT_ALLOWED', status: 403 });
     }
@@ -337,9 +337,9 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
     const { fileId } = await ingest(branch);
     const read = (version?: number) => extractAndPropose({ runtime: workerRuntime, store, extractor: null, extract, today: () => '2026-10-13' }, org.orgId, fileId, version);
     const versionOf = async () =>
-      (await admin((c) => c.query<{ v: number }>('SELECT max(version)::int AS v FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2', [org.orgId, fileId]))).rows[0]?.v as number;
+      (await admin((c) => c.query<{ v: number }>('SELECT max(version)::int AS v FROM ludy_kernel.extraction WHERE org_id = $1 AND file_id = $2', [org.orgId, fileId]))).rows[0]?.v as number;
     const first = String((await read()).proposalId);
-    expect(await entityOf('crove_kernel.proposal', first)).toBe(branch);
+    expect(await entityOf('ludy_kernel.proposal', first)).toBe(branch);
     // Uploaded again in another entity while its proposal waits: refused with the reason.
     await expect(ingest(defaultEntity)).rejects.toMatchObject({ code: 'LEGAL_ENTITY_MOVE_REFUSED', status: 409 });
     // Once rejected, uploading it again in another entity reads it again there: a new proposal in that entity.
@@ -347,18 +347,18 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
     await expect(ingest(defaultEntity)).resolves.toMatchObject({ fileId, duplicate: true });
     const inDefault = String((await read(await versionOf())).proposalId);
     expect(inDefault).not.toBe(first);
-    expect(await entityOf('crove_kernel.proposal', inDefault)).toBe(defaultEntity);
+    expect(await entityOf('ludy_kernel.proposal', inDefault)).toBe(defaultEntity);
     // And back to the branch the same way, where it is booked below.
     await runtime.execute('kernel.proposal.reject', { id: inDefault, reason: 'nhầm lần nữa' }, as(owner));
     await ingest(branch);
     const proposalId = String((await read(await versionOf())).proposalId);
-    expect(await entityOf('crove_kernel.proposal', proposalId)).toBe(branch);
+    expect(await entityOf('ludy_kernel.proposal', proposalId)).toBe(branch);
 
     // A member limited to the default entity (an external accountant's assignment) reaches the branch no way.
     const scopedId = await upsertIdentity(createDb(pool), { issuer: 'le-areas', subject: randomUUID(), email: 'scoped@le-areas.test', name: null });
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [org.orgId, scopedId]);
-      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [org.orgId, scopedId]);
+      await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
         org.orgId,
         scopedId,
         defaultEntity,
@@ -366,7 +366,7 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
       ]);
     });
     const scoped = { actor: asUser(scopedId), orgId: org.orgId };
-    const readings = async () => Number((await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2', [org.orgId, fileId]))).rows[0]?.n);
+    const readings = async () => Number((await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.extraction WHERE org_id = $1 AND file_id = $2', [org.orgId, fileId]))).rows[0]?.n);
     const before = await readings();
     // Uploading in the branch: refused, the same way as an entity that does not exist.
     await expect(
@@ -382,10 +382,10 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
       await c.connect();
       try {
         await c.query('BEGIN');
-        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(scopedId, org.orgId)]);
+        await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(scopedId, org.orgId)]);
         const sha = randomUUID().replaceAll('-', '').padEnd(64, '0');
         await c.query(
-          `INSERT INTO crove_kernel.file (org_id, sha256, storage_key, filename, content_type, size_bytes, source, upload_entity_id)
+          `INSERT INTO ludy_kernel.file (org_id, sha256, storage_key, filename, content_type, size_bytes, source, upload_entity_id)
            VALUES ($1, $2, $3, 'x.xml', 'application/xml', 1, 'upload', $4)`,
           [org.orgId, sha, fileKey(org.orgId, sha), branch],
         );
@@ -424,8 +424,8 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
       await c.connect();
       try {
         await c.query('BEGIN');
-        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.userId, org.orgId)]);
-        await c.query(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{legalEntityId}', to_jsonb($2::text)) WHERE id = $1`, [proposalId, defaultEntity]);
+        await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.userId, org.orgId)]);
+        await c.query(`UPDATE ludy_kernel.proposal SET payload = jsonb_set(payload, '{legalEntityId}', to_jsonb($2::text)) WHERE id = $1`, [proposalId, defaultEntity]);
         return null;
       } catch (error) {
         return error as { code?: string; message?: string };
@@ -436,10 +436,10 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
     })();
     expect(rawMove).toMatchObject({ code: '23514', message: 'LEGAL_ENTITY_MOVE_REFUSED' });
     // The file keeps the entity it was uploaded in.
-    await expect(admin((c) => c.query('UPDATE crove_kernel.file SET upload_entity_id = $2 WHERE id = $1', [fileId, defaultEntity]))).rejects.toThrow(/LEGAL_ENTITY_IMMUTABLE/);
+    await expect(admin((c) => c.query('UPDATE ludy_kernel.file SET upload_entity_id = $2 WHERE id = $1', [fileId, defaultEntity]))).rejects.toThrow(/LEGAL_ENTITY_IMMUTABLE/);
     const recorded = await approve(proposalId);
-    expect(await entityOf('crove_finance.purchase_document', recorded.documentId as string)).toBe(branch);
-    expect(await entityOf('crove_finance.journal_entry', recorded.journalEntryId)).toBe(branch);
+    expect(await entityOf('ludy_finance.purchase_document', recorded.documentId as string)).toBe(branch);
+    expect(await entityOf('ludy_finance.journal_entry', recorded.journalEntryId)).toBe(branch);
 
     const branchDocuments = await runtime.query<Array<{ id: string }>>('finance.documents.list', { legalEntityId: branch }, as(member));
     expect(branchDocuments.map((d) => d.id)).toEqual([recorded.documentId]);
@@ -452,7 +452,7 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
 
     // Learned rules are kept per entity.
     const rule = await runtime.execute<{ id: string }>('finance.categorization_rule.create', { keyword: 'cuoc internet', accountCode: '6422', legalEntityId: branch }, as(owner));
-    expect(await entityOf('crove_finance.categorization_rule', rule.id)).toBe(branch);
+    expect(await entityOf('ludy_finance.categorization_rule', rule.id)).toBe(branch);
     expect((await runtime.query<Array<{ id: string }>>('finance.categorization_rules.list', { legalEntityId: branch }, as(member))).map((r) => r.id)).toContain(rule.id);
     expect((await runtime.query<Array<{ id: string }>>('finance.categorization_rules.list', {}, as(member))).map((r) => r.id)).not.toContain(rule.id);
     // The same keyword is a new rule in another entity.
@@ -463,10 +463,10 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
     await runtime.execute('finance.vat.return_mark', { period: '2026-08', done: true, legalEntityId: branch }, as(owner));
     const marks = () =>
       admin(async (c) => ({
-        filed: (await c.query<{ e: string }>(`SELECT legal_entity_id AS e FROM crove_finance.vat_return_filed WHERE org_id = $1 AND period = '2026-08' ORDER BY created_at`, [org.orgId])).rows.map(
+        filed: (await c.query<{ e: string }>(`SELECT legal_entity_id AS e FROM ludy_finance.vat_return_filed WHERE org_id = $1 AND period = '2026-08' ORDER BY created_at`, [org.orgId])).rows.map(
           (r) => r.e,
         ),
-        calendar: Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM crove_kernel.tax_obligation_done WHERE org_id = $1 AND obligation = 'vat_return' AND period = '2026-08'`, [org.orgId])).rows[0]?.n),
+        calendar: Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM ludy_kernel.tax_obligation_done WHERE org_id = $1 AND obligation = 'vat_return' AND period = '2026-08'`, [org.orgId])).rows[0]?.n),
       }));
     expect(await marks()).toEqual({ filed: [branch], calendar: 1 });
     await runtime.execute('finance.vat.return_mark', { period: '2026-08', done: true }, as(owner));
@@ -482,7 +482,7 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
     await expect(request('finance.closing.record', { year: 2025 })).rejects.toMatchObject({ code: 'CLOSING_EMPTY' });
     const closed = await approve((await request('finance.closing.record', { year: 2025, legalEntityId: hue })).proposalId);
     expect(closed.code).toBe('NVK00002');
-    expect(await entityOf('crove_finance.journal_entry', closed.journalEntryId)).toBe(hue);
+    expect(await entityOf('ludy_finance.journal_entry', closed.journalEntryId)).toBe(hue);
     await expect(request('finance.closing.record', { year: 2025, legalEntityId: hue })).rejects.toMatchObject({ code: 'YEAR_CLOSED' });
     const check = await runtime.query<{ warnings: string[] }>('finance.statements.htkk_check', { year: 2025, legalEntityId: hue }, as(member));
     expect(check.warnings).not.toContain('YEAR_NOT_CLOSED');
@@ -509,7 +509,7 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
     expect(ok.status).toBe(200);
     const audit = await admin(
       async (c) =>
-        (await c.query<{ detail: { legal_entity_id?: string; entries: number } }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.journal.export' ORDER BY occurred_at DESC LIMIT 1`, [org.orgId]))
+        (await c.query<{ detail: { legal_entity_id?: string; entries: number } }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.journal.export' ORDER BY occurred_at DESC LIMIT 1`, [org.orgId]))
           .rows[0]?.detail,
     );
     // The branch's entries: a cash voucher, a journal voucher, its opening entry, a depreciation, a bank voucher and a purchase.
@@ -524,7 +524,7 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
       admin(async (c) =>
         (
           await c.query<{ id: string }>(
-            `INSERT INTO crove_kernel.proposal (org_id, kind, command, title, payload, eligible_approvers, authors, legal_entity_id)
+            `INSERT INTO ludy_kernel.proposal (org_id, kind, command, title, payload, eligible_approvers, authors, legal_entity_id)
              VALUES ($1, $2, $3, 'Đề xuất', $4::jsonb, ARRAY[$5::uuid], '[]', $6) RETURNING id`,
             [org.orgId, kind, command, JSON.stringify({ legalEntityId: named }), owner.userId, defaultEntity],
           )
@@ -546,7 +546,7 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
 
   it("lists a customer's receivable on 131 per legal entity, and a scoped member only in its own (#1534)", async () => {
     const customer = await admin(
-      async (c) => (await c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, name) VALUES ($1, 'Khách Hai Sổ') RETURNING id`, [org.orgId])).rows[0]?.id as string,
+      async (c) => (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, name) VALUES ($1, 'Khách Hai Sổ') RETURNING id`, [org.orgId])).rows[0]?.id as string,
     );
     // A sale on credit in each entity's books, posted and committed as the owner.
     const owe = async (entity: string, amount: string) => {
@@ -554,8 +554,8 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
       await c.connect();
       try {
         await c.query('BEGIN');
-        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.userId, org.orgId)]);
-        await c.query(`SELECT crove_finance.post_journal_entry('2026-10-15'::date, 'bán chịu', 'test.sale', $1::uuid, $2::jsonb, NULL, 1, $3::uuid)`, [
+        await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.userId, org.orgId)]);
+        await c.query(`SELECT ludy_finance.post_journal_entry('2026-10-15'::date, 'bán chịu', 'test.sale', $1::uuid, $2::jsonb, NULL, 1, $3::uuid)`, [
           randomUUID(),
           JSON.stringify([
             { line_no: 1, account_code: '131', debit: amount, credit: '0', party_id: customer },
@@ -581,8 +581,8 @@ suite('finance books per legal entity, part 2b (#1280)', () => {
     // A member limited to the branch: its books by default, never the default entity's, whatever it names.
     const branchOnly = await upsertIdentity(createDb(pool), { issuer: 'le-areas', subject: randomUUID(), email: 'branch-only@le-areas.test', name: null });
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [org.orgId, branchOnly]);
-      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [org.orgId, branchOnly]);
+      await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
         org.orgId,
         branchOnly,
         branch,

@@ -13,10 +13,10 @@ import { fileURLToPath } from 'node:url';
 import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb, type Db } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import {
   GENESIS_SHA256,
   LocalArchiveStore,
@@ -29,6 +29,7 @@ import {
 } from '../../src/worm.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -39,6 +40,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('WORM fact stream: voucher numbers and voids on PostgreSQL (#977)', () => {
   const dbName = `crove_test_worm_numbers_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let pool: pg.Pool;
   let workerPool: pg.Pool;
   let db: Db;
@@ -51,7 +53,7 @@ suite('WORM fact stream: voucher numbers and voids on PostgreSQL (#977)', () => 
   let voidedDocument = '';
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = createDbClient({ connectionString: adminUrl }, dbIds);
     await client.connect();
     try {
       return await fn(client);
@@ -62,7 +64,7 @@ suite('WORM fact stream: voucher numbers and voids on PostgreSQL (#977)', () => 
 
   const login = (user: string, password: string) => {
     const url = new URL(adminUrl);
-    url.username = user;
+    url.username = dbIds ? dbIds.roleName(user) : user;
     url.password = password;
     return url.toString();
   };
@@ -115,10 +117,11 @@ suite('WORM fact stream: voucher numbers and voids on PostgreSQL (#977)', () => 
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
+    pool = createDbPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 }, dbIds);
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createDbPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 }, dbIds);
     worker = createDb(workerPool);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
     userId = await upsertIdentity(db, { issuer: 'test', subject: 'worm-numbers', email: 'worm-numbers@example.com', name: null });

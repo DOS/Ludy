@@ -6,12 +6,12 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { ConversationAdapter, ConversationHistoryResult, ConversationProfileResult, InboundConversationEvent } from '@crove/channel';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { ConversationDetail } from '@crove/kernel-contract';
-import { CredentialVault, parseVaultKey, Runtime } from '@crove/kernel-runtime';
+import type { ConversationAdapter, ConversationHistoryResult, ConversationProfileResult, InboundConversationEvent } from '@ludy/channel';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { ConversationDetail } from '@ludy/kernel-contract';
+import { CredentialVault, parseVaultKey, Runtime } from '@ludy/kernel-runtime';
 import { dueConversationSync, requestConversationSync, runConversationSync, type ConversationSyncJob } from '../src/conversations-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -72,7 +72,7 @@ suite('conversation sync (name and history) on PostgreSQL (CV5b, #2329)', () => 
     broker: vault,
     adapter: (provider: string) => (provider === 'zalo_oa' ? ({ provider: 'zalo_oa', reply: async () => ({ kind: 'unknown' as const }), ...impl } as ConversationAdapter) : undefined),
   });
-  const threadOf = async (o: Org, customer: string) => (await rows<{ id: string }>('SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, customer]))[0]?.id as string;
+  const threadOf = async (o: Org, customer: string) => (await rows<{ id: string }>('SELECT id FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = $2', [o.orgId, customer]))[0]?.id as string;
   const detail = (o: Org, id: string) => rt.query<ConversationDetail>('kernel.conversation.get', { conversationId: id }, { actor: asUser(o.owner), orgId: o.orgId });
   const due = async (o: Org, history = true) => (await dueConversationSync(workerDb, { history: history ? ['zalo_oa'] : [], profile: ['zalo_oa'] })).filter((j) => j.orgId === o.orgId);
   const profileJobs = async (o: Org) => (await due(o, false)).filter((j) => j.action === 'profile');
@@ -87,14 +87,14 @@ suite('conversation sync (name and history) on PostgreSQL (CV5b, #2329)', () => 
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const w = new URL(adminUrl);
-    w.username = 'crove_worker';
+    w.username = 'ludy_worker';
     w.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: w.toString(), max: 2 });
     workerDb = createDb(workerPool);
@@ -146,7 +146,7 @@ suite('conversation sync (name and history) on PostgreSQL (CV5b, #2329)', () => 
     expect(await runConversationSync(adapter({ profile: async () => ({ kind: 'failed', retry: false, code: 'ZALO_OA_ACCESS' }) }), jobs[1] as ConversationSyncJob)).toBe('failed');
     expect(await profileJobs(o)).toHaveLength(0);
     // Nothing of a name reaches an audit row.
-    const audit = JSON.stringify(await rows("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.profile_apply'", [o.orgId]));
+    const audit = JSON.stringify(await rows("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.profile_apply'", [o.orgId]));
     expect(audit).not.toContain('Trần Thị Khách');
   });
 
@@ -196,9 +196,9 @@ suite('conversation sync (name and history) on PostgreSQL (CV5b, #2329)', () => 
     expect((await detail(o, id)).messages).toHaveLength(2);
     expect((await detail(o, id)).gap).toBeNull();
     // After an hour it is due again; a reconnect makes it due at once.
-    await rows("UPDATE crove_kernel.channel_connection SET history_synced_at = now() - interval '61 minutes' WHERE org_id = $1", [o.orgId]);
+    await rows("UPDATE ludy_kernel.channel_connection SET history_synced_at = now() - interval '61 minutes' WHERE org_id = $1", [o.orgId]);
     expect(await historyJobs(o)).toHaveLength(1);
-    await rows('UPDATE crove_kernel.channel_connection SET history_synced_at = now() WHERE org_id = $1', [o.orgId]);
+    await rows('UPDATE ludy_kernel.channel_connection SET history_synced_at = now() WHERE org_id = $1', [o.orgId]);
     expect(await historyJobs(o)).toHaveLength(0);
     const sealed = vault.seal(JSON.stringify({ accessToken: 'b', refreshToken: 'r2' }), { orgId: o.orgId, provider: 'zalo_oa', externalAccountId: o.accountId });
     await rt.execute(
@@ -215,7 +215,7 @@ suite('conversation sync (name and history) on PostgreSQL (CV5b, #2329)', () => 
     await ingest(o, [ev('u-old', 'o-1', 'Tin rất cũ', new Date(now - 6 * 86_400_000))]);
     await ingest(o, [ev('u-new', 'n-1', 'Tin gần đây', new Date(now - 2 * 3_600_000))]);
     // The account has been connected for three days: the read goes back to then.
-    await rows("UPDATE crove_kernel.channel_connection SET connected_at = now() - interval '3 days' WHERE org_id = $1", [o.orgId]);
+    await rows("UPDATE ludy_kernel.channel_connection SET connected_at = now() - interval '3 days' WHERE org_id = $1", [o.orgId]);
     const [job] = await historyJobs(o);
     const partial: Partial<ConversationAdapter> = {
       history: async () => ({ kind: 'ok', events: [ev('u-new', 'n-2', 'Tin bù', new Date(now - MIN))], complete: false, oldest: new Date(now - MIN).toISOString() }),
@@ -250,8 +250,8 @@ suite('conversation sync (name and history) on PostgreSQL (CV5b, #2329)', () => 
       }),
     };
     expect(await runConversationSync(adapter(replay), job as ConversationSyncJob)).toBe('complete');
-    expect(await rows("SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = 'u-gone'", [o.orgId])).toHaveLength(0);
-    expect(await rows("SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = 'u-ok'", [o.orgId])).toHaveLength(1);
+    expect(await rows("SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = 'u-gone'", [o.orgId])).toHaveLength(0);
+    expect(await rows("SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1 AND external_thread_id = 'u-ok'", [o.orgId])).toHaveLength(1);
   });
 
   it('hands each due read to the worker once through a command that emits its event, so the relay does not hand it out every pass', async () => {
@@ -261,9 +261,9 @@ suite('conversation sync (name and history) on PostgreSQL (CV5b, #2329)', () => 
     expect(jobs.map((j) => j.action).sort()).toEqual(['history', 'profile']);
     expect(await requestConversationSync(worker, jobs)).toBe(2);
     expect(await due(o)).toHaveLength(0);
-    expect(await rows("SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.sync_request' AND outcome = 'ok'", [o.orgId])).toHaveLength(2);
+    expect(await rows("SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.sync_request' AND outcome = 'ok'", [o.orgId])).toHaveLength(2);
     // The event the worker's queue takes: ids only.
-    const events = await rows<{ payload: Record<string, unknown> }>("SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.conversation.sync_queued'", [o.orgId]);
+    const events = await rows<{ payload: Record<string, unknown> }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.conversation.sync_queued'", [o.orgId]);
     expect(events).toHaveLength(2);
     for (const e of events) expect(Object.keys(e.payload).sort().every((k) => ['action', 'connectionId', 'identityId'].includes(k))).toBe(true);
     // A request for a connection that is no longer active queues nothing.
@@ -272,7 +272,7 @@ suite('conversation sync (name and history) on PostgreSQL (CV5b, #2329)', () => 
   });
 
   it('lists the work for the worker login alone, only for the providers asked, and only for active connections', async () => {
-    await expect(pool.query("SELECT * FROM crove_kernel.conversation_sync_due(ARRAY['zalo_oa'], ARRAY['zalo_oa'], 60, 10)")).rejects.toMatchObject({ code: '42501' });
+    await expect(pool.query("SELECT * FROM ludy_kernel.conversation_sync_due(ARRAY['zalo_oa'], ARRAY['zalo_oa'], 60, 10)")).rejects.toMatchObject({ code: '42501' });
     const o = await org();
     expect((await dueConversationSync(workerDb, { history: ['facebook_page'], profile: [] })).filter((j) => j.orgId === o.orgId)).toHaveLength(0);
     expect(await dueConversationSync(workerDb, { history: [], profile: [] })).toEqual([]);

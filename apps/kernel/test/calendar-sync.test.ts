@@ -3,10 +3,10 @@
 // kernel, and how it ends a connection the provider refused. No database, no network.
 import { randomBytes } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
-import type { CalendarAdapter, CalendarWriteResult } from '@crove/channel';
-import { busyPieces, cutOut } from '@crove/kernel';
-import { calendarBinding } from '@crove/kernel-contract';
-import { CredentialVault, DomainError, parseVaultKey, type Runtime } from '@crove/kernel-runtime';
+import type { CalendarAdapter, CalendarWriteResult } from '@ludy/channel';
+import { busyPieces, cutOut } from '@ludy/kernel';
+import { calendarBinding } from '@ludy/kernel-contract';
+import { CredentialVault, DomainError, parseVaultKey, type Runtime } from '@ludy/kernel-runtime';
 import { runCalendarDisconnect, runCalendarSync, runCalendarWriteBack, syncCalendars } from '../src/calendar-sync.ts';
 
 const ORG = '11111111-1111-4111-8111-111111111111';
@@ -27,7 +27,7 @@ interface Call {
 }
 
 function fakeRuntime(
-  state: { status: string; provider: string; expiresAt: string | null; updatedAt: string; writeBack?: boolean } | null,
+  state: { status: string; provider: string; expiresAt: string | null; updatedAt: string; writeBack?: boolean; readEvents?: boolean } | null,
   credential: unknown,
   plan: { actions: unknown[] } = { actions: [] },
   behaviour: { settleFails?: Error; crm?: boolean } = {},
@@ -35,6 +35,7 @@ function fakeRuntime(
   const calls: Call[] = [];
   const runtime = {
     installed: (module: string) => module !== 'crm' || behaviour.crm !== false,
+    appOn: async () => true,
     query: async (name: string, input: Record<string, unknown>) => {
       calls.push({ kind: 'query', name, input });
       if (name === 'kernel.calendar.connection_state') return state;
@@ -79,6 +80,7 @@ function adapter(over: Partial<CalendarAdapter> = {}): CalendarAdapter & { busyC
     writeEvent: async (_secret, event): Promise<CalendarWriteResult> => (writes.push(`write ${event.externalId} ${event.summary} ${event.startsAt}`), { ok: true }),
     removeEvent: async (_secret, externalId): Promise<CalendarWriteResult> => (writes.push(`remove ${externalId}`), { ok: true }),
     revoke: async (): Promise<{ revoked: true } | { revoked: false; reason: string } | { failed: string }> => ({ revoked: true }),
+    events: async () => ({ events: [] }),
     ...over,
   };
 }
@@ -268,6 +270,92 @@ describe('runCalendarSync', () => {
     const { runtime, calls } = fakeRuntime(fresh, wrong);
     expect(await run(runtime, adapter())).toEqual({ outcome: 'expired', reason: 'credential_unreadable' });
     expect(calls.at(-1)).toMatchObject({ name: 'kernel.calendar.mark_failed', input: { status: 'expired', reason: 'credential_unreadable' } });
+  });
+});
+
+describe('reading the member\'s meetings in the sweep (B1, #3165)', () => {
+  const event = { id: 'e1', title: 'Họp giao ban', startsAt: '2026-11-03T08:00:00.000Z', endsAt: '2026-11-03T09:00:00.000Z', timeZone: 'Asia/Ho_Chi_Minh', joinUrl: 'https://meet.google.com/abc-defg-hij', invitees: 3, series: null };
+
+  it('reads nothing while the switch is off, and the busy times are read as before', async () => {
+    const { runtime, calls } = fakeRuntime(fresh, seal(SECRET));
+    const events = vi.fn(async () => ({ events: [event] }));
+    expect(await run(runtime, adapter({ events }))).toEqual({ outcome: 'synced', added: 2, removed: 1 });
+    expect(events).not.toHaveBeenCalled();
+    expect(calls.some((c) => c.name === 'meetings.agenda.replace')).toBe(false);
+  });
+
+  it('with the switch on, asks for 1 day back to 7 days ahead with the token that just worked and hands the answer to the meetings command', async () => {
+    const { runtime, calls } = fakeRuntime({ ...fresh, readEvents: true }, seal(SECRET));
+    const events = vi.fn(async (_secret: string, _from: Date, _to: Date) => ({ events: [event] }));
+    expect(await run(runtime, adapter({ events }))).toEqual({ outcome: 'synced', added: 2, removed: 1 });
+    expect(events).toHaveBeenCalledTimes(1);
+    const [secret, from, to] = events.mock.calls[0] ?? [];
+    expect(secret).toBe(SECRET);
+    expect(from?.toISOString()).toBe('2026-11-02T05:30:00.000Z');
+    expect(to?.toISOString()).toBe('2026-11-10T05:30:00.000Z');
+    const replace = calls.filter((c) => c.name === 'meetings.agenda.replace');
+    expect(replace).toHaveLength(1);
+    expect(replace[0]?.kind).toBe('execute');
+    expect(replace[0]?.input).toEqual({ connectionId: CONNECTION, from: '2026-11-02T05:30:00.000Z', events: [event] });
+    // It runs after the busy times were stored.
+    expect(calls.findIndex((c) => c.name === 'kernel.calendar.busy_replace')).toBeLessThan(calls.findIndex((c) => c.name === 'meetings.agenda.replace'));
+  });
+
+  it('never stops the busy sync: a refusal, a missing scope, an outage or a missing module are logged by code and the sweep still reports synced', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      for (const answer of [{ refused: 'refused' as const }, { scope: true as const }, { failed: 'outage' }]) {
+        const { runtime, calls } = fakeRuntime({ ...fresh, readEvents: true }, seal(SECRET));
+        expect(await run(runtime, adapter({ events: async () => answer as never }))).toEqual({ outcome: 'synced', added: 2, removed: 1 });
+        expect(calls.some((c) => c.name === 'meetings.agenda.replace')).toBe(false);
+      }
+      // The meetings module is not installed: the command does not exist and the call throws.
+      const { runtime } = fakeRuntime({ ...fresh, readEvents: true }, seal(SECRET));
+      const execute = runtime.execute.bind(runtime);
+      (runtime as unknown as { execute: unknown }).execute = async (name: string, input: Record<string, unknown>, options: unknown) => {
+        if (name === 'meetings.agenda.replace') throw new DomainError('UNKNOWN_COMMAND', 404, 'nope');
+        return (execute as (n: string, i: unknown, o: unknown) => Promise<unknown>)(name, input, options);
+      };
+      expect(await run(runtime, adapter({ events: async () => ({ events: [event] }) }))).toEqual({ outcome: 'synced', added: 2, removed: 1 });
+      // The log says what failed, never a title or an address.
+      const text = log.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(text).toContain('could not store events: UNKNOWN_COMMAND');
+      expect(text).not.toContain('Họp giao ban');
+      expect(text).not.toContain('meet.google.com');
+    } finally {
+      log.mockRestore();
+    }
+  });
+});
+
+describe('an Outlook connection in the sweep (B3, #3167)', () => {
+  const outlook = (over: Partial<CalendarAdapter> = {}) => adapter({ provider: 'microsoft', oauthProvider: 'microsoft_calendar', ...over });
+  const sealed = (secret: string) => {
+    const s = vault.seal(secret, calendarBinding(ORG, 'microsoft', ACCOUNT));
+    return { provider: 'microsoft', externalAccount: ACCOUNT, keyId: s.keyId, envelope: s.envelope.toString('base64') };
+  };
+  const runOutlook = (rt: Runtime, a: CalendarAdapter) => runCalendarSync({ runtime: rt, broker: vault, adapters: { microsoft_calendar: a }, now: () => NOW }, { orgId: ORG, connectionId: CONNECTION });
+
+  it('is synced by the adapter of its own provider: busy times, and the events only when the switch is on', async () => {
+    const event = { id: 'e1', title: 'Họp giao ban', startsAt: '2026-11-03T08:00:00.000Z', endsAt: '2026-11-03T09:00:00.000Z', timeZone: 'UTC', joinUrl: 'https://teams.microsoft.com/l/meetup-join/x', invitees: 2, series: null };
+    const off = fakeRuntime({ ...fresh, provider: 'microsoft' }, sealed(SECRET));
+    const offEvents = vi.fn(async () => ({ events: [event] }));
+    expect(await runOutlook(off.runtime, outlook({ events: offEvents }))).toEqual({ outcome: 'synced', added: 2, removed: 1 });
+    expect(offEvents).not.toHaveBeenCalled();
+    const on = fakeRuntime({ ...fresh, provider: 'microsoft', readEvents: true }, sealed(SECRET));
+    const onEvents = vi.fn(async (_secret: string, _from: Date, _to: Date) => ({ events: [event] }));
+    expect(await runOutlook(on.runtime, outlook({ events: onEvents }))).toEqual({ outcome: 'synced', added: 2, removed: 1 });
+    expect(onEvents).toHaveBeenCalledTimes(1);
+    const replace = on.calls.find((c) => c.name === 'meetings.agenda.replace');
+    expect(replace?.input).toEqual({ connectionId: CONNECTION, from: '2026-11-02T05:30:00.000Z', events: [event] });
+  });
+
+  it('is not synced by the adapter of another provider: a Google adapter alone leaves it skipped', async () => {
+    const { runtime, calls } = fakeRuntime({ ...fresh, provider: 'microsoft' }, sealed(SECRET));
+    const google = adapter();
+    expect(await run(runtime, google)).toEqual({ outcome: 'skipped', reason: 'no_adapter' });
+    expect(google.busyCalls).toHaveLength(0);
+    expect(calls.some((c) => c.name === 'kernel.calendar.busy_replace')).toBe(false);
   });
 });
 

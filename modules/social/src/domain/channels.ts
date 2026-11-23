@@ -154,7 +154,7 @@ export const LINK_PLACEMENT: Readonly<Record<Provider, LinkPlacement>> = {
 };
 
 // The link as a whole: followed by the end, a space, or sentence punctuation and then the end or a space (the
-// adapters' holdsLink in @crove/channel, which the browser cannot import).
+// adapters' holdsLink in @ludy/channel, which the browser cannot import).
 export function holdsLink(text: string, link: string): boolean {
   for (let i = text.indexOf(link); i !== -1; i = text.indexOf(link, i + 1)) {
     if (/^[.,!?;:)\]]*(?:\s|$)/.test(text.slice(i + link.length))) return true;
@@ -422,7 +422,7 @@ export function topicTagOf(settings: Readonly<Record<string, unknown>> | undefin
 // Google Business Profile posts (#709), in the variant's settings (`settings.gbp`): a topic (a standard post, an event
 // or an offer), an optional call to action (its URL is the post's link; CALL needs none), an event's title and dates
 // (YYYY-MM-DD, times HH:MM optional) for events and offers, an offer's coupon code and terms, and the post's language. The adapter's
-// gbpSettingsOf in @crove/channel reads the same shape.
+// gbpSettingsOf in @ludy/channel reads the same shape.
 export const GBP_TOPICS = ['STANDARD', 'EVENT', 'OFFER'] as const;
 export const GBP_CTAS = ['BOOK', 'ORDER', 'SHOP', 'LEARN_MORE', 'SIGN_UP', 'CALL'] as const;
 export type GbpTopic = (typeof GBP_TOPICS)[number];
@@ -456,7 +456,7 @@ export function gbpOf(settings: Readonly<Record<string, unknown>> | undefined): 
 
 // A video's cover (#642), in the variant's settings (`settings.cover`): a frame of the video, at a time in
 // milliseconds from its start, or an image of the org (a file uploaded for Social, JPEG or PNG), by file id. The
-// adapters' videoCoverOf in @crove/channel reads the same shape.
+// adapters' videoCoverOf in @ludy/channel reads the same shape.
 export type Cover = { atMs: number } | { fileId: string };
 export type CoverKind = 'frame' | 'image';
 export const COVER_IMAGE_TYPES: readonly string[] = ['image/jpeg', 'image/png'];
@@ -478,7 +478,7 @@ export const coverKind = (cover: Cover): CoverKind => ('atMs' in cover ? 'frame'
 // Data API has no way to pick one. A Facebook Page video takes an image (`thumb` on /{page-id}/videos, #1499), on a
 // feed video only: Meta's Reels publishing takes no cover (REEL_COVER_REFUSED). The other channels take none yet.
 // A channel's post type (#644), in the variant's settings (`settings.postType`): a feed post (the default), a Story or
-// a Reel, on the channels whose adapter posts them. The adapters' postTypeOf in @crove/channel reads the same value.
+// a Reel, on the channels whose adapter posts them. The adapters' postTypeOf in @ludy/channel reads the same value.
 // A Story is one image or video shown for a day: its text and link are not sent, and a video lasts at most a minute.
 // A Reel is one video. A Story image is upright, about 9:16 (phone screens from 1:2.2 to 2:3 count).
 export const POST_TYPES = ['feed', 'story', 'reel'] as const;
@@ -552,7 +552,7 @@ export const COVER_REQUIRED: ReadonlySet<Provider> = new Set<Provider>(['zalo_oa
 // How a TikTok variant goes out (#903), in `settings.tiktokMode`: posted at once (direct, the default, so variants
 // saved before #903 behave as they did), or sent to the creator's TikTok inbox as a draft they finish and post in the
 // TikTok app (inbox). Inbox mode takes no privacy level, interaction settings or cover: the creator picks them in
-// TikTok. The adapter's tiktokModeOf in @crove/channel reads the same value.
+// TikTok. The adapter's tiktokModeOf in @ludy/channel reads the same value.
 export const TIKTOK_MODES = ['direct', 'inbox'] as const;
 export type TikTokMode = (typeof TIKTOK_MODES)[number];
 // The mode in a variant's settings; null when it is set to something else.
@@ -575,7 +575,7 @@ export function scopeNeeded(provider: Provider, settings: Readonly<Record<string
 // own business, labelled "Promotional content"), brandedContent (promoting another brand or a third party, labelled
 // "Paid partnership"), or both; aiGenerated asks TikTok for its AI-generated label. Branded content cannot be "only
 // me" (SELF_ONLY), and a draft sent to the TikTok app takes none of them. The adapter's tiktokDisclosureOf in
-// @crove/channel reads the same value.
+// @ludy/channel reads the same value.
 export interface TikTokDisclosure {
   commercial: boolean;
   yourBrand: boolean;
@@ -619,7 +619,7 @@ export function telegramOptionsOf(settings: Readonly<Record<string, unknown>> | 
 // Link buttons under a Telegram post (#1017), in `settings.telegram.buttons`: rows of buttons, each a label (`text`)
 // and an https link (`url`), sent as the message's inline keyboard. At most TELEGRAM_BUTTON_ROWS_MAX rows of
 // TELEGRAM_BUTTONS_PER_ROW_MAX, a label of at most TELEGRAM_BUTTON_TEXT_MAX characters; an album (a media group) takes
-// none, as Telegram puts no keyboard on one. The adapter in @crove/channel names the same limits. Not stored without
+// none, as Telegram puts no keyboard on one. The adapter in @ludy/channel names the same limits. Not stored without
 // a button, so a variant saved before keeps its content hash.
 export const TELEGRAM_BUTTON_ROWS_MAX = 3;
 export const TELEGRAM_BUTTONS_PER_ROW_MAX = 3;
@@ -678,7 +678,7 @@ export function mapTelegramButtonUrls(settings: Record<string, unknown>, map: (u
   const telegram = settings.telegram as Record<string, unknown>;
   return { ...settings, telegram: { ...telegram, buttons: rows.map((row) => row.map((b) => ({ text: b.text, url: map(b.url) }))) } };
 }
-// The scope a Telegram connection carries when its bot may pin in the channel (TELEGRAM_PIN_SCOPE in @crove/channel,
+// The scope a Telegram connection carries when its bot may pin in the channel (TELEGRAM_PIN_SCOPE in @ludy/channel,
 // read at connect): the editor greys the pin out without it.
 export const TELEGRAM_PIN_SCOPE = 'can_pin_messages';
 
@@ -686,7 +686,7 @@ export const TELEGRAM_PIN_SCOPE = 'can_pin_messages';
 // webhook's channel type cannot be read with the webhook alone, so the person posting marks a forum (or media)
 // channel's webhook: forum posts the variant as a new forum post named threadName, else the post's title, else the
 // text's first line (cut to DISCORD_THREAD_NAME_MAX), with the forum's tag ids; threadId posts into an existing thread
-// instead. Absent is a message in the webhook's channel, as before. The adapter's discordOptionsOf in @crove/channel
+// instead. Absent is a message in the webhook's channel, as before. The adapter's discordOptionsOf in @ludy/channel
 // reads the same shape and names the same limits.
 export const DISCORD_THREAD_NAME_MAX = 100;
 export const DISCORD_TAGS_MAX = 5;
@@ -742,7 +742,7 @@ export const WORDPRESS_PENDING = 'WORDPRESS_PENDING';
 export const NOT_PUBLIC_NOTES: readonly string[] = [SENT_TO_APP, WORDPRESS_DRAFT, WORDPRESS_PENDING];
 
 // WordPress options (#981), in `settings.wordpress`: category and tag names, an excerpt and a status. The adapter's
-// wordpressOptionsOf in @crove/channel reads the same shape.
+// wordpressOptionsOf in @ludy/channel reads the same shape.
 export const WORDPRESS_STATUSES = ['publish', 'draft', 'pending'] as const;
 export type WordPressStatus = (typeof WORDPRESS_STATUSES)[number];
 // The status a WordPress variant asks for: publish when it names none; null when it names one WordPress would not take.
@@ -766,7 +766,7 @@ export const COVER_IMAGE_MAX_BYTES: Readonly<Partial<Record<Provider, number>>> 
 
 // A LinkedIn document's title (#1119), `settings.linkedin.documentTitle`: 1 to DOCUMENT_TITLE_MAX characters once
 // trimmed, counted as LinkedIn counts its text. Unsaid, the adapter sends the post's title or the file's name. The
-// adapter's linkedinDocumentTitleOf in @crove/channel reads the same shape and limit (LinkedIn's docs give none; 58 is
+// adapter's linkedinDocumentTitleOf in @ludy/channel reads the same shape and limit (LinkedIn's docs give none; 58 is
 // the one schedulers that post documents hold to).
 export const DOCUMENT_TITLE_MAX = 58;
 export const DOCUMENT_PROVIDERS: ReadonlySet<Provider> = new Set<Provider>(['linkedin', 'linkedin_page']);
@@ -789,7 +789,7 @@ export function documentTitleOf(settings: Readonly<Record<string, unknown>> | un
 // content.article and Bluesky's app.bsky.embed.external are the post's one content, so images win), and then the link
 // is not added to the text. The title (1 to 200 characters) and description (at most 300) are Crove's caps, as neither
 // platform documents one [unverified]; Bluesky takes a thumbnail of at most 1,000,000 bytes. The adapters' linkCardOf
-// in @crove/channel reads the same shape and limits.
+// in @ludy/channel reads the same shape and limits.
 export const LINK_CARD_PROVIDERS: ReadonlySet<Provider> = new Set<Provider>(['linkedin', 'linkedin_page', 'bluesky']);
 export const LINK_CARD_TITLE_MAX = 200;
 export const LINK_CARD_DESCRIPTION_MAX = 300;
@@ -870,7 +870,7 @@ export function editRefusal(provider: string, settings: Readonly<Record<string, 
 // REMOVE_AT_MAX_MS) after the time the post goes out. The commands check that where the time becomes known (a time, a
 // queue slot, a retry now); the worker's sweep checks it again against the time the post really went out, which a rate
 // limit, a paused channel or a queue edit can move, and leaves a post outside it up. The same pattern guards the
-// database's crove_social.remove_at_of.
+// database's ludy_social.remove_at_of.
 export const REMOVE_AT_MIN_GAP_MS = 5 * 60_000;
 // The furthest a takedown may be planned, so stale or far values never stay in the worker's scan.
 export const REMOVE_AT_MAX_MS = 365 * 24 * 3_600_000;
@@ -1220,7 +1220,7 @@ export function youtubeTagsOf(settings: Readonly<Record<string, unknown>> | unde
 // into once it is out, each as its own step after the post (playlists.ts), so a refused insert leaves the video
 // published. At most YOUTUBE_PLAYLISTS_MAX. Not stored when empty, so a variant saved before keeps its content hash.
 export const YOUTUBE_PLAYLISTS_MAX = 5;
-// A playlist a channel made itself (YOUTUBE_PLAYLIST_ID in @crove/channel, which sends it): PL and 16 or 32 more characters.
+// A playlist a channel made itself (YOUTUBE_PLAYLIST_ID in @ludy/channel, which sends it): PL and 16 or 32 more characters.
 export const YOUTUBE_PLAYLIST_ID = /^PL[A-Za-z0-9_-]{16,32}$/;
 
 // The playlist ids in a variant's settings: null when there are none, 'invalid' when settings.youtube is not an object
@@ -1257,7 +1257,7 @@ export function youtubePlaylistIdFrom(text: string): string | null {
 }
 
 // The Pinterest board section a pin goes into (#1120): settings.pinterest.sectionId, one of the board's sections as the
-// composer listed them (PINTEREST_SECTION_ID in @crove/channel, which sends it and checks it against the board again).
+// composer listed them (PINTEREST_SECTION_ID in @ludy/channel, which sends it and checks it against the board again).
 // Not stored without one, so a variant saved before keeps its content hash.
 export const PINTEREST_SECTION_ID = /^\d{1,32}$/;
 
@@ -1292,7 +1292,7 @@ export type TikTokInteraction = (typeof TIKTOK_INTERACTIONS)[number];
 // { id, name } item each: `nickname` (the creator's display name), `privacy_<level>` for each privacy level the account
 // may post with, `off_<interaction>` for each interaction the creator turned off, `max_video_seconds` (the longest
 // video, in seconds) and `cannot_post` (TikTok's code when the account may not post now: spam_risk_too_many_posts,
-// spam_risk_user_banned_from_posting). The adapter's tiktokCreatorOptions in @crove/channel writes the same ids.
+// spam_risk_user_banned_from_posting). The adapter's tiktokCreatorOptions in @ludy/channel writes the same ids.
 // The composer shows these; publishing reads creator_info again and never trusts them.
 export const TIKTOK_CANNOT_POST = ['spam_risk_too_many_posts', 'spam_risk_user_banned_from_posting'] as const;
 export interface TikTokCreator {
@@ -1349,7 +1349,7 @@ export function instagramPeopleOf(settings: Readonly<Record<string, unknown>> | 
 // tab, off the grid (share_to_feed false); trial makes it a trial Reel, shown to people who do not follow the account
 // first (trial_params), which goes to followers once graduated: by hand in the Instagram app (manual, the default) or by
 // Instagram when it does well (performance). Only a Reel takes it, never a Story, an image or a carousel. The adapter's
-// instagramReelFormOf in @crove/channel reads the same shape.
+// instagramReelFormOf in @ludy/channel reads the same shape.
 export const IG_REEL_FEEDS = ['feed', 'reels_only', 'trial'] as const;
 export type InstagramReelFeed = (typeof IG_REEL_FEEDS)[number];
 export const IG_TRIAL_GRADUATIONS = ['manual', 'performance'] as const;

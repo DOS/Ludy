@@ -7,13 +7,14 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { contextToken } from './fixtures/context-token.ts';
-import { meetingsCommands, meetingsQueries, setTranscribeEnabled } from '@crove/mod-meetings';
+import { meetingsCommands, meetingsQueries, setTranscribeEnabled } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -22,6 +23,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('a member Vy run sees only its own meeting segment files (#2874)', () => {
   const dbName = `crove_test_inv_media_vy_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   const pools: pg.Pool[] = [];
@@ -36,7 +38,7 @@ suite('a member Vy run sees only its own meeting segment files (#2874)', () => {
   const asUser = (who: string) => ({ type: 'user' as const, userId: users[who] as string, aal: 'aal1' as const });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -84,17 +86,18 @@ suite('a member Vy run sees only its own meeting segment files (#2874)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = username;
+      url.username = dbIds ? dbIds.roleName(username) : username;
       url.password = password;
       return url.toString();
     };
     appUrl = login('crove_app', 'test-app-pw');
     workerUrl = login('crove_worker', 'test-worker-pw');
-    const appPool = createPool({ connectionString: appUrl, max: 3 });
-    const workerPool = createPool({ connectionString: workerUrl, max: 4 });
+    const appPool = createDbPool({ connectionString: appUrl, max: 3 }, dbIds);
+    const workerPool = createDbPool({ connectionString: workerUrl, max: 4 }, dbIds);
     pools.push(appPool, workerPool);
     setTranscribeEnabled(true);
     const register = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
@@ -125,7 +128,7 @@ suite('a member Vy run sees only its own meeting segment files (#2874)', () => {
   // The file ids this run's member-scoped context reads of the four test files (every file row of the org is asked for by id).
   async function seenBy(who: string): Promise<string[]> {
     const run = runs[who] as { agentId: string; runId: string };
-    const c = new pg.Client({ connectionString: workerUrl });
+    const c = createDbClient({ connectionString: workerUrl }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -164,7 +167,7 @@ suite('a member Vy run sees only its own meeting segment files (#2874)', () => {
 
   // The set form the file policy reads once per statement: the segment file ids of the run's own meeting, an empty set for everything else.
   async function mediaFiles(enter: (c: pg.Client) => Promise<unknown>, url: string = workerUrl): Promise<string[]> {
-    const c = new pg.Client({ connectionString: url });
+    const c = createDbClient({ connectionString: url }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -195,7 +198,7 @@ suite('a member Vy run sees only its own meeting segment files (#2874)', () => {
   it('member_vy_media_files is empty once the run\'s agent is no longer active, even with a running transcribe result', async () => {
     // The context cannot be entered for an inactive agent (AGENT_NOT_ACTIVE), so the agent is paused after the entry, in the same transaction, as the superuser (whose login passes the worker check). The helper checks the status and so does audio_for_member_vy behind it: this case pins the two together.
     const run = runs.recorder as { agentId: string; runId: string };
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -216,7 +219,7 @@ suite('a member Vy run sees only its own meeting segment files (#2874)', () => {
   });
 
   it('a member-Vy context of one org reads none of another org\'s media file rows, whatever the statement touches', async () => {
-    const c = new pg.Client({ connectionString: workerUrl });
+    const c = createDbClient({ connectionString: workerUrl }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -239,7 +242,7 @@ suite('a member Vy run sees only its own meeting segment files (#2874)', () => {
   it('a login that is not a crove_worker member is refused the member-Vy context entry, and even with a valid sealed context the helper answers it an empty set, not an error', async () => {
     const run = runs.recorder as { agentId: string; runId: string };
     // (a) The app login cannot enter the context at all (no EXECUTE on the entry function), and with no context the helper answers an empty set.
-    const c = new pg.Client({ connectionString: appUrl });
+    const c = createDbClient({ connectionString: appUrl }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -253,7 +256,7 @@ suite('a member Vy run sees only its own meeting segment files (#2874)', () => {
     }
     // (b) A valid sealed context (entered by a worker-capable session) read by the app login: audio_for_member_vy refuses a login that is not a worker (MEETINGS_WORKER_ONLY), and the helper
     // turns that refusal into an empty set instead of an error. The seal is transaction-local, so it survives the change of session authorization (agents.db.test.ts does the same).
-    const d = new pg.Client({ connectionString: adminUrl });
+    const d = createDbClient({ connectionString: adminUrl }, dbIds);
     await d.connect();
     try {
       await d.query('BEGIN');
@@ -268,7 +271,7 @@ suite('a member Vy run sees only its own meeting segment files (#2874)', () => {
   });
 
   it('the file policy runs the helper once per statement: one function scan, hashed, not a call per row', async () => {
-    const c = new pg.Client({ connectionString: workerUrl });
+    const c = createDbClient({ connectionString: workerUrl }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');

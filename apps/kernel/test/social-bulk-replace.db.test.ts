@@ -8,11 +8,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, type BulkEditResult, type BulkReplacePreview, type PostView, type VersionView } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, type BulkEditResult, type BulkReplacePreview, type PostView, type VersionView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -43,7 +43,7 @@ suite('social find and replace on PostgreSQL (#1144)', () => {
   async function connection(orgId: string, owner: string, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, name, owner]),
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, name, owner]),
     );
     return id;
   }
@@ -53,7 +53,7 @@ suite('social find and replace on PostgreSQL (#1144)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const member = await person('member');
     const viewer = await person('viewer');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
     return { orgId, owner, member, viewer, a: await connection(orgId, owner, 'Kênh A'), b: await connection(orgId, owner, 'Kênh B') };
   }
 
@@ -76,11 +76,11 @@ suite('social find and replace on PostgreSQL (#1144)', () => {
   const replace = (o: Org, user: string, input: Record<string, unknown>) => exec<BulkEditResult>(o, user, 'social.post.bulk_replace', input);
   const versions = async (o: Org, postId: string) => (await rt.query<{ versions: VersionView[] }>('social.post.versions', { postId }, { actor: asUser(o.owner), orgId: o.orgId })).versions;
   const audits = (o: Org, command: string, outcome = 'ok') =>
-    admin(async (c) => (await c.query<{ target_id: string | null; detail: Record<string, unknown> | null }>('SELECT target_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = $3 ORDER BY occurred_at, id', [o.orgId, command, outcome])).rows);
+    admin(async (c) => (await c.query<{ target_id: string | null; detail: Record<string, unknown> | null }>('SELECT target_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = $3 ORDER BY occurred_at, id', [o.orgId, command, outcome])).rows);
   const publish = (o: Org, postId: string) =>
     admin(async (c) => {
-      await c.query("UPDATE crove_social.post_variant SET status = 'published', published_at = now() WHERE org_id = $1 AND post_id = $2", [o.orgId, postId]);
-      await c.query("UPDATE crove_social.post SET status = 'published' WHERE org_id = $1 AND id = $2", [o.orgId, postId]);
+      await c.query("UPDATE ludy_social.post_variant SET status = 'published', published_at = now() WHERE org_id = $1 AND post_id = $2", [o.orgId, postId]);
+      await c.query("UPDATE ludy_social.post SET status = 'published' WHERE org_id = $1 AND id = $2", [o.orgId, postId]);
     });
   const sorted = (ids: readonly string[]) => [...ids].sort();
   // What the preview says of each post, as the command answers it.
@@ -98,9 +98,9 @@ suite('social find and replace on PostgreSQL (#1144)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -269,7 +269,7 @@ suite('social find and replace on PostgreSQL (#1144)', () => {
     const long = await post(o, [o.a], { body: 'Tiêu đề dài', title: `${'x'.repeat(490)} AB` });
     const link = await post(o, [o.a], { body: 'Có liên kết', linkUrl: 'https://shop.example/AB' });
     const going = await post(o, [o.a], { body: 'Đang đăng AB' });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'publishing' WHERE org_id = $1 AND post_id = $2", [o.orgId, going]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'publishing' WHERE org_id = $1 AND post_id = $2", [o.orgId, going]));
     // The sandbox channel takes 1000 characters of text.
     const fits = await post(o, [o.a], { body: `${'y'.repeat(990)} AB` });
     const same = await post(o, [o.a], { body: 'Đã là AB' });
@@ -301,7 +301,7 @@ suite('social find and replace on PostgreSQL (#1144)', () => {
     const covered = await post(o, [o.a], { body: 'Có ảnh bìa' });
     const plain = await post(o, [o.a], { body: 'Không ảnh bìa' });
     for (const postId of [covered, plain]) await own(o, postId, o.a, { settings: { firstComment: 'Xem AB' } });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET settings = settings || jsonb_build_object('cover', jsonb_build_object('fileId', $3::text)) WHERE org_id = $1 AND post_id = $2", [o.orgId, covered, randomUUID()]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET settings = settings || jsonb_build_object('cover', jsonb_build_object('fileId', $3::text)) WHERE org_id = $1 AND post_id = $2", [o.orgId, covered, randomUUID()]));
     const seen = await preview(o, o.member, { postIds: [covered, plain], find: 'AB', replace: 'CD' });
     expect(Object.fromEntries(seen.posts.map((p) => [p.postId, p.skip]))).toEqual({ [covered]: 'over_limit', [plain]: null });
     expect(await replace(o, o.member, { postIds: [covered, plain], find: 'AB', replace: 'CD' })).toEqual(expected(seen));

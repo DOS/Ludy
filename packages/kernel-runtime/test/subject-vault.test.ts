@@ -8,7 +8,7 @@ const root = () => parseVaultKey(randomBytes(32).toString('base64'));
 const vaultOf = (...roots: ReturnType<typeof root>[]) => new SubjectVault(new CredentialVault(roots).deriveKeys(SUBJECT_WRAP_INFO));
 const org = randomUUID();
 const subject = randomUUID();
-const PLACE = 'crove_hr.payroll_employee.national_id';
+const PLACE = 'ludy_hr.payroll_employee.national_id';
 
 describe('SubjectVault', () => {
   it('seals a value that opens under the subject key, and shows nothing of it in the text', () => {
@@ -51,7 +51,7 @@ describe('SubjectVault', () => {
     const parsed = parseSealed(vault.seal(dataKey, org, subject, PLACE, 'secret')) as NonNullable<ReturnType<typeof parseSealed>>;
     expect(() => vault.open(dataKey, randomUUID(), subject, PLACE, parsed.packed)).toThrow(SubjectKeyError);
     expect(() => vault.open(dataKey, org, randomUUID(), PLACE, parsed.packed)).toThrow(SubjectKeyError);
-    expect(() => vault.open(dataKey, org, subject, 'crove_hr.payroll_employee.bank_account', parsed.packed)).toThrow(SubjectKeyError);
+    expect(() => vault.open(dataKey, org, subject, 'ludy_hr.payroll_employee.bank_account', parsed.packed)).toThrow(SubjectKeyError);
     expect(() => vault.open(randomBytes(32), org, subject, PLACE, parsed.packed)).toThrow(SubjectKeyError);
   });
 

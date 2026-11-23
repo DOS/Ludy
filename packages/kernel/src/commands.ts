@@ -2,11 +2,13 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import {
   ANOMALY_CHECK_PREFIX,
+  ENGAGE_PROPOSALS,
   MAX_IMPORT_BYTES,
   MAX_MEETING_AUDIO_BYTES,
   MAX_MEETING_VIDEO_BYTES,
   MAX_SOCIAL_VIDEO_BYTES,
   MAX_UPLOAD_BYTES,
+  PAYROLL_PAYMENT_COMMAND,
   UPLOAD_PURPOSES,
   VOUCHER_COMMAND,
   VOUCHER_TYPES,
@@ -20,8 +22,8 @@ import {
   zPurchaseProposal,
   zRole,
   zSessionRevoke,
-} from '@crove/kernel-contract';
-import type { Db, MemberRole } from '@crove/db';
+} from '@ludy/kernel-contract';
+import type { Db, MemberRole } from '@ludy/db';
 import {
   DomainError,
   defineCommand,
@@ -30,12 +32,15 @@ import {
   type CommandContext,
   type Runtime,
   type UserActor,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 import { agentCommands } from './agents.ts';
 import { channelCommands } from './channels.ts';
 import { extensionCommands } from './extension.ts';
 import { mcpCommands } from './mcp.ts';
+import { conversationProposalCommands } from './engage-proposals.ts';
 import { conversationCommands } from './conversations.ts';
+import { engageWakeCommands } from './engage-wake.ts';
+import { mcpEngageWriteCommands } from './mcp-write.ts';
 import {
   actorRef,
   addAuthor,
@@ -54,7 +59,7 @@ import { extractionCommands, legalEntityMoveRefused, readAgainIn, refuseWhileRee
 import { ingestFileRow, zIngestFile } from './files.ts';
 import { createOrgCommand, myOrgs, orgCreateCommand, type OrgCreateLimits, type OrgSummary } from './identity.ts';
 import { acceptInvite, createInvite, inviteCreateCommand, revokeInvite, type InviteLimits } from './invites.ts';
-import { mailCommands, queueContactMail } from './mail.ts';
+import { mailCommands, queueContactMail, queueMemberMail } from './mail.ts';
 import { auditLogCommands } from './audit-log.ts';
 import { personalDataCommands } from './personal-data.ts';
 import { notificationCommands } from './notifications.ts';
@@ -67,11 +72,13 @@ import { setAddress, setContactEmail } from './org-address.ts';
 import { partyCommands } from './parties.ts';
 import { setTaxCode, setVatFilingPeriod } from './tax-code.ts';
 import { setApprovalPreset } from './approval-preset.ts';
+import { setAppCommand, type AppBusyProbe } from './org-apps.ts';
 import { legalEntityCommands } from './legal-entities.ts';
 import { numberingCommands } from './numbering.ts';
 import { cancelMemberVyRuns, memberVyCommands } from './member-vy.ts';
 import { roleCommands } from './roles.ts';
 import { calendarCommands } from './calendar.ts';
+import { meetingPlatformCommands } from './meeting-platform.ts';
 import { proposalReminderCommands } from './proposal-reminders.ts';
 import { PROPOSAL_PREPARERS, REQUESTABLE, preparedCoAuthors, preparedEntity, resubmitProposal, zPreparedProposal } from './proposal-resubmit.ts';
 import { aiBudgetCommands } from './ai-budget.ts';
@@ -101,14 +108,30 @@ const PROPOSAL_COMMANDS = new Set([
   'finance.payroll_posting.record',
   // The payment of a pay run's net pay or a remittance (#2532): records a payment voucher that names the run and what it pays.
   'finance.payroll_payment.record',
+  // The posting of a stored marketplace settlement (#2516): posts the settlement's sales as a general journal voucher that names it.
+  'finance.marketplace_settlement.record',
+  // The posting of a platform's payout (#2516): posts the settlement's money received, fees and withheld tax as a general journal voucher that names the settlement and the bank line.
+  'finance.marketplace_payout.record',
+  // The clearing of the fees on 1388 by the platform's fee invoice (#2516): a general journal voucher Dr 331 / Cr 1388 that names the purchase document it clears.
+  'finance.marketplace_fee_clearing.record',
   // Running ads (ADR-0043 point 1, #2294): the commands that open the way to spend, none of which posts to the ledger.
   'ads.write.enable',
   'ads.account.enable_write',
   'ads.cap.set',
   'ads.launches.unblock',
   'ads.campaign.launch',
+  // Managing a running ad (ADR-0043, #3835, W4): what can start or raise spend on a live launch, approved like a launch. None posts to the ledger.
+  'ads.object.resume',
+  'ads.budget.raise',
+  'ads.schedule.extend',
   // Issuing a sales e-invoice (ADR-0044 point 3, #2502): a legal document, posted to no ledger.
   'finance.einvoice.issue',
+  // A payment to a supplier approved in Ludy (#3113 S2): posts to no ledger (Ludy moves no money).
+  'finance.supplier_payment.record',
+  // The settlement of an approved supplier payment (#3700 S3c): records a bank voucher that names the payment and moves it to paid.
+  'finance.supplier_payment.settle.record',
+  // What an AI coworker proposes in the Engage lines (E4 #3863): the proposal-only twins of a reply, a quote, a booking change, a post and the ads that only reduce spend. Each runs its original as the approver.
+  ...ENGAGE_PROPOSALS.map((p) => p.command),
 ]);
 // The proposals a user may ask for and their preparers: PROPOSAL_PREPARERS in proposal-resubmit.ts.
 const ADMINS = ['owner', 'admin'] as const;
@@ -136,7 +159,7 @@ interface LockedMembers {
 // count errs on the side of refusing. RLS and the org_id filter keep other orgs' members out of reach.
 async function lockMembers(ctx: CommandContext, actorId: string, targetId: string): Promise<LockedMembers> {
   const rows = await ctx.trx
-    .selectFrom('crove_kernel.tenant_member')
+    .selectFrom('ludy_kernel.tenant_member')
     .select(['user_id', 'role'])
     .where('org_id', '=', ctx.orgId)
     .where((eb) => eb.or([eb('role', '=', 'owner'), eb('user_id', 'in', [actorId, targetId])]))
@@ -201,7 +224,7 @@ export const changeMemberRole = defineCommand({
     // came. Whoever demotes them decides which side goes first.
     if ((previousRole === 'owner' || previousRole === 'admin') && (input.role === 'member' || input.role === 'viewer')) {
       const held = await ctx.trx
-        .selectFrom('crove_kernel.role_assignment')
+        .selectFrom('ludy_kernel.role_assignment')
         .select('legal_entity_id')
         .where('org_id', '=', ctx.orgId)
         .where('user_id', '=', input.userId)
@@ -221,7 +244,7 @@ export const changeMemberRole = defineCommand({
     // owners and admins only, and a self-demotion would otherwise lock the caller out of it).
     if (input.role === 'viewer') await cancelMemberVyRuns(ctx, { userId: input.userId }, 'ROLE_CHANGED');
     await keepingChiefAccountant(() =>
-      ctx.trx.updateTable('crove_kernel.tenant_member').set({ role: input.role }).where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).execute(),
+      ctx.trx.updateTable('ludy_kernel.tenant_member').set({ role: input.role }).where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).execute(),
     );
     // Pending invites the member could no longer issue are revoked in the same transaction, after the membership locks
     // (the order every invite path uses): an admin or owner who becomes a member or viewer loses every invite, an
@@ -235,7 +258,7 @@ export const changeMemberRole = defineCommand({
       lostRoles.length === 0
         ? []
         : await ctx.trx
-            .updateTable('crove_kernel.member_invite')
+            .updateTable('ludy_kernel.member_invite')
             .set({ status: 'revoked', revoked_at: ctx.now, revoked_by: actorId })
             .where('org_id', '=', ctx.orgId)
             .where('invited_by', '=', input.userId)
@@ -274,11 +297,11 @@ export const removeMember = defineCommand({
     // membership row goes, in the order the member commands use (membership rows, then invites): an acceptance that
     // holds the invite row meets a member row that is only locked, does not wait for it and finishes first, and one that
     // does not waits for this update and then finds the invite revoked. Matched as invite_for_user matches the
-    // accepting account's verified email (lower(btrim(user_account.email))); crove_kernel.invite_accept also refuses an
+    // accepting account's verified email (lower(btrim(user_account.email))); ludy_kernel.invite_accept also refuses an
     // invite made before its invitee's removal, for invites addressed to members removed before this existed.
     const addressedInvites = target.email
       ? await ctx.trx
-          .updateTable('crove_kernel.member_invite')
+          .updateTable('ludy_kernel.member_invite')
           .set({ status: 'revoked', revoked_at: ctx.now, revoked_by: actorId })
           .where('org_id', '=', ctx.orgId)
           .where('email', '=', sql<string>`pg_catalog.lower(pg_catalog.btrim(${target.email}))`)
@@ -292,11 +315,11 @@ export const removeMember = defineCommand({
     // Their live runs of Vy end with their membership (ADR-0049 decision 1): the run policy hides them from every other context.
     const cancelledVyRuns = await cancelMemberVyRuns(ctx, { userId: input.userId }, 'MEMBER_REMOVED');
     // Removing the last chief accountant under the accountant preset is refused (#1402).
-    await keepingChiefAccountant(() => ctx.trx.deleteFrom('crove_kernel.tenant_member').where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).execute());
+    await keepingChiefAccountant(() => ctx.trx.deleteFrom('ludy_kernel.tenant_member').where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).execute());
     // The removed member's pending invites go with them (they already stop working at acceptance while the inviter is
     // not a member; revoking them keeps them from coming back if the person is invited again later).
     const revokedInvites = await ctx.trx
-      .updateTable('crove_kernel.member_invite')
+      .updateTable('ludy_kernel.member_invite')
       .set({ status: 'revoked', revoked_at: ctx.now, revoked_by: actorId })
       .where('org_id', '=', ctx.orgId)
       .where('invited_by', '=', input.userId)
@@ -387,7 +410,7 @@ export function beginUploadCommand(limits: UploadBeginLimits = DEFAULT_UPLOAD_BE
       // of the inserting transaction, and they are compared with now() here. Only grants of the last 5 minutes can
       // count (a grant expires 5 minutes after it is created), which bounds the scan on file_upload_recent_idx.
       const counts = await ctx.trx
-        .selectFrom('crove_kernel.file_upload')
+        .selectFrom('ludy_kernel.file_upload')
         .select([
           sql<string>`count(*) FILTER (WHERE used_at IS NULL AND expires_at > pg_catalog.now())`.as('open'),
           sql<string>`count(*) FILTER (WHERE created_at > pg_catalog.now() - interval '1 minute')`.as('recent'),
@@ -403,7 +426,7 @@ export function beginUploadCommand(limits: UploadBeginLimits = DEFAULT_UPLOAD_BE
         throw new DomainError('RATE_LIMITED', 429, 'Bạn mở quá nhiều lượt tải lên trong một phút; hãy thử lại sau');
       }
       const row = await ctx.trx
-        .insertInto('crove_kernel.file_upload')
+        .insertInto('ludy_kernel.file_upload')
         .values({ org_id: ctx.orgId, staging_key: newStagingKey(), created_by: userId, max_bytes: String(maxBytes), purpose: input.purpose })
         .returning(['id', 'staging_key', 'max_bytes', 'expires_at'])
         .executeTakeFirstOrThrow();
@@ -429,7 +452,7 @@ export const claimUpload = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tải tệp lên được');
     const row = await ctx.trx
-      .selectFrom('crove_kernel.file_upload')
+      .selectFrom('ludy_kernel.file_upload')
       .select(['staging_key', 'created_by', 'max_bytes', 'purpose', 'used_at', sql<boolean>`expires_at <= pg_catalog.now()`.as('expired')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.uploadId)
@@ -442,7 +465,7 @@ export const claimUpload = defineCommand({
     if (row.used_at) throw new DomainError('UPLOAD_USED', 409, 'Lượt tải lên này đã được dùng');
     if (row.expired) throw new DomainError('UPLOAD_EXPIRED', 409, 'Lượt tải lên đã hết hạn; hãy tải lại tệp');
     await ctx.trx
-      .updateTable('crove_kernel.file_upload')
+      .updateTable('ludy_kernel.file_upload')
       .set({ used_at: sql`pg_catalog.now()` })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.uploadId)
@@ -451,7 +474,7 @@ export const claimUpload = defineCommand({
   },
 });
 
-// The most characters of a mail's text kept with it (#779), as the CHECK on crove_kernel.inbound_message.body_text.
+// The most characters of a mail's text kept with it (#779), as the CHECK on ludy_kernel.inbound_message.body_text.
 export const INBOUND_TEXT_MAX = 20_000;
 
 export const receiveInbound = defineCommand({
@@ -476,7 +499,7 @@ export const receiveInbound = defineCommand({
   access: 'system',
   handler: async (ctx, input) => {
     const message = await ctx.trx
-      .insertInto('crove_kernel.inbound_message')
+      .insertInto('ludy_kernel.inbound_message')
       .values({
         org_id: ctx.orgId,
         message_id: input.messageId,
@@ -492,7 +515,7 @@ export const receiveInbound = defineCommand({
     // What the org used of its daily limits (#675): the message, and the bytes of the attachments it keeps.
     const bytes = input.files.reduce((total, file) => total + file.sizeBytes, 0);
     await ctx.trx
-      .insertInto('crove_kernel.org_usage')
+      .insertInto('ludy_kernel.org_usage')
       .values([
         { org_id: ctx.orgId, metric: 'inbound_emails', amount: '1' },
         ...(bytes > 0 ? [{ org_id: ctx.orgId, metric: 'attachment_bytes' as const, amount: String(bytes) }] : []),
@@ -517,8 +540,8 @@ export const receiveInbound = defineCommand({
 });
 
 // How often one org may rotate its inbound address (#113): perDay in any rolling 24 hours, total ever. Every
-// rotation leaves a permanent tombstone row in crove_kernel.inbound_address, so the total bounds the ledger.
-// Enforced by crove_kernel.inbound_rotate under a per-org lock, so the limit holds across API instances; a replay of
+// rotation leaves a permanent tombstone row in ludy_kernel.inbound_address, so the total bounds the ledger.
+// Enforced by ludy_kernel.inbound_rotate under a per-org lock, so the limit holds across API instances; a replay of
 // an existing idempotency key never reaches the definer and does not count.
 export interface InboundRotateLimits {
   perDay: number;
@@ -558,9 +581,9 @@ export function inboundRotateCommand(limits: InboundRotateLimits = DEFAULT_INBOU
     handler: async (ctx) => {
       if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu mới đổi được địa chỉ nhận hóa đơn');
       // Transaction-local, read by the definer right below.
-      await sql`SELECT set_config('crove.inbound_rotate_limit_per_day', ${String(limits.perDay)}, true),
-                       set_config('crove.inbound_rotate_limit_total', ${String(limits.total)}, true)`.execute(ctx.trx);
-      const { rows } = await sql<{ token: string | null }>`SELECT crove_kernel.inbound_rotate() AS token`.execute(ctx.trx);
+      await sql`SELECT set_config('ludy.inbound_rotate_limit_per_day', ${String(limits.perDay)}, true),
+                       set_config('ludy.inbound_rotate_limit_total', ${String(limits.total)}, true)`.execute(ctx.trx);
+      const { rows } = await sql<{ token: string | null }>`SELECT ludy_kernel.inbound_rotate() AS token`.execute(ctx.trx);
       const token = rows[0]?.token;
       if (!token) throw new DomainError('INTERNAL', 500, 'Không đổi được địa chỉ nhận hóa đơn');
       await ctx.activity('kernel.org', ctx.orgId, 'inbound.rotated', 'Đổi địa chỉ email nhận hóa đơn; địa chỉ cũ ngừng nhận thư');
@@ -585,9 +608,9 @@ export function conversationAddressRotateCommand(limits: InboundRotateLimits = D
     access: ['owner'],
     handler: async (ctx) => {
       if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu mới đổi được địa chỉ email của Hộp thư');
-      await sql`SELECT set_config('crove.inbound_rotate_limit_per_day', ${String(limits.perDay)}, true),
-                       set_config('crove.inbound_rotate_limit_total', ${String(limits.total)}, true)`.execute(ctx.trx);
-      const { rows } = await sql<{ token: string | null }>`SELECT crove_kernel.conversation_address_rotate() AS token`.execute(ctx.trx);
+      await sql`SELECT set_config('ludy.inbound_rotate_limit_per_day', ${String(limits.perDay)}, true),
+                       set_config('ludy.inbound_rotate_limit_total', ${String(limits.total)}, true)`.execute(ctx.trx);
+      const { rows } = await sql<{ token: string | null }>`SELECT ludy_kernel.conversation_address_rotate() AS token`.execute(ctx.trx);
       if (!rows[0]?.token) throw new DomainError('INTERNAL', 500, 'Không đổi được địa chỉ email của Hộp thư');
       await ctx.activity('kernel.org', ctx.orgId, 'conversation_address.rotated', 'Đổi địa chỉ email của Hộp thư; địa chỉ cũ ngừng nhận thư');
       return { rotated: true };
@@ -613,7 +636,7 @@ export const requestProposal = defineCommand({
     const entity = preparedEntity(draft);
     const coAuthors = preparedCoAuthors(draft);
     const proposal = await ctx.trx
-      .insertInto('crove_kernel.proposal')
+      .insertInto('ludy_kernel.proposal')
       .values({
         org_id: ctx.orgId,
         kind: draft.kind,
@@ -652,10 +675,10 @@ interface GateDecision {
 async function approveInDatabase(ctx: CommandContext, id: string, revision: number, fallback: GateDecision): Promise<GateDecision> {
   // A database the gate's migration has not reached yet (a runtime ahead of its schema, as some tests build) has
   // neither the gate nor the guard that refuses the plain update: the approval is written as before #1793.
-  const { rows: gated } = await sql<{ gate: boolean }>`SELECT pg_catalog.to_regprocedure('crove_kernel.proposal_approve(uuid,integer,uuid)') IS NOT NULL AS gate`.execute(ctx.trx);
+  const { rows: gated } = await sql<{ gate: boolean }>`SELECT pg_catalog.to_regprocedure('ludy_kernel.proposal_approve(uuid,integer,uuid)') IS NOT NULL AS gate`.execute(ctx.trx);
   if (gated[0]?.gate !== true) {
     await ctx.trx
-      .updateTable('crove_kernel.proposal')
+      .updateTable('ludy_kernel.proposal')
       .set({ status: 'approved', decided_by: ctx.actor.type === 'user' ? ctx.actor.userId : null, decided_at: ctx.now, executed_command_id: ctx.commandId })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', id)
@@ -663,7 +686,7 @@ async function approveInDatabase(ctx: CommandContext, id: string, revision: numb
     return fallback;
   }
   try {
-    const { rows } = await sql<{ d: GateDecision }>`SELECT crove_kernel.proposal_approve(${id}::uuid, ${revision}::int, ${ctx.commandId}::uuid) AS d`.execute(ctx.trx);
+    const { rows } = await sql<{ d: GateDecision }>`SELECT ludy_kernel.proposal_approve(${id}::uuid, ${revision}::int, ${ctx.commandId}::uuid) AS d`.execute(ctx.trx);
     const decided = rows[0]?.d;
     if (!decided) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
     return decided;
@@ -683,7 +706,7 @@ async function approveInDatabase(ctx: CommandContext, id: string, revision: numb
 
 async function lockPendingProposal(ctx: CommandContext, id: string, revision?: number) {
   const proposal = await ctx.trx
-    .selectFrom('crove_kernel.proposal')
+    .selectFrom('ludy_kernel.proposal')
     .selectAll()
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', id)
@@ -759,7 +782,7 @@ export const editProposal = defineCommand({
     if (named.success && named.data.toLowerCase() !== proposal.legal_entity_id) throw legalEntityMoveRefused();
     const revision = proposal.revision + 1;
     await ctx.trx
-      .updateTable('crove_kernel.proposal')
+      .updateTable('ludy_kernel.proposal')
       .set({ payload: JSON.stringify(revised.payload), revision, authors: JSON.stringify(addAuthor(authors, actorRef(ctx.actor))) })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', proposal.id)
@@ -836,7 +859,7 @@ export const approveProposal = defineCommand({
     }
     // Approved for its command by this command: the runtime's proposal state gate lets the command run only now.
     // The same transaction ends 'executed', or rolls back to 'pending' if the command fails. The database decides P09,
-    // P10 and P12 again and writes the approval (crove_kernel.proposal_approve, #1793): a user's session reaches
+    // P10 and P12 again and writes the approval (ludy_kernel.proposal_approve, #1793): a user's session reaches
     // 'approved' no other way. The audit row records the decision it applied.
     const applied = await approveInDatabase(ctx, proposal.id, proposal.revision, {
       fourEyes: decision.fourEyes,
@@ -872,7 +895,7 @@ export const approveProposal = defineCommand({
       { proposalId: proposal.id },
     );
     await ctx.trx
-      .updateTable('crove_kernel.proposal')
+      .updateTable('ludy_kernel.proposal')
       .set({
         status: 'executed',
         decision_note: input.note ?? null,
@@ -894,6 +917,8 @@ export const approveProposal = defineCommand({
 export const BULK_ITEM_REFUSALS: ReadonlySet<string> = new Set([
   // The proposal (lockPendingProposal, refuseWhileReextracting): another org's id reads like one that does not exist.
   'NOT_FOUND',
+  // The proposal's command belongs to an app the org switched off or does not hold (ADR-0053): that item waits, the others go on.
+  'MODULE_OFF',
   'PROPOSAL_DECIDED',
   // A proposal that expired while the batch was prepared (#876).
   'PROPOSAL_EXPIRED',
@@ -949,27 +974,36 @@ export const BULK_ITEM_REFUSALS: ReadonlySet<string> = new Set([
 // The proposals approved one at a time, never in a batch: what opens the way to spend on an ad platform (ADR-0043 point 1,
 // #2294). The approver reads what changes on its own card, and one stale item must not decide the rest. A batch refuses them
 // item by item with BULK_NOT_ALLOWED, without running them.
-const SINGLE_APPROVAL_COMMANDS = ['ads.write.enable', 'ads.account.enable_write', 'ads.cap.set', 'ads.launches.unblock', 'ads.campaign.launch', 'finance.einvoice.issue'];
+const SINGLE_APPROVAL_COMMANDS = ['ads.write.enable', 'ads.account.enable_write', 'ads.cap.set', 'ads.launches.unblock', 'ads.campaign.launch', 'ads.object.resume', 'ads.budget.raise', 'ads.schedule.extend', 'finance.einvoice.issue', 'finance.supplier_payment.record', 'finance.supplier_payment.settle.record', ...ENGAGE_PROPOSALS.map((p) => p.command)];
 
 // Whether a nested approval's error refuses only that item.
 export function isBulkItemRefusal(error: unknown): error is DomainError {
   return error instanceof DomainError && BULK_ITEM_REFUSALS.has(error.code);
 }
 
+// Commands whose approval records a cash or bank voucher and takes its per-type numbering lock (#509, #2793).
+export const VOUCHER_BULK_COMMANDS = [VOUCHER_COMMAND, PAYROLL_PAYMENT_COMMAND] as const;
+
 // The order a bulk approval runs its items in, so that concurrent batches take their locks in one order. Every item
 // but a cash or bank voucher comes first, in id order, so two batches over the same proposals lock them in the same
-// order. Vouchers (#327) follow, by voucher type (VOUCHER_TYPES order) and then id: posting one holds its org's
-// numbering lock for its type until commit (20261019270000), so a batch taking PT then PC and another taking PC then
-// PT would deadlock (40P01, both users told to retry). In one type order the second batch waits for the first. A voucher
-// made from a bank statement line (#326) also locks that line, always after its numbering lock (20261020130000), and a
-// line takes vouchers of one type only, so the order holds.
+// order. Vouchers (#327) and payroll payment vouchers (#2532, #2793) follow, by voucher type (VOUCHER_TYPES order) and
+// then id: posting one holds its entity's numbering lock for its type until commit (20261019270000, 20261103040000),
+// so a batch taking PT then PC and another taking PC then PT would deadlock (40P01, both users told to retry). In one
+// type order the second batch waits for the first. A voucher made from a bank statement line (#326) also locks that
+// line, and a payroll payment voucher locks its (run, kind) slot (20261212114500) after its numbering lock.
 // voucherTypes: the voucher type of each voucher item, by proposal id; items not in it are not vouchers.
 export function bulkApproveOrder<T extends { id: string }>(items: readonly T[], voucherTypes: ReadonlyMap<string, string>): T[] {
   const rank = (id: string) => {
-    const type = voucherTypes.get(id);
+    const type = voucherTypes.get(id) ?? voucherTypes.get(id.toLowerCase());
     return type === undefined ? 0 : 1 + Math.max(0, (VOUCHER_TYPES as readonly string[]).indexOf(type));
   };
-  return [...items].sort((a, b) => rank(a.id) - rank(b.id) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return [...items].sort((a, b) => {
+    const byRank = rank(a.id) - rank(b.id);
+    if (byRank !== 0) return byRank;
+    const la = a.id.toLowerCase();
+    const lb = b.id.toLowerCase();
+    return la < lb ? -1 : la > lb ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
 }
 
 export type BulkApproveResult =
@@ -1005,17 +1039,17 @@ export const approveProposals = defineCommand({
     // The voucher type of each voucher item, read without a lock: a pending voucher is never edited, so its type stays.
     // Each item is still locked and checked by its own nested approval.
     const vouchers = await ctx.trx
-      .selectFrom('crove_kernel.proposal')
+      .selectFrom('ludy_kernel.proposal')
       .select(['id', sql<string | null>`payload ->> 'type'`.as('voucher_type')])
       .where('org_id', '=', ctx.orgId)
-      .where('command', '=', VOUCHER_COMMAND)
+      .where('command', 'in', VOUCHER_BULK_COMMANDS)
       .where('id', 'in', input.items.map((i) => i.id))
       .execute();
     const voucherTypes = new Map(vouchers.map((v) => [v.id, v.voucher_type ?? '']));
     const singleOnly = new Set(
       (
         await ctx.trx
-          .selectFrom('crove_kernel.proposal')
+          .selectFrom('ludy_kernel.proposal')
           .select('id')
           .where('org_id', '=', ctx.orgId)
           .where('command', 'in', SINGLE_APPROVAL_COMMANDS)
@@ -1028,7 +1062,7 @@ export const approveProposals = defineCommand({
     const flagged = new Set(
       (
         await sql<{ id: string }>`
-          SELECT p.id FROM crove_kernel.proposal p
+          SELECT p.id FROM ludy_kernel.proposal p
           WHERE p.org_id = ${ctx.orgId} AND p.id = ANY(${input.items.map((i) => i.id)}::uuid[])
             AND EXISTS (
               SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p.payload -> 'checks') = 'array' THEN p.payload -> 'checks' ELSE '[]'::jsonb END) c
@@ -1083,7 +1117,7 @@ export const rejectProposal = defineCommand({
     const proposal = await lockPendingProposal(ctx, input.id);
     await refuseWhileReextracting(ctx, proposal.source_file_id, proposal.extraction_id);
     await ctx.trx
-      .updateTable('crove_kernel.proposal')
+      .updateTable('ludy_kernel.proposal')
       .set({ status: 'rejected', decided_by: ctx.actor.userId, decided_at: ctx.now, decision_note: input.reason ?? null })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', proposal.id)
@@ -1114,7 +1148,7 @@ export const revokeSession = defineCommand({
     const current = ctx.actor.type === 'user' ? (ctx.actor.sessionId ?? null) : null;
     const { rows } = await sql<{ revoked_session: string; auth_subject: string | null; sign_out: 'local' | 'global' | null }>`
       SELECT revoked_session, auth_subject, sign_out
-      FROM crove_kernel.session_revoke(${input.userId}::uuid, ${input.sessionId ?? null}::uuid, ${input.reason ?? null}, ${current}::uuid)`.execute(ctx.trx);
+      FROM ludy_kernel.session_revoke(${input.userId}::uuid, ${input.sessionId ?? null}::uuid, ${input.reason ?? null}, ${current}::uuid)`.execute(ctx.trx);
     for (const row of rows) {
       if (!row.sign_out || !row.auth_subject) continue;
       // Ids only (#1970): the sign-out job reads the account's identity provider subject itself.
@@ -1132,7 +1166,7 @@ export async function sessionOrgs(db: Db, userId: string, sessionId: string | nu
   const orgs = await myOrgs(db, userId);
   if (!sessionId || orgs.length === 0) return orgs;
   const { rows } = await sql<{ org_id: string }>`
-    SELECT r AS org_id FROM crove_kernel.session_revoked_orgs(${userId}::uuid, ${sessionId}::uuid) r`.execute(db);
+    SELECT r AS org_id FROM ludy_kernel.session_revoked_orgs(${userId}::uuid, ${sessionId}::uuid) r`.execute(db);
   const revoked = new Set(rows.map((r) => r.org_id));
   return orgs.filter((org) => !revoked.has(org.orgId));
 }
@@ -1143,7 +1177,7 @@ export async function sessionOrgs(db: Db, userId: string, sessionId: string | nu
 //   any other page: the same definer, membership and session checks, audit row and upstream sign-out. An org that
 //   cannot run it (its owner revoked this session there, or the user left it since the lookup) passes to the next
 //   one, so one org's owner cannot block a global self revoke (issue #196);
-// - a user with no org that can run it has nowhere to audit: crove_kernel.session_revoke_orgless revokes in Crove
+// - a user with no org that can run it has nowhere to audit: ludy_kernel.session_revoke_orgless revokes in Crove
 //   only, in the org-less request transaction right after the session check, and refuses while some org could.
 // Revoking another user's sessions always needs that user's org: owners revoke in their org only.
 export async function revokeOwnSessionsWithoutOrg(runtime: Runtime, actor: UserActor, rawInput: unknown): Promise<{ revoked: string[] }> {
@@ -1152,7 +1186,7 @@ export async function revokeOwnSessionsWithoutOrg(runtime: Runtime, actor: UserA
     throw new DomainError('VALIDATION', 422, 'Dữ liệu không hợp lệ', { issues: parsed.error.issues.slice(0, 10) });
   }
   const input = parsed.data;
-  if (input.userId !== actor.userId) throw new DomainError('ORG_REQUIRED', 400, 'Thiếu tổ chức (header x-crove-org)');
+  if (input.userId !== actor.userId) throw new DomainError('ORG_REQUIRED', 400, 'Thiếu tổ chức (header x-ludy-org)');
   // A second pass covers a user who joined an org between the lookup and the org-less definer.
   for (let pass = 0; pass < 2; pass += 1) {
     const orgs = await runtime.forUser(actor, (db) => myOrgs(db, actor.userId));
@@ -1170,7 +1204,7 @@ export async function revokeOwnSessionsWithoutOrg(runtime: Runtime, actor: UserA
         try {
           const { rows } = await sql<{ revoked_session: string }>`
             SELECT r AS revoked_session
-            FROM crove_kernel.session_revoke_orgless(${actor.userId}::uuid, ${actor.sessionId ?? null}::uuid,
+            FROM ludy_kernel.session_revoke_orgless(${actor.userId}::uuid, ${actor.sessionId ?? null}::uuid,
               ${input.sessionId ?? null}::uuid, ${input.reason ?? null}) r`.execute(db);
           return { revoked: rows.map((r) => r.revoked_session) };
         } catch (error) {
@@ -1215,6 +1249,9 @@ const otherKernelCommands = [
   ...extensionCommands,
   ...mcpCommands,
   ...conversationCommands,
+  ...conversationProposalCommands,
+  ...engageWakeCommands,
+  ...mcpEngageWriteCommands,
   setTaxCode,
   setVatFilingPeriod,
   setApprovalPreset,
@@ -1223,9 +1260,11 @@ const otherKernelCommands = [
   ...roleCommands,
   ...memberVyCommands,
   ...calendarCommands,
+  ...meetingPlatformCommands,
   setAddress,
   setContactEmail,
   queueContactMail,
+  queueMemberMail,
   ...partyCommands,
   ...mailCommands,
   ...proposalReminderCommands,
@@ -1250,6 +1289,10 @@ export function buildKernelCommands(
     uploadBeginLimits?: UploadBeginLimits;
     inviteLimits?: InviteLimits;
     messageIdDomain?: string;
+    // The modules this build ships, so kernel.org.set_app refuses an app that does not exist (ADR-0053); absent: any well-formed id.
+    shippedModules?: readonly string[];
+    // What each app is busy with, so switching it off can be refused while that work is open (ADR-0053, kernel.org.set_app).
+    appBusy?: Readonly<Record<string, AppBusyProbe>>;
   } = {},
 ) {
   return [
@@ -1258,6 +1301,7 @@ export function buildKernelCommands(
       ? inviteCreateCommand(options.inviteLimits, { messageIdDomain: options.messageIdDomain })
       : createInvite,
     ...otherKernelCommands,
+    setAppCommand({ ...(options.shippedModules ? { shipped: options.shippedModules } : {}), ...(options.appBusy ? { busy: options.appBusy } : {}) }),
     options.uploadBeginLimits ? beginUploadCommand(options.uploadBeginLimits) : beginUpload,
     options.inboundRotateLimits ? inboundRotateCommand(options.inboundRotateLimits) : rotateInbound,
     options.inboundRotateLimits ? conversationAddressRotateCommand(options.inboundRotateLimits) : rotateConversationAddress,

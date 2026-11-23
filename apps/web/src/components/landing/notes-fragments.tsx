@@ -5,9 +5,8 @@ import { Chip } from './ui';
 
 type Notes = Dictionary['modules']['notes'];
 
-// The pieces of Ludy Notes drawn from the real screens with the sample company's data: the list of notes with their
-// private or shared mark, and one member's own to-dos grouped by due day. Used by the home page's Ludy Notes card and by
-// the Ludy Notes page.
+// The pieces of Ludy Cộng tác drawn from the real screens with the sample company's data: the list of notes with their
+// private or shared mark, and one member's own to-dos grouped by due day. Used by the Ludy Cộng tác page.
 export function NotesList({ notes }: { notes: Notes }) {
   return (
     <figure className="min-w-0 rounded-md border border-line bg-bg">

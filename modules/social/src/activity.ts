@@ -7,9 +7,9 @@
 // suggestions.ts).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, zSocialCommentPin } from '@crove/kernel-contract';
-import type { MemberRole, SocialSuggestField, SocialSuggestState } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { zId, zSocialCommentPin } from '@ludy/kernel-contract';
+import type { MemberRole, SocialSuggestField, SocialSuggestState } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { AUTO_REPLY_STALE_MS, autoReplyCallsOf } from './auto-reply.ts';
 import { REPOST_STALE_MS, repostCallsOf } from './repost.ts';
 import { EDIT_STALE_MS, editCallsOf } from './edit-published.ts';
@@ -36,7 +36,7 @@ type PinInput = z.infer<typeof zSocialCommentPin>;
 export async function mentionedMembers(ctx: CommandContext, body: string, author: string): Promise<string[]> {
   const ids = mentionsOf(body).filter((id) => id !== author);
   if (ids.length === 0) return [];
-  const rows = await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('user_id', 'in', ids).execute();
+  const rows = await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('user_id', 'in', ids).execute();
   const members = new Set(rows.map((r) => r.user_id));
   return ids.filter((id) => members.has(id));
 }
@@ -45,9 +45,9 @@ export async function mentionedMembers(ctx: CommandContext, body: string, author
 // spot and a video for a moment. Anything else, another org's file included, is the same refusal.
 async function checkPin(ctx: CommandContext, postId: string, channelMedia: unknown, pin: PinInput): Promise<void> {
   const notInPost = () => new DomainError('PIN_FILE_NOT_IN_POST', 422, 'Ảnh hoặc video được ghim không thuộc bài đăng hay kênh này');
-  const inPost = await ctx.trx.selectFrom('crove_social.post_media').select('file_id').where('org_id', '=', ctx.orgId).where('post_id', '=', postId).where('file_id', '=', pin.fileId).executeTakeFirst();
+  const inPost = await ctx.trx.selectFrom('ludy_social.post_media').select('file_id').where('org_id', '=', ctx.orgId).where('post_id', '=', postId).where('file_id', '=', pin.fileId).executeTakeFirst();
   if (!inPost && !(mediaOf(channelMedia) ?? []).some((m) => m.fileId === pin.fileId)) throw notInPost();
-  const file = await ctx.trx.selectFrom('crove_kernel.file').select('content_type').where('org_id', '=', ctx.orgId).where('id', '=', pin.fileId).executeTakeFirst();
+  const file = await ctx.trx.selectFrom('ludy_kernel.file').select('content_type').where('org_id', '=', ctx.orgId).where('id', '=', pin.fileId).executeTakeFirst();
   if (!file) throw notInPost();
   if ('atSeconds' in pin ? !file.content_type.startsWith('video/') : !file.content_type.startsWith('image/')) {
     throw new DomainError('PIN_KIND_MISMATCH', 422, 'Ghim một vị trí trên ảnh, hoặc một thời điểm trên video');
@@ -68,14 +68,14 @@ export const commentAdd = defineCommand({
   target: (input) => ({ type: 'social.post', id: input.postId }),
   handler: async (ctx, input) => {
     const userId = requireUser(ctx);
-    const post = await ctx.trx.selectFrom('crove_social.post').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.postId).executeTakeFirst();
+    const post = await ctx.trx.selectFrom('ludy_social.post').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.postId).executeTakeFirst();
     if (!post) throw new DomainError('POST_NOT_FOUND', 404, 'Không tìm thấy bài đăng');
     // A member limited to some channels (#1081) comments on the posts and the channels they may use.
     await refusePostOutside(ctx, post.id);
     let channelMedia: unknown = null;
     if (input.variantId) {
       const v = await ctx.trx
-        .selectFrom('crove_social.post_variant')
+        .selectFrom('ludy_social.post_variant')
         .select(['id', 'channel_connection_id', 'media'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.variantId)
@@ -88,7 +88,7 @@ export const commentAdd = defineCommand({
     const pin = input.pin ?? null;
     if (pin) await checkPin(ctx, post.id, channelMedia, pin);
     const row = await ctx.trx
-      .insertInto('crove_social.post_comment')
+      .insertInto('ludy_social.post_comment')
       .values({
         org_id: ctx.orgId,
         post_id: input.postId,
@@ -121,7 +121,7 @@ export const commentEdit = defineCommand({
   handler: async (ctx, input) => {
     const userId = requireUser(ctx);
     const c = await ctx.trx
-      .selectFrom('crove_social.post_comment')
+      .selectFrom('ludy_social.post_comment')
       .select(['id', 'post_id', 'variant_id', 'author_user_id', 'created_at', 'body'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.commentId)
@@ -132,16 +132,16 @@ export const commentEdit = defineCommand({
     // Not on a post or a channel the author may no longer use (#1081).
     await refusePostOutside(ctx, c.post_id);
     if (c.variant_id) {
-      const v = await ctx.trx.selectFrom('crove_social.post_variant').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('id', '=', c.variant_id).executeTakeFirst();
+      const v = await ctx.trx.selectFrom('ludy_social.post_variant').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('id', '=', c.variant_id).executeTakeFirst();
       if (v) await refuseChannels(ctx, [v.channel_connection_id]);
     }
     if (ctx.now.getTime() - c.created_at.getTime() > COMMENT_EDIT_MS) throw new DomainError('COMMENT_EDIT_CLOSED', 409, 'Đã quá thời gian sửa bình luận này');
     if (c.body !== input.body) {
-      await ctx.trx.updateTable('crove_social.post_comment').set({ body: input.body, edited_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', c.id).execute();
+      await ctx.trx.updateTable('ludy_social.post_comment').set({ body: input.body, edited_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', c.id).execute();
       // Only members this comment never mentioned are told: not the ones in the text before, nor anyone told by an
       // earlier fix, so taking a mention out and back in tells nobody twice.
       const told = await sql<{ id: string }>`
-        SELECT DISTINCT pg_catalog.jsonb_array_elements_text(payload -> 'user_ids') AS id FROM crove_kernel.outbox_event
+        SELECT DISTINCT pg_catalog.jsonb_array_elements_text(payload -> 'user_ids') AS id FROM ludy_kernel.outbox_event
         WHERE org_id = ${ctx.orgId} AND type = 'social.post.mentioned' AND created_at >= ${c.created_at} AND payload ->> 'comment_id' = ${c.id}`.execute(ctx.trx);
       const before = new Set([...mentionsOf(c.body), ...told.rows.map((r) => r.id)]);
       const added = (await mentionedMembers(ctx, input.body, userId)).filter((id) => !before.has(id));
@@ -158,17 +158,17 @@ export const commentEdit = defineCommand({
 async function setResolved(ctx: CommandContext, commentId: string, resolved: boolean) {
   const userId = requireUser(ctx);
   const c = await ctx.trx
-    .selectFrom('crove_social.post_comment')
+    .selectFrom('ludy_social.post_comment')
     .select(['id', 'post_id', 'variant_id', 'author_user_id', 'resolved_at', 'resolved_by', 'suggest_state'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', commentId)
     .forUpdate()
     .executeTakeFirst();
   if (!c) throw new DomainError('COMMENT_NOT_FOUND', 404, 'Không tìm thấy bình luận này');
-  const post = await ctx.trx.selectFrom('crove_social.post').select(['author_user_id', 'assignee_user_id']).where('org_id', '=', ctx.orgId).where('id', '=', c.post_id).executeTakeFirstOrThrow();
+  const post = await ctx.trx.selectFrom('ludy_social.post').select(['author_user_id', 'assignee_user_id']).where('org_id', '=', ctx.orgId).where('id', '=', c.post_id).executeTakeFirstOrThrow();
   await refusePostOutside(ctx, c.post_id);
   if (c.variant_id) {
-    const v = await ctx.trx.selectFrom('crove_social.post_variant').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('id', '=', c.variant_id).executeTakeFirst();
+    const v = await ctx.trx.selectFrom('ludy_social.post_variant').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('id', '=', c.variant_id).executeTakeFirst();
     if (v) await refuseChannels(ctx, [v.channel_connection_id]);
   }
   // A suggested edit (#1236) is closed by accepting or skipping it, never resolved or reopened by hand.
@@ -180,7 +180,7 @@ async function setResolved(ctx: CommandContext, commentId: string, resolved: boo
   if (resolved !== (c.resolved_at !== null)) {
     at = resolved ? ctx.now : null;
     by = resolved ? userId : null;
-    await ctx.trx.updateTable('crove_social.post_comment').set({ resolved_at: at, resolved_by: by }).where('org_id', '=', ctx.orgId).where('id', '=', c.id).execute();
+    await ctx.trx.updateTable('ludy_social.post_comment').set({ resolved_at: at, resolved_by: by }).where('org_id', '=', ctx.orgId).where('id', '=', c.id).execute();
   }
   ctx.audit({ post_id: c.post_id, changed: at !== c.resolved_at });
   return { commentId: c.id, postId: c.post_id, resolvedAt: at?.toISOString() ?? null, resolvedBy: by };
@@ -211,7 +211,7 @@ export const commentReopen = defineCommand({
 export async function openCommentsOf(trx: Trx, orgId: string, scope: ChannelScope, postIds: readonly string[]): Promise<Map<string, number>> {
   if (postIds.length === 0) return new Map();
   let q = trx
-    .selectFrom('crove_social.post_comment as c')
+    .selectFrom('ludy_social.post_comment as c')
     .select(['c.post_id', (eb) => eb.fn.countAll<string>().as('n')])
     .where('c.org_id', '=', orgId)
     .where('c.post_id', 'in', [...new Set(postIds)])
@@ -222,7 +222,7 @@ export async function openCommentsOf(trx: Trx, orgId: string, scope: ChannelScop
         eb('c.variant_id', 'is', null),
         eb.exists(
           eb
-            .selectFrom('crove_social.post_variant as v')
+            .selectFrom('ludy_social.post_variant as v')
             .select(sql`1`.as('one'))
             .whereRef('v.org_id', '=', 'c.org_id')
             .whereRef('v.id', '=', 'c.variant_id')
@@ -370,7 +370,7 @@ export const postActivity = defineQuery({
   access: ALL,
   handler: async (ctx, input): Promise<{ items: ActivityItem[]; more: boolean }> => {
     const post = await ctx.trx
-      .selectFrom('crove_social.post')
+      .selectFrom('ludy_social.post')
       .select(['id', 'author_user_id', 'assignee_user_id', 'origin', 'created_at', 'body', 'revision'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.postId)
@@ -380,7 +380,7 @@ export const postActivity = defineQuery({
     const scope = await channelScope(ctx);
     if ((await postsInScope(ctx, scope, [post.id])).length === 0) throw new DomainError('POST_NOT_FOUND', 404, 'Không tìm thấy bài đăng');
     const variants = await ctx.trx
-      .selectFrom('crove_social.post_variant')
+      .selectFrom('ludy_social.post_variant')
       .select(['id', 'provider', 'settings', 'status', 'published_at', 'external_url', 'error_code', 'updated_at', 'removed_at', 'removed_by', 'remove_reason', 'media', 'body', 'revision', 'content_frozen'])
       .where('org_id', '=', ctx.orgId)
       .where('post_id', '=', post.id)
@@ -389,7 +389,7 @@ export const postActivity = defineQuery({
     const variantIds = variants.map((v) => v.id);
     const [comments, decisions, audited, reorders] = await Promise.all([
       ctx.trx
-        .selectFrom('crove_social.post_comment')
+        .selectFrom('ludy_social.post_comment')
         .select(['id', 'variant_id', 'author_user_id', 'body', 'created_at', 'edited_at', 'resolved_at', 'resolved_by', 'file_id', 'pin_x', 'pin_y', 'pin_seconds', 'suggest_field', 'suggest_start', 'suggest_end', 'suggest_quote', 'suggest_text', 'suggest_state'])
         .where('org_id', '=', ctx.orgId)
         .where('post_id', '=', post.id)
@@ -397,7 +397,7 @@ export const postActivity = defineQuery({
         .limit(ACTIVITY_LIMIT)
         .execute(),
       ctx.trx
-        .selectFrom('crove_social.post_approval')
+        .selectFrom('ludy_social.post_approval')
         .select(['id', 'variant_id', 'decision', 'comment', 'decided_by', 'created_at', 'checklist'])
         .where('org_id', '=', ctx.orgId)
         .where('post_id', '=', post.id)
@@ -406,7 +406,7 @@ export const postActivity = defineQuery({
         .execute(),
       // From the post's creation on, so the scan stays on the org's audit rows of that time (audit_event_time_idx).
       sql<{ id: string; command: string; actor_id: string | null; actor_type: string; occurred_at: Date; target_type: string; target_id: string }>`
-        SELECT id, command, actor_id, actor_type, occurred_at, target_type, target_id FROM crove_kernel.audit_event
+        SELECT id, command, actor_id, actor_type, occurred_at, target_type, target_id FROM ludy_kernel.audit_event
         WHERE org_id = ${ctx.orgId}::uuid AND occurred_at >= ${post.created_at} AND outcome = 'ok'
           AND command = ANY(${Object.keys(AUDITED)}::text[])
           -- An archive or restore that found the post already so (#1299) names no post in its facts: nothing happened.
@@ -416,7 +416,7 @@ export const postActivity = defineQuery({
         ORDER BY occurred_at DESC LIMIT ${ACTIVITY_LIMIT}`.execute(ctx.trx),
       // A queue reorder (#1020) is audited once for its channel, naming every post it moved.
       sql<{ id: string; command: string; actor_id: string | null; actor_type: string; occurred_at: Date; detail: { variant_ids?: unknown; target_variant_id?: unknown } }>`
-        SELECT id, command, actor_id, actor_type, occurred_at, detail FROM crove_kernel.audit_event
+        SELECT id, command, actor_id, actor_type, occurred_at, detail FROM ludy_kernel.audit_event
         WHERE org_id = ${ctx.orgId}::uuid AND occurred_at >= ${post.created_at} AND outcome = 'ok'
           AND command = ANY(${QUEUE_ORDER_COMMANDS}::text[])
           AND detail -> 'post_ids' @> pg_catalog.jsonb_build_array(${post.id}::text)
@@ -427,9 +427,9 @@ export const postActivity = defineQuery({
     const pinFiles = new Map<string, { mime: string; filename: string }>();
     const current = new Set<string>();
     if (pinned.length > 0) {
-      const files = await ctx.trx.selectFrom('crove_kernel.file').select(['id', 'content_type', 'filename']).where('org_id', '=', ctx.orgId).where('id', 'in', pinned).execute();
+      const files = await ctx.trx.selectFrom('ludy_kernel.file').select(['id', 'content_type', 'filename']).where('org_id', '=', ctx.orgId).where('id', 'in', pinned).execute();
       for (const f of files) pinFiles.set(f.id, { mime: f.content_type, filename: f.filename });
-      const used = await ctx.trx.selectFrom('crove_social.post_media').select('file_id').where('org_id', '=', ctx.orgId).where('post_id', '=', post.id).execute();
+      const used = await ctx.trx.selectFrom('ludy_social.post_media').select('file_id').where('org_id', '=', ctx.orgId).where('post_id', '=', post.id).execute();
       for (const m of used) current.add(m.file_id);
       for (const v of variants) for (const m of mediaOf(v.media) ?? []) current.add(m.fileId);
     }
@@ -460,7 +460,7 @@ export const postActivity = defineQuery({
         decidable: open && writer,
       };
     };
-    const keyed = await ctx.trx.selectFrom('crove_social.post_variant').select(['id', 'revision', 'published_revision', 'attempt']).where('org_id', '=', ctx.orgId).where('post_id', '=', post.id).where(connectionInScope(scope, 'channel_connection_id')).execute();
+    const keyed = await ctx.trx.selectFrom('ludy_social.post_variant').select(['id', 'revision', 'published_revision', 'attempt']).where('org_id', '=', ctx.orgId).where('post_id', '=', post.id).where(connectionInScope(scope, 'channel_connection_id')).execute();
     const replies = await autoReplyCallsOf(ctx.trx, ctx.orgId, keyed);
     const reposts = await repostCallsOf(ctx.trx, ctx.orgId, keyed);
     const edits = await editCallsOf(ctx.trx, ctx.orgId, keyed);
@@ -540,12 +540,12 @@ export const postActivity = defineQuery({
     const kept = scope === null ? items : items.filter((i) => i.variantId === null || visible.has(i.variantId));
     kept.sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id));
     const shown = kept.slice(0, ACTIVITY_LIMIT);
-    // Names of the people, while they are members (crove_kernel.member_profiles answers only members of the org).
+    // Names of the people, while they are members (ludy_kernel.member_profiles answers only members of the org).
     const ids = [...new Set(shown.flatMap((i) => [i.userId, i.resolvedBy]).filter((u): u is string => u !== null))];
     const names = new Map<string, string>();
     if (ids.length > 0) {
       const { rows } = await sql<{ user_id: string; email: string; display_name: string | null }>`
-        SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
+        SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
       for (const r of rows) names.set(r.user_id, r.display_name ?? r.email);
     }
     return {

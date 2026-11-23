@@ -9,12 +9,12 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import type { ExtractClient } from '@crove/extract-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -166,17 +166,17 @@ suite('customers (#670)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     const db: Db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -285,31 +285,31 @@ suite('customers (#670)', () => {
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query(
-        `INSERT INTO crove_kernel.party (org_id, name) SELECT $1, 'Khách ' || lpad(g::text, 2, '0') FROM generate_series(1, 51) AS g`,
+        `INSERT INTO ludy_kernel.party (org_id, name) SELECT $1, 'Khách ' || lpad(g::text, 2, '0') FROM generate_series(1, 51) AS g`,
         [org.orgId],
       );
       await c.query('COMMIT');
     });
-    const ids = await admin(async (c) => (await c.query(`SELECT id FROM crove_kernel.party WHERE org_id = $1 AND name LIKE 'Khách __' ORDER BY name`, [org.orgId])).rows);
+    const ids = await admin(async (c) => (await c.query(`SELECT id FROM ludy_kernel.party WHERE org_id = $1 AND name LIKE 'Khách __' ORDER BY name`, [org.orgId])).rows);
     expect(ids).toHaveLength(51);
     // Lines on 131 by the superuser, balanced against 3388: enough for the list, which reads posted lines only.
     await admin(async (c) => {
       await c.query('BEGIN');
       const { rows } = await c.query(
-        `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-30', 'Số dư khách hàng', 'test', gen_random_uuid()) RETURNING id`,
+        `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-30', 'Số dư khách hàng', 'test', gen_random_uuid()) RETURNING id`,
         [org.orgId],
       );
       const entry = rows[0].id;
       let lineNo = 1;
       for (const { id } of ids) {
-        await c.query(`INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, $3, '131', 1000, 0, $4)`, [
+        await c.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, $3, '131', 1000, 0, $4)`, [
           org.orgId,
           entry,
           lineNo++,
           id,
         ]);
       }
-      await c.query(`INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, '3388', 0, $4)`, [
+      await c.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, '3388', 0, $4)`, [
         org.orgId,
         entry,
         lineNo,
@@ -365,7 +365,7 @@ suite('customers (#670)', () => {
     expect(foreign.status).not.toBe(200);
     // The viewer is not a member of the other org.
     expect((await customers({}, viewer, other.slug)).status).toBe(403);
-    const [party] = await admin(async (c) => (await c.query(`SELECT name FROM crove_kernel.party WHERE id = $1`, [buyerId])).rows);
+    const [party] = await admin(async (c) => (await c.query(`SELECT name FROM ludy_kernel.party WHERE id = $1`, [buyerId])).rows);
     expect(party?.name).toBe('Công ty CP Người Mua Mẫu');
   });
 });

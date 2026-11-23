@@ -4,9 +4,9 @@
 // to review at once: a person approves it before it goes out again.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, zSocialPostDuplicate, type zSocialPostDuplicateResult } from '@crove/kernel-contract';
-import type { Db, MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { zId, zSocialPostDuplicate, type zSocialPostDuplicateResult } from '@ludy/kernel-contract';
+import type { Db, MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type CommandContext, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
 import { effectiveContent, inheritedContent } from './domain/approval.ts';
 import { refusesDuplicates } from './domain/duplicate.ts';
 import { duplicatesOf } from './duplicates.ts';
@@ -48,7 +48,7 @@ export async function repostCopy(ctx: CommandContext, sourceId: string, options:
   const published = variants.filter((v) => v.status === 'published');
   if (published.length === 0) throw new DomainError('NOTHING_TO_REPOST', 409, 'Bài này chưa đăng lên kênh nào');
   const live = await ctx.trx
-    .selectFrom('crove_kernel.channel_connection')
+    .selectFrom('ludy_kernel.channel_connection')
     .select(['id', 'status'])
     .where('org_id', '=', ctx.orgId)
     .where(
@@ -86,7 +86,7 @@ async function copyPost(
 ): Promise<{ postId: string; submitted: number }> {
   const variation = options.variation ?? null;
   const { submit } = options;
-  const meta = await ctx.trx.selectFrom('crove_social.post').select(['tainted', 'author_user_id', 'origin']).where('org_id', '=', ctx.orgId).where('id', '=', source.id).executeTakeFirstOrThrow();
+  const meta = await ctx.trx.selectFrom('ludy_social.post').select(['tainted', 'author_user_id', 'origin']).where('org_id', '=', ctx.orgId).where('id', '=', source.id).executeTakeFirstOrThrow();
   const author = ctx.actor.type === 'user' ? ctx.actor.userId : meta.author_user_id;
   const b = base(source);
   const baseMedia = JSON.stringify(b.media);
@@ -108,7 +108,7 @@ async function copyPost(
       }
     : { body: b.body, title: b.title, linkUrl: b.linkUrl };
   const inserted = await ctx.trx
-    .insertInto('crove_social.post')
+    .insertInto('ludy_social.post')
     .values({
       org_id: ctx.orgId,
       body: shared.body,
@@ -137,7 +137,7 @@ async function copyPost(
   const present = new Set(
     ownIds.length === 0
       ? []
-      : (await ctx.trx.selectFrom('crove_kernel.file').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', ownIds).execute()).map((f) => f.id),
+      : (await ctx.trx.selectFrom('ludy_kernel.file').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', ownIds).execute()).map((f) => f.id),
   );
   const channels = outs.map(({ v, kept, ownMedia }) => {
     const own = ownMedia ? ownMedia.filter((m) => present.has(m.fileId)) : null;
@@ -224,7 +224,7 @@ export const postRepostEvergreen = defineCommand({
     // waits for nobody, so it is done, as evergreen_due reads it (#1341).
     await lockPost(ctx.trx, ctx.orgId, input.postId);
     const still = await ctx.trx
-      .selectFrom('crove_social.post as p')
+      .selectFrom('ludy_social.post as p')
       .select('p.id')
       .where('p.org_id', '=', ctx.orgId)
       .where('p.id', '=', input.postId)
@@ -232,7 +232,7 @@ export const postRepostEvergreen = defineCommand({
       .where(({ not, exists, selectFrom }) =>
         not(
           exists(
-            selectFrom('crove_social.post as r')
+            selectFrom('ludy_social.post as r')
               .select('r.id')
               .whereRef('r.org_id', '=', 'p.org_id')
               .whereRef('r.repost_of', '=', 'p.id')
@@ -248,7 +248,7 @@ export const postRepostEvergreen = defineCommand({
     if (done === 'waiting') return { postId: null };
     // No channel left for good: the post stops being evergreen rather than being tried every hour.
     if (done === 'gone') {
-      await ctx.trx.updateTable('crove_social.post').set({ evergreen_days: null, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.postId).execute();
+      await ctx.trx.updateTable('ludy_social.post').set({ evergreen_days: null, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.postId).execute();
       ctx.audit({ post_id: input.postId, evergreen_days: null, reason: 'no_connected_channel' });
       return { postId: null };
     }
@@ -273,10 +273,10 @@ export const postSetEvergreen = defineCommand({
     if (input.days !== null) refuseArchived(post);
     // One kind of repeat per post (#979): a series' copies would hold its evergreen reposts back, and the other way round.
     if (input.days !== null) {
-      const series = await ctx.trx.selectFrom('crove_social.post').select('recurrence').where('org_id', '=', ctx.orgId).where('id', '=', input.postId).executeTakeFirstOrThrow();
+      const series = await ctx.trx.selectFrom('ludy_social.post').select('recurrence').where('org_id', '=', ctx.orgId).where('id', '=', input.postId).executeTakeFirstOrThrow();
       if (series.recurrence !== null) throw new DomainError('RECURRENCE_WITH_EVERGREEN', 409, 'Bài này đang lặp lại theo lịch; hãy tắt lặp lại trước khi bật tự đăng lại');
     }
-    await ctx.trx.updateTable('crove_social.post').set({ evergreen_days: input.days, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.postId).execute();
+    await ctx.trx.updateTable('ludy_social.post').set({ evergreen_days: input.days, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.postId).execute();
     ctx.audit({ post_id: input.postId, evergreen_days: input.days });
     return { postId: input.postId, evergreenDays: input.days };
   },
@@ -309,7 +309,7 @@ export const postDuplicate = defineCommand({
         : new Set(
             (
               await ctx.trx
-                .selectFrom('crove_kernel.channel_connection')
+                .selectFrom('ludy_kernel.channel_connection')
                 .select('id')
                 .where('org_id', '=', ctx.orgId)
                 .where(
@@ -345,12 +345,12 @@ export type DuplicateResult = z.infer<typeof zSocialPostDuplicateResult>;
 // The source's labels on the copy. Held until the commit, so a label deleted meanwhile waits rather than failing the
 // insert; one deleted before is simply not there.
 async function copyLabels(ctx: CommandContext, fromId: string, toId: string): Promise<number> {
-  const ids = (await ctx.trx.selectFrom('crove_social.post_label').select('label_id').where('org_id', '=', ctx.orgId).where('post_id', '=', fromId).execute()).map((r) => r.label_id);
+  const ids = (await ctx.trx.selectFrom('ludy_social.post_label').select('label_id').where('org_id', '=', ctx.orgId).where('post_id', '=', fromId).execute()).map((r) => r.label_id);
   if (ids.length === 0) return 0;
-  const found = await ctx.trx.selectFrom('crove_social.label').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', ids).forKeyShare().execute();
+  const found = await ctx.trx.selectFrom('ludy_social.label').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', ids).forKeyShare().execute();
   if (found.length === 0) return 0;
   await ctx.trx
-    .insertInto('crove_social.post_label')
+    .insertInto('ludy_social.post_label')
     .values(found.map((l) => ({ org_id: ctx.orgId, post_id: toId, label_id: l.id, created_at: ctx.now })))
     .execute();
   return found.length;
@@ -391,10 +391,12 @@ export async function sweepEvergreen(deps: { runtime: Runtime; workerDb: Db; pag
   const tried: string[] = [];
   let made = 0;
   for (let page = 0; page < SWEEP_PAGES; page += 1) {
-    const { rows } = await sql<{ org_id: string; post_id: string }>`SELECT org_id, post_id FROM crove_social.evergreen_due(${pageSize}::int, ${tried}::uuid[])`.execute(deps.workerDb);
+    const { rows } = await sql<{ org_id: string; post_id: string }>`SELECT org_id, post_id FROM ludy_social.evergreen_due(${pageSize}::int, ${tried}::uuid[])`.execute(deps.workerDb);
     for (const row of rows) {
       tried.push(row.post_id);
       try {
+        // An app that is off for the org (ADR-0053) has nothing to do here: no call, no refusal row, no line in the log.
+        if (!(await deps.runtime.appOn(row.org_id, 'social'))) continue;
         const done = await deps.runtime.execute<{ postId: string | null }>('social.post.repost_evergreen', { postId: row.post_id }, { actor: ACTOR, orgId: row.org_id });
         if (done.postId) made += 1;
       } catch (error) {

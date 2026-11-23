@@ -5,8 +5,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PayrollCoworker, pseudonymizeSheet, withAiScope, type AiMeter, type PayrollFigures, type PayrollSheetLine } from '../src/index.ts';
 
 const PLANTED = ['Nguyễn Văn Thử', 'Nguyen Van Thu', '079201012345', '8012345678-001', '0123456789012', '12 Phố Huế, Hà Nội', 'VCB 1234 5678 9012', 'Công ty Bảng Lương Thử'];
-const zero = (): PayrollFigures => ({ base_wage: '0', allowances: '0', other_regular_pay: '0', overtime: '0', night_work: '0', bonus: '0', unpaid_reduction: '0', gross: '0', employee_insurance: '0', pit: '0', deductions: '0', net: '0' });
-const quiet = { minimumWageFailed: false, deductionCapFailed: false, netBelowMinimum: false, insuredAboveCap: false, cashPaymentOverLimit: false };
+const zero = (): PayrollFigures => ({ base_wage: '0', allowances: '0', other_regular_pay: '0', overtime: '0', night_work: '0', bonus: '0', unpaid_reduction: '0', sickness_bhxh_reduction: '0', maternity_bhxh_reduction: '0', gross: '0', employee_insurance: '0', pit: '0', deductions: '0', net: '0' });
+const quiet = { minimumWageFailed: false, deductionCapFailed: false, overtimeCapFailed: false, netBelowMinimum: false, insuredAboveCap: false, cashPaymentOverLimit: false, annualLeaveExceeded: false };
 
 // A line that carries planted identifiers in fields it should not have, as a careless caller could pass them.
 const tainted = (id: string, over: Partial<PayrollSheetLine> = {}): PayrollSheetLine =>
@@ -14,7 +14,7 @@ const tainted = (id: string, over: Partial<PayrollSheetLine> = {}): PayrollSheet
     employeeId: id,
     figures: { ...zero(), net: '12000000', gross: '13000000' },
     previous: { ...zero(), net: '8000000' },
-    contract: { startsInMonth: false, probationEndsInMonth: true, endsInMonth: false },
+    contract: { startsInMonth: false, probationEndsInMonth: true, endsInMonth: false, severanceCheckSuggested: false },
     overtimeMonthsInRow: 0,
     dependentsWithoutRegistration: 0,
     checks: quiet,

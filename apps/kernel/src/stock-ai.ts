@@ -10,18 +10,19 @@
 // with a link or a figure the line and the item do not hold, a message with a figure, link or address it was not given), the answer names the state (`ai`) and gives no suggestion; the
 // reorder draft then holds the fixed template, so the screen works as it does with AI off. A suggestion is kept for a while by its content, so reopening the screen does not pay for
 // the same answer twice. A failure is named, never quoted: neither the lines, the names nor the model's answer is logged.
-import { AiBudgetExhaustedError, type InboxReader } from '@crove/agent';
-import type { StockReorderDraft, StockSuggested } from '@crove/kernel-contract';
-import { sha256Hex } from '@crove/kernel-runtime';
-import type { ReorderSource, SuggestSource } from '@crove/mod-finance';
+import { AiBudgetExhaustedError, type InboxReader } from '@ludy/agent';
+import type { MarketplaceSuggested, StockAiState, StockReorderDraft, StockSuggested } from '@ludy/kernel-contract';
+import { sha256Hex } from '@ludy/kernel-runtime';
+import type { MarketplaceSuggestSource, ReorderSource, SuggestSource } from '@ludy/mod-finance';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface StockAi {
   // Either method may be missing: each use checks its own, so one that is there works without the other.
   reader: Partial<Pick<InboxReader, 'stockMatch' | 'reorderText'>> | null;
   budget: DraftBudget;
-  // Suggestions by content (org, language, the lines and the items offered), with the time they were written.
+  // Suggestions by content (org, language, the lines and the items offered), with the time they were written. The invoice lines' and the marketplace lines' are kept apart: they are keyed differently.
   kept: Map<string, { suggestions: StockSuggested['suggestions']; at: number }>;
+  keptMarketplace: Map<string, { suggestions: MarketplaceSuggested['suggestions']; at: number }>;
 }
 
 export const STOCK_KEEP_MS = 30 * 60 * 1000;
@@ -30,7 +31,7 @@ export const STOCK_KEEP_NONE_MS = 2 * 60 * 1000;
 export const STOCK_KEEP_MAX = 200;
 
 export function stockAi(reader: StockAi['reader'], budget: DraftBudget): StockAi {
-  return { reader, budget, kept: new Map() };
+  return { reader, budget, kept: new Map(), keptMarketplace: new Map() };
 }
 
 // What the model is shown, as one key: the same lines against the same items give the same answer to reuse.
@@ -40,37 +41,86 @@ function suggestKey(orgId: string, language: 'vi' | 'en', source: SuggestSource)
   return sha256Hex(`${orgId}\n${language}\n${lines}\n--\n${items}`);
 }
 
-export async function suggestItems(ai: StockAi, orgId: string, userId: string, source: SuggestSource, language: 'vi' | 'en', now: () => number = Date.now): Promise<StockSuggested> {
-  const answer = (state: StockSuggested['ai'], suggestions: StockSuggested['suggestions'] = []): StockSuggested => ({ ai: state, suggestions });
+// The one flow both kinds of line share: the model is asked once with each line's text and the items offered, an answer names an item by its number in that list (so an item that was not offered cannot
+// come out), and the result is kept by content. `line` gives the model's text for a line and `suggest` builds the suggestion a line and an item make.
+async function askMatch<L, S extends { reason: string }>(
+  ai: StockAi,
+  orgId: string,
+  userId: string,
+  lines: readonly L[],
+  items: readonly { id: string; code: string; name: string; unit: string }[],
+  language: 'vi' | 'en',
+  shape: { text: (line: L) => { description: string; unit: string | null }; suggest: (line: L, itemId: string, reason: string) => S },
+  cache: { map: Map<string, { suggestions: S[]; at: number }>; key: string },
+  now: () => number,
+): Promise<{ ai: StockAiState; suggestions: S[] }> {
   const match = ai.reader?.stockMatch;
-  if (!match) return answer('off');
-  if (source.lines.length === 0 || source.items.length === 0) return answer('quiet');
-  const key = suggestKey(orgId, language, source);
-  const hit = ai.kept.get(key);
-  if (hit && now() - hit.at < (hit.suggestions.length === 0 ? STOCK_KEEP_NONE_MS : STOCK_KEEP_MS)) return answer('used', hit.suggestions);
+  if (!match) return { ai: 'off', suggestions: [] };
+  if (lines.length === 0 || items.length === 0) return { ai: 'quiet', suggestions: [] };
+  const hit = cache.map.get(cache.key);
+  if (hit && now() - hit.at < (hit.suggestions.length === 0 ? STOCK_KEEP_NONE_MS : STOCK_KEEP_MS)) return { ai: 'used', suggestions: hit.suggestions };
   const ticket = ai.budget.take(orgId, userId);
-  if (!ticket.allowed) return answer('busy');
+  if (!ticket.allowed) return { ai: 'busy', suggestions: [] };
   try {
     const answers = await match(
-      source.lines.map((l) => ({ description: l.description, unit: l.unit })),
-      source.items.map((i) => ({ code: i.code, name: i.name, unit: i.unit })),
+      lines.map((l) => shape.text(l)),
+      items.map((i) => ({ code: i.code, name: i.name, unit: i.unit })),
       language,
     );
     const suggestions = answers.flatMap((a, i) => {
-      const line = source.lines[i];
-      const item = a === null ? undefined : source.items[a.itemIndex];
-      return a !== null && line && item ? [{ documentId: line.documentId, lineNo: line.lineNo, itemId: item.id, reason: a.reason }] : [];
+      const line = lines[i];
+      const item = a === null ? undefined : items[a.itemIndex];
+      return a !== null && line !== undefined && item ? [shape.suggest(line, item.id, a.reason)] : [];
     });
-    if (ai.kept.size >= STOCK_KEEP_MAX) ai.kept.delete(ai.kept.keys().next().value as string);
-    ai.kept.set(key, { suggestions, at: now() });
-    return answer('used', suggestions);
+    if (cache.map.size >= STOCK_KEEP_MAX) cache.map.delete(cache.map.keys().next().value as string);
+    cache.map.set(cache.key, { suggestions, at: now() });
+    return { ai: 'used', suggestions };
   } catch (error: unknown) {
-    if (error instanceof AiBudgetExhaustedError) return answer('budget');
+    if (error instanceof AiBudgetExhaustedError) return { ai: 'budget', suggestions: [] };
     console.error('[stock-ai] match failed', error instanceof Error ? error.name : typeof error);
-    return answer('failed');
+    return { ai: 'failed', suggestions: [] };
   } finally {
     ticket.release();
   }
+}
+
+export async function suggestItems(ai: StockAi, orgId: string, userId: string, source: SuggestSource, language: 'vi' | 'en', now: () => number = Date.now): Promise<StockSuggested> {
+  return askMatch(
+    ai,
+    orgId,
+    userId,
+    source.lines,
+    source.items,
+    language,
+    { text: (l) => ({ description: l.description, unit: l.unit }), suggest: (l, itemId, reason) => ({ documentId: l.documentId, lineNo: l.lineNo, itemId, reason }) },
+    { map: ai.kept, key: suggestKey(orgId, language, source) },
+    now,
+  );
+}
+
+// The same coworker for the unassigned marketplace order lines (#2686): the model sees each line's product name and SKU text as one string and the entity's items, nothing else of the order
+// (finance.marketplace.suggest_source reads only those). A suggestion only fills the item picker; the person's `assign` writes.
+export async function suggestMarketplaceItems(
+  ai: StockAi,
+  orgId: string,
+  userId: string,
+  source: MarketplaceSuggestSource,
+  language: 'vi' | 'en',
+  now: () => number = Date.now,
+): Promise<MarketplaceSuggested> {
+  const lines = source.lines.map((l) => `${l.lineId}:${l.text}`).join('\n');
+  const items = source.items.map((i) => `${i.id}:${i.code}:${i.name}:${i.unit}`).join('\n');
+  return askMatch(
+    ai,
+    orgId,
+    userId,
+    source.lines,
+    source.items,
+    language,
+    { text: (l) => ({ description: l.text, unit: null }), suggest: (l, itemId, reason) => ({ lineId: l.lineId, itemId, reason }) },
+    { map: ai.keptMarketplace, key: sha256Hex(`${orgId}\n${language}\n${lines}\n--\n${items}`) },
+    now,
+  );
 }
 
 export async function draftReorder(ai: StockAi, orgId: string, userId: string, source: ReorderSource, language: 'vi' | 'en', hint: string | undefined): Promise<StockReorderDraft> {

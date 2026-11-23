@@ -8,18 +8,35 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import { money, toMoney, type PayrollBreakdown } from '@crove/l10n-vn';
-import { HR_ALLOWANCE_TYPES, HR_DEDUCTION_KINDS, HR_INSURANCE_FUNDS, HR_OVERTIME_DAY_KINDS, PAYROLL_PAYMENT_KINDS, vietnamToday, type HrLineView, type HrPayrollInputs, type HrPayslip, type HrRuleView, type HrRunSheet } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { TableCell, TableRow } from '@crove/ui/components/table';
+import { money, toMoney, type PayrollBreakdown } from '@ludy/l10n-vn';
+import {
+  HR_ALLOWANCE_TYPES,
+  HR_DEDUCTION_KINDS,
+  HR_INSURANCE_FUNDS,
+  HR_OVERTIME_DAY_KINDS,
+  PAYROLL_PAYMENT_KINDS,
+  vietnamToday,
+  type HrLineView,
+  type HrPayrollDiffExplained,
+  type HrPayrollDiffReason,
+  type HrPayrollInputs,
+  type HrPayrollPreviewDiff,
+  type HrPayslip,
+  type HrRuleView,
+  type HrRunSheet,
+} from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@ludy/ui/components/table';
 import { BankSelect } from '../components/bank-select.tsx';
+import { ThirteenthMonthPanel } from '../components/hr-thirteenth-month-panel.tsx';
+import { TimekeepingImportPanel } from '../components/hr-timekeeping-panel.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
-import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, PageHeader, TOTAL_RULE, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { apiFetch, client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { cashAccountChoices } from '../lib/vouchers.ts';
@@ -36,7 +53,11 @@ type Money = (value: string | null | undefined, currency?: string) => string;
 // The inputs of a line as the form edits them: every field a string, so a half-typed number is not lost.
 interface InputsState {
   unpaidLeaveDays: string;
+  sicknessBhxhDays: string;
+  maternityBhxhDays: string;
   daysNotEmployed: string;
+  workedHours: string;
+  pieceCount: string;
   bonus: string;
   advance: string;
   nightHours: string;
@@ -49,11 +70,15 @@ interface InputsState {
 }
 
 const str = (v: unknown, fallback = '0') => (typeof v === 'string' ? v : fallback);
-function stateOf(inputs: Record<string, unknown>): InputsState {
+export function stateOf(inputs: Record<string, unknown>): InputsState {
   const list = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
   return {
     unpaidLeaveDays: str(inputs.unpaidLeaveDays),
+    sicknessBhxhDays: str(inputs.sicknessBhxhDays),
+    maternityBhxhDays: str(inputs.maternityBhxhDays),
     daysNotEmployed: str(inputs.daysNotEmployed),
+    workedHours: str(inputs.workedHours, ''),
+    pieceCount: str(inputs.pieceCount, ''),
     bonus: str(inputs.bonus),
     advance: str(inputs.advance),
     nightHours: str(inputs.nightHours),
@@ -64,11 +89,15 @@ function stateOf(inputs: Record<string, unknown>): InputsState {
     rest: { otherRegularPay: inputs.otherRegularPay, voluntaryPension: inputs.voluntaryPension, commitment: inputs.commitment, insured: inputs.insured, withholdingRequested: inputs.withholdingRequested },
   };
 }
-const inputsOf = (s: InputsState): HrPayrollInputs =>
+export const inputsOf = (s: InputsState): HrPayrollInputs =>
   ({
     ...s.rest,
     unpaidLeaveDays: s.unpaidLeaveDays,
+    sicknessBhxhDays: s.sicknessBhxhDays,
+    maternityBhxhDays: s.maternityBhxhDays,
     daysNotEmployed: s.daysNotEmployed,
+    workedHours: s.workedHours === '' ? null : s.workedHours,
+    pieceCount: s.pieceCount === '' ? null : s.pieceCount,
     bonus: s.bonus,
     advance: s.advance,
     nightHours: s.nightHours,
@@ -78,12 +107,14 @@ const inputsOf = (s: InputsState): HrPayrollInputs =>
     deductions: s.deductions,
   }) as HrPayrollInputs;
 const dayOk = (v: string) => /^\d{1,2}(\.\d)?$/.test(v);
+const bhxhDayOk = (v: string) => /^\d{1,2}(\.\d{1,2})?$/.test(v);
 const hoursOk = (v: string) => /^\d{1,3}(\.\d{1,2})?$/.test(v);
-const formOk = (s: InputsState) =>
-  dayOk(s.unpaidLeaveDays) && dayOk(s.daysNotEmployed) && amountOk(s.bonus) && amountOk(s.advance) && hoursOk(s.nightHours) && (s.contractTermMonths === '' || /^\d{1,2}$/.test(s.contractTermMonths)) &&
+const workUnitsOk = (v: string) => /^\d{1,7}(\.\d{1,2})?$/.test(v);
+export const formOk = (s: InputsState) =>
+  dayOk(s.unpaidLeaveDays) && bhxhDayOk(s.sicknessBhxhDays) && bhxhDayOk(s.maternityBhxhDays) && dayOk(s.daysNotEmployed) && (s.workedHours === '' || hoursOk(s.workedHours)) && (s.pieceCount === '' || workUnitsOk(s.pieceCount)) && amountOk(s.bonus) && amountOk(s.advance) && hoursOk(s.nightHours) && (s.contractTermMonths === '' || /^\d{1,2}$/.test(s.contractTermMonths)) &&
   s.overtime.every((o) => hoursOk(o.hours)) && s.allowances.every((a) => a.label.trim() !== '' && amountOk(a.amount)) && s.deductions.every((d) => d.label.trim() !== '' && amountOk(d.amount));
 
-function Breakdown({ line, money }: { line: HrLineView; money: Money }) {
+export function Breakdown({ line, money }: { line: HrLineView; money: Money }) {
   const t = useTranslations('hrPayroll');
   const b = line.breakdown as unknown as PayrollBreakdown | null;
   if (!b) return <p className="text-sm text-muted-foreground">{line.refusal ?? t('noBreakdown')}</p>;
@@ -104,11 +135,16 @@ function Breakdown({ line, money }: { line: HrLineView; money: Money }) {
         {b.pay.nightWork && row(t('bd.night', { hours: b.pay.nightWork.hours }), b.pay.nightWork.pay, 'night')}
         {row(t('bd.bonus'), b.pay.bonus, 'bonus')}
         {row(t('bd.unpaidReduction'), b.pay.unpaidReduction, 'unpaid')}
+        {b.pay.sicknessBhxhReduction && b.pay.sicknessBhxhReduction !== '0' && row(t('bd.sicknessBhxhReduction'), b.pay.sicknessBhxhReduction, 'sicknessBhxh')}
+        {b.pay.maternityBhxhReduction && b.pay.maternityBhxhReduction !== '0' && row(t('bd.maternityBhxhReduction'), b.pay.maternityBhxhReduction, 'maternityBhxh')}
       </div>
       <div>
         <h4 className="mb-1 font-medium text-foreground">{t('bd.deductions')}</h4>
         {b.insurance.funds.map((fund) => row(t(`fund.${fund.fund}`), fund.employee, fund.fund))}
+        {b.insurance.suspended === 'sickness_leave' && <p className="py-0.5 text-xs text-muted-foreground">{t('bd.insuranceSuspendedSickness')}</p>}
+        {b.insurance.suspended === 'maternity_leave' && <p className="py-0.5 text-xs text-muted-foreground">{t('bd.insuranceSuspendedMaternity')}</p>}
         {row(t('bd.pit'), f?.pit ?? '0', 'pit')}
+        {b.tax.mode === 'non_resident_flat' && <p className="py-0.5 text-xs text-muted-foreground">{t('bd.taxModeNonResident')}</p>}
         {row(t('bd.advance'), b.deductions.advance, 'advance')}
         {row(t('bd.damage'), b.deductions.damage, 'damage')}
         {row(t('bd.other'), b.deductions.other, 'other')}
@@ -120,26 +156,78 @@ function Breakdown({ line, money }: { line: HrLineView; money: Money }) {
   );
 }
 
-function InputsForm({ line, onDone }: { line: HrLineView; onDone: () => void }) {
+export function normalizePayrollNumericInput(raw: string): string {
+  return raw.replaceAll(',', '.').replace(/[^\d.]/g, '');
+}
+
+export function overtimeEntriesEqual(
+  a: readonly InputsState['overtime'][number][],
+  b: readonly InputsState['overtime'][number][],
+): boolean {
+  if (a.length !== b.length) return false;
+  return a.every(
+    (entry, idx) =>
+      b[idx] !== undefined &&
+      entry.dayKind === b[idx].dayKind &&
+      entry.night === b[idx].night &&
+      entry.hours.trim() === b[idx].hours.trim(),
+  );
+}
+
+export function buildLineInputsUpdatePayload(
+  s: InputsState,
+  initialOvertime: readonly InputsState['overtime'][number][],
+): Omit<HrPayrollInputs, 'overtime'> & { overtime?: HrPayrollInputs['overtime'] } {
+  const full = inputsOf(s);
+  if (overtimeEntriesEqual(s.overtime, initialOvertime)) {
+    const { overtime: _overtime, ...rest } = full;
+    return rest;
+  }
+  return full;
+}
+
+export function InputsForm({ line, onDone }: { line: HrLineView; onDone: () => void }) {
   const t = useTranslations('hrPayroll');
+  const [initialOvertime] = useState(() => stateOf(line.inputs).overtime);
   const [s, setS] = useState(() => stateOf(line.inputs));
   const save = useMutation({
-    mutationFn: () => client.hr.payroll.lines.setInputs({ lineId: line.id, inputs: inputsOf(s) }),
+    mutationFn: () =>
+      client.hr.payroll.lines.setInputs({
+        lineId: line.id,
+        inputs: buildLineInputsUpdatePayload(s, initialOvertime),
+      }),
     onSuccess: async () => {
       await refresh();
       onDone();
     },
   });
-  const text = (key: 'unpaidLeaveDays' | 'daysNotEmployed' | 'bonus' | 'advance' | 'nightHours' | 'contractTermMonths', label: string) => (
+  const text = (
+    key:
+      | 'unpaidLeaveDays'
+      | 'sicknessBhxhDays'
+      | 'maternityBhxhDays'
+      | 'daysNotEmployed'
+      | 'workedHours'
+      | 'pieceCount'
+      | 'bonus'
+      | 'advance'
+      | 'nightHours'
+      | 'contractTermMonths',
+    label: string,
+  ) => (
     <div className="space-y-1">
       <Label htmlFor={`in-${line.id}-${key}`}>{label}</Label>
-      <Input id={`in-${line.id}-${key}`} value={s[key]} inputMode="decimal" onChange={(e) => setS({ ...s, [key]: e.target.value.replace(/[^\d.]/g, '') })} />
+      <Input id={`in-${line.id}-${key}`} value={s[key]} inputMode="decimal" onChange={(e) => setS({ ...s, [key]: normalizePayrollNumericInput(e.target.value) })} data-testid={`hr-input-${key}`} />
     </div>
   );
   return (
     <div className="mt-3 space-y-3 border-t pt-3" data-testid="hr-inputs-form">
       <div className="grid gap-3 sm:grid-cols-3">
+        {text('workedHours', t('in.workedHours'))}
+        {text('pieceCount', t('in.pieceCount'))}
         {text('unpaidLeaveDays', t('in.unpaidLeaveDays'))}
+        {text('sicknessBhxhDays', t('in.sicknessBhxhDays'))}
+        {text('maternityBhxhDays', t('in.maternityBhxhDays'))}
         {text('daysNotEmployed', t('in.daysNotEmployed'))}
         {text('bonus', t('in.bonus'))}
         {text('advance', t('in.advance'))}
@@ -157,11 +245,11 @@ function InputsForm({ line, onDone }: { line: HrLineView; onDone: () => void }) 
                 </NativeSelectOption>
               ))}
             </NativeSelect>
-            <label className="flex items-center gap-1 text-xs">
+            <label className="flex items-center gap-1 text-xs max-md:min-h-11">
               <input type="checkbox" checked={o.night} onChange={(e) => setS({ ...s, overtime: s.overtime.map((x, j) => (j === i ? { ...x, night: e.target.checked } : x)) })} />
               {t('in.night')}
             </label>
-            <Input aria-label={t('in.hours')} className="w-24" value={o.hours} inputMode="decimal" onChange={(e) => setS({ ...s, overtime: s.overtime.map((x, j) => (j === i ? { ...x, hours: e.target.value.replace(/[^\d.]/g, '') } : x)) })} />
+            <Input aria-label={t('in.hours')} className="w-24" value={o.hours} inputMode="decimal" onChange={(e) => setS({ ...s, overtime: s.overtime.map((x, j) => (j === i ? { ...x, hours: normalizePayrollNumericInput(e.target.value) } : x)) })} />
             <Button variant="ghost" size="sm" onClick={() => setS({ ...s, overtime: s.overtime.filter((_, j) => j !== i) })}>
               {t('remove')}
             </Button>
@@ -176,7 +264,7 @@ function InputsForm({ line, onDone }: { line: HrLineView; onDone: () => void }) 
         {s.allowances.map((a, i) => (
           <div key={i} className="flex flex-wrap items-center gap-2">
             <Input aria-label={t('in.label')} className="w-40" value={a.label} maxLength={100} onChange={(e) => setS({ ...s, allowances: s.allowances.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)) })} />
-            <Input aria-label={t('in.amount')} className="w-32" value={a.amount} inputMode="decimal" onChange={(e) => setS({ ...s, allowances: s.allowances.map((x, j) => (j === i ? { ...x, amount: e.target.value.replace(/[^\d.]/g, '') } : x)) })} />
+            <Input aria-label={t('in.amount')} className="w-32" value={a.amount} inputMode="decimal" onChange={(e) => setS({ ...s, allowances: s.allowances.map((x, j) => (j === i ? { ...x, amount: normalizePayrollNumericInput(e.target.value) } : x)) })} />
             <NativeSelect aria-label={t('in.allowanceType')} value={a.type} onChange={(e) => setS({ ...s, allowances: s.allowances.map((x, j) => (j === i ? { ...x, type: e.target.value as typeof a.type } : x)) })}>
               {HR_ALLOWANCE_TYPES.map((k) => (
                 <NativeSelectOption key={k} value={k}>
@@ -184,7 +272,7 @@ function InputsForm({ line, onDone }: { line: HrLineView; onDone: () => void }) 
                 </NativeSelectOption>
               ))}
             </NativeSelect>
-            <label className="flex items-center gap-1 text-xs">
+            <label className="flex items-center gap-1 text-xs max-md:min-h-11">
               <input type="checkbox" checked={a.namedInContract} onChange={(e) => setS({ ...s, allowances: s.allowances.map((x, j) => (j === i ? { ...x, namedInContract: e.target.checked } : x)) })} />
               {t('in.named')}
             </label>
@@ -202,7 +290,7 @@ function InputsForm({ line, onDone }: { line: HrLineView; onDone: () => void }) 
         {s.deductions.map((d, i) => (
           <div key={i} className="flex flex-wrap items-center gap-2">
             <Input aria-label={t('in.label')} className="w-40" value={d.label} maxLength={100} onChange={(e) => setS({ ...s, deductions: s.deductions.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)) })} />
-            <Input aria-label={t('in.amount')} className="w-32" value={d.amount} inputMode="decimal" onChange={(e) => setS({ ...s, deductions: s.deductions.map((x, j) => (j === i ? { ...x, amount: e.target.value.replace(/[^\d.]/g, '') } : x)) })} />
+            <Input aria-label={t('in.amount')} className="w-32" value={d.amount} inputMode="decimal" onChange={(e) => setS({ ...s, deductions: s.deductions.map((x, j) => (j === i ? { ...x, amount: normalizePayrollNumericInput(e.target.value) } : x)) })} />
             <NativeSelect aria-label={t('in.deductionKind')} value={d.kind} onChange={(e) => setS({ ...s, deductions: s.deductions.map((x, j) => (j === i ? { ...x, kind: e.target.value as typeof d.kind } : x)) })}>
               {HR_DEDUCTION_KINDS.map((k) => (
                 <NativeSelectOption key={k} value={k}>
@@ -329,7 +417,7 @@ function MonthCoworker({ runId }: { runId: string }) {
 }
 
 // The payslip of Labor Code Art. 95(3): only stored facts. "Print" opens the browser's print dialog, where the person saves it as a PDF; nothing is emailed.
-function Payslip({ lineId, onClose }: { lineId: string; onClose: () => void }) {
+export function Payslip({ lineId, onClose }: { lineId: string; onClose: () => void }) {
   const t = useTranslations('hrPayroll');
   const f = useFormat();
   const q = useQuery({ ...orpc.hr.payroll.lines.payslip.queryOptions({ input: { lineId } }), ...ONCE });
@@ -367,6 +455,8 @@ function Payslip({ lineId, onClose }: { lineId: string; onClose: () => void }) {
           {b.pay.overtime.map((o, i) => line(t('bd.overtime', { kind: t(`dayKind.${o.dayKind}`), hours: o.hours }), o.pay, `o${i}`))}
           {b.pay.nightWork && line(t('bd.night', { hours: b.pay.nightWork.hours }), b.pay.nightWork.pay, 'night')}
           {line(t('bd.bonus'), b.pay.bonus, 'bonus')}
+          {b.pay.sicknessBhxhReduction && b.pay.sicknessBhxhReduction !== '0' && line(t('bd.sicknessBhxhReduction'), b.pay.sicknessBhxhReduction, 'sicknessBhxh')}
+          {b.pay.maternityBhxhReduction && b.pay.maternityBhxhReduction !== '0' && line(t('bd.maternityBhxhReduction'), b.pay.maternityBhxhReduction, 'maternityBhxh')}
           {line(t('gross'), p.figures.gross, 'gross')}
           {b.insurance.funds.map((fund) => line(t(`fund.${fund.fund}`), fund.employee, fund.fund))}
           {line(t('bd.pit'), p.figures.pit, 'pit')}
@@ -379,6 +469,9 @@ function Payslip({ lineId, onClose }: { lineId: string; onClose: () => void }) {
           </tr>
         </tbody>
       </table>
+      {b.tax.mode === 'non_resident_flat' && <p className="mt-2 text-xs text-muted-foreground">{t('bd.taxModeNonResident')}</p>}
+      {b.insurance.suspended === 'sickness_leave' && <p className="mt-1 text-xs text-muted-foreground">{t('bd.insuranceSuspendedSickness')}</p>}
+      {b.insurance.suspended === 'maternity_leave' && <p className="mt-1 text-xs text-muted-foreground">{t('bd.insuranceSuspendedMaternity')}</p>}
       <ExplainPayslip lineId={lineId} />
     </Card>
   );
@@ -591,7 +684,7 @@ function SettlementPayment({ runId, kind, step, canAsk }: { runId: string; kind:
   );
 }
 
-function Settlement({ runId }: { runId: string }) {
+export function Settlement({ runId }: { runId: string }) {
   const t = useTranslations('hrPayroll');
   const { slug } = useParams({ strict: false }) as { slug: string };
   const state = useQuery(orpc.hr.payroll.settlement.queryOptions({ input: { runId } }));
@@ -627,7 +720,7 @@ function Settlement({ runId }: { runId: string }) {
           </div>
           {post.error && <ErrorText>{errorMessage(post.error)}</ErrorText>}
           {s.posting.status === 'reversed' && <p className="mt-2 text-sm text-muted-foreground">{t('settleReversedNote')}</p>}
-          {s.posting.status === 'posted' || (s.posting.status === 'reversed' && PAYROLL_PAYMENT_KINDS.some((k) => s.payments[k].status !== 'none')) ? (
+          {s.posting.status === 'posted' || PAYROLL_PAYMENT_KINDS.some((k) => s.payments[k].status !== 'none') ? (
             <ul className="mt-3 divide-y border-t" data-testid="hr-settle-payments">
               {PAYROLL_PAYMENT_KINDS.map((kind) => (
                 <SettlementPayment key={kind} runId={runId} kind={kind} step={s.payments[kind]} canAsk={s.posting.status === 'posted'} />
@@ -694,7 +787,310 @@ function BankFile({ runId, month, legalEntityId }: { runId: string; month: strin
   );
 }
 
-function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: readonly { id: string; month: string }[]; onBack: () => void }) {
+const REASON_BADGE_VARIANT: Record<HrPayrollDiffReason, 'success' | 'destructive' | 'brand' | 'warning' | 'secondary' | 'outline'> = {
+  new_hire: 'success',
+  terminated: 'destructive',
+  salary_change: 'brand',
+  leave_change: 'warning',
+  allowance_change: 'secondary',
+  deduction_change: 'outline',
+};
+
+export function formatSignedMoney(f: { money: Money }, value: string): string {
+  const d = money(value);
+  if (d.isZero()) return f.money('0', 'VND');
+  const formatted = f.money(value, 'VND');
+  return d.greaterThan(0) ? `+${formatted}` : formatted;
+}
+
+function formatHeadcountDelta(delta: number): string {
+  return delta > 0 ? `+${delta}` : String(delta);
+}
+
+export function localDiffSummary(diff: HrPayrollPreviewDiff, f: { money: Money }, locale: string): string {
+  if (diff.prior === null) {
+    return locale === 'en'
+      ? `Baseline period (${diff.current.headcount} people): employer cost ${f.money(diff.totals.employerCost, 'VND')}, net pay ${f.money(diff.totals.net, 'VND')}.`
+      : `Kỳ đầu tiên (${diff.current.headcount} người): tổng chi phí công ty ${f.money(diff.totals.employerCost, 'VND')}, thực nhận ${f.money(diff.totals.net, 'VND')}.`;
+  }
+  const changed = diff.rows.filter((r) => r.changed);
+  if (changed.length === 0 && diff.deltas.headcountDelta === 0 && money(diff.deltas.employerCostDelta).isZero()) {
+    return locale === 'en'
+      ? 'No payroll fluctuations compared with the prior finalized run.'
+      : 'Không có biến động so với kỳ lương đã duyệt gần nhất.';
+  }
+  const movers = changed
+    .slice(0, 2)
+    .map((r) => r.employeeName)
+    .join(', ');
+  return locale === 'en'
+    ? `Employer cost ${formatSignedMoney(f, diff.deltas.employerCostDelta)}, net pay ${formatSignedMoney(f, diff.deltas.netDelta)}${movers ? `; top movers: ${movers}` : ''}.`
+    : `Tổng chi phí công ty ${formatSignedMoney(f, diff.deltas.employerCostDelta)}, thực nhận ${formatSignedMoney(f, diff.deltas.netDelta)}${movers ? `; biến động chính: ${movers}` : ''}.`;
+}
+
+export function PayrollDiffNarration({
+  answer,
+  fallback,
+}: {
+  answer: HrPayrollDiffExplained;
+  fallback: string;
+}) {
+  const t = useTranslations('hrPayroll');
+  if (answer.ai === 'used' && answer.text !== null) {
+    return (
+      <div className="mt-2 rounded-md border border-border bg-muted/30 p-3 text-sm" data-testid="hr-diff-narration">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="proposal" data-testid="hr-diff-ai-state">
+            {t('diff.aiBadge')}
+          </Badge>
+          <span>{answer.text}</span>
+        </div>
+      </div>
+    );
+  }
+  const fallbackState = answer.ai === 'used' ? 'failed' : answer.ai;
+  return (
+    <div className="mt-2 rounded-md border border-border bg-muted/30 p-3 text-sm" data-testid="hr-diff-narration">
+      <div className="space-y-1">
+        <p className="text-xs text-muted-foreground" data-testid="hr-diff-ai-state">
+          {t(`diff.aiStates.${fallbackState}`)}
+        </p>
+        <p>{answer.deterministicText !== '' ? answer.deterministicText : fallback}</p>
+      </div>
+    </div>
+  );
+}
+
+function PayrollDiffExplainArea({
+  diff,
+  askInput,
+}: {
+  diff: HrPayrollPreviewDiff;
+  askInput: { runId?: string; month?: string; legalEntityId?: string };
+}) {
+  const t = useTranslations('hrPayroll');
+  const f = useFormat();
+  const locale = useLocale();
+  const explain = useMutation({
+    mutationFn: () =>
+      client.hr.payroll.coworker.explainDiff({
+        ...askInput,
+        lang: locale === 'en' ? 'en' : 'vi',
+      }),
+  });
+  const answer = explain.data;
+  const fallback = localDiffSummary(diff, f, locale);
+  return (
+    <div className="mb-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          className="max-md:min-h-11"
+          loading={explain.isPending}
+          onClick={() => explain.mutate()}
+          data-testid="hr-diff-explain-btn"
+        >
+          {t('diff.askAi')}
+        </Button>
+      </div>
+      {explain.error && <ErrorText>{errorMessage(explain.error)}</ErrorText>}
+      {answer && <PayrollDiffNarration answer={answer} fallback={fallback} />}
+    </div>
+  );
+}
+
+// Continuous payroll fluctuation preview and What-Changed diff before lock (#4445, Stage 5E):
+// compares the draft run, finalized run, or projected snapshot from active employments and approved leave
+// against the immediately preceding finalized run of the same legal entity. Read-only, works 100% with AI off.
+export function PayrollDiffPanel({
+  runId,
+  month,
+  legalEntityId,
+  headingLevel = 'h2',
+}: {
+  runId?: string;
+  month?: string;
+  legalEntityId?: string;
+  headingLevel?: 'h2' | 'h3';
+}) {
+  const t = useTranslations('hrPayroll');
+  const f = useFormat();
+  const [showUnchanged, setShowUnchanged] = useState(false);
+
+  const queryInput =
+    runId !== undefined
+      ? { runId, includeUnchanged: true }
+      : {
+          ...(month !== undefined ? { month } : {}),
+          ...(legalEntityId !== undefined ? { legalEntityId } : {}),
+          includeUnchanged: true,
+        };
+  const q = useQuery({ ...orpc.hr.payroll.previewDiff.queryOptions({ input: queryInput }), ...ONCE });
+
+  if (q.isPending) {
+    return (
+      <div className="mb-6" data-testid="hr-diff-panel">
+        <TableSkeleton columns={5} />
+      </div>
+    );
+  }
+  if (q.error) {
+    return (
+      <Card className="mb-6 block p-4" aria-label={t('diff.title')} data-testid="hr-diff-panel">
+        <ErrorText>{errorMessage(q.error)}</ErrorText>
+      </Card>
+    );
+  }
+
+  const diff = q.data;
+  const visibleRows = showUnchanged ? diff.rows : diff.rows.filter((r) => r.changed);
+  const explainInput =
+    runId !== undefined
+      ? { runId }
+      : {
+          ...(month !== undefined ? { month } : {}),
+          ...(legalEntityId !== undefined ? { legalEntityId } : {}),
+        };
+  const explainKey = `${diff.mode}:${diff.legalEntityId}:${diff.month}:${diff.totals.gross}:${diff.totals.employerCost}:${diff.totals.net}:${diff.current.headcount}:${diff.rows.filter((r) => r.changed).length}`;
+
+  const kpis = [
+    {
+      key: 'headcount',
+      label: t('diff.kpi.headcount'),
+      value: String(diff.totals.headcount),
+      delta: t('diff.deltaCount', { count: formatHeadcountDelta(diff.deltas.headcountDelta) }),
+    },
+    {
+      key: 'gross',
+      label: t('diff.kpi.gross'),
+      value: f.money(diff.totals.gross, 'VND'),
+      delta: formatSignedMoney(f, diff.deltas.grossDelta),
+    },
+    {
+      key: 'deductions',
+      label: t('diff.kpi.deductions'),
+      value: f.money(diff.totals.employeeDeductions, 'VND'),
+      delta: formatSignedMoney(f, diff.deltas.employeeDeductionDelta),
+    },
+    {
+      key: 'net',
+      label: t('diff.kpi.net'),
+      value: f.money(diff.totals.net, 'VND'),
+      delta: formatSignedMoney(f, diff.deltas.netDelta),
+    },
+    {
+      key: 'employerCost',
+      label: t('diff.kpi.employerCost'),
+      value: f.money(diff.totals.employerCost, 'VND'),
+      delta: formatSignedMoney(f, diff.deltas.employerCostDelta),
+    },
+  ] as const;
+
+  const Heading = headingLevel;
+  return (
+    <Card className="mb-6 block p-4" aria-label={t('diff.title')} data-testid="hr-diff-panel">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Heading className="text-base font-semibold">{t('diff.title')}</Heading>
+            <Badge variant={diff.mode === 'finalized_run' ? 'brand' : 'secondary'} data-testid="hr-diff-mode">
+              {t(`diff.modes.${diff.mode}`, { month: diff.month })}
+            </Badge>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground" data-testid="hr-diff-baseline">
+            {diff.prior
+              ? t('diff.compareWith', { month: diff.prior.month, status: t(`status.${diff.prior.status ?? 'approved'}`) })
+              : t('diff.noPrior')}
+          </p>
+        </div>
+        {diff.unchangedCount > 0 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="max-md:min-h-11"
+            onClick={() => setShowUnchanged((v) => !v)}
+            data-testid="hr-diff-toggle-unchanged"
+          >
+            {showUnchanged ? t('diff.hideUnchanged', { count: diff.unchangedCount }) : t('diff.showUnchanged', { count: diff.unchangedCount })}
+          </Button>
+        )}
+      </div>
+
+      <PayrollDiffExplainArea key={explainKey} diff={diff} askInput={explainInput} />
+
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5" data-testid="hr-diff-kpi">
+        {kpis.map((item) => (
+          <div key={item.key} className="rounded-md border border-border bg-card p-3" data-testid={`hr-diff-kpi-${item.key}`}>
+            <p className="text-xs text-muted-foreground">{item.label}</p>
+            <p className="mt-1 text-base font-semibold tabular-nums">{item.value}</p>
+            <p className="mt-0.5 text-xs text-subtle-foreground tabular-nums">{item.delta}</p>
+          </div>
+        ))}
+      </div>
+
+      {visibleRows.length === 0 ? (
+        <Empty title={t('diff.emptyChanged')} hint={t('diff.emptyHint')} />
+      ) : (
+        <Table className="[&_td]:whitespace-normal" data-testid="hr-diff-table">
+          <TableHeader>
+            <TableRow>
+              <TableHead scope="col" className="px-4 py-3">{t('diff.colEmployee')}</TableHead>
+              <TableHead scope="col" className="px-4 py-3">{t('diff.colReasons')}</TableHead>
+              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colPriorNet')}</TableHead>
+              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colCurrentNet')}</TableHead>
+              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colNetDelta')}</TableHead>
+              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colGrossDelta')}</TableHead>
+              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colDeductionDelta')}</TableHead>
+              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colEmployerCostDelta')}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {visibleRows.map((row) => (
+              <TableRow key={row.employeeId} data-testid="hr-diff-row">
+                <TableCell className="px-4 py-3 font-medium">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span>{row.employeeName}</span>
+                    {row.hasRefused && <Badge variant="destructive">{t('diff.refusedTag')}</Badge>}
+                    {!row.hasRefused && row.hasFlags && <Badge variant="warning">{t('diff.flaggedTag')}</Badge>}
+                  </div>
+                </TableCell>
+                <TableCell className="px-4 py-3">
+                  <div className="flex flex-wrap gap-1">
+                    {row.reasons.map((reason) => (
+                      <Badge key={reason} variant={REASON_BADGE_VARIANT[reason]}>
+                        {t(`diff.reasons.${reason}`)}
+                      </Badge>
+                    ))}
+                  </div>
+                </TableCell>
+                <TableCell className={`${NUM} whitespace-nowrap`}>{row.prior ? f.money(row.prior.net, 'VND') : '-'}</TableCell>
+                <TableCell className={`${NUM} whitespace-nowrap`}>{row.current ? f.money(row.current.net, 'VND') : '-'}</TableCell>
+                <TableCell className={`${NUM} whitespace-nowrap font-medium`}>{formatSignedMoney(f, row.netDelta)}</TableCell>
+                <TableCell className={`${NUM} whitespace-nowrap`}>{formatSignedMoney(f, row.grossDelta)}</TableCell>
+                <TableCell className={`${NUM} whitespace-nowrap`}>{formatSignedMoney(f, row.employeeDeductionDelta)}</TableCell>
+                <TableCell className={`${NUM} whitespace-nowrap`}>{formatSignedMoney(f, row.employerCostDelta)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+          <TableFooter className={`${TOTAL_RULE} [&_tr]:hover:bg-transparent`}>
+            <TableRow>
+              <TableCell className="px-4 py-3" colSpan={2}>{t('diff.totalRow', { count: diff.totals.headcount })}</TableCell>
+              <TableCell className={`${NUM} whitespace-nowrap`}>{diff.priorTotals ? f.money(diff.priorTotals.net, 'VND') : f.money('0', 'VND')}</TableCell>
+              <TableCell className={`${NUM} whitespace-nowrap`}>{f.money(diff.totals.net, 'VND')}</TableCell>
+              <TableCell className={`${NUM} whitespace-nowrap font-semibold`}>{formatSignedMoney(f, diff.deltas.netDelta)}</TableCell>
+              <TableCell className={`${NUM} whitespace-nowrap`}>{formatSignedMoney(f, diff.deltas.grossDelta)}</TableCell>
+              <TableCell className={`${NUM} whitespace-nowrap`}>{formatSignedMoney(f, diff.deltas.employeeDeductionDelta)}</TableCell>
+              <TableCell className={`${NUM} whitespace-nowrap`}>{formatSignedMoney(f, diff.deltas.employerCostDelta)}</TableCell>
+            </TableRow>
+          </TableFooter>
+        </Table>
+      )}
+    </Card>
+  );
+}
+
+export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: readonly { id: string; month: string }[]; onBack: () => void }) {
   const t = useTranslations('hrPayroll');
   const f = useFormat();
   const q = useQuery({ ...orpc.hr.payroll.runs.sheet.queryOptions({ input: { runId } }), ...ONCE });
@@ -702,6 +1098,8 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
   const [shown, setShown] = useState<string | null>(null);
   const [payslip, setPayslip] = useState<string | null>(null);
   const [adjusting, setAdjusting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [thirteenthOpen, setThirteenthOpen] = useState(false);
   const [accept, setAccept] = useState(false);
   const [days, setDays] = useState('');
   const recalc = useMutation({
@@ -712,11 +1110,30 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
     mutationFn: (fingerprint: string) => client.hr.payroll.runs.approve({ runId, fingerprint, acceptFlags: accept }),
     onSuccess: refresh,
   });
+  const syncLeave = useMutation({
+    mutationFn: () => client.hr.payroll.runs.syncLeave({ runId }),
+    onMutate: () => setEditing(null),
+    onSuccess: async () => {
+      setAccept(false);
+      setEditing(null);
+      await refresh();
+    },
+  });
+  const syncOvertime = useMutation({
+    mutationFn: () => client.hr.payroll.runs.syncOvertime({ runId }),
+    onMutate: () => setEditing(null),
+    onSuccess: async () => {
+      setAccept(false);
+      setEditing(null);
+      await refresh();
+    },
+  });
   if (q.isPending) return <TableSkeleton columns={7} />;
   if (q.error) return <ErrorText>{errorMessage(q.error)}</ErrorText>;
   const s = q.data;
   const draft = s.run.status === 'draft';
-  const flagged = s.lines.some((l) => l.flags.some((x) => x === 'check_minimum_wage' || x === 'check_deduction_cap'));
+  const hasPayLines = s.lines.some((l) => l.kind === 'pay');
+  const flagged = s.lines.some((l) => l.flags.some((x) => x === 'check_minimum_wage' || x === 'check_deduction_cap' || x === 'check_overtime_cap'));
   return (
     <>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -726,12 +1143,72 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
           </h2>
           <p className="text-sm text-muted-foreground">{t('sheetMeta', { employer: s.run.employerName, days: s.run.workingDays })}</p>
         </div>
-        <Button variant="ghost" onClick={onBack}>
-          {t('back')}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {draft && hasPayLines && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                loading={syncLeave.isPending}
+                disabled={editing !== null}
+                onClick={() => syncLeave.mutate()}
+                data-testid="hr-sync-leave"
+              >
+                {t('syncLeave')}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                loading={syncOvertime.isPending}
+                disabled={editing !== null || approve.isPending}
+                onClick={() => syncOvertime.mutate()}
+                data-testid="hr-sync-overtime"
+              >
+                {t('syncOvertime')}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setThirteenthOpen((v) => !v)} data-testid="hr-13th-month-toggle">
+                {t('thirteenthMonth.toggle')}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setImporting((v) => !v)} data-testid="hr-timekeeping-toggle">
+                {t('timekeeping.toggle')}
+              </Button>
+            </>
+          )}
+          <Button variant="ghost" onClick={onBack}>
+            {t('back')}
+          </Button>
+        </div>
       </div>
       {s.blocking.length > 0 && <BlockingRules rules={s.blocking} />}
       {draft && s.lines.length > 0 && <MonthCoworker runId={runId} />}
+      <PayrollDiffPanel runId={runId} headingLevel="h3" />
+      {draft && hasPayLines && thirteenthOpen && (
+        <ThirteenthMonthPanel
+          runId={runId}
+          month={s.run.month}
+          onApplied={async () => {
+            setAccept(false);
+            setEditing(null);
+            await refresh();
+          }}
+          onClose={() => setThirteenthOpen(false)}
+        />
+      )}
+      {draft && hasPayLines && importing && (
+        <TimekeepingImportPanel
+          runId={runId}
+          month={s.run.month}
+          lines={s.lines}
+          onImported={async () => {
+            setAccept(false);
+            setEditing(null);
+            await refresh();
+          }}
+          onClose={() => setImporting(false)}
+        />
+      )}
+      {syncLeave.error && <ErrorText>{errorMessage(syncLeave.error)}</ErrorText>}
+      {syncOvertime.error && <ErrorText>{errorMessage(syncOvertime.error)}</ErrorText>}
       {draft && s.obstacles.includes('refused_lines') && <ErrorText>{t('refusedLines')}</ErrorText>}
       {payslip && <Payslip key={payslip} lineId={payslip} onClose={() => setPayslip(null)} />}
       {adjusting && <AdjustForm sheet={s} approvedRuns={approvedRuns} onClose={() => setAdjusting(false)} />}
@@ -763,11 +1240,14 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
                     {t('adjustmentOf', { month: l.adjustsMonth ?? '' })}
                   </Badge>
                 )}
-                {l.flags.map((x) => (
-                  <Badge key={x} className="ml-2" variant="destructive" data-testid="hr-flag">
-                    {t(`flag.${x}`)}
-                  </Badge>
-                ))}
+                {l.flags.map((x) => {
+                  const variant = x === 'work_permit_expiring' ? 'warning' : x === 'bhxh_suspended_regime' || x === 'non_resident_flat_pit' ? 'secondary' : 'destructive';
+                  return (
+                    <Badge key={x} className="ml-2" variant={variant} data-testid="hr-flag">
+                      {t(`flag.${x}`)}
+                    </Badge>
+                  );
+                })}
               </TableCell>
               <TableCell className={NUM}>{l.figures ? f.money(l.figures.gross, 'VND') : '-'}</TableCell>
               <TableCell className={NUM}>{l.figures ? f.money(l.figures.employeeInsurance, 'VND') : '-'}</TableCell>
@@ -788,10 +1268,15 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
                   {l.kind === 'adjustment' ? <p className="text-sm">{l.note}</p> : <Breakdown line={l} money={f.money} />}
                   {l.checks.filter((c) => !c.ok).map((c) => (
                     <p key={c.id} className="mt-2 text-xs text-destructive">
-                      {t(`check.${c.id}`, { actual: f.money(c.actual, 'VND'), limit: f.money(c.limit, 'VND') })}
+                      {t(`check.${c.id}`, c.id === 'overtime_cap' ? { actual: c.actual, limit: c.limit } : { actual: f.money(c.actual, 'VND'), limit: f.money(c.limit, 'VND') })}
                     </p>
                   ))}
                   {l.refusal && <p className="mt-2 text-xs text-destructive">{l.refusal}</p>}
+                  {l.exceededAnnualDays && (
+                    <p className="mt-2 text-xs text-muted-foreground" data-testid="hr-annual-leave-exceeded">
+                      {t('annualLeaveExceededDetail', { days: l.exceededAnnualDays })}
+                    </p>
+                  )}
                   <div className="mt-3 flex flex-wrap gap-2">
                     {l.kind === 'pay' && l.status === 'calculated' && (
                       <Button variant="outline" size="sm" onClick={() => setPayslip(l.id)} data-testid="hr-payslip-open">
@@ -799,7 +1284,7 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
                       </Button>
                     )}
                     {draft && l.kind === 'pay' && editing !== l.id && (
-                      <Button variant="outline" size="sm" onClick={() => setEditing(l.id)} data-testid="hr-inputs-open">
+                      <Button variant="outline" size="sm" disabled={syncLeave.isPending || syncOvertime.isPending} onClick={() => setEditing(l.id)} data-testid="hr-inputs-open">
                         {t('editInputs')}
                       </Button>
                     )}
@@ -832,20 +1317,28 @@ function Sheet({ runId, approvedRuns, onBack }: { runId: string; approvedRuns: r
           <div className="mt-4 border-t pt-4">
             <p className="text-sm text-muted-foreground">{t('approveHint')}</p>
             {flagged && (
-              <label className="mt-2 flex items-center gap-2 text-sm">
+              <label className="mt-2 flex items-center gap-2 text-sm max-md:min-h-11">
                 <input type="checkbox" checked={accept} onChange={(e) => setAccept(e.target.checked)} data-testid="hr-accept-flags" />
                 {t('acceptFlags')}
               </label>
             )}
-            <Button className="mt-3" loading={approve.isPending} disabled={!s.approvable || (flagged && !accept)} onClick={() => approve.mutate(s.fingerprint)} data-testid="hr-approve">
+            <Button className="mt-3" loading={approve.isPending} disabled={!s.approvable || (flagged && !accept) || syncOvertime.isPending} onClick={() => approve.mutate(s.fingerprint)} data-testid="hr-approve">
               {t('approve')}
             </Button>
             {approve.error &&
               (isStepUpRequired(approve.error) ? (
-                // Approving freezes the month, so it asks for a fresh second factor; once verified, the same request is repeated.
-                <div className="mt-3">
-                  <StepUpPrompt action={t('approve')} onVerified={() => approve.mutate(s.fingerprint)} onCancel={() => approve.reset()} />
-                </div>
+                syncOvertime.isPending ? null : (
+                  // Approving freezes the month, so it asks for a fresh second factor; once verified, the same request is repeated.
+                  <div className="mt-3">
+                    <StepUpPrompt
+                      action={t('approve')}
+                      onVerified={() => {
+                        if (!syncOvertime.isPending) approve.mutate(s.fingerprint);
+                      }}
+                      onCancel={() => approve.reset()}
+                    />
+                  </div>
+                )
               ) : (
                 <ErrorText>{errorMessage(approve.error)}</ErrorText>
               ))}
@@ -887,6 +1380,8 @@ export function HrPayrollPage() {
   const rows = list.data ?? [];
   const sheetMonth = rows.find((r) => r.id === open)?.month;
   const approvedRuns = rows.filter((r) => r.status !== 'draft' && (sheetMonth === undefined || r.month < sheetMonth)).map((r) => ({ id: r.id, month: r.month }));
+  const matchingMonthRuns = rows.filter((r) => r.month === month);
+  const selectedMonthRunId = matchingMonthRuns.length === 1 ? matchingMonthRuns[0]?.id : undefined;
   return (
     <>
       <PageHeader title={t('title')} subtitle={t('subtitle')} />
@@ -907,6 +1402,9 @@ export function HrPayrollPage() {
             <p className="mt-2 text-xs text-subtle-foreground">{t('openHint')}</p>
             {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
           </Card>
+          {list.isSuccess && /^\d{4}-(0[1-9]|1[0-2])$/.test(month) && (
+            <PayrollDiffPanel {...(selectedMonthRunId !== undefined ? { runId: selectedMonthRunId } : { month })} />
+          )}
           {list.isPending ? (
             <TableSkeleton columns={5} />
           ) : list.error ? (

@@ -7,6 +7,7 @@
 // No server-initiated message, no GET stream, no session id: a request is answered in its own response. A tool is a descriptor over one existing
 // query of the kernel; this file knows nothing of the database.
 import { z } from 'zod';
+import type { McpWriteScopeId } from '@ludy/kernel-contract';
 
 export const MODERN_VERSION = '2026-07-28';
 // Newest first. A client that asks for another version of `initialize` is answered with the newest legacy one, as the specification has it.
@@ -38,11 +39,20 @@ export interface ToolDescriptor {
   description: string;
   inputSchema: Record<string, unknown>;
   outputSchema: Record<string, unknown>;
-  // The MCP annotations mirror the risk tier of the query behind the tool: every tool of this step reads only.
-  annotations: { readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false };
+  // The MCP annotations mirror the risk tier of what the tool runs: a read, a Social draft for a person to review (not read only, never destructive, and a second call makes a second draft, so not
+  // idempotent), or one of the Engage R1 writes (E2, #3861), which may overwrite what it changes (a draft quote's lines, a thread's assignee) and says so with `destructiveHint`.
+  annotations:
+    | { readOnlyHint: true; destructiveHint: false; idempotentHint: true; openWorldHint: false }
+    | { readOnlyHint: false; destructiveHint: boolean; idempotentHint: false; openWorldHint: false };
   // What the tool accepts, checked here before anything runs: strict (an unknown key is refused), so a client cannot smuggle a field a query does not declare.
   argsSchema: z.ZodType<Record<string, unknown>>;
-  // The kernel query it runs and what it answers; the endpoint runs it as the grant, never as the person's own click.
+  // The app the tool reads or writes (ADR-0053, slice e); none for a kernel tool, which is never off. A tool of an app the org switched off is left out of the list and
+  // answers MODULE_OFF as an error result.
+  module?: string;
+  // The write scope a tool needs (ADR-0051 decision 11, #3858): the tool is listed, and callable, only for a company grant that holds it. A tool that is not read only and names no write scope is never listed
+  // (the filter fails closed), so a new write tool cannot appear to a grant by leaving the field out.
+  writeScope?: McpWriteScopeId;
+  // The kernel query (or, for the one write tool, the command) it runs and what it answers; the endpoint runs it as the grant, never as the person's own click.
   read: (args: Record<string, unknown>) => Promise<Record<string, unknown>>;
   // How many rows of business data an answer carries, charged against the grant's daily row budget. Zero for a tool that reads none.
   rows: (value: Record<string, unknown>) => number;
@@ -70,7 +80,7 @@ function metaOf(params: Record<string, unknown> | undefined): Record<string, unk
 export function toolList(tools: readonly ToolDescriptor[]): Array<Record<string, unknown>> {
   return [...tools]
     .sort((a, b) => (a.name < b.name ? -1 : 1))
-    .map(({ read: _read, rows: _rows, argsSchema: _argsSchema, ...descriptor }) => descriptor);
+    .map(({ read: _read, rows: _rows, argsSchema: _argsSchema, module: _module, ...descriptor }) => descriptor);
 }
 
 // What a tool answers: structured content and a short text form of it, for clients that read only text.
@@ -82,11 +92,14 @@ export interface HandleInput {
   body: unknown;
   headers: McpHeaders;
   tools: readonly ToolDescriptor[];
+  // The names of tools left out of tools/list: those of an app the org switched off. They stay callable so the call answers why (MODULE_OFF).
+  hidden?: ReadonlySet<string>;
   serverVersion: string;
   // Runs one tool call after the endpoint's own checks; throws what the kernel throws.
   callTool: (tool: ToolDescriptor, args: Record<string, unknown>) => Promise<Record<string, unknown>>;
   // Describes an error thrown while running a tool as a JSON-RPC error body (never the thrown message of an unexpected error).
-  describeError: (error: unknown) => { code: number; message: string };
+  // `toolError` makes the failure a tool result with isError (the tool ran and could not do it, which the model may read), not a JSON-RPC error.
+  describeError: (error: unknown) => { code: number; message: string; toolError?: boolean };
 }
 
 // One request, as the 2026-07-28 transport and the two legacy revisions it still serves allow. A batch (a JSON array) is not supported by any of
@@ -117,7 +130,7 @@ export async function handleMcp(input: HandleInput): Promise<McpReply> {
         protocolVersion: version,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: SERVER_NAME, version: input.serverVersion },
-        instructions: 'Ludy, the business OS for small companies. This connection reads only: it has no tool that changes anything.',
+        instructions: 'Ludy, the business OS for small companies. Most tools here only read. A tool that writes says so in its description: it makes a draft for a person to review in Ludy, or does one routine internal step (assign a thread, add a note, link a contact, create or move a deal, save a draft quote, mark a next step); it never sends a message, spends money, approves, schedules, publishes or deletes anything. What goes out to a customer or costs money is for a person to approve in Ludy.',
       }),
     };
   }
@@ -160,14 +173,14 @@ export async function handleMcp(input: HandleInput): Promise<McpReply> {
           supportedVersions: [...SUPPORTED_VERSIONS],
           capabilities: { tools: {} },
           _meta: { 'io.modelcontextprotocol/serverInfo': { name: SERVER_NAME, version: input.serverVersion } },
-          instructions: 'Ludy, the business OS for small companies. This connection reads only: it has no tool that changes anything.',
+          instructions: 'Ludy, the business OS for small companies. Most tools here only read. A tool that writes says so in its description: it makes a draft for a person to review in Ludy, or does one routine internal step (assign a thread, add a note, link a contact, create or move a deal, save a draft quote, mark a next step); it never sends a message, spends money, approves, schedules, publishes or deletes anything. What goes out to a customer or costs money is for a person to approve in Ludy.',
           ttlMs: 3_600_000,
           cacheScope: 'public',
         }),
       };
     case 'tools/list':
-      // The same list for every connection of a grant: it never varies per connection. Cached for a minute.
-      return { kind: 'json', status: 200, body: rpcResult(id, { ...(modern ? { resultType: 'complete', ttlMs: 60_000, cacheScope: 'private' } : {}), tools: toolList(input.tools) }) };
+      // The list of a grant: the tools its scopes allow, the same for every connection of that grant, so a tool the grant may not run is not listed. Cached for a minute.
+      return { kind: 'json', status: 200, body: rpcResult(id, { ...(modern ? { resultType: 'complete', ttlMs: 60_000, cacheScope: 'private' } : {}), tools: toolList(input.tools.filter((t) => !input.hidden?.has(t.name))) }) };
     case 'tools/call': {
       const name = typeof request.params?.name === 'string' ? request.params.name : null;
       const tool = input.tools.find((t) => t.name === name);
@@ -186,6 +199,9 @@ export async function handleMcp(input: HandleInput): Promise<McpReply> {
         return { kind: 'json', status: 200, body: rpcResult(id, toolResult(modern, await input.callTool(tool, parsed.data))) };
       } catch (error) {
         const described = input.describeError(error);
+        if (described.toolError) {
+          return { kind: 'json', status: 200, body: rpcResult(id, { ...(modern ? { resultType: 'complete' } : {}), content: [{ type: 'text', text: described.message }], isError: true }) };
+        }
         return { kind: 'json', status: 200, body: rpcError(id, described.code, described.message) };
       }
     }

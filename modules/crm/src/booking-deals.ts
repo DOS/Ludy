@@ -2,9 +2,9 @@
 // Dy's suggestion of a deal for a booking (#3103, docs/plan/calendar.md "Deal links"). The rule is fixed and runs here, with no model: a booking that has no deal yet is
 // offered the guest's open deals, found by the guest's contact (the booking's contact is the deal's contact), by email (the same address, compared without case) or by phone
 // (the same number by phoneKey, so +84 and 0 are one number). Only deals in an open stage are offered; a person decides, and the suggestion changes nothing by itself.
-import { BOOKING_DEAL_SUGGESTIONS_MAX, phoneKey, type BookingDealMatch, type BookingDealSuggestion } from '@crove/kernel-contract';
+import { BOOKING_DEAL_SUGGESTIONS_MAX, phoneKey, type BookingDealMatch, type BookingDealSuggestion } from '@ludy/kernel-contract';
 import { sql } from 'kysely';
-import type { QueryContext } from '@crove/kernel-runtime';
+import type { QueryContext } from '@ludy/kernel-runtime';
 
 // What of a booking the rule reads: its contact and the guest's own email and phone (null once an erasure cleared them).
 export interface MatchBooking {
@@ -65,9 +65,9 @@ export async function openDealsFor(ctx: Pick<QueryContext, 'trx' | 'orgId'>, boo
   const phones = [...new Set(bookings.flatMap((b) => phoneKey(b.phone) ?? []))];
   if (parties.length === 0 && emails.length === 0 && phones.length === 0) return [];
   const rows = await ctx.trx
-    .selectFrom('crove_crm.deal as d')
-    .innerJoin('crove_kernel.party as p', (j) => j.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
-    .innerJoin('crove_crm.pipeline_stage as s', (j) => j.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.stage_id'))
+    .selectFrom('ludy_crm.deal as d')
+    .innerJoin('ludy_kernel.party as p', (j) => j.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
+    .innerJoin('ludy_crm.pipeline_stage as s', (j) => j.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.stage_id'))
     .select(['d.id', 'd.title', 'd.party_id', 'd.updated_at', 's.name as stage', 'p.email as party_email', 'p.phone as party_phone'])
     .where('d.org_id', '=', ctx.orgId)
     .where('s.kind', '=', 'open')
@@ -76,7 +76,7 @@ export async function openDealsFor(ctx: Pick<QueryContext, 'trx' | 'orgId'>, boo
         ...(parties.length > 0 ? [eb('d.party_id', 'in', parties)] : []),
         // Trimmed as emailKey() trims, so a stored address with a stray space still fits.
         ...(emails.length > 0 ? [sql<boolean>`pg_catalog.lower(pg_catalog.btrim(p.email)) IN (${sql.join(emails)})`] : []),
-        ...(phones.length > 0 ? [sql<boolean>`crove_kernel.phone_key(p.phone) IN (${sql.join(phones)})`] : []),
+        ...(phones.length > 0 ? [sql<boolean>`ludy_kernel.phone_key(p.phone) IN (${sql.join(phones)})`] : []),
       ]),
     )
     .orderBy('d.updated_at', 'desc')

@@ -4,9 +4,9 @@
 import { z } from 'zod';
 import { zId } from './schemas.ts';
 
-// The scopes an extension token may hold, one per feature of the extension. @crove/kernel-runtime keeps the list the
-// runtime enforces (EXTENSION_SCOPES) and crove_kernel.extension_token's CHECK the same one; a test pins the two lists.
-export const EXTENSION_SCOPE_IDS = ['meetings'] as const;
+// The scopes an extension token may hold, one per feature of the extension. @ludy/kernel-runtime keeps the list the
+// runtime enforces (EXTENSION_SCOPES) and ludy_kernel.extension_token's CHECK the same one; a test pins the two lists.
+export const EXTENSION_SCOPE_IDS = ['meetings', 'agenda', 'notes'] as const;
 export type ExtensionScopeId = (typeof EXTENSION_SCOPE_IDS)[number];
 export const zExtensionScope = z.enum(EXTENSION_SCOPE_IDS);
 
@@ -16,7 +16,8 @@ export const EXTENSION_ID_FORMAT = /^[a-p]{32}$/;
 export const zExtensionId = z.string().regex(EXTENSION_ID_FORMAT);
 
 // The ids that may receive a sign-in code when the deployment sets none (EXTENSION_IDS): the Ludy extension's id in the
-// Chrome Web Store (#3010, first upload 2026-11-13; an item keeps its id for life, and the id is public, not a secret).
+// Chrome Web Store (#3010, first upload 2026-11-13; an item keeps its id for life, and the id is public, not a secret). The Edge Add-ons
+// item has its own id, to be added here the same way once the owner has created it (D2, #3181; docs/runbooks/extension-store.md, step E5).
 // Any other id is refused, so an unpacked or self-built extension (its own id, shown at chrome://extensions) needs
 // EXTENSION_IDS on the server it connects to, and a server that sets EXTENSION_IDS uses only that list.
 export const DEFAULT_EXTENSION_IDS: readonly string[] = Object.freeze(['emfhpcbmdbbeomfkdadbellllngmlhmf']);
@@ -27,7 +28,8 @@ export const zExtensionAuthorize = z.strictObject({
   extensionId: zExtensionId,
   codeChallenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   codeChallengeMethod: z.literal('S256'),
-  scopes: z.array(zExtensionScope).min(1).max(EXTENSION_SCOPE_IDS.length),
+  // The agenda scope rides with the meetings scope (B2): the token's own exchange is a meetings command, and the card exists to start a recording.
+  scopes: z.array(zExtensionScope).min(1).max(EXTENSION_SCOPE_IDS.length).refine((scopes) => !scopes.includes('agenda') || scopes.includes('meetings'), 'agenda needs meetings'),
   deviceName: z.string().trim().min(1).max(80),
 });
 

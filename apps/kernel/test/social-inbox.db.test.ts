@@ -5,11 +5,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, type PostView } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -45,7 +45,7 @@ suite('social reviews in the inbox on PostgreSQL (#749)', () => {
     const roles = { admin: await person('admin'), member: await person('member'), other: await person('other'), viewer: await person('viewer') };
     const role = { admin: 'admin', member: 'member', other: 'member', viewer: 'viewer' } as const;
     for (const [key, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
     }
     return { orgId, owner, ...roles };
   }
@@ -54,7 +54,7 @@ suite('social reviews in the inbox on PostgreSQL (#749)', () => {
     const id = randomUUID();
     await admin((c) =>
       c.query(
-        'INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
+        'INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
         [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, 'Kênh thử', owner],
       ),
     );
@@ -74,9 +74,9 @@ suite('social reviews in the inbox on PostgreSQL (#749)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -142,7 +142,7 @@ suite('social reviews in the inbox on PostgreSQL (#749)', () => {
     const { postId } = await exec<{ postId: string }>(o, o.member, 'social.post.create', { body: 'Hai kênh', channels: [{ connectionId: a }, { connectionId: b }] });
     await exec(o, o.member, 'social.post.submit', { postId });
     const at = new Date('2026-11-01T02:00:00Z');
-    await admin((c) => c.query('UPDATE crove_social.post SET scheduled_at = $2 WHERE id = $1', [postId, at]));
+    await admin((c) => c.query('UPDATE ludy_social.post SET scheduled_at = $2 WHERE id = $1', [postId, at]));
     const listed = await inbox(o, o.owner);
     expect(listed.items).toHaveLength(1);
     expect(listed.items[0]?.channels).toHaveLength(2);

@@ -17,11 +17,11 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { LocalDiskStore, Runtime, sha256Hex } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { LocalDiskStore, Runtime, sha256Hex } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { createAuthenticator } from '../../src/auth.ts';
 import { ConcurrencyLimiter } from '../../src/concurrency.ts';
 import { loadConfig } from '../../src/config.ts';
@@ -30,6 +30,7 @@ import { createSessionStatusSource } from '../../src/sessions.ts';
 import { ENTITY_HINT_TYPES, StreamHub, createDbTicketStore, createPgNotificationSource } from '../../src/stream.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -47,6 +48,7 @@ interface SseEvent {
 suite('invariant: invalidation hints honor the legal-entity scope', () => {
   const dbName = `crove_test_stream_le_inv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let pool: pg.Pool;
   let runtime: Runtime;
   let hub: StreamHub;
@@ -59,7 +61,7 @@ suite('invariant: invalidation hints honor the legal-entity scope', () => {
   const userIds = new Map<string, string>();
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = createDbClient({ connectionString: adminUrl }, dbIds);
     await client.connect();
     try {
       return await fn(client);
@@ -230,11 +232,12 @@ suite('invariant: invalidation hints honor the legal-entity scope', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     appUrl.password = 'test-app-pw';
-    pool = createPool({ connectionString: appUrl.toString(), max: 6 });
+    pool = createDbPool({ connectionString: appUrl.toString(), max: 6 }, dbIds);
     const db = createDb(pool);
     const config = loadConfig({
       DATABASE_URL: appUrl.toString(),
@@ -318,7 +321,7 @@ suite('invariant: invalidation hints honor the legal-entity scope', () => {
   const STREAM_TRIGGERS = `
     FROM pg_catalog.pg_trigger t
     JOIN pg_catalog.pg_proc f ON f.oid = t.tgfoid
-    WHERE NOT t.tgisinternal AND f.prosrc LIKE '%crove_stream%'`;
+    WHERE NOT t.tgisinternal AND (f.prosrc LIKE '%crove_stream%' OR f.prosrc LIKE '%ludy_stream%')`;
 
   it('names the entity column in the stream hint of every table under le_scope, and of no other', async () => {
     const rows = await admin(async (c) =>
@@ -373,11 +376,11 @@ suite('invariant: invalidation hints honor the legal-entity scope', () => {
   });
 
   it('carries the entity on the channel for an entity-scoped row and nothing more for an org-wide one', async () => {
-    const listener = new pg.Client({ connectionString: adminUrl });
+    const listener = createDbClient({ connectionString: adminUrl }, dbIds);
     await listener.connect();
     const payloads: string[] = [];
     listener.on('notification', (m) => {
-      if (m.channel === 'crove_stream' && m.payload) payloads.push(m.payload);
+      if (m.channel === (dbIds?.streamChannel ?? 'crove_stream') && m.payload) payloads.push(m.payload);
     });
     await listener.query('LISTEN crove_stream');
     try {

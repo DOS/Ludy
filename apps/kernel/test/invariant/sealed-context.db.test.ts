@@ -10,12 +10,13 @@ import { fileURLToPath } from 'node:url';
 import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, toDomainError } from '@crove/kernel-runtime';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, toDomainError } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, createRawPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -26,6 +27,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('sealed request context on PostgreSQL (§4.5 item 5, T11)', () => {
   const dbName = `crove_test_seal_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   let pool: pg.Pool;
@@ -37,14 +39,14 @@ suite('sealed request context on PostgreSQL (§4.5 item 5, T11)', () => {
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
 
   async function connect(url: string): Promise<pg.Client> {
-    const client = new pg.Client({ connectionString: url });
+    const client = createDbClient({ connectionString: url }, dbIds);
     await client.connect();
     clients.push(client);
     return client;
   }
 
   async function withAdmin<T>(fn: (admin: pg.Client) => Promise<T>): Promise<T> {
-    const admin = new pg.Client({ connectionString: adminUrl });
+    const admin = createDbClient({ connectionString: adminUrl }, dbIds);
     await admin.connect();
     try {
       return await fn(admin);
@@ -181,16 +183,17 @@ suite('sealed request context on PostgreSQL (§4.5 item 5, T11)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const loginUrl = (username: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = username;
+      url.username = dbIds ? dbIds.roleName(username) : username;
       url.password = password;
       return url.toString();
     };
     appUrl = loginUrl('crove_app', 'test-app-pw');
     workerUrl = loginUrl('crove_worker', 'test-worker-pw');
-    pool = createPool({ connectionString: appUrl, max: 1 });
+    pool = createDbPool({ connectionString: appUrl, max: 1 }, dbIds);
     const db = createDb(pool);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: 'in.test' }) });
     users.owner = await upsertIdentity(db, { issuer: 'test', subject: 'seal-owner', email: 'owner@seal.test', name: null });
@@ -279,7 +282,7 @@ suite('sealed request context on PostgreSQL (§4.5 item 5, T11)', () => {
     const { tables, functions } = await withAdmin(async (a) => {
       const t = await a.query<{ rolname: string }>(
         `SELECT r.rolname FROM pg_roles r
-         WHERE r.rolname LIKE 'crove\\_%' AND NOT r.rolsuper
+         WHERE ((r.rolname LIKE 'crove\\_%' OR r.rolname LIKE 'ludy\\_%') AND r.rolname NOT LIKE '%\\_test\\_%' AND r.rolname NOT LIKE 'crove\\_test%' AND r.rolname NOT LIKE 'ludy\\_test%' AND r.rolname <> 'ludy_migrate_test') AND NOT r.rolsuper
            AND (has_table_privilege(r.oid, 'crove_kernel.context_key', 'SELECT')
                 OR has_table_privilege(r.oid, 'crove_kernel.context_key', 'INSERT')
                 OR has_table_privilege(r.oid, 'crove_kernel.context_key', 'UPDATE'))
@@ -655,7 +658,7 @@ suite('sealed request context on PostgreSQL (§4.5 item 5, T11)', () => {
     const pid = async (c: pg.PoolClient) => (await c.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid;
 
     // Without the reset (a plain pg.Pool), one session-level setting denies every later transaction on the backend.
-    const plain = new pg.Pool({ connectionString: appUrl, max: 1 });
+    const plain = createRawPool({ connectionString: appUrl, max: 1 }, dbIds);
     try {
       const first = await plain.connect();
       await first.query(POISON[0] as string);
@@ -672,7 +675,7 @@ suite('sealed request context on PostgreSQL (§4.5 item 5, T11)', () => {
     }
 
     // createPool resets on release: the same backend (max 1) enters normally after each kind of leftover state.
-    const pooled = createPool({ connectionString: appUrl, max: 1 });
+    const pooled = createDbPool({ connectionString: appUrl, max: 1 }, dbIds);
     try {
       for (const poison of [...POISON, POISON.join('; ')]) {
         const first = await pooled.connect();
@@ -728,7 +731,7 @@ suite('sealed request context on PostgreSQL (§4.5 item 5, T11)', () => {
 
   it('closes a pooled connection whose reset fails or that a late BEGIN left in a transaction (#117)', async () => {
     const pid = async (c: pg.PoolClient) => (await c.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid;
-    const pooled = createPool({ connectionString: appUrl, max: 1 });
+    const pooled = createDbPool({ connectionString: appUrl, max: 1 }, dbIds);
     try {
       // The backend dies while the reset waits behind a running query: the reset fails, the client is destroyed,
       // and the lost connection does not surface as an unhandled 'error' event (vitest fails the run on one).
@@ -769,7 +772,7 @@ suite('sealed request context on PostgreSQL (§4.5 item 5, T11)', () => {
   it('closes a connection that hit a context error instead of pooling it, with the reset turned off (#117)', async () => {
     const pid = async (c: pg.PoolClient) => (await c.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid;
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const pooled = createPool({ connectionString: appUrl, max: 1, resetOnRelease: false });
+    const pooled = createDbPool({ connectionString: appUrl, max: 1, resetOnRelease: false }, dbIds);
     const poison = async (statement = POISON[0] as string) => {
       const c = await pooled.connect();
       const backend = await pid(c);

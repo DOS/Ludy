@@ -7,10 +7,10 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { runUserDisable, setUserDisabled } from '../src/user-disable.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -40,14 +40,14 @@ suite('user disable and enable on PostgreSQL (#985)', () => {
 
   const person = (email: string, issuer = 'test') => upsertIdentity(db, { issuer, subject: randomUUID(), email, name: null });
   const disabledAt = (userId: string) =>
-    admin(async (c) => (await c.query<{ disabled_at: Date | null }>('SELECT disabled_at FROM crove_kernel.user_account WHERE id = $1', [userId])).rows[0]?.disabled_at);
+    admin(async (c) => (await c.query<{ disabled_at: Date | null }>('SELECT disabled_at FROM ludy_kernel.user_account WHERE id = $1', [userId])).rows[0]?.disabled_at);
   const statusReason = (userId: string) =>
-    admin(async (c) => (await c.query<{ status_reason: string | null }>('SELECT status_reason FROM crove_kernel.user_account WHERE id = $1', [userId])).rows[0]?.status_reason);
+    admin(async (c) => (await c.query<{ status_reason: string | null }>('SELECT status_reason FROM ludy_kernel.user_account WHERE id = $1', [userId])).rows[0]?.status_reason);
   const notes = (userId: string) =>
     admin(async (c) =>
       (
         await c.query<{ org_id: string; actor_type: string; outcome: string; target_type: string; detail: Record<string, unknown> }>(
-          `SELECT org_id, actor_type, outcome, target_type, detail FROM crove_kernel.audit_event
+          `SELECT org_id, actor_type, outcome, target_type, detail FROM ludy_kernel.audit_event
            WHERE command = 'kernel.user.status_note' AND target_id = $1 ORDER BY occurred_at, id`,
           [userId],
         )
@@ -63,16 +63,16 @@ suite('user disable and enable on PostgreSQL (#985)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 2 });
     db = createDb(pool);
     const registry = { commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
     const asWorker = new URL(adminUrl);
-    asWorker.username = 'crove_worker';
+    asWorker.username = 'ludy_worker';
     asWorker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorker.toString(), max: 2 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);

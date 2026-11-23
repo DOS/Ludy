@@ -15,10 +15,12 @@
 // only with its void (20261018150000).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zJournalReversal, type DocumentDirection, type JournalReversal } from '@crove/kernel-contract';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { zJournalReversal, type DocumentDirection, type JournalReversal } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { OPENING_BALANCE_SOURCE } from './domain/opening-balance.ts';
 import { postNewEntry } from './ledger.ts';
+import { marketplaceReversalNotes } from './marketplace-reversal-guard.ts';
+import { refuseSupplierPaymentReversal } from './supplier-payment-settle.ts';
 import { reverseDocumentStock } from './stock-lines.ts';
 
 export { zJournalReversal, type JournalReversal };
@@ -43,7 +45,7 @@ const PARTIAL_MIRROR = () =>
 // The entry as the caller sees it (RLS), and whether it may be reversed. The database re-checks all of it.
 async function reversibleEntry(ctx: CommandContext, reversal: JournalReversal) {
   const entry = await ctx.trx
-    .selectFrom('crove_finance.journal_entry')
+    .selectFrom('ludy_finance.journal_entry')
     .select(['id', 'entry_date', 'description', 'reverses_entry_id', 'source_type', 'source_id', 'legal_entity_id'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', reversal.entryId)
@@ -56,7 +58,7 @@ async function reversibleEntry(ctx: CommandContext, reversal: JournalReversal) {
   // right with a move of a later month.
   if (entry.source_type === 'finance.journal_voucher') {
     const posted = await ctx.trx
-      .selectFrom('crove_finance.journal_voucher')
+      .selectFrom('ludy_finance.journal_voucher')
       .select(['stock_closing_month', 'stock_count_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', entry.source_id)
@@ -66,7 +68,7 @@ async function reversibleEntry(ctx: CommandContext, reversal: JournalReversal) {
     if (posted?.stock_count_id) throw new DomainError('STOCK_COUNT_ENTRY', 409, 'Bút toán này ghi chênh lệch của một lần kiểm kê kho nên không đảo được; hãy kiểm kê lại');
   }
   const reversed = await ctx.trx
-    .selectFrom('crove_finance.journal_entry')
+    .selectFrom('ludy_finance.journal_entry')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('reverses_entry_id', '=', reversal.entryId)
@@ -99,7 +101,7 @@ export const OPEN_REVERSAL_STATUSES = ['pending', 'approved'] as const;
 async function refuseOpenReversal(ctx: CommandContext, entryId: string): Promise<void> {
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`${REVERSAL_KIND}:${entryId}`}, 0))`.execute(ctx.trx);
   const open = await ctx.trx
-    .selectFrom('crove_kernel.proposal')
+    .selectFrom('ludy_kernel.proposal')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('kind', '=', REVERSAL_KIND)
@@ -120,7 +122,7 @@ async function refuseOpenReversal(ctx: CommandContext, entryId: string): Promise
 async function documentDirection(ctx: CommandContext, entry: { source_type: string; source_id: string }): Promise<DocumentDirection | null> {
   if (entry.source_type !== PURCHASE_SOURCE) return null;
   const document = await ctx.trx
-    .selectFrom('crove_finance.purchase_document')
+    .selectFrom('ludy_finance.purchase_document')
     .select('direction')
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', entry.source_id)
@@ -130,8 +132,8 @@ async function documentDirection(ctx: CommandContext, entry: { source_type: stri
 
 const VOID_LABELS: Record<DocumentDirection, string> = { purchase: 'hủy chứng từ mua', sale: 'hủy chứng từ bán' };
 
-const reversalTitle = (entry: { entry_date: string; description: string }, direction: DocumentDirection | null) =>
-  `Đảo bút toán ngày ${entry.entry_date}${direction ? ` (${VOID_LABELS[direction]})` : ''}: ${entry.description}`.slice(0, 300);
+const reversalTitle = (entry: { entry_date: string; description: string }, direction: DocumentDirection | null, notes: readonly string[] = []) =>
+  `Đảo bút toán ngày ${entry.entry_date}${direction ? ` (${VOID_LABELS[direction]})` : ''}: ${entry.description}${notes.length > 0 ? ` [${notes.join('; ')}]` : ''}`.slice(0, 300);
 
 export const prepareReversal = defineCommand({
   name: 'finance.journal.prepare_reversal',
@@ -145,11 +147,15 @@ export const prepareReversal = defineCommand({
     const request = { ...input, entryId: input.entryId.toLowerCase() };
     await refuseOpenReversal(ctx, request.entryId);
     const entry = await reversibleEntry(ctx, request);
+    // A marketplace settlement's or payout's entry: refused while the payout stands or the period is closed, and noted in the title for the approver (#3329).
+    const notes = await marketplaceReversalNotes(ctx, entry, request.entryDate);
+    // The voucher of a settled supplier payment is not reversed while the payment is paid (#3700 S3c).
+    await refuseSupplierPaymentReversal(ctx, entry);
     // The proposal belongs to the entry's legal entity (#1538), which the payload does not name.
     return {
       kind: REVERSAL_KIND,
       command: REVERSAL_COMMAND,
-      title: reversalTitle(entry, await documentDirection(ctx, entry)),
+      title: reversalTitle(entry, await documentDirection(ctx, entry), notes),
       payload: request,
       legalEntityId: entry.legal_entity_id,
     };
@@ -167,6 +173,9 @@ export const reverseEntry = defineCommand({
   handler: async (ctx, { payload }) => {
     if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
     const entry = await reversibleEntry(ctx, payload);
+    // Checked again at the approval: a payout posted after the request must not be left without its settlement (#3329).
+    await marketplaceReversalNotes(ctx, entry, payload.entryDate);
+    await refuseSupplierPaymentReversal(ctx, entry);
     return postReversal(ctx, entry, payload.entryDate, payload.reason);
   },
 });
@@ -182,7 +191,7 @@ export async function postReversal(
 ) {
   if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
   const lines = await ctx.trx
-    .selectFrom('crove_finance.journal_line')
+    .selectFrom('ludy_finance.journal_line')
     .select(['line_no', 'account_code', 'debit', 'credit', 'party_id', 'memo'])
     .where('org_id', '=', ctx.orgId)
     .where('entry_id', '=', entry.id)
@@ -221,7 +230,7 @@ export async function postReversal(
   let stockReversed = 0;
   if (voidedDocumentId) {
     await ctx.trx
-      .insertInto('crove_finance.purchase_document_void')
+      .insertInto('ludy_finance.purchase_document_void')
       .values({
         org_id: ctx.orgId,
         document_id: voidedDocumentId,

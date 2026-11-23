@@ -14,11 +14,12 @@ concurrency:
 
 jobs:
   # The checks run in parallel jobs (#1041): lint, typecheck and unit tests here, the database tests in `db` split in
-  # three, and `check` below, the required "Lint, typecheck, test", passes only when every one of them passed.
+  # eight balanced shards plus a heavy-files job, and `check` below, the required "Lint, typecheck, test", passes only when every one of them passed.
   static:
     name: Lint, typecheck, unit tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 25 minutes (#3995): successful runs take 8 to 14 minutes, and the 15-minute limit cancelled unrelated PRs mid-typecheck.
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
@@ -28,6 +29,7 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 3s --health-retries 30
     env:
+      LUDY_TEST_ADMIN_URL: postgres://postgres:ci-postgres@localhost:5432/postgres
       CROVE_TEST_ADMIN_URL: postgres://postgres:ci-postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -44,7 +46,7 @@ jobs:
       # Every module, also one the kernel does not import yet: typecheck and unit tests run over all of them, and the
       # marketing site, which pnpm typecheck covers with its tests (#1629).
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "@crove/app..." --filter "./modules/*" --filter "@crove/e2e" --filter "@crove/web" --filter "@crove/extension" --filter "@crove/media..." --filter "crove-monorepo"
+        run: pnpm install --frozen-lockfile --filter "@ludy/kernel-server..." --filter "@ludy/app..." --filter "./modules/*" --filter "@ludy/e2e" --filter "@ludy/web" --filter "@ludy/extension" --filter "@ludy/media..." --filter "ludy-monorepo"
 
       - name: Lint
         run: pnpm lint
@@ -58,7 +60,14 @@ jobs:
       - name: Shell scripts (shellcheck)
         run: shellcheck tools/deploy/deploy.sh tools/test/deploy-stubs/docker tools/test/deploy-stubs/curl
 
+      # One package at a time (`pnpm -r --workspace-concurrency=1` in the root script, #4023): the `tsc` of apps/kernel and
+      # apps/app are each several GB, so two of them together (or four module checks, 14 GB) exhausted the runner's 16 GB
+      # and it was killed ("The runner has received a shutdown signal"), on about one run in three. One at a time the
+      # machine peaks at about 14.6 GB used while apps/kernel is checked (apps/app: 8 GB), so the headroom is thin
+      # (#4062) and this must not go back to parallel. It takes about the same time (4 to 5 minutes). The step limit
+      # makes a stall fail here, by name, instead of using up the job's 25 minutes.
       - name: Typecheck
+        timeout-minutes: 12
         run: pnpm typecheck
 
       # The Kysely types generated from the migrated database (issue #48): a migration that changes a table the
@@ -77,17 +86,18 @@ jobs:
       # longer published on Docker Hub; pgsty/minio is a community build of the same server, pinned by digest.
       - name: Start MinIO
         run: |
-          docker run -d --name minio -p 127.0.0.1:9000:9000 -e MINIO_ROOT_USER=crove-ci -e MINIO_ROOT_PASSWORD=crove-ci-minio \
+          docker run -d --name minio -p 127.0.0.1:9000:9000 -e MINIO_ROOT_USER=ludy-ci -e MINIO_ROOT_PASSWORD=ludy-ci-minio \
             pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372 server /data
           curl --silent --fail --retry 30 --retry-all-errors --retry-delay 1 http://127.0.0.1:9000/minio/health/live
 
       - name: Unit tests (S3 tests against MinIO)
         env:
-          CROVE_TEST_S3_URL: http://crove-ci:crove-ci-minio@127.0.0.1:9000/crove-test
+          LUDY_TEST_S3_URL: http://ludy-ci:ludy-ci-minio@127.0.0.1:9000/ludy-test
+          CROVE_TEST_S3_URL: http://ludy-ci:ludy-ci-minio@127.0.0.1:9000/ludy-test
         run: pnpm exec vitest run --project unit
 
       - name: Build web app
-        run: pnpm --filter @crove/app build
+        run: pnpm --filter @ludy/app build
 
       # Kernel plan §9 (#1518): every browser downloads the SPA, so no kernel secret name used as code and no
       # secret-shaped value may be in the build.
@@ -96,7 +106,7 @@ jobs:
 
   # The database tests run one file at a time (fileParallelism: false) and took 17 minutes in one job (#1041). Two
   # files take 44% of that (finance-search on 50,000 documents, about 260 s; archive, about 150 s), so they run in a
-  # job of their own and every other file in four shards, each job on its own PostgreSQL. A renamed heavy file fails the
+  # job of their own and every other file in eight shards, each job on its own PostgreSQL. A renamed heavy file fails the
   # heavy job (no test files found) until this list follows it.
   # The shards are balanced by measured file time (tools/ci/db-shards.mjs, times in tools/ci/db-test-times.json), not by
   # file name as vitest's --shard does: the two name-based halves ran 13 and 19 minutes against the 20-minute timeout
@@ -105,7 +115,8 @@ jobs:
   db:
     name: Database tests (${{ matrix.part.name }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Eight balanced shards (#3756) keep every job well under the 30-minute limit.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -113,17 +124,29 @@ jobs:
           - name: heavy files
             shard: ''
             exclude: ''
-          - name: shard 1 of 4
+          - name: shard 1 of 8
             shard: '1'
             exclude: apps/kernel/test/finance-search.db.test.ts,apps/kernel/test/archive.db.test.ts
-          - name: shard 2 of 4
+          - name: shard 2 of 8
             shard: '2'
             exclude: apps/kernel/test/finance-search.db.test.ts,apps/kernel/test/archive.db.test.ts
-          - name: shard 3 of 4
+          - name: shard 3 of 8
             shard: '3'
             exclude: apps/kernel/test/finance-search.db.test.ts,apps/kernel/test/archive.db.test.ts
-          - name: shard 4 of 4
+          - name: shard 4 of 8
             shard: '4'
+            exclude: apps/kernel/test/finance-search.db.test.ts,apps/kernel/test/archive.db.test.ts
+          - name: shard 5 of 8
+            shard: '5'
+            exclude: apps/kernel/test/finance-search.db.test.ts,apps/kernel/test/archive.db.test.ts
+          - name: shard 6 of 8
+            shard: '6'
+            exclude: apps/kernel/test/finance-search.db.test.ts,apps/kernel/test/archive.db.test.ts
+          - name: shard 7 of 8
+            shard: '7'
+            exclude: apps/kernel/test/finance-search.db.test.ts,apps/kernel/test/archive.db.test.ts
+          - name: shard 8 of 8
+            shard: '8'
             exclude: apps/kernel/test/finance-search.db.test.ts,apps/kernel/test/archive.db.test.ts
     services:
       postgres:
@@ -134,6 +157,7 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 3s --health-retries 30
     env:
+      LUDY_TEST_ADMIN_URL: postgres://postgres:ci-postgres@localhost:5432/postgres
       CROVE_TEST_ADMIN_URL: postgres://postgres:ci-postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -148,27 +172,28 @@ jobs:
         run: npm install -g pnpm@10.34.7 --no-fund --no-audit
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "@crove/app..." --filter "./modules/*" --filter "@crove/e2e" --filter "crove-monorepo"
+        run: pnpm install --frozen-lockfile --filter "@ludy/kernel-server..." --filter "@ludy/app..." --filter "./modules/*" --filter "@ludy/e2e" --filter "ludy-monorepo"
 
       - name: Start MinIO
         run: |
-          docker run -d --name minio -p 127.0.0.1:9000:9000 -e MINIO_ROOT_USER=crove-ci -e MINIO_ROOT_PASSWORD=crove-ci-minio \
+          docker run -d --name minio -p 127.0.0.1:9000:9000 -e MINIO_ROOT_USER=ludy-ci -e MINIO_ROOT_PASSWORD=ludy-ci-minio \
             pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372 server /data
           curl --silent --fail --retry 30 --retry-all-errors --retry-delay 1 http://127.0.0.1:9000/minio/health/live
 
       # The staged upload tests (#109) run on MinIO too: the database decides single use, the bucket holds the bytes.
       - name: Database tests (PostgreSQL 17, S3 tests against MinIO)
         env:
-          CROVE_TEST_S3_URL: http://crove-ci:crove-ci-minio@127.0.0.1:9000/crove-test
+          LUDY_TEST_S3_URL: http://ludy-ci:ludy-ci-minio@127.0.0.1:9000/ludy-test
+          CROVE_TEST_S3_URL: http://ludy-ci:ludy-ci-minio@127.0.0.1:9000/ludy-test
           PART_SHARD: ${{ matrix.part.shard }}
           # Read by vitest.config.ts: the files another part runs (vitest's --exclude does not reach a project).
-          CROVE_DB_TEST_EXCLUDE: ${{ matrix.part.exclude }}
+          LUDY_DB_TEST_EXCLUDE: ${{ matrix.part.exclude }}
         run: |
           echo "DB_PART_STARTED=$(date +%s)" >> "$GITHUB_ENV"
           if [ -z "$PART_SHARD" ]; then
             files=(apps/kernel/test/finance-search.db.test.ts apps/kernel/test/archive.db.test.ts)
           else
-            mapfile -t files < <(node tools/ci/db-shards.mjs "$PART_SHARD" 4)
+            mapfile -t files < <(node tools/ci/db-shards.mjs "$PART_SHARD" 8)
           fi
           echo "Running ${#files[@]} database test files"
           pnpm exec vitest run --project db "${files[@]}"
@@ -185,9 +210,9 @@ jobs:
           elapsed=$(( $(date +%s) - started ))
           planned="n/a"
           if [ -n "$PART_SHARD" ]; then
-            planned=$(node tools/ci/db-shards.mjs --plan 4 | awk -F'|' -v n="$PART_SHARD" '$2 ~ "^ "n" of" { gsub(/ /, "", $4); print $4 "s" }')
+            planned=$(node tools/ci/db-shards.mjs --plan 8 | awk -F'|' -v n="$PART_SHARD" '$2 ~ "^ "n" of" { gsub(/ /, "", $4); print $4 "s" }')
           fi
-          printf '%s: tests ran %dm%02ds (planned file time %s, job timeout 20m)\n' "$PART_NAME" $((elapsed / 60)) $((elapsed % 60)) "$planned" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s: tests ran %dm%02ds (planned file time %s, job timeout 30m)\n' "$PART_NAME" $((elapsed / 60)) $((elapsed % 60)) "$planned" >> "$GITHUB_STEP_SUMMARY"
 
   # The core invariants with CROVE_SHARED_DATABASE=true (#2284): the same migrations in shared-database mode, where PUBLIC keeps
   # TEMPORARY. The cross-org RLS matrix, the EXECUTE matrix of the login roles and the definer search_path hijack test (all in
@@ -208,8 +233,9 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 3s --health-retries 30
     env:
+      LUDY_TEST_ADMIN_URL: postgres://postgres:ci-postgres@localhost:5432/postgres
       CROVE_TEST_ADMIN_URL: postgres://postgres:ci-postgres@localhost:5432/postgres
-      CROVE_SHARED_DATABASE: "true"
+      LUDY_SHARED_DATABASE: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -223,7 +249,7 @@ jobs:
         run: npm install -g pnpm@10.34.7 --no-fund --no-audit
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "crove-monorepo"
+        run: pnpm install --frozen-lockfile --filter "@ludy/kernel-server..." --filter "ludy-monorepo"
 
       - name: RLS matrix, EXECUTE matrix and search_path hijack test, shared mode
         run: >-
@@ -260,10 +286,33 @@ jobs:
   # no Vietnamese on the English page but the allowed example names. Then its performance budget (#1655, DESIGN.md
   # §6.3): LCP, CLS and INP on a throttled phone and a desktop, fonts, raster images and client scripts, with the
   # planted faults the budget must catch. The image build downloads the fonts.
+  # Split into four parallel jobs (#4081): axe/language on its own runner and the single-worker performance budget
+  # across three shards, so each part finishes in ~4 to 6 minutes instead of running 17 to 19+ minutes against the
+  # 20-minute limit.
   web:
-    name: Marketing site (image, axe, language, performance)
+    name: Marketing site (${{ matrix.part.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        part:
+          - name: axe and language
+            suite: a11y
+            shard: ''
+            artifact: a11y
+          - name: performance 1 of 3
+            suite: perf
+            shard: '1/3'
+            artifact: perf-1-of-3
+          - name: performance 2 of 3
+            suite: perf
+            shard: '2/3'
+            artifact: perf-2-of-3
+          - name: performance 3 of 3
+            suite: perf
+            shard: '3/3'
+            artifact: perf-3-of-3
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -277,7 +326,7 @@ jobs:
         run: npm install -g pnpm@10.34.7 --no-fund --no-audit
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter "@crove/web"
+        run: pnpm install --frozen-lockfile --filter "@ludy/web"
 
       - name: Build the apps/web image
         run: docker build -f apps/web/Dockerfile -t crove-web:ci .
@@ -288,18 +337,21 @@ jobs:
           curl --silent --fail --output /dev/null --retry 30 --retry-all-errors --retry-delay 1 http://127.0.0.1:3000/
 
       - name: Install Chromium
-        run: pnpm --filter @crove/web exec playwright install --with-deps chromium
+        run: pnpm --filter @ludy/web exec playwright install --with-deps chromium
 
       - name: axe and language checks
+        if: matrix.part.suite == 'a11y'
         env:
           WEB_BASE_URL: http://127.0.0.1:3000
-        run: pnpm --filter @crove/web test:a11y
+        run: pnpm --filter @ludy/web test:a11y
 
-      # After the axe run and with one worker, so nothing else competes for the CPU it measures.
+      # Each shard runs with one worker on its own runner, so nothing else competes for the CPU it measures.
       - name: Performance budget
+        if: matrix.part.suite == 'perf'
         env:
           WEB_BASE_URL: http://127.0.0.1:3000
-        run: pnpm --filter @crove/web test:perf
+          PERF_SHARD: ${{ matrix.part.shard }}
+        run: pnpm --filter @ludy/web exec playwright test --project=perf --workers=1 --shard="$PERF_SHARD"
 
       - name: Server log
         if: failure()
@@ -309,7 +361,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: web-playwright-traces
+          name: web-playwright-traces-${{ matrix.part.artifact }}
           path: apps/web/test-results/
           retention-days: 7
           if-no-files-found: ignore
@@ -335,27 +387,28 @@ jobs:
         run: npm install -g pnpm@10.34.7 --no-fund --no-audit
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter "@crove/extension..."
+        run: pnpm install --frozen-lockfile --filter "@ludy/extension..."
 
       - name: Build the package
-        run: pnpm --filter @crove/extension build
+        run: pnpm --filter @ludy/extension build
 
       - name: Manifest permissions match the fixed list
-        run: pnpm --filter @crove/extension check:manifest
+        run: pnpm --filter @ludy/extension check:manifest
 
       - name: Install Chromium
-        run: pnpm --filter @crove/extension exec playwright install --with-deps chromium
+        run: pnpm --filter @ludy/extension exec playwright install --with-deps chromium
 
       - name: Load the unpacked extension in Chromium
-        run: pnpm --filter @crove/extension test:e2e -- --trace off
+        run: pnpm --filter @ludy/extension test:e2e -- --trace off
 
-  # The required check: it passes only when the static job, knip, the marketing site, the extension and every database part passed, so
-  # a failed, cancelled or skipped part fails it.
+  # The required check: it passes only when the static job, knip, the marketing site, the extension, every database part, the shared-database
+  # invariants, the Supabase image (T17), the kernel, extract and media images (T12), the split stack (T7) and the backup drill passed, so a
+  # failed, cancelled or skipped part fails it (#3974: before, a red T12 or T17 job blocked neither a merge nor a release).
   check:
     name: Lint, typecheck, test
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [static, knip, web, db, media-image, extension]
+    needs: [static, knip, web, db, shared-mode-invariants, supabase-stack, kernel-image, extract-image, media-image, split-stack, backup-drill, extension]
     if: always()
     steps:
       - name: Every part passed
@@ -366,9 +419,18 @@ jobs:
           DB: ${{ needs.db.result }}
           MEDIA: ${{ needs.media-image.result }}
           EXTENSION: ${{ needs.extension.result }}
+          SHARED: ${{ needs.shared-mode-invariants.result }}
+          SUPABASE: ${{ needs.supabase-stack.result }}
+          KERNEL: ${{ needs.kernel-image.result }}
+          EXTRACT: ${{ needs.extract-image.result }}
+          SPLIT: ${{ needs.split-stack.result }}
+          BACKUP: ${{ needs.backup-drill.result }}
         run: |
           echo "static: $STATIC, knip: $KNIP, marketing site: $WEB, database tests: $DB, media: $MEDIA, extension: $EXTENSION"
-          test "$STATIC" = success && test "$KNIP" = success && test "$WEB" = success && test "$DB" = success && test "$MEDIA" = success && test "$EXTENSION" = success
+          echo "shared-mode invariants: $SHARED, Supabase image: $SUPABASE, kernel image: $KERNEL, extract image: $EXTRACT, split stack: $SPLIT, backup drill: $BACKUP"
+          for result in "$STATIC" "$KNIP" "$WEB" "$DB" "$MEDIA" "$EXTENSION" "$SHARED" "$SUPABASE" "$KERNEL" "$EXTRACT" "$SPLIT" "$BACKUP"; do
+            test "$result" = success
+          done
 
   # The migrations and the definer hardening guard (External-tenant gate T17) on the Supabase Postgres image that
   # hosted Supabase runs (issue #179): its extensions, its roles and the supautils hooks, with migrations run as
@@ -403,7 +465,7 @@ jobs:
         run: npm install -g pnpm@10.34.7 --no-fund --no-audit
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "crove-monorepo"
+        run: pnpm install --frozen-lockfile --filter "@ludy/kernel-server..." --filter "ludy-monorepo"
 
       - name: Migrate with the extensions enabled and run the guard (as postgres, not a superuser)
         env:
@@ -449,16 +511,16 @@ jobs:
         run: |
           built_at="$(git show -s --format=%cI "$GITHUB_SHA")"
           test -n "$built_at"
-          docker build --build-arg "CROVE_BUILD=$GITHUB_SHA" --build-arg "CROVE_BUILD_TIME=$built_at" -t "$IMAGE" .
+          docker build --build-arg "LUDY_BUILD=$GITHUB_SHA" --build-arg "LUDY_BUILD_TIME=$built_at" -t "$IMAGE" .
 
-      # GET /version reports CROVE_BUILD (#892), and CROVE_BUILD_TIME orders builds for /readyz (#1952): both build
+      # GET /version reports LUDY_BUILD (#892), and LUDY_BUILD_TIME orders builds for /readyz (#1952): both build
       # arguments reach the running image.
       - name: The image carries its build id and time
         run: |
-          test "$(docker run --rm --entrypoint printenv "$IMAGE" CROVE_BUILD)" = "$GITHUB_SHA"
+          test "$(docker run --rm --entrypoint printenv "$IMAGE" LUDY_BUILD)" = "$GITHUB_SHA"
           built_at="$(git show -s --format=%cI "$GITHUB_SHA")"
           test -n "$built_at"
-          test "$(docker run --rm --entrypoint printenv "$IMAGE" CROVE_BUILD_TIME)" = "$built_at"
+          test "$(docker run --rm --entrypoint printenv "$IMAGE" LUDY_BUILD_TIME)" = "$built_at"
 
       - name: Modules load and no parser package is in the image
         run: |

@@ -3,7 +3,7 @@
 // different transfer words, references, dates and numbers each time ("CK TU NGUYEN VAN A TT TIEN NHA T9 FT26301..."), so the
 // key keeps only what stays: the longest run of consecutive distinctive words, after the transfer words, bank codes and
 // every token with a digit are dropped. Pure and deterministic; the key is hashed by the database
-// (crove_finance.bank_party_rule_hash) before it is stored, so no text of a line is ever kept.
+// (ludy_finance.bank_party_rule_hash) before it is stored, so no text of a line is ever kept.
 import { foldVietnamese } from './portal-status.ts';
 
 // Words and phrases of a bank statement that say nothing about the counterparty, folded (no diacritics, lower case). A phrase

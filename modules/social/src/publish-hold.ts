@@ -16,8 +16,8 @@
 // before anything else, so once a hold commits no publish step of the org begins (a call begun just before it finishes).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { CLEAR_ERROR, lockPost, lockVariants, refreshPostStatus, setVariant, step, type Trx } from './variants.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -29,7 +29,7 @@ export const HELD_TOO_LONG_MS = 60 * 60_000;
 
 export const zHoldReason = z.string().trim().min(1).max(HOLD_REASON_MAX);
 
-const lockKey = (orgId: string) => `crove_social.publish_hold:${orgId}`;
+const lockKey = (orgId: string) => `ludy_social.publish_hold:${orgId}`;
 
 function requireUser(ctx: CommandContext): string {
   if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
@@ -45,7 +45,7 @@ interface HoldRow {
 
 async function liveHold(trx: Trx, orgId: string): Promise<HoldRow | undefined> {
   return trx
-    .selectFrom('crove_social.publish_hold')
+    .selectFrom('ludy_social.publish_hold')
     .select(['id', 'reason', 'held_by', 'held_at'])
     .where('org_id', '=', orgId)
     .where('released_at', 'is', null)
@@ -80,7 +80,7 @@ export const publishingHold = defineCommand({
     const live = await liveHold(ctx.trx, ctx.orgId);
     if (live) return { holdId: live.id, heldAt: live.held_at.toISOString(), created: false };
     const row = await ctx.trx
-      .insertInto('crove_social.publish_hold')
+      .insertInto('ludy_social.publish_hold')
       // held_at and released_at from the database clock (its default, now()), so the row's order check never compares
       // the clocks of two app instances.
       .values({ org_id: ctx.orgId, reason: input.reason, held_by: userId })
@@ -94,20 +94,27 @@ export const publishingHold = defineCommand({
 
 // Fails, with HELD_TOO_LONG, the scheduled variants of the org due more than HELD_TOO_LONG_MS before now, except one
 // waiting in a paused queue (its queue holds it, not this hold). Posts are locked one by one in id order, as every
-// command locks a post before its variants. Returns how many variants failed.
-async function failStale(ctx: CommandContext): Promise<number> {
-  const cutoff = new Date(ctx.now.getTime() - HELD_TOO_LONG_MS);
-  const stale = (postId: string | null) => sql<{ id: string; post_id: string }>`
-    SELECT v.id, v.post_id FROM crove_social.post_variant v
-    WHERE v.org_id = ${ctx.orgId}::uuid AND v.status = 'scheduled' AND (${postId}::uuid IS NULL OR v.post_id = ${postId}::uuid)
+// command locks a post before its variants. Returns the variants it failed, with their posts.
+const staleSql = (orgId: string, now: Date, postId: string | null) => {
+  const cutoff = new Date(now.getTime() - HELD_TOO_LONG_MS);
+  return sql<{ id: string; post_id: string }>`
+    SELECT v.id, v.post_id FROM ludy_social.post_variant v
+    WHERE v.org_id = ${orgId}::uuid AND v.status = 'scheduled' AND (${postId}::uuid IS NULL OR v.post_id = ${postId}::uuid)
       AND coalesce(v.error_retry_at, v.scheduled_at, v.queue_slot_at) < ${cutoff}
       AND NOT (v.error_retry_at IS NULL AND v.scheduled_at IS NULL AND EXISTS (
-        SELECT 1 FROM crove_social.queue q
+        SELECT 1 FROM ludy_social.queue q
         WHERE q.org_id = v.org_id AND q.channel_connection_id = v.channel_connection_id AND q.paused))
     ORDER BY v.post_id, v.id`;
-  const { rows } = await stale(null).execute(ctx.trx);
-  const posts = [...new Set(rows.map((r) => r.post_id))];
-  let failed = 0;
+};
+
+// `maxPosts` bounds one run (the sweep's); the release takes them all.
+async function failStale(ctx: CommandContext, maxPosts = Infinity): Promise<Array<{ postId: string; variantId: string }>> {
+  const stale = (postId: string | null) => staleSql(ctx.orgId, ctx.now, postId);
+  // The cap is in the query: at most maxPosts post ids are read, never every late row of a big backlog.
+  const limit = Number.isFinite(maxPosts) ? maxPosts : null;
+  const { rows } = await sql<{ post_id: string }>`SELECT s.post_id FROM (${stale(null)}) s GROUP BY s.post_id ORDER BY s.post_id LIMIT ${limit}::int`.execute(ctx.trx);
+  const posts = rows.map((r) => r.post_id);
+  const failed: Array<{ postId: string; variantId: string }> = [];
   for (const postId of posts) {
     await lockPost(ctx.trx, ctx.orgId, postId);
     const variants = new Map((await lockVariants(ctx.trx, ctx.orgId, postId)).map((v) => [v.id, v]));
@@ -116,7 +123,7 @@ async function failStale(ctx: CommandContext): Promise<number> {
       const v = variants.get(id);
       if (!v) continue;
       await setVariant(ctx, id, { ...CLEAR_ERROR, status: step(v, { type: 'held_too_long' }), error_code: HELD_TOO_LONG });
-      failed += 1;
+      failed.push({ postId, variantId: id });
     }
     await refreshPostStatus(ctx, postId);
   }
@@ -135,12 +142,12 @@ export const publishingRelease = defineCommand({
     const live = await liveHold(ctx.trx, ctx.orgId);
     if (!live) return { released: false, heldTooLong: 0 };
     await ctx.trx
-      .updateTable('crove_social.publish_hold')
+      .updateTable('ludy_social.publish_hold')
       .set({ released_by: userId, released_at: sql<Date>`pg_catalog.now()` })
       .where('org_id', '=', ctx.orgId)
       .where('released_at', 'is', null)
       .execute();
-    const heldTooLong = await failStale(ctx);
+    const heldTooLong = (await failStale(ctx)).length;
     ctx.audit({ hold_id: live.id, reason: live.reason, held_too_long: heldTooLong });
     await ctx.emit('social.publishing.released', { hold_id: live.id, held_too_long: heldTooLong });
     return { released: true, heldTooLong };
@@ -160,13 +167,67 @@ export const publishingHoldGet = defineQuery({
   handler: async (ctx): Promise<PublishHoldView> => {
     const live = await liveHold(ctx.trx, ctx.orgId);
     if (!live) return { held: false, hold: null };
-    // The name while they are a member (crove_kernel.member_profiles answers only members of the org).
+    // The name while they are a member (ludy_kernel.member_profiles answers only members of the org).
     const { rows } = await sql<{ email: string; display_name: string | null }>`
-      SELECT email, display_name FROM crove_kernel.member_profiles(${[live.held_by]}::uuid[])`.execute(ctx.trx);
+      SELECT email, display_name FROM ludy_kernel.member_profiles(${[live.held_by]}::uuid[])`.execute(ctx.trx);
     const who = rows[0];
     return { held: true, hold: { id: live.id, reason: live.reason, heldBy: live.held_by, heldByName: who ? (who.display_name ?? who.email) : null, heldAt: live.held_at.toISOString() } };
   },
 });
 
-export const publishHoldCommands = [publishingHold, publishingRelease];
-export const publishHoldQueries = [publishingHoldGet];
+// The late variants of one org, failed in one step (#3462). The publish sweep runs this for an org before it queues jobs, so a long switch-off or a worker outage that left many
+// posts more than an hour late fails them together and tells the team once (social.publishing.late_failed, with the count), where each job's own social.publish.begin would
+// send one failed notice and one chat alert per post. A live hold is left alone (the release fails them, with its own notice); begin keeps the same rule for a variant that
+// becomes late after the sweep looked, and for a job that was already queued, which fail one by one. One variant fails as before (social.variant.failed); two or more send
+// the one event, with the people to tell: the authors of the failed posts, besides the owners and admins.
+export const publishFailLate = defineCommand({
+  name: 'social.publish.fail_late',
+  input: z.strictObject({}),
+  // Its event goes to the team chat alert, a post outside Crove (#1578).
+  risk: 'R2',
+  sideEffect: 'external',
+  access: 'system',
+  handler: async (ctx): Promise<{ failed: number; variantIds: string[] }> => {
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới thực hiện được việc này');
+    // The hold's lock shared, as the publish steps take it: a hold in progress commits first, and a sweep every few seconds never blocks a publish step.
+    if (await publishingHeld(ctx)) return { failed: 0, variantIds: [] };
+    // At most LATE_FAIL_POSTS_MAX posts a run, so one transaction stays short; the next sweep goes on with the rest (and a huge backlog tells once per run).
+    const failed = await failStale(ctx, LATE_FAIL_POSTS_MAX);
+    const posts = [...new Set(failed.map((f) => f.postId))];
+    if (posts.length === 0) return { failed: 0, variantIds: [] };
+    ctx.audit({ failed: failed.length, posts: posts.length });
+    if (posts.length === 1) {
+      // One post (on one channel or several): the ordinary notice of each failed channel, as before, opening the post.
+      for (const f of failed) await ctx.emit('social.variant.failed', { post_id: f.postId, variant_id: f.variantId });
+    } else {
+      const authors = await ctx.trx.selectFrom('ludy_social.post').select('author_user_id').distinct().where('org_id', '=', ctx.orgId).where('id', 'in', posts).execute();
+      await ctx.emit('social.publishing.late_failed', {
+        count: posts.length,
+        authors: authors.map((a) => a.author_user_id).filter((u): u is string => u !== null).slice(0, LATE_FAILED_AUTHORS_MAX),
+      });
+    }
+    return { failed: failed.length, variantIds: failed.map((f) => f.variantId) };
+  },
+});
+
+// Whether the org has a variant over an hour late (outside a hold): the sweep asks this read first, so an org with nothing late costs one query and writes no audit row.
+export const publishHasLate = defineQuery({
+  name: 'social.publish.has_late',
+  input: z.strictObject({}),
+  access: 'system',
+  handler: async (ctx): Promise<boolean> => {
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới thực hiện được việc này');
+    // A live hold keeps its late variants for the release, which fails them with its own notice: nothing for the sweep to do (and fail_late would answer 0 and still write an audit row).
+    if (await liveHold(ctx.trx, ctx.orgId)) return false;
+    const { rows } = await sql<{ late: boolean }>`SELECT EXISTS (${staleSql(ctx.orgId, new Date(), null)}) AS late`.execute(ctx.trx);
+    return rows[0]?.late === true;
+  },
+});
+
+// The most posts one fail_late run fails, and the authors one combined notice names.
+export const LATE_FAIL_POSTS_MAX = 1000;
+// The authors one combined notice names, at most: the notice's people are these and the org's owners and admins.
+export const LATE_FAILED_AUTHORS_MAX = 100;
+
+export const publishHoldCommands = [publishingHold, publishingRelease, publishFailLate];
+export const publishHoldQueries = [publishingHoldGet, publishHasLate];

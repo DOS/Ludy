@@ -1,16 +1,25 @@
 // What the AI agents screens decide on their own (ADR-0029, issue #258).
 import { describe, expect, it } from 'vitest';
 import {
+  activeCoworkers,
   agentPermissions,
+  aiConnectionsVisible,
   budgetUsage,
   chartTree,
+  conversationOf,
+  conversationSummaryTitle,
   defaultScope,
+  deriveRoleKey,
   holderCandidates,
   isBudgetAmount,
   isEveryEntity,
-  scopeNames,
   meetingItemOf,
+  meetingSourceOf,
+  resolvePositionTitle,
+  resolveTemplateTitle,
+  scopeNames,
   socialPostOf,
+  stripAiSuffix,
   taskDueDay,
   taskDueFromDay,
   toggleScopeEntity,
@@ -114,6 +123,57 @@ describe('meetingItemOf', () => {
   });
 });
 
+describe('conversationOf', () => {
+  it('reads the Inbox thread id of a task made from a conversation (#3421), and nothing else', () => {
+    const id = '0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f4a5b';
+    expect(conversationOf({ type: 'kernel.conversation', id })).toBe(id);
+    expect(conversationOf({ type: 'kernel.conversation', id, extra: 1 })).toBe(id);
+    expect(conversationOf({ type: 'social.post', id })).toBeNull();
+    expect(conversationOf({ type: 'kernel.conversation.reply', id })).toBeNull();
+    expect(conversationOf({ type: 'kernel.conversation', id: 'not-a-uuid' })).toBeNull();
+    expect(conversationOf({ type: 'kernel.conversation', id: 7 })).toBeNull();
+    expect(conversationOf({ type: 'kernel.conversation' })).toBeNull();
+    expect(conversationOf({})).toBeNull();
+    expect(conversationOf(null)).toBeNull();
+    expect(conversationOf(undefined)).toBeNull();
+    expect(conversationOf('kernel.conversation')).toBeNull();
+  });
+});
+
+describe('meetingSourceOf & conversationSummaryTitle', () => {
+  it('extracts meeting UUIDs from sourceRef cleanly', () => {
+    const id = '0198a0b4-3c5d-7e6f-8a9b-0c1d2e3f4a5b';
+    expect(meetingSourceOf({ type: 'meetings.meeting', id })).toBe(id);
+    expect(meetingSourceOf({ type: 'meetings.action_item', id })).toBeNull();
+    expect(meetingSourceOf({ type: 'meetings.meeting', id: 'bad' })).toBeNull();
+    expect(meetingSourceOf(null)).toBeNull();
+  });
+
+  it('picks conversation display label from subject, displayName, partyName, or channel', () => {
+    expect(
+      conversationSummaryTitle({
+        subject: 'Invoice #99',
+        contact: { displayName: 'Khách A', partyName: 'Công ty A' },
+        channel: { displayName: 'Mail' },
+      }),
+    ).toBe('Invoice #99');
+    expect(
+      conversationSummaryTitle({
+        subject: null,
+        contact: { displayName: null, partyName: 'Công ty B' },
+        channel: { displayName: 'Zalo OA' },
+      }),
+    ).toBe('Công ty B');
+    expect(
+      conversationSummaryTitle({
+        subject: null,
+        contact: { displayName: null, partyName: null },
+        channel: { displayName: 'Facebook Page' },
+      }),
+    ).toBe('Facebook Page');
+  });
+});
+
 describe('socialPostOf', () => {
   it("names the Social post a content agent's task is about (#1193), and nothing else", () => {
     const id = '0b5c6f7e-1d2a-4c3b-9e8f-7a6b5c4d3e2f';
@@ -168,5 +228,177 @@ describe('taskDueDay and taskDueFromDay', () => {
     expect(taskDueDay(dst, 'Australia/Sydney')).toBe('2026-04-04');
     expect(taskDueFromDay('', 'Asia/Ho_Chi_Minh')).toBeNull();
     expect(taskDueDay(null, 'Asia/Ho_Chi_Minh')).toBe('');
+  });
+});
+
+describe('activeCoworkers (#3594)', () => {
+  const templateModules = new Map([
+    ['finance.chief_accountant', 'finance'],
+    ['social.content_manager', 'social'],
+    ['crm.scheduler', 'crm'],
+  ]);
+
+  it('always includes Vy, shows Ly/Dy/Uy when their modules are on, and never shows Hy', () => {
+    expect(activeCoworkers({ modules: ['kernel'], agents: [], templateModules, killSwitches: [] }).map((c) => c.key)).toEqual(['gm']);
+    expect(activeCoworkers({ modules: ['kernel', 'finance'], agents: [], templateModules, killSwitches: [] }).map((c) => c.key)).toEqual(['gm', 'finance']);
+    const all = activeCoworkers({
+      modules: ['kernel', 'finance', 'hr', 'crm', 'social', 'ads'],
+      agents: [],
+      templateModules,
+      killSwitches: [],
+    });
+    expect(all.map((c) => [c.key, c.name])).toEqual([
+      ['gm', 'Vy'],
+      ['finance', 'Ly'],
+      ['sales', 'Dy'],
+      ['marketing', 'Uy'],
+    ]);
+  });
+
+  it('uses active renamed org-chart agent name, kill switch state, and most specific budget', () => {
+    const out = activeCoworkers({
+      modules: ['kernel', 'finance', 'social'],
+      agents: [{ id: 'a-fin', templateKey: 'finance.chief_accountant', displayName: 'Chị Ly', status: 'active' }],
+      templateModules,
+      killSwitches: [{ scope: 'module', target: 'social' }],
+      budgets: [
+        { scope: 'org', target: '*', monthlyLimit: '500000', spent: '100000', warnPercent: 80, hardStop: true },
+        { scope: 'module', target: 'finance', monthlyLimit: '200000', spent: '50000', warnPercent: 80, hardStop: true },
+      ],
+    });
+    const fin = out.find((c) => c.key === 'finance');
+    const mkt = out.find((c) => c.key === 'marketing');
+    expect(fin?.name).toBe('Chị Ly');
+    expect(fin?.stopped).toBe(false);
+    expect(fin?.stopState).toBe('running');
+    expect(fin?.budget?.monthlyLimit).toBe('200000');
+    expect(mkt?.stopped).toBe(true);
+    expect(mkt?.stopState).toBe('stopped');
+    expect(mkt?.budget?.scope).toBe('org');
+  });
+
+  it('keeps the oldest non-retired agent name even when paused, matching coworker-names', () => {
+    const out = activeCoworkers({
+      modules: ['kernel', 'finance'],
+      agents: [
+        { id: 'a-retired', templateKey: 'finance.chief_accountant', displayName: 'Tên cũ', status: 'retired' },
+        { id: 'a-paused', templateKey: 'finance.chief_accountant', displayName: 'Chị Ly 1', status: 'paused' },
+        { id: 'a-active', templateKey: 'finance.chief_accountant', displayName: 'Chị Ly 2', status: 'active' },
+      ],
+      templateModules,
+      killSwitches: [],
+    });
+    expect(out.find((c) => c.key === 'finance')?.name).toBe('Chị Ly 1');
+  });
+
+  it('distinguishes partial kill switches from full coworker stops', () => {
+    const out = activeCoworkers({
+      modules: ['kernel', 'finance', 'hr', 'crm', 'conversations', 'social'],
+      agents: [{ id: 'a-crm', templateKey: 'crm.scheduler', displayName: 'Dy', status: 'active' }],
+      templateModules,
+      killSwitches: [
+        { scope: 'module', target: 'hr' },
+        { scope: 'agent', target: 'a-crm' },
+        { scope: 'module', target: 'social' },
+      ],
+    });
+    const fin = out.find((c) => c.key === 'finance');
+    const sales = out.find((c) => c.key === 'sales');
+    const mkt = out.find((c) => c.key === 'marketing');
+    expect(fin?.stopState).toBe('partial');
+    expect(fin?.stopped).toBe(false);
+    expect(sales?.stopState).toBe('partial');
+    expect(sales?.stopped).toBe(false);
+    expect(mkt?.stopState).toBe('stopped');
+    expect(mkt?.stopped).toBe(true);
+  });
+
+  it('ranks a spent hard-stop org budget ahead of an unused module budget and keeps all matching budgets', () => {
+    const out = activeCoworkers({
+      modules: ['kernel', 'finance'],
+      agents: [],
+      templateModules,
+      killSwitches: [],
+      budgets: [
+        { scope: 'module', target: 'finance', monthlyLimit: '200000', spent: '0', warnPercent: 80, hardStop: true },
+        { scope: 'org', target: '*', monthlyLimit: '500000', spent: '500000', warnPercent: 80, hardStop: true },
+      ],
+    });
+    const fin = out.find((c) => c.key === 'finance');
+    expect(fin?.budget?.scope).toBe('org');
+    expect(fin?.budgets.map((b) => b.scope)).toEqual(['org', 'module']);
+  });
+
+  it('marks Vy partially stopped when notes remain active, maps conversations budget target, and keeps renamed name across disabled sibling modules', () => {
+    const out = activeCoworkers({
+      modules: ['kernel', 'notes', 'conversations'],
+      agents: [{ id: 'a-crm', templateKey: 'crm.scheduler', displayName: 'Dy CRM', status: 'active' }],
+      templateModules,
+      killSwitches: [{ scope: 'module', target: 'kernel' }],
+      budgets: [{ scope: 'module', target: 'conversation', monthlyLimit: '150000', spent: '150000', warnPercent: 80, hardStop: true }],
+    });
+    const vy = out.find((c) => c.key === 'gm');
+    const sales = out.find((c) => c.key === 'sales');
+    expect(vy?.stopState).toBe('partial');
+    expect(vy?.stopped).toBe(false);
+    expect(sales?.name).toBe('Dy CRM');
+    expect(sales?.budget?.monthlyLimit).toBe('150000');
+
+    const fullStopVy = activeCoworkers({
+      modules: ['kernel', 'notes'],
+      agents: [],
+      templateModules,
+      killSwitches: [
+        { scope: 'module', target: 'kernel' },
+        { scope: 'module', target: 'notes' },
+      ],
+    }).find((c) => c.key === 'gm');
+    expect(fullStopVy?.stopState).toBe('stopped');
+    expect(fullStopVy?.stopped).toBe(true);
+  });
+
+  it('includes finance-metered budget on Ly when HR is enabled without Finance', () => {
+    const out = activeCoworkers({
+      modules: ['kernel', 'hr'],
+      agents: [],
+      templateModules,
+      killSwitches: [],
+      budgets: [{ scope: 'module', target: 'finance', monthlyLimit: '10', spent: '10', warnPercent: 80, hardStop: true }],
+    });
+    const ly = out.find((c) => c.key === 'finance');
+    expect(ly?.coveredModules).toEqual(['hr']);
+    expect(ly?.budget?.monthlyLimit).toBe('10');
+  });
+});
+
+describe('deriveRoleKey and localized labels (#3594)', () => {
+  it('derives valid unique kernel role keys from Vietnamese position titles', () => {
+    const key1 = deriveRoleKey('Đọc hóa đơn & công nợ', 'finance', []);
+    expect(key1).toBe('finance.doc_hoa_don_cong_no');
+    expect(key1).toMatch(/^[a-z][a-z0-9_.]*$/);
+    const key2 = deriveRoleKey('Đọc hóa đơn & công nợ', 'finance', [key1]);
+    expect(key2).toBe('finance.doc_hoa_don_cong_no_2');
+    expect(deriveRoleKey('---', 'ads')).toBe('ads.position');
+    expect(deriveRoleKey('a'.repeat(150), 'kernel').length).toBeLessThanOrEqual(100);
+  });
+
+  it('translates seeded template and position titles and strips legacy (AI) suffix', () => {
+    const t = (k: 'finance_chief_accountant' | 'social_content_manager' | 'crm_scheduler' | 'kernel_member_vy') =>
+      ({
+        finance_chief_accountant: 'Chief accountant',
+        social_content_manager: 'Content manager',
+        crm_scheduler: 'Booking coordinator',
+        kernel_member_vy: 'Personal Vy',
+      })[k];
+    expect(resolveTemplateTitle('finance.chief_accountant', 'Kế toán trưởng (AI)', t)).toBe('Chief accountant');
+    expect(resolvePositionTitle('Điều phối lịch hẹn (AI)', t)).toBe('Booking coordinator');
+    expect(resolvePositionTitle('Custom lead (AI)', t)).toBe('Custom lead');
+    expect(stripAiSuffix('Kiểm toán viên (ai)')).toBe('Kiểm toán viên');
+  });
+
+  it('gates AI connections visibility strictly on mcpEnabled === true', () => {
+    expect(aiConnectionsVisible(true)).toBe(true);
+    expect(aiConnectionsVisible(false)).toBe(false);
+    expect(aiConnectionsVisible(undefined)).toBe(false);
   });
 });

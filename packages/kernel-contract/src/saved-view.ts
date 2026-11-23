@@ -4,9 +4,9 @@
 // op, value }] }`, at most 8 conditions, all ANDed. The scope registry below says, per scope, which fields exist, which
 // operators each takes and what value each operator carries, so the app and the server cannot disagree, and a stored
 // view cannot name a field the server does not know. The server turns an AST into a `where` (saved-view-filter.ts in
-// @crove/kernel), so a view only ever narrows what row-level security already lets the member read.
+// @ludy/kernel), so a view only ever narrows what row-level security already lets the member read.
 import { z } from 'zod';
-import { zId, zLocalDate } from './schemas.ts';
+import { zId, zLocalDate, zTaskStatus } from './schemas.ts';
 
 export const FILTER_AST_VERSION = 1;
 export const FILTER_MAX_CONDITIONS = 8;
@@ -59,6 +59,17 @@ const PARTY_FIELDS = {
   created: { label: 'Ngày tạo', ops: { within_last_days: days } },
 } as const satisfies Record<string, FieldSpec>;
 
+// Tasks (#2610, #2227): team tasks across /tasks and project boards. `assignee` is a position id, `is_me` the positions
+// held by the caller (plus unassigned tasks for an org owner), and `tainted` isolates AI-proposed or external tasks.
+const TASK_FIELDS = {
+  search: { label: 'Tìm kiếm', ops: { contains: text } },
+  status: { label: 'Trạng thái', ops: { is: zTaskStatus, in: z.array(zTaskStatus).min(1).max(6) } },
+  assignee: { label: 'Vị trí phụ trách', ops: { is: zId, is_me: none, is_empty: none } },
+  due: { label: 'Hạn hoàn thành', ops: { before: zLocalDate, after: zLocalDate, overdue: none, within_next_days: days, is_empty: none } },
+  tainted: { label: 'Nội dung bên ngoài', ops: { is: yesNo } },
+  created: { label: 'Ngày tạo', ops: { within_last_days: days } },
+} as const satisfies Record<string, FieldSpec>;
+
 interface ScopeSpec {
   fields: Readonly<Record<string, FieldSpec>>;
   /** The fields a view may sort by. */
@@ -68,6 +79,7 @@ interface ScopeSpec {
 export const SAVED_VIEW_SCOPES = {
   'crm.deal': { fields: DEAL_FIELDS, sortable: ['created', 'name', 'amount', 'expected_close', 'updated'] },
   'crm.party': { fields: PARTY_FIELDS, sortable: ['created', 'name', 'updated'] },
+  'kernel.task': { fields: TASK_FIELDS, sortable: ['due', 'created', 'updated', 'title'] },
 } as const satisfies Record<string, ScopeSpec>;
 
 export type SavedViewScope = keyof typeof SAVED_VIEW_SCOPES;

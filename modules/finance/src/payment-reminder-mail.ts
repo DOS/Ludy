@@ -5,7 +5,7 @@
 // at the moment of the send. The Reply-To is the org's inbound address when the deployment receives mail, so the customer's answer
 // reaches the Inbox.
 import { z } from 'zod';
-import { PAYMENT_REMINDER_TEXT_MAX, zId } from '@crove/kernel-contract';
+import { PAYMENT_REMINDER_TEXT_MAX, zId } from '@ludy/kernel-contract';
 import { formatAmount, formatDate, escapeHtml, oneLine, type RenderedMail } from './missing-invoices.ts';
 
 export const PAYMENT_REMINDER_TEMPLATE = 'finance.payment_reminder';

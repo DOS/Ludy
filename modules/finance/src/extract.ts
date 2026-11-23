@@ -1,13 +1,13 @@
 // Worker job: read a received file, extract the invoice, run deterministic checks and raise a proposal.
 // Files are parsed in crove-extract (plan §7.6, External-tenant gate T12); its answer is untrusted, validated
-// against @crove/extract-contract by the client and checked again here before it becomes a proposal.
+// against @ludy/extract-contract by the client and checked again here before it becomes a proposal.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { ExtractClient, ExtractFailure } from '@crove/extract-contract';
-import type { UsageMetric } from '@crove/db';
-import { PARTY_BANK_ACCOUNT_MAX, zId, zLocalDate, zPurchaseProposal, zRelatedInvoiceRef, type DocumentDirection, type PurchaseProposal, type RelatedInvoiceRef } from '@crove/kernel-contract';
-import { defineQuery, readVerified, sha256Hex, type BlobStore, type QueryContext, type Runtime } from '@crove/kernel-runtime';
-import { AiBudgetExhaustedError, AiNotConfiguredError, AmountFormatError, aiCost, withAiScope, type AiMeter, type InvoiceReader } from '@crove/agent';
+import type { ExtractClient, ExtractFailure } from '@ludy/extract-contract';
+import type { UsageMetric } from '@ludy/db';
+import { PARTY_BANK_ACCOUNT_MAX, zId, zLocalDate, zPurchaseProposal, zRelatedInvoiceRef, type DocumentDirection, type PurchaseProposal, type RelatedInvoiceRef } from '@ludy/kernel-contract';
+import { defineQuery, readVerified, sha256Hex, type BlobStore, type QueryContext, type Runtime } from '@ludy/kernel-runtime';
+import { AiBudgetExhaustedError, AiNotConfiguredError, AmountFormatError, aiCost, withAiScope, type AiMeter, type InvoiceReader } from '@ludy/agent';
 import { journalMemo } from './memo.ts';
 import { BOOK_CURRENCY, convertInvoice, type ForeignAmounts } from './domain/foreign-currency.ts';
 
@@ -17,6 +17,7 @@ import { loadOwnTaxCodes, readSeller } from './own-tax-code.ts';
 import { rulesForSuggestion } from './categorization.ts';
 import { HISTORY_WINDOW, anomalyChecks, type VendorHistory } from './domain/anomaly.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
+import { booksOn } from './payroll-posting.ts';
 import {
   bookableLines,
   classificationCheck,
@@ -34,7 +35,7 @@ import {
   type InvoiceCheck,
   type LearnedRule,
   type ParsedInvoice,
-} from '@crove/l10n-vn';
+} from '@ludy/l10n-vn';
 
 // The file to read and whether this run should happen: `version` names a pending re-extraction (issue #40), which
 // runs only while that version is still pending; without it, the first extraction runs only if the file has none.
@@ -44,7 +45,7 @@ export const fileForExtraction = defineQuery({
   access: 'system',
   handler: async (ctx, input) => {
     const file = await ctx.trx
-      .selectFrom('crove_kernel.file')
+      .selectFrom('ludy_kernel.file')
       .select(['id', 'filename', 'content_type', 'storage_key', 'generation', 'sha256', 'upload_entity_id', 'original_deleted_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.fileId)
@@ -53,7 +54,7 @@ export const fileForExtraction = defineQuery({
     // the extraction, order, income and bank statement readers all end here, as for a file that is not there.
     if (file?.original_deleted_at) return null;
     let query = ctx.trx
-      .selectFrom('crove_kernel.extraction')
+      .selectFrom('ludy_kernel.extraction')
       .select(['status', 'legal_entity_id'])
       .where('org_id', '=', ctx.orgId)
       .where('file_id', '=', input.fileId);
@@ -63,7 +64,7 @@ export const fileForExtraction = defineQuery({
     // "Dừng AI" (#886): a kill switch engaged for the org, or for the finance module, stops the AI reads of PDFs and
     // images; e-invoice XML is parsed without AI and goes on.
     const stopped = await ctx.trx
-      .selectFrom('crove_kernel.kill_switch')
+      .selectFrom('ludy_kernel.kill_switch')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('released_at', 'is', null)
@@ -71,11 +72,11 @@ export const fileForExtraction = defineQuery({
       .limit(1)
       .executeTakeFirst();
     // And the operator's switch for every org (#886).
-    const { rows: global } = await sql<{ on: boolean }>`SELECT crove_kernel.global_kill_switch_on('ai') AS on`.execute(ctx.trx);
+    const { rows: global } = await sql<{ on: boolean }>`SELECT ludy_kernel.global_kill_switch_on('ai') AS on`.execute(ctx.trx);
     // Waiting for the org's AI budget of the month (#2382): a deferral of the file that is not due yet, so a read that finds the
     // budget still spent adds nothing to the file's history.
     const waiting = await ctx.trx
-      .selectFrom('crove_kernel.usage_deferral')
+      .selectFrom('ludy_kernel.usage_deferral')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('subject_type', '=', 'file')
@@ -91,9 +92,11 @@ export const fileForExtraction = defineQuery({
 });
 
 export interface InvoiceLookup {
-  // 'sale' when the seller is the legal entity the invoice is read in or one of its branches (its tax code, which is crove_kernel.tenant.tax_code for the default entity,
+  // 'sale' when the seller is the legal entity the invoice is read in or one of its branches (its tax code, which is ludy_kernel.tenant.tax_code for the default entity,
   // #313, #686), or another entity of the org that the buyer is not (#2502: a sale that is booked in the issuing entity's books, refused in this one).
   direction: DocumentDirection;
+  // The books regime the sale is posted under on the invoice's issue date ('tt133', 'tt99'); set only for a sale whose issue date was asked for (#3712 slice 4).
+  regime?: string;
   vendorDefault: string | null;
   // The learned account rules of the vendor and of every vendor (#1399), for a purchase; none for a sale.
   learnedRules?: LearnedRule[];
@@ -122,17 +125,17 @@ const DUPLICATE_CHECK: Readonly<InvoiceCheck> = Object.freeze({ id: 'duplicate',
 
 // What the books remember of a vendor (#2380): the totals, the line unit prices and the bank accounts of its last
 // HISTORY_DOCUMENTS invoices in force, newest first, without the invoice being read (a re-reading of it is not its own
-// history). The bank accounts are those its earlier proposals carried.
+// history). The bank accounts are those its earlier proposals carried, from an XML or a PDF read but not a photo (#2426).
 async function vendorHistory(ctx: QueryContext, partyId: string, current: { series: string; number: string }): Promise<VendorHistory> {
   const documents = await ctx.trx
-    .selectFrom('crove_finance.purchase_document as d')
+    .selectFrom('ludy_finance.purchase_document as d')
     .select(['d.id', 'd.total', 'd.proposal_id'])
     .where('d.org_id', '=', ctx.orgId)
     .where('d.party_id', '=', partyId)
     .where('d.direction', '=', 'purchase')
     .where((eb) => eb.not(eb.and([eb('d.invoice_series', '=', current.series), eb('d.invoice_number', '=', current.number)])))
     .where(({ not, exists, selectFrom }) =>
-      not(exists(selectFrom('crove_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
+      not(exists(selectFrom('ludy_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
     )
     .orderBy('d.invoice_date', 'desc')
     .orderBy('d.id', 'desc')
@@ -141,7 +144,7 @@ async function vendorHistory(ctx: QueryContext, partyId: string, current: { seri
   if (documents.length === 0) return { totals: [], prices: [], bankAccounts: [] };
   const order = new Map(documents.map((d, i) => [d.id, i]));
   const lines = await ctx.trx
-    .selectFrom('crove_finance.purchase_line as l')
+    .selectFrom('ludy_finance.purchase_line as l')
     .select(['l.document_id', 'l.line_no', 'l.description', 'l.unit_price'])
     .where('l.org_id', '=', ctx.orgId)
     .where('l.document_id', 'in', documents.map((d) => d.id))
@@ -153,8 +156,9 @@ async function vendorHistory(ctx: QueryContext, partyId: string, current: { seri
     proposalIds.length === 0
       ? []
       : await ctx.trx
-          .selectFrom('crove_kernel.proposal')
-          .select(['id', sql<string | null>`payload #>> '{seller,bankAccount}'`.as('account')])
+          .selectFrom('ludy_kernel.proposal')
+          // An account a photo gave is left out: nothing in the document confirms the model read it right (one read from a PDF was checked against its text, one from an XML was printed by the seller's software).
+          .select(['id', sql<string | null>`CASE WHEN payload ->> 'extractionMethod' IN ('einvoice_xml', 'pdf_text_ai') THEN payload #>> '{seller,bankAccount}' END`.as('account')])
           .where('org_id', '=', ctx.orgId)
           .where('id', 'in', proposalIds)
           .execute();
@@ -184,6 +188,8 @@ export const purchaseLookup = defineQuery({
     legalEntityId: zId.optional(),
     // The buyer's tax code, to tell a purchase from another entity of the org (an invoice between two entities is a purchase in the buyer's books).
     buyerTaxCode: z.string().nullable().default(null),
+    // The invoice's issue date, to read the books regime the sale is posted under (#3712 slice 4); omitted, no regime is named.
+    issueDate: zLocalDate.optional(),
     // The amounts of the reading being recorded (an original, #2320), to tell whether they are the posted document's: in
     // the invoice's own currency when it is not VND (each side converts at its own rate, so the dong amounts may differ
     // while the invoice is the same), else the amounts booked.
@@ -201,7 +207,7 @@ export const purchaseLookup = defineQuery({
     const party =
       !sale && input.sellerTaxCode
         ? await ctx.trx
-            .selectFrom('crove_kernel.party')
+            .selectFrom('ludy_kernel.party')
             .select('id')
             .where('org_id', '=', ctx.orgId)
             .where('tax_code', '=', input.sellerTaxCode)
@@ -209,7 +215,7 @@ export const purchaseLookup = defineQuery({
         : undefined;
     const rule = party
       ? await ctx.trx
-          .selectFrom('crove_finance.vendor_account_rule')
+          .selectFrom('ludy_finance.vendor_account_rule')
           .select('debit_account')
           .where('org_id', '=', ctx.orgId)
           .where('party_id', '=', party.id)
@@ -219,7 +225,7 @@ export const purchaseLookup = defineQuery({
     // supplier not yet in the books has no document.
     const inForce = (series: string, number: string) => {
       let documents = ctx.trx
-        .selectFrom('crove_finance.purchase_document as d')
+        .selectFrom('ludy_finance.purchase_document as d')
         .select(['d.id', 'd.proposal_id', 'd.currency', 'd.subtotal', 'd.vat_amount', 'd.total', 'd.foreign_subtotal', 'd.foreign_vat_amount', 'd.foreign_total'])
         .where('d.org_id', '=', ctx.orgId)
         .where('d.direction', '=', sale ? 'sale' : 'purchase')
@@ -228,7 +234,7 @@ export const purchaseLookup = defineQuery({
         // A sale is unique per issuing entity (#2502): two entities of the org may use the same series and number.
         .$if(sale, (q) => q.where('d.legal_entity_id', '=', entityId))
         .where(({ not, exists, selectFrom }) =>
-          not(exists(selectFrom('crove_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
+          not(exists(selectFrom('ludy_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
         );
       if (party) documents = documents.where('d.party_id', '=', party.id);
       return sale || party ? documents.executeTakeFirst() : Promise.resolve(undefined);
@@ -236,7 +242,7 @@ export const purchaseLookup = defineQuery({
     const document = await inForce(input.series, input.number);
     const original = input.related ? await inForce(input.related.series, input.related.number) : undefined;
     const duplicates = await ctx.trx
-      .selectFrom('crove_kernel.proposal')
+      .selectFrom('ludy_kernel.proposal')
       .select(['id', 'status', sql<string | null>`payload ->> 'extractionMethod'`.as('method')])
       .where('org_id', '=', ctx.orgId)
       .where('kind', '=', 'finance.purchase')
@@ -248,10 +254,10 @@ export const purchaseLookup = defineQuery({
       .where(({ not, exists, selectFrom }) =>
         not(
           exists(
-            selectFrom('crove_kernel.extraction as xr')
+            selectFrom('ludy_kernel.extraction as xr')
               .select('xr.id')
-              .whereRef('xr.org_id', '=', 'crove_kernel.proposal.org_id')
-              .whereRef('xr.id', '=', 'crove_kernel.proposal.extraction_id')
+              .whereRef('xr.org_id', '=', 'ludy_kernel.proposal.org_id')
+              .whereRef('xr.id', '=', 'ludy_kernel.proposal.extraction_id')
               .where('xr.file_id', '=', input.fileId),
           ),
         ),
@@ -260,11 +266,11 @@ export const purchaseLookup = defineQuery({
       .where(({ not, exists, selectFrom }) =>
         not(
           exists(
-            selectFrom('crove_finance.purchase_document as d')
-              .innerJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
+            selectFrom('ludy_finance.purchase_document as d')
+              .innerJoin('ludy_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
               .select('d.id')
-              .whereRef('d.org_id', '=', 'crove_kernel.proposal.org_id')
-              .whereRef('d.proposal_id', '=', 'crove_kernel.proposal.id'),
+              .whereRef('d.org_id', '=', 'ludy_kernel.proposal.org_id')
+              .whereRef('d.proposal_id', '=', 'ludy_kernel.proposal.id'),
           ),
         ),
       )
@@ -284,15 +290,17 @@ export const purchaseLookup = defineQuery({
       party ??
       (!sale && !input.sellerTaxCode && input.sellerName.trim()
         ? await ctx.trx
-            .selectFrom('crove_kernel.party')
+            .selectFrom('ludy_kernel.party')
             .select('id')
             .where('org_id', '=', ctx.orgId)
             .where('tax_code', 'is', null)
             .where((eb) => eb(eb.fn('lower', ['name']), '=', input.sellerName.trim().toLowerCase()))
             .executeTakeFirst()
         : undefined);
+    const regime = sale && input.issueDate ? (await booksOn(ctx, entityId, input.issueDate)).regime : undefined;
     return {
       direction: sale ? 'sale' : 'purchase',
+      ...(regime ? { regime } : {}),
       vendorDefault: rule?.debit_account ?? null,
       learnedRules: sale ? [] : await rulesForSuggestion(ctx, ruleParty?.id ?? null, entityId),
       duplicateDocumentId: document?.id ?? null,
@@ -401,7 +409,7 @@ interface ReadUsage {
   pages: number;
 }
 
-// The cost of the AI calls of one read lives with the meter (@crove/agent): each call records its own, so a read no
+// The cost of the AI calls of one read lives with the meter (@ludy/agent): each call records its own, so a read no
 // longer records AI cost itself. Re-exported for the callers that priced a read.
 export { aiCost };
 
@@ -652,6 +660,8 @@ export async function extractAndPropose(
     related: invoice.related ? { series: invoice.related.series, number: invoice.related.number } : null,
     buyerTaxCode: invoice.buyer.taxCode ? (parseTaxCode(invoice.buyer.taxCode)?.normalized ?? invoice.buyer.taxCode) : null,
     ...(file.legalEntityId ? { legalEntityId: file.legalEntityId } : {}),
+    // Only a well-formed date: a malformed one must not fail the lookup (the invoice's own checks name it).
+    ...(zLocalDate.safeParse(invoice.issueDate).success ? { issueDate: invoice.issueDate } : {}),
   };
   const lookup = await deps.runtime.query<InvoiceLookup>('finance.extraction.lookup', { fileId, ...lookupInput }, { actor, orgId });
 
@@ -728,7 +738,8 @@ export async function extractAndPropose(
       ...(converted ? { foreign: { ...converted.foreign, source: 'invoice' as const } } : {}),
     },
     lines,
-    journal: sale ? buildSalesJournal(lines, booked.vatTotal, memo) : buildPurchaseJournal(lines, booked.vatTotal, memo),
+    ...(sale && lookup.regime ? { regime: lookup.regime } : {}),
+    journal: sale ? buildSalesJournal(lines, booked.vatTotal, memo, lookup.regime) : buildPurchaseJournal(lines, booked.vatTotal, memo),
     checks,
     sourceFileId: fileId,
     ...(lookupHints.length > 0 ? { lookupHints } : {}),

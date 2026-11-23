@@ -1,7 +1,7 @@
 // The tax portal reconciliation screen (issue #465): who may import a list, which sections the outcomes fall into and
 // in what order, and when to poll. The kernel decides every rule; these only arrange its answer.
 import { z } from 'zod';
-import { MAX_IMPORT_BYTES, type MissingInvoiceStatusView, type PortalListDirection, type PortalReconciliation, type ReconcileOutcome } from '@crove/kernel-contract';
+import { MAX_IMPORT_BYTES, type MissingInvoiceStatusView, type PortalListDirection, type PortalReconciliation, type ReconcileOutcome } from '@ludy/kernel-contract';
 import { readSearch, type Defined } from './search.ts';
 import { periodChoiceOf } from './vat.ts';
 
@@ -30,7 +30,7 @@ export function canImportPortalList(role: string | null | undefined): boolean {
 // declared_late (#560) lists the invoices of earlier periods the VAT working declares in this one.
 export const SECTIONS: ReadonlyArray<{ outcome: ReconcileOutcome; folded: boolean }> = [
   { outcome: 'missing', folded: false },
-  { outcome: 'void_in_crove', folded: false },
+  { outcome: 'void_in_ludy', folded: false },
   { outcome: 'amount_mismatch', folded: false },
   { outcome: 'not_on_portal', folded: false },
   { outcome: 'in_inbox', folded: false },
@@ -54,8 +54,8 @@ export function outcomeTotal(summary: PortalReconciliation['summary'], outcome: 
   switch (outcome) {
     case 'missing':
       return summary.missing;
-    case 'void_in_crove':
-      return summary.voidInCrove;
+    case 'void_in_ludy':
+      return summary.voidInLudy;
     case 'amount_mismatch':
       return summary.amountMismatch;
     case 'not_on_portal':

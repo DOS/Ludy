@@ -10,9 +10,9 @@
 // balances into a locked month all say why. The same guard keeps the opening entry first (#366): an entry dated on or
 // before it answers BEFORE_OPENING_BALANCE (openingEntryError below).
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
-import { VIETNAM_TIME_ZONE, zLegalEntityChoice, zPeriodLockInput, zPeriodUnlockInput, type PeriodLockState } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { VIETNAM_TIME_ZONE, zLegalEntityChoice, zPeriodLockInput, zPeriodUnlockInput, type PeriodLockState } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { legalEntityError, resolveLegalEntity } from './legal-entity.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -22,7 +22,7 @@ const LOCKERS: readonly MemberRole[] = ['owner', 'admin'];
 // this clock, never the kernel process's: lock_period() refuses a month that has not ended by pg_catalog.now(), and a
 // late posting date may not be after this day (record.ts). now() is the transaction's start, one clock for every
 // kernel process (theirs may drift apart), and the same one the lock and the posting guard run under, so the two
-// rules cannot disagree around midnight. The SPA's hints use @crove/kernel-contract vietnamToday; the kernel decides.
+// rules cannot disagree around midnight. The SPA's hints use @ludy/kernel-contract vietnamToday; the kernel decides.
 export async function databaseToday(trx: QueryContext['trx']): Promise<string> {
   const { rows } = await sql<{ today: string }>`
     SELECT pg_catalog.to_char(pg_catalog.now() AT TIME ZONE ${VIETNAM_TIME_ZONE}::text, 'YYYY-MM-DD') AS today`.execute(trx);
@@ -39,9 +39,9 @@ export function shiftMonth(month: string, by: 1 | -1): string {
   return `${Math.floor(index / 12)}-${String((index % 12) + 1).padStart(2, '0')}`;
 }
 
-// An owner, or a holder of finance.period.unlock org-wide or for this entity (crove_finance.may_unlock_period, #1507).
+// An owner, or a holder of finance.period.unlock org-wide or for this entity (ludy_finance.may_unlock_period, #1507).
 async function mayUnlock(ctx: QueryContext, entity: string): Promise<boolean> {
-  const { rows } = await sql<{ may: boolean }>`SELECT crove_finance.may_unlock_period(${entity}::uuid) AS may`.execute(ctx.trx);
+  const { rows } = await sql<{ may: boolean }>`SELECT ludy_finance.may_unlock_period(${entity}::uuid) AS may`.execute(ctx.trx);
   return rows[0]?.may === true;
 }
 
@@ -50,7 +50,7 @@ async function mayUnlock(ctx: QueryContext, entity: string): Promise<boolean> {
 export async function periodLockedThrough(ctx: QueryContext, legalEntityId?: string): Promise<string | null> {
   const entity = await resolveLegalEntity(ctx, legalEntityId);
   const row = await ctx.trx
-    .selectFrom('crove_finance.period_lock')
+    .selectFrom('ludy_finance.period_lock')
     .select('locked_through')
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', entity)
@@ -62,17 +62,17 @@ export async function periodLockedThrough(ctx: QueryContext, legalEntityId?: str
 export async function periodLockState(ctx: QueryContext, legalEntityId?: string): Promise<PeriodLockState> {
   const entity = await resolveLegalEntity(ctx, legalEntityId);
   const row = await ctx.trx
-    .selectFrom('crove_finance.period_lock')
+    .selectFrom('ludy_finance.period_lock')
     .select(['locked_from', 'locked_through', 'updated_by', 'updated_at'])
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', entity)
     .executeTakeFirst();
   const lockedThrough = row?.locked_through ?? null;
-  // Who locked or unlocked last, by name while they are a member (crove_kernel.member_profiles answers only members).
+  // Who locked or unlocked last, by name while they are a member (ludy_kernel.member_profiles answers only members).
   let updatedBy: string | null = null;
   if (row?.updated_by) {
     const { rows } = await sql<{ email: string; display_name: string | null }>`
-      SELECT email, display_name FROM crove_kernel.member_profiles(${[row.updated_by]}::uuid[])`.execute(ctx.trx);
+      SELECT email, display_name FROM ludy_kernel.member_profiles(${[row.updated_by]}::uuid[])`.execute(ctx.trx);
     updatedBy = rows[0] ? (rows[0].display_name ?? rows[0].email) : null;
   }
   return {
@@ -165,7 +165,7 @@ export const periodLock = defineCommand({
     // the database clock (databaseToday above says why that clock), after the order, so a month out of order says which
     // month comes first.
     try {
-      await sql`SELECT crove_finance.lock_period(${`${input.month}-01`}::date, ${entity}::uuid)`.execute(ctx.trx);
+      await sql`SELECT ludy_finance.lock_period(${`${input.month}-01`}::date, ${entity}::uuid)`.execute(ctx.trx);
     } catch (error) {
       lockRefusal(error, input.month);
     }
@@ -194,7 +194,7 @@ export const periodUnlock = defineCommand({
     ctx.permissionEntity(entity);
     ctx.audit({ month: input.month, reason: input.reason, legalEntityId: entity });
     try {
-      await sql`SELECT crove_finance.unlock_period(${`${input.month}-01`}::date, ${entity}::uuid)`.execute(ctx.trx);
+      await sql`SELECT ludy_finance.unlock_period(${`${input.month}-01`}::date, ${entity}::uuid)`.execute(ctx.trx);
     } catch (error) {
       lockRefusal(error, input.month);
     }
@@ -308,8 +308,8 @@ export async function liveOpeningDate(ctx: QueryContext, legalEntityId?: string)
   const entity = await resolveLegalEntity(ctx, legalEntityId);
   const { rows } = await sql<{ opening: string | null }>`
     SELECT pg_catalog.max(o.entry_date)::text AS opening
-    FROM crove_finance.journal_entry o
+    FROM ludy_finance.journal_entry o
     WHERE o.org_id = ${ctx.orgId}::uuid AND o.legal_entity_id = ${entity}::uuid AND o.source_type = 'finance.opening_balance'
-      AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry r WHERE r.org_id = o.org_id AND r.reverses_entry_id = o.id)`.execute(ctx.trx);
+      AND NOT EXISTS (SELECT 1 FROM ludy_finance.journal_entry r WHERE r.org_id = o.org_id AND r.reverses_entry_id = o.id)`.execute(ctx.trx);
   return rows[0]?.opening ?? null;
 }

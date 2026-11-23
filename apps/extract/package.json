@@ -1,5 +1,5 @@
 {
-  "name": "@crove/extract",
+  "name": "@ludy/extract",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -14,12 +14,14 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@crove/extract-contract": "workspace:*",
-    "@crove/l10n-vn": "workspace:*",
+    "@ludy/extract-contract": "workspace:*",
+    "@ludy/l10n-vn": "workspace:*",
     "@xmldom/xmldom": "catalog:",
     "@hono/node-server": "catalog:",
+    "@pdf-lib/fontkit": "catalog:",
     "fast-xml-parser": "catalog:",
     "hono": "catalog:",
+    "pdf-lib": "catalog:",
     "postal-mime": "catalog:",
     "unpdf": "catalog:",
     "xml-crypto": "catalog:",

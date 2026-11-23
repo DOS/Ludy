@@ -4,20 +4,22 @@
 // created_xact_id). A session with raw SQL that writes the audit row itself and marks the proposal executed with nothing
 // posted is refused, and so is an entry for another proposal or one posted by an earlier transaction. The entry of the
 // reversal path (source kernel.proposal) and of the journal voucher path (a voucher naming the proposal) let the move
-// pass. A command that is not a ledger command needs no effect, and the move keeps the command as approved, in the system
-// context too. crove_finance.ledger_effect_recorded answers for the org of the context only. Part of the invariant suite:
-// keep it self-contained (package code under test, no helpers from outside test/invariant/). Set CROVE_TEST_ADMIN_URL to
-// a superuser URL; the run creates and drops its own database.
+// pass, and on cash_voucher an untagged voucher satisfies finance.voucher.record only while a pay-run-tagged voucher
+// satisfies finance.payroll_payment.record only (#2853). A command that is not a ledger command needs no effect, and the
+// move keeps the command as approved, in the system context too. crove_finance.ledger_effect_recorded answers for the org
+// of the context only. Part of the invariant suite: keep it self-contained (package code under test, no helpers from
+// outside test/invariant/). Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -32,11 +34,16 @@ const MIRRORED = JSON.stringify([
   { line_no: 1, account_code: '6422', debit: '0', credit: '100000' },
   { line_no: 2, account_code: '331', debit: '100000', credit: '0' },
 ]);
+const CASH_PAYMENT_LINES = JSON.stringify([
+  { line_no: 1, account_code: '334', debit: '100000', credit: '0' },
+  { line_no: 2, account_code: '1111', debit: '0', credit: '100000' },
+]);
 const suite = ADMIN ? describe : describe.skip;
 
 suite('ledger proposals executed only with their effect (#1842)', () => {
   const dbName = `crove_test_ledger_effect_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   let pool: pg.Pool;
@@ -45,7 +52,7 @@ suite('ledger proposals executed only with their effect (#1842)', () => {
   let otherOrg = '';
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -56,7 +63,7 @@ suite('ledger proposals executed only with their effect (#1842)', () => {
 
   // One transaction as crove_app in the owner's context; committed when commit is set, else rolled back.
   async function asOwner<T>(fn: (c: pg.Client) => Promise<T>, commit = false): Promise<{ ok: true; value: T } | { ok: false; code: string | undefined; message: string }> {
-    const c = new pg.Client({ connectionString: appUrl });
+    const c = createDbClient({ connectionString: appUrl }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -117,6 +124,19 @@ suite('ledger proposals executed only with their effect (#1842)', () => {
     );
     await post('finance.journal_voucher', rows[0]?.id as string)(c);
   };
+  // A cash payment voucher naming the proposal (tagged with a pay run or untagged), and its entry: the paths of
+  // finance.voucher.record and finance.payroll_payment.record (#2853).
+  const cashVoucher = (proposalId: string, payrollRunId: string | null) => async (c: pg.Client) => {
+    const { rows } = await c.query<{ id: string }>(
+      `INSERT INTO crove_finance.cash_voucher (org_id, voucher_type, number, voucher_date, cash_account, description, amount, proposal_id, payroll_run_id, payroll_payment_kind)
+       VALUES ($1, 'cash_payment', 0, '2026-10-15', '1111', 'ledger effect', 100000, $2, $3, $4) RETURNING id`,
+      [orgId, proposalId, payrollRunId, payrollRunId ? 'net_pay' : null],
+    );
+    await c.query(`SELECT crove_finance.post_journal_entry('2026-10-15'::date, 'ledger effect', 'finance.cash_voucher', $1::uuid, $2::jsonb)`, [
+      rows[0]?.id as string,
+      CASH_PAYMENT_LINES,
+    ]);
+  };
   const execute = (proposalId: string) => (c: pg.Client) =>
     c.query(`UPDATE crove_kernel.proposal SET status = 'executed', result = '{"ok": true}' WHERE org_id = $1 AND id = $2`, [orgId, proposalId]);
 
@@ -129,16 +149,17 @@ suite('ledger proposals executed only with their effect (#1842)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
     const worker = new URL(adminUrl);
-    worker.username = 'crove_worker';
+    worker.username = dbIds ? dbIds.roleName('crove_worker') : 'crove_worker';
     worker.password = 'test-worker-pw';
     workerUrl = worker.toString();
-    pool = createPool({ connectionString: appUrl, max: 2 });
+    pool = createDbPool({ connectionString: appUrl, max: 2 }, dbIds);
     const db = createDb(pool);
     const rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
     owner = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: 'owner@ledger-effect.test', name: null });
@@ -156,7 +177,7 @@ suite('ledger proposals executed only with their effect (#1842)', () => {
   });
 
   it('refuses to mark a ledger proposal executed with its audit row alone, nothing posted', async () => {
-    for (const command of ['finance.journal.reverse', 'finance.journal_voucher.record', 'finance.voucher.record', 'finance.purchase.record', 'finance.closing.record', 'finance.depreciation.record', 'finance.stock.close_period', 'finance.stock.count_confirm', 'finance.payroll_posting.record', 'finance.payroll_payment.record']) {
+    for (const command of ['finance.journal.reverse', 'finance.journal_voucher.record', 'finance.voucher.record', 'finance.purchase.record', 'finance.closing.record', 'finance.depreciation.record', 'finance.stock.close_period', 'finance.stock.count_confirm', 'finance.payroll_posting.record', 'finance.payroll_payment.record', 'finance.marketplace_settlement.record', 'finance.marketplace_payout.record', 'finance.marketplace_fee_clearing.record']) {
       const id = await approved(command);
       const outcome = await asOwner(async (c) => {
         await ran(command, id)(c);
@@ -215,7 +236,7 @@ suite('ledger proposals executed only with their effect (#1842)', () => {
     // The system context may change a pending proposal's command (the worker revises what it extracted); executing one
     // under another command would check the old command's row and effect, not the new one's.
     const asSystem = async (fn: (c: pg.Client) => Promise<unknown>) => {
-      const c = new pg.Client({ connectionString: workerUrl });
+      const c = createDbClient({ connectionString: workerUrl }, dbIds);
       await c.connect();
       try {
         await c.query('BEGIN');
@@ -264,5 +285,58 @@ suite('ledger proposals executed only with their effect (#1842)', () => {
       };
     });
     expect(answer).toEqual({ ok: true, value: { notLedger: true, own: true, otherOrg: false, otherOrgNotLedger: false } });
+  });
+
+  it('keeps plain cash vouchers and payroll payment vouchers on their own commands (#2853)', async () => {
+    const asked = async (c: pg.Client, proposalId: string, command: string) =>
+      (await c.query<{ v: boolean }>('SELECT crove_finance.ledger_effect_recorded($1::uuid, $2::uuid, $3) AS v', [orgId, proposalId, command])).rows[0]?.v;
+
+    // Positive controls (committed, so deferred cash_voucher_entry runs too): an untagged voucher satisfies finance.voucher.record,
+    // and a pay-run-tagged voucher satisfies finance.payroll_payment.record.
+    const plain = await approved('finance.voucher.record');
+    let plainRecorded: boolean | undefined;
+    const plainOk = await asOwner(async (c) => {
+      await cashVoucher(plain, null)(c);
+      plainRecorded = await asked(c, plain, 'finance.voucher.record');
+      await ran('finance.voucher.record', plain)(c);
+      return execute(plain)(c);
+    }, true);
+    expect(plainRecorded).toBe(true);
+    expect(plainOk).toMatchObject({ ok: true, value: { rowCount: 1 } });
+
+    const payroll = await approved('finance.payroll_payment.record');
+    let payrollRecorded: boolean | undefined;
+    const payrollOk = await asOwner(async (c) => {
+      await cashVoucher(payroll, randomUUID())(c);
+      payrollRecorded = await asked(c, payroll, 'finance.payroll_payment.record');
+      await ran('finance.payroll_payment.record', payroll)(c);
+      return execute(payroll)(c);
+    }, true);
+    expect(payrollRecorded).toBe(true);
+    expect(payrollOk).toMatchObject({ ok: true, value: { rowCount: 1 } });
+
+    // Cross cases: a_effect_proposal admits both voucher commands on crove_finance.cash_voucher, so the voucher insert and
+    // journal entry succeed, and crove_finance.ledger_effect_recorded refuses moving either proposal to executed with the other's tag.
+    const plainWithRun = await approved('finance.voucher.record');
+    let taggedVoucherRecorded: boolean | undefined;
+    const plainRefused = await asOwner(async (c) => {
+      await cashVoucher(plainWithRun, randomUUID())(c);
+      taggedVoucherRecorded = await asked(c, plainWithRun, 'finance.voucher.record');
+      await ran('finance.voucher.record', plainWithRun)(c);
+      return execute(plainWithRun)(c);
+    });
+    expect(taggedVoucherRecorded).toBe(false);
+    expect(plainRefused).toMatchObject({ ok: false, ...REFUSED });
+
+    const payrollUntagged = await approved('finance.payroll_payment.record');
+    let untaggedVoucherRecorded: boolean | undefined;
+    const payrollRefused = await asOwner(async (c) => {
+      await cashVoucher(payrollUntagged, null)(c);
+      untaggedVoucherRecorded = await asked(c, payrollUntagged, 'finance.payroll_payment.record');
+      await ran('finance.payroll_payment.record', payrollUntagged)(c);
+      return execute(payrollUntagged)(c);
+    });
+    expect(untaggedVoucherRecorded).toBe(false);
+    expect(payrollRefused).toMatchObject({ ok: false, ...REFUSED });
   });
 });

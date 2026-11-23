@@ -12,8 +12,8 @@ import { describe, expect, it } from 'vitest';
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const MODULES = join(ROOT, 'modules');
 const SKIPPED_DIRS = new Set(['node_modules', 'dist', 'build', 'coverage']);
-// A Crove schema named as a qualifier: crove_<name> followed by a dot.
-const SCHEMA = /\bcrove_([a-z][a-z0-9_]*)\./g;
+// A Crove or Ludy schema named as a qualifier: (crove|ludy)_<name> followed by a dot.
+const SCHEMA = /\b(?:crove|ludy)_([a-z][a-z0-9_]*)\./g;
 
 function sources(dir: string): string[] {
   const out: string[] = [];
@@ -69,14 +69,26 @@ describe('no cross-module SQL (plan §5.4)', () => {
 const KERNEL_DIRS = ['packages/kernel/src', 'packages/kernel-runtime/src', 'apps/kernel/src', 'packages/db/src'];
 // The kernel source files that name a module's schema, with the modules they name and why.
 const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why: string }> = {
-  'packages/db/src/generated/database.ts': { modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'social'], why: 'Kysely types of every table crove_tenant reads, generated (pnpm db:types); types only, no SQL' },
-  'packages/db/src/schema.ts': { modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'social'], why: 'refinements of the generated table types (CHECK unions, trigger-set columns); types only, no SQL' },
+  'packages/db/src/generated/database.ts': { modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'sign', 'social'], why: 'Kysely types of every table crove_tenant reads, generated (pnpm db:types); types only, no SQL' },
+  'packages/db/src/schema.ts': { modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'sign', 'social'], why: 'refinements of the generated table types (CHECK unions, trigger-set columns); types only, no SQL' },
+  'packages/kernel/src/agents.ts': {
+    modules: ['projects'],
+    why: 'kernel.projects_roadmap.otp_cleanup prunes expired/invalidated public roadmap OTP challenges older than 24 hours through crove_projects.cleanup_roadmap_otp_org (#4399, ADR-0053, ADR-0057) whether or not projects is switched on, so email addresses left behind before projects was turned off still expire nightly',
+  },
+  'packages/kernel/src/engage-view.ts': {
+    modules: ['ads', 'crm', 'social'],
+    why: "the Inbox card of an Engage proposal (E4 #3863) says what the proposal is about, read as the approver: a booking and its event type (crm), a quote and its customer (crm), a post and its variants (social) and a live ad launch with its draft and account (ads). The kernel cannot import a module and the card shows the thing to be changed, so it reads those rows by plain SQL, only for the commands of the twin list, in the approver's own context (RLS applies) and only for an owner or an admin",
+  },
+  'packages/kernel/src/meeting-platform.ts': {
+    modules: ['meetings'],
+    why: 'kernel.meeting_platform.recordings checks crove_meetings.meeting for a single overlapping visible meeting (#4123 Step 3) only when meetings is installed (ctx.installed) and enabled (apps_off), in the caller transaction under meeting_read RLS',
+  },
   'packages/kernel/src/member-vy.ts': {
     modules: ['meetings'],
     why: "the recorder's own Vy reads the recorder's own recording through the audited kernel.member_vy.meeting_audio.open, which calls the definer crove_meetings.audio_for_member_vy (#2578): a run exists only after meetings.transcript.start (a meetings command, registered only when meetings is installed), and the definer refuses anything but that run's own meeting",
   },
   'packages/kernel/src/offboarding.ts': {
-    modules: ['ads', 'crm', 'finance', 'hr', 'notes', 'social'],
+    modules: ['ads', 'crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'sign', 'social'],
     why: 'the org export lists every table of every schema (its manifest needs a part per table): a module left out exports its old rows or none, and its data stays, as ADR-0031 says; hr is read only by the owner-run people export (#2676)',
   },
   'packages/kernel/src/parties.ts': {
@@ -84,14 +96,19 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
     why: "a party's kind changes only while nothing points at it (#2438): the check reads the books and the deals, bookings and rules that name the party, whatever is installed now, because an earlier install of finance or crm left rows that still read its kind (PARTY_KIND_HOLDERS; a database test lists every foreign key to party)",
   },
   'packages/kernel/src/personal-data.ts': {
-    modules: ['crm', 'finance', 'hr', 'meetings', 'notes', 'social'],
-    why: 'the personal-data registry, find and erase: an erasure reaches data an earlier install of the module left, whatever is installed now; private notes and to-dos are counted through crove_notes.private_matches (#1678); the payroll people (#2530) are registered here and their sealed columns listed; the meeting columns (#2579) are registered, and erased by deleting the meeting',
+    modules: ['crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'sign', 'social'],
+    why: 'the personal-data registry, find and erase: an erasure reaches data an earlier install of the module left, whatever is installed now; private notes and to-dos are counted through crove_notes.private_matches (#1678); the payroll people (#2530) are registered here and their sealed columns listed; the meeting columns (#2579) are registered, and erased by deleting the meeting; project names and descriptions (#2591) are redacted in place; unsealed crove_sign.signer rows are deleted on erasure via crove_sign.personal_erase_unsealed_signers (#3427), eSign OTP emails via crove_sign.personal_erase_otp (#3323), and matching crove_sign.kyc_check findings via crove_sign.personal_data_erase_kyc_check (#4443)',
+  },
+  'packages/kernel/src/queries.ts': {
+    modules: ['sign'],
+    why: 'kernel.file.get checks crove_sign.can_read_sign_file for sign_document, sign_sealed, sign_certificate and sign_attachment rows (#3553, #3818) whatever is installed now, so a confidential HR contract PDF, certificate or signer attachment stored by an earlier install of sign stays restricted to owners, admins and its creator even when sign is off',
   },
   'apps/kernel/src/meta-deletion.ts': { modules: ['ads'], why: "Meta's one data deletion callback fans a verified request out to the Ads side (crove_ads.deletion_request) as well as to the conversations (CV6, #2305): the Ads definers are called only for a secret the deployment holds for the Ads app" },
   'apps/kernel/src/ads-deletion.ts': { modules: ['ads'], why: "Meta's data deletion callback of the Ads connection: its signed request, the status page, and the worker's erasure of the accounts a request names, only when ads is installed (http.ts, worker.ts)" },
   'apps/kernel/src/ads-revoke.ts': { modules: ['ads'], why: "the revoke at the platform of a closed ads connection's token (#2296, W2-1): the sweep's worker-only definers (crove_ads.token_revoke_due, token_seal_get, token_revoke_expire, write_orphans), worked and scheduled only when ads is installed (worker.ts)" },
   'apps/kernel/src/ads-worker.ts': { modules: ['ads'], why: "the AI coworker's campaign draft job and the worker's sweep of requests nobody answered (crove_ads.campaign_request_sweep, the worker login's definer), worked and scheduled only when ads is installed (worker.ts)" },
   'apps/kernel/src/ads-sync.ts': { modules: ['ads'], why: 'the ad account sync, its hourly sweep and the prune of old runs, worked and scheduled only when ads is installed (worker.ts)' },
+  'apps/kernel/src/bank-feed-hook.ts': { modules: ['finance'], why: "the per-connection bank feed webhook (Tingee): the route's lookup and put, and the worker's claim and verification, go through finance definers, mounted and worked only when finance is installed (http.ts, worker.ts)" },
   'apps/kernel/src/bank-feed-webhook.ts': { modules: ['finance'], why: 'the bank feed notice route queues the account ids through a finance definer, mounted only when finance is installed (http.ts)' },
   'apps/kernel/src/bank-feed-sync.ts': { modules: ['finance'], why: 'the bank feed sync and its daily sweep, worked and scheduled only when finance is installed (worker.ts)' },
   'apps/kernel/src/bio-page.ts': { modules: ['social'], why: 'public bio page routes, registered only when social is installed (http.ts)' },
@@ -100,24 +117,41 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'apps/kernel/src/calendar-feed.ts': { modules: ['social'], why: 'the post calendar feed, served only when social is installed (http.ts)' },
   'apps/kernel/src/crm-worker.ts': { modules: ['crm'], why: 'the contact import staging sweep, worked and scheduled only when crm is installed (worker.ts)' },
   'apps/kernel/src/credential-reseal.ts': { modules: ['meetings', 'social'], why: 'the chat alert targets are resealed only when social is installed; media keys are resealed only when meetings is installed; the channel credentials are kernel work' },
+  'apps/kernel/src/marketplace-push-hook.ts': { modules: ['finance'], why: "the route's half of a marketplace push (#4346, #4315): the lookup of a hook by its key's hash and the put of the raw push, both crove_finance definers of the API login, run only when finance is installed (http.ts)" },
+  'apps/kernel/src/marketplace-push-relay.ts': { modules: ['finance'], why: "the worker's relay of a marketplace's signed push (#4327, #4315): the worker-only crove_finance definers that claim and delete the waiting pushes, count a refused one and sweep the old ones, run only when finance is installed (worker.ts)" },
   'apps/kernel/src/marketplace-retention.ts': { modules: ['finance'], why: "the nightly deletion of the original file and the per-order amounts of a decided marketplace report (#2516, ADR-0045 point 8): the worker-only crove_finance definers, run only when finance is installed (worker.ts)" },
+  'apps/kernel/src/meeting-hook-sweep.ts': { modules: ['meetings'], why: "the minute sweep of a member's minutes webhook (A6, #3164): the worker-only crove_meetings definer that lists the deliveries waiting, only when meetings is installed (worker.ts)" },
+  'apps/kernel/src/meetings-series-nudge.ts': { modules: ['meetings'], why: "the 5 minute sweep of the series nudge (#3542): the worker-only crove_meetings definer that lists the nudges due, worked and scheduled only when meetings is installed (worker.ts)" },
+  'apps/kernel/src/meeting-chat-sweep.ts': { modules: ['meetings'], why: "the minute sweep of the minutes posted to Slack and Teams (B4, #3168): the worker-only crove_meetings definer that lists the posts waiting, only when meetings is installed (worker.ts)" },
+  'apps/kernel/src/meetings-morning.ts': { modules: ['meetings'], why: "the 5 minute sweep of the opt-in morning notice of the day's meetings (#3955): the worker-only crove_meetings definer that lists the members due, worked and scheduled only when meetings is installed (worker.ts)" },
   'apps/kernel/src/meetings-retention.ts': { modules: ['meetings'], why: "the nightly shred of meeting audio, video and text and the sweep of their objects, the shred references and their replay (#2579): the worker-only crove_meetings definers, worked, timed and replayed only when meetings is installed (worker.ts, kernel.ts)" },
   'apps/kernel/src/feeds.ts': { modules: ['social'], why: 'the RSS feed sweep, timed only when social is installed (worker.ts)' },
+  'apps/kernel/src/misa-amis-callback.ts': { modules: ['finance'], why: "MISA AMIS's callback hands the signed results to a finance machinery table through one orgless definer (crove_finance.misa_amis_callback_enqueue), mounted only when finance is installed (http.ts)" },
+  'apps/kernel/src/misa-amis-callback-relay.ts': { modules: ['finance'], why: 'the worker relay takes the callback results with crove_finance.misa_amis_callback_claim (worker login only) and records them through finance.misa_amis.push_record' },
   'apps/kernel/src/missing-invoice-mail.ts': { modules: ['finance'], why: 'the missing invoice reminders, timed only when finance is installed (worker.ts)' },
   'apps/kernel/src/notes-worker.ts': { modules: ['notes'], why: 'the notes jobs, worked and scheduled only when notes is installed (worker.ts)' },
+  'apps/kernel/src/projects-public-roadmap.ts': { modules: ['projects'], why: 'the orgless public roadmap board view, OTP request/verify, idea submission, vote toggle, and unsubscribe routes (crove_projects.public_roadmap_* definers, #4399), registered only when projects is installed (http.ts)' },
+  'apps/kernel/src/projects-recurring-worker.ts': { modules: ['projects'], why: 'the recurring project task sweep (crove_projects.recurring_tasks_due), worked and scheduled only when projects is installed (worker.ts)' },
+  'apps/kernel/src/projects-roadmap-worker.ts': { modules: ['projects'], why: 'the nightly public roadmap OTP retention sweep (crove_projects.cleanup_roadmap_otp_due_orgs, #4399), worked and scheduled only when projects is installed (worker.ts)' },
+  'apps/kernel/src/sign-hook.ts': { modules: ['sign'], why: 'the minute sweep of queued eSign outbound webhooks (#4440): the worker-only ludy_sign.webhook_open definer lists queued deliveries, worked and scheduled only when sign is installed (worker.ts)' },
+  'apps/kernel/src/sign-worker.ts': { modules: ['sign'], why: 'the eSign PDF inspect/seal workers and sweeps, worked and scheduled only when sign is installed (worker.ts)' },
   'apps/kernel/src/period-balance.ts': { modules: ['finance'], why: 'the period balance reconciliation, worked and scheduled only when finance is installed (worker.ts)' },
   'apps/kernel/src/quote-link.ts': { modules: ['crm'], why: 'the public quote page route (the definer crove_crm.quote_link_view), registered only when crm is installed (http.ts)' },
   'apps/kernel/src/report-link.ts': { modules: ['social'], why: 'public report link routes, registered only when social is installed (http.ts)' },
   'apps/kernel/src/review-link.ts': { modules: ['social'], why: 'public review link routes, registered only when social is installed (http.ts)' },
   'apps/kernel/src/short-link.ts': { modules: ['social'], why: 'the short link route, registered only when social is installed (http.ts)' },
+  'apps/kernel/src/sign-api-v1.ts': { modules: ['sign'], why: 'the orgless scoped /api/v1/sign/* external REST resolvers (crove_sign.api_key_* definers, #4441), registered only when sign is installed (http.ts)' },
+  'apps/kernel/src/sign-direct-link.ts': { modules: ['sign'], why: 'the orgless public direct eSign link ceremony resolvers (crove_sign.public_direct_* definers), registered only when sign is installed (http.ts)' },
+  'apps/kernel/src/sign-link.ts': { modules: ['sign'], why: 'the orgless public eSign link and verification resolvers (crove_sign.public_* definers), registered only when sign is installed (http.ts)' },
+  'apps/kernel/src/sign-public-hub.ts': { modules: ['sign'], why: 'the orgless public self-service eSign template hub resolvers (crove_sign.public_hub_* definers), registered only when sign is installed (http.ts)' },
   'apps/kernel/src/worker.ts': {
     modules: ['ads', 'social'],
     why: 'the publishing sweep claims social posts only when social is installed (no publishers otherwise); the agent sweep, a schedule with no egress, also wipes the sealed copies of closed ads tokens past their age through a worker-only definer (crove_ads.token_revoke_expire), whether or not ads is installed: the hold is a trigger of the database, so a copy can exist with the module switched off and must not outlive its seven days (#2296)',
   },
 };
 
-// A Crove schema named whole, in quotes: withSchema('crove_finance'), a list of schemas, "crove_finance"."x".
-const QUOTED_SCHEMA = /['"`]crove_([a-z][a-z0-9_]*)['"`]/g;
+// A Crove or Ludy schema named whole, in quotes: withSchema('ludy_finance'), a list of schemas, "crove_finance"."x".
+const QUOTED_SCHEMA = /['"`](?:crove|ludy)_([a-z][a-z0-9_]*)['"`]/g;
 
 // The modules a text names by schema (crove_<module>. or a quoted 'crove_<module>'), among `modules`.
 function moduleSchemas(modules: ReadonlySet<string>, text: string): string[] {

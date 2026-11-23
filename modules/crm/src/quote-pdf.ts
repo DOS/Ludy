@@ -4,8 +4,8 @@
 // for `crm.quote.get`. The bytes are made from this by `renderQuotePdf`, in the HTTP route for the download and later by the mail template of Q2.
 //
 // `loadQuoteDocument(ctx, quoteId)` gives a `QuoteDocument`; `renderQuotePdf(document)` is a pure function of its input.
-import { defineQuery } from '@crove/kernel-runtime';
-import { vietnamToday, zQuoteRef } from '@crove/kernel-contract';
+import { defineCommand, defineQuery } from '@ludy/kernel-runtime';
+import { vietnamToday, zQuoteRef } from '@ludy/kernel-contract';
 import { loadQuote, logoFileOf, type QuoteLogoFile, type Reader } from './quotes.ts';
 import type { QuoteDocument, QuoteParty } from './pdf/quote-document.ts';
 
@@ -26,14 +26,14 @@ type Org = { name: string; tax_code: string | null; address: string | null; cont
 // and the phone, email and bank note of the quote settings (no fallback).
 async function sellerOf(ctx: Reader, org: Org, frozen: Frozen): Promise<QuoteDocument['seller']> {
   if (frozen.sent && frozen.snapshot) return frozen.snapshot;
-  const letterhead = await ctx.trx.selectFrom('crove_crm.quote_setting').select(['phone', 'email', 'bank_note']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+  const letterhead = await ctx.trx.selectFrom('ludy_crm.quote_setting').select(['phone', 'email', 'bank_note']).where('org_id', '=', ctx.orgId).executeTakeFirst();
   if (!frozen.sent) {
     return { name: org.name, taxCode: org.tax_code, address: org.address, phone: letterhead?.phone ?? null, email: letterhead?.email ?? org.contact_email, bankNote: letterhead?.bank_note ?? null };
   }
   const issuer =
     frozen.issuerEntityId === null
       ? undefined
-      : await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', frozen.issuerEntityId).executeTakeFirst();
+      : await ctx.trx.selectFrom('ludy_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', frozen.issuerEntityId).executeTakeFirst();
   return { name: issuer?.name ?? org.name, taxCode: issuer?.tax_code ?? null, address: org.address, phone: letterhead?.phone ?? null, email: letterhead?.email ?? null, bankNote: letterhead?.bank_note ?? null };
 }
 
@@ -42,12 +42,12 @@ async function sellerOf(ctx: Reader, org: Org, frozen: Frozen): Promise<QuoteDoc
 export async function loadQuoteDocument(ctx: Reader, quoteId: string): Promise<QuoteDocumentData> {
   const quote = await loadQuote(ctx, quoteId);
   const row = await ctx.trx
-    .selectFrom('crove_crm.quote')
+    .selectFrom('ludy_crm.quote')
     .select(['sent_at', 'issuer_entity_id', 'buyer_name', 'buyer_tax_code', 'buyer_address', 'buyer_email', 'seller_name', 'seller_tax_code', 'seller_address', 'seller_phone', 'seller_email', 'seller_bank_note', 'seller_logo_file_id', 'seller_logo_frozen'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', quoteId)
     .executeTakeFirstOrThrow();
-  const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['name', 'tax_code', 'address', 'contact_email']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+  const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['name', 'tax_code', 'address', 'contact_email']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
   const sentAt = row.sent_at;
   const sent = sentAt !== null && row.buyer_name !== null;
   const snapshot =
@@ -56,11 +56,11 @@ export async function loadQuoteDocument(ctx: Reader, quoteId: string): Promise<Q
       : { name: row.seller_name, taxCode: row.seller_tax_code, address: row.seller_address, phone: row.seller_phone, email: row.seller_email, bankNote: row.seller_bank_note };
   const seller = await sellerOf(ctx, org, { sent, issuerEntityId: row.issuer_entity_id, snapshot });
   // A quote that was sent after the freeze existed has the logo it was sent with (or none); a draft, and a quote sent before, show the org's logo as it is.
-  const liveLogo = async () => (await ctx.trx.selectFrom('crove_crm.quote_setting').select('logo_file_id').where('org_id', '=', ctx.orgId).executeTakeFirst())?.logo_file_id ?? null;
+  const liveLogo = async () => (await ctx.trx.selectFrom('ludy_crm.quote_setting').select('logo_file_id').where('org_id', '=', ctx.orgId).executeTakeFirst())?.logo_file_id ?? null;
   const logoFile = await logoFileOf(ctx, sent && row.seller_logo_frozen ? row.seller_logo_file_id : await liveLogo());
   if (!sent) {
     const party = await ctx.trx
-      .selectFrom('crove_kernel.party')
+      .selectFrom('ludy_kernel.party')
       .select(['name', 'tax_code', 'address', 'phone', 'email'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', quote.partyId)
@@ -81,3 +81,21 @@ export const quoteDocument = defineQuery({
 });
 
 export const quotePdfQueries = [quoteDocument];
+
+// The document of a quote whose mail is being sent now (#3418, Q3's exit "the PDF attached to the email"): the mail template asks for it as the system, in the org's context, because no
+// member is signed in then. Only the quote that is still the current sent one has a document here (a replaced or decided quote gets none, as it gets no link from `crm.quote.mail_data`);
+// what comes back is the sent quote as the download route reads it (the frozen seller, buyer, logo reference and lines), returned to the worker and kept nowhere: no audit row, no event.
+export const quoteMailDocument = defineCommand({
+  name: 'crm.quote.mail_document',
+  input: zQuoteRef,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  handler: async (ctx, input): Promise<QuoteDocumentData | null> => {
+    const row = await ctx.trx.selectFrom('ludy_crm.quote').select('status').where('org_id', '=', ctx.orgId).where('id', '=', input.quoteId).forShare().executeTakeFirst();
+    if (!row || row.status !== 'sent') return null;
+    return loadQuoteDocument(ctx, input.quoteId);
+  },
+});
+
+export const quotePdfCommands = [quoteMailDocument];

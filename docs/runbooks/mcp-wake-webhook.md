@@ -2,7 +2,7 @@
 
 Decision: [ADR-0051](../adr/0051-vys-brain-is-a-dos-claw-agent-ludy-is-the-gate.md) decision 4. Tracking: issue #3024. The endpoint it complements: [the MCP endpoint](mcp-endpoint.md).
 
-What it is: an owner or admin gives one connected AI app (Settings, "Connected AI apps") an https address. Ludy then sends one signed `POST` there when something new needs attention, or on a daily or weekly schedule. The message only wakes the app up: it carries ids, dates and amounts, never a name, a note or a message. The app then reads what it needs through the [MCP endpoint](mcp-endpoint.md), with its own, read-only access. Ludy runs without it and sends nothing until an address is saved.
+What it is: an owner or admin gives one connected AI app (Settings, "Connected AI apps") an https address. Ludy then sends one signed `POST` there when something new needs attention, or on a daily or weekly schedule. The message only wakes the app up: it carries ids, dates and amounts, never a name, a note or a message. The app then reads what it needs through the [MCP endpoint](mcp-endpoint.md), with its own access, which reads (and, only if an owner or admin allowed it on the consent page, writes Social post drafts that a person reviews). Ludy runs without it and sends nothing until an address is saved.
 
 ## A member's own connected app
 
@@ -28,7 +28,20 @@ The body is one JSON object with the keys `id`, `type`, `created_at`, `org`, `gr
 
 - `ping`: `data` is `{}`. A test.
 - `schedule.due`: `data` is `{"date":"YYYY-MM-DD"}`, the day (Vietnam time) the schedule fired for.
+- `meetings.minutes_published`: `data` is `{"meeting_id":"<uuid>","published_at":"<instant>"}`, sent when the recorder publishes the minutes of a meeting they shared with the whole company (see below). Exactly those two keys; no title, no text, no name.
 - `signal.fired`: `data` is `{"items":[...]}`, 1 to 20 items, each with `rule`, `key`, `severity` (`info`, `warn`, `block`) and some of `party_id`, `deal_id`, `invoice_id`, `amount` (a decimal string), `currency` (ISO 4217, with an amount), `due_on` and `days`. A signal fires when its `key` first appears and again only after it went away.
+
+**Published minutes, in detail** (`meetings.minutes_published`, issue #3803). When a meeting's recorder publishes its minutes and the meeting is shared with the whole company ("cả công ty", visibility `org`), Ludy sends this event to the company grants of that org whose wake-up is on and that still stand. It is a doorbell, not the minutes: the app then reads them with `ludy_meeting_minutes` (the meeting's id is `meeting_id`) under its own grant, which the database gates exactly as for any pull call.
+
+```json
+{"id":"2f6c0e5a-0e53-5b0b-8c4e-6f6f4f3a9d11","type":"meetings.minutes_published","created_at":"2026-11-18T09:30:00.123Z","org":"0197a1c2-7b3e-7c11-9a55-3f2d8e6b4a10","grant":"0197a1c2-7b3e-7c11-9a55-3f2d8e6b4a11","data":{"meeting_id":"0197a1c2-7b3e-7c11-9a55-3f2d8e6b4a12","published_at":"2026-11-18T09:29:58.456Z"}}
+```
+
+- **Who gets it.** Only a **company** grant of the org whose wake-up is on and whose standing holds now: not revoked or expired, the grantor still an owner or admin and not disabled (a grantor demoted after the grant was made wakes nothing). Never a member-bound grant (the database refuses the type for one, as it refuses a signal), and never another org's grant. The wake-up's schedule setting does not matter, as for signals.
+- **When.** Once per publish of a **result** of an org-visible meeting. An attendees-only meeting, a draft that is not published, a publish of action items alone and a refused publish send nothing. Publishing again sends another event (its own `id`); a retry of the same publish sends nothing new, because the event's id is derived from the publish and the grant.
+- **`published_at`** is the instant the minutes were published, the same value `ludy_meetings_list` shows as `publishedAt`, so the app can tell which minutes the event is about.
+- **Not while Meetings is off.** While the org has Meetings switched off nothing is sent, and an event for minutes published in that time is not released later (Meetings' events are not parked). An event that reaches the worker more than **24 hours** after it was stored (a long queue delay) is dropped and audited by its id, so a stale wake-up never goes out. The app always reads the current state through the tool (`ludy_meetings_list`), so nothing it needs is lost.
+- **Never in the body:** the title, the summary, the decisions, the action items, a name, who attended or who recorded the meeting. A canary test pins that none of them is in any stored row.
 
 **Signals, in detail.** Every five minutes the worker asks the kernel's cross-app rules for each company grant with signals due, as the grant itself (the same sealed, read-only, tainted context a pull call from that app gets; the worker has its own door into it, `enter_mcp_wake_company_context`, which only the worker's database login may use and only for a company grant whose wake-up is on). The rules are the ones the `ludy_signals` tool runs:
 
@@ -36,12 +49,12 @@ The body is one JSON object with the keys `id`, `type`, `created_at`, `org`, `gr
 | --- | --- | --- |
 | `kernel.signals.deal_without_invoice` | `deal_without_invoice:<deal id>` | a deal won 7 days ago or more with no sales invoice after the win (`deal_id`, `days`, `amount`) |
 | `kernel.signals.receivable_with_open_deal` | `receivable_with_open_deal:<party id>` | a customer with an overdue receivable who has an open deal (`party_id`, `amount`, `due_on`) |
-| `kernel.signals.supplier_bank_changed` | `supplier_bank_changed:<party id>` | **never yet**, see below |
+| `kernel.signals.supplier_bank_changed` | `supplier_bank_changed:<party id>` | when a supplier changed its bank account in the last 30 days and has a payment waiting, see below |
 
 An item carries ids, the severity, a day and an amount, nothing a person typed (no name, title, note or invoice number); anything else is read through the MCP tools. A signal fires when its `key` first appears and again only after it went away and came back; up to 20 items go in one event, and the keys are stored in the same transaction as the event, so a failure fires it again and never loses it. A key is forgotten only when its rule answered in full: a rule that failed or answered in part leaves its keys as they were.
 
 - **Quiet on purpose.** When a grant's books are only in part in view (a branch-limited grantor, for instance) the finance reads refuse with `SIGNAL_PARTIAL_VIEW` and the wake-up stays quiet for that rule; it never fires on a part of the books. `ludy_signals` says the same thing out loud (`unchecked`, reason `partial_view`).
-- **Rule 3 stays quiet until its data exists.** "A supplier's bank account changed while a payment waits" needs a supplier bank account record and a supplier-payment flow, and Ludy has neither yet (an owner decision). Until then the rule answers nothing and `ludy_signals` lists it as `unchecked`, reason `not_available`. An empty wake-up is never "all clear".
+- **Rule 3, a supplier's bank account changed while a payment waits (#3113).** It looks at two finance reads: `finance.signals.supplier_bank_changes` (suppliers whose account was added, replaced or retired in the last 30 days) and `finance.signals.supplier_payments_waiting` (asked with those suppliers: how many payments wait and their total in dong; waiting is a payment approved and not yet paid, or asked for and not yet approved). It fires, severity `block`, for each supplier with both; with no change in the window, or nothing waiting, it is quiet and `ludy_signals` lists it under `checked`. When a change is in the window and the grant sees the books only in part, the payments read refuses (never answers a part): `ludy_signals` lists the rule as `unchecked`, reason `partial_view`, and the item for the change it could not check says so; with no change in the window the rule needs nothing from the payments read and is `checked`. The item carries ids, days, a count and an amount: never a bank, a number or a holder. An empty wake-up is never "all clear".
 - **A member-bound grant never gets a signal.** The sweep asks no signals for it, the database refuses a `signal.fired` event for it, and the worker's entry refuses anything that is not a company grant. A member's wake-up is a schedule and a ping only.
 - **The refusal tally.** If a grant loses its standing between the sweep picking it and the rule call (a revoke or a demotion, a window of seconds), the worker's call is refused and counted in the runtime's bounded refusal tally under the grantor, the same way the same grant asked through the API is counted. No audit row is written and nothing is fired; the next pass drops the grant.
 

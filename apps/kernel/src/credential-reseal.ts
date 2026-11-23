@@ -7,7 +7,7 @@
 // credential_get); the others reseal when they are reconnected, and the counts say how many there are. No token is ever logged.
 // Orgs being offboarded are resealed too, as they are counted (#1889): one may return to active before its purge.
 //
-// The sealed targets of team chat alerts (#863, crove_social.chat_alert_target) go through the same pass, under the
+// The sealed targets of team chat alerts (#863, ludy_social.chat_alert_target) go through the same pass, under the
 // same lock, when the Social module is on: those whose saver is still an owner or admin are resealed, the others when
 // the chat is saved again, and both are in the counts. With Social left out (ADR-0031: its tables stay) they are
 // counted all the same (#1878), apart: they reseal only once Social is on again, so the previous key must stay until
@@ -18,15 +18,17 @@
 // worker logs it as an error; nothing stops, since a lost key is a runbook path (reconnect), not an outage.
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { DomainError, unwrapMediaKeyWithSubkey, wrapMediaKeyWithSubkey, type CredentialBroker, type MediaKind, type Runtime, type SystemActor } from '@crove/kernel-runtime';
-import { SUBJECT_KEY_RESEAL_BATCH, type SealedChannelCredential } from '@crove/kernel';
-import { CHAT_ALERT_PROVIDER, type SealedChatAlert } from '@crove/mod-social';
+import type { Db } from '@ludy/db';
+import { DomainError, unwrapMediaKeyWithSubkey, wrapMediaKeyWithSubkey, type CredentialBroker, type MediaKind, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
+import { SUBJECT_KEY_RESEAL_BATCH, type SealedChannelCredential } from '@ludy/kernel';
+import { MEETING_CHAT_PROVIDER, type ChatTarget } from '@ludy/kernel-contract';
+import { CHAT_ALERT_PROVIDER, type SealedChatAlert } from '@ludy/mod-social';
 import type { SubjectKeyResealDeps, SubjectKeyResealOutcome } from './subject-key-reseal.ts';
 
 const ACTOR: SystemActor = { type: 'system', component: 'kernel.channel.reseal' };
 const CHAT_ACTOR: SystemActor = { type: 'system', component: 'social.chat_alert.reseal' };
 const MEDIA_ACTOR: SystemActor = { type: 'system', component: 'meetings.media_key.reseal' };
+const MINUTES_ACTOR: SystemActor = { type: 'system', component: 'meetings.chat.reseal' };
 export const RESEAL_SWEEP_MS = 10 * 60_000;
 const RESEAL_LIMIT = 200;
 const SUBJECT_ACTOR: SystemActor = { type: 'system', component: 'kernel.subject_key.reseal' };
@@ -87,7 +89,7 @@ export async function resealCredentials(deps: ResealDeps): Promise<ResealOutcome
       let after = null as { sealed: Date; id: string } | null;
       for (let page = 0; page < RESEAL_PAGES; page += 1) {
         const { rows } = await sql<{ org_id: string; connection_id: string; key_id: string; sealed_at: Date }>`
-          SELECT org_id, connection_id, key_id, sealed_at FROM crove_kernel.credential_reseal_due(${current}, ${RESEAL_LIMIT}::int, ${after?.sealed ?? null}::timestamptz, ${after?.id ?? null}::uuid)`.execute(db);
+          SELECT org_id, connection_id, key_id, sealed_at FROM ludy_kernel.credential_reseal_due(${current}, ${RESEAL_LIMIT}::int, ${after?.sealed ?? null}::timestamptz, ${after?.id ?? null}::uuid)`.execute(db);
         for (const row of rows) {
           const done = await resealOne(deps, row).catch((error: unknown) => {
             // The connection id only: never the envelope or what it holds.
@@ -113,12 +115,17 @@ export async function resealCredentials(deps: ResealDeps): Promise<ResealOutcome
         await resealMediaKeys(deps, db, current, outcome).catch((error: unknown) => {
           console.error('[credential-reseal] media key pass', error instanceof Error ? error.name : typeof error);
         });
+        // The addresses of the org's minutes channels (B4, #3168) go through the same pass: those whose saver is still an owner or admin are resealed, the others when pasted again.
+        await resealMinutesChannels(deps, db, current, outcome).catch((error: unknown) => {
+          console.error('[credential-reseal] minutes channel pass', error instanceof Error ? error.name : typeof error);
+        });
       }
-      const { rows: counts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM crove_kernel.credential_key_counts()`.execute(db);
+      const { rows: counts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM ludy_kernel.credential_key_counts()`.execute(db);
       // Counted whatever is installed: the tables exist with Social left out too (ADR-0031), and a target left under the
       // previous key must keep it from being retired (#1878).
-      const { rows: chatCounts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM crove_social.chat_alert_target_key_counts()`.execute(db);
-      const { rows: mediaCounts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM crove_meetings.media_key_counts()`.execute(db);
+      const { rows: chatCounts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM ludy_social.chat_alert_target_key_counts()`.execute(db);
+      const { rows: mediaCounts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM ludy_meetings.media_key_counts()`.execute(db);
+      const { rows: minutesCounts } = await sql<{ key_id: string; active: string; inactive: string }>`SELECT key_id, active, inactive FROM ludy_meetings.chat_target_key_counts()`.execute(db);
       const openable = openableKeysOf(deps.broker);
       const unopenable = new Map<string, UnopenableKey>();
       const lost = (keyId: string, active: number, waiting: number) => {
@@ -142,6 +149,13 @@ export async function resealCredentials(deps: ResealDeps): Promise<ResealOutcome
         lost(c.key_id, social ? Number(c.active) : 0, social ? 0 : Number(c.active));
       }
       for (const c of mediaCounts) {
+        if (c.key_id === current) continue;
+        if (meetings) outcome.leftActive += Number(c.active);
+        else outcome.leftWaiting += Number(c.active);
+        outcome.leftInactive += Number(c.inactive);
+        lost(c.key_id, meetings ? Number(c.active) : 0, meetings ? 0 : Number(c.active));
+      }
+      for (const c of minutesCounts) {
         if (c.key_id === current) continue;
         if (meetings) outcome.leftActive += Number(c.active);
         else outcome.leftWaiting += Number(c.active);
@@ -213,7 +227,7 @@ async function resealChatAlerts(deps: ResealDeps, db: Db, current: string, outco
   let after = null as { sealed: Date; id: string } | null;
   for (let page = 0; page < RESEAL_PAGES; page += 1) {
     const { rows } = await sql<{ org_id: string; alert_id: string; key_id: string; sealed_at: Date }>`
-      SELECT org_id, alert_id, key_id, sealed_at FROM crove_social.chat_alert_target_reseal_due(${current}, ${RESEAL_LIMIT}::int, ${after?.sealed ?? null}::timestamptz, ${after?.id ?? null}::uuid)`.execute(db);
+      SELECT org_id, alert_id, key_id, sealed_at FROM ludy_social.chat_alert_target_reseal_due(${current}, ${RESEAL_LIMIT}::int, ${after?.sealed ?? null}::timestamptz, ${after?.id ?? null}::uuid)`.execute(db);
     for (const row of rows) {
       const done = await resealChatAlert(deps, row).catch((error: unknown) => {
         // The alert id only: never the envelope or what it holds.
@@ -252,6 +266,45 @@ async function resealChatAlert(deps: ResealDeps, row: { org_id: string; alert_id
   return stored.resealed;
 }
 
+// The addresses of minutes channels (B4, #3168) still under an older key, page after page as the credentials.
+async function resealMinutesChannels(deps: ResealDeps, db: Db, current: string, outcome: ResealOutcome): Promise<void> {
+  let after = null as { sealed: Date; id: string } | null;
+  for (let page = 0; page < RESEAL_PAGES; page += 1) {
+    const { rows } = await sql<{ org_id: string; channel_id: string; key_id: string; sealed_at: Date }>`
+      SELECT org_id, channel_id, key_id, sealed_at FROM ludy_meetings.chat_target_reseal_due(${current}, ${RESEAL_LIMIT}::int, ${after?.sealed ?? null}::timestamptz, ${after?.id ?? null}::uuid)`.execute(db);
+    for (const row of rows) {
+      const done = await resealMinutesChannel(deps, row).catch((error: unknown) => {
+        // The channel id only: never the envelope or the address.
+        console.error(`[credential-reseal] minutes channel ${row.channel_id.slice(0, 8)}`, error instanceof Error ? error.name : typeof error);
+        return false;
+      });
+      if (done) outcome.resealed += 1;
+      else outcome.failed += 1;
+    }
+    const last = rows.at(-1);
+    if (!last || rows.length < RESEAL_LIMIT) break;
+    after = { sealed: last.sealed_at, id: last.channel_id };
+  }
+}
+
+async function resealMinutesChannel(deps: ResealDeps, row: { org_id: string; channel_id: string }): Promise<boolean> {
+  const options = { actor: MINUTES_ACTOR, orgId: row.org_id };
+  // No address back: the channel stopped standing since the scan (its saver left or was demoted, or it was removed): it reseals when pasted again.
+  const sealed = await deps.runtime.query<ChatTarget | null>('meetings.chat.target', { channelId: row.channel_id }, options);
+  if (!sealed) return false;
+  const binding = { orgId: row.org_id, provider: MEETING_CHAT_PROVIDER, externalAccountId: row.channel_id };
+  const envelope = Buffer.from(sealed.envelope, 'base64');
+  let secret: string | null = deps.broker.open({ keyId: sealed.keyId, envelope }, binding);
+  const next = deps.broker.seal(secret, binding);
+  secret = null;
+  const stored = await deps.runtime.execute<{ resealed: boolean }>(
+    'meetings.chat.reseal',
+    { channelId: row.channel_id, fromKeyId: sealed.keyId, fromSha256: createHash('sha256').update(envelope).digest('hex'), keyId: next.keyId, envelope: next.envelope.toString('base64') },
+    options,
+  );
+  return stored.resealed;
+}
+
 // Media keys of recorded meetings (#2576).
 async function resealMediaKeys(deps: ResealDeps, db: Db, current: string, outcome: ResealOutcome): Promise<void> {
   let after = null as { created: Date; id: string } | null;
@@ -266,7 +319,7 @@ async function resealMediaKeys(deps: ResealDeps, db: Db, current: string, outcom
       created_at: Date;
     }>`
       SELECT org_id, meeting_id, id, key_id, kind, wrapped_key, created_at
-        FROM crove_meetings.media_key_reseal_due(${current}, ${RESEAL_LIMIT}::int, ${after?.created ?? null}::timestamptz, ${after?.id ?? null}::uuid)
+        FROM ludy_meetings.media_key_reseal_due(${current}, ${RESEAL_LIMIT}::int, ${after?.created ?? null}::timestamptz, ${after?.id ?? null}::uuid)
     `.execute(db);
 
     for (const row of rows) {
@@ -339,7 +392,7 @@ export async function resealSubjectKeys(deps: SubjectKeyResealDeps): Promise<Sub
       let after = null as { orgId: string; id: string } | null;
       for (let page = 0; page < RESEAL_PAGES; page += 1) {
         const { rows } = await sql<{ org_id: string; id: string; key_id: string; wrapped_key: Buffer }>`
-          SELECT org_id, id, key_id, wrapped_key FROM crove_kernel.subject_key_reseal_due(${current}, ${openable}::text[], ${SUBJECT_RESEAL_LIMIT}::int, ${after?.orgId ?? null}::uuid, ${after?.id ?? null}::uuid)`.execute(db);
+          SELECT org_id, id, key_id, wrapped_key FROM ludy_kernel.subject_key_reseal_due(${current}, ${openable}::text[], ${SUBJECT_RESEAL_LIMIT}::int, ${after?.orgId ?? null}::uuid, ${after?.id ?? null}::uuid)`.execute(db);
         // Rows come in (org, id) order: one batch per org.
         const byOrg = new Map<string, Array<{ id: string; fromKeyId: string; fromWrapped: string; keyId: string; wrapped: string }>>();
         for (const row of rows) {
@@ -367,7 +420,7 @@ export async function resealSubjectKeys(deps: SubjectKeyResealDeps): Promise<Sub
         if (!last || rows.length < SUBJECT_RESEAL_LIMIT) break;
         after = { orgId: last.org_id, id: last.id };
       }
-      const { rows: counts } = await sql<{ key_id: string; n: string }>`SELECT key_id, n FROM crove_kernel.subject_key_key_counts()`.execute(db);
+      const { rows: counts } = await sql<{ key_id: string; n: string }>`SELECT key_id, n FROM ludy_kernel.subject_key_key_counts()`.execute(db);
       const openableIds = new Set(openable);
       for (const c of counts) {
         if (c.key_id === current) continue;

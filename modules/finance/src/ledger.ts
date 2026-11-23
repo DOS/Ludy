@@ -1,4 +1,4 @@
-// The posting path, the only way to write the ledger. crove_finance.post_journal_entry() inserts an entry
+// The posting path, the only way to write the ledger. ludy_finance.post_journal_entry() inserts an entry
 // and all of its lines in one call, stamps org and author from the context and checks that it balances.
 // The database refuses direct inserts, and lines added to an entry after the transaction that created it.
 // A reversal (reversal.ts) is posted here too, as a new entry naming the one it reverses; the database checks
@@ -12,8 +12,8 @@
 // (a later revision posted, or the entry reversed) is refused (POSTING_SUPERSEDED): a retried old request never takes
 // a reversed entry for the one on the books.
 import { sql } from 'kysely';
-import { DomainError, type CommandContext } from '@crove/kernel-runtime';
-import type { Money } from '@crove/l10n-vn';
+import { DomainError, type CommandContext } from '@ludy/kernel-runtime';
+import type { Money } from '@ludy/l10n-vn';
 import { legalEntityError } from './legal-entity.ts';
 import { postingGuardError, type BeforeOpeningChoice } from './period-lock.ts';
 
@@ -67,13 +67,13 @@ export async function postJournalEntry(ctx: CommandContext, posting: Posting): P
   // revision between the look below and the definer's own. Held to the end of the transaction; the definer's second
   // take of it is free.
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
-      'crove_finance.journal_entry.source:' || ${ctx.orgId}::uuid::text || ':' || ${posting.sourceType}::text || ':' || ${posting.sourceId}::uuid::text, 0))`.execute(
+      'ludy_finance.journal_entry.source:' || ${ctx.orgId}::uuid::text || ':' || ${posting.sourceType}::text || ':' || ${posting.sourceId}::uuid::text, 0))`.execute(
     ctx.trx,
   );
   // Already posted: the definer replays it (same payload) or refuses it (another one). A replay can only be of an entry
   // this caller may see: the definer replays only into the entity the context allows.
   const before = await ctx.trx
-    .selectFrom('crove_finance.journal_entry')
+    .selectFrom('ludy_finance.journal_entry')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('source_type', '=', posting.sourceType)
@@ -83,7 +83,7 @@ export async function postJournalEntry(ctx: CommandContext, posting: Posting): P
   let rows: Array<{ id: string }>;
   try {
     ({ rows } = await sql<{ id: string }>`
-      SELECT crove_finance.post_journal_entry(
+      SELECT ludy_finance.post_journal_entry(
         ${posting.entryDate}::date, ${posting.description}, ${posting.sourceType}, ${posting.sourceId}::uuid, ${JSON.stringify(lines)}::jsonb,
         ${posting.reversesEntryId ?? null}::uuid, ${revision}::int, ${posting.legalEntityId ?? null}::uuid
       ) AS id`.execute(ctx.trx));
@@ -98,12 +98,12 @@ export async function postJournalEntry(ctx: CommandContext, posting: Posting): P
   if (before.id !== id) throw new DomainError('INTERNAL', 500, 'Không ghi được bút toán');
   // A replay: the entry must still be the one in force for its source.
   const state = await ctx.trx
-    .selectFrom('crove_finance.journal_entry as e')
+    .selectFrom('ludy_finance.journal_entry as e')
     .select((eb) => [
       eb
         .exists(
           eb
-            .selectFrom('crove_finance.journal_entry as later')
+            .selectFrom('ludy_finance.journal_entry as later')
             .select('later.id')
             .whereRef('later.org_id', '=', 'e.org_id')
             .whereRef('later.source_type', '=', 'e.source_type')
@@ -112,7 +112,7 @@ export async function postJournalEntry(ctx: CommandContext, posting: Posting): P
         )
         .as('superseded'),
       eb
-        .exists(eb.selectFrom('crove_finance.journal_entry as r').select('r.id').whereRef('r.org_id', '=', 'e.org_id').whereRef('r.reverses_entry_id', '=', 'e.id'))
+        .exists(eb.selectFrom('ludy_finance.journal_entry as r').select('r.id').whereRef('r.org_id', '=', 'e.org_id').whereRef('r.reverses_entry_id', '=', 'e.id'))
         .as('reversed'),
     ])
     .where('e.org_id', '=', ctx.orgId)

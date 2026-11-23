@@ -9,10 +9,10 @@ import type { AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, type BlobStore } from '@crove/kernel-runtime';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, type BlobStore } from '@ludy/kernel-runtime';
 import { loadConfig } from '../src/config.ts';
 import type { InviteChecks } from '../src/auth-signup-policy.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -146,9 +146,9 @@ suite('sign-up policy through the /auth/v1 proxy (#350)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     runtime = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
@@ -197,7 +197,7 @@ suite('sign-up policy through the /auth/v1 proxy (#350)', () => {
       await runtime.execute('kernel.member.invite.revoke', { inviteId: ids.get(revoked) }, { actor: asUser(ownerId), orgId });
       await admin((c) =>
         c.query(
-          `INSERT INTO crove_kernel.member_invite (org_id, email, role, invited_by, created_at, expires_at, token_sha256)
+          `INSERT INTO ludy_kernel.member_invite (org_id, email, role, invited_by, created_at, expires_at, token_sha256)
            VALUES ($1, $2, 'member', $3, now() - interval '8 days', now() - interval '1 minute', encode(sha256(convert_to($4, 'UTF8')), 'hex'))`,
           [orgId, expired, ownerId, EXPIRED_TOKEN],
         ),
@@ -437,7 +437,7 @@ suite('sign-up policy through the /auth/v1 proxy (#350)', () => {
     });
 
     it('caps them for the whole deployment too, counting a repeated address once', async () => {
-      await admin((c) => c.query('DELETE FROM crove_kernel.auth_email_send'));
+      await admin((c) => c.query('DELETE FROM ludy_kernel.auth_email_send'));
       const capped = appWith({ AUTH_SIGNUP_POLICY: 'allowlist', AUTH_SIGNUP_ALLOWED_DOMAINS: 'corp.test', AUTH_SIGNUP_REFUSAL_GLOBAL_LIMIT_PER_HOUR: '2' });
       const [g1, g2, g3] = [`g1-${tag}@corp.test`, `g2-${tag}@corp.test`, `g3-${tag}@corp.test`] as const;
       const tokens = (await orgInviting([g1, g2, g3])).tokens;

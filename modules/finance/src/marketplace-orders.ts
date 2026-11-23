@@ -12,13 +12,17 @@
 //   finance.marketplace.reject skips it. Both run on the staged run only, locked, so two members cannot both decide it, and a re-upload is idempotent.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { EXTRACT_LIMIT_RETRIES, EXTRACT_LIMITS, zExtractedMarketplaceOrders, type ExtractClient } from '@crove/extract-contract';
-import type { MemberRole } from '@crove/db';
-import { STAGED_STATEMENT_MAX_BYTES, zId, zMarketplaceAssign, zMarketplaceOrdersInput, zMarketplaceSummary, zMarketplaceUnassign, zMarketplaceUnassignedInput, type MarketplaceConfirmResult, type MarketplaceOrder, type MarketplacePreview, type MarketplaceUnassignedLine, type MarketplaceStaged, type MarketplaceSummary } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type CommandContext, type QueryContext, type Runtime } from '@crove/kernel-runtime';
-import { money } from '@crove/l10n-vn';
+import { EXTRACT_LIMIT_RETRIES, EXTRACT_LIMITS, zExtractedMarketplaceOrders, type ExtractClient } from '@ludy/extract-contract';
+import type { MemberRole } from '@ludy/db';
+import { STAGED_STATEMENT_MAX_BYTES, zId, zMarketplaceAssign, zMarketplaceOrdersInput, zMarketplaceSuggestInput, zMarketplaceSummary, zMarketplaceUnassign, zMarketplaceUnassignedInput, type MarketplaceConfirmResult, type MarketplaceOrder, type MarketplacePreview, type MarketplaceUnassignedLine, type MarketplaceStaged, type MarketplaceSummary } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type CommandContext, type QueryContext, type Runtime } from '@ludy/kernel-runtime';
+import { money } from '@ludy/l10n-vn';
+import { readWithSavedColumns } from './marketplace-column-apply.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
+import { pickCandidates } from './domain/stock-low.ts';
+import { oneLine } from './missing-invoices.ts';
+import { OFFERED_ITEMS_MAX } from './stock-low.ts';
 import { moveQuantity, movableQuantity, normalizeAlias, oppositeQuantity, plainQuantity } from './domain/stock.ts';
 import { loadItem, writeStockMove } from './stock.ts';
 
@@ -46,7 +50,7 @@ export function canAdvance(from: Stage, to: Stage): boolean {
   return false;
 }
 
-// The stages that move stock: a shipment takes it out, a return brings it back; a placed or cancelled order moves nothing.
+// The stages whose shipment takes stock out; a placed order moves nothing, and a return or a cancellation after the shipment is a person's answer (marketplace-return.ts, #4355).
 const MOVES_STOCK: ReadonlySet<Stage> = new Set(['shipped', 'completed', 'returned']);
 
 // The summary a staged read keeps: the file's own figures, nothing of the orders' content beyond counts.
@@ -94,7 +98,7 @@ async function matchSkus(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityId
   const out = new Map<string, ItemMatch>();
   if (keys.length === 0) return out;
   const items = await ctx.trx
-    .selectFrom('crove_finance.stock_item')
+    .selectFrom('ludy_finance.stock_item')
     .select(['id', 'code'])
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', legalEntityId)
@@ -108,8 +112,8 @@ async function matchSkus(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityId
   }
   for (const [key, id] of byCode) if (id !== null) out.set(key, { itemId: id, factor: '1' });
   const aliases = await ctx.trx
-    .selectFrom('crove_finance.stock_alias as a')
-    .innerJoin('crove_finance.stock_item as i', (join) => join.onRef('i.org_id', '=', 'a.org_id').onRef('i.id', '=', 'a.item_id'))
+    .selectFrom('ludy_finance.stock_alias as a')
+    .innerJoin('ludy_finance.stock_item as i', (join) => join.onRef('i.org_id', '=', 'a.org_id').onRef('i.id', '=', 'a.item_id'))
     .select(['a.alias_key', 'a.item_id', 'a.factor'])
     .where('a.org_id', '=', ctx.orgId)
     .where('a.legal_entity_id', '=', legalEntityId)
@@ -128,9 +132,9 @@ async function matchSkus(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityId
 // The newest run of a file when it is a staged order report: the run a member decides. `lock`: the file row and the run are locked for the decision (the order a re-read and a record
 // take them in, as for a bank statement).
 async function stagedRun(ctx: QueryContext, fileId: string, lock: boolean): Promise<{ summary: MarketplaceSummary; platform: Platform; lines: StagedLine[]; legalEntityId: string | null; sha256: string } | null> {
-  const file = await ctx.trx.selectFrom('crove_kernel.file').select(['id', 'sha256']).where('org_id', '=', ctx.orgId).where('id', '=', fileId).$if(lock, (qb) => qb.forUpdate()).executeTakeFirst();
+  const file = await ctx.trx.selectFrom('ludy_kernel.file').select(['id', 'sha256']).where('org_id', '=', ctx.orgId).where('id', '=', fileId).$if(lock, (qb) => qb.forUpdate()).executeTakeFirst();
   if (!file) return null;
-  let query = ctx.trx.selectFrom('crove_kernel.extraction').select(['result', 'status', 'legal_entity_id']).where('org_id', '=', ctx.orgId).where('file_id', '=', fileId).orderBy('version', 'desc').limit(1);
+  let query = ctx.trx.selectFrom('ludy_kernel.extraction').select(['result', 'status', 'legal_entity_id']).where('org_id', '=', ctx.orgId).where('file_id', '=', fileId).orderBy('version', 'desc').limit(1);
   if (lock) query = query.forUpdate();
   const run = await query.executeTakeFirst();
   if (!run || run.status !== 'done') return null;
@@ -148,12 +152,12 @@ const keyOf = (k: OrderKey) => `${k.platform}\u0000${k.orderNo}\u0000${k.lineKey
 
 // The lines of this entity the report names, as the org holds them now, by (platform, order number, line).
 async function knownLines(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityId: string, platform: Platform, orderNos: readonly string[]) {
-  const map = new Map<string, { id: string; stage: Stage; quantity: string; sku: string | null; shippedAt: string | null; orderedAt: string | null; attempt: number }>();
+  const map = new Map<string, { id: string; stage: Stage; quantity: string; sku: string | null; shippedAt: string | null; deliveredAt: string | null; orderedAt: string | null; attempt: number }>();
   for (let i = 0; i < orderNos.length; i += 1000) {
     const rows = await ctx.trx
-      .selectFrom('crove_finance.channel_order_line as l')
-      .innerJoin('crove_finance.channel_order as o', (join) => join.onRef('o.org_id', '=', 'l.org_id').onRef('o.id', '=', 'l.order_id'))
-      .select(['l.id', 'l.line_key', 'l.stage', 'l.quantity', 'l.sku', 'l.shipped_at', 'l.attempt', 'o.order_no', 'o.ordered_at'])
+      .selectFrom('ludy_finance.channel_order_line as l')
+      .innerJoin('ludy_finance.channel_order as o', (join) => join.onRef('o.org_id', '=', 'l.org_id').onRef('o.id', '=', 'l.order_id'))
+      .select(['l.id', 'l.line_key', 'l.stage', 'l.quantity', 'l.sku', 'l.shipped_at', 'l.delivered_at', 'l.attempt', 'o.order_no', 'o.ordered_at'])
       .where('l.org_id', '=', ctx.orgId)
       .where('o.legal_entity_id', '=', legalEntityId)
       .where('o.platform', '=', platform)
@@ -166,6 +170,7 @@ async function knownLines(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityI
         quantity: String(r.quantity),
         sku: r.sku,
         shippedAt: r.shipped_at === null ? null : String(r.shipped_at).slice(0, 10),
+        deliveredAt: r.delivered_at === null ? null : String(r.delivered_at).slice(0, 10),
         orderedAt: r.ordered_at === null ? null : String(r.ordered_at).slice(0, 10),
         attempt: r.attempt,
       });
@@ -185,16 +190,16 @@ export const marketplaceStaged = defineQuery({
   handler: async (ctx): Promise<MarketplaceStaged[]> => {
     const { rows } = await sql<{ file_id: string; filename: string; created_at: Date; summary: unknown; legal_entity_id: string | null }>`
       SELECT x.file_id::text AS file_id, f.filename, f.created_at, x.result -> 'summary' AS summary, x.legal_entity_id::text AS legal_entity_id
-      FROM crove_kernel.extraction x
-      JOIN crove_kernel.file f ON f.org_id = x.org_id AND f.id = x.file_id
+      FROM ludy_kernel.extraction x
+      JOIN ludy_kernel.file f ON f.org_id = x.org_id AND f.id = x.file_id
       WHERE x.org_id = ${ctx.orgId}::uuid AND x.method = 'unsupported' AND x.status = 'done' AND x.result ->> 'kind' = 'marketplace_orders' AND x.result -> 'summary' ->> 'state' = 'staged'
-        AND x.version = (SELECT max(v.version) FROM crove_kernel.extraction v WHERE v.org_id = x.org_id AND v.file_id = x.file_id)
+        AND x.version = (SELECT max(v.version) FROM ludy_kernel.extraction v WHERE v.org_id = x.org_id AND v.file_id = x.file_id)
       ORDER BY f.created_at DESC
       LIMIT 20`.execute(ctx.trx);
     const entityIds = [...new Set(rows.flatMap((r) => (r.legal_entity_id ? [r.legal_entity_id] : [])))];
     const names = new Map<string, string>();
     if (entityIds.length > 0) {
-      for (const e of await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', entityIds).execute()) names.set(e.id, e.name);
+      for (const e of await ctx.trx.selectFrom('ludy_kernel.legal_entity').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', entityIds).execute()) names.set(e.id, e.name);
     }
     return rows.flatMap((r) => {
       const summary = zMarketplaceSummary.safeParse(r.summary);
@@ -254,7 +259,7 @@ export const marketplaceOrders = defineQuery({
   access: ['owner', 'admin', 'member', 'viewer'],
   handler: async (ctx, input): Promise<MarketplaceOrder[]> => {
     let query = ctx.trx
-      .selectFrom('crove_finance.channel_order as o')
+      .selectFrom('ludy_finance.channel_order as o')
       .select(['o.id', 'o.legal_entity_id', 'o.platform', 'o.order_no', 'o.ordered_at', 'o.created_at'])
       .where('o.org_id', '=', ctx.orgId)
       .orderBy('o.ordered_at', sql`desc nulls last`)
@@ -265,11 +270,11 @@ export const marketplaceOrders = defineQuery({
     if (input.platform) query = query.where('o.platform', '=', input.platform);
     // An order with a line at the stage asked for.
     const stage = input.stage;
-    if (stage) query = query.where((eb) => eb.exists(eb.selectFrom('crove_finance.channel_order_line as s').select('s.id').whereRef('s.org_id', '=', 'o.org_id').whereRef('s.order_id', '=', 'o.id').where('s.stage', '=', stage)));
+    if (stage) query = query.where((eb) => eb.exists(eb.selectFrom('ludy_finance.channel_order_line as s').select('s.id').whereRef('s.org_id', '=', 'o.org_id').whereRef('s.order_id', '=', 'o.id').where('s.stage', '=', stage)));
     const orders = await query.execute();
     if (orders.length === 0) return [];
     const lines = await ctx.trx
-      .selectFrom('crove_finance.channel_order_line as l')
+      .selectFrom('ludy_finance.channel_order_line as l')
       .select(['l.id', 'l.order_id', 'l.line_key', 'l.sku', 'l.item_name', 'l.quantity', 'l.unit_price', 'l.amount', 'l.stage', 'l.shipped_at', 'l.attempt'])
       .where('l.org_id', '=', ctx.orgId)
       .where('l.order_id', 'in', orders.map((o) => o.id))
@@ -277,8 +282,8 @@ export const marketplaceOrders = defineQuery({
       .execute();
     // The item each shipped line moved, by its code.
     const shipped = lines.length === 0 ? [] : await ctx.trx
-      .selectFrom('crove_finance.stock_move as m')
-      .innerJoin('crove_finance.stock_item as i', (join) => join.onRef('i.org_id', '=', 'm.org_id').onRef('i.id', '=', 'm.item_id'))
+      .selectFrom('ludy_finance.stock_move as m')
+      .innerJoin('ludy_finance.stock_item as i', (join) => join.onRef('i.org_id', '=', 'm.org_id').onRef('i.id', '=', 'm.item_id'))
       .select(['m.order_line_id', 'm.order_attempt', 'i.code'])
       .where('m.org_id', '=', ctx.orgId)
       .where('m.order_move', '=', 'ship')
@@ -321,14 +326,14 @@ export const marketplaceOrders = defineQuery({
 // One order of an entity and platform: stored once, never changed (a re-upload adds only what is new).
 async function ensureOrder(ctx: CommandContext, legalEntityId: string, platform: Platform, orderNo: string, orderedAt: string | null): Promise<string> {
   const inserted = await ctx.trx
-    .insertInto('crove_finance.channel_order')
+    .insertInto('ludy_finance.channel_order')
     .values({ org_id: ctx.orgId, legal_entity_id: legalEntityId, platform, order_no: orderNo, ordered_at: orderedAt })
     .onConflict((oc) => oc.columns(['org_id', 'legal_entity_id', 'platform', 'order_no']).doNothing())
     .returning('id')
     .executeTakeFirst();
   if (inserted) return inserted.id;
   const row = await ctx.trx
-    .selectFrom('crove_finance.channel_order')
+    .selectFrom('ludy_finance.channel_order')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', legalEntityId)
@@ -338,9 +343,9 @@ async function ensureOrder(ctx: CommandContext, legalEntityId: string, platform:
   return row.id;
 }
 
-// The stock a line moves, once: a shipment at the shipping day (or the order's, or today), a return after its shipment, both through the item the line names (the shipment's item for a
-// return). A line cancelled after it shipped (a failed delivery) brings its stock back like a return; one cancelled before shipping moved nothing. A line that names no item moves nothing
-// and waits for a person.
+// The stock a line moves, once: a shipment at the shipping day (or the order's, or today), through the item the line names. The return is not moved here any more (#4355): a line that came back,
+// or was cancelled after it shipped (a failed delivery), waits as "goods back?" and a person's answer writes the return move (marketplace-return.ts), because the report cannot tell a return from a
+// refund-only claim or a loss. A line cancelled before shipping moved nothing. A line that names no item moves nothing and waits for a person.
 async function moveLineStock(
   ctx: CommandContext,
   line: { id: string; stage: Stage; quantity: string; shippedAt: string | null; orderedAt: string | null; sku: string | null; attempt: number },
@@ -349,29 +354,26 @@ async function moveLineStock(
   // An item a person chose for the line (the assignment): used instead of looking the SKU up.
   explicit?: ItemMatch,
 ): Promise<number> {
-  if (!MOVES_STOCK.has(line.stage) && line.stage !== 'cancelled') return 0;
-  // The moves of the line's live attempt: an earlier attempt's were reversed when it was unassigned (#2633).
-  const made = await ctx.trx.selectFrom('crove_finance.stock_move').select(['order_move', 'item_id', 'quantity']).where('org_id', '=', ctx.orgId).where('order_line_id', '=', line.id).where('order_attempt', '=', line.attempt).execute();
-  const ship = made.find((m) => m.order_move === 'ship');
-  const returned = made.find((m) => m.order_move === 'return');
-  // Cancelled: only a line that had shipped has anything to bring back.
-  if (line.stage === 'cancelled' && !ship) return 0;
+  // A placed, unknown or cancelled line moves nothing here: a cancelled line that shipped waits for a person's answer (#4355).
+  if (!MOVES_STOCK.has(line.stage)) return 0;
+  // The shipment of the line's live attempt: an earlier attempt's was reversed when it was unassigned (#2633).
+  const ship = await ctx.trx
+    .selectFrom('ludy_finance.stock_move')
+    .select('id')
+    .where('org_id', '=', ctx.orgId)
+    .where('order_line_id', '=', line.id)
+    .where('order_move', '=', 'ship')
+    .where('order_attempt', '=', line.attempt)
+    .executeTakeFirst();
   const day = line.shippedAt ?? line.orderedAt ?? today;
   let moves = 0;
-  let shipped = ship ? { itemId: ship.item_id, quantity: String(ship.quantity) } : null;
-  if (!shipped) {
+  if (!ship) {
     // A line taken back from an item (attempt 2 or more) is assigned again by a person only: the name taught for its SKU would put it on the same item at the next report (#2633).
     const match = explicit ?? (line.attempt === 1 && line.sku ? matches.get(normalizeAlias(line.sku)) : undefined);
     const quantity = movableQuantity(line.quantity);
     const signed = match && quantity !== null ? moveQuantity('sale', quantity, match.factor) : null;
     if (!match || signed === null) return 0;
     await writeStockMove(ctx, { itemId: match.itemId, date: day, quantity: signed, source: { type: 'order_line', orderLineId: line.id, move: 'ship', attempt: line.attempt } });
-    shipped = { itemId: match.itemId, quantity: signed };
-    moves += 1;
-  }
-  if ((line.stage === 'returned' || line.stage === 'cancelled') && !returned) {
-    const back = shipped.quantity.startsWith('-') ? shipped.quantity.slice(1) : `-${shipped.quantity}`;
-    await writeStockMove(ctx, { itemId: shipped.itemId, date: today, quantity: back, source: { type: 'order_line', orderLineId: line.id, move: 'return', attempt: line.attempt } });
     moves += 1;
   }
   return moves;
@@ -405,17 +407,40 @@ export const marketplaceConfirm = defineCommand({
         const key = keyOf({ platform, orderNo: line.orderNo, lineKey: line.lineKey });
         const was = known.get(key);
         if (was) {
+          // The delivery day is kept only for a delivery that happened: a line reported completed, or one that was completed and then came back. A line that goes from shipped to returned
+          // is a failed delivery (the parcel came back to the seller): whatever day the platform gives it, none is written.
+          const deliveredAt = was.deliveredAt === null && line.deliveredAt !== null && (line.stage === 'completed' || (line.stage === 'returned' && was.stage === 'completed')) ? line.deliveredAt : null;
           if (canAdvance(was.stage, line.stage)) {
-            // The shipping day is set once; a later report can give it, never change it.
+            // The shipping day and the delivery day are set once; a later report can give them, never change them.
             await ctx.trx
-              .updateTable('crove_finance.channel_order_line')
-              .set({ stage: line.stage, ...(was.shippedAt === null && line.shippedAt !== null ? { shipped_at: line.shippedAt } : {}), updated_at: ctx.now })
+              .updateTable('ludy_finance.channel_order_line')
+              .set({
+                stage: line.stage,
+                ...(was.shippedAt === null && line.shippedAt !== null ? { shipped_at: line.shippedAt } : {}),
+                // coalesce: another confirmation that stored a day first keeps its day (the table refuses a change, which would fail this whole confirm).
+                ...(deliveredAt !== null ? { delivered_at: sql<string>`coalesce(delivered_at, ${deliveredAt}::date)` } : {}),
+                updated_at: ctx.now,
+              })
               .where('org_id', '=', ctx.orgId)
               .where('id', '=', was.id)
               .execute();
             updatedLines += 1;
             touched.push({ id: was.id, stage: line.stage, quantity: was.quantity, shippedAt: was.shippedAt ?? line.shippedAt, orderedAt: was.orderedAt ?? line.orderedAt, sku: was.sku, attempt: was.attempt });
           } else {
+            // A line that is already completed and has no delivery day yet takes it from a report that says it is completed (the earlier file had no completion column).
+            if (was.deliveredAt === null && line.deliveredAt !== null && was.stage === 'completed' && line.stage === 'completed') {
+              await ctx.trx
+                .updateTable('ludy_finance.channel_order_line')
+                .set({ delivered_at: line.deliveredAt, updated_at: ctx.now })
+                .where('org_id', '=', ctx.orgId)
+                .where('id', '=', was.id)
+                // A day another confirmation stored first is kept.
+                .where('delivered_at', 'is', null)
+                .execute();
+              updatedLines += 1;
+              touched.push({ id: was.id, stage: was.stage, quantity: was.quantity, shippedAt: was.shippedAt, orderedAt: was.orderedAt ?? line.orderedAt, sku: was.sku, attempt: was.attempt });
+              continue;
+            }
             duplicateLines += 1;
             // A line known and unchanged may still have stock to move (the item was assigned since).
             touched.push({ id: was.id, stage: was.stage, quantity: was.quantity, shippedAt: was.shippedAt, orderedAt: was.orderedAt ?? line.orderedAt, sku: was.sku, attempt: was.attempt });
@@ -428,7 +453,7 @@ export const marketplaceConfirm = defineCommand({
           orderIds.set(line.orderNo, orderId);
         }
         const row = await ctx.trx
-          .insertInto('crove_finance.channel_order_line')
+          .insertInto('ludy_finance.channel_order_line')
           .values({
             org_id: ctx.orgId,
             order_id: orderId,
@@ -440,6 +465,8 @@ export const marketplaceConfirm = defineCommand({
             amount: line.amount,
             stage: line.stage,
             shipped_at: line.shippedAt,
+            // A new line reported returned was never seen delivered: it gets no day.
+            delivered_at: line.stage === 'completed' ? line.deliveredAt : null,
             source_sha256: staged.sha256,
             source_row: line.rowNo,
           })
@@ -452,7 +479,7 @@ export const marketplaceConfirm = defineCommand({
       // The lines are held, in order, and their live attempt read again: a line taken back from its item since the report was read is at its next attempt now (#2633).
       if (touched.length > 0) {
         const live = await ctx.trx
-          .selectFrom('crove_finance.channel_order_line')
+          .selectFrom('ludy_finance.channel_order_line')
           .select(['id', 'attempt'])
           .where('org_id', '=', ctx.orgId)
           .where('id', 'in', touched.map((l) => l.id))
@@ -552,9 +579,16 @@ export async function readMarketplaceFile(deps: MarketplaceFileDeps, orgId: stri
     if (limitHit && attempt < EXTRACT_LIMIT_RETRIES) throw new Error(`crove-extract stopped at a limit: ${read.code}`);
     return { handled: false };
   }
-  const orders = read.orders;
+  let orders = read.orders;
   // Not an order report: the same call says whether it is an income report, so the caller can skip that reader (and its sandbox parse) for any other sheet (#2753).
-  if (!orders.recognized || orders.platform === null || orders.profile === null) return orders.incomeReport === false ? { handled: false, notIncome: true } : { handled: false };
+  if (!orders.recognized || orders.platform === null || orders.profile === null) {
+    // No built-in profile fits: a mapping a person saved for a file with this very header row reads it (#4037), and its lines are staged like any report's for a person to approve.
+    // An income report (the same call says so) is the income reader's, never an order report read through a mapping.
+    const applied = orders.incomeReport === true ? null : await readWithSavedColumns(deps, orgId, bytes, attempt);
+    if (applied === null) return orders.incomeReport === false ? { handled: false, notIncome: true } : { handled: false };
+    orders = applied;
+  }
+  if (orders.platform === null || orders.profile === null) return { handled: false };
   if (orders.tooMany) {
     await record('failed', { error: TOO_MANY_LINES });
     return { handled: true };
@@ -601,12 +635,12 @@ export const marketplaceUnassigned = defineQuery({
   access: ['owner', 'admin', 'member', 'viewer'],
   handler: async (ctx, input): Promise<MarketplaceUnassignedLine[]> => {
     let query = ctx.trx
-      .selectFrom('crove_finance.channel_order_line as l')
-      .innerJoin('crove_finance.channel_order as o', (join) => join.onRef('o.org_id', '=', 'l.org_id').onRef('o.id', '=', 'l.order_id'))
+      .selectFrom('ludy_finance.channel_order_line as l')
+      .innerJoin('ludy_finance.channel_order as o', (join) => join.onRef('o.org_id', '=', 'l.org_id').onRef('o.id', '=', 'l.order_id'))
       .select(['l.id', 'l.legal_entity_id', 'l.sku', 'l.item_name', 'l.quantity', 'l.stage', 'o.platform', 'o.order_no', 'o.ordered_at'])
       .where('l.org_id', '=', ctx.orgId)
       .where('l.stage', 'in', ['shipped', 'completed', 'returned'])
-      .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM crove_finance.stock_move AS m WHERE m.org_id = l.org_id AND m.order_line_id = l.id AND m.order_move = 'ship' AND m.order_attempt = l.attempt)`)
+      .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM ludy_finance.stock_move AS m WHERE m.org_id = l.org_id AND m.order_line_id = l.id AND m.order_move = 'ship' AND m.order_attempt = l.attempt)`)
       .orderBy('o.ordered_at', sql`desc nulls last`)
       .orderBy('o.id')
       .orderBy('l.line_key')
@@ -637,10 +671,10 @@ export const marketplaceAssign = defineCommand({
   handler: async (ctx, input): Promise<{ moves: number }> => {
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.marketplace.line:${ctx.orgId}:${input.lineId}`}, 0))`.execute(ctx.trx);
     // The line row is held first: a report confirming the same line at the same moment is finished before the line is read.
-    await ctx.trx.selectFrom('crove_finance.channel_order_line').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.lineId).forUpdate().executeTakeFirst();
+    await ctx.trx.selectFrom('ludy_finance.channel_order_line').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.lineId).forUpdate().executeTakeFirst();
     const line = await ctx.trx
-      .selectFrom('crove_finance.channel_order_line as l')
-      .innerJoin('crove_finance.channel_order as o', (join) => join.onRef('o.org_id', '=', 'l.org_id').onRef('o.id', '=', 'l.order_id'))
+      .selectFrom('ludy_finance.channel_order_line as l')
+      .innerJoin('ludy_finance.channel_order as o', (join) => join.onRef('o.org_id', '=', 'l.org_id').onRef('o.id', '=', 'l.order_id'))
       .select(['l.id', 'l.legal_entity_id', 'l.sku', 'l.quantity', 'l.stage', 'l.shipped_at', 'l.attempt', 'o.platform', 'o.ordered_at'])
       .where('l.org_id', '=', ctx.orgId)
       .where('l.id', '=', input.lineId)
@@ -650,7 +684,7 @@ export const marketplaceAssign = defineCommand({
     if (!item.active) throw new DomainError('STOCK_ITEM_INACTIVE', 409, 'Mặt hàng này đã ngừng dùng, hãy bật lại trước khi gán');
     if (item.legal_entity_id !== line.legal_entity_id) throw new DomainError('STOCK_ITEM_ENTITY_MISMATCH', 422, 'Mặt hàng và đơn hàng thuộc hai pháp nhân khác nhau');
     if (!MOVES_STOCK.has(line.stage)) throw new DomainError('MARKETPLACE_LINE_NOT_SHIPPED', 409, 'Dòng này chưa giao nên chưa có gì để ghi kho');
-    const shipped = await ctx.trx.selectFrom('crove_finance.stock_move').select('id').where('org_id', '=', ctx.orgId).where('order_line_id', '=', line.id).where('order_move', '=', 'ship').where('order_attempt', '=', line.attempt).executeTakeFirst();
+    const shipped = await ctx.trx.selectFrom('ludy_finance.stock_move').select('id').where('org_id', '=', ctx.orgId).where('order_line_id', '=', line.id).where('order_move', '=', 'ship').where('order_attempt', '=', line.attempt).executeTakeFirst();
     if (shipped) throw new DomainError('MARKETPLACE_LINE_ASSIGNED', 409, 'Dòng này đã được gán cho một mặt hàng');
     const today = await databaseToday(ctx.trx);
     const moves = await moveLineStock(
@@ -683,18 +717,18 @@ export const marketplaceUnassign = defineCommand({
   handler: async (ctx, input): Promise<{ moves: number; forgot: boolean }> => {
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.marketplace.line:${ctx.orgId}:${input.lineId}`}, 0))`.execute(ctx.trx);
     // The line row is held first: a report confirming the same line at the same moment is finished before its moves are read, so none is missed.
-    await ctx.trx.selectFrom('crove_finance.channel_order_line').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.lineId).forUpdate().executeTakeFirst();
+    await ctx.trx.selectFrom('ludy_finance.channel_order_line').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.lineId).forUpdate().executeTakeFirst();
     const line = await ctx.trx
-      .selectFrom('crove_finance.channel_order_line as l')
-      .innerJoin('crove_finance.channel_order as o', (join) => join.onRef('o.org_id', '=', 'l.org_id').onRef('o.id', '=', 'l.order_id'))
+      .selectFrom('ludy_finance.channel_order_line as l')
+      .innerJoin('ludy_finance.channel_order as o', (join) => join.onRef('o.org_id', '=', 'l.org_id').onRef('o.id', '=', 'l.order_id'))
       .select(['l.id', 'l.legal_entity_id', 'l.sku', 'l.quantity', 'l.stage', 'l.attempt', 'o.platform'])
       .where('l.org_id', '=', ctx.orgId)
       .where('l.id', '=', input.lineId)
       .executeTakeFirst();
     if (!line) throw new DomainError('MARKETPLACE_LINE_NOT_FOUND', 404, 'Không tìm thấy dòng đơn hàng này');
-    if (line.stage === 'cancelled') throw new DomainError('MARKETPLACE_LINE_CANCELLED', 409, 'Đơn đã hủy nên kho đã tự hoàn lại; không có gì để bỏ gán');
+    if (line.stage === 'cancelled') throw new DomainError('MARKETPLACE_LINE_CANCELLED', 409, 'Đơn đã hủy sau khi giao: hàng hoàn lại được xử lý ở mục "hàng đã về chưa?", nên không có gì để bỏ gán');
     const live = await ctx.trx
-      .selectFrom('crove_finance.stock_move')
+      .selectFrom('ludy_finance.stock_move')
       .select(['id', 'item_id', 'quantity', 'order_move'])
       .where('org_id', '=', ctx.orgId)
       .where('order_line_id', '=', line.id)
@@ -703,7 +737,7 @@ export const marketplaceUnassign = defineCommand({
     const ship = live.find((m) => m.order_move === 'ship');
     if (!ship) throw new DomainError('MARKETPLACE_LINE_NOT_ASSIGNED', 409, 'Dòng này chưa gán mặt hàng nào nên chưa có gì để bỏ gán');
     // The line goes to its next attempt first: only then does the database admit a reversal of the attempt it leaves, and at commit it checks that none was left behind.
-    await ctx.trx.updateTable('crove_finance.channel_order_line').set({ attempt: line.attempt + 1, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', line.id).execute();
+    await ctx.trx.updateTable('ludy_finance.channel_order_line').set({ attempt: line.attempt + 1, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', line.id).execute();
     const today = await databaseToday(ctx.trx);
     let moves = 0;
     // The return first if the line came back, then the shipment.
@@ -717,7 +751,7 @@ export const marketplaceUnassign = defineCommand({
       // Only the name that put the line on this item, at the factor the shipment used: a name taught for another item is a right one for the lines that carry it.
       const lineQuantity = movableQuantity(String(line.quantity));
       const alias = await ctx.trx
-        .selectFrom('crove_finance.stock_alias')
+        .selectFrom('ludy_finance.stock_alias')
         .select(['id', 'item_id', 'factor'])
         .where('org_id', '=', ctx.orgId)
         .where('legal_entity_id', '=', line.legal_entity_id)
@@ -733,5 +767,46 @@ export const marketplaceUnassign = defineCommand({
   },
 });
 
+// What the finance coworker may see when it proposes the item of unassigned order lines (#2686, plan stock-and-marketplaces.md section 8.6): for each line the product name and the SKU text as one string, and the
+// entity's active items (code, name, unit). Read only, in the caller's own transaction. It selects the line's id, SKU and product name and joins nothing: no order number, buyer, address, phone, date or amount
+// is in the query, so none can reach the model. A line counts only while it is still unassigned by the rule of `finance.marketplace.unassigned` and belongs to the entity asked: one already assigned, not yet
+// shipped, cancelled or of another entity or org is left out, never read. The model is asked outside any transaction by the API (apps/kernel stock-ai.ts).
+export interface MarketplaceSuggestSource {
+  lines: Array<{ lineId: string; text: string }>;
+  items: Array<{ id: string; code: string; name: string; unit: string }>;
+}
+
+export const marketplaceSuggestSource = defineQuery({
+  name: 'finance.marketplace.suggest_source',
+  input: zMarketplaceSuggestInput,
+  access: IMPORTERS,
+  handler: async (ctx, input): Promise<MarketplaceSuggestSource> => {
+    const entity = await resolveLegalEntity(ctx, input.legalEntityId);
+    const rows = await ctx.trx
+      .selectFrom('ludy_finance.channel_order_line as l')
+      .select(['l.id', 'l.sku', 'l.item_name'])
+      .where('l.org_id', '=', ctx.orgId)
+      .where('l.legal_entity_id', '=', entity)
+      .where('l.id', 'in', input.lineIds)
+      .where('l.stage', 'in', ['shipped', 'completed', 'returned'])
+      .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM ludy_finance.stock_move AS m WHERE m.org_id = l.org_id AND m.order_line_id = l.id AND m.order_move = 'ship' AND m.order_attempt = l.attempt)`)
+      .orderBy('l.id')
+      .execute();
+    const lines = rows
+      .map((r) => ({ lineId: r.id, text: oneLine([r.item_name, r.sku ? `SKU ${r.sku}` : null].filter((part): part is string => part !== null && part.trim() !== '').join(' '), 200) }))
+      .filter((l) => l.text !== '');
+    if (lines.length === 0) return { lines: [], items: [] };
+    const items = await ctx.trx
+      .selectFrom('ludy_finance.stock_item')
+      .select(['id', 'code', 'name', 'unit'])
+      .where('org_id', '=', ctx.orgId)
+      .where('legal_entity_id', '=', entity)
+      .where('active', '=', true)
+      .orderBy('code')
+      .execute();
+    return { lines, items: pickCandidates(lines.map((l) => l.text), items, OFFERED_ITEMS_MAX) };
+  },
+});
+
 export const marketplaceCommands = [marketplaceConfirm, marketplaceReject, marketplaceAssign, marketplaceUnassign];
-export const marketplaceQueries = [marketplaceStaged, marketplacePreview, marketplaceOrders, marketplaceUnassigned];
+export const marketplaceQueries = [marketplaceStaged, marketplacePreview, marketplaceOrders, marketplaceUnassigned, marketplaceSuggestSource];

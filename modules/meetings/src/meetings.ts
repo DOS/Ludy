@@ -1,19 +1,48 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
+import type { MemberRole } from '@ludy/db';
 import { CONSENT_NOTICE_VERSION, MEETING } from './manifest.ts';
 import { meetingSearch } from './search.ts';
 import { transcriptCorrect, transcriptDraftStore, transcriptGet } from './transcript.ts';
+import { createRedactCommands, redactQueries } from './redact.ts';
 import { transcribeCommandList } from './transcribe.ts';
 import { transcribeRunCommands, transcribeRunQueries } from './transcribe-run.ts';
+import { chaptersCommands, chaptersQueries } from './chapters.ts';
+import { chaptersRunCommands, chaptersRunQueries } from './chapters-run.ts';
+import { titleCommands, titleQueries } from './title.ts';
+import { commitmentsCommands, commitmentsQueries } from './commitments.ts';
+import { notesCommands, notesQueries } from './notes.ts';
 import { resultCommands, resultQueries } from './results.ts';
-import { summaryCommands } from './summary.ts';
+import { glossaryCommands, glossaryQueries } from './glossary.ts';
+import { minutesTemplateCommands, minutesTemplateQueries } from './minutes-templates.ts';
+import { mcpMeetingsQueries } from './mcp.ts';
+import { seriesCommands, seriesQueries } from './series.ts';
+import { speakerCommands } from './speaker.ts';
+import { summaryCommands, summaryQueries } from './summary.ts';
+import { summaryReadyCommands } from './summary-ready.ts';
 import { summaryRunCommands, summaryRunQueries } from './summary-run.ts';
+import { dropDraftTranslationsForMember, translateCommands } from './translate.ts';
+import { translateRunCommands, translateRunQueries } from './translate-run.ts';
+import { askRunCommands, askRunQueries } from './ask.ts';
+import { briefCommands, briefQueries } from './brief.ts';
+import { digestCommands, digestQueries } from './digest.ts';
+import { todayQueries } from './today.ts';
+import { morningCommands, morningQueries } from './morning.ts';
+import { assigneeCommands, assigneeQueries } from './assignee.ts';
+import { adherenceCommands, adherenceQueries } from './adherence.ts';
+import { agendaCommands, agendaQueries } from './agenda.ts';
+import { chatCommands, chatQueries } from './chat.ts';
 import { linkCommands, linkQueries } from './links.ts';
+import { hookCommands, hookQueries } from './hook.ts';
 import { liveNotesCommands } from './live-notes.ts';
 import { liveRunCommands, liveRunQueries } from './live-run.ts';
 import { liveCommands } from './live.ts';
+import { captureCommands, endCapture, openCapture } from './capture.ts';
+import { liveAssembleCommands, liveAssembleQueries } from './live-assemble.ts';
+import { lockMeetingMedia, recordSealedMedia } from './media-record.ts';
+import { createMeetingRow } from './meeting-core.ts';
+import { importCommands } from './import.ts';
 import { dropFollowupPayloads } from './followup-erase.ts';
 import { followupCommands, followupQueries } from './followup.ts';
 import {
@@ -21,22 +50,29 @@ import {
   meetingMediaDiscard,
   meetingMediaOrphanKeys,
   meetingRetentionShred,
+  meetingConsentPolicyGet,
+  meetingConsentPolicySet,
   meetingSettingsGet,
   meetingSettingsSet,
   meetingShredReplay,
-  readRetentionSettings,
-  retentionDates,
   vnDay,
 } from './retention.ts';
 import {
   auditValue,
+  joinServiceFromUrl,
   MEETING_OWNER_LIST_PAGE,
   zMeetingCreate,
   zMeetingExtensionStatus,
+  zMeetingRecordingNow,
+  zMeetingRecordingNowInput,
+  RECORDING_NOW_WINDOW_HOURS,
+  type MeetingRecordingNow,
   zMeetingListInput,
   zMeetingMediaKeyReseal,
   zMeetingMediaMeta,
   zMeetingMediaRecord,
+  zMeetingRecordingStopped,
+  zMeetingRecordingStoppedDone,
   zMeetingOwnerListInput,
   zMeetingReaderAdd,
   zMeetingReaderRemove,
@@ -44,13 +80,18 @@ import {
   type ConsentMethod,
   type MeetingDetail,
   type MeetingExtensionStatus,
+  type MeetingPlatform,
+  type MeetingRecordingStoppedDone,
+  type RecordingStopReason,
   type MeetingLanguage,
+  type MeetingSummaryTemplate,
+  parseStoredSections,
   type MeetingOwnerList,
   type MeetingOwnerListItem,
   type MeetingStatus,
   type MeetingSummary,
   type MeetingVisibility,
-} from '@crove/kernel-contract';
+} from '@ludy/kernel-contract';
 import {
   DomainError,
   defineCommand,
@@ -58,7 +99,7 @@ import {
   fileKey,
   type CommandContext,
   type QueryContext,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -70,20 +111,7 @@ function userOf(actor: CommandContext['actor'] | QueryContext['actor']): string 
   return actor.userId;
 }
 
-const MEDIA_EXTENSIONS: Record<string, string> = {
-  'audio/webm': 'webm',
-  'video/webm': 'webm',
-  'audio/mp4': 'm4a',
-  'video/mp4': 'mp4',
-  'audio/ogg': 'ogg',
-  'audio/wav': 'wav',
-  'audio/mpeg': 'mp3',
-};
-
-/** File extension for a sniffed container (detectMediaContainer), so the stored name matches the bytes (#2703). */
-export function mediaExtension(contentType: string, kind: 'audio' | 'video'): string {
-  return MEDIA_EXTENSIONS[contentType] ?? (kind === 'audio' ? 'bin' : 'mp4');
-}
+export { mediaExtension } from './media-record.ts';
 
 export function detectMediaContainer(bytes: Uint8Array, kind: 'audio' | 'video'): string | null {
   if (bytes.length < 12) return null;
@@ -136,17 +164,30 @@ interface MeetingRow {
   length_seconds: number | null;
   keep_video: boolean;
   live_notes: boolean;
+  summary_template: MeetingSummaryTemplate;
+  minutes_template_name: string | null;
+  minutes_template_sections: unknown;
+  minutes_template_hash: string | null;
   consent_method: ConsentMethod;
   consent_confirmed_by: string;
   consent_confirmed_at: Date | string;
   consent_notice_version: string;
+  recording_stop_reason: RecordingStopReason | null;
+  platform_transcript_cut: boolean;
   audio_retention_date: Date | string;
   text_retention_date: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
 
-function toSummary(r: MeetingRow, readersCount: number, hasAudio: boolean, hasVideo: boolean): MeetingSummary {
+function toSummary(
+  r: MeetingRow,
+  readersCount: number,
+  hasAudio: boolean,
+  hasVideo: boolean,
+  hasTranscript: boolean,
+  platform: MeetingPlatform | null,
+): MeetingSummary {
   return {
     id: r.id,
     recorderUserId: r.recorder_user_id,
@@ -159,10 +200,13 @@ function toSummary(r: MeetingRow, readersCount: number, hasAudio: boolean, hasVi
     lengthSeconds: r.length_seconds,
     keepVideo: r.keep_video,
     liveNotes: r.live_notes,
+    summaryTemplate: r.summary_template,
     audioRetentionDate: dayText(r.audio_retention_date),
     textRetentionDate: r.text_retention_date === null ? null : dayText(r.text_retention_date),
     hasAudio,
     hasVideo,
+    hasTranscript,
+    platform,
     readersCount,
     createdAt: new Date(r.created_at).toISOString(),
     updatedAt: new Date(r.updated_at).toISOString(),
@@ -171,6 +215,8 @@ function toSummary(r: MeetingRow, readersCount: number, hasAudio: boolean, hasVi
 
 export const meetingCreate = defineCommand({
   name: 'meetings.meeting.create',
+  // Opens a recording the app's switch-off would cut short: it holds the tenant row, as the switch does (ADR-0053).
+  opensBusyWork: true,
   input: zMeetingCreate,
   risk: 'R1',
   sideEffect: 'internal',
@@ -180,70 +226,34 @@ export const meetingCreate = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const extensionTokenId = ctx.actor.type === 'user' ? (ctx.actor.extension?.tokenId ?? null) : null;
-    const meetingId = randomUUID();
-    const startedAt = ctx.now;
-    // The periods the org's settings give today, stamped on the meeting so the period the participants were told stays true (plan section 9).
-    const dates = retentionDates(startedAt, await readRetentionSettings(ctx.trx, ctx.orgId));
-
-    await ctx.trx
-      .insertInto('crove_meetings.meeting')
-      .values({
-        org_id: ctx.orgId,
-        id: meetingId,
-        recorder_user_id: userId,
-        visibility: input.visibility,
-        title: input.title,
-        language: input.language,
-        status: 'ready',
-        started_at: startedAt,
-        ended_at: null,
-        length_seconds: input.lengthSeconds ?? null,
-        keep_video: input.keepVideo,
-        live_notes: input.liveNotes,
-        consent_method: input.consentMethod,
-        consent_confirmed_by: userId,
-        consent_confirmed_at: startedAt,
-        consent_notice_version: CONSENT_NOTICE_VERSION,
-        audio_retention_date: dates.audio,
-        text_retention_date: dates.text,
-        extension_token_id: extensionTokenId,
-      })
-      .execute();
-
-    if (input.visibility === 'attendees' && input.readerUserIds && input.readerUserIds.length > 0) {
-      const uniqueReaderIds = Array.from(new Set(input.readerUserIds.filter((id) => id !== userId)));
-      if (uniqueReaderIds.length > 0) {
-        const validMembers = await ctx.trx
-          .selectFrom('crove_kernel.tenant_member')
-          .select(['user_id'])
-          .where('org_id', '=', ctx.orgId)
-          .where('user_id', 'in', uniqueReaderIds)
-          .where('role', 'in', ['owner', 'admin', 'member'])
-          .execute();
-        if (validMembers.length !== uniqueReaderIds.length) {
-          throw new DomainError('INVALID_READER', 400, 'All readers must be active non-viewer members of this organization');
-        }
-        for (const readerId of uniqueReaderIds) {
-          await ctx.trx
-            .insertInto('crove_meetings.meeting_reader')
-            .values({
-              org_id: ctx.orgId,
-              id: randomUUID(),
-              meeting_id: meetingId,
-              user_id: readerId,
-            })
-            .onConflict((oc) => oc.columns(['org_id', 'meeting_id', 'user_id']).doNothing())
-            .execute();
-        }
-      }
-    }
+    const meetingId = await createMeetingRow(ctx, {
+      userId,
+      title: input.title,
+      language: input.language,
+      visibility: input.visibility,
+      startedAt: ctx.now,
+      retentionFrom: ctx.now,
+      lengthSeconds: input.lengthSeconds ?? null,
+      keepVideo: input.keepVideo,
+      liveNotes: input.liveNotes,
+      summaryTemplate: input.summaryTemplate,
+      consentMethod: input.consentMethod,
+      consentNoticeVersion: input.consentNoticeVersion ?? CONSENT_NOTICE_VERSION,
+      readerUserIds: input.readerUserIds,
+      extensionTokenId,
+    });
+    // A live recording is a capture (ADR-0055 slice 1, #4123), and an extension token always is: asked here, in the meeting's own transaction, so a refused start (CAPTURE_ALREADY_RUNNING) leaves no meeting.
+    const captureKind = input.capture !== undefined || extensionTokenId !== null ? await openCapture(ctx, meetingId, input.capture) : null;
 
     ctx.audit({
       meetingId,
       title: auditValue(MEETING, 'title', input.title),
       visibility: input.visibility,
       consentMethod: input.consentMethod,
+      consentNoticeVersion: input.consentNoticeVersion ?? CONSENT_NOTICE_VERSION,
       liveNotes: input.liveNotes,
+      summaryTemplate: input.summaryTemplate,
+      ...(captureKind !== null ? { capture: captureKind } : {}),
     });
 
     return { meetingId };
@@ -262,8 +272,8 @@ export const meetingMediaRecord = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
-      .select(['id', 'recorder_user_id', 'keep_video', 'extension_token_id', sql<string>`audio_retention_date::text`.as('audio_retention_day')])
+      .selectFrom('ludy_meetings.meeting')
+      .select(['id', 'recorder_user_id', 'keep_video', 'extension_token_id', 'started_at', 'ended_at', 'recording_stop_reason', sql<string>`audio_retention_date::text`.as('audio_retention_day')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .executeTakeFirst();
@@ -289,76 +299,80 @@ export const meetingMediaRecord = defineCommand({
       throw new DomainError('INVALID_STORAGE_KEY', 400, 'Storage key must match org and sha256');
     }
 
-    // The recording is complete, whatever its kind (a video holds the same audio): the live pieces (ADR-0052 L4a) are not kept beside it. The meeting's live lock
-    // is taken first, so a piece being recorded at this moment either commits before this and is deleted here, or waits and finds the recording ended. Their keys go
-    // first, so they are unreadable from this commit, and their file rows are left for the worker's orphan sweep. A meeting with no live pieces has nothing to delete.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`meetings.live:${ctx.orgId}:${input.meetingId}`}, 0))`.execute(ctx.trx);
-    const { rows: discarded } = await sql<{ n: number }>`SELECT crove_meetings.live_chunk_discard(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS n`.execute(ctx.trx);
-    const liveChunksDiscarded = Number(discarded[0]?.n ?? 0);
-    const wrappedKey = Buffer.from(input.wrappedKeyHex, 'hex');
-    await sql`SELECT crove_meetings.media_key_seal(
-      ${ctx.orgId}::uuid,
-      ${input.meetingId}::uuid,
-      ${input.keyId}::text,
-      ${input.kind}::text,
-      ${wrappedKey}::bytea
-    )`.execute(ctx.trx);
+    const { fileId, liveChunksDiscarded, replaced } = await recordSealedMedia(ctx, { userId, meetingId: input.meetingId, audioRetentionDay: meeting.audio_retention_day, joinedFromPieces: false, input });
 
-    const fileId = randomUUID();
-    const filename = `meeting-${input.meetingId}.${mediaExtension(input.contentType, input.kind)}`;
-    await ctx.trx
-      .insertInto('crove_kernel.file')
-      .values({
-        org_id: ctx.orgId,
-        id: fileId,
-        filename,
-        content_type: input.contentType,
-        size_bytes: String(input.sizeBytes),
-        sha256: input.sha256,
-        storage_key: input.storageKey,
-        generation: input.generation ?? null,
-        source: input.kind === 'audio' ? 'meeting_audio' : 'meeting_video',
-        created_by: userId,
-      })
-      .execute();
-
-    if (input.kind === 'audio') {
+    // A recording that stopped without the recorder's click (A1, #3159): the reason code stays on the meeting, once (with the first media, which is also what
+    // recordSealedMedia ends the meeting's recording on, #3205), so it can say "Ghi âm đã dừng lúc ...". A code, never text. The stop reason is this command's
+    // alone: a recording joined from live pieces carries none.
+    if (meeting.ended_at === null && meeting.started_at !== null && input.stopReason !== undefined && meeting.recording_stop_reason === null) {
       await ctx.trx
-        .insertInto('crove_meetings.audio_segment')
-        .values({
-          org_id: ctx.orgId,
-          id: randomUUID(),
-          meeting_id: input.meetingId,
-          file_id: fileId,
-          segment_order: 0,
-          start_offset_seconds: 0,
-          length_seconds: input.lengthSeconds,
-        })
-        .execute();
-    } else {
-      // The org's video period from the recording, never past the meeting's own audio date.
-      const videoDay = retentionDates(ctx.now, await readRetentionSettings(ctx.trx, ctx.orgId)).video;
-      const videoRetentionDate = videoDay < meeting.audio_retention_day ? videoDay : meeting.audio_retention_day;
-      await ctx.trx
-        .insertInto('crove_meetings.meeting_video')
-        .values({
-          org_id: ctx.orgId,
-          id: randomUUID(),
-          meeting_id: input.meetingId,
-          file_id: fileId,
-          length_seconds: input.lengthSeconds,
-          video_retention_date: videoRetentionDate,
-        })
+        .updateTable('ludy_meetings.meeting')
+        .set({ recording_stop_reason: input.stopReason, updated_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.meetingId)
+        // Once: a reason a report already left (#3196) is kept.
+        .where('recording_stop_reason', 'is', null)
         .execute();
     }
 
-    ctx.audit({ meetingId: input.meetingId, kind: input.kind, fileId, ...(liveChunksDiscarded > 0 ? { liveChunksDiscarded } : {}) });
+    ctx.audit({ meetingId: input.meetingId, kind: input.kind, fileId, ...(input.stopReason !== undefined ? { stopReason: input.stopReason } : {}), ...(liveChunksDiscarded > 0 ? { liveChunksDiscarded } : {}), ...(replaced ? { replacedJoined: true } : {}) });
     return { fileId };
+  },
+});
+
+// A recording ended and no media will reach the server (#3196): the extension stopped with nothing saved, the upload never arrived, or the
+// capture failed to start after the meeting was made. It sets the meeting's end time and, for a stop the member did not ask for, the stop code,
+// once, so the app's recording chip lets go at once instead of after its window. Codes and a length only, in the input and the audit.
+// A no-op (and `ended: false`) once the meeting has any recording or an end time, so a late or repeated call changes nothing.
+export const meetingRecordingStopped = defineCommand({
+  name: 'meetings.meeting.recording_stopped',
+  input: zMeetingRecordingStopped,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  // The extension's meetings scope reports the end of a meeting its own token created, and no other (#3196).
+  extension: { scope: 'meetings' },
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input): Promise<MeetingRecordingStoppedDone> => {
+    const userId = userOf(ctx.actor);
+    const meeting = await ctx.trx
+      .selectFrom('ludy_meetings.meeting')
+      .select(['recorder_user_id', 'extension_token_id', 'started_at', 'ended_at', 'recording_stop_reason'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.meetingId)
+      .executeTakeFirst();
+    if (!meeting) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may end its recording');
+    // An extension token reaches only the meetings it created: any other is answered as one that does not exist.
+    if (ctx.actor.type === 'user' && ctx.actor.extension && meeting.extension_token_id !== ctx.actor.extension.tokenId) {
+      throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    }
+    // The media lock first, so a recording being stored at this moment either commits before the checks below or waits for this transaction.
+    await lockMeetingMedia(ctx, input.meetingId);
+    // The recorder says the recording is over, whether or not anything was recorded: the call is free again (ADR-0055 slice 1, #4123).
+    await endCapture(ctx, input.meetingId, 'stopped');
+    const { rows: held } = await sql<{ recorded: boolean; ended: boolean }>`
+      SELECT EXISTS (SELECT 1 FROM ludy_meetings.audio_segment WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid)
+          OR EXISTS (SELECT 1 FROM ludy_meetings.meeting_video WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${input.meetingId}::uuid) AS recorded,
+             (SELECT ended_at IS NOT NULL FROM ludy_meetings.meeting WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.meetingId}::uuid) AS ended`.execute(ctx.trx);
+    const changed = held[0]?.recorded !== true && held[0]?.ended !== true;
+    if (changed) {
+      const length = input.lengthSeconds === undefined || meeting.started_at === null ? null : input.lengthSeconds;
+      await sql`
+        UPDATE ludy_meetings.meeting
+        SET ended_at = CASE WHEN ${length}::int IS NULL THEN ${ctx.now}::timestamptz ELSE LEAST(started_at + (${length}::int * interval '1 second'), ${ctx.now}::timestamptz) END,
+            recording_stop_reason = COALESCE(recording_stop_reason, ${input.reason ?? null}::text),
+            updated_at = ${ctx.now}::timestamptz
+        WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.meetingId}::uuid AND ended_at IS NULL`.execute(ctx.trx);
+    }
+    ctx.audit({ meetingId: input.meetingId, changed, ...(input.reason !== undefined ? { reason: input.reason } : {}) });
+    return zMeetingRecordingStoppedDone.parse({ meetingId: input.meetingId, ended: changed });
   },
 });
 
 export const meetingDelete = defineCommand({
   name: 'meetings.meeting.delete',
+  runsWhenOff: 'deletes a meeting and its recording, which the owner of the data may still do while the app is off',
   input: zMeetingRef,
   risk: 'R1',
   sideEffect: 'internal',
@@ -367,7 +381,7 @@ export const meetingDelete = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['id', 'recorder_user_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -381,11 +395,11 @@ export const meetingDelete = defineCommand({
       throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can delete this meeting');
     }
 
-    await sql`SELECT crove_meetings.media_key_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx);
+    await sql`SELECT ludy_meetings.media_key_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx);
     // The follow-up mails hold a copy of the shared text: it goes with the meeting (#3016).
     const mailPayloads = await dropFollowupPayloads(ctx, input.meetingId);
     await ctx.trx
-      .deleteFrom('crove_meetings.meeting')
+      .deleteFrom('ludy_meetings.meeting')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
       .execute();
@@ -397,6 +411,7 @@ export const meetingDelete = defineCommand({
 
 export const meetingOwnerDelete = defineCommand({
   name: 'meetings.meeting.owner_delete',
+  runsWhenOff: 'deletes a meeting and its recording on the org owner\'s word while the app is off',
   input: zMeetingRef,
   risk: 'R3',
   sideEffect: 'internal',
@@ -404,12 +419,12 @@ export const meetingOwnerDelete = defineCommand({
   target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
   handler: async (ctx, input) => {
     userOf(ctx.actor);
-    await sql`SELECT crove_meetings.media_key_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx);
+    await sql`SELECT ludy_meetings.media_key_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx);
     // The follow-up mails hold a copy of the shared text: it goes with the meeting (#3016). A meeting that does not exist has none, and the delete below then says so.
     const mailPayloads = await dropFollowupPayloads(ctx, input.meetingId);
 
     const { rows } = await sql<{ deleted: boolean }>`
-      SELECT crove_meetings.meeting_owner_delete(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS deleted
+      SELECT ludy_meetings.meeting_owner_delete(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS deleted
     `.execute(ctx.trx);
 
     if (!rows[0]?.deleted) {
@@ -449,7 +464,7 @@ export const meetingOwnerList = defineCommand({
     }>`
       SELECT l.id, pg_catalog.to_json(l.started_at) #>> '{}' AS started_text, l.recorder_user_id, l.org_wide, l.status_code,
              l.audio_retention_date, l.video_retention_date, l.text_retention_date
-      FROM crove_meetings.meeting_owner_list_page(${ctx.orgId}::uuid, ${limit}::integer, ${input.afterStartedAt ?? null}::timestamptz, ${input.afterId ?? null}::uuid) l
+      FROM ludy_meetings.meeting_owner_list_page(${ctx.orgId}::uuid, ${limit}::integer, ${input.afterStartedAt ?? null}::timestamptz, ${input.afterId ?? null}::uuid) l
     `.execute(ctx.trx);
     const items: MeetingOwnerListItem[] = rows.map((r) => ({
       id: r.id,
@@ -465,7 +480,7 @@ export const meetingOwnerList = defineCommand({
     const last = items[items.length - 1];
     if (items.length === limit && last) {
       const { rows: more } = await sql<{ id: string }>`
-        SELECT l.id FROM crove_meetings.meeting_owner_list_page(${ctx.orgId}::uuid, 1, ${last.startedAt}::timestamptz, ${last.id}::uuid) l
+        SELECT l.id FROM ludy_meetings.meeting_owner_list_page(${ctx.orgId}::uuid, 1, ${last.startedAt}::timestamptz, ${last.id}::uuid) l
       `.execute(ctx.trx);
       if (more.length > 0) next = { afterStartedAt: last.startedAt, afterId: last.id };
     }
@@ -484,7 +499,7 @@ export const meetingReaderAdd = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['id', 'recorder_user_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -495,7 +510,7 @@ export const meetingReaderAdd = defineCommand({
     }
 
     const member = await ctx.trx
-      .selectFrom('crove_kernel.tenant_member')
+      .selectFrom('ludy_kernel.tenant_member')
       .select(['role'])
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', input.userId)
@@ -506,7 +521,7 @@ export const meetingReaderAdd = defineCommand({
     }
 
     await ctx.trx
-      .insertInto('crove_meetings.meeting_reader')
+      .insertInto('ludy_meetings.meeting_reader')
       .values({
         org_id: ctx.orgId,
         id: randomUUID(),
@@ -531,7 +546,7 @@ export const meetingReaderRemove = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['id', 'recorder_user_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -542,7 +557,7 @@ export const meetingReaderRemove = defineCommand({
     }
 
     await ctx.trx
-      .deleteFrom('crove_meetings.meeting_reader')
+      .deleteFrom('ludy_meetings.meeting_reader')
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
       .where('user_id', '=', input.userId)
@@ -557,6 +572,7 @@ export const meetingReaderRemove = defineCommand({
 // the one it read (the definer compares the key id and the wrapped bytes under the update). System actor only.
 export const meetingMediaKeyReseal = defineCommand({
   name: 'meetings.media_key.reseal',
+  runsWhenOff: 'rewraps the sealed recording keys under the current key while the app is off',
   input: zMeetingMediaKeyReseal,
   risk: 'R1',
   sideEffect: 'internal',
@@ -564,7 +580,7 @@ export const meetingMediaKeyReseal = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Only a system actor may do this');
     const { rows } = await sql<{ resealed: boolean }>`
-      SELECT crove_meetings.media_key_reseal(
+      SELECT ludy_meetings.media_key_reseal(
         ${ctx.orgId}::uuid,
         ${input.id}::uuid,
         ${input.fromKeyId}::text,
@@ -580,13 +596,55 @@ export const meetingMediaKeyReseal = defineCommand({
   },
 });
 
+// The recording indicator of the app header (A1, #3159): the caller's own meeting made by the extension that has no audio yet
+// (no media recorded yet, so no end time) and started in the last RECORDING_NOW_WINDOW_HOURS. A person's own meetings only; nothing of any other member. Not sensitive:
+// it returns an id and a start time, never a title, and the app asks every few seconds.
+export const meetingRecordingNow = defineQuery({
+  name: 'meetings.meeting.recording_now',
+  input: zMeetingRecordingNowInput,
+  access: READERS,
+  handler: async (ctx): Promise<MeetingRecordingNow> => {
+    const userId = userOf(ctx.actor);
+    const now = new Date();
+    const since = new Date(now.getTime() - RECORDING_NOW_WINDOW_HOURS * 3_600_000);
+    const row = await ctx.trx
+      .selectFrom('ludy_meetings.meeting')
+      .select(['id', 'started_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('recorder_user_id', '=', userId)
+      .where('status', '=', 'ready')
+      .where('extension_token_id', 'is not', null)
+      .where('started_at', '>', since)
+      .where('ended_at', 'is', null)
+      .where((eb) => eb.or([eb('text_retention_date', 'is', null), eb('text_retention_date', '>', vnDay(now))]))
+      .orderBy('started_at', 'desc')
+      .limit(1)
+      .executeTakeFirst();
+    return zMeetingRecordingNow.parse({
+      recording: row ? { meetingId: row.id, startedAt: new Date(row.started_at as Date | string).toISOString() } : null,
+    });
+  },
+});
+
+// Caller's active calendar events with event reading enabled, scoped by org, user, and calendar_agenda_read RLS.
+function readableAgendaPlatforms(trx: QueryContext['trx'], orgId: string, userId: string) {
+  return trx
+    .selectFrom('ludy_meetings.calendar_agenda as a')
+    .innerJoin('ludy_kernel.calendar_connection as c', (join) => join.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.connection_id'))
+    .where('a.org_id', '=', orgId)
+    .where('a.user_id', '=', userId)
+    .where('c.status', '=', 'active')
+    .where('c.read_events', '=', true);
+}
+
 export const meetingList = defineQuery({
   name: 'meetings.meeting.list',
   input: zMeetingListInput,
   access: READERS,
   handler: async (ctx, input): Promise<MeetingSummary[]> => {
+    const userId = userOf(ctx.actor);
     let query = ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       // A meeting past its text date is gone from its day, not from the nightly job's run (#2579).
@@ -606,7 +664,7 @@ export const meetingList = defineQuery({
     const meetingIds = rows.map((r) => r.id);
 
     const readers = await ctx.trx
-      .selectFrom('crove_meetings.meeting_reader')
+      .selectFrom('ludy_meetings.meeting_reader')
       .select(['meeting_id', sql<string>`count(*)::text`.as('count')])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', 'in', meetingIds)
@@ -615,7 +673,7 @@ export const meetingList = defineQuery({
     const readersMap = new Map(readers.map((r) => [r.meeting_id, Number(r.count)]));
 
     const audioSegments = await ctx.trx
-      .selectFrom('crove_meetings.audio_segment')
+      .selectFrom('ludy_meetings.audio_segment')
       .select(['meeting_id'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', 'in', meetingIds)
@@ -623,15 +681,48 @@ export const meetingList = defineQuery({
     const audioSet = new Set(audioSegments.map((a) => a.meeting_id));
 
     const videos = await ctx.trx
-      .selectFrom('crove_meetings.meeting_video')
+      .selectFrom('ludy_meetings.meeting_video')
       .select(['meeting_id'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', 'in', meetingIds)
       .execute();
     const videoSet = new Set(videos.map((v) => v.meeting_id));
 
+    // transcript_segment_read RESTRICTIVE RLS ensures recorders see drafts/published while readers only see published.
+    // EXISTS stops at the first visible segment per meeting instead of evaluating RLS on every row.
+    const transcriptMeetings = await sql<{ meeting_id: string }>`
+      SELECT m.id AS meeting_id
+      FROM pg_catalog.unnest(${meetingIds}::uuid[]) AS m(id)
+      WHERE EXISTS (
+        SELECT 1
+        FROM ludy_meetings.transcript_segment s
+        WHERE s.org_id = ${ctx.orgId}::uuid
+          AND s.meeting_id = m.id
+      )
+    `.execute(ctx.trx);
+    const transcriptSet = new Set(transcriptMeetings.rows.map((t) => t.meeting_id));
+
+    // Active, readable caller calendar events only; mapped to platform code without exposing raw joinUrl.
+    const agendaPlatforms = await readableAgendaPlatforms(ctx.trx, ctx.orgId, userId)
+      .select(['a.meeting_id', 'a.join_url'])
+      .where('a.meeting_id', 'in', meetingIds)
+      .execute();
+    const platformMap = new Map<string, MeetingPlatform>();
+    for (const row of agendaPlatforms) {
+      if (!row.meeting_id) continue;
+      const platform = joinServiceFromUrl(row.join_url);
+      if (platform !== null) platformMap.set(row.meeting_id, platform);
+    }
+
     return rows.map((r) =>
-      toSummary(r, readersMap.get(r.id) ?? 0, audioSet.has(r.id), videoSet.has(r.id)),
+      toSummary(
+        r,
+        readersMap.get(r.id) ?? 0,
+        audioSet.has(r.id),
+        videoSet.has(r.id),
+        transcriptSet.has(r.id),
+        platformMap.get(r.id) ?? null,
+      ),
     );
   },
 });
@@ -643,7 +734,7 @@ export const meetingGet = defineQuery({
   handler: async (ctx, input): Promise<MeetingDetail> => {
     const userId = userOf(ctx.actor);
     const meeting = (await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -653,7 +744,7 @@ export const meetingGet = defineQuery({
     }
 
     const readers = await ctx.trx
-      .selectFrom('crove_meetings.meeting_reader')
+      .selectFrom('ludy_meetings.meeting_reader')
       .select(['user_id'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
@@ -661,17 +752,31 @@ export const meetingGet = defineQuery({
     const readerIds = readers.map((r) => r.user_id);
 
     const audioSegment = await ctx.trx
-      .selectFrom('crove_meetings.audio_segment')
+      .selectFrom('ludy_meetings.audio_segment')
       .select(['id'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
       .executeTakeFirst();
 
     const video = await ctx.trx
-      .selectFrom('crove_meetings.meeting_video')
+      .selectFrom('ludy_meetings.meeting_video')
       .select(['id', 'video_retention_date'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
+      .executeTakeFirst();
+
+    const transcriptSegment = await ctx.trx
+      .selectFrom('ludy_meetings.transcript_segment')
+      .select(['id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', '=', input.meetingId)
+      .limit(1)
+      .executeTakeFirst();
+
+    const agendaPlatform = await readableAgendaPlatforms(ctx.trx, ctx.orgId, userId)
+      .select(['a.join_url'])
+      .where('a.meeting_id', '=', input.meetingId)
+      .limit(1)
       .executeTakeFirst();
 
     const videoRetentionDate = video?.video_retention_date
@@ -680,16 +785,29 @@ export const meetingGet = defineQuery({
         : new Date(video.video_retention_date).toISOString().slice(0, 10)
       : null;
 
-    const summary = toSummary(meeting, readerIds.length, audioSegment !== undefined, video !== undefined);
+    const summary = toSummary(
+      meeting,
+      readerIds.length,
+      audioSegment !== undefined,
+      video !== undefined,
+      transcriptSegment !== undefined,
+      joinServiceFromUrl(agendaPlatform?.join_url ?? null),
+    );
     return {
       ...summary,
       consentMethod: meeting.consent_method,
       consentConfirmedBy: meeting.consent_confirmed_by,
       consentConfirmedAt: new Date(meeting.consent_confirmed_at).toISOString(),
       consentNoticeVersion: meeting.consent_notice_version,
+      recordingStopReason: meeting.recording_stop_reason,
+      platformTranscriptCut: meeting.platform_transcript_cut,
       readers: readerIds,
       videoRetentionDate,
       isRecorder: meeting.recorder_user_id === userId,
+      minutesTemplate:
+        meeting.minutes_template_sections === null || meeting.minutes_template_name === null || meeting.minutes_template_hash === null
+          ? null
+          : { name: meeting.minutes_template_name, hash: meeting.minutes_template_hash, sections: parseStoredSections(meeting.minutes_template_sections) },
     };
   },
 });
@@ -708,7 +826,7 @@ export const meetingExtensionStatus = defineQuery({
   handler: async (ctx, input): Promise<MeetingExtensionStatus> => {
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['id', 'recorder_user_id', 'status', 'keep_video', 'live_notes', 'length_seconds', 'extension_token_id', sql<string | null>`text_retention_date::text`.as('text_day')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -723,13 +841,13 @@ export const meetingExtensionStatus = defineQuery({
       throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
     }
     const audio = await ctx.trx
-      .selectFrom('crove_meetings.audio_segment')
+      .selectFrom('ludy_meetings.audio_segment')
       .select(['id'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
       .executeTakeFirst();
     const video = await ctx.trx
-      .selectFrom('crove_meetings.meeting_video')
+      .selectFrom('ludy_meetings.meeting_video')
       .select(['id'])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
@@ -755,7 +873,7 @@ export const meetingAudioRead = defineQuery({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['id', sql<string>`audio_retention_date::text`.as('audio_day'), sql<string | null>`text_retention_date::text`.as('text_day')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -769,22 +887,22 @@ export const meetingAudioRead = defineQuery({
     }
 
     const { rows: readerRows } = await sql<{ ok: boolean }>`
-      SELECT crove_meetings.is_meeting_reader(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${userId}::uuid) AS ok
+      SELECT ludy_meetings.is_meeting_reader(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${userId}::uuid) AS ok
     `.execute(ctx.trx);
     if (!readerRows[0]?.ok) {
       throw new DomainError('FORBIDDEN', 403, 'You do not have permission to play meeting audio');
     }
 
     const { rows: keyRows } = await sql<{ key_id: string; wrapped_key: Buffer }>`
-      SELECT key_id, wrapped_key FROM crove_meetings.media_key_read(${ctx.orgId}::uuid, ${input.meetingId}::uuid, 'audio')
+      SELECT key_id, wrapped_key FROM ludy_meetings.media_key_read(${ctx.orgId}::uuid, ${input.meetingId}::uuid, 'audio')
     `.execute(ctx.trx);
     if (keyRows.length === 0 || !keyRows[0]) {
       throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting audio key has been shredded');
     }
 
     const segment = await ctx.trx
-      .selectFrom('crove_meetings.audio_segment as s')
-      .innerJoin('crove_kernel.file as f', (join) =>
+      .selectFrom('ludy_meetings.audio_segment as s')
+      .innerJoin('ludy_kernel.file as f', (join) =>
         join.onRef('f.org_id', '=', 's.org_id').onRef('f.id', '=', 's.file_id'),
       )
       .select(['f.id as fileId', 'f.storage_key as storageKey', 'f.generation as generation', 'f.size_bytes as sizeBytes', 'f.sha256', 'f.content_type as contentType'])
@@ -818,7 +936,7 @@ export const meetingVideoRead = defineQuery({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['id', sql<string>`audio_retention_date::text`.as('audio_day'), sql<string | null>`text_retention_date::text`.as('text_day')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -832,22 +950,22 @@ export const meetingVideoRead = defineQuery({
     }
 
     const { rows: readerRows } = await sql<{ ok: boolean }>`
-      SELECT crove_meetings.is_meeting_reader(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${userId}::uuid) AS ok
+      SELECT ludy_meetings.is_meeting_reader(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${userId}::uuid) AS ok
     `.execute(ctx.trx);
     if (!readerRows[0]?.ok) {
       throw new DomainError('FORBIDDEN', 403, 'You do not have permission to play meeting video');
     }
 
     const { rows: keyRows } = await sql<{ key_id: string; wrapped_key: Buffer }>`
-      SELECT key_id, wrapped_key FROM crove_meetings.media_key_read(${ctx.orgId}::uuid, ${input.meetingId}::uuid, 'video')
+      SELECT key_id, wrapped_key FROM ludy_meetings.media_key_read(${ctx.orgId}::uuid, ${input.meetingId}::uuid, 'video')
     `.execute(ctx.trx);
     if (keyRows.length === 0 || !keyRows[0]) {
       throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting video key has been shredded');
     }
 
     const video = await ctx.trx
-      .selectFrom('crove_meetings.meeting_video as v')
-      .innerJoin('crove_kernel.file as f', (join) =>
+      .selectFrom('ludy_meetings.meeting_video as v')
+      .innerJoin('ludy_kernel.file as f', (join) =>
         join.onRef('f.org_id', '=', 'v.org_id').onRef('f.id', '=', 'v.file_id'),
       )
       .select(['f.id as fileId', 'f.storage_key as storageKey', 'f.generation as generation', 'f.size_bytes as sizeBytes', 'f.sha256', 'f.content_type as contentType', sql<string>`v.video_retention_date::text`.as('videoDay')])
@@ -881,7 +999,7 @@ export const meetingMediaMeta = defineQuery({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['id', sql<string>`audio_retention_date::text`.as('audio_day'), sql<string | null>`text_retention_date::text`.as('text_day')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -895,14 +1013,14 @@ export const meetingMediaMeta = defineQuery({
     }
 
     const { rows: readerRows } = await sql<{ ok: boolean }>`
-      SELECT crove_meetings.is_meeting_reader(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${userId}::uuid) AS ok
+      SELECT ludy_meetings.is_meeting_reader(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${userId}::uuid) AS ok
     `.execute(ctx.trx);
     if (!readerRows[0]?.ok) {
       throw new DomainError('FORBIDDEN', 403, 'You do not have permission to play meeting media');
     }
 
     const { rows: keyRows } = await sql<{ key_id: string; wrapped_key: Buffer }>`
-      SELECT key_id, wrapped_key FROM crove_meetings.media_key_read(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${input.kind})
+      SELECT key_id, wrapped_key FROM ludy_meetings.media_key_read(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${input.kind})
     `.execute(ctx.trx);
     if (keyRows.length === 0 || !keyRows[0]) {
       throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting media key has been shredded');
@@ -910,8 +1028,8 @@ export const meetingMediaMeta = defineQuery({
 
     if (input.kind === 'audio') {
       const segment = await ctx.trx
-        .selectFrom('crove_meetings.audio_segment as s')
-        .innerJoin('crove_kernel.file as f', (join) =>
+        .selectFrom('ludy_meetings.audio_segment as s')
+        .innerJoin('ludy_kernel.file as f', (join) =>
           join.onRef('f.org_id', '=', 's.org_id').onRef('f.id', '=', 's.file_id'),
         )
         .select(['f.id as fileId', 'f.storage_key as storageKey', 'f.generation as generation', 'f.size_bytes as sizeBytes', 'f.sha256', 'f.content_type as contentType'])
@@ -934,8 +1052,8 @@ export const meetingMediaMeta = defineQuery({
       };
     } else {
       const video = await ctx.trx
-        .selectFrom('crove_meetings.meeting_video as v')
-        .innerJoin('crove_kernel.file as f', (join) =>
+        .selectFrom('ludy_meetings.meeting_video as v')
+        .innerJoin('ludy_kernel.file as f', (join) =>
           join.onRef('f.org_id', '=', 'v.org_id').onRef('f.id', '=', 'v.file_id'),
         )
         .select(['f.id as fileId', 'f.storage_key as storageKey', 'f.generation as generation', 'f.size_bytes as sizeBytes', 'f.sha256', 'f.content_type as contentType', sql<string>`v.video_retention_date::text`.as('videoDay')])
@@ -964,6 +1082,7 @@ export const meetingMediaMeta = defineQuery({
 export const meetingsCommands = [
   meetingCreate,
   meetingMediaRecord,
+  meetingRecordingStopped,
   meetingDelete,
   meetingOwnerDelete,
   meetingOwnerList,
@@ -971,38 +1090,89 @@ export const meetingsCommands = [
   meetingReaderRemove,
   meetingMediaKeyReseal,
   meetingSettingsSet,
+  meetingConsentPolicySet,
   meetingRetentionShred,
   meetingShredReplay,
   meetingMediaDiscard,
   transcriptDraftStore,
   transcriptCorrect,
+  ...createRedactCommands(dropDraftTranslationsForMember),
   ...transcribeRunCommands,
   ...transcribeCommandList,
   ...resultCommands,
+  ...notesCommands,
+  ...chaptersCommands,
+  ...chaptersRunCommands,
+  ...titleCommands,
+  ...commitmentsCommands,
   ...summaryCommands,
+  ...speakerCommands,
+  ...seriesCommands,
+  ...minutesTemplateCommands,
+  ...glossaryCommands,
   ...summaryRunCommands,
+  ...summaryReadyCommands,
+  ...translateCommands,
+  ...translateRunCommands,
+  ...askRunCommands,
+  ...briefCommands,
+  ...digestCommands,
+  ...morningCommands,
+  ...assigneeCommands,
+  ...adherenceCommands,
+  ...agendaCommands,
+  ...chatCommands,
   ...linkCommands,
   ...followupCommands,
   ...liveCommands,
+  ...captureCommands,
+  ...liveAssembleCommands,
   ...liveRunCommands,
   ...liveNotesCommands,
+  ...hookCommands,
+  ...importCommands,
 ];
 
 export const meetingsQueries = [
   meetingList,
   meetingGet,
   meetingExtensionStatus,
+  meetingRecordingNow,
   meetingAudioRead,
   meetingVideoRead,
   meetingMediaMeta,
   meetingSettingsGet,
+  meetingConsentPolicyGet,
   meetingMediaOrphanKeys,
   transcriptGet,
+  ...redactQueries,
   meetingSearch,
   ...transcribeRunQueries,
   ...resultQueries,
+  ...notesQueries,
+  ...chaptersQueries,
+  ...chaptersRunQueries,
+  ...titleQueries,
+  ...commitmentsQueries,
+  ...summaryQueries,
+  ...seriesQueries,
+  ...minutesTemplateQueries,
+  ...glossaryQueries,
   ...summaryRunQueries,
+  ...translateRunQueries,
+  ...askRunQueries,
+  ...briefQueries,
+  ...digestQueries,
+  ...todayQueries,
+  ...morningQueries,
+  ...assigneeQueries,
+  ...adherenceQueries,
+  ...agendaQueries,
+  ...chatQueries,
   ...linkQueries,
   ...followupQueries,
   ...liveRunQueries,
+  ...liveAssembleQueries,
+  ...hookQueries,
+  ...mcpMeetingsQueries,
 ];

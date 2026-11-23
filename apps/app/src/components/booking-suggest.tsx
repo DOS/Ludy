@@ -5,22 +5,18 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { zonedInstant, type BookingSuggestion } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { Textarea } from '@crove/ui/components/textarea';
+import { zonedInstant, type BookingSuggestion } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { Textarea } from '@ludy/ui/components/textarea';
+import { BookingSettingsLink } from './booking-link.tsx';
 import { ErrorText } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
-import { dayLabel, timeIn } from '../lib/booking.ts';
+import { bookingLinkOf, dayLabel, timeIn } from '../lib/booking.ts';
 import { whenOf } from '../routes/booking-page.tsx';
-
-// The address of a type's booking page. With a deal (#3103) the address names it, so the client's booking arrives linked to the deal; the server keeps the link only when it is a deal
-// of the org, and the page shows the client nothing of it.
-export const bookingLinkOf = (origin: string, org: string, type: string, dealId?: string) =>
-  `${origin}/-/b/${encodeURIComponent(org)}/${encodeURIComponent(type)}${dealId ? `?deal=${encodeURIComponent(dealId)}` : ''}`;
 
 // `dealId`: "Đặt lịch" from a deal's panel (#3103); `startOpen` and `onClose` let that panel open and close the card itself.
 export function BookingSuggestCard({ slug, dealId, startOpen = false, onClose }: { slug: string; dealId?: string; startOpen?: boolean; onClose?: () => void }) {
@@ -50,7 +46,7 @@ export function BookingSuggestCard({ slug, dealId, startOpen = false, onClose }:
   function draftOf(s: BookingSuggestion): string {
     const link = bookingLinkOf(window.location.origin, slug, s.eventType.slug, dealId);
     if (s.slots.length === 0) return t('replyNone', { title: s.eventType.title, link });
-    const lines = s.slots.map((x) => `- ${whenOf(x, s.timeZone, locale)}`).join('\n');
+    const lines = s.slots.map((x) => `- ${whenOf(x, s.timeZone, locale, { named: true })}`).join('\n');
     return t('reply', { title: s.eventType.title, slots: lines, link });
   }
 
@@ -85,7 +81,12 @@ export function BookingSuggestCard({ slug, dealId, startOpen = false, onClose }:
       {types.error && <ErrorText>{errorMessage(types.error)}</ErrorText>}
       {types.isSuccess && active.length === 0 ? (
         <div className="flex flex-wrap items-center gap-2">
-          <p className="text-sm text-muted-foreground">{t('noTypes')}</p>
+          <p className="text-sm text-muted-foreground">
+            {t('noTypes')}{' '}
+            <BookingSettingsLink slug={slug} anchor="eventTypes" className="text-link underline-offset-4 hover:underline">
+              {t('noTypesLink')}
+            </BookingSettingsLink>
+          </p>
           <Button size="sm" type="button" variant="ghost" onClick={close}>
             {t('close')}
           </Button>

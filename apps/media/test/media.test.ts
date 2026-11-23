@@ -176,7 +176,7 @@ describe('crove-media HTTP server & client SDK', () => {
     const res = await fetch(`${baseUrl}/healthz`);
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json).toEqual({ ok: true, service: 'crove-media' });
+    expect(json).toEqual({ ok: true, service: 'ludy-media' });
   });
 
   it('rejects empty payload with 400 bad_request', async () => {
@@ -394,6 +394,60 @@ describe('crove-media HTTP server & client SDK', () => {
     await expect(client.normalize(oversized)).rejects.toMatchObject({
       code: 'too_large',
       status: 413,
+    });
+  });
+
+  describe('POST /extract-audio (a recording that may carry a video track)', () => {
+    const post = (baseUrl: string, path: string, size: number) =>
+      fetch(`${baseUrl}${path}`, { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: new Uint8Array(size).fill(7) });
+
+    it('returns the same result as /normalize', async () => {
+      const baseUrl = await startServer({ runNormalize: async () => mockNormalize });
+      const res = await post(baseUrl, '/extract-audio', 16);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true, result: mockNormalize });
+    });
+
+    it('takes an input over the audio cap but under the input cap, which /normalize refuses', async () => {
+      const baseUrl = await startServer({ maxInputBytes: 1000, maxAudioBytes: 100, runNormalize: async () => mockNormalize });
+      const extracted = await post(baseUrl, '/extract-audio', 500);
+      expect(extracted.status).toBe(200);
+      const normalized = await post(baseUrl, '/normalize', 500);
+      expect(normalized.status).toBe(413);
+      expect(await normalized.json()).toMatchObject({ ok: false, code: 'too_large' });
+    });
+
+    it('refuses an input over the input cap, as /normalize does', async () => {
+      const baseUrl = await startServer({ maxInputBytes: 1000, maxAudioBytes: 100, runNormalize: async () => mockNormalize });
+      for (const path of ['/extract-audio', '/normalize']) {
+        const res = await post(baseUrl, path, 1500);
+        expect(res.status).toBe(413);
+        expect(await res.json()).toMatchObject({ ok: false, code: 'too_large' });
+      }
+    });
+
+    it('maps a file with no audio stream to no_audio_stream (422)', async () => {
+      const baseUrl = await startServer({
+        runNormalize: async () => {
+          throw new MediaExecutionError('no_audio_stream', 'Input media contains no audio stream to normalize');
+        },
+      });
+      const res = await post(baseUrl, '/extract-audio', 16);
+      expect(res.status).toBe(422);
+      expect(await res.json()).toMatchObject({ ok: false, code: 'no_audio_stream' });
+    });
+
+    it('passes the bitrate query on', async () => {
+      let seen: number | undefined;
+      const baseUrl = await startServer({
+        runNormalize: async (_bytes, _signal, options) => {
+          seen = options?.bitrateKbps;
+          return mockNormalize;
+        },
+      });
+      const res = await fetch(`${baseUrl}/extract-audio?bitrate_kbps=32`, { method: 'POST', body: new Uint8Array(8).fill(1) });
+      expect(res.status).toBe(200);
+      expect(seen).toBe(32);
     });
   });
 });

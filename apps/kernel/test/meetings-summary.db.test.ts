@@ -8,11 +8,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { meetingsCommands, meetingsQueries, setSummaryEnabled } from '@crove/mod-meetings';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { meetingsCommands, meetingsQueries, setSummaryEnabled } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -45,11 +45,11 @@ suite('the recorder\'s Vy summary copied into the draft (#2580, M6 part B1)', ()
   async function seedMeeting(recorder: string, readers: string[]): Promise<string> {
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp tuần', 'vi', '2026-11-10T03:00:00Z', '2026-11-10T03:30:00Z', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, meetingId, users[recorder]],
     );
-    for (const reader of readers) await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users[reader]]);
+    for (const reader of readers) await sqlAdmin(`INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users[reader]]);
     return meetingId;
   }
   // A finished run of `who`'s Vy for the meeting, its result stored as the interactive route will store it.
@@ -80,9 +80,9 @@ suite('the recorder\'s Vy summary copied into the draft (#2580, M6 part B1)', ()
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -94,7 +94,7 @@ suite('the recorder\'s Vy summary copied into the draft (#2580, M6 part B1)', ()
     const names: Record<string, string> = { owner: 'Chủ', recorder: 'Hà', attendee: 'Nguyễn Thị Lan', another: 'Trần Văn Nam', twin: 'Phạm Văn Nam', stranger: 'Người ngoài' };
     for (const key of Object.keys(names)) users[key] = await upsertIdentity(createDb(pool), { issuer: 'summary', subject: key, email: `${key}@summary.test`, name: names[key] as string });
     orgId = (await createOrg(runtime, asUser('owner'), 'Tóm tắt')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member')`, [orgId, users.recorder, users.attendee, users.another, users.twin, users.stranger]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member')`, [orgId, users.recorder, users.attendee, users.another, users.twin, users.stranger]);
   }, 300_000);
 
   afterAll(async () => {
@@ -161,10 +161,10 @@ suite('the recorder\'s Vy summary copied into the draft (#2580, M6 part B1)', ()
     expect((await results('recorder', meetingId)).draft).toBeNull();
     // A second real org, where the recorder is a member too, with a meeting of its own and a finished summary run of the recorder's there.
     const other = (await createOrg(runtime, asUser('stranger'), 'Org thứ hai')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [other, users.recorder]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [other, users.recorder]);
     const foreignMeeting = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp org khác', 'vi', now(), now(), 60, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [other, foreignMeeting, users.recorder],
     );
@@ -217,13 +217,13 @@ suite('the recorder\'s Vy summary copied into the draft (#2580, M6 part B1)', ()
     const runId = await finishedRun('recorder', meetingId, BODY);
     await exec('recorder', 'meetings.summary.copy_result', { meetingId, runId });
     const sources = await sqlAdmin<{ n: string }>(
-      `SELECT (SELECT count(*) FROM crove_meetings.meeting_result WHERE meeting_id = $1 AND source_run_id = $2)::text || '/' || (SELECT count(*) FROM crove_meetings.action_item WHERE meeting_id = $1 AND source_run_id = $2)::text AS n`,
+      `SELECT (SELECT count(*) FROM ludy_meetings.meeting_result WHERE meeting_id = $1 AND source_run_id = $2)::text || '/' || (SELECT count(*) FROM ludy_meetings.action_item WHERE meeting_id = $1 AND source_run_id = $2)::text AS n`,
       [meetingId, runId],
     );
     expect(sources.rows[0]?.n).toBe('1/3');
     // Not yet read: the publish command, and the database, refuse.
     expect(await refuses(exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true }))).toBe('DRAFT_NOT_REVIEWED');
-    expect(await refuses(sqlAdmin(`UPDATE crove_meetings.action_item SET stage = 'published' WHERE meeting_id = $1`, [meetingId]))).toBe('42501');
+    expect(await refuses(sqlAdmin(`UPDATE ludy_meetings.action_item SET stage = 'published' WHERE meeting_id = $1`, [meetingId]))).toBe('42501');
     // Only the recorder reviews, and only with their own explicit confirmation.
     const shown = await results('recorder', meetingId);
     const ids = [shown.draft?.id as string, ...shown.items.map((i) => i.id)];
@@ -252,7 +252,7 @@ suite('the recorder\'s Vy summary copied into the draft (#2580, M6 part B1)', ()
     expect(view.items.map((i) => i.title).sort()).toEqual(['Tự viết', 'Việc mới']);
     expect(view.items.find((i) => i.title === 'Tự viết')?.tainted).toBe(false);
     expect(view.items.find((i) => i.title === 'Việc mới')?.tainted).toBe(true);
-    const id = (await sqlAdmin<{ id: string }>(`SELECT id FROM crove_meetings.action_item WHERE org_id = $1 AND meeting_id = $2 AND title = 'Việc mới'`, [orgId, meetingId])).rows[0]?.id as string;
+    const id = (await sqlAdmin<{ id: string }>(`SELECT id FROM ludy_meetings.action_item WHERE org_id = $1 AND meeting_id = $2 AND title = 'Việc mới'`, [orgId, meetingId])).rows[0]?.id as string;
     await exec('recorder', 'meetings.action_item.edit', { itemId: id, whenDate: '2026-11-20' });
     expect((await results('recorder', meetingId)).items.find((i) => i.title === 'Việc mới')?.tainted).toBe(true);
     await exec('recorder', 'meetings.action_item.edit', { itemId: id, title: 'Việc mới, đã sửa' });

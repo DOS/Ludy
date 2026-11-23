@@ -8,7 +8,7 @@ import { createTranslator } from 'use-intl/core';
 import { COWORKERS, DEFAULT_BRAND, brandCatalog, brandFileName, brandName, setBrandName, withBrand } from '../src/i18n/brand.ts';
 import { LOCALES } from '../src/i18n/locale.ts';
 import { SOURCE_CATALOGS, catalog, translator } from '../src/i18n/runtime.ts';
-import { firmGuide } from '../src/lib/firm-guide.ts';
+import { crmGuide } from '../src/lib/crm-guide.ts';
 import { quickGuide } from '../src/lib/quick-guide.ts';
 
 // Messages that may name Crove itself whatever the brand: legal and source notices (the AGPL notice and the link to
@@ -85,20 +85,21 @@ describe('brand name (#1040)', () => {
       expect(text, locale).not.toMatch(/\bCrove\b|\{brand\}/);
       expect(text, locale).toContain('Tên Mới');
     }
-    const guides = [...quickGuide(), ...firmGuide()].flatMap((step) => [step.title, ...step.items]).join('\n');
+    const guides = LOCALES.flatMap((locale) => [...quickGuide('Tên Mới', locale), ...crmGuide('Tên Mới', locale)]).flatMap((step) => [step.title, ...step.items]).join('\n');
     expect(guides).toContain('Tên Mới');
     expect(guides).not.toMatch(/\bCrove\b|\{brand\}/);
   });
 
-  // #1045: downloaded files are named after the product too, so no message spells a file name with "crove-".
+  // #1045: downloaded files are named after the product too, so no message spells a file name with "ludy-" or "crove-".
   it('names downloaded files after the brand', () => {
     for (const locale of LOCALES) {
-      const offenders = messages(SOURCE_CATALOGS[locale]).filter(([, text]) => /\bcrove-/.test(text));
+      const offenders = messages(SOURCE_CATALOGS[locale]).filter(([, text]) => /\b(?:ludy|crove)-/.test(text));
       expect(offenders, locale).toEqual([]);
     }
     expect(catalog('vi').journal.exportFile).toBe('ludy-but-toan-{org}.xlsx');
     setBrandName('Tên Mới');
     expect(catalog('vi').journal.exportFile).toBe('ten-moi-but-toan-{org}.xlsx');
+    expect(brandFileName('ludy-ke-hoach-2026-10.csv')).toBe('ten-moi-ke-hoach-2026-10.csv');
     expect(brandFileName('crove-ke-hoach-2026-10.csv')).toBe('ten-moi-ke-hoach-2026-10.csv');
     expect(brandFileName('chung-tu.pdf')).toBe('chung-tu.pdf');
     expect(withBrand('Tệp {brandSlug}-but-toan.xlsx của {brand}')).toBe('Tệp ten-moi-but-toan.xlsx của Tên Mới');
@@ -111,7 +112,7 @@ describe('brand name (#1040)', () => {
       const offenders = messages(catalog(locale)).filter(([key, text]) => /\bcrove\b/i.test(text) && !ALLOWED_MESSAGES.has(key));
       expect(offenders, locale).toEqual([]);
     }
-    const guides = [...quickGuide(), ...firmGuide()].flatMap((step) => [step.title, ...step.items]).join('\n');
+    const guides = LOCALES.flatMap((locale) => [...quickGuide(undefined, locale), ...crmGuide(undefined, locale)]).flatMap((step) => [step.title, ...step.items]).join('\n');
     expect(guides).not.toMatch(/\bcrove\b/i);
     for (const file of STATIC_FILES) {
       const shown = readFileSync(join(app, file), 'utf8')
@@ -134,10 +135,10 @@ describe('brand name (#1040)', () => {
     // Where each coworker is named: the messages of the screens its app owns. The general manager names the work across apps
     // (the AI budget); the system coworker is reserved and hidden, with no message.
     const APP_OF: Record<string, RegExp> = {
-      finance: /^(auth\.|bank\.payroll\.aiState\.|financeOverview\.|hrPayroll\.coworker\.|inboxDetail\.|paymentReminders\.|salesInvoices\.ai\.|stock\.(suggest|low)\.|inbox\.(?!socialMails))/,
-      sales: /^(bookings\.|conversations\.|commands\.|contacts\.company\.|quotes\.suggest\.|deals\.nextSteps\.followup\.)/,
+      finance: /^(auth\.|bank\.payroll\.aiState\.|bank\.match\.candidatesNote|marketplaceBalance\.line|vendors\.payable\.lineAi\.|misaCheck\.lineAi\.|misaAmisPreview\.notes\.|financeOverview\.|financeCashForecast\.|hrPayroll\.coworker\.|inboxDetail\.|paymentReminders\.|salesInvoices\.ai\.|stock\.(suggest|low)\.|stock\.counts\.surplusAiLabel|vat\.lateSummary\.|inbox\.(?!socialMails))/,
+      sales: /^(bookings\.|conversations\.|commands\.|contacts\.company\.|quotes\.(suggest|dealOffer)\.|deals\.nextSteps\.followup\.)/,
       marketing: /^(social\.|ads\.|inbox\.socialMails\.|kernelErrors\.codes\.(AI_|ALT_TEXT_))/,
-      gm: /^(aiMeter\.|today\.brief\.|kernelErrors\.codes\.AI_BUDGET_EXHAUSTED)/,
+      gm: /^(aiMeter\.|today\.brief\.|today\.weekly\.|projects\.(weeklyStatus|cycles\.summary)\.|kernelErrors\.codes\.AI_BUDGET_EXHAUSTED)/,
     };
     for (const [role, where] of Object.entries(APP_OF)) {
       expect(named('vi', role).length, role).toBeGreaterThan(0);
@@ -154,10 +155,12 @@ describe('brand name (#1040)', () => {
       }
     }
     // Whoever holds a role, the message says so through the roster: the names are not written in the catalogs.
-    expect(catalog('vi').auth.tagline).toBe(`Chứng từ chờ duyệt: chuyển tiếp hóa đơn, đồng nghiệp AI ${COWORKERS.finance} đề xuất hạch toán, bạn duyệt.`);
-    expect(catalog('en').auth.tagline).toBe(`Document inbox: forward invoices; ${COWORKERS.finance}, your AI coworker, proposes the entries; you approve.`);
+    // The sign-in line speaks for the suite and names no coworker (#3593); the accounting line moved to the first Accounting screen.
+    expect(catalog('en').auth.tagline).not.toContain(COWORKERS.finance);
+    expect(catalog('vi').financeOverview.empty.hint).toContain(`đồng nghiệp AI ${COWORKERS.finance} đề xuất hạch toán, bạn duyệt`);
+    expect(catalog('en').financeOverview.empty.hint).toContain(`${COWORKERS.finance}, your AI coworker, proposes the entries`);
     expect(catalog('en').bookings.suggest.ai.noWindows).toMatch(new RegExp(`^${COWORKERS.sales} `));
-    expect(catalog('en').conversations.draft.ask).toBe(`Ask ${COWORKERS.sales}`);
+    expect(catalog('en').conversations.draft.ask).toBe(`Ask ${COWORKERS.sales} to draft a reply`);
     expect(withBrand('{finance} của {brand}')).toBe(`${COWORKERS.finance} của Tên Mới`);
   });
 
@@ -182,10 +185,11 @@ describe('brand name (#1040)', () => {
 
   // #1683: the products are named after the brand, so a deployment's own name carries over.
   it('names the apps after the brand', () => {
-    expect(catalog('vi').nav.appNames).toMatchObject({ accounting: 'Ludy Kế toán', social: 'Ludy Engage' });
-    expect(catalog('en').nav.appNames).toMatchObject({ accounting: 'Ludy Accounting', social: 'Ludy Engage' });
+    expect(catalog('vi').nav.appNames).toMatchObject({ finance: 'Ludy Tài chính', engage: 'Ludy Engage', sign: 'Ludy eSign' });
+    expect(catalog('en').nav.appNames).toMatchObject({ finance: 'Ludy Finance', engage: 'Ludy Engage', sign: 'Ludy eSign' });
     setBrandName('Tên Mới');
-    expect(catalog('vi').nav.appNames.social).toBe('Tên Mới Engage');
+    expect(catalog('vi').nav.appNames.engage).toBe('Tên Mới Engage');
+    expect(catalog('vi').nav.appNames.sign).toBe('Tên Mới eSign');
   });
 
   it('keeps an apostrophe literal inside ICU messages', () => {

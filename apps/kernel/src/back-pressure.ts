@@ -6,7 +6,7 @@
 //   and the event loop. They are fetched again once the outbox has caught up.
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
+import type { Db } from '@ludy/db';
 
 export const WORKER_LAG_EXIT_MS = 5000;
 export const WORKER_LAG_SUSTAIN_MS = 30_000;
@@ -112,7 +112,7 @@ export class PausableWork {
 }
 
 export async function outboxLagSeconds(workerDb: Db): Promise<number> {
-  const { rows } = await sql<{ lag: number }>`SELECT crove_kernel.outbox_lag_seconds() AS lag`.execute(workerDb);
+  const { rows } = await sql<{ lag: number }>`SELECT ludy_kernel.outbox_lag_seconds() AS lag`.execute(workerDb);
   return Number(rows[0]?.lag ?? 0);
 }
 

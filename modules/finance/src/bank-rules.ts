@@ -11,13 +11,13 @@
 //   (R1, audited).
 // The key is hashed with BANK_KEY_VERSION in front: a later change to the noise words or the key logic bumps it, and the rules
 // learned under the old derivation are simply not hit again (a person's next match teaches the new key).
-// Both the learner and the matcher hash through crove_finance.bank_party_rule_hash, so the deployment's key is read by that
+// Both the learner and the matcher hash through ludy_finance.bank_party_rule_hash, so the deployment's key is read by that
 // definer alone.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { voucherCode, zId, type BankPartyRule } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { voucherCode, zId, type BankPartyRule } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { VOUCHER_SOURCE } from './domain/cash-voucher.ts';
 import { bankLineKey } from './domain/bank-rule-key.ts';
 import { mappedAccounts } from './account-number.ts';
@@ -43,13 +43,13 @@ export async function learnedParties(
   const account = line.counterpartyAccount ?? null;
   if (key === null && account === null) return { text: [], account: [] };
   const { rows } = await sql<{ party_id: string; kind: string }>`
-    SELECT r.party_id, r.kind FROM crove_finance.bank_party_rule r
+    SELECT r.party_id, r.kind FROM ludy_finance.bank_party_rule r
     WHERE r.org_id = ${ctx.orgId} AND r.legal_entity_id = ${line.legalEntityId}
-      AND ((${key}::text IS NOT NULL AND r.kind = 'text' AND r.key_hash = crove_finance.bank_party_rule_hash('text', ${hashed('text', key ?? '')}))
-        OR (${account}::text IS NOT NULL AND r.kind = 'account' AND r.key_hash = crove_finance.bank_party_rule_hash('account', ${hashed('account', account ?? '')})))
+      AND ((${key}::text IS NOT NULL AND r.kind = 'text' AND r.key_hash = ludy_finance.bank_party_rule_hash('text', ${hashed('text', key ?? '')}))
+        OR (${account}::text IS NOT NULL AND r.kind = 'account' AND r.key_hash = ludy_finance.bank_party_rule_hash('account', ${hashed('account', account ?? '')})))
       AND NOT EXISTS (
-        SELECT 1 FROM crove_finance.journal_entry j
-        JOIN crove_finance.journal_entry x ON x.org_id = j.org_id AND x.reverses_entry_id = j.id
+        SELECT 1 FROM ludy_finance.journal_entry j
+        JOIN ludy_finance.journal_entry x ON x.org_id = j.org_id AND x.reverses_entry_id = j.id
         WHERE j.org_id = r.org_id AND j.source_id = r.source_voucher_id AND j.source_type = ${VOUCHER_SOURCE} AND j.reverses_entry_id IS NULL)`.execute(ctx.trx);
   return { text: rows.filter((r) => r.kind === 'text').map((r) => r.party_id), account: rows.filter((r) => r.kind === 'account').map((r) => r.party_id) };
 }
@@ -64,8 +64,8 @@ export async function learnFromVoucher(
   if (ctx.actor.type !== 'user') return null;
   const write = async (kind: 'text' | 'account', key: string): Promise<string | undefined> => {
     const { rows } = await sql<{ id: string }>`
-      INSERT INTO crove_finance.bank_party_rule (org_id, legal_entity_id, kind, key_hash, party_id, confirmed_by, confirmed_at, source_voucher_id)
-      VALUES (${ctx.orgId}, ${input.legalEntityId}, ${kind}, crove_finance.bank_party_rule_hash(${kind}, ${hashed(kind, key)}), ${input.partyId}, ${ctx.actor.type === 'user' ? ctx.actor.userId : null}, ${ctx.now}, ${input.voucherId})
+      INSERT INTO ludy_finance.bank_party_rule (org_id, legal_entity_id, kind, key_hash, party_id, confirmed_by, confirmed_at, source_voucher_id)
+      VALUES (${ctx.orgId}, ${input.legalEntityId}, ${kind}, ludy_finance.bank_party_rule_hash(${kind}, ${hashed(kind, key)}), ${input.partyId}, ${ctx.actor.type === 'user' ? ctx.actor.userId : null}, ${ctx.now}, ${input.voucherId})
       ON CONFLICT ON CONSTRAINT bank_party_rule_key_uq DO NOTHING
       RETURNING id`.execute(ctx.trx);
     return rows[0]?.id;
@@ -89,9 +89,9 @@ export const bankPartyRulesList = defineQuery({
   handler: async (ctx, input): Promise<BankPartyRule[]> => {
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     const rows = await ctx.trx
-      .selectFrom('crove_finance.bank_party_rule as r')
-      .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'r.org_id').onRef('p.id', '=', 'r.party_id'))
-      .innerJoin('crove_finance.cash_voucher as v', (join) => join.onRef('v.org_id', '=', 'r.org_id').onRef('v.id', '=', 'r.source_voucher_id'))
+      .selectFrom('ludy_finance.bank_party_rule as r')
+      .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'r.org_id').onRef('p.id', '=', 'r.party_id'))
+      .innerJoin('ludy_finance.cash_voucher as v', (join) => join.onRef('v.org_id', '=', 'r.org_id').onRef('v.id', '=', 'r.source_voucher_id'))
       .select(['r.id', 'r.kind', 'r.party_id', 'p.name as party_name', 'r.confirmed_by', 'r.confirmed_at', 'r.source_voucher_id', 'v.voucher_type', 'v.number'])
       .where('r.org_id', '=', ctx.orgId)
       .where('r.legal_entity_id', '=', legalEntityId)
@@ -99,12 +99,12 @@ export const bankPartyRulesList = defineQuery({
       .orderBy('r.id', 'desc')
       .limit(BANK_RULE_LIST_LIMIT)
       .execute();
-    // Who confirmed a rule, by name while they are a member (crove_kernel.member_profiles answers only members).
+    // Who confirmed a rule, by name while they are a member (ludy_kernel.member_profiles answers only members).
     const users = [...new Set(rows.map((r) => r.confirmed_by).filter((u): u is string => u !== null))];
     const names = new Map<string, string>();
     if (users.length > 0) {
       const { rows: people } = await sql<{ user_id: string; email: string; display_name: string | null }>`
-        SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${users}::uuid[])`.execute(ctx.trx);
+        SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${users}::uuid[])`.execute(ctx.trx);
       for (const p of people) names.set(p.user_id, p.display_name ?? p.email);
     }
     return rows.map((r) => ({
@@ -127,7 +127,7 @@ export const removeBankPartyRule = defineCommand({
   target: (input) => ({ type: 'finance.bank_party_rule', id: input.id }),
   handler: async (ctx, { id }) => {
     const removed = await ctx.trx
-      .deleteFrom('crove_finance.bank_party_rule')
+      .deleteFrom('ludy_finance.bank_party_rule')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', id)
       .returning(['party_id', 'kind', 'confirmed_by', 'source_voucher_id', 'legal_entity_id'])

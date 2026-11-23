@@ -7,23 +7,27 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import { CONVERSATION_FACEBOOK_DIRECT_MAX, CONVERSATION_INSTAGRAM_COMMENT_MAX, CONVERSATION_INSTAGRAM_DIRECT_MAX, CONVERSATION_NOTE_MAX, CONVERSATION_RETENTION_MONTHS, CONVERSATION_REPLY_MAX, CONVERSATION_THREADS_REPLY_MAX, conversationRules, type ConversationAttachmentView, type ConversationDetail, type ConversationIntent, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { NativeSelect } from '@crove/ui/components/native-select';
-import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
-import { Textarea } from '@crove/ui/components/textarea';
-import { cn } from '@crove/ui/lib/utils';
+import { CONVERSATION_FACEBOOK_DIRECT_MAX, CONVERSATION_INSTAGRAM_COMMENT_MAX, CONVERSATION_INSTAGRAM_DIRECT_MAX, CONVERSATION_NOTE_MAX, CONVERSATION_REPLY_MAX, CONVERSATION_THREADS_REPLY_MAX, CONVERSATION_WHATSAPP_REPLY_MAX, conversationCanResendUnknown, conversationRules, type ConversationAttachmentView, type ConversationDetail, type ConversationIntent, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { NativeSelect } from '@ludy/ui/components/native-select';
+import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
+import { Textarea } from '@ludy/ui/components/textarea';
+import { cn } from '@ludy/ui/lib/utils';
 import { Empty, ErrorText, Spinner } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { splitQuoted } from '../lib/email-text.ts';
 import { channelsOfPosts, INBOX_PAGE_SIZE, inboxListInput, mergeConversationPages, nextConversationCursor } from '../lib/conversation-inbox.ts';
-import { client, errorMessage, fetchConversationImage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
+import { client, errorMessage, fetchConversationImage, orpc, queryClient } from '../lib/api.ts';
 import { appendQuoteMessage, canInsertQuoteLink } from '../lib/quote-reply.ts';
-import { StepUpPrompt } from './two-factor.tsx';
+import { takeReplyHandoff } from '../lib/reply-handoff.ts';
+import { TOUCH_BUTTON, TOUCH_SELECT } from '../lib/conversation-touch.ts';
+import { PersonalDataSection } from './conversation-erase.tsx';
 import { DraftPanel, replyTextFor } from './conversation-drafts.tsx';
-import { IntentBadge, IntentBar } from './conversation-intent.tsx';
+import { IntentBadge, IntentBar, useSpamSuggested } from './conversation-intent.tsx';
+import { PaneError, ThreadSkeleton } from './conversation-states.tsx';
 import { REPLY_INSERT_EVENT, type ReplyInsert } from './quote-send.tsx';
+import { AiWrittenBadge } from './ai-written-badge.tsx';
 
 export const STATUSES: readonly ConversationStatus[] = ['new', 'pending', 'resolved'];
 // Lists and the open thread are read again this often (the stream's hints do not carry conversations yet).
@@ -40,17 +44,26 @@ export interface PostRef {
 const codeOf = (error: unknown): string | null => ((error as { code?: unknown } | null)?.code as string | undefined) ?? null;
 
 // The codes a failed or unclear send is worded for; any other is shown as it is.
-// The mark of an email whose sender the receiving server did not vouch for (#2439): the name and address in From may be anyone's.
-function UnverifiedMark() {
+// The mark of an email whose sender the receiving server did not vouch for (#2439): the name and address in From may be anyone's. The server sends `senderUnverified`
+// only where the deployment can check senders at all (INBOUND_AUTHSERV_ID): without it every mail is unconfirmed, the mark would sit on all of them and mean nothing (#3636).
+// The explanation is a visible line under the address (`explain`), not a hover title that touch and keyboard readers never get.
+export function UnverifiedMark({ explain = false }: { explain?: boolean }) {
   const t = useTranslations('conversations');
   return (
-    <span className="shrink-0 rounded border border-border px-1 text-[10px] leading-4 text-muted-foreground" data-testid="unverified-sender" title={t('unverifiedHint')}>
-      {t('unverified')}
-    </span>
+    <>
+      <span className="shrink-0 rounded border border-border px-1 text-xs leading-4 text-muted-foreground" data-testid="unverified-sender">
+        {t('unverified')}
+      </span>
+      {explain && (
+        <span className="basis-full text-xs text-muted-foreground" data-testid="unverified-explain">
+          {t('unverifiedHint')}
+        </span>
+      )}
+    </>
   );
 }
 
-const SEND_ERRORS = ['ZALO_TOKEN', 'ZALO_NO_TOKEN', 'ZALO_QUOTA', 'ZALO_RATE_LIMIT', 'ZALO_NOT_FOLLOWER', 'ZALO_BLOCKED', 'ZALO_OA_ACCESS', 'ZALO_BAD_PARAM', 'ZALO_TEXT_LENGTH', 'ZALO_DIRECT_ONLY', 'ZALO_UNREACHABLE', 'ZALO_5XX', 'ZALO_NO_MESSAGE_ID', 'ZALO_BAD_ANSWER', 'FB_WINDOW_CLOSED', 'FB_PRIVATE_REPLIED', 'FB_RECIPIENT_UNAVAILABLE', 'FB_NOT_FOUND', 'FB_TEXT_LENGTH', 'FB_NO_MESSAGE_ID', 'IG_TEXT_LENGTH', 'IG_COMMENT_LENGTH', 'THREADS_REPLY_CAP', 'THREADS_TEXT_LENGTH', 'YOUTUBE_QUOTA', 'YOUTUBE_RATE_LIMIT', 'YOUTUBE_TEXT_LENGTH', 'YOUTUBE_COMMENT_GONE', 'YOUTUBE_COMMENTS_OFF', 'YOUTUBE_RECONNECT', 'YOUTUBE_FORBIDDEN', 'YOUTUBE_TOKEN', 'YOUTUBE_BAD_REQUEST', 'NO_TOKEN', 'BAD_REPLY_ID', 'LATE_PUBLISH', 'CONTAINER_NOT_READY', 'NO_POST_ID', 'CONTAINER_PUBLISHED', 'NO_PAGE_TOKEN', 'BAD_PAGE_ID', 'BAD_IG_ID', 'BAD_COMMENT_ID', 'BAD_RECIPIENT_ID', 'CHANNEL_NOT_ACTIVE', 'CHANNEL_OWNER_LEFT', 'CREDENTIAL_ERROR', 'WORKER_LOST', 'SUPPRESSED', 'BOUNCED', 'COMPLAINED', 'MAIL_OFF', 'NO_ADDRESS', 'TEMPLATE_DATA', 'TEMPLATE_UNKNOWN', 'SEND_TIMEOUT', 'SEND_FAILED', 'OUTCOME_UNKNOWN'] as const;
+const SEND_ERRORS = ['ZALO_TOKEN', 'ZALO_NO_TOKEN', 'ZALO_QUOTA', 'ZALO_RATE_LIMIT', 'ZALO_NOT_FOLLOWER', 'ZALO_BLOCKED', 'ZALO_OA_ACCESS', 'ZALO_BAD_PARAM', 'ZALO_TEXT_LENGTH', 'ZALO_DIRECT_ONLY', 'ZALO_UNREACHABLE', 'ZALO_5XX', 'ZALO_NO_MESSAGE_ID', 'ZALO_BAD_ANSWER', 'FB_WINDOW_CLOSED', 'FB_PRIVATE_REPLIED', 'FB_RECIPIENT_UNAVAILABLE', 'FB_NOT_FOUND', 'FB_TEXT_LENGTH', 'FB_NO_MESSAGE_ID', 'WA_WINDOW_CLOSED', 'WA_131047', 'WA_TEXT_LENGTH', 'WA_UNDELIVERABLE', 'WA_131026', 'WA_RECIPIENT_NOT_ALLOWED', 'WA_131030', 'WA_NOT_DIRECT', 'WA_BAD_RECIPIENT', 'WA_NO_MESSAGE_ID', 'WA_FAILED', 'NO_WHATSAPP_TOKEN', 'BAD_PHONE_NUMBER_ID', 'WA_130429', 'WA_131048', 'WA_131056', 'WA_133016', 'WA_131005', 'WA_131031', 'WA_131037', 'WA_133010', 'IG_TEXT_LENGTH', 'IG_COMMENT_LENGTH', 'TELEGRAM_BOT_BLOCKED', 'TELEGRAM_USER_GONE', 'TELEGRAM_CHAT_NOT_FOUND', 'TELEGRAM_TOKEN_REFUSED', 'TELEGRAM_BUSINESS_REFUSED', 'BUSINESS_ACCOUNT_STOPPED', 'BUSINESS_ACCOUNT_READ_ONLY', 'THREADS_REPLY_CAP', 'THREADS_TEXT_LENGTH', 'YOUTUBE_QUOTA', 'YOUTUBE_RATE_LIMIT', 'YOUTUBE_TEXT_LENGTH', 'YOUTUBE_COMMENT_GONE', 'YOUTUBE_COMMENTS_OFF', 'YOUTUBE_RECONNECT', 'YOUTUBE_FORBIDDEN', 'YOUTUBE_TOKEN', 'YOUTUBE_BAD_REQUEST', 'NO_TOKEN', 'BAD_REPLY_ID', 'LATE_PUBLISH', 'CONTAINER_NOT_READY', 'NO_POST_ID', 'CONTAINER_PUBLISHED', 'NO_PAGE_TOKEN', 'BAD_PAGE_ID', 'BAD_IG_ID', 'BAD_COMMENT_ID', 'BAD_RECIPIENT_ID', 'CHANNEL_NOT_ACTIVE', 'CHANNEL_OWNER_LEFT', 'CREDENTIAL_ERROR', 'WORKER_LOST', 'SUPPRESSED', 'BOUNCED', 'COMPLAINED', 'MAIL_OFF', 'NO_ADDRESS', 'TEMPLATE_DATA', 'TEMPLATE_UNKNOWN', 'SEND_TIMEOUT', 'SEND_FAILED', 'OUTCOME_UNKNOWN'] as const;
 const isKnownSendError = (code: string): code is (typeof SEND_ERRORS)[number] => (SEND_ERRORS as readonly string[]).includes(code);
 
 const refresh = () => void queryClient.invalidateQueries({ queryKey: orpc.conversations.key() });
@@ -93,7 +106,7 @@ export function useConversationPages(input: ListInput) {
     refetchInterval: POLL_MS,
   });
   const items = useMemo(() => mergeConversationPages(pages.data?.pages ?? []), [pages.data]);
-  return { items, loaded: pages.data !== undefined, isPending: pages.isPending, error: pages.error, hasMore: pages.hasNextPage, loadingMore: pages.isFetchingNextPage, loadFailed: pages.isFetchNextPageError, loadMore: () => void pages.fetchNextPage() };
+  return { items, loaded: pages.data !== undefined, isPending: pages.isPending, error: pages.error, hasMore: pages.hasNextPage, loadingMore: pages.isFetchingNextPage, loadFailed: pages.isFetchNextPageError, loadMore: () => void pages.fetchNextPage(), retry: () => void pages.refetch() };
 }
 
 // "Load older conversations" under a list: shown only while the server says there are more.
@@ -102,7 +115,7 @@ export function LoadOlderConversations({ hasMore, loading, onLoad, failed }: { h
   if (!hasMore) return null;
   return (
     <div className="space-y-1" data-testid="conversation-more">
-      <Button type="button" size="sm" variant="outline" className="w-full" loading={loading} onClick={onLoad}>
+      <Button type="button" size="sm" variant="outline" className={cn('w-full', TOUCH_BUTTON)} loading={loading} onClick={onLoad}>
         {t('loadOlder')}
       </Button>
       {failed && <ErrorText>{t('loadOlderFailed')}</ErrorText>}
@@ -170,7 +183,7 @@ export function ConversationInbox({ kind, posts, empty }: { kind: ConversationKi
           </TabsList>
         </Tabs>
         {list.isPending && <Spinner />}
-        {list.error && <ErrorText>{errorMessage(list.error)}</ErrorText>}
+        {list.error && <PaneError message={errorMessage(list.error)} onRetry={list.retry} testId="inbox-list-error" />}
         {list.loaded && items.length === 0 && <Empty title={empty ?? t(`empty.${status}`)} />}
         <ul className="divide-y divide-border rounded-md border border-border">
           {items.map((c) => (
@@ -180,7 +193,7 @@ export function ConversationInbox({ kind, posts, empty }: { kind: ConversationKi
         <LoadOlderConversations hasMore={list.hasMore} loading={list.loadingMore} failed={list.loadFailed} onLoad={list.loadMore} />
       </section>
       <section aria-label={t('threadLabel')} className="min-w-0">
-        {openId ? <ConversationThread key={openId} conversationId={openId} onGone={() => setSelected(null)} onOpenConversation={(id) => setSelected(id)} /> : <Empty title={t('pick')} />}
+        {openId ? <ConversationThread key={openId} conversationId={openId} onGone={() => setSelected(null)} onOpenConversation={(id) => setSelected(id)} showErase /> : <Empty title={t('pick')} />}
       </section>
     </div>
   );
@@ -249,7 +262,8 @@ function ComposingNote({ userIds, members }: { userIds: readonly string[]; membe
   );
 }
 
-export function ConversationThread({ conversationId, onGone, onOpenConversation }: { conversationId: string; onGone: () => void; onOpenConversation?: ((id: string) => void) | undefined }) {
+// `showErase`: draws the personal-data section (erasing the customer) under the thread, for a screen that has no contact panel beside it.
+export function ConversationThread({ conversationId, onGone, onOpenConversation, showErase = false }: { conversationId: string; onGone: () => void; onOpenConversation?: ((id: string) => void) | undefined; showErase?: boolean }) {
   const t = useTranslations('conversations');
   const f = useFormat();
   const contactName = useContactName();
@@ -274,8 +288,8 @@ export function ConversationThread({ conversationId, onGone, onOpenConversation 
     // A thread the reader may no longer read is gone from their screen.
     if (codeOf(detail.error) === 'CONVERSATION_NOT_FOUND') onGone();
   }, [detail.error]); // eslint-disable-line react-hooks/exhaustive-deps
-  if (detail.isPending) return <Spinner />;
-  if (detail.error || !data) return <ErrorText>{errorMessage(detail.error)}</ErrorText>;
+  if (detail.isPending) return <ThreadSkeleton />;
+  if (detail.error || !data) return <PaneError message={errorMessage(detail.error)} onRetry={() => void detail.refetch()} testId="thread-error" />;
   const c = data.conversation;
   const newer = seen !== null && c.lastSeq > seen;
   return (
@@ -284,9 +298,9 @@ export function ConversationThread({ conversationId, onGone, onOpenConversation 
         <div className="min-w-0">
           <h2 className="truncate text-base font-semibold text-foreground">{contactName(c.contact)}</h2>
           {c.kind === 'email' && (
-            <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground" data-testid="conversation-address">
+            <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground" data-testid="conversation-address">
               <span className="truncate">{c.contact.address}</span>
-              {c.senderUnverified && <UnverifiedMark />}
+              {c.senderUnverified && <UnverifiedMark explain />}
             </p>
           )}
           {c.kind === 'email' && c.subject && (
@@ -303,9 +317,9 @@ export function ConversationThread({ conversationId, onGone, onOpenConversation 
           <Badge variant={c.status === 'new' ? 'default' : 'outline'} data-testid="conversation-status">
             {t(`status.${c.status}`)}
           </Badge>
-          {canWrite && <AssignSelect conversation={c} members={members} />}
+          {/* A one-person org has no one else to hand a thread to (#3637), so the control appears with two members or more, or when the thread already has someone in charge (who can then be changed or cleared). */}
+          {canWrite && (members.length >= 2 || c.assigneeUserId !== null) && <AssignSelect conversation={c} members={members} />}
           {canWrite && <ResolveButton conversation={c} />}
-          {isAdmin && <EraseContactButton conversation={c} onErased={onGone} />}
         </div>
       </header>
       {canWrite ? <IntentBar conversation={c} /> : c.intent ? <IntentBadge intent={c.intent} applied /> : null}
@@ -313,7 +327,7 @@ export function ConversationThread({ conversationId, onGone, onOpenConversation 
         <div className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground" data-testid="conversation-parent-link">
           <span>{t('fromComment')}</span>
           {onOpenConversation && (
-            <Button type="button" size="sm" variant="ghost" onClick={() => onOpenConversation(data.parentId as string)}>
+            <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" onClick={() => onOpenConversation(data.parentId as string)}>
               {t('openParentComment')}
             </Button>
           )}
@@ -327,19 +341,20 @@ export function ConversationThread({ conversationId, onGone, onOpenConversation 
       {newer && (
         <div role="status" className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted px-3 py-2 text-sm" data-testid="conversation-newer">
           <span>{t('newer')}</span>
-          <Button type="button" size="sm" variant="outline" onClick={() => setSeen(c.lastSeq)}>
+          <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" onClick={() => setSeen(c.lastSeq)}>
             {t('seenIt')}
           </Button>
         </div>
       )}
       <ol className="space-y-2" aria-label={t('messages')}>
         {data.messages.map((m) => (
-          <MessageRow key={m.id} message={m} detail={data} members={members} userId={userId} canWrite={canWrite} isAdmin={isAdmin} contact={contactName(c.contact)} onOpenConversation={onOpenConversation} />
+          <MessageRow key={m.id} message={m} detail={data} members={members} userId={userId} canWrite={canWrite} contact={contactName(c.contact)} onOpenConversation={onOpenConversation} />
         ))}
       </ol>
       {c.composing.length > 0 && <ComposingNote userIds={c.composing} members={members} />}
       {canWrite && <ReplyBox detail={data} seen={seen ?? c.lastSeq} onMoved={(seq) => setSeen(seq)} />}
       <Notes detail={data} members={members} canWrite={canWrite} />
+      {showErase && isAdmin && <PersonalDataSection detail={data} contactName={contactName(c.contact)} onErased={onGone} />}
     </div>
   );
 }
@@ -349,7 +364,7 @@ function AssignSelect({ conversation, members }: { conversation: ConversationSum
   const assign = useMutation({ mutationFn: (assigneeUserId: string | null) => client.conversations.assign({ conversationId: conversation.id, assigneeUserId }), onSuccess: refresh });
   return (
     <div>
-      <NativeSelect size="sm" aria-label={t('assignee')} value={conversation.assigneeUserId ?? ''} disabled={assign.isPending} onChange={(e) => assign.mutate(e.target.value || null)}>
+      <NativeSelect size="sm" className={TOUCH_SELECT} aria-label={t('assignee')} value={conversation.assigneeUserId ?? ''} disabled={assign.isPending} onChange={(e) => assign.mutate(e.target.value || null)}>
         <option value="">{t('unassigned')}</option>
         {members.map((m) => (
           <option key={m.userId} value={m.userId}>
@@ -362,125 +377,6 @@ function AssignSelect({ conversation, members }: { conversation: ConversationSum
   );
 }
 
-// Erases the customer of this thread: every thread of theirs with its messages and notes, and their name. Owners and admins, behind a
-// confirmation and a fresh second factor (the kernel asks for it); it cannot be undone.
-function EraseContactButton({ conversation, onErased, messageId, who, label = 'eraseOpen' }: { conversation: ConversationSummary; onErased: () => void; messageId?: string; who?: string; label?: 'eraseOpen' | 'eraseAuthor' }) {
-  const t = useTranslations('conversations');
-  const [asking, setAsking] = useState(false);
-  const [attempt] = useState(() => crypto.randomUUID());
-  const erase = useMutation({
-    // One key per confirmed attempt, kept across the step-up retry, so a lost answer is retried to the same result.
-    mutationFn: () => client.conversations.eraseContact({ conversationId: conversation.id, ...(messageId ? { messageId } : {}), confirm: true, idempotencyKey: attempt }),
-    onSuccess: () => {
-      setAsking(false);
-      onErased();
-      refresh();
-    },
-  });
-  const stepUp = isStepUpRequired(erase.error);
-  if (!asking) {
-    return (
-      <Button type="button" size="sm" variant="ghost" data-testid={messageId ? 'conversation-message-erase-open' : 'conversation-erase-open'} onClick={() => setAsking(true)}>
-        {t(label)}
-      </Button>
-    );
-  }
-  return (
-    <div role="alertdialog" aria-label={t('eraseOpen')} className="w-full space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm" data-testid={messageId ? 'conversation-message-erase-confirm' : 'conversation-erase-confirm'}>
-      <p>{messageId && who ? t('eraseAuthorWarn', { name: who, channel: conversation.channel.displayName }) : t('eraseWarn', { channel: conversation.channel.displayName })}</p>
-      <div className="flex gap-2">
-        <Button type="button" size="sm" variant="destructive" disabled={erase.isPending} data-testid={messageId ? 'conversation-message-erase-yes' : 'conversation-erase-yes'} onClick={() => erase.mutate()}>
-          {t('eraseYes')}
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="ghost"
-          onClick={() => {
-            setAsking(false);
-            erase.reset();
-          }}
-        >
-          {t('cancel')}
-        </Button>
-      </div>
-      {stepUp && <StepUpPrompt action={t('eraseStepUp')} onVerified={() => erase.mutate()} onCancel={() => erase.reset()} />}
-      {erase.error && !stepUp && <ErrorText>{errorMessage(erase.error)}</ErrorText>}
-    </div>
-  );
-}
-
-// How long threads are kept after their last message (CV6, #2305): every member sees it, owners and admins change it. Older threads
-// are deleted every night with their messages and notes; "keep" holds them until someone deletes them.
-export function ConversationRetentionSetting() {
-  const t = useTranslations('conversations');
-  const { isAdmin } = useMe();
-  const current = useQuery(orpc.conversations.retention.queryOptions({ input: {} }));
-  // A shorter retention (or one where there was none) deletes threads at the next nightly run, so it asks first.
-  const [asking, setAsking] = useState<6 | 12 | 24 | null | undefined>(undefined);
-  const set = useMutation({
-    mutationFn: (retentionMonths: 6 | 12 | 24 | null) => client.conversations.setRetention({ retentionMonths }),
-    onSuccess: () => {
-      setAsking(undefined);
-      void queryClient.invalidateQueries({ queryKey: orpc.conversations.retention.key() });
-    },
-  });
-  if (current.isError) {
-    return (
-      <section className="space-y-1 rounded-md border border-border p-3 text-sm" data-testid="conversation-retention-error">
-        <ErrorText>{errorMessage(current.error)}</ErrorText>
-        <Button type="button" size="sm" variant="outline" onClick={() => void current.refetch()}>
-          {t('retention.retry')}
-        </Button>
-      </section>
-    );
-  }
-  if (!current.data) return null;
-  const monthsOf = (m: 6 | 12 | 24 | null) => (m === null ? Number.POSITIVE_INFINITY : m);
-  const choose = (next: 6 | 12 | 24 | null) => {
-    if (monthsOf(next) < monthsOf(current.data.retentionMonths)) setAsking(next);
-    else set.mutate(next);
-  };
-  const value = current.data.retentionMonths === null ? 'keep' : String(current.data.retentionMonths);
-  return (
-    <section className="space-y-1 rounded-md border border-border p-3 text-sm" aria-label={t('retention.title')} data-testid="conversation-retention">
-      <label className="flex flex-wrap items-center gap-2">
-        <span className="font-medium text-foreground">{t('retention.title')}</span>
-        <NativeSelect
-          aria-label={t('retention.title')}
-          value={value}
-          disabled={!isAdmin || set.isPending}
-          data-testid="conversation-retention-select"
-          onChange={(e) => choose(e.target.value === 'keep' ? null : (Number(e.target.value) as 6 | 12 | 24))}
-        >
-          {CONVERSATION_RETENTION_MONTHS.map((m) => (
-            <option key={m} value={String(m)}>
-              {t(`retention.m${m}`)}
-              {current.data.isDefault && m === 24 ? ` ${t('retention.default')}` : ''}
-            </option>
-          ))}
-          <option value="keep">{t('retention.keep')}</option>
-        </NativeSelect>
-      </label>
-      <p className="text-xs text-muted-foreground">{t('retention.hint')}</p>
-      {asking !== undefined && asking !== null && (
-        <div role="alertdialog" aria-label={t('retention.title')} className="space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3" data-testid="conversation-retention-confirm">
-          <p>{t('retention.shorten', { months: String(asking) })}</p>
-          <div className="flex gap-2">
-            <Button type="button" size="sm" variant="destructive" disabled={set.isPending} data-testid="conversation-retention-yes" onClick={() => set.mutate(asking)}>
-              {t('retention.shortenYes')}
-            </Button>
-            <Button type="button" size="sm" variant="ghost" onClick={() => setAsking(undefined)}>
-              {t('cancel')}
-            </Button>
-          </div>
-        </div>
-      )}
-      {set.error && <ErrorText>{errorMessage(set.error)}</ErrorText>}
-    </section>
-  );
-}
-
 function ResolveButton({ conversation }: { conversation: ConversationSummary }) {
   const t = useTranslations('conversations');
   const resolve = useMutation({ mutationFn: () => client.conversations.resolve({ conversationId: conversation.id }), onSuccess: refresh });
@@ -490,7 +386,7 @@ function ResolveButton({ conversation }: { conversation: ConversationSummary }) 
   const failure = resolved ? reopen.error : resolve.error;
   return (
     <>
-    <Button type="button" size="sm" variant={resolved ? 'outline' : 'default'} loading={pending} data-testid={resolved ? 'conversation-reopen' : 'conversation-resolve'} onClick={() => (resolved ? reopen.mutate() : resolve.mutate())}>
+    <Button type="button" size="lg" className={TOUCH_BUTTON} variant="outline" loading={pending} data-testid={resolved ? 'conversation-reopen' : 'conversation-resolve'} onClick={() => (resolved ? reopen.mutate() : resolve.mutate())}>
       {resolved ? t('reopen') : t('resolve')}
     </Button>
     {failure && <ErrorText>{errorMessage(failure)}</ErrorText>}
@@ -524,7 +420,7 @@ function MessageImage({ attachment }: { attachment: ConversationAttachmentView }
   );
 }
 
-function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, contact, onOpenConversation }: { message: ConversationMessage; detail: ConversationDetail; members: readonly Member[]; userId: string | null; canWrite: boolean; isAdmin: boolean; contact: string; onOpenConversation?: ((id: string) => void) | undefined }) {
+export function MessageRow({ message: m, detail, members, userId, canWrite, contact, onOpenConversation }: { message: ConversationMessage; detail: ConversationDetail; members: readonly Member[]; userId: string | null; canWrite: boolean; contact: string; onOpenConversation?: ((id: string) => void) | undefined }) {
   const t = useTranslations('conversations');
   const f = useFormat();
   const mine = m.direction === 'out';
@@ -544,8 +440,13 @@ function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, co
       if (onOpenConversation) onOpenConversation(done.conversationId);
     },
   });
-  // Only where the platform's hide is confirmed (the provider's rules): Threads' is not until its live check (#3133).
-  const canHide = canWrite && detail.conversation.kind === 'comment_thread' && !mine && !m.removed && Boolean(conversationRules(detail.conversation.channel.provider)?.canHide);
+  // Only where the platform's hide is confirmed (the provider's rules): Threads' is not until its live check (#3133). The thread says whether this channel's
+  // grant allows it now (a YouTube channel without the comment scope shows no button, #3808); an older answer without the field keeps the provider's rule.
+  const canHide = canWrite && detail.conversation.kind === 'comment_thread' && !mine && !m.removed && Boolean(conversationRules(detail.conversation.channel.provider)?.canHide) && detail.hideAllowed !== false;
+  // Dy's suggestion that this thread is spam (read from the header's cache, no new model call): only a hint beside the button, a person clicks.
+  // The suggestion is read for the thread's last customer message, so only that comment carries the hint.
+  const lastCustomer = [...detail.messages].reverse().find((x) => x.direction === 'in' && !x.removed);
+  const spamSuggested = useSpamSuggested(detail.conversation) && (lastCustomer?.id ?? m.id) === m.id;
   const supportsPrivateReply =
     detail.conversation.kind === 'comment_thread' &&
     !mine &&
@@ -566,7 +467,7 @@ function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, co
         {m.removed ? <p className="italic text-muted-foreground">{t('removed')}</p> : <p className="whitespace-pre-wrap break-words text-foreground">{email ? email.fresh : m.body}</p>}
         {email && email.quoted !== '' && (
           <>
-            <Button type="button" size="sm" variant="ghost" aria-expanded={showQuoted} data-testid="conversation-quoted-toggle" onClick={() => setShowQuoted((v) => !v)}>
+            <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" aria-expanded={showQuoted} data-testid="conversation-quoted-toggle" onClick={() => setShowQuoted((v) => !v)}>
               {t(showQuoted ? 'quoted.hide' : 'quoted.show')}
             </Button>
             {showQuoted && <p className="whitespace-pre-wrap break-words border-l-2 border-border pl-2 text-muted-foreground" data-testid="conversation-quoted">{email.quoted}</p>}
@@ -580,17 +481,18 @@ function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, co
             </Badge>
           )}
           {m.sendErrorCode && (m.sendState === 'failed' || m.sendState === 'unknown') && (
-            <span className="text-muted-foreground">{isKnownSendError(m.sendErrorCode) ? t(`sendError.${m.sendErrorCode}`) : m.sendErrorCode}</span>
+            <span className="text-muted-foreground">{isKnownSendError(m.sendErrorCode) ? t(`sendError.${m.sendErrorCode}`) : t(m.sendState === 'unknown' ? 'sendErrorUnknownGeneric' : 'sendErrorGeneric')}</span>
           )}
           {canWrite && (m.sendState === 'failed' || m.sendState === 'unknown') && (
             <>
-              {!(detail.conversation.kind === 'email' && m.sendState === 'unknown') && (
-                <Button type="button" size="sm" variant="outline" loading={settle.isPending} onClick={() => settle.mutate('retry')}>
+              {/* An unclear send that nothing can be read back for (an email, WhatsApp) is never sent again by a button: a person looks and marks it sent. */}
+              {!(m.sendState === 'unknown' && !conversationCanResendUnknown(detail.conversation.channel.provider, detail.conversation.kind)) && (
+                <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" loading={settle.isPending} onClick={() => settle.mutate('retry')}>
                   {m.sendState === 'unknown' ? t('sendAgainUnknown') : t('sendAgain')}
                 </Button>
               )}
               {m.sendState === 'unknown' && (
-                <Button type="button" size="sm" variant="ghost" loading={settle.isPending} onClick={() => settle.mutate('mark_sent')}>
+                <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" loading={settle.isPending} onClick={() => settle.mutate('mark_sent')}>
                   {t('wasSent')}
                 </Button>
               )}
@@ -598,20 +500,25 @@ function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, co
           )}
           {m.hidden && <Badge variant="outline">{t('hidden')}</Badge>}
           {m.hideRequest && <Badge variant="outline">{t(m.hideRequest === 'hide' ? 'hiding' : 'unhiding')}</Badge>}
-          {m.hideErrorCode && !m.hideRequest && <span className="text-destructive">{t('hideFailed', { code: m.hideErrorCode })}</span>}
+          {m.hideErrorCode && !m.hideRequest && <span className="text-destructive">{t('hideFailed')}</span>}
           {canHide && m.hideRequest && m.hideErrorCode && (
-            <Button type="button" size="sm" variant="outline" loading={hide.isPending} onClick={() => hide.mutate(m.hideRequest === 'hide')}>
+            <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" loading={hide.isPending} onClick={() => hide.mutate(m.hideRequest === 'hide')}>
               {t('hideAgain')}
             </Button>
           )}
+          {canHide && !m.hideRequest && !m.hidden && spamSuggested && (
+            <Badge variant="proposal" data-testid="conversation-hide-suggested">
+              {t('hideSuggested')}
+            </Badge>
+          )}
           {canHide && !m.hideRequest && (
-            <Button type="button" size="sm" variant="ghost" loading={hide.isPending} data-testid="conversation-hide" onClick={() => hide.mutate(!m.hidden)}>
+            <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" loading={hide.isPending} data-testid="conversation-hide" onClick={() => hide.mutate(!m.hidden)}>
               {m.hidden ? t('unhide') : t('hide')}
             </Button>
           )}
           {supportsPrivateReply && m.privateReplyConversationId && (
             onOpenConversation ? (
-              <Button type="button" size="sm" variant="ghost" data-testid="conversation-private-reply-open" onClick={() => onOpenConversation(m.privateReplyConversationId as string)}>
+              <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" data-testid="conversation-private-reply-open" onClick={() => onOpenConversation(m.privateReplyConversationId as string)}>
                 {t('privateReplyView')}
               </Button>
             ) : (
@@ -619,7 +526,7 @@ function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, co
             )
           )}
           {supportsPrivateReply && !m.privateReplyConversationId && canWrite && withinPrivateWindow && (
-            <Button type="button" size="sm" variant="ghost" data-testid="conversation-private-reply-button" onClick={() => setPrivateOpen((v) => !v)}>
+            <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" data-testid="conversation-private-reply-button" onClick={() => setPrivateOpen((v) => !v)}>
               {t('privateReplyOpen')}
             </Button>
           )}
@@ -642,12 +549,13 @@ function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, co
               data-testid="conversation-private-reply-text"
             />
             <div className="flex gap-2">
-              <Button type="submit" size="sm" loading={privateReply.isPending} disabled={privateText.trim() === ''} data-testid="conversation-private-reply-send">
+              <Button type="submit" size="sm" className={TOUCH_BUTTON} loading={privateReply.isPending} disabled={privateText.trim() === ''} data-testid="conversation-private-reply-send">
                 {t('privateReplySend')}
               </Button>
               <Button
                 type="button"
                 size="sm"
+                className={TOUCH_BUTTON}
                 variant="ghost"
                 onClick={() => {
                   setPrivateOpen(false);
@@ -660,15 +568,13 @@ function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, co
             {privateReply.error && <ErrorText>{errorMessage(privateReply.error)}</ErrorText>}
           </form>
         )}
-        {/* A customer who only replied in this comment thread has no thread of their own to erase from: their message names them. */}
-        {isAdmin && !mine && m.authorTail !== null && detail.conversation.kind === 'comment_thread' && <EraseContactButton conversation={detail.conversation} messageId={m.id} who={customer} onErased={refresh} label="eraseAuthor" />}
         {(settle.error || hide.error) && <ErrorText>{errorMessage(settle.error ?? hide.error)}</ErrorText>}
       </div>
     </li>
   );
 }
 
-function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen: number; onMoved: (seq: number) => void }) {
+export function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen: number; onMoved: (seq: number) => void }) {
   const t = useTranslations('conversations');
   const [text, setText] = useState('');
   const [movedNote, setMovedNote] = useState(false);
@@ -688,11 +594,13 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
         : CONVERSATION_INSTAGRAM_COMMENT_MAX
       : detail.conversation.channel.provider === 'threads'
         ? CONVERSATION_THREADS_REPLY_MAX
-        : detail.conversation.channel.provider === 'facebook_page' && kind === 'direct'
-          ? CONVERSATION_FACEBOOK_DIRECT_MAX
-          : detail.conversation.channel.provider === 'telegram'
-            ? (conversationRules('telegram')?.replyMax ?? CONVERSATION_REPLY_MAX)
-            : CONVERSATION_REPLY_MAX;
+        : detail.conversation.channel.provider === 'whatsapp'
+          ? CONVERSATION_WHATSAPP_REPLY_MAX
+          : detail.conversation.channel.provider === 'facebook_page' && kind === 'direct'
+            ? CONVERSATION_FACEBOOK_DIRECT_MAX
+            : detail.conversation.channel.provider === 'telegram'
+              ? (conversationRules('telegram')?.replyMax ?? CONVERSATION_REPLY_MAX)
+              : CONVERSATION_REPLY_MAX;
   const [insertTooLong, setInsertTooLong] = useState(false);
   // The listener below reads what is in the box now without being set up again at every keystroke.
   const textNow = useRef(text);
@@ -712,6 +620,17 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
     };
     window.addEventListener(REPLY_INSERT_EVENT, onInsert);
     return () => window.removeEventListener(REPLY_INSERT_EVENT, onInsert);
+  }, [id, kind, replyMax]);
+  // A text another screen left for this thread while the Inbox opened (Meetings "Gửi qua Zalo", #3169): taken once when this thread's box appears, and put in like an inserted
+  // message (read, edit, then Send; nothing is sent from here). It is dropped when it is old or was left for another thread (apps/app/src/lib/reply-handoff.ts).
+  useEffect(() => {
+    const left = takeReplyHandoff(id);
+    if (left === null || !canInsertQuoteLink(kind)) return;
+    const next = appendQuoteMessage(textNow.current, left, replyMax);
+    setInsertTooLong(!next.fits);
+    if (!next.fits) return;
+    setText(next.text);
+    setFrom({});
   }, [id, kind, replyMax]);
   const send = useMutation({
     mutationFn: () => client.conversations.reply({ conversationId: id, body: text.trim(), lastSeenSeq: seen, ...from }),
@@ -735,7 +654,8 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
     },
   });
   const reason = detail.reply.reason;
-  if (!detail.reply.allowed) return <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">{t(`replyBlocked.${reason ?? 'not_supported'}`)}</p>;
+  // Past WhatsApp's 24 hours there is no Send button, and the reason says why (Ludy sends no paid template).
+  if (!detail.reply.allowed) return <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground">{t(reason === 'window_closed' && detail.conversation.channel.provider === 'whatsapp' ? 'replyBlocked.window_closed_whatsapp' : `replyBlocked.${reason ?? 'not_supported'}`)}</p>;
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (text.trim()) send.mutate();
@@ -743,8 +663,17 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
   return (
     <form onSubmit={submit} className="space-y-2" aria-label={t('replyLabel')}>
       <p className="text-xs text-muted-foreground">
-        {detail.conversation.kind === 'email' ? t('replyEmail') : t(detail.conversation.kind === 'direct' ? 'replyPrivate' : 'replyPublic', { channel: detail.conversation.channel.displayName })}
+        {detail.conversation.kind === 'email'
+          ? detail.conversation.contact.address
+            ? t('replyEmailTo', { address: detail.conversation.contact.address })
+            : t('replyEmail')
+          : t(detail.conversation.kind === 'direct' ? 'replyPrivate' : 'replyPublic', { channel: detail.conversation.channel.displayName })}
       </p>
+      {detail.conversation.kind === 'email' && detail.conversation.senderUnverified && (
+        <p className="text-xs text-muted-foreground" data-testid="reply-unverified-note">
+          {t('replyEmailUnverified')}
+        </p>
+      )}
       <DraftPanel
         detail={detail}
         onUse={(draft) => {
@@ -776,11 +705,14 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
         }}
         data-testid="conversation-reply-text"
       />
+      <p className="text-xs text-muted-foreground" data-testid="conversation-reply-count">
+        {t('replyCount', { left: String(Math.max(0, replyMax - text.length)), max: String(replyMax) })}
+      </p>
       {insertTooLong && <ErrorText>{t('quoteTooLong', { max: String(replyMax) })}</ErrorText>}
       {movedNote && <p role="status" className="text-sm text-muted-foreground">{t('movedAfterSend')}</p>}
       {send.error && !movedNote && <ErrorText>{errorMessage(send.error)}</ErrorText>}
-      <Button type="submit" size="sm" loading={send.isPending} disabled={text.trim() === ''} data-testid="conversation-send">
-        {t('send')}
+      <Button type="submit" size="lg" className={TOUCH_BUTTON} loading={send.isPending} disabled={text.trim() === ''} data-testid="conversation-send">
+        {t(detail.conversation.kind === 'email' ? 'sendEmail' : detail.conversation.kind === 'direct' ? 'sendPrivate' : 'sendPublic')}
       </Button>
     </form>
   );
@@ -806,8 +738,11 @@ function Notes({ detail, members, canWrite }: { detail: ConversationDetail; memb
         {detail.notes.map((n) => (
           <li key={n.id} className="rounded-md bg-muted px-3 py-2 text-sm" data-testid="conversation-note">
             <p className="whitespace-pre-wrap break-words text-foreground">{n.body}</p>
-            <p className="text-xs text-muted-foreground">
-              {names.get(n.authorUserId) ?? t('member')} · {f.dateTime(n.createdAt)}
+            <p className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
+              <span>
+                {names.get(n.authorUserId) ?? t('member')} · {f.dateTime(n.createdAt)}
+              </span>
+              <AiWrittenBadge actorOrigin={n.actorOrigin} tainted={n.tainted} />
             </p>
           </li>
         ))}
@@ -821,7 +756,7 @@ function Notes({ detail, members, canWrite }: { detail: ConversationDetail; memb
           }}
         >
           <Textarea aria-label={t('noteLabel')} rows={2} maxLength={CONVERSATION_NOTE_MAX} value={text} placeholder={t('notePlaceholder')} onChange={(e) => setText(e.target.value)} data-testid="conversation-note-text" />
-          <Button type="submit" size="sm" variant="outline" loading={add.isPending} disabled={text.trim() === ''} data-testid="conversation-note-add">
+          <Button type="submit" size="sm" className={TOUCH_BUTTON} variant="outline" loading={add.isPending} disabled={text.trim() === ''} data-testid="conversation-note-add">
             {t('addNote')}
           </Button>
         </form>
@@ -847,7 +782,7 @@ export function SandboxCommentButton({ connectionId, postId }: { connectionId: s
   });
   if (!open) {
     return (
-      <Button type="button" size="sm" variant="outline" data-testid="sandbox-comment-open" onClick={() => setOpen(true)}>
+      <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" data-testid="sandbox-comment-open" onClick={() => setOpen(true)}>
         {t('sandboxMake')}
       </Button>
     );
@@ -862,10 +797,10 @@ export function SandboxCommentButton({ connectionId, postId }: { connectionId: s
     >
       <Textarea aria-label={t('sandboxText')} rows={2} maxLength={2000} value={text} placeholder={t('sandboxText')} onChange={(e) => setText(e.target.value)} data-testid="sandbox-comment-text" />
       <div className="flex gap-2">
-        <Button type="submit" size="sm" loading={make.isPending} disabled={text.trim() === ''} data-testid="sandbox-comment-send">
+        <Button type="submit" size="sm" className={TOUCH_BUTTON} loading={make.isPending} disabled={text.trim() === ''} data-testid="sandbox-comment-send">
           {t('sandboxSend')}
         </Button>
-        <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
+        <Button type="button" size="sm" className={TOUCH_BUTTON} variant="ghost" onClick={() => setOpen(false)}>
           {t('cancel')}
         </Button>
       </div>

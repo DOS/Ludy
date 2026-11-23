@@ -9,13 +9,14 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { DomainError, Runtime, defineCommand, isSecurityRefusal, type RefusalAuditLimits } from '@crove/kernel-runtime';
+import { createDb, type Db } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { DomainError, Runtime, defineCommand, isSecurityRefusal, type RefusalAuditLimits } from '@ludy/kernel-runtime';
 import { pruneRefusalTally } from '../../src/worker.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -40,6 +41,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('refusal audit bound on PostgreSQL (#162)', () => {
   const dbName = `crove_test_refusal_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   let pool: pg.Pool;
@@ -50,7 +52,7 @@ suite('refusal audit bound on PostgreSQL (#162)', () => {
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
 
   async function withClient<T>(url: string, fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: url });
+    const client = createDbClient({ connectionString: url }, dbIds);
     await client.connect();
     try {
       return await fn(client);
@@ -110,16 +112,17 @@ suite('refusal audit bound on PostgreSQL (#162)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = username;
+      url.username = dbIds ? dbIds.roleName(username) : username;
       url.password = password;
       return url.toString();
     };
     appUrl = login('crove_app', 'test-app-pw');
     workerUrl = login('crove_worker', 'test-worker-pw');
-    pool = createPool({ connectionString: appUrl, max: 8 });
+    pool = createDbPool({ connectionString: appUrl, max: 8 }, dbIds);
     db = createDb(pool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS, refusalAudit: LIMITS }).register({
       commands: [...kernelCommands, refuse, refuseOther],
@@ -253,7 +256,7 @@ suite('refusal audit bound on PostgreSQL (#162)', () => {
         [org.orgId, key],
       ),
     );
-    const workerPool = createPool({ connectionString: workerUrl, max: 1 });
+    const workerPool = createDbPool({ connectionString: workerUrl, max: 1 }, dbIds);
     try {
       expect(await pruneRefusalTally(createDb(workerPool), 7)).toBeGreaterThanOrEqual(2);
     } finally {

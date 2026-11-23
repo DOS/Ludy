@@ -5,8 +5,8 @@
 // kernel.vy_data.results.expire and kernel.vy_data.member_data.purge; the lists come from definers that answer ids, never text. Logs carry org
 // prefixes and codes only.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { DomainError, type Runtime } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { DomainError, type Runtime } from '@ludy/kernel-runtime';
 
 // After the nightly retention purge (02:30) and the notes trash (02:45), on the same clock.
 export const MEMBER_VY_SWEEP_CRON = '15 3 * * *';
@@ -28,7 +28,7 @@ export async function sweepMemberVyResults(deps: { runtime: Runtime; workerDb: D
   let removed = 0;
   let after: string | null = null;
   for (;;) {
-    const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_kernel.member_vy_results_due(${ORGS_PER_PASS}::int, ${after}::uuid)`.execute(deps.workerDb);
+    const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM ludy_kernel.member_vy_results_due(${ORGS_PER_PASS}::int, ${after}::uuid)`.execute(deps.workerDb);
     for (const row of rows) {
       try {
         removed += (await deps.runtime.execute<{ removed: number }>('kernel.vy_data.results.expire', {}, { actor: ACTOR, orgId: row.org_id })).removed;
@@ -41,7 +41,7 @@ export async function sweepMemberVyResults(deps: { runtime: Runtime; workerDb: D
   }
 }
 
-// One pass of the former members, after the expiry: the users who hold Vy results or memory in an org they left more than 30 days ago, each purged in
+// One pass of the former members, after the expiry: the users who hold Vy results, memory or meeting translations in an org they left more than 30 days ago, each purged in
 // the org's system context. A user whose membership ended with no removal in the audit trail has no date to count the 30 days from: their data is
 // kept and logged, never purged here (the rule of the Notes sweep).
 // The orgs (id prefixes) whose unrecorded former members this process has already logged: the same orgs stay in that state every night, so a line is written for an org
@@ -51,7 +51,7 @@ const reportedUnrecorded = new Set<string>();
 export async function sweepMemberVyFormerMembers(deps: { runtime: Runtime; workerDb: Db; reported?: Set<string> }): Promise<number> {
   const reported = deps.reported ?? reportedUnrecorded;
   const { rows } = await sql<{ org_id: string; user_id: string; recorded: boolean }>`
-    SELECT org_id, user_id, recorded FROM crove_kernel.member_vy_former_members_due(${FORMER_MEMBERS_PER_PASS}::int)`.execute(deps.workerDb);
+    SELECT org_id, user_id, recorded FROM ludy_kernel.member_vy_former_members_due(${FORMER_MEMBERS_PER_PASS}::int)`.execute(deps.workerDb);
   let removed = 0;
   const unrecorded = new Set<string>();
   for (const row of rows) {

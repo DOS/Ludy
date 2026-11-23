@@ -10,11 +10,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, type LibraryItem } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, type LibraryItem } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -49,7 +49,7 @@ suite('archived media library files and the attach checks (#1302, #1273)', () =>
   async function connection(orgId: string, owner: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         orgId,
         id,
         'sandbox',
@@ -68,11 +68,11 @@ suite('archived media library files and the attach checks (#1302, #1273)', () =>
     const viewer = await person('viewer');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, member, limited, viewer]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, member, limited, viewer]),
     );
     const mine = await connection(orgId, owner);
     const other = await connection(orgId, owner);
-    await admin((c) => c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [orgId, limited, mine, owner]));
+    await admin((c) => c.query('INSERT INTO ludy_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [orgId, limited, mine, owner]));
     return { orgId, owner, member, limited, viewer, mine, other };
   }
 
@@ -82,7 +82,7 @@ suite('archived media library files and the attach checks (#1302, #1273)', () =>
     const sha = createHash('sha256').update(id).digest('hex');
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
          VALUES ($1, $2, $3, $4, $5, $6, $7, 120000, $8)`,
         [o.orgId, id, sha, `org/${o.orgId}/${sha}`, `content:${sha}`, filename, options.contentType ?? 'image/jpeg', options.source ?? 'social'],
       ),
@@ -96,11 +96,11 @@ suite('archived media library files and the attach checks (#1302, #1273)', () =>
   const restore = (o: Org, fileIds: string[], who = o.member) => exec<{ restored: string[] }>(o, who, 'social.media.restore', { fileIds });
   const list = (o: Org, input: Record<string, unknown> = {}, who = o.member) => query<{ items: LibraryItem[] }>(o, who, 'social.media.list', input);
   const names = async (o: Org, input: Record<string, unknown> = {}, who = o.member) => (await list(o, input, who)).items.map((i) => i.filename).sort();
-  const marks = (o: Org) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_social.media_archive WHERE org_id = $1', [o.orgId])).rows[0]?.n));
-  const posts = (o: Org) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_social.post WHERE org_id = $1', [o.orgId])).rows[0]?.n));
+  const marks = (o: Org) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_social.media_archive WHERE org_id = $1', [o.orgId])).rows[0]?.n));
+  const posts = (o: Org) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_social.post WHERE org_id = $1', [o.orgId])).rows[0]?.n));
   const create = (o: Org, who: string, input: Record<string, unknown>) => exec<{ postId: string; revision: number; variants: Array<{ variantId: string; connectionId: string }> }>(o, who, 'social.post.create', input);
   const revisionOf = (o: Org, table: 'post' | 'post_variant', id: string) =>
-    admin(async (c) => Number((await c.query<{ revision: number }>(`SELECT revision FROM crove_social.${table} WHERE org_id = $1 AND id = $2`, [o.orgId, id])).rows[0]?.revision));
+    admin(async (c) => Number((await c.query<{ revision: number }>(`SELECT revision FROM ludy_social.${table} WHERE org_id = $1 AND id = $2`, [o.orgId, id])).rows[0]?.revision));
 
   // A post on the channel other with its own media only: for the limited member, another channel's own media (#1081).
   async function hiddenOwn(o: Org) {
@@ -119,9 +119,9 @@ suite('archived media library files and the attach checks (#1302, #1273)', () =>
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -162,7 +162,7 @@ suite('archived media library files and the attach checks (#1302, #1273)', () =>
     expect(await marks(o)).toBe(1);
 
     const audit = await admin((c) =>
-      c.query("SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command IN ('social.media.archive', 'social.media.restore') ORDER BY occurred_at, id", [o.orgId]),
+      c.query("SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command IN ('social.media.archive', 'social.media.restore') ORDER BY occurred_at, id", [o.orgId]),
     );
     expect(audit.rows.map((r) => [r.command, r.detail.file_ids])).toEqual([
       ['social.media.archive', [a, b]],
@@ -251,7 +251,7 @@ suite('archived media library files and the attach checks (#1302, #1273)', () =>
     const added = await exec<{ done: string[] }>(o, o.member, 'social.post.bulk_add_channel', { postIds: [postId], connectionId: third });
     expect(added.done).toEqual([postId]);
     await exec(o, o.member, 'social.post.submit', { postId, variantIds: variants.map((v) => v.variantId) });
-    const statuses = await admin(async (c) => (await c.query<{ status: string; media: unknown }>('SELECT status, media FROM crove_social.post_variant WHERE org_id = $1 AND post_id = $2 AND channel_connection_id = $3', [o.orgId, postId, o.other])).rows);
+    const statuses = await admin(async (c) => (await c.query<{ status: string; media: unknown }>('SELECT status, media FROM ludy_social.post_variant WHERE org_id = $1 AND post_id = $2 AND channel_connection_id = $3', [o.orgId, postId, o.other])).rows);
     expect(statuses).toHaveLength(1);
     expect(statuses[0]?.status).not.toBe('draft');
     expect(JSON.stringify(statuses[0]?.media)).toContain(own);
@@ -311,7 +311,7 @@ suite('archived media library files and the attach checks (#1302, #1273)', () =>
 
     // Add channels: a second channel of theirs, with the other channel's file as its own.
     const second = await connection(o.orgId, o.owner);
-    await admin((c) => c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.limited, second, o.owner]));
+    await admin((c) => c.query('INSERT INTO ludy_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.limited, second, o.owner]));
     await expect(exec(o, o.limited, 'social.post.add_channels', { postId, channels: [{ connectionId: second, media: [{ fileId: hidden }] }] })).rejects.toMatchObject(hiddenRefusal(hidden));
 
     // The owner and an unlimited member may use it (no channel scope: mediaHidden is FALSE), and archive it.
@@ -326,7 +326,7 @@ suite('archived media library files and the attach checks (#1302, #1273)', () =>
     const f = await file(o, 'xoa.jpg');
     await archive(o, [f]);
     expect(await marks(o)).toBe(1);
-    await admin((c) => c.query('DELETE FROM crove_kernel.file WHERE org_id = $1 AND id = $2', [o.orgId, f]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.file WHERE org_id = $1 AND id = $2', [o.orgId, f]));
     expect(await marks(o)).toBe(0);
   });
 });

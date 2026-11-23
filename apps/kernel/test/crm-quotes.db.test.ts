@@ -8,13 +8,13 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { vietnamToday, type Deal, type PipelineStage, type Quote, type QuoteDefaults, type QuotePage, type QuoteSummary } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
-import { computeLineTotals, sumLineTotals } from '@crove/l10n-vn';
-import { crmCommands, crmQueries, renderQuotePdf, type QuoteDocument } from '@crove/mod-crm';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { vietnamToday, type Deal, type PipelineStage, type Quote, type QuoteDefaults, type QuotePage, type QuoteSummary } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
+import { computeLineTotals, sumLineTotals } from '@ludy/l10n-vn';
+import { crmCommands, crmQueries, renderQuotePdf, type QuoteDocument } from '@ludy/mod-crm';
 import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -50,9 +50,9 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     const member = await person('member');
     const viewer = await person('viewer');
     const adminUser = await person('admin');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer'), ($1, $4, 'admin')", [orgId, member, viewer, adminUser]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer'), ($1, $4, 'admin')", [orgId, member, viewer, adminUser]));
     const party = (name: string) =>
-      admin((c) => c.query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => r.rows[0]!.id));
+      admin((c) => c.query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => r.rows[0]!.id));
     const exec = <T>(user: string, command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(user), orgId });
     const query = <T>(user: string, command: string, input: unknown) => rt.query<T>(command, input, { actor: asUser(user), orgId });
     const newDeal = async (partyId: string, title = 'Gói kế toán năm') => {
@@ -62,7 +62,7 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     const draft = (dealId: string) => exec<Quote>(member, 'crm.quote.save', { dealId, lines: [] });
     // The row as the database owner makes a send (Q2's step): the commands refuse everything that is not a draft.
     const send = (quoteId: string, number = 'BG-2026-0001') =>
-      admin((c) => c.query("UPDATE crove_crm.quote SET status = 'sent', number = $3, sent_at = now(), sent_via = 'link' WHERE org_id = $1 AND id = $2", [orgId, quoteId, number]));
+      admin((c) => c.query("UPDATE ludy_crm.quote SET status = 'sent', number = $3, sent_at = now(), sent_via = 'link' WHERE org_id = $1 AND id = $2", [orgId, quoteId, number]));
     return { orgId, owner, member, viewer, adminUser, party, exec, query, newDeal, draft, send };
   }
 
@@ -75,9 +75,9 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -139,8 +139,8 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
         `SELECT l.line_no, l.amount::text, pg_catalog.round(l.quantity * l.unit_price * (100 - l.discount_percent) / 100)::text AS sql_amount, l.vat_amount::text,
                 pg_catalog.round(l.amount * CASE l.vat_rate WHEN 'KCT' THEN 0 ELSE pg_catalog.rtrim(l.vat_rate, '%')::numeric END / 100)::text AS sql_vat,
                 q.total = q.subtotal + q.vat_amount AS total_ok,
-                q.subtotal = (SELECT sum(amount) FROM crove_crm.quote_line x WHERE x.org_id = q.org_id AND x.quote_id = q.id) AND q.vat_amount = (SELECT sum(vat_amount) FROM crove_crm.quote_line x WHERE x.org_id = q.org_id AND x.quote_id = q.id) AS sum_ok
-         FROM crove_crm.quote_line l JOIN crove_crm.quote q ON q.org_id = l.org_id AND q.id = l.quote_id WHERE l.org_id = $1 AND l.quote_id = $2 AND l.kind = 'item' ORDER BY l.line_no`,
+                q.subtotal = (SELECT sum(amount) FROM ludy_crm.quote_line x WHERE x.org_id = q.org_id AND x.quote_id = q.id) AND q.vat_amount = (SELECT sum(vat_amount) FROM ludy_crm.quote_line x WHERE x.org_id = q.org_id AND x.quote_id = q.id) AS sum_ok
+         FROM ludy_crm.quote_line l JOIN ludy_crm.quote q ON q.org_id = l.org_id AND q.id = l.quote_id WHERE l.org_id = $1 AND l.quote_id = $2 AND l.kind = 'item' ORDER BY l.line_no`,
         [o.orgId, quote.id],
       ),
     );
@@ -156,16 +156,16 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     const { rows } = await admin((c) =>
       c.query<{ column_name: string; line: string; draft: string }>(
         `SELECT 'quantity' AS column_name,
-                (SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) FROM pg_attribute a WHERE a.attrelid = 'crove_crm.quote_line'::regclass AND a.attname = 'quantity') AS line,
-                (SELECT pg_catalog.format_type(t.typbasetype, t.typtypmod) FROM pg_type t WHERE t.oid = 'crove_finance.quantity'::regtype) AS draft
+                (SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) FROM pg_attribute a WHERE a.attrelid = 'ludy_crm.quote_line'::regclass AND a.attname = 'quantity') AS line,
+                (SELECT pg_catalog.format_type(t.typbasetype, t.typtypmod) FROM pg_type t WHERE t.oid = 'ludy_finance.quantity'::regtype) AS draft
          UNION ALL
          SELECT 'unit_price',
-                (SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) FROM pg_attribute a WHERE a.attrelid = 'crove_crm.quote_line'::regclass AND a.attname = 'unit_price'),
-                (SELECT pg_catalog.format_type(t.typbasetype, t.typtypmod) FROM pg_type t WHERE t.oid = 'crove_finance.unit_amount'::regtype)
+                (SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) FROM pg_attribute a WHERE a.attrelid = 'ludy_crm.quote_line'::regclass AND a.attname = 'unit_price'),
+                (SELECT pg_catalog.format_type(t.typbasetype, t.typtypmod) FROM pg_type t WHERE t.oid = 'ludy_finance.unit_amount'::regtype)
          UNION ALL
          SELECT 'amount',
-                (SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) FROM pg_attribute a WHERE a.attrelid = 'crove_crm.quote_line'::regclass AND a.attname = 'amount'),
-                (SELECT pg_catalog.format_type(t.typbasetype, t.typtypmod) FROM pg_type t WHERE t.oid = 'crove_finance.amount'::regtype)`,
+                (SELECT pg_catalog.format_type(a.atttypid, a.atttypmod) FROM pg_attribute a WHERE a.attrelid = 'ludy_crm.quote_line'::regclass AND a.attname = 'amount'),
+                (SELECT pg_catalog.format_type(t.typbasetype, t.typtypmod) FROM pg_type t WHERE t.oid = 'ludy_finance.amount'::regtype)`,
       ),
     );
     expect(rows).toHaveLength(3);
@@ -223,7 +223,7 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     await o.exec(o.member, 'crm.quote.save', { quoteId: quote.id, version: 1, lines: [item(), item({ description: 'Thêm' })] });
     await expect(o.exec(o.owner, 'crm.deal.delete', { dealId: deal.id })).rejects.toMatchObject({ code: 'DEAL_HAS_QUOTES', status: 409 });
     expect(await o.exec(o.member, 'crm.quote.delete_draft', { quoteId: quote.id })).toEqual({ quoteId: quote.id, deleted: true });
-    expect((await admin((c) => c.query('SELECT 1 FROM crove_crm.quote_line WHERE org_id = $1 AND quote_id = $2', [o.orgId, quote.id]))).rowCount).toBe(0);
+    expect((await admin((c) => c.query('SELECT 1 FROM ludy_crm.quote_line WHERE org_id = $1 AND quote_id = $2', [o.orgId, quote.id]))).rowCount).toBe(0);
     await expect(o.query(o.owner, 'crm.quote.get', { quoteId: quote.id })).rejects.toMatchObject({ code: 'QUOTE_NOT_FOUND', status: 404 });
     expect(await o.exec(o.owner, 'crm.deal.delete', { dealId: deal.id })).toEqual({ dealId: deal.id, deleted: true });
   });
@@ -256,9 +256,9 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     // A declined quote may be revised; an accepted one is final.
     const second = await o.draft(deal.id);
     await o.send(second.id, 'BG-2026-0002');
-    await admin((c) => c.query("UPDATE crove_crm.quote SET status = 'accepted', decided_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, second.id]));
+    await admin((c) => c.query("UPDATE ludy_crm.quote SET status = 'accepted', decided_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, second.id]));
     await expect(o.exec(o.member, 'crm.quote.revise', { quoteId: second.id })).rejects.toMatchObject({ code: 'QUOTE_NOT_REVISABLE' });
-    await admin((c) => c.query("UPDATE crove_crm.quote SET status = 'declined' WHERE org_id = $1 AND id = $2", [o.orgId, second.id]));
+    await admin((c) => c.query("UPDATE ludy_crm.quote SET status = 'declined' WHERE org_id = $1 AND id = $2", [o.orgId, second.id]));
     expect((await o.exec<Quote>(o.member, 'crm.quote.revise', { quoteId: second.id })).revisesId).toBe(second.id);
   });
 
@@ -268,11 +268,11 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     const quote = await o.draft(deal.id);
     await o.send(quote.id);
     expect((await o.query<Quote>(o.owner, 'crm.quote.get', { quoteId: quote.id })).expired).toBe(false);
-    await admin((c) => c.query("UPDATE crove_crm.quote SET valid_until = '2020-01-01' WHERE org_id = $1 AND id = $2", [o.orgId, quote.id]));
+    await admin((c) => c.query("UPDATE ludy_crm.quote SET valid_until = '2020-01-01' WHERE org_id = $1 AND id = $2", [o.orgId, quote.id]));
     expect(await o.query<Quote>(o.owner, 'crm.quote.get', { quoteId: quote.id })).toMatchObject({ status: 'sent', expired: true });
     // A draft past its date is not expired: only a sent quote is.
     const old = await o.draft(deal.id);
-    await admin((c) => c.query("UPDATE crove_crm.quote SET valid_until = '2020-01-01' WHERE org_id = $1 AND id = $2", [o.orgId, old.id]));
+    await admin((c) => c.query("UPDATE ludy_crm.quote SET valid_until = '2020-01-01' WHERE org_id = $1 AND id = $2", [o.orgId, old.id]));
     expect((await o.query<Quote>(o.owner, 'crm.quote.get', { quoteId: old.id })).expired).toBe(false);
   });
 
@@ -316,9 +316,9 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
   // The document the PDF is made from (#2695): the quote, the org as the seller, the customer as the buyer; read only, for anyone who reads quotes.
   it('gives the quote document to a viewer: the quote, the org as seller, the customer as buyer, and another org\'s quote as missing', async () => {
     const o = await org();
-    await admin((c) => c.query('UPDATE crove_kernel.tenant SET address = $2, contact_email = $3 WHERE org_id = $1', [o.orgId, '12 Nguyễn Huệ, Quận 1, TP. Hồ Chí Minh', 'ketoan@bao-gia.test']));
+    await admin((c) => c.query('UPDATE ludy_kernel.tenant SET address = $2, contact_email = $3 WHERE org_id = $1', [o.orgId, '12 Nguyễn Huệ, Quận 1, TP. Hồ Chí Minh', 'ketoan@bao-gia.test']));
     const party = await o.party('Công ty TNHH Đặng Thị Hằng');
-    await admin((c) => c.query('UPDATE crove_kernel.party SET address = $3, email = $4 WHERE org_id = $1 AND id = $2', [o.orgId, party, '5 Lê Lợi, Đà Nẵng', 'mua@bao-gia.test']));
+    await admin((c) => c.query('UPDATE ludy_kernel.party SET address = $3, email = $4 WHERE org_id = $1 AND id = $2', [o.orgId, party, '5 Lê Lợi, Đà Nẵng', 'mua@bao-gia.test']));
     const deal = await o.newDeal(party);
     const quote = await o.exec<Quote>(o.member, 'crm.quote.save', {
       dealId: deal.id,
@@ -357,7 +357,7 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
       }
     }
     const insert = (extra: string, values: unknown[] = []) =>
-      `INSERT INTO crove_crm.quote (org_id, deal_id, party_id, valid_until, created_by${extra ? `, ${extra}` : ''}) VALUES ($1, $2, $3, '2031-01-31', $4${values.map((_, i) => `, $${i + 5}`).join('')}) RETURNING id`;
+      `INSERT INTO ludy_crm.quote (org_id, deal_id, party_id, valid_until, created_by${extra ? `, ${extra}` : ''}) VALUES ($1, $2, $3, '2031-01-31', $4${values.map((_, i) => `, $${i + 5}`).join('')}) RETURNING id`;
     const base = [o.orgId, deal.id, party, o.member];
     // A writer inserts a fresh draft; a viewer inserts nothing.
     expect(await as(o.member, async (c) => (await c.query(insert(''), base)).rowCount)).toBe(1);
@@ -377,24 +377,24 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
       await expect(as(o.member, (c) => c.query(insert(column, values), [...base, ...values])), column).rejects.toMatchObject({ code: '42501' });
     }
     // The editable columns of a draft change; the status, the number, the sent and decided facts, the deal and the customer never do.
-    expect(await as(o.member, async (c) => (await c.query("UPDATE crove_crm.quote SET remarks = 'x', terms = 'y', valid_until = '2031-02-01' WHERE org_id = $1 AND id = $2", [o.orgId, draft.id])).rowCount)).toBe(1);
+    expect(await as(o.member, async (c) => (await c.query("UPDATE ludy_crm.quote SET remarks = 'x', terms = 'y', valid_until = '2031-02-01' WHERE org_id = $1 AND id = $2", [o.orgId, draft.id])).rowCount)).toBe(1);
     // The status, the number, the sent columns and the decision columns (Q4) are granted to the commands' transitions, which the guard trigger holds: a draft is not edited into a sent or decided quote.
     for (const set of ["status = 'sent'", "number = 'BG-2026-0098'", 'sent_at = now()', "sent_via = 'email'", `issuer_entity_id = '${randomUUID()}'`, "buyer_name = 'x'", 'decided_at = now()', "decline_reason = 'x'"]) {
-      await expect(as(o.member, (c) => c.query(`UPDATE crove_crm.quote SET ${set} WHERE org_id = $1 AND id = $2`, [o.orgId, draft.id])), set).rejects.toMatchObject({ code: '42501' });
+      await expect(as(o.member, (c) => c.query(`UPDATE ludy_crm.quote SET ${set} WHERE org_id = $1 AND id = $2`, [o.orgId, draft.id])), set).rejects.toMatchObject({ code: '42501' });
     }
     // The rest is never granted to a tenant role.
     for (const set of ['first_viewed_at = now()', `deal_id = '${randomUUID()}'`, `party_id = '${randomUUID()}'`, 'created_at = now()', `created_by = '${randomUUID()}'`, `revises_id = '${quote.id}'`, 'revision = 9']) {
-      await expect(as(o.member, (c) => c.query(`UPDATE crove_crm.quote SET ${set} WHERE org_id = $1 AND id = $2`, [o.orgId, draft.id])), set).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
+      await expect(as(o.member, (c) => c.query(`UPDATE ludy_crm.quote SET ${set} WHERE org_id = $1 AND id = $2`, [o.orgId, draft.id])), set).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
     }
     // A viewer changes and deletes nothing; a sent quote is read-only to every tenant role, and its lines too.
-    expect(await as(o.viewer, async (c) => (await c.query("UPDATE crove_crm.quote SET remarks = 'x' WHERE org_id = $1 AND id = $2", [o.orgId, draft.id])).rowCount)).toBe(0);
-    expect(await as(o.viewer, async (c) => (await c.query('DELETE FROM crove_crm.quote WHERE org_id = $1 AND id = $2', [o.orgId, draft.id])).rowCount)).toBe(0);
+    expect(await as(o.viewer, async (c) => (await c.query("UPDATE ludy_crm.quote SET remarks = 'x' WHERE org_id = $1 AND id = $2", [o.orgId, draft.id])).rowCount)).toBe(0);
+    expect(await as(o.viewer, async (c) => (await c.query('DELETE FROM ludy_crm.quote WHERE org_id = $1 AND id = $2', [o.orgId, draft.id])).rowCount)).toBe(0);
     for (const who of [o.member, o.owner]) {
-      await expect(as(who, (c) => c.query("UPDATE crove_crm.quote SET remarks = 'x' WHERE org_id = $1 AND id = $2", [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('QUOTE_FROZEN') });
-      expect(await as(who, async (c) => (await c.query('DELETE FROM crove_crm.quote WHERE org_id = $1 AND id = $2', [o.orgId, quote.id])).rowCount)).toBe(0);
+      await expect(as(who, (c) => c.query("UPDATE ludy_crm.quote SET remarks = 'x' WHERE org_id = $1 AND id = $2", [o.orgId, quote.id]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('QUOTE_FROZEN') });
+      expect(await as(who, async (c) => (await c.query('DELETE FROM ludy_crm.quote WHERE org_id = $1 AND id = $2', [o.orgId, quote.id])).rowCount)).toBe(0);
     }
     const lineSql = (quoteId: string) => ({
-      text: "INSERT INTO crove_crm.quote_line (org_id, quote_id, line_no, kind, description, quantity, unit_price, vat_rate, amount, vat_amount) VALUES ($1, $2, 1, 'item', 'Dòng', 1, 100, '10%', 100, 10) RETURNING id",
+      text: "INSERT INTO ludy_crm.quote_line (org_id, quote_id, line_no, kind, description, quantity, unit_price, vat_rate, amount, vat_amount) VALUES ($1, $2, 1, 'item', 'Dòng', 1, 100, '10%', 100, 10) RETURNING id",
       values: [o.orgId, quoteId],
     });
     expect(await as(o.member, async (c) => (await c.query(lineSql(draft.id))).rowCount)).toBe(1);
@@ -402,12 +402,12 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     await expect(as(o.viewer, (c) => c.query(lineSql(draft.id)))).rejects.toMatchObject({ code: '42501' });
     // A line of a sent quote is neither changed nor deleted (its row reads as absent to the update and the delete).
     const sentLine = (await admin((c) => c.query<{ id: string }>(lineSql(quote.id).text, lineSql(quote.id).values))).rows[0]!.id;
-    expect(await as(o.owner, async (c) => (await c.query("UPDATE crove_crm.quote_line SET description = 'x' WHERE org_id = $1 AND id = $2", [o.orgId, sentLine])).rowCount)).toBe(0);
-    expect(await as(o.owner, async (c) => (await c.query('DELETE FROM crove_crm.quote_line WHERE org_id = $1 AND id = $2', [o.orgId, sentLine])).rowCount)).toBe(0);
+    expect(await as(o.owner, async (c) => (await c.query("UPDATE ludy_crm.quote_line SET description = 'x' WHERE org_id = $1 AND id = $2", [o.orgId, sentLine])).rowCount)).toBe(0);
+    expect(await as(o.owner, async (c) => (await c.query('DELETE FROM ludy_crm.quote_line WHERE org_id = $1 AND id = $2', [o.orgId, sentLine])).rowCount)).toBe(0);
     // The shape of a line: an item needs a positive quantity and price, a text line has no amounts.
-    await expect(admin((c) => c.query("INSERT INTO crove_crm.quote_line (org_id, quote_id, line_no, kind, description, quantity, unit_price, vat_rate) VALUES ($1, $2, 2, 'item', 'x', 0, 1, '10%')", [o.orgId, draft.id]))).rejects.toMatchObject({ code: '23514' });
-    await expect(admin((c) => c.query("INSERT INTO crove_crm.quote_line (org_id, quote_id, line_no, kind, description, amount) VALUES ($1, $2, 3, 'text', 'x', 5)", [o.orgId, draft.id]))).rejects.toMatchObject({ code: '23514' });
-    await expect(admin((c) => c.query("UPDATE crove_crm.quote SET total = 5 WHERE org_id = $1 AND id = $2", [o.orgId, draft.id]))).rejects.toMatchObject({ code: '23514' });
+    await expect(admin((c) => c.query("INSERT INTO ludy_crm.quote_line (org_id, quote_id, line_no, kind, description, quantity, unit_price, vat_rate) VALUES ($1, $2, 2, 'item', 'x', 0, 1, '10%')", [o.orgId, draft.id]))).rejects.toMatchObject({ code: '23514' });
+    await expect(admin((c) => c.query("INSERT INTO ludy_crm.quote_line (org_id, quote_id, line_no, kind, description, amount) VALUES ($1, $2, 3, 'text', 'x', 5)", [o.orgId, draft.id]))).rejects.toMatchObject({ code: '23514' });
+    await expect(admin((c) => c.query("UPDATE ludy_crm.quote SET total = 5 WHERE org_id = $1 AND id = $2", [o.orgId, draft.id]))).rejects.toMatchObject({ code: '23514' });
   });
 
   it('holds the setting\'s role in SQL: owners and admins write it, members and viewers read it', async () => {
@@ -424,13 +424,13 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
         c.release();
       }
     }
-    for (const who of [o.member, o.viewer, o.adminUser, o.owner]) expect(await as(who, async (c) => (await c.query('SELECT 1 FROM crove_crm.quote_setting WHERE org_id = $1', [o.orgId])).rowCount)).toBe(1);
+    for (const who of [o.member, o.viewer, o.adminUser, o.owner]) expect(await as(who, async (c) => (await c.query('SELECT 1 FROM ludy_crm.quote_setting WHERE org_id = $1', [o.orgId])).rowCount)).toBe(1);
     for (const who of [o.member, o.viewer]) {
-      expect(await as(who, async (c) => (await c.query('UPDATE crove_crm.quote_setting SET valid_days = 30 WHERE org_id = $1', [o.orgId])).rowCount)).toBe(0);
-      expect(await as(who, async (c) => (await c.query('DELETE FROM crove_crm.quote_setting WHERE org_id = $1', [o.orgId])).rowCount)).toBe(0);
+      expect(await as(who, async (c) => (await c.query('UPDATE ludy_crm.quote_setting SET valid_days = 30 WHERE org_id = $1', [o.orgId])).rowCount)).toBe(0);
+      expect(await as(who, async (c) => (await c.query('DELETE FROM ludy_crm.quote_setting WHERE org_id = $1', [o.orgId])).rowCount)).toBe(0);
     }
-    expect(await as(o.adminUser, async (c) => (await c.query('UPDATE crove_crm.quote_setting SET valid_days = 30 WHERE org_id = $1', [o.orgId])).rowCount)).toBe(1);
-    await expect(as(o.adminUser, (c) => c.query('UPDATE crove_crm.quote_setting SET created_at = now() WHERE org_id = $1', [o.orgId]))).rejects.toMatchObject({ code: '42501' });
+    expect(await as(o.adminUser, async (c) => (await c.query('UPDATE ludy_crm.quote_setting SET valid_days = 30 WHERE org_id = $1', [o.orgId])).rowCount)).toBe(1);
+    await expect(as(o.adminUser, (c) => c.query('UPDATE ludy_crm.quote_setting SET created_at = now() WHERE org_id = $1', [o.orgId]))).rejects.toMatchObject({ code: '42501' });
   });
 
   it('writes timeline rows and audit rows with ids and counts only, never a price or a line text', async () => {
@@ -442,9 +442,9 @@ suite('crm quotes on PostgreSQL (#2693)', () => {
     await o.send(quote.id);
     const revision = await o.exec<Quote>(o.member, 'crm.quote.revise', { quoteId: quote.id });
     await o.exec(o.member, 'crm.quote.delete_draft', { quoteId: revision.id });
-    const timeline = await admin((c) => c.query<{ kind: string; summary: string }>("SELECT kind, summary FROM crove_kernel.activity WHERE org_id = $1 AND record_type = 'kernel.party' AND record_id = $2 AND kind LIKE 'quote.%' ORDER BY occurred_at, id", [o.orgId, party]));
+    const timeline = await admin((c) => c.query<{ kind: string; summary: string }>("SELECT kind, summary FROM ludy_kernel.activity WHERE org_id = $1 AND record_type = 'kernel.party' AND record_id = $2 AND kind LIKE 'quote.%' ORDER BY occurred_at, id", [o.orgId, party]));
     expect(timeline.rows.map((r) => r.kind)).toEqual(['quote.created', 'quote.revised', 'quote.deleted']);
-    const audit = await admin((c) => c.query<{ command: string; detail: unknown }>("SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'crm.quote%' AND outcome = 'ok' ORDER BY id", [o.orgId]));
+    const audit = await admin((c) => c.query<{ command: string; detail: unknown }>("SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'crm.quote%' AND outcome = 'ok' ORDER BY id", [o.orgId]));
     expect(audit.rows.map((r) => r.command)).toEqual(['crm.quote.save', 'crm.quote.save', 'crm.quote.revise', 'crm.quote.delete_draft']);
     const text = JSON.stringify(timeline.rows) + JSON.stringify(audit.rows);
     for (const secret of ['Bí mật', 'bí mật', 'Điều khoản', '7770001', saved.total, '1500000']) expect(text).not.toContain(secret);

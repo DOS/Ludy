@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import { POLL_RULES } from '@crove/mod-social/contract';
+import { POLL_RULES } from '@ludy/mod-social/contract';
 import { catalog } from '../src/i18n/runtime.ts';
 import type { PreviewContent } from '../src/components/social-preview.tsx';
 

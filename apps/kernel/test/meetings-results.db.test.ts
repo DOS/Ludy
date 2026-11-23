@@ -6,11 +6,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { meetingsCommands, meetingsQueries, itemFlags, itemIsClean } from '@crove/mod-meetings';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { meetingsCommands, meetingsQueries, itemFlags, itemIsClean } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -46,7 +46,7 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query(`SET LOCAL session_replication_role = replica`);
-      await c.query(`UPDATE crove_meetings.action_item SET tainted = true WHERE org_id = $1 AND id = $2`, [orgId, itemId]);
+      await c.query(`UPDATE ludy_meetings.action_item SET tainted = true WHERE org_id = $1 AND id = $2`, [orgId, itemId]);
       await c.query('COMMIT');
     });
   }
@@ -54,22 +54,22 @@ suite('the summary and the action items of a meeting (#2580)', () => {
   async function seedMeeting(recorder: string, readers: string[]): Promise<string> {
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp tuần', 'vi', now(), now() + interval '30 minutes', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, meetingId, users[recorder]],
     );
-    for (const reader of readers) await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users[reader]]);
+    for (const reader of readers) await sqlAdmin(`INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users[reader]]);
     return meetingId;
   }
   async function seedPosition(who: string, title: string): Promise<string> {
     const id = randomUUID();
-    await sqlAdmin(`INSERT INTO crove_kernel.position (org_id, id, title, module, role_key, holder_user_id) VALUES ($1, $2, $3, 'kernel', 'member', $4)`, [orgId, id, title, users[who]]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.position (org_id, id, title, module, role_key, holder_user_id) VALUES ($1, $2, $3, 'kernel', 'member', $4)`, [orgId, id, title, users[who]]);
     return id;
   }
   // A member of its own, so a test's seats do not leak into another's.
   async function newMember(key: string): Promise<void> {
     users[key] = await upsertIdentity(createDb(pools[0] as pg.Pool), { issuer: 'results', subject: key, email: `${key}@results.test`, name: null });
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, users[key]]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, users[key]]);
   }
   type Results = { isRecorder: boolean; draft: { summary: string; decisions: string[]; tainted: boolean } | null; published: { summary: string; decisions: string[] } | null; items: Array<{ id: string; stage: string; status: string; title: string; clean: boolean; tainted: boolean; flags: string[]; taskId: string | null; positions: Array<{ id: string }> }> };
   const results = (who: string, meetingId: string) => query<Results>(who, 'meetings.result.get', { meetingId });
@@ -84,9 +84,9 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -98,7 +98,7 @@ suite('the summary and the action items of a meeting (#2580)', () => {
       users[key] = await upsertIdentity(createDb(pool), { issuer: 'results', subject: key, email: `${key}@results.test`, name: null });
     }
     orgId = (await createOrg(runtime, { type: 'user', userId: users.owner as string, aal: 'aal1' }, 'Results')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member')`, [orgId, users.recorder, users.attendee, users.other, users.stranger]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member')`, [orgId, users.recorder, users.attendee, users.other, users.stranger]);
   }, 300_000);
 
   afterAll(async () => {
@@ -144,7 +144,7 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     // The click is the person's own: not defaulted, not false.
     expect(await refuses(exec('recorder', 'meetings.result.publish', { meetingId }))).not.toBeNull();
     expect(await refuses(exec('recorder', 'meetings.result.publish', { meetingId, confirmed: false }))).not.toBeNull();
-    expect(await exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true })).toEqual({ meetingId, results: 1, items: 1 });
+    expect(await exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true })).toEqual({ meetingId, results: 1, items: 1, chapters: 0 });
     const seen = await results('attendee', meetingId);
     expect(seen).toMatchObject({ isRecorder: false, draft: null, published: { summary: 'Chốt báo giá tuần này.', decisions: ['Giữ giá cũ', 'Gặp khách thứ sáu'] } });
     expect(seen.items.map((i) => [i.title, i.stage, i.status])).toEqual([['Gửi báo giá cho khách', 'published', 'suggested']]);
@@ -183,7 +183,7 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     expect(await refuses(exec('other', 'meetings.action_item.accept', { itemId, confirmed: true, title: 'x', due: null, positionId: seat }))).toBe('ACTION_ITEM_NOT_FOUND');
     const accepted = await exec<{ taskId: string }>('attendee', 'meetings.action_item.accept', { itemId, confirmed: true, title: 'Gửi báo giá cho khách A', due: '2026-11-13', positionId: seat });
     const task = await sqlAdmin<{ title: string; description: string | null; assignee_position_id: string; source_ref: { type: string; id: string }; tainted: boolean; due: Date | null }>(
-      `SELECT title, description, assignee_position_id, source_ref, tainted, due FROM crove_kernel.task WHERE org_id = $1 AND id = $2`,
+      `SELECT title, description, assignee_position_id, source_ref, tainted, due FROM ludy_kernel.task WHERE org_id = $1 AND id = $2`,
       [orgId, accepted.taskId],
     );
     expect(task.rows[0]).toMatchObject({ title: 'Gửi báo giá cho khách A', description: null, assignee_position_id: seat, source_ref: { type: 'meetings.action_item', id: itemId } });
@@ -192,7 +192,7 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     const after = (await results('attendee', meetingId)).items[0];
     expect(after).toMatchObject({ status: 'accepted', taskId: accepted.taskId });
     // No task text holds anything of the transcript: only what the person confirmed. Exactly one task came of the item.
-    const tasks = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.task WHERE org_id = $1 AND source_ref ->> 'id' = $2`, [orgId, itemId]);
+    const tasks = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.task WHERE org_id = $1 AND source_ref ->> 'id' = $2`, [orgId, itemId]);
     expect(tasks.rows[0]?.n).toBe('1');
   });
 
@@ -202,12 +202,12 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     const { itemId } = await exec<{ itemId: string }>('recorder', 'meetings.action_item.create', item(meetingId, { whoUserId: users.recorder }));
     await taint(itemId);
     const kept = await exec<{ taskId: string }>('recorder', 'meetings.action_item.accept', { itemId, confirmed: true, title: 'Gửi báo giá cho khách', due: null, positionId: seat });
-    const row = await sqlAdmin<{ tainted: boolean }>(`SELECT tainted FROM crove_kernel.task WHERE org_id = $1 AND id = $2`, [orgId, kept.taskId]);
+    const row = await sqlAdmin<{ tainted: boolean }>(`SELECT tainted FROM ludy_kernel.task WHERE org_id = $1 AND id = $2`, [orgId, kept.taskId]);
     expect(row.rows[0]?.tainted).toBe(true);
     const { itemId: second } = await exec<{ itemId: string }>('recorder', 'meetings.action_item.create', item(meetingId, { whoUserId: users.recorder }));
     await taint(second);
     const changed = await exec<{ taskId: string }>('recorder', 'meetings.action_item.accept', { itemId: second, confirmed: true, title: 'Gửi báo giá, bản sửa', due: null, positionId: seat });
-    const row2 = await sqlAdmin<{ tainted: boolean }>(`SELECT tainted FROM crove_kernel.task WHERE org_id = $1 AND id = $2`, [orgId, changed.taskId]);
+    const row2 = await sqlAdmin<{ tainted: boolean }>(`SELECT tainted FROM ludy_kernel.task WHERE org_id = $1 AND id = $2`, [orgId, changed.taskId]);
     expect(row2.rows[0]?.tainted).toBe(false);
   });
 
@@ -249,7 +249,7 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     expect(['ok', 'NO_CLEAN_ITEMS']).toContain(code(clean));
     expect(['ok', 'ACTION_ITEM_ACCEPTED']).toContain(code(single));
     expect([code(clean), code(single)]).toContain('ok');
-    const tasks = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.task WHERE org_id = $1 AND source_ref ->> 'id' = $2`, [orgId, itemId]);
+    const tasks = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.task WHERE org_id = $1 AND source_ref ->> 'id' = $2`, [orgId, itemId]);
     expect(tasks.rows[0]?.n).toBe('1');
   });
 
@@ -277,9 +277,67 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     expect(await refuses(exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true }))).toBe('DRAFT_NOT_REVIEWED');
     await exec('recorder', 'meetings.draft.review', { meetingId, confirmed: true, ids: (await results('recorder', meetingId)).items.map((i) => i.id) });
     await exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true });
-    await sqlAdmin(`UPDATE crove_meetings.meeting SET text_retention_date = current_date - 1 WHERE org_id = $1 AND id = $2`, [orgId, meetingId]);
+    await sqlAdmin(`UPDATE ludy_meetings.meeting SET text_retention_date = current_date - 1 WHERE org_id = $1 AND id = $2`, [orgId, meetingId]);
     expect(await refuses(exec('attendee', 'meetings.action_item.accept', { itemId, confirmed: true, title: 'x', due: null, positionId: seat }))).toBe('MEETING_NOT_FOUND');
     expect(await refuses(query('attendee', 'meetings.action_item.source', { itemId }))).toBe('MEETING_NOT_FOUND');
+  });
+
+  // Minutes templates (A4, #3162): the template is a code on the meeting, chosen at create or changed by the recorder alone; on a template the recorder types sections and the
+  // kernel makes the one summary text from them, which the readers read once it is published.
+  it('stores the template at create (the general summary by default), shows it on the meeting and lets only the recorder change it', async () => {
+    const make = (extra: Record<string, unknown>) => exec<{ meetingId: string }>('recorder', 'meetings.meeting.create', { title: 'Họp mẫu', consentMethod: 'told_at_start', ...extra });
+    const plain = await make({});
+    const picked = await make({ summaryTemplate: 'customer' });
+    expect((await query<{ summaryTemplate: string }>('recorder', 'meetings.meeting.get', { meetingId: plain.meetingId })).summaryTemplate).toBe('general');
+    expect((await query<{ summaryTemplate: string }>('recorder', 'meetings.meeting.get', { meetingId: picked.meetingId })).summaryTemplate).toBe('customer');
+    expect(await refuses(make({ summaryTemplate: 'secret' }))).not.toBeNull();
+
+    const meetingId = await seedMeeting('recorder', ['attendee']);
+    expect(await exec('recorder', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'briefing' })).toEqual({ meetingId, summaryTemplate: 'briefing' });
+    expect((await query<{ summaryTemplate: string }>('recorder', 'meetings.meeting.get', { meetingId })).summaryTemplate).toBe('briefing');
+    // An attendee, an owner who is not the recorder and a stranger cannot change it (the attendee reads the meeting, so the refusal is the recorder-only one).
+    expect(await refuses(exec('attendee', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'supplier' }))).toBe('FORBIDDEN');
+    expect(await refuses(exec('stranger', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'supplier' }))).toBe('MEETING_NOT_FOUND');
+    expect(await refuses(exec('recorder', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'nope' }))).not.toBeNull();
+    // The database itself holds the same five codes.
+    expect(await refuses(sqlAdmin(`UPDATE ludy_meetings.meeting SET summary_template = 'nope' WHERE id = $1`, [meetingId]))).not.toBeNull();
+    expect((await query<{ summaryTemplate: string }>('recorder', 'meetings.meeting.get', { meetingId })).summaryTemplate).toBe('briefing');
+  });
+
+  it('saves the sections of a template as one summary text under their headings, publishes it, and reads it back for an attendee only once published', async () => {
+    const meetingId = await seedMeeting('recorder', ['attendee']);
+    await exec('recorder', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'briefing' });
+    const saved = await exec<{ decisions: number }>('recorder', 'meetings.summary.save', {
+      meetingId,
+      sections: [{ key: 'plan', text: 'Gửi báo giá thứ sáu.' }, { key: 'progress', text: 'Đã gửi hợp đồng.' }, { key: 'issues', text: '  ' }],
+      decisions: ['Giữ giá cũ'],
+    });
+    expect(saved.decisions).toBe(1);
+    const draft = (await results('recorder', meetingId)).draft;
+    // The template's order and headings, whatever the order the recorder's screen sent; an empty section is left out.
+    expect(draft?.summary).toBe('Kết quả công việc kỳ trước\nĐã gửi hợp đồng.\n\nKế hoạch kỳ tới\nGửi báo giá thứ sáu.');
+    expect(draft?.tainted).toBe(false);
+    expect((await results('attendee', meetingId)).draft).toBeNull();
+    await exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true });
+    const shared = await results('attendee', meetingId);
+    expect(shared.published?.summary).toBe(draft?.summary);
+    expect(shared.draft).toBeNull();
+  });
+
+  it('refuses a mix of the general summary and sections, a section the template does not have and a save with nothing in it', async () => {
+    const meetingId = await seedMeeting('recorder', ['attendee']);
+    // The general summary takes a summary, never sections.
+    expect(await refuses(exec('recorder', 'meetings.summary.save', { meetingId, sections: [{ key: 'plan', text: 'x' }], decisions: [] }))).toBe('TEMPLATE_MISMATCH');
+    expect(await exec('recorder', 'meetings.summary.save', { meetingId, summary: 'Tóm tắt chung', decisions: [] })).toMatchObject({ meetingId });
+    await exec('recorder', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'customer' });
+    // A template takes sections, never a summary of its own, and only its own keys.
+    expect(await refuses(exec('recorder', 'meetings.summary.save', { meetingId, summary: 'Tóm tắt', decisions: [] }))).toBe('TEMPLATE_MISMATCH');
+    expect(await refuses(exec('recorder', 'meetings.summary.save', { meetingId, sections: [{ key: 'plan', text: 'x' }], decisions: [] }))).toBe('TEMPLATE_MISMATCH');
+    expect(await refuses(exec('recorder', 'meetings.summary.save', { meetingId, sections: [{ key: 'needs', text: ' ' }], decisions: [] }))).not.toBeNull();
+    // The draft that was there is untouched by the refusals.
+    expect((await results('recorder', meetingId)).draft?.summary).toBe('Tóm tắt chung');
+    // Only the recorder saves.
+    expect(await refuses(exec('attendee', 'meetings.summary.save', { meetingId, sections: [{ key: 'needs', text: 'x' }], decisions: [] }))).toBe('FORBIDDEN');
   });
 
   it('goes with its meeting', async () => {
@@ -288,7 +346,7 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     await exec('recorder', 'meetings.action_item.create', item(meetingId));
     await exec('recorder', 'meetings.meeting.delete', { meetingId });
     const left = await sqlAdmin<{ results: string; items: string }>(
-      `SELECT (SELECT count(*) FROM crove_meetings.meeting_result WHERE meeting_id = $1)::text AS results, (SELECT count(*) FROM crove_meetings.action_item WHERE meeting_id = $1)::text AS items`,
+      `SELECT (SELECT count(*) FROM ludy_meetings.meeting_result WHERE meeting_id = $1)::text AS results, (SELECT count(*) FROM ludy_meetings.action_item WHERE meeting_id = $1)::text AS items`,
       [meetingId],
     );
     expect(left.rows[0]).toEqual({ results: '0', items: '0' });

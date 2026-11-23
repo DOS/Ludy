@@ -7,11 +7,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, type BlobStore } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, type CalendarFeedView } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, type BlobStore } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, type CalendarFeedView } from '@ludy/mod-social';
 import { createAuthenticator } from '../src/auth.ts';
 import { calendarFeed, type CalendarFeed } from '../src/calendar-feed.ts';
 import { loadConfig } from '../src/config.ts';
@@ -48,12 +48,12 @@ suite('social calendar feed on PostgreSQL (#862)', () => {
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Cửa hàng ${randomUUID().slice(0, 6)}`);
     const roles = { admin: await person('admin'), member: await person('member'), viewer: await person('viewer') };
-    for (const [role, user] of Object.entries(roles)) await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]));
+    for (const [role, user] of Object.entries(roles)) await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]));
     const conn = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, conn, 'sandbox', `acct-${conn.slice(0, 8)}`, 'Kênh thử', owner]),
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, conn, 'sandbox', `acct-${conn.slice(0, 8)}`, 'Kênh thử', owner]),
     );
-    const slug = await admin(async (c) => (await c.query<{ slug: string }>('SELECT slug FROM crove_kernel.tenant WHERE org_id = $1', [orgId])).rows[0]?.slug as string);
+    const slug = await admin(async (c) => (await c.query<{ slug: string }>('SELECT slug FROM ludy_kernel.tenant WHERE org_id = $1', [orgId])).rows[0]?.slug as string);
     return { orgId, owner, conn, slug, ...roles };
   }
 
@@ -64,9 +64,9 @@ suite('social calendar feed on PostgreSQL (#862)', () => {
   async function post(o: Org, body: string, set: { status: string; scheduledAt?: Date; queueSlotAt?: Date; publishedAt?: Date; title?: string; variantBody?: string }) {
     const { postId } = await exec<{ postId: string }>(o, o.owner, 'social.post.create', { body, channels: [{ connectionId: o.conn }] });
     return admin(async (c) => {
-      if (set.title !== undefined) await c.query('UPDATE crove_social.post SET title = $2 WHERE id = $1', [postId, set.title]);
+      if (set.title !== undefined) await c.query('UPDATE ludy_social.post SET title = $2 WHERE id = $1', [postId, set.title]);
       const { rows } = await c.query<{ id: string }>(
-        'UPDATE crove_social.post_variant SET status = $2, scheduled_at = $3, queue_slot_at = $4, published_at = $5, body = coalesce($6, body) WHERE post_id = $1 RETURNING id',
+        'UPDATE ludy_social.post_variant SET status = $2, scheduled_at = $3, queue_slot_at = $4, published_at = $5, body = coalesce($6, body) WHERE post_id = $1 RETURNING id',
         [postId, set.status, set.scheduledAt ?? null, set.queueSlotAt ?? null, set.publishedAt ?? null, set.variantBody ?? null],
       );
       return { postId, variantId: rows[0]?.id as string };
@@ -82,9 +82,9 @@ suite('social calendar feed on PostgreSQL (#862)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -156,7 +156,7 @@ suite('social calendar feed on PostgreSQL (#862)', () => {
     const ics = await res.text();
     expect(ics.startsWith('BEGIN:VCALENDAR\r\n')).toBe(true);
     expect(ics.match(/BEGIN:VEVENT/g)).toHaveLength(4);
-    expect(ics.replace(/\r\n /g, '')).toContain(`UID:${titled.variantId}@crove\r\n`);
+    expect(ics.replace(/\r\n /g, '')).toContain(`UID:${titled.variantId}@ludy\r\n`);
     expect(ics.replace(/\r\n /g, '')).toContain(`URL:http://localhost:8080/o/${o.slug}/social/${titled.postId}\r\n`);
     expect(ics.replace(/\r\n /g, '')).toContain('SUMMARY:Sandbox: Khai trương\r\n');
     // Without the extension, or with a wrong token: a plain 404.
@@ -173,16 +173,16 @@ suite('social calendar feed on PostgreSQL (#862)', () => {
     const second = await exec<{ token: string }>(o, o.owner, 'social.calendar_feed.create');
     expect(await calendarFeed(rt, first.token)).toBeNull();
     expect(await calendarFeed(rt, second.token)).toMatchObject({ slug: o.slug, events: [] });
-    const live = await admin(async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_social.calendar_feed WHERE org_id = $1 AND revoked_at IS NULL', [o.orgId])).rows[0]?.n);
+    const live = await admin(async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_social.calendar_feed WHERE org_id = $1 AND revoked_at IS NULL', [o.orgId])).rows[0]?.n);
     expect(live).toBe(1);
     // Everyone sees that there is one and who made it, never the token.
     const seen = await rt.query<CalendarFeedView | null>('social.calendar_feed.get', {}, { actor: asUser(o.viewer), orgId: o.orgId });
     expect(seen).toEqual({ createdAt: expect.any(String), createdBy: o.owner });
     expect(JSON.stringify(seen)).not.toContain(second.token);
-    const stored = await admin(async (c) => (await c.query<{ token_sha256: string }>('SELECT token_sha256 FROM crove_social.calendar_feed WHERE org_id = $1 AND revoked_at IS NULL', [o.orgId])).rows[0]?.token_sha256);
+    const stored = await admin(async (c) => (await c.query<{ token_sha256: string }>('SELECT token_sha256 FROM ludy_social.calendar_feed WHERE org_id = $1 AND revoked_at IS NULL', [o.orgId])).rows[0]?.token_sha256);
     expect(stored).toMatch(/^[0-9a-f]{64}$/);
     // The audit keeps no token.
-    const audit = await admin(async (c) => JSON.stringify((await c.query("SELECT * FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'social.calendar_feed.%'", [o.orgId])).rows));
+    const audit = await admin(async (c) => JSON.stringify((await c.query("SELECT * FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'social.calendar_feed.%'", [o.orgId])).rows));
     expect(audit).toContain('social.calendar_feed.create');
     expect(audit).not.toContain(first.token);
     expect(audit).not.toContain(second.token);
@@ -195,7 +195,7 @@ suite('social calendar feed on PostgreSQL (#862)', () => {
 
     // A closed org's feed opens nothing either.
     const third = await exec<{ token: string }>(o, o.owner, 'social.calendar_feed.create');
-    await admin((c) => c.query("UPDATE crove_kernel.tenant SET status = 'closed' WHERE org_id = $1", [o.orgId]));
+    await admin((c) => c.query("UPDATE ludy_kernel.tenant SET status = 'closed' WHERE org_id = $1", [o.orgId]));
     expect(await calendarFeed(rt, third.token)).toBeNull();
   });
 
@@ -228,28 +228,43 @@ suite('social calendar feed on PostgreSQL (#862)', () => {
     const grants = await admin(async (c) =>
       (
         await c.query<{ grantee: string }>(
-          "SELECT grantee FROM information_schema.role_routine_grants WHERE routine_schema = 'crove_social' AND routine_name = 'calendar_feed_events' AND grantee NOT IN ('postgres') ORDER BY 1",
+          "SELECT grantee FROM information_schema.role_routine_grants WHERE routine_schema = 'ludy_social' AND routine_name = 'calendar_feed_events' AND grantee NOT IN ('postgres') ORDER BY 1",
         )
       ).rows.map((r) => r.grantee),
     );
-    expect(grants).toEqual(['crove_app']);
+    expect(grants).toEqual(['ludy_app']);
     const columns = await admin(async (c) =>
       (
         await c.query<{ column_name: string }>(
-          "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'calendar_feed' AND privilege_type = 'UPDATE' ORDER BY 1",
+          "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'ludy_tenant' AND table_schema = 'ludy_social' AND table_name = 'calendar_feed' AND privilege_type = 'UPDATE' ORDER BY 1",
         )
       ).rows.map((r) => r.column_name),
     );
     expect(columns).toEqual(['revoked_at', 'revoked_by']);
     const worker = new URL(adminUrl);
-    worker.username = 'crove_worker';
+    worker.username = 'ludy_worker';
     worker.password = 'test-worker-pw';
     const w = new pg.Client({ connectionString: worker.toString() });
     await w.connect();
     try {
-      await expect(w.query("SELECT crove_social.calendar_feed_events('x')")).rejects.toMatchObject({ code: '42501' });
+      await expect(w.query("SELECT ludy_social.calendar_feed_events('x')")).rejects.toMatchObject({ code: '42501' });
     } finally {
       await w.end();
     }
+  });
+
+  it('opens nothing while Social is off for the org, and the same feed once it is on (ADR-0053, C2)', async () => {
+    const o = await org();
+    const { token } = await exec<{ token: string }>(o, o.admin, 'social.calendar_feed.create');
+    const setApp = (enabled: boolean) => rt.execute('kernel.org.set_app', { module: 'social', enabled }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    expect(await calendarFeed(rt, token)).toMatchObject({ slug: o.slug });
+    await setApp(false);
+    expect(await calendarFeed(rt, token)).toBeNull();
+    const res = await http().request(`/cal/${token}.ics`);
+    const unknown = await http().request(`/cal/${'A'.repeat(43)}.ics`);
+    expect(res.status).toBe(unknown.status);
+    expect(await res.text()).toBe(await unknown.text());
+    await setApp(true);
+    expect(await calendarFeed(rt, token)).toMatchObject({ slug: o.slug });
   });
 });

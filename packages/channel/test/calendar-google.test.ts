@@ -1,21 +1,36 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Google Calendar free/busy against recorded answers (shapes from Google's Calendar API and OAuth docs); no live call.
-import { describe, expect, it } from 'vitest';
-import { ConnectorError, GOOGLE_CALENDAR_EVENTS_SCOPE, GOOGLE_CALENDAR_FREEBUSY_SCOPE, GoogleCalendarAdapter, googleCalendarSecretOf, type Fetch } from '../src/index.ts';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ConnectorError, GOOGLE_CALENDAR_EVENTS_READ_SCOPE, GOOGLE_CALENDAR_EVENTS_SCOPE, GOOGLE_CALENDAR_FREEBUSY_SCOPE, GoogleCalendarAdapter, agendaEventOf, googleCalendarSecretOf, joinUrlOf, titleOf, withCallSignal, type Fetch } from '../src/index.ts';
 
 const APP = { clientId: '123456789-testclientid0001.apps.googleusercontent.com', clientSecret: 'test-google-secret-not-real' };
 const SECRET = JSON.stringify({ accessToken: 'ya29.token-1', refreshToken: '1//refresh-1' });
 const REDIRECT = 'https://ludy.example/calendar/oauth/google_calendar/callback';
 
-function google(routes: Record<string, { status?: number; body: unknown }[]>) {
-  const calls: { route: string; body: unknown; auth: string | null }[] = [];
+type RouteReply = { status?: number; body?: unknown; raw?: Response } | 'network' | ((init?: RequestInit) => Promise<Response>);
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+function google(routes: Record<string, RouteReply[]>) {
+  const calls: { route: string; body: unknown; auth: string | null; contentType: string | null; signal: AbortSignal | null }[] = [];
   const fetchImpl: Fetch = async (input, init) => {
     const url = new URL(input);
     const route = `${init?.method ?? 'GET'} ${url.host}${url.pathname}`;
     const raw = init?.body;
     const headers = new Headers(init?.headers);
-    calls.push({ route, auth: headers.get('authorization'), body: typeof raw === 'string' ? (headers.get('content-type')?.includes('json') ? JSON.parse(raw) : Object.fromEntries(new URLSearchParams(raw))) : raw });
+    calls.push({
+      route,
+      auth: headers.get('authorization'),
+      contentType: headers.get('content-type'),
+      signal: init?.signal ?? null,
+      body: typeof raw === 'string' ? (headers.get('content-type')?.includes('json') ? JSON.parse(raw) : Object.fromEntries(new URLSearchParams(raw))) : raw,
+    });
     const answer = routes[route]?.shift() ?? { status: 500, body: { error: { code: 500, message: `no answer for ${route}`, status: 'INTERNAL' } } };
+    if (answer === 'network') throw new Error(`network failure on ${route}`);
+    if (typeof answer === 'function') return answer(init);
+    if (answer.raw) return answer.raw;
     return new Response(JSON.stringify(answer.body), { status: answer.status ?? 200, headers: { 'content-type': 'application/json' } });
   };
   return { calls, fetchImpl };
@@ -61,6 +76,121 @@ describe('GoogleCalendarAdapter', () => {
     await expect(exchange({ access_token: 'a', refresh_token: 'r', scope: 'openid email' })).rejects.toMatchObject({ kind: 'denied', code: 'MISSING_PERMISSION' });
     await expect(exchange({ access_token: 'a', scope: `openid email ${GOOGLE_CALENDAR_FREEBUSY_SCOPE}` })).rejects.toBeInstanceOf(ConnectorError);
     await expect(exchange({ access_token: 'a', refresh_token: 'r', scope: GOOGLE_CALENDAR_FREEBUSY_SCOPE }, { email: 'a@b.test', email_verified: false })).rejects.toMatchObject({ kind: 'denied', code: 'NO_EMAIL' });
+  });
+
+  it('takes the grant away at Google when the connect refuses after Google issued tokens, and only then', async () => {
+    const attempt = async (token: object, info: RouteReply = { body: { email: 'a@b.test', email_verified: true } }, revoke: RouteReply = { body: {} }) => {
+      const fake = google({ 'POST oauth2.googleapis.com/token': [{ body: token }], 'GET www.googleapis.com/oauth2/v3/userinfo': [info], 'POST oauth2.googleapis.com/revoke': [revoke] });
+      const failure = await new GoogleCalendarAdapter(APP, fake.fetchImpl).exchange({ code: 'secret-code', redirectUri: REDIRECT, codeVerifier: null }).catch((e: unknown) => e);
+      const revokes = fake.calls.filter((c) => c.route === 'POST oauth2.googleapis.com/revoke');
+      return { failure, routes: fake.calls.map((c) => c.route), revokes, revoked: revokes.map((c) => c.body) };
+    };
+    // The member unticked the calendar permission: userinfo is never called and the refresh token is revoked alone in the form.
+    const noScope = await attempt({ access_token: 'a1', refresh_token: 'r1', scope: 'openid email' });
+    expect(noScope.failure).toMatchObject({ kind: 'denied', code: 'MISSING_PERMISSION' });
+    expect(noScope.routes).toEqual(['POST oauth2.googleapis.com/token', 'POST oauth2.googleapis.com/revoke']);
+    expect(noScope.revoked).toEqual([{ token: 'r1' }]);
+    expect(noScope.revokes[0]?.contentType).toBe('application/x-www-form-urlencoded');
+    expect(noScope.revokes[0]?.signal).toBeInstanceOf(AbortSignal);
+    // No refresh token came (absent or empty): the access token is what there is to revoke.
+    for (const refresh of [undefined, '']) {
+      const noRefresh = await attempt({ access_token: 'a2', ...(refresh === undefined ? {} : { refresh_token: refresh }), scope: `openid email ${GOOGLE_CALENDAR_FREEBUSY_SCOPE}` });
+      expect(noRefresh.failure).toBeInstanceOf(ConnectorError);
+      expect(noRefresh.revoked).toEqual([{ token: 'a2' }]);
+    }
+    // Missing or unverified email revokes the refresh token.
+    for (const info of [{ email: 'a@b.test', email_verified: false }, { email: '', email_verified: true }, {}]) {
+      const badEmail = await attempt({ access_token: 'a3', refresh_token: 'r3', scope: GOOGLE_CALENDAR_FREEBUSY_SCOPE }, { body: info });
+      expect(badEmail.failure).toMatchObject({ kind: 'denied', code: 'NO_EMAIL' });
+      expect(badEmail.revoked).toEqual([{ token: 'r3' }]);
+    }
+    // A userinfo failure (403, 500, network) revokes the refresh token and keeps the original refusal.
+    for (const info of [{ status: 403, body: { error: { code: 403, message: 'denied' } } }, { status: 500, body: { error: { code: 500, message: 'server' } } }, 'network' as const]) {
+      const profileFail = await attempt({ access_token: 'a4', refresh_token: 'r4', scope: GOOGLE_CALENDAR_FREEBUSY_SCOPE }, info);
+      expect(profileFail.failure).toBeInstanceOf(ConnectorError);
+      expect(profileFail.revoked).toEqual([{ token: 'r4' }]);
+    }
+    // A connect that works, and calls where Google issued no grant, revoke nothing.
+    const worked = await attempt({ access_token: 'a5', refresh_token: 'r5', expires_in: 3599, scope: `openid email ${GOOGLE_CALENDAR_FREEBUSY_SCOPE}` });
+    expect(worked.failure).toMatchObject({ externalAccount: 'a@b.test' });
+    expect(worked.revoked).toEqual([]);
+    for (const tokenReply of [
+      { status: 400, body: { error: 'invalid_grant' } },
+      { status: 503, body: { error: { code: 503, message: 'unavailable' } } },
+      { body: { refresh_token: 'r6', scope: GOOGLE_CALENDAR_FREEBUSY_SCOPE } },
+      { body: { access_token: '', refresh_token: 'r6', scope: GOOGLE_CALENDAR_FREEBUSY_SCOPE } },
+      'network' as const,
+    ]) {
+      const fake = google({ 'POST oauth2.googleapis.com/token': [tokenReply] });
+      await new GoogleCalendarAdapter(APP, fake.fetchImpl).exchange({ code: 'secret-code', redirectUri: REDIRECT, codeVerifier: null }).catch(() => undefined);
+      expect(fake.calls.map((c) => c.route)).toEqual(['POST oauth2.googleapis.com/token']);
+    }
+  });
+
+  it('keeps the original refusal, never parses the revoke body, uses a 5 s timeout, and leaks nothing when revoke fails', async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    const unparsed = new Response('google-revoke-body-leak-r4', { status: 502 });
+    const jsonSpy = vi.spyOn(unparsed, 'json');
+    const textSpy = vi.spyOn(unparsed, 'text');
+    const arrayBufferSpy = vi.spyOn(unparsed, 'arrayBuffer');
+    const cancelSpy = vi.spyOn(unparsed.body!, 'cancel');
+    const failures: RouteReply[] = [
+      { status: 500, body: { error: 'server', leak: 'r4' } },
+      { status: 400, body: { error: 'invalid_token' } },
+      { raw: unparsed },
+      'network',
+      async () => Promise.reject(new DOMException('timed out', 'TimeoutError')),
+    ];
+    for (const revoke of failures) {
+      const fake = google({
+        'POST oauth2.googleapis.com/token': [{ body: { access_token: 'a4', refresh_token: 'r4', scope: 'openid email' } }],
+        'POST oauth2.googleapis.com/revoke': [revoke],
+      });
+      const failure = await new GoogleCalendarAdapter(APP, fake.fetchImpl).exchange({ code: 'secret-code', redirectUri: REDIRECT, codeVerifier: null }).catch((e: unknown) => e);
+      expect(failure).toMatchObject({ kind: 'denied', code: 'MISSING_PERMISSION' });
+      const msg = (failure as Error).message;
+      for (const secret of ['secret-code', 'a4', 'r4', APP.clientSecret, 'google-revoke-body-leak']) expect(msg).not.toContain(secret);
+      expect(fake.calls.filter((c) => c.route === 'POST oauth2.googleapis.com/revoke').map((c) => c.body)).toEqual([{ token: 'r4' }]);
+    }
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+    expect(jsonSpy).not.toHaveBeenCalled();
+    expect(textSpy).not.toHaveBeenCalled();
+    expect(arrayBufferSpy).not.toHaveBeenCalled();
+    expect(timeoutSpy).toHaveBeenCalledWith(5_000);
+  });
+
+  it('skips revoke when the call signal is already aborted, and aborts an in-flight revoke cleanly', async () => {
+    const abortDuringProfile = new AbortController();
+    const skipped = google({
+      'POST oauth2.googleapis.com/token': [{ body: { access_token: 'a1', refresh_token: 'r1', scope: `openid email ${GOOGLE_CALENDAR_FREEBUSY_SCOPE}` } }],
+      'GET www.googleapis.com/oauth2/v3/userinfo': [async () => {
+        abortDuringProfile.abort();
+        throw new DOMException('Aborted', 'AbortError');
+      }],
+    });
+    const profileFailure = await withCallSignal(abortDuringProfile.signal, () =>
+      new GoogleCalendarAdapter(APP, skipped.fetchImpl).exchange({ code: 'c', redirectUri: REDIRECT, codeVerifier: null }),
+    ).catch((e: unknown) => e);
+    expect(profileFailure).toBeInstanceOf(ConnectorError);
+    expect(skipped.calls.map((c) => c.route)).toEqual(['POST oauth2.googleapis.com/token', 'GET www.googleapis.com/oauth2/v3/userinfo']);
+
+    const abortDuringRevoke = new AbortController();
+    let seenSignal: AbortSignal | undefined;
+    const hanging = google({
+      'POST oauth2.googleapis.com/token': [{ body: { access_token: 'a2', refresh_token: 'r2', scope: 'openid email' } }],
+      'POST oauth2.googleapis.com/revoke': [async (init) => {
+        seenSignal = init?.signal ?? undefined;
+        queueMicrotask(() => abortDuringRevoke.abort());
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+        });
+      }],
+    });
+    const revokeFailure = await withCallSignal(abortDuringRevoke.signal, () =>
+      new GoogleCalendarAdapter(APP, hanging.fetchImpl).exchange({ code: 'c', redirectUri: REDIRECT, codeVerifier: null }),
+    ).catch((e: unknown) => e);
+    expect(revokeFailure).toMatchObject({ kind: 'denied', code: 'MISSING_PERMISSION' });
+    expect(seenSignal?.aborted).toBe(true);
   });
 
   it('maps a refused code to invalid_grant without putting the code or a token in the error', async () => {
@@ -125,12 +255,14 @@ describe('GoogleCalendarAdapter', () => {
   });
 
   it('revokes the whole grant with the refresh token, and counts a grant Google no longer knows as revoked', async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
     const { fetchImpl, calls } = google({
       'POST oauth2.googleapis.com/revoke': [{ body: {} }, { status: 400, body: { error: 'invalid_token', error_description: 'Token expired or revoked' } }, { status: 503, body: { error: 'backendError' } }, { status: 400, body: { error: 'invalid_request' } }],
     });
     const adapter = new GoogleCalendarAdapter(APP, fetchImpl);
     expect(await adapter.revoke(SECRET)).toEqual({ revoked: true });
     expect(calls[0]?.body).toEqual({ token: '1//refresh-1' });
+    expect(timeoutSpy).toHaveBeenCalledWith(30_000);
     expect(await adapter.revoke(SECRET)).toEqual({ revoked: true });
     expect(await adapter.revoke(SECRET)).toEqual({ failed: 'backendError' });
     expect(await adapter.revoke(SECRET)).toEqual({ failed: 'invalid_request' });
@@ -198,5 +330,133 @@ describe('GoogleCalendarAdapter', () => {
     const answer = await new GoogleCalendarAdapter(APP, hostile).busy(SECRET, new Date(0), new Date(1000));
     expect(called).toBe('https://www.googleapis.com/calendar/v3/freeBusy');
     expect(answer).toMatchObject({ failed: expect.any(String) });
+  });
+});
+
+describe('GoogleCalendarAdapter, the member\'s own meetings (B1, #3165)', () => {
+  it('makes a title the database can hold: no NUL, no lone surrogate, no pair cut in half at 200', () => {
+    expect(titleOf('Họp\u0000 giao ban')).toBe('Họp giao ban');
+    expect(titleOf('a\uD83Db')).toBe('a\uFFFDb');
+    expect(titleOf('\uDE00')).toBe('\uFFFD');
+    // An emoji (two units) that would straddle the cut is dropped whole.
+    const edge = `${'x'.repeat(199)}😀`;
+    expect(titleOf(edge)).toBe('x'.repeat(199));
+    expect(titleOf(`${'x'.repeat(198)}😀`)).toBe(`${'x'.repeat(198)}😀`);
+    expect(JSON.parse(JSON.stringify(titleOf(edge)))).toBe('x'.repeat(199));
+    expect(titleOf(42)).toBe('');
+    expect(titleOf('Họp với khách A')).toBe('Họp với khách A');
+  });
+
+  const EVENTS = 'GET www.googleapis.com/calendar/v3/calendars/primary/events';
+  const FROM = new Date('2026-11-13T00:00:00Z');
+  const TO = new Date('2026-11-21T00:00:00Z');
+  const timed = (id: string, over: Record<string, unknown> = {}) => ({
+    id,
+    status: 'confirmed',
+    summary: `Họp ${id}`,
+    start: { dateTime: '2026-11-14T09:00:00+07:00', timeZone: 'Asia/Ho_Chi_Minh' },
+    end: { dateTime: '2026-11-14T10:00:00+07:00' },
+    ...over,
+  });
+
+  it('asks for the events-read scope next to free/busy only when the member turns the read on, and for neither the write scope nor anything else', () => {
+    const url = (input: object) => new URL(new GoogleCalendarAdapter(APP).authorizeUrl({ state: 'st', redirectUri: REDIRECT, codeChallenge: 'ch', ...input }));
+    expect(url({ readEvents: true }).searchParams.get('scope')?.split(' ')).toEqual(['openid', 'email', GOOGLE_CALENDAR_FREEBUSY_SCOPE, GOOGLE_CALENDAR_EVENTS_READ_SCOPE]);
+    expect(url({ readEvents: true, writeBack: true }).searchParams.get('scope')?.split(' ')).toEqual(['openid', 'email', GOOGLE_CALENDAR_FREEBUSY_SCOPE, GOOGLE_CALENDAR_EVENTS_SCOPE, GOOGLE_CALENDAR_EVENTS_READ_SCOPE]);
+    expect(url({}).searchParams.get('scope')?.split(' ')).not.toContain(GOOGLE_CALENDAR_EVENTS_READ_SCOPE);
+    expect(GOOGLE_CALENDAR_EVENTS_READ_SCOPE).toBe('https://www.googleapis.com/auth/calendar.events.owned.readonly');
+  });
+
+  it('reads the primary calendar in time order with the events unfolded, asking for no address, description, attachment or location', async () => {
+    const { fetchImpl, calls } = google({ [EVENTS]: [{ body: { items: [timed('a')] } }] });
+    const answer = await new GoogleCalendarAdapter(APP, fetchImpl).events(SECRET, FROM, TO);
+    expect(answer).toEqual({ events: [{ id: 'a', title: 'Họp a', startsAt: '2026-11-14T02:00:00.000Z', endsAt: '2026-11-14T03:00:00.000Z', timeZone: 'Asia/Ho_Chi_Minh', joinUrl: null, invitees: 0, series: null }] });
+    expect(calls[0]?.auth).toBe('Bearer ya29.token-1');
+  });
+
+  it('carries the recurring event id of an occurrence as its series, and none for a single event or an unusable id (#3542)', async () => {
+    const { fetchImpl } = google({ [EVENTS]: [{ body: { items: [timed('a_20261114T020000Z', { recurringEventId: 'a' }), timed('b'), timed('c', { recurringEventId: '' }), timed('d', { recurringEventId: 42 }), timed('e', { recurringEventId: 'x'.repeat(1025) })] } }] });
+    const answer = await new GoogleCalendarAdapter(APP, fetchImpl).events(SECRET, FROM, TO);
+    expect('events' in answer ? answer.events.map((e) => [e.id, e.series]) : answer).toEqual([['a_20261114T020000Z', 'a'], ['b', null], ['c', null], ['d', null], ['e', null]]);
+  });
+
+  it('sends a field mask that names no attendee address, description, attachment or location', async () => {
+    const seen: URL[] = [];
+    const fetchImpl: Fetch = async (input) => {
+      seen.push(new URL(input));
+      return new Response(JSON.stringify({ items: [] }), { status: 200, headers: { 'content-type': 'application/json' } });
+    };
+    await new GoogleCalendarAdapter(APP, fetchImpl).events(SECRET, FROM, TO);
+    const q = seen[0]?.searchParams;
+    expect(q?.get('singleEvents')).toBe('true');
+    expect(q?.get('orderBy')).toBe('startTime');
+    expect(q?.get('timeMin')).toBe(FROM.toISOString());
+    expect(q?.get('timeMax')).toBe(TO.toISOString());
+    const fields = q?.get('fields') ?? '';
+    for (const forbidden of ['email', 'displayName', 'description', 'attachments', 'location', 'organizer', 'creator', 'htmlLink']) expect(fields, forbidden).not.toContain(forbidden);
+    expect(fields).toContain('attendees(self,responseStatus,optional)');
+  });
+
+  it('keeps a timed event, counts its invitees and keeps a Meet, Zoom or Teams address only', async () => {
+    const meet = timed('m', { hangoutLink: 'https://meet.google.com/abc-defg-hij', attendees: [{ self: true, responseStatus: 'accepted' }, { responseStatus: 'needsAction' }, { optional: true }] });
+    const zoom = timed('z', { conferenceData: { entryPoints: [{ entryPointType: 'phone', uri: 'tel:+84123' }, { entryPointType: 'video', uri: 'https://us02web.zoom.us/j/123456789?pwd=abc' }] } });
+    const odd = timed('o', { hangoutLink: 'https://evil.example/meet.google.com', conferenceData: { entryPoints: [{ entryPointType: 'video', uri: 'http://zoom.us/j/1' }] } });
+    const { fetchImpl } = google({ [EVENTS]: [{ body: { items: [meet, zoom, odd] } }] });
+    const answer = await new GoogleCalendarAdapter(APP, fetchImpl).events(SECRET, FROM, TO);
+    expect('events' in answer && answer.events.map((e) => [e.id, e.joinUrl, e.invitees])).toEqual([
+      ['m', 'https://meet.google.com/abc-defg-hij', 3],
+      ['z', 'https://us02web.zoom.us/j/123456789?pwd=abc', 0],
+      ['o', null, 0],
+    ]);
+  });
+
+  it('leaves out an all-day event, a cancelled one, one the member declined, and one with no usable time or id', () => {
+    expect(agendaEventOf({ id: 'd', summary: 'Nghỉ lễ', start: { date: '2026-11-14' }, end: { date: '2026-11-15' } })).toBeNull();
+    expect(agendaEventOf(timed('c', { status: 'cancelled' }))).toBeNull();
+    expect(agendaEventOf(timed('x', { attendees: [{ self: true, responseStatus: 'declined' }] }))).toBeNull();
+    expect(agendaEventOf(timed('y', { attendees: [{ self: false, responseStatus: 'declined' }] }))).not.toBeNull();
+    expect(agendaEventOf(timed('', {}))).toBeNull();
+    expect(agendaEventOf({ ...timed('e'), end: { dateTime: '2026-11-14T08:00:00+07:00' } })).toBeNull();
+    expect(agendaEventOf({ ...timed('f'), start: { dateTime: 'not a time' } })).toBeNull();
+    expect(agendaEventOf({ ...timed('g'), end: { dateTime: '2026-12-31T10:00:00+07:00' } })).toBeNull();
+    expect(agendaEventOf(timed('h', { summary: 'x'.repeat(500) }))?.title).toHaveLength(200);
+    expect(agendaEventOf(timed('i', { summary: undefined }))?.title).toBe('');
+  });
+
+  it('reads two pages at most, drops a repeated id and cuts at 300', async () => {
+    const page = (ids: string[], next?: string) => ({ body: { items: ids.map((id) => timed(id)), ...(next ? { nextPageToken: next } : {}) } });
+    const ids = (from: number, n: number) => Array.from({ length: n }, (_, i) => `e${from + i}`);
+    const { fetchImpl, calls } = google({ [EVENTS]: [page(ids(0, 250), 'p2'), page([...ids(240, 60)], 'p3')] });
+    const answer = await new GoogleCalendarAdapter(APP, fetchImpl).events(SECRET, FROM, TO);
+    expect(calls).toHaveLength(2);
+    expect('events' in answer && answer.events.length).toBe(300);
+    expect('events' in answer && new Set(answer.events.map((e) => e.id)).size).toBe(300);
+  });
+
+  it('says a refused token, a missing permission and any other failure in fixed words', async () => {
+    const run = (route: { status?: number; body: unknown }) => new GoogleCalendarAdapter(APP, google({ [EVENTS]: [route] }).fetchImpl).events(SECRET, FROM, TO);
+    expect(await run({ status: 401, body: { error: { code: 401, message: 'Invalid Credentials', status: 'UNAUTHENTICATED' } } })).toEqual({ refused: 'invalid_token' });
+    expect(await run({ status: 403, body: { error: { code: 403, message: 'Insufficient Permission', errors: [{ reason: 'insufficientPermissions' }] } } })).toEqual({ scope: true });
+    expect(await run({ status: 429, body: { error: { code: 429, message: 'Rate Limit Exceeded', errors: [{ reason: 'rateLimitExceeded' }] } } })).toEqual({ failed: 'rateLimitExceeded' });
+    expect(await new GoogleCalendarAdapter(APP, async () => { throw new Error('socket hang up'); }).events(SECRET, FROM, TO)).toEqual({ failed: 'NETWORK' });
+    expect(await new GoogleCalendarAdapter(APP).events('not json', FROM, TO)).toEqual({ refused: 'NO_ACCESS_TOKEN' });
+  });
+
+  it('ignores a hostile answer: items that are not objects, odd types and a missing list', async () => {
+    const { fetchImpl } = google({ [EVENTS]: [{ body: { items: [null, 7, 'x', [], { id: 5 }, timed('ok')] } }] });
+    const answer = await new GoogleCalendarAdapter(APP, fetchImpl).events(SECRET, FROM, TO);
+    expect('events' in answer && answer.events.map((e) => e.id)).toEqual(['ok']);
+    expect(await new GoogleCalendarAdapter(APP, google({ [EVENTS]: [{ body: {} }] }).fetchImpl).events(SECRET, FROM, TO)).toEqual({ events: [] });
+  });
+
+  it('keeps a join address only for https on a known host, with no credentials in it', () => {
+    expect(joinUrlOf('https://meet.google.com/abc-defg-hij')).toBe('https://meet.google.com/abc-defg-hij');
+    expect(joinUrlOf('https://teams.microsoft.com/l/meetup-join/19%3a')).not.toBeNull();
+    expect(joinUrlOf('https://user:pass@zoom.us/j/1')).toBeNull();
+    expect(joinUrlOf('https://notzoom.us/j/1')).toBeNull();
+    expect(joinUrlOf('https://zoom.us.evil.example/j/1')).toBeNull();
+    expect(joinUrlOf('http://zoom.us/j/1')).toBeNull();
+    expect(joinUrlOf(`https://zoom.us/j/${'1'.repeat(600)}`)).toBeNull();
+    expect(joinUrlOf(undefined)).toBeNull();
   });
 });

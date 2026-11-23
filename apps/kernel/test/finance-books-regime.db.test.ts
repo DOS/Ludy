@@ -7,11 +7,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
@@ -50,12 +50,12 @@ suite('finance books regime per legal entity (#1403)', () => {
     return url.toString();
   };
 
-  // One transaction as crove_app in userId's context; committed when commit is set, else rolled back.
+  // One transaction as ludy_app in userId's context; committed when commit is set, else rolled back.
   async function asApp<T>(userId: string, fn: (c: pg.PoolClient) => Promise<T>, commit = false): Promise<T> {
     const c = await appPool.connect();
     try {
       await c.query('BEGIN');
-      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+      await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
       const result = await fn(c);
       await c.query(commit ? 'COMMIT' : 'ROLLBACK');
       return result;
@@ -70,7 +70,7 @@ suite('finance books regime per legal entity (#1403)', () => {
   // A balanced entry on two accounts, posted through the 8-argument posting path.
   const post = (c: pg.PoolClient, a: { entity: string; date: string; debit: string; credit: string }) =>
     c
-      .query<{ id: string }>(`SELECT crove_finance.post_journal_entry($1::date, 'books regime', 'test.regime', $2::uuid, $3::jsonb, NULL, 1, $4::uuid) AS id`, [
+      .query<{ id: string }>(`SELECT ludy_finance.post_journal_entry($1::date, 'books regime', 'test.regime', $2::uuid, $3::jsonb, NULL, 1, $4::uuid) AS id`, [
         a.date,
         randomUUID(),
         JSON.stringify([
@@ -92,9 +92,9 @@ suite('finance books regime per legal entity (#1403)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    appPool = new pg.Pool({ connectionString: login('crove_app', 'test-app-pw'), max: 3 });
-    kyselyPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 2 });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    appPool = new pg.Pool({ connectionString: login('ludy_app', 'test-app-pw'), max: 3 });
+    kyselyPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 2 });
     const db = createDb(kyselyPool);
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
       commands: [...kernelCommands, ...financeCommands],
@@ -104,19 +104,19 @@ suite('finance books regime per legal entity (#1403)', () => {
     member = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: 'member@books-regime.test', name: null });
     ({ orgId } = await createOrg(runtime, asUser(owner), 'Hai chế độ kế toán'));
     await admin(async (a) => {
-      defaultEntity = (await a.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
+      defaultEntity = (await a.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
       branch = (
-        await a.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Công ty con TT99', 'company', $2) RETURNING id`, [orgId, owner])
+        await a.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Công ty con TT99', 'company', $2) RETURNING id`, [orgId, owner])
       ).rows[0]?.id as string;
-      await a.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, member]);
-      await a.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
+      await a.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, member]);
+      await a.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
         orgId,
         member,
         branch,
         owner,
       ]);
       // A sub-account of the org's (TT133) chart.
-      await a.query(`INSERT INTO crove_finance.org_account (org_id, code, name, parent_code) VALUES ($1, '331.A', 'Nhà cung cấp A', '331')`, [orgId]);
+      await a.query(`INSERT INTO ludy_finance.org_account (org_id, code, name, parent_code) VALUES ($1, '331.A', 'Nhà cung cấp A', '331')`, [orgId]);
     });
   }, 120_000);
 
@@ -136,31 +136,31 @@ suite('finance books regime per legal entity (#1403)', () => {
         await a.query<{ total: string; roots: string; orphans: string }>(
           `SELECT count(*) AS total, count(*) FILTER (WHERE parent_code IS NULL) AS roots,
                   count(*) FILTER (WHERE parent_code IS NOT NULL AND NOT starts_with(code, parent_code)) AS orphans
-           FROM crove_finance.chart_account WHERE regime = 'tt99' AND version = '2026.1'`,
+           FROM ludy_finance.chart_account WHERE regime = 'tt99' AND version = '2026.1'`,
         )
       ).rows[0],
     );
     expect(shape).toEqual({ total: '184', roots: '71', orphans: '0' });
-    // TT133 2026.1 stays crove_finance.account; no second copy of it.
+    // TT133 2026.1 stays ludy_finance.account; no second copy of it.
     await expect(
-      admin((a) => a.query(`INSERT INTO crove_finance.chart_account (regime, version, code, name) VALUES ('tt133', '2026.1', '999', 'x')`)),
+      admin((a) => a.query(`INSERT INTO ludy_finance.chart_account (regime, version, code, name) VALUES ('tt133', '2026.1', '999', 'x')`)),
     ).rejects.toMatchObject({ code: '23514' });
     // Names may be corrected; codes are never deleted or renumbered.
-    await admin((a) => a.query(`UPDATE crove_finance.chart_account SET name = name WHERE regime = 'tt99' AND code = '1283'`));
-    await expect(admin((a) => a.query(`UPDATE crove_finance.chart_account SET code = '1284' WHERE regime = 'tt99' AND code = '1283'`))).rejects.toMatchObject({
+    await admin((a) => a.query(`UPDATE ludy_finance.chart_account SET name = name WHERE regime = 'tt99' AND code = '1283'`));
+    await expect(admin((a) => a.query(`UPDATE ludy_finance.chart_account SET code = '1284' WHERE regime = 'tt99' AND code = '1283'`))).rejects.toMatchObject({
       code: '42501',
     });
-    await expect(admin((a) => a.query(`DELETE FROM crove_finance.chart_account WHERE regime = 'tt99' AND code = '1283'`))).rejects.toMatchObject({ code: '42501' });
+    await expect(admin((a) => a.query(`DELETE FROM ludy_finance.chart_account WHERE regime = 'tt99' AND code = '1283'`))).rejects.toMatchObject({ code: '42501' });
 
     const read = await asApp(member, async (c) => ({
-      charts: (await c.query<{ regime: string }>('SELECT regime FROM crove_finance.chart ORDER BY regime')).rows.map((r) => r.regime),
-      accounts: (await c.query<{ n: string }>(`SELECT count(*) AS n FROM crove_finance.chart_account WHERE regime = 'tt99'`)).rows[0]?.n,
+      charts: (await c.query<{ regime: string }>('SELECT regime FROM ludy_finance.chart ORDER BY regime')).rows.map((r) => r.regime),
+      accounts: (await c.query<{ n: string }>(`SELECT count(*) AS n FROM ludy_finance.chart_account WHERE regime = 'tt99'`)).rows[0]?.n,
     }));
     expect(read).toEqual({ charts: ['tt133', 'tt99'], accounts: '184' });
     expect(
-      await refusal(asApp(owner, (c) => c.query(`INSERT INTO crove_finance.chart_account (regime, version, code, name) VALUES ('tt99', '2026.1', '999', 'x')`))),
+      await refusal(asApp(owner, (c) => c.query(`INSERT INTO ludy_finance.chart_account (regime, version, code, name) VALUES ('tt99', '2026.1', '999', 'x')`))),
     ).toMatchObject({ code: '42501', message: expect.stringMatching(PRIVILEGE_DENIED) });
-    expect(await refusal(asApp(owner, (c) => c.query(`UPDATE crove_finance.chart SET name = 'x'`)))).toMatchObject({
+    expect(await refusal(asApp(owner, (c) => c.query(`UPDATE ludy_finance.chart SET name = 'x'`)))).toMatchObject({
       code: '42501',
       message: expect.stringMatching(PRIVILEGE_DENIED),
     });
@@ -176,7 +176,7 @@ suite('finance books regime per legal entity (#1403)', () => {
   it('starts a regime on the first day of a fiscal year with no entries yet', async () => {
     const books = (entity: string, from: string) =>
       admin((a) =>
-        a.query(`INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt99', '2026.1', $3)`, [
+        a.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt99', '2026.1', $3)`, [
           orgId,
           entity,
           from,
@@ -192,7 +192,7 @@ suite('finance books regime per legal entity (#1403)', () => {
     expect(
       await refusal(
         admin((a) =>
-          a.query(`INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt99', '2025.1', '2029-01-01')`, [
+          a.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt99', '2025.1', '2029-01-01')`, [
             orgId,
             branch,
           ]),
@@ -201,7 +201,7 @@ suite('finance books regime per legal entity (#1403)', () => {
     ).toMatchObject({ code: '23503' });
     // The row with no entity named belongs to the default entity.
     await books(defaultEntity, '2030-01-01');
-    await admin((a) => a.query(`DELETE FROM crove_finance.legal_entity_books WHERE org_id = $1 AND effective_from = '2030-01-01'`, [orgId]));
+    await admin((a) => a.query(`DELETE FROM ludy_finance.legal_entity_books WHERE org_id = $1 AND effective_from = '2030-01-01'`, [orgId]));
   });
 
   it('posts a TT99 entity only on TT99 accounts from its first TT99 year', async () => {
@@ -225,35 +225,35 @@ suite('finance books regime per legal entity (#1403)', () => {
 
   it('never changes the regime of a year with entries', async () => {
     const edit = (sql: string) => refusal(admin((a) => a.query(sql, [orgId, branch])));
-    expect(await edit(`UPDATE crove_finance.legal_entity_books SET effective_from = '2028-01-01' WHERE org_id = $1 AND legal_entity_id = $2`)).toMatchObject({
+    expect(await edit(`UPDATE ludy_finance.legal_entity_books SET effective_from = '2028-01-01' WHERE org_id = $1 AND legal_entity_id = $2`)).toMatchObject({
       message: 'BOOKS_REGIME_IN_USE',
     });
-    expect(await edit(`UPDATE crove_finance.legal_entity_books SET regime = 'tt133' WHERE org_id = $1 AND legal_entity_id = $2`)).toMatchObject({
+    expect(await edit(`UPDATE ludy_finance.legal_entity_books SET regime = 'tt133' WHERE org_id = $1 AND legal_entity_id = $2`)).toMatchObject({
       message: 'BOOKS_REGIME_IN_USE',
     });
-    expect(await edit(`DELETE FROM crove_finance.legal_entity_books WHERE org_id = $1 AND legal_entity_id = $2`)).toMatchObject({ message: 'BOOKS_REGIME_IN_USE' });
+    expect(await edit(`DELETE FROM ludy_finance.legal_entity_books WHERE org_id = $1 AND legal_entity_id = $2`)).toMatchObject({ message: 'BOOKS_REGIME_IN_USE' });
     // The entity never changes either.
     expect(
       await refusal(
-        admin((a) => a.query(`UPDATE crove_finance.legal_entity_books SET legal_entity_id = $3 WHERE org_id = $1 AND legal_entity_id = $2`, [orgId, branch, defaultEntity])),
+        admin((a) => a.query(`UPDATE ludy_finance.legal_entity_books SET legal_entity_id = $3 WHERE org_id = $1 AND legal_entity_id = $2`, [orgId, branch, defaultEntity])),
       ),
     ).toMatchObject({ message: 'LEGAL_ENTITY_IMMUTABLE' });
     // A row that repeats the chart in force changes nothing, over booked years too.
     await admin((a) =>
-      a.query(`INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt133', '2026.1', '2026-01-01')`, [
+      a.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt133', '2026.1', '2026-01-01')`, [
         orgId,
         branch,
       ]),
     );
-    await admin((a) => a.query(`DELETE FROM crove_finance.legal_entity_books WHERE org_id = $1 AND legal_entity_id = $2 AND effective_from = '2026-01-01'`, [orgId, branch]));
+    await admin((a) => a.query(`DELETE FROM ludy_finance.legal_entity_books WHERE org_id = $1 AND legal_entity_id = $2 AND effective_from = '2026-01-01'`, [orgId, branch]));
   });
 
   it('follows the fiscal year of the org', async () => {
-    await admin((a) => a.query(`INSERT INTO crove_kernel.tax_profile (org_id, fiscal_year_end_month, updated_by) VALUES ($1, 3, $2)`, [orgId, owner]));
+    await admin((a) => a.query(`INSERT INTO ludy_kernel.tax_profile (org_id, fiscal_year_end_month, updated_by) VALUES ($1, 3, $2)`, [orgId, owner]));
     const books = (from: string) =>
       refusal(
         admin((a) =>
-          a.query(`INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt133', '2026.1', $3)`, [
+          a.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt133', '2026.1', $3)`, [
             orgId,
             defaultEntity,
             from,
@@ -262,19 +262,19 @@ suite('finance books regime per legal entity (#1403)', () => {
       );
     expect(await books('2031-01-01')).toMatchObject({ message: 'BOOKS_NOT_FISCAL_YEAR_START' });
     expect(await books('2031-04-01')).toBeNull();
-    await admin((a) => a.query(`DELETE FROM crove_kernel.tax_profile WHERE org_id = $1`, [orgId]));
+    await admin((a) => a.query(`DELETE FROM ludy_kernel.tax_profile WHERE org_id = $1`, [orgId]));
   });
 
   it('waits for a posting in flight and then refuses the year it booked', async () => {
     const poster = await appPool.connect();
     try {
       await poster.query('BEGIN');
-      await poster.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner, orgId)]);
+      await poster.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner, orgId)]);
       await post(poster, { entity: defaultEntity, date: '2032-05-05', debit: '1111', credit: '5111' });
       let settled = false;
       const books = refusal(
         admin((a) =>
-          a.query(`INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt99', '2026.1', '2032-01-01')`, [
+          a.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, 'tt99', '2026.1', '2032-01-01')`, [
             orgId,
             defaultEntity,
           ]),
@@ -293,13 +293,13 @@ suite('finance books regime per legal entity (#1403)', () => {
 
   it('shows each actor the books rows of its own entities only, and lets no runtime role write them', async () => {
     const seen = (userId: string) =>
-      asApp(userId, async (c) => (await c.query<{ e: string }>('SELECT legal_entity_id AS e FROM crove_finance.legal_entity_books ORDER BY effective_from')).rows.map((r) => r.e));
+      asApp(userId, async (c) => (await c.query<{ e: string }>('SELECT legal_entity_id AS e FROM ludy_finance.legal_entity_books ORDER BY effective_from')).rows.map((r) => r.e));
     expect(await seen(owner)).toEqual([branch, defaultEntity]);
     expect(await seen(member)).toEqual([branch]);
     for (const sql of [
-      `INSERT INTO crove_finance.legal_entity_books (org_id, regime, chart_version, effective_from) VALUES ('${orgId}', 'tt99', '2026.1', '2040-01-01')`,
-      `UPDATE crove_finance.legal_entity_books SET created_by = NULL`,
-      `DELETE FROM crove_finance.legal_entity_books`,
+      `INSERT INTO ludy_finance.legal_entity_books (org_id, regime, chart_version, effective_from) VALUES ('${orgId}', 'tt99', '2026.1', '2040-01-01')`,
+      `UPDATE ludy_finance.legal_entity_books SET created_by = NULL`,
+      `DELETE FROM ludy_finance.legal_entity_books`,
     ]) {
       expect(await refusal(asApp(owner, (c) => c.query(sql))), sql).toMatchObject({ code: '42501', message: expect.stringMatching(PRIVILEGE_DENIED) });
     }
@@ -308,7 +308,7 @@ suite('finance books regime per legal entity (#1403)', () => {
   it('checks an update on every date whose chart it may change, and on no other', async () => {
     const books = (from: string, regime: string) =>
       admin((a) =>
-        a.query(`INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, $3, '2026.1', $4)`, [
+        a.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) VALUES ($1, $2, $3, '2026.1', $4)`, [
           orgId,
           defaultEntity,
           regime,
@@ -316,7 +316,7 @@ suite('finance books regime per legal entity (#1403)', () => {
         ]),
       );
     const update = (set: string) =>
-      refusal(admin((a) => a.query(`UPDATE crove_finance.legal_entity_books SET ${set} WHERE org_id = $1 AND legal_entity_id = $2 AND effective_from = '2041-01-01'`, [orgId, defaultEntity])));
+      refusal(admin((a) => a.query(`UPDATE ludy_finance.legal_entity_books SET ${set} WHERE org_id = $1 AND legal_entity_id = $2 AND effective_from = '2041-01-01'`, [orgId, defaultEntity])));
     await books('2041-01-01', 'tt99');
     await books('2042-01-01', 'tt133');
     await postAsOwner({ entity: defaultEntity, date: '2042-06-01', debit: '1111', credit: '5111' });

@@ -8,8 +8,8 @@
 // the worker sends nothing; a partial or mismatched set refuses to start, so a typo never turns push quietly off.
 // Logs carry outcomes and status codes only: never an endpoint, a key or the payload.
 import { createECDH, createPrivateKey, createCipheriv, hkdfSync, randomBytes, sign, type KeyObject } from 'node:crypto';
-import { guardedRequest, type EgressOptions, type EgressResponse, type GuardedRequest } from '@crove/kernel-runtime';
-import type { Runtime } from '@crove/kernel-runtime';
+import { guardedRequest, type EgressOptions, type EgressResponse, type GuardedRequest } from '@ludy/kernel-runtime';
+import type { Runtime } from '@ludy/kernel-runtime';
 
 const RECORD_SIZE = 4096;
 // How long a push service keeps a message for a browser that is offline: a day.

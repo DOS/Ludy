@@ -4,7 +4,7 @@
 import { existsSync } from 'node:fs';
 import { serve } from '@hono/node-server';
 import { z } from 'zod';
-import { EXTRACT_CLIENT_TIMEOUT_MS, EXTRACT_LIMITS, EXTRACT_TIMING, worstCaseCallMs } from '@crove/extract-contract';
+import { EXTRACT_CLIENT_TIMEOUT_MS, EXTRACT_LIMITS, EXTRACT_TIMING, worstCaseCallMs } from '@ludy/extract-contract';
 import { DEFAULT_SANDBOX } from './sandbox.ts';
 import { createExtractApp } from './server.ts';
 
@@ -56,16 +56,18 @@ export function unexpectedVariables(env: NodeJS.ProcessEnv): string[] {
     .sort();
 }
 
-// Written into the crove-extract image at build time (apps/extract/Dockerfile). Where it exists the allowlist
+// Written into the ludy-extract image at build time (apps/extract/Dockerfile). Where it exists the allowlist
 // always applies, whatever NODE_ENV says: an env_file with NODE_ENV=development cannot switch the guard off.
-export const IMAGE_MARKER = '/etc/crove-extract-image';
+export const IMAGE_MARKER = '/etc/ludy-extract-image';
+export const LEGACY_IMAGE_MARKER = '/etc/crove-extract-image';
 
 // Only an explicit development or test run, outside the image, relaxes the guard; an unset, empty or unknown
 // NODE_ENV enforces it.
 const RELAXED_NODE_ENV = new Set(['development', 'test']);
 
-export function enforcesAllowlist(env: NodeJS.ProcessEnv, markerPath: string = IMAGE_MARKER): boolean {
-  return existsSync(markerPath) || !RELAXED_NODE_ENV.has(env.NODE_ENV ?? '');
+export function enforcesAllowlist(env: NodeJS.ProcessEnv, markerPath?: string): boolean {
+  const hasMarker = markerPath !== undefined ? existsSync(markerPath) : existsSync(IMAGE_MARKER) || existsSync(LEGACY_IMAGE_MARKER);
+  return hasMarker || !RELAXED_NODE_ENV.has(env.NODE_ENV ?? '');
 }
 
 export interface LoadOptions {

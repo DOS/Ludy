@@ -1,14 +1,14 @@
 // Fair order on the extraction queue (#432, ADR-0035) on PostgreSQL 17 with the vendored pg-boss schema: one org's
 // 500-entry ZIP does not hold back another org's single upload. The jobs are sent as the outbox relay sends them (in
-// batches of 100, with extractPriorities and sendExtractJob, as crove_worker) and fetched as the extraction worker
+// batches of 100, with extractPriorities and sendExtractJob, as ludy_worker) and fetched as the extraction worker
 // fetches them (one at a time). Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { PgBoss } from 'pg-boss';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { jobGroup } from '../src/job-keys.ts';
 import { JOB_SCHEMA, QUEUES } from '../src/jobs-schema.ts';
 import { extractPriorities, sendExtractJob, type OutboxRow } from '../src/worker.ts';
@@ -68,8 +68,8 @@ suite('fair order of extraction jobs across orgs (#432)', () => {
     url.pathname = `/${dbName}`;
     const adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    url.username = 'crove_worker';
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    url.username = 'ludy_worker';
     url.password = 'test-worker-pw';
     pool = createPool({ connectionString: url.toString(), max: 2 });
     db = createDb(pool);

@@ -81,7 +81,7 @@ export async function signOut(page: Page): Promise<void> {
 export async function createOrg(page: Page, name: string): Promise<string> {
   await page.getByLabel('Tên công ty hoặc hộ kinh doanh').fill(name);
   await page.getByRole('button', { name: 'Tạo tổ chức' }).click();
-  await expect(page).toHaveURL(/\/o\/[^/]+\/inbox$/);
+  await expect(page).toHaveURL(/\/o\/[^/]+\/overview$/);
   return new URL(page.url()).pathname.split('/')[2] ?? '';
 }
 
@@ -91,9 +91,9 @@ export interface StoredSession {
   expires_at: number;
 }
 
-// The session auth-js keeps in localStorage (storage key `crove-auth`).
+// The session auth-js keeps in localStorage (storage key `ludy-auth`).
 export async function storedSession(page: Page): Promise<StoredSession | null> {
-  const raw = await page.evaluate(() => window.localStorage.getItem('crove-auth'));
+  const raw = await page.evaluate(() => window.localStorage.getItem('ludy-auth'));
   return raw ? (JSON.parse(raw) as StoredSession) : null;
 }
 

@@ -4,7 +4,7 @@
 // same figures always give the same flags, so a later note of Vy's (#2220) can cite them. Money is a decimal string and every sum, product
 // and median goes through decimal.js (AGENTS.md "Money"); amounts of different currencies are never added or compared.
 import { Decimal } from 'decimal.js';
-import type { AdsFlag } from '@crove/kernel-contract';
+import type { AdsFlag } from '@ludy/kernel-contract';
 import { addDays, currencyDecimals, todayIn } from './domain.ts';
 
 // The thresholds, with the defaults an org gets until it sets its own. `paceMinDays`: days of the month that must be over (today not
@@ -49,6 +49,8 @@ export function daysInMonthOf(day: string): number {
 // How the month stands: the days over, today (a partial day) not counted, what was spent in them, and what the same pace spends in the
 // whole month (linear: spent over the days over, times the days of the month).
 export interface MonthPace {
+  // The first day of the month, in the account's own calendar (the month the pace is about).
+  month: string;
   elapsedDays: number;
   daysInMonth: number;
   spent: Decimal;
@@ -62,7 +64,7 @@ export function monthPace(input: { today: string; spentBeforeToday: Decimal.Valu
   const daysInMonth = daysInMonthOf(input.today);
   const spent = new Decimal(input.spentBeforeToday);
   // Multiplied before it is divided, so a day's share is not rounded first.
-  return { elapsedDays, daysInMonth, spent, projected: spent.times(daysInMonth).div(elapsedDays) };
+  return { month: monthStartOf(input.today), elapsedDays, daysInMonth, spent, projected: spent.times(daysInMonth).div(elapsedDays) };
 }
 
 // A flag only when the projection is above the cap, never at it.
@@ -252,6 +254,7 @@ export function evaluateFlags(input: FlagInput, now: Date, thresholds: FlagThres
             projected: flagAmount(projected, cap.currency),
             elapsedDays: first.elapsedDays,
             daysInMonth: first.daysInMonth,
+            month: first.month,
           });
         }
       }

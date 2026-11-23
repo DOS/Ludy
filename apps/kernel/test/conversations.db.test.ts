@@ -8,11 +8,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { ConversationCounted, ConversationDetail, ConversationEvent, ConversationIngested, ConversationListed } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { ConversationCounted, ConversationDetail, ConversationEvent, ConversationIngested, ConversationListed } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
 
@@ -50,7 +50,7 @@ suite('conversations on PostgreSQL (#2303)', () => {
     await client.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(user, orgId)]);
+      await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(user, orgId)]);
       return await fn(client);
     } finally {
       await client.query('ROLLBACK').catch(() => {});
@@ -67,14 +67,14 @@ suite('conversations on PostgreSQL (#2303)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const o = { orgId, owner, admin: await person('admin'), lan: await person('lan'), minh: await person('minh'), viewer: await person('viewer') };
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [orgId, o.admin, o.lan, o.minh, o.viewer]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [orgId, o.admin, o.lan, o.minh, o.viewer]),
     );
     return o;
   }
   async function connection(o: Org, provider = 'sandbox'): Promise<string> {
     const id = randomUUID();
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, 'Kênh thử', $5)", [
+      c.query("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, 'Kênh thử', $5)", [
         o.orgId,
         id,
         provider,
@@ -105,7 +105,7 @@ suite('conversations on PostgreSQL (#2303)', () => {
   const listAll = (o: Org, user: string, input: Record<string, unknown> = {}) => query<ConversationListed>(o, user, 'kernel.conversation.list', input);
   const detail = (o: Org, user: string, id: string) => query<ConversationDetail>(o, user, 'kernel.conversation.get', { conversationId: id });
   const threadOf = async (o: Org, connectionId: string, threadId: string) =>
-    (await rows<{ id: string }>('SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND channel_connection_id = $2 AND external_thread_id = $3', [o.orgId, connectionId, threadId]))[0]?.id as string;
+    (await rows<{ id: string }>('SELECT id FROM ludy_kernel.conversation WHERE org_id = $1 AND channel_connection_id = $2 AND external_thread_id = $3', [o.orgId, connectionId, threadId]))[0]?.id as string;
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -116,15 +116,15 @@ suite('conversations on PostgreSQL (#2303)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     appUrl = app.toString();
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const w = new URL(adminUrl);
-    w.username = 'crove_worker';
+    w.username = 'ludy_worker';
     w.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: w.toString(), max: 2 });
     const registered = { commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: null })] };
@@ -163,7 +163,7 @@ suite('conversations on PostgreSQL (#2303)', () => {
     expect(seen.conversation).toMatchObject({ kind: 'comment_thread', status: 'new', postId: 'post-1', lastSeq: 2, unread: true });
     expect(seen.conversation.contact).toMatchObject({ displayName: 'Trần Thị Khách', idTail: '1001', partyId: null });
     // Inbound text is tainted external text, always.
-    expect(await rows('SELECT 1 FROM crove_kernel.conversation_message WHERE org_id = $1 AND direction = $2 AND NOT tainted', [o.orgId, 'in'])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_kernel.conversation_message WHERE org_id = $1 AND direction = $2 AND NOT tainted', [o.orgId, 'in'])).toHaveLength(0);
   });
 
   it('refuses text the database cannot store before it starts, and counts a post page the way its list does', async () => {
@@ -225,7 +225,7 @@ suite('conversations on PostgreSQL (#2303)', () => {
     const same = { id: 'u-same', name: 'Cùng một người' };
     await ingest(o, ch, [comment('d-1', 'Riêng', { kind: 'direct', postId: undefined, contact: same }), comment('c-1', 'Công khai', { contact: same })]);
     const party = randomUUID();
-    await admin((c) => c.query("INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Khách hàng Z')", [o.orgId, party]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.party (org_id, id, name) VALUES ($1, $2, 'Khách hàng Z')", [o.orgId, party]));
     await exec(o, o.owner, 'kernel.conversation.link_contact', { conversationId: await threadOf(o, ch, 'd-1'), partyId: party });
     expect((await detail(o, o.lan, await threadOf(o, ch, 'c-1'))).conversation.contact.partyId).toBeNull();
     // A new private thread of the same customer inherits it; a new comment thread does not.
@@ -240,12 +240,12 @@ suite('conversations on PostgreSQL (#2303)', () => {
     const chB = await connection(b);
     // Org A's context names org B's connection: it is not found there, so nothing is stored anywhere.
     expect(await ingest(a, chB, [comment('x-1', 'hi')])).toEqual({ stored: 0, duplicates: 0, ignored: 1 });
-    expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE channel_connection_id = $1', [chB])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE channel_connection_id = $1', [chB])).toHaveLength(0);
     // Only the system runs it; a member is refused.
     await expect(exec(a, a.owner, 'kernel.conversation.ingest', { connectionId: chB, events: [comment('x-2', 'hi')] })).rejects.toMatchObject({ status: 403 });
     // An inactive connection stores nothing.
     const chA = await connection(a);
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE id = $1", [chA]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'expired' WHERE id = $1", [chA]));
     expect(await ingest(a, chA, [comment('x-3', 'hi')])).toEqual({ stored: 0, duplicates: 0, ignored: 1 });
   });
 
@@ -284,18 +284,18 @@ suite('conversations on PostgreSQL (#2303)', () => {
     expect(first).toMatchObject({ action: 'call', callKey: `conversation.reply:${replied.messageId}:1`, text: 'Dạ 3 ngày ạ', contactId: 'u-1001' });
     // The job comes round again: the call is in flight, so it makes none.
     expect(await begin()).toEqual({ action: 'none', reason: 'in_flight' });
-    expect(await rows("SELECT state, retry_safety FROM crove_kernel.external_call WHERE org_id = $1 AND step = 'reply'", [o.orgId])).toEqual([{ state: 'started', retry_safety: 'reconcile_only' }]);
+    expect(await rows("SELECT state, retry_safety FROM ludy_kernel.external_call WHERE org_id = $1 AND step = 'reply'", [o.orgId])).toEqual([{ state: 'started', retry_safety: 'reconcile_only' }]);
     // The call is still started long after: a person settles it, the message says it is unclear.
     // (The call row's start never changes through the app; the test ages it as the database owner, triggers off.)
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query("SET LOCAL session_replication_role = 'replica'");
-      await c.query("UPDATE crove_kernel.external_call SET started_at = now() - interval '11 minutes' WHERE org_id = $1 AND step = 'reply'", [o.orgId]);
+      await c.query("UPDATE ludy_kernel.external_call SET started_at = now() - interval '11 minutes' WHERE org_id = $1 AND step = 'reply'", [o.orgId]);
       await c.query('COMMIT');
     });
     expect(await begin()).toEqual({ action: 'none', reason: 'settled' });
     expect((await detail(o, o.lan, id)).messages[1]).toMatchObject({ sendState: 'unknown', sendErrorCode: 'WORKER_LOST' });
-    expect(await rows("SELECT state FROM crove_kernel.external_call WHERE org_id = $1 AND step = 'reply'", [o.orgId])).toEqual([{ state: 'ambiguous' }]);
+    expect(await rows("SELECT state FROM ludy_kernel.external_call WHERE org_id = $1 AND step = 'reply'", [o.orgId])).toEqual([{ state: 'ambiguous' }]);
     // A person looked on the platform and it did go out.
     await exec(o, o.lan, 'kernel.conversation.reply_settle', { messageId: replied.messageId, action: 'mark_sent' });
     expect((await detail(o, o.lan, id)).messages[1]?.sendState).toBe('sent');
@@ -320,7 +320,7 @@ suite('conversations on PostgreSQL (#2303)', () => {
     expect((await detail(o, o.minh, id)).messages[1]?.sendState).toBe('sending');
     await sys(o, 'kernel.conversation.reply_record', { messageId, callKey: again.callKey, result: { kind: 'accepted', externalId: 'sbx_reply_1' } });
     expect((await detail(o, o.minh, id)).messages[1]).toMatchObject({ sendState: 'sent', sendErrorCode: null });
-    expect(await rows("SELECT key, state, external_ref FROM crove_kernel.external_call WHERE org_id = $1 AND step = 'reply' ORDER BY key", [o.orgId])).toEqual([
+    expect(await rows("SELECT key, state, external_ref FROM ludy_kernel.external_call WHERE org_id = $1 AND step = 'reply' ORDER BY key", [o.orgId])).toEqual([
       { key: `conversation.reply:${messageId}:1`, state: 'failed', external_ref: null },
       { key: `conversation.reply:${messageId}:2`, state: 'succeeded', external_ref: 'sbx_reply_1' },
     ]);
@@ -382,7 +382,7 @@ suite('conversations on PostgreSQL (#2303)', () => {
     const states = (await detail(o, o.owner, id)).messages.filter((m) => m.direction === 'out').map((m) => m.sendState);
     expect(states).toEqual(['sent', 'sent']);
     // The call row is finished, not left started.
-    expect((await rows<{ state: string }>('SELECT state FROM crove_kernel.external_call WHERE org_id = $1 AND key = $2', [o.orgId, call.callKey]))[0]?.state).toBe('succeeded');
+    expect((await rows<{ state: string }>('SELECT state FROM ludy_kernel.external_call WHERE org_id = $1 AND key = $2', [o.orgId, call.callKey]))[0]?.state).toBe('succeeded');
   });
 
   it('refuses to send an earlier reply again after a newer message, and a note with a NUL character as input', async () => {
@@ -423,12 +423,12 @@ suite('conversations on PostgreSQL (#2303)', () => {
     await expect(detail(o, o.lan, direct)).rejects.toMatchObject({ code: 'CONVERSATION_NOT_FOUND' });
     await expect(exec(o, o.lan, 'kernel.conversation.note', { conversationId: direct, body: 'x' })).rejects.toMatchObject({ code: 'CONVERSATION_NOT_FOUND' });
     // The table itself says the same to a member context that bypasses the commands.
-    const direct$ = await asApp(o.orgId, o.lan, async (c) => (await c.query('SELECT count(*)::int AS n FROM crove_kernel.conversation WHERE kind = $1', ['direct'])).rows[0].n);
+    const direct$ = await asApp(o.orgId, o.lan, async (c) => (await c.query('SELECT count(*)::int AS n FROM ludy_kernel.conversation WHERE kind = $1', ['direct'])).rows[0].n);
     expect(direct$).toBe(0);
-    const messages$ = await asApp(o.orgId, o.lan, async (c) => (await c.query('SELECT count(*)::int AS n FROM crove_kernel.conversation_message WHERE kind = $1', ['direct'])).rows[0].n);
+    const messages$ = await asApp(o.orgId, o.lan, async (c) => (await c.query('SELECT count(*)::int AS n FROM ludy_kernel.conversation_message WHERE kind = $1', ['direct'])).rows[0].n);
     expect(messages$).toBe(0);
     // A member limited to channel A reads that channel's comments and no other's (owners and admins are never limited).
-    await admin((c) => c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.lan, chA, o.owner]));
+    await admin((c) => c.query('INSERT INTO ludy_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.lan, chA, o.owner]));
     expect(await texts(o.lan)).toEqual(['Kênh A']);
     expect(await texts(o.minh)).toEqual(['Kênh A', 'Kênh B']);
     expect(await texts(o.admin)).toEqual(['Kênh A', 'Kênh B', 'Nhắn riêng']);
@@ -459,7 +459,7 @@ suite('conversations on PostgreSQL (#2303)', () => {
     expect(call).toMatchObject({ action: 'call', hidden: true, externalMessageId: 'm-spam' });
     // The same hide is made again (idempotent on the platform): one call row, counted twice.
     expect((await begin()).action).toBe('call');
-    expect(await rows("SELECT calls, retry_safety FROM crove_kernel.external_call WHERE org_id = $1 AND step = 'hide'", [o.orgId])).toEqual([{ calls: 2, retry_safety: 'idempotent' }]);
+    expect(await rows("SELECT calls, retry_safety FROM ludy_kernel.external_call WHERE org_id = $1 AND step = 'hide'", [o.orgId])).toEqual([{ calls: 2, retry_safety: 'idempotent' }]);
     await sys(o, 'kernel.conversation.hide_record', { messageId, callKey: call.callKey, result: { kind: 'done' } });
     expect((await detail(o, o.lan, id)).messages[0]).toMatchObject({ hidden: true, hideRequest: null });
     expect(await begin()).toEqual({ action: 'none' });
@@ -488,10 +488,10 @@ suite('conversations on PostgreSQL (#2303)', () => {
     expect((await listAll(o, o.minh, { assignee: 'me' })).conversations.map((c) => c.id)).toEqual([id]);
     expect((await listAll(o, o.minh, { assignee: 'none' })).conversations).toHaveLength(1);
     const { noteId } = await exec<{ noteId: string }>(o, o.minh, 'kernel.conversation.note', { conversationId: id, body: SECRET_TEXT });
-    expect((await detail(o, o.viewer, id)).notes).toEqual([{ id: noteId, authorUserId: o.minh, body: SECRET_TEXT, createdAt: expect.any(String) }]);
+    expect((await detail(o, o.viewer, id)).notes).toEqual([{ id: noteId, authorUserId: o.minh, body: SECRET_TEXT, createdAt: expect.any(String), actorOrigin: 'ui', tainted: false }]);
     // Linking a contact is a person's decision, and holds for the customer's other threads.
     const party = randomUUID();
-    await admin((c) => c.query("INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Khách')", [o.orgId, party]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Khách')", [o.orgId, party]));
     await exec(o, o.lan, 'kernel.conversation.link_contact', { conversationId: id, partyId: party });
     expect((await detail(o, o.lan, id)).conversation.contact).toMatchObject({ partyId: party, partyName: 'Công ty Khách' });
     await ingest(o, ch, [comment('c-3', 'Ba lần', { messageId: 'm-3' })]);
@@ -521,15 +521,15 @@ suite('conversations on PostgreSQL (#2303)', () => {
     const begin = await sys<{ callKey: string }>(o, 'kernel.conversation.reply_begin', { messageId });
     await sys(o, 'kernel.conversation.reply_record', { messageId, callKey: begin.callKey, result: { kind: 'rejected', error: 'bad_request', code: SECRET_TEXT } });
     for (const needle of ['0912345678', 'Nguyễn Văn Mẫu', 'Trần Thị Khách']) {
-      const audit = await rows('SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND (detail::text ILIKE $2 OR target_id::text ILIKE $2)', [o.orgId, `%${needle}%`]);
+      const audit = await rows('SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND (detail::text ILIKE $2 OR target_id::text ILIKE $2)', [o.orgId, `%${needle}%`]);
       expect(audit, `audit rows hold ${needle}`).toHaveLength(0);
-      const events = await rows('SELECT 1 FROM crove_kernel.outbox_event WHERE org_id = $1 AND payload::text ILIKE $2', [o.orgId, `%${needle}%`]);
+      const events = await rows('SELECT 1 FROM ludy_kernel.outbox_event WHERE org_id = $1 AND payload::text ILIKE $2', [o.orgId, `%${needle}%`]);
       expect(events, `events hold ${needle}`).toHaveLength(0);
-      const calls = await rows('SELECT 1 FROM crove_kernel.external_call WHERE org_id = $1 AND (key ILIKE $2 OR error_code ILIKE $2 OR external_ref ILIKE $2)', [o.orgId, `%${needle}%`]);
+      const calls = await rows('SELECT 1 FROM ludy_kernel.external_call WHERE org_id = $1 AND (key ILIKE $2 OR error_code ILIKE $2 OR external_ref ILIKE $2)', [o.orgId, `%${needle}%`]);
       expect(calls, `call rows hold ${needle}`).toHaveLength(0);
     }
     // What a reply queues names ids only.
-    const queued = await rows<{ type: string; payload: Record<string, unknown> }>("SELECT type, payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.conversation.reply_queued'", [o.orgId]);
+    const queued = await rows<{ type: string; payload: Record<string, unknown> }>("SELECT type, payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.conversation.reply_queued'", [o.orgId]);
     expect(queued).toHaveLength(1);
     expect(Object.keys(queued[0]?.payload ?? {}).sort()).toEqual(['connectionId', 'conversationId', 'messageId']);
   });
@@ -542,7 +542,7 @@ suite('conversations on PostgreSQL (#2303)', () => {
     expect(made.events).toHaveLength(1);
     expect(made.events[0]).toMatchObject({ kind: 'comment_thread', postId: 'post-9', direction: 'in', text: 'Bình luận thử', contact: { name: 'Khách thử nghiệm' } });
     // It is only an event: nothing is stored until the intake takes it.
-    expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [o.orgId])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_kernel.conversation WHERE org_id = $1', [o.orgId])).toHaveLength(0);
     expect(await ingest(o, ch, made.events)).toEqual({ stored: 1, duplicates: 0, ignored: 0 });
     await expect(exec(o, o.lan, 'kernel.conversation.sandbox_comment', { connectionId: ch, postId: 'p', text: 'x' })).rejects.toMatchObject({ status: 403 });
     await expect(exec(o, o.owner, 'kernel.conversation.sandbox_comment', { connectionId: real, postId: 'p', text: 'x' })).rejects.toMatchObject({ code: 'CHANNEL_NOT_FOUND' });
@@ -551,7 +551,7 @@ suite('conversations on PostgreSQL (#2303)', () => {
   it('parks webhook notices for the worker alone: lease, finish, drop a poison notice, find the connections', async () => {
     const o = await org();
     const ch = await connection(o);
-    const accountId = (await rows<{ external_account_id: string }>('SELECT external_account_id FROM crove_kernel.channel_connection WHERE id = $1', [ch]))[0]?.external_account_id as string;
+    const accountId = (await rows<{ external_account_id: string }>('SELECT external_account_id FROM ludy_kernel.channel_connection WHERE id = $1', [ch]))[0]?.external_account_id as string;
     const asRole = async <T>(url: string, fn: (c: pg.Client) => Promise<T>): Promise<T> => {
       const c = new pg.Client({ connectionString: url });
       await c.connect();
@@ -562,45 +562,45 @@ suite('conversations on PostgreSQL (#2303)', () => {
       }
     };
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = 'ludy_worker';
     workerUrl.password = 'test-worker-pw';
     // Only the API's login enqueues; only the worker's claims, finishes and finds connections; neither reads the table.
-    const seq = await asRole(appUrl, async (c) => (await c.query('SELECT crove_kernel.conversation_inbound_enqueue($1, $2) AS seq', ['sandbox', Buffer.from('{"v":1}')])).rows[0].seq);
-    await expect(asRole(appUrl, (c) => c.query('SELECT * FROM crove_kernel.conversation_inbound_claim(10, 60)'))).rejects.toMatchObject({ code: '42501' });
-    await expect(asRole(workerUrl.toString(), (c) => c.query('SELECT crove_kernel.conversation_inbound_enqueue($1, $2)', ['sandbox', Buffer.from('x')]))).rejects.toMatchObject({ code: '42501' });
-    await expect(asRole(appUrl, (c) => c.query('SELECT * FROM crove_kernel.conversation_inbound_pending'))).rejects.toMatchObject({ code: '42501' });
+    const seq = await asRole(appUrl, async (c) => (await c.query('SELECT ludy_kernel.conversation_inbound_enqueue($1, $2) AS seq', ['sandbox', Buffer.from('{"v":1}')])).rows[0].seq);
+    await expect(asRole(appUrl, (c) => c.query('SELECT * FROM ludy_kernel.conversation_inbound_claim(10, 60)'))).rejects.toMatchObject({ code: '42501' });
+    await expect(asRole(workerUrl.toString(), (c) => c.query('SELECT ludy_kernel.conversation_inbound_enqueue($1, $2)', ['sandbox', Buffer.from('x')]))).rejects.toMatchObject({ code: '42501' });
+    await expect(asRole(appUrl, (c) => c.query('SELECT * FROM ludy_kernel.conversation_inbound_pending'))).rejects.toMatchObject({ code: '42501' });
     // Neither login role reads or writes the table itself, whatever the statement: only the definers above touch it.
     for (const url of [appUrl, workerUrl.toString()]) {
       for (const statement of [
-        'SELECT * FROM crove_kernel.conversation_inbound_pending',
-        "INSERT INTO crove_kernel.conversation_inbound_pending (provider, body) VALUES ('sandbox', 'x'::bytea)",
-        "UPDATE crove_kernel.conversation_inbound_pending SET attempts = 0",
-        'DELETE FROM crove_kernel.conversation_inbound_pending',
-        'TRUNCATE crove_kernel.conversation_inbound_pending',
+        'SELECT * FROM ludy_kernel.conversation_inbound_pending',
+        "INSERT INTO ludy_kernel.conversation_inbound_pending (provider, body) VALUES ('sandbox', 'x'::bytea)",
+        "UPDATE ludy_kernel.conversation_inbound_pending SET attempts = 0",
+        'DELETE FROM ludy_kernel.conversation_inbound_pending',
+        'TRUNCATE ludy_kernel.conversation_inbound_pending',
       ]) {
         await expect(asRole(url, (c) => c.query(statement)), statement).rejects.toMatchObject({ code: '42501' });
       }
     }
-    const claim = () => asRole(workerUrl.toString(), async (c) => (await c.query('SELECT seq, provider, body, attempts, dropped, reason FROM crove_kernel.conversation_inbound_claim(10, 60)')).rows);
+    const claim = () => asRole(workerUrl.toString(), async (c) => (await c.query('SELECT seq, provider, body, attempts, dropped, reason FROM ludy_kernel.conversation_inbound_claim(10, 60)')).rows);
     const first = await claim();
     expect(first).toEqual([{ seq, provider: 'sandbox', body: Buffer.from('{"v":1}'), attempts: 1, dropped: false, reason: null }]);
     // Leased: a second worker finds nothing until the lease passes.
     expect(await claim()).toEqual([]);
     for (let attempt = 2; attempt <= 5; attempt++) {
-      await admin((c) => c.query("UPDATE crove_kernel.conversation_inbound_pending SET claimed_until = now() - interval '1 second' WHERE seq = $1", [seq]));
+      await admin((c) => c.query("UPDATE ludy_kernel.conversation_inbound_pending SET claimed_until = now() - interval '1 second' WHERE seq = $1", [seq]));
       expect(await claim()).toMatchObject([{ attempts: attempt, dropped: false }]);
     }
     // Claimed five times and never finished: dropped with its body, so one poison notice never blocks the rest.
-    await admin((c) => c.query("UPDATE crove_kernel.conversation_inbound_pending SET claimed_until = now() - interval '1 second' WHERE seq = $1", [seq]));
+    await admin((c) => c.query("UPDATE ludy_kernel.conversation_inbound_pending SET claimed_until = now() - interval '1 second' WHERE seq = $1", [seq]));
     expect(await claim()).toEqual([{ seq, provider: 'sandbox', body: null, attempts: 5, dropped: true, reason: 'poison' }]);
-    expect(await rows('SELECT 1 FROM crove_kernel.conversation_inbound_pending')).toHaveLength(0);
-    const next = await asRole(appUrl, async (c) => (await c.query('SELECT crove_kernel.conversation_inbound_enqueue($1, $2) AS seq', ['sandbox', Buffer.from('{}')])).rows[0].seq);
-    await asRole(workerUrl.toString(), (c) => c.query('SELECT crove_kernel.conversation_inbound_done($1)', [next]));
-    expect(await rows('SELECT 1 FROM crove_kernel.conversation_inbound_pending')).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_kernel.conversation_inbound_pending')).toHaveLength(0);
+    const next = await asRole(appUrl, async (c) => (await c.query('SELECT ludy_kernel.conversation_inbound_enqueue($1, $2) AS seq', ['sandbox', Buffer.from('{}')])).rows[0].seq);
+    await asRole(workerUrl.toString(), (c) => c.query('SELECT ludy_kernel.conversation_inbound_done($1)', [next]));
+    expect(await rows('SELECT 1 FROM ludy_kernel.conversation_inbound_pending')).toHaveLength(0);
     // Where a notice goes: the active connections of active orgs that name the platform's own account id.
-    const found = await asRole(workerUrl.toString(), async (c) => (await c.query('SELECT org_id, connection_id FROM crove_kernel.conversation_connections_for($1, $2)', ['sandbox', accountId])).rows);
+    const found = await asRole(workerUrl.toString(), async (c) => (await c.query('SELECT org_id, connection_id FROM ludy_kernel.conversation_connections_for($1, $2)', ['sandbox', accountId])).rows);
     expect(found).toEqual([{ org_id: o.orgId, connection_id: ch }]);
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [ch]));
-    expect(await asRole(workerUrl.toString(), async (c) => (await c.query('SELECT 1 FROM crove_kernel.conversation_connections_for($1, $2)', ['sandbox', accountId])).rows)).toEqual([]);
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [ch]));
+    expect(await asRole(workerUrl.toString(), async (c) => (await c.query('SELECT 1 FROM ludy_kernel.conversation_connections_for($1, $2)', ['sandbox', accountId])).rows)).toEqual([]);
   });
 });

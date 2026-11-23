@@ -2,12 +2,17 @@
 // a proposal. The server decides every approval; these only shape the requests and the keys.
 
 import { z } from 'zod';
-import { ADS_PROPOSAL_KIND_PREFIX, EINVOICE_ISSUE_KIND, PROPOSAL_APPROVE_PERMISSION } from '@crove/kernel-contract';
+import { ADS_PROPOSAL_KIND_PREFIX, EINVOICE_ISSUE_KIND, PROPOSAL_APPROVE_PERMISSION, isEngageProposalKind } from '@ludy/kernel-contract';
 import { readSearch, type Defined } from './search.ts';
 
 // A request to open the way to spend on an ad platform (ADR-0043 point 1, #2294): the org switch, an account's flag, a cap set
 // or raised, launches opened again. It posts nothing to the books, so it has no invoice, no checks and no "matched" badge.
-export const isAdsProposalKind = (kind: string): boolean => kind.startsWith(ADS_PROPOSAL_KIND_PREFIX);
+// The ads kinds an AI coworker asks for (stopping a launch, pausing, archiving, a lower budget, a shorter schedule; E4 #3863) are the Engage card's, not this one's.
+export const isAdsProposalKind = (kind: string): boolean => kind.startsWith(ADS_PROPOSAL_KIND_PREFIX) && !isEngageProposalKind(kind);
+
+// What an AI coworker asks for in an Engage line (a reply, a quote, a booking change, a post, an ad that only stops or reduces spend; E4 #3863): approved one at a time, on its own page, where the text and the
+// asker are shown as the AI's. It posts nothing to the books, so it has no invoice, no checks and no "matched" badge.
+export const isEngageKind = isEngageProposalKind;
 
 // A request to issue a sales e-invoice (ADR-0044 point 3, #2502): it posts nothing to the books and is approved one at a time, never in a batch.
 export const isEInvoiceIssueKind = (kind: string): boolean => kind === EINVOICE_ISSUE_KIND;
@@ -47,9 +52,37 @@ export function bulkSelectable(
   item: { status: string; failedChecks: number; kind: string; duplicateOf: string | null; unclassifiedLines?: number; anomalyChecks?: number | undefined },
   reversalKind: string,
 ): boolean {
-  if (isAdsProposalKind(item.kind) || isEInvoiceIssueKind(item.kind)) return false;
+  return item.status === 'pending' && bulkExclusion(item, reversalKind) === null;
+}
+
+// Why a pending row is left out of the bulk approval (#3598), in the order a person fixes them: null when it can be
+// approved in bulk. The Inbox says the reason on the row, so "Chọn tất cả (6)" with seven rows never leaves the seventh
+// unexplained. The same rules as bulkSelectable above, which is built on this.
+export type BulkExclusion = 'own_page' | 'checks' | 'duplicate' | 'reversal' | 'account' | 'anomaly';
+export function bulkExclusion(
+  item: { failedChecks: number; kind: string; duplicateOf: string | null; unclassifiedLines?: number; anomalyChecks?: number | undefined },
+  reversalKind: string,
+): BulkExclusion | null {
+  if (isAdsProposalKind(item.kind) || isEInvoiceIssueKind(item.kind) || isEngageKind(item.kind)) return 'own_page';
+  if (item.failedChecks > 0) return 'checks';
+  if (item.duplicateOf !== null) return 'duplicate';
+  if (item.kind === reversalKind) return 'reversal';
   // A line no rule matched (#2091) has no account to approve: it is classified on the proposal's own page first.
-  return item.status === 'pending' && item.failedChecks === 0 && item.duplicateOf === null && item.kind !== reversalKind && (item.unclassifiedLines ?? 0) === 0 && (item.anomalyChecks ?? 0) === 0;
+  if ((item.unclassifiedLines ?? 0) > 0) return 'account';
+  if ((item.anomalyChecks ?? 0) > 0) return 'anomaly';
+  return null;
+}
+
+// The files of the "Tệp mới nhận" row that still need a look (#3598): one being read or one that failed. A file read into
+// a proposal is the proposal's row below, so it is not listed twice.
+export function filesNeedingAttention<T extends { status: string }>(files: readonly T[]): T[] {
+  return files.filter((file) => file.status === 'processing' || file.status === 'failed');
+}
+
+// Whether every row of a list carries the unverified-signature chip (#3598): then the red says nothing, and the list
+// states it once instead. One row alone keeps its own chip.
+export function allSignaturesUnverified(items: ReadonlyArray<{ signatureStatus: string | null }>): boolean {
+  return items.length > 1 && items.every((item) => item.signatureStatus === 'unverified');
 }
 
 // The "Chưa phân loại" filter of the Inbox (#2091): the proposals with at least one invoice line no rule matched, and how
@@ -70,7 +103,7 @@ export function showMatched(
   // The kinds approved as shown, with no checks: a reversal, a cash or bank voucher, a general journal voucher (#888).
   ...plainKinds: string[]
 ): boolean {
-  if (plainKinds.includes(item.kind) || isAdsProposalKind(item.kind) || isEInvoiceIssueKind(item.kind)) return false;
+  if (plainKinds.includes(item.kind) || isAdsProposalKind(item.kind) || isEInvoiceIssueKind(item.kind) || isEngageKind(item.kind)) return false;
   if (item.voided) return false;
   if (item.requestedByAgent && !item.extracted) return false;
   return item.failedChecks === 0 && item.warnChecks === 0 && !item.duplicateOf;

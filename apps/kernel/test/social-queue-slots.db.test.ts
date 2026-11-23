@@ -8,11 +8,11 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, type PostView } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -53,7 +53,7 @@ suite('social open queue slots on PostgreSQL (#1158)', () => {
     const { orgId } = await createOrg(api, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const people = { admin: await person('admin'), member: await person('member'), viewer: await person('viewer') };
     for (const [role, id] of Object.entries(people)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
     }
     return { orgId, owner, ...people };
   }
@@ -87,7 +87,7 @@ suite('social open queue slots on PostgreSQL (#1158)', () => {
   }
 
   const toSlot = (o: Org, p: { postId: string; variantId: string }, slotAt: string, user = o.owner) => exec<Scheduled>(o, 'social.variant.schedule', { postId: p.postId, variantIds: [p.variantId], queue: true, slotAt }, user);
-  const row = (variantId: string) => admin(async (c) => (await c.query<Row>('SELECT status, queue_slot_at, scheduled_at FROM crove_social.post_variant WHERE id = $1', [variantId])).rows[0] as Row);
+  const row = (variantId: string) => admin(async (c) => (await c.query<Row>('SELECT status, queue_slot_at, scheduled_at FROM ludy_social.post_variant WHERE id = $1', [variantId])).rows[0] as Row);
   // One clock read for both ends: two reads a millisecond apart made a 31-day range a millisecond over the limit (#1828).
   const range = (days = 14) => {
     const now = Date.now();
@@ -105,9 +105,9 @@ suite('social open queue slots on PostgreSQL (#1158)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const u = new URL(adminUrl);
-    u.username = 'crove_app';
+    u.username = 'ludy_app';
     u.password = 'test-app-pw';
     appPool = createPool({ connectionString: u.toString(), max: 6 });
     appDb = createDb(appPool);

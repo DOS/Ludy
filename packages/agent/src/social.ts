@@ -78,7 +78,7 @@ const zDraft = z.object({
 });
 
 const LANGUAGE = { vi: 'Vietnamese', en: 'English' } as const;
-// What the posts the writer feeds take (crove_social.post): longer text or titles are cut rather than refused after the
+// What the posts the writer feeds take (ludy_social.post): longer text or titles are cut rather than refused after the
 // model was paid for, and the channel rules still flag a text too long for its channel.
 const MAX_BODY = 100_000;
 const MAX_TITLE = 500;
@@ -505,7 +505,7 @@ const zAlt = z.object({ altText: z.string().describe('What the image shows, for 
 export type DescribeGenerator = (args: { system: string; prompt: string; image: Uint8Array; mime: string }) => Promise<z.infer<typeof zAlt> | null>;
 
 // Post ideas (#1181): from a theme or brief of at most IDEA_THEME_MAX characters, IDEAS_MIN to IDEAS_MAX ideas whose
-// titles and notes fit crove_social.idea (title 1 to 200 characters, note at most 5000; notes are kept short here).
+// titles and notes fit ludy_social.idea (title 1 to 200 characters, note at most 5000; notes are kept short here).
 export const IDEAS_MIN = 3;
 export const IDEAS_MAX = 10;
 export const IDEA_THEME_MAX = 2000;

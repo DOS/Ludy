@@ -11,12 +11,12 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import type { ExtractClient } from '@crove/extract-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries, importPortalList } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { extractAndPropose, financeCommands, financeQueries, importPortalList } from '@ludy/mod-finance';
 import { PORTAL_HEADER, buildXlsx, portalListXlsx, portalRow, type PortalInvoiceSpec } from '../../extract/test/xlsx-fixture.ts';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
@@ -180,17 +180,17 @@ suite('tax portal purchase list (#465)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     const db: Db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -261,9 +261,9 @@ suite('tax portal purchase list (#465)', () => {
     const xlsx = await upload(token, 'danh-sach.xlsx', portalListXlsx([spec('1', '2026-09-01')]));
     expect(xlsx.status).toBe(200);
     const fileId = xlsx.body.files[0].fileId as string;
-    const row = await admin(async (c) => (await c.query('SELECT source, content_type, filename FROM crove_kernel.file WHERE id = $1', [fileId])).rows[0]);
+    const row = await admin(async (c) => (await c.query('SELECT source, content_type, filename FROM ludy_kernel.file WHERE id = $1', [fileId])).rows[0]);
     expect(row).toEqual({ source: 'import', content_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', filename: 'danh-sach.xlsx' });
-    const outbox = await admin(async (c) => (await c.query(`SELECT count(*)::int AS n FROM crove_kernel.outbox_event WHERE type = 'kernel.file.ingested' AND payload ->> 'fileId' = $1`, [fileId])).rows[0]);
+    const outbox = await admin(async (c) => (await c.query(`SELECT count(*)::int AS n FROM ludy_kernel.outbox_event WHERE type = 'kernel.file.ingested' AND payload ->> 'fileId' = $1`, [fileId])).rows[0]);
     expect(outbox.n).toBe(0);
     const recent = await rpc('files/recent', token, undefined);
     expect(recent.body.map((f: { id: string }) => f.id)).not.toContain(fileId);
@@ -288,21 +288,21 @@ suite('tax portal purchase list (#465)', () => {
     expect(result.status).toBe(200);
     expect(result.body.lists).toEqual([expect.objectContaining({ id: listId, status: 'done', rowCount: 8, listFrom: '2026-09-01', listTo: '2026-09-30', error: null })]);
     const byNumber = Object.fromEntries(
-      result.body.items.map((i: any) => [i.portal?.number ?? i.crove?.number, { outcome: i.outcome, kind: i.crove?.kind ?? null, differences: i.differences, duplicateRows: i.duplicateRows }]),
+      result.body.items.map((i: any) => [i.portal?.number ?? i.ludy?.number, { outcome: i.outcome, kind: i.ludy?.kind ?? null, differences: i.differences, duplicateRows: i.duplicateRows }]),
     );
     expect(byNumber).toEqual({
       '9001': { outcome: 'matched', kind: 'document', differences: [], duplicateRows: 1 },
       '9002': { outcome: 'missing', kind: null, differences: [], duplicateRows: 0 },
       '9003': { outcome: 'in_inbox', kind: 'proposal', differences: [], duplicateRows: 0 },
       '9004': { outcome: 'amount_mismatch', kind: 'document', differences: ['total'], duplicateRows: 0 },
-      '9005': { outcome: 'void_in_crove', kind: 'document', differences: [], duplicateRows: 0 },
+      '9005': { outcome: 'void_in_ludy', kind: 'document', differences: [], duplicateRows: 0 },
       '9006': { outcome: 'not_on_portal', kind: 'document', differences: [], duplicateRows: 0 },
       '9007': { outcome: 'missing', kind: null, differences: [], duplicateRows: 0 },
       '9008': { outcome: 'void', kind: null, differences: [], duplicateRows: 0 },
     });
-    expect(result.body.summary).toMatchObject({ portalInvoices: 7, matched: 1, inInbox: 1, amountMismatch: 1, missing: 2, voidInCrove: 1, void: 1, notOnPortal: 1, duplicateRows: 1 });
+    expect(result.body.summary).toMatchObject({ portalInvoices: 7, matched: 1, inInbox: 1, amountMismatch: 1, missing: 2, voidInLudy: 1, void: 1, notOnPortal: 1, duplicateRows: 1 });
     // The template came from the booked document's proposal.
-    expect(result.body.items.find((i: any) => i.portal?.number === '9001').crove).toMatchObject({ template: '1', series: 'C26TAB', sellerTaxCode: SELLER });
+    expect(result.body.items.find((i: any) => i.portal?.number === '9001').ludy).toMatchObject({ template: '1', series: 'C26TAB', sellerTaxCode: SELLER });
   });
 
   it('keeps lists and Crove-only invoices to their period', async () => {
@@ -313,7 +313,7 @@ suite('tax portal purchase list (#465)', () => {
     const quarter = await rpc('portalList/reconcile', await tokenFor(owner), { period: '2026-Q3' });
     expect(quarter.body.lists).toEqual([]);
     const september = await rpc('portalList/reconcile', await tokenFor(owner), { period: '2026-09' });
-    expect(september.body.items.some((i: any) => i.crove?.number === '1001')).toBe(false);
+    expect(september.body.items.some((i: any) => i.ludy?.number === '1001')).toBe(false);
   });
 
   it('refuses the same file twice in a period, and takes a removed list out of the reconciliation', async () => {
@@ -333,7 +333,7 @@ suite('tax portal purchase list (#465)', () => {
     await importPortalList({ runtime: workerRuntime, store, extract }, org.orgId, reimported.body.listId);
     const restored = await rpc('portalList/reconcile', await tokenFor(owner), { period: '2026-09' });
     expect(restored.body.summary.missing).toBe(2);
-    const removed = await admin(async (c) => (await c.query('SELECT removed_by FROM crove_finance.portal_invoice_list WHERE id = $1', [list.id])).rows[0]);
+    const removed = await admin(async (c) => (await c.query('SELECT removed_by FROM ludy_finance.portal_invoice_list WHERE id = $1', [list.id])).rows[0]);
     expect(removed.removed_by).toBe(owner.userId);
   });
 
@@ -409,19 +409,19 @@ suite('tax portal purchase list (#465)', () => {
     );
     expect(again.recorded).toBe(false);
     await admin(async (c) => {
-      await expect(c.query(`UPDATE crove_finance.portal_invoice_list SET status = 'failed', error = 'x' WHERE id = $1`, [listId])).rejects.toThrow(/already has its outcome/);
-      await expect(c.query(`UPDATE crove_finance.portal_invoice_list SET period = '2026-10' WHERE id = $1`, [listId])).rejects.toThrow(/only its outcome/);
-      await expect(c.query(`DELETE FROM crove_finance.portal_invoice_list WHERE id = $1`, [listId])).rejects.toThrow(/never deleted/);
-      await expect(c.query(`UPDATE crove_finance.portal_invoice_row SET total = 0 WHERE list_id = $1`, [listId])).rejects.toThrow();
+      await expect(c.query(`UPDATE ludy_finance.portal_invoice_list SET status = 'failed', error = 'x' WHERE id = $1`, [listId])).rejects.toThrow(/already has its outcome/);
+      await expect(c.query(`UPDATE ludy_finance.portal_invoice_list SET period = '2026-10' WHERE id = $1`, [listId])).rejects.toThrow(/only its outcome/);
+      await expect(c.query(`DELETE FROM ludy_finance.portal_invoice_list WHERE id = $1`, [listId])).rejects.toThrow(/never deleted/);
+      await expect(c.query(`UPDATE ludy_finance.portal_invoice_row SET total = 0 WHERE list_id = $1`, [listId])).rejects.toThrow();
       await expect(
         c.query(
-          `INSERT INTO crove_finance.portal_invoice_row (org_id, list_id, row_no, seller_tax_code, series, number, issue_date, status)
+          `INSERT INTO ludy_finance.portal_invoice_row (org_id, list_id, row_no, seller_tax_code, series, number, issue_date, status)
            VALUES ($1, $2, 999, $3, 'C26TAB', '1', '2026-09-01', 'original')`,
           [org.orgId, listId, SELLER],
         ),
       ).rejects.toThrow(/already has its outcome/);
     });
-    const audits = await admin(async (c) => (await c.query(`SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.portal_list.%' AND outcome = 'ok' ORDER BY occurred_at`, [org.orgId])).rows);
+    const audits = await admin(async (c) => (await c.query(`SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.portal_list.%' AND outcome = 'ok' ORDER BY occurred_at`, [org.orgId])).rows);
     expect(audits.map((a) => a.command)).toEqual(expect.arrayContaining(['finance.portal_list.import', 'finance.portal_list.record', 'finance.portal_list.remove']));
   });
 
@@ -440,20 +440,20 @@ suite('tax portal purchase list (#465)', () => {
       const c = await pool.connect();
       try {
         await c.query('BEGIN');
-        await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.userId, org.orgId)]);
+        await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [org.orgId, contextToken(owner.userId, org.orgId)]);
         return await c.query(text, params);
       } finally {
         await c.query('ROLLBACK').catch(() => {});
         c.release();
       }
     };
-    await expect(asMember(`UPDATE crove_finance.portal_invoice_list SET status = 'failed', error = 'x', recorded_at = now() WHERE id = $1`, [listId])).rejects.toThrow(
+    await expect(asMember(`UPDATE ludy_finance.portal_invoice_list SET status = 'failed', error = 'x', recorded_at = now() WHERE id = $1`, [listId])).rejects.toThrow(
       /only the worker that reads the list records its outcome/,
     );
-    await expect(asMember('UPDATE crove_finance.portal_invoice_list SET own_sales_count = 3 WHERE id = $1', [listId])).rejects.toThrow(/only the worker/);
+    await expect(asMember('UPDATE ludy_finance.portal_invoice_list SET own_sales_count = 3 WHERE id = $1', [listId])).rejects.toThrow(/only the worker/);
     await expect(
       asMember(
-        `INSERT INTO crove_finance.portal_invoice_row (org_id, list_id, row_no, seller_tax_code, series, number, issue_date, status)
+        `INSERT INTO ludy_finance.portal_invoice_row (org_id, list_id, row_no, seller_tax_code, series, number, issue_date, status)
          VALUES ($1, $2, 1, $3, 'C26TAB', '1', '2026-06-01', 'original')`,
         [org.orgId, listId, SELLER],
       ),
@@ -461,12 +461,12 @@ suite('tax portal purchase list (#465)', () => {
     // A list never starts with an outcome, whoever inserts it.
     await expect(
       asMember(
-        `INSERT INTO crove_finance.portal_invoice_list (org_id, period, file_id, filename, list_from)
-         SELECT org_id, '2026-05', file_id, 'x.xlsx', '2026-05-01' FROM crove_finance.portal_invoice_list WHERE id = $1`,
+        `INSERT INTO ludy_finance.portal_invoice_list (org_id, period, file_id, filename, list_from)
+         SELECT org_id, '2026-05', file_id, 'x.xlsx', '2026-05-01' FROM ludy_finance.portal_invoice_list WHERE id = $1`,
         [listId],
       ),
     ).rejects.toThrow(/starts pending, without an outcome/);
-    const removed = await asMember('UPDATE crove_finance.portal_invoice_list SET removed_at = now(), removed_by = $2 WHERE id = $1 RETURNING id', [listId, owner.userId]);
+    const removed = await asMember('UPDATE ludy_finance.portal_invoice_list SET removed_at = now(), removed_by = $2 WHERE id = $1 RETURNING id', [listId, owner.userId]);
     expect(removed.rowCount).toBe(1);
     // The worker still records it.
     await importPortalList({ runtime: workerRuntime, store, extract }, org.orgId, listId);
@@ -537,7 +537,7 @@ suite('tax portal purchase list (#465)', () => {
     expect(asDocument.status).toBe(409);
     expect(asDocument.body.code).toBe('FILE_IS_IMPORT');
     const outbox = await admin(
-      async (c) => (await c.query(`SELECT count(*)::int AS n FROM crove_kernel.outbox_event WHERE type = 'kernel.file.ingested' AND payload ->> 'fileId' = $1`, [imported.body.files[0].fileId])).rows[0],
+      async (c) => (await c.query(`SELECT count(*)::int AS n FROM ludy_kernel.outbox_event WHERE type = 'kernel.file.ingested' AND payload ->> 'fileId' = $1`, [imported.body.files[0].fileId])).rows[0],
     );
     expect(outbox.n).toBe(0);
     // A ZIP uploaded as a document is not imported as a list, by the upload or by the import command.
@@ -585,7 +585,7 @@ suite('tax portal purchase list (#465)', () => {
     await record(first, 20_000);
     await record(second, 20_000);
     await record(third, 10_001);
-    const states = await admin(async (c) => (await c.query('SELECT id, status, error FROM crove_finance.portal_invoice_list WHERE id = ANY($1::uuid[])', [lists])).rows);
+    const states = await admin(async (c) => (await c.query('SELECT id, status, error FROM ludy_finance.portal_invoice_list WHERE id = ANY($1::uuid[])', [lists])).rows);
     const byId = new Map(states.map((r) => [r.id as string, r]));
     expect([byId.get(first)?.status, byId.get(second)?.status]).toEqual(['done', 'done']);
     expect(byId.get(third)).toMatchObject({ status: 'failed', error: expect.stringContaining('đã có 40.000 hóa đơn từ các danh sách đã nhập, thêm 10.001 hóa đơn của danh sách này sẽ vượt mức 50.000 hóa đơn mỗi kỳ') });
@@ -641,24 +641,24 @@ suite('tax portal purchase list (#465)', () => {
     expect(result.status, JSON.stringify(result.body)).toBe(200);
     expect(result.body.direction).toBe('sale');
     expect(result.body.lists).toEqual([expect.objectContaining({ id: first.listId, direction: 'sale', status: 'done', rowCount: 4, error: null })]);
-    const byNumber = Object.fromEntries(result.body.items.map((i: any) => [i.portal?.number ?? i.crove?.number, { outcome: i.outcome, differences: i.differences }]));
+    const byNumber = Object.fromEntries(result.body.items.map((i: any) => [i.portal?.number ?? i.ludy?.number, { outcome: i.outcome, differences: i.differences }]));
     expect(byNumber).toEqual({
       '8001': { outcome: 'matched', differences: [] },
       '8002': { outcome: 'amount_mismatch', differences: ['vat'] },
       '8003': { outcome: 'missing', differences: [] },
       '8004': { outcome: 'not_on_portal', differences: [] },
-      '8005': { outcome: 'void_in_crove', differences: [] },
+      '8005': { outcome: 'void_in_ludy', differences: [] },
     });
-    expect(result.body.summary).toMatchObject({ portalInvoices: 4, matched: 1, amountMismatch: 1, missing: 1, notOnPortal: 1, voidInCrove: 1 });
+    expect(result.body.summary).toMatchObject({ portalInvoices: 4, matched: 1, amountMismatch: 1, missing: 1, notOnPortal: 1, voidInLudy: 1 });
     // The customer is carried on both sides.
     expect(result.body.items.find((i: any) => i.portal?.number === '8003').portal).toMatchObject({ buyerTaxCode: SELLER, sellerTaxCode: BUYER });
-    expect(result.body.items.find((i: any) => i.portal?.number === '8001').crove).toMatchObject({ buyerTaxCode: SELLER, buyerName: expect.any(String) });
+    expect(result.body.items.find((i: any) => i.portal?.number === '8001').ludy).toMatchObject({ buyerTaxCode: SELLER, buyerName: expect.any(String) });
     // The purchase side of the period knows nothing of the sales list, and the books are untouched by the comparison.
     const purchases = await rpc('portalList/reconcile', await tokenFor(viewer), { period: '2026-09' });
     expect(purchases.body.direction).toBe('purchase');
     expect(purchases.body.lists.every((l: any) => l.direction === 'purchase')).toBe(true);
-    expect(purchases.body.items.some((i: any) => ['8001', '8002', '8003', '8004', '8005'].includes(i.portal?.number ?? i.crove?.number))).toBe(false);
-    const sales = await admin(async (c) => (await c.query(`SELECT count(*)::int AS n FROM crove_finance.purchase_document WHERE org_id = $1 AND direction = 'sale'`, [org.orgId])).rows[0]);
+    expect(purchases.body.items.some((i: any) => ['8001', '8002', '8003', '8004', '8005'].includes(i.portal?.number ?? i.ludy?.number))).toBe(false);
+    const sales = await admin(async (c) => (await c.query(`SELECT count(*)::int AS n FROM ludy_finance.purchase_document WHERE org_id = $1 AND direction = 'sale'`, [org.orgId])).rows[0]);
     expect(sales.n).toBe(4);
 
     // The same file is refused again; the same list exported again (other bytes) flags nothing new.
@@ -668,7 +668,7 @@ suite('tax portal purchase list (#465)', () => {
     await importList([...portalSales].reverse(), '2026-09', 'sale');
     const twice = await rpc('portalList/reconcile', await tokenFor(viewer), { period: '2026-09', direction: 'sale' });
     expect(twice.body.lists).toHaveLength(2);
-    expect(twice.body.summary).toMatchObject({ portalInvoices: 4, matched: 1, amountMismatch: 1, missing: 1, notOnPortal: 1, voidInCrove: 1, duplicateRows: 4 });
+    expect(twice.body.summary).toMatchObject({ portalInvoices: 4, matched: 1, amountMismatch: 1, missing: 1, notOnPortal: 1, voidInLudy: 1, duplicateRows: 4 });
   }, 60_000);
 
   it('refuses a purchase list imported as a sales list and the other way round (#2141)', async () => {

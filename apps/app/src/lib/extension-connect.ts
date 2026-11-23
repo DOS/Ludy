@@ -4,7 +4,8 @@
 // in as usual, chooses the org and approves; the app asks the kernel for a one-time code and sends the window back to the
 // extension's redirect address with it. The extension then trades the code and its verifier for a token. The member's
 // password and browser session never reach the extension.
-import { EXTENSION_SCOPE_IDS, type ExtensionScopeId } from '@crove/kernel-contract';
+import { EXTENSION_SCOPE_IDS, type ExtensionScopeId } from '@ludy/kernel-contract';
+import { promoteMigratedItem, readLegacyAwareItem, removeMigratedItem, writeMigratedItem } from './storage-migrate.ts';
 
 export const CONNECT_PATH = '/-/extension/connect';
 // Chrome and Edge give an extension this redirect address: https://<32 letters a to p>.chromiumapp.org/<path>. Nothing
@@ -12,7 +13,8 @@ export const CONNECT_PATH = '/-/extension/connect';
 const REDIRECT = /^https:\/\/[a-p]{32}\.chromiumapp\.org\/[A-Za-z0-9_./-]{0,100}$/;
 const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
 const STATE = /^[A-Za-z0-9_-]{1,200}$/;
-const KEY = 'crove-pending-extension-connect';
+const KEY = 'ludy-pending-extension-connect';
+const LEGACY_KEY = 'crove-pending-extension-connect';
 // Long enough to sign in (and pass a second factor); much shorter than the code the kernel then issues lives on.
 export const PENDING_CONNECT_TTL_MS = 10 * 60 * 1000;
 
@@ -28,6 +30,19 @@ export interface ConnectRequest {
 
 const isScope = (value: string): value is ExtensionScopeId => (EXTENSION_SCOPE_IDS as readonly string[]).includes(value);
 
+const SCOPE_MODULE: Record<ExtensionScopeId, string> = { meetings: 'meetings', agenda: 'meetings', notes: 'notes' };
+
+/**
+ * Narrows requested extension scopes to those whose backing module is enabled for the chosen org (ADR-0053), keeping
+ * 'agenda' only while 'meetings' stays enabled.
+ */
+export function filterScopesForModules(scopes: readonly ExtensionScopeId[], enabledModules: readonly string[]): ExtensionScopeId[] {
+  const allowed = new Set(enabledModules);
+  const kept = scopes.filter((scope) => allowed.has(SCOPE_MODULE[scope]));
+  const hasMeetings = kept.includes('meetings');
+  return [...new Set(hasMeetings ? kept : kept.filter((s) => s !== 'agenda'))].sort();
+}
+
 // The request an address carries, or null when any part is missing or malformed: the extension's address must be a
 // chromiumapp.org one of an extension in `allowedIds` (EXTENSION_IDS, #2740), the challenge a SHA-256 in base64url, the
 // method S256, every scope a known one.
@@ -41,6 +56,8 @@ export function parseConnectRequest(search: string, allowedIds: readonly string[
   if (!allowedIds.includes(extensionId)) return null;
   const asked = (params.get('scope') ?? EXTENSION_SCOPE_IDS[0]).split(/[ ,]+/).filter(Boolean);
   if (asked.length === 0 || asked.length > EXTENSION_SCOPE_IDS.length || !asked.every(isScope)) return null;
+  // The agenda scope rides with the meetings scope (B2): alone it could not even be exchanged for a token.
+  if (asked.includes('agenda') && !asked.includes('meetings')) return null;
   const deviceName = (params.get('device') ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
   return { extensionId, codeChallenge, redirect, state, scopes: [...new Set(asked)].sort(), deviceName };
 }
@@ -68,7 +85,7 @@ interface Stored {
 // /mfa, and dropped once answered or after PENDING_CONNECT_TTL_MS.
 export function rememberConnect(request: ConnectRequest, now: number = Date.now()): void {
   try {
-    sessionStorage.setItem(KEY, JSON.stringify({ request, savedAt: now } satisfies Stored));
+    writeMigratedItem(sessionStorage, KEY, LEGACY_KEY, JSON.stringify({ request, savedAt: now } satisfies Stored));
   } catch {
     // Storage may be unavailable (private mode): the member opens the extension's sign-in again after signing in.
   }
@@ -76,9 +93,9 @@ export function rememberConnect(request: ConnectRequest, now: number = Date.now(
 
 export function pendingConnect(allowedIds: readonly string[], now: number = Date.now()): ConnectRequest | null {
   try {
-    const raw = sessionStorage.getItem(KEY);
-    if (raw === null) return null;
-    const stored = JSON.parse(raw) as Partial<Stored> | null;
+    const entry = readLegacyAwareItem(sessionStorage, KEY, LEGACY_KEY);
+    if (!entry) return null;
+    const stored = JSON.parse(entry.value) as Partial<Stored> | null;
     const request = stored?.request;
     const fresh = typeof stored?.savedAt === 'number' && stored.savedAt <= now && now - stored.savedAt < PENDING_CONNECT_TTL_MS;
     // Parsed again from its own parts: whatever storage holds is checked as the address was.
@@ -95,17 +112,25 @@ export function pendingConnect(allowedIds: readonly string[], now: number = Date
           allowedIds,
         )
       : null;
-    if (checked) return checked;
-    sessionStorage.removeItem(KEY);
+    if (checked) {
+      if (entry.fromLegacy) promoteMigratedItem(sessionStorage, KEY, LEGACY_KEY, entry.value);
+      return checked;
+    }
+    removeMigratedItem(sessionStorage, KEY, LEGACY_KEY);
     return null;
   } catch {
+    try {
+      removeMigratedItem(sessionStorage, KEY, LEGACY_KEY);
+    } catch {
+      // Ignore unavailable storage.
+    }
     return null;
   }
 }
 
 export function forgetConnect(): void {
   try {
-    sessionStorage.removeItem(KEY);
+    removeMigratedItem(sessionStorage, KEY, LEGACY_KEY);
   } catch {
     // Nothing to forget.
   }

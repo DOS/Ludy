@@ -5,15 +5,15 @@
 // - it checks the payload again as a general journal voucher (its shape, its accounts in the org's chart and in use, its total) and that the month is not closed;
 // - it refuses a run that already has a live posting (the database holds this too: one voucher per run that is not reversed, a trigger; a reversed posting frees the run, #2931);
 // - it inserts the voucher, which names the run and the proposal, and posts its entry through the posting path, in the same transaction. The database checks at commit that the proposal
-//   has such a voucher (crove_finance.ledger_effect_recorded) before it moves to 'executed'.
+//   has such a voucher (ludy_finance.ledger_effect_recorded) before it moves to 'executed'.
 // No finance code reads a payroll table: the run's id is the voucher's source, carried in the payload, and the lines are one per account (the detail stays on the run). A posting is
 // corrected by reversing its entry (finance.journal.reverse) while the period lock allows it.
-import { PAYROLL_POSTING_MAPS, money } from '@crove/l10n-vn';
+import { PAYROLL_POSTING_MAPS, money } from '@ludy/l10n-vn';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { JOURNAL_VOUCHER_KIND, JOURNAL_VOUCHER_MAX_LINES, PAYROLL_REGIMES, zAccountCode, zId, zJournalAmount, zLocalDate, zPayrollPostingProposal, type JournalVoucherProposal } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
+import { JOURNAL_VOUCHER_KIND, JOURNAL_VOUCHER_MAX_LINES, PAYROLL_REGIMES, zAccountCode, zId, zJournalAmount, zLocalDate, zPayrollPostingProposal, type JournalVoucherProposal } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type QueryContext } from '@ludy/kernel-runtime';
 import { assertUsableAccounts } from './accounts.ts';
 import { JOURNAL_VOUCHER_SOURCE, journalVoucherProblems, journalVoucherTotal } from './domain/journal-voucher.ts';
 import { postJournalVoucher } from './journal-voucher.ts';
@@ -24,10 +24,10 @@ import { reversedSource } from './source-entry.ts';
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 
 // The chart an entity keeps its books under on a date: its books row in force (the newest that starts on or before the date), TT133 2026.1 when there is none (the only regime before the
-// books rows existed). The database's own check of every journal line follows the same rule (crove_finance.check_account_ref).
-async function booksOn(ctx: QueryContext, legalEntityId: string, date: string): Promise<{ regime: string; version: string }> {
+// books rows existed). The database's own check of every journal line follows the same rule (ludy_finance.check_account_ref).
+export async function booksOn(ctx: QueryContext, legalEntityId: string, date: string): Promise<{ regime: string; version: string }> {
   const row = await ctx.trx
-    .selectFrom('crove_finance.legal_entity_books')
+    .selectFrom('ludy_finance.legal_entity_books')
     .select(['regime', 'chart_version'])
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', legalEntityId)
@@ -63,7 +63,7 @@ async function checkPostingLines(ctx: QueryContext, input: PostingLines): Promis
   if (books.regime === 'tt133' && books.version === '2026.1') {
     await assertUsableAccounts(ctx, codes);
   } else {
-    const known = await ctx.trx.selectFrom('crove_finance.chart_account').select('code').where('regime', '=', books.regime).where('version', '=', books.version).where('code', 'in', codes).execute();
+    const known = await ctx.trx.selectFrom('ludy_finance.chart_account').select('code').where('regime', '=', books.regime).where('version', '=', books.version).where('code', 'in', codes).execute();
     const have = new Set(known.map((k) => k.code));
     const unknown = codes.filter((c) => !have.has(c));
     if (unknown.length > 0) throw new DomainError('UNKNOWN_ACCOUNT', 422, `Tài khoản ${unknown.join(', ')} không có trong hệ thống tài khoản của pháp nhân`, { codes: unknown });
@@ -78,7 +78,7 @@ async function checkPostingLines(ctx: QueryContext, input: PostingLines): Promis
 // The posting of a run that stands: a voucher naming the run whose entry was not reversed (a reversed one no longer holds the run, #2931; the database rule is the trigger of 20261227014500).
 async function livePosting(ctx: QueryContext, runId: string): Promise<{ id: string } | undefined> {
   return ctx.trx
-    .selectFrom('crove_finance.journal_voucher as j')
+    .selectFrom('ludy_finance.journal_voucher as j')
     .select('j.id')
     .where('j.org_id', '=', ctx.orgId)
     .where('j.payroll_run_id', '=', runId)
@@ -170,7 +170,7 @@ export const recordPayrollPosting = defineCommand({
     }
     // The person who approved the run is a co-author of its posting (four-eyes): a proposal that does not list them was not made by the preparer, so it is refused.
     if (expected.approvedBy) {
-      const own = await ctx.trx.selectFrom('crove_kernel.proposal').select('co_authors').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
+      const own = await ctx.trx.selectFrom('ludy_kernel.proposal').select('co_authors').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
       if (!(own?.co_authors ?? []).map((id) => id.toLowerCase()).includes(expected.approvedBy.toLowerCase())) {
         throw new DomainError('HR_POSTING_MISMATCH', 422, 'Đề xuất hạch toán không ghi người đã duyệt bảng lương là đồng tác giả; hãy lập lại đề xuất', { what: 'coAuthors' });
       }

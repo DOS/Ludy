@@ -12,12 +12,13 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb, type Db } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -26,13 +27,14 @@ const suite = ADMIN ? describe : describe.skip;
 suite('OAuth connect attempts on PostgreSQL (S6.1)', () => {
   const dbName = `crove_test_oauth_state_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appPool: pg.Pool;
   let api: Runtime;
   let appDb: Db;
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = createDbClient({ connectionString: adminUrl }, dbIds);
     await client.connect();
     try {
       return await fn(client);
@@ -60,9 +62,9 @@ suite('OAuth connect attempts on PostgreSQL (S6.1)', () => {
   // Runs SQL as a login role in a member's context, the way the runtime enters it, skipping the commands.
   async function asMemberSql<T extends pg.QueryResultRow>(role: 'crove_app' | 'crove_worker', userId: string, orgId: string, text: string, values: unknown[]): Promise<pg.QueryResult<T>> {
     const u = new URL(adminUrl);
-    u.username = role;
+    u.username = dbIds ? dbIds.roleName(role) : role;
     u.password = role === 'crove_app' ? 'test-app-pw' : 'test-worker-pw';
-    const client = new pg.Client({ connectionString: u.toString() });
+    const client = createDbClient({ connectionString: u.toString() }, dbIds);
     await client.connect();
     try {
       await client.query('BEGIN');
@@ -92,11 +94,12 @@ suite('OAuth connect attempts on PostgreSQL (S6.1)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const u = new URL(adminUrl);
-    u.username = 'crove_app';
+    u.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     u.password = 'test-app-pw';
-    appPool = createPool({ connectionString: u.toString(), max: 4 });
+    appPool = createDbPool({ connectionString: u.toString(), max: 4 }, dbIds);
     appDb = createDb(appPool);
     api = new Runtime(appDb, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
   });

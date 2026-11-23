@@ -9,7 +9,7 @@
 // 'ai' stops AI document reading and every agent run; 'mail' holds the mail queue (mail stays queued and goes out once
 // released); 'relay:<event type>' (#1696) holds the outbox events of that type in every org while the relay sends
 // every other type, and sends the held ones, in order, once released. It writes through
-// crove_kernel.global_kill_switch_set, which only the database owner may run, so it needs the admin URL the migrations
+// ludy_kernel.global_kill_switch_set, which only the database owner may run, so it needs the admin URL the migrations
 // use; no Crove login can flip it. Every change is a row of the switch's append-only history, with when, who and why:
 // that row is its audit trail.
 //
@@ -64,19 +64,19 @@ export function parseArgs(argv) {
 // 'ai' and 'mail' always, then every relay key that has a history, each with its state and last change. An engaged
 // relay key also shows how many events it holds (up to 10000), so a mistyped type that holds nothing shows 0.
 export const STATUS_SQL = `
-  SELECT k.key, crove_kernel.global_kill_switch_on(k.key) AS engaged,
-         (SELECT row_to_json(s) FROM (SELECT g.changed_at, g.changed_by, g.reason FROM crove_kernel.global_kill_switch g
+  SELECT k.key, ludy_kernel.global_kill_switch_on(k.key) AS engaged,
+         (SELECT row_to_json(s) FROM (SELECT g.changed_at, g.changed_by, g.reason FROM ludy_kernel.global_kill_switch g
            WHERE g.key = k.key ORDER BY g.changed_at DESC, g.id DESC LIMIT 1) s) AS last,
-         CASE WHEN k.key LIKE 'relay:%' AND crove_kernel.global_kill_switch_on(k.key) THEN
-           (SELECT count(*)::int FROM (SELECT 1 FROM crove_kernel.outbox_pending p
-              JOIN crove_kernel.outbox_event e ON e.org_id = p.org_id AND e.id = p.event_id
+         CASE WHEN k.key LIKE 'relay:%' AND ludy_kernel.global_kill_switch_on(k.key) THEN
+           (SELECT count(*)::int FROM (SELECT 1 FROM ludy_kernel.outbox_pending p
+              JOIN ludy_kernel.outbox_event e ON e.org_id = p.org_id AND e.id = p.event_id
               WHERE e.type = substr(k.key, 7) LIMIT 10000) h)
          END AS held
   FROM (SELECT unnest($1::text[]) AS key
-        UNION SELECT DISTINCT g.key FROM crove_kernel.global_kill_switch g WHERE g.key LIKE 'relay:%') k
+        UNION SELECT DISTINCT g.key FROM ludy_kernel.global_kill_switch g WHERE g.key LIKE 'relay:%') k
   ORDER BY k.key LIKE 'relay:%', k.key`;
 
-export const SET_SQL = 'SELECT crove_kernel.global_kill_switch_set($1, $2, $3, $4)';
+export const SET_SQL = 'SELECT ludy_kernel.global_kill_switch_set($1, $2, $3, $4)';
 
 /**
  * @typedef {{ key: string, engaged: boolean, last: { changed_at: string, changed_by: string, reason: string | null } | null, held: number | null }} SwitchStatus

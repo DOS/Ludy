@@ -6,20 +6,22 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import type { AdAccountView } from '@crove/kernel-contract';
-import { Card } from '@crove/ui/components/card';
-import { NativeSelect } from '@crove/ui/components/native-select';
-import { TableCell, TableRow } from '@crove/ui/components/table';
+import type { AdAccountView } from '@ludy/kernel-contract';
+import { buttonVariants } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { NativeSelect } from '@ludy/ui/components/native-select';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { useFormat } from '../i18n/provider.tsx';
 import { adsRange, hasFigures } from '../lib/ads.ts';
 import { errorMessage, orpc } from '../lib/api.ts';
 import { pipelineTotals } from '../lib/reports.ts';
-import { ChangeChip } from './social-growth.tsx';
+import { SocialMetrics } from './social-metrics.tsx';
+import { GoalsCard } from './social-goals.tsx';
+import { TeamReport } from './social-team-report.tsx';
+import { ReportLinks } from './social-report-links.tsx';
+import { ReportSchedules } from './social-report-schedules.tsx';
+import { useLabels } from './social-labels.tsx';
 import { CardSkeleton, DataTable, Empty, ErrorText, TableSkeleton } from './ui.tsx';
-
-// The posts' window: the last 30 days, set against the 30 days before.
-const POSTS_DAYS = 30;
-const POST_METRICS = ['reach', 'reactions', 'comments', 'shares'] as const;
 
 function Stat({ label, note, children }: { label: string; note?: string | undefined; children: ReactNode }) {
   return (
@@ -209,17 +211,37 @@ export function QuotesPanel({ slug }: { slug: string }) {
   );
 }
 
-// How the posts that went out did: the last 30 days, each total against the 30 days before.
-export function PostsPanel({ slug }: { slug: string }) {
+// How the posts that went out did, and what goes with the figures (#3658): the one place for them. The window (7, 30 or 90 days),
+// the totals against the period before, the channels, the best posts and the CSV export; the monthly goals, the team report,
+// the links for clients and the e-mail schedules under them. The Posts screen keeps a line and a link here.
+// labelId and onLabel: the label the report is limited to, kept in the address by the screen.
+export function PostsPanel({ slug, labelId = '', onLabel = () => undefined }: { slug: string; labelId?: string | undefined; onLabel?: (label: string) => void }) {
   const t = useTranslations('reports.posts');
   const ts = useTranslations('social');
-  const f = useFormat();
-  const totals = useQuery(orpc.social.metrics.totals.queryOptions({ input: { days: POSTS_DAYS } }));
-  const against = ts('growth.change.days', { days: String(POSTS_DAYS) });
-  const data = totals.data;
-  const title = t('title', { days: POSTS_DAYS });
+  const channels = useQuery(orpc.channels.list.queryOptions({ input: {} }));
+  const labels = useLabels();
+  // The empty report's one action is for whoever can use it (#3654): writing needs a role that writes and a channel; a viewer gets none.
+  const me = useQuery(orpc.me.get.queryOptions());
+  const role = me.data?.orgs.find((o) => o.slug === slug)?.role;
+  const canWrite = role === 'owner' || role === 'admin' || role === 'member';
+  const canConnect = role === 'owner' || role === 'admin';
+  const noChannels = channels.isSuccess && channels.data.length === 0;
+  const names = new Map((channels.data ?? []).map((c) => [c.id, c.displayName]));
+  const labelList = labels.data ?? [];
+  const title = t('title');
+  const action = !canWrite ? undefined : noChannels ? (
+    canConnect ? (
+      <Link to="/o/$slug/social/channels" params={{ slug }} className={buttonVariants({ size: 'lg' })}>
+        {ts('connectFirst')}
+      </Link>
+    ) : undefined
+  ) : (
+    <Link to="/o/$slug/social/new" params={{ slug }} className={buttonVariants({ size: 'lg' })}>
+      {ts('compose')}
+    </Link>
+  );
   return (
-    <section aria-label={title}>
+    <section aria-label={title} data-testid="reports-posts" className="space-y-4">
       <Heading
         title={title}
         hint={t('hint')}
@@ -229,28 +251,24 @@ export function PostsPanel({ slug }: { slug: string }) {
           </Link>
         }
       />
-      {totals.error ? (
-        <ErrorText>{errorMessage(totals.error)}</ErrorText>
-      ) : !data ? (
-        <CardSkeleton />
-      ) : data.posts === 0 ? (
-        <Empty title={t('empty')} hint={t('emptyHint')} />
-      ) : (
-        <Card className="block p-4">
-          <dl className="grid grid-cols-2 gap-4 sm:grid-cols-5">
-            <Stat label={ts('growth.posts')}>
-              {f.number(data.posts)}
-              <ChangeChip current={data.posts} previous={data.previous.posts} against={against} className="mt-1 flex" />
-            </Stat>
-            {POST_METRICS.map((metric) => (
-              <Stat key={metric} label={ts(`metric.${metric}`)}>
-                {f.number(data.metrics[metric] ?? 0)}
-                <ChangeChip current={data.metrics[metric] ?? 0} previous={data.previous.metrics[metric]} against={against} className="mt-1 flex" />
-              </Stat>
+      {(labelList.length > 0 || labelId !== '') && (
+        <label className="block text-xs">
+          <span className="text-subtle-foreground">{ts('filters.label')}</span>
+          <NativeSelect className="mt-1 w-48" value={labelId} onChange={(e) => onLabel(e.target.value)}>
+            <option value="">{ts('filters.allLabels')}</option>
+            {labelList.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
             ))}
-          </dl>
-        </Card>
+          </NativeSelect>
+        </label>
       )}
+      <SocialMetrics slug={slug} names={names} labelId={labelId || undefined} action={action} />
+      <GoalsCard channels={channels.data ?? []} />
+      <TeamReport key={slug} />
+      <ReportLinks channels={channels.data ?? []} />
+      <ReportSchedules channels={channels.data ?? []} />
     </section>
   );
 }

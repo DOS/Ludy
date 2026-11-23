@@ -2,7 +2,7 @@
 // The extension token's credential format, its route list and the edge's scope check (#2582, ADR-0047 point 10).
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { DomainError } from '@crove/kernel-runtime';
+import { DomainError } from '@ludy/kernel-runtime';
 import {
   EXTENSION_ROUTES,
   EXTENSION_TOKEN_PREFIX,
@@ -51,14 +51,23 @@ describe('extension secrets', () => {
 });
 
 describe('the routes an extension token may reach', () => {
+  // Landing in two steps (ADR-0055 slice 1, issue #4123): the route of the capture heartbeat may be on the list or not; the step that adds it moves it into the list below and empties this one.
+  const ROUTES_NEXT = ['POST /api/rpc/meetings/captureHeartbeat meetings'];
   it('lists each route with its reason, the meetings ones with the meetings scope', () => {
-    expect(EXTENSION_ROUTES.map((r) => `${r.method} ${r.path} ${r.scope}`)).toEqual([
+    const listed = EXTENSION_ROUTES.map((r) => `${r.method} ${r.path} ${r.scope}`);
+    // The optional route is on the list once or not at all (the filter below drops every copy of it).
+    for (const next of ROUTES_NEXT) expect(listed.filter((route) => route === next).length).toBeLessThanOrEqual(1);
+    expect(listed.filter((route) => !ROUTES_NEXT.includes(route))).toEqual([
       'GET /api/extension/me null',
       'POST /api/rpc/meetings/create meetings',
       'POST /api/rpc/meetings/extensionStatus meetings',
+      'POST /api/rpc/meetings/recordingStopped meetings',
+      'POST /api/rpc/meetings/agenda/next agenda',
       'POST /api/files/uploads meetings',
       'POST /api/meetings/:id/media meetings',
       'POST /api/meetings/:id/live-chunk meetings',
+      'POST /api/rpc/notes/clip notes',
+      'POST /api/rpc/notes/todos/quickCapture notes',
     ]);
     expect(EXTENSION_ROUTES.every((r) => r.why.length > 20)).toBe(true);
   });
@@ -66,6 +75,13 @@ describe('the routes an extension token may reach', () => {
   it('matches a listed method and path exactly, with one UUID for an id', () => {
     expect(matchExtensionRoute('POST', `/api/meetings/${ID}/media`)?.scope).toBe('meetings');
     expect(matchExtensionRoute('POST', `/api/meetings/${ID}/live-chunk`)?.scope).toBe('meetings');
+    expect(matchExtensionRoute('POST', '/api/rpc/notes/clip')?.scope).toBe('notes');
+    expect(matchExtensionRoute('POST', '/api/rpc/notes/todos/quickCapture')?.scope).toBe('notes');
+    expect(matchExtensionRoute('GET', '/api/rpc/notes/clip')).toBeNull();
+    expect(matchExtensionRoute('POST', '/api/rpc/notes/list')).toBeNull();
+    expect(matchExtensionRoute('POST', '/api/rpc/notes/get')).toBeNull();
+    expect(matchExtensionRoute('POST', '/api/rpc/notes/todos/list')).toBeNull();
+    expect(matchExtensionRoute('POST', '/api/rpc/notes/todos/get')).toBeNull();
     expect(matchExtensionRoute('GET', `/api/meetings/${ID}/live-chunk`)).toBeNull();
     expect(matchExtensionRoute('POST', '/api/meetings/x/live-chunk')).toBeNull();
     expect(matchExtensionRoute('POST', '/api/meetings/x/media')).toBeNull();
@@ -87,6 +103,11 @@ describe('the routes an extension token may reach', () => {
     expect(refused).toBeInstanceOf(DomainError);
     expect(refused).toMatchObject({ code: 'FORBIDDEN', status: 403, details: { rule: 'extension_scope' } });
     expect(refuseOutsideScopes(['meetings'], 'POST', '/api/rpc/meetings/create')).toBeNull();
+    expect(refuseOutsideScopes(['notes'], 'POST', '/api/rpc/notes/clip')).toBeNull();
+    expect(refuseOutsideScopes(['notes'], 'POST', '/api/rpc/notes/todos/quickCapture')).toBeNull();
+    expect(refuseOutsideScopes(['notes'], 'POST', '/api/rpc/meetings/create')).toMatchObject({ status: 403 });
+    expect(refuseOutsideScopes(['meetings'], 'POST', '/api/rpc/notes/clip')).toMatchObject({ status: 403 });
+    expect(refuseOutsideScopes(['notes'], 'POST', '/api/rpc/notes/list')).toMatchObject({ status: 403 });
     expect(refuseOutsideScopes(['other'], 'POST', '/api/rpc/meetings/create')).toMatchObject({ status: 403 });
     expect(refuseOutsideScopes([], 'POST', '/api/rpc/meetings/create')).toMatchObject({ status: 403 });
     // A route open to any token still needs a token that is valid, which authenticate() has settled before this runs.

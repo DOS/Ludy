@@ -108,7 +108,7 @@ describe('the delivery panel of an order (#2697)', () => {
     expect(count(html, 'data-testid="order-delivery-stock-retry"')).toBe(2);
     expect(html).toContain('Ghi kho');
     expect(html).toContain('Ghi hoàn kho');
-    expect(html).toContain('Chưa kiểm tra việc ghi kho');
+    expect(html).toContain('Chưa biết kho đã ghi chưa; bấm Ghi kho.');
     expect(count(html, 'data-testid="order-delivery-stock-teach"')).toBe(0);
   });
 

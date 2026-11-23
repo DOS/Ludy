@@ -8,9 +8,9 @@
 // A link may choose its sections and their order (#1259): report_link_view returns only those, the rest as null.
 import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import { zId, zSocialReportSections, zSocialReportTopCount, type SocialReportSection } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { zId, zSocialReportSections, zSocialReportTopCount, type SocialReportSection } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
@@ -111,18 +111,18 @@ export const reportLinkCreate = defineCommand({
     const end = new Date(bounds.endMs);
     const ids = [...new Set(input.connectionIds ?? [])];
     if (ids.length > 0) {
-      const found = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
+      const found = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
       if (found.length !== ids.length) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
     }
     if (input.labelId) {
       if (input.includeExternal === true) throw new DomainError('REPORT_LABEL_EXTERNAL', 422, 'Báo cáo theo nhãn không tính bài đăng ngoài');
       // Held until the commit, so the label cannot go between this check and the insert (its FK cascades to the link).
-      const label = await ctx.trx.selectFrom('crove_social.label').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.labelId).forShare().executeTakeFirst();
+      const label = await ctx.trx.selectFrom('ludy_social.label').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.labelId).forShare().executeTakeFirst();
       if (!label) throw new DomainError('LABEL_NOT_FOUND', 404, 'Không tìm thấy nhãn này');
     }
     const includeAudience = audienceOf(input.sections, input.includeAudience);
     const live = await ctx.trx
-      .selectFrom('crove_social.report_link')
+      .selectFrom('ludy_social.report_link')
       .select((eb) => eb.fn.countAll<string>().as('n'))
       .where('org_id', '=', ctx.orgId)
       .where('revoked_at', 'is', null)
@@ -134,7 +134,7 @@ export const reportLinkCreate = defineCommand({
     const token = newReportToken();
     const expiresAt = new Date(ctx.now.getTime() + (input.days ?? 30) * DAY_MS);
     const row = await ctx.trx
-      .insertInto('crove_social.report_link')
+      .insertInto('ludy_social.report_link')
       .values({
         org_id: ctx.orgId,
         token_sha256: reportTokenHash(token),
@@ -172,16 +172,17 @@ export function audienceOf(sections: readonly SocialReportSection[] | null | und
 
 export const reportLinkRevoke = defineCommand({
   name: 'social.report_link.revoke',
+  runsWhenOff: 'revokes a client report link, so a leaked link can still be killed while the app is off',
   input: z.strictObject({ linkId: zId }),
   risk: 'R1',
   sideEffect: 'internal',
   access: ADMINS,
   handler: async (ctx, input) => {
     const userId = requireUser(ctx);
-    const link = await ctx.trx.selectFrom('crove_social.report_link').select(['id', 'revoked_at']).where('org_id', '=', ctx.orgId).where('id', '=', input.linkId).forUpdate().executeTakeFirst();
+    const link = await ctx.trx.selectFrom('ludy_social.report_link').select(['id', 'revoked_at']).where('org_id', '=', ctx.orgId).where('id', '=', input.linkId).forUpdate().executeTakeFirst();
     if (!link) throw new DomainError('REPORT_LINK_NOT_FOUND', 404, 'Không tìm thấy liên kết báo cáo này');
     if (link.revoked_at === null) {
-      await ctx.trx.updateTable('crove_social.report_link').set({ revoked_at: ctx.now, revoked_by: userId }).where('org_id', '=', ctx.orgId).where('id', '=', link.id).execute();
+      await ctx.trx.updateTable('ludy_social.report_link').set({ revoked_at: ctx.now, revoked_by: userId }).where('org_id', '=', ctx.orgId).where('id', '=', link.id).execute();
     }
     return { linkId: link.id };
   },
@@ -214,7 +215,7 @@ export const reportLinkList = defineQuery({
   access: ALL,
   handler: async (ctx): Promise<ReportLinkView[]> => {
     const rows = await ctx.trx
-      .selectFrom('crove_social.report_link')
+      .selectFrom('ludy_social.report_link')
       .select(['id', 'title', 'note', 'period_start', 'period_end', 'connection_ids', 'created_by', 'created_at', 'expires_at', 'revoked_at', 'include_external', 'label_id', 'include_audience', 'sections', 'top_count'])
       .where('org_id', '=', ctx.orgId)
       .where('schedule_id', 'is', null)

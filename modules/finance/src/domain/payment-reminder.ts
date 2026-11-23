@@ -8,7 +8,7 @@
 // - what is still owed is the customer's balance on 131 (reversals counted, as the customers list does), laid over the customer's
 //   invoices newest first: the oldest invoices are taken as paid first. Whatever balance no invoice covers (an opening balance, a
 //   manual journal) is `other`: shown to the person, never worded into a reminder.
-import { Decimal } from '@crove/l10n-vn';
+import { Decimal } from '@ludy/l10n-vn';
 
 export const PAYMENT_TERMS_DAYS = 30;
 // A customer's notice level by the days its oldest overdue invoice is late: first from the first day, second from the 15th, final from the 30th.

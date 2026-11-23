@@ -1,5 +1,5 @@
 // Bookings of the public booking page (issue #1318, plan docs/plan/calendar.md §3.3). The page records a pending
-// booking through crove_crm.booking_request (the API's login cannot enter an org's system context); the worker then
+// booking through ludy_crm.booking_request (the API's login cannot enter an org's system context); the worker then
 // runs crm.booking.confirm here as a system actor: it checks the time is still one of the type's free slots, holds an
 // event on the host's calendar, links the booking to a party (matched by email, else created) with an activity on its
 // timeline, and marks the booking confirmed, or refused when the time was taken or is no longer offered.
@@ -12,12 +12,12 @@
 // Mails and links (#1319, step C4): a confirmation queues a mail to the visitor and one to the host (template
 // crm.booking, with an .ics event) and emits crm.booking.scheduled, from which the worker queues the reminders (24 hours
 // and 1 hour before; crm.booking.remind sends one only while the booking still starts then). The visitor's mails carry
-// a manage link (crove_crm.booking_manage_token, minted at send time through crm.booking.mail_data): the page records
-// an ask with crove_crm.booking_manage_request, and crm.booking.manage carries it out here. A cancel or a move raises
+// a manage link (ludy_crm.booking_manage_token, minted at send time through crm.booking.mail_data): the page records
+// an ask with ludy_crm.booking_manage_request, and crm.booking.manage carries it out here. A cancel or a move raises
 // the booking's revision, which ends every link minted before it.
 //
 // Confirmations and moves of one host run one at a time (an advisory lock), so the slot check sees every earlier
-// booking; the exclusion constraint on crove_kernel.calendar_event stays the last line against any other writer.
+// booking; the exclusion constraint on ludy_kernel.calendar_event stays the last line against any other writer.
 //
 // Team types (#1373, step C8): a round-robin booking lands on one free host of the type (the one with the fewest
 // upcoming bookings of it, ties by member id); a collective booking holds an event on every host's calendar, the
@@ -26,10 +26,10 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { sql } from 'kysely';
-import { BOOKING_DEAL_LIST_MAX, GOOGLE_CALENDAR_EVENTS_SCOPE, MEET_URL, freeSlots, zBookingCancel, zBookingDealLink, zBookingDealUnlink, zBookingListQuery, zBookingMove, zDealBookingsQuery, zId, zonedDate, zoneOffsetMs, type BookingDealChanged, type BookingItem, type DealBookings, type Interval, type WorkingHours } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { busyOf, createMailMessage, workingHoursOf } from '@crove/kernel';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { BOOKING_DEAL_LIST_MAX, GOOGLE_CALENDAR_EVENTS_SCOPE, MEET_URL, freeSlots, zBookingCancel, zBookingDealLink, zBookingDealUnlink, zBookingListQuery, zBookingMove, zDealBookingsQuery, zId, zonedDate, zoneOffsetMs, type BookingDealChanged, type BookingItem, type DealBookings, type Interval, type WorkingHours } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { busyOf, createMailMessage, workingHoursOf } from '@ludy/kernel';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { openDealsFor, suggestDeals } from './booking-deals.ts';
 
 const DAY_MS = 86_400_000;
@@ -42,7 +42,7 @@ type Outcome = { bookingId: string; status: 'confirmed' | 'refused' | 'pending' 
 // Takes every host's lock, in one order, so two bookings of overlapping teams cannot wait on each other.
 async function lockHosts(ctx: CommandContext, hostUserIds: readonly string[]): Promise<void> {
   for (const id of [...new Set(hostUserIds)].sort()) {
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_crm.booking:${ctx.orgId}:${id}`}, 0))`.execute(ctx.trx);
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`ludy_crm.booking:${ctx.orgId}:${id}`}, 0))`.execute(ctx.trx);
   }
 }
 
@@ -57,9 +57,9 @@ function wallTime(timeZone: string, at: number): string {
 // The party with this email in the org, or a new person with the visitor's name, email and phone. Confirmations for
 // different hosts run in parallel, so the same visitor booking two of them at once takes this lock first.
 async function partyFor(ctx: CommandContext, name: string, email: string, phone: string | null): Promise<string> {
-  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_crm.party:${ctx.orgId}:${email.toLowerCase()}`}, 0))`.execute(ctx.trx);
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`ludy_crm.party:${ctx.orgId}:${email.toLowerCase()}`}, 0))`.execute(ctx.trx);
   const existing = await ctx.trx
-    .selectFrom('crove_kernel.party')
+    .selectFrom('ludy_kernel.party')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where((eb) => eb(eb.fn('lower', ['email']), '=', email.toLowerCase()))
@@ -68,16 +68,16 @@ async function partyFor(ctx: CommandContext, name: string, email: string, phone:
     .limit(1)
     .executeTakeFirst();
   if (existing) return existing.id;
-  // The id is given here and the row inserted without RETURNING (see crove_kernel.party_link_new, #1280).
+  // The id is given here and the row inserted without RETURNING (see ludy_kernel.party_link_new, #1280).
   const created = { id: randomUUID() };
-  await ctx.trx.insertInto('crove_kernel.party').values({ id: created.id, org_id: ctx.orgId, kind: 'person', name, email, phone, source_trust: 'external' }).execute();
+  await ctx.trx.insertInto('ludy_kernel.party').values({ id: created.id, org_id: ctx.orgId, kind: 'person', name, email, phone, source_trust: 'external' }).execute();
   await ctx.activity('kernel.party', created.id, 'party.created', 'Thêm khách hàng từ trang đặt lịch');
   return created.id;
 }
 
 type EventType = Awaited<ReturnType<typeof eventTypeOf>>;
 const eventTypeOf = (ctx: Pick<CommandContext, 'trx' | 'orgId'>, id: string) =>
-  ctx.trx.selectFrom('crove_crm.event_type').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', id).executeTakeFirstOrThrow();
+  ctx.trx.selectFrom('ludy_crm.event_type').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', id).executeTakeFirstOrThrow();
 
 // The type's hosts who may still be booked (members who keep a calendar), lead first: the lead alone for a single
 // type. None when the type is archived.
@@ -85,7 +85,7 @@ async function hostsOf(ctx: Pick<CommandContext, 'trx' | 'orgId'>, type: EventTy
   if (!type.active) return [];
   const ids = type.assignment === 'single' ? [type.host_user_id] : [type.host_user_id, ...type.co_host_user_ids];
   const members = await ctx.trx
-    .selectFrom('crove_kernel.tenant_member')
+    .selectFrom('ludy_kernel.tenant_member')
     .select(['user_id', 'role'])
     .where('org_id', '=', ctx.orgId)
     .where('user_id', 'in', ids)
@@ -98,7 +98,7 @@ async function hostsOf(ctx: Pick<CommandContext, 'trx' | 'orgId'>, type: EventTy
 // connection; nothing of it but this yes or no is used.
 async function meetReady(ctx: CommandContext, userId: string): Promise<boolean> {
   const row = await ctx.trx
-    .selectFrom('crove_kernel.calendar_connection')
+    .selectFrom('ludy_kernel.calendar_connection')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('user_id', '=', userId)
@@ -114,8 +114,8 @@ async function meetReady(ctx: CommandContext, userId: string): Promise<boolean> 
 // Of the round-robin hosts free at a time, the one with the fewest upcoming bookings of the type (ties by member id).
 async function leastBooked(ctx: CommandContext, type: EventType, free: readonly string[]): Promise<string> {
   const counts = await ctx.trx
-    .selectFrom('crove_crm.booking as b')
-    .innerJoin('crove_kernel.calendar_event as ev', (j) => j.onRef('ev.org_id', '=', 'b.org_id').onRef('ev.id', '=', 'b.calendar_event_id'))
+    .selectFrom('ludy_crm.booking as b')
+    .innerJoin('ludy_kernel.calendar_event as ev', (j) => j.onRef('ev.org_id', '=', 'b.org_id').onRef('ev.id', '=', 'b.calendar_event_id'))
     .select(['ev.user_id', (eb) => eb.fn.countAll<string>().as('n')])
     .where('b.org_id', '=', ctx.orgId)
     .where('b.event_type_id', '=', type.id)
@@ -143,7 +143,7 @@ async function slotCheck(
   const to = new Date(end + DAY_MS);
   const busy = await busyOf(ctx, hostUserId, from, to, own?.eventId);
   const booked = await ctx.trx
-    .selectFrom('crove_crm.booking')
+    .selectFrom('ludy_crm.booking')
     .select('starts_at')
     .where('org_id', '=', ctx.orgId)
     .where('event_type_id', '=', type.id)
@@ -218,13 +218,13 @@ async function queueBookingMails(
   toHost = true,
 ): Promise<void> {
   if (!booking.email || !booking.visitor_name) return;
-  const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+  const tenant = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
   // The hosts' addresses while they are members (the worker's member_emails: no name, no other account column). Only
   // the worker mails the hosts: a change a host made in the app mails the visitor alone.
   const emails = toHost
     ? new Map(
         (
-          await sql<{ user_id: string; email: string | null }>`SELECT user_id, email FROM crove_kernel.member_emails(${hosts.map((h) => h.userId)}::uuid[])`.execute(ctx.trx)
+          await sql<{ user_id: string; email: string | null }>`SELECT user_id, email FROM ludy_kernel.member_emails(${hosts.map((h) => h.userId)}::uuid[])`.execute(ctx.trx)
         ).rows.map((r) => [r.user_id, r.email]),
       )
     : new Map<string, string | null>();
@@ -288,7 +288,7 @@ export const bookingConfirm = defineCommand({
   access: 'system',
   handler: async (ctx, input): Promise<Outcome> => {
     const booking = await ctx.trx
-      .selectFrom('crove_crm.booking')
+      .selectFrom('ludy_crm.booking')
       .select(['id', 'event_type_id', 'starts_at', 'ends_at', 'status', 'visitor_name', 'email', 'phone', 'time_zone', 'revision'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.bookingId)
@@ -304,7 +304,7 @@ export const bookingConfirm = defineCommand({
 
     const refuse = async (refusal: 'taken' | 'unavailable'): Promise<Outcome> => {
       await ctx.trx
-        .updateTable('crove_crm.booking')
+        .updateTable('ludy_crm.booking')
         .set({ status: 'refused', refusal, decided_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', booking.id)
@@ -339,7 +339,7 @@ export const bookingConfirm = defineCommand({
     const held: Held[] = [];
     for (const host of holding) {
       const event = await ctx.trx
-        .insertInto('crove_kernel.calendar_event')
+        .insertInto('ludy_kernel.calendar_event')
         .values({
           org_id: ctx.orgId,
           user_id: host.userId,
@@ -360,7 +360,7 @@ export const bookingConfirm = defineCommand({
     const partyId = await partyFor(ctx, booking.visitor_name, booking.email, booking.phone);
     await ctx.activity('kernel.party', partyId, 'crm.booking.confirmed', `Đặt lịch hẹn ${type.title} lúc ${wallTime(primary.hours.timeZone, start)}`);
     await ctx.trx
-      .updateTable('crove_crm.booking')
+      .updateTable('ludy_crm.booking')
       .set({ status: 'confirmed', calendar_event_id: primary.eventId, hold_event_ids: more.map((h) => h.eventId), party_id: partyId, decided_at: ctx.now, meeting_state: meet ? 'pending' : wantsMeet ? 'failed' : 'none' })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', booking.id)
@@ -404,14 +404,14 @@ export const bookingMailData = defineCommand({
   access: 'system',
   handler: async (ctx, input): Promise<BookingMailData> => {
     const booking = await ctx.trx
-      .selectFrom('crove_crm.booking')
+      .selectFrom('ludy_crm.booking')
       .select(['revision', 'visitor_name', 'email', 'phone', 'note', 'meeting_state', 'meeting_url'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.bookingId)
       // Held until the token is read, so a move cannot commit between the revision check and the token.
       .forShare()
       .executeTakeFirst();
-    const { rows } = await sql<{ token: string | null }>`SELECT crove_crm.booking_manage_token(${input.bookingId}::uuid) AS token`.execute(ctx.trx);
+    const { rows } = await sql<{ token: string | null }>`SELECT ludy_crm.booking_manage_token(${input.bookingId}::uuid) AS token`.execute(ctx.trx);
     return {
       // A mail of an earlier revision (sent after a move) carries no link: links of earlier revisions are dead.
       token: booking?.revision === input.revision ? (rows[0]?.token ?? null) : null,
@@ -436,7 +436,7 @@ export const bookingMeetingSettle = defineCommand({
   access: 'system',
   handler: async (ctx, input): Promise<{ settled: boolean; state?: 'ready' | 'failed' }> => {
     const found = await ctx.trx
-      .selectFrom('crove_crm.booking')
+      .selectFrom('ludy_crm.booking')
       .select(['id', 'event_type_id', 'starts_at', 'ends_at', 'status', 'time_zone', 'revision', 'visitor_name', 'email', 'calendar_event_id', 'hold_event_ids', 'meeting_state'])
       .where('org_id', '=', ctx.orgId)
       .$if(input.calendarEventId !== undefined, (q) => q.where('calendar_event_id', '=', input.calendarEventId as string))
@@ -447,11 +447,11 @@ export const bookingMeetingSettle = defineCommand({
     if (!found || found.meeting_state !== 'pending' || found.status !== 'confirmed') return { settled: false };
     const url = input.url !== null && MEET_URL.test(input.url) ? input.url : null;
     const state = url === null ? ('failed' as const) : ('ready' as const);
-    await ctx.trx.updateTable('crove_crm.booking').set({ meeting_state: state, meeting_url: url }).where('org_id', '=', ctx.orgId).where('id', '=', found.id).execute();
+    await ctx.trx.updateTable('ludy_crm.booking').set({ meeting_state: state, meeting_url: url }).where('org_id', '=', ctx.orgId).where('id', '=', found.id).execute();
     // The event stops asking for a conference either way: a failed one makes none, and a ready one keeps the Meet Google made (a later write of the event, a move,
     // leaves its conference data alone), so the request is not sent again.
     if (found.calendar_event_id) {
-      await ctx.trx.updateTable('crove_kernel.calendar_event').set({ conference: false }).where('org_id', '=', ctx.orgId).where('id', '=', found.calendar_event_id).execute();
+      await ctx.trx.updateTable('ludy_kernel.calendar_event').set({ conference: false }).where('org_id', '=', ctx.orgId).where('id', '=', found.calendar_event_id).execute();
     }
     const type = await eventTypeOf(ctx, found.event_type_id);
     const held = await holdHosts(ctx, await eventsOf(ctx, { calendar_event_id: found.calendar_event_id, hold_event_ids: found.hold_event_ids }));
@@ -466,7 +466,7 @@ export const bookingMeetingSettle = defineCommand({
 export type ManageOutcome = 'cancelled' | 'moved' | 'taken' | 'unavailable' | 'none';
 
 const lockBooking = (ctx: CommandContext, bookingId: string) =>
-  ctx.trx.selectFrom('crove_crm.booking').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', bookingId).forUpdate().executeTakeFirst();
+  ctx.trx.selectFrom('ludy_crm.booking').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', bookingId).forUpdate().executeTakeFirst();
 type HeldBooking = NonNullable<Awaited<ReturnType<typeof lockBooking>>> & { calendar_event_id: string };
 // Who cancels or moves a booking: the visitor from a manage link, or the host (or an owner or admin) in the app.
 type ChangedBy = 'visitor' | 'host';
@@ -481,7 +481,7 @@ const changeable = (ctx: CommandContext, b: NonNullable<Awaited<ReturnType<typeo
 async function eventsOf(ctx: Pick<CommandContext, 'trx' | 'orgId'>, booking: { calendar_event_id: string | null; hold_event_ids: string[] }): Promise<Omit<Held, 'hours'>[]> {
   if (booking.calendar_event_id === null) return [];
   const ids = [booking.calendar_event_id, ...booking.hold_event_ids];
-  const events = await ctx.trx.selectFrom('crove_kernel.calendar_event').select(['id', 'user_id']).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
+  const events = await ctx.trx.selectFrom('ludy_kernel.calendar_event').select(['id', 'user_id']).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
   const owner = new Map(events.map((e) => [e.id, e.user_id]));
   return ids.flatMap((eventId) => {
     const userId = owner.get(eventId);
@@ -503,14 +503,14 @@ async function holdHosts(ctx: CommandContext, events: readonly Omit<Held, 'hours
 async function cancelHeld(ctx: CommandContext, booking: HeldBooking, type: EventType, held: readonly Held[], by: ChangedBy): Promise<void> {
   const hours = (held[0] as Held).hours;
   await ctx.trx
-    .updateTable('crove_kernel.calendar_event')
+    .updateTable('ludy_kernel.calendar_event')
     .set({ status: 'cancelled', cancelled_at: ctx.now })
     .where('org_id', '=', ctx.orgId)
     .where('id', 'in', held.map((h) => h.eventId))
     .where('status', '=', 'active')
     .execute();
   await ctx.trx
-    .updateTable('crove_crm.booking')
+    .updateTable('ludy_crm.booking')
     .set({ status: 'cancelled', cancelled_at: ctx.now, revision: booking.revision + 1 })
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', booking.id)
@@ -553,14 +553,14 @@ async function moveHeld(
   const endsAt = new Date(end);
   for (const h of held) {
     await ctx.trx
-      .updateTable('crove_kernel.calendar_event')
+      .updateTable('ludy_kernel.calendar_event')
       .set({ starts_at: startsAt, ends_at: endsAt, time_zone: h.hours.timeZone })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', h.eventId)
       .execute();
   }
   await ctx.trx
-    .updateTable('crove_crm.booking')
+    .updateTable('ludy_crm.booking')
     .set({ starts_at: startsAt, ends_at: endsAt, revision: booking.revision + 1 })
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', booking.id)
@@ -574,7 +574,7 @@ async function moveHeld(
   return 'moved';
 }
 
-// Carries out a visitor's ask from a manage link (recorded by crove_crm.booking_manage_request): the ask `requestId`
+// Carries out a visitor's ask from a manage link (recorded by ludy_crm.booking_manage_request): the ask `requestId`
 // names, while it is still the booking's last and unanswered. A cancel frees the slot; a move holds the new time if it
 // is still a free slot of the type, else the answer says why and the link keeps working.
 export const bookingManage = defineCommand({
@@ -592,7 +592,7 @@ export const bookingManage = defineCommand({
     }
     const type = await eventTypeOf(ctx, booking.event_type_id);
     const answer = async (outcome: Exclude<ManageOutcome, 'none'>) => {
-      await ctx.trx.updateTable('crove_crm.booking').set({ manage_outcome: outcome }).where('org_id', '=', ctx.orgId).where('id', '=', booking.id).execute();
+      await ctx.trx.updateTable('ludy_crm.booking').set({ manage_outcome: outcome }).where('org_id', '=', ctx.orgId).where('id', '=', booking.id).execute();
       ctx.audit({ bookingId: booking.id, action: booking.manage_action, outcome });
       return { bookingId: booking.id, outcome };
     };
@@ -661,7 +661,7 @@ export const bookingMove = defineCommand({
 // Linking a booking to a deal (#3103, docs/plan/calendar.md "Deal links"). The deal's panel lists its bookings, and a person confirms Dy's suggestion (booking-deals.ts) with
 // a click. Whoever may read a booking may link it or take its link off: the host of its type, a host it holds, or an owner or admin; the deal is any deal of the org (deals are
 // read by every role). Past and cancelled bookings can be linked too, so the deal's history is complete. Nothing is mailed and no calendar event changes. A booking made
-// from a deal's "Đặt lịch" link carries the deal from the start (crove_crm.booking_request_deal); these commands are the only other writers of crove_crm.booking.deal_id.
+// from a deal's "Đặt lịch" link carries the deal from the start (ludy_crm.booking_request_deal); these commands are the only other writers of ludy_crm.booking.deal_id.
 async function bookingOfCaller(ctx: CommandContext, bookingId: string): Promise<NonNullable<Awaited<ReturnType<typeof lockBooking>>>> {
   if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
   const userId = ctx.actor.userId;
@@ -691,11 +691,11 @@ export const bookingLinkDeal = defineCommand({
   handler: async (ctx, input): Promise<BookingDealChanged> => {
     // The deal is read in this org alone and held (a key share, which only a delete of it conflicts with) before the booking row is locked, the order a delete of a deal takes
     // (the deal, then the bookings its key clears), so the two cannot wait on each other, and a deal deleted at the same moment cannot leave a link to nothing.
-    const deal = await ctx.trx.selectFrom('crove_crm.deal').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).forKeyShare().executeTakeFirst();
+    const deal = await ctx.trx.selectFrom('ludy_crm.deal').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).forKeyShare().executeTakeFirst();
     if (!deal) throw new DomainError('DEAL_NOT_FOUND', 404, 'Không tìm thấy cơ hội này');
     const booking = await bookingOfCaller(ctx, input.bookingId);
     if (booking.deal_id !== deal.id) {
-      await ctx.trx.updateTable('crove_crm.booking').set({ deal_id: deal.id }).where('org_id', '=', ctx.orgId).where('id', '=', booking.id).execute();
+      await ctx.trx.updateTable('ludy_crm.booking').set({ deal_id: deal.id }).where('org_id', '=', ctx.orgId).where('id', '=', booking.id).execute();
     }
     // Ids only: the deal's title and the guest's details stay out of the audit row.
     ctx.audit({ bookingId: booking.id, dealId: deal.id, previousDealId: booking.deal_id, linked: booking.deal_id !== deal.id });
@@ -713,7 +713,7 @@ export const bookingUnlinkDeal = defineCommand({
   handler: async (ctx, input): Promise<BookingDealChanged> => {
     const booking = await bookingOfCaller(ctx, input.bookingId);
     if (booking.deal_id !== null) {
-      await ctx.trx.updateTable('crove_crm.booking').set({ deal_id: null }).where('org_id', '=', ctx.orgId).where('id', '=', booking.id).execute();
+      await ctx.trx.updateTable('ludy_crm.booking').set({ deal_id: null }).where('org_id', '=', ctx.orgId).where('id', '=', booking.id).execute();
     }
     ctx.audit({ bookingId: booking.id, previousDealId: booking.deal_id, unlinked: booking.deal_id !== null });
     return { bookingId: booking.id, dealId: null };
@@ -731,7 +731,7 @@ export const bookingRemind = defineCommand({
   access: 'system',
   handler: async (ctx, input): Promise<{ sent: boolean }> => {
     const booking = await ctx.trx
-      .selectFrom('crove_crm.booking')
+      .selectFrom('ludy_crm.booking')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.bookingId)
@@ -744,7 +744,7 @@ export const bookingRemind = defineCommand({
     if (booking.meeting_state === 'pending') return { sent: false };
     const source = `crm.booking.remind_${input.lead}`;
     const earlier = await ctx.trx
-      .selectFrom('crove_kernel.mail_message')
+      .selectFrom('ludy_kernel.mail_message')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('source', '=', source)
@@ -754,7 +754,7 @@ export const bookingRemind = defineCommand({
     if (earlier) return { sent: false };
     const type = await eventTypeOf(ctx, booking.event_type_id);
     if (!booking.email || !booking.visitor_name) return { sent: false };
-    const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const tenant = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     const mail = await createMailMessage(ctx, {
       stream: 'transactional',
       source,
@@ -798,13 +798,13 @@ async function loadBookings(
   // A day (the Home read, today.ts): the confirmed bookings that start in it and have not ended, earliest first.
   const upcoming = ('period' in filter && filter.period === 'upcoming') || 'day' in filter;
   let query = ctx.trx
-    .selectFrom('crove_crm.booking as b')
-    .innerJoin('crove_crm.event_type as e', (j) => j.onRef('e.org_id', '=', 'b.org_id').onRef('e.id', '=', 'b.event_type_id'))
+    .selectFrom('ludy_crm.booking as b')
+    .innerJoin('ludy_crm.event_type as e', (j) => j.onRef('e.org_id', '=', 'b.org_id').onRef('e.id', '=', 'b.event_type_id'))
     // Confirmed and cancelled bookings always hold their event (booking_confirmed_event).
-    .innerJoin('crove_kernel.calendar_event as ev', (j) => j.onRef('ev.org_id', '=', 'b.org_id').onRef('ev.id', '=', 'b.calendar_event_id'))
+    .innerJoin('ludy_kernel.calendar_event as ev', (j) => j.onRef('ev.org_id', '=', 'b.org_id').onRef('ev.id', '=', 'b.calendar_event_id'))
     // The linked deal, when there is one (#3103).
-    .leftJoin('crove_crm.deal as dl', (j) => j.onRef('dl.org_id', '=', 'b.org_id').onRef('dl.id', '=', 'b.deal_id'))
-    .leftJoin('crove_crm.pipeline_stage as ds', (j) => j.onRef('ds.org_id', '=', 'dl.org_id').onRef('ds.id', '=', 'dl.stage_id'))
+    .leftJoin('ludy_crm.deal as dl', (j) => j.onRef('dl.org_id', '=', 'b.org_id').onRef('dl.id', '=', 'b.deal_id'))
+    .leftJoin('ludy_crm.pipeline_stage as ds', (j) => j.onRef('ds.org_id', '=', 'dl.org_id').onRef('ds.id', '=', 'dl.stage_id'))
     .select([
       'b.id',
       'b.status',
@@ -828,7 +828,7 @@ async function loadBookings(
       'e.title',
       'e.active',
       'ev.user_id as host_user_id',
-      sql<string[]>`coalesce((SELECT array_agg(h.user_id ORDER BY array_position(b.hold_event_ids, h.id)) FROM crove_kernel.calendar_event h
+      sql<string[]>`coalesce((SELECT array_agg(h.user_id ORDER BY array_position(b.hold_event_ids, h.id)) FROM ludy_kernel.calendar_event h
         WHERE h.org_id = b.org_id AND h.id = ANY (b.hold_event_ids)), '{}')`.as('hold_user_ids'),
     ])
     .where('b.org_id', '=', ctx.orgId)
@@ -838,7 +838,7 @@ async function loadBookings(
         eb.or([
           eb('e.host_user_id', '=', userId),
           eb('ev.user_id', '=', userId),
-          sql<boolean>`EXISTS (SELECT 1 FROM crove_kernel.calendar_event h WHERE h.org_id = b.org_id AND h.id = ANY (b.hold_event_ids) AND h.user_id = ${userId})`,
+          sql<boolean>`EXISTS (SELECT 1 FROM ludy_kernel.calendar_event h WHERE h.org_id = b.org_id AND h.id = ANY (b.hold_event_ids) AND h.user_id = ${userId})`,
         ]),
       ),
     );
@@ -929,7 +929,7 @@ export const dealBookings = defineQuery({
   access: STAFF,
   handler: async (ctx, input): Promise<DealBookings> => {
     const userId = bookingUser(ctx);
-    const deal = await ctx.trx.selectFrom('crove_crm.deal').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).executeTakeFirst();
+    const deal = await ctx.trx.selectFrom('ludy_crm.deal').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).executeTakeFirst();
     if (!deal) throw new DomainError('DEAL_NOT_FOUND', 404, 'Không tìm thấy cơ hội này');
     const scope = manages(ctx) ? 'org' : 'mine';
     const upcoming = await loadBookings(ctx, userId, { scope, period: 'upcoming', dealId: deal.id }, { limit: BOOKING_DEAL_LIST_MAX });
@@ -947,7 +947,7 @@ export const bookingLiveTarget = defineQuery({
   input: z.strictObject({ bookingId: zId, requestId: zId.optional() }),
   access: 'system',
   handler: async (ctx, input): Promise<{ hostUserIds: string[]; from: string; to: string } | null> => {
-    const booking = await ctx.trx.selectFrom('crove_crm.booking').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', input.bookingId).executeTakeFirst();
+    const booking = await ctx.trx.selectFrom('ludy_crm.booking').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', input.bookingId).executeTakeFirst();
     if (!booking) return null;
     const type = await eventTypeOf(ctx, booking.event_type_id);
     const window = (start: number, end: number) => ({ from: new Date(start - type.buffer_before_min * 60_000).toISOString(), to: new Date(end + type.buffer_after_min * 60_000).toISOString() });

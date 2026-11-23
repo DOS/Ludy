@@ -36,6 +36,52 @@ and it carries JOY's authority, so a change to it is a change to agent instructi
   never as inline text in a message. Each question still names what is
   decided, why it matters, the options, the recommendation (first) and what
   happens without an answer, in Vietnamese with full diacritics (AGENTS.md).
+- Owner decision 2026-11-15 (Antigravity chat): "Cái này hardcode tên model
+  thì không hợp lý. Nếu được thì quy định model flagship và model yếu hơn 1
+  cách generic thôi nhỉ? Vì hết Claude Opus limit thì làm sao? Trong khi
+  Antigravity nhiều limit model Gemini hơn. Tự nhiên Carbon phải chờ Opus
+  duyệt khá vô lý" and "Nên sửa cấu hình, ít nhất cho Antigravity để dùng
+  model phù hợp". Define PO, security-review and worker models by generic
+  capability tier (flagship vs worker) rather than hardcoding vendor model
+  names, and configure Antigravity to use `Orchestrator (Carbon)` /
+  `Gemini 4 Carbon` for PO sessions and workers. Independent security reviews
+  of protected-path PRs run only on `Gemini 4 Carbon` or `Claude Opus` (fresh
+  context, with no Hydrogen routing), so a PO on `Gemini 4 Carbon` runs its
+  own independent security review without waiting on Claude Opus, while a PO
+  on `Orchestrator (Carbon)` holds a protected-path PR's security-review gate
+  for a `Gemini 4 Carbon` or `Claude Opus` review (or owner acceptance)
+  (updated 2026-11-21 below).
+- Owner decision 2026-11-18 (eSign PO chat, popup A2): "Sao mày chạy chỉ 1
+  subagent? 3-5 subagent/subession cơ mà?" and popup A2 choice "Cập nhật quy
+  tắc chung lên tối đa 5 phiên con song song trong tệp cấu hình dự án". Raise
+  `sub_sessions_normal` and `sub_sessions_max` to 5 concurrent sub-sessions
+  per Product Owner across all lines, superseding the 2026-11-15 and
+  2026-11-16 cap of 3 and Engage's 2026-11-08 cap of 4, while keeping the
+  2026-11-17 local-resources rules intact (one heavy command at a time per
+  session, scoped `--filter` typechecks and touched-file test runs only, and
+  the shared `ludy-pg17-shared` Postgres container).
+- Owner decision 2026-11-21 (HRM PO chat,
+  https://github.com/DOS/Ludy/issues/1210#issuecomment-7048935611): accepted
+  merging PR #4191 (#2720) and PR #4194 (#2691) using their fresh-context
+  `Orchestrator (Neon)` (`TypeName: "research"`) independent security reviews,
+  and directed updating `AGENTS.md` and `docs/product-owner-config.md` ("Chấp
+  nhận gộp PR #4191 và PR #4194 bằng bản rà soát Neon này, đồng thời mở thêm 1
+  PR sửa AGENTS.md và docs/product-owner-config.md cho phép nhóm Gemini 4 cao
+  cấp (kể cả Neon) chạy rà soát bảo mật về sau" and "Hạn mức còn nhiều lắm, xài
+  Neon và làm tiếp đi đừng hỏi vụ này nữa"). On Antigravity, PO sessions, the
+  coordinator, workers (via `inherit`), and fresh-context independent security
+  reviews of protected-path PRs run at flagship capability tier across
+  Antigravity's Gemini 4 flagship and Orchestrator models (such as
+  `Gemini 4 Carbon`, `Gemini 4 Neon`, `Orchestrator (Carbon)`,
+  `Orchestrator (Neon)`) or `Claude Opus`, while independent security reviews
+  run in a fresh context (`TypeName: "research"` on Antigravity, no direct
+  `Hydrogen` downgrade/bypass) without needing an identical model codename
+  when newer Gemini 4 variants are used; on Antigravity, which has no session
+  effort API, the security review's stand-in for `xhigh` is a fresh-context
+  flagship-tier review via `TypeName: "research"` on Antigravity's Gemini 4
+  flagship or Orchestrator models such as `Gemini 4 Carbon`, `Gemini 4 Neon`,
+  `Orchestrator (Carbon)`, `Orchestrator (Neon)`, or `Claude Opus`, with no
+  direct `Hydrogen` downgrade/bypass.
 
 ## Board
 
@@ -64,7 +110,10 @@ turn on `sprint_review` with `line_scopes`.
 | Notes & CRM (notes, to-dos, bookings and calendar) | `line:notes-crm` | `b8743ac2` | `Notes & CRM Product Owner` |
 | Engage (Ludy Engage: Social in `modules/social`, Ads, Hộp thư/Help Desk and the CRM folded in, DESIGN.md 2026-11-03) | `line:social-management` | `735657ce` | `Ludy Engage Product Owner` |
 | AI Meeting Notes | `line:meetings` | `8c4c0494` | AI Meeting Notes Product Owner |
-| Platform (the shared backend core: kernel, database, tenancy, authentication and sessions, the command runtime, the WORM archive; Vy, the AI general manager; architecture and ADRs; security reviews; CI, deploy and operations) | `line:platform` | `3d3f0729` | `0: Điều phối` (the coordinator session) |
+| Platform (the shared backend core: kernel, database, tenancy, authentication and sessions, the command runtime, the WORM archive; Vy, the AI general manager; architecture and ADRs; security reviews; CI, deploy and operations) | `line:platform` | `3d3f0729` | `Platform Product Owner` (the coordinator session; titled `0: Điều phối` until 2026-11-14) |
+| eSign (Ludy Ký kết: electronic signatures, envelopes, templates, audit certificates, `modules/sign`) | `line:esign` | `none` | `eSign Product Owner` |
+| HRM (Ludy Nhân sự: payroll, employees, employments, dependents, attendance, leave balances, declarations, HR AI coworker Ly, `modules/hr`) | `line:hrm` | `5130d418` | `HRM Product Owner` |
+| Projects & Notes (Cộng tác: projects, task board and list, notes, personal to-dos, My work, `modules/projects`, `modules/notes`) | `line:projects` | `d8c18cec` | `Projects & Notes Product Owner` |
 
 - Social is not paused. Decision D5 was answered by JOY on 2026-10-17 as
   "no for Social" (backlog review, Decision 17), and JOY confirmed on
@@ -72,9 +121,9 @@ turn on `sprint_review` with `line_scopes`.
   Social, Ads, Hộp thư/Help Desk and the CRM folded in on 2026-11-03
   (DESIGN.md). On 2026-11-01 JOY said "Mở lại, làm FB + Zalo" (#236), which set
   the order of work, the Facebook Page and Zalo OA channels first.
-- Owner decision 2026-11-08: "Ok, cho Engage chạy 4 phiên con." The Engage
-  line may run up to 4 sub-sessions at once, an exception to the
-  repository-wide cap of 3 above for this line.
+- Owner decision 2026-11-08: "Ok, cho Engage chạy 4 phiên con." Allowed the
+  Engage line up to 4 sub-sessions when the cap was 3 (superseded by owner
+  decision 2026-11-18 raising every PO line to 5; see Sessions below).
 - Platform owns what every line builds on, not the features: a line's own
   feature stays with that line even when it adds a migration or a kernel
   command. Platform owns the shared core itself, the architecture (ADRs),
@@ -123,6 +172,16 @@ turn on `sprint_review` with `line_scopes`.
   acceptance gate of its own line's PRs, protected-path ones included.
 - Each line owns its feature's behavior and data; Frontend owns presentation
   and UX across the apps.
+- Owner decisions 2026-11-15 (eSign PO chat, #3318, #3319, docs/plan/esign.md):
+  - Slice 1 ships self-contained Documenso-style electronic signatures (draw/type signature, optional email OTP via ADR-0034, tamper-evident SHA-256 PDF sealing, independent audit certificate) running 100% locally on `docker compose up` with zero external provider accounts; Vietnamese public CAs (`VNPT SmartCA`, `Viettel MySign`, `MISA WeSign`) sit behind a pluggable adapter in Slice 2.
+  - Standalone per-org toggleable app `Ký kết` / `eSign` (`'sign'`, ADR-0031, ADR-0053); `Vy` (`gm`) proposes signature/date/text fields and summarizes risky clauses via the `packages/agent` AI budget meter (core works with AI off; humans approve every placement and send).
+  - Public signing uses fragment links `/-/sign#<token>` (`Referrer-Policy: no-referrer`, single-use replay rejection, optional email OTP, and no mandatory third-party CAPTCHA per `#203`); templates and Engage quote / HR contract handoffs stay in Slice 2; `Product Line` board option stays `none` so existing option ids are not mutated.
+- Owner decisions 2026-11-15 (HRM PO chat, popup, https://github.com/DOS/Ludy/issues/1210#issuecomment-6897161133):
+  - `"Vậy mày làm PO line HRM đi"` (`HRM Product Owner`): split HRM onto its own line (`line:hrm`, Project #8 `Product Line` option `5130d418`, preserving all six prior option ids; `#2749` stays on `line:accounting`).
+  - Reopen the 3-stage SME HRM roadmap in strict order, moving Stage 1 and Stage 2 into `M3 Paid pilot` (`priority:P2`) while Stage 3 stays in Phase 7 (`when wedge customers pull for it`): Stage 1 (`#2540`: lightweight monthly timekeeping inputs and annual leave balances feeding `hr.payroll.run.*` runs) -> Stage 2 (`#2541`: labor contract tracking, the labor management register and `01/PLI` report data, 13th-month salary, and severance allowance calculation; job-loss allowance and foreign/piece-rate items wait beyond Stage 2, and HTKK tax XML stays gated on `#2536`) -> Stage 3 (Phase 7 HRM departments and lightweight recruiting in `docs/plan/crove-os-kernel.md`).
+  - `"Nhân sự thì Ly đi"`: name `Ly` (`hr: 'finance'` in `COWORKER_BY_MODULE`) as the HR AI coworker (`ADR-0046` addendum item 4, merged in `#3327`).
+  - Enable `Ludy Nhân sự` (`hr`) by default on Ludy Cloud for every org as the approved product default (`#2538`, merged in `#3327`, combined with the `2026-11-08` salary visibility rule; `tools/deploy/compose.pilot.yml` still defaults `CROVE_MODULES` to `finance`, so changing live pilot `CROVE_MODULES` requires a separate Production runbook and owner approval; `#2536` stays open for lawyer PDPL, retention and HTKK XSD answers).
+- Owner decisions 2026-11-16 (Projects & Notes PO chat, https://github.com/DOS/Ludy/issues/1210#issuecomment-6898310263): Projects, Notes, and Personal To-do list (`modules/projects`, `modules/notes`, matching the `#3225` Cộng tác app group) belong to one independent end-to-end PO line: `Projects & Notes` (`line:projects`, option `d8c18cec`, preserving all existing option ids). `AI Meeting Notes` stays on `line:meetings`, CRM stays folded into `Ludy Engage` (`#2435`), and `line:frontend` stays on shared UI / `apps/app` shell / `apps/web` (the legacy `line:notes-crm` row remains above for historical references).
 
 ## Issue fields
 
@@ -198,21 +257,38 @@ The DOS organization ids are the same in every DOS repository.
   is not a failure.
 - claim_gate: none
 - external_review_app: none
-- local_reviews: `codex review --base origin/main` in the background, then
-  a fresh-context subagent given the diff and the issue; docs-only PRs skip
-  both and need `pnpm docs:check`. A protected-path PR also gets an
-  independent security review before merge, run by its line's PO with a
-  fresh-context Opus reviewer that did not write the change, and a PR that
-  changes the shared core also gets the Platform PO's review of those files
-  ("Shared-core review").
+- local_reviews: `codex review -c model_reasoning_effort=<subagent_effort> --base origin/main`
+  in the background, then a fresh-context subagent given the diff and the
+  issue; docs-only PRs skip both and need `pnpm docs:check`. A protected-path
+  PR also gets an independent security review before merge, run by its line's
+  PO with a fresh-context flagship-model reviewer that did not write the
+  change, and a PR that changes the shared core also gets the Platform PO's
+  review of those files ("Shared-core review").
 - shared_core_review: `line:platform`: the paths in "Shared-core review"
   below.
-- agent_effort: high. PO sessions run on Opus at effort high. Every sub-session
-  runs on Sonnet 5.5 (`claude-sonnet-5-5`) at effort high, and at xhigh only
-  for hard work (a protected-path security change, a migration, a root-cause
-  hunt). The security review of a protected-path PR runs on
-  Opus; Codex reviews at effort high (AGENTS.md, owner decisions 2026-10-27,
-  2026-10-30 and 2026-10-31).
+- agent_model: claude-sonnet-5-5 (Claude Code sub-sessions; Antigravity:
+  `inherit` at flagship capability tier; owner decisions 2026-11-15 and
+  2026-11-21, see above). On Claude Code, PO sessions and fresh-context
+  independent security reviews of protected-path PRs run on a flagship model
+  (`Claude Opus`). On Antigravity, PO sessions, the coordinator, workers (via
+  `inherit`), and fresh-context independent security reviews of protected-path
+  PRs run at flagship capability tier across Antigravity's Gemini 4 flagship
+  and Orchestrator models (such as `Gemini 4 Carbon`, `Gemini 4 Neon`,
+  `Orchestrator (Carbon)`, `Orchestrator (Neon)`) or `Claude Opus`, while
+  independent security reviews run in a fresh context (`TypeName: "research"`
+  on Antigravity, no direct `Hydrogen` downgrade/bypass) without needing an
+  identical model codename when newer Gemini 4 variants are used.
+- agent_effort: high (owner decisions 2026-10-27, 2026-10-30 and 2026-10-31;
+  skipped on Antigravity, which has no session effort API). Exception: xhigh
+  only for hard work (a protected-path security change, a migration, a
+  root-cause hunt); on Antigravity, which has no session effort API, the
+  security review's stand-in for `xhigh` is a fresh-context flagship-tier
+  review via `TypeName: "research"` on Antigravity's Gemini 4 flagship or
+  Orchestrator models such as `Gemini 4 Carbon`, `Gemini 4 Neon`,
+  `Orchestrator (Carbon)`, `Orchestrator (Neon)`, or `Claude Opus`, with no
+  direct `Hydrogen` downgrade/bypass.
+- subagent_effort: high (passed to Codex CLI reviews as
+  `-c model_reasoning_effort=high` on every host, Antigravity included).
 
 ## Shared-core review
 
@@ -222,33 +298,79 @@ owns it, the Platform PO, in the way a code owner reviews a file: it covers
 those files only, it is not an approval of the PR, and the PR's own PO keeps
 its acceptance gate, its merge and its questions to JOY.
 
-The shared core:
-- `packages/kernel-runtime/src/**` (the one write path, the blob cipher);
-- the database context guards and the migration runner (`packages/db`);
+The shared core (owner decision 2026-11-16: only what carries risk for every
+line):
+- `packages/kernel-runtime/src/**` (the one write path, the blob cipher, the
+  egress guard);
+- the database context guards and the migration runner (`packages/db`; not
+  the generated types in `packages/db/src/generated/`);
 - authentication and the HTTP edge: `auth*.ts`, `sessions*.ts`, `http.ts`,
   any `auth/` directory, `approval.ts`, `identity.ts`;
-- tenancy and kernel SQL: a migration that creates or replaces a function in
+- kernel SQL: a migration that creates or replaces a function in
   `crove_kernel` (`apply_tenant_rls`, `org_purge` and the like), changes
-  grants or roles, or touches another line's tables;
+  roles or grants on `crove_kernel` objects, or changes another line's
+  tables;
 - the gate: `.github/workflows/**`, `tools/ci/**`, `tools/deploy/**`, git
-  hooks, every `test/invariant/` directory outside the PR's own module,
-  `supabase/tests/database/_*.test.sql`, the pgTAP runner;
+  hooks, the pgTAP runner, and any change to an invariant file
+  (`test/invariant/`, `supabase/tests/database/_*.test.sql`) that loosens a
+  rule;
 - the agent harness and policy: `AGENTS.md`, `CLAUDE.md`, `.claude/settings*`,
   hooks, agents, `.mcp.json`.
 
-A line's own migrations, tables, module code and its own invariant tests are
-not shared core, even though they are protected paths: its PO reviews them.
+Not shared core, so the line's PO reviews them alone (they stay protected
+paths, with the line PO's security review):
+- a line's own migrations, tables, grants on its own tables, module code and
+  its own invariant tests, unless the change loosens a rule;
+- an invariant change that only tightens a rule (removes an allowance or a
+  pending entry), or only adds a two-step pending entry for the line's own
+  tables or commands;
+- the generated DB types.
 
-To ask, the PR's PO comments on the PR `Security review requested (Platform
-PO)` with the head SHA and the shared-core files it changes. The Platform PO
-answers on the PR with `## Shared-core review (Platform PO)`, naming the head
-it reviewed, and repeats it if those files change again.
+The Platform PO is a role, not a person. The owner, 2026-11-16, in the
+Meetings PO's chat: "Bản chất PO Platform cũng là 1 agent bình thường thôi
+[...] Cái quan trọng ở đây là có 1 agent có role dedicated để nó double check,
+review 1 lượt thôi" (the Platform PO is an ordinary agent too; what matters is
+one agent with a dedicated role that double-checks, reviewing once). So any
+dedicated session that runs it on a flagship model with fresh context, and is neither the
+PR's author nor the PR's own PO, may give the shared-core review. What matters
+is one independent second agent that checks those files once.
+
+How to ask and how long to wait (owner decision 2026-11-16):
+- The PR's PO adds the label `shared-core` and comments on the PR
+  `Request: Shared-core review (Platform PO)` with the head SHA and the
+  shared-core files it changes. The Platform PO watches that label, so a
+  request wakes it.
+- A review stays valid for later heads while
+  `git diff <reviewed head>..<head> -- <the shared-core files>` is empty:
+  a merge of `main`, a migration rename or a module-only fix needs no new
+  request.
+- If the Platform PO has not answered within 4 hours, the PR's PO runs an
+  independent, fresh-context flagship-model reviewer on the shared-core files
+  only, posts it as `## Shared-core review (stand-in)`, and may merge. The
+  Platform PO reviews it after the merge within 24 hours; a blocking finding
+  is a P0 forward fix or a revert. Changing an invariant on purpose stays an
+  owner decision.
+- Once `Security review (agent)` runs in CI (#95), its comment on the head
+  counts as the stand-in review.
+
+The Platform PO answers on the PR with `## Shared-core review (Platform PO)`,
+naming the head it reviewed.
 
 ## Sessions
 
-- sub_sessions_normal: 1 (JOY caps the repository at 3 sub-sessions at
-  once, across every line; owner decision 2026-10-31)
-- sub_sessions_max: 2
+- sub_sessions_normal: 5 (owner decision 2026-11-18 in eSign PO chat: "Sao
+  mày chạy chỉ 1 subagent? 3-5 subagent/subession cơ mà?", popup A2: "Cập
+  nhật quy tắc chung lên tối đa 5 phiên con song song trong tệp cấu hình dự
+  án"; each PO keeps up to 5 concurrent sub-sessions running when independent
+  tasks are ready, matching `sub_sessions_max: 5` and superseding the
+  2026-11-15/2026-11-16 cap of 3, Engage's 2026-11-08 cap of 4, and the
+  2026-10-31 default of 1, while keeping AGENTS.md's 2026-11-17
+  local-resources rules: one heavy command at a time per session, scoped
+  `--filter` typechecks and touched-file tests only)
+- sub_sessions_max: 5 (owner decision 2026-11-18 in eSign PO chat, popup A2:
+  up to 5 active sub-sessions + 1 PO session per line, superseding the
+  2026-11-15 cap of 3 and Engage's 2026-11-08 cap of 4; local-resources
+  discipline from 2026-11-17 still applies to every session)
 
 A PO keeps its context small at natural breaks. With a warm cache, it uses
 `/compact` with a focus. After a long idle, such as overnight, it starts a

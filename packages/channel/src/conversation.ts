@@ -24,9 +24,28 @@ export interface InboundConversationEvent {
   hidden?: boolean | undefined;
   // A hide or unhide notice that carried no comment text: updates an existing comment when found, and never creates a blank one when not.
   hiddenOnly?: boolean | undefined;
-  // The images the message carries, by the platform's address (CV5c, #2357): personal data the worker fetches once and the core clears, so it
-  // is never logged, never put in a job and never kept past the fetch (six days at the most).
-  attachments?: Array<{ kind: 'image'; url: string }> | undefined;
+  // The images the message carries (CV5c, #2357): by the platform's address, or, where the bytes need the connection's token (WhatsApp's media id,
+  // #3131), by a provider-scoped reference that is not a URL and holds no token (exactly one of `url` and `mediaRef`). Either is personal data the worker
+  // uses once and the core clears, so it is never logged, never put in a job and never kept past the fetch (six days at the most).
+  attachments?: Array<{ kind: 'image'; url: string } | { kind: 'image'; mediaRef: string }> | undefined;
+  // The platform says a message the org sent did not reach the customer (WhatsApp's status `failed`, #3131): the stored outbound message with this id is
+  // marked failed with this short code. Carries no text and never creates a message.
+  deliveryFailed?: { code: string } | undefined;
+  // How long the platform lets this thread be answered after the customer's last message, when that differs from the provider's own rule
+  // (Telegram Business: 24 hours for a business chat, none for a bot chat; #3191). Whole hours, 1 to 720.
+  replyWindowHours?: number | undefined;
+}
+
+// A change in a business account's connection to a bot (Telegram Business, #3191), as the platform told it. The id is the platform's
+// business connection id and `userId` the account's own user; `canReply` is the bot's right to send and `enabled` whether the connection is active.
+export interface ConversationBusinessState {
+  id: string;
+  userId: string;
+  name?: string | undefined;
+  // The account's @username (unique on Telegram), so an owner can tell their own account from a stranger who wears the same name.
+  username?: string | undefined;
+  canReply: boolean;
+  enabled: boolean;
 }
 
 // A verified notice: the platform's own account id (a Page, an Instagram account, an OA), from which the worker finds the
@@ -37,6 +56,10 @@ export interface ConversationNotice {
   // The sandbox only: the one connection its notice is for. Its account id is a key a member chose, so two orgs may pick the
   // same one, and a demo comment must reach only the connection it was made on. A platform's notice never has it.
   connectionId?: string | undefined;
+  // Telegram Business (#3191): the business connection the events came through, so the core stores them only while its stored state lists that
+  // connection as enabled; and a change of that state, which the worker records through the connection's own command, never by itself.
+  businessConnectionId?: string | undefined;
+  businessState?: ConversationBusinessState | undefined;
 }
 
 export class ConversationNoticeError extends Error {
@@ -133,6 +156,39 @@ export type ConversationChatHookResult =
   | { kind: 'done'; botId: string | null }
   | { kind: 'failed'; retry: boolean; code: string };
 
+// The bytes of an image the platform gave only by a reference (`mediaRef`, #3131), read with the connection's sealed credential inside the fetch job.
+export interface ConversationMediaInput {
+  externalAccountId: string;
+  secret: string;
+  // The reference the notice carried: a provider-scoped id, never a URL and never a token.
+  mediaRef: string;
+  // The fetch the bytes call goes through: the kernel's egress guard (public addresses, the connection pinned to the checked address, the platform's media
+  // hosts only, https only, no redirect followed, a byte cap). An adapter sends its token only through it, and only to a host of its own list.
+  fetch: (input: string, init?: RequestInit) => Promise<Response>;
+  // The most bytes the guard lets through; the adapter refuses a declared size above it before the call.
+  maxBytes: number;
+  // The hosts the platform's media may be fetched from (a suffix of a host name, matched on a label boundary): the adapter refuses an address outside them
+  // before it sends its token anywhere, and the guard checks the same list on its side.
+  hosts: readonly string[];
+}
+export type ConversationMediaResult =
+  | { kind: 'ok'; bytes: Uint8Array }
+  // retry: asking again may succeed (a timeout, the platform's error, a rate limit); else the image is dropped for good. `code` is a short code, never a platform's words.
+  | { kind: 'failed'; retry: boolean; code: string };
+
+// Reading one Telegram Business connection back from Telegram (#3224): a business message named a connection Ludy never recorded (the owner added the chatbot in
+// Telegram before turning chats on in Ludy), so the worker asks once. The answer is the same state a `business_connection` update would have brought.
+export interface ConversationBusinessLookupInput {
+  // The opened credential (the provider's own JSON).
+  secret: string;
+  // The business connection id the message named.
+  businessConnectionId: string;
+}
+export type ConversationBusinessLookupResult =
+  | { kind: 'ok'; state: ConversationBusinessState }
+  // `retry` is for the log only: the worker asks again no sooner than its window, whatever the answer. `code` is a short code, never a platform's words or an address.
+  | { kind: 'failed'; retry: boolean; code: string };
+
 // What a provider can do with a conversation. Hide is idempotent on the platforms that have it, so it may be repeated.
 export interface ConversationAdapter {
   readonly provider: string;
@@ -140,7 +196,11 @@ export interface ConversationAdapter {
   hide?(input: ConversationHideInput): Promise<ConversationHideResult>;
   profile?(input: ConversationProfileInput): Promise<ConversationProfileResult>;
   history?(input: ConversationHistoryInput): Promise<ConversationHistoryResult>;
+  // An image the platform gave by a reference (#3131): the adapter turns it into bytes with the credential; the caller checks the bytes (type, size) itself.
+  media?(input: ConversationMediaInput): Promise<ConversationMediaResult>;
   chatHook?(input: ConversationChatHookInput): Promise<ConversationChatHookResult>;
+  // A Telegram Business connection Ludy has no record of, read back with the bot's own token (#3224).
+  businessConnection?(input: ConversationBusinessLookupInput): Promise<ConversationBusinessLookupResult>;
 }
 
 const MAX_NOTICE_BYTES = 262_144;

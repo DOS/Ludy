@@ -4,7 +4,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import { BUILTIN_ROLE_KEYS, type LegalEntity, type MemberRoles } from '@crove/kernel-contract';
+import { BUILTIN_ROLE_KEYS, type LegalEntity, type MemberRoles } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog, translatorFor } from '../src/i18n/runtime.ts';

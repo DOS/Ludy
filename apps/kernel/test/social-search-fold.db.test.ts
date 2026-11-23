@@ -7,11 +7,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, type LibraryItem, type PostView } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, type LibraryItem, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -44,7 +44,7 @@ suite('social search without marks on PostgreSQL (#1360)', () => {
   async function connection(orgId: string, owner: string, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, name, owner]),
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, name, owner]),
     );
     return id;
   }
@@ -55,7 +55,7 @@ suite('social search without marks on PostgreSQL (#1360)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const adminUser = await person('admin');
     const member = await person('member');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')", [orgId, adminUser, member]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')", [orgId, adminUser, member]));
     return { orgId, owner, admin: adminUser, member, a: await connection(orgId, owner, 'Kênh A'), b: await connection(orgId, owner, 'Kênh B') };
   }
 
@@ -79,7 +79,7 @@ suite('social search without marks on PostgreSQL (#1360)', () => {
     const sha = createHash('sha256').update(id).digest('hex');
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
          VALUES ($1, $2, $3, $4, $5, $6, 'image/jpeg', 120000, 'social')`,
         [o.orgId, id, sha, `org/${o.orgId}/${sha}`, `content:${sha}`, filename],
       ),
@@ -97,9 +97,9 @@ suite('social search without marks on PostgreSQL (#1360)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -168,8 +168,8 @@ suite('social search without marks on PostgreSQL (#1360)', () => {
     const pb = await variantOn(o, onB, o.b);
     const own = (id: string) => JSON.stringify([{ fileId: id, generation: null, altText: null, mime: 'image/jpeg', sizeBytes: 120000 }]);
     await admin(async (c) => {
-      await c.query('UPDATE crove_social.post_variant SET media = $2::jsonb WHERE id = $1', [pa.id, own(mine)]);
-      await c.query('UPDATE crove_social.post_variant SET media = $2::jsonb WHERE id = $1', [pb.id, own(theirs)]);
+      await c.query('UPDATE ludy_social.post_variant SET media = $2::jsonb WHERE id = $1', [pa.id, own(mine)]);
+      await c.query('UPDATE ludy_social.post_variant SET media = $2::jsonb WHERE id = $1', [pb.id, own(theirs)]);
     });
     expect(await media(o, o.owner, { search: 'dien thoai', usable: true })).toEqual(['Điện thoại kênh B.jpg', 'dien-thoai-kenh-a.jpg'].sort());
     expect(await media(o, o.member, { search: 'dien thoai', usable: true })).toEqual(['dien-thoai-kenh-a.jpg']);
@@ -208,20 +208,20 @@ suite('social search without marks on PostgreSQL (#1360)', () => {
         // Posts of a few hundred characters each, one channel each, half with a channel text of their own.
         await c.query(
           `WITH p AS (
-             INSERT INTO crove_social.post (org_id, body, title, author_user_id)
+             INSERT INTO ludy_social.post (org_id, body, title, author_user_id)
              SELECT $1, 'Bài số ' || g || ': ' || repeat('Cửa hàng thời trang Hà Nội giới thiệu bộ sưu tập mới, ưu đãi cho khách quen. ', 4),
                     CASE WHEN g % 3 = 0 THEN 'Tiêu đề ' || g END, $2
              FROM generate_series(1, $4::int) g
              RETURNING id, body
            )
-           INSERT INTO crove_social.post_variant (org_id, post_id, channel_connection_id, provider, body, content_hash)
+           INSERT INTO ludy_social.post_variant (org_id, post_id, channel_connection_id, provider, body, content_hash)
            SELECT $1, p.id, $3, 'sandbox', CASE WHEN row_number() OVER () % 2 = 0 THEN 'Riêng kênh: ' || p.body END,
                   'sha256:' || encode(sha256(convert_to(p.id::text, 'UTF8')), 'hex')
            FROM p`,
           [o.orgId, o.owner, o.a, POSTS],
         );
         await c.query('COMMIT');
-        await c.query('VACUUM ANALYZE crove_social.post, crove_social.post_variant');
+        await c.query('VACUUM ANALYZE ludy_social.post, ludy_social.post_variant');
       });
     }, 300_000);
 

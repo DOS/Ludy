@@ -1,5 +1,5 @@
 // Every record type an activity row is written for (ctx.activity in modules, packages and apps) is either scoped by
-// legal entity, listed in the trigger b_legal_entity on crove_kernel.activity (the newest migration that creates it,
+// legal entity, listed in the trigger b_legal_entity on ludy_kernel.activity (the newest migration that creates it,
 // #1716), named with its entity at every call (options.legalEntityId, #1725), or org-level for a reason given here. A
 // new record type of an entity's record that is in none of these would show that entity's activity to members limited
 // to other entities, so it fails here until it is listed. Calls are found whatever the context object is called, an
@@ -26,6 +26,10 @@ const ORG_LEVEL = new Map<string, string>([
   ['kernel.position', 'the org chart is org-wide'],
   ['kernel.tenant', "the org's own settings"],
   ['kernel.user', "a member's sessions"],
+  ['projects.project', 'a project (created, updated, status, owner, members, tasks)'],
+  ['projects.roadmap_announcement', 'a public roadmap changelog announcement (published or subscriber notifications queued; org-wide)'],
+  ['projects.roadmap_board', 'a public roadmap board (created and configuration updated; org-wide)'],
+  ['projects.roadmap_item', 'a public roadmap item (created, moderated, merged, or converted to a task; org-wide)'],
 ]);
 // Record types whose record names no entity, written with the entity the action was for at every call (#1725). Sorted.
 const ENTITY_NAMED = new Map<string, string>([
@@ -151,11 +155,11 @@ function scopedTypes(): Set<string> {
   const files = readdirSync(MIGRATIONS)
     .filter((n) => n.endsWith('.sql'))
     .sort()
-    .filter((n) => readFileSync(join(MIGRATIONS, n), 'utf8').includes('crove_kernel.activity_legal_entity_fill('));
+    .filter((n) => /(?:crove|ludy)_kernel\.activity_legal_entity_fill\(/.test(readFileSync(join(MIGRATIONS, n), 'utf8')));
   const newest = files.at(-1);
-  if (!newest) throw new Error('no migration creates the trigger b_legal_entity on crove_kernel.activity');
+  if (!newest) throw new Error('no migration creates the trigger b_legal_entity on ludy_kernel.activity');
   const text = readFileSync(join(MIGRATIONS, newest), 'utf8');
-  return new Set([...text.matchAll(/ARRAY\['([a-z_.]+)', 'crove_[a-z_]+\.[a-z_]+'/g)].map((m) => m[1] as string));
+  return new Set([...text.matchAll(/ARRAY\['([a-z_.]+)', '(?:crove|ludy)_[a-z_]+\.[a-z_]+'/g)].map((m) => m[1] as string));
 }
 
 describe('activity record types (#1716, #1725, #1728)', () => {
@@ -209,7 +213,7 @@ describe('activity record types (#1716, #1725, #1728)', () => {
     const unlisted = [...literal.keys()]
       .filter((t) => !scoped.has(t) && !ORG_LEVEL.has(t) && !ENTITY_NAMED.has(t))
       .map((t) => `${t} (${literal.get(t)?.join(', ')})`);
-    expect(unlisted, 'add each to the trigger list of crove_kernel.activity (a migration), to ENTITY_NAMED, or to ORG_LEVEL with a reason').toEqual([]);
+    expect(unlisted, 'add each to the trigger list of ludy_kernel.activity (a migration), to ENTITY_NAMED, or to ORG_LEVEL with a reason').toEqual([]);
     const lists = [[...scoped], [...ORG_LEVEL.keys()], [...ENTITY_NAMED.keys()]];
     const twice = [...new Set(lists.flat())].filter((t) => lists.filter((l) => l.includes(t)).length > 1);
     expect(twice, 'record types in more than one list').toEqual([]);
@@ -225,7 +229,7 @@ describe('activity record types (#1716, #1725, #1728)', () => {
       .sort()
       .filter((n) => readFileSync(join(MIGRATIONS, n), 'utf8').includes('ADD CONSTRAINT activity_entity_named'));
     const newest = files.at(-1);
-    if (!newest) throw new Error('no migration adds the constraint activity_entity_named on crove_kernel.activity');
+    if (!newest) throw new Error('no migration adds the constraint activity_entity_named on ludy_kernel.activity');
     const check = /ADD CONSTRAINT activity_entity_named\s+CHECK \(([\s\S]*?OR legal_entity_id IS NOT NULL)/.exec(readFileSync(join(MIGRATIONS, newest), 'utf8'))?.[1] ?? '';
     const listed = (column: string) => [...(new RegExp(String.raw`${column} NOT IN \(([^)]*)\)`).exec(check)?.[1] ?? '').matchAll(/'([a-z_.]+)'/g)].map((m) => m[1]).sort();
     expect(listed('record_type'), 'the constraint and ENTITY_NAMED name the same record types').toEqual([...ENTITY_NAMED.keys()]);

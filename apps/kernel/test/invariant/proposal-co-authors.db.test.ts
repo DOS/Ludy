@@ -14,14 +14,15 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
 import { sql } from 'kysely';
-import { PROPOSAL_CO_AUTHOR_COMMANDS, createOrg, decideApproval, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { PROPOSAL_CO_AUTHOR_COMMANDS, createOrg, decideApproval, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -33,6 +34,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('the co-authors of a proposal on PostgreSQL (#2736)', () => {
   const dbName = `crove_test_co_authors_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   const pools: pg.Pool[] = [];
@@ -50,7 +52,7 @@ suite('the co-authors of a proposal on PostgreSQL (#2736)', () => {
   let solo: Org; // an owner alone
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -62,7 +64,7 @@ suite('the co-authors of a proposal on PostgreSQL (#2736)', () => {
   type Outcome<T> = { ok: true; value: T } | { ok: false; code: string | undefined; message: string };
   // One statement block in its own transaction, rolled back: a login role and the context it enters.
   async function inContext<T>(url: string, enter: (c: pg.Client) => Promise<unknown>, fn: (c: pg.Client) => Promise<T>): Promise<Outcome<T>> {
-    const c = new pg.Client({ connectionString: url });
+    const c = createDbClient({ connectionString: url }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -119,16 +121,17 @@ suite('the co-authors of a proposal on PostgreSQL (#2736)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = user;
+      url.username = dbIds ? dbIds.roleName(user) : user;
       url.password = password;
       return url.toString();
     };
     appUrl = login('crove_app', 'test-app-pw');
     workerUrl = login('crove_worker', 'test-worker-pw');
-    const pool = createPool({ connectionString: appUrl, max: 4 });
+    const pool = createDbPool({ connectionString: appUrl, max: 4 }, dbIds);
     pools.push(pool);
     app = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({
       commands: [...kernelCommands, ...financeCommands],
@@ -274,7 +277,7 @@ suite('the co-authors of a proposal on PostgreSQL (#2736)', () => {
     const written: string[][] = [[], [big.owner], [big.admin], [big.admin, big.owner], [big.admin, big.admin2], [big.chief]];
     const co: string[][] = [[], [big.owner], [big.admin2], [big.owner, big.admin], [big.admin, big.admin2], [big.chief], [big.owner, big.admin, big.admin2, big.chief]];
     const user = (id: string) => ({ type: 'user' as const, id });
-    const a = new pg.Client({ connectionString: adminUrl });
+    const a = createDbClient({ connectionString: adminUrl }, dbIds);
     await a.connect();
     try {
       let checked = 0;

@@ -9,10 +9,10 @@
 // (#1320). So a task's comment and an escalation's title and reason carry the type, times and counts only, never the
 // visitor's name or contact; the task points at the booking (its source ref), which its host finds in Lịch hẹn.
 import { z } from 'zod';
-import { CALENDAR_RANGE_MAX_DAYS, freeSlots, teamSlots, zId, zonedDate, zonedInstant, zoneOffsetMs, type Interval, type WorkingHours } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { busyOf, workingHoursOf } from '@crove/kernel';
-import { DomainError, defineQuery, type AgentProgram, type QueryContext } from '@crove/kernel-runtime';
+import { CALENDAR_RANGE_MAX_DAYS, freeSlots, teamSlots, zId, zonedDate, zonedInstant, zoneOffsetMs, type Interval, type WorkingHours } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { busyOf, workingHoursOf } from '@ludy/kernel';
+import { DomainError, defineQuery, type AgentProgram, type QueryContext } from '@ludy/kernel-runtime';
 
 export const SCHEDULER_TEMPLATE = 'crm.scheduler';
 // Tasks one run handles at most; the rest wait for the next run.
@@ -64,7 +64,7 @@ export function escalationTitle(n: NextSlots): string {
 }
 
 type Reader = Pick<QueryContext, 'trx' | 'orgId'>;
-const eventTypeRow = (ctx: Reader, id: string) => ctx.trx.selectFrom('crove_crm.event_type').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', id).executeTakeFirst();
+const eventTypeRow = (ctx: Reader, id: string) => ctx.trx.selectFrom('ludy_crm.event_type').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', id).executeTakeFirst();
 type EventTypeRow = NonNullable<Awaited<ReturnType<typeof eventTypeRow>>>;
 
 // The free slots the type's booking page offers between from and to: each host's free slots (the type's daily limit
@@ -72,11 +72,11 @@ type EventTypeRow = NonNullable<Awaited<ReturnType<typeof eventTypeRow>>>;
 // one), as bookingView() computes them; with the lead host's zone. None for an archived type.
 async function typeSlots(ctx: Reader, type: EventTypeRow, from: number, to: number, now: number): Promise<{ timeZone: string; slots: Interval[] }> {
   const ids = type.assignment === 'single' ? [type.host_user_id] : [type.host_user_id, ...type.co_host_user_ids];
-  const members = await ctx.trx.selectFrom('crove_kernel.tenant_member').select(['user_id', 'role']).where('org_id', '=', ctx.orgId).where('user_id', 'in', ids).execute();
+  const members = await ctx.trx.selectFrom('ludy_kernel.tenant_member').select(['user_id', 'role']).where('org_id', '=', ctx.orgId).where('user_id', 'in', ids).execute();
   const able = new Set(members.filter((m) => HOST_ROLES.has(m.role)).map((m) => m.user_id));
   const hosts = type.active ? ids.filter((id) => able.has(id)) : [];
   const booked = await ctx.trx
-    .selectFrom('crove_crm.booking')
+    .selectFrom('ludy_crm.booking')
     .select('starts_at')
     .where('org_id', '=', ctx.orgId)
     .where('event_type_id', '=', type.id)
@@ -145,7 +145,7 @@ export const bookingNextSlots = defineQuery({
   agent: { roles: [SCHEDULER_TEMPLATE] },
   handler: async (ctx, input): Promise<NextSlots> => {
     const booking = await ctx.trx
-      .selectFrom('crove_crm.booking')
+      .selectFrom('ludy_crm.booking')
       .select(['id', 'status', 'starts_at', 'event_type_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.bookingId)

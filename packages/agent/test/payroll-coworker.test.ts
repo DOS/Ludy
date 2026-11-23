@@ -5,26 +5,30 @@ import { describe, expect, it } from 'vitest';
 import {
   PayrollCoworker,
   PayrollPromptLeakError,
+  checkDiffNarration,
   checkExplanation,
   checkFlagSentences,
   checkPrepareProposals,
   dependentsCountedOf,
+  diffFactsText,
   explainFactsText,
   findAnomalies,
   findSignals,
   payrollFiguresOf,
   promptLeaks,
+  pseudonymizePayrollDiff,
   pseudonymizeSheet,
   restoreAliases,
+  restoreDiffAliases,
   type PayrollFigures,
   type PayrollSheetLine,
 } from '../src/index.ts';
 
 const CONFIG = { baseURL: 'http://localhost:1/v1', apiKey: null, model: 'test' };
-const zero = (): PayrollFigures => ({ base_wage: '0', allowances: '0', other_regular_pay: '0', overtime: '0', night_work: '0', bonus: '0', unpaid_reduction: '0', gross: '0', employee_insurance: '0', pit: '0', deductions: '0', net: '0' });
+const zero = (): PayrollFigures => ({ base_wage: '0', allowances: '0', other_regular_pay: '0', overtime: '0', night_work: '0', bonus: '0', unpaid_reduction: '0', sickness_bhxh_reduction: '0', maternity_bhxh_reduction: '0', gross: '0', employee_insurance: '0', pit: '0', deductions: '0', net: '0' });
 const figures = (over: Partial<PayrollFigures>): PayrollFigures => ({ ...zero(), ...over });
-const quiet = { minimumWageFailed: false, deductionCapFailed: false, netBelowMinimum: false, insuredAboveCap: false, cashPaymentOverLimit: false };
-const calm = { startsInMonth: false, probationEndsInMonth: false, endsInMonth: false };
+const quiet = { minimumWageFailed: false, deductionCapFailed: false, overtimeCapFailed: false, netBelowMinimum: false, insuredAboveCap: false, cashPaymentOverLimit: false, annualLeaveExceeded: false };
+const calm = { startsInMonth: false, probationEndsInMonth: false, endsInMonth: false, severanceCheckSuggested: false };
 
 // Values that must never reach a model, planted wherever a careless caller could put them.
 const PLANTED = ['Nguyễn Văn Thử', 'Nguyen Van Thu', '079201012345', '8012345678-001', '0123456789012', '12 Phố Huế, Hà Nội', 'VCB 1234 5678 9012'];
@@ -82,6 +86,34 @@ describe('promptLeaks', () => {
     expect(promptLeaks('so 0,792,010,123,45', ['079201012345'])).toEqual(['079201012345']);
     expect(promptLeaks('E1 gets a bonus', ['a'])).toEqual([]);
   });
+
+  it('matches single-word names on word boundaries (including two-letter and diacritic-folded forms) without false hits inside longer words', () => {
+    for (const text of ['pay Lan', 'Lan,', '(Lan)', 'pay Lân', 'lan_nguyen', 'lan@example.com']) {
+      expect(promptLeaks(text, ['Lan']), text).toEqual(['Lan']);
+    }
+    expect(promptLeaks('pay Lan', ['Lân'])).toEqual(['Lân']);
+    for (const text of ['pay An', 'An,', '(An)', 'pay Ân', 'an-tran']) {
+      expect(promptLeaks(text, ['An']), text).toEqual(['An']);
+    }
+    expect(promptLeaks('pay An', ['Ân'])).toEqual(['Ân']);
+
+    // Ordinary prompt words that contain "lan" or "an" as substrings must not trigger a false refusal.
+    expect(promptLeaks('Check the plan, balance, language, allowance, accountant, cannot, and annual leave cap.', ['Lan', 'Lân', 'An', 'Ân'])).toEqual([]);
+    // Trailing punctuation on a single-word display name still respects the leading word boundary.
+    expect(promptLeaks('Review the plan.', ['Lan.'])).toEqual([]);
+    expect(promptLeaks('Pay Lan.', ['Lan.'])).toEqual(['Lan.']);
+    // Short digit strings (1-2 chars) stay ignored so prompt figures never falsely match.
+    expect(promptLeaks('E1 worked 12 months and took 2 days', ['1', '2', '12'])).toEqual([]);
+  });
+
+  it('keeps strict substring and compact matching for multi-word names, IDs, emails, bank accounts and phone numbers', () => {
+    expect(promptLeaks('contact mailto:lan@example.com now', ['lan@example.com'])).toEqual(['lan@example.com']);
+    expect(promptLeaks('ID:079201012345', ['079201012345'])).toEqual(['079201012345']);
+    expect(promptLeaks('TK VCB-1234-5678-9012', ['VCB 1234 5678 9012'])).toEqual(['VCB 1234 5678 9012']);
+    expect(promptLeaks('call (090) 912-3456 today', ['0909123456'])).toEqual(['0909123456']);
+    expect(promptLeaks('call +84 909.123.456 today', ['+84909123456'])).toEqual(['+84909123456']);
+    expect(promptLeaks('gluedE1nguyen van lanhere', ['Nguyễn Văn Lan'])).toEqual(['Nguyễn Văn Lan']);
+  });
 });
 
 describe('findAnomalies', () => {
@@ -91,17 +123,53 @@ describe('findAnomalies', () => {
         line('1', { figures: figures({ net: '12000000', gross: '13000000' }), previous: figures({ net: '8000000' }) }),
         line('2', { previous: null, checks: { ...quiet, netBelowMinimum: true }, figures: figures({ net: '3000000' }) }),
         line('3', { previous: null, checks: { ...quiet, deductionCapFailed: true }, figures: figures({ deductions: '4000000' }) }),
-        line('4', { previous: null, dependentsWithoutRegistration: 2 }),
-        line('5', { previous: null, checks: { ...quiet, insuredAboveCap: true } }),
-        line('6', { previous: null, checks: { ...quiet, cashPaymentOverLimit: true }, figures: figures({ net: '6500000' }) }),
+        line('4', { previous: null, checks: { ...quiet, overtimeCapFailed: true }, figures: figures({ overtime: '1500000' }) }),
+        line('5', { previous: null, dependentsWithoutRegistration: 2 }),
+        line('6', { previous: null, checks: { ...quiet, insuredAboveCap: true } }),
+        line('7', { previous: null, checks: { ...quiet, cashPaymentOverLimit: true }, figures: figures({ net: '6500000' }) }),
       ],
       { language: 'vi', blockingRules: 2 },
     );
     const anomalies = findAnomalies(sheet);
-    expect(anomalies.map((a) => a.kind)).toEqual(['pay_moved', 'net_below_minimum', 'deduction_over_cap', 'dependent_unregistered', 'insured_above_cap', 'cash_payment_over_limit', 'rule_blocks']);
+    expect(anomalies.map((a) => a.kind)).toEqual(['pay_moved', 'net_below_minimum', 'deduction_over_cap', 'overtime_over_cap', 'dependent_unregistered', 'insured_above_cap', 'cash_payment_over_limit', 'rule_blocks']);
     expect(anomalies[0]?.facts).toBe('E1: thực nhận 12.000.000 đồng, tháng trước 8.000.000 đồng; tăng 50%');
-    expect(anomalies[6]?.alias).toBeNull();
-    expect(anomalies.map((a) => a.id)).toEqual(['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7']);
+    expect(anomalies[3]?.facts).toBe('E4: tổng giờ làm thêm vượt mức 40 giờ/tháng theo quy định của Bộ luật Lao động; tiền làm thêm tháng này 1.500.000 đồng');
+    expect(anomalies[7]?.alias).toBeNull();
+    expect(anomalies.map((a) => a.id)).toEqual(['A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'A7', 'A8']);
+  });
+
+  it('formats overtime_over_cap cleanly in English and passes figure checks when grounded', () => {
+    const { sheet } = pseudo([line('1', { previous: null, checks: { ...quiet, overtimeCapFailed: true }, figures: figures({ overtime: '1500000' }) })], {
+      language: 'en',
+      blockingRules: 0,
+    });
+    const anomalies = findAnomalies(sheet);
+    expect(anomalies).toHaveLength(1);
+    expect(anomalies[0]?.kind).toBe('overtime_over_cap');
+    expect(anomalies[0]?.facts).toBe('E1: total overtime hours exceed the 40 hours/month cap of the Labor Code; overtime pay this month 1,500,000 dong');
+    const ok = checkFlagSentences(anomalies, { items: [{ id: 'A1', sentence: 'E1 exceeded the 40 hours/month overtime limit with 1,500,000 dong overtime pay.' }] });
+    expect(ok).toEqual({
+      kind: 'flags',
+      items: [{ id: 'A1', kind: 'overtime_over_cap', alias: 'E1', text: 'E1 exceeded the 40 hours/month overtime limit with 1,500,000 dong overtime pay.' }],
+      refused: 0,
+    });
+  });
+
+  it('formats annual_leave_exceeded in English and passes figure checks when grounded', () => {
+    const { sheet } = pseudo([line('1', { previous: null, exceededAnnualDays: '1.5', checks: { ...quiet, annualLeaveExceeded: true } })], {
+      language: 'en',
+      blockingRules: 0,
+    });
+    const anomalies = findAnomalies(sheet);
+    expect(anomalies).toHaveLength(1);
+    expect(anomalies[0]?.kind).toBe('annual_leave_exceeded');
+    expect(anomalies[0]?.facts).toBe('E1: annual leave taken exceeds statutory entitlement by 1.5 day(s)');
+    const ok = checkFlagSentences(anomalies, { items: [{ id: 'A1', sentence: 'E1 took 1.5 annual leave day(s) over the statutory entitlement.' }] });
+    expect(ok).toEqual({
+      kind: 'flags',
+      items: [{ id: 'A1', kind: 'annual_leave_exceeded', alias: 'E1', text: 'E1 took 1.5 annual leave day(s) over the statutory entitlement.' }],
+      refused: 0,
+    });
   });
 
   it('finds nothing in a month that did not move by more than the threshold', () => {
@@ -114,16 +182,17 @@ describe('findSignals', () => {
   it('finds a hire, a probation and a contract ending, recurring overtime and a changed regular component', () => {
     const { sheet } = pseudo(
       [
-        line('1', { previous: null, contract: { startsInMonth: true, probationEndsInMonth: false, endsInMonth: false } }),
-        line('2', { previous: null, contract: { startsInMonth: false, probationEndsInMonth: true, endsInMonth: true } }),
+        line('1', { previous: null, contract: { ...calm, startsInMonth: true } }),
+        line('2', { previous: null, contract: { ...calm, probationEndsInMonth: true, endsInMonth: true, severanceCheckSuggested: true } }),
         line('3', { previous: null, overtimeMonthsInRow: 3, figures: figures({ overtime: '1200000' }) }),
         line('4', { figures: figures({ allowances: '700000' }), previous: figures({ allowances: '500000' }) }),
       ],
       { language: 'en', blockingRules: 0 },
     );
     const signals = findSignals(sheet);
-    expect(signals.map((s) => [s.alias, s.kind])).toEqual([['E1', 'new_hire'], ['E2', 'probation_ends'], ['E2', 'contract_ends'], ['E3', 'recurring_overtime'], ['E4', 'component_changed']]);
-    expect(signals[4]?.facts).toBe('E4: Allowances 700,000 dong, last month 500,000 dong; up');
+    expect(signals.map((s) => [s.alias, s.kind])).toEqual([['E1', 'new_hire'], ['E2', 'probation_ends'], ['E2', 'contract_ends'], ['E2', 'severance_check'], ['E3', 'recurring_overtime'], ['E4', 'component_changed']]);
+    expect(signals[3]?.facts).toContain('12');
+    expect(signals[5]?.facts).toBe('E4: Allowances 700,000 dong, last month 500,000 dong; up');
   });
 });
 
@@ -197,7 +266,7 @@ describe('checkFlagSentences', () => {
 });
 
 describe('checkPrepareProposals', () => {
-  const { sheet } = pseudo([line('1', { contract: { startsInMonth: false, probationEndsInMonth: true, endsInMonth: false } })], { language: 'en', blockingRules: 0 });
+  const { sheet } = pseudo([line('1', { contract: { ...calm, probationEndsInMonth: true } })], { language: 'en', blockingRules: 0 });
   const signals = findSignals(sheet);
 
   it('keeps a proposal with its field and drops one that names another alias, an unknown id or a made-up figure', () => {
@@ -205,6 +274,18 @@ describe('checkPrepareProposals', () => {
     expect(checkPrepareProposals(signals, { items: [{ id: 'S1', field: 'none', note: 'E2 leaves probation.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
     expect(checkPrepareProposals(signals, { items: [{ id: 'S9', field: 'none', note: 'E1 leaves probation.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
     expect(checkPrepareProposals(signals, { items: [{ id: 'S1', field: 'bonus', note: 'E1 gets a bonus of 500000 dong.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
+  });
+
+  it('validates severance_check field allowlist and 12-month figure grounding in vi and en', () => {
+    const viSheet = pseudo([line('1', { previous: null, contract: { ...calm, severanceCheckSuggested: true } })], { language: 'vi', blockingRules: 0 }).sheet;
+    const viSignals = findSignals(viSheet);
+    expect(viSignals).toHaveLength(1);
+    expect(viSignals[0]?.facts).toContain('12');
+    expect(checkPrepareProposals(viSignals, { items: [{ id: 'S1', field: 'contract', note: 'E1 đã làm đủ 12 tháng, cần kiểm tra trợ cấp thôi việc.' }] })).toMatchObject({
+      kind: 'proposals',
+      items: [{ alias: 'E1', kind: 'severance_check', field: 'contract' }],
+    });
+    expect(checkPrepareProposals(viSignals, { items: [{ id: 'S1', field: 'overtime', note: 'E1 đã làm đủ 12 tháng.' }] })).toEqual({ kind: 'none', code: 'EMPTY' });
   });
 });
 
@@ -271,7 +352,7 @@ describe('PayrollCoworker', () => {
   };
   const { sheet } = pseudo(
     [
-      tainted('1', { figures: figures({ net: '12000000' }), previous: figures({ net: '8000000' }), contract: { startsInMonth: false, probationEndsInMonth: true, endsInMonth: false } }),
+      tainted('1', { figures: figures({ net: '12000000' }), previous: figures({ net: '8000000' }), contract: { ...calm, probationEndsInMonth: true } }),
       tainted('2', { dependentsWithoutRegistration: 1 }),
     ],
     { language: 'vi', blockingRules: 1 },
@@ -302,6 +383,34 @@ describe('PayrollCoworker', () => {
     // The caller's own list of values: a value that appears in the prompt (here a phrase of the facts) stops the call.
     await expect(coworker.flag(sheet, { forbidden: ['tháng trước'] })).rejects.toBeInstanceOf(PayrollPromptLeakError);
     expect(prompts).toEqual([]);
+
+    // Single-word display names "Lan" and "An" do not falsely refuse English prompts containing "annual", "allowance", "accountant" or "cannot".
+    const enSheet = pseudo(
+      [
+        line('1', {
+          previous: null,
+          exceededAnnualDays: '1.5',
+          checks: { ...quiet, annualLeaveExceeded: true },
+          contract: { ...calm, severanceCheckSuggested: true },
+        }),
+      ],
+      { language: 'en', blockingRules: 1 },
+    ).sheet;
+    const enCoworker = new PayrollCoworker(CONFIG, {
+      prepare: spy({ items: [{ id: 'S1', field: 'contract', note: 'E1 has 12 months worked; check severance.' }] }),
+      flag: spy({ items: [{ id: 'A1', sentence: 'E1 exceeded annual leave by 1.5 day(s).' }] }),
+      explain: spy({ text: 'Gross pay is 10,500,000 dong and net pay is 9,450,000 dong.' }),
+    });
+    expect((await enCoworker.prepare(enSheet, { forbidden: ['Lan', 'Lân', 'An', 'Ân'] })).kind).toBe('proposals');
+    expect((await enCoworker.flag(enSheet, { forbidden: ['Lan', 'Lân', 'An', 'Ân'] })).kind).toBe('flags');
+    expect(
+      (
+        await enCoworker.explain(
+          { language: 'en', figures: figures({ base_wage: '10000000', allowances: '500000', gross: '10500000', employee_insurance: '1050000', net: '9450000' }), dependentsCounted: 0 },
+          { forbidden: ['Lan', 'Lân', 'An', 'Ân'] },
+        )
+      ).kind,
+    ).toBe('text');
   });
 
   it('does not ask the model when code found nothing to say, and reports the tokens of a call', async () => {
@@ -323,5 +432,161 @@ describe('PayrollCoworker', () => {
     });
     expect(await coworker.flag(sheet)).toEqual({ kind: 'none', code: 'EMPTY' });
     expect(await coworker.explain({ language: 'vi', figures: figures({ net: '8950000', gross: '10000000' }), dependentsCounted: 0 })).toEqual({ kind: 'none', code: 'FIGURES' });
+  });
+
+  it('surfaces Stage 4B anomalies and BHXH/non-resident payslip explanation components without leaking raw names', () => {
+    const stage4bLine = tainted('s4b', {
+      figures: figures({
+        base_wage: '8000000',
+        sickness_bhxh_reduction: '1000000',
+        maternity_bhxh_reduction: '2000000',
+        gross: '8000000',
+        pit: '1600000',
+        net: '6400000',
+      }),
+      previous: null,
+      checks: {
+        ...quiet,
+        workPermitExpiring: true,
+        bhxhSuspendedRegime: true,
+        nonResidentFlatPit: true,
+      },
+    });
+    const stage4bSheet = pseudo([stage4bLine], { language: 'vi', blockingRules: 0 }).sheet;
+    const anomalies = findAnomalies(stage4bSheet);
+    expect(anomalies.map((a) => a.kind)).toEqual(['work_permit_expiring', 'bhxh_suspended_regime', 'non_resident_flat_pit']);
+    expect(anomalies.map((a) => a.facts).join(' ')).toContain('20%');
+
+    const extracted = payrollFiguresOf(
+      { gross: '8000000', employeeInsurance: '0', pit: '1600000', net: '6400000' },
+      {
+        pay: { baseWage: '8000000', allowances: [], otherRegularPay: '0', overtime: [], nightWork: null, bonus: '0', unpaidReduction: '0', sicknessBhxhReduction: '1000000', maternityBhxhReduction: '2000000' },
+        deductions: { total: '0' },
+      },
+    );
+    expect(extracted.sickness_bhxh_reduction).toBe('1000000');
+    expect(extracted.maternity_bhxh_reduction).toBe('2000000');
+
+    const factsVi = explainFactsText({
+      language: 'vi',
+      figures: extracted,
+      dependentsCounted: 0,
+      taxMode: 'non_resident_flat',
+      insuranceSuspended: 'maternity_leave',
+    });
+    expect(factsVi).toContain('Khoản trừ do nghỉ ốm đau hưởng BHXH');
+    expect(factsVi).toContain('Khoản trừ do nghỉ thai sản hưởng BHXH');
+    expect(factsVi).toContain('20%');
+    expect(factsVi).toContain('tổng số ngày nghỉ thai sản hưởng BHXH và nghỉ không lương từ 14 ngày làm việc trở lên');
+  });
+
+  it('narrates What-Changed diff over P1/P2 pseudonymized rows and drops ungrounded numbers, links, or bad aliases', async () => {
+    const { sheet, aliases } = pseudonymizePayrollDiff(
+      {
+        language: 'vi',
+        hasPrior: true,
+        headcount: 3,
+        priorHeadcount: 2,
+        headcountDelta: 1,
+        grossDelta: '18000000',
+        employeeDeductionDelta: '1900000',
+        netDelta: '16100000',
+        employerStatutoryDelta: '3870000',
+        employerCostDelta: '21870000',
+        rows: [
+          {
+            employeeId: 'emp-1',
+            reasons: ['new_hire'],
+            grossDelta: '16000000',
+            employeeDeductionDelta: '1700000',
+            netDelta: '14300000',
+            employerStatutoryDelta: '3440000',
+            employerCostDelta: '19440000',
+            priorLeaveDays: null,
+            currentLeaveDays: '0',
+            hasRefused: false,
+            hasFlags: false,
+          },
+          {
+            employeeId: 'emp-2',
+            reasons: ['salary_change'],
+            grossDelta: '2000000',
+            employeeDeductionDelta: '200000',
+            netDelta: '1800000',
+            employerStatutoryDelta: '430000',
+            employerCostDelta: '2430000',
+            priorLeaveDays: '0',
+            currentLeaveDays: '0',
+            hasRefused: false,
+            hasFlags: false,
+          },
+        ],
+      },
+      { random: () => 0 }, // deterministic Fisher-Yates swap test
+    );
+    expect([...aliases.keys()]).toEqual(['P1', 'P2']);
+    expect(new Set(aliases.values())).toEqual(new Set(['emp-1', 'emp-2']));
+    const facts = diffFactsText(sheet);
+    expect(facts).not.toContain('338'); // never emit 338 account digits in prompt facts
+    expect(facts).not.toContain('emp-1');
+    expect(facts).not.toContain('0 -> 0');
+
+    // Grounded sentence with exact numbers & P1/P2 aliases passes and restores names cleanly
+    const goodCw = new PayrollCoworker(CONFIG, {
+      diffExplain: async () => ({
+        output: { text: 'Tổng chi phí người sử dụng lao động tăng 21.870.000 đồng (tăng 1 người), chủ yếu do P2 tuyển mới.' },
+      }),
+    });
+    const ok = await goodCw.explainDiff(sheet);
+    expect(ok).toEqual({
+      kind: 'text',
+      text: 'Tổng chi phí người sử dụng lao động tăng 21.870.000 đồng (tăng 1 người), chủ yếu do P2 tuyển mới.',
+    });
+    if (ok.kind === 'text') {
+      const names = new Map<string, string>([
+        ['P1', 'Nguyễn Văn A'],
+        ['P2', 'Trần Thị B'],
+      ]);
+      expect(restoreDiffAliases(ok.text, names)).toContain('Trần Thị B');
+    }
+
+    // Reject ungrounded number, invalid P9 alias, E1 alias, and URLs
+    expect(checkDiffNarration(sheet, { text: 'Tổng chi phí tăng 99.000.000 đồng do P1.' })).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(checkDiffNarration(sheet, { text: 'P9 tăng lương làm tổng chi phí tăng 21.870.000 đồng.' })).toEqual({ kind: 'none', code: 'ALIAS' });
+    expect(checkDiffNarration(sheet, { text: 'E1 tăng lương làm tổng chi phí tăng 21.870.000 đồng.' })).toEqual({ kind: 'none', code: 'ALIAS' });
+    expect(checkDiffNarration(sheet, { text: 'Xem chi tiết tại https://example.com nhé.' })).toEqual({ kind: 'none', code: 'LINK' });
+    expect(checkDiffNarration(sheet, { text: '   ' })).toEqual({ kind: 'none', code: 'EMPTY' });
+
+    // Quiet diff skips model call entirely
+    let quietCalled = false;
+    const quietCw = new PayrollCoworker(CONFIG, {
+      diffExplain: async () => {
+        quietCalled = true;
+        return { output: { text: 'should not run' } };
+      },
+    });
+    const quietRes = await quietCw.explainDiff({
+      language: 'vi',
+      hasPrior: true,
+      headcount: 2,
+      priorHeadcount: 2,
+      headcountDelta: 0,
+      grossDelta: '0',
+      employeeDeductionDelta: '0',
+      netDelta: '0',
+      employerStatutoryDelta: '0',
+      employerCostDelta: '0',
+      rows: [],
+    });
+    expect(quietRes).toEqual({ kind: 'none', code: 'QUIET' });
+    expect(quietCalled).toBe(false);
+
+    // Raw name passed in alias field is rejected by guardDiffSheet before prompt reaches model
+    await expect(
+      quietCw.explainDiff({
+        ...sheet,
+        rows: [{ ...sheet.rows[0]!, alias: 'Nguyễn Văn Thử' }],
+      }),
+    ).rejects.toThrow(PayrollPromptLeakError);
   });
 });

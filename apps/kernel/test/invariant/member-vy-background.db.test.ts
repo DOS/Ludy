@@ -23,19 +23,20 @@ import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createDb, createPool } from "@crove/db";
-import { migrate, setRolePasswords } from "@crove/db/migrate";
+import { createDb } from "@ludy/db";
+import { migrate } from "@ludy/db/migrate";
 import {
   createOrg,
   kernelCommands,
   upsertIdentity,
   kernelQueries,
-} from "@crove/kernel";
-import { Runtime } from "@crove/kernel-runtime";
-import { financeCommands, financeQueries } from "@crove/mod-finance";
+} from "@ludy/kernel";
+import { Runtime } from "@ludy/kernel-runtime";
+import { financeCommands, financeQueries } from "@ludy/mod-finance";
 import { TEST_MANIFESTS } from "./fixtures/manifests.ts";
 import { contextToken } from "./fixtures/context-token.ts";
 import { aiRunFeature, type AiRunFeature } from "./fixtures/ai-run-feature.ts";
+import { auditRoleFunctionExecute, createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 // The extra column of an ai_run seed once the table has `feature` (#3029); empty before.
 let FEAT: AiRunFeature = { cols: "", vals: "" };
@@ -61,6 +62,30 @@ const POLICIES = [
   ["crove_kernel.member_vy_result", "member_only", "*", false],
   ["crove_notes.note", "note_read", "r", false],
 ];
+// One named policy, `crove_meetings.meeting.meeting_read`, may read the sealed context once, to compare its kind with 'mcp_company' (#3731, owner-approved change of this net, 2026-11-18):
+// `(SELECT crove_kernel.ctx_verified() ->> 'kind') = 'mcp_company'`. That comparison and the role list of the person branch (`ARRAY['owner', 'admin', 'member']`, whose string 'member' the net
+// below would otherwise take for a read of the sealed member) are set aside for that policy only. For that policy the rendered text must hold exactly one `ctx_verified`, and it must be that
+// comparison; any other read through ctx_verified, ctx_acting_user_id or crove.ctx written in the policy text (a second comparison, another key, a path read, another kind, the setting read
+// directly) fails, and so does the same text on any other policy. What the net does not do, as before: it reads only the policy text, so a read through a view or a function is not seen
+// (the functions are pinned below), and a policy that reads `ctx_verified` and holds no 'member' string and no ctx_acting_user_id is not matched at all (a gap, filed separately).
+const COMPANY_READ_POLICIES = [["crove_meetings.meeting", "meeting_read"]] as const;
+const KIND_COMPARE = /\(\s*SELECT\s*\(crove_kernel\.ctx_verified\(\) ->> 'kind'::text\)\s*\)\s*=\s*'mcp_company'::text/g;
+const ROLE_LIST = /ARRAY\['owner'::text, 'admin'::text, 'member'::text\]/g;
+// The policies of {t, n, text} that the net flags: those that read the helper or the sealed member, after the allowance above is applied to the named policy.
+function readsSealedMember(policies: ReadonlyArray<{ t: string; n: string; text: string }>): Array<{ t: string; n: string }> {
+  return policies
+    .filter((p) => {
+      const named = COMPANY_READ_POLICIES.some(([t, n]) => t === p.t && n === p.n);
+      if (named) {
+        // Exactly one read of the sealed context in the whole text, and it is the allowed comparison; nothing else of the net's match survives once the allowance is set aside.
+        if ((p.text.match(/ctx_verified/gi) ?? []).length !== 1 || (p.text.match(KIND_COMPARE) ?? []).length !== 1) return true;
+        const rest = p.text.replace(KIND_COMPARE, "").replace(ROLE_LIST, "");
+        return /ctx_acting_user_id|ctx_verified|crove\.ctx|'\{?member\}?'/i.test(rest);
+      }
+      return /(ctx_acting_user_id|ctx_verified)/i.test(p.text) && /ctx_acting_user_id|'member'/i.test(p.text);
+    })
+    .map(({ t, n }) => ({ t, n }));
+}
 // What the catalog may hold, nothing else. No meeting table (Platform PO decision on #2756), no task, proposal or notification.
 const CATALOG: Record<string, string> = {
   "crove_kernel.ai_run": "write",
@@ -91,6 +116,7 @@ const NON_SYSTEM =
 suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   const dbName = `crove_test_member_vy_bg_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = "";
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = "";
   let workerUrl = "";
   const pools: pg.Pool[] = [];
@@ -103,7 +129,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   const has = { entry: false, catalog: false, kind: false, notes: false };
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -117,7 +143,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     fn: (c: pg.Client) => Promise<T>,
     commit = false,
   ): Promise<T> {
-    const c = new pg.Client({ connectionString: url });
+    const c = createDbClient({ connectionString: url }, dbIds);
     await c.connect();
     try {
       await c.query("BEGIN");
@@ -264,21 +290,22 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
+    dbIds = await resolveDbIdentifiers(adminUrl);
     FEAT = await admin((c) => aiRunFeature(c));
-    await setRolePasswords(adminUrl, {
+    await setActiveRolePasswords(adminUrl, {
       crove_app: "test-app-pw",
       crove_worker: "test-worker-pw",
-    });
+    }, dbIds);
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = username;
+      url.username = dbIds ? dbIds.roleName(username) : username;
       url.password = password;
       return url.toString();
     };
     appUrl = login("crove_app", "test-app-pw");
     workerUrl = login("crove_worker", "test-worker-pw");
     const runtimeFor = (url: string) => {
-      const pool = createPool({ connectionString: url, max: 4 });
+      const pool = createDbPool({ connectionString: url, max: 4 }, dbIds);
       pools.push(pool);
       const db = createDb(pool);
       return {
@@ -385,14 +412,18 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   });
 
   // The context of a member-bound MCP grant (ADR-0051, design note on #2975 slice 3) adds one writer of the sealed context and one reader of the sealed member, each its own kind, and the
-  // context of a company MCP grant (slice 3e) adds one more writer (it seals no member and has no catalog, so no reader): they are accepted here once they exist, and only these three
-  // names (`enter_mcp_member_context`, `ctx_mcp_member_id`, `enter_mcp_company_context`); a fourth writer or reader still fails the exact sets below.
+  // context of a company MCP grant (slice 3e) adds one more writer (it seals no member and has no catalog, so no reader), and the write context of the one MCP write command (#3227, step 3)
+  // one more writer: they are accepted here once they exist, and only these names (`enter_mcp_member_context`, `ctx_mcp_member_id`, `enter_mcp_company_context` with its core, and
+  // `enter_mcp_company_draft_context`, pinned in its own case below); another writer or reader still fails the exact sets below.
   const mcpMemberObjects = async () => {
     const found = await admin((c) =>
-      c.query<{ entry: boolean; helper: boolean; company: boolean; core: boolean }>(
+      c.query<{ entry: boolean; helper: boolean; company: boolean; core: boolean; draft: boolean; proposal: boolean; write: boolean }>(
         `SELECT to_regprocedure('crove_kernel.enter_mcp_member_context(uuid,uuid)') IS NOT NULL AS entry, to_regprocedure('crove_kernel.ctx_mcp_member_id()') IS NOT NULL AS helper,
                 to_regprocedure('crove_kernel.enter_mcp_company_context(uuid,uuid)') IS NOT NULL AS company,
-                to_regprocedure('crove_kernel.seal_mcp_company_context(uuid,uuid)') IS NOT NULL AS core`,
+                to_regprocedure('crove_kernel.seal_mcp_company_context(uuid,uuid)') IS NOT NULL AS core,
+                to_regprocedure('crove_kernel.enter_mcp_company_draft_context(uuid,uuid)') IS NOT NULL AS draft,
+                to_regprocedure('crove_kernel.enter_mcp_company_proposal_context(uuid,uuid,text)') IS NOT NULL AS proposal,
+                to_regprocedure('crove_kernel.enter_mcp_company_write_context(uuid,uuid,text)') IS NOT NULL AS write`,
       ),
     );
     const row = found.rows[0];
@@ -402,6 +433,14 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       entry: [
         ...(row?.entry ? ['crove_kernel.enter_mcp_member_context(uuid,uuid)'] : []),
         ...(row?.core ? ['crove_kernel.seal_mcp_company_context(uuid,uuid)'] : row?.company ? ['crove_kernel.enter_mcp_company_context(uuid,uuid)'] : []),
+        // The write context of the one MCP write command (#3227, step 3, owner decision 2026-11-14): one more writer of the seal, its own kind (`mcp_company_draft`), accepted once it exists.
+        ...(row?.draft ? ['crove_kernel.enter_mcp_company_draft_context(uuid,uuid)'] : []),
+        // The sealed context in which an MCP call to an R2 or R3 command becomes a proposal (#3858 slice d, ADR-0051 decision 10, owner decision 2026-11-18/19): one more writer of the seal, its own kind
+        // (`mcp_company_proposal`), accepted once it exists and pinned in its own case below.
+        ...(row?.proposal ? ['crove_kernel.enter_mcp_company_proposal_context(uuid,uuid,text)'] : []),
+        // The sealed write contexts of the Engage coworkers (E2, #3861, ADR-0051 decisions 10 and 11): one more writer of the seal for the two line scopes, kinds `mcp_engage_write` and `mcp_ads_draft`,
+        // accepted once it exists and pinned in test/invariant/mcp-engage-write.db.test.ts.
+        ...(row?.write ? ['crove_kernel.enter_mcp_company_write_context(uuid,uuid,text)'] : []),
       ],
       helper: row?.helper ? ['crove_kernel.ctx_mcp_member_id()'] : [],
     };
@@ -428,6 +467,104 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       rows.map((r) => r.n).sort(),
       "functions that call ctx_write",
     ).toEqual([...CTX_WRITERS, MEMBER_ENTRY, ...(await mcpMemberObjects()).entry].sort());
+  });
+
+  // The write context of the one MCP write command (#3227): accepted above by name only when it exists, so its properties are pinned here, whatever file later creates it: a weaker writer cannot
+  // pass the base copy of this suite. The API login alone runs it, its search path is pinned, and what it seals has no user, R1, taint and its own kind.
+  it("pins the write context of the MCP draft command when it exists: the API login alone, a pinned search path, no user, R1, tainted, its own kind", async () => {
+    const entry = "crove_kernel.enter_mcp_company_draft_context(uuid,uuid)";
+    const found = await admin((c) => c.query<{ ok: boolean }>(`SELECT to_regprocedure('${entry}') IS NOT NULL AS ok`));
+    if (found.rows[0]?.ok !== true) return;
+    await admin(async (c) => {
+      const { rows: logins, activeAllowed } = await auditRoleFunctionExecute(c, dbIds, entry, ["crove_app"], "brand");
+      expect(logins.length).toBeGreaterThan(0);
+      expect(logins.some((r) => r.rolname === activeAllowed[0] && r.ok), `active role ${activeAllowed[0]} execute the draft entry`).toBe(true);
+      for (const { rolname, ok, expected } of logins) {
+        expect(ok, `${rolname} execute the draft entry`).toBe(expected);
+      }
+      expect((await c.query<{ ok: boolean }>(`SELECT has_function_privilege('public', '${entry}', 'EXECUTE') AS ok`)).rows[0]?.ok).toBe(false);
+      const row = (await c.query<{ proconfig: string[] | null; secdef: boolean; def: string }>(`SELECT proconfig, prosecdef AS secdef, pg_get_functiondef(oid) AS def FROM pg_proc WHERE oid = '${entry}'::regprocedure`)).rows[0];
+      expect(row?.secdef).toBe(true);
+      // The whole setting, as one element: `pg_catalog, pg_temp, public` is another element and fails.
+      expect(row?.proconfig, "the draft entry's settings").toEqual(["search_path=pg_catalog, pg_temp"]);
+      // The shape it seals, read from its own text: an agent-shaped context with no user, at R1, tainted, of its own kind, naming the grant and the grantor.
+      for (const part of [/'actor',\s*'agent'/, /'user',\s*NULL/, /'max_risk',\s*'R1'/, /'tainted',\s*true/, /'kind',\s*'mcp_company_draft'/, /'grantor',\s*v_user/]) {
+        expect(row?.def, String(part)).toMatch(part);
+      }
+      expect(row?.def).not.toMatch(/'max_risk',\s*'R[23]'/);
+    });
+    // The text checks above are supplementary: a later expression in the same function could override a key, so what it seals is read back from a live entry of a real company grant.
+    const grantId = randomUUID();
+    await admin((c) =>
+      c.query(
+        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
+         VALUES ($1, $2, $3, $4, 'Pin client', 'client.example.com', ARRAY['ludy.read', 'ludy.social.draft'], $5, now(), now() + interval '30 days', $3)`,
+        [orgId, grantId, users.owner, `pin-client-${grantId}`, `pin-oauth-${grantId}`],
+      ),
+    );
+    const sealed = await inContext(
+      appUrl,
+      (c) => c.query("SELECT crove_kernel.enter_mcp_company_draft_context($1::uuid, $2::uuid)", [orgId, grantId]),
+      sealOf,
+    );
+    expect(sealed, "the sealed context of the draft entry").toMatchObject({
+      actor: "agent",
+      user: null,
+      max_risk: "R1",
+      tainted: true,
+      kind: "mcp_company_draft",
+      grantor: users.owner,
+      org: orgId,
+      agent: grantId,
+    });
+  });
+
+  // The sealed context of an MCP proposal (#3858 slice d): accepted above by name only when it exists, so its properties are pinned here whatever file later creates it: a weaker writer cannot pass the
+  // base copy of this suite. The API login alone runs it, its search path is pinned, and what it seals has no user, R1, taint and its own kind.
+  it("pins the sealed context of an MCP proposal when it exists: the API login alone, a pinned search path, no user, R1, tainted, its own kind", async () => {
+    const entry = "crove_kernel.enter_mcp_company_proposal_context(uuid,uuid,text)";
+    const found = await admin((c) => c.query<{ ok: boolean }>(`SELECT to_regprocedure('${entry}') IS NOT NULL AS ok`));
+    if (found.rows[0]?.ok !== true) return;
+    await admin(async (c) => {
+      const { rows: logins, activeAllowed } = await auditRoleFunctionExecute(c, dbIds, entry, ["crove_app"], "brand");
+      expect(logins.length).toBeGreaterThan(0);
+      expect(logins.some((r) => r.rolname === activeAllowed[0] && r.ok), `active role ${activeAllowed[0]} execute the proposal entry`).toBe(true);
+      for (const { rolname, ok, expected } of logins) {
+        expect(ok, `${rolname} execute the proposal entry`).toBe(expected);
+      }
+      expect((await c.query<{ ok: boolean }>(`SELECT has_function_privilege('public', '${entry}', 'EXECUTE') AS ok`)).rows[0]?.ok).toBe(false);
+      const row = (await c.query<{ proconfig: string[] | null; secdef: boolean; def: string }>(`SELECT proconfig, prosecdef AS secdef, pg_get_functiondef(oid) AS def FROM pg_proc WHERE oid = '${entry}'::regprocedure`)).rows[0];
+      expect(row?.secdef).toBe(true);
+      expect(row?.proconfig, "the proposal entry's settings").toEqual(["search_path=pg_catalog, pg_temp"]);
+      for (const part of [/'actor',\s*'agent'/, /'user',\s*NULL/, /'max_risk',\s*'R1'/, /'tainted',\s*true/, /'kind',\s*'mcp_company_proposal'/, /'grantor',\s*v_user/]) {
+        expect(row?.def, String(part)).toMatch(part);
+      }
+      expect(row?.def).not.toMatch(/'max_risk',\s*'R[23]'/);
+    });
+    // A live entry of a real company grant seals what the text says (a later expression could override a key).
+    const grantId = randomUUID();
+    await admin((c) =>
+      c.query(
+        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
+         VALUES ($1, $2, $3, $4, 'Pin client', 'client.example.com', ARRAY['ludy.read', 'ludy.engage.write'], $5, now(), now() + interval '30 days', $3)`,
+        [orgId, grantId, users.owner, `pin-proposal-client-${grantId}`, `pin-proposal-oauth-${grantId}`],
+      ),
+    );
+    const sealed = await inContext(
+      appUrl,
+      (c) => c.query("SELECT crove_kernel.enter_mcp_company_proposal_context($1::uuid, $2::uuid, 'ludy.engage.write')", [orgId, grantId]),
+      sealOf,
+    );
+    expect(sealed, "the sealed context of the proposal entry").toMatchObject({
+      actor: "agent",
+      user: null,
+      max_risk: "R1",
+      tainted: true,
+      kind: "mcp_company_proposal",
+      grantor: users.owner,
+      org: orgId,
+      agent: grantId,
+    });
   });
 
   it("pins the functions that touch the context's key, its seal or its settings: only the writer and the verifier", async () => {
@@ -481,10 +618,10 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   it("reads ctx_acting_user_id only in the pinned policies, and nowhere else: no function, wrapper or direct read of the sealed member", async () => {
     const found = await admin(async (c) => ({
       policies: (
-        await c.query<{ t: string; n: string; cmd: string; perm: boolean }>(
-          `SELECT p.polrelid::regclass::text AS t, p.polname::text AS n, p.polcmd::text AS cmd, p.polpermissive AS perm FROM pg_policy p
+        await c.query<{ t: string; n: string; cmd: string; perm: boolean; text: string }>(
+          `SELECT p.polrelid::regclass::text AS t, p.polname::text AS n, p.polcmd::text AS cmd, p.polpermissive AS perm,
+                  coalesce(pg_get_expr(p.polqual, p.polrelid), '') || ' ' || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '') AS text FROM pg_policy p
            WHERE coalesce(pg_get_expr(p.polqual, p.polrelid), '') || ' ' || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '') ~* '(ctx_acting_user_id|ctx_verified)'
-             AND coalesce(pg_get_expr(p.polqual, p.polrelid), '') || ' ' || coalesce(pg_get_expr(p.polwithcheck, p.polrelid), '') ~* 'ctx_acting_user_id|''member'''
            ORDER BY 1, 2`,
         )
       ).rows,
@@ -509,13 +646,55 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       "functions that call ctx_acting_user_id (a wrapper, or a definer that gates on it)",
     ).toEqual([]);
     expect(
-      found.sealReaders,
+      [...found.sealReaders].sort(),
       "functions that read the sealed member directly",
-    ).toEqual(["crove_kernel.ctx_acting_user_id()", ...(await mcpMemberObjects()).helper]);
+    ).toEqual(["crove_kernel.ctx_acting_user_id()", ...(await mcpMemberObjects()).helper].sort());
+    // The named policies of Meetings, when they exist, read the sealed kind through the one allowed comparison, once each, as restrictive read policies.
+    for (const p of found.policies.filter((x) => COMPANY_READ_POLICIES.some(([t, n]) => t === x.t && n === x.n))) {
+      expect([...p.text.matchAll(KIND_COMPARE)].length, `${p.t}.${p.n}: one comparison of the sealed kind`).toBe(1);
+      expect([p.cmd, p.perm], `${p.t}.${p.n}: a restrictive read policy`).toEqual(["r", false]);
+    }
+    const byTablePolicy = (a: readonly (string | boolean)[], b: readonly (string | boolean)[]) => {
+      const ta = String(a[0]);
+      const tb = String(b[0]);
+      if (ta !== tb) return ta < tb ? -1 : 1;
+      const pa = String(a[1]);
+      const pb = String(b[1]);
+      return pa < pb ? -1 : pa > pb ? 1 : 0;
+    };
     expect(
-      found.policies.map((p) => [p.t, p.n, p.cmd, p.perm]),
+      found.policies.filter((p) => readsSealedMember([p]).length > 0).map((p) => [p.t, p.n, p.cmd, p.perm]).sort(byTablePolicy),
       "policies that read the helper: (table, policy, command, permissive)",
-    ).toEqual(POLICIES);
+    ).toEqual([...POLICIES].sort(byTablePolicy));
+  });
+
+  it("sets aside only the one comparison of the sealed kind in meeting_read, and flags every other match (planted texts)", () => {
+    const compare = "(( SELECT (crove_kernel.ctx_verified() ->> 'kind'::text)) = 'mcp_company'::text)";
+    const roles = "m.role = ANY (ARRAY['owner'::text, 'admin'::text, 'member'::text])";
+    const meeting = { t: "crove_meetings.meeting", n: "meeting_read" };
+    // The real shape is set aside.
+    expect(readsSealedMember([{ ...meeting, text: `(${roles}) OR ${compare}` }])).toEqual([]);
+    // The same text on any other policy, table or name is flagged (so are the other two Meetings read policies, should they ever hold the role list).
+    expect(readsSealedMember([{ t: "crove_meetings.meeting", n: "other_read", text: `(${roles}) OR ${compare}` }])).toHaveLength(1);
+    expect(readsSealedMember([{ t: "crove_meetings.meeting_result", n: "meeting_result_read", text: `(${roles}) OR ${compare}` }])).toHaveLength(1);
+    expect(readsSealedMember([{ t: "crove_notes.note", n: "meeting_read", text: `(${roles}) OR ${compare}` }])).toHaveLength(1);
+    // Another policy holding the comparison beside any 'member' string is flagged.
+    expect(readsSealedMember([{ t: "crove_meetings.meeting_result", n: "meeting_result_read", text: `${compare} OR (x = 'member'::text)` }])).toHaveLength(1);
+    // meeting_read with any other read of the sealed context or of the helper is flagged, whatever the key or kind it names.
+    const extras = [
+      "(crove_kernel.ctx_acting_user_id() IS NOT NULL)",
+      "((SELECT (crove_kernel.ctx_verified() ->> 'member_vy'::text)) = 'x'::text)",
+      "((SELECT (crove_kernel.ctx_verified() ->> 'kind'::text)) = 'mcp_member'::text)",
+      "((SELECT (crove_kernel.ctx_verified() #>> '{member}'::text[])) IS NOT NULL)",
+      "((SELECT (crove_kernel.ctx_verified() ->> 'member'::text)) IS NOT NULL)",
+      `${compare}`,
+    ];
+    for (const extra of extras) expect(readsSealedMember([{ ...meeting, text: `(${roles}) OR ${compare} OR ${extra}` }]), extra).toHaveLength(1);
+    // A direct read of the sealed setting is flagged as well.
+    expect(readsSealedMember([{ ...meeting, text: `(${roles}) OR ${compare} OR ((current_setting('crove.ctx'::text, true))::jsonb ->> 'member'::text) IS NOT NULL` }])).toHaveLength(1);
+    // meeting_read without the comparison, or with a different one, is flagged too.
+    expect(readsSealedMember([{ ...meeting, text: `(${roles})` }])).toHaveLength(1);
+    expect(readsSealedMember([{ ...meeting, text: `(${roles}) OR ((SELECT (crove_kernel.ctx_verified() ->> 'kind'::text)) = 'mcp_member'::text)` }])).toHaveLength(1);
   });
 
   // ---- The catalog -----------------------------------------------------------------------------------------------------------
@@ -530,7 +709,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           "SELECT table_name, mode FROM crove_kernel.member_vy_table ORDER BY 1",
         ),
       )
-    ).rows;
+    ).rows.map((r) => ({ ...r, table_name: dbIds ? dbIds.toCanonicalTable(r.table_name) : r.table_name }));
     // A subset of the explicit list: no meeting table, no task, proposal or notification, whatever policy comes with it.
     for (const row of catalog)
       expect(CATALOG[row.table_name], `catalog row ${row.table_name}`).toBe(
@@ -559,7 +738,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     const privileges = await admin((c) =>
       c.query<{ r: string; p: string }>(
         `SELECT r.rolname AS r, p AS p FROM pg_roles r, unnest(ARRAY['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) p
-         WHERE r.rolname LIKE 'crove\\_%' AND NOT r.rolsuper
+         WHERE ((r.rolname LIKE 'crove\\_%' OR r.rolname LIKE 'ludy\\_%') AND r.rolname NOT LIKE '%\\_test\\_%' AND r.rolname NOT LIKE 'crove\\_test%' AND r.rolname NOT LIKE 'ludy\\_test%' AND r.rolname <> 'ludy_migrate_test') AND NOT r.rolsuper
            AND (has_table_privilege(r.rolname, 'crove_kernel.member_vy_table', p)
                 OR (p IN ('INSERT', 'UPDATE') AND has_any_column_privilege(r.rolname, 'crove_kernel.member_vy_table', p)))`,
       ),
@@ -901,7 +1080,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
 
   it("takes FOR SHARE on the member's membership row, so a removal waits for an entering transaction (55P03)", async () => {
     const run = await liveRun("vyUser");
-    const holder = new pg.Client({ connectionString: workerUrl });
+    const holder = createDbClient({ connectionString: workerUrl }, dbIds);
     await holder.connect();
     try {
       await holder.query("BEGIN");
@@ -943,7 +1122,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
   it("enters in a READ ONLY transaction without the membership lock, reads as the member and writes nothing", async () => {
     const run = await liveRun("vyUser");
     const mine = await addResult(run.runId, users.vyUser);
-    const c = new pg.Client({ connectionString: workerUrl });
+    const c = createDbClient({ connectionString: workerUrl }, dbIds);
     await c.connect();
     try {
       await c.query("BEGIN READ ONLY");
@@ -1034,7 +1213,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         c.query<{ name: string }>(
           `SELECT n.nspname || '.' || c.relname AS name
            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-           WHERE n.nspname LIKE 'crove\\_%' AND n.nspname <> 'crove_meta' AND c.relkind IN ('r', 'p') AND NOT c.relispartition
+           WHERE (n.nspname LIKE 'crove\\_%' OR n.nspname LIKE 'ludy\\_%') AND n.nspname <> 'crove_meta' AND c.relkind IN ('r', 'p') AND NOT c.relispartition
              AND EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = c.oid AND t.tgname = 'agent_write_guard' AND NOT t.tgisinternal AND t.tgenabled = 'O')
            ORDER BY 1`,
         ),
@@ -1630,7 +1809,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     const found = await admin((c) =>
       c.query<{ fn: string }>(
         `SELECT n.nspname || '.' || p.proname AS fn FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-         WHERE n.nspname LIKE 'crove\\_%' AND (p.prosrc ~ 'member_vy_(result|memory)' OR p.prosrc ~ $$member_vy_['"]?\\s*\\|\\|$$) ORDER BY 1`,
+         WHERE (n.nspname LIKE 'crove\\_%' OR n.nspname LIKE 'ludy\\_%') AND (p.prosrc ~ 'member_vy_(result|memory)' OR p.prosrc ~ $$member_vy_['"]?\\s*\\|\\|$$) ORDER BY 1`,
       ),
     );
     const names = [...new Set(found.rows.map((r) => r.fn))];
@@ -1911,7 +2090,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
           await c.query<{ name: string; exempt: boolean }>(
             `SELECT n.nspname || '.' || c.relname AS name, crove_kernel.agent_write_exempt(c.oid::regclass) AS exempt
              FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-             WHERE n.nspname LIKE 'crove\\_%' AND n.nspname <> 'crove_meta' AND c.relkind IN ('r', 'p') AND NOT c.relispartition
+             WHERE (n.nspname LIKE 'crove\\_%' OR n.nspname LIKE 'ludy\\_%') AND n.nspname <> 'crove_meta' AND c.relkind IN ('r', 'p') AND NOT c.relispartition
                AND NOT EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = c.oid AND t.tgname = 'agent_write_guard' AND NOT t.tgisinternal
                                  AND t.tgenabled IN ('O', 'A') AND t.tgfoid = 'crove_kernel.agent_write_guard()'::regprocedure)
              ORDER BY 1`,
@@ -1991,7 +2170,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
         ok: false,
         code: "42501",
         message: "AGENT_FORBIDDEN",
-        detail: table,
+        detail: dbIds ? dbIds.table(table) : table,
       });
     }
   });
@@ -2019,7 +2198,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       ok: false,
       code: "42501",
       message: "AGENT_FORBIDDEN",
-      detail: "crove_kernel.refusal_tally",
+      detail: `${dbIds?.schema("kernel") ?? "crove_kernel"}.refusal_tally`,
     });
     // The control: the same call in an org-chart agent context counts (the function and its grant work; only member mode is refused).
     const control = await inContext(workerUrl, agentEnter, (c) =>
@@ -2068,7 +2247,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
       ok: false,
       code: "42501",
       message: "AGENT_FORBIDDEN",
-      detail: "crove_kernel.member_vy_result",
+      detail: `${dbIds?.schema("kernel") ?? "crove_kernel"}.member_vy_result`,
     });
     // Through the worker login the column grant refuses first (run_id is not updatable by crove_tenant): pinned too, with its own code.
     const viaWorker = await inContext(workerUrl, memberEnter(run.agentId, run.runId), (c) =>
@@ -2086,7 +2265,7 @@ suite("Vy in member mode, stage B invariants (ADR-0049, #2756)", () => {
     const mine = await addResult(run.runId, users.vyUser, "ready");
     // The member's acceptance clears the taint in the member's own context; here as the superuser outside any context.
     await admin((c) => c.query(`UPDATE crove_kernel.member_vy_result SET tainted = false WHERE id = $1`, [mine]));
-    const forbidden = { ok: false, code: "42501", message: "AGENT_FORBIDDEN", detail: "crove_kernel.member_vy_result" };
+    const forbidden = { ok: false, code: "42501", message: "AGENT_FORBIDDEN", detail: `${dbIds?.schema("kernel") ?? "crove_kernel"}.member_vy_result` };
     for (const url of [workerUrl, adminUrl]) {
       const who = url === workerUrl ? "the worker login" : "the superuser";
       const attempts = await inContext(url, memberEnter(run.agentId, run.runId), async (c) => {

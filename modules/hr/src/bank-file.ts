@@ -7,22 +7,22 @@
 // decrypted reaches an audit fact or a log, and the answer is returned to the caller and never stored. Only the people of an approved run that are paid (the net of their pay line and their corrections, above zero)
 // are in it, and a person's corrections are added to their pay, one amount per person (a person whose total is below zero, or a line not calculated, gets no file). A person with no account number on record, or erased, refuses the whole file with a count (never a name): a file with some people missing must not exist.
 //
-// One file is for one bank (#2897): the query takes the code of a bank of the list `VN_BANKS` (@crove/l10n-vn; the route's `bank` parameter carries it, so the route needs no change) and the file holds the
+// One file is for one bank (#2897): the query takes the code of a bank of the list `VN_BANKS` (@ludy/l10n-vn; the route's `bank` parameter carries it, so the route needs no change) and the file holds the
 // people of the run whose record names that bank, with the bank's short name from the list in the `bank` column. A person with no bank on record refuses the whole file with a count, like a missing
 // account number: no file may leave someone out unseen. The check that nothing is lost is on the whole run: the amounts of every bank together must equal the net pay frozen at approval, to the dong, before
 // any file is made; the file's own total is its bank's part, and the answer says how many people are in other banks' files (a count). A code not in the list is refused. More people in one file than the
 // cap is refused too.
 //
-// A saved template (#2893, `crove_hr.payroll_bank_template`, the screen "Mẫu file lương") of the run's legal entity may be chosen: the file then follows its columns in its order (`sequence` of a
+// A saved template (#2893, `ludy_hr.payroll_bank_template`, the screen "Mẫu file lương") of the run's legal entity may be chosen: the file then follows its columns in its order (`sequence` of a
 // template is the file's `seq`), its headers and its remark text (`{month}` becomes MM/YYYY). The bank cell stays the list's short name. The headers and the remark are text a person typed: they go
 // through the same control-character clean-up as a name and are written as string cells with the Text format (./bank-file-xlsx.ts), so a leading `=`, `+`, `-` or `@` stays inert. A template that is not
 // found, or belongs to another legal entity than the run, is refused as not found.
 //
 // `hr.payroll.bank_file.export` is the audit row of a downloaded file: the run and a count, never a name, an account number or an amount. The route writes it before it answers, so no row, no download.
-import type { MemberRole } from '@crove/db';
-import { HR_BANK_FILE_COLUMNS, HR_BANK_FILE_HEADERS, HR_BANK_FILE_MAX_PEOPLE, zHrBankFileExport, zHrBankFileQuery, zHrBankLayout, type HrBankFile, type HrBankFileColumn, type HrBankFileExport } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, hasFreshMfa } from '@crove/kernel-runtime';
-import { Decimal, bankByCode, money } from '@crove/l10n-vn';
+import type { MemberRole } from '@ludy/db';
+import { HR_BANK_FILE_COLUMNS, HR_BANK_FILE_HEADERS, HR_BANK_FILE_MAX_PEOPLE, zHrBankFileExport, zHrBankFileQuery, zHrBankLayout, type HrBankFile, type HrBankFileColumn, type HrBankFileExport } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, hasFreshMfa } from '@ludy/kernel-runtime';
+import { Decimal, bankByCode, money } from '@ludy/l10n-vn';
 import { ACCOUNT_PLACE, subjectOf } from './employees.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
@@ -51,13 +51,13 @@ export const bankFileGet = defineQuery({
     // The bank is a bank of the list, never free text: a code that is not in it is refused before anything is read.
     const bank = bankByCode(input.bankName);
     if (!bank) throw new DomainError('HR_BANK_UNKNOWN', 422, 'Ngân hàng này không có trong danh sách ngân hàng của Ludy');
-    const run = await ctx.trx.selectFrom('crove_hr.payroll_run').select(['id', 'legal_entity_id', 'month', 'status', 'approval']).where('org_id', '=', ctx.orgId).where('id', '=', input.runId).executeTakeFirst();
+    const run = await ctx.trx.selectFrom('ludy_hr.payroll_run').select(['id', 'legal_entity_id', 'month', 'status', 'approval']).where('org_id', '=', ctx.orgId).where('id', '=', input.runId).executeTakeFirst();
     if (!run) throw new DomainError('HR_RUN_NOT_FOUND', 404, 'Không tìm thấy bảng lương này');
     if (!(APPROVED as readonly string[]).includes(run.status)) throw new DomainError('HR_RUN_NOT_APPROVED', 409, 'Chỉ bảng lương đã được duyệt mới xuất được file chuyển lương');
     // The saved template, if one is chosen: of this run's legal entity, found by the caller's own row policies (another org's or another entity's is not found), and a valid layout.
     let template: { columns: HrBankFileColumn[]; headers: string[]; content: string } | null = null;
     if (input.templateId !== undefined) {
-      const row = await ctx.trx.selectFrom('crove_hr.payroll_bank_template').select(['legal_entity_id', 'layout']).where('org_id', '=', ctx.orgId).where('id', '=', input.templateId).executeTakeFirst();
+      const row = await ctx.trx.selectFrom('ludy_hr.payroll_bank_template').select(['legal_entity_id', 'layout']).where('org_id', '=', ctx.orgId).where('id', '=', input.templateId).executeTakeFirst();
       const layout = row && row.legal_entity_id === run.legal_entity_id ? zHrBankLayout.safeParse(row.layout) : null;
       if (!layout?.success) throw new DomainError('HR_BANK_TEMPLATE_NOT_FOUND', 404, 'Không tìm thấy mẫu file này');
       template = {
@@ -68,7 +68,7 @@ export const bankFileGet = defineQuery({
       };
     }
     const lines = await ctx.trx
-      .selectFrom('crove_hr.payroll_line')
+      .selectFrom('ludy_hr.payroll_line')
       .select(['employee_id', 'net', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('run_id', '=', run.id)
@@ -85,7 +85,7 @@ export const bankFileGet = defineQuery({
     if (paid.length === 0) throw new DomainError('HR_BANK_FILE_EMPTY', 422, 'Bảng lương này không có khoản thực nhận nào để chuyển');
     const ids = paid.map((l) => l.employee_id);
     const employees = await ctx.trx
-      .selectFrom('crove_hr.payroll_employee')
+      .selectFrom('ludy_hr.payroll_employee')
       .select(['id', 'display_name', 'erased_at', 'bank_account_sealed', 'bank_code'])
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', ids)

@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { chromium, expect, test, type BrowserContext, type Page } from '@playwright/test';
+import { snapshotDomPage } from '../src/page-capture.ts';
 import { startFakeLudy, type FakeLudy } from './fake-ludy.ts';
 
 const pkg = fileURLToPath(new URL('..', import.meta.url));
@@ -63,7 +64,7 @@ test('the installed manifest asks for nothing beyond the list', async () => {
   const manifest = await context.serviceWorkers()[0]!.evaluate(() => chrome.runtime.getManifest());
   expect([...(manifest.permissions ?? [])].sort()).toEqual(['identity', 'storage']);
   expect(manifest.host_permissions).toEqual(['https://app.ludy.vn/*']);
-  expect([...(manifest.optional_permissions ?? [])].sort()).toEqual(['offscreen', 'tabCapture']);
+  expect([...(manifest.optional_permissions ?? [])].sort()).toEqual(['activeTab', 'offscreen', 'scripting', 'tabCapture']);
 });
 
 test('the installed manifest names its icons, and the package holds them', async () => {
@@ -134,6 +135,8 @@ test('the code exchange carries the extension\'s own Origin, which the kernel bi
   fake.requests.length = 0;
   fake.exchanges.length = 0;
   const page = await popup();
+  // The sign-in step says, before the button, that the browser and operating system name is sent (#3273).
+  await expect(page.locator('#sign-in-device-note')).toContainText('tên thiết bị');
   await page.evaluate(() => {
     const seen: { redirect: string } = { redirect: '' };
     (chrome.identity as { launchWebAuthFlow: unknown }).launchWebAuthFlow = async ({ url }: { url: string }) => {
@@ -173,6 +176,16 @@ test('the shell talks to the configured address only', async () => {
   for (const url of seen) expect(url.startsWith(`chrome-extension://${extensionId}/`) || url.startsWith(fake.origin) || url.startsWith('data:') || url === 'about:blank').toBe(true);
   expect(fake.requests.map((r) => r.path)).toContain('/api/extension/me');
 });
+
+// The popup as if the member had granted the feature's browser permissions (a click-only prompt automation cannot answer), so the consent step shows.
+const popupGranted = async (): Promise<Page> => {
+  const page = await context.newPage();
+  await page.addInitScript(() => {
+    (chrome.permissions as { contains: unknown }).contains = async () => true;
+  });
+  await page.goto(`chrome-extension://${extensionId}/popup.html`);
+  return page;
+};
 
 // Runs one capture in the offscreen document's module: a fake tab (a tone, and a picture only when asked), the fake
 // microphone device, three seconds, stop.
@@ -222,7 +235,7 @@ test('video off: the meeting is created with its consent and only audio arrives'
   fake.uploads.length = 0;
   const result = await record(false);
   expect(result).toEqual({ ok: true, uploaded: true, left: 0 });
-  expect(fake.created).toEqual([{ title: 'Họp thử', language: 'vi', visibility: 'attendees', keepVideo: false, consentMethod: 'told_at_start', liveNotes: false }]);
+  expect(fake.created).toEqual([{ title: 'Họp thử', language: 'vi', visibility: 'attendees', keepVideo: false, consentMethod: 'told_at_start', consentNoticeVersion: '2026-11-v1', liveNotes: false }]);
   expect(fake.uploads).toHaveLength(1);
   expect(fake.uploads[0]).toMatchObject({ kind: 'audio', fileType: expect.stringMatching(/^audio\/webm/) });
   expect(fake.uploads[0]!.bytes).toBeGreaterThan(1000);
@@ -245,6 +258,144 @@ test('a failed upload keeps the recording on the device', async () => {
   fake.failUploads = false;
   expect(result).toEqual({ ok: true, uploaded: false, left: 1 });
   expect(fake.uploads).toHaveLength(0);
+});
+
+// A1 (#3159): the meeting tab's track ends while recording (the tab was closed or its capture taken away). The capture reports it
+// once, with a code, and what was saved is uploaded with that code; a stop the member asks for carries none.
+test('a recording whose tab ends by itself uploads what it has with the reason code', async () => {
+  fake.created.length = 0;
+  fake.uploads.length = 0;
+  const page = await context.newPage();
+  await page.goto(`chrome-extension://${extensionId}/offscreen.html`);
+  const result = await page.evaluate(
+    async ([base, address]) => {
+      const run = (await import(`${base}capture-run.js`)) as typeof import('../src/capture-run.ts');
+      const deps = run.browserDeps();
+      let tabTrack: MediaStreamTrack | null = null;
+      deps.getTabStream = async () => {
+        const context = new AudioContext();
+        const tone = context.createOscillator();
+        const out = context.createMediaStreamDestination();
+        tone.connect(out);
+        tone.start();
+        tabTrack = out.stream.getAudioTracks()[0]!;
+        return new MediaStream([tabTrack]);
+      };
+      const params = { address, token: 'crx_test', orgId: 'org1', uploads: 'direct', title: 'Họp bị ngắt', consentMethod: 'in_call_chat', consentAgreed: true, keepVideo: false, liveNotes: false, streamId: 'fake' } as const;
+      const started = await run.startCapture(params, deps);
+      if (!started.ok) return { ok: false, reasons: [] as string[], uploaded: false };
+      const reasons: string[] = [];
+      let finished: Promise<{ uploaded: boolean }> | null = null;
+      started.running.onLost((reason) => {
+        reasons.push(reason);
+        finished = started.running.stop(reason);
+      });
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      // The browser fires `ended` on the track when its tab goes away.
+      tabTrack!.dispatchEvent(new Event('ended'));
+      const done = await (finished as Promise<{ uploaded: boolean }> | null);
+      // A second sign of the same loss reports nothing more.
+      tabTrack!.dispatchEvent(new Event('ended'));
+      return { ok: true, reasons, uploaded: done?.uploaded ?? false };
+    },
+    [`chrome-extension://${extensionId}/`, fake.origin] as const,
+  );
+  await page.close();
+  expect(result).toEqual({ ok: true, reasons: ['tab_closed'], uploaded: true });
+  expect(fake.created[0]).toMatchObject({ consentMethod: 'in_call_chat', consentNoticeVersion: '2026-11-v1' });
+  expect(fake.uploads).toHaveLength(1);
+  expect(fake.uploads[0]).toMatchObject({ kind: 'audio', stopReason: 'tab_closed' });
+});
+
+// A2 (#3160): a strict org refuses a consent method that is not written; the capture reports it as its own failure, opens no recording
+// and leaves nothing on the device, and a written method works.
+test('a strict org refuses "said at the start" and accepts a written method', async () => {
+  fake.created.length = 0;
+  fake.strict = true;
+  const page = await context.newPage();
+  await page.goto(`chrome-extension://${extensionId}/offscreen.html`);
+  const outcome = await page.evaluate(
+    async ([base, address]) => {
+      const run = (await import(`${base}capture-run.js`)) as typeof import('../src/capture-run.ts');
+      const deps = run.browserDeps();
+      deps.getTabStream = async () => {
+        const context = new AudioContext();
+        const out = context.createMediaStreamDestination();
+        context.createOscillator().connect(out);
+        return new MediaStream(out.stream.getAudioTracks());
+      };
+      const params = { address, token: 'crx_test', orgId: 'org1', uploads: 'direct', title: 'Họp nghiêm', consentMethod: 'told_at_start', consentAgreed: true, keepVideo: false, liveNotes: false, streamId: 'fake' } as const;
+      const refused = await run.startCapture(params, deps);
+      const written = await run.startCapture({ ...params, consentMethod: 'in_call_chat' }, deps);
+      if (written.ok) await written.running.stop();
+      return { refused: refused.ok ? 'started' : refused.reason, written: written.ok };
+    },
+    [`chrome-extension://${extensionId}/`, fake.origin] as const,
+  );
+  await page.close();
+  fake.strict = false;
+  expect(outcome).toEqual({ refused: 'consentPolicy', written: true });
+  expect(fake.created).toHaveLength(1);
+  expect(fake.created[0]).toMatchObject({ consentMethod: 'in_call_chat' });
+});
+
+test('a stop the member asks for carries no reason code', async () => {
+  fake.uploads.length = 0;
+  expect(await record(false)).toMatchObject({ ok: true, uploaded: true });
+  expect(fake.uploads[0]).toMatchObject({ stopReason: null });
+});
+
+test('the consent step shows the recording notice: the text, the other language, copied to the clipboard on the click, and the draft marker (A1, #3159)', async () => {
+  await seed({ meetings: true });
+  const page = await popupGranted();
+  await expect(page.locator('#notice-text')).toContainText('Cuộc họp này đang được ghi âm để lập biên bản');
+  await expect(page.getByText('#2585').first()).toBeVisible();
+  // The new method is one of the choices.
+  await expect(page.locator('#method option')).toHaveText(['Chọn...', 'Nói ở đầu cuộc họp', 'Ghi trong lời mời', 'Bằng văn bản', 'Đã dán thông báo vào khung chat cuộc họp']);
+  await page.evaluate(() => {
+    (window as unknown as { copied: string[] }).copied = [];
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (text: string) => void (window as unknown as { copied: string[] }).copied.push(text) }, configurable: true });
+  });
+  await page.locator('#copy-notice').click();
+  await expect(page.locator('#copy-note')).toContainText('Đã sao chép');
+  // The English one is one click away, and copying then copies that text.
+  await page.locator('#notice-lang').click();
+  await expect(page.locator('#notice-text')).toContainText('This meeting is being recorded to prepare the minutes');
+  await expect(page.locator('#copy-note')).toHaveCount(0);
+  await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (text: string) => void (window as unknown as { copied: string[] }).copied.push(text) }, configurable: true }));
+  await page.locator('#copy-notice').click();
+  await expect(page.locator('#copy-note')).toContainText('Đã sao chép');
+  const copied = await page.evaluate(() => (window as unknown as { copied: string[] }).copied);
+  expect(copied).toHaveLength(2);
+  expect(copied[0]).toContain('Cuộc họp này đang được ghi âm');
+  expect(copied[1]).toContain('This meeting is being recorded');
+  // Copying ticks nothing: the start is still refused without the method and the confirmation.
+  const titleInput = page.locator('#title');
+  await expect(titleInput).toBeEditable();
+  await titleInput.fill('Họp thử');
+  await expect(titleInput).toHaveValue('Họp thử');
+  await expect(page.locator('#start')).toBeEnabled();
+  await page.locator('#start').click();
+  await expect(page.getByRole('alert')).toContainText('Vui lòng chọn cách đã báo cho người tham gia');
+  await page.close();
+});
+
+test('a recording that ended by itself shows when and why in the popup and the badge, until the member says they saw it (A1, #3159)', async () => {
+  await seed({ meetings: true });
+  const worker = context.serviceWorkers()[0]!;
+  await worker.evaluate(async () => {
+    await chrome.storage.local.set({ 'ludy-extension-recording-lost': { meetingId: 'm1', title: 'Họp thử', reason: 'tab_closed', at: Date.now(), uploaded: true } });
+    await chrome.action.setBadgeText({ text: '!' });
+  });
+  const page = await popupGranted();
+  const lost = page.locator('#lost');
+  await expect(lost).toContainText('Ghi âm đã dừng lúc');
+  await expect(lost).toContainText('Tab họp đã đóng');
+  await expect(lost).toContainText('đã được tải lên');
+  await page.locator('#lost-dismiss').click();
+  await expect(page.locator('#lost')).toHaveCount(0);
+  expect(await worker.evaluate(() => chrome.action.getBadgeText({}))).toBe('');
+  await page.close();
 });
 
 test('a redirect from the configured address is not followed: the token goes nowhere else', async () => {
@@ -357,4 +508,114 @@ test('the worker refuses a start request whose flags are not booleans, and creat
     { ok: false, reason: 'invalid' },
   ]);
   expect(fake.created).toEqual([]);
+});
+
+test('Notes Quick Capture saves private note and to-do with zero optional permissions, while Web Clipper requires opt-in toggle', async () => {
+  await seed({});
+  fake.scopes = ['notes'];
+  fake.features = { meetings: false, notes: true };
+  fake.clips.length = 0;
+  fake.todos.length = 0;
+  const page = await popup();
+  try {
+    await expect(page.locator('#notes-capture')).toBeVisible();
+    await expect(page.locator('#clipper-toggle')).not.toBeChecked();
+    await expect(page.locator('#clip-now')).toHaveCount(0);
+
+    // Quick Capture note works with zero extra browser permissions.
+    await page.locator('#capture-title').fill('Ghi chú nhanh e2e');
+    await page.locator('#capture-body').fill('Nội dung e2e');
+    await page.locator('#capture-tags').fill('e2e, nhanh');
+    await page.locator('#capture-save').click();
+    await expect.poll(() => fake.clips.length).toBe(1);
+    expect(fake.clips[0]).toEqual({ title: 'Ghi chú nhanh e2e', body: 'Nội dung e2e', tags: ['e2e', 'nhanh'] });
+    await expect(page.locator('#notes-status')).toContainText('Đã lưu ghi chú riêng tư');
+
+    // Switch to To-do Quick Capture and save.
+    await page.locator('#mode-todo').click();
+    await page.locator('#capture-title').fill('Việc nhanh e2e');
+    await page.locator('#capture-details').fill('Chi tiết việc');
+    await page.locator('#capture-save').click();
+    await expect.poll(() => fake.todos.length).toBe(1);
+    expect(fake.todos[0]).toEqual({ title: 'Việc nhanh e2e', details: 'Chi tiết việc' });
+    await expect(page.locator('#notes-status')).toContainText('Đã lưu việc cá nhân');
+
+    // Enabling Web Clipper explicitly requests activeTab + scripting and allows 1-click Clip; turning it OFF revokes them.
+    await page.evaluate(() => {
+      const held = new Set<string>();
+      const events: { requested: string[][]; removed: string[][] } = { requested: [], removed: [] };
+      (window as unknown as { clipperEvents: typeof events }).clipperEvents = events;
+      (chrome.permissions as { contains: unknown }).contains = async ({ permissions = [] }: { permissions?: string[] }) =>
+        permissions.every((p) => held.has(p));
+      (chrome.permissions as { request: unknown }).request = async ({ permissions = [] }: { permissions?: string[] }) => {
+        events.requested.push([...permissions]);
+        for (const p of permissions) held.add(p);
+        return true;
+      };
+      (chrome.permissions as { remove: unknown }).remove = async ({ permissions = [] }: { permissions?: string[] }) => {
+        events.removed.push([...permissions]);
+        for (const p of permissions) held.delete(p);
+        return true;
+      };
+      (chrome.tabs as { query: unknown }).query = async () => [{ id: 42, url: 'https://example.com/clip-target' }];
+      (chrome as unknown as { scripting: { executeScript: unknown } }).scripting = {
+        executeScript: async () => [
+          {
+            result: {
+              url: 'https://example.com/clip-target',
+              title: 'Trang tin mẫu',
+              selectedHtml: '',
+              selectedText: '',
+              contentHtml: '<h1>Tiêu đề bài viết</h1><p>Đoạn trích sạch</p>',
+              textFallback: 'Tiêu đề bài viết Đoạn trích sạch',
+            },
+          },
+        ],
+      };
+    });
+
+    await page.locator('#clipper-toggle').check();
+    await expect(page.locator('#clip-now')).toBeVisible();
+    await page.locator('#clip-now').click();
+    await expect.poll(() => fake.clips.length).toBe(2);
+    expect(fake.clips[1]).toEqual({
+      title: 'Trang tin mẫu',
+      body: '# Tiêu đề bài viết\n\nĐoạn trích sạch',
+      sourceUrl: 'https://example.com/clip-target',
+    });
+
+    await page.locator('#clipper-toggle').uncheck();
+    await expect(page.locator('#clip-now')).toHaveCount(0);
+    const permEvents = await page.evaluate(() => (window as unknown as { clipperEvents: { requested: string[][]; removed: string[][] } }).clipperEvents);
+    expect(permEvents.requested).toEqual([['activeTab', 'scripting']]);
+    expect(permEvents.removed).toEqual([['activeTab', 'scripting']]);
+
+    // Real-DOM snapshotDomPage sanity check: stripped form inputs, hidden nodes, scripts and nav never leak into textFallback.
+    const articlePage = await context.newPage();
+    try {
+      await articlePage.setContent(`
+        <nav>Menu Item</nav>
+        <div id="only-hidden">
+          <div hidden>HIDDEN_SECRET_TEXT</div>
+          <div style="display:none">STYLE_HIDDEN_TEXT</div>
+          <form><textarea>SECRET_TEXTAREA</textarea><input type="password" value="SECRET_PW" /></form>
+          <script>const secretVar = "SECRET_SCRIPT";</script>
+        </div>
+        <p id="real-text">Clean article body</p>
+      `);
+      const snap = await articlePage.evaluate(snapshotDomPage);
+      expect(snap.textFallback).toBe('Clean article body');
+      expect(snap.contentHtml).not.toContain('HIDDEN_SECRET_TEXT');
+      expect(snap.contentHtml).not.toContain('STYLE_HIDDEN_TEXT');
+      expect(snap.contentHtml).not.toContain('SECRET_TEXTAREA');
+      expect(snap.contentHtml).not.toContain('SECRET_SCRIPT');
+      expect(snap.contentHtml).not.toContain('Menu Item');
+    } finally {
+      await articlePage.close();
+    }
+  } finally {
+    fake.scopes = ['meetings'];
+    fake.features = { meetings: true, notes: false };
+    await page.close();
+  }
 });

@@ -19,11 +19,11 @@
 //   (conflicts: stored flagged when imported, never silently dropped as duplicates).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { EXTRACT_LIMIT_RETRIES, EXTRACT_LIMITS, type ExtractClient } from '@crove/extract-contract';
-import type { MemberRole } from '@crove/db';
-import { BANK_IMPORT_MAX_ROWS, STAGED_STATEMENT_MAX_BYTES, STATEMENT_LINES_SHOWN, statementAmountText, zBankStatementRow, zId, zStatementSummary, type BankImportResult, type BankStatementRow, type StatementLines } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type QueryContext, type Runtime } from '@crove/kernel-runtime';
-import { Decimal } from '@crove/l10n-vn';
+import { EXTRACT_LIMIT_RETRIES, EXTRACT_LIMITS, type ExtractClient } from '@ludy/extract-contract';
+import type { MemberRole } from '@ludy/db';
+import { BANK_IMPORT_MAX_ROWS, STAGED_STATEMENT_MAX_BYTES, STATEMENT_LINES_SHOWN, statementAmountText, zBankStatementRow, zId, zStatementSummary, type BankImportResult, type BankStatementRow, type StatementLines } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type QueryContext, type Runtime } from '@ludy/kernel-runtime';
+import { Decimal } from '@ludy/l10n-vn';
 import { mappedAccounts, maskAccountNumber } from './account-number.ts';
 import { importStatement, previewStatement } from './bank.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -135,10 +135,10 @@ export const bankStatementStage = defineQuery({
 // of the same file never wait on each other in a circle.
 async function stagedRun(ctx: QueryContext, fileId: string, lock: boolean): Promise<{ summary: StagedSummary; rows: BankStatementRow[] } | null> {
   if (lock) {
-    await ctx.trx.selectFrom('crove_kernel.file').select('id').where('org_id', '=', ctx.orgId).where('id', '=', fileId).forUpdate().executeTakeFirst();
+    await ctx.trx.selectFrom('ludy_kernel.file').select('id').where('org_id', '=', ctx.orgId).where('id', '=', fileId).forUpdate().executeTakeFirst();
   }
   let query = ctx.trx
-    .selectFrom('crove_kernel.extraction')
+    .selectFrom('ludy_kernel.extraction')
     .select(['result', 'status'])
     .where('org_id', '=', ctx.orgId)
     .where('file_id', '=', fileId)

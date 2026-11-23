@@ -2,16 +2,19 @@
 // The popup: the shell (address, sign-in, org picker, the features of this org) and the meetings feature (turn on, the
 // consent step, "Ghi cả video", start and stop). Every string is set as text, never as markup. Nothing here reads a page:
 // the one tab it touches is the active one the member clicked the icon on, and only to ask for its audio.
-import { T } from './strings.ts';
+import { ENGLISH, T } from './strings.ts';
 import { DEFAULT_ADDRESS, isDefaultAddress, originPattern, parseAddress, stalePattern } from './ludy-address.ts';
 import { activeAccount, loadState, saveState, withAccount, withAddress, withFeature, withoutAccount, type State } from './state.ts';
-import { visibleFeatures, FEATURES, type Me } from './features.ts';
+import { permissionsToRemove, visibleFeatures, FEATURES, type Me } from './features.ts';
+import { AGENDA_SCOPE, agendaLine, type AgendaNext } from './agenda.ts';
 import { connectUrl, deviceName, newPkce, parseConnectResult } from './auth.ts';
 import { createClient, LudyError } from './api.ts';
 import { CONSENT_METHODS, consentBlocker } from './consent.ts';
-import { RECORDING_KEY, type RecordingState, type StartReply, type StopReply } from './messages.ts';
-import { formatClock, createIndexedDbChunkStore, type RecordingMeta } from '@crove/meeting-recorder';
-import { uploadSaved } from './capture-run.ts';
+import { LOST_KEY, readLost, RECORDING_KEY, tabAddress, type LostState, type RecordingState, type StartReply, type StopReply } from './messages.ts';
+import { captureActiveTab, CLIP_BODY_MAX, CLIP_TITLE_MAX, NOTES_SCOPE, parseTagsInput, WEB_CLIPPER_PERMISSIONS } from './page-capture.ts';
+import { formatClock, createIndexedDbChunkStore, noticeToCopy, otherNoticeLanguage, RECORDING_NOTICE, type RecordingMeta, type RecordingNoticeLanguage } from '@ludy/meeting-recorder';
+import { reportEnded, uploadSaved } from './capture-run.ts';
+import { createPopupConcurrency } from './popup-guards.ts';
 
 const root = document.getElementById('root') as HTMLElement;
 const area = chrome.storage.local;
@@ -33,17 +36,88 @@ function h<K extends keyof HTMLElementTagNameMap>(tag: K, props: Props = {}, ...
 let notice = '';
 let draft = { title: '', consentMethod: '', consentAgreed: false, keepVideo: false, liveNotes: false };
 let ticker: ReturnType<typeof setInterval> | undefined;
+// The recording notice shown in the consent step (A1, #3159): the popup's language first, the other one a click away. The
+// extension knows no meeting language before the meeting exists, so the browser's language is the default.
+let noticeLang: RecordingNoticeLanguage = T === ENGLISH ? 'en' : 'vi';
+let copyNote = '';
+// Shown under the "Sắp họp" cards after a title was filled in from one.
+let agendaNote = '';
+let agendaRead: { token: string; promise: Promise<AgendaNext | null> } | null = null;
+let serverModules: { address: string; promise: Promise<readonly string[] | null> } | null = null;
+const notesExcludedOrgs = new Set<string>();
+// Set when the org refused the method as not written (A2, #3160): the unwritten choice is then not offered for the rest of this popup.
+let strictOrg = false;
+let captureDraft: {
+  kind: 'note' | 'todo';
+  title: string;
+  body: string;
+  tags: string;
+  details: string;
+  dueOn: string;
+  sourceUrl: string | null;
+} = { kind: 'note', title: '', body: '', tags: '', details: '', dueOn: '', sourceUrl: null };
+let notesStatus = '';
+let notesBusy = false;
+const concurrency = createPopupConcurrency();
+
+function clearTicker(): void {
+  clearInterval(ticker);
+  ticker = undefined;
+}
+
+async function copyNotice(): Promise<void> {
+  let needsRender = false;
+  await concurrency.runNoticeCopy(
+    () => navigator.clipboard.writeText(noticeToCopy(noticeLang).text),
+    (copied) => {
+      copyNote = copied ? T.noticeCopied : T.noticeCopyFailed;
+      const existing = document.getElementById('copy-note');
+      if (existing) {
+        existing.textContent = copyNote;
+        return;
+      }
+      const row = document.getElementById('copy-notice')?.parentElement;
+      if (row) {
+        row.after(h('p', { class: 'note', id: 'copy-note', role: 'status' }, copyNote));
+        return;
+      }
+      needsRender = true;
+    },
+  );
+  if (needsRender) await render();
+}
+
+function toggleNoticeLanguage(): void {
+  concurrency.invalidateNoticeOp();
+  noticeLang = otherNoticeLanguage(noticeLang);
+  copyNote = '';
+  const textEl = document.getElementById('notice-text');
+  const langBtn = document.getElementById('notice-lang');
+  if (textEl && langBtn) {
+    textEl.lang = noticeLang;
+    textEl.textContent = RECORDING_NOTICE.text[noticeLang];
+    langBtn.textContent = otherNoticeLanguage(noticeLang) === 'en' ? T.noticeShowEn : T.noticeShowVi;
+    document.getElementById('copy-note')?.remove();
+    return;
+  }
+  void render();
+}
 
 async function render(): Promise<void> {
-  clearInterval(ticker);
-  const state = await loadState(area);
-  const view = h('div');
-  view.append(h('h1', {}, T.title));
-  const account = activeAccount(state);
-  if (!account) view.append(...signInView(state));
-  else view.append(...(await signedInView(state)));
-  if (notice) view.append(h('p', { class: 'error', role: 'alert' }, notice));
-  root.replaceChildren(view);
+  await concurrency.runRender(clearTicker, async (pass) => {
+    const state = await loadState(area);
+    if (!pass.isCurrent()) return null;
+    const view = h('div');
+    view.append(h('h1', {}, T.title));
+    const account = activeAccount(state);
+    if (!account) view.append(...signInView(state));
+    else view.append(...(await signedInView(state, pass.onMount)));
+    if (!pass.isCurrent()) return null;
+    return () => {
+      if (notice) view.append(h('p', { class: 'error', role: 'alert' }, notice));
+      root.replaceChildren(view);
+    };
+  });
 }
 
 function addressForm(state: State): Node[] {
@@ -87,22 +161,33 @@ function signInView(state: State): Node[] {
     h('h2', {}, T.setupTitle),
     ...addressForm(state),
     h('p', { class: 'note' }, state.address),
+    h('p', { class: 'note', id: 'sign-in-device-note' }, T.signInDeviceNote),
     h('button', { class: 'primary', onclick: () => void signIn(state) }, T.signIn),
   ];
 }
 
-async function signIn(state: State): Promise<void> {
+async function signIn(state: State, withAgenda = false): Promise<void> {
   notice = T.signingIn;
   await render();
   try {
+    const config = await createClient(state.address, null).config().catch(() => null);
+    const available = config?.modules;
+    const featureScopes = available ? FEATURES.map((f) => f.scope).filter((s) => available.includes(s)) : FEATURES.map((f) => f.scope);
+    const scopesToAsk = featureScopes.length > 0 ? featureScopes : FEATURES.map((f) => f.scope);
+    const askAgenda = withAgenda && scopesToAsk.includes('meetings');
     const pkce = await newPkce();
     const redirect = chrome.identity.getRedirectURL('connect');
-    const returned = await chrome.identity.launchWebAuthFlow({ url: connectUrl(state.address, pkce, redirect, deviceName(navigator.userAgent)), interactive: true });
+    const returned = await chrome.identity.launchWebAuthFlow({
+      url: connectUrl(state.address, pkce, redirect, deviceName(navigator.userAgent), askAgenda, scopesToAsk),
+      interactive: true,
+    });
     const result = returned ? parseConnectResult(returned, pkce, redirect) : { error: 'invalid' };
     if ('error' in result) {
       notice = result.error === 'access_denied' ? T.signInDenied : T.signInFailed;
     } else {
       const done = await createClient(state.address, null).exchangeCode(result.code, pkce.verifier);
+      if (scopesToAsk.includes(NOTES_SCOPE) && !done.scopes.includes(NOTES_SCOPE)) notesExcludedOrgs.add(done.orgId);
+      else notesExcludedOrgs.delete(done.orgId);
       await saveState(area, withAccount(await loadState(area), { orgId: done.orgId, orgSlug: result.org, token: done.token, expiresAt: done.expiresAt }));
       notice = '';
     }
@@ -112,7 +197,7 @@ async function signIn(state: State): Promise<void> {
   await render();
 }
 
-async function signedInView(state: State): Promise<Node[]> {
+async function signedInView(state: State, onMount: Array<() => void>): Promise<Node[]> {
   const account = activeAccount(state);
   if (!account) return [];
   const out: Node[] = [];
@@ -141,29 +226,309 @@ async function signedInView(state: State): Promise<Node[]> {
     return out;
   }
   const features = visibleFeatures(me);
-  if (features.length === 0) out.push(h('p', {}, T.noFeatures));
-  for (const feature of features) if (feature.id === 'meetings') out.push(...(await meetingsView(state)));
+  let showNotesAsk = false;
+  if (!me.scopes.includes(NOTES_SCOPE) && !notesExcludedOrgs.has(account.orgId)) {
+    if (serverModules?.address !== state.address) {
+      serverModules = { address: state.address, promise: createClient(state.address, null).config().then((c) => c.modules ?? null).catch(() => null) };
+    }
+    const installed = await serverModules.promise;
+    showNotesAsk = Boolean(installed?.includes(NOTES_SCOPE));
+  }
+  if (features.length === 0 && !showNotesAsk) out.push(h('p', {}, T.noFeatures));
+  if (showNotesAsk) {
+    out.push(
+      h('div', { class: 'capture-box', id: 'notes-ask' },
+        h('p', { class: 'note' }, T.notesAskNote),
+        h('button', { id: 'notes-reconnect', onclick: () => void signIn(state, me.scopes.includes(AGENDA_SCOPE)) }, T.notesReconnect)),
+    );
+  }
+  for (const feature of features) {
+    if (feature.id === 'meetings') out.push(...(await meetingsView(state, me, account.token, onMount)));
+    else if (feature.id === 'notes') out.push(...(await notesView(state, account.token)));
+  }
   out.push(...(await pendingView(state, account.orgId, account.token)));
   return out;
 }
 
-async function meetingsView(state: State): Promise<Node[]> {
-  const feature = FEATURES[0]!;
+async function notesView(state: State, token: string): Promise<Node[]> {
+  const clipperGranted = await chrome.permissions.contains({ permissions: [...WEB_CLIPPER_PERMISSIONS] }).catch(() => false);
+  const clipperOn = clipperGranted && state.enabled.clipper === true;
+  const isNote = captureDraft.kind === 'note';
+
+  const modeNoteBtn = h('button', {
+    id: 'mode-note',
+    class: isNote ? 'active-tab' : undefined,
+    disabled: notesBusy,
+    onclick: () => void ((captureDraft.kind = 'note'), (notesStatus = ''), (notice = ''), render()),
+  }, T.captureModeNote);
+  const modeTodoBtn = h('button', {
+    id: 'mode-todo',
+    class: !isNote ? 'active-tab' : undefined,
+    disabled: notesBusy,
+    onclick: () => void ((captureDraft.kind = 'todo'), (notesStatus = ''), (notice = ''), render()),
+  }, T.captureModeTodo);
+
+  const titleInput = h('input', {
+    type: 'text',
+    id: 'capture-title',
+    value: captureDraft.title,
+    maxlength: isNote ? String(CLIP_TITLE_MAX) : '300',
+    disabled: notesBusy,
+    placeholder: isNote ? T.captureTitleNotePlaceholder : T.captureTitleTodoPlaceholder,
+  });
+  titleInput.addEventListener('input', () => void (captureDraft.title = titleInput.value));
+
+  const bodyFields: Node[] = [];
+  if (isNote) {
+    const bodyInput = h('textarea', {
+      id: 'capture-body',
+      maxlength: String(CLIP_BODY_MAX),
+      disabled: notesBusy,
+      placeholder: T.captureBodyPlaceholder,
+    }, captureDraft.body);
+    bodyInput.addEventListener('input', () => void (captureDraft.body = bodyInput.value));
+    const tagsInput = h('input', {
+      type: 'text',
+      id: 'capture-tags',
+      value: captureDraft.tags,
+      disabled: notesBusy,
+      placeholder: T.captureTagsPlaceholder,
+    });
+    tagsInput.addEventListener('input', () => void (captureDraft.tags = tagsInput.value));
+    bodyFields.push(
+      h('label', { class: 'block', for: 'capture-body' }, T.captureBody),
+      bodyInput,
+      h('label', { class: 'block', for: 'capture-tags' }, T.captureTags),
+      tagsInput,
+    );
+  } else {
+    const detailsInput = h('textarea', {
+      id: 'capture-details',
+      maxlength: '10000',
+      disabled: notesBusy,
+      placeholder: T.captureDetailsPlaceholder,
+    }, captureDraft.details);
+    detailsInput.addEventListener('input', () => void (captureDraft.details = detailsInput.value));
+    const dueInput = h('input', {
+      type: 'date',
+      id: 'capture-due',
+      value: captureDraft.dueOn,
+      disabled: notesBusy,
+    });
+    dueInput.addEventListener('input', () => void (captureDraft.dueOn = dueInput.value));
+    bodyFields.push(
+      h('label', { class: 'block', for: 'capture-details' }, T.captureDetails),
+      detailsInput,
+      h('label', { class: 'block', for: 'capture-due' }, T.captureDueOn),
+      dueInput,
+    );
+  }
+
+  const sourceChip = captureDraft.sourceUrl
+    ? h('div', { class: 'source-chip', id: 'capture-source' },
+      h('span', {}, T.captureSourceLabel.replace('{url}', captureDraft.sourceUrl)),
+      h('button', {
+        id: 'capture-source-clear',
+        disabled: notesBusy,
+        'aria-label': T.captureSourceClear,
+        onclick: () => void ((captureDraft.sourceUrl = null), render()),
+      }, 'x'))
+    : null;
+
+  const clipperToggle = h('input', {
+    type: 'checkbox',
+    id: 'clipper-toggle',
+    checked: clipperOn,
+    disabled: notesBusy,
+  });
+  clipperToggle.addEventListener('change', () => void toggleWebClipper(clipperToggle.checked));
+
+  const clipperControls: Node[] = [
+    h('div', { class: 'clipper-box', id: 'clipper-box' },
+      h('div', { class: 'row' }, clipperToggle, h('label', { for: 'clipper-toggle' }, T.clipperToggle)),
+      h('p', { class: 'note' }, T.clipperHint),
+      ...(clipperOn
+        ? [
+            h('div', { class: 'row' },
+              h('button', {
+                class: 'primary',
+                id: 'clip-now',
+                disabled: notesBusy,
+                onclick: () => void clipCurrentPage(state, token, 'save'),
+              }, T.clipNowButton),
+              h('button', {
+                id: 'clip-fill',
+                disabled: notesBusy,
+                onclick: () => void clipCurrentPage(state, token, 'fill'),
+              }, T.clipFillButton)),
+          ]
+        : [])),
+  ];
+
+  return [
+    h('h2', {}, T.notesTitle),
+    h('div', { class: 'capture-box', id: 'notes-capture' },
+      h('p', { class: 'note', id: 'notes-privacy-hint' }, T.notesPrivacyHint),
+      h('div', { class: 'tabs' }, modeNoteBtn, modeTodoBtn),
+      h('label', { class: 'block', for: 'capture-title' }, isNote ? T.captureTitleNote : T.captureTitleTodo),
+      titleInput,
+      ...bodyFields,
+      sourceChip,
+      h('div', { class: 'row' },
+        h('button', {
+          class: 'primary',
+          id: 'capture-save',
+          disabled: notesBusy,
+          onclick: () => void saveQuickCapture(state, token),
+        }, isNote ? T.captureSaveNote : T.captureSaveTodo)),
+      ...clipperControls,
+      notesStatus ? h('p', { class: 'note', id: 'notes-status', role: 'status' }, notesStatus) : null),
+  ];
+}
+
+async function toggleWebClipper(enable: boolean): Promise<void> {
+  notice = '';
+  notesStatus = '';
+  if (enable) {
+    // Only asks Chrome for activeTab + scripting on this explicit toggle click.
+    const granted = await chrome.permissions.request({ permissions: [...WEB_CLIPPER_PERMISSIONS] }).catch(() => false);
+    const latest = await loadState(area);
+    await saveState(area, withFeature(latest, 'clipper', granted));
+    if (!granted) notice = T.clipperPermissionDenied;
+  } else {
+    const latest = await loadState(area);
+    const remove = permissionsToRemove('clipper', latest.enabled);
+    if (remove.length > 0) await chrome.permissions.remove({ permissions: remove }).catch(() => false);
+    captureDraft.sourceUrl = null;
+    await saveState(area, withFeature(latest, 'clipper', false));
+  }
+  await render();
+}
+
+async function clipCurrentPage(state: State, token: string, action: 'save' | 'fill'): Promise<void> {
+  if (notesBusy) return;
+  notesBusy = true;
+  notice = '';
+  notesStatus = T.clipping;
+  await render();
+  try {
+    const captured = await captureActiveTab({
+      permissions: chrome.permissions,
+      tabs: chrome.tabs,
+      scripting: chrome.scripting,
+      clicked: true,
+    });
+    if (!captured.ok) {
+      notesStatus = '';
+      notice =
+        captured.reason === 'permission'
+          ? T.clipperPermissionDenied
+          : captured.reason === 'unsupportedUrl'
+            ? T.clipUnsupportedUrl
+            : T.clipFailed;
+      return;
+    }
+    if (action === 'fill') {
+      captureDraft.kind = 'note';
+      captureDraft.title = captured.clip.title;
+      captureDraft.body = captured.clip.body;
+      captureDraft.sourceUrl = captured.clip.sourceUrl;
+      notesStatus = T.clipFilled;
+      return;
+    }
+    const client = createClient(state.address, token);
+    await client.clipNote({
+      title: captured.clip.title,
+      body: captured.clip.body,
+      sourceUrl: captured.clip.sourceUrl,
+    });
+    notesStatus = T.captureSavedNote;
+  } catch (error) {
+    notesStatus = '';
+    notice = error instanceof LudyError ? error.message : T.captureSaveFailed;
+  } finally {
+    notesBusy = false;
+    await render();
+  }
+}
+
+async function saveQuickCapture(state: State, token: string): Promise<void> {
+  if (notesBusy) return;
+  notice = '';
+  notesStatus = '';
+  const sent = { ...captureDraft };
+  const title = sent.title.trim();
+  if (!title) {
+    notice = T.captureTitleRequired;
+    await render();
+    return;
+  }
+  notesBusy = true;
+  notesStatus = T.captureSaving;
+  await render();
+  try {
+    const client = createClient(state.address, token);
+    if (sent.kind === 'note') {
+      await client.clipNote({
+        title,
+        body: sent.body,
+        tags: parseTagsInput(sent.tags),
+        sourceUrl: sent.sourceUrl,
+      });
+      if (captureDraft.title === sent.title) captureDraft.title = '';
+      if (captureDraft.body === sent.body) captureDraft.body = '';
+      if (captureDraft.tags === sent.tags) captureDraft.tags = '';
+      if (captureDraft.sourceUrl === sent.sourceUrl) captureDraft.sourceUrl = null;
+      notesStatus = T.captureSavedNote;
+    } else {
+      await client.quickCaptureTodo({
+        title,
+        details: sent.details,
+        dueOn: sent.dueOn || null,
+        sourceUrl: sent.sourceUrl,
+      });
+      if (captureDraft.title === sent.title) captureDraft.title = '';
+      if (captureDraft.details === sent.details) captureDraft.details = '';
+      if (captureDraft.dueOn === sent.dueOn) captureDraft.dueOn = '';
+      if (captureDraft.sourceUrl === sent.sourceUrl) captureDraft.sourceUrl = null;
+      notesStatus = T.captureSavedTodo;
+    }
+  } catch (error) {
+    notesStatus = '';
+    notice = error instanceof LudyError ? error.message : T.captureSaveFailed;
+  } finally {
+    notesBusy = false;
+    await render();
+  }
+}
+
+async function meetingsView(state: State, me: Me, token: string, onMount: Array<() => void>): Promise<Node[]> {
+  const feature = FEATURES.find((f) => f.id === 'meetings')!;
   const out: Node[] = [h('h2', {}, T.meetings)];
   const granted = await chrome.permissions.contains({ permissions: [...feature.permissions] });
   if (!granted || state.enabled.meetings !== true) {
     out.push(
       h('p', { class: 'note' }, T.meetingsNote),
-      h('button', { class: 'primary', onclick: () => void turnOn(state) }, T.meetingsOn),
+      h('button', { class: 'primary', onclick: () => void turnOn() }, T.meetingsOn),
     );
     return out;
   }
   const recording = (await area.get(RECORDING_KEY))[RECORDING_KEY] as RecordingState | undefined;
+  // A recording that ended by itself (A1, #3159): when, why, and whether what was saved is already uploaded. Shown until dismissed.
+  const lost = readLost((await area.get(LOST_KEY))[LOST_KEY]);
+  if (lost && !recording) out.push(...lostView(lost));
   if (recording) {
     const clock = h('span', { class: 'rec' });
-    const tick = () => void (clock.textContent = `REC ${formatClock(Date.now() - recording.startedAt)}`);
-    tick();
-    ticker = setInterval(tick, 1000);
+    const updateClock = () => void (clock.textContent = `REC ${formatClock(Date.now() - recording.startedAt)}`);
+    updateClock();
+    onMount.push(() => {
+      clearTicker();
+      const id = setInterval(() => {
+        if (!clock.isConnected) clearInterval(id);
+        else updateClock();
+      }, 1000);
+      ticker = id;
+    });
     out.push(
       h('p', {}, clock, ` · ${recording.title}`),
       ...(recording.micMissing ? [h('p', { class: 'error' }, T.micMissing)] : []),
@@ -171,11 +536,12 @@ async function meetingsView(state: State): Promise<Node[]> {
     );
     return out;
   }
+  out.push(...(await agendaView(state, me, token)));
   const title = h('input', { type: 'text', id: 'title', value: draft.title, maxlength: '200' });
   title.addEventListener('input', () => void (draft.title = title.value));
   const method = h('select', { id: 'method' },
     h('option', { value: '' }, T.consentChoose),
-    ...CONSENT_METHODS.map((m) => h('option', { value: m, selected: draft.consentMethod === m }, T.consentMethods[m])));
+    ...CONSENT_METHODS.filter((m) => !(strictOrg && m === 'told_at_start')).map((m) => h('option', { value: m, selected: draft.consentMethod === m }, T.consentMethods[m])));
   method.addEventListener('change', () => void (draft.consentMethod = method.value));
   const agreed = h('input', { type: 'checkbox', id: 'agreed', checked: draft.consentAgreed });
   agreed.addEventListener('change', () => void (draft.consentAgreed = agreed.checked));
@@ -191,28 +557,88 @@ async function meetingsView(state: State): Promise<Node[]> {
     h('div', { class: 'consent' },
       h('strong', {}, T.consentTitle),
       h('p', { class: 'note' }, T.consentNotice),
-      h('p', { class: 'note' }, T.consentSpoken),
+      h('strong', { class: 'note' }, T.noticeHeading),
+      h('p', { class: 'notice', id: 'notice-text', lang: noticeLang }, RECORDING_NOTICE.text[noticeLang]),
+      h('div', { class: 'row' },
+        h('button', { id: 'copy-notice', onclick: () => void copyNotice() }, T.noticeCopy),
+        h('button', { id: 'notice-lang', onclick: () => toggleNoticeLanguage() }, otherNoticeLanguage(noticeLang) === 'en' ? T.noticeShowEn : T.noticeShowVi)),
+      copyNote ? h('p', { class: 'note', id: 'copy-note', role: 'status' }, copyNote) : null,
+      h('p', { class: 'note' }, T.noticeDraft),
       h('label', { class: 'block', for: 'method' }, T.consentMethod),
       method,
+      strictOrg ? h('p', { class: 'note', id: 'strict-note' }, T.strictNote) : null,
       h('div', { class: 'row' }, agreed, h('label', { for: 'agreed' }, T.consentConfirm)),
     ),
     h('div', { class: 'row' }, video, h('label', { for: 'video' }, T.withVideo)),
     h('div', { class: 'row' }, liveNotes, h('label', { for: 'live' }, T.liveNotes)),
     h('p', { class: 'note' }, T.liveNotesHint),
     h('button', { class: 'primary', id: 'start', onclick: () => void startRecording() }, T.start),
-    h('button', { onclick: () => void turnOff(state) }, T.meetingsOff),
+    h('button', { onclick: () => void turnOff() }, T.meetingsOff),
   );
   return out;
 }
 
-async function turnOn(state: State): Promise<void> {
+// The "Sắp họp" cards (B2, #3166): the member's next meetings, when the token holds the agenda scope; one button to ask for it when it does not. A click on "Ghi cuộc họp này" only fills the
+// title below; the consent step, the confirmations and "Bắt đầu ghi" are the member's, as always. A failing read (an old server, a refused scope) draws nothing.
+async function agendaView(state: State, me: Me, token: string): Promise<Node[]> {
+  if (!me.scopes.includes(AGENDA_SCOPE)) {
+    return [h('div', { class: 'agenda', id: 'agenda-ask' }, h('p', { class: 'note' }, T.agendaNote), h('button', { id: 'agenda-on', onclick: () => void signIn(state, true) }, T.agendaOn))];
+  }
+  if (me.features.agenda !== true) return [];
+  // Read once for each token while this popup is open: a redraw (a language toggle, a copied notice, a filled title) does not ask the server again, and each read is an audit row there.
+  if (agendaRead?.token !== token) agendaRead = { token, promise: createClient(state.address, token).agendaNext().catch(() => null) };
+  const next: AgendaNext | null = await agendaRead.promise;
+  if (!next) return [];
+  if (!next.enabled) return [h('p', { class: 'note', id: 'agenda-off' }, T.agendaOff)];
+  if (next.events.length === 0) return [];
+  return [
+    h('div', { class: 'agenda', id: 'agenda' },
+      h('strong', {}, T.agendaTitle),
+      ...next.events.map((event) =>
+        h('div', { class: 'row agenda-event' },
+          h('span', {}, agendaLine(T.agendaLine, T.agendaUntitled, event)),
+          h('button', { class: 'agenda-record', onclick: () => void fillTitle(event.title) }, T.agendaRecord))),
+      ...(agendaNote ? [h('p', { class: 'note', id: 'agenda-filled', role: 'status' }, agendaNote)] : [])),
+  ];
+}
+
+// Puts the event's title in the recording form and nothing else: no consent is ticked, nothing starts.
+async function fillTitle(title: string): Promise<void> {
+  draft.title = title.slice(0, 200);
+  // A new meeting is a new notice: the member confirms it again, whatever they ticked for an earlier one.
+  draft.consentAgreed = false;
+  agendaNote = T.agendaFilled;
+  await render();
+  document.getElementById('title')?.focus();
+}
+
+function lostView(lost: LostState): Node[] {
+  const time = new Date(lost.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return [
+    h('div', { class: 'lost', id: 'lost', role: 'alert' },
+      h('strong', {}, T.lostLine.replace('{time}', time)),
+      h('p', {}, `${lost.title}: ${T.lostReasons[lost.reason]}`),
+      h('p', { class: 'note' }, lost.uploaded ? T.lostUploaded : T.lostKept),
+      h('button', { id: 'lost-dismiss', onclick: () => void dismissLost() }, T.lostDismiss)),
+  ];
+}
+
+async function dismissLost(): Promise<void> {
+  await area.remove(LOST_KEY);
+  // The "!" of the badge goes with it; nothing is recording.
+  await chrome.action.setBadgeText({ text: '' });
+  await chrome.action.setTitle({ title: 'Ludy' });
+  await render();
+}
+
+async function turnOn(): Promise<void> {
   notice = '';
-  const feature = FEATURES[0]!;
-  // The browser asks for tab capture and the offscreen document on this click, and nothing is asked before it.
+  const feature = FEATURES.find((f) => f.id === 'meetings')!;
+  // The browser asks for tab capture, offscreen, and activeTab (to read the active meeting tab URL on click) on this click, and nothing is asked before it.
   if (!(await chrome.permissions.request({ permissions: [...feature.permissions] }))) {
     notice = T.permissionDenied;
   } else {
-    await saveState(area, withFeature(state, 'meetings', true));
+    await saveState(area, withFeature(await loadState(area), 'meetings', true));
     // The microphone prompt cannot show in an offscreen document: the member answers it once on a page of the extension.
     const mic = await navigator.permissions.query({ name: 'microphone' as PermissionName }).catch(() => null);
     if (mic?.state !== 'granted') await chrome.tabs.create({ url: chrome.runtime.getURL('mic.html') });
@@ -220,9 +646,11 @@ async function turnOn(state: State): Promise<void> {
   await render();
 }
 
-async function turnOff(state: State): Promise<void> {
-  await chrome.permissions.remove({ permissions: [...FEATURES[0]!.permissions] });
-  await saveState(area, withFeature(state, 'meetings', false));
+async function turnOff(): Promise<void> {
+  const latest = await loadState(area);
+  const remove = permissionsToRemove('meetings', latest.enabled);
+  if (remove.length > 0) await chrome.permissions.remove({ permissions: remove });
+  await saveState(area, withFeature(latest, 'meetings', false));
   await render();
 }
 
@@ -239,9 +667,27 @@ async function startRecording(): Promise<void> {
     if (tab?.id === undefined) throw new Error('no tab');
     // Only after the member's click here, and only for the tab they are on.
     const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
-    const reply = (await chrome.runtime.sendMessage({ type: 'start', ...draft, streamId })) as StartReply;
-    if (reply.ok) draft = { title: '', consentMethod: '', consentAgreed: false, keepVideo: false, liveNotes: false };
-    else notice = T.blockers[reply.reason];
+    // The tab's address, when the browser gave it, so the server can tell a second capture of the same call; nothing of it is kept.
+    const joinUrl = tabAddress(tab.url);
+    const reply = (await chrome.runtime.sendMessage({ type: 'start', ...draft, streamId, ...(joinUrl ? { joinUrl } : {}) })) as StartReply;
+    if (reply.ok) {
+      draft = { title: '', consentMethod: '', consentAgreed: false, keepVideo: false, liveNotes: false };
+      agendaNote = '';
+    } else {
+      notice = T.blockers[reply.reason];
+      // Another capture of this call exists: which kind of client and since when, in words (ADR-0055 slice 1, #4123).
+      if (reply.reason === 'captureRunning') {
+        const since = reply.held ? new Date(reply.held.since) : null;
+        notice =
+          reply.held && since && !Number.isNaN(since.getTime())
+            ? T.blockers.captureRunning.replace('{kind}', T.captureKinds[reply.held.kind]).replace('{time}', since.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+            : T.blockers.captureRunningUnknown;
+      }
+      if (reply.reason === 'consentPolicy') {
+        strictOrg = true;
+        if (draft.consentMethod === 'told_at_start') draft.consentMethod = '';
+      }
+    }
   } catch {
     notice = T.blockers.device;
   }
@@ -274,7 +720,8 @@ async function pendingView(state: State, orgId: string, token: string): Promise<
           notice = done.ok ? T.uploaded : T.uploadFailed;
           await render();
         })() }, T.retry),
-        h('button', { onclick: () => void store.remove(meta.id).then(render) }, T.discard),
+        // Discarding a left-over copy ends that meeting's recording too (best effort), so the app's recording chip lets go (#3196).
+        h('button', { onclick: () => void reportEnded(client, meta).then(() => store.remove(meta.id)).then(render) }, T.discard),
       )),
   ];
 }

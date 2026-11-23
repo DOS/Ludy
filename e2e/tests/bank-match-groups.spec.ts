@@ -28,6 +28,8 @@ test('a clean bank match is asked for and approved in one action, then listed wi
     await page.goto('/');
     await signUp(page, newEmail('match'));
     const created = await createOrg(page, 'Công ty khớp sao kê');
+    // A new org opens on the overview (#3225); the uploads are on the Inbox.
+    await page.goto(page.url().replace(/\/overview$/, '/inbox'));
     await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
     await page.locator('input[type=file]').setInputFiles({
       name: `hd-${NUMBER}.xml`,
@@ -53,7 +55,7 @@ test('a clean bank match is asked for and approved in one action, then listed wi
     const dir = mkdtempSync(join(tmpdir(), 'crove-match-'));
     const path = join(dir, 'thang-11.csv');
     writeFileSync(path, `﻿${HEADER}\n${LINES.join('\n')}\nTổng cộng;;;1.991.000;;\n`);
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Ngân hàng' }).click();
     await expect(page.getByRole('heading', { name: 'Sao kê ngân hàng' })).toBeVisible();
     await page.getByLabel('Tháng').fill('2026-11');
@@ -97,7 +99,7 @@ test('a clean bank match is asked for and approved in one action, then listed wi
   await test.step('the books hold the voucher, tied to the line and the proposal', async () => {
     const rows = sql<{ voucher_type: string; number: number; amount: string; has_line: boolean; has_proposal: boolean }>(
       `SELECT v.voucher_type, v.number, v.amount::text, (v.bank_line_id IS NOT NULL) AS has_line, (v.proposal_id IS NOT NULL) AS has_proposal
-         FROM crove_finance.cash_voucher v JOIN crove_kernel.tenant t ON t.org_id = v.org_id WHERE t.slug = :'slug'`,
+         FROM ludy_finance.cash_voucher v JOIN ludy_kernel.tenant t ON t.org_id = v.org_id WHERE t.slug = :'slug'`,
       { slug },
     );
     expect(rows).toHaveLength(1);

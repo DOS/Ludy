@@ -7,9 +7,10 @@ import { nextTotp } from '../lib/totp.ts';
 
 test('the agents screen asks for a second factor in place, then does what was asked', async ({ page }) => {
   await signUp(page, newEmail('agents'));
-  await createOrg(page, 'Công ty Tác tử');
-  await page.getByRole('navigation').getByRole('link', { name: 'Sơ đồ và AI' }).click();
-  await expect(page.getByRole('heading', { name: 'Sơ đồ tổ chức và tác tử AI' })).toBeVisible();
+  await createOrg(page, 'Công ty Đội ngũ AI');
+  await page.getByRole('navigation').getByRole('link', { name: 'Ludy AI', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Đội ngũ AI' }).click();
+  await expect(page.getByRole('heading', { name: 'Đội ngũ AI' })).toBeVisible();
 
   await page.getByTestId('template').first().getByRole('button', { name: 'Cài', exact: true }).click();
   await expect(page.getByText('Việc này cần xác thực hai lớp. Bật xác thực hai lớp cho tài khoản, Ludy sẽ thực hiện lại ngay sau đó.')).toBeVisible();
@@ -23,7 +24,7 @@ test('the agents screen asks for a second factor in place, then does what was as
   await page.getByRole('button', { name: 'Xác nhận' }).click();
 
   // The refused request ran again once the factor was on.
-  await expect(page.getByText('Đã cài tác tử AI và vị trí của nó.')).toBeVisible();
+  await expect(page.getByText('Đã cài đồng nghiệp AI và vị trí của nó.')).toBeVisible();
   await expect(page.getByTestId('agent-row')).toHaveCount(1);
   await expect(page.getByText(/^Đang chờ: cài mẫu/)).toHaveCount(0);
 });
@@ -33,15 +34,19 @@ test('the agents screen asks for a second factor in place, then does what was as
 test('the budget form locks while it waits for a second factor, then saves the budget once', async ({ page }) => {
   await signUp(page, newEmail('budget'));
   await createOrg(page, 'Công ty Ngân sách');
-  await page.getByRole('navigation').getByRole('link', { name: 'Sơ đồ và AI' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Ludy AI', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Ngân sách AI' }).click();
   await expect(page.getByRole('heading', { name: 'Ngân sách AI hằng tháng' })).toBeVisible();
 
-  const limit = page.getByLabel('Hạn mức mỗi tháng');
-  await limit.fill('500000');
+  // The budget form is a dialog behind a button (#3608).
   await page.getByRole('button', { name: 'Đặt ngân sách' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Đặt ngân sách' });
+  const limit = dialog.getByLabel('Hạn mức mỗi tháng');
+  await limit.fill('500000');
+  await dialog.getByRole('button', { name: 'Đặt ngân sách' }).click();
   await expect(page.getByText('Đang chờ: đặt ngân sách AI.')).toBeVisible();
   await expect(limit).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Đặt ngân sách' })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Đặt ngân sách' })).toBeDisabled();
 
   await page.getByRole('button', { name: 'Bật xác thực hai lớp' }).click();
   const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
@@ -51,5 +56,7 @@ test('the budget form locks while it waits for a second factor, then saves the b
 
   await expect(page.getByTestId('budget-row')).toHaveCount(1);
   await expect(page.getByText(/^Đang chờ:/)).toHaveCount(0);
-  await expect(limit).toBeEnabled();
+  // The dialog closes once the budget is saved, and focus returns to the button that opened it.
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Đặt ngân sách' })).toBeFocused();
 });

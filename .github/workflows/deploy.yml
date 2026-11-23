@@ -8,6 +8,17 @@ name: deploy
 # digest; tools/deploy/deploy.sh on the host migrates, rolls the worker before the API, waits for /readyz, runs the
 # smoke test and rolls back on failure. Until the environment has its secrets, the deploy job only says so and
 # passes.
+#
+# Opt-in (#2704): when the variable DEPLOY_IDP_ENVIRONMENT names the environment being deployed, the deploy writes the identity
+# provider settings (variables DEPLOY_IDP_AUTH_ISSUER, DEPLOY_IDP_AUTH_JWKS_URL, DEPLOY_IDP_PUBLIC_AUTH_URL,
+# DEPLOY_IDP_PUBLIC_AUTH_ANON_KEY, DEPLOY_IDP_AUTH_OAUTH_PROVIDERS, DEPLOY_IDP_AUTH_HOSTED_LOGIN_URL,
+# DEPLOY_IDP_AUTH_HOSTED_LOGIN_TOKEN_URL, DEPLOY_IDP_AUTH_HOSTED_LOGIN_NAME and the secret DEPLOY_IDP_AUTH_ALLOWED_EMAILS)
+# into the host's env file (docs/runbooks/pilot-sign-in-remote-idp.md, step 5). Define them in the environment only, never at
+# repository or organization level: those fall back into every environment. Without the opt-in the env file is never edited.
+#
+# Opt-in (#3531): when DEPLOY_MODULES_ENVIRONMENT names the environment being deployed, the deploy writes
+# CROVE_MODULES=<DEPLOY_CROVE_MODULES> into the host's env file and verifies /api/config reports those modules (plus kernel).
+# Define DEPLOY_MODULES_ENVIRONMENT and DEPLOY_CROVE_MODULES in the environment only.
 
 on:
   push:
@@ -173,7 +184,7 @@ jobs:
           # The commit's date orders builds for the API's /readyz (worker build >= API build, #1952).
           built_at="$(git show -s --format=%cI "$SHA")"
           test -n "$built_at"
-          docker build "${labels[@]}" --build-arg "CROVE_BUILD=$SHA" --build-arg "CROVE_BUILD_TIME=$built_at" -t "$repo:$RELEASE" .
+          docker build "${labels[@]}" --build-arg "LUDY_BUILD=$SHA" --build-arg "LUDY_BUILD_TIME=$built_at" -t "$repo:$RELEASE" .
           docker build "${labels[@]}" -f apps/extract/Dockerfile -t "$repo-extract:$RELEASE" .
           docker build "${labels[@]}" -f apps/media/Dockerfile -t "$repo-media:$RELEASE" .
           docker push --quiet "$repo:$RELEASE"
@@ -282,18 +293,123 @@ jobs:
           persist-credentials: false
           ref: ${{ needs.target.outputs.action == 'deploy' && needs.target.outputs.sha || github.sha }}
 
+      # The identity provider settings (#2704), when the variable DEPLOY_IDP_ENVIRONMENT names this environment: written to a private
+      # file from the DEPLOY_IDP_* variables and secret (as environment variables, never interpolated into the script), checked by the
+      # release's own deploy.sh, and sent with the release. It prints the names it set, never a value. deploy.sh on the host checks the
+      # file again and edits the env file; the file goes with the rest of the incoming directory when the run ends. A rollback sends
+      # nothing. The deploy-specific names and the opt-in keep a variable of the same name at repository or organization level (the
+      # kernel's own setting names, which another project may use) from reaching an environment that did not ask for it.
+      - name: Prepare the identity provider settings
+        id: idp
+        if: steps.config.outputs.ready == 'true' && needs.target.outputs.action == 'deploy'
+        env:
+          ENVIRONMENT: ${{ needs.target.outputs.environment }}
+          OPT_IN: ${{ vars.DEPLOY_IDP_ENVIRONMENT }}
+          DEPLOY_IDP_AUTH_ISSUER: ${{ vars.DEPLOY_IDP_AUTH_ISSUER }}
+          DEPLOY_IDP_AUTH_JWKS_URL: ${{ vars.DEPLOY_IDP_AUTH_JWKS_URL }}
+          DEPLOY_IDP_PUBLIC_AUTH_URL: ${{ vars.DEPLOY_IDP_PUBLIC_AUTH_URL }}
+          DEPLOY_IDP_PUBLIC_AUTH_ANON_KEY: ${{ vars.DEPLOY_IDP_PUBLIC_AUTH_ANON_KEY }}
+          DEPLOY_IDP_AUTH_OAUTH_PROVIDERS: ${{ vars.DEPLOY_IDP_AUTH_OAUTH_PROVIDERS }}
+          DEPLOY_IDP_AUTH_HOSTED_LOGIN_URL: ${{ vars.DEPLOY_IDP_AUTH_HOSTED_LOGIN_URL }}
+          DEPLOY_IDP_AUTH_HOSTED_LOGIN_TOKEN_URL: ${{ vars.DEPLOY_IDP_AUTH_HOSTED_LOGIN_TOKEN_URL }}
+          DEPLOY_IDP_AUTH_HOSTED_LOGIN_NAME: ${{ vars.DEPLOY_IDP_AUTH_HOSTED_LOGIN_NAME }}
+          DEPLOY_IDP_AUTH_ALLOWED_EMAILS: ${{ secrets.DEPLOY_IDP_AUTH_ALLOWED_EMAILS }}
+        run: |
+          set -euo pipefail
+          # The settings carry the kernel's own names (the lines of the env file) behind the DEPLOY_IDP_ prefix.
+          names=(AUTH_ISSUER AUTH_JWKS_URL PUBLIC_AUTH_URL PUBLIC_AUTH_ANON_KEY AUTH_ALLOWED_EMAILS AUTH_OAUTH_PROVIDERS AUTH_HOSTED_LOGIN_URL AUTH_HOSTED_LOGIN_TOKEN_URL AUTH_HOSTED_LOGIN_NAME)
+          given=()
+          for name in "${names[@]}"; do
+            src="DEPLOY_IDP_$name"
+            if [ -n "${!src}" ]; then given+=("$name"); fi
+          done
+          if [ "$OPT_IN" != "$ENVIRONMENT" ]; then
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            if ((${#given[@]} > 0)); then
+              echo "::notice title=Identity provider settings ignored::DEPLOY_IDP_* settings are defined but DEPLOY_IDP_ENVIRONMENT is not '$ENVIRONMENT': the host env file is left alone. Define them in the environment only."
+            else
+              echo 'No identity provider settings opted in for this environment: the host env file is left alone.'
+            fi
+            exit 0
+          fi
+          if ((${#given[@]} == 0)); then
+            echo "::error::DEPLOY_IDP_ENVIRONMENT is '$ENVIRONMENT' but no DEPLOY_IDP_* setting is defined"
+            exit 1
+          fi
+          dir="$RUNNER_TEMP/idp"
+          install -m 700 -d "$dir"
+          (
+            umask 077
+            : > "$dir/auth-settings.env"
+            for name in "${given[@]}"; do
+              src="DEPLOY_IDP_$name"
+              value="${!src}"
+              case "$value" in
+                *$'\n'* | *$'\r'*) echo "::error::$src must be one line"; exit 1 ;;
+              esac
+              printf '%s=%s\n' "$name" "$value" >> "$dir/auth-settings.env"
+            done
+          )
+          # Names only: a failed check names the setting, not its value.
+          bash tools/deploy/deploy.sh check-auth-settings "$dir/auth-settings.env"
+          echo "Settings given: ${given[*]}" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo 'enabled=true'
+            echo "file=$dir/auth-settings.env"
+            # The Auth URL (public) the public smoke test must find in /api/config.
+            echo "auth_url=$DEPLOY_IDP_PUBLIC_AUTH_URL"
+          } >> "$GITHUB_OUTPUT"
+
+      # Opt-in (#3531): when DEPLOY_MODULES_ENVIRONMENT names this environment, validate DEPLOY_CROVE_MODULES and pass it via
+      # --modules to deploy.sh, plus SMOKE_EXPECT_MODULES to the public smoke check. Define both in the environment only.
+      - name: Prepare the module settings
+        id: modules
+        if: steps.config.outputs.ready == 'true' && needs.target.outputs.action == 'deploy'
+        env:
+          ENVIRONMENT: ${{ needs.target.outputs.environment }}
+          OPT_IN: ${{ vars.DEPLOY_MODULES_ENVIRONMENT }}
+          MODULES: ${{ vars.DEPLOY_LUDY_MODULES || vars.DEPLOY_CROVE_MODULES }}
+        run: |
+          set -euo pipefail
+          if [ "$OPT_IN" != "$ENVIRONMENT" ]; then
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            if [ -n "$MODULES" ]; then
+              echo "::notice title=Module settings ignored::DEPLOY_LUDY_MODULES is defined but DEPLOY_MODULES_ENVIRONMENT is not '$ENVIRONMENT': the host env file is left alone. Define them in the environment only."
+            else
+              echo 'No module settings opted in for this environment: the host env file is left alone.'
+            fi
+            exit 0
+          fi
+          if [ -z "$MODULES" ]; then
+            echo "::error::DEPLOY_MODULES_ENVIRONMENT is '$ENVIRONMENT' but DEPLOY_LUDY_MODULES is empty"
+            exit 1
+          fi
+          case "$MODULES" in
+            *$'\n'* | *$'\r'*) echo '::error::DEPLOY_LUDY_MODULES must be one line'; exit 1 ;;
+          esac
+          bash tools/deploy/deploy.sh check-modules "$MODULES"
+          echo "Modules given: $MODULES" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo 'enabled=true'
+            echo "modules=$MODULES"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Upload the deploy script and the compose file
         if: steps.config.outputs.ready == 'true'
         env:
           SSH_CONFIG: ${{ steps.config.outputs.ssh_config }}
           REMOTE: ${{ steps.config.outputs.remote }}
+          IDP_FILE: ${{ steps.idp.outputs.file }}
         run: |
           set -euo pipefail
           # compose.pilot.yml travels with the release (#2133): deploy.sh stages it from the directory of the compose file.
           # A release from before the file existed has none to send.
           files=(deploy.sh)
           if [ -f tools/deploy/compose.pilot.yml ]; then files+=(compose.pilot.yml); fi
-          tar -cf - -C tools/deploy "${files[@]}" -C "$GITHUB_WORKSPACE" docker-compose.yml \
+          # The identity provider settings (private, #2704) travel in the same private directory.
+          extra=()
+          if [ -n "$IDP_FILE" ]; then extra=(-C "$(dirname "$IDP_FILE")" auth-settings.env); fi
+          tar -cf - -C tools/deploy "${files[@]}" -C "$GITHUB_WORKSPACE" docker-compose.yml "${extra[@]}" \
             | ssh -F "$SSH_CONFIG" crove-target "umask 077 && mkdir -p '$REMOTE' && tar -xf - -C '$REMOTE'"
 
       - name: Deploy, or roll back, on the host
@@ -306,6 +422,9 @@ jobs:
           ENV_FILE: ${{ steps.config.outputs.env_file }}
           GH_TOKEN: ${{ github.token }}
           ACTOR: ${{ github.actor }}
+          IDP_ENABLED: ${{ steps.idp.outputs.enabled }}
+          MODULES_ENABLED: ${{ steps.modules.outputs.enabled }}
+          MODULES: ${{ steps.modules.outputs.modules }}
         run: |
           set -euo pipefail
           [[ "$ACTOR" =~ ^[A-Za-z0-9._-]+(\[bot\])?$ ]] || { echo '::error::unexpected actor name'; exit 1; }
@@ -316,8 +435,15 @@ jobs:
           else
             [[ "$IMAGE" =~ ^[a-z0-9./_:-]+@sha256:[0-9a-f]{64}$ && "$EXTRACT" =~ ^[a-z0-9./_:-]+@sha256:[0-9a-f]{64}$ && "$MEDIA" =~ ^[a-z0-9./_:-]+@sha256:[0-9a-f]{64}$ ]] || { echo '::error::image digests missing'; exit 1; }
             [[ "$BUILD" =~ ^[0-9a-f]{40}$ ]] || { echo '::error::the release commit is missing'; exit 1; }
+            # The settings file is on the host (sent above); deploy.sh edits the env file only when it is given.
+            settings=''
+            if [ "$IDP_ENABLED" = true ]; then settings+=" --auth-settings '$REMOTE/auth-settings.env'"; fi
+            if [ "$MODULES_ENABLED" = true ]; then
+              [[ "$MODULES" =~ ^[a-z][a-z0-9_]{0,31}(,[a-z][a-z0-9_]{0,31}){0,9}$ ]] || { echo '::error::unexpected module list'; exit 1; }
+              settings+=" --modules '$MODULES'"
+            fi
             printf '%s\n' "$GH_TOKEN" | ssh -F "$SSH_CONFIG" crove-target \
-              "bash '$REMOTE/deploy.sh' deploy $registry --release '$RELEASE' --image '$IMAGE' --extract-image '$EXTRACT' --media-image '$MEDIA' --build '$BUILD' --compose '$REMOTE/docker-compose.yml'"
+              "bash '$REMOTE/deploy.sh' deploy $registry --release '$RELEASE' --image '$IMAGE' --extract-image '$EXTRACT' --media-image '$MEDIA' --build '$BUILD' --compose '$REMOTE/docker-compose.yml'$settings"
           fi
 
       # The same checks through the public URL: DNS, TLS and the reverse proxy. Optional (DEPLOY_PUBLIC_URL). With the
@@ -331,6 +457,10 @@ jobs:
           SMOKE_EMAIL: ${{ secrets.SMOKE_EMAIL }}
           SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
           SMOKE_ORG: ${{ vars.SMOKE_ORG }}
+          # A remote identity provider has no /auth/v1 proxy on this host (#2704): the smoke test reads that from the deployed
+          # /api/config, not from these settings. When this run wrote the settings it also demands the Auth URL it was given.
+          SMOKE_EXPECT_AUTH_URL: ${{ steps.idp.outputs.auth_url }}
+          SMOKE_EXPECT_MODULES: ${{ steps.modules.outputs.modules }}
         run: |
           if [ "$ACTION" = deploy ]; then bash tools/deploy/deploy.sh smoke "$PUBLIC_URL" "$BUILD"; else bash tools/deploy/deploy.sh smoke "$PUBLIC_URL"; fi
 
@@ -354,9 +484,14 @@ jobs:
         env:
           HOST_OUTCOME: ${{ steps.host.outcome }}
           SMOKE_OUTCOME: ${{ steps.public-smoke.outcome }}
+          IDP_ENABLED: ${{ steps.idp.outputs.enabled }}
+          MODULES_ENABLED: ${{ steps.modules.outputs.enabled }}
+          MODULES: ${{ steps.modules.outputs.modules }}
         run: |
           {
             echo "- $ACTION on the host: $HOST_OUTCOME"
+            if [ "$IDP_ENABLED" = true ]; then echo '- identity provider settings: given to the deploy (the host log names what changed)'; fi
+            if [ "$MODULES_ENABLED" = true ]; then echo "- module settings: updated for LUDY_MODULES=$MODULES (when changed; see host log)"; fi
             echo "- public smoke test: ${SMOKE_OUTCOME:-not run (no DEPLOY_PUBLIC_URL)}"
             if [ "$ACTION" = deploy ]; then echo "- release: $RELEASE"; fi
           } >> "$GITHUB_STEP_SUMMARY"
@@ -368,7 +503,7 @@ jobs:
           REMOTE: ${{ steps.config.outputs.remote }}
         run: |
           ssh -F "$SSH_CONFIG" crove-target "rm -rf '$REMOTE'" < /dev/null || true
-          rm -rf "$(dirname "$SSH_CONFIG")"
+          rm -rf "$(dirname "$SSH_CONFIG")" "$RUNNER_TEMP/idp"
 
   # The partner's release notes (#691; plan §7 rule 6): one line per PR, from the "Release note (vi):" line of its body
   # (tools/release-notes.mjs). Written to the summary on every v* tag; published as the tag's GitHub Release only once

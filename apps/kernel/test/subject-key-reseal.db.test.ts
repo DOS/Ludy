@@ -9,10 +9,10 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, type CommandDef, type QueryDef } from '@crove/kernel-runtime';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, type CommandDef, type QueryDef } from '@ludy/kernel-runtime';
 import { resealSubjectKeys, unopenableSubjectKeysLog } from '../src/subject-key-reseal.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -68,7 +68,7 @@ suite('the reseal pass for subject keys on PostgreSQL (#2643)', () => {
     const seal = async (ref = `employee:${randomUUID()}`) => ({ ref, ...(await appRt.execute<{ sealed: string }>('t2643.seal', { ref, value: VALUE }, { actor: asUser(person), orgId, idempotencyKey: randomUUID() })) });
     const open = (runtime: Runtime, sealed: string, ref: string) => runtime.query('t2643.open', { sealed, ref }, { actor: asUser(person), orgId });
     const rowOf = async (ref: string) =>
-      withAdmin(async (c) => (await c.query<{ id: string; key_id: string; wrapped_key: Buffer }>('SELECT id, key_id, wrapped_key FROM crove_kernel.subject_key WHERE org_id = $1 AND ref = $2', [orgId, ref])).rows[0]);
+      withAdmin(async (c) => (await c.query<{ id: string; key_id: string; wrapped_key: Buffer }>('SELECT id, key_id, wrapped_key FROM ludy_kernel.subject_key WHERE org_id = $1 AND ref = $2', [orgId, ref])).rows[0]);
     return { orgId, person, seal, open, rowOf };
   }
 
@@ -87,15 +87,15 @@ suite('the reseal pass for subject keys on PostgreSQL (#2643)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 3 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 3 });
     appRt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS, subjectVault: vaultOf(rootOld) }).register({ commands: [...kernelCommands, SEAL], queries: [...kernelQueries({ inboundDomain: null }), OPEN] });
     workerRt = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
   }, 120_000);
@@ -139,7 +139,7 @@ suite('the reseal pass for subject keys on PostgreSQL (#2643)', () => {
     const sealed = await o.seal();
     const row = await o.rowOf(sealed.ref);
     await pass(vaultOf(rootNew, rootOld));
-    const rows = await withAdmin(async (c) => (await c.query<{ row: string; detail: Record<string, unknown> }>("SELECT audit_event::text AS row, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.subject_key.reseal'", [o.orgId])).rows);
+    const rows = await withAdmin(async (c) => (await c.query<{ row: string; detail: Record<string, unknown> }>("SELECT audit_event::text AS row, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.subject_key.reseal'", [o.orgId])).rows);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.detail).toMatchObject({ resealed: 1, unchanged: 0, from_key_ids: [vaultOf(rootOld).keyId], key_ids: [vaultOf(rootNew).keyId] });
     expect(rows[0]?.row).not.toContain(Buffer.from(row?.wrapped_key ?? Buffer.alloc(0)).toString('base64'));
@@ -153,13 +153,13 @@ suite('the reseal pass for subject keys on PostgreSQL (#2643)', () => {
     const fine = await o.seal();
     // Re-wrapped by a key the worker no longer holds: a key id of another root, as if CREDENTIAL_KEY_PREVIOUS had been removed too early.
     const unknownId = 'k1-ffffffffffffffff';
-    await withAdmin((c) => c.query('UPDATE crove_kernel.subject_key SET key_id = $1 WHERE org_id = $2 AND ref = $3', [unknownId, o.orgId, lost.ref]));
+    await withAdmin((c) => c.query('UPDATE ludy_kernel.subject_key SET key_id = $1 WHERE org_id = $2 AND ref = $3', [unknownId, o.orgId, lost.ref]));
     const done = await pass(vaultOf(rootNew, rootOld));
     // The pass reads only rows under a key its vault opens: the lost one is not read (so it never crowds the others out), not counted as failed, and reported by its key id.
     expect(done.failed).toBe(0);
     expect(done.unopenable).toContainEqual({ keyId: unknownId, count: 1 });
     expect(done.left).toBeGreaterThanOrEqual(1);
-    const readable = await workerPool.query<{ id: string }>('SELECT id FROM crove_kernel.subject_key_reseal_due($1, $2::text[], 1000, NULL, NULL)', [vaultOf(rootNew).keyId, [vaultOf(rootNew).keyId, vaultOf(rootOld).keyId]]);
+    const readable = await workerPool.query<{ id: string }>('SELECT id FROM ludy_kernel.subject_key_reseal_due($1, $2::text[], 1000, NULL, NULL)', [vaultOf(rootNew).keyId, [vaultOf(rootNew).keyId, vaultOf(rootOld).keyId]]);
     const lostRow = await o.rowOf(lost.ref);
     expect(readable.rows.map((r) => r.id)).not.toContain(lostRow?.id);
     // Key ids and counts only: no subject id and no wrapped bytes.
@@ -187,7 +187,7 @@ suite('the reseal pass for subject keys on PostgreSQL (#2643)', () => {
     expect(await run([{ ...item, fromWrapped: oldVault.newDataKey(o.orgId, row.id).wrapped.toString('base64') }])).toEqual({ resealed: 0, skipped: 1 });
     expect((await o.rowOf(sealed.ref))?.key_id).toBe(row.key_id);
     // Shredded in between: no row, no change, no error.
-    await withAdmin((c) => c.query('DELETE FROM crove_kernel.subject_key WHERE org_id = $1 AND id = $2', [o.orgId, row.id]));
+    await withAdmin((c) => c.query('DELETE FROM ludy_kernel.subject_key WHERE org_id = $1 AND id = $2', [o.orgId, row.id]));
     expect(await run([item])).toEqual({ resealed: 0, skipped: 1 });
     expect(await o.rowOf(sealed.ref)).toBeUndefined();
     // The definer refuses a write that names the same key id.
@@ -209,12 +209,12 @@ suite('the reseal pass for subject keys on PostgreSQL (#2643)', () => {
     if (!row) throw new Error('no row');
     const call = (client: pg.Pool, text: string, params: unknown[] = []) => client.query(text, params);
     // The API login has no EXECUTE on any of the three definers.
-    await expect(call(pool, 'SELECT * FROM crove_kernel.subject_key_reseal_due($1, $2::text[], 10, NULL, NULL)', ['x', ['x']])).rejects.toMatchObject({ code: '42501' });
-    await expect(call(pool, 'SELECT * FROM crove_kernel.subject_key_key_counts()')).rejects.toMatchObject({ code: '42501' });
-    await expect(call(pool, 'SELECT crove_kernel.subject_key_reseal($1::uuid, $2, $3, $4, $5)', [row.id, row.key_id, row.wrapped_key, 'k-new', Buffer.alloc(60)])).rejects.toMatchObject({ code: '42501' });
+    await expect(call(pool, 'SELECT * FROM ludy_kernel.subject_key_reseal_due($1, $2::text[], 10, NULL, NULL)', ['x', ['x']])).rejects.toMatchObject({ code: '42501' });
+    await expect(call(pool, 'SELECT * FROM ludy_kernel.subject_key_key_counts()')).rejects.toMatchObject({ code: '42501' });
+    await expect(call(pool, 'SELECT ludy_kernel.subject_key_reseal($1::uuid, $2, $3, $4, $5)', [row.id, row.key_id, row.wrapped_key, 'k-new', Buffer.alloc(60)])).rejects.toMatchObject({ code: '42501' });
     // The worker login reads, but the write needs the system context of an org: outside one it is refused.
-    expect((await call(workerPool, 'SELECT * FROM crove_kernel.subject_key_key_counts()')).rowCount).toBeGreaterThan(0);
-    await expect(call(workerPool, 'SELECT crove_kernel.subject_key_reseal($1::uuid, $2, $3, $4, $5)', [row.id, row.key_id, row.wrapped_key, 'k-new', Buffer.alloc(60)])).rejects.toMatchObject({ message: 'SUBJECT_KEY_SYSTEM_CONTEXT' });
+    expect((await call(workerPool, 'SELECT * FROM ludy_kernel.subject_key_key_counts()')).rowCount).toBeGreaterThan(0);
+    await expect(call(workerPool, 'SELECT ludy_kernel.subject_key_reseal($1::uuid, $2, $3, $4, $5)', [row.id, row.key_id, row.wrapped_key, 'k-new', Buffer.alloc(60)])).rejects.toMatchObject({ message: 'SUBJECT_KEY_SYSTEM_CONTEXT' });
     // The command itself is the system's: a user is refused, and the row stays under its key.
     await expect(appRt.execute('kernel.subject_key.reseal', { items: [{ id: row.id, fromKeyId: row.key_id, fromWrapped: row.wrapped_key.toString('base64'), keyId: 'k-new', wrapped: Buffer.alloc(60).toString('base64') }] }, { actor: asUser(o.person), orgId: o.orgId })).rejects.toBeInstanceOf(Error);
     expect((await o.rowOf(sealed.ref))?.key_id).toBe(row.key_id);

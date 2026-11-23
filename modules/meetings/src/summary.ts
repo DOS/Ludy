@@ -5,24 +5,17 @@
 // what each item says about who and when: the "who" is matched to an attendee only when exactly one attendee answers to that name, the "when" is parsed
 // against the meeting's own date, and a link, email address or phone number in a title is flagged. Nothing is shared by this; the recorder's publish does that.
 import { sql } from 'kysely';
-import { zSummaryCopy, zSummaryCopied, zSummaryResult, ITEMS_PER_MEETING_MAX } from '@crove/kernel-contract';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { CHAPTERS_MAX, chapterTitleProblem, zChaptersCopied, zChaptersCopy, zChaptersResult, zSummaryCopy, zSummaryCopied, zSummaryResult, zSummaryRef, zNotesPreview, zNotesPreviewInput, zSpeakerSuggestions, zSpeakerSuggestionsInput, ITEMS_PER_MEETING_MAX, parseStoredSections, sectionsToText, templateSections, type Enhanced, type MeetingSummaryTemplate, type NotesPreview, type SpeakerSuggestions, type SummaryResult, type TemplateSection } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { itemFlags } from './results.ts';
+import { plainName } from './plain-name.ts';
+import { attendeeNames, draftLabels } from './speaker.ts';
 import { dayAfter, vnDay } from './retention.ts';
+import { CHAPTERS_FEATURE } from './chapters-run.ts';
 import { SUMMARY_FEATURE as FEATURE, isSummaryEnabled } from './summary-run.ts';
-import { ROLES, openMeeting, userOf } from './transcript.ts';
+import { ROLES, lockMeeting, openMeeting, userOf } from './transcript.ts';
 
-// "Nguyễn Văn Nam" and "nguyen van nam" are one name: no marks, lower case, single spaces.
-export function plainName(text: string): string {
-  return text
-    .normalize('NFD')
-    .replace(/\p{M}+/gu, '')
-    .replace(/đ/g, 'd')
-    .replace(/Đ/g, 'd')
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+export { plainName };
 
 /**
  * The one attendee a said name belongs to, or null: the whole name or one word of it (a Vietnamese is often called by the last word) of exactly one
@@ -94,6 +87,45 @@ export function parseWhen(text: string, meetingDay: string): string | null {
   return day;
 }
 
+// The recorder's own finished summary run of this meeting, read in the recorder's own context (the row is sealed to its member) and read back strictly: the body is the model's, checked once
+// by the agent package, and is never trusted for its shape. A run of another meeting or feature, one past its expiry, one not finished or one with an unreadable body is refused with the
+// same fixed codes whoever asks (the copy and the preview of an expansion share it).
+async function readRunBody(ctx: CommandContext | QueryContext, meetingId: string, runId: string, now: Date, feature: string): Promise<string> {
+  const found = await ctx
+    .query<{ status: string; feature: string; subjectType: string; subjectId: string; body: string | null; expiresAt: string }>('kernel.member_vy.result.get', { runId })
+    .catch((error: unknown) => {
+      // The kernel's own refusal for a run that is not the caller's or does not exist.
+      if (error instanceof DomainError && error.code === 'RESULT_NOT_FOUND') throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
+      throw error;
+    });
+  if (found.status !== 'ok') throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
+  const result = found.value;
+  if (result.feature !== feature || result.subjectType !== 'meeting' || result.subjectId !== meetingId) {
+    throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
+  }
+  // An answer past its expiry is gone for the member, as the kernel's own read treats it: it is not copied into a draft.
+  if (new Date(result.expiresAt).getTime() <= now.getTime()) throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
+  if (result.status !== 'ready' || result.body === null) throw new DomainError('SUMMARY_RESULT_NOT_READY', 409, 'The summary is not finished');
+  return result.body;
+}
+async function readRunResult(ctx: CommandContext | QueryContext, meetingId: string, runId: string, now: Date): Promise<SummaryResult> {
+  const raw = await readRunBody(ctx, meetingId, runId, now, FEATURE);
+  try {
+    return zSummaryResult.parse(JSON.parse(raw));
+  } catch {
+    throw new DomainError('SUMMARY_RESULT_INVALID', 422, 'The summary result cannot be read');
+  }
+}
+
+// The text an expansion of the recorder's notes becomes in the draft: the lines of each section, own and added, one to a line, under the template's headings (the general summary has one block).
+// Built by code from the checked lines, so the recorder's own lines are in it exactly as they wrote them.
+export function enhancedText(template: MeetingSummaryTemplate, enhanced: Enhanced, copy: readonly TemplateSection[] | null = null): string {
+  const defs = templateSections(template, copy);
+  if (defs.length === 0) return enhanced.sections.flatMap((s) => s.lines.map((l) => l.text)).join('\n');
+  const entries = enhanced.sections.flatMap((s) => (s.key !== null && defs.some((d) => d.key === s.key) ? [{ key: s.key, text: s.lines.map((l) => l.text).join('\n') }] : []));
+  return sectionsToText(template, entries, copy);
+}
+
 export const summaryCopyResult = defineCommand({
   name: 'meetings.summary.copy_result',
   input: zSummaryCopy,
@@ -106,68 +138,74 @@ export const summaryCopyResult = defineCommand({
     if (!isSummaryEnabled()) throw new DomainError('SUMMARY_OFF', 422, 'Summaries by Vy are not turned on here; type the summary by hand');
     const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can copy its summary');
-    // The recorder's own result, read in the recorder's own context (the row is sealed to its member). A run of another meeting or feature is not this one.
-    const found = await ctx
-      .query<{ status: string; feature: string; subjectType: string; subjectId: string; body: string | null; expiresAt: string }>('kernel.member_vy.result.get', { runId: input.runId })
-      .catch((error: unknown) => {
-        // The kernel's own refusal for a run that is not the caller's or does not exist.
-        if (error instanceof DomainError && error.code === 'RESULT_NOT_FOUND') throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
-        throw error;
-      });
-    if (found.status !== 'ok') throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
-    const result = found.value;
-    if (result.feature !== FEATURE || result.subjectType !== 'meeting' || result.subjectId !== input.meetingId) {
-      throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
-    }
-    // An answer past its expiry is gone for the member, as the kernel's own read treats it: it is not copied into a draft.
-    if (new Date(result.expiresAt).getTime() <= ctx.now.getTime()) throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No summary result for this meeting');
-    if (result.status !== 'ready' || result.body === null) throw new DomainError('SUMMARY_RESULT_NOT_READY', 409, 'The summary is not finished');
-    // The body is the model's, checked once by the agent package; it is read back strictly here and never trusted for its shape.
-    let body;
-    try {
-      body = zSummaryResult.parse(JSON.parse(result.body));
-    } catch {
-      throw new DomainError('SUMMARY_RESULT_INVALID', 422, 'The summary result cannot be read');
-    }
+    // Lock the meeting row first (the order redact and personal_erase take), before reading the private result, so a concurrent
+    // redaction drops the private result before it can be read and a template change serializes (#4415, #3578).
+    const row = await ctx.trx
+      .selectFrom('ludy_meetings.meeting')
+      .select(['started_at', 'summary_template', 'minutes_template_sections', 'minutes_template_hash'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.meetingId)
+      .forNoKeyUpdate()
+      .executeTakeFirst();
+    if (!row) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    const body = await readRunResult(ctx, input.meetingId, input.runId, ctx.now);
     // The meeting's day and who may be named: the recorder and the attendees, by the names the org knows them by (member_profiles answers for members only).
-    const row = await ctx.trx.selectFrom('crove_meetings.meeting').select(['started_at']).where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirstOrThrow();
     const meetingDay = vnDay(row.started_at ?? new Date());
-    const readers = await ctx.trx.selectFrom('crove_meetings.meeting_reader').select('user_id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).execute();
+    // A4 (#3162): a run was asked for one template; if the recorder picked another since, its sections would not fit the headings they now type under, so it is not copied.
+    // #3578: on a custom template the run is tied to the copy of the sections it was asked to fill (its hash), so another org template, or the same one edited and picked again, is refused too.
+    if (body.template !== row.summary_template || (row.summary_template === 'custom' && (body.templateHash ?? null) !== row.minutes_template_hash)) {
+      throw new DomainError('SUMMARY_TEMPLATE_CHANGED', 409, 'The minutes template changed since Vy wrote this; ask Vy again');
+    }
+    const copy = row.minutes_template_sections === null ? null : parseStoredSections(row.minutes_template_sections);
+    // On a template the sections become the one summary text, by code (the headings are code's, the text is the model's, already checked); on the general template the summary is as it was.
+    const defs = templateSections(body.template, copy);
+    // An expansion of the recorder's notes (A5, #3163) becomes the same one text, the recorder's own lines verbatim among Vy's, and brings no items or decisions of its own.
+    const summaryText = body.enhanced
+      ? enhancedText(body.template, body.enhanced, copy)
+      : defs.length === 0
+        ? body.summary
+        : sectionsToText(body.template, body.sections.filter((x) => defs.some((d) => d.key === x.key)), copy);
+    if (body.enhanced && (summaryText === '' || summaryText.length > 8000)) throw new DomainError('SUMMARY_RESULT_INVALID', 422, 'The summary result cannot be read');
+    const readers = await ctx.trx.selectFrom('ludy_meetings.meeting_reader').select('user_id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).execute();
     const ids = [userId, ...readers.map((r) => r.user_id)];
-    const { rows: profiles } = await sql<{ user_id: string; email: string; display_name: string | null }>`SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
+    const { rows: profiles } = await sql<{ user_id: string; email: string; display_name: string | null }>`SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
     const people = profiles.map((p) => ({ userId: p.user_id, name: p.display_name ?? p.email.split('@')[0] ?? '' }));
 
     // One copy of a run: a run already copied (its rows carry its id, read or not) is not copied again, which would duplicate its items.
     const already = await ctx.trx
-      .selectFrom('crove_meetings.action_item')
+      .selectFrom('ludy_meetings.action_item')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
       .where('source_run_id', '=', input.runId)
-      .unionAll(ctx.trx.selectFrom('crove_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('source_run_id', '=', input.runId))
+      .unionAll(ctx.trx.selectFrom('ludy_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('source_run_id', '=', input.runId))
       .executeTakeFirst();
     if (already) throw new DomainError('SUMMARY_ALREADY_COPIED', 409, 'This summary was already copied into the draft');
     // The earlier model-written drafts go (the recorder asked for a new run); what the recorder typed, or read and kept, stays, and a summary of theirs that is
     // still there is not replaced: they share it or save over it first.
-    await ctx.trx.deleteFrom('crove_meetings.meeting_result').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('tainted', '=', true).execute();
-    const mine = await ctx.trx.selectFrom('crove_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').executeTakeFirst();
-    if (mine && (body.summary !== '' || body.decisions.length > 0)) throw new DomainError('DRAFT_SUMMARY_EXISTS', 409, 'You already have a summary draft; share it or save over it before copying Vy\'s');
-    await ctx.trx
-      .deleteFrom('crove_meetings.action_item')
-      .where('org_id', '=', ctx.orgId)
-      .where('meeting_id', '=', input.meetingId)
-      .where('stage', '=', 'draft')
-      .where('status', '=', 'suggested')
-      .where('tainted', '=', true)
-      .execute();
-    if (body.summary !== '' || body.decisions.length > 0) {
+    await ctx.trx.deleteFrom('ludy_meetings.meeting_result').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('tainted', '=', true).execute();
+    const mine = await ctx.trx.selectFrom('ludy_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').executeTakeFirst();
+    if (mine && (summaryText !== '' || body.decisions.length > 0)) throw new DomainError('DRAFT_SUMMARY_EXISTS', 409, 'You already have a summary draft; share it or save over it before copying Vy\'s');
+    // The items a summary run suggested are replaced by a new summary run; an expansion of the notes has none and leaves them.
+    if (!body.enhanced) {
+      await ctx.trx
+        .deleteFrom('ludy_meetings.action_item')
+        .where('org_id', '=', ctx.orgId)
+        .where('meeting_id', '=', input.meetingId)
+        .where('stage', '=', 'draft')
+        .where('status', '=', 'suggested')
+        .where('tainted', '=', true)
+        .execute();
+    }
+    if (summaryText !== '' || body.decisions.length > 0) {
       // A second click at the same moment waits on the first's row and then meets the one draft a meeting may hold: the same answer as a draft that is there.
       await ctx.trx
-        .insertInto('crove_meetings.meeting_result')
+        .insertInto('ludy_meetings.meeting_result')
         .values({
           org_id: ctx.orgId,
           meeting_id: input.meetingId,
-          summary: body.summary === '' ? body.decisions[0] ?? '-' : body.summary,
+          // On a template the decisions have their own place on the page, so a run with no section stores a bare dash, never a copy of a decision.
+          summary: summaryText === '' ? (defs.length > 0 ? '-' : body.decisions[0] ?? '-') : summaryText,
           decisions: sql`${JSON.stringify(body.decisions)}::jsonb`,
           feature: FEATURE,
           stage: 'draft',
@@ -181,7 +219,7 @@ export const summaryCopyResult = defineCommand({
         });
     }
     const kept = await ctx.trx
-      .selectFrom('crove_meetings.action_item')
+      .selectFrom('ludy_meetings.action_item')
       .select(sql<number>`count(*)::int`.as('n'))
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
@@ -190,7 +228,7 @@ export const summaryCopyResult = defineCommand({
     const items = body.items.slice(0, room);
     for (const item of items) {
       await ctx.trx
-        .insertInto('crove_meetings.action_item')
+        .insertInto('ludy_meetings.action_item')
         .values({
           org_id: ctx.orgId,
           meeting_id: input.meetingId,
@@ -212,4 +250,113 @@ export const summaryCopyResult = defineCommand({
   },
 });
 
-export const summaryCommands = [summaryCopyResult];
+// What the recorder reads of a finished expansion of their notes before they copy it into their draft: their own lines and Vy's told apart, with the transcript second under each line Vy
+// added. The recorder's own run result only (the same checks as the copy: another meeting's, another feature's, an expired or unfinished one is refused), and an audited sensitive read.
+export const notesPreview = defineQuery({
+  name: 'meetings.notes.preview',
+  input: zNotesPreviewInput,
+  access: ROLES,
+  sensitive: true,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input): Promise<NotesPreview> => {
+    const userId = userOf(ctx.actor);
+    const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can read this');
+    const body = await readRunResult(ctx, input.meetingId, input.runId, new Date());
+    if (!body.enhanced) throw new DomainError('SUMMARY_RESULT_NOT_FOUND', 404, 'No expansion of the notes for this meeting');
+    return zNotesPreview.parse({ meetingId: input.meetingId, runId: input.runId, template: body.template, enhanced: body.enhanced, dropped: body.dropped });
+  },
+});
+
+// The names the recorder's Vy may suggest for a speaker (#3502): what the summary run is told, so it can say which attendee a speaker label is. The recorder's own read, audited; names only.
+export const summaryAttendees = defineQuery({
+  name: 'meetings.summary.attendees',
+  input: zSummaryRef,
+  access: ROLES,
+  sensitive: true,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input): Promise<{ meetingId: string; names: string[] }> => {
+    const userId = userOf(ctx.actor);
+    const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can read this');
+    return { meetingId: input.meetingId, names: (await attendeeNames(ctx, input.meetingId, userId)).map((p) => p.name) };
+  },
+});
+
+// What a finished summary run suggested for the speakers and still applies (#3502): the recorder's own run result only (the same checks as the copy), kept to the suggestions whose label is
+// still on a draft line, whose name is still one of the meeting's people and is not already another speaker's label. An audited sensitive read; nothing is changed.
+export const speakerSuggestions = defineQuery({
+  name: 'meetings.speaker.suggestions',
+  input: zSpeakerSuggestionsInput,
+  access: ROLES,
+  sensitive: true,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input): Promise<SpeakerSuggestions> => {
+    const userId = userOf(ctx.actor);
+    const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can read this');
+    const body = await readRunResult(ctx, input.meetingId, input.runId, new Date());
+    if (body.speakers.length === 0) return zSpeakerSuggestions.parse({ meetingId: input.meetingId, runId: input.runId, suggestions: [] });
+    const labels = await draftLabels(ctx, input.meetingId);
+    const people = new Set((await attendeeNames(ctx, input.meetingId, userId)).map((p) => p.name));
+    return zSpeakerSuggestions.parse({ meetingId: input.meetingId, runId: input.runId, suggestions: body.speakers.filter((s) => labels.has(s.label) && people.has(s.name) && ![...labels].some((l) => l !== s.label && plainName(l) === plainName(s.name))) });
+  },
+});
+
+
+// The recorder's own click that copies a finished chapters run (#3844) into their DRAFT chapters: each chapter is the model's text (tainted, with the run it came from) until the recorder reads it
+// (meetings.draft.review) and only then can it be published. Code, not the model, decides what is kept: the run's result is read back strictly, every start second must still be the start of a real
+// line of the transcript as it is now (a line replaced since drops its chapter) and every title passes the same checks as one the recorder types. One copy of a run; the earlier model-written draft
+// goes, a draft the recorder typed or read stays and blocks the copy (they save over it or clear it first).
+export const chaptersCopyResult = defineCommand({
+  name: 'meetings.chapters.copy_result',
+  input: zChaptersCopy,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ROLES,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input) => {
+    const userId = userOf(ctx.actor);
+    if (!isSummaryEnabled()) throw new DomainError('SUMMARY_OFF', 422, 'Vy is not turned on here; type the chapters by hand');
+    const meeting = await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    if (meeting.recorder_user_id !== userId) throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can copy its chapters');
+    // The meeting row is held first (before reading the private result), so a copy, a save, a publish, a redaction and an erase of the same meeting
+    // serialize, and a concurrent redaction drops the private result before it can be read (#4415).
+    await lockMeeting(ctx.trx, ctx.orgId, input.meetingId);
+    const raw = await readRunBody(ctx, input.meetingId, input.runId, ctx.now, CHAPTERS_FEATURE);
+    let body: { chapters: Array<{ title: string; startSeconds: number }>; dropped: number };
+    try {
+      body = zChaptersResult.parse(JSON.parse(raw));
+    } catch {
+      throw new DomainError('SUMMARY_RESULT_INVALID', 422, 'The chapters result cannot be read');
+    }
+    const already = await ctx.trx.selectFrom('ludy_meetings.meeting_chapter').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('source_run_id', '=', input.runId).executeTakeFirst();
+    if (already) throw new DomainError('CHAPTERS_ALREADY_COPIED', 409, 'These chapters were already copied into the draft');
+    // The anchors again, against the transcript as it is at the copy.
+    const seconds = body.chapters.map((c) => c.startSeconds);
+    const found = await sql<{ second: number }>`
+      SELECT DISTINCT pg_catalog.floor(s.start_seconds)::int AS second
+        FROM ludy_meetings.transcript_segment s
+       WHERE s.org_id = ${ctx.orgId}::uuid AND s.meeting_id = ${input.meetingId}::uuid AND pg_catalog.floor(s.start_seconds)::int = ANY(${sql.val(seconds)}::int[])`.execute(ctx.trx);
+    const anchored = new Set(found.rows.map((r) => r.second));
+    const seen = new Set<number>();
+    const kept = body.chapters
+      .filter((c) => anchored.has(c.startSeconds) && chapterTitleProblem(c.title) === null && !seen.has(c.startSeconds) && seen.add(c.startSeconds))
+      .sort((a, b) => a.startSeconds - b.startSeconds)
+      .slice(0, CHAPTERS_MAX);
+    if (kept.length === 0) throw new DomainError('CHAPTERS_STALE', 409, 'No chapter of this run starts at a line of the transcript any more; ask Vy again');
+    // The earlier model-written draft goes (the recorder asked for a new run); what the recorder typed, or read and kept, stays and blocks the copy.
+    await ctx.trx.deleteFrom('ludy_meetings.meeting_chapter').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('tainted', '=', true).execute();
+    const mine = await ctx.trx.selectFrom('ludy_meetings.meeting_chapter').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').executeTakeFirst();
+    if (mine) throw new DomainError('DRAFT_CHAPTERS_EXIST', 409, 'You already have a chapters draft; clear it or share it before copying Vy\'s');
+    await ctx.trx
+      .insertInto('ludy_meetings.meeting_chapter')
+      .values(kept.map((c, i) => ({ org_id: ctx.orgId, meeting_id: input.meetingId, stage: 'draft' as const, position: i + 1, title: c.title, start_seconds: c.startSeconds, tainted: true, source_run_id: input.runId })))
+      .execute();
+    ctx.audit({ meetingId: input.meetingId, runId: input.runId, chapterCount: kept.length, dropped: body.dropped + (body.chapters.length - kept.length) });
+    return zChaptersCopied.parse({ meetingId: input.meetingId, chapters: kept.length, dropped: body.dropped + (body.chapters.length - kept.length) });
+  },
+});
+
+export const summaryCommands = [summaryCopyResult, chaptersCopyResult];
+export const summaryQueries = [notesPreview, summaryAttendees, speakerSuggestions];

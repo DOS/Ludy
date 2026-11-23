@@ -8,8 +8,9 @@
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { migrate } from '@crove/db/migrate';
-import { PERSONAL_DATA_COLUMNS, PERSONAL_DATA_NAME_PATTERN, PERSONAL_DATA_SCHEMAS, SEALED_COLUMNS } from '@crove/kernel';
+import { migrate } from '@ludy/db/migrate';
+import { PERSONAL_DATA_COLUMNS, PERSONAL_DATA_NAME_PATTERN, PERSONAL_DATA_SCHEMAS, SEALED_COLUMNS } from '@ludy/kernel';
+import { createDbClient, resolveDbIdentifiers, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -22,6 +23,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('personal-data registry (#923)', () => {
   const dbName = `crove_test_pdpl_inv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -32,6 +34,7 @@ suite('personal-data registry (#923)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
+    dbIds = await resolveDbIdentifiers(adminUrl);
   });
 
   afterAll(async () => {
@@ -43,7 +46,7 @@ suite('personal-data registry (#923)', () => {
   });
 
   async function columns(where: string, params: unknown[]): Promise<string[]> {
-    const admin = new pg.Client({ connectionString: adminUrl });
+    const admin = createDbClient({ connectionString: adminUrl }, dbIds, { canonicalizeCatalog: false });
     await admin.connect();
     try {
       const { rows } = await admin.query<{ key: string }>(
@@ -79,7 +82,7 @@ suite('personal-data registry (#923)', () => {
     const problems: string[] = [];
     for (const place of Object.keys(SEALED_COLUMNS)) {
       const [schema, table, column] = place.split('.') as [string, string, string];
-      const admin = new pg.Client({ connectionString: adminUrl });
+      const admin = createDbClient({ connectionString: adminUrl }, dbIds, { canonicalizeCatalog: false });
       await admin.connect();
       try {
         const { rows: columns } = await admin.query<{ type: string; attnum: number; relid: number }>(

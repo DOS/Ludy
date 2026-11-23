@@ -18,9 +18,10 @@ test('import opening balances from the Excel template', async ({ page }) => {
   const dir = mkdtempSync(join(tmpdir(), 'crove-opening-'));
 
   const template = await test.step('open the screen from the journal and download the template', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Bút toán' }).click();
-    await page.getByRole('link', { name: 'Nhập số dư đầu kỳ' }).click();
+    await page.getByRole('button', { name: 'Thêm', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Nhập số dư đầu kỳ' }).click();
     await expect(page.getByRole('heading', { name: 'Số dư đầu kỳ' })).toBeVisible();
     const download = page.waitForEvent('download');
     await page.getByRole('button', { name: 'Tải file mẫu' }).click();
@@ -77,11 +78,11 @@ test('import opening balances from the Excel template', async ({ page }) => {
   await test.step('one opening entry in the database, posted with the second factor', async () => {
     const rows = sql<{ lines: number; debit: string; command_aal: string }>(
       `SELECT count(l.*)::int AS lines, sum(l.debit)::text AS debit,
-              (SELECT a.detail->>'aal' FROM crove_kernel.audit_event a
+              (SELECT a.detail->>'aal' FROM ludy_kernel.audit_event a
                 WHERE a.org_id = e.org_id AND a.command = 'finance.opening_balance.post' AND a.outcome = 'ok') AS command_aal
-         FROM crove_finance.journal_entry e
-         JOIN crove_kernel.tenant t ON t.org_id = e.org_id
-         JOIN crove_finance.journal_line l ON l.org_id = e.org_id AND l.entry_id = e.id
+         FROM ludy_finance.journal_entry e
+         JOIN ludy_kernel.tenant t ON t.org_id = e.org_id
+         JOIN ludy_finance.journal_line l ON l.org_id = e.org_id AND l.entry_id = e.id
         WHERE t.slug = :'slug' AND e.source_type = 'finance.opening_balance'
         GROUP BY e.org_id, e.id`,
       { slug },

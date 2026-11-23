@@ -5,19 +5,20 @@
 // Read-only throughout: a feed brings in bank lines that a person reviews as before, nothing is paid or posted here.
 // The server enforces every rule; the screen offers only what can succeed and shows the server's reason otherwise.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useReducer, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import type { BankFeedAccountView, LegalEntity } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import type { BankFeedAccountView, LegalEntity } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { ErrorText, FieldError, fieldControl, focusFirstInvalid, RowsSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
+import { serverOrigin } from '../lib/api-base.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { accountLabel, type ChartAccount } from '../lib/accounts.ts';
-import { bankAccountChoices, feedAccountRows, mappedOf, type FeedAccountRow } from '../lib/bank-feeds.ts';
+import { bankAccountChoices, feedAccountRows, feedFromMin, hookAddress, hookReduce, hookViewStart, latestSync, mappedOf, type FeedAccountRow } from '../lib/bank-feeds.ts';
 import type { Role } from '../lib/members.ts';
 
 const refreshAccounts = () => queryClient.invalidateQueries({ queryKey: orpc.bankFeeds.accounts.key() });
@@ -26,8 +27,109 @@ const refreshConnections = () => queryClient.invalidateQueries({ queryKey: orpc.
 type ConnectionStatus = 'active' | 'expired' | 'revoked' | 'error';
 interface Connection {
   id: string;
+  provider: string;
   displayName: string;
   status: ConnectionStatus;
+}
+
+// What this deployment offers to connect (`/api/config` bankFeeds): the test feed, Tingee (each business registers its own
+// Tingee account, #2045), or both.
+export interface FeedOffers {
+  sandbox: boolean;
+  tingee: boolean;
+}
+
+// Tingee: the business's own read credential. The guidance comes first because the permission groups are chosen in
+// Tingee's portal, not here: only the account and transaction groups, never payouts, direct debit or refunds. The secret
+// is sent once, sealed by the server, and never shown again; the field is cleared as soon as it has been sent.
+function ConnectTingeeForm() {
+  const t = useTranslations('bankFeeds');
+  const [clientId, setClientId] = useState('');
+  const [secretToken, setSecretToken] = useState('');
+  const [name, setName] = useState('');
+  const clientIdId = useId();
+  const secretId = useId();
+  const fields = useFieldErrors<'clientId' | 'secretToken'>((field) => {
+    if (field === 'clientId') return clientId.trim() ? null : t('tingee.clientIdNeeded');
+    return secretToken.trim() ? null : t('tingee.secretNeeded');
+  });
+  const connect = useMutation({
+    ...orpc.bankFeeds.connectTingee.mutationOptions({
+      onSuccess: async () => {
+        setClientId('');
+        setName('');
+        fields.reset();
+        await refreshConnections();
+      },
+      // Whatever the answer, the secret leaves the field: a refused one is typed again, never kept on screen.
+      onSettled: () => setSecretToken(''),
+    }),
+    // The mutation holds the variables it was given: with no cache time it is dropped as soon as nothing watches it, so the secret does not linger in the client's memory.
+    gcTime: 0,
+  });
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!fields.checkAll(['clientId', 'secretToken'])) {
+      focusFirstInvalid(event.currentTarget);
+      return;
+    }
+    connect.mutate({ clientId: clientId.trim(), secretToken: secretToken.trim(), ...(name.trim() ? { displayName: name.trim() } : {}) });
+  };
+  return (
+    <form className="mt-4 space-y-3" onSubmit={submit} aria-label={t('tingee.title')} noValidate>
+      <p className="text-xs font-medium text-muted-foreground">{t('tingee.title')}</p>
+      <p className="text-xs text-subtle-foreground">{t('tingee.intro')}</p>
+      <div className="rounded-md border p-3 text-xs text-muted-foreground">
+        <p className="font-medium text-foreground">{t('tingee.guideTitle')}</p>
+        <ol className="mt-1 list-decimal space-y-1 pl-4">
+          <li>{t('tingee.guideCreate')}</li>
+          <li>{t('tingee.guideGroups')}</li>
+          <li>{t('tingee.guideNever')}</li>
+          <li>{t('tingee.guideSecret')}</li>
+        </ol>
+      </div>
+      <div className="space-y-2">
+        <Input
+          {...fieldControl(clientIdId, { error: Boolean(fields.of('clientId')) })}
+          className="min-h-11"
+          maxLength={200}
+          autoComplete="off"
+          spellCheck={false}
+          aria-label={t('tingee.clientIdLabel')}
+          placeholder={t('tingee.clientIdLabel')}
+          value={clientId}
+          onChange={(e) => {
+            setClientId(e.target.value);
+            fields.edit('clientId');
+          }}
+          onBlur={(e) => fields.blur('clientId', e.target.value)}
+        />
+        <FieldError id={clientIdId}>{fields.of('clientId')}</FieldError>
+        <Input
+          {...fieldControl(secretId, { error: Boolean(fields.of('secretToken')) })}
+          className="min-h-11"
+          type="password"
+          maxLength={200}
+          autoComplete="new-password"
+          spellCheck={false}
+          aria-label={t('tingee.secretLabel')}
+          placeholder={t('tingee.secretLabel')}
+          value={secretToken}
+          onChange={(e) => {
+            setSecretToken(e.target.value);
+            fields.edit('secretToken');
+          }}
+          onBlur={(e) => fields.blur('secretToken', e.target.value)}
+        />
+        <FieldError id={secretId}>{fields.of('secretToken')}</FieldError>
+        <Input className="min-h-11" maxLength={200} aria-label={t('tingee.nameLabel')} placeholder={t('tingee.nameLabel')} value={name} onChange={(e) => setName(e.target.value)} />
+      </div>
+      <Button loading={connect.isPending} type="submit" variant="outline" className="min-h-11">
+        {t('tingee.connect')}
+      </Button>
+      {connect.error && <ErrorText>{errorMessage(connect.error)}</ErrorText>}
+    </form>
+  );
 }
 
 function ConnectForm() {
@@ -86,6 +188,20 @@ function LastSynced({ account }: { account: BankFeedAccountView }) {
   return <>{account.lastSyncedAt ? t('syncedAt', { when: f.dateTime(account.lastSyncedAt) }) : t('neverSynced')}</>;
 }
 
+// Why the last pull of an account stopped, in one plain sentence per kind (#4244). It draws nothing after a good pull
+// (the server clears the reason in the same transaction) or before any pull. `item` is 1-based; the sentence never
+// carries the bank's own text.
+function PullReason({ account }: { account: BankFeedAccountView }) {
+  const t = useTranslations('bankFeeds');
+  const last = account.lastPull;
+  if (!last || last.outcome === 'ok') return null;
+  return (
+    <p className="text-xs text-warning" role="status">
+      {last.outcome === 'bad_page' && last.item !== null ? t('pullReason.bad_page_item', { item: String(last.item) }) : t(`pullReason.${last.outcome}`)}
+    </p>
+  );
+}
+
 // One account the connection lists (or a mapped one it no longer lists): where its lines go, and the form to choose
 // that. The legal entity is chosen only by an org with more than one, and stays with a mapping once made: another one
 // takes an unmap first (the server refuses otherwise).
@@ -101,11 +217,14 @@ function AccountRow({
   entities: readonly LegalEntity[];
 }) {
   const t = useTranslations('bankFeeds');
+  const f = useFormat();
   const mapped = row.mapped;
   const defaultEntity = entities.find((e) => e.isDefault) ?? entities[0];
   const [bankAccount, setBankAccount] = useState(mapped?.bankAccount ?? '');
   const [legalEntityId, setLegalEntityId] = useState(mapped?.legalEntityId ?? defaultEntity?.id ?? '');
+  const [feedFrom, setFeedFrom] = useState(mapped?.feedFrom ?? '');
   const bankId = useId();
+  const feedFromId = useId();
   const fields = useFieldErrors<'bankAccount'>(() => (bankAccount ? null : t('bankAccountNeeded')));
   const several = entities.length > 1;
   const choices = bankAccountChoices(bankAccounts, mapped?.bankAccount);
@@ -128,6 +247,7 @@ function AccountRow({
       connectionId: connection.id,
       externalAccountId: row.externalAccountId,
       bankAccount,
+      feedFrom: feedFrom || null,
       ...(several && legalEntityId ? { legalEntityId } : {}),
       idempotencyKey: crypto.randomUUID(),
     });
@@ -142,8 +262,10 @@ function AccountRow({
       {mapped && (
         <p className="text-xs text-subtle-foreground">
           {t('mappedTo', { account: mapped.bankAccount })} · <LastSynced account={mapped} />
+          {mapped.feedFrom && ` · ${t('feedFromOn', { date: f.date(mapped.feedFrom) })}`}
         </p>
       )}
+      {mapped && <PullReason account={mapped} />}
       {row.gone && (
         <p className="text-xs text-warning" role="status">
           {t('gone')}
@@ -151,6 +273,15 @@ function AccountRow({
       )}
       {!row.gone && (
         <form className="mt-2 space-y-2" onSubmit={submit} aria-label={t('mapForm', { name: row.displayName })} noValidate>
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor={feedFromId} className="text-xs text-muted-foreground">
+              {t('feedFromLabel')}
+            </label>
+            <Input id={feedFromId} type="date" min={feedFromMin(connection.provider, mapped)} className="min-h-11 w-auto" aria-describedby={`${feedFromId}-hint`} value={feedFrom} disabled={!active || mapped?.feedFromEarliest === null} onChange={(e) => setFeedFrom(e.target.value)} />
+          </div>
+          <p id={`${feedFromId}-hint`} className="text-xs text-subtle-foreground">
+            {t('feedFromHint')}
+          </p>
           <div className="flex flex-wrap gap-2">
             <NativeSelect
               {...fieldControl(bankId, { error: Boolean(fields.of('bankAccount')) })}
@@ -205,6 +336,156 @@ function AccountRow({
   );
 }
 
+// The Tingee webhook (#4204): the address to paste in the business's Tingee portal, made by the server and shown once. The key
+// lives only in this component's state: it is not in a query key, a URL or storage. It is read in the call's own onSuccess and the
+// mutation is reset at once, so the answer (key included) is not kept in the mutation cache or the observer; hiding the address,
+// starting another rotation or leaving the card discards what is left. Replacing the address stops the old one at once, so it
+// takes a second click. The status read never carries the key.
+function HookBlock({ connection, mapped }: { connection: Connection; mapped: readonly BankFeedAccountView[] }) {
+  const t = useTranslations('bankFeeds.hook');
+  const f = useFormat();
+  const [view, dispatch] = useReducer(hookReduce, hookViewStart);
+  const [copied, setCopied] = useState<'yes' | 'failed' | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const returnFocus = useRef(false);
+  const status = useQuery(orpc.bankFeeds.hook.queryOptions({ input: { connectionId: connection.id } }));
+  const make = useMutation({
+    ...orpc.bankFeeds.hookSet.mutationOptions({
+      // Whatever the outcome (even one the page is gone for), the status is read again: a key made but never seen, or an old one that stopped, shows there.
+      onSettled: () => queryClient.invalidateQueries({ queryKey: orpc.bankFeeds.hook.key() }),
+    }),
+    // The mutation holds its answer, the key included: with no cache time it is dropped as soon as nothing watches it.
+    gcTime: 0,
+  });
+  useEffect(() => {
+    if (view.address !== null) inputRef.current?.focus();
+  }, [view.address]);
+  useEffect(() => {
+    if (view.confirming) confirmRef.current?.focus();
+  }, [view.confirming]);
+  useEffect(() => {
+    if (returnFocus.current && !view.confirming && view.address === null) {
+      returnFocus.current = false;
+      triggerRef.current?.focus();
+    }
+  }, [view]);
+  const copy = async () => {
+    if (view.address === null) return;
+    // Cleared first so a second copy changes the status text again and is announced again.
+    setCopied(null);
+    try {
+      await navigator.clipboard.writeText(view.address);
+      setCopied('yes');
+    } catch {
+      setCopied('failed');
+    }
+  };
+  const run = () => {
+    dispatch({ type: 'start' });
+    setCopied(null);
+    make.reset();
+    make.mutate(
+      { connectionId: connection.id },
+      {
+        onSuccess: (made) => {
+          dispatch({ type: 'made', address: hookAddress(serverOrigin(), made.provider, made.key), created: made.created });
+          make.reset();
+        },
+      },
+    );
+  };
+  const hide = () => {
+    returnFocus.current = true;
+    setCopied(null);
+    make.reset();
+    dispatch({ type: 'hide' });
+  };
+  const cancel = () => {
+    returnFocus.current = true;
+    make.reset();
+    dispatch({ type: 'cancel' });
+  };
+  const hook = status.data;
+  const lastPull = latestSync(mapped);
+  return (
+    <section className="mt-3 space-y-2 rounded-md border p-3" aria-label={t('title')}>
+      <p className="text-xs font-medium text-muted-foreground">{t('title')}</p>
+      <p className="text-xs text-subtle-foreground">{t('intro')}</p>
+      {status.error && <ErrorText>{errorMessage(status.error)}</ErrorText>}
+      {hook && (
+        <ul className="space-y-1 text-xs text-muted-foreground">
+          {hook.exists ? (
+            <>
+              {hook.createdAt && <li>{t('createdAt', { when: f.dateTime(hook.createdAt) })}</li>}
+              {hook.rotatedAt && <li>{t('rotatedAt', { when: f.dateTime(hook.rotatedAt) })}</li>}
+              <li>{hook.lastSeenAt ? t('lastSeen', { when: f.dateTime(hook.lastSeenAt) }) : t('noNotice')}</li>
+              <li>{t('rejected', { count: String(hook.rejectedCount) })}</li>
+            </>
+          ) : (
+            <li>{t('none')}</li>
+          )}
+          <li>{lastPull ? t('lastPull', { when: f.dateTime(lastPull) }) : t('noPull')}</li>
+        </ul>
+      )}
+      {hook?.stopped && (
+        <p className="text-xs text-warning" role="alert">
+          {t('stopped')}
+        </p>
+      )}
+      {/* Always drawn, empty until the address appears, so a screen reader announces its arrival. */}
+      <p className="text-xs text-foreground" role="status">
+        {view.address !== null ? t('shownOnce') : ''}
+      </p>
+      {view.address !== null && (
+        <div className="space-y-2 rounded-md bg-muted p-2">
+          {view.replaced && <p className="text-xs text-warning">{t('replacedExisting')}</p>}
+          <Input ref={inputRef} className="min-h-11 font-mono text-xs" readOnly aria-label={t('addressLabel')} value={view.address} onFocus={(e) => e.currentTarget.select()} />
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="outline" className="min-h-11" onClick={() => void copy()}>
+              {t('copy')}
+            </Button>
+            <Button type="button" variant="ghost" className="min-h-11" onClick={hide}>
+              {t('close')}
+            </Button>
+          </div>
+        </div>
+      )}
+      <p className="text-xs text-subtle-foreground" role="status">
+        {copied === 'yes' ? t('copied') : copied === 'failed' ? t('copyFailed') : ''}
+      </p>
+      {view.confirming ? (
+        <div className="space-y-2">
+          <p className="text-xs text-warning" role="alert">
+            {t('warnRotate')}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button ref={confirmRef} loading={make.isPending} type="button" variant="outline" className="min-h-11" onClick={run}>
+              {t('confirmRotate')}
+            </Button>
+            <Button type="button" variant="ghost" className="min-h-11" disabled={make.isPending} onClick={cancel}>
+              {t('cancel')}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        hook && (
+          <Button ref={triggerRef} loading={make.isPending} type="button" variant="outline" className="min-h-11" onClick={() => (hook.exists ? dispatch({ type: 'ask' }) : run())}>
+            {hook.exists ? t('rotate') : t('create')}
+          </Button>
+        )
+      )}
+      {make.error && (
+        <ErrorText>
+          {errorMessage(make.error)}
+          {hook?.exists ? ` ${t('rotateFailed')}` : ''}
+        </ErrorText>
+      )}
+    </section>
+  );
+}
+
 function ConnectionItem({
   connection,
   mapped,
@@ -240,6 +521,7 @@ function ConnectionItem({
           {t('errorHint')}
         </p>
       )}
+      {connection.provider === 'bank_tingee' && connection.status === 'active' && <HookBlock connection={connection} mapped={mapped} />}
       {listed.error && <ErrorText>{errorMessage(listed.error)}</ErrorText>}
       {listed.isLoading ? (
         <RowsSkeleton />
@@ -254,7 +536,7 @@ function ConnectionItem({
         <ul className="mt-1 divide-y">
           {rows.map((row) => (
             // Keyed by the mapping too, so the form starts from a mapping made or removed since.
-            <AccountRow key={`${row.externalAccountId}:${row.mapped?.id ?? ''}:${row.mapped?.bankAccount ?? ''}`} connection={connection} row={row} bankAccounts={bankAccounts} entities={entities} />
+            <AccountRow key={`${row.externalAccountId}:${row.mapped?.id ?? ''}:${row.mapped?.bankAccount ?? ''}:${row.mapped?.feedFrom ?? ''}`} connection={connection} row={row} bankAccounts={bankAccounts} entities={entities} />
           ))}
         </ul>
       )}
@@ -278,6 +560,7 @@ function ReadOnlyList({ accounts }: { accounts: readonly BankFeedAccountView[] }
             <p className="text-xs text-subtle-foreground">
               {t('mappedTo', { account: a.bankAccount })} · <LastSynced account={a} />
             </p>
+            <PullReason account={a} />
           </li>
         ))}
       </ul>
@@ -286,7 +569,7 @@ function ReadOnlyList({ accounts }: { accounts: readonly BankFeedAccountView[] }
 }
 
 // The caller draws it only when the deployment offers a bank feed (lib/bank-feeds.ts bankFeedOffered).
-export function BankFeedsCard({ role }: { role: Role }) {
+export function BankFeedsCard({ role, offers = { sandbox: true, tingee: false } }: { role: Role; offers?: FeedOffers }) {
   const t = useTranslations('bankFeeds');
   const canManage = role === 'owner' || role === 'admin';
   // A mapped account is pulled by the worker a moment after it is mapped, so ask again for two minutes while one has not
@@ -335,7 +618,8 @@ export function BankFeedsCard({ role }: { role: Role }) {
         </>
       )}
       {/* It needs only the connect call, so it stays when a read above failed. */}
-      {!loading && <ConnectForm />}
+      {!loading && offers.tingee && <ConnectTingeeForm />}
+      {!loading && offers.sandbox && <ConnectForm />}
     </Card>
   );
 }

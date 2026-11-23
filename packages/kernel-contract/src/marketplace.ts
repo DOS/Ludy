@@ -3,8 +3,9 @@
 // what could not be read), the live check against the stock items before a member confirms, and the confirmed orders. No buyer data of any kind appears anywhere here: the importer
 // never reads the report's buyer columns.
 import { z } from 'zod';
-import { zId, zLocalDate } from './schemas.ts';
-import { zStockFactor } from './stock.ts';
+import { zMonth } from './journal-voucher.ts';
+import { zId, zJournalAmount, zJournalVoucherProposal, zLocalDate } from './schemas.ts';
+import { STOCK_SUGGEST_LINES_MAX, zStockAiState, zStockFactor } from './stock.ts';
 
 export const MARKETPLACE_PLATFORM_KEYS = ['shopee', 'tiktok_shop', 'lazada'] as const;
 export const MARKETPLACE_STAGE_KEYS = ['placed', 'shipped', 'completed', 'cancelled', 'returned', 'unknown'] as const;
@@ -108,6 +109,22 @@ export const zMarketplaceUnassignedLine = z.object({
 });
 export type MarketplaceUnassignedLine = z.infer<typeof zMarketplaceUnassignedLine>;
 
+// The finance coworker on the unassigned order lines (#2686, plan stock-and-marketplaces.md section 8.6): the item a line is most likely about. The lines asked about are at most STOCK_SUGGEST_LINES_MAX of one
+// legal entity, named by id only; the server reads the product name and the SKU text from the books, never from the request, and nothing else of the order (no order number, buyer, address, phone, date or
+// amount). `ai` is the stock coworker's: used, off, busy, budget, failed or quiet; without an answer the list works as it does with AI off. A suggestion only fills the item picker; assigning is the person's
+// own `assign`.
+export const zMarketplaceSuggestInput = z.strictObject({
+  legalEntityId: zId,
+  lineIds: z.array(zId).min(1).max(STOCK_SUGGEST_LINES_MAX),
+  lang: z.enum(['vi', 'en']).optional(),
+});
+export type MarketplaceSuggestInput = z.infer<typeof zMarketplaceSuggestInput>;
+export const zMarketplaceSuggested = z.object({
+  ai: zStockAiState,
+  suggestions: z.array(z.object({ lineId: zId, itemId: zId, reason: z.string() })),
+});
+export type MarketplaceSuggested = z.infer<typeof zMarketplaceSuggested>;
+
 // factor: how many of the item's units one unit of the report's is (a carton of 12). teach: remember the SKU for this platform and item, which makes every later report with it move that
 // item by itself at that factor. Off unless asked: a wrong item or factor cannot be undone yet (#2633), and a taught one would repeat on every report.
 export const zMarketplaceAssign = z.strictObject({ lineId: zId, itemId: zId, factor: zStockFactor.default('1'), teach: z.boolean().default(false) });
@@ -118,13 +135,21 @@ export type MarketplaceAssign = z.infer<typeof zMarketplaceAssign>;
 export const zMarketplaceUnassign = z.strictObject({ lineId: zId, forget: z.boolean().default(false) });
 export type MarketplaceUnassign = z.infer<typeof zMarketplaceUnassign>;
 
+// What a person says about a marketplace line that came back (#4355, rule 8 of #2520, the stock side): `back` (the goods are in the seller's hands again: a stock-in of the shipment's item and quantity is
+// written, priced by the month close at the month's average, Dr 156 / Cr 632) or `not_back` (a refund-only claim, a loss: nothing moves). The platform's status only offers the question; no report decides it.
+// A line is offered while it is returned (or cancelled after it shipped), has its shipment, no return move and no decision for its live attempt, and no payout proposal classifies carrier compensation on
+// its order (#4338). MARKETPLACE_RETURN_NOT_FOUND (404), MARKETPLACE_RETURN_NOT_OFFERED (422), MARKETPLACE_RETURN_DECIDED (409, a second answer), MARKETPLACE_RETURN_COMPENSATED (409).
+export const zMarketplaceReturnDecide = z.strictObject({ orderLineId: zId, decision: z.enum(['back', 'not_back']) });
+export const zMarketplaceReturnDecided = z.object({ orderLineId: zId, decision: z.enum(['back', 'not_back']), moveId: zId.nullable() });
+export type MarketplaceReturnDecided = z.infer<typeof zMarketplaceReturnDecided>;
+
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 // Income reports (#2516, ADR-0045 points 5 and 7): what a platform paid for the orders of a period, read from the platform's income file and staged until a member confirms. Like the
 // order report, no buyer data of any kind appears here: the reader has no field for it.
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 // The platforms whose income files are read (Lazada has no profile until a real file decides its layout, #2521).
-export const MARKETPLACE_INCOME_PLATFORM_KEYS = ['shopee', 'tiktok_shop'] as const;
+export const MARKETPLACE_INCOME_PLATFORM_KEYS = ['shopee', 'tiktok_shop', 'lazada'] as const;
 export const zMarketplaceIncomePlatform = z.enum(MARKETPLACE_INCOME_PLATFORM_KEYS);
 const zDecimal = z.string().regex(/^-?\d{1,16}(\.\d{1,4})?$/, 'decimal string');
 
@@ -197,5 +222,98 @@ export const zMarketplaceIncomeConfirmResult = z.object({ settlementId: zId, lin
 export type MarketplaceIncomeConfirmResult = z.infer<typeof zMarketplaceIncomeConfirmResult>;
 
 // Days after a member's decision (import or skip) when the original file and the per-order amounts of a marketplace report are deleted (ADR-0045 point 8, #2516). The database
-// (crove_finance.marketplace_retention_*) refuses anything shorter than 90, so a bug in the job can never delete early.
+// (ludy_finance.marketplace_retention_*) refuses anything shorter than 90, so a bug in the job can never delete early.
 export const MARKETPLACE_ORIGINAL_RETENTION_DAYS = 90;
+// Days after a marketplace connection is gone (disconnected, or its channel revoked) when what its poll brought in and no member ever imported (still waiting, skipped, or never read) is destroyed, the
+// original file and every read of it with it (#4284, ADR-0045 point 8; Lazada's terms ask for the platform's data to be destroyed within 14 days of revocation). The database
+// (ludy_finance.marketplace_purge_*) accepts 7 to 14 only: that is the age at which a file BECOMES due, so the job can never purge early; it is not a deadline the job promises to meet (a due file goes at the
+// next nightly run). What a member imported is never touched. Seven days leave the member a week to import what waited, and the nightly run lands well inside the 14.
+export const MARKETPLACE_PURGE_GRACE_DAYS = 7;
+// Days a channel may stay `expired` (a refused token refresh: the seller's revocation on the platform looks the same) with no new authorization before it counts as revoked and the grace above starts.
+// `expired` alone never starts the clock: the seller may simply authorize again. The database accepts 30 to 90.
+export const MARKETPLACE_PURGE_EXPIRED_DAYS = 30;
+
+// The posting of a stored settlement (#2516, ADR-0045 point 6): ONE general journal voucher per settlement, Dr 131 (the platform) / Cr 511, or the reverse when the refunds and the seller discounts
+// exceed the sales. A person asks for it with the settlement alone (kernel.proposal.request with command `finance.marketplace_settlement.record`); the server builds the entry from the stored
+// lines, and builds it again when the proposal is approved, so the request carries nothing else. Nothing is requested or posted until the accountant has confirmed the account map (#2520).
+// MARKETPLACE_POSTING_MAP_UNCONFIRMED (409), MARKETPLACE_POSTING_REGIME_UNKNOWN, MARKETPLACE_SETTLEMENT_NOT_POSTABLE, MARKETPLACE_SETTLEMENT_MISMATCH, PERIOD_LOCKED (409),
+// MARKETPLACE_SETTLEMENT_POSTED (409), MARKETPLACE_SETTLEMENT_NOT_FOUND (404).
+export const MARKETPLACE_SETTLEMENT_COMMAND = 'finance.marketplace_settlement.record';
+export const zMarketplaceSettlementRequest = z.strictObject({ settlementId: zId });
+export type MarketplaceSettlementRequest = z.infer<typeof zMarketplaceSettlementRequest>;
+// The proposal (kind finance.journal_voucher, shown as one) with the settlement it posts, the platform and the period, and the settlement's sales, seller discounts and refunds in whole dong,
+// so the refund stays visible beside the net. The platform's party on the 131 line is null until the platform's first posting creates it.
+export const zMarketplaceSettlementProposal = zJournalVoucherProposal.extend({
+  settlementId: zId,
+  // A settlement posts as one general voucher per month of delivery (#2516 rework slice C1), all of them by this one proposal in one transaction: the proposal shows the entries of every month
+  // one after the other in `lines` (each line's memo names its month) and lists the months, their entry dates and totals here; `date` is the settlement's last day and `total` the sum.
+  months: z.array(z.strictObject({ month: zMonth, date: zLocalDate, total: zJournalAmount })).min(1).max(12),
+  platform: zMarketplacePlatform,
+  periodFrom: zLocalDate,
+  periodTo: zLocalDate,
+  sales: zJournalAmount,
+  sellerDiscount: zJournalAmount,
+  refund: zJournalAmount,
+  // A household seller's withheld tax is one amount the platform gave, split into VAT and PIT only as an estimate (research D1, #3711 slice 5): what the platform withheld, what the household's rate pair
+  // would take from the revenue, and the difference (negative when the platform withheld less). A fact beside the estimate for the annual certificate, never posted; absent for a seller with no withheld tax.
+  taxEstimate: z.strictObject({ withheld: zJournalAmount, expected: zJournalAmount, difference: z.string().regex(/^-?\d+(\.\d{1,4})?$/) }).optional(),
+});
+export type MarketplaceSettlementProposal = z.infer<typeof zMarketplaceSettlementProposal>;
+
+// The posting of a platform's payout (#2516, ADR-0045 point 6, plan 8.4 "The payout"): ONE general journal voucher per settlement: Dr 112 for the money received, Dr 331 for the platform's fees,
+// Dr 3331 and Dr 3335 for the tax the platform withheld (as the settlement credited it), Cr 131 (the platform) for what the settlement posted there; lines of the settlement a person classified add Cr 711 / Cr 632
+// or Dr 1388 (`adjustments`, #4303 S4, below). A person asks for it with the settlement and the bank line of the platform's transfer
+// (kernel.proposal.request with command `finance.marketplace_payout.record`); every amount comes from the stored settlement's lines, the bank line only has to be money in, equal to the net the
+// settlement paid, and free. The server builds the entry again when the proposal is approved. Nothing is requested or posted until the accountant has confirmed the account map (#2520), and a
+// payout whose settlement is not posted yet is refused: MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED (409). Other codes: MARKETPLACE_POSTING_MAP_UNCONFIRMED (409), MARKETPLACE_PAYOUT_NOT_POSTABLE (422),
+// MARKETPLACE_PAYOUT_BANK_LINE (409 or 422), MARKETPLACE_PAYOUT_POSTED (409), MARKETPLACE_PAYOUT_MISMATCH (422), PERIOD_LOCKED (409), MARKETPLACE_SETTLEMENT_NOT_FOUND (404).
+export const MARKETPLACE_PAYOUT_COMMAND = 'finance.marketplace_payout.record';
+// What a person says a settlement line's unexplained money is (#4303 S4, research rules 2, 3 and 4). The report gives only the residual `other` (net less what the named columns explain) and one withheld-tax figure,
+// no reason a reader can trust, so a person classifies each such line and the server never guesses: an unclassified line is refused as before. Each adjustment names a stored line of the settlement and its
+// amount (checked equal to the line's, no slack); the kind is a closed set. `carrier_compensation` also carries the cost of the lost goods the person states (whole dong, never computed): 632 is credited with
+// the smaller of it and the compensation, 711 with the rest. `incentive` (other > 0): Cr 711. `withheld_in_error` (tax withheld from a seller that is no household): Dr 1388 under the platform's party.
+export const MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX = 100;
+export const zMarketplacePayoutAdjustment = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('incentive'), lineId: zId, amount: zJournalAmount }),
+  z.strictObject({ kind: z.literal('carrier_compensation'), lineId: zId, amount: zJournalAmount, costAmount: zJournalAmount }),
+  z.strictObject({ kind: z.literal('withheld_in_error'), lineId: zId, amount: zJournalAmount }),
+]);
+export type MarketplacePayoutAdjustment = z.infer<typeof zMarketplacePayoutAdjustment>;
+export const zMarketplacePayoutRequest = z.strictObject({ settlementId: zId, bankLineId: zId, adjustments: z.array(zMarketplacePayoutAdjustment).max(MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX).optional() });
+export type MarketplacePayoutRequest = z.infer<typeof zMarketplacePayoutRequest>;
+// The proposal (kind finance.journal_voucher, shown as one) with the settlement it pays, the bank line, the platform and the period, and the split in whole dong: the money received, the fees and
+// the withheld tax, so a person sees what the platform kept. The platform's party on the 131 and 331 lines is the one the settlement's posting created.
+export const zMarketplacePayoutProposal = zJournalVoucherProposal.extend({
+  settlementId: zId,
+  bankLineId: zId,
+  platform: zMarketplacePlatform,
+  periodFrom: zLocalDate,
+  periodTo: zLocalDate,
+  received: zJournalAmount,
+  fees: zJournalAmount,
+  taxWithheld: zJournalAmount,
+  // The classification the entry was built with (#4303 S4); the approver's rebuild uses the same one. Ids, kinds and amounts only. A proposal stored before S4 has none.
+  adjustments: z.array(zMarketplacePayoutAdjustment).max(MARKETPLACE_PAYOUT_ADJUSTMENTS_MAX).default([]),
+});
+export type MarketplacePayoutProposal = z.infer<typeof zMarketplacePayoutProposal>;
+
+// The clearing of the fees a payout put on 1388 (#2516, plan 8.4 "The payout" and section 11): ONE general journal voucher, Dr 331 / Cr 1388 with the platform's party on both lines, built from the
+// platform's fee e-invoice, a purchase document already posted (Dr expense, Dr 1331, Cr 331). A person asks for it with the document alone (kernel.proposal.request with command
+// `finance.marketplace_fee_clearing.record`); the server builds the entry and builds it again when the proposal is approved. The amount is the smaller of what the invoice still has to clear (its
+// credit to 331 less its standing clearings) and the platform's 1388 balance, in whole dong; an invoice may be cleared more than once, and the sum of its standing clearings never exceeds its
+// credit to 331. Nothing is requested or posted until the accountant has confirmed the account map (#2520). MARKETPLACE_POSTING_MAP_UNCONFIRMED (409), MARKETPLACE_FEE_DOCUMENT (422),
+// MARKETPLACE_FEE_NOTHING_TO_CLEAR (409), MARKETPLACE_FEE_MISMATCH (422), PERIOD_LOCKED (409).
+export const MARKETPLACE_FEE_CLEARING_COMMAND = 'finance.marketplace_fee_clearing.record';
+export const zMarketplaceFeeClearingRequest = z.strictObject({ purchaseDocumentId: zId });
+export type MarketplaceFeeClearingRequest = z.infer<typeof zMarketplaceFeeClearingRequest>;
+// The proposal (kind finance.journal_voucher, shown as one) with the invoice it clears, the platform, and the split in whole dong: the invoice's credit to 331, what its standing clearings took
+// already, the platform's 1388 balance, and the amount cleared now.
+export const zMarketplaceFeeClearingProposal = zJournalVoucherProposal.extend({
+  purchaseDocumentId: zId,
+  platform: zMarketplacePlatform,
+  invoiceTotal: zJournalAmount,
+  alreadyCleared: zJournalAmount,
+  waiting: zJournalAmount,
+  amount: zJournalAmount,
+});
+export type MarketplaceFeeClearingProposal = z.infer<typeof zMarketplaceFeeClearingProposal>;

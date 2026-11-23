@@ -14,6 +14,8 @@ test('upload a ZIP of e-invoices with loose files and follow each file to its pr
     await page.goto('/');
     await signUp(page, newEmail('bulk'));
     const created = await createOrg(page, 'Công ty nhận hàng loạt');
+    // A new org opens on the overview (#3225); the uploads are on the Inbox.
+    await page.goto(page.url().replace(/\/overview$/, '/inbox'));
     await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
     return created;
   });
@@ -48,9 +50,9 @@ test('upload a ZIP of e-invoices with loose files and follow each file to its pr
       await expect(page.getByText(`HĐ C26TAB-${number}`, { exact: false }).first()).toBeVisible();
     }
     const rows = sql<{ filename: string; created_by: string | null }>(
-      `SELECT f.filename, f.created_by FROM crove_kernel.file f
-       JOIN crove_kernel.tenant t ON t.org_id = f.org_id
-       JOIN crove_kernel.proposal p ON p.org_id = f.org_id AND p.source_file_id = f.id
+      `SELECT f.filename, f.created_by FROM ludy_kernel.file f
+       JOIN ludy_kernel.tenant t ON t.org_id = f.org_id
+       JOIN ludy_kernel.proposal p ON p.org_id = f.org_id AND p.source_file_id = f.id
        WHERE t.slug = :'slug' ORDER BY f.filename`,
       { slug },
     );

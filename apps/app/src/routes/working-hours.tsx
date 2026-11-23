@@ -3,20 +3,24 @@
 // off without being listed. A viewer sees their hours and changes nothing. The server enforces every rule. Dates read
 // dd/mm/yyyy and times 24-hour HH:mm whatever the browser's language (DESIGN.md §5.5, #1428).
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { CALENDAR_RANGE_MAX_DAYS, type MyCalendar, type Weekday } from '@crove/kernel-contract';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
+import { CALENDAR_RANGE_MAX_DAYS, type MyCalendar, type Weekday } from '@ludy/kernel-contract';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { DateInput } from '../components/date-input.tsx';
 import { TimeInput } from '../components/time-input.tsx';
 import { ExternalCalendars } from './calendar-connections.tsx';
-import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
+import { FormDialog } from '../components/form-dialog.tsx';
+import { DuplicateHint } from '../components/form-panel.tsx';
+import { ErrorText, Field, RowsSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { WEEKDAY_KEYS, dayOffRange, daysOf, datesOf, hoursOf, timeZones, type DayHours } from '../lib/calendar.ts';
+import { BOOKING_SETTINGS_ID } from '../lib/booking.ts';
+import { WEEKDAY_KEYS, dayOffRange, daysOf, datesOf, hoursOf, overlappingDayOff, timeZones, zoneLabel, type DayHours } from '../lib/calendar.ts';
+import { toast } from '../lib/toast.ts';
 
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.calendar.get.key() });
 
@@ -25,7 +29,22 @@ function HoursForm({ calendar, canEdit }: { calendar: MyCalendar; canEdit: boole
   const [timeZone, setTimeZone] = useState(calendar.hours.timeZone);
   const [days, setDays] = useState<DayHours[]>(() => daysOf(calendar.hours));
   const [invalid, setInvalid] = useState<Weekday | null>(null);
-  const save = useMutation(orpc.calendar.saveHours.mutationOptions({ onSuccess: refresh }));
+  // The zones as people say them, Vietnam first and the rest by their names (#3650); made once, not on every keystroke in a time field.
+  const vietnam = t('zoneVietnam');
+  const savedZone = calendar.hours.timeZone;
+  const zones = useMemo(() => {
+    const all = timeZones(savedZone).map((zone) => ({ zone, label: zoneLabel(zone, vietnam) }));
+    return [...all.slice(0, 1), ...all.slice(1).sort((a, b) => a.label.localeCompare(b.label))];
+  }, [savedZone, vietnam]);
+  // "Đã lưu giờ làm việc." (#3650): the save was silent before, and the button looked as it did.
+  const save = useMutation(
+    orpc.calendar.saveHours.mutationOptions({
+      onSuccess: () => {
+        toast(t('saved'));
+        return refresh();
+      },
+    }),
+  );
   const set = (i: number, patch: Partial<DayHours>) => setDays((all) => all.map((d, k) => (k === i ? { ...d, ...patch } : d)));
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -40,9 +59,9 @@ function HoursForm({ calendar, canEdit }: { calendar: MyCalendar; canEdit: boole
   return (
     <form className="mt-3 space-y-2" onSubmit={submit} aria-label={t('title')}>
       <NativeSelect className="w-full" value={timeZone} disabled={!canEdit} onChange={(e) => setTimeZone(e.target.value)} aria-label={t('timeZone')}>
-        {timeZones(timeZone).map((z) => (
-          <NativeSelectOption key={z} value={z}>
-            {z}
+        {zones.map(({ zone, label }) => (
+          <NativeSelectOption key={zone} value={zone}>
+            {label}
           </NativeSelectOption>
         ))}
       </NativeSelect>
@@ -68,9 +87,17 @@ function HoursForm({ calendar, canEdit }: { calendar: MyCalendar; canEdit: boole
       </ul>
       {invalid !== null && <ErrorText>{t('invalidDay', { day: t(`weekdays.${WEEKDAY_KEYS[invalid]}`) })}</ErrorText>}
       {canEdit && (
-        <Button loading={save.isPending} type="submit" variant="outline" size="sm" disabled={save.isPending || !days.some((d) => d.on)}>
-          {t('save')}
-        </Button>
+        <>
+          <Button loading={save.isPending} type="submit" variant="outline" size="sm" disabled={save.isPending || !days.some((d) => d.on)} aria-describedby={days.some((d) => d.on) ? undefined : 'working-hours-save-hint'}>
+            {t('save')}
+          </Button>
+          {/* Why the button is off, in words (#3650). */}
+          {!days.some((d) => d.on) && (
+            <p id="working-hours-save-hint" className="text-xs text-muted-foreground">
+              {t('saveNeedsDay')}
+            </p>
+          )}
+        </>
       )}
       {!calendar.saved && <p className="text-xs text-subtle-foreground">{t('defaultHint')}</p>}
       {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}
@@ -78,28 +105,55 @@ function HoursForm({ calendar, canEdit }: { calendar: MyCalendar; canEdit: boole
   );
 }
 
-function DaysOff({ calendar, canEdit }: { calendar: MyCalendar; canEdit: boolean }) {
+// The dates of a day off, asked in a dialog (#3608); a range that overlaps one already listed is flagged while it is picked.
+export function AddDayOffDialog({ tz, off, onClose }: { tz: string; off: ReadonlyArray<{ timeZone: string; startsAt: string; endsAt: string }>; onClose: () => void }) {
   const t = useTranslations('workingHours');
   const f = useFormat();
-  const tz = calendar.hours.timeZone;
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const add = useMutation(
     orpc.calendar.addEvent.mutationOptions({
       onSuccess: async () => {
-        setFrom('');
-        setTo('');
         await refresh();
+        onClose();
       },
     }),
   );
+  // An end before the start is not turned into one day: the person is told and corrects it.
+  const endBeforeStart = from !== '' && to !== '' && to < from;
+  const overlap = from && !endBeforeStart ? overlappingDayOff(off, tz, from, to || from) : null;
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!from || endBeforeStart) return;
+    add.mutate({ ...dayOffRange(tz, from, to || from), timeZone: tz, kind: 'time_off', title: null });
+  };
+  return (
+    <FormDialog title={t('addDayOff')} busy={add.isPending} dirty={from !== '' || to !== ''} submitLabel={t('addDayOff')} submitDisabled={!from || endBeforeStart} onClose={onClose} onSubmit={submit}>
+      <Field label={t('from')}>{(control) => <DateInput {...control} required value={from} onChange={setFrom} />}</Field>
+      <Field label={t('to')} hint={t('toHint')}>
+        {(control) => <DateInput {...control} min={from || undefined} value={to} onChange={setTo} />}
+      </Field>
+      {endBeforeStart && (
+        <p role="alert" className="text-sm text-destructive" data-testid="day-off-order">
+          {t('endBeforeStart')}
+        </p>
+      )}
+      <DuplicateHint testId="day-off-duplicate">
+        {overlap ? t('dayOffOverlap', { from: f.date(overlap.from), to: f.date(overlap.to) }) : null}
+      </DuplicateHint>
+      {add.error && <ErrorText>{errorMessage(add.error)}</ErrorText>}
+    </FormDialog>
+  );
+}
+
+function DaysOff({ calendar, canEdit }: { calendar: MyCalendar; canEdit: boolean }) {
+  const t = useTranslations('workingHours');
+  const f = useFormat();
+  const tz = calendar.hours.timeZone;
+  const [adding, setAdding] = useState(false);
   const cancel = useMutation(orpc.calendar.cancelEvent.mutationOptions({ onSuccess: refresh }));
   const off = calendar.events.filter((e) => e.kind === 'time_off');
   const day = (date: string) => f.date(date);
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    add.mutate({ ...dayOffRange(tz, from, to || from), timeZone: tz, kind: 'time_off', title: null });
-  };
   return (
     <div className="mt-4">
       <p className="text-xs font-medium text-muted-foreground">{t('daysOff')}</p>
@@ -125,16 +179,14 @@ function DaysOff({ calendar, canEdit }: { calendar: MyCalendar; canEdit: boolean
         </ul>
       )}
       {canEdit && (
-        <form className="mt-2 flex flex-wrap items-center gap-2" onSubmit={submit} aria-label={t('addDayOff')}>
-          <DateInput required className="w-44" value={from} onChange={setFrom} aria-label={t('from')} />
-          <span className="text-subtle-foreground">-</span>
-          <DateInput className="w-44" min={from || undefined} value={to} onChange={setTo} aria-label={t('to')} />
-          <Button loading={add.isPending} type="submit" variant="outline" size="sm" disabled={add.isPending || !from}>
+        <div className="mt-2">
+          <Button type="button" variant="outline" size="sm" onClick={() => setAdding(true)}>
             {t('addDayOff')}
           </Button>
-        </form>
+        </div>
       )}
-      {(add.error ?? cancel.error) && <ErrorText>{errorMessage(add.error ?? cancel.error)}</ErrorText>}
+      {adding && <AddDayOffDialog tz={tz} off={off} onClose={() => setAdding(false)} />}
+      {cancel.error && <ErrorText>{errorMessage(cancel.error)}</ErrorText>}
     </div>
   );
 }
@@ -149,7 +201,7 @@ export function WorkingHoursCard({ canEdit }: { canEdit: boolean }) {
   });
   const calendar = useQuery(orpc.calendar.get.queryOptions({ input: range }));
   return (
-    <Card className="block p-4" aria-label={t('title')}>
+    <Card id={BOOKING_SETTINGS_ID} tabIndex={-1} className="block scroll-mt-20 p-4 outline-none" aria-label={t('title')}>
       <p className="text-sm font-medium text-muted-foreground">{t('title')}</p>
       <p className="mt-2 text-sm text-muted-foreground">{t('intro')}</p>
       {calendar.isLoading ? (

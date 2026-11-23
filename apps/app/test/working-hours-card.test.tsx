@@ -4,7 +4,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MyCalendar } from '@crove/kernel-contract';
+import type { MyCalendar } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 import { formatDate } from '../src/lib/format.ts';
@@ -62,12 +62,16 @@ describe('WorkingHoursCard', () => {
     expect(days[1]).toContain(`>${en.workingHours.off}<`);
     expect(days[2]).toContain('value="08:00"');
     expect(days[2]).toContain('value="12:00"');
-    expect(html).toContain('>Asia/Ho_Chi_Minh<');
+    // The zone as a person says it, not its IANA name (#3650).
+    expect(html).toContain('>Vietnam (GMT+7)<');
+    expect(html).not.toContain('>Asia/Ho_Chi_Minh<');
     // The two-day day off, not the meeting.
     expect(html).toContain(`${formatDate('2026-11-02', 'vi')} to ${formatDate('2026-11-03', 'vi')}`);
     expect(html).not.toContain('Họp');
     expect(html).toContain(`>${en.workingHours.save}<`);
-    expect(html).toContain(`aria-label="${en.workingHours.addDayOff}"`);
+    // The day off is added from a button that opens a dialog (#3608), not a form that stays open: the hours form is the only one.
+    expect(html).toContain(`>${en.workingHours.addDayOff}<`);
+    expect(html.match(/<form/g)).toHaveLength(1);
     expect(html).not.toContain(en.workingHours.defaultHint);
   });
 
@@ -78,7 +82,8 @@ describe('WorkingHoursCard', () => {
     const native = inputs.filter((i) => /type="(date|time)"/.test(i));
     expect(native.length).toBeGreaterThan(0);
     for (const input of native) expect(input).toContain('aria-hidden="true"');
-    expect(inputs.filter((i) => i.includes(`placeholder="${en.common.datePlaceholder}"`))).toHaveLength(2);
+    // The date fields of the day off live in the dialog, which is closed here.
+    expect(inputs.filter((i) => i.includes(`placeholder="${en.common.datePlaceholder}"`))).toHaveLength(0);
     expect(inputs.filter((i) => i.includes(`placeholder="${en.common.timePlaceholder}"`))).toHaveLength(2);
     // Midnight at the end of the day reads 00:00, as it is typed: the start and the end, each field and its picker.
     const monday = html.split('<li')[1] ?? '';
@@ -90,7 +95,14 @@ describe('WorkingHoursCard', () => {
     expect(html).toContain(en.workingHours.defaultHint);
     expect(html).toContain(en.workingHours.noDaysOff);
     expect(html).not.toContain(`>${en.workingHours.save}<`);
-    expect(html).not.toContain(`aria-label="${en.workingHours.addDayOff}"`);
+    expect(html).not.toContain(`>${en.workingHours.addDayOff}<`);
     expect(html).toContain('disabled=""');
+  });
+
+  it('says why the save is off when every day is off (#3650)', () => {
+    const html = card(true, { ...calendar, hours: { timeZone: 'Asia/Ho_Chi_Minh', windows: [] } });
+    expect(html).toContain(en.workingHours.saveNeedsDay);
+    expect(html).toMatch(/<button[^>]*disabled[^>]*aria-describedby="working-hours-save-hint"/);
+    expect(card(true)).not.toContain(en.workingHours.saveNeedsDay);
   });
 });

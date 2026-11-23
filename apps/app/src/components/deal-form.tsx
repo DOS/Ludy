@@ -5,12 +5,14 @@ import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { DEAL_TITLE_MAX, zDealAmount, type Deal, type PartyChoice } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect } from '@crove/ui/components/native-select';
+import { DEAL_TITLE_MAX, zDealAmount, type Deal, type PartyChoice } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect } from '@ludy/ui/components/native-select';
 import { AmountInput } from './amount-input.tsx';
+import { DateInput, hasInvalidDate } from './date-input.tsx';
+import { NewPartyGroup } from './deal-party-new.tsx';
 import { ErrorText, Field, focusFirstInvalid, useFieldErrors } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -19,7 +21,12 @@ import { normalizeAmount } from '../lib/vouchers.ts';
 export const refreshDeals = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.crm.deals.list.key() });
   void queryClient.invalidateQueries({ queryKey: orpc.crm.deals.board.key() });
+  // The deal read by id (the offers on the quotes tab, #3420) follows a move or an edit made from the board, the list or the form.
+  void queryClient.invalidateQueries({ queryKey: orpc.crm.deals.get.key() });
   void queryClient.invalidateQueries({ queryKey: orpc.crm.deals.conversations.key() });
+  // A deal added from a contact's panel shows in that panel, and the contact lists count their open deals.
+  void queryClient.invalidateQueries({ queryKey: orpc.crm.deals.byParty.key() });
+  void queryClient.invalidateQueries({ queryKey: orpc.crm.contacts.key() });
   // An edit or a move closes the deal's next step, and a done or a snooze changes the badge: the next steps read again with the deals.
   void queryClient.invalidateQueries({ queryKey: orpc.crm.nextSteps.key() });
 };
@@ -32,20 +39,38 @@ export interface Member {
 
 type FormField = 'title' | 'party' | 'amount';
 
-// Picks a party by typing part of its name or tax code.
-function PartyPicker({ value, onPick, invalid, describedBy }: { value: PartyChoice | null; onPick: (party: PartyChoice | null) => void; invalid: boolean; describedBy?: string | undefined }) {
+// Picks a party by typing part of its name or tax code; when none matches, "Thêm liên hệ mới" adds one in place (#3292).
+// locked: the deal is for this party and the picker only shows it (a deal added from the party's own panel).
+function PartyPicker({ value, onPick, invalid, describedBy, locked }: { value: PartyChoice | null; onPick: (party: PartyChoice | null) => void; invalid: boolean; describedBy?: string | undefined; locked: boolean }) {
   const t = useTranslations('deals');
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
   const found = useQuery({ ...orpc.crm.parties.search.queryOptions({ input: { q: q.trim(), limit: 8 } }), enabled: open, placeholderData: keepPreviousData });
-  if (value && !open) {
+  if (value && (locked || !open)) {
     return (
       <div className="flex items-center gap-2 text-sm">
         <span className="font-medium text-foreground">{value.name}</span>
-        <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(true)}>
-          {t('form.changeParty')}
-        </Button>
+        {!locked && (
+          <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(true)}>
+            {t('form.changeParty')}
+          </Button>
+        )}
       </div>
+    );
+  }
+  if (creating) {
+    return (
+      <NewPartyGroup
+        initialName={q}
+        onCancel={() => setCreating(false)}
+        onCreated={(party) => {
+          onPick(party);
+          setCreating(false);
+          setOpen(false);
+          setQ('');
+        }}
+      />
     );
   }
   return (
@@ -66,7 +91,18 @@ function PartyPicker({ value, onPick, invalid, describedBy }: { value: PartyChoi
       />
       {open && (
         <ul className="max-h-48 overflow-auto rounded-md border border-border text-sm" aria-label={t('form.partyResults')}>
-          {found.data?.length === 0 && <li className="px-3 py-2 text-muted-foreground">{t('form.partyNone')}</li>}
+          {found.data?.length === 0 && !found.isPlaceholderData && (
+            <li className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-muted-foreground">
+              <span>{t('form.partyNone')}</span>
+              <Button type="button" size="sm" variant="outline" onClick={() => {
+                  // The deal is for the new contact: the customer chosen before is let go, so it cannot be saved with the old one meanwhile.
+                  onPick(null);
+                  setCreating(true);
+                }}>
+                {t('form.newParty.open')}
+              </Button>
+            </li>
+          )}
           {found.data?.map((p) => (
             <li key={p.id}>
               <button
@@ -89,10 +125,11 @@ function PartyPicker({ value, onPick, invalid, describedBy }: { value: PartyChoi
   );
 }
 
-export function DealForm({ deal, members, onDone }: { deal: Deal | null; members: readonly Member[]; onDone: () => void }) {
+// presetParty: a new deal for this party, chosen and not changeable (the contact panel's "Thêm cơ hội", #3292). plain: the form sits in a side sheet (#3648), which frames it: one column, no border of its own.
+export function DealForm({ deal, members, onDone, presetParty = null, plain = false }: { deal: Deal | null; members: readonly Member[]; onDone: () => void; presetParty?: PartyChoice | null; plain?: boolean }) {
   const t = useTranslations('deals');
   const [title, setTitle] = useState(deal?.title ?? '');
-  const [party, setParty] = useState<PartyChoice | null>(deal ? { id: deal.partyId, name: deal.partyName, kind: 'organization', taxCode: null } : null);
+  const [party, setParty] = useState<PartyChoice | null>(deal ? { id: deal.partyId, name: deal.partyName, kind: 'organization', taxCode: null } : presetParty);
   const [amount, setAmount] = useState(deal ? deal.amount.replace(/\.00$/, '') : '');
   const [expectedClose, setExpectedClose] = useState(deal?.expectedClose ?? '');
   const [ownerUserId, setOwnerUserId] = useState(deal ? (deal.ownerUserId ?? '') : 'me');
@@ -111,6 +148,10 @@ export function DealForm({ deal, members, onDone }: { deal: Deal | null; members
   });
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (hasInvalidDate(e.currentTarget)) {
+      e.currentTarget.reportValidity();
+      return;
+    }
     if (!fields.checkAll(['title', 'party', 'amount']) || !party) {
       focusFirstInvalid(e.currentTarget);
       return;
@@ -121,17 +162,17 @@ export function DealForm({ deal, members, onDone }: { deal: Deal | null; members
   };
   const error = create.error ?? update.error;
   return (
-    <form onSubmit={submit} noValidate className="grid gap-3 rounded-lg border border-border p-4 sm:grid-cols-2" aria-label={deal ? t('form.editTitle') : t('form.newTitle')}>
-      <Field label={t('form.title')} error={fields.of('title')} className="sm:col-span-2">
+    <form onSubmit={submit} noValidate className={plain ? 'grid gap-3' : 'grid gap-3 rounded-lg border border-border p-4 sm:grid-cols-2'} aria-label={deal ? t('form.editTitle') : t('form.newTitle')}>
+      <Field label={t('form.title')} error={fields.of('title')} {...(plain ? {} : { className: 'sm:col-span-2' })}>
         {(c) => <Input {...c} maxLength={DEAL_TITLE_MAX} value={title} onChange={(e) => (setTitle(e.target.value), fields.edit('title'))} />}
       </Field>
       <Field label={t('form.party')} error={fields.of('party')}>
-        {(c) => <PartyPicker value={party} invalid={Boolean(fields.of('party'))} describedBy={c['aria-describedby']} onPick={(p) => (setParty(p), fields.edit('party'))} />}
+        {(c) => <PartyPicker value={party} locked={!deal && presetParty !== null} invalid={Boolean(fields.of('party'))} describedBy={c['aria-describedby']} onPick={(p) => (setParty(p), fields.edit('party'))} />}
       </Field>
       <Field label={t('form.amount')} hint={t('form.amountHint')} error={fields.of('amount')}>
         {(c) => <AmountInput {...c} value={amount} onChange={(v) => (setAmount(v), fields.edit('amount'))} />}
       </Field>
-      <Field label={t('form.expectedClose')}>{(c) => <Input {...c} type="date" value={expectedClose} onChange={(e) => setExpectedClose(e.target.value)} />}</Field>
+      <Field label={t('form.expectedClose')}>{(c) => <DateInput {...c} value={expectedClose} onChange={setExpectedClose} />}</Field>
       <Field label={t('form.owner')}>
         {(c) => (
           <NativeSelect {...c} className="w-full" value={ownerUserId} onChange={(e) => setOwnerUserId(e.target.value)}>
@@ -146,11 +187,11 @@ export function DealForm({ deal, members, onDone }: { deal: Deal | null; members
         )}
       </Field>
       {error && (
-        <div className="sm:col-span-2">
+        <div className={plain ? undefined : 'sm:col-span-2'}>
           <ErrorText>{errorMessage(error)}</ErrorText>
         </div>
       )}
-      <div className="flex gap-2 sm:col-span-2">
+      <div className={plain ? 'flex gap-2' : 'flex gap-2 sm:col-span-2'}>
         <Button type="submit" loading={pending}>
           {deal ? t('form.save') : t('form.create')}
         </Button>
@@ -159,11 +200,38 @@ export function DealForm({ deal, members, onDone }: { deal: Deal | null; members
         </Button>
       </div>
       {deal && (
-        <div className="sm:col-span-2">
+        <div className={plain ? undefined : 'sm:col-span-2'}>
           <DealConversations dealId={deal.id} />
         </div>
       )}
     </form>
+  );
+}
+
+// The hint of a deal whose customer was marked a duplicate (CRM-15, #3294): "Liên hệ này đã được đánh dấu trùng với <name>". An editor may move the
+// deal to the party that was kept with one click (`crm.deal.update`, nothing moves by itself); a viewer only reads the hint. Nothing shows for a
+// deal on a customer that is not a duplicate.
+export function DealPartyDuplicate({ deal, canEdit }: { deal: Deal; canEdit: boolean }) {
+  const t = useTranslations('deals');
+  const move = useMutation(orpc.crm.deals.update.mutationOptions({ onSuccess: refreshDeals, onError: refreshDeals }));
+  const keep = deal.partyDuplicateOf;
+  if (!keep) return null;
+  return (
+    <div data-testid="deal-party-duplicate" className="mt-1 space-y-1 text-xs">
+      <p className="text-muted-foreground">{t('duplicate.hint', { name: keep.name })}</p>
+      {canEdit && (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          loading={move.isPending}
+          onClick={() => move.mutate({ dealId: deal.id, version: deal.version, partyId: keep.id, title: deal.title, amount: deal.amount, expectedClose: deal.expectedClose, ownerUserId: deal.ownerUserId })}
+        >
+          {t('duplicate.move', { name: keep.name })}
+        </Button>
+      )}
+      {move.error && <ErrorText>{errorMessage(move.error)}</ErrorText>}
+    </div>
   );
 }
 

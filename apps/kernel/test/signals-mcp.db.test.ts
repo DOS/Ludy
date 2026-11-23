@@ -6,13 +6,13 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { SIGNAL_PARTIAL_VIEW_CODE, vietnamToday, type Deal, type PipelineStage } from '@crove/kernel-contract';
-import { DomainError, Runtime, type UserActor } from '@crove/kernel-runtime';
-import { crmCommands, crmQueries } from '@crove/mod-crm';
-import { addDays, financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { SIGNAL_PARTIAL_VIEW_CODE, vietnamToday, type Deal, type PipelineStage } from '@ludy/kernel-contract';
+import { DomainError, Runtime, type UserActor } from '@ludy/kernel-runtime';
+import { crmCommands, crmQueries } from '@ludy/mod-crm';
+import { addDays, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -20,6 +20,8 @@ const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.
 const suite = ADMIN ? describe : describe.skip;
 const TODAY = vietnamToday();
 const RULES = ['kernel.signals.deal_without_invoice', 'kernel.signals.receivable_with_open_deal', 'kernel.signals.supplier_bank_changed'] as const;
+// The fourth rule (#3124) reads conversations, which a grant's context cannot: the rule query refuses a grant, and kernel.mcp.signals names it not_available.
+const CONVERSATION_RULE = 'kernel.signals.conversation_unanswered';
 const READS = ['crm.signals.won_deals', 'crm.signals.open_deals', 'finance.signals.sales', 'finance.signals.overdue_receivables'] as const;
 
 suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
@@ -55,7 +57,7 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     const kind = over.kind ?? 'company';
     counter += 1;
     await rows(
-      `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, revoked_at, created_by, kind, member_id)
+      `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, revoked_at, created_by, kind, member_id)
        VALUES ($1, $2, $3, $4, 'Test client', 'client.example.com', ARRAY['ludy.read'], $5, clock_timestamp(), now() + interval '30 days', ${over.revoked ? 'now()' : 'NULL'}, $3, $6, ${kind === 'member' ? '$3' : 'NULL'})`,
       [orgId, id, userId, `client-${counter}-${id}`, `oauth-${id}`, kind],
     );
@@ -82,9 +84,9 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     db = createDb(pool);
@@ -94,13 +96,13 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     });
     for (const key of Object.keys(users) as Array<keyof typeof users>) users[key] = (await upsertIdentity(db, { issuer: 'signals-mcp', subject: key, email: `${key}@signals-mcp.test`, name: null })) as string;
     orgId = (await createOrg(rt, browser(users.owner), 'Org A')).orgId;
-    entity = (await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
-    const branch = (await rows<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id", [orgId, users.owner]))[0]?.id as string;
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member')", [orgId, users.admin, users.member, users.branchMember]);
-    await rows('UPDATE crove_kernel.tenant SET mcp_member_grants = true WHERE org_id = $1', [orgId]);
-    await rows("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [orgId, users.branchMember, branch, users.owner]);
+    entity = (await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
+    const branch = (await rows<{ id: string }>("INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id", [orgId, users.owner]))[0]?.id as string;
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member')", [orgId, users.admin, users.member, users.branchMember]);
+    await rows('UPDATE ludy_kernel.tenant SET mcp_member_grants = true WHERE org_id = $1', [orgId]);
+    await rows("INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [orgId, users.branchMember, branch, users.owner]);
     // Party A: a deal won 8 days ago, no invoice. Party B: an open deal and an invoice 40 days old (overdue). Party C: a deal won 8 days ago with an invoice after the win.
-    const party = (name: string) => rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
+    const party = (name: string) => rows<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
     const [a, b, c] = [await party('A'), await party('B'), await party('C')];
     partyIds = [a, b, c];
     const exec = <T>(command: string, body: unknown) => rt.execute<T>(command, body, { actor: browser(users.owner), orgId });
@@ -108,7 +110,7 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     for (const [partyId, days] of [[a, 8], [c, 8]] as const) {
       const deal = await exec<Deal>('crm.deal.create', { partyId, title: 'x', amount: '1000000', expectedClose: null });
       await exec('crm.deal.move', { dealId: deal.id, version: deal.version, stageId: won });
-      await rows("UPDATE crove_crm.deal SET closed_at = now() - make_interval(days => $3) WHERE org_id = $1 AND id = $2", [orgId, deal.id, days]);
+      await rows("UPDATE ludy_crm.deal SET closed_at = now() - make_interval(days => $3) WHERE org_id = $1 AND id = $2", [orgId, deal.id, days]);
     }
     await exec('crm.deal.create', { partyId: b, title: 'y', amount: '2000000', expectedClose: null });
     const sale = (partyId: string, number: string, date: string) =>
@@ -116,12 +118,12 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
         const doc = randomUUID();
         await cl.query('BEGIN');
         await cl.query(
-          `INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, $3, 'C26TAA', $4, $5, 'VND', 1000000, 0, 1000000, 'sale', $6)`,
+          `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, $3, 'C26TAA', $4, $5, 'VND', 1000000, 0, 1000000, 'sale', $6)`,
           [orgId, doc, partyId, number, date, entity],
         );
         const entry = randomUUID();
-        await cl.query(`INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'HĐ', 'finance.purchase_document', $4, $5)`, [orgId, entry, date, doc, entity]);
-        await cl.query(`INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '131', 1000000, 0, $3, $4), ($1, $2, 2, '511', 0, 1000000, NULL, $4)`, [orgId, entry, partyId, entity]);
+        await cl.query(`INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'HĐ', 'finance.purchase_document', $4, $5)`, [orgId, entry, date, doc, entity]);
+        await cl.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '131', 1000000, 0, $3, $4), ($1, $2, 2, '511', 0, 1000000, NULL, $4)`, [orgId, entry, partyId, entity]);
         await cl.query('COMMIT');
       });
     await sale(b, '1', addDays(TODAY, -40));
@@ -165,7 +167,7 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     expect(await run(actor, 'crm.signals.open_deals')).toHaveLength(1);
   });
 
-  it('runs the three rules over MCP for a company grant with the items of the owner\'s own Home, rule 3 quiet while its reads do not exist', async () => {
+  it('runs the rules over MCP for a company grant with the items of the owner\'s own Home, rule 3 quiet while no supplier account changed', async () => {
     const g = await grant(users.owner);
     const actor = mcp(users.owner, g, 'company');
     for (const rule of RULES) expect(await run(actor, rule), rule).toEqual(await run(browser(users.owner), rule));
@@ -185,7 +187,7 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     for (const rule of RULES) expect(await run(branch, rule), rule).toEqual([]);
   });
 
-  it('answers kernel.mcp.signals with the items of the rules and says what it could not check: nothing for a whole-org grant, partial_view for a branch-limited one, rule 3 never checked yet', async () => {
+  it('answers kernel.mcp.signals with the items of the rules and says what it could not check: nothing for a whole-org grant, partial_view for a branch-limited one, rule 3 checked since #3113 S1', async () => {
     const whole = mcp(users.owner, await grant(users.owner), 'company');
     const answer = (await run(whole, 'kernel.mcp.signals')) as unknown as { items: Array<{ id: string }>; checked: string[]; unchecked: Array<{ rule: string; reason: string }> };
     expect(answer.items.map((i) => i.id).sort()).toEqual([
@@ -193,18 +195,26 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
       ...((await run(whole, 'kernel.signals.receivable_with_open_deal')) as Array<{ id: string }>),
     ].map((i) => i.id).sort());
     expect(answer.items).toHaveLength(2);
-    expect(answer.checked).toEqual(['deal_without_invoice', 'receivable_with_open_deal']);
-    expect(answer.unchecked).toEqual([{ rule: 'supplier_bank_changed', reason: 'not_available' }]);
-    // A branch-limited member's grant gets no item, and is told in so many words that two rules could not be checked: an empty list is never "all clear".
+    expect(answer.checked).toEqual(['deal_without_invoice', 'receivable_with_open_deal', 'supplier_bank_changed']);
+    expect(answer.unchecked).toEqual([{ rule: 'conversation_unanswered', reason: 'not_available' }]);
+    // A branch-limited member's grant gets no item, and is told in so many words that the two CRM rules could not be checked: an empty list is never "all clear". Rule 3 reads the org's bank changes (ids and days, no branch scope), so it is checked.
     const branch = mcp(users.branchMember, await grant(users.branchMember, { kind: 'member' }), 'member');
     const limited = (await run(branch, 'kernel.mcp.signals')) as unknown as { items: unknown[]; checked: string[]; unchecked: Array<{ rule: string; reason: string }> };
     expect(limited.items).toEqual([]);
-    expect(limited.checked).toEqual([]);
+    expect(limited.checked).toEqual(['supplier_bank_changed']);
     expect(limited.unchecked).toEqual([
       { rule: 'deal_without_invoice', reason: 'partial_view' },
       { rule: 'receivable_with_open_deal', reason: 'partial_view' },
-      { rule: 'supplier_bank_changed', reason: 'not_available' },
+      { rule: 'conversation_unanswered', reason: 'not_available' },
     ]);
+  });
+
+  it('refuses the conversation rule to a grant instead of answering an empty list that could read as "all clear"', async () => {
+    for (const kind of ['company', 'member'] as const) {
+      const actor = mcp(users.owner, await grant(users.owner, { kind }), kind);
+      await expect(run(actor, CONVERSATION_RULE), kind).rejects.toBeInstanceOf(DomainError);
+    }
+    expect(await run(browser(users.owner), CONVERSATION_RULE)).toEqual([]);
   });
 
   it('does not let a grant run Home itself or anything the rules do not name', async () => {
@@ -221,9 +231,9 @@ suite('the signals reads over MCP (#2967, #2969, step S2)', () => {
     answers.push(await refusal(run(mcp(users.owner, revoked, 'company'), 'crm.signals.won_deals')));
     const demoted = await grant(users.admin);
     await run(mcp(users.admin, demoted, 'company'), 'crm.signals.won_deals');
-    await rows("UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2", [orgId, users.admin]);
+    await rows("UPDATE ludy_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2", [orgId, users.admin]);
     answers.push(await refusal(run(mcp(users.admin, demoted, 'company'), 'crm.signals.won_deals')));
-    await rows("UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2", [orgId, users.admin]);
+    await rows("UPDATE ludy_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2", [orgId, users.admin]);
     // The revoked grant and the demoted grantor are the one generic answer; the missing scope is refused before the grant is looked at.
     expect(answers[1]?.code).toBe('MCP_GRANT_INVALID');
     expect(answers[2]?.code).toBe('MCP_GRANT_INVALID');

@@ -6,14 +6,14 @@
 // kernel.saved_view.* of one scope, so every list of the app (the contacts today, the deals next) shares this component and
 // the server's rules: at most 30 per member and scope, a private view seen by its owner alone.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { SAVED_VIEW_LIMIT, type FilterAst, type SavedViewSort } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
+import { SAVED_VIEW_LIMIT, type FilterAst, type SavedViewSort } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
+import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { sameFilter, sameSort } from '../lib/view-filter.ts';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { ConfirmDialog } from './confirm-dialog.tsx';
@@ -28,6 +28,22 @@ export interface ViewState {
 const ALL = 'all';
 export const NO_FILTER: FilterAst = { v: 1, all: [] };
 
+export async function completeSavedViewCreate(opts: {
+  viewId: string;
+  seqAtStart: number;
+  currentSeq: () => number;
+  refresh: () => Promise<unknown>;
+  selectCreated: (viewId: string) => void;
+  closeForm: () => void;
+}): Promise<boolean> {
+  // Wait for the refreshed list before selecting the new tab so `gone` never sees a stale cache without `viewId` and wipes filters.
+  await opts.refresh();
+  opts.closeForm();
+  if (opts.currentSeq() !== opts.seqAtStart) return false;
+  opts.selectCreated(opts.viewId);
+  return true;
+}
+
 export function ViewTabs({ scope, filters, sort, onApply }: { scope: string; filters: FilterAst; sort: SavedViewSort | null; onApply: (next: ViewState) => void }) {
   const t = useTranslations('savedViews');
   const nameId = useId();
@@ -37,11 +53,13 @@ export function ViewTabs({ scope, filters, sort, onApply }: { scope: string; fil
   const views = useQuery(orpc.savedViews.list.queryOptions({ input: { scope } }));
   const list = views.data ?? [];
   const [activeId, setActiveId] = useState<string | null>(null);
+  const selectionSeqRef = useRef(0);
   const active = list.find((v) => v.id === activeId) ?? null;
   // The picked view is gone (deleted here or by its owner): the screen leaves its filter too, not only the tab.
-  const gone = activeId !== null && views.isSuccess && active === null;
+  const gone = activeId !== null && views.isSuccess && !views.isFetching && active === null;
   useEffect(() => {
     if (!gone) return;
+    selectionSeqRef.current += 1;
     setActiveId(null);
     onApply({ filters: NO_FILTER, sort: null });
     // onApply is the screen's setter pair; the effect runs once per disappearance.
@@ -66,10 +84,20 @@ export function ViewTabs({ scope, filters, sort, onApply }: { scope: string; fil
   };
   const create = useMutation({
     mutationFn: (input: { name: string; shared: boolean }) => client.savedViews.save({ scope, name: input.name, filters, sort, shared: input.shared }),
-    onSuccess: ({ viewId }, input) => {
-      setActiveId(viewId);
-      done(t('saved', { name: input.name }));
-    },
+    onMutate: () => selectionSeqRef.current,
+    onSuccess: ({ viewId }, input, seqAtStart) =>
+      completeSavedViewCreate({
+        viewId,
+        seqAtStart,
+        currentSeq: () => selectionSeqRef.current,
+        refresh,
+        selectCreated: (id) => setActiveId(id),
+        closeForm: () => {
+          setMode('none');
+          setName('');
+          setNotice(t('saved', { name: input.name }));
+        },
+      }),
   });
   const update = useMutation({
     mutationFn: (view: SavedView) => client.savedViews.save({ viewId: view.id, filters, sort }),
@@ -86,6 +114,7 @@ export function ViewTabs({ scope, filters, sort, onApply }: { scope: string; fil
   const remove = useMutation({
     mutationFn: (view: SavedView) => client.savedViews.remove({ viewId: view.id }),
     onSuccess: (_, view) => {
+      selectionSeqRef.current += 1;
       setActiveId(null);
       onApply({ filters: NO_FILTER, sort: null });
       done(t('removed', { name: view.name }));
@@ -95,6 +124,7 @@ export function ViewTabs({ scope, filters, sort, onApply }: { scope: string; fil
   const busy = create.isPending || update.isPending || rename.isPending || share.isPending || remove.isPending;
 
   const pick = (value: string) => {
+    selectionSeqRef.current += 1;
     setNotice(null);
     setMode('none');
     const view = list.find((v) => v.id === value) ?? null;
@@ -118,6 +148,9 @@ export function ViewTabs({ scope, filters, sort, onApply }: { scope: string; fil
     share.reset();
     remove.reset();
   };
+
+  // With no saved view, nothing to save and nothing said, the strip would hold one tab, "Tất cả", that does nothing (#3647): it comes with the first view or a changed filter.
+  if (list.length === 0 && activeId === null && !dirty && mode === 'none' && notice === null && !error) return null;
 
   return (
     <div className="mb-3 space-y-2">

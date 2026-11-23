@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The payment vouchers of an approved and posted pay run (#2532, payroll plan 6.4, ADR-0046) on a real PostgreSQL 17, through the finance proposal path:
-// - an owner or an admin asks for the payment of the net pay or of a remittance (kernel.proposal.request, `finance.payroll_payment.record`), the HR module builds the voucher from the frozen run, an owner
-//   or an admin approves it, and approving records one voucher that names the run and the kind of payment, with its entry (Dr the payable, Cr the bank or cash account);
+// - an owner or an admin asks for the payment of the net pay or of a remittance (kernel.proposal.request, `finance.payroll_payment.record`), the HR module builds the voucher from the frozen run, an owner,
+//   an admin or a member holding finance.proposal.approve org-wide approves it (#2751), and approving records one voucher that names the run and the kind of payment, with its entry (Dr the payable, Cr the bank or cash account);
 // - one voucher per run and kind (the command and the database both hold it), only after the run was posted, never while the account map is unconfirmed, never for a draft run;
 // - a payment of the net pay in cash is flagged when a net pay is 5 million or more, a bank payment is not, and the flag keeps the proposal out of bulk approval;
 // - a stored proposal that differs from the run is refused at approval; no person's name is stored anywhere.
@@ -10,20 +10,20 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { normalizeStatementAmount, type BankPayrollMatch, type BankStatementRow, type HrRunPaymentAmounts, type HrRunSheet, type HrRunWritten, type HrWritten, type PayrollSettlement } from '@crove/kernel-contract';
-import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@crove/kernel-runtime';
-import { PAYROLL_POSTING_MAPS, PAYROLL_RULES, money } from '@crove/l10n-vn';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
-import { hrCommands, hrQueries } from '@crove/mod-hr';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { normalizeStatementAmount, type BankPayrollMatch, type BankStatementRow, type HrRunPaymentAmounts, type HrRunSheet, type HrRunWritten, type HrWritten, type PayrollSettlement } from '@ludy/kernel-contract';
+import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@ludy/kernel-runtime';
+import { PAYROLL_POSTING_MAPS, PAYROLL_RULES, money } from '@ludy/l10n-vn';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
+import { hrCommands, hrQueries } from '@ludy/mod-hr';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 // Every rule of the shipped set, and every account map of the posting, is `commentary` until the accountant confirms it (#2535), so a real approval or posting cannot pass yet: the tests confirm the
 // rows for themselves (see hr-payroll-run), and one test leaves the maps as shipped to show the posting is refused.
-vi.mock('@crove/l10n-vn', async (importOriginal) => {
-  const real = await importOriginal<typeof import('@crove/l10n-vn')>();
+vi.mock('@ludy/l10n-vn', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@ludy/l10n-vn')>();
   return {
     ...real,
     PAYROLL_RULES: real.PAYROLL_RULES.map((row) => ({ ...row })),
@@ -75,16 +75,16 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const admin = await person('admin');
     const member = await person('member');
     const { orgId } = await createOrg(rt, asUser(owner), `Hạch toán lương ${tag}`);
-    await withAdmin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgId, admin, member]));
+    await withAdmin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgId, admin, member]));
     // Three people may approve a posting (an owner and two admins), or the owner alone.
     const admin2 = await person('admin2');
-    if (people === 'trio') await withAdmin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [orgId, admin2]));
-    if (people === 'solo') await withAdmin((c) => c.query(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = ANY ($2::uuid[])`, [orgId, [admin, member]]));
+    if (people === 'trio') await withAdmin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [orgId, admin2]));
+    if (people === 'solo') await withAdmin((c) => c.query(`DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = ANY ($2::uuid[])`, [orgId, [admin, member]]));
     if (regime === 'tt99') {
       await withAdmin((c) =>
         c.query(
-          `INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from)
-           SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default`,
+          `INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from)
+           SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default`,
           [orgId],
         ),
       );
@@ -122,7 +122,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     Object.fromEntries(
       (
         await rows<{ account_code: string; debit: string; credit: string }>(
-          'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2',
+          'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit FROM ludy_finance.journal_line WHERE org_id = $1 AND entry_id = $2',
           [o.orgId, entryId],
         )
       ).map((l) => [l.account_code, l.debit !== '0' ? `Dr ${l.debit}` : `Cr ${l.credit}`]),
@@ -140,8 +140,8 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    url.username = 'crove_app';
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     rt = new Runtime(createDb(pool), {
@@ -177,7 +177,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     );
   const voucherOf = (o: Org, runId: string, kind: Kind) =>
     rows<{ id: string; voucher_type: string; cash_account: string; amount: string; proposal_id: string }>(
-      'SELECT id, voucher_type, cash_account, amount::bigint::text AS amount, proposal_id FROM crove_finance.cash_voucher WHERE org_id = $1 AND payroll_run_id = $2 AND payroll_payment_kind = $3',
+      'SELECT id, voucher_type, cash_account, amount::bigint::text AS amount, proposal_id FROM ludy_finance.cash_voucher WHERE org_id = $1 AND payroll_run_id = $2 AND payroll_payment_kind = $3',
       [o.orgId, runId, kind],
     );
 
@@ -216,8 +216,8 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     await expect(pay(o, runId, 'tax')).rejects.toMatchObject({ code: 'HR_PAYMENT_DONE' });
     await expect(
       rows(
-        `INSERT INTO crove_finance.cash_voucher (org_id, voucher_type, number, voucher_date, cash_account, description, amount, proposal_id, payroll_run_id, payroll_payment_kind)
-         SELECT org_id, voucher_type, 0, voucher_date, cash_account, description, amount, proposal_id, payroll_run_id, payroll_payment_kind FROM crove_finance.cash_voucher WHERE org_id = $1 AND payroll_run_id = $2 AND payroll_payment_kind = 'tax'`,
+        `INSERT INTO ludy_finance.cash_voucher (org_id, voucher_type, number, voucher_date, cash_account, description, amount, proposal_id, payroll_run_id, payroll_payment_kind)
+         SELECT org_id, voucher_type, 0, voucher_date, cash_account, description, amount, proposal_id, payroll_run_id, payroll_payment_kind FROM ludy_finance.cash_voucher WHERE org_id = $1 AND payroll_run_id = $2 AND payroll_payment_kind = 'tax'`,
         [o.orgId, runId],
       ),
     ).rejects.toMatchObject({ code: '23505' });
@@ -251,13 +251,13 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const o = await org('tt133', 'solo');
     const { runId } = await postedRun(o);
     const cash = await pay(o, runId, 'net_pay', { type: 'cash_payment', cashAccount: '1111' });
-    const flagged = await rows<{ checks: { id: string; status: string; code: string; params: { count: string } }[] }>('SELECT payload -> \'checks\' AS checks FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, cash.proposalId]);
+    const flagged = await rows<{ checks: { id: string; status: string; code: string; params: { count: string } }[] }>('SELECT payload -> \'checks\' AS checks FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, cash.proposalId]);
     // The three people of the test are paid 5 million or more net: the flag counts them and names nobody.
     expect(flagged[0]?.checks).toEqual([expect.objectContaining({ id: 'anomaly_cash', status: 'warn', code: 'anomaly_cash.payroll_limit', params: { count: '3' } })]);
     const detail = await rt.query<{ checks: { code?: string }[] }>('kernel.inbox.get', { id: cash.proposalId }, { actor: asUser(o.owner), orgId: o.orgId });
     expect(JSON.stringify(detail)).not.toMatch(/Canary/);
     const bank = await pay(o, runId, 'tax', { type: 'cash_payment', cashAccount: '1111' });
-    const none = await rows<{ checks: unknown }>('SELECT payload -> \'checks\' AS checks FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, bank.proposalId]);
+    const none = await rows<{ checks: unknown }>('SELECT payload -> \'checks\' AS checks FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, bank.proposalId]);
     expect(none[0]?.checks ?? null).toBeNull();
   });
 
@@ -265,7 +265,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const o = await org('tt133', 'solo');
     const { runId } = await postedRun(o);
     for (const kind of ['net_pay', 'insurance', 'union', 'tax'] as const) await approve(o, (await pay(o, runId, kind)).proposalId);
-    for (const table of ['crove_kernel.proposal', 'crove_finance.cash_voucher', 'crove_finance.journal_entry', 'crove_kernel.audit_event', 'crove_kernel.outbox_event']) {
+    for (const table of ['ludy_kernel.proposal', 'ludy_finance.cash_voucher', 'ludy_finance.journal_entry', 'ludy_kernel.audit_event', 'ludy_kernel.outbox_event']) {
       const hit = await rows(`SELECT 1 FROM ${table} t WHERE t.org_id = $1 AND t::text ILIKE '%canary%'`, [o.orgId]);
       expect(hit, table).toHaveLength(0);
     }
@@ -277,21 +277,27 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const { proposalId } = await pay(o, runId, 'net_pay');
     // A proposal row written some other way than by the preparer (raw SQL, staff here): the amount of the first line is raised, still a valid voucher.
     await rows(
-      `UPDATE crove_kernel.proposal
+      `UPDATE ludy_kernel.proposal
           SET payload = jsonb_set(jsonb_set(payload, '{lines,0,amount}', to_jsonb((((payload #>> '{lines,0,amount}')::bigint) + 1)::text)), '{total}', to_jsonb((((payload ->> 'total')::bigint) + 1)::text))
         WHERE org_id = $1 AND id = $2`,
       [o.orgId, proposalId],
     );
     await expect(approve(o, proposalId)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH' });
     expect(await voucherOf(o, runId, 'net_pay')).toHaveLength(0);
-    expect((await rows<{ status: string }>('SELECT status FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
+    expect((await rows<{ status: string }>('SELECT status FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.status).toBe('pending');
+    // A stored proposal whose amounts and accounts match the run, but whose description was changed (for example to free text or a person's name, #2853), is refused too.
+    const tax = await pay(o, runId, 'tax');
+    await rows(`UPDATE ludy_kernel.proposal SET payload = jsonb_set(payload, '{description}', '"Chi lương Nguyễn Thị Hằng Canary"') WHERE org_id = $1 AND id = $2`, [o.orgId, tax.proposalId]);
+    await expect(approve(o, tax.proposalId)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: 'description' } });
+    expect(await voucherOf(o, runId, 'tax')).toHaveLength(0);
+    expect((await rows<{ status: string }>('SELECT status FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, tax.proposalId]))[0]?.status).toBe('pending');
   });
 
   it('rebuilds the cash flag when it records: a stored proposal without it, with a changed count, or with one on a bank payment is refused', async () => {
     const o = await org('tt133', 'solo');
     const { runId } = await postedRun(o);
     const rawChecks = (proposalId: string, checks: string) =>
-      rows(`UPDATE crove_kernel.proposal SET payload = jsonb_set(payload, '{checks}', $3::jsonb) WHERE org_id = $1 AND id = $2`, [o.orgId, proposalId, checks]);
+      rows(`UPDATE ludy_kernel.proposal SET payload = jsonb_set(payload, '{checks}', $3::jsonb) WHERE org_id = $1 AND id = $2`, [o.orgId, proposalId, checks]);
     // A cash payment of the net pay raises the flag; the same row without it (raw SQL, staff here) cannot be approved, so it cannot slip into a bulk approval.
     const cash = await pay(o, runId, 'net_pay', { type: 'cash_payment', cashAccount: '1111' });
     await rawChecks(cash.proposalId, '[]');
@@ -318,7 +324,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const net = money(totals.net).toFixed(0);
     // An outgoing line of the bank account for the net pay, on the payment's date (what the statement of the pay day shows).
     const [line] = await rows<{ id: string }>(
-      `INSERT INTO crove_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount, bank_ref)
+      `INSERT INTO ludy_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount, bank_ref)
        VALUES ($1, '1121', $2, 1, '2026-03-31', 'Chi luong thang 03', $3, 'FTPAY1') RETURNING id`,
       [o.orgId, randomUUID(), `-${net}`],
     );
@@ -348,8 +354,8 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const o = await org('tt133', 'trio');
     const chief = await upsertIdentity(createDb(pool), { issuer: 'hrpayment', subject: `chief-${randomUUID()}`, email: `chief-${randomUUID().slice(0, 6)}@hr.test`, name: null });
     await withAdmin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [o.orgId, chief]);
-      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'finance.chief_accountant', NULL, $3)`, [o.orgId, chief, o.owner]);
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [o.orgId, chief]);
+      await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'finance.chief_accountant', NULL, $3)`, [o.orgId, chief, o.owner]);
     });
     const approved = await approvedRun(o);
     const posting = await ask(o, approved.runId, o.admin);
@@ -369,12 +375,12 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     // A raw session that lifts the freeze of an approved run (outside the commands) changes one fund's share: the funds no longer add to the insurance the lines carry.
     await withAdmin(async (c) => {
       await c.query('BEGIN');
-      await c.query('ALTER TABLE crove_hr.payroll_line DISABLE TRIGGER frozen_row');
+      await c.query('ALTER TABLE ludy_hr.payroll_line DISABLE TRIGGER frozen_row');
       const done = await c.query(
-        `UPDATE crove_hr.payroll_line SET breakdown = jsonb_set(breakdown, '{insurance,funds,0,employee}', '"1"') WHERE org_id = $1 AND run_id = $2 AND kind = 'pay' AND breakdown #> '{insurance,funds,0}' IS NOT NULL`,
+        `UPDATE ludy_hr.payroll_line SET breakdown = jsonb_set(breakdown, '{insurance,funds,0,employee}', '"1"') WHERE org_id = $1 AND run_id = $2 AND kind = 'pay' AND breakdown #> '{insurance,funds,0}' IS NOT NULL`,
         [o.orgId, march.runId],
       );
-      await c.query('ALTER TABLE crove_hr.payroll_line ENABLE ALWAYS TRIGGER frozen_row');
+      await c.query('ALTER TABLE ludy_hr.payroll_line ENABLE ALWAYS TRIGGER frozen_row');
       await c.query('COMMIT');
       expect(done.rowCount).toBeGreaterThan(0);
     });
@@ -384,7 +390,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
 
   it('pays a month that carries corrections from the signed totals: the amounts add the corrections, the voucher equals the entry, and a kind the corrections take below zero is refused', async () => {
     const o = await org('tt133', 'solo');
-    const [employee] = await rows<{ id: string }>('SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1', [o.orgId]);
+    const [employee] = await rows<{ id: string }>('SELECT id FROM ludy_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1', [o.orgId]);
     const march = await approvedRun(o);
     const april = await approvedRun(o, '2026-04', async (runId) => {
       await o.exec(o.owner, 'hr.payroll.line.adjust', {
@@ -416,7 +422,9 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
 
   it('counts the cash limit per person: a person whose pay is over it and whose corrections take the total under it is no longer counted', async () => {
     const o = await org('tt133', 'solo');
-    const [employee] = await rows<{ id: string }>('SELECT id FROM crove_hr.payroll_employee WHERE org_id = $1 ORDER BY created_at, id LIMIT 1', [o.orgId]);
+    // Pick a fixed person by name rather than ORDER BY created_at, id or the first pay line, so uuid_v7 ties never mix two employees across runs.
+    const [employee] = await rows<{ id: string }>('SELECT id FROM ludy_hr.payroll_employee WHERE org_id = $1 AND display_name = $2', [o.orgId, TEAM[0]?.name]);
+    expect(employee?.id).toBeTruthy();
     const march = await approvedRun(o);
     const verified = (runId: string) => o.exec<{ cashLarge: number }>(o.owner, 'hr.payroll.payment.verify', { runId, kind: 'net_pay' });
     const { proposalId } = await ask(o, march.runId, o.owner);
@@ -427,7 +435,9 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     let payNet = '0';
     const april = await approvedRun(o, '2026-04', async (runId) => {
       const sheet = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId });
-      payNet = (sheet.lines.find((l) => l.kind === 'pay') as HrRunSheet['lines'][number]).figures?.net ?? '0';
+      const payLine = sheet.lines.find((l) => l.kind === 'pay' && l.employeeId === employee?.id);
+      expect(payLine).toBeDefined();
+      payNet = payLine?.figures?.net ?? '0';
       await o.exec(o.owner, 'hr.payroll.line.adjust', { runId, adjustsRunId: march.runId, employeeId: employee?.id, note: 'Hoàn lại', gross: money(payNet).minus(1000000).negated().toFixed(0), pit: '0' });
     });
     // The person's own pay line is over the limit (the premise of this test), whatever the correction does to their total.
@@ -467,7 +477,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const o = await org('tt133', 'solo');
     const { runId } = await postedRun(o);
     const [posting] = await rows<{ id: string }>(
-      `SELECT e.id FROM crove_finance.journal_entry e JOIN crove_finance.journal_voucher j ON j.org_id = e.org_id AND j.id = e.source_id AND e.source_type = 'finance.journal_voucher'
+      `SELECT e.id FROM ludy_finance.journal_entry e JOIN ludy_finance.journal_voucher j ON j.org_id = e.org_id AND j.id = e.source_id AND e.source_type = 'finance.journal_voucher'
         WHERE j.org_id = $1 AND j.payroll_run_id = $2 AND e.reverses_entry_id IS NULL`,
       [o.orgId, runId],
     );
@@ -488,11 +498,11 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const o = await org('tt133', 'trio');
     const { runId } = await postedRun(o, 'trio');
     const { proposalId } = await pay(o, runId, 'union', {}, o.admin);
-    const [stored] = await rows<{ co_authors: string[] }>('SELECT co_authors FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]);
+    const [stored] = await rows<{ co_authors: string[] }>('SELECT co_authors FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]);
     expect(stored?.co_authors).toEqual([o.owner]);
     await expect(approve(o, proposalId, o.owner)).rejects.toMatchObject({ code: 'FOUR_EYES_REQUIRED' });
     // A proposal row written some other way without the co-author (raw SQL, staff here) is refused when it records, even by the other admin.
-    await rows('UPDATE crove_kernel.proposal SET co_authors = NULL WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]);
+    await rows('UPDATE ludy_kernel.proposal SET co_authors = NULL WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]);
     await expect(approve(o, proposalId, o.admin2)).rejects.toMatchObject({ code: 'HR_POSTING_MISMATCH', details: { what: 'coAuthors' } });
     expect(await voucherOf(o, runId, 'union')).toHaveLength(0);
   });
@@ -502,9 +512,9 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
   let rowNo = 1;
   async function statement(o: Org, lines: { out?: string; in?: string; description: string }[]): Promise<string[]> {
     const rowsIn: BankStatementRow[] = lines.map((l) => ({ rowNo: rowNo++, date: '31/03/2026', description: l.description, moneyIn: normalizeStatementAmount(l.in ?? ''), moneyOut: normalizeStatementAmount(l.out ?? ''), balance: '', reference: `FT${rowNo}` }));
-    const before = new Set((await rows<{ id: string }>('SELECT id FROM crove_finance.bank_line WHERE org_id = $1', [o.orgId])).map((r) => r.id));
+    const before = new Set((await rows<{ id: string }>('SELECT id FROM ludy_finance.bank_line WHERE org_id = $1', [o.orgId])).map((r) => r.id));
     await o.exec(o.owner, 'finance.bank.import', { bankAccount: '1121', filename: 'sao-ke-03.xlsx', rows: rowsIn });
-    const after = await rows<{ id: string; position: number }>('SELECT id, position FROM crove_finance.bank_line WHERE org_id = $1 ORDER BY import_id, position', [o.orgId]);
+    const after = await rows<{ id: string; position: number }>('SELECT id, position FROM ludy_finance.bank_line WHERE org_id = $1 ORDER BY import_id, position', [o.orgId]);
     return after.filter((r) => !before.has(r.id)).map((r) => r.id);
   }
   const matchOf = (o: Org, bankLineId: string, user = o.owner) => o.query<BankPayrollMatch>(user, 'finance.bank.payroll_match', { bankLineId });
@@ -556,7 +566,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const [line] = (await statement(o, [{ out: vn(totals.net), description: 'Tra luong' }])) as [string];
     expect((await matchOf(o, line)).candidates).toHaveLength(1);
     const [posting] = await rows<{ id: string }>(
-      `SELECT e.id FROM crove_finance.journal_entry e JOIN crove_finance.journal_voucher j ON j.org_id = e.org_id AND j.id = e.source_id AND e.source_type = 'finance.journal_voucher'
+      `SELECT e.id FROM ludy_finance.journal_entry e JOIN ludy_finance.journal_voucher j ON j.org_id = e.org_id AND j.id = e.source_id AND e.source_type = 'finance.journal_voucher'
         WHERE j.org_id = $1 AND j.payroll_run_id = $2 AND e.reverses_entry_id IS NULL`,
       [o.orgId, runId],
     );
@@ -567,7 +577,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     );
     await approve(o, asked.proposalId);
     // The run is still approved and hr still offers its amounts, so it is the finance filter on the reversed posting that hides the candidate.
-    expect((await rows<{ status: string }>('SELECT status FROM crove_hr.payroll_run WHERE org_id = $1 AND id = $2', [o.orgId, runId]))[0]?.status).toBe('approved');
+    expect((await rows<{ status: string }>('SELECT status FROM ludy_hr.payroll_run WHERE org_id = $1 AND id = $2', [o.orgId, runId]))[0]?.status).toBe('approved');
     expect(await o.query<HrRunPaymentAmounts[]>(o.owner, 'hr.payroll.payment.amounts', { runIds: [runId] })).toHaveLength(1);
     expect((await matchOf(o, line)).candidates).toEqual([]);
   });
@@ -584,13 +594,13 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
   const postingEntry = async (o: Org, runId: string) =>
     (
       await rows<{ id: string }>(
-        `SELECT e.id FROM crove_finance.journal_entry e JOIN crove_finance.journal_voucher j ON j.org_id = e.org_id AND j.id = e.source_id AND e.source_type = 'finance.journal_voucher'
+        `SELECT e.id FROM ludy_finance.journal_entry e JOIN ludy_finance.journal_voucher j ON j.org_id = e.org_id AND j.id = e.source_id AND e.source_type = 'finance.journal_voucher'
           WHERE j.org_id = $1 AND j.payroll_run_id = $2 AND e.reverses_entry_id IS NULL`,
         [o.orgId, runId],
       )
     )[0]?.id;
   const paymentEntry = async (o: Org, voucherId: string) =>
-    (await rows<{ id: string }>(`SELECT id FROM crove_finance.journal_entry WHERE org_id = $1 AND source_type = 'finance.cash_voucher' AND source_id = $2 AND reverses_entry_id IS NULL`, [o.orgId, voucherId]))[0]?.id;
+    (await rows<{ id: string }>(`SELECT id FROM ludy_finance.journal_entry WHERE org_id = $1 AND source_type = 'finance.cash_voucher' AND source_id = $2 AND reverses_entry_id IS NULL`, [o.orgId, voucherId]))[0]?.id;
 
   it('refuses a payment request, and the record of a request made before, once the posting of the run was reversed, and records nothing (#2854)', async () => {
     const o = await org('tt133', 'solo');
@@ -615,7 +625,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const other = (await pay(o, runId, 'union')).proposalId;
     const insert = (proposal: string) =>
       rows(
-        `INSERT INTO crove_finance.cash_voucher (org_id, voucher_type, number, voucher_date, cash_account, description, amount, proposal_id, payroll_run_id, payroll_payment_kind)
+        `INSERT INTO ludy_finance.cash_voucher (org_id, voucher_type, number, voucher_date, cash_account, description, amount, proposal_id, payroll_run_id, payroll_payment_kind)
          VALUES ($1, 'bank_debit', 0, '2026-03-31', '1121', 'chi', 1000, $2, $3, 'net_pay')`,
         [o.orgId, proposal, runId],
       );
@@ -666,10 +676,10 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
   it('posts a run again after its posting was reversed, then pays it, and still refuses two live postings of one run, in the command and in the table (#2931)', async () => {
     const o = await org('tt133', 'solo');
     const { runId } = await postedRun(o);
-    const [first] = await rows<{ id: string }>('SELECT id FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId]);
+    const [first] = await rows<{ id: string }>('SELECT id FROM ludy_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId]);
     const insertPosting = () =>
       rows(
-        `INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payroll_run_id) SELECT org_id, voucher_date, description, proposal_id, payroll_run_id FROM crove_finance.journal_voucher WHERE id = $1`,
+        `INSERT INTO ludy_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payroll_run_id) SELECT org_id, voucher_date, description, proposal_id, payroll_run_id FROM ludy_finance.journal_voucher WHERE id = $1`,
         [first?.id],
       );
     // A live posting holds the run: a new request is refused, and so is a row written some other way.
@@ -686,7 +696,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const second = await approve(o, again.proposalId);
     expect(second.voucherId).not.toBe(first?.id);
     expect((await settlementOf(o, runId)).posting).toEqual({ status: 'posted', proposalId: null });
-    expect(await rows('SELECT id FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(2);
+    expect(await rows('SELECT id FROM ludy_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId])).toHaveLength(2);
     // The run is payable again, against the posting that stands.
     const paid = await approve(o, (await pay(o, runId, 'net_pay')).proposalId);
     expect(paid.voucherId).toBeTruthy();
@@ -699,12 +709,12 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
   it('makes a writer of a run wait while another holds the posting slot of that run, once an earlier posting was reversed (the advisory lock of 20261227014500, held alone so no other lock explains the wait) (#2931)', async () => {
     const o = await org('tt133', 'solo');
     const { runId } = await postedRun(o);
-    const [voucher] = await rows<{ id: string }>('SELECT id FROM crove_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId]);
+    const [voucher] = await rows<{ id: string }>('SELECT id FROM ludy_finance.journal_voucher WHERE org_id = $1 AND payroll_run_id = $2', [o.orgId, runId]);
     await reverseEntry(o, await postingEntry(o, runId));
     // The writer copies the reversed voucher (its proposal passes the effect check) for the same run.
     const insert = (c: pg.Client) =>
       c.query(
-        `INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payroll_run_id) SELECT org_id, voucher_date, description, proposal_id, payroll_run_id FROM crove_finance.journal_voucher WHERE id = $1`,
+        `INSERT INTO ludy_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payroll_run_id) SELECT org_id, voucher_date, description, proposal_id, payroll_run_id FROM ludy_finance.journal_voucher WHERE id = $1`,
         [voucher?.id],
       );
     const holder = new pg.Client({ connectionString: adminUrl });
@@ -713,7 +723,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     try {
       // The holder takes only the slot's advisory key (the number series and the unique keys are not touched), as a first writer would in the trigger.
       await holder.query('BEGIN');
-      await holder.query(`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('crove_finance.journal_voucher_payroll_slot:' || $1::text || ':' || $2::text, 0))`, [o.orgId, runId]);
+      await holder.query(`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('ludy_finance.journal_voucher_payroll_slot:' || $1::text || ':' || $2::text, 0))`, [o.orgId, runId]);
       await writer.query('BEGIN');
       let finished = false;
       const waiting = insert(writer).then(() => {
@@ -739,7 +749,7 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     const proposals = { first: (await pay(o, runId, 'union')).proposalId, second: (await pay(o, runId, 'insurance')).proposalId, third: (await pay(o, runId, 'tax')).proposalId };
     const insert = (c: pg.Client, type: 'cash_payment' | 'bank_debit', kind: string, proposal: string) =>
       c.query(
-        `INSERT INTO crove_finance.cash_voucher (org_id, voucher_type, number, voucher_date, cash_account, description, amount, proposal_id, payroll_run_id, payroll_payment_kind)
+        `INSERT INTO ludy_finance.cash_voucher (org_id, voucher_type, number, voucher_date, cash_account, description, amount, proposal_id, payroll_run_id, payroll_payment_kind)
          VALUES ($1, $2, 0, '2026-03-31', $3, 'chi', 1000, $4, $5, $6)`,
         [o.orgId, type, type === 'cash_payment' ? '1111' : '1121', proposal, runId, kind],
       );
@@ -793,6 +803,216 @@ suite('the payment of a pay run on PostgreSQL (#2532)', () => {
     expect(await other.query<HrRunPaymentAmounts[]>(other.owner, 'hr.payroll.payment.amounts', { runIds: [otherRun] })).toHaveLength(1);
     const team = await org('tt133', 'standard');
     await expect(team.query(team.member, 'hr.payroll.payment.amounts', { runIds: [runId] })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
+  it('maps only the (run, kind) 23505 violation on payroll voucher insert to HR_PAYMENT_DONE, and lets other 23505 violations surface (#2793)', async () => {
+    const o = await org('tt133', 'trio');
+    const { runId } = await postedRun(o, 'trio');
+    const first = await pay(o, runId, 'tax', {}, o.admin);
+    // A second pending proposal of the same (run, kind), as if created before the open-proposal check saw the first: both pass checkPayable while the slot lock holds them, and the second hits cash_voucher_payroll_payment_uq on insert.
+    const [cloned] = await rows<{ id: string }>(
+      `INSERT INTO ludy_kernel.proposal (org_id, kind, command, status, title, payload, request_input, eligible_approvers, authors, co_authors, legal_entity_id)
+       SELECT org_id, kind, command, 'pending', title, payload, request_input, eligible_approvers, authors, co_authors, legal_entity_id
+       FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2 RETURNING id`,
+      [o.orgId, first.proposalId],
+    );
+    const secondId = cloned?.id as string;
+    const holder = new pg.Client({ connectionString: adminUrl });
+    await holder.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query(
+        `SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('ludy_finance.cash_voucher_payroll_slot:' || $1::text || ':' || $2::text || ':tax', 0))`,
+        [o.orgId, runId],
+      );
+      const race = Promise.allSettled([approve(o, first.proposalId, o.admin2), approve(o, secondId, o.admin2)]);
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      await holder.query('ROLLBACK');
+      const settled = await race;
+      expect(settled.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      const rejected = settled.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+      expect(rejected.reason).toMatchObject({ code: 'HR_PAYMENT_DONE', status: 409 });
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      await holder.end();
+    }
+    expect(await voucherOf(o, runId, 'tax')).toHaveLength(1);
+
+    // Another 23505 on the payroll voucher insert (here, rewinding the bank_debit number series so number_allocate hits number_allocation_number_uq) is not misreported as HR_PAYMENT_DONE.
+    const union = await pay(o, runId, 'union', {}, o.admin);
+    await rows(`UPDATE ludy_kernel.number_series SET next_number = 1 WHERE org_id = $1 AND doc_type = 'finance.cash_voucher.bank_debit'`, [o.orgId]);
+    const nonPayroll23505 = await approve(o, union.proposalId, o.admin2).then(
+      () => null,
+      (err: { code?: string; status?: number; details?: Record<string, unknown> }) => err,
+    );
+    expect(nonPayroll23505).not.toBeNull();
+    expect(nonPayroll23505?.code).not.toBe('HR_PAYMENT_DONE');
+    expect(nonPayroll23505).toMatchObject({ code: 'CONFLICT', status: 409, details: { constraint: 'number_allocation_number_uq' } });
+    expect(await voucherOf(o, runId, 'union')).toHaveLength(0);
+
+    // Restoring the series lets the union payment record cleanly; a settled bank line on a payroll payment still surfaces BANK_LINE_MATCHED rather than HR_PAYMENT_DONE.
+    await rows(`UPDATE ludy_kernel.number_series SET next_number = 2 WHERE org_id = $1 AND doc_type = 'finance.cash_voucher.bank_debit'`, [o.orgId]);
+    await expect(approve(o, union.proposalId, o.admin2)).resolves.toMatchObject({ voucherId: expect.any(String) });
+  });
+
+  it('orders payroll payment vouchers with ordinary vouchers in kernel.proposal.approve_many so numbering locks run in VOUCHER_TYPES + id order (#2793)', async () => {
+    const o = await org('tt133', 'trio');
+    const { runId } = await postedRun(o, 'trio');
+    const requestPlain = (input: Record<string, unknown>) =>
+      rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.voucher.record', input }, { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() });
+    // Create ordinary bank_debit BEFORE payroll bank_debit so ordinaryBankDebit.id < payrollBankDebit.id (uuid_v7), then submit payrollBankDebit first in the batch.
+    const ordinaryBankDebit = await requestPlain({ type: 'bank_debit', date: '2026-03-31', cashAccount: '1121', description: 'Chi phí ngân hàng', lines: [{ account: '6422', amount: '200000' }] });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const payrollBankDebit = await pay(o, runId, 'tax', { type: 'bank_debit', cashAccount: '1121' }, o.admin);
+    const payrollCashPayment = await pay(o, runId, 'union', { type: 'cash_payment', cashAccount: '1111' }, o.admin);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const ordinaryCashPayment = await requestPlain({ type: 'cash_payment', date: '2026-03-31', cashAccount: '1111', description: 'Chi phí tiền mặt', lines: [{ account: '6422', amount: '150000' }] });
+    const ordinaryCashReceipt = await requestPlain({ type: 'cash_receipt', date: '2026-03-31', cashAccount: '1111', description: 'Thu khác', lines: [{ account: '711', amount: '100000' }] });
+    const journalVoucher = await rt.execute<{ proposalId: string }>(
+      'kernel.proposal.request',
+      {
+        command: 'finance.journal_voucher.record',
+        input: {
+          date: '2026-03-31',
+          description: 'Bút toán tổng hợp',
+          lines: [
+            { account: '6422', debit: '50000', credit: '0' },
+            { account: '3388', debit: '0', credit: '50000' },
+          ],
+        },
+      },
+      { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    expect(ordinaryBankDebit.proposalId < payrollBankDebit.proposalId).toBe(true);
+    expect(payrollCashPayment.proposalId < ordinaryCashPayment.proposalId).toBe(true);
+
+    const submitted = [
+      { id: payrollBankDebit.proposalId.toUpperCase(), revision: 1 },
+      { id: ordinaryBankDebit.proposalId, revision: 1 },
+      { id: ordinaryCashPayment.proposalId, revision: 1 },
+      { id: payrollCashPayment.proposalId, revision: 1 },
+      { id: ordinaryCashReceipt.proposalId, revision: 1 },
+      { id: journalVoucher.proposalId, revision: 1 },
+    ];
+    const bulk = await rt.execute<{ results: { id: string; outcome: string; result?: { code?: string; journalEntryId?: string } }[] }>(
+      'kernel.proposal.approve_many',
+      { items: submitted },
+      { actor: asMfa(o.admin2), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    expect(bulk.results.map((r) => [r.id, r.outcome])).toEqual(submitted.map((s) => [s.id, 'approved']));
+
+    const codeByProposal = new Map(bulk.results.map((r) => [r.id.toLowerCase(), r.result?.code]));
+    // Within cash_payment, payrollCashPayment.id < ordinaryCashPayment.id so payroll gets PC00001 and ordinary gets PC00002.
+    expect(codeByProposal.get(payrollCashPayment.proposalId)).toBe('PC00001');
+    expect(codeByProposal.get(ordinaryCashPayment.proposalId)).toBe('PC00002');
+    // Within bank_debit, ordinaryBankDebit.id < payrollBankDebit.id so ordinary gets BN00001 and payroll gets BN00002 (without #2793, payrollBankDebit ran first at rank 0 and took BN00001).
+    expect(codeByProposal.get(ordinaryBankDebit.proposalId)).toBe('BN00001');
+    expect(codeByProposal.get(payrollBankDebit.proposalId)).toBe('BN00002');
+
+    // Physical insertion order of journal_entry rows in this transaction confirms non-voucher -> cash_receipt -> cash_payment -> bank_debit.
+    const entryIds = bulk.results.map((r) => r.result?.journalEntryId as string);
+    const physicalOrder = await rows<{ id: string }>('SELECT id FROM ludy_finance.journal_entry WHERE org_id = $1 AND id = ANY($2::uuid[]) ORDER BY ctid', [o.orgId, entryIds]);
+    const entryOf = (proposalId: string) => bulk.results.find((r) => r.id.toLowerCase() === proposalId.toLowerCase())?.result?.journalEntryId;
+    expect(physicalOrder.map((e) => e.id)).toEqual([
+      entryOf(journalVoucher.proposalId),
+      entryOf(ordinaryCashReceipt.proposalId),
+      entryOf(payrollCashPayment.proposalId),
+      entryOf(ordinaryCashPayment.proposalId),
+      entryOf(ordinaryBankDebit.proposalId),
+      entryOf(payrollBankDebit.proposalId),
+    ]);
+  });
+
+  it('warns on an ordinary payment voucher debiting a payroll payable only while a pay-run payment of that liability is pending or recorded, and leaves finance.payroll_payment.record unaffected (#2793)', async () => {
+    const o = await org('tt133', 'trio');
+    const branch = await withAdmin(async (c) => {
+      const { rows: created } = await c.query<{ id: string }>(
+        `INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh phía Nam', 'branch', $2) RETURNING id`,
+        [o.orgId, o.owner],
+      );
+      return created[0]?.id as string;
+    });
+    const { runId } = await postedRun(o, 'trio');
+    const plainVoucher = (lines: { account: string; amount: string }[], extra: Record<string, unknown> = {}, user = o.member) =>
+      rt.execute<{ proposalId: string }>(
+        'kernel.proposal.request',
+        { command: 'finance.voucher.record', input: { type: 'bank_debit', date: '2026-03-31', cashAccount: '1121', description: 'Chi tay công nợ lương', lines, ...extra } },
+        { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() },
+      );
+    const checksOf = async (proposalId: string) =>
+      (await rows<{ checks: { id: string; status: string; code?: string; params?: Record<string, string> }[] | null }>(
+        `SELECT payload -> 'checks' AS checks FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2`,
+        [o.orgId, proposalId],
+      ))[0]?.checks ?? [];
+
+    // (b) Before any pay-run payment is pending or recorded, an ordinary voucher debiting 334 raises no warning.
+    const beforeAny = await plainVoucher([{ account: '334', amount: '500000' }]);
+    expect(await checksOf(beforeAny.proposalId)).toEqual([]);
+
+    // (a) Once net_pay is pending, an ordinary voucher debiting 334 carries anomaly_payroll.active_payment, is held out of bulk approval, and still approves individually under four-eyes.
+    const pendingNet = await pay(o, runId, 'net_pay', {}, o.admin);
+    const whilePending = await plainVoucher([{ account: '334', amount: '500000' }]);
+    expect(await checksOf(whilePending.proposalId)).toEqual([
+      expect.objectContaining({ id: 'anomaly_payroll', status: 'warn', code: 'anomaly_payroll.active_payment', params: { accounts: '334' } }),
+    ]);
+    const inboxDetail = await rt.query<{ warnChecks: number; anomalyChecks: number; failedChecks: number }>('kernel.inbox.get', { id: whilePending.proposalId }, { actor: asUser(o.admin), orgId: o.orgId });
+    expect(inboxDetail).toMatchObject({ warnChecks: 1, anomalyChecks: 1, failedChecks: 0 });
+    expect(JSON.stringify(inboxDetail)).not.toMatch(/canary/i);
+    const bulk = await rt.execute<{ results: { id: string; outcome: string; code?: string }[] }>(
+      'kernel.proposal.approve_many',
+      { items: [{ id: whilePending.proposalId, revision: 1 }] },
+      { actor: asMfa(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    expect(bulk.results).toEqual([expect.objectContaining({ id: whilePending.proposalId, outcome: 'refused', code: 'BULK_NOT_ALLOWED' })]);
+    await expect(approve(o, whilePending.proposalId, o.admin)).resolves.toMatchObject({ voucherId: expect.any(String) });
+
+    // Unsettled payroll kinds (3382 union), TT133 deposits (3386), inflows (cash_receipt) and another legal entity raise nothing while only net_pay is pending in the default entity.
+    expect(await checksOf((await plainVoucher([{ account: '3382', amount: '100000' }])).proposalId)).toEqual([]);
+    expect(await checksOf((await plainVoucher([{ account: '3386', amount: '100000' }])).proposalId)).toEqual([]);
+    expect(await checksOf((await plainVoucher([{ account: '334', amount: '100000' }], { type: 'cash_receipt', cashAccount: '1111' })).proposalId)).toEqual([]);
+    expect(await checksOf((await plainVoucher([{ account: '334', amount: '100000' }], { legalEntityId: branch }, o.owner)).proposalId)).toEqual([]);
+
+    // Recording net_pay keeps the warning active on plain vouchers debiting 334.
+    const recordedNet = await approve(o, pendingNet.proposalId, o.admin2);
+    const whileRecorded = await plainVoucher([{ account: '334', amount: '250000' }], { type: 'cash_payment', cashAccount: '1111' });
+    expect(await checksOf(whileRecorded.proposalId)).toEqual([
+      expect.objectContaining({ id: 'anomaly_payroll', status: 'warn', code: 'anomaly_payroll.active_payment', params: { accounts: '334' } }),
+    ]);
+
+    // (c) finance.payroll_payment.record itself never receives anomaly_payroll, even when other payroll payments exist or after reversing and re-requesting the same kind.
+    const taxPayment = await pay(o, runId, 'tax', {}, o.admin);
+    expect(await checksOf(taxPayment.proposalId)).toEqual([]);
+    await expect(approve(o, taxPayment.proposalId, o.admin2)).resolves.toMatchObject({ voucherId: expect.any(String) });
+
+    // (b) Reversing the recorded net_pay voucher frees the liability, so a plain voucher debiting 334 raises no warning again, while tax (3335, still recorded) warns.
+    const askedReversal = await rt.execute<{ proposalId: string }>(
+      'kernel.proposal.request',
+      { command: 'finance.journal.reverse', input: { entryId: recordedNet.journalEntryId, entryDate: '2026-03-31', reason: 'Lập lại' } },
+      { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    await approve(o, askedReversal.proposalId, o.admin2);
+    expect(await checksOf((await plainVoucher([{ account: '334', amount: '250000' }])).proposalId)).toEqual([]);
+    expect(await checksOf((await plainVoucher([{ account: '3335', amount: '100000' }])).proposalId)).toEqual([
+      expect.objectContaining({ id: 'anomaly_payroll', status: 'warn', code: 'anomaly_payroll.active_payment', params: { accounts: '3335' } }),
+    ]);
+    const netAgain = await pay(o, runId, 'net_pay', {}, o.admin);
+    expect(await checksOf(netAgain.proposalId)).toEqual([]);
+    await expect(approve(o, netAgain.proposalId, o.admin2)).resolves.toMatchObject({ voucherId: expect.any(String) });
+
+    // Under TT99, 3386 is unemployment insurance, so a pending insurance payment warns when a plain voucher debits 3386.
+    const o99 = await org('tt99', 'solo');
+    const posted99 = await postedRun(o99);
+    await pay(o99, posted99.runId, 'insurance');
+    const plain99 = await rt.execute<{ proposalId: string }>(
+      'kernel.proposal.request',
+      { command: 'finance.voucher.record', input: { type: 'bank_debit', date: '2026-03-31', cashAccount: '1121', description: 'Nộp bảo hiểm tay', lines: [{ account: '3386', amount: '100000' }] } },
+      { actor: asUser(o99.owner), orgId: o99.orgId, idempotencyKey: randomUUID() },
+    );
+    const [checks99] = await rows<{ checks: { code?: string; params?: Record<string, string> }[] }>(
+      `SELECT payload -> 'checks' AS checks FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2`,
+      [o99.orgId, plain99.proposalId],
+    );
+    expect(checks99?.checks).toEqual([expect.objectContaining({ code: 'anomaly_payroll.active_payment', params: { accounts: '3386' } })]);
   });
 
 });

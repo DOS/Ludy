@@ -12,9 +12,9 @@
 // mapping does. Nothing here moves money or posts a line.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { auditValue, zBankAccountNumberSet, zId, type BankAccountNumberView } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { auditValue, zBankAccountNumberSet, zId, type BankAccountNumberView } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery } from '@ludy/kernel-runtime';
 import { accountNumberDigits } from './account-number.ts';
 import { bankAccount } from './bank.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -24,7 +24,7 @@ const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 // The number is a `payment` column: an audit fact keeps its class, never its digits (#1626). bank_account is the chart
 // account code (112x) the number is recorded on, internal data as in bank-feed.ts, listed for this file in
 // apps/kernel/test/audit-facts.test.ts.
-const NUMBER = financeManifest.tables.crove_finance.bank_account_number;
+const NUMBER = financeManifest.tables.ludy_finance.bank_account_number;
 // The most numbers an org records: the Settings card lists them all, so every record stays visible and removable.
 export const BANK_ACCOUNT_NUMBER_MAX = 500;
 
@@ -49,7 +49,7 @@ export const bankAccountNumberSet = defineCommand({
     // exist yet locks nothing).
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.bank_account_number:${ctx.orgId}:${digits}`}, 0))`.execute(ctx.trx);
     const existing = await ctx.trx
-      .selectFrom('crove_finance.bank_account_number')
+      .selectFrom('ludy_finance.bank_account_number')
       .select(['id', 'bank_account', 'legal_entity_id'])
       .where('org_id', '=', ctx.orgId)
       .where('account_number', '=', digits)
@@ -62,7 +62,7 @@ export const bankAccountNumberSet = defineCommand({
     // admins, the only callers, always hold the org-wide entity scope (enter_context seals '*' for them), so no mapping of
     // another entity is hidden from this lookup.
     const fed = await ctx.trx
-      .selectFrom('crove_finance.bank_feed_account')
+      .selectFrom('ludy_finance.bank_feed_account')
       .select(['bank_account', 'legal_entity_id'])
       .where('org_id', '=', ctx.orgId)
       .where(sql<boolean>`pg_catalog.regexp_replace(external_account_id, '[^0-9]', '', 'g') = ${digits}`)
@@ -72,7 +72,7 @@ export const bankAccountNumberSet = defineCommand({
     // no-op even at the limit; under the org's lock, so two records at once cannot both take the last place).
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.bank_account_number:${ctx.orgId}`}, 0))`.execute(ctx.trx);
     const held = await ctx.trx
-      .selectFrom('crove_finance.bank_account_number')
+      .selectFrom('ludy_finance.bank_account_number')
       .select((eb) => eb.fn.countAll<string>().as('n'))
       .where('org_id', '=', ctx.orgId)
       .executeTakeFirstOrThrow();
@@ -82,7 +82,7 @@ export const bankAccountNumberSet = defineCommand({
     // Under the number's lock the lookups above have seen every row the caller may read. A conflict here is a row that
     // row security hides from the caller (another entity's): the same answer as a visible one.
     const inserted = await ctx.trx
-      .insertInto('crove_finance.bank_account_number')
+      .insertInto('ludy_finance.bank_account_number')
       .values({ org_id: ctx.orgId, legal_entity_id: legalEntityId, bank_account: input.bankAccount, account_number: digits, created_by: ctx.actor.type === 'user' ? ctx.actor.userId : null })
       .onConflict((oc) => oc.columns(['org_id', 'account_number']).doNothing())
       .returning('id')
@@ -101,7 +101,7 @@ export const bankAccountNumberClear = defineCommand({
   access: MANAGERS,
   handler: async (ctx, input): Promise<{ id: string }> => {
     const removed = await ctx.trx
-      .deleteFrom('crove_finance.bank_account_number')
+      .deleteFrom('ludy_finance.bank_account_number')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
       .returning(['id', 'bank_account', 'legal_entity_id', 'account_number'])
@@ -118,7 +118,7 @@ export const bankAccountNumberList = defineQuery({
   access: MANAGERS,
   handler: async (ctx): Promise<BankAccountNumberView[]> => {
     const rows = await ctx.trx
-      .selectFrom('crove_finance.bank_account_number')
+      .selectFrom('ludy_finance.bank_account_number')
       .select(['id', 'bank_account', 'account_number', 'legal_entity_id', 'created_at'])
       .where('org_id', '=', ctx.orgId)
       .orderBy('bank_account')

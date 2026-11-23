@@ -6,12 +6,12 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
-import type { AccountMetricsInput, AccountMetricsResult, Publisher, PublishResult } from '@crove/channel';
-import { socialCommands, socialQueries, sweepAccounts, utcDay, type AccountTrend } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
+import type { AccountMetricsInput, AccountMetricsResult, Publisher, PublishResult } from '@ludy/channel';
+import { socialCommands, socialQueries, sweepAccounts, utcDay, type AccountTrend } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -85,15 +85,15 @@ suite('social account growth on PostgreSQL (#645)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 4 });
     appDb = createDb(appPool);
     workerDb = createDb(workerPool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
@@ -125,7 +125,7 @@ suite('social account growth on PostgreSQL (#645)', () => {
     expect(platform.asked.map((x) => x.externalAccountId).sort()).toEqual(['acct-a', 'acct-b', 'acct-c']);
     // The secret reached the adapter opened, never sealed.
     expect(platform.asked.every((x) => x.secret === JSON.stringify({ accessToken: 'sbx_test' }))).toBe(true);
-    const rows = await admin(async (cl) => (await cl.query<{ channel_connection_id: string; followers: string | null; reach: string | null; error: string | null }>('SELECT channel_connection_id, followers, reach, error FROM crove_social.account_snapshot WHERE org_id = $1 ORDER BY followers NULLS LAST, error', [o.orgId])).rows);
+    const rows = await admin(async (cl) => (await cl.query<{ channel_connection_id: string; followers: string | null; reach: string | null; error: string | null }>('SELECT channel_connection_id, followers, reach, error FROM ludy_social.account_snapshot WHERE org_id = $1 ORDER BY followers NULLS LAST, error', [o.orgId])).rows);
     expect(rows).toEqual([
       { channel_connection_id: a, followers: '1200', reach: '80', error: null },
       { channel_connection_id: c, followers: null, reach: null, error: 'no_answer' },
@@ -139,7 +139,7 @@ suite('social account growth on PostgreSQL (#645)', () => {
     // Earlier days, as the worker would have kept them.
     const day = (ago: number) => utcDay(new Date(Date.now() - ago * 86_400_000));
     await admin((cl) =>
-      cl.query('INSERT INTO crove_social.account_snapshot (org_id, channel_connection_id, captured_on, followers) VALUES ($1, $2, $3, 1100), ($1, $2, $4, 1150), ($1, $2, $5, 900)', [o.orgId, a, day(5), day(2), day(40)]),
+      cl.query('INSERT INTO ludy_social.account_snapshot (org_id, channel_connection_id, captured_on, followers) VALUES ($1, $2, $3, 1100), ($1, $2, $4, 1150), ($1, $2, $5, 900)', [o.orgId, a, day(5), day(2), day(40)]),
     );
     const week = await trends(o, 7);
     expect(week).toEqual([{ connectionId: a, provider: 'sandbox', points: [{ day: day(5), followers: 1100, reach: null }, { day: day(2), followers: 1150, reach: null }, { day: day(0), followers: 1200, reach: 80 }], audience: null, performance: [] }]);
@@ -155,7 +155,7 @@ suite('social account growth on PostgreSQL (#645)', () => {
     const stranger = await org();
     const live = await connect(o, 'acct-live');
     const gone = await connect(o, 'acct-gone');
-    await admin((cl) => cl.query("UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE id = $1", [gone]));
+    await admin((cl) => cl.query("UPDATE ludy_kernel.channel_connection SET status = 'expired' WHERE id = $1", [gone]));
     const platform = new FakeAccounts();
     platform.answers.set('acct-live', { followers: 10 });
     platform.answers.set('acct-gone', { followers: 99 });
@@ -163,7 +163,7 @@ suite('social account growth on PostgreSQL (#645)', () => {
     const boom = await connect(o, 'acct-boom');
     platform.throwing.add('acct-boom');
     await sweep(platform);
-    const kept = await admin(async (cl) => (await cl.query<{ error: string | null }>('SELECT error FROM crove_social.account_snapshot WHERE channel_connection_id = $1', [boom])).rows);
+    const kept = await admin(async (cl) => (await cl.query<{ error: string | null }>('SELECT error FROM ludy_social.account_snapshot WHERE channel_connection_id = $1', [boom])).rows);
     expect(kept).toEqual([{ error: 'no_answer' }]);
     expect(platform.asked.map((x) => x.externalAccountId)).toContain('acct-live');
     expect(platform.asked.map((x) => x.externalAccountId)).not.toContain('acct-gone');
@@ -174,11 +174,11 @@ suite('social account growth on PostgreSQL (#645)', () => {
     await expect(worker.execute('social.account.record', { connectionId: live, capturedOn: '2026-01-01', followers: 1 }, { actor: { type: 'system', component: 'test' }, orgId: stranger.orgId })).rejects.toMatchObject({ code: 'CHANNEL_NOT_FOUND' });
     // Append-only for tenant roles.
     const grants = await admin(async (cl) =>
-      (await cl.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'account_snapshot' ORDER BY 1")).rows.map((r) => r.privilege_type),
+      (await cl.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'ludy_tenant' AND table_schema = 'ludy_social' AND table_name = 'account_snapshot' ORDER BY 1")).rows.map((r) => r.privilege_type),
     );
     expect(grants).toEqual(['INSERT', 'SELECT']);
     // The scan is the worker's alone.
-    await expect(appPool.query("SELECT * FROM crove_social.account_snapshots_due(10, ARRAY['sandbox'])")).rejects.toMatchObject({ code: '42501' });
+    await expect(appPool.query("SELECT * FROM ludy_social.account_snapshots_due(10, ARRAY['sandbox'])")).rejects.toMatchObject({ code: '42501' });
   });
 
   // Who follows the account (#1146): asked for once a week per channel within the daily pass, kept on the day's
@@ -204,7 +204,7 @@ suite('social account growth on PostgreSQL (#645)', () => {
     // What the worker kept on earlier days: an audience 3 days ago, one 7 days ago, an ask 6 days ago that got nothing.
     await admin((cl) =>
       cl.query(
-        `INSERT INTO crove_social.account_snapshot (org_id, channel_connection_id, captured_on, followers, audience)
+        `INSERT INTO ludy_social.account_snapshot (org_id, channel_connection_id, captured_on, followers, audience)
          VALUES ($1, $2, $5, 1000, $8::jsonb), ($1, $3, $6, 1000, $8::jsonb), ($1, $4, $7, 1000, '{}'::jsonb)`,
         [o.orgId, recent, weekOld, askedEmpty, day(3), day(7), day(6), JSON.stringify(AUDIENCE)],
       ),
@@ -233,7 +233,7 @@ suite('social account growth on PostgreSQL (#645)', () => {
       'aud-week-old': true,
     });
     const today = async (conn: string) =>
-      (await admin(async (cl) => (await cl.query<{ followers: string | null; audience: unknown; error: string | null }>('SELECT followers, audience, error FROM crove_social.account_snapshot WHERE channel_connection_id = $1 AND captured_on = $2', [conn, day(0)])).rows))[0];
+      (await admin(async (cl) => (await cl.query<{ followers: string | null; audience: unknown; error: string | null }>('SELECT followers, audience, error FROM ludy_social.account_snapshot WHERE channel_connection_id = $1 AND captured_on = $2', [conn, day(0)])).rows))[0];
     expect(await today(fresh)).toEqual({ followers: '1500', audience: AUDIENCE, error: null });
     expect(await today(recent)).toEqual({ followers: '1510', audience: null, error: null });
     expect(await today(weekOld)).toEqual({ followers: '1520', audience: AUDIENCE, error: null });
@@ -261,7 +261,7 @@ suite('social account growth on PostgreSQL (#645)', () => {
     const older = { ...AUDIENCE, countries: [{ key: 'US', count: 5 }] };
     await admin((cl) =>
       cl.query(
-        `INSERT INTO crove_social.account_snapshot (org_id, channel_connection_id, captured_on, followers, audience)
+        `INSERT INTO ludy_social.account_snapshot (org_id, channel_connection_id, captured_on, followers, audience)
          VALUES ($1, $2, $4, 900, $6::jsonb), ($1, $2, $5, 1000, $7::jsonb), ($1, $2, $8, 1010, NULL), ($1, $3, $5, 50, '{}'::jsonb)`,
         [o.orgId, a, b, day(40), day(9), JSON.stringify(older), JSON.stringify(AUDIENCE), day(2)],
       ),
@@ -281,7 +281,7 @@ suite('social account growth on PostgreSQL (#645)', () => {
     const insert = async (audience: unknown) => {
       n += 1;
       try {
-        await admin((cl) => cl.query('INSERT INTO crove_social.account_snapshot (org_id, channel_connection_id, captured_on, audience) VALUES ($1, $2, $3, $4::jsonb)', [o.orgId, conn, day(100 + n), JSON.stringify(audience)]));
+        await admin((cl) => cl.query('INSERT INTO ludy_social.account_snapshot (org_id, channel_connection_id, captured_on, audience) VALUES ($1, $2, $3, $4::jsonb)', [o.orgId, conn, day(100 + n), JSON.stringify(audience)]));
         return 'ok';
       } catch (error) {
         return (error as { constraint?: string }).constraint ?? String(error);
@@ -313,7 +313,7 @@ suite('social account growth on PostgreSQL (#645)', () => {
     for (const audience of bad) expect([JSON.stringify(audience).slice(0, 60), await insert(audience)]).toEqual([JSON.stringify(audience).slice(0, 60), 'account_snapshot_audience_shape']);
     // The table stays append-only for tenant roles, the new column with it.
     const grants = await admin(async (cl) =>
-      (await cl.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'account_snapshot' ORDER BY 1")).rows.map((r) => r.privilege_type),
+      (await cl.query<{ privilege_type: string }>("SELECT privilege_type FROM information_schema.role_table_grants WHERE grantee = 'ludy_tenant' AND table_schema = 'ludy_social' AND table_name = 'account_snapshot' ORDER BY 1")).rows.map((r) => r.privilege_type),
     );
     expect(grants).toEqual(['INSERT', 'SELECT']);
   });

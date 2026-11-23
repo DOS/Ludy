@@ -8,9 +8,16 @@ import { FOLLOWUP_MAIL_TEMPLATE, followupMailTemplate } from './followup-mail.ts
 import { MISSING_INVOICE_TEMPLATE, missingInvoiceMailTemplate } from './missing-invoice-mail.ts';
 import { notificationMailTemplate } from './notification-mail.ts';
 import { PAYMENT_REMINDER_TEMPLATE, paymentReminderMailTemplate } from './payment-reminder-mail.ts';
+import { ROADMAP_OTP_MAIL_TEMPLATE, ROADMAP_SHIPPED_MAIL_TEMPLATE } from '@ludy/kernel-contract';
+import { projectWeeklyStatusMailTemplate } from './project-weekly-status-mail.ts';
+import { roadmapOtpMailTemplate } from './roadmap-otp-mail.ts';
+import { roadmapShippedMailTemplate } from './roadmap-shipped-mail.ts';
 import { proposalReminderMailTemplate } from './proposal-reminder-mail.ts';
 import { QUOTE_MAIL_TEMPLATE, quoteMailTemplate } from './quote-mail.ts';
 import { reportMailTemplate } from './report-mail.ts';
+import { signMailTemplates } from './sign-mail.ts';
+import { morningMailTemplate } from './morning-mail.ts';
+import { summaryReadyMailTemplate } from './summary-ready-mail.ts';
 import { todayMailTemplate } from './today-mail.ts';
 import { usageDeferredMailTemplate } from './usage-deferred-mail.ts';
 
@@ -39,4 +46,16 @@ export const MAIL_TEMPLATES: MailTemplates = {
   [QUOTE_MAIL_TEMPLATE]: quoteMailTemplate,
   // The follow-up of a meeting, sent by the recorder's click with the published summary (L3, #2590).
   [FOLLOWUP_MAIL_TEMPLATE]: followupMailTemplate,
+  // The recorder's "minutes draft ready" mail: a fixed line and the link, no title and no text of the draft (#3730).
+  'meetings.summary_ready': summaryReadyMailTemplate,
+  // The member's opt-in morning mail of the day's meetings: a fixed line with the count and the link to the meetings page, no title (#3955).
+  'meetings.morning': morningMailTemplate,
+  // A project's weekly status shared by email to project members (#2609).
+  'projects.weekly_status': projectWeeklyStatusMailTemplate,
+  // Public roadmap 6-digit email OTP verification (#4399, ADR-0057).
+  [ROADMAP_OTP_MAIL_TEMPLATE]: roadmapOtpMailTemplate,
+  // Public roadmap opt-in shipped changelog alerts (#4400, ADR-0057).
+  [ROADMAP_SHIPPED_MAIL_TEMPLATE]: roadmapShippedMailTemplate,
+  // Public eSign invitation, reminder, OTP verification, and completed document notifications (#3324).
+  ...signMailTemplates,
 };

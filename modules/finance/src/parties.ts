@@ -10,10 +10,10 @@
 // receivable, whatever they pass. Its customers are the parties with a sale or a 131 line in that entity's books.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { CUSTOMER_PAGE_SIZE, zCustomerCursor, zId, type CustomerPage } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { defineQuery } from '@crove/kernel-runtime';
-import { RECEIVABLE_ACCOUNT } from '@crove/l10n-vn';
+import { CUSTOMER_PAGE_SIZE, zCustomerCursor, zId, type CustomerPage } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { defineQuery } from '@ludy/kernel-runtime';
+import { RECEIVABLE_ACCOUNT } from '@ludy/l10n-vn';
 import { canonical, parseDecimal } from './domain/money.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 
@@ -31,9 +31,9 @@ export const customersList = defineQuery({
       // Per customer, the sales documents still in the books: a voided one (#165) is no longer a sale of the org.
       .with('sales', (db) =>
         db
-          .selectFrom('crove_finance.purchase_document as d')
-          .innerJoin('crove_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'd.org_id').onRef('x.id', '=', 'd.party_id'))
-          .leftJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
+          .selectFrom('ludy_finance.purchase_document as d')
+          .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'd.org_id').onRef('x.id', '=', 'd.party_id'))
+          .leftJoin('ludy_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
           .select(kept.as('party_id'))
           .select((eb) => [
             eb.fn.count<string>('d.id').filterWhere('v.document_id', 'is', null).as('invoice_count'),
@@ -48,8 +48,8 @@ export const customersList = defineQuery({
       // the whole subtree, as the financial statements read it.
       .with('receivable', (db) =>
         db
-          .selectFrom('crove_finance.journal_line as l')
-          .innerJoin('crove_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'l.org_id').onRef('x.id', '=', 'l.party_id'))
+          .selectFrom('ludy_finance.journal_line as l')
+          .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'l.org_id').onRef('x.id', '=', 'l.party_id'))
           .select(kept.as('party_id'))
           .select(sql<string>`sum(l.debit - l.credit)`.as('balance'))
           .where('l.org_id', '=', ctx.orgId)
@@ -57,14 +57,14 @@ export const customersList = defineQuery({
           .where('l.account_code', 'like', `${RECEIVABLE_ACCOUNT}%`)
           .groupBy(kept),
       )
-      .selectFrom('crove_kernel.party as p')
+      .selectFrom('ludy_kernel.party as p')
       .leftJoin('sales as s', 's.party_id', 'p.id')
       .leftJoin('receivable as r', 'r.party_id', 'p.id')
       .select(['p.id', 'p.name', 'p.tax_code', 'p.address', 'p.email', 'p.phone', 'p.version', 's.invoice_count', 's.last_invoice_date', 'r.balance'])
       .select(
         sql<Array<{ id: string; name: string; taxCode: string | null }>>`(
           SELECT coalesce(json_agg(json_build_object('id', x.id, 'name', x.name, 'taxCode', x.tax_code) ORDER BY x.name, x.id), '[]'::json)
-            FROM crove_kernel.party x WHERE x.org_id = p.org_id AND x.duplicate_of = p.id)`.as('duplicates'),
+            FROM ludy_kernel.party x WHERE x.org_id = p.org_id AND x.duplicate_of = p.id)`.as('duplicates'),
       )
       .where('p.org_id', '=', ctx.orgId)
       .where('p.duplicate_of', 'is', null)
@@ -77,7 +77,7 @@ export const customersList = defineQuery({
       // Found by the name or tax code of the customer or of any of its duplicates.
       const term = `%${input.q.toLowerCase()}%`;
       query = query.where(
-        sql<boolean>`EXISTS (SELECT 1 FROM crove_kernel.party m WHERE m.org_id = p.org_id AND (m.id = p.id OR m.duplicate_of = p.id) AND (lower(m.name) LIKE ${term} OR m.tax_code LIKE ${term}))`,
+        sql<boolean>`EXISTS (SELECT 1 FROM ludy_kernel.party m WHERE m.org_id = p.org_id AND (m.id = p.id OR m.duplicate_of = p.id) AND (lower(m.name) LIKE ${term} OR m.tax_code LIKE ${term}))`,
       );
     }
     if (input.after) query = query.where(sql<boolean>`(p.name, p.id) > (${input.after.name}, ${input.after.id}::uuid)`);

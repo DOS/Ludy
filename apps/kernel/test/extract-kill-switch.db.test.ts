@@ -5,11 +5,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -47,9 +47,9 @@ suite('kill switches and AI extraction on PostgreSQL (#886)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -58,7 +58,7 @@ suite('kill switches and AI extraction on PostgreSQL (#886)', () => {
     rt = register(db);
     // The extraction job runs in the worker, as the system.
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = 'ludy_worker';
     workerUrl.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: workerUrl.toString(), max: 2 });
     worker = register(createDb(workerPool));
@@ -81,7 +81,7 @@ suite('kill switches and AI extraction on PostgreSQL (#886)', () => {
     const sha = 'a'.repeat(64);
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, filename, content_type, size_bytes, source)
          VALUES ($1, $2, $3, $4, 'hd.pdf', 'application/pdf', 10, 'upload')`,
         [orgId, fileId, sha, `org/${orgId}/${sha}`],
       ),
@@ -102,33 +102,33 @@ suite('kill switches and AI extraction on PostgreSQL (#886)', () => {
     expect(await stopped()).toBe(false);
     // A switch for one agent stops that agent's runs, not the org's document reading.
     await admin((c) =>
-      c.query(`INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'agent', $2, $3)`, [orgId, randomUUID(), owner]),
+      c.query(`INSERT INTO ludy_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, 'agent', $2, $3)`, [orgId, randomUUID(), owner]),
     );
     expect(await stopped()).toBe(false);
 
     // The operator's switch for every org (#886 part 2): only the database owner flips it, every runtime role reads it.
-    const set = (engaged: boolean) => admin((c) => c.query(`SELECT crove_kernel.global_kill_switch_set('ai', $1, 'thử', 'ops')`, [engaged]));
+    const set = (engaged: boolean) => admin((c) => c.query(`SELECT ludy_kernel.global_kill_switch_set('ai', $1, 'thử', 'ops')`, [engaged]));
     await set(true);
     expect(await stopped()).toBe(true);
     await set(false);
     expect(await stopped()).toBe(false);
-    for (const [role, password] of [['crove_app', 'test-app-pw'], ['crove_worker', 'test-worker-pw']] as const) {
+    for (const [role, password] of [['ludy_app', 'test-app-pw'], ['ludy_worker', 'test-worker-pw']] as const) {
       const url = new URL(adminUrl);
       url.username = role;
       url.password = password;
       const c = new pg.Client({ connectionString: url.toString() });
       await c.connect();
       try {
-        expect((await c.query(`SELECT crove_kernel.global_kill_switch_on('ai') AS on`)).rows[0]).toEqual({ on: false });
-        await expect(c.query(`SELECT crove_kernel.global_kill_switch_set('ai', true, 'x', 'y')`), role).rejects.toMatchObject({ code: '42501' });
-        await expect(c.query('SELECT * FROM crove_kernel.global_kill_switch'), role).rejects.toMatchObject({ code: '42501' });
+        expect((await c.query(`SELECT ludy_kernel.global_kill_switch_on('ai') AS on`)).rows[0]).toEqual({ on: false });
+        await expect(c.query(`SELECT ludy_kernel.global_kill_switch_set('ai', true, 'x', 'y')`), role).rejects.toMatchObject({ code: '42501' });
+        await expect(c.query('SELECT * FROM ludy_kernel.global_kill_switch'), role).rejects.toMatchObject({ code: '42501' });
       } finally {
         await c.end();
       }
     }
     // The history is append-only, for the owner too.
-    await expect(admin((c) => c.query(`UPDATE crove_kernel.global_kill_switch SET engaged = true`))).rejects.toThrow();
-    const history = await admin(async (c) => (await c.query(`SELECT key, engaged, reason, changed_by FROM crove_kernel.global_kill_switch ORDER BY changed_at, id`)).rows);
+    await expect(admin((c) => c.query(`UPDATE ludy_kernel.global_kill_switch SET engaged = true`))).rejects.toThrow();
+    const history = await admin(async (c) => (await c.query(`SELECT key, engaged, reason, changed_by FROM ludy_kernel.global_kill_switch ORDER BY changed_at, id`)).rows);
     expect(history).toEqual([
       { key: 'ai', engaged: true, reason: 'thử', changed_by: 'ops' },
       { key: 'ai', engaged: false, reason: 'thử', changed_by: 'ops' },

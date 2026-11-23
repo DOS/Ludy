@@ -3,9 +3,9 @@
 // new file, so the original stays untouched and nothing is drawn on the server. Owners and admins edit; everyone reads.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import { SOCIAL_WATERMARK_CORNERS, type MemberRole, type SocialWatermarkCorner } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import { SOCIAL_WATERMARK_CORNERS, type MemberRole, type SocialWatermarkCorner } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
@@ -26,8 +26,8 @@ function requireUser(ctx: CommandContext): string {
 }
 
 async function lockWatermark(ctx: CommandContext) {
-  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`crove_social.watermark:${ctx.orgId}`}))`.execute(ctx.trx);
-  return ctx.trx.selectFrom('crove_social.watermark').select('id').where('org_id', '=', ctx.orgId).orderBy('created_at').orderBy('id').execute();
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`ludy_social.watermark:${ctx.orgId}`}))`.execute(ctx.trx);
+  return ctx.trx.selectFrom('ludy_social.watermark').select('id').where('org_id', '=', ctx.orgId).orderBy('created_at').orderBy('id').execute();
 }
 
 export const watermarkSave = defineCommand({
@@ -40,7 +40,7 @@ export const watermarkSave = defineCommand({
     const userId = requireUser(ctx);
     // An image of the org's Social library, as a post's images are.
     const file = await ctx.trx
-      .selectFrom('crove_kernel.file')
+      .selectFrom('ludy_kernel.file')
       .select('content_type')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.fileId)
@@ -51,10 +51,10 @@ export const watermarkSave = defineCommand({
     const existing = await lockWatermark(ctx);
     const first = existing[0];
     if (first) {
-      await ctx.trx.updateTable('crove_social.watermark').set(values).where('org_id', '=', ctx.orgId).where('id', '=', first.id).execute();
+      await ctx.trx.updateTable('ludy_social.watermark').set(values).where('org_id', '=', ctx.orgId).where('id', '=', first.id).execute();
     } else {
       await ctx.trx
-        .insertInto('crove_social.watermark')
+        .insertInto('ludy_social.watermark')
         .values({ org_id: ctx.orgId, ...values, created_at: ctx.now })
         .execute();
     }
@@ -74,7 +74,7 @@ export const watermarkRemove = defineCommand({
     const rows = await lockWatermark(ctx);
     if (rows.length > 0)
       await ctx.trx
-        .deleteFrom('crove_social.watermark')
+        .deleteFrom('ludy_social.watermark')
         .where('org_id', '=', ctx.orgId)
         .where(
           'id',
@@ -103,8 +103,8 @@ export const watermarkGet = defineQuery({
   access: ALL,
   handler: async (ctx): Promise<Watermark | null> => {
     const row = await ctx.trx
-      .selectFrom('crove_social.watermark as w')
-      .innerJoin('crove_kernel.file as f', (j) => j.onRef('f.org_id', '=', 'w.org_id').onRef('f.id', '=', 'w.file_id'))
+      .selectFrom('ludy_social.watermark as w')
+      .innerJoin('ludy_kernel.file as f', (j) => j.onRef('f.org_id', '=', 'w.org_id').onRef('f.id', '=', 'w.file_id'))
       .select(['w.file_id', 'f.content_type', 'w.corner', 'w.scale_percent', 'w.opacity_percent', 'w.updated_at'])
       .where('w.org_id', '=', ctx.orgId)
       .orderBy('w.created_at')

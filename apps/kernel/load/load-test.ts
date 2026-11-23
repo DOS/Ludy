@@ -14,7 +14,7 @@
 //   - The party list and search queries over the seeded parties (finance.vendors.list, finance.customers.list,
 //     finance.search): p95 per query. Reported, no target in the plan.
 //   - The outbox: kernel.file.ingest at --rate commands per second for --seconds while one relay loop claims the events
-//     the way the worker does (crove_kernel.outbox_claim, 100 at a time). Lag is from the event's emit to its claim,
+//     the way the worker does (ludy_kernel.outbox_claim, 100 at a time). Lag is from the event's emit to its claim,
 //     both by the database clock: an event id is a UUIDv7 whose first 48 bits are the emit time in milliseconds. Targets: p95 lag < 2 s, at least 50 events per second relayed.
 //     The relay here claims and drops; the worker also sends each claimed event to its job queue, so this is the
 //     database's share of the lag.
@@ -33,11 +33,11 @@ import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import { sql } from 'kysely';
 import pg from 'pg';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelManifest, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, contentGeneration, fileKey, type Actor } from '@crove/kernel-runtime';
-import { financeCommands, financeManifest, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelManifest, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, contentGeneration, fileKey, type Actor } from '@ludy/kernel-runtime';
+import { financeCommands, financeManifest, financeQueries } from '@ludy/mod-finance';
 import { PgBoss } from 'pg-boss';
 import { BACK_PRESSURE_CHECK_MS, DEFAULT_OUTBOX_LAG_PAUSE_SECONDS, PausableWork, checkBackPressure, outboxLagSeconds } from '../src/back-pressure.ts';
 import { jobKey } from '../src/job-keys.ts';
@@ -87,7 +87,7 @@ const INTEGER_FLAGS = {
 } as const;
 
 export function parseLoadArgs(argv: readonly string[], env: Record<string, string | undefined> = {}): LoadArgs {
-  const args: LoadArgs = { adminUrl: env.CROVE_TEST_ADMIN_URL ?? '', ...DEFAULT_LOAD_ARGS };
+  const args: LoadArgs = { adminUrl: env.LUDY_TEST_ADMIN_URL ?? env.CROVE_TEST_ADMIN_URL ?? '', ...DEFAULT_LOAD_ARGS };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i] as string;
     if (flag === '--keep') {
@@ -106,7 +106,7 @@ export function parseLoadArgs(argv: readonly string[], env: Record<string, strin
     if (!Number.isInteger(n) || n < 1 || n > 1_000_000) throw new Error(`${flag} must be a whole number from 1 to 1000000`);
     args[key] = n;
   }
-  if (!args.adminUrl) throw new Error('--admin-url (or CROVE_TEST_ADMIN_URL) is required: a superuser URL of a PostgreSQL 17 server');
+  if (!args.adminUrl) throw new Error('--admin-url (or LUDY_TEST_ADMIN_URL / CROVE_TEST_ADMIN_URL) is required: a superuser URL of a PostgreSQL 17 server');
   return args;
 }
 
@@ -586,10 +586,10 @@ export async function runLoad(args: LoadArgs, log: (line: string) => void = cons
     log(`database ${dbName}: migrating`);
     // The image sets MIGRATIONS_DIR; a checkout uses the repository's migrations.
     await migrate({ adminUrl, dir: process.env.MIGRATIONS_DIR ?? fileURLToPath(new URL('../../../supabase/migrations', import.meta.url)) });
-    await setRolePasswords(adminUrl, { crove_app: appPassword, crove_worker: workerPassword });
-    appPool = createPool({ connectionString: login(adminUrl, 'crove_app', appPassword), max: args.concurrency + 2 });
+    await setRolePasswords(adminUrl, { ludy_app: appPassword, ludy_worker: workerPassword });
+    appPool = createPool({ connectionString: login(adminUrl, 'ludy_app', appPassword), max: args.concurrency + 2 });
     // The relay, the lag sampler and the back-pressure check each hold one at a time.
-    workerPool = createPool({ connectionString: login(adminUrl, 'crove_worker', workerPassword), max: 4 });
+    workerPool = createPool({ connectionString: login(adminUrl, 'ludy_worker', workerPassword), max: 4 });
     const db: Db = createDb(appPool);
     const worker: Db = createDb(workerPool);
     // Input hashes keyed as the server writes them (#1732), so the run measures their cost too.
@@ -609,19 +609,19 @@ export async function runLoad(args: LoadArgs, log: (line: string) => void = cons
     await admin.connect();
     try {
       await admin.query(
-        `INSERT INTO crove_kernel.party (org_id, name, tax_code, address)
+        `INSERT INTO ludy_kernel.party (org_id, name, tax_code, address)
          SELECT $1, 'Công ty TNHH Thử tải ' || n, '8' || lpad(n::text, 9, '0'), 'Số ' || n || ' Đường Thử, Quận 1, TP Hồ Chí Minh'
          FROM generate_series(1, $2) AS n`,
         [orgId, args.parties],
       );
-      await admin.query('ANALYZE crove_kernel.party');
+      await admin.query('ANALYZE ludy_kernel.party');
     } finally {
       await admin.end();
     }
     // Parties to edit, read in the org's context (the app role sees tenant rows only there).
     const ids = await db.transaction().execute(async (trx) => {
-      await sql`SELECT crove_kernel.enter_context(${userId}::uuid, ${orgId}::uuid)`.execute(trx);
-      return (await sql<{ id: string; tax_code: string | null }>`SELECT id, tax_code FROM crove_kernel.party ORDER BY random() LIMIT ${args.commands}`.execute(trx)).rows;
+      await sql`SELECT ludy_kernel.enter_context(${userId}::uuid, ${orgId}::uuid)`.execute(trx);
+      return (await sql<{ id: string; tax_code: string | null }>`SELECT id, tax_code FROM ludy_kernel.party ORDER BY random() LIMIT ${args.commands}`.execute(trx)).rows;
     });
 
     log(`running ${args.commands} kernel.party.update and ${args.commands} kernel.file.ingest, ${args.concurrency} at a time`);
@@ -669,7 +669,7 @@ export async function runLoad(args: LoadArgs, log: (line: string) => void = cons
               await sql<{ lag_ms: number }>`
                 SELECT extract(epoch FROM clock_timestamp()) * 1000
                        - ('x' || substr(replace(event_id::text, '-', ''), 1, 12))::bit(48)::bigint AS lag_ms
-                FROM crove_kernel.outbox_claim(100)`.execute(trx)
+                FROM ludy_kernel.outbox_claim(100)`.execute(trx)
             ).rows,
         )
       ).map((r) => Number(r.lag_ms));
@@ -714,7 +714,7 @@ export async function runLoad(args: LoadArgs, log: (line: string) => void = cons
     const drainSeconds = (performance.now() - drainStarted) / 1000;
 
     const backPressure = await measureBackPressure({
-      bossUrl: login(adminUrl, 'crove_worker', workerPassword),
+      bossUrl: login(adminUrl, 'ludy_worker', workerPassword),
       worker,
       orgId,
       ingest,

@@ -8,9 +8,10 @@
 // answer never grows past what the server and the browser can hold).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { NOTES_EXPORT_LIMIT, NOTES_EXPORT_TEXT, type NotesExport } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { NOTES_EXPORT_LIMIT, NOTES_EXPORT_TEXT, parseTodoRecurrence, type NoteVisibility, type NotesExport, type TodoPriority } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
+import { listColorOf, parseSections } from './todos.ts';
 
 // Whoever has notes may take them: a member who became a viewer keeps what they wrote.
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -29,7 +30,7 @@ export const notesExportMine = defineQuery({
       SELECT id, (n <= ${NOTES_EXPORT_LIMIT} AND running <= ${NOTES_EXPORT_TEXT}) AS fits FROM (
         SELECT id, pg_catalog.row_number() OVER w AS n,
                pg_catalog.sum(pg_catalog.length(title) + pg_catalog.length(body) + pg_catalog.length(pg_catalog.array_to_string(tags, ' '))) OVER w AS running
-          FROM crove_notes.note
+          FROM ludy_notes.note
          WHERE org_id = ${ctx.orgId}::uuid AND author_user_id = ${userId}::uuid
         WINDOW w AS (ORDER BY created_at DESC, id)) t
        ORDER BY n LIMIT ${NOTES_EXPORT_LIMIT + 1}`.execute(ctx.trx);
@@ -38,66 +39,234 @@ export const notesExportMine = defineQuery({
       (
         await sql<{ used: string | null }>`
           SELECT pg_catalog.sum(pg_catalog.length(title) + pg_catalog.length(body) + pg_catalog.length(pg_catalog.array_to_string(tags, ' '))) AS used
-            FROM crove_notes.note WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${noteIds.filter((r) => r.fits).map((r) => r.id)}::uuid[])`.execute(ctx.trx)
+            FROM ludy_notes.note WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${noteIds.filter((r) => r.fits).map((r) => r.id)}::uuid[])`.execute(ctx.trx)
       ).rows[0]?.used ?? 0,
     );
     const { rows: todoIds } = await sql<{ id: string; fits: boolean }>`
       SELECT id, (n <= ${NOTES_EXPORT_LIMIT} AND running <= ${NOTES_EXPORT_TEXT - used}) AS fits FROM (
         SELECT id, pg_catalog.row_number() OVER w AS n,
-               pg_catalog.sum(pg_catalog.length(title) + COALESCE(pg_catalog.length(details), 0) + pg_catalog.length(checklist::text)) OVER w AS running
-          FROM crove_notes.todo
+               pg_catalog.sum(
+                 pg_catalog.length(title)
+                 + COALESCE(pg_catalog.length(details), 0)
+                 + pg_catalog.length(checklist::text)
+                 + pg_catalog.length(pg_catalog.array_to_string(tags, ' '))
+               ) OVER w AS running
+          FROM ludy_notes.todo
          WHERE org_id = ${ctx.orgId}::uuid AND owner_user_id = ${userId}::uuid
         WINDOW w AS (ORDER BY created_at DESC, id)) t
        ORDER BY n LIMIT ${NOTES_EXPORT_LIMIT + 1}`.execute(ctx.trx);
     const noteKeep = noteIds.filter((r) => r.fits).map((r) => r.id);
     const todoKeep = todoIds.filter((r) => r.fits).map((r) => r.id);
+    const todoUsed = Number(
+      (
+        await sql<{ used: string | null }>`
+          SELECT pg_catalog.sum(
+                   pg_catalog.length(title)
+                   + COALESCE(pg_catalog.length(details), 0)
+                   + pg_catalog.length(checklist::text)
+                   + pg_catalog.length(pg_catalog.array_to_string(tags, ' '))
+                 ) AS used
+            FROM ludy_notes.todo WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${todoKeep}::uuid[])`.execute(ctx.trx)
+      ).rows[0]?.used ?? 0,
+    );
+    const { rows: todoListIds } = await sql<{ id: string; fits: boolean }>`
+      SELECT id, (n <= ${NOTES_EXPORT_LIMIT} AND running <= ${NOTES_EXPORT_TEXT - used - todoUsed}) AS fits FROM (
+        SELECT id, pg_catalog.row_number() OVER w AS n,
+               pg_catalog.sum(pg_catalog.length(name) + pg_catalog.length(sections::text)) OVER w AS running
+          FROM ludy_notes.todo_list
+         WHERE org_id = ${ctx.orgId}::uuid AND owner_user_id = ${userId}::uuid
+        WINDOW w AS (ORDER BY sort_key, id)) l
+       ORDER BY n LIMIT ${NOTES_EXPORT_LIMIT + 1}`.execute(ctx.trx);
+    const listKeep = todoListIds.filter((r) => r.fits).map((r) => r.id);
+    const listUsed = Number(
+      (
+        await sql<{ used: string | null }>`
+          SELECT pg_catalog.sum(pg_catalog.length(name) + pg_catalog.length(sections::text)) AS used
+            FROM ludy_notes.todo_list WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${listKeep}::uuid[])`.execute(ctx.trx)
+      ).rows[0]?.used ?? 0,
+    );
+    const { rows: notebookIds } = await sql<{ id: string; fits: boolean }>`
+      SELECT id, (n <= ${NOTES_EXPORT_LIMIT} AND running <= ${NOTES_EXPORT_TEXT - used - todoUsed - listUsed}) AS fits FROM (
+        SELECT id, pg_catalog.row_number() OVER w AS n,
+               pg_catalog.sum(pg_catalog.length(name) + COALESCE(pg_catalog.length(stack_name), 0)) OVER w AS running
+          FROM ludy_notes.notebook
+         WHERE org_id = ${ctx.orgId}::uuid AND author_user_id = ${userId}::uuid
+        WINDOW w AS (ORDER BY sort_key, id)) b
+       ORDER BY n LIMIT ${NOTES_EXPORT_LIMIT + 1}`.execute(ctx.trx);
+    const notebookKeep = notebookIds.filter((r) => r.fits).map((r) => r.id);
+    const notebookUsed = Number(
+      (
+        await sql<{ used: string | null }>`
+          SELECT pg_catalog.sum(pg_catalog.length(name) + COALESCE(pg_catalog.length(stack_name), 0)) AS used
+            FROM ludy_notes.notebook WHERE org_id = ${ctx.orgId}::uuid AND id = ANY(${notebookKeep}::uuid[])`.execute(ctx.trx)
+      ).rows[0]?.used ?? 0,
+    );
+    const { rows: templateIds } = await sql<{ id: string; fits: boolean }>`
+      SELECT id, (n <= ${NOTES_EXPORT_LIMIT} AND running <= ${NOTES_EXPORT_TEXT - used - todoUsed - listUsed - notebookUsed}) AS fits FROM (
+        SELECT id, pg_catalog.row_number() OVER w AS n,
+               pg_catalog.sum(
+                 pg_catalog.length(name)
+                 + pg_catalog.length(title)
+                 + pg_catalog.length(body)
+                 + pg_catalog.length(pg_catalog.array_to_string(tags, ' '))
+               ) OVER w AS running
+          FROM ludy_notes.note_template
+         WHERE org_id = ${ctx.orgId}::uuid AND author_user_id = ${userId}::uuid
+        WINDOW w AS (ORDER BY created_at DESC, id)) tpl
+       ORDER BY n LIMIT ${NOTES_EXPORT_LIMIT + 1}`.execute(ctx.trx);
+    const templateKeep = templateIds.filter((r) => r.fits).map((r) => r.id);
     const notes =
       noteKeep.length === 0
         ? []
         : await ctx.trx
-            .selectFrom('crove_notes.note')
-            .select(['id', 'visibility', 'title', 'body', 'tags', 'pinned', 'created_at', 'updated_at', 'archived_at', 'deleted_at'])
+            .selectFrom('ludy_notes.note')
+            .select(['id', 'notebook_id', 'visibility', 'title', 'body', 'tags', 'pinned', 'created_at', 'updated_at', 'archived_at', 'deleted_at'])
             .where('org_id', '=', ctx.orgId)
             .where('author_user_id', '=', userId)
             .where('id', 'in', noteKeep)
             .orderBy('created_at', 'desc')
             .orderBy('id')
             .execute();
+    const notebooks =
+      notebookKeep.length === 0
+        ? []
+        : await ctx.trx
+            .selectFrom('ludy_notes.notebook')
+            .select(['id', 'visibility', 'name', 'stack_name', 'pinned', 'sort_key', 'created_at', 'updated_at'])
+            .where('org_id', '=', ctx.orgId)
+            .where('author_user_id', '=', userId)
+            .where('id', 'in', notebookKeep)
+            .orderBy('sort_key')
+            .orderBy('id')
+            .execute();
     const todos =
       todoKeep.length === 0
         ? []
         : await ctx.trx
-            .selectFrom('crove_notes.todo')
-            .select(['id', 'title', 'details', 'checklist', 'status', 'due_on', 'due_at', 'time_zone', 'remind_at', 'created_at', 'updated_at', 'done_at', 'deleted_at', 'source_note_id', 'task_id'])
+            .selectFrom('ludy_notes.todo')
+            .select([
+              'id',
+              'title',
+              'details',
+              'checklist',
+              'status',
+              'priority',
+              'tags',
+              'list_id',
+              'section_id',
+              'due_on',
+              'due_at',
+              'time_zone',
+              'remind_at',
+              'created_at',
+              'updated_at',
+              'done_at',
+              'deleted_at',
+              'source_note_id',
+              'task_id',
+              'recurrence',
+              'series_id',
+            ])
             .where('org_id', '=', ctx.orgId)
             .where('owner_user_id', '=', userId)
             .where('id', 'in', todoKeep)
             .orderBy('created_at', 'desc')
             .orderBy('id')
             .execute();
-
-    const ids = notes.map((n) => n.id);
-    const links =
-      ids.length === 0
+    const todoLists =
+      listKeep.length === 0
         ? []
         : await ctx.trx
-            .selectFrom('crove_notes.link')
-            .select(['note_id', 'target_type', 'target_id'])
+            .selectFrom('ludy_notes.todo_list')
+            .select(['id', 'name', 'color', 'sections', 'sort_key', 'created_at', 'updated_at', 'deleted_at'])
             .where('org_id', '=', ctx.orgId)
-            .where('note_id', 'in', ids)
+            .where('owner_user_id', '=', userId)
+            .where('id', 'in', listKeep)
+            .orderBy('sort_key')
+            .orderBy('id')
+            .execute();
+    const templates =
+      templateKeep.length === 0
+        ? []
+        : await ctx.trx
+            .selectFrom('ludy_notes.note_template')
+            .select(['id', 'visibility', 'name', 'title', 'body', 'tags', 'created_at', 'updated_at'])
+            .where('org_id', '=', ctx.orgId)
+            .where('author_user_id', '=', userId)
+            .where('id', 'in', templateKeep)
+            .orderBy('created_at', 'desc')
+            .orderBy('id')
+            .execute();
+
+    const noteIdsList = notes.map((n) => n.id);
+    const todoIdsList = todos.map((t) => t.id);
+    const links =
+      noteIdsList.length === 0 && todoIdsList.length === 0
+        ? []
+        : await ctx.trx
+            .selectFrom('ludy_notes.link')
+            .select(['note_id', 'todo_id', 'target_type', 'target_id'])
+            .where('org_id', '=', ctx.orgId)
+            .where((eb) => {
+              const clauses = [];
+              if (noteIdsList.length > 0) clauses.push(eb('note_id', 'in', noteIdsList));
+              if (todoIdsList.length > 0) clauses.push(eb('todo_id', 'in', todoIdsList));
+              return eb.or(clauses);
+            })
             .orderBy('created_at')
             .orderBy('id')
             .execute();
-    const linksOf = new Map<string, { targetType: string; targetId: string }[]>();
+    const noteLinksOf = new Map<string, { targetType: string; targetId: string }[]>();
+    const todoLinksOf = new Map<string, { targetType: string; targetId: string }[]>();
     for (const l of links) {
-      const list = linksOf.get(l.note_id) ?? [];
+      const targetMap = l.note_id !== null ? noteLinksOf : todoLinksOf;
+      const ownerId = l.note_id ?? l.todo_id;
+      if (ownerId === null) continue;
+      const list = targetMap.get(ownerId) ?? [];
       list.push({ targetType: l.target_type, targetId: l.target_id });
-      linksOf.set(l.note_id, list);
+      targetMap.set(ownerId, list);
+    }
+    const attachments =
+      noteIdsList.length === 0
+        ? []
+        : await ctx.trx
+            .selectFrom('ludy_notes.attachment')
+            .select(['id', 'note_id', 'filename', 'content_type', 'size_bytes', 'sha256', 'extract_status', 'created_at'])
+            .where('org_id', '=', ctx.orgId)
+            .where('note_id', 'in', noteIdsList)
+            .orderBy('created_at', 'asc')
+            .orderBy('id', 'asc')
+            .execute();
+    const noteAttachmentsOf = new Map<
+      string,
+      Array<{
+        id: string;
+        filename: string;
+        contentType: string;
+        sizeBytes: number;
+        sha256: string;
+        extractStatus: 'pending' | 'done' | 'skipped' | 'failed';
+        createdAt: string;
+      }>
+    >();
+    for (const a of attachments) {
+      const list = noteAttachmentsOf.get(a.note_id) ?? [];
+      list.push({
+        id: a.id,
+        filename: a.filename,
+        contentType: a.content_type,
+        sizeBytes: a.size_bytes,
+        sha256: a.sha256,
+        extractStatus: a.extract_status,
+        createdAt: new Date(a.created_at).toISOString(),
+      });
+      noteAttachmentsOf.set(a.note_id, list);
     }
     return {
       exportedAt: new Date().toISOString(),
       notes: notes.map((n) => ({
         id: n.id,
+        notebookId: n.notebook_id,
         visibility: n.visibility,
         title: n.title,
         body: n.body,
@@ -107,7 +276,18 @@ export const notesExportMine = defineQuery({
         updatedAt: new Date(n.updated_at).toISOString(),
         archivedAt: iso(n.archived_at),
         deletedAt: iso(n.deleted_at),
-        links: linksOf.get(n.id) ?? [],
+        links: noteLinksOf.get(n.id) ?? [],
+        attachments: noteAttachmentsOf.get(n.id) ?? [],
+      })),
+      notebooks: notebooks.map((b) => ({
+        id: b.id,
+        visibility: b.visibility,
+        name: b.name,
+        stackName: b.stack_name,
+        pinned: b.pinned,
+        sortKey: b.sort_key,
+        createdAt: new Date(b.created_at).toISOString(),
+        updatedAt: new Date(b.updated_at).toISOString(),
       })),
       todos: todos.map((t) => ({
         id: t.id,
@@ -115,6 +295,10 @@ export const notesExportMine = defineQuery({
         details: t.details ?? '',
         checklist: (Array.isArray(t.checklist) ? (t.checklist as { text: string; done: boolean }[]) : []).map((s) => ({ text: s.text, done: s.done })),
         status: t.status,
+        priority: t.priority as TodoPriority,
+        tags: t.tags,
+        listId: t.list_id,
+        sectionId: t.section_id,
         dueOn: t.due_on,
         dueAt: iso(t.due_at),
         timeZone: t.time_zone,
@@ -125,8 +309,36 @@ export const notesExportMine = defineQuery({
         deletedAt: iso(t.deleted_at),
         sourceNoteId: t.source_note_id,
         taskId: t.task_id,
+        recurrence: parseTodoRecurrence(t.recurrence),
+        seriesId: t.series_id,
+        links: todoLinksOf.get(t.id) ?? [],
       })),
-      truncated: noteKeep.length < noteIds.length || todoKeep.length < todoIds.length,
+      todoLists: todoLists.map((l) => ({
+        id: l.id,
+        name: l.name,
+        color: listColorOf(l.color),
+        sections: parseSections(l.sections),
+        sortKey: l.sort_key,
+        createdAt: new Date(l.created_at).toISOString(),
+        updatedAt: new Date(l.updated_at).toISOString(),
+        deletedAt: iso(l.deleted_at),
+      })),
+      templates: templates.map((tpl) => ({
+        id: tpl.id,
+        visibility: tpl.visibility as NoteVisibility,
+        name: tpl.name,
+        title: tpl.title,
+        body: tpl.body,
+        tags: tpl.tags,
+        createdAt: new Date(tpl.created_at).toISOString(),
+        updatedAt: new Date(tpl.updated_at).toISOString(),
+      })),
+      truncated:
+        noteKeep.length < noteIds.length ||
+        todoKeep.length < todoIds.length ||
+        listKeep.length < todoListIds.length ||
+        notebookKeep.length < notebookIds.length ||
+        templateKeep.length < templateIds.length,
     };
   },
 });

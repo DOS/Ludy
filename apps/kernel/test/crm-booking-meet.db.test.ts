@@ -8,13 +8,13 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { CalendarAdapter, CalendarWriteResult } from '@crove/channel';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity, type WriteBackAction } from '@crove/kernel';
-import { GOOGLE_CALENDAR_EVENTS_SCOPE, calendarBinding, isVietnamHoliday, zonedDate, zonedInstant, type BookingItem, type EventType } from '@crove/kernel-contract';
-import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
-import { crmCommands, crmQueries, type BookingMailData } from '@crove/mod-crm';
+import type { CalendarAdapter, CalendarWriteResult } from '@ludy/channel';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity, type WriteBackAction } from '@ludy/kernel';
+import { GOOGLE_CALENDAR_EVENTS_SCOPE, calendarBinding, isVietnamHoliday, zonedDate, zonedInstant, type BookingItem, type EventType } from '@ludy/kernel-contract';
+import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
+import { crmCommands, crmQueries, type BookingMailData } from '@ludy/mod-crm';
 import { bookingFeed, type BookingFeed } from '../src/booking-feed.ts';
 import { bookingRequest } from '../src/booking-page.ts';
 import { runCalendarWriteBack } from '../src/calendar-sync.ts';
@@ -65,8 +65,8 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
     const owner = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `owner-${randomUUID().slice(0, 8)}@meet.test`, name: null });
     const host = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `host-${randomUUID().slice(0, 8)}@meet.test`, name: null });
     const { orgId } = await createOrg(app, asUser(owner), `Công ty ${randomUUID().slice(0, 6)}`);
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, host]);
-    const slug = (await rows<{ slug: string }>('SELECT slug FROM crove_kernel.tenant WHERE org_id = $1', [orgId]))[0]?.slug as string;
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, host]);
+    const slug = (await rows<{ slug: string }>('SELECT slug FROM ludy_kernel.tenant WHERE org_id = $1', [orgId]))[0]?.slug as string;
     await app.execute('kernel.calendar.hours.save', { timeZone: VN, windows: [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, start: 0, end: 1440 })) }, { actor: asUser(host), orgId });
     return { orgId, slug, owner, host };
   }
@@ -121,14 +121,14 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
   async function book(o: Org) {
     const day = freshDay();
     await bookingRequest(app, o.slug, 'tu-van', { startsAt: at(day, 540), name: 'Nguyễn Văn Khách', email: 'Khach@Example.test', phone: '0901234567', note: null, timeZone: VN });
-    const id = (await rows<{ id: string }>('SELECT id FROM crove_crm.booking WHERE org_id = $1 ORDER BY created_at DESC, id LIMIT 1', [o.orgId]))[0]?.id as string;
+    const id = (await rows<{ id: string }>('SELECT id FROM ludy_crm.booking WHERE org_id = $1 ORDER BY created_at DESC, id LIMIT 1', [o.orgId]))[0]?.id as string;
     const confirmed = await worker.execute<{ status: string }>('crm.booking.confirm', { bookingId: id }, { actor: SYSTEM, orgId: o.orgId });
-    const state = () => rows<{ meeting_state: string; meeting_url: string | null; calendar_event_id: string }>('SELECT meeting_state, meeting_url, calendar_event_id FROM crove_crm.booking WHERE org_id = $1 AND id = $2', [o.orgId, id]).then((r) => r[0] as { meeting_state: string; meeting_url: string | null; calendar_event_id: string });
-    const mails = () => rows<{ recipient: string }>("SELECT payload->>'recipient' AS recipient FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'crm.booking.confirmed' AND source_id = $2 ORDER BY payload->>'recipient'", [o.orgId, id]).then((r) => r.map((m) => m.recipient));
+    const state = () => rows<{ meeting_state: string; meeting_url: string | null; calendar_event_id: string }>('SELECT meeting_state, meeting_url, calendar_event_id FROM ludy_crm.booking WHERE org_id = $1 AND id = $2', [o.orgId, id]).then((r) => r[0] as { meeting_state: string; meeting_url: string | null; calendar_event_id: string });
+    const mails = () => rows<{ recipient: string }>("SELECT payload->>'recipient' AS recipient FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'crm.booking.confirmed' AND source_id = $2 ORDER BY payload->>'recipient'", [o.orgId, id]).then((r) => r.map((m) => m.recipient));
     return { id, day, confirmed, state, mails };
   }
   const settle = (o: Org, input: Record<string, unknown>) => worker.execute<{ settled: boolean; state?: string }>('crm.booking.meeting_settle', input, { actor: SYSTEM, orgId: o.orgId });
-  const eventConference = async (eventId: string) => (await rows<{ conference: boolean }>('SELECT conference FROM crove_kernel.calendar_event WHERE id = $1', [eventId]))[0]?.conference;
+  const eventConference = async (eventId: string) => (await rows<{ conference: boolean }>('SELECT conference FROM ludy_kernel.calendar_event WHERE id = $1', [eventId]))[0]?.conference;
   const mailData = (o: Org, bookingId: string) => worker.execute<BookingMailData>('crm.booking.mail_data', { bookingId, revision: 0 }, { actor: SYSTEM, orgId: o.orgId });
 
   beforeAll(async () => {
@@ -140,15 +140,15 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 6 });
+    appPool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 6 });
     app = register(createDb(appPool));
     worker = register(createDb(workerPool));
   });
@@ -204,7 +204,7 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
       expect(await eventConference(pending.calendar_event_id)).toBe(true);
       expect(await b.mails()).toEqual([]);
       // The relay hands the delayed job its event.
-      expect((await rows('SELECT 1 FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = $2 AND payload->>$3 = $4', [o.orgId, 'crm.booking.meeting_pending', 'booking_id', b.id])).length).toBe(1);
+      expect((await rows('SELECT 1 FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2 AND payload->>$3 = $4', [o.orgId, 'crm.booking.meeting_pending', 'booking_id', b.id])).length).toBe(1);
       // The write-back plan asks the worker for the conference.
       const plan = await worker.query<{ actions: WriteBackAction[] }>('kernel.calendar.writeback_plan', { connectionId }, { actor: SYSTEM, orgId: o.orgId });
       expect(plan.actions).toEqual([expect.objectContaining({ eventId: pending.calendar_event_id, kind: 'upsert', conference: true })]);
@@ -268,12 +268,12 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
       const b = await book(o);
       const mailsOf = (source: string) =>
         rows<{ revision: string; startsAt: string; recipient: string }>(
-          `SELECT payload->>'revision' AS revision, payload->>'startsAt' AS "startsAt", payload->>'recipient' AS recipient FROM crove_kernel.mail_message WHERE org_id = $1 AND source_id = $2 AND source = $3 ORDER BY payload->>'recipient'`,
+          `SELECT payload->>'revision' AS revision, payload->>'startsAt' AS "startsAt", payload->>'recipient' AS recipient FROM ludy_kernel.mail_message WHERE org_id = $1 AND source_id = $2 AND source = $3 ORDER BY payload->>'recipient'`,
           [o.orgId, b.id, source],
         );
       const newStart = at(b.day, 600);
       await app.execute('crm.booking.move', { bookingId: b.id, startsAt: newStart }, { actor: asUser(o.host), orgId: o.orgId });
-      expect(await rows<{ revision: number }>('SELECT revision FROM crove_crm.booking WHERE id = $1', [b.id])).toEqual([{ revision: 1 }]);
+      expect(await rows<{ revision: number }>('SELECT revision FROM ludy_crm.booking WHERE id = $1', [b.id])).toEqual([{ revision: 1 }]);
       // Nothing was told yet: not the confirmation (held), and not the move (the visitor never heard of the first time).
       expect(await mailsOf('crm.booking.moved')).toEqual([]);
       expect(await mailsOf('crm.booking.confirmed')).toEqual([]);
@@ -293,10 +293,10 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
       await connect(o);
       await createType(o, o.host);
       const b = await book(o);
-      const startsAt = new Date((await rows<{ starts_at: Date }>('SELECT starts_at FROM crove_crm.booking WHERE id = $1', [b.id]))[0]?.starts_at as Date).toISOString();
+      const startsAt = new Date((await rows<{ starts_at: Date }>('SELECT starts_at FROM ludy_crm.booking WHERE id = $1', [b.id]))[0]?.starts_at as Date).toISOString();
       const remind = () => worker.execute<{ sent: boolean }>('crm.booking.remind', { bookingId: b.id, startsAt, lead: '1h' }, { actor: SYSTEM, orgId: o.orgId });
       expect(await remind()).toEqual({ sent: false });
-      expect(await rows("SELECT 1 FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'crm.booking.remind_1h' AND source_id = $2", [o.orgId, b.id])).toEqual([]);
+      expect(await rows("SELECT 1 FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'crm.booking.remind_1h' AND source_id = $2", [o.orgId, b.id])).toEqual([]);
       await settle(o, { bookingId: b.id, url: MEET });
       expect(await remind()).toEqual({ sent: true });
     });
@@ -362,7 +362,7 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
       await connect(o);
       await createType(o, o.host);
       const b = await book(o);
-      const set = (sql: string) => rows(`UPDATE crove_crm.booking SET ${sql} WHERE id = $1`, [b.id]);
+      const set = (sql: string) => rows(`UPDATE ludy_crm.booking SET ${sql} WHERE id = $1`, [b.id]);
       await expect(set("meeting_state = 'ready'")).rejects.toMatchObject({ code: '23514' });
       await expect(set("meeting_url = 'https://meet.google.com/abc-defg-hij'")).rejects.toMatchObject({ code: '23514' });
       await expect(set("meeting_state = 'ready', meeting_url = 'https://evil.example/abc-defg-hij'")).rejects.toMatchObject({ code: '23514' });
@@ -389,6 +389,7 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
       writeEvent: async (_secret, event) => (writes.push({ id: event.externalId, conference: event.conference }), answer(event.conference)),
       removeEvent: async () => ({ ok: true }),
       revoke: async () => ({ revoked: true }),
+      events: async () => ({ events: [] }),
     });
     const job = (o: Org, adapter: CalendarAdapter) => runCalendarWriteBack({ runtime: worker, broker: vault, adapters: { google_calendar: adapter } }, { orgId: o.orgId });
 

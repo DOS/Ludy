@@ -11,11 +11,11 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, defineCommand } from '@crove/kernel-runtime';
-import { postJournalEntry, postNewEntry } from '@crove/mod-finance';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, defineCommand } from '@ludy/kernel-runtime';
+import { postJournalEntry, postNewEntry } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -91,7 +91,7 @@ suite('the posting path tells a replay from a new posting (#1925)', () => {
     await c.connect();
     try {
       return (
-        await c.query<{ id: string; source_revision: number }>('SELECT id, source_revision FROM crove_finance.journal_entry WHERE org_id = $1 AND source_id = $2 ORDER BY source_revision', [
+        await c.query<{ id: string; source_revision: number }>('SELECT id, source_revision FROM ludy_finance.journal_entry WHERE org_id = $1 AND source_id = $2 ORDER BY source_revision', [
           orgId,
           sourceId,
         ])
@@ -110,9 +110,9 @@ suite('the posting path tells a replay from a new posting (#1925)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 2 });
     const db = createDb(pool);

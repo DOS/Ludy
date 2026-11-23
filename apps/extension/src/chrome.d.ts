@@ -37,9 +37,21 @@ declare namespace chrome {
   namespace tabs {
     interface Tab {
       id?: number;
+      url?: string;
+      title?: string;
     }
     function query(query: { active: boolean; currentWindow: boolean }): Promise<Tab[]>;
     function create(properties: { url: string }): Promise<Tab>;
+  }
+  namespace scripting {
+    interface InjectionResult<T = unknown> {
+      result?: T;
+    }
+    function executeScript<Args extends unknown[], Result>(injection: {
+      target: { tabId: number };
+      func: (...args: Args) => Result;
+      args?: Args;
+    }): Promise<Array<InjectionResult<Result>>>;
   }
   namespace tabCapture {
     function getMediaStreamId(options: { targetTabId: number }): Promise<string>;
@@ -50,6 +62,7 @@ declare namespace chrome {
   }
   namespace action {
     function setBadgeText(details: { text: string }): Promise<void>;
+    function getBadgeText(details: object): Promise<string>;
     function setBadgeBackgroundColor(details: { color: string }): Promise<void>;
     function setTitle(details: { title: string }): Promise<void>;
   }

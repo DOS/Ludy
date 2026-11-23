@@ -1,0 +1,92 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// What would be sent to MISA AMIS Kế toán (#3901, S3a of #3854): the vouchers of a period and kind as the push would write them, each with its AMIS type, its parts (a voucher of more than 500 lines is several
+// requests), its totals and the blockers that keep it from being sent. A read: nothing is sent and MISA is not called. A blocker names a code and a line, never a party, an invoice number or a name. The
+// AMIS-side references (branch, party codes read from get_dictionary) are not known until the connection test of #3885 reads the dictionary, so `checkedAgainstAmis` is false and the blockers that need them
+// are left out until then; the deterministic list of what Ludy can decide alone is shown.
+import { z } from 'zod';
+import { zId, zLocalDate, zMoney } from './schemas.ts';
+import { zMisaAmisMatchStatus } from './misa-amis-match.ts';
+
+// The seven kinds Ludy hands to AMIS, with the voucher_type AMIS gives them (17, 18, 13, 5, 4, 1, 3).
+export const MISA_AMIS_KINDS = ['purchase_services', 'purchase_goods', 'sales', 'cash_receipt', 'cash_payment', 'bank_credit', 'bank_debit'] as const;
+export type MisaAmisKind = (typeof MISA_AMIS_KINDS)[number];
+
+// branch_missing, party_code_unknown and party_code_ambiguous need the MISA dictionary (the branch read, the check against the catalogue); `party_code_ambiguous` is a party whose tax code more than one active entry carries (#4114).
+export const MISA_AMIS_BLOCKERS = ['branch_missing', 'party_code_unknown', 'party_code_ambiguous', 'item_code_unknown', 'stock_missing', 'stock_unknown', 'unit_unknown', 'unit_ambiguous', 'vat_rate_unmapped', 'voucher_number_too_long', 'no_lines'] as const;
+export type MisaAmisBlockerCode = (typeof MISA_AMIS_BLOCKERS)[number];
+
+// A code of AMIS's item dictionary, as a person types it.
+const zItemCode = z.string().trim().min(1).max(50);
+
+export const zMisaAmisPreviewAsk = z.strictObject({
+  kind: z.enum(MISA_AMIS_KINDS),
+  from: zLocalDate.optional(),
+  to: zLocalDate.optional(),
+  legalEntityId: zId.optional(),
+  // The AMIS item the purchase service lines, or the sales lines, go under; without it those vouchers are blocked.
+  serviceItemCode: zItemCode.optional(),
+  salesItemCode: zItemCode.optional(),
+  // The "mục đích mua vào" AMIS asks of purchases and payments; 1 when not given.
+  purchasePurpose: z.enum(['1', '2', '3', '4', '5']).optional(),
+});
+export type MisaAmisPreviewAsk = z.infer<typeof zMisaAmisPreviewAsk>;
+
+export const zMisaAmisPreviewBlocker = z.strictObject({ code: z.enum(MISA_AMIS_BLOCKERS), lineNo: z.number().int().min(0).nullable() });
+
+// The most blockers one voucher lists; a voucher with more says how many were left out (a voucher of thousands of lines could otherwise make the whole answer too large).
+export const MISA_AMIS_PREVIEW_BLOCKERS = 100;
+
+export const zMisaAmisPreviewItem = z.strictObject({
+  // The voucher's id in Ludy: the `org_refid` of the push.
+  sourceId: zId,
+  // Ludy's own voucher number (the `org_refno`), as on the MISA SME file.
+  voucherNo: z.string().max(40),
+  // AMIS's voucher_type, reftype and reason_type_id (null when the kind has none). The last two are Ludy's own choices, not yet confirmed in a MISA sandbox, so the person sees them before anything is sent.
+  amisType: z.number().int().positive(),
+  reftype: z.number().int().positive(),
+  reasonTypeId: z.number().int().positive().nullable(),
+  // How many requests it is: more than one when it has more than 500 lines.
+  parts: z.number().int().min(1),
+  lines: z.number().int().min(0),
+  // The total payable, VAT included; "0" for a voucher that is blocked.
+  total: zMoney,
+  blockers: z.array(zMisaAmisPreviewBlocker).max(MISA_AMIS_PREVIEW_BLOCKERS),
+  // How many more blockers the voucher has than are listed.
+  blockersMore: z.number().int().min(0),
+});
+export type MisaAmisPreviewItem = z.infer<typeof zMisaAmisPreviewItem>;
+
+// The most vouchers one preview lists; a longer period says `more` and the person narrows it.
+export const MISA_AMIS_PREVIEW_LIMIT = 500;
+
+export const zMisaAmisPreview = z.strictObject({
+  kind: z.enum(MISA_AMIS_KINDS),
+  // Vouchers read, those with no blocker, those with at least one.
+  vouchers: z.number().int().min(0),
+  ready: z.number().int().min(0),
+  blocked: z.number().int().min(0),
+  // false until a check against the firm's catalogue is done (S3a, #4112): until then the party and item codes are not checked ("not matched with AMIS yet"). True when `matchCheck.state` is `done`.
+  checkedAgainstAmis: z.boolean(),
+  // The last check of this entity's connection: asked, waiting, done (when) or failed (why). `none` while there is no connection or no check.
+  matchCheck: zMisaAmisMatchStatus,
+  // The "mục đích mua vào" the purchases and payments are written with (default 1, not yet confirmed in a MISA sandbox).
+  purchasePurpose: z.enum(['1', '2', '3', '4', '5']),
+  // true when the period holds more than MISA_AMIS_PREVIEW_LIMIT vouchers: the counts and items are of the first ones.
+  more: z.boolean(),
+  // SHA-256 (hex) of what the list shows, parts and all (the AMIS branch left out): the push carries it, and a different digest at push time means the data changed since the person looked.
+  digest: z.string().regex(/^[0-9a-f]{64}$/),
+  items: z.array(zMisaAmisPreviewItem).max(MISA_AMIS_PREVIEW_LIMIT),
+});
+export type MisaAmisPreview = z.infer<typeof zMisaAmisPreview>;
+
+// The accounting coworker's notes on the blocker kinds of the preview (#3904, S5 of #3854): a second read that runs the preview again on the server (so the model is told what the books say, never what the caller
+// says), takes the SET of blocker kinds on the list, and answers one plain note per kind, or why there are none: `off` (no model), `busy` (too frequent), `budget` (the AI budget is spent), `failed` (the call failed or
+// every note was dropped by the checks; the reason is logged as a code, never the words) or `none` (nothing is blocked). The notes never change the list of blockers and never decide what is sent; the screen shows
+// a note only beside a kind that is on the list it shows.
+export const zMisaAmisBlockerNotesAsk = zMisaAmisPreviewAsk.extend({ lang: z.enum(['vi', 'en']).optional() });
+export type MisaAmisBlockerNotesAsk = z.infer<typeof zMisaAmisBlockerNotesAsk>;
+export const zMisaAmisBlockerNotes = z.strictObject({
+  ai: z.enum(['used', 'off', 'busy', 'budget', 'failed', 'none']),
+  notes: z.array(z.strictObject({ code: z.enum(MISA_AMIS_BLOCKERS), text: z.string().max(480) })).max(MISA_AMIS_BLOCKERS.length),
+});
+export type MisaAmisBlockerNotes = z.infer<typeof zMisaAmisBlockerNotes>;

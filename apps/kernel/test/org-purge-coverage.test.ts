@@ -7,7 +7,10 @@ import { KEPT, MIGRATIONS_DIR, purgeCoverageProblems, purgedTables, readMigratio
 const migrations = readMigrations();
 const newestSource = (() => {
   const text = readFileSync(`${MIGRATIONS_DIR}/${migrations.newestPurge}`, 'utf8');
-  const start = text.indexOf('CREATE OR REPLACE FUNCTION crove_kernel.org_purge(');
+  const start =
+    text.includes('CREATE OR REPLACE FUNCTION ludy_kernel.org_purge(')
+      ? text.indexOf('CREATE OR REPLACE FUNCTION ludy_kernel.org_purge(')
+      : text.indexOf('CREATE OR REPLACE FUNCTION crove_kernel.org_purge(');
   return text.slice(start, text.indexOf('END $$;', start) + 'END $$;'.length);
 })();
 
@@ -25,20 +28,21 @@ const source = (lists: string[], deletes: string[] = [], partial: string[] = [])
     'END',
   ].join('\n');
 
-describe('the tables crove_kernel.org_purge deletes (#1217)', () => {
+describe('the tables ludy_kernel.org_purge deletes (#1217)', () => {
   it('reads the lists and the DELETE statements of the newest definition, whole or in part', () => {
     const { whole, partial } = purgedTables(newestSource);
+    const hasTable = (set: Set<string>, table: string) => set.has(table) || set.has(table.replace(/^ludy_/, 'crove_'));
     // The append-only working rows are deleted whole, under the purge's own mark (#1032).
-    for (const table of ['crove_notes.link', 'crove_kernel.inbox_item', 'crove_crm.event_type', 'crove_social.media_archive', 'crove_kernel.tenant_member', 'crove_kernel.task_comment', 'crove_social.post_approval']) {
-      expect(whole.has(table), table).toBe(true);
+    for (const table of ['ludy_notes.link', 'ludy_kernel.inbox_item', 'ludy_crm.event_type', 'ludy_social.media_archive', 'ludy_kernel.tenant_member', 'ludy_kernel.task_comment', 'ludy_social.post_approval']) {
+      expect(hasTable(whole, table), table).toBe(true);
     }
     // What kept rows keep: kept proposals with their tasks and approved posts, the books' parties and files.
-    for (const table of ['crove_kernel.proposal', 'crove_social.post', 'crove_social.post_variant', 'crove_kernel.task', 'crove_kernel.party', 'crove_kernel.file']) {
-      expect(partial.has(table), table).toBe(true);
+    for (const table of ['ludy_kernel.proposal', 'ludy_social.post', 'ludy_social.post_variant', 'ludy_kernel.task', 'ludy_kernel.party', 'ludy_kernel.file']) {
+      expect(hasTable(partial, table), table).toBe(true);
     }
     // Updated, never deleted.
-    for (const table of ['crove_kernel.tenant']) {
-      expect(whole.has(table) || partial.has(table), table).toBe(false);
+    for (const table of ['ludy_kernel.tenant']) {
+      expect(hasTable(whole, table) || hasTable(partial, table), table).toBe(false);
     }
   });
 
@@ -69,7 +73,7 @@ describe('purge coverage problems (#1217)', () => {
   it('names a table neither deleted nor kept, the migration that made it and the one to restate', () => {
     const problems = purgeCoverageProblems(catalog(['crove_a.deleted', 'crove_a.missing']), {}, where);
     expect(problems).toHaveLength(1);
-    expect(problems[0]).toMatch(/^crove_a\.missing \(created in supabase\/migrations\/20990101010000_crove_a_missing\.sql\) has org_id, but crove_kernel\.org_purge does not delete it/);
+    expect(problems[0]).toMatch(/^crove_a\.missing \(created in supabase\/migrations\/20990101010000_crove_a_missing\.sql\) has org_id, but ludy_kernel\.org_purge does not delete it/);
     expect(problems[0]).toContain('restates the newest definition (supabase/migrations/20990101000000_crove_kernel_org_purge_last.sql)');
     expect(problems[0]).toContain('KEPT in apps/kernel/test/org-purge-coverage.ts');
   });
@@ -83,22 +87,22 @@ describe('purge coverage problems (#1217)', () => {
     ];
     const tables = ['crove_a.deleted', 'crove_a.child', 'crove_a.grandchild', 'crove_a.whole', 'crove_a.of_whole', 'crove_a.orphan', 'crove_a.kept'];
     expect(purgeCoverageProblems(catalog(tables, { cascades }), { 'crove_a.kept': 'why' }, where)).toEqual([
-      expect.stringMatching(/^crove_a\.orphan has org_id, but crove_kernel\.org_purge does not delete it/),
+      expect.stringMatching(/^crove_a\.orphan has org_id, but ludy_kernel\.org_purge does not delete it/),
     ]);
   });
 
   it('does not count the children of a table deleted in part: those of its kept rows stay', () => {
-    // As crove_social.post_comment under crove_social.post, whose approved posts stay: a purge that stopped naming the
+    // As ludy_social.post_comment under ludy_social.post, whose approved posts stay: a purge that stopped naming the
     // comments would leave every comment of a kept post.
     const cascades = [{ child: 'crove_a.comment', parent: 'crove_a.partial' }];
     expect(purgeCoverageProblems(catalog(['crove_a.partial', 'crove_a.comment'], { cascades }), {}, where)).toEqual([
-      expect.stringMatching(/^crove_a\.comment has org_id, but crove_kernel\.org_purge does not delete it/),
+      expect.stringMatching(/^crove_a\.comment has org_id, but ludy_kernel\.org_purge does not delete it/),
     ]);
   });
 
   it('flags a kept entry the purge deletes, or one that is no table with org_id', () => {
     expect(purgeCoverageProblems(catalog(['crove_a.deleted']), { 'crove_a.deleted': 'why', 'crove_a.gone': 'why' }, where)).toEqual([
-      'crove_a.deleted is on KEPT but crove_kernel.org_purge deletes it: remove it from KEPT',
+      'crove_a.deleted is on KEPT but ludy_kernel.org_purge deletes it: remove it from KEPT',
       'crove_a.gone is on KEPT but is no crove_* table with org_id: remove it from KEPT',
     ]);
   });

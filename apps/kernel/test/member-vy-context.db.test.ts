@@ -6,10 +6,10 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 import { contextToken } from './invariant/fixtures/context-token.ts';
 
@@ -54,20 +54,20 @@ suite('member-scoped background context', () => {
     }
   }
   const enter = (who: string) =>
-    inContext(workerUrl, (c) => c.query('SELECT crove_kernel.enter_member_vy_context($1::uuid, $2::uuid, $3::uuid)', [orgId, vy[who]?.agentId, vy[who]?.runId]), async (c) =>
-      JSON.parse((await c.query<{ ctx: string }>(`SELECT current_setting('crove.ctx') AS ctx`)).rows[0]?.ctx as string) as Record<string, unknown>,
+    inContext(workerUrl, (c) => c.query('SELECT ludy_kernel.enter_member_vy_context($1::uuid, $2::uuid, $3::uuid)', [orgId, vy[who]?.agentId, vy[who]?.runId]), async (c) =>
+      JSON.parse((await c.query<{ ctx: string }>(`SELECT current_setting('ludy.ctx') AS ctx`)).rows[0]?.ctx as string) as Record<string, unknown>,
     );
   const refusal = (who: string) => enter(who).then(() => 'entered', (e: { message: string }) => e.message);
 
   async function makeVy(user: string): Promise<{ agentId: string; runId: string }> {
     return inContext(
       appUrl,
-      (c) => c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(user, orgId)]),
+      (c) => c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(user, orgId)]),
       async (c) => {
         const agentId = randomUUID();
         const runId = randomUUID();
-        await c.query(`INSERT INTO crove_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, agentId, user]);
-        await c.query(`INSERT INTO crove_kernel.ai_run (org_id, id, agent_id, module, feature, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'notes.summary', 'running', true, now(), now() + interval '30 minutes')`, [orgId, runId, agentId]);
+        await c.query(`INSERT INTO ludy_kernel.agent (org_id, id, template_key, display_name, kind, member_user_id, created_by) VALUES ($1, $2, 'kernel.member_vy', 'Vy', 'member_vy', $3, $3)`, [orgId, agentId, user]);
+        await c.query(`INSERT INTO ludy_kernel.ai_run (org_id, id, agent_id, module, feature, status, tainted, started_at, expires_at) VALUES ($1, $2, $3, 'notes', 'notes.summary', 'running', true, now(), now() + interval '30 minutes')`, [orgId, runId, agentId]);
         return { agentId, runId };
       },
       true,
@@ -83,15 +83,15 @@ suite('member-scoped background context', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
-    workerUrl = login('crove_worker', 'test-worker-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
+    workerUrl = login('ludy_worker', 'test-worker-pw');
     const pool = createPool({ connectionString: appUrl, max: 2 });
     pools.push(pool);
     const db = createDb(pool);
@@ -101,9 +101,9 @@ suite('member-scoped background context', () => {
     limited = await upsertIdentity(db, { issuer: 'member-vy-ctx', subject: 'limited', email: 'limited@member-vy-ctx.test', name: null });
     orgId = (await createOrg(runtime, { type: 'user', userId: owner, aal: 'aal1' }, 'Vy nền')).orgId;
     await admin(async (c) => {
-      branch = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner])).rows[0]?.id as string;
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')`, [orgId, member, limited]);
-      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, limited, branch, owner]);
+      branch = (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner])).rows[0]?.id as string;
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member')`, [orgId, member, limited]);
+      await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, limited, branch, owner]);
     });
     vy.member = await makeVy(member);
     vy.limited = await makeVy(limited);
@@ -129,8 +129,8 @@ suite('member-scoped background context', () => {
 
   it('refuses the entry under an org, module or agent kill switch and under the operator\'s global switch, and enters again once released', async () => {
     const engage = (scope: string, target: string) =>
-      admin(async (c) => (await c.query<{ id: string }>(`INSERT INTO crove_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, $2, $3, $4) RETURNING id`, [orgId, scope, target, owner])).rows[0]?.id as string);
-    const release = (id: string) => admin((c) => c.query(`UPDATE crove_kernel.kill_switch SET released_at = now(), released_by = $2 WHERE org_id = $1 AND id = $3`, [orgId, owner, id]));
+      admin(async (c) => (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.kill_switch (org_id, scope, target, engaged_by) VALUES ($1, $2, $3, $4) RETURNING id`, [orgId, scope, target, owner])).rows[0]?.id as string);
+    const release = (id: string) => admin((c) => c.query(`UPDATE ludy_kernel.kill_switch SET released_at = now(), released_by = $2 WHERE org_id = $1 AND id = $3`, [orgId, owner, id]));
     for (const [scope, target] of [['org', '*'], ['module', 'notes'], ['agent', vy.member?.agentId as string]] as const) {
       const id = await engage(scope, target);
       expect(await refusal('member'), `a ${scope} kill switch`).toMatch(/KILL_SWITCH_ON/);
@@ -144,11 +144,11 @@ suite('member-scoped background context', () => {
   });
 
   it('refuses the entry once a hard-stop budget is spent', async () => {
-    const id = await admin(async (c) => (await c.query<{ id: string }>(`INSERT INTO crove_kernel.budget_policy (org_id, scope, target, monthly_limit, updated_by) VALUES ($1, 'org', '*', 0, $2) RETURNING id`, [orgId, owner])).rows[0]?.id as string);
+    const id = await admin(async (c) => (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.budget_policy (org_id, scope, target, monthly_limit, updated_by) VALUES ($1, 'org', '*', 0, $2) RETURNING id`, [orgId, owner])).rows[0]?.id as string);
     try {
       expect(await refusal('member')).toMatch(/BUDGET_EXHAUSTED/);
     } finally {
-      await admin((c) => c.query(`DELETE FROM crove_kernel.budget_policy WHERE org_id = $1 AND id = $2`, [orgId, id]));
+      await admin((c) => c.query(`DELETE FROM ludy_kernel.budget_policy WHERE org_id = $1 AND id = $2`, [orgId, id]));
     }
     expect(await refusal('member')).toBe('entered');
   });
@@ -157,7 +157,7 @@ suite('member-scoped background context', () => {
     const { rows } = await admin((c) =>
       c.query<{ t: string }>(
         `SELECT t.tgrelid::regclass::text AS t FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
-         WHERE NOT t.tgisinternal AND p.proname = 'stream_notify' AND t.tgrelid::regclass::text IN ('crove_kernel.ai_run', 'crove_kernel.member_vy_result', 'crove_kernel.member_vy_memory', 'crove_kernel.agent')`,
+         WHERE NOT t.tgisinternal AND p.proname = 'stream_notify' AND t.tgrelid::regclass::text IN ('ludy_kernel.ai_run', 'ludy_kernel.member_vy_result', 'ludy_kernel.member_vy_memory', 'ludy_kernel.agent')`,
       ),
     );
     // A hint for these tables would have to name the member as its recipient, as the notes hints do; none exists, so none leaks.

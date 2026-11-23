@@ -10,12 +10,20 @@ import { SandboxConversations, type ConversationAdapter } from './conversation.t
 
 export * from './oauth.ts';
 export * from './calendar-google.ts';
+export * from './calendar-microsoft.ts';
+export * from './meeting-platform.ts';
+export * from './meeting-platform-zoom.ts';
+export * from './meeting-platform-zoom-webhook.ts';
+export * from './meeting-platform-teams.ts';
+export * from './meeting-google.ts';
+export * from './minutes-webhook.ts';
 export * from './text.ts';
 export * from './meta.ts';
 export * from './meta-conversation.ts';
 export * from './instagram.ts';
 export * from './zalo.ts';
 export * from './zalo-conversation.ts';
+export * from './whatsapp-conversation.ts';
 export * from './bluesky.ts';
 export * from './threads.ts';
 export * from './threads-conversation.ts';
@@ -60,6 +68,9 @@ export const CHANNEL_PROVIDERS = [
   'wordpress',
   // LinkedIn Company Pages (#1077), with the LinkedIn app once it has the Community Management API.
   'linkedin_page',
+  // WhatsApp Business, Cloud API (#3131): a messaging channel of the conversation core only. It never publishes; it is listed so a connection has a provider
+  // id, a publish queue exists for every provider (the job tests count them), and nothing else needs to know a provider that is not one of these.
+  'whatsapp',
 ] as const;
 export type ChannelProviderId = (typeof CHANNEL_PROVIDERS)[number];
 
@@ -67,7 +78,7 @@ export function isChannelProvider(value: string): value is ChannelProviderId {
   return (CHANNEL_PROVIDERS as readonly string[]).includes(value);
 }
 
-// The provider of an account an OAuth connector connects: a channel provider, or an ad platform of @crove/ad-platform
+// The provider of an account an OAuth connector connects: a channel provider, or an ad platform of @ludy/ad-platform
 // (ADR-0040), whose ids end in `_ads` and whose connections the Social screens leave out.
 export type ConnectorProviderId = ChannelProviderId | `${string}_ads`;
 
@@ -82,7 +93,7 @@ export interface ConnectedAccount {
   expiresAt: Date | null;
   secret: string;
   // A keyed hash of the platform user who granted the connection, for a platform whose data deletion request names the user
-  // (Meta's, for Ads: @crove/ad-platform platformUserHash). Never the platform's id of the person.
+  // (Meta's, for Ads: @ludy/ad-platform platformUserHash). Never the platform's id of the person.
   grantedByHash?: string;
 }
 
@@ -197,7 +208,8 @@ export type ReconcileResult = { found: true; externalId: string; url: string | n
 // Renews a connection's tokens before they expire (providers with short-lived tokens and refresh tokens, such as Zalo
 // OA). refused: the provider turned the refresh down and the connection needs reconnecting; failed: try again later.
 export interface Refresher {
-  readonly provider: ChannelProviderId;
+  // A channel provider, or a marketplace connection's (`marketplace_<adapter>`, whose token life is the platform's own).
+  readonly provider: ChannelProviderId | `marketplace_${string}`;
   // How long before expiry to renew (6 hours when unset): long-lived tokens are renewed days ahead.
   readonly horizonSeconds?: number;
   refresh(secret: string): Promise<{ secret: string; expiresAt: Date | null } | { refused: string } | { failed: string }>;

@@ -1,8 +1,8 @@
 // Team chat alerts (#863): the line each alert posts (wording, length, escaping), the per-org limits and what a failed
 // call means. The database and the worker path are in social-chat-alerts.db.test.ts.
 import { describe, expect, it } from 'vitest';
-import { DiscordError, TelegramError } from '@crove/channel';
-import type { ChatAlertFacts } from '@crove/mod-social';
+import { DiscordError, TelegramError } from '@ludy/channel';
+import type { ChatAlertFacts } from '@ludy/mod-social';
 import { ChatAlertSaveBudget, ChatAlertTestBudget } from '../src/chat-alert-save.ts';
 import { ChatAlertLimiter, chatAlertFailure, chatAlertText, CHAT_ALERT_TITLE_MAX, clip, discordEscape, telegramEscape } from '../src/chat-alerts.ts';
 
@@ -31,6 +31,10 @@ describe('team chat alert line (#863)', () => {
     expect(chatAlertText(facts({ channels: ['Facebook', 'Zalo', 'TikTok'], channelCount: 5 }), telegram)).toBe(`Bài «Khai trương chi nhánh mới» trên Facebook, Zalo, TikTok và 2 kênh khác đang chờ duyệt: ${link}`);
     expect(chatAlertText(facts({ kind: 'failed', event: 'social.variant.failed' }), telegram)).toBe(`Bài «Khai trương chi nhánh mới» không đăng được lên Facebook Quán Phở: ${link}`);
     expect(chatAlertText(facts({ kind: 'failed', event: 'social.variant.needs_attention' }), telegram)).toBe(`Bài «Khai trương chi nhánh mới» trên Facebook Quán Phở cần bạn kiểm tra: ${link}`);
+    // Many late posts failed together (#3462): one line with the count, linking to the posts that need a person.
+    expect(chatAlertText(facts({ kind: 'failed', event: 'social.publishing.late_failed', postId: null, postText: null, count: 7, channels: [], channelCount: 0 }), telegram)).toBe(
+      '7 bài không đăng được vì đã quá giờ hẹn: https://crove.example/o/quan-pho/social?tab=attention',
+    );
     expect(chatAlertText(facts({ kind: 'published', event: 'social.variant.published' }), telegram)).toBe(`Bài «Khai trương chi nhánh mới» đã đăng lên Facebook Quán Phở: ${link}`);
     const answer = facts({ kind: 'client_answered', event: 'social.review.answered', channels: [], channelCount: 0, verdict: 'approved', reviewer: 'Chị Lan' });
     expect(chatAlertText(answer, telegram)).toBe(`Khách hàng Chị Lan đã duyệt bài «Khai trương chi nhánh mới»: ${link}`);

@@ -7,10 +7,10 @@ import type { ReactNode } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Button, buttonVariants } from '@crove/ui/components/button';
-import { TableCell, TableRow } from '@crove/ui/components/table';
-import { cn } from '@crove/ui/lib/utils';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button, buttonVariants } from '@ludy/ui/components/button';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
+import { cn } from '@ludy/ui/lib/utils';
 import { ClientSocialFigures } from '../components/client-social.tsx';
 import { SupportLink } from '../components/support-link.tsx';
 import { DueWhen, TONE_CLASS, usePeriodLabel } from '../components/tax-due.tsx';
@@ -33,7 +33,7 @@ function Deadline({ deadline, slug, canChoose }: { deadline: ClientDeadline | nu
         {canChoose && (
           <>
             {' · '}
-            <Link to="/o/$slug/settings" params={{ slug }} className="text-link hover:underline">
+            <Link to="/o/$slug/settings" params={{ slug }} hash="tax-profile" className="text-link hover:underline">
               {t('chooseFilingPeriod')}
             </Link>
           </>
@@ -80,7 +80,7 @@ function TaxCalendarRow({ row, periodLabel }: { row: TaxDueRow; periodLabel: (pe
         <DueWhen due={row} />
       </TableCell>
       <TableCell className="px-4 py-3">
-        <Link to="/o/$slug/inbox" params={{ slug: row.slug }} className="font-medium text-foreground hover:text-link hover:underline">
+        <Link to="/o/$slug/overview" params={{ slug: row.slug }} className="font-medium text-foreground hover:text-link hover:underline">
           {row.name}
         </Link>
       </TableCell>
@@ -188,7 +188,7 @@ export function ClientsPage() {
     o.modules.social ? <ClientSocialFigures slug={c.slug} figures={o.modules.social} /> : <span className="text-subtle-foreground">-</span>;
   const companyOf = (c: Row) => (
     <>
-      <Link to="/o/$slug/inbox" params={{ slug: c.slug }} className="font-medium text-foreground hover:text-link hover:underline">
+      <Link to="/o/$slug/overview" params={{ slug: c.slug }} className="font-medium text-foreground hover:text-link hover:underline">
         {c.name}
       </Link>
       <Badge variant={c.role === 'owner' ? 'brand' : 'secondary'} className="ml-2 align-middle">
@@ -212,7 +212,7 @@ export function ClientsPage() {
         <div className="flex flex-wrap items-center gap-3 text-xs text-subtle-foreground">
           <SupportLink className="text-link" />
           <span className="hidden truncate sm:inline">{me.data?.email}</span>
-          <button className="hover:text-muted-foreground" onClick={() => void signOut()}>
+          <button type="button" className="inline-flex min-h-11 items-center px-2 hover:text-muted-foreground md:min-h-6" onClick={() => void signOut()}>
             {tc('signOut')}
           </button>
           <LocaleSwitcher />

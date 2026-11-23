@@ -10,10 +10,10 @@
 // Nothing is written here, no agent runs it (it is not in the agent's allowlist), and it leaves no audit row: a read of the member's own records. The model is asked outside any transaction, by the API.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, zonedDate, zoneOffsetMs } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { money } from '@crove/l10n-vn';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { zId, zonedDate, zoneOffsetMs } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { money } from '@ludy/l10n-vn';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 import { readableBooking } from './bookings.ts';
 
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -54,15 +54,15 @@ export const meetingBriefSourceQuery = defineQuery({
     if (booking.status !== 'confirmed' || Date.parse(booking.endsAt) <= Date.now()) throw new DomainError('BOOKING_NOT_UPCOMING', 409, 'Chỉ chuẩn bị được cho lịch hẹn sắp tới');
     const found = await sql<{ title: string; amount: string; expected_close: string | null; party_id: string; party_name: string; stage: string; kind: 'open' | 'won' | 'lost' }>`
       SELECT d.title, d.amount::text AS amount, d.expected_close::text AS expected_close, d.party_id, p.name AS party_name, s.name AS stage, s.kind
-      FROM crove_crm.deal d
-      JOIN crove_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
-      JOIN crove_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id
+      FROM ludy_crm.deal d
+      JOIN ludy_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
+      JOIN ludy_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id
       WHERE d.org_id = ${ctx.orgId}::uuid AND d.id = ${booking.deal.id}::uuid`.execute(ctx.trx);
     const deal = found.rows[0];
     if (!deal) throw new DomainError('DEAL_NOT_FOUND', 404, 'Không tìm thấy cơ hội này');
     const steps = await sql<{ reason: MeetingBriefStepReason; since_on: string }>`
       SELECT n.reason, n.since_on::text AS since_on
-      FROM crove_crm.deal_next_step n
+      FROM ludy_crm.deal_next_step n
       WHERE n.org_id = ${ctx.orgId}::uuid AND n.deal_id = ${booking.deal.id}::uuid AND n.status = 'open' AND (n.snoozed_until IS NULL OR n.snoozed_until <= now())
       ORDER BY n.since_on, n.id
       LIMIT 3`.execute(ctx.trx);
@@ -72,16 +72,16 @@ export const meetingBriefSourceQuery = defineQuery({
       SELECT q.number, q.revision, q.total::text AS total, q.status, q.valid_until::text AS valid_until,
              (q.status = 'sent' AND q.valid_until < (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date) AS expired,
              ((coalesce(q.sent_at, q.created_at)) AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::text AS sent_on
-      FROM crove_crm.quote q
+      FROM ludy_crm.quote q
       WHERE q.org_id = ${ctx.orgId}::uuid AND q.deal_id = ${booking.deal.id}::uuid AND q.party_id = ${deal.party_id}::uuid AND q.number IS NOT NULL AND q.status IN ('sent', 'accepted', 'declined')
       ORDER BY coalesce(q.sent_at, q.created_at) DESC, q.id DESC
       LIMIT 1`.execute(ctx.trx);
-    const setting = await sql<{ auto_draft: boolean }>`SELECT auto_draft FROM crove_kernel.conversation_setting WHERE org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
+    const setting = await sql<{ auto_draft: boolean }>`SELECT auto_draft FROM ludy_kernel.conversation_setting WHERE org_id = ${ctx.orgId}::uuid`.execute(ctx.trx);
     // The messages go through the member's own row-level security: a conversation they may not read gives none.
     const said = await sql<{ body: string }>`
       SELECT pg_catalog.left(m.body, ${MESSAGE_CHARS}::int) AS body
-      FROM crove_kernel.conversation_message m
-      JOIN crove_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id
+      FROM ludy_kernel.conversation_message m
+      JOIN ludy_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.party_id = ${deal.party_id}::uuid AND m.direction = 'in' AND m.platform_removed_at IS NULL AND m.hidden_at IS NULL AND m.body <> ''
       ORDER BY m.sent_at DESC, m.id DESC LIMIT ${MEETING_BRIEF_MESSAGES}::int`.execute(ctx.trx);
     const startsAt = Date.parse(booking.startsAt);

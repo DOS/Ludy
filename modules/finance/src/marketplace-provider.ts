@@ -9,18 +9,23 @@
 //
 // Each provider declares static capability data (page size, window and rate per platform), its hosts and the fields the org types to connect. The offline provider reaches no host,
 // asks for no field and serves a small recorded set of orders for each platform: made-up SKUs and names, no buyer data of any kind, amounts as decimal strings, dates as ISO days.
-// A real adapter (a later issue, one per platform with its own review) reaches its platform only through guardedRequest of @crove/kernel-runtime (egress.ts), never with a bare fetch.
-import { MARKETPLACE_PLATFORM_KEYS } from '@crove/kernel-contract';
-import { money, toMoney } from '@crove/l10n-vn';
+// A real adapter (a later issue, one per platform with its own review) reaches its platform only through guardedRequest of @ludy/kernel-runtime (egress.ts), never with a bare fetch.
+import { z } from 'zod';
+import { MARKETPLACE_PLATFORM_KEYS } from '@ludy/kernel-contract';
+import { money, toMoney } from '@ludy/l10n-vn';
 
 export type MarketplacePlatformKey = (typeof MARKETPLACE_PLATFORM_KEYS)[number];
 
-// The adapters this build knows. `sandbox` is the offline provider.
-export const MARKETPLACE_ADAPTERS = ['sandbox'] as const;
+// The adapters this build knows. `sandbox` is the offline provider; `lazada` is the real Lazada adapter (#2524), built dormant: a deployment turns it on with MARKETPLACE_PROVIDERS (a later slice).
+// `tiktok_shop` is the TikTok Shop adapter (#2524, T2 = #4259), built dormant too: nothing builds it from MARKETPLACE_PROVIDERS until its wiring slice. `shopee` is the Shopee adapter (#2524, S1 = #4274), dormant in the same way.
+export const MARKETPLACE_ADAPTERS = ['sandbox', 'lazada', 'tiktok_shop', 'shopee'] as const;
 export type MarketplaceAdapterId = (typeof MARKETPLACE_ADAPTERS)[number];
 
 // The platforms each adapter serves, as static data: the commands check a connection against it before anything is sealed, and the adapter's capabilities are built from it.
-export const MARKETPLACE_ADAPTER_PLATFORMS: Readonly<Record<MarketplaceAdapterId, readonly MarketplacePlatformKey[]>> = { sandbox: MARKETPLACE_PLATFORM_KEYS };
+export const MARKETPLACE_ADAPTER_PLATFORMS: Readonly<Record<MarketplaceAdapterId, readonly MarketplacePlatformKey[]>> = { sandbox: MARKETPLACE_PLATFORM_KEYS, lazada: ['lazada'], tiktok_shop: ['tiktok_shop'], shopee: ['shopee'] };
+
+// The adapters whose connection the seller authorizes on the platform's own page after typing their app's key and secret (Lazada): the connection holds no access token until they do.
+export const MARKETPLACE_AUTHORIZED_ADAPTERS: readonly MarketplaceAdapterId[] = ['lazada', 'tiktok_shop'];
 
 export function isMarketplaceAdapter(value: string): value is MarketplaceAdapterId {
   return (MARKETPLACE_ADAPTERS as readonly string[]).includes(value);
@@ -34,8 +39,8 @@ export type MarketplaceTestResult = (typeof MARKETPLACE_TEST_RESULTS)[number];
 export const MARKETPLACE_POLL_RESULTS = ['ok', 'unreachable', 'credentials', 'rate_limited', 'too_large', 'not_recognized'] as const;
 export type MarketplacePollEnding = (typeof MARKETPLACE_POLL_RESULTS)[number];
 
-// A failure the caller maps to a state on screen.
-export const MARKETPLACE_ERROR_KINDS = ['unreachable', 'credentials', 'rate_limited'] as const;
+// A failure the caller maps to a state on screen. `not_recognized`: the platform answered, but with a page the adapter will not store (a masked value, an unknown status, a malformed amount).
+export const MARKETPLACE_ERROR_KINDS = ['unreachable', 'credentials', 'rate_limited', 'not_recognized', 'too_large'] as const;
 export type MarketplaceErrorKind = (typeof MARKETPLACE_ERROR_KINDS)[number];
 
 export class MarketplaceProviderError extends Error {
@@ -57,7 +62,9 @@ export interface MarketplacePlatformCapability {
 // The figures a real adapter starts from; each is replaced by the platform's published limit when that adapter is built and reviewed. Nothing here is called today.
 export const MARKETPLACE_PLATFORM_LIMITS: Readonly<Record<MarketplacePlatformKey, MarketplacePlatformCapability>> = {
   shopee: { pageSize: 100, windowDays: 15, ratePerMinute: 60 },
-  tiktok_shop: { pageSize: 50, windowDays: 30, ratePerMinute: 60 },
+  // TikTok Shop (#2524, T2 = #4259): a request asks for 50 (the return list takes at most 50, the order list 100) and one poll page holds at most 250 orders, which is five requests: a bulk change within one
+  // second can only be read on by page token inside one call, and the orders read by id for returns count against the same figure.
+  tiktok_shop: { pageSize: 250, windowDays: 30, ratePerMinute: 60 },
   lazada: { pageSize: 100, windowDays: 30, ratePerMinute: 60 },
 };
 
@@ -85,6 +92,8 @@ export interface MarketplaceOrder {
   // ISO days (YYYY-MM-DD).
   orderedAt: string;
   shippedAt: string | null;
+  // The day of successful delivery (the completion column of the platform's report), or null while the platform gives none. Revenue belongs to its month (#2520, working answer A5).
+  deliveredAt: string | null;
   stage: MarketplaceOrderStage;
   lines: readonly MarketplaceOrderLine[];
 }
@@ -93,6 +102,35 @@ export interface MarketplaceOrderPage {
   orders: MarketplaceOrder[];
   // Where the next poll resumes: opaque, at most 200 characters. The cursor given when there is nothing new.
   nextCursor: string | null;
+  // True when the provider knows more orders wait behind this page (a full page): the poll may read the next page in the same run. Left out, the poll reads one page per run, as before.
+  more?: boolean;
+}
+
+// One order's income on one payment day, as the three readers (Lazada S5a, TikTok T3, Shopee S3) give it and the income path's lines hold it: decimal strings, every deduction a positive amount taken
+// from the seller, `other` and `net` signed: net = sales - sellerDiscount - commission - serviceFee - paymentFee - shipping - taxWithheld - refund + other. What a reader only carries (VAT and
+// withholding fields, fee ids) is not here: it is not written to the file the income path stages.
+export interface MarketplaceIncomeLine {
+  orderNo: string;
+  // YYYY-MM-DD, the payment day (Vietnam).
+  paidAt: string;
+  sales: string;
+  sellerDiscount: string;
+  commission: string;
+  serviceFee: string;
+  paymentFee: string;
+  shipping: string;
+  taxWithheld: string;
+  refund: string;
+  other: string;
+  net: string;
+}
+
+export interface MarketplaceIncomePage {
+  lines: MarketplaceIncomeLine[];
+  // Where the next read resumes: opaque, at most 100 characters; the cursor given when nothing moved.
+  nextCursor: string | null;
+  // True when the provider knows more closed days wait behind this one: the poll may read the next in the same run.
+  more?: boolean;
 }
 
 // What a platform paid and kept for one order (the figures of an income report, #2516), decimal strings.
@@ -112,6 +150,14 @@ export interface MarketplaceStockLevel {
   quantity: string;
 }
 
+// What trading a seller's one-time authorization code gives: the new sealed secret of the connection (the seller's keys with the tokens) and the dates, or why not. `refused`: the platform says the code is
+// bad, used or expired (the seller authorizes again); `failed`: anything else. A short word each, never the platform's text.
+export type MarketplaceAuthorizeResult =
+  // `sellerRef`: the platform's id of the seller who authorized, when its answer names one (a short word, never a name or an e-mail): the finance command refuses an authorization of a different seller (#4285).
+  | { granted: { secret: string; accessExpiresAt: Date; refreshExpiresAt: Date | null; sellerRef?: string | null } }
+  | { refused: string }
+  | { failed: string };
+
 export interface MarketplaceProvider {
   readonly id: MarketplaceAdapterId;
   // The hosts this adapter's calls are bound to (through guardedRequest).
@@ -120,10 +166,20 @@ export interface MarketplaceProvider {
   // the opaque secret of a call; the offline provider needs none.
   readonly connectFields: readonly string[];
   readonly capabilities: MarketplaceCapabilities;
+  // Only an adapter the seller authorizes on the platform's own page (Lazada): the address of that page for an app key, a return address and a state, and the trade of the code the page returns. The
+  // trade runs in the worker, with the seller's own secret; the API only builds the address.
+  // The connect field whose clear value is the public id of the consent page (Lazada: `appKey`, TikTok Shop: `serviceId`); the API stores it beside the sealed secret, in the `app_key` column (printable
+  // ASCII, 1 to 100 characters, which both ids fit). A closed value, never a free field name. Absent: `appKey`.
+  readonly authorizePublicField?: 'appKey' | 'serviceId';
+  authorizeUrl?(input: { appKey: string; redirectUri: string; state: string }): string;
+  authorize?(secret: string, code: string): Promise<MarketplaceAuthorizeResult>;
   testConnection(secret: string): Promise<MarketplaceTestResult>;
   // The orders changed since the cursor (null: from the start of the platform's window), at most one page.
   listOrders(secret: string, platform: MarketplacePlatformKey, since: string | null): Promise<MarketplaceOrderPage>;
   orderFinance(secret: string, orderNo: string): Promise<MarketplaceOrderFinance | null>;
+  // The income of ONE closed payment day after the cursor (null: from the start of the first window), at most one day, as the lines of the income path. Left out by an adapter with no income
+  // reader (the offline one): its poll has no income leg.
+  listIncome?(secret: string, platform: MarketplacePlatformKey, since: string | null): Promise<MarketplaceIncomePage>;
   listStock(secret: string): Promise<MarketplaceStockLevel[]>;
 }
 
@@ -138,6 +194,7 @@ interface Recorded {
   orderNo: string;
   orderedAt: string;
   shippedAt: string | null;
+  deliveredAt: string | null;
   stage: MarketplaceOrderStage;
   lines: ReadonlyArray<[sku: string, name: string, quantity: string, unitPrice: string]>;
 }
@@ -145,19 +202,19 @@ interface Recorded {
 // Three recorded orders for each platform, in the order they were "placed". The names are made up, the order numbers carry the platform's own look, and no buyer is named.
 const RECORDED: Readonly<Record<MarketplacePlatformKey, readonly Recorded[]>> = {
   shopee: [
-    { orderNo: '2611A0001', orderedAt: '2026-11-02', shippedAt: '2026-11-03', stage: 'completed', lines: [['MAU-001', 'Áo thun mẫu cổ tròn', '2', '150000'], ['MAU-002', 'Mũ vải mẫu', '1', '90000']] },
-    { orderNo: '2611A0002', orderedAt: '2026-11-04', shippedAt: '2026-11-05', stage: 'shipped', lines: [['MAU-001', 'Áo thun mẫu cổ tròn', '1', '150000']] },
-    { orderNo: '2611A0003', orderedAt: '2026-11-06', shippedAt: null, stage: 'placed', lines: [['MAU-003', 'Túi vải mẫu', '3', '65000']] },
+    { orderNo: '2611A0001', orderedAt: '2026-11-02', shippedAt: '2026-11-03', deliveredAt: '2026-11-05', stage: 'completed', lines: [['MAU-001', 'Áo thun mẫu cổ tròn', '2', '150000'], ['MAU-002', 'Mũ vải mẫu', '1', '90000']] },
+    { orderNo: '2611A0002', orderedAt: '2026-11-04', shippedAt: '2026-11-05', deliveredAt: null, stage: 'shipped', lines: [['MAU-001', 'Áo thun mẫu cổ tròn', '1', '150000']] },
+    { orderNo: '2611A0003', orderedAt: '2026-11-06', shippedAt: null, deliveredAt: null, stage: 'placed', lines: [['MAU-003', 'Túi vải mẫu', '3', '65000']] },
   ],
   tiktok_shop: [
-    { orderNo: '5771000001', orderedAt: '2026-11-01', shippedAt: '2026-11-02', stage: 'completed', lines: [['MAU-002', 'Mũ vải mẫu', '2', '88000']] },
-    { orderNo: '5771000002', orderedAt: '2026-11-03', shippedAt: null, stage: 'cancelled', lines: [['MAU-003', 'Túi vải mẫu', '1', '65000']] },
-    { orderNo: '5771000003', orderedAt: '2026-11-05', shippedAt: '2026-11-06', stage: 'shipped', lines: [['MAU-001', 'Áo thun mẫu cổ tròn', '1', '149000']] },
+    { orderNo: '5771000001', orderedAt: '2026-11-01', shippedAt: '2026-11-02', deliveredAt: '2026-11-04', stage: 'completed', lines: [['MAU-002', 'Mũ vải mẫu', '2', '88000']] },
+    { orderNo: '5771000002', orderedAt: '2026-11-03', shippedAt: null, deliveredAt: null, stage: 'cancelled', lines: [['MAU-003', 'Túi vải mẫu', '1', '65000']] },
+    { orderNo: '5771000003', orderedAt: '2026-11-05', shippedAt: '2026-11-06', deliveredAt: null, stage: 'shipped', lines: [['MAU-001', 'Áo thun mẫu cổ tròn', '1', '149000']] },
   ],
   lazada: [
-    { orderNo: '9101000001', orderedAt: '2026-11-02', shippedAt: '2026-11-03', stage: 'completed', lines: [['MAU-001', 'Áo thun mẫu cổ tròn', '1', '152000'], ['MAU-003', 'Túi vải mẫu', '1', '66000']] },
-    { orderNo: '9101000002', orderedAt: '2026-11-04', shippedAt: '2026-11-05', stage: 'returned', lines: [['MAU-002', 'Mũ vải mẫu', '1', '91000']] },
-    { orderNo: '9101000003', orderedAt: '2026-11-06', shippedAt: null, stage: 'placed', lines: [['MAU-002', 'Mũ vải mẫu', '2', '91000']] },
+    { orderNo: '9101000001', orderedAt: '2026-11-02', shippedAt: '2026-11-03', deliveredAt: '2026-11-05', stage: 'completed', lines: [['MAU-001', 'Áo thun mẫu cổ tròn', '1', '152000'], ['MAU-003', 'Túi vải mẫu', '1', '66000']] },
+    { orderNo: '9101000002', orderedAt: '2026-11-04', shippedAt: '2026-11-05', deliveredAt: '2026-11-07', stage: 'returned', lines: [['MAU-002', 'Mũ vải mẫu', '1', '91000']] },
+    { orderNo: '9101000003', orderedAt: '2026-11-06', shippedAt: null, deliveredAt: null, stage: 'placed', lines: [['MAU-002', 'Mũ vải mẫu', '2', '91000']] },
   ],
 };
 
@@ -179,6 +236,7 @@ function orderOf(r: Recorded): MarketplaceOrder {
     orderNo: r.orderNo,
     orderedAt: r.orderedAt,
     shippedAt: r.shippedAt,
+    deliveredAt: r.deliveredAt,
     stage: r.stage,
     lines: r.lines.map(([sku, itemName, quantity, unitPrice], index) => ({ lineKey: `${r.orderNo}-${index + 1}`, sku, itemName, quantity, unitPrice, amount: toMoney(money(quantity).times(unitPrice)) })),
   };
@@ -239,7 +297,7 @@ export function createSandboxMarketplaceProvider(options: SandboxMarketplaceOpti
 // A page of orders as the platform's own report
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
-// The header and status words of each platform's profile (@crove/l10n-vn, marketplace-orders.ts) that the writer below uses, so the file reads through the same profile as one a seller
+// The header and status words of each platform's profile (@ludy/l10n-vn, marketplace-orders.ts) that the writer below uses, so the file reads through the same profile as one a seller
 // downloads. There is NO buyer column in any layout: a provider's page never carried one into this process, and the report has none to read.
 interface Layout {
   head: readonly string[];
@@ -260,39 +318,56 @@ const EN_STATUS: Record<MarketplaceOrderStage, string> = { placed: 'Awaiting shi
 
 const LAYOUTS: Readonly<Record<MarketplacePlatformKey, Layout>> = {
   shopee: {
-    head: ['Mã đơn hàng', 'Ngày đặt hàng', 'Ngày gửi hàng', 'Trạng Thái Đơn Hàng', 'SKU phân loại hàng', 'Tên sản phẩm', 'Giá ưu đãi', 'Số lượng', 'Tổng giá bán (sản phẩm)'],
+    head: ['Mã đơn hàng', 'Ngày đặt hàng', 'Ngày gửi hàng', 'Trạng Thái Đơn Hàng', 'SKU phân loại hàng', 'Tên sản phẩm', 'Giá ưu đãi', 'Số lượng', 'Tổng giá bán (sản phẩm)', 'Thời gian hoàn thành đơn hàng'],
     rowPerUnit: false,
-    row: (o, l, _unit, text) => [o.orderNo, o.orderedAt, o.shippedAt ?? '', VN_STATUS[o.stage], l.sku ?? '', text(l.itemName), decimal(l.unitPrice), decimal(l.quantity), decimal(l.amount)],
+    row: (o, l, _unit, text) => [o.orderNo, o.orderedAt, o.shippedAt ?? '', VN_STATUS[o.stage], l.sku ?? '', text(l.itemName), decimal(l.unitPrice), decimal(l.quantity), decimal(l.amount), o.deliveredAt ?? ''],
   },
   tiktok_shop: {
-    head: ['Order ID', 'Order Status', 'Order Substatus', 'Seller SKU', 'Product Name', 'Quantity', 'SKU Unit Original Price', 'SKU Subtotal After Discount', 'Created Time', 'Shipped Time'],
+    head: ['Order ID', 'Order Status', 'Order Substatus', 'Seller SKU', 'Product Name', 'Quantity', 'SKU Unit Original Price', 'SKU Subtotal After Discount', 'Created Time', 'Shipped Time', 'Delivered Time'],
     rowPerUnit: false,
-    row: (o, l, _unit, text) => [o.orderNo, EN_STATUS[o.stage], EN_STATUS[o.stage], l.sku ?? '', text(l.itemName), decimal(l.quantity), decimal(l.unitPrice), decimal(l.amount), o.orderedAt, o.shippedAt ?? ''],
+    row: (o, l, _unit, text) => [o.orderNo, EN_STATUS[o.stage], EN_STATUS[o.stage], l.sku ?? '', text(l.itemName), decimal(l.quantity), decimal(l.unitPrice), decimal(l.amount), o.orderedAt, o.shippedAt ?? '', o.deliveredAt ?? ''],
   },
   lazada: {
-    head: ['orderNumber', 'orderItemId', 'status', 'createTime', 'shippedTime', 'itemName', 'sellerSku', 'unitPrice', 'paidPrice'],
+    head: ['orderNumber', 'orderItemId', 'status', 'createTime', 'shippedTime', 'itemName', 'sellerSku', 'unitPrice', 'paidPrice', 'deliveredTime'],
     rowPerUnit: true,
-    // One row per unit: the unit's own item id, and its share of the line's amount (a whole number of units).
-    row: (o, l, unit, text) => [o.orderNo, `${l.lineKey}-${unit.index}`, EN_STATUS[o.stage], o.orderedAt, o.shippedAt ?? '', text(l.itemName), l.sku ?? '', decimal(l.unitPrice), decimal(unit.amount)],
+    // One row per unit: the unit's own item id, and its share of the line's amount (a whole number of units). A line of ONE unit keeps its item id as it is, so a polled item and the same item in a
+    // report a seller downloads (which carries the bare `orderItemId`) have the same line key and are one line; only a line of several units gets `-<unit>` after its key.
+    row: (o, l, unit, text) => [o.orderNo, l.quantity === '1' ? l.lineKey : `${l.lineKey}-${unit.index}`, EN_STATUS[o.stage], o.orderedAt, o.shippedAt ?? '', text(l.itemName), l.sku ?? '', decimal(l.unitPrice), decimal(unit.amount), o.deliveredAt ?? ''],
   },
 };
 
 // A free-text cell (a product name the seller chose) as plain text: a leading = + - @, tab or carriage return would start a formula in a spreadsheet, so it gets a ' in front. Only
 // names go through this; an SKU, an order number, a day or an amount is written as it is, because the parsing sandbox reads those back exactly and no spreadsheet ever opens the file.
 const FORMULA_START = /^[=+\-@\t\r]/;
-const plainText = (value: string): string => (FORMULA_START.test(value) ? `'${value}` : value);
+export const marketplaceCellText = (value: string): string => (FORMULA_START.test(value) ? `'${value}` : value);
 // The reader takes one point followed by exactly three digits for a thousands group ("125.125" is read as 125125). Four digits are never grouped, and the reader gives the value back
 // without the extra zero, so a number with three decimals is written with a zero added.
 const decimal = (value: string): string => value.replace(/\.(\d{3})$/, (_, digits: string) => `.${digits}0`);
 
 // A cell as CSV: always quoted, a quote doubled.
 const cell = (value: string): string => `"${value.replaceAll('"', '""')}"`;
+export const marketplaceCsvCell = cell;
 
 // The number of units of a line on a platform that writes a row for each, or null when the quantity is no whole number of at least 1.
 const wholeUnits = (quantity: string): number | null => {
   const q = money(quantity);
   return q.isInteger() && q.gte(1) && q.lte(100_000) ? q.toNumber() : null;
 };
+
+// The most rows one file may carry (the same as EXTRACT_LIMITS.maxOrderLines of the parsing sandbox; a test keeps the two equal). The rows are counted BEFORE any is built (#2840 point 1), so a page
+// of a few lines with huge quantities on a platform that writes a row for each unit is refused early and never materialised.
+export const MARKETPLACE_CSV_MAX_ROWS = 20_000;
+
+// How many rows a page of orders writes in the platform's layout: one for each line, on a platform with a row per unit one for each unit. A line a per-unit layout cannot carry (a fractional or
+// absurd quantity) counts as one row here; splitWritableOrders names those, and writing one throws.
+export function marketplaceCsvRows(platform: MarketplacePlatformKey, orders: readonly MarketplaceOrder[]): number {
+  const perUnit = LAYOUTS[platform].rowPerUnit;
+  let rows = 0;
+  for (const order of orders) {
+    for (const line of order.lines) rows += perUnit ? (wholeUnits(line.quantity) ?? 1) : 1;
+  }
+  return rows;
+}
 
 // What a page can be written as: the orders the layout can carry, and how many it cannot (a platform that writes a row for each unit cannot carry a line of 1.5 units). Those are named
 // by the caller, never written half and never dropped without a trace.
@@ -309,13 +384,14 @@ export function splitWritableOrders(platform: MarketplacePlatformKey, orders: re
 // carry throws; the caller removes those first (splitWritableOrders).
 export function marketplaceOrdersCsv(platform: MarketplacePlatformKey, orders: readonly MarketplaceOrder[], connectionId?: string): string {
   const layout = LAYOUTS[platform];
+  if (marketplaceCsvRows(platform, orders) > MARKETPLACE_CSV_MAX_ROWS) throw new Error('the page writes more rows than one file may carry');
   const rows: string[][] = [];
   if (connectionId !== undefined) rows.push([`Ludy marketplace connection ${connectionId}`]);
   rows.push([...layout.head]);
   for (const order of orders) {
     for (const line of order.lines) {
       if (!layout.rowPerUnit) {
-        rows.push(layout.row(order, line, { index: 1, amount: line.amount }, plainText));
+        rows.push(layout.row(order, line, { index: 1, amount: line.amount }, marketplaceCellText));
         continue;
       }
       const units = wholeUnits(line.quantity);
@@ -325,7 +401,7 @@ export function marketplaceOrdersCsv(platform: MarketplacePlatformKey, orders: r
       const share = total.dividedBy(units).toDecimalPlaces(4, 1);
       const last = total.minus(share.times(units - 1));
       for (let unit = 1; unit <= units; unit += 1) {
-        rows.push(layout.row(order, { ...line, quantity: String(units) }, { index: unit, amount: toMoney(unit === units ? last : share) }, plainText));
+        rows.push(layout.row(order, { ...line, quantity: String(units) }, { index: unit, amount: toMoney(unit === units ? last : share) }, marketplaceCellText));
       }
     }
   }
@@ -338,4 +414,59 @@ export function ordersSpan(orders: readonly MarketplaceOrder[]): { from: string;
   const from = days[0];
   const to = days.at(-1);
   return from === undefined || to === undefined ? null : { from, to };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// A page as a provider returns it, checked before anything is written (#2840 point 2)
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+const noControl = (value: string): boolean => ![...value].some((ch) => ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f);
+const validDay = (value: string): boolean => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return false;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const date = new Date(Date.UTC(y, mo - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === mo - 1 && date.getUTCDate() === d;
+};
+const zDay = z.string().refine(validDay);
+const zIdent = (max: number) => z.string().min(1).max(max).refine(noControl);
+const zAmount = z.string().regex(/^-?\d{1,16}(\.\d{1,4})?$/);
+const zQuantity = z.string().regex(/^\d{1,9}(\.\d{1,3})?$/).refine((value) => Number(value) > 0);
+
+// Strict: a field the port does not name (a buyer's name, an address) is a provider's bug and refuses the page, so nothing a provider adds can ride along into a file.
+export const zMarketplaceOrderPage = z.strictObject({
+  orders: z
+    .array(
+      z.strictObject({
+        orderNo: zIdent(100),
+        orderedAt: zDay,
+        shippedAt: zDay.nullable(),
+        deliveredAt: zDay.nullable(),
+        stage: z.enum(MARKETPLACE_ORDER_STAGES),
+        lines: z
+          .array(
+            z.strictObject({
+              lineKey: zIdent(120),
+              sku: zIdent(100).nullable(),
+              // Counted in characters, as the adapters cut it: 300 characters outside the basic plane are 600 UTF-16 units. The unit bound only limits the work of counting.
+              itemName: z.string().max(1200).refine(noControl).refine((value) => Array.from(value).length <= 300),
+              quantity: zQuantity,
+              unitPrice: zAmount,
+              amount: zAmount,
+            }),
+          )
+          .min(1)
+          .max(500),
+      }),
+    )
+    .max(1000),
+  nextCursor: z.string().max(200).nullable(),
+  more: z.boolean().optional(),
+});
+
+// The page when it is one the writer may take, or null: decimal strings, real calendar days, known stages, bounded lengths, no field the port does not name. The caller maps null to the poll
+// state `not_recognized` and leaves the cursor where it was; the provider's own text is never kept.
+export function parseMarketplaceOrderPage(page: unknown): MarketplaceOrderPage | null {
+  const parsed = zMarketplaceOrderPage.safeParse(page);
+  return parsed.success ? (parsed.data as MarketplaceOrderPage) : null;
 }

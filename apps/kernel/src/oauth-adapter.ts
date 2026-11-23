@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The storage of the embedded OAuth 2.1 authorization server (ADR-0032 item 7, ADR-0051 decision 2, issue #2975): the adapter `oidc-provider`
-// asks for, over crove_kernel.oauth_record.
+// asks for, over ludy_kernel.oauth_record.
 //
 // A record's key is stored only as its SHA-256, whatever its model, so an authorization code, a refresh token or a session id is never in the
 // database in clear. The provider's payload (the PKCE challenge, the scopes, the account) is stored as it is: it holds none of those secrets,
@@ -9,11 +9,11 @@
 import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import { errors, type Adapter, type AdapterPayload } from 'oidc-provider';
-import type { Db } from '@crove/db';
-import { toDomainError } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { toDomainError } from '@ludy/kernel-runtime';
 
 // How long a record lives when the provider names no end: a registered client that never obtains a grant is gone after 30 days
-// (crove_kernel.mcp_grant_approve lifts it to 400 days when a person consents to it).
+// (ludy_kernel.mcp_grant_approve lifts it to 400 days when a person consents to it).
 const DEFAULT_LIFETIME_SECONDS = 24 * 3600;
 
 export const keyHash = (id: string): Buffer => createHash('sha256').update(id, 'utf8').digest();
@@ -53,7 +53,7 @@ class OauthAdapter implements Adapter {
     const stored = SECRET_ID_MODELS.has(this.#model) ? Object.fromEntries(Object.entries(rest).filter(([key]) => key !== 'jti')) : rest;
     try {
       await this.#run((db) =>
-        sql`SELECT crove_kernel.oauth_record_upsert(${this.#model}::text, ${keyHash(id)}::bytea, ${JSON.stringify(stored)}::jsonb, ${grantId}::text, ${uid}::text,
+        sql`SELECT ludy_kernel.oauth_record_upsert(${this.#model}::text, ${keyHash(id)}::bytea, ${JSON.stringify(stored)}::jsonb, ${grantId}::text, ${uid}::text,
           pg_catalog.clock_timestamp() + (${lifetime} * interval '1 second'))`.execute(db),
       );
     } catch (error) {
@@ -62,13 +62,13 @@ class OauthAdapter implements Adapter {
   }
 
   async find(id: string): Promise<AdapterPayload | undefined> {
-    const { rows } = await this.#run((db) => sql<Row>`SELECT payload, consumed_at FROM crove_kernel.oauth_record_find(${this.#model}::text, ${keyHash(id)}::bytea)`.execute(db));
+    const { rows } = await this.#run((db) => sql<Row>`SELECT payload, consumed_at FROM ludy_kernel.oauth_record_find(${this.#model}::text, ${keyHash(id)}::bytea)`.execute(db));
     const found = withConsumed(rows[0]);
     return found && SECRET_ID_MODELS.has(this.#model) ? { ...found, jti: id } : found;
   }
 
   async findByUid(uid: string): Promise<AdapterPayload | undefined> {
-    const { rows } = await this.#run((db) => sql<Row>`SELECT payload, consumed_at FROM crove_kernel.oauth_record_find_by_uid(${this.#model}::text, ${uid}::text)`.execute(db));
+    const { rows } = await this.#run((db) => sql<Row>`SELECT payload, consumed_at FROM ludy_kernel.oauth_record_find_by_uid(${this.#model}::text, ${uid}::text)`.execute(db));
     return withConsumed(rows[0]);
   }
 
@@ -79,16 +79,16 @@ class OauthAdapter implements Adapter {
 
   // Consumed once: a second consumer (two requests racing with one code or refresh token) gets a refusal, so a chain never forks.
   async consume(id: string): Promise<void> {
-    const { rows } = await this.#run((db) => sql<{ consumed: boolean }>`SELECT crove_kernel.oauth_record_consume(${this.#model}::text, ${keyHash(id)}::bytea) AS consumed`.execute(db));
+    const { rows } = await this.#run((db) => sql<{ consumed: boolean }>`SELECT ludy_kernel.oauth_record_consume(${this.#model}::text, ${keyHash(id)}::bytea) AS consumed`.execute(db));
     if (rows[0]?.consumed !== true) throw new errors.InvalidGrant('the grant was already used');
   }
 
   async destroy(id: string): Promise<void> {
-    await this.#run((db) => sql`SELECT crove_kernel.oauth_record_destroy(${this.#model}::text, ${keyHash(id)}::bytea)`.execute(db));
+    await this.#run((db) => sql`SELECT ludy_kernel.oauth_record_destroy(${this.#model}::text, ${keyHash(id)}::bytea)`.execute(db));
   }
 
   async revokeByGrantId(grantId: string): Promise<void> {
-    await this.#run((db) => sql`SELECT crove_kernel.oauth_record_revoke_by_grant(${grantId}::text)`.execute(db));
+    await this.#run((db) => sql`SELECT ludy_kernel.oauth_record_revoke_by_grant(${grantId}::text)`.execute(db));
   }
 }
 

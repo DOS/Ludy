@@ -11,9 +11,9 @@
 // with their count, so a read groups before it lists.
 import { Decimal } from 'decimal.js';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import type { AdsFlag, TodayItem } from '@crove/kernel-contract';
-import { defineQuery } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import type { AdsFlag, TodayItem } from '@ludy/kernel-contract';
+import { defineQuery } from '@ludy/kernel-runtime';
 import { loadFlags } from './spend-flags.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];

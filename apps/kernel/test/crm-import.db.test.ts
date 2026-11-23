@@ -8,12 +8,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { ImportBatch, ImportCommitted, ImportPreview, ImportRowInput } from '@crove/kernel-contract';
-import { crmCommands, crmQueries } from '@crove/mod-crm';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { ImportBatch, ImportCommitted, ImportPreview, ImportRowInput } from '@ludy/kernel-contract';
+import { crmCommands, crmQueries } from '@ludy/mod-crm';
+import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -48,7 +48,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     const lan = await person('lan');
     const huy = await person('huy');
     const viewer = await person('viewer');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, lan, huy, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, lan, huy, viewer]));
     const exec = <T>(user: string, name: string, input: unknown) => rt.execute<T>(name, input, { actor: asUser(user), orgId });
     const query = <T>(user: string, name: string, input: unknown) => rt.query<T>(name, input, { actor: asUser(user), orgId });
     const stage = (user: string, rows: ImportRowInput[], filename = 'lien-he.csv') => exec<ImportPreview>(user, 'crm.import.stage', { filename, rows });
@@ -57,17 +57,17 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     const companies = () =>
       admin((c) =>
         c
-          .query<{ name: string; company: string }>('SELECT p.name, k.name AS company FROM crove_kernel.party p JOIN crove_kernel.party k ON k.org_id = p.org_id AND k.id = p.company_id WHERE p.org_id = $1 ORDER BY p.name', [orgId])
+          .query<{ name: string; company: string }>('SELECT p.name, k.name AS company FROM ludy_kernel.party p JOIN ludy_kernel.party k ON k.org_id = p.org_id AND k.id = p.company_id WHERE p.org_id = $1 ORDER BY p.name', [orgId])
           .then((r) => r.rows),
       );
     const party = (fields: { name: string; tax_code?: string; email?: string; phone?: string; address?: string; source_trust?: 'external' | 'user' | 'system' }) =>
       admin((c) =>
         c
-          .query<{ id: string }>('INSERT INTO crove_kernel.party (org_id, name, tax_code, email, phone, address, source_trust) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id', [orgId, fields.name, fields.tax_code ?? null, fields.email ?? null, fields.phone ?? null, fields.address ?? null, fields.source_trust ?? 'user'])
+          .query<{ id: string }>('INSERT INTO ludy_kernel.party (org_id, name, tax_code, email, phone, address, source_trust) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id', [orgId, fields.name, fields.tax_code ?? null, fields.email ?? null, fields.phone ?? null, fields.address ?? null, fields.source_trust ?? 'user'])
           .then((r) => r.rows[0]!.id),
       );
-    const parties = () => admin((c) => c.query<{ name: string; kind: string; tax_code: string | null; email: string | null; phone: string | null; source_trust: string }>('SELECT name, kind, tax_code, email, phone, source_trust FROM crove_kernel.party WHERE org_id = $1 ORDER BY name', [orgId]).then((r) => r.rows));
-    const stagedRows = (batchId: string) => admin((c) => c.query('SELECT 1 FROM crove_crm.import_row WHERE org_id = $1 AND batch_id = $2', [orgId, batchId]).then((r) => r.rowCount ?? 0));
+    const parties = () => admin((c) => c.query<{ name: string; kind: string; tax_code: string | null; email: string | null; phone: string | null; source_trust: string }>('SELECT name, kind, tax_code, email, phone, source_trust FROM ludy_kernel.party WHERE org_id = $1 ORDER BY name', [orgId]).then((r) => r.rows));
+    const stagedRows = (batchId: string) => admin((c) => c.query('SELECT 1 FROM ludy_crm.import_row WHERE org_id = $1 AND batch_id = $2', [orgId, batchId]).then((r) => r.rowCount ?? 0));
     return { orgId, owner, lan, huy, viewer, exec, query, stage, commit, party, parties, stagedRows, companies };
   }
 
@@ -80,9 +80,9 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -177,7 +177,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     expect(again.batch).toMatchObject({ status: 'committed', createdRows: 2 });
     expect((await o.parties()).length).toBe(3);
     // The timeline of a created party says where it came from.
-    const timeline = await admin((c) => c.query<{ kind: string; summary: string }>("SELECT kind, summary FROM crove_kernel.activity WHERE org_id = $1 AND kind = 'party.imported'", [o.orgId]));
+    const timeline = await admin((c) => c.query<{ kind: string; summary: string }>("SELECT kind, summary FROM ludy_kernel.activity WHERE org_id = $1 AND kind = 'party.imported'", [o.orgId]));
     expect(timeline.rows).toHaveLength(2);
     // The preview of a decided batch has no rows.
     expect((await o.query<ImportPreview>(o.owner, 'crm.import.preview', { batchId: staged.batch.id })).rows).toEqual([]);
@@ -190,11 +190,11 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     expect(staged.rows[0]).toMatchObject({ outcome: 'duplicate', reason: 'DUPLICATE_EMAIL' });
     const done = await o.commit(o.owner, staged.batch.id, 'fill_empty');
     expect(done.batch).toMatchObject({ createdRows: 0, updatedRows: 1, onDuplicate: 'fill_empty' });
-    const after = await admin((c) => c.query<{ name: string; email: string; phone: string; address: string; tax_code: string; version: number }>('SELECT name, email, phone, address, tax_code, version FROM crove_kernel.party WHERE org_id = $1 AND id = $2', [o.orgId, id]));
+    const after = await admin((c) => c.query<{ name: string; email: string; phone: string; address: string; tax_code: string; version: number }>('SELECT name, email, phone, address, tax_code, version FROM ludy_kernel.party WHERE org_id = $1 AND id = $2', [o.orgId, id]));
     // The tax code is never filled: the party was matched by its email, which does not say that code is its own.
     expect(after.rows[0]).toMatchObject({ name: 'Khách Cũ', email: 'cu@khach.test', phone: '0901 000 111', address: '12 Lê Lợi, Quận 1', tax_code: null, version: 2 });
     // The audit row lists the field names filled per party, never a value.
-    const audit = await admin((c) => c.query<{ detail: { filled: { partyId: string; fields: string[] }[] } }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'crm.import.commit' AND outcome = 'ok'", [o.orgId]));
+    const audit = await admin((c) => c.query<{ detail: { filled: { partyId: string; fields: string[] }[] } }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'crm.import.commit' AND outcome = 'ok'", [o.orgId]));
     expect(audit.rows[0]?.detail.filled).toEqual([{ partyId: id, fields: ['address'] }]);
     expect(JSON.stringify(audit.rows)).not.toContain('Lê Lợi');
     // With skip, the same row changes nothing.
@@ -202,7 +202,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     const second = await o.stage(o.owner, [row({ name: 'Khách Hai', email: 'hai@khach.test', address: 'Hà Nội' })]);
     const skipped = await o.commit(o.owner, second.batch.id, 'skip');
     expect(skipped.batch).toMatchObject({ updatedRows: 0 });
-    expect((await admin((c) => c.query<{ address: string | null }>('SELECT address FROM crove_kernel.party WHERE org_id = $1 AND id = $2', [o.orgId, other]))).rows[0]!.address).toBeNull();
+    expect((await admin((c) => c.query<{ address: string | null }>('SELECT address FROM ludy_kernel.party WHERE org_id = $1 AND id = $2', [o.orgId, other]))).rows[0]!.address).toBeNull();
   });
 
   it('lowers the trust of a party that fill_empty changes to external, and leaves the others as they are', async () => {
@@ -219,7 +219,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     ]);
     const done = await o.commit(o.owner, staged.batch.id, 'fill_empty');
     expect(done.batch).toMatchObject({ createdRows: 1, updatedRows: 2 });
-    const trust = await admin((c) => c.query<{ id: string; name: string; source_trust: string; version: number }>('SELECT id, name, source_trust, version FROM crove_kernel.party WHERE org_id = $1', [o.orgId]));
+    const trust = await admin((c) => c.query<{ id: string; name: string; source_trust: string; version: number }>('SELECT id, name, source_trust, version FROM ludy_kernel.party WHERE org_id = $1', [o.orgId]));
     const by = new Map(trust.rows.map((r) => [r.name, r]));
     expect(by.get('Đã Kiểm')).toMatchObject({ id: verified, source_trust: 'external' });
     expect(by.get('Tự Nhập')).toMatchObject({ id: typed, source_trust: 'external' });
@@ -240,7 +240,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     const done = await o.commit(o.owner, staged.batch.id, 'fill_empty');
     // The new row is made; the old party takes nothing the new one holds, and the commit does not fail on the tax code.
     expect(done.batch).toMatchObject({ status: 'committed', createdRows: 1 });
-    const after = await admin((c) => c.query<{ tax_code: string | null; phone: string | null }>('SELECT tax_code, phone FROM crove_kernel.party WHERE org_id = $1 AND id = $2', [o.orgId, id]));
+    const after = await admin((c) => c.query<{ tax_code: string | null; phone: string | null }>('SELECT tax_code, phone FROM ludy_kernel.party WHERE org_id = $1 AND id = $2', [o.orgId, id]));
     expect(after.rows[0]).toEqual({ tax_code: null, phone: null });
   });
 
@@ -268,7 +268,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     expect(staged.rows.map((r) => r.outcome)).toEqual(['duplicate', 'duplicate']);
     const done = await o.commit(o.owner, staged.batch.id, 'fill_empty');
     expect(done.batch).toMatchObject({ updatedRows: 1 });
-    const holders = await admin((c) => c.query("SELECT name FROM crove_kernel.party WHERE org_id = $1 AND phone = '0900 000 888'", [o.orgId]));
+    const holders = await admin((c) => c.query("SELECT name FROM ludy_kernel.party WHERE org_id = $1 AND phone = '0900 000 888'", [o.orgId]));
     expect(holders.rows).toHaveLength(1);
   });
 
@@ -299,19 +299,19 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     const second = await o.stage(o.lan, [row({ name: 'Lô Hai' })]);
     expect(await o.stagedRows(first.batch.id)).toBe(0);
     await expect(o.commit(o.lan, first.batch.id)).rejects.toMatchObject({ code: 'IMPORT_NOT_STAGED', status: 409 });
-    const status = await admin((c) => c.query<{ id: string; status: string }>('SELECT id, status FROM crove_crm.import_batch WHERE org_id = $1', [o.orgId]));
+    const status = await admin((c) => c.query<{ id: string; status: string }>('SELECT id, status FROM ludy_crm.import_batch WHERE org_id = $1', [o.orgId]));
     expect(new Map(status.rows.map((r) => [r.id, r.status]))).toEqual(new Map([[first.batch.id, 'cancelled'], [other.batch.id, 'staged'], [second.batch.id, 'staged']]));
     expect(await o.stagedRows(other.batch.id)).toBe(1);
     // Two stagings at once by one person leave one open batch.
     await Promise.all([o.stage(o.owner, [row({ name: 'A' })]), o.stage(o.owner, [row({ name: 'B' })])]);
-    const open = await admin((c) => c.query("SELECT 1 FROM crove_crm.import_batch WHERE org_id = $1 AND created_by = $2 AND status = 'staged'", [o.orgId, o.owner]));
+    const open = await admin((c) => c.query("SELECT 1 FROM ludy_crm.import_batch WHERE org_id = $1 AND created_by = $2 AND status = 'staged'", [o.orgId, o.owner]));
     expect(open.rowCount).toBe(1);
   });
 
   it('lets the tenant role update an import batch only in its status, choice, counts and decision time, and a staged row never', async () => {
     const o = await org();
     const grants = await admin((c) =>
-      c.query<{ table_name: string; column_name: string }>("SELECT table_name, column_name FROM information_schema.column_privileges WHERE grantee = 'crove_tenant' AND privilege_type = 'UPDATE' AND table_schema = 'crove_crm' AND table_name IN ('import_batch', 'import_row') ORDER BY 1, 2"),
+      c.query<{ table_name: string; column_name: string }>("SELECT table_name, column_name FROM information_schema.column_privileges WHERE grantee = 'ludy_tenant' AND privilege_type = 'UPDATE' AND table_schema = 'ludy_crm' AND table_name IN ('import_batch', 'import_row') ORDER BY 1, 2"),
     );
     expect(grants.rows.filter((g) => g.table_name === 'import_row')).toEqual([]);
     expect(grants.rows.map((g) => g.column_name)).toEqual(['conflict_rows', 'created_companies', 'created_rows', 'decided_at', 'duplicate_rows', 'invalid_rows', 'linked_rows', 'new_companies', 'new_rows', 'on_duplicate', 'status', 'total_rows', 'updated_rows']);
@@ -344,7 +344,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
   it('refuses and deletes a batch staged more than 7 days ago', async () => {
     const o = await org();
     const old = await o.stage(o.lan, [row({ name: 'Cũ' })]);
-    await admin((c) => c.query("UPDATE crove_crm.import_batch SET created_at = now() - interval '8 days' WHERE org_id = $1 AND id = $2", [o.orgId, old.batch.id]));
+    await admin((c) => c.query("UPDATE ludy_crm.import_batch SET created_at = now() - interval '8 days' WHERE org_id = $1 AND id = $2", [o.orgId, old.batch.id]));
     // The preview already calls it expired, though no command has run yet.
     expect((await o.query<ImportPreview>(o.lan, 'crm.import.preview', { batchId: old.batch.id })).batch.status).toBe('expired');
     // A commit answers that it expired, makes nothing, and its rows are gone for good.
@@ -353,7 +353,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     expect((await o.query<ImportPreview>(o.lan, 'crm.import.preview', { batchId: old.batch.id })).batch).toMatchObject({ status: 'expired' });
     // Another batch staged long ago loses its rows when any import command runs in the org.
     const forgotten = await o.stage(o.huy, [row({ name: 'Quên' })]);
-    await admin((c) => c.query("UPDATE crove_crm.import_batch SET created_at = now() - interval '9 days' WHERE org_id = $1 AND id = $2", [o.orgId, forgotten.batch.id]));
+    await admin((c) => c.query("UPDATE ludy_crm.import_batch SET created_at = now() - interval '9 days' WHERE org_id = $1 AND id = $2", [o.orgId, forgotten.batch.id]));
     await o.stage(o.owner, [row({ name: 'Mới' })]);
     expect(await o.stagedRows(forgotten.batch.id)).toBe(0);
     expect(await o.parties()).toEqual([]);
@@ -371,7 +371,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     const done = await o.commit(o.owner, staged.batch.id);
     expect(done.batch).toMatchObject({ createdRows: 2000 });
     expect((await o.parties()).length).toBe(2000);
-    const audit = await admin((c) => c.query("SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'crm.import.%' AND outcome = 'ok'", [o.orgId]));
+    const audit = await admin((c) => c.query("SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'crm.import.%' AND outcome = 'ok'", [o.orgId]));
     const text = JSON.stringify(audit.rows);
     expect(audit.rows.map((r) => r.command).sort()).toEqual(['crm.import.commit', 'crm.import.stage']);
     expect(text).not.toContain('bí mật');
@@ -398,7 +398,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     const staged = await o.stage(o.lan, [row({ name: 'Cần Xóa', email: 'xoa@khach.test', phone: '0900 000 222' }), row({ name: 'Giữ Lại', email: 'giu@khach.test' })]);
     const mfa = { type: 'user' as const, userId: o.owner, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
     const erased = await rt.execute<{ erased: { column: string; rows: number }[] }>('kernel.personal_data.erase', { value: 'XOA@khach.test' }, { actor: mfa, orgId: o.orgId, idempotencyKey: randomUUID() });
-    expect(erased.erased.find((e) => e.column === 'crove_crm.import_row.email')).toMatchObject({ rows: 1 });
+    expect(erased.erased.find((e) => e.column === 'ludy_crm.import_row.email')).toMatchObject({ rows: 1 });
     expect(await o.stagedRows(staged.batch.id)).toBe(1);
     const left = await o.query<ImportPreview>(o.lan, 'crm.import.preview', { batchId: staged.batch.id });
     expect(left.rows.map((r) => r.name)).toEqual(['Giữ Lại']);
@@ -463,7 +463,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
       ]);
       expect(await p2.parties()).toContainEqual({ name: 'Công ty Mới Toanh', kind: 'organization', tax_code: null, email: null, phone: null, source_trust: 'external' });
       // The audit row holds counts and the choice, never a company's name.
-      const audit = await admin((c) => c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'crm.import.commit' ORDER BY id", [p2.orgId]));
+      const audit = await admin((c) => c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'crm.import.commit' ORDER BY id", [p2.orgId]));
       expect(audit.rows[0]?.detail).toMatchObject({ createCompanies: true, createdCompanies: 1, linked: 3 });
       expect(JSON.stringify(audit.rows[0]?.detail)).not.toContain('Mới Toanh');
     });
@@ -473,7 +473,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
       await o.party({ name: 'Công ty Acme', tax_code: '0123456780' });
       const other = await o.party({ name: 'Công ty Khác' });
       const person = (name: string, email: string, company: string | null = null) =>
-        admin((c) => c.query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, kind, name, email, company_id) VALUES ($1, 'person', $2, $3, $4) RETURNING id", [o.orgId, name, email, company]).then((r) => r.rows[0]!.id));
+        admin((c) => c.query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, kind, name, email, company_id) VALUES ($1, 'person', $2, $3, $4) RETURNING id", [o.orgId, name, email, company]).then((r) => r.rows[0]!.id));
       await person('Có sẵn trống', 'trong@khach.test');
       await person('Đã có công ty', 'co@khach.test', other);
       await person('Cần công ty mới', 'moi@khach.test');
@@ -542,7 +542,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
       expect(staged.batch.newCompanies).toBe(0);
       // A company with no one working at it may be merged into a person: that person is no company, so the name is not matched to it.
       const lone = await o.party({ name: 'Công ty Một Mình', tax_code: '0309876543' });
-      const human = await admin((c) => c.query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, kind, name) VALUES ($1, 'person', 'Chủ Công Ty') RETURNING id", [o.orgId]).then((r) => r.rows[0]!.id));
+      const human = await admin((c) => c.query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, kind, name) VALUES ($1, 'person', 'Chủ Công Ty') RETURNING id", [o.orgId]).then((r) => r.rows[0]!.id));
       await o.exec(o.owner, 'kernel.party.mark_duplicate', { partyId: lone, keepId: human });
       const second = await o.stage(o.lan, [{ ...person('Bình'), company: '0309876543' }, { ...person('Chi'), company: 'Công ty Một Mình' }]);
       expect(second.rows.map((r) => r.company?.state)).toEqual(['unknown_tax_code', 'new']);

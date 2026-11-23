@@ -8,11 +8,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { monthBounds, socialCommands, socialQueries, type GoalsProgressView, type ReportLinkView } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { monthBounds, socialCommands, socialQueries, type GoalsProgressView, type ReportLinkView } from '@ludy/mod-social';
 import { reportView } from '../src/report-link.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -54,7 +54,7 @@ suite('social monthly goals on PostgreSQL (#1056)', () => {
     const member = await person('member');
     const viewer = await person('viewer');
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, adminUser, member, viewer]),
     );
     return { orgId, owner, admin: adminUser, member, viewer };
   }
@@ -62,7 +62,7 @@ suite('social monthly goals on PostgreSQL (#1056)', () => {
   async function connection(o: Org, name: string) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         'sandbox',
@@ -82,12 +82,12 @@ suite('social monthly goals on PostgreSQL (#1056)', () => {
   async function published(o: Org, conn: string, at: string, metrics: Record<string, number>) {
     const { postId } = await exec<{ postId: string }>(o, o.owner, 'social.post.create', { body: 'Bài', channels: [{ connectionId: conn }] });
     await admin(async (c) => {
-      const { rows } = await c.query<{ id: string }>("UPDATE crove_social.post_variant SET status = 'published', published_at = $2 WHERE post_id = $1 RETURNING id", [postId, at]);
-      await c.query("INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, 'k', $3)", [o.orgId, rows[0]?.id, JSON.stringify(metrics)]);
+      const { rows } = await c.query<{ id: string }>("UPDATE ludy_social.post_variant SET status = 'published', published_at = $2 WHERE post_id = $1 RETURNING id", [postId, at]);
+      await c.query("INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, 'k', $3)", [o.orgId, rows[0]?.id, JSON.stringify(metrics)]);
     });
   }
   const followers = (o: Org, conn: string, day: string, n: number) =>
-    admin((c) => c.query('INSERT INTO crove_social.account_snapshot (org_id, channel_connection_id, captured_on, followers) VALUES ($1, $2, $3, $4)', [o.orgId, conn, day, n]));
+    admin((c) => c.query('INSERT INTO ludy_social.account_snapshot (org_id, channel_connection_id, captured_on, followers) VALUES ($1, $2, $3, $4)', [o.orgId, conn, day, n]));
 
   const view = async (token: string) => (await reportView(rt, { token })) as unknown as Page | null;
   const link = (o: Org, period: { start: number; end: number }, extra: Record<string, unknown> = {}) =>
@@ -127,9 +127,9 @@ suite('social monthly goals on PostgreSQL (#1056)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -175,7 +175,7 @@ suite('social monthly goals on PostgreSQL (#1056)', () => {
     await expect(exec(o, o.admin, 'social.goal.remove', { connectionId: fb })).rejects.toMatchObject({ code: 'GOAL_NOT_FOUND' });
     await exec(o, o.owner, 'social.goal.remove', { connectionId: null });
     expect((await progress(o, o.member)).goals).toEqual([]);
-    const audit = await admin(async (c) => (await c.query<{ command: string }>("SELECT command FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'social.goal.%' AND outcome = 'ok' ORDER BY occurred_at", [o.orgId])).rows);
+    const audit = await admin(async (c) => (await c.query<{ command: string }>("SELECT command FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'social.goal.%' AND outcome = 'ok' ORDER BY occurred_at", [o.orgId])).rows);
     expect(audit.map((a) => a.command)).toEqual(['social.goal.set', 'social.goal.set', 'social.goal.set', 'social.goal.set', 'social.goal.remove']);
   });
 
@@ -186,11 +186,11 @@ suite('social monthly goals on PostgreSQL (#1056)', () => {
     await expect(setGoal(a, theirs, { posts: 1 })).rejects.toMatchObject({ code: 'CHANNEL_NOT_FOUND' });
     await setGoal(a, null, { posts: 1 });
     await setGoal(a, null, { posts: 2 });
-    const rows = await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_social.goal WHERE org_id = $1', [a.orgId])).rows);
+    const rows = await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_social.goal WHERE org_id = $1', [a.orgId])).rows);
     expect(Number(rows[0]?.n)).toBe(1);
     // The table refuses a second org row and a goal with no target.
-    await expect(admin((c) => c.query("INSERT INTO crove_social.goal (org_id, posts, created_by, updated_by) VALUES ($1, 5, $2, $2)", [a.orgId, a.owner]))).rejects.toThrow(/goal_scope_uq/);
-    await expect(admin((c) => c.query('INSERT INTO crove_social.goal (org_id, connection_id, created_by, updated_by) VALUES ($1, $2, $3, $3)', [b.orgId, theirs, b.owner]))).rejects.toThrow(/goal_some_target/);
+    await expect(admin((c) => c.query("INSERT INTO ludy_social.goal (org_id, posts, created_by, updated_by) VALUES ($1, 5, $2, $2)", [a.orgId, a.owner]))).rejects.toThrow(/goal_scope_uq/);
+    await expect(admin((c) => c.query('INSERT INTO ludy_social.goal (org_id, connection_id, created_by, updated_by) VALUES ($1, $2, $3, $3)', [b.orgId, theirs, b.owner]))).rejects.toThrow(/goal_some_target/);
   });
 
   it('counts the month in the goals zone against each target', async () => {
@@ -326,7 +326,7 @@ suite('social monthly goals on PostgreSQL (#1056)', () => {
     await expect(link(o, SEP, { note: 'a'.repeat(2001) })).rejects.toMatchObject({ status: 422 });
     expect((await view((await link(o, SEP, { note: 'ữ'.repeat(2000) })).token))?.note).toHaveLength(2000);
     // The table holds no more either.
-    await expect(admin((c) => c.query('UPDATE crove_social.report_link SET note = $2 WHERE id = $1', [linkId, 'a'.repeat(2001)]))).rejects.toThrow(/report_link_note_length/);
+    await expect(admin((c) => c.query('UPDATE ludy_social.report_link SET note = $2 WHERE id = $1', [linkId, 'a'.repeat(2001)]))).rejects.toThrow(/report_link_note_length/);
   });
 
   it('carries the goals in the report mail of a month, not of a week', async () => {
@@ -350,7 +350,7 @@ suite('social monthly goals on PostgreSQL (#1056)', () => {
       async (c) =>
         (
           await c.query<{ payload: { periodStart: string; goals?: { month: string; items: { channel: string | null; metric: string; target: number; status: string }[] } } }>(
-            "SELECT payload FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'social.report_schedule.run' ORDER BY created_at",
+            "SELECT payload FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'social.report_schedule.run' ORDER BY created_at",
             [o.orgId],
           )
         ).rows,

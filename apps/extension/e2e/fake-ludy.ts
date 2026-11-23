@@ -9,6 +9,8 @@ export interface Upload {
   kind: string | null;
   fileType: string | null;
   bytes: number;
+  // The code the extension said the recording stopped by itself with (A1, #3159), or null.
+  stopReason: string | null;
 }
 
 export interface FakeLudy {
@@ -17,9 +19,14 @@ export interface FakeLudy {
   // The bodies of the code exchanges (POST /api/extension/token) the extension made.
   exchanges: Array<Record<string, unknown>>;
   created: Array<Record<string, unknown>>;
+  clips: Array<Record<string, unknown>>;
+  todos: Array<Record<string, unknown>>;
   uploads: Upload[];
-  features: { meetings: boolean };
+  scopes: string[];
+  features: { meetings: boolean; notes: boolean };
   failUploads: boolean;
+  // A strict org (A2, #3160): a meeting whose consent method is not written is refused with 422 CONSENT_METHOD_NOT_ALLOWED.
+  strict: boolean;
   // When set, /api/extension/me answers 302 to this address (a misconfigured proxy).
   redirectMeTo: string | null;
   close(): Promise<void>;
@@ -33,7 +40,21 @@ const read = (req: IncomingMessage): Promise<Buffer> =>
   });
 
 export async function startFakeLudy(): Promise<FakeLudy> {
-  const fake: FakeLudy = { origin: '', requests: [], exchanges: [], created: [], uploads: [], features: { meetings: true }, failUploads: false, redirectMeTo: null, close: async () => undefined };
+  const fake: FakeLudy = {
+    origin: '',
+    requests: [],
+    exchanges: [],
+    created: [],
+    clips: [],
+    todos: [],
+    uploads: [],
+    scopes: ['meetings'],
+    features: { meetings: true, notes: false },
+    failUploads: false,
+    strict: false,
+    redirectMeTo: null,
+    close: async () => undefined,
+  };
   const server: Server = createServer((req, res) => {
     void (async () => {
       const path = new URL(req.url ?? '/', 'http://x').pathname;
@@ -51,12 +72,26 @@ export async function startFakeLudy(): Promise<FakeLudy> {
       }
       if (path === '/api/extension/me' && fake.redirectMeTo) return void res.writeHead(302, { location: `${fake.redirectMeTo}/api/extension/me` }).end();
       if (path === '/api/extension/me') {
-        return json({ tokenId: 't1', orgId: 'org1', scopes: ['meetings'], expiresAt: '2027-01-01T00:00:00.000Z', features: { meetings: fake.features.meetings } });
+        return json({ tokenId: 't1', orgId: 'org1', scopes: fake.scopes, expiresAt: '2027-01-01T00:00:00.000Z', features: { meetings: fake.features.meetings, notes: fake.features.notes } });
+      }
+      if (path === '/api/rpc/notes/clip') {
+        const input = (JSON.parse(body.toString()) as { json: Record<string, unknown> }).json;
+        fake.clips.push(input);
+        return json({ json: { noteId: '22222222-2222-4222-8222-222222222222', revision: 1 } });
+      }
+      if (path === '/api/rpc/notes/todos/quickCapture') {
+        const input = (JSON.parse(body.toString()) as { json: Record<string, unknown> }).json;
+        fake.todos.push(input);
+        return json({ json: { todoId: '33333333-3333-4333-8333-333333333333', revision: 1 } });
       }
       if (path === '/api/rpc/meetings/create') {
-        fake.created.push((JSON.parse(body.toString()) as { json: Record<string, unknown> }).json);
+        const input = (JSON.parse(body.toString()) as { json: Record<string, unknown> }).json;
+        if (fake.strict && input.consentMethod === 'told_at_start') return json({ code: 'CONSENT_METHOD_NOT_ALLOWED', message: 'written only' }, 422);
+        fake.created.push(input);
         return json({ json: { meetingId: '11111111-1111-4111-8111-111111111111' } });
       }
+      // The heartbeat of a running capture, and its end when the member stops (ADR-0055 slice 1, #4123): always open here.
+      if (path === '/api/rpc/meetings/captureHeartbeat') return json({ json: { open: true } });
       const media = /^\/api\/meetings\/([0-9a-f-]{36})\/media$/.exec(path);
       if (media) {
         if (fake.failUploads) return json({ code: 'INTERNAL', message: 'down' }, 500);
@@ -67,6 +102,7 @@ export async function startFakeLudy(): Promise<FakeLudy> {
           kind: url.searchParams.get('kind'),
           fileType: req.headers['content-type'] ?? null,
           bytes: body.length,
+          stopReason: url.searchParams.get('stopReason'),
         });
         return json({ fileId: 'f1' });
       }

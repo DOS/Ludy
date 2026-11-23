@@ -27,7 +27,7 @@ const hasBash = spawnSync('bash', ['-c', 'exit 0']).status === 0;
 describe.skipIf(!hasBash)('wal.sh', () => {
   it('parses, and refuses an unknown command and a bad restore target', () => {
     expect(spawnSync('bash', ['-n', resolve(repo, 'tools/backup/wal.sh')]).status).toBe(0);
-    const env = { ...process.env, CROVE_DIR: repo, BACKUP_ALERT: 'off' };
+    const env = { ...process.env, LUDY_DIR: repo, CROVE_DIR: repo, BACKUP_ALERT: 'off' };
     const run = (...args: string[]) => spawnSync('bash', [resolve(repo, 'tools/backup/wal.sh'), ...args], { env, encoding: 'utf8' });
     const unknown = run('frobnicate');
     expect(unknown.status).toBe(2);
@@ -42,6 +42,15 @@ describe.skipIf(!hasBash)('wal.sh', () => {
     expect(naive.status).toBe(2);
     expect(naive.stderr).toContain('timestamp with its time zone');
     expect(run('backup', '--type', 'weekly').status).toBe(2);
+  });
+
+  it('refuses an unsafe or invalid WAL_STANZA before calling docker', () => {
+    for (const bad of ["ludy'; DROP TABLE x;--", 'Ludy', 'bad stanza', '-ludy', 'a'.repeat(65)]) {
+      const env = { ...process.env, LUDY_DIR: repo, CROVE_DIR: repo, BACKUP_ALERT: 'off', WAL_STANZA: bad };
+      const res = spawnSync('bash', [resolve(repo, 'tools/backup/wal.sh'), 'check'], { env, encoding: 'utf8' });
+      expect(res.status, bad).toBe(2);
+      expect(res.stderr, bad).toContain('WAL_STANZA');
+    }
   });
 });
 
@@ -112,6 +121,11 @@ describe.skipIf(!hasCompose)('compose.wal.yml', { timeout: 60_000 }, () => {
   it('follows the prefix and the TLS and style settings', () => {
     const env = services({ ...settings, BACKUP_S3_PREFIX: 'books', WAL_S3_URI_STYLE: 'path', WAL_S3_PORT: '9000', WAL_S3_VERIFY_TLS: 'n' })['db']?.environment;
     expect(env).toMatchObject({ PGBACKREST_REPO1_PATH: '/books/wal', PGBACKREST_REPO1_S3_URI_STYLE: 'path', PGBACKREST_REPO1_STORAGE_PORT: '9000', PGBACKREST_REPO1_STORAGE_VERIFY_TLS: 'n' });
+  });
+
+  it('follows WAL_STANZA with BACKUP_S3_PREFIX for the Phase 3 cutover', () => {
+    const env = services({ ...settings, WAL_STANZA: 'ludy', BACKUP_S3_PREFIX: 'ludy' })['db']?.environment;
+    expect(env).toMatchObject({ PGBACKREST_STANZA: 'ludy', PGBACKREST_REPO1_PATH: '/ludy/wal' });
   });
 
   it('does not load without the bucket, its keys, the host and the encryption key, naming each setting', () => {

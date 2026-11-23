@@ -6,12 +6,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { Deal, PipelineStage, Quote, QuoteSent } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
-import { crmCommands, crmQueries } from '@crove/mod-crm';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { Deal, PipelineStage, Quote, QuoteSent } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
+import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -47,9 +47,9 @@ suite('crm quote numbers per legal entity on PostgreSQL (#2832)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -71,13 +71,13 @@ suite('crm quote numbers per legal entity on PostgreSQL (#2832)', () => {
     const exec = <T>(command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(owner), orgId });
     const partyId = await admin((c) =>
       c
-        .query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind, tax_code, address) VALUES ($1, 'Công ty ABC', 'organization', '0312345678', '12 Lê Lợi, Quận 1') RETURNING id", [orgId])
+        .query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind, tax_code, address) VALUES ($1, 'Công ty ABC', 'organization', '0312345678', '12 Lê Lợi, Quận 1') RETURNING id", [orgId])
         .then((r) => r.rows[0]!.id),
     );
     // A second entity of the org (the first is the default one the org was made with).
     const entityB = await admin((c) =>
       c
-        .query<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh B', 'branch', $2) RETURNING id", [orgId, owner])
+        .query<{ id: string }>("INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh B', 'branch', $2) RETURNING id", [orgId, owner])
         .then((r) => r.rows[0]!.id),
     );
     await exec<PipelineStage[]>('crm.pipeline.setup', {});
@@ -86,14 +86,14 @@ suite('crm quote numbers per legal entity on PostgreSQL (#2832)', () => {
     const ready = await exec<Quote>('crm.quote.save', { quoteId: draft.id, version: draft.version, lines: [item] });
     const sent = (await exec<QuoteSent>('crm.quote.send', { quoteId: ready.id, version: ready.version, via: 'link' })).quote;
     expect(sent.number).toMatch(/^BG-\d{4}-0001$/);
-    const entityA = await admin((c) => c.query<{ issuer_entity_id: string }>('SELECT issuer_entity_id FROM crove_crm.quote WHERE org_id = $1 AND id = $2', [orgId, sent.id]).then((r) => r.rows[0]!.issuer_entity_id));
+    const entityA = await admin((c) => c.query<{ issuer_entity_id: string }>('SELECT issuer_entity_id FROM ludy_crm.quote WHERE org_id = $1 AND id = $2', [orgId, sent.id]).then((r) => r.rows[0]!.issuer_entity_id));
     expect(entityA).not.toBe(entityB);
 
     // Another entity's series gives the same number: allowed. The same number in the same entity (and revision) is refused, by the named constraint.
     const insertSent = (entity: string) =>
       admin((c) =>
         c.query(
-          `INSERT INTO crove_crm.quote (org_id, deal_id, party_id, valid_until, created_by, status, number, sent_at, sent_via, issuer_entity_id, buyer_name)
+          `INSERT INTO ludy_crm.quote (org_id, deal_id, party_id, valid_until, created_by, status, number, sent_at, sent_via, issuer_entity_id, buyer_name)
            VALUES ($1, $2, $3, '2031-01-31', $4, 'sent', $5, now(), 'link', $6, 'Công ty ABC')`,
           [orgId, deal.id, partyId, owner, sent.number, entity],
         ),
@@ -106,7 +106,7 @@ suite('crm quote numbers per legal entity on PostgreSQL (#2832)', () => {
     // Its revision keeps C (the entity whose series gave the number), so it cannot collide with a quote of A's own series.
     const entityC = await admin((c) =>
       c
-        .query<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh C', 'branch', $2) RETURNING id", [orgId, owner])
+        .query<{ id: string }>("INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh C', 'branch', $2) RETURNING id", [orgId, owner])
         .then((r) => r.rows[0]!.id),
     );
     const deal2 = await exec<Deal>('crm.deal.create', { partyId, title: 'Gói kế toán năm 2', amount: '15000000', expectedClose: '2026-12-31' });
@@ -114,11 +114,11 @@ suite('crm quote numbers per legal entity on PostgreSQL (#2832)', () => {
     const ready2 = await exec<Quote>('crm.quote.save', { quoteId: draft2.id, version: draft2.version, lines: [item] });
     const sent2 = (await exec<QuoteSent>('crm.quote.send', { quoteId: ready2.id, version: ready2.version, via: 'link' })).quote;
     expect(sent2.number).toMatch(/^BG-\d{4}-0002$/);
-    await admin((c) => c.query('UPDATE crove_crm.quote SET issuer_entity_id = $3 WHERE org_id = $1 AND id = $2', [orgId, sent2.id, entityC]));
+    await admin((c) => c.query('UPDATE ludy_crm.quote SET issuer_entity_id = $3 WHERE org_id = $1 AND id = $2', [orgId, sent2.id, entityC]));
     const revision = await exec<Quote>('crm.quote.revise', { quoteId: sent2.id });
     const revised = (await exec<QuoteSent>('crm.quote.send', { quoteId: revision.id, version: revision.version, via: 'link' })).quote;
     expect(revised.number).toBe(sent2.number);
-    const revisedIssuer = await admin((c) => c.query<{ issuer_entity_id: string }>('SELECT issuer_entity_id FROM crove_crm.quote WHERE org_id = $1 AND id = $2', [orgId, revised.id]).then((r) => r.rows[0]!.issuer_entity_id));
+    const revisedIssuer = await admin((c) => c.query<{ issuer_entity_id: string }>('SELECT issuer_entity_id FROM ludy_crm.quote WHERE org_id = $1 AND id = $2', [orgId, revised.id]).then((r) => r.rows[0]!.issuer_entity_id));
     expect(revisedIssuer).toBe(entityC);
   });
 });

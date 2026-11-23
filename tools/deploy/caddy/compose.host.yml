@@ -10,9 +10,9 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      CROVE_DOMAIN: ${CROVE_DOMAIN:?set CROVE_DOMAIN to the host name of PUBLIC_URL}
+      LUDY_DOMAIN: ${LUDY_DOMAIN:-${CROVE_DOMAIN:?set LUDY_DOMAIN to the host name of PUBLIC_URL}}
       # The port the compose file publishes on loopback for the app (crove, or api in a split layout).
-      CROVE_UPSTREAM: 127.0.0.1:${PORT:-8080}
+      LUDY_UPSTREAM: ${LUDY_UPSTREAM:-${CROVE_UPSTREAM:-127.0.0.1:${PORT:-8080}}}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       # The certificates and the ACME account: keep this volume, or every restart asks Let's Encrypt again.

@@ -6,12 +6,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, runAgentWake, upsertIdentity } from '@crove/kernel';
-import { isVietnamHoliday, zonedDate, zonedInstant, type EventTypeInput } from '@crove/kernel-contract';
-import { Runtime, type AgentProgram } from '@crove/kernel-runtime';
-import { crmAgentPrograms, crmCommands, crmQueries, proposalText, type NextSlots } from '@crove/mod-crm';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, runAgentWake, upsertIdentity } from '@ludy/kernel';
+import { isVietnamHoliday, zonedDate, zonedInstant, type EventTypeInput } from '@ludy/kernel-contract';
+import { Runtime, type AgentProgram } from '@ludy/kernel-runtime';
+import { crmAgentPrograms, crmCommands, crmQueries, proposalText, type NextSlots } from '@ludy/mod-crm';
 import { bookingManageAsk, bookingRequest } from '../src/booking-page.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -72,8 +72,8 @@ suite('the crm.scheduler agent on PostgreSQL (#1434)', () => {
     const owner = await person('owner');
     const member = await person('member');
     const { orgId } = await createOrg(app, asUser(owner), `Văn phòng ${randomUUID().slice(0, 6)}`);
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]));
-    const slug = (await admin((c) => c.query<{ slug: string }>('SELECT slug FROM crove_kernel.tenant WHERE org_id = $1', [orgId]))).rows[0]?.slug as string;
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]));
+    const slug = (await admin((c) => c.query<{ slug: string }>('SELECT slug FROM ludy_kernel.tenant WHERE org_id = $1', [orgId]))).rows[0]?.slug as string;
     // Working hours 9:00 to 12:00 every day, so the next free slots are predictable.
     await app.execute('kernel.calendar.hours.save', { timeZone: VN, windows: [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({ weekday, start: 540, end: 720 })) }, { actor: asUser(owner), orgId });
     await app.execute('crm.event_type.create', draft(owner), { actor: asUser(owner), orgId });
@@ -81,7 +81,7 @@ suite('the crm.scheduler agent on PostgreSQL (#1434)', () => {
     const book = async (startsAt: string) => {
       const request = await bookingRequest(app, slug, 'tu-van', { startsAt, name: 'Chị Lan Bí Mật', email: `lan-${randomUUID().slice(0, 6)}@khach.test`, phone: '0901234567', timeZone: VN });
       if (!request) throw new Error('no request');
-      const { rows } = await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_crm.booking WHERE org_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1', [orgId]));
+      const { rows } = await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_crm.booking WHERE org_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1', [orgId]));
       const bookingId = rows[0]?.id as string;
       expect(await worker.execute('crm.booking.confirm', { bookingId }, { actor: SYSTEM, orgId })).toMatchObject({ status: 'confirmed' });
       return bookingId;
@@ -93,7 +93,7 @@ suite('the crm.scheduler agent on PostgreSQL (#1434)', () => {
       expect(await worker.execute('crm.booking.manage', { bookingId, requestId: ask?.requestId }, { actor: SYSTEM, orgId })).toMatchObject({ outcome: 'cancelled' });
     };
     const dispatchCancels = async () => {
-      const events = await admin(async (c) => (await c.query<{ id: string }>(`SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'crm.booking.cancelled' ORDER BY id`, [orgId])).rows);
+      const events = await admin(async (c) => (await c.query<{ id: string }>(`SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'crm.booking.cancelled' ORDER BY id`, [orgId])).rows);
       let tasks = 0;
       for (const e of events) tasks += (await worker.execute<{ tasks: number }>('kernel.agent.dispatch_event', { eventId: e.id }, { actor: SYSTEM, orgId })).tasks;
       return { events: events.length, tasks };
@@ -110,7 +110,7 @@ suite('the crm.scheduler agent on PostgreSQL (#1434)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const runtimeFor = (user: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = user;
@@ -120,10 +120,10 @@ suite('the crm.scheduler agent on PostgreSQL (#1434)', () => {
       const d = createDb(pool);
       return { db: d, runtime: new Runtime(d, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...crmCommands], queries: [...kernelQueries({ inboundDomain: null }), ...crmQueries] }) };
     };
-    const api = runtimeFor('crove_app', 'test-app-pw');
+    const api = runtimeFor('ludy_app', 'test-app-pw');
     app = api.runtime;
     db = api.db;
-    worker = runtimeFor('crove_worker', 'test-worker-pw').runtime;
+    worker = runtimeFor('ludy_worker', 'test-worker-pw').runtime;
   });
 
   afterAll(async () => {
@@ -145,7 +145,7 @@ suite('the crm.scheduler agent on PostgreSQL (#1434)', () => {
     const first = await o.dispatchCancels();
     expect(first).toEqual({ events: 1, tasks: 1 });
     expect((await o.dispatchCancels()).tasks).toBe(0);
-    const tasks = await admin(async (c) => (await c.query(`SELECT title, kind, source, source_ref, tainted FROM crove_kernel.task WHERE org_id = $1`, [o.orgId])).rows);
+    const tasks = await admin(async (c) => (await c.query(`SELECT title, kind, source, source_ref, tainted FROM ludy_kernel.task WHERE org_id = $1`, [o.orgId])).rows);
     expect(tasks).toEqual([{ title: 'Khách hủy lịch hẹn', kind: 'general', source: 'event', source_ref: { type: 'crm.booking', id: cancelled }, tainted: true }]);
 
     // What the page offers now: the freed 10:00 among the next slots; 9:00 stays taken.
@@ -158,9 +158,9 @@ suite('the crm.scheduler agent on PostgreSQL (#1434)', () => {
 
     expect(await runAgentWake({ runtime: worker, programs: crmAgentPrograms }, o.orgId, o.agentId)).toMatchObject({ outcome: 'succeeded' });
     const after = await admin(async (c) => ({
-      comments: (await c.query<{ body: string; author_type: string }>(`SELECT body, author_type FROM crove_kernel.task_comment WHERE org_id = $1`, [o.orgId])).rows,
-      escalations: (await c.query(`SELECT title, created_by_type FROM crove_kernel.task WHERE org_id = $1 AND kind = 'escalation'`, [o.orgId])).rows,
-      bookings: (await c.query<{ id: string; status: string }>(`SELECT id, status FROM crove_crm.booking WHERE org_id = $1 ORDER BY starts_at`, [o.orgId])).rows,
+      comments: (await c.query<{ body: string; author_type: string }>(`SELECT body, author_type FROM ludy_kernel.task_comment WHERE org_id = $1`, [o.orgId])).rows,
+      escalations: (await c.query(`SELECT title, created_by_type FROM ludy_kernel.task WHERE org_id = $1 AND kind = 'escalation'`, [o.orgId])).rows,
+      bookings: (await c.query<{ id: string; status: string }>(`SELECT id, status FROM ludy_crm.booking WHERE org_id = $1 ORDER BY starts_at`, [o.orgId])).rows,
     }));
     expect(after.comments).toEqual([{ body: proposalText(next), author_type: 'agent' }]);
     expect(after.comments[0]?.body).toContain('Khách đã hủy lịch hẹn "Tư vấn thuế" lúc 10:00 ');
@@ -182,7 +182,7 @@ suite('the crm.scheduler agent on PostgreSQL (#1434)', () => {
     const booking = await o.book(at(bookableDay(3), 540));
     await app.execute('crm.booking.cancel', { bookingId: booking }, { actor: asUser(o.owner), orgId: o.orgId });
     expect(await o.dispatchCancels()).toEqual({ events: 1, tasks: 0 });
-    const payload = await admin(async (c) => (await c.query(`SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'crm.booking.cancelled'`, [o.orgId])).rows[0]?.payload);
+    const payload = await admin(async (c) => (await c.query(`SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'crm.booking.cancelled'`, [o.orgId])).rows[0]?.payload);
     expect(payload).toEqual({ booking_id: booking, by: 'host' });
   });
 
@@ -209,7 +209,7 @@ suite('the crm.scheduler agent on PostgreSQL (#1434)', () => {
     };
     expect(await runAgentWake({ runtime: worker, programs: { 'crm.scheduler': tries } }, o.orgId, o.agentId)).toMatchObject({ outcome: 'succeeded' });
     expect(refused).toEqual(['crm.booking.cancel: 403', 'crm.booking.move: 403', 'crm.event_type.set_active: 403']);
-    const status = await admin(async (c) => (await c.query<{ status: string }>(`SELECT status FROM crove_crm.booking WHERE org_id = $1 AND id = $2`, [o.orgId, standing])).rows[0]?.status);
+    const status = await admin(async (c) => (await c.query<{ status: string }>(`SELECT status FROM ludy_crm.booking WHERE org_id = $1 AND id = $2`, [o.orgId, standing])).rows[0]?.status);
     expect(status).toBe('confirmed');
   });
 });

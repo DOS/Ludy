@@ -17,11 +17,11 @@
 //   message and nothing stored.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { EXTRACT_LIMIT_RETRIES, EXTRACT_LIMITS, zExtractedMarketplaceIncome, type ExtractClient } from '@crove/extract-contract';
-import type { MemberRole } from '@crove/db';
-import { STAGED_STATEMENT_MAX_BYTES, zId, zMarketplaceIncomeSummary, type MarketplaceIncomeConfirmResult, type MarketplaceIncomePreview, type MarketplaceIncomeStaged, type MarketplaceIncomeSummary } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type QueryContext, type Runtime } from '@crove/kernel-runtime';
-import { money, sum, toMoney } from '@crove/l10n-vn';
+import { EXTRACT_LIMIT_RETRIES, EXTRACT_LIMITS, zExtractedMarketplaceIncome, type ExtractClient } from '@ludy/extract-contract';
+import type { MemberRole } from '@ludy/db';
+import { STAGED_STATEMENT_MAX_BYTES, zId, zMarketplaceIncomeSummary, type MarketplaceIncomeConfirmResult, type MarketplaceIncomePreview, type MarketplaceIncomeStaged, type MarketplaceIncomeSummary } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type QueryContext, type Runtime } from '@ludy/kernel-runtime';
+import { money, sum, toMoney } from '@ludy/l10n-vn';
 import { resolveLegalEntity } from './legal-entity.ts';
 
 export const MARKETPLACE_INCOME_ACTOR = { type: 'system' as const, component: 'finance.marketplace_income' };
@@ -108,9 +108,9 @@ type Staged = { summary: MarketplaceIncomeSummary; platform: Platform; lines: St
 // The newest run of a file when it is a staged income report: the run a member decides. `lock`: the file row and the run are locked for the decision (the order a re-read and a record take
 // them in, as for a bank statement and an order report).
 async function stagedRun(ctx: QueryContext, fileId: string, lock: boolean): Promise<Staged | null> {
-  const file = await ctx.trx.selectFrom('crove_kernel.file').select(['id', 'sha256']).where('org_id', '=', ctx.orgId).where('id', '=', fileId).$if(lock, (qb) => qb.forUpdate()).executeTakeFirst();
+  const file = await ctx.trx.selectFrom('ludy_kernel.file').select(['id', 'sha256']).where('org_id', '=', ctx.orgId).where('id', '=', fileId).$if(lock, (qb) => qb.forUpdate()).executeTakeFirst();
   if (!file) return null;
-  let query = ctx.trx.selectFrom('crove_kernel.extraction').select(['result', 'status', 'legal_entity_id']).where('org_id', '=', ctx.orgId).where('file_id', '=', fileId).orderBy('version', 'desc').limit(1);
+  let query = ctx.trx.selectFrom('ludy_kernel.extraction').select(['result', 'status', 'legal_entity_id']).where('org_id', '=', ctx.orgId).where('file_id', '=', fileId).orderBy('version', 'desc').limit(1);
   if (lock) query = query.forUpdate();
   const run = await query.executeTakeFirst();
   if (!run || run.status !== 'done') return null;
@@ -122,7 +122,7 @@ async function stagedRun(ctx: QueryContext, fileId: string, lock: boolean): Prom
 const lockReport = (ctx: QueryContext, fileId: string) => sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.marketplace_income.report:${ctx.orgId}:${fileId}`}, 0))`.execute(ctx.trx);
 const notStaged = () => new DomainError('MARKETPLACE_INCOME_NOT_STAGED', 409, 'Báo cáo thu nhập này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách');
 
-const PLATFORM_NAME: Record<Platform, string> = { shopee: 'Shopee', tiktok_shop: 'TikTok Shop' };
+const PLATFORM_NAME: Record<Platform, string> = { shopee: 'Shopee', tiktok_shop: 'TikTok Shop', lazada: 'Lazada' };
 const dmy = (day: string) => `${day.slice(8, 10)}/${day.slice(5, 7)}/${day.slice(0, 4)}`;
 const day = (value: unknown) => String(value).slice(0, 10);
 
@@ -142,7 +142,7 @@ async function knownOrders(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntity
   const out = new Map<string, string>();
   for (let i = 0; i < orderNos.length; i += 1000) {
     const rows = await ctx.trx
-      .selectFrom('crove_finance.channel_order')
+      .selectFrom('ludy_finance.channel_order')
       .select(['id', 'order_no'])
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', legalEntityId)
@@ -171,10 +171,10 @@ async function standingOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, staged: Stag
   let overlap: MarketplaceIncomePreview['overlap'] = null;
   if (period !== null) {
     const { rows } = await sql<{ period_start: unknown; period_end: unknown }>`
-      SELECT s.period_start, s.period_end FROM crove_finance.channel_settlement s
+      SELECT s.period_start, s.period_end FROM ludy_finance.channel_settlement s
       WHERE s.org_id = ${ctx.orgId}::uuid AND s.legal_entity_id = ${legalEntityId}::uuid AND s.platform = ${platform} AND s.reversal_of IS NULL
         AND s.period_start <= ${period.end}::date AND s.period_end >= ${period.start}::date
-        AND NOT EXISTS (SELECT 1 FROM crove_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)
+        AND NOT EXISTS (SELECT 1 FROM ludy_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)
       ORDER BY s.period_start LIMIT 1`.execute(ctx.trx);
     const hit = rows[0];
     if (hit) {
@@ -189,11 +189,11 @@ async function standingOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, staged: Stag
     const ids = [...new Set(lines.flatMap((l) => (money(l.sales).gt(0) && orderIds.has(l.orderNo) ? [orderIds.get(l.orderNo) as string] : [])))];
     for (let i = 0; i < ids.length; i += 1000) {
       const { rows } = await sql<{ order_id: string; line_key: string }>`
-        SELECT l.order_id::text AS order_id, l.line_key FROM crove_finance.channel_settlement_line l
-        JOIN crove_finance.channel_settlement s ON s.org_id = l.org_id AND s.legal_entity_id = l.legal_entity_id AND s.id = l.settlement_id
+        SELECT l.order_id::text AS order_id, l.line_key FROM ludy_finance.channel_settlement_line l
+        JOIN ludy_finance.channel_settlement s ON s.org_id = l.org_id AND s.legal_entity_id = l.legal_entity_id AND s.id = l.settlement_id
         WHERE l.org_id = ${ctx.orgId}::uuid AND l.legal_entity_id = ${legalEntityId}::uuid AND l.order_id = ANY(${ids.slice(i, i + 1000)}::uuid[])
           AND NOT l.adjustment AND l.sales > 0 AND s.reversal_of IS NULL
-          AND NOT EXISTS (SELECT 1 FROM crove_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)`.execute(ctx.trx);
+          AND NOT EXISTS (SELECT 1 FROM ludy_finance.channel_settlement r WHERE r.org_id = s.org_id AND r.legal_entity_id = s.legal_entity_id AND r.reversal_of = s.id)`.execute(ctx.trx);
       for (const r of rows) if (wanted.has(`${r.order_id}\u0000${r.line_key}`)) repeated += 1;
     }
   }
@@ -249,16 +249,16 @@ export const marketplaceIncomeStaged = defineQuery({
   handler: async (ctx): Promise<MarketplaceIncomeStaged[]> => {
     const { rows } = await sql<{ file_id: string; filename: string; created_at: Date; summary: unknown; legal_entity_id: string | null }>`
       SELECT x.file_id::text AS file_id, f.filename, f.created_at, x.result -> 'summary' AS summary, x.legal_entity_id::text AS legal_entity_id
-      FROM crove_kernel.extraction x
-      JOIN crove_kernel.file f ON f.org_id = x.org_id AND f.id = x.file_id
+      FROM ludy_kernel.extraction x
+      JOIN ludy_kernel.file f ON f.org_id = x.org_id AND f.id = x.file_id
       WHERE x.org_id = ${ctx.orgId}::uuid AND x.method = 'unsupported' AND x.status = 'done' AND x.result ->> 'kind' = 'marketplace_income' AND x.result -> 'summary' ->> 'state' = 'staged'
-        AND x.version = (SELECT max(v.version) FROM crove_kernel.extraction v WHERE v.org_id = x.org_id AND v.file_id = x.file_id)
+        AND x.version = (SELECT max(v.version) FROM ludy_kernel.extraction v WHERE v.org_id = x.org_id AND v.file_id = x.file_id)
       ORDER BY f.created_at DESC
       LIMIT 20`.execute(ctx.trx);
     const entityIds = [...new Set(rows.flatMap((r) => (r.legal_entity_id ? [r.legal_entity_id] : [])))];
     const names = new Map<string, string>();
     if (entityIds.length > 0) {
-      for (const e of await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', entityIds).execute()) names.set(e.id, e.name);
+      for (const e of await ctx.trx.selectFrom('ludy_kernel.legal_entity').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', entityIds).execute()) names.set(e.id, e.name);
     }
     return rows.flatMap((r) => {
       const summary = zMarketplaceIncomeSummary.safeParse(r.summary);
@@ -305,14 +305,14 @@ export const marketplaceIncomeConfirm = defineCommand({
     let settlementId: string;
     try {
       const settlement = await ctx.trx
-        .insertInto('crove_finance.channel_settlement')
+        .insertInto('ludy_finance.channel_settlement')
         .values({ org_id: ctx.orgId, legal_entity_id: legalEntityId, platform: staged.platform, period_start: period.start, period_end: period.end, report_net: standing.preview.reportNet, source_sha256: staged.sha256 })
         .returning('id')
         .executeTakeFirstOrThrow();
       settlementId = settlement.id;
       for (let i = 0; i < staged.lines.length; i += BATCH) {
         await ctx.trx
-          .insertInto('crove_finance.channel_settlement_line')
+          .insertInto('ludy_finance.channel_settlement_line')
           .values(
             staged.lines.slice(i, i + BATCH).map((line) => ({
               org_id: ctx.orgId,
@@ -444,7 +444,7 @@ export async function readMarketplaceIncomeFile(deps: MarketplaceIncomeFileDeps,
     await record('failed', {
       error: (blocking.length > 0
         ? `Báo cáo thu nhập ${income.platform} có ${blocking.length} dòng không đọc được (dòng ${rows.join(', ')} của tệp): số tiền, ngày hoặc mã đơn không đúng định dạng; hãy kiểm tra lại tệp hoặc báo cho người hỗ trợ nếu sàn đã đổi mẫu báo cáo`
-        : 'Không nhận ra báo cáo thu nhập của Shopee hoặc TikTok Shop'
+        : 'Không nhận ra báo cáo thu nhập của Shopee, TikTok Shop hoặc Lazada'
       ).slice(0, 2000),
     });
     return { handled: true };

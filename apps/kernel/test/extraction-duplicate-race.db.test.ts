@@ -7,15 +7,15 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { InvoiceExtractor } from '@crove/agent';
-import { createExtractApp } from '@crove/extract';
-import { createDb, createPool, type Db } from '@crove/db';
-import { createExtractClient, type ExtractClient } from '@crove/extract-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import type { ParsedInvoice } from '@crove/l10n-vn';
-import { extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
+import type { InvoiceExtractor } from '@ludy/agent';
+import { createExtractApp } from '@ludy/extract';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { createExtractClient, type ExtractClient } from '@ludy/extract-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import type { ParsedInvoice } from '@ludy/l10n-vn';
+import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -97,7 +97,7 @@ suite('duplicate invoices read at the same time on PostgreSQL (#2137)', () => {
         `SELECT p.source_file_id, p.id, p.duplicate_of,
                 coalesce((SELECT array_agg(c ->> 'code') FROM jsonb_array_elements(p.payload -> 'checks') c), '{}') AS codes,
                 coalesce((SELECT array_agg(c ->> 'code') FROM jsonb_array_elements(e.checks) c), '{}') AS run_codes
-         FROM crove_kernel.proposal p JOIN crove_kernel.extraction e ON e.org_id = p.org_id AND e.id = p.extraction_id
+         FROM ludy_kernel.proposal p JOIN ludy_kernel.extraction e ON e.org_id = p.org_id AND e.id = p.extraction_id
          WHERE p.org_id = $1 AND p.source_file_id = ANY($2::uuid[]) ORDER BY p.created_at`,
         [orgA, fileIds],
       );
@@ -118,7 +118,7 @@ suite('duplicate invoices read at the same time on PostgreSQL (#2137)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const loginUrl = (username: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = username;
@@ -130,9 +130,9 @@ suite('duplicate invoices read at the same time on PostgreSQL (#2137)', () => {
         commands: [...kernelCommands, ...financeCommands],
         queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries],
       });
-    pool = createPool({ connectionString: loginUrl('crove_app', 'test-app-pw'), max: 4 });
+    pool = createPool({ connectionString: loginUrl('ludy_app', 'test-app-pw'), max: 4 });
     runtime = register(createDb(pool));
-    workerPool = createPool({ connectionString: loginUrl('crove_worker', 'test-worker-pw'), max: 6 });
+    workerPool = createPool({ connectionString: loginUrl('ludy_worker', 'test-worker-pw'), max: 6 });
     workerRuntime = register(createDb(workerPool));
     owner = await upsertIdentity(createDb(pool), { issuer: 'test', subject: 'dupr-owner', email: 'dupr-owner@example.com', name: null });
     orgA = (await createOrg(runtime, asUser(owner), 'Org A')).orgId;

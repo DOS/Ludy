@@ -3,16 +3,18 @@
 // manifest.db.test.ts adds the role_permission rows the migrations seed and the permissions the database's functions and
 // policies name. Each problem is one line naming what to change.
 import { readFileSync } from 'node:fs';
-import * as kernel from '@crove/kernel';
-import { LEDGER_APPROVE_PERMISSION, kernelManifest } from '@crove/kernel';
-import type { ModuleManifest, PermissionDeclaration } from '@crove/kernel-contract';
-import { adsManifest } from '@crove/mod-ads';
-import { crmManifest } from '@crove/mod-crm';
-import { financeManifest } from '@crove/mod-finance';
-import { hrManifest } from '@crove/mod-hr';
-import { notesManifest } from '@crove/mod-notes';
-import { socialManifest } from '@crove/mod-social';
-import { meetingsManifest } from '@crove/mod-meetings';
+import * as kernel from '@ludy/kernel';
+import { LEDGER_APPROVE_PERMISSION, kernelManifest } from '@ludy/kernel';
+import type { ModuleManifest, PermissionDeclaration } from '@ludy/kernel-contract';
+import { adsManifest } from '@ludy/mod-ads';
+import { crmManifest } from '@ludy/mod-crm';
+import { financeManifest } from '@ludy/mod-finance';
+import { hrManifest } from '@ludy/mod-hr';
+import { notesManifest } from '@ludy/mod-notes';
+import { projectsManifest } from '@ludy/mod-projects';
+import { socialManifest } from '@ludy/mod-social';
+import { meetingsManifest } from '@ludy/mod-meetings';
+import { signManifest } from '@ludy/mod-sign';
 import { loadConfig } from '../src/config.ts';
 import { moduleDefinitions } from '../src/kernel.ts';
 import { orgPurgeCommand } from '../src/org-purge.ts';
@@ -21,7 +23,7 @@ import { stripSqlComments } from './manifest-entities.ts';
 
 type Risk = PermissionDeclaration['risk'];
 const RANK: Record<Risk, number> = { R0: 0, R1: 1, R2: 2, R3: 3 };
-// The shape crove_kernel.role_permission's CHECK and the runtime's register() accept.
+// The shape ludy_kernel.role_permission's CHECK and the runtime's register() accept.
 const KEY = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 
 export type Manifests = Record<string, { manifest: ModuleManifest; file: string }>;
@@ -34,6 +36,8 @@ export const MODULE_MANIFESTS: Manifests = {
   crm: { manifest: crmManifest, file: 'modules/crm/src/manifest.ts' },
   notes: { manifest: notesManifest, file: 'modules/notes/src/manifest.ts' },
   meetings: { manifest: meetingsManifest, file: 'modules/meetings/src/manifest.ts' },
+  projects: { manifest: projectsManifest, file: 'modules/projects/src/manifest.ts' },
+  sign: { manifest: signManifest, file: 'modules/sign/src/manifest.ts' },
   hr: { manifest: hrManifest, file: 'modules/hr/src/manifest.ts' },
 };
 
@@ -132,7 +136,7 @@ export function staticPermissionUses(): { uses: PermissionUse[]; problems: strin
 // The permissions the approval policy's source names. The policy table is not exported (approval.ts is a protected
 // path), so its source is read: every `permission:` in its code (comments are skipped), in any field order or after a
 // spread, is the type `string` (the interface field and a parameter), null, a quoted key or a string constant
-// @crove/kernel exports; anything else is a problem, so a new one cannot slip past.
+// @ludy/kernel exports; anything else is a problem, so a new one cannot slip past.
 export function approvalPolicyUses(source: string): { uses: PermissionUse[]; problems: string[] } {
   const uses: PermissionUse[] = [];
   const problems: string[] = [];
@@ -143,7 +147,7 @@ export function approvalPolicyUses(source: string): { uses: PermissionUse[]; pro
     const quoted = /^'([^']*)'$/.exec(value);
     const resolved = quoted ? quoted[1] : (kernel as Record<string, unknown>)[value];
     if (typeof resolved !== 'string') {
-      problems.push(`packages/kernel/src/approval.ts: a CommandPolicy's permission ${value} is neither a string, null, nor a string constant @crove/kernel exports`);
+      problems.push(`packages/kernel/src/approval.ts: a CommandPolicy's permission ${value} is neither a string, null, nor a string constant @ludy/kernel exports`);
       continue;
     }
     uses.push({ permission: resolved, by: `the approval policy (${value})` });
@@ -167,11 +171,11 @@ export function routePermissionUses(manifests: Manifests): PermissionUse[] {
 // member_has_permission is the one resolution ctx_has_permission calls (ADR-0049 decision 10), member_permission_set writes the one
 // exception it reads (only vy.use), and role_assignment_check asks whether a role grants anything a viewer may not hold.
 const PERMISSION_CHECKERS: ReadonlySet<string> = new Set([
-  'function crove_kernel.ctx_has_permission',
-  'function crove_kernel.ctx_permission_entities',
-  'function crove_kernel.member_has_permission',
-  'function crove_kernel.member_permission_set',
-  'function crove_kernel.role_assignment_check',
+  'function ludy_kernel.ctx_has_permission',
+  'function ludy_kernel.ctx_permission_entities',
+  'function ludy_kernel.member_has_permission',
+  'function ludy_kernel.member_permission_set',
+  'function ludy_kernel.role_assignment_check',
 ]);
 // The quoted literals of a SQL fragment ('...'::text included), with doubled quotes undone.
 const sqlLiterals = (fragment: string): string[] => [...fragment.matchAll(/'((?:[^']|'')*)'/g)].map((m) => (m[1] as string).replaceAll("''", "'"));
@@ -179,7 +183,7 @@ const SQL_IDENT = /^[a-z_][a-z0-9_$]*$/i;
 
 // The permissions a database function's body or a row-level security policy names (#1630, #1641), and what it names
 // in a form this cannot attribute (#1641). A key is read from:
-//   crove_kernel.ctx_has_permission('<key>');
+//   ludy_kernel.ctx_has_permission('<key>');
 //   a comparison of a permission column (role_permission.permission, p.permission): = '<key>', IN ('<key>', ...),
 //   = ANY (ARRAY['<key>', ...]) and = ANY ('{<key>,...}'), with or without ::text casts as PostgreSQL deparses them;
 //   in each of these, a PL/pgSQL variable instead of the literal, when the body assigns it literals (v := '<key>',
@@ -296,10 +300,10 @@ export function sqlPermissionUses(by: string, source: string): { uses: Permissio
 
 // What the app's screens gate on (#1641): every check of a member's permissions in apps/app/src
 // (`permissions.includes(...)` or `.indexOf(...)` on a list named `permissions`, as the app's gates are written; a check
-// written another way is not seen) must pass a permission constant @crove/kernel-contract exports, so a
+// written another way is not seen) must pass a permission constant @ludy/kernel-contract exports, so a
 // renamed or retired key fails here or at typecheck. Like the screens' route permissions they are display gates, not
 // checks (the server decides), so they are kept apart from staticPermissionUses(). The name must be imported from
-// @crove/kernel-contract in that file (an alias is followed) and not declared there again; `contract` is the module the
+// @ludy/kernel-contract in that file (an alias is followed) and not declared there again; `contract` is the module the
 // constants are read from.
 export function appPermissionUses(files: ReadonlyArray<{ file: string; source: string }>, contract: Record<string, unknown>): { uses: PermissionUse[]; problems: string[] } {
   const uses: PermissionUse[] = [];
@@ -308,7 +312,7 @@ export function appPermissionUses(files: ReadonlyArray<{ file: string; source: s
     const code = stripComments(source);
     // The names this file imports from the contract, each to the name the contract exports it under.
     const imported = new Map<string, string>();
-    for (const m of code.matchAll(/\bimport\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"]@crove\/kernel-contract['"]/g)) {
+    for (const m of code.matchAll(/\bimport\s+(?:type\s+)?\{([^}]*)\}\s*from\s*['"]@ludy\/kernel-contract['"]/g)) {
       for (const spec of (m[1] as string).split(',')) {
         const parts = spec.trim().replace(/^type\s+/, '').split(/\s+as\s+/);
         const exported = parts[0]?.trim();
@@ -322,7 +326,7 @@ export function appPermissionUses(files: ReadonlyArray<{ file: string; source: s
       const shadowed = new RegExp(`\\b(?:const|let|var|function|class)\\s+${arg.replace(/[^A-Za-z0-9_]/g, '')}\\b`).test(code);
       const value = exported && !shadowed ? contract[exported] : undefined;
       if (typeof value !== 'string') {
-        problems.push(`${file}: a permission check passes ${arg}; pass a permission constant imported from @crove/kernel-contract`);
+        problems.push(`${file}: a permission check passes ${arg}; pass a permission constant imported from @ludy/kernel-contract`);
         continue;
       }
       uses.push({ permission: value, by: `${file} (${arg})` });
@@ -375,11 +379,11 @@ export function permissionProblems(manifests: Manifests, input: { uses: readonly
     const seeded = new Set(input.grants.map((g) => `${g.role_key} ${g.permission}`));
     for (const g of input.grants) {
       const entry = declared.get(g.permission);
-      if (!entry) problems.push(`crove_kernel.role_permission (${g.role_key}, ${g.permission}): no manifest declares ${g.permission}; declare it in ${owner(g.permission)}`);
-      else if (!(entry.decl.defaultRoles as readonly string[]).includes(g.role_key)) problems.push(`crove_kernel.role_permission (${g.role_key}, ${g.permission}): ${entry.file} does not list ${g.role_key} among the default roles of ${g.permission}`);
+      if (!entry) problems.push(`ludy_kernel.role_permission (${g.role_key}, ${g.permission}): no manifest declares ${g.permission}; declare it in ${owner(g.permission)}`);
+      else if (!(entry.decl.defaultRoles as readonly string[]).includes(g.role_key)) problems.push(`ludy_kernel.role_permission (${g.role_key}, ${g.permission}): ${entry.file} does not list ${g.role_key} among the default roles of ${g.permission}`);
     }
     for (const [key, { decl, file }] of declared) {
-      for (const role of decl.defaultRoles) if (!seeded.has(`${role} ${key}`)) problems.push(`${file}: ${key} lists the default role ${role}, but no crove_kernel.role_permission row grants it`);
+      for (const role of decl.defaultRoles) if (!seeded.has(`${role} ${key}`)) problems.push(`${file}: ${key} lists the default role ${role}, but no ludy_kernel.role_permission row grants it`);
       if (!input.uses.some((u) => u.permission === key)) problems.push(`${file}: ${key} is declared, but no command, approval policy or database function checks it`);
     }
   }

@@ -18,8 +18,8 @@
 // batches it streams), and the token endpoint. The queries are fixed text with only dates (checked against a pattern) and an account id (ten
 // digits) in them, and a test pins the endpoints, the hosts and that no query changes anything. Both hosts are named below; a request to any other,
 // a plain http one, or one with credentials in the address is refused before it leaves, and nothing redirects.
-import type { AuthorizeInput, ConnectedAccount, ExchangeInput, Fetch, OAuthConnector } from '@crove/channel';
-import { ConnectorError, allowlistedFetch } from '@crove/channel';
+import type { AuthorizeInput, ConnectedAccount, ExchangeInput, Fetch, OAuthConnector } from '@ludy/channel';
+import { ConnectorError, allowlistedFetch } from '@ludy/channel';
 import { AdPlatformError, type AdDailyRow, type AdPlatform, type AdPlatformAccount, type AdPlatformCapabilities } from './index.ts';
 
 export const GOOGLE_ADS_PROVIDER = 'google_ads' as const;

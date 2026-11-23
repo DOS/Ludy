@@ -1,7 +1,7 @@
 // Fiscal year archive packages on the ledger screen (issue #922): who may archive, which years are offered, and when a
 // request counts as stalled.
 import { describe, expect, it } from 'vitest';
-import type { YearArchive } from '@crove/kernel-contract';
+import type { YearArchive } from '@ludy/kernel-contract';
 import { archivableYears, canArchiveYears, isStalled, lastLockedYear } from '../src/lib/year-archive.ts';
 
 const NOW = Date.parse('2026-10-21T10:00:00Z');

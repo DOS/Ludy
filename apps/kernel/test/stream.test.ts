@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type pg from 'pg';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DomainError } from '@crove/kernel-runtime';
+import { DomainError } from '@ludy/kernel-runtime';
 import { Semaphore } from '../src/concurrency.ts';
 import {
   LISTEN_STABLE_MS,
@@ -797,7 +797,7 @@ class FakeListenClient extends EventEmitter {
 
   // A NOTIFY from another session.
   deliver(payload: string): void {
-    this.emit('notification', { channel: 'crove_stream', payload });
+    this.emit('notification', { channel: 'ludy_stream', payload });
   }
 }
 
@@ -843,7 +843,7 @@ describe('the LISTEN connection (issue #281)', () => {
     const h = harness();
     await vi.advanceTimersByTimeAsync(0);
     expect(h.events).toEqual(['ready']);
-    expect(h.clients[0]?.queries).toEqual(['LISTEN crove_stream', 'SELECT pg_catalog.pg_notify($1, $2)']);
+    expect(h.clients[0]?.queries).toEqual(['LISTEN ludy_stream', 'SELECT pg_catalog.pg_notify($1, $2)']);
     const hint = `${ORG_A} file ${randomUUID()}`;
     h.clients[0]?.deliver(hint);
     // Another instance's probe is dropped too; it would not parse as a hint either.

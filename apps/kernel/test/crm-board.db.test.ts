@@ -7,12 +7,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { Board, Deal, PipelineStage } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
-import { crmCommands, crmQueries } from '@crove/mod-crm';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { Board, Deal, PipelineStage } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
+import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -46,10 +46,10 @@ suite('crm stages and board on PostgreSQL (#2226)', () => {
     const other = await person('other');
     const viewer = await person('viewer');
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, member, other, viewer]),
+      c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')", [orgId, member, other, viewer]),
     );
     const party = (name: string) =>
-      admin((c) => c.query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => r.rows[0]!.id));
+      admin((c) => c.query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => r.rows[0]!.id));
     const exec = <T>(user: string, command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(user), orgId });
     const query = <T>(user: string, command: string, input: unknown) => rt.query<T>(command, input, { actor: asUser(user), orgId });
     const stages = () => exec<PipelineStage[]>(owner, 'crm.pipeline.setup', {});
@@ -69,9 +69,9 @@ suite('crm stages and board on PostgreSQL (#2226)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -169,7 +169,7 @@ suite('crm stages and board on PostgreSQL (#2226)', () => {
     const old = await o.newDeal(o.member, party, { title: 'Thua cũ', amount: '7000000' });
     const lost = await o.exec<Deal>(o.member, 'crm.deal.move', { dealId: old.id, version: old.version, stageId: thua });
     // A deal closed more than 30 days ago is left off the lost column and its totals.
-    await admin((cl) => cl.query("UPDATE crove_crm.deal SET closed_at = now() - interval '31 days' WHERE org_id = $1 AND id = $2", [o.orgId, lost.id]));
+    await admin((cl) => cl.query("UPDATE ludy_crm.deal SET closed_at = now() - interval '31 days' WHERE org_id = $1 AND id = $2", [o.orgId, lost.id]));
 
     const columns = (await o.query<Board>(o.viewer, 'crm.deal.board', {})).columns;
     expect(columns.map((col) => col.stage.name)).toEqual(['Mới', 'Đã liên hệ', 'Báo giá', 'Thương lượng', 'Thắng', 'Thua']);

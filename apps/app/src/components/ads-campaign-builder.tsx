@@ -2,7 +2,7 @@
 // The campaign builder (W1c, issue #2295, plan docs/plan/ads-write.md section 10): one campaign, one ad set and one ad with up to three texts, written by
 // a person or drafted by the AI coworker and edited here. A field the AI coworker drafted and nobody has changed since is marked as drafted. Saving checks
 // the plan on the server against the dates, the spend caps and the switches of running ads, and the list says what is still to fix; the largest amount the
-// plan can spend is one sentence under the form, the same one the approver signs. Owners and admins ask for approval; nothing is sent to an ad platform.
+// plan can spend is one sentence under the form, the same one the approver signs. Owners and admins ask for approval; until it is approved nothing is sent to an ad platform (an approved plan is launched paused and switched on from its first day, #3639).
 // The form is the person's own until they save: a draft someone else saved meanwhile never replaces their edits (the save is refused as stale instead).
 import { useMutation } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
@@ -19,18 +19,19 @@ import {
   type AdsCampaignPlanDraft,
   type AdsLaunchView,
   type AdsObjective,
-} from '@crove/kernel-contract';
-import { Alert } from '@crove/ui/components/alert';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { Textarea } from '@crove/ui/components/textarea';
+} from '@ludy/kernel-contract';
+import { Alert } from '@ludy/ui/components/alert';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { useFormat } from '../i18n/provider.tsx';
 import type { Translate } from '../i18n/runtime.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { keyFor, type KeyHolder } from '../lib/ads.ts';
+import { tidyMoneyInput } from '../lib/money-input.ts';
 import {
   badLocationIndex,
   blankVariant,
@@ -45,17 +46,21 @@ import {
   issueText,
   launchObjectLevelText,
   launchObjectStatusText,
+  launchObjectStatusVariant,
   launchReasonText,
   maxSpendHint,
   maxSpendOf,
   objectiveText,
   planToForm,
   problemText,
+  statesReadNote,
   type AdsGender,
   type AiField,
   type CampaignForm,
+  budgetTextOf,
 } from '../lib/ads-campaigns.ts';
 import { toast } from '../lib/toast.ts';
+import { ManageSection } from './ads-manage.tsx';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput } from './date-input.tsx';
 import { ErrorText, Field, focusFirstInvalid } from './ui.tsx';
@@ -63,7 +68,7 @@ import { ErrorText, Field, focusFirstInvalid } from './ui.tsx';
 const H2 = 'text-base font-semibold text-foreground';
 const H3 = 'text-sm font-medium text-foreground';
 
-// A Facebook Page of the org that a Messenger ad can open a conversation with (a channel connection).
+// A Facebook Page of the org that an ad can run as (a channel connection).
 export interface PageChoice {
   id: string;
   name: string;
@@ -75,6 +80,8 @@ export const refreshCampaigns = () =>
     queryClient.invalidateQueries({ queryKey: orpc.ads.campaignDrafts.key() }),
     queryClient.invalidateQueries({ queryKey: orpc.ads.campaignDraft.key() }),
     queryClient.invalidateQueries({ queryKey: orpc.ads.campaignRequests.key() }),
+    // A launch cancelled, stopped or retried changes what is committed this month.
+    queryClient.invalidateQueries({ queryKey: orpc.ads.committed.key() }),
   ]);
 
 // What the form was loaded from: the revision the next save is made from (a draft saved since is refused as stale), the plan the form is compared with
@@ -208,6 +215,9 @@ export function CampaignBuilder({
   const checked = draft !== null && !dirty && !moved;
   const errors = checked ? draft.issues.filter((i) => i.severity === 'error') : [];
   const warnings = checked ? draft.issues.filter((i) => i.severity === 'warning') : [];
+  // What the checked draft says about its Page, under the Page field itself (the full list of findings is below the form).
+  const pageIssue = errors.find((i) => i.field === 'pageConnectionId');
+  const pageError = pageIssue ? (pageIssue.code === 'page_not_found' ? t('campaigns.pageNotFound') : t('campaigns.pageNeeded')) : undefined;
   const canSubmit = canManage && checked && !frozen && errors.length === 0 && currency !== null;
   const objectiveChanged = (next: AdsObjective) =>
     set({
@@ -242,7 +252,7 @@ export function CampaignBuilder({
           </Link>
         </Alert>
       )}
-      {approved && draft && <LaunchNote draft={draft} canManage={canManage} />}
+      {approved && draft && <LaunchNote draft={draft} canManage={canManage} slug={slug} />}
       {draft?.origin === 'ai' && !frozen && <p className="text-sm text-muted-foreground">{t('campaigns.draftedHint')}</p>}
       {moved && dirty && !frozen && draft && (
         <Alert role="status" data-testid="campaign-moved">
@@ -293,7 +303,7 @@ export function CampaignBuilder({
             >
               {(control) => (
                 <div className="flex items-center gap-2">
-                  <Input {...control} inputMode="decimal" autoComplete="off" value={form.dailyBudget} onChange={(e) => set({ dailyBudget: e.target.value.trim() })} />
+                  <Input {...control} inputMode="decimal" autoComplete="off" value={form.dailyBudget} onChange={(e) => set({ dailyBudget: e.target.value.trim() })} onBlur={() => set({ dailyBudget: tidyMoneyInput(form.dailyBudget) })} />
                   <span className="text-sm text-muted-foreground">{currency ?? ''}</span>
                 </div>
               )}
@@ -362,28 +372,31 @@ export function CampaignBuilder({
           </div>,
         )}
 
+        {/* Every ad runs as a Facebook Page, whatever the objective: the launch stops a plan with none, so it is asked for here and judged with the plan. */}
         {section(
-          form.objective === 'messenger' ? t('campaigns.sectionPage') : t('campaigns.sectionLink'),
-          form.objective === 'messenger' ? (
-            <Field label={t('campaigns.page')} className="max-w-sm">
-              {(control) => (
-                <NativeSelect {...control} className="w-full" value={form.pageConnectionId} onChange={(e) => set({ pageConnectionId: e.target.value })}>
-                  <NativeSelectOption value="">{pages.length === 0 ? t('campaigns.pageNone') : t('campaigns.pageChoose')}</NativeSelectOption>
-                  {pages.map((p) => (
-                    <NativeSelectOption key={p.id} value={p.id}>
-                      {p.name}
-                    </NativeSelectOption>
-                  ))}
-                </NativeSelect>
-              )}
-            </Field>
-          ) : (
+          t('campaigns.sectionPage'),
+          <Field label={t('campaigns.page')} hint={t('campaigns.pageHint')} error={pageError} className="max-w-sm">
+            {(control) => (
+              <NativeSelect {...control} className="w-full" value={form.pageConnectionId} onChange={(e) => set({ pageConnectionId: e.target.value })}>
+                <NativeSelectOption value="">{pages.length === 0 ? t('campaigns.pageNone') : t('campaigns.pageChoose')}</NativeSelectOption>
+                {pages.map((p) => (
+                  <NativeSelectOption key={p.id} value={p.id}>
+                    {p.name}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            )}
+          </Field>,
+        )}
+
+        {form.objective !== 'messenger' &&
+          section(
+            t('campaigns.sectionLink'),
             // Not a url field: the browser's own check would refuse a link with its own words, and this form words its problems itself.
             <Field label={<Labelled text={t('campaigns.link')} ai={ai('linkUrl')} />} error={problems.linkUrl ? problemText(problems.linkUrl, root) : undefined} className="max-w-xl">
               {(control) => <Input {...control} type="text" inputMode="url" autoComplete="off" placeholder="https://" maxLength={2000} value={form.linkUrl} onChange={(e) => set({ linkUrl: e.target.value })} />}
-            </Field>
-          ),
-        )}
+            </Field>,
+          )}
 
         {section(
           t('campaigns.variantsTitle'),
@@ -433,7 +446,7 @@ export function CampaignBuilder({
 
       <p className="text-sm font-medium text-foreground" data-testid="campaign-max-spend">
         {spend !== null && currency !== null
-          ? t('campaigns.maxSpend', { amount: f.money(spend.amount, currency), days: spend.days, daily: f.money(form.dailyBudget.trim(), currency) })
+          ? t('campaigns.maxSpend', { amount: f.money(spend.amount, currency), days: spend.days, daily: f.money(budgetTextOf(form.dailyBudget), currency) })
           : maxSpendHint(form) === 'dates'
             ? t('campaigns.maxSpendDates', { max: String(ADS_PLAN_LIMITS.daysMax) })
             : t('campaigns.maxSpendNone')}
@@ -508,7 +521,7 @@ export function CampaignBuilder({
 // What an approved plan's launch is (W2-2..W2-4c, #2296): its amount is held against the spend caps until it is cancelled or stopped. Owners and admins can cancel one that has
 // not started, which releases the amount at once, retry one that needs attention (W2-4b..W2-4c), and stop one that has started (W2-4a): the commitment stays to at least today,
 // and the ads it made at the platform are paused.
-function LaunchNote({ draft, canManage }: { draft: AdsCampaignDraftView; canManage: boolean }) {
+function LaunchNote({ draft, canManage, slug }: { draft: AdsCampaignDraftView; canManage: boolean; slug: string }) {
   const t = useTranslations('ads');
   const root = useTranslations();
   const f = useFormat();
@@ -556,7 +569,7 @@ function LaunchNote({ draft, canManage }: { draft: AdsCampaignDraftView; canMana
     );
   }
   if (launch.state === 'launching' || launch.state === 'needs_attention' || launch.state === 'live') {
-    return (
+    const note = (
       <Alert role="status" data-testid="campaign-launch">
         <p>
           {launch.state === 'live'
@@ -606,6 +619,15 @@ function LaunchNote({ draft, canManage }: { draft: AdsCampaignDraftView; canMana
         {stop.error && <ErrorText>{errorMessage(stop.error)}</ErrorText>}
       </Alert>
     );
+    // A live launch is managed under its note (ads W4, #3835): the Manage section sits beside the note, not inside it, since the note is a live region and holds forms and lists.
+    return launch.state === 'live' ? (
+      <div className="space-y-3">
+        {note}
+        <ManageSection launch={launch} canManage={canManage} slug={slug} />
+      </div>
+    ) : (
+      note
+    );
   }
   return (
     <Alert role="status" data-testid="campaign-launch">
@@ -631,22 +653,37 @@ function LaunchNote({ draft, canManage }: { draft: AdsCampaignDraftView; canMana
 }
 
 function LaunchObjectsList({ launch, title, root }: { launch: AdsLaunchView; title: string; root: Translate }) {
+  const f = useFormat();
+  const t = useTranslations('ads');
   if (launch.objects.length === 0) return null;
+  const read = statesReadNote(launch, root, (value) => f.dateTime(value));
   return (
     <div className="mt-2 space-y-1">
       <p className="text-xs font-medium text-foreground">{title}</p>
       <ul className="space-y-1 text-xs text-muted-foreground" data-testid="campaign-launch-objects">
         {launch.objects.map((o) => (
           <li key={o.slot} className="flex flex-wrap items-center justify-between gap-2">
-            <span>
-              {launchObjectLevelText(o.level, root)}: <span className="font-medium text-foreground">{o.name}</span> ({o.externalId})
-            </span>
-            <Badge variant={launch.state === 'live' && o.level !== 'creative' && (o.effectiveStatus === null || o.effectiveStatus.toLowerCase() === 'active') ? 'success' : 'outline'}>
+            <div>
+              {launchObjectLevelText(o.level, root)}: <span className="font-medium text-foreground">{o.name}</span>
+              {/* The platform's own id is for support and for finding the object in its manager: behind a link, not in the line (AD-11, #3659). */}
+              <details className="mt-0.5">
+                <summary className="cursor-pointer text-subtle-foreground" aria-label={t('campaigns.launchObjectDetailsOf', { name: o.name })}>
+                  {t('campaigns.launchObjectDetails')}
+                </summary>
+                <span className="block font-mono">{t('campaigns.launchObjectId', { id: o.externalId })}</span>
+              </details>
+            </div>
+            <Badge variant={launchObjectStatusVariant(o, launch)}>
               {launchObjectStatusText(o, launch, root)}
             </Badge>
           </li>
         ))}
       </ul>
+      {read && (
+        <p className={read.failed ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'} data-testid="campaign-launch-read">
+          {read.text}
+        </p>
+      )}
     </div>
   );
 }

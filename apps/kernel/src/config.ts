@@ -1,8 +1,13 @@
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { EXTRACT_TIMING } from '@crove/extract-contract';
-import { zExtensionId } from '@crove/kernel-contract';
-import type { UsageLimits } from '@crove/kernel';
+import { checkEnvPair } from '@ludy/db';
+import { EXTRACT_TIMING } from '@ludy/extract-contract';
+import { misaBlockers } from '@ludy/einvoice';
+import { MODULE_IDS, TRANSLATION_FLAGGED_TARGETS, zExtensionId, type ModuleId, type TranslationFlaggedTarget } from '@ludy/kernel-contract';
+import type { UsageLimits } from '@ludy/kernel';
+import { parseAllowedEmails } from './auth-access.ts';
+import { checkHostedLoginUrl, hostedLoginName } from './auth-hosted-login.ts';
+import { MAX_OAUTH_PROVIDERS, parseOauthProviders } from './auth-oauth-providers.ts';
 import { SIGNUP_POLICIES, parseAllowedDomains } from './auth-signup-policy.ts';
 import { WEBHOOK_ENV } from './alert.ts';
 import { parseAllowedOrigins } from './cors.ts';
@@ -23,8 +28,8 @@ const optional = z
 
 // Modules this build ships (plan Decision 12, ADR-0031). kernel is always on; the others are on unless CROVE_MODULES
 // leaves them out.
-export const AVAILABLE_MODULES = ['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings'] as const;
-export type ModuleId = (typeof AVAILABLE_MODULES)[number];
+export const AVAILABLE_MODULES = MODULE_IDS;
+export type { ModuleId };
 
 // CROVE_MODULES: a comma-separated list such as `finance`. Unset or empty enables every available module; kernel is
 // added when missing. An unknown name stops the boot, so a typo never silently turns a module off. The prober reads it
@@ -57,7 +62,9 @@ const schema = z.object({
   TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
   // Where the API answers: the auth proxy (`/auth/v1`), webhooks, short links (`/l/<code>`), link-in-bio pages and
   // feeds. With the web app served from the same origin (self-host) it is also where people open the app.
-  PUBLIC_URL: z.string().default('http://localhost:8080'),
+  // At most 340 characters: Shopee's push address (`<PUBLIC_URL>/api/marketplace/shopee/webhook/<22-character key>`, 54 characters after it) is stored with each Shopee push, and the definer refuses an address of over 400
+  // characters (#4346), so a longer value would turn every Shopee push into an error. Checked here, at boot, rather than on a request.
+  PUBLIC_URL: z.string().max(340, 'PUBLIC_URL is at most 340 characters (the push address built from it must stay under 400)').default('http://localhost:8080'),
   // Where people open the web app, when it is served from another origin than the API (a split deployment, #2261: the app
   // at app.<domain>, the API at api.<domain>). Every link that opens a screen of the app (invite, notification and report
   // mail, calendar feed events, chat alerts) and the OAuth return addresses (`/channels/oauth/<provider>/callback`,
@@ -83,7 +90,10 @@ const schema = z.object({
   }),
   // Which modules' commands, queries, jobs, routes and menus this deployment registers. Migrations still apply to
   // every schema (one linear ledger); per-org access is entitlements (Decision 10), not this setting.
-  CROVE_MODULES: modulesSetting,
+  LUDY_MODULES: modulesSetting,
+  // Legal gate for live external Vietnam public CA providers (VNPT SmartCA, Viettel MySign, MISA WeSign; issue #62 and
+  // #3554). false (the default) allows only the offline sandbox PAdES adapter until lawyer sign-off completes.
+  SIGN_LIVE_CA_ENABLED: optional.pipe(z.enum(['true', 'false']).default('false')),
   DATABASE_URL: z.string().min(1),
   WORKER_DATABASE_URL: optional,
   // Reset each pooled connection's session before it goes back to the pool (#117, plan §3.3). Keep true for direct
@@ -104,10 +114,10 @@ const schema = z.object({
   // The database holds other systems' schemas, roles and event triggers beside Ludy's (Ludy Cloud inside DOS's Supabase
   // project, #2284): `migrate` then limits every effect to the `crove_*` roles and schemas (docs/runbooks/shared-database.md).
   // false (the default, and every self-host) keeps every database-wide guard.
-  CROVE_SHARED_DATABASE: optional.pipe(z.enum(['true', 'false']).default('false')),
+  LUDY_SHARED_DATABASE: optional.pipe(z.enum(['true', 'false']).default('false')),
   // The mode is locked to the database once `migrate` has recorded it: a run that asks for the other one is refused unless
   // this is true, for the one run a person decides to switch it in.
-  CROVE_SHARED_DATABASE_SWITCH: optional.pipe(z.enum(['true', 'false']).default('false')),
+  LUDY_SHARED_DATABASE_SWITCH: optional.pipe(z.enum(['true', 'false']).default('false')),
   MIGRATIONS_DIR: z.string().default(here('../../../supabase/migrations')),
   // How long `migrate` waits for another run's migration lock before it fails; unset waits as long as it takes (#1803).
   // Empty (a compose `${VAR:-}`) counts as unset; coerced, it would be 0 and fail every role's config.
@@ -206,7 +216,7 @@ const schema = z.object({
   // The context token key (#1822, ADR-0028 section 9): base64 of 32 to 64 random bytes (`node dist/main.js
   // context-token-key` prints one). The same value goes to the migrate step, which installs it in the database, and to
   // the kernel, which signs a token with it for every user context it enters. Unset: today's enter_context.
-  CROVE_CONTEXT_TOKEN_KEY: optional,
+  LUDY_CONTEXT_TOKEN_KEY: optional,
   AUTH_JWKS_URL: optional,
   // Required (ADR-0028): the `iss` every access token must carry. Bundled Supabase Auth: GOTRUE_JWT_ISSUER.
   AUTH_ISSUER: optional,
@@ -215,7 +225,42 @@ const schema = z.object({
   // (Crove Cloud, or any remote Supabase Auth) trusts the verified token until its exp, plus Crove's own session
   // records, and confirms every R3 command live with Supabase Auth; off checks only Crove's own records and never
   // calls Auth (local URLs only). Unset: db when AUTH_UPSTREAM_URL is set (bundled Supabase Auth), jwt otherwise.
-  AUTH_SESSION_CHECK: z.enum(['db', 'jwt', 'off']).optional(),
+  // Empty counts as unset (compose passes the line through empty), so the derived default below applies.
+  AUTH_SESSION_CHECK: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.enum(['db', 'jwt', 'off']).optional()),
+  // Who may use this deployment (issue #2704, auth-access.ts): exact addresses and `@domain` entries, comma or space
+  // separated. Unset: every holder of a valid token. Set it when AUTH_ISSUER and AUTH_JWKS_URL name an identity provider
+  // that serves other people too; a token for any other address is refused with 403 ACCOUNT_NOT_ALLOWED.
+  AUTH_ALLOWED_EMAILS: optional.transform((value, ctx): readonly string[] => {
+    if (value === undefined) return [];
+    const { entries, invalid } = parseAllowedEmails(value);
+    if (invalid.length > 0) {
+      ctx.addIssue({ code: 'custom', message: `not an email address or @domain: ${invalid.join(', ')}` });
+      return z.NEVER;
+    }
+    // Set but listing nobody (`,` or an empty variable in a template) would read as no limit: fail closed instead.
+    if (entries.length === 0) {
+      ctx.addIssue({ code: 'custom', message: 'lists no address or @domain; unset it to allow every account' });
+      return z.NEVER;
+    }
+    return entries;
+  }),
+  // The sign-in buttons the app shows besides email and password (issue #2704, auth-oauth-providers.ts): provider ids the
+  // identity provider has enabled, at most 12. They reach the app through /api/config; Ludy holds no credential for them.
+  AUTH_OAUTH_PROVIDERS: optional.transform((value, ctx): readonly string[] => {
+    if (value === undefined) return [];
+    const { providers, invalid } = parseOauthProviders(value);
+    if (invalid.length > 0) {
+      ctx.addIssue({ code: 'custom', message: `not a provider id (lower-case letters, digits and _, at most ${MAX_OAUTH_PROVIDERS} of them): ${invalid.join(', ')}` });
+      return z.NEVER;
+    }
+    return providers;
+  }),
+  // The identity provider's hosted login page (issue #2704, auth-hosted-login.ts, docs/contracts/hosted-login.md): the page the
+  // app sends the browser to, the endpoint it redeems the returned one-time code at (PKCE) for a Supabase Auth session, and the
+  // words on the button. Both addresses or neither; public addresses, no secret.
+  AUTH_HOSTED_LOGIN_URL: optional,
+  AUTH_HOSTED_LOGIN_TOKEN_URL: optional,
+  AUTH_HOSTED_LOGIN_NAME: optional,
   // Policy P11: R3 needs MFA in the last 5 minutes. off is accepted on local URLs only.
   AUTH_STEP_UP: z.enum(['required', 'off']).default('required'),
   // Mirrors GOTRUE_MAILER_AUTOCONFIRM so the kernel can refuse unsafe public deployments.
@@ -304,7 +349,7 @@ const schema = z.object({
   // Bound on denied/failed audit rows (issue #162), counted in the database across API instances: in each fixed
   // window of REFUSAL_AUDIT_WINDOW_SECONDS, an actor's refusals get an audit row until the actor has
   // REFUSAL_AUDIT_LIMIT_PER_ACTOR or the org REFUSAL_AUDIT_LIMIT_PER_ORG refusals in it; later ones are only counted
-  // (crove_kernel.refusal_tally). The first refusal of each command and code of an actor in a window is always audited,
+  // (ludy_kernel.refusal_tally). The first refusal of each command and code of an actor in a window is always audited,
   // so are an actor's first REFUSAL_AUDIT_RESERVE_PER_ACTOR refusals whatever the org's count, and security-relevant
   // refusals (FORBIDDEN, STEP_UP_REQUIRED, 404s and the like) up to the actor's own limit. The worker deletes tally
   // windows older than REFUSAL_TALLY_RETENTION_DAYS.
@@ -333,6 +378,8 @@ const schema = z.object({
   // Calls per minute one grant may make before the endpoint answers 429, and the cap of concurrent calls of one grant.
   MCP_GRANT_PER_MINUTE: z.coerce.number().int().min(1).max(6000).default(60),
   MCP_GRANT_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(4),
+  // The writes one grant may make in a minute through the Engage write tools (E2, #3861); a client that loops is answered 429 before anything runs.
+  MCP_GRANT_WRITES_PER_MINUTE: z.coerce.number().int().min(1).max(600).default(20),
   // Rows of business data one grant may read per UTC day (the sum of the rows its tool calls return). A call that starts under the budget may end over it by one answer.
   MCP_GRANT_DAILY_ROWS: z.coerce.number().int().min(1).max(1_000_000).default(2000),
   // Dynamic client registrations one address may make per minute, and all addresses together (RFC 7591 is public by protocol).
@@ -343,6 +390,12 @@ const schema = z.object({
   // The offline sandbox e-invoice provider (ADR-0044, #2500, #2502): series and drafts are made, and invoices issued, without any provider account. Left out, it is on for a
   // local PUBLIC_URL and off for a public one; set to true on a public deployment that runs the finance module it is refused, since what it issues is read into a sale of the books.
   EINVOICE_SANDBOX: optional.pipe(z.enum(['true', 'false']).optional()),
+  // The real e-invoice adapters this deployment offers (#2503), a comma-separated list of adapter ids; `misa` is MISA meInvoice. Off by default, and naming `misa` is refused
+  // until the issues its gates name (MISA_GATES in @ludy/einvoice) are done and written in issue #2503. The offline sandbox has its own switch, EINVOICE_SANDBOX.
+  EINVOICE_PROVIDERS: z
+    .string()
+    .default('')
+    .refine((value) => value.split(',').every((id) => id.trim() === '' || /^[a-z][a-z0-9_]{0,21}$/.test(id.trim())), 'a comma-separated list of adapter ids'),
   // The marketplace adapters this deployment offers (#2519), a comma-separated list of adapter ids; `sandbox` is the offline provider, which serves a few recorded orders for each platform
   // without any seller account. Off unless asked for here (`docker compose up` asks for it), so a deployment shows no marketplace connection until it has an adapter. What an adapter
   // reads is only staged, in the Inbox, for a member to confirm; nothing is written until they do.
@@ -350,12 +403,28 @@ const schema = z.object({
     .string()
     .default('')
     .refine((value) => value.split(',').every((id) => id.trim() === '' || /^[a-z][a-z0-9_]{0,21}$/.test(id.trim())), 'a comma-separated list of adapter ids'),
+  // The integrator's ClientID that MISA issued for the MISA AMIS Kế toán API (#3854): a SECRET of the deployment (it is also the key that signs the callbacks of AMIS), never logged, never in an
+  // error or an audit row. Unset, the connector is off: the card says so and no route that uses it is reachable. Crove Cloud sets DOS's own; a self-hoster sets the one MISA issued to their app.
+  MISA_AMIS_CLIENT_ID: optional.pipe(z.string().regex(/^[0-9A-Za-z._-]{8,128}$/, 'MISA_AMIS_CLIENT_ID is not in the shape of a ClientID').optional()),
+  // The push of vouchers to MISA AMIS (S3b, #3902) is OFF unless this is `on`, and it needs MISA_AMIS_CLIENT_ID. It stays off until the sandbox check (docs/runbooks/misa-amis-sandbox-check.md) has confirmed what the push assumes; only the coordinator runs that check and sets this.
+  MISA_AMIS_PUSH: optional.pipe(z.enum(['on', 'off']).optional()),
+  // The integrator's ClientID for the MISA ASP API (#4111, S2 of #4103): one per product (the plan counts approved apps per product; where MISA issued one value for both it is set twice). A SECRET of the
+  // deployment like MISA_AMIS_CLIENT_ID, never logged, never in an error or an audit row. Unset, the ASP product is off: the connect dialog does not offer it and no route that uses it is reachable.
+  MISA_ASP_CLIENT_ID: optional.pipe(z.string().regex(/^[0-9A-Za-z._-]{8,128}$/, 'MISA_ASP_CLIENT_ID is not in the shape of a ClientID').optional()),
+  // The push of vouchers to MISA ASP (S4, #4113) is OFF unless this is `on`, and it needs MISA_ASP_CLIENT_ID: a switch of its own, apart from MISA_AMIS_PUSH, so one product can be pushed while the other is not.
+  // It stays off until the sandbox check of ASP (docs/runbooks/misa-amis-sandbox-check.md) has confirmed what the push assumes; only the coordinator runs that check and sets this.
+  MISA_ASP_PUSH: optional.pipe(z.enum(['on', 'off']).optional()),
   // The offline sandbox bank feed (ADR-0039, #2044): off unless asked for, so a deployment shows no bank feed until it
   // has one.
   BANK_FEED_SANDBOX: z.enum(['true', 'false']).default('false'),
   // The secret the sandbox bank feed's signed notices are checked with (POST /api/bank-feed/bank_sandbox/webhook); unset:
   // the sandbox takes no notices. At least 32 characters.
   BANK_FEED_SANDBOX_WEBHOOK_SECRET: optional,
+  // The Tingee bank feed (ADR-0039, #2045): off unless asked for, so a deployment reaches no bank service and shows no Tingee connect until it has one. Each org registers its own Tingee account and
+  // gives its Client ID and Secret Token (sealed per org, never in this configuration); this switch only turns the adapter on. It needs the credential key (CREDENTIAL_KEY).
+  BANK_FEED_TINGEE: z.enum(['true', 'false']).default('false'),
+  // Points the Tingee adapter at Tingee's UAT host instead of production, for the UAT run (S5): only with BANK_FEED_TINGEE=true, never on a public deployment.
+  BANK_FEED_TINGEE_UAT: z.enum(['true', 'false']).default('false'),
   // The offline sandbox ad platform (ADR-0040, #2217): connect a test ad account and read made-up daily figures without any
   // platform account. Left out, it is on for a local PUBLIC_URL and off for a public one (compose passes it through empty). Its figures
   // reach no books: the ads screen only shows them beside the ledger's total.
@@ -400,6 +469,20 @@ const schema = z.object({
   // since nothing is read for a channel without the opt-in.
   CHANNEL_YOUTUBE_HISTORY: z.enum(['true', 'false']).default('true'),
   CHANNEL_META_GRAPH_VERSION: z.string().regex(/^v\d{1,3}\.\d{1,2}$/).default('v24.0'),
+  // WhatsApp Business, Cloud API (conversation core, #3131): the secret of the Meta app the WhatsApp product belongs to, which may be the Pages app's (set the same
+  // value) or another app. Set, a business may connect its number by hand on the Channels screen (a system user token, the phone number id and the WABA id,
+  // sealed) and the worker sends its replies with it; the secret also proves the Graph calls (appsecret_proof) and checks the webhook's X-Hub-Signature-256.
+  // A credential: read from the environment only, never logged, stored or put in an answer.
+  CHANNEL_WHATSAPP_APP_SECRET: optional,
+  // The secret CHANNEL_WHATSAPP_APP_SECRET replaces while Meta may still sign notices with it during a rotation.
+  CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS: optional,
+  // The verify token Meta sends on GET /api/channels/whatsapp/webhook when the callback URL is saved in the app dashboard. With the app secret above, the route
+  // /api/channels/whatsapp/webhook exists and customers' messages to the connected numbers are taken in. A credential, as the secret is.
+  CHANNEL_WHATSAPP_VERIFY_TOKEN: optional,
+  // The hosts a customer's image on WhatsApp may be fetched from (conversation core CV5c, #3131): domain suffixes separated by commas, each matching the host itself
+  // and its subdomains. Unset: the built-in list (WHATSAPP_MEDIA_HOSTS in @ludy/channel), which is [M] until the live check settles it. An image from any other
+  // host is never fetched, and the connection's token is never sent to one.
+  CHANNEL_WHATSAPP_MEDIA_HOSTS: optional,
   // The Meta app for ad accounts, read only (ADR-0040, #2218): set both to offer "Connect a Meta ad account" on the Ads
   // screen; neither hides it. It may be the same app as the Pages one above (a classic app holds Facebook Login and the
   // Marketing API together), so the same id and secret can be given twice; but a Meta user token carries every permission
@@ -438,7 +521,7 @@ const schema = z.object({
   // answers' shapes, the message ids above all (the history must name a message as the webhook does, or it would store it twice).
   CHANNEL_ZALO_HISTORY: z.enum(['true', 'false']).default('false'),
   // The hosts a customer's image on Zalo may be fetched from (conversation core CV5c, #2357): domain suffixes separated by commas, each
-  // matching the host itself and its subdomains. Unset: the built-in list (ZALO_MEDIA_HOSTS in @crove/channel), which is [S, U] until the
+  // matching the host itself and its subdomains. Unset: the built-in list (ZALO_MEDIA_HOSTS in @ludy/channel), which is [S, U] until the
   // live check settles it (docs/runbooks/zalo-conversations-live-check.md row 18). An image from any other host is never fetched.
   CHANNEL_ZALO_MEDIA_HOSTS: optional,
   // The deployment's Threads app (the Threads use case of a Meta app has its own id), S9. Callback URL:
@@ -471,6 +554,29 @@ const schema = z.object({
   // APP_URL/calendar/oauth/google_calendar/callback. With neither set, the connect button is not offered.
   CALENDAR_GOOGLE_CLIENT_ID: optional,
   CALENDAR_GOOGLE_CLIENT_SECRET: optional,
+  // Outlook calendars (Meetings B3, #3167): the operator's own Microsoft Entra app registration (delegated Graph calendar read, redirect URI
+  // APP_URL/calendar/oauth/microsoft_calendar/callback). The tenant is `common` (work, school and personal accounts) unless one is given. With neither id nor secret set, the connect button is not offered.
+  CALENDAR_MICROSOFT_CLIENT_ID: optional,
+  CALENDAR_MICROSOFT_CLIENT_SECRET: optional,
+  CALENDAR_MICROSOFT_TENANT: optional,
+  // Zoom recordings (Meetings C3, #3175): the operator's own Zoom OAuth app, a user-managed app (authorization code with PKCE; a self-hoster's own private app needs no Zoom review) with the granular
+  // cloud recording read scopes and the redirect URL APP_URL/meetings/oauth/zoom/callback (docs/runbooks/meetings-zoom.md). Off by default: with neither set there is no Zoom adapter and no Zoom connection. Both or neither.
+  ZOOM_OAUTH_CLIENT_ID: optional,
+  ZOOM_OAUTH_CLIENT_SECRET: optional,
+  // The Zoom app's secret token (Feature, Event Subscriptions): signs the webhook that rings the recording import when a recording finishes, at APP_URL's API host /api/meeting-platform/zoom/webhook
+  // (docs/runbooks/meetings-zoom.md). Needs the OAuth app above. Unset: no route; the sweep alone lists. The token it replaces is kept while Zoom may still sign with it (a rotation in the app, then here).
+  ZOOM_WEBHOOK_SECRET_TOKEN: optional,
+  ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS: optional,
+  // Google Meet transcripts (Meetings C2, #3174): a Google OAuth web client of its own for the Meet connection (not the calendar's, so the calendar consent stays narrow), with the sensitive scope
+  // meetings.space.readonly on its consent screen, the Google Meet REST API on in its project and the redirect URL APP_URL/meetings/oauth/google_meet/callback (docs/runbooks/meetings-google.md). Off by default:
+  // with neither set there is no Google Meet adapter and no Google Meet connection. Both or neither. The value of the calendar's client may be used here if the owner decides so.
+  MEETINGS_GOOGLE_CLIENT_ID: optional,
+  MEETINGS_GOOGLE_CLIENT_SECRET: optional,
+  // Microsoft Teams recordings and transcripts (Meetings C4, #3176): the operator's own multi-tenant Microsoft Entra app (work and school accounts; authorization code with PKCE) with the delegated
+  // permissions of docs/runbooks/meetings-teams.md and the redirect URL APP_URL/meetings/oauth/microsoft_teams/callback. Two of the permissions need a customer's tenant administrator to consent. Off by default: with
+  // neither set there is no Teams adapter and no Teams connection. Both or neither. Its own pair, apart from CALENDAR_MICROSOFT_*: a calendar app asks for calendar scopes only.
+  TEAMS_OAUTH_CLIENT_ID: optional,
+  TEAMS_OAUTH_CLIENT_SECRET: optional,
   // The deployment's TikTok app (Login Kit and Content Posting API, Direct Post), S9. Callback URL:
   // APP_URL/channels/oauth/tiktok/callback.
   CHANNEL_TIKTOK_CLIENT_KEY: optional,
@@ -540,9 +646,23 @@ const schema = z.object({
   // (TRANSCRIBE_BASE_URL and TRANSCRIBE_MODEL; the key is optional for a local model). The module works with it off: no run starts and the screen shows
   // no button. AI_PRICE_AUDIO_PER_MIN is the price of one minute of audio in the unit of the other AI_PRICE_* settings (default 0: counted, not priced).
   MEETINGS_TRANSCRIBE: z.enum(['on', 'off']).default('off'),
-  // The recorder's Vy summarizing a meeting (#2580, M6): off unless MEETINGS_SUMMARY=on (it also needs the deployment's AI provider and Vy turned on for members).
+  // The recorder's Vy summarizing a meeting (#2580, M6): off unless MEETINGS_SUMMARY=on (it also needs the deployment's AI provider and Vy turned on for members). The same switch lets a member's Vy translate the summary they read (#3184).
   // The module works with it off: the recorder types a summary and items by hand, and no button asks Vy.
   MEETINGS_SUMMARY: z.enum(['on', 'off']).default('off'),
+  // The languages besides vi and en a member's Vy may translate a meeting INTO (E3, #3186): a comma-separated list from zh, ja, ko, empty (none) by default. Each is a separate switch because each needs a
+  // native reader's check of its quality before a deployment offers it; it works only where MEETINGS_SUMMARY is on. An unknown name stops the boot, so a typo never silently leaves a language off.
+  MEETINGS_TRANSLATION_LANGUAGES: optional.transform((value, ctx): readonly TranslationFlaggedTarget[] => {
+    const names = (value ?? '')
+      .split(',')
+      .map((name) => name.trim().toLowerCase())
+      .filter(Boolean);
+    const unknown = names.filter((name) => !(TRANSLATION_FLAGGED_TARGETS as readonly string[]).includes(name));
+    if (unknown.length > 0) {
+      ctx.addIssue({ code: 'custom', message: `unknown translation language(s) ${unknown.join(', ')}; available: ${TRANSLATION_FLAGGED_TARGETS.join(', ')}` });
+      return z.NEVER;
+    }
+    return TRANSLATION_FLAGGED_TARGETS.filter((language) => names.includes(language));
+  }),
   // How many meeting videos this process streams at once, over all members (#2965; each member may have 3, or this many if it is lower). A stream holds a slot until its body ends,
   // so size it from the members who may watch together and the process's memory (a window is 4 MiB); a request over the limit is told to retry (429).
   MEETINGS_VIDEO_STREAMS_MAX: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.coerce.number().int().min(1).max(4096).default(64)),
@@ -571,15 +691,15 @@ const schema = z.object({
   MAIL_PROVIDER: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['smtp', 'resend']).default('smtp')),
   RESEND_API_KEY: optional,
   RESEND_WEBHOOK_SECRET: optional.pipe(z.string().regex(/^whsec_[A-Za-z0-9+/=]{24,}$/, 'RESEND_WEBHOOK_SECRET is the whsec_... signing secret of the webhook').optional()),
-  // The build this image was made from (#892): the git SHA the release workflow passes as the image's CROVE_BUILD build
+  // The build this image was made from (#892): the git SHA the release workflow passes as the image's LUDY_BUILD build
   // argument. GET /version reports it, so the deploy's smoke test can tell the new image from the old one. Unset (a
   // local build): "dev".
-  CROVE_BUILD: optional.pipe(z.string().regex(/^[A-Za-z0-9._-]{1,64}$/, 'CROVE_BUILD is a build id: letters, digits, dot, dash, underscore').optional()),
-  // When that commit was made (#1952): its committer date, ISO 8601, the image's CROVE_BUILD_TIME build argument. A
+  LUDY_BUILD: optional.pipe(z.string().regex(/^[A-Za-z0-9._-]{1,64}$/, 'LUDY_BUILD is a build id: letters, digits, dot, dash, underscore').optional()),
+  // When that commit was made (#1952): its committer date, ISO 8601, the image's LUDY_BUILD_TIME build argument. A
   // SHA has no order, so builds are compared by this date: the API's /readyz waits while a live worker runs an older
   // build (plan §3.5, worker build >= API build), and each worker records its own in its heartbeat. Unset (a local
   // build): no comparison.
-  CROVE_BUILD_TIME: optional.pipe(z.iso.datetime({ offset: true, error: 'CROVE_BUILD_TIME is an ISO 8601 date and time with its offset' }).optional()),
+  LUDY_BUILD_TIME: optional.pipe(z.iso.datetime({ offset: true, error: 'LUDY_BUILD_TIME is an ISO 8601 date and time with its offset' }).optional()),
   // Where the app's "Góp ý / Hỗ trợ" (feedback and support) link goes: an https: page (a chat group, a help desk) or
   // a mailto: address. Unset hides the link. Browsers see it through /api/config, so it must hold nothing secret.
   SUPPORT_URL: optional.pipe(
@@ -629,7 +749,7 @@ const schema = z.object({
   // ends every subscription; members turn push on again.
   // The all-in-one role puts the HTTP edge on the worker's all-org database login and every secret, so on a public
   // PUBLIC_URL the kernel starts it only with this opt-in (assertSplitRoles); the pilot runs api and worker apart.
-  CROVE_ALLOW_ALL_IN_ONE: optional.pipe(z.enum(['true', 'false']).optional()),
+  LUDY_ALLOW_ALL_IN_ONE: optional.pipe(z.enum(['true', 'false']).optional()),
   VAPID_PUBLIC_KEY: optional.pipe(z.string().regex(/^[A-Za-z0-9_-]{87}$/, 'VAPID_PUBLIC_KEY is the base64url public key the vapid-keys role prints').optional()),
   VAPID_PRIVATE_KEY: optional.pipe(z.string().regex(/^[A-Za-z0-9_-]{43}$/, 'VAPID_PRIVATE_KEY is the base64url private key the vapid-keys role prints').optional()),
   VAPID_SUBJECT: optional.pipe(z.string().max(200).optional()),
@@ -671,26 +791,71 @@ const schema = z.object({
   TURNSTILE_SITE_KEY: optional.pipe(z.string().regex(/^[0-9A-Za-z_-]{1,100}$/, 'TURNSTILE_SITE_KEY is a Turnstile site key').optional()),
   TURNSTILE_SECRET: optional,
   // Role passwords applied by `migrate` (self-host).
-  CROVE_APP_DB_PASSWORD: optional,
-  CROVE_WORKER_DB_PASSWORD: optional,
-  // The prober's login (crove_prober); it may only execute crove_kernel.health().
-  CROVE_PROBER_DB_PASSWORD: optional,
-  // The usage report's login (crove_reporter); it may only execute crove_kernel.usage_weekly().
-  CROVE_REPORTER_DB_PASSWORD: optional,
+  LUDY_APP_DB_PASSWORD: optional,
+  LUDY_WORKER_DB_PASSWORD: optional,
+  // The prober's login (ludy_prober); it may only execute ludy_kernel.health().
+  LUDY_PROBER_DB_PASSWORD: optional,
+  // The usage report's login (ludy_reporter); it may only execute ludy_kernel.usage_weekly().
+  LUDY_REPORTER_DB_PASSWORD: optional,
   AUTH_DB_PASSWORD: optional,
 });
 
 export type SessionCheckMode = 'db' | 'jwt' | 'off';
 
-export type Config = Omit<z.infer<typeof schema>, 'AUTH_ISSUER' | 'AUTH_SESSION_CHECK' | 'EINVOICE_SANDBOX' | 'ADS_SANDBOX'> & {
-  AUTH_ISSUER: string;
-  AUTH_SESSION_CHECK: SessionCheckMode;
-  EINVOICE_SANDBOX: 'true' | 'false';
-  ADS_SANDBOX: 'true' | 'false';
+const BRANDED_ENV_PAIRS = [
+  ['LUDY_MODULES', 'CROVE_MODULES'],
+  ['LUDY_SHARED_DATABASE', 'CROVE_SHARED_DATABASE'],
+  ['LUDY_SHARED_DATABASE_SWITCH', 'CROVE_SHARED_DATABASE_SWITCH'],
+  ['LUDY_CONTEXT_TOKEN_KEY', 'CROVE_CONTEXT_TOKEN_KEY'],
+  ['LUDY_BUILD', 'CROVE_BUILD'],
+  ['LUDY_BUILD_TIME', 'CROVE_BUILD_TIME'],
+  ['LUDY_ALLOW_ALL_IN_ONE', 'CROVE_ALLOW_ALL_IN_ONE'],
+  ['LUDY_APP_DB_PASSWORD', 'CROVE_APP_DB_PASSWORD'],
+  ['LUDY_WORKER_DB_PASSWORD', 'CROVE_WORKER_DB_PASSWORD'],
+  ['LUDY_PROBER_DB_PASSWORD', 'CROVE_PROBER_DB_PASSWORD'],
+  ['LUDY_REPORTER_DB_PASSWORD', 'CROVE_REPORTER_DB_PASSWORD'],
+] as const;
+
+function normalizeBrandedEnv(env: NodeJS.ProcessEnv): Record<string, string | undefined> {
+  const normalized: Record<string, string | undefined> = { ...env };
+  for (const [primary, legacy] of BRANDED_ENV_PAIRS) {
+    const resolved = checkEnvPair(env, primary, legacy);
+    if (!resolved.ok) {
+      throw new Error(`invalid configuration: ${resolved.error}`);
+    }
+    if (resolved.value !== undefined) {
+      normalized[primary] = resolved.value;
+    } else {
+      delete normalized[primary];
+    }
+  }
+  return normalized;
+}
+
+type LegacyBrandedConfig = {
+  readonly CROVE_MODULES: z.infer<typeof schema>['LUDY_MODULES'];
+  readonly CROVE_SHARED_DATABASE: 'true' | 'false';
+  readonly CROVE_SHARED_DATABASE_SWITCH: 'true' | 'false';
+  readonly CROVE_CONTEXT_TOKEN_KEY: string | undefined;
+  readonly CROVE_BUILD: string | undefined;
+  readonly CROVE_BUILD_TIME: string | undefined;
+  readonly CROVE_ALLOW_ALL_IN_ONE: 'true' | 'false' | undefined;
+  readonly CROVE_APP_DB_PASSWORD: string | undefined;
+  readonly CROVE_WORKER_DB_PASSWORD: string | undefined;
+  readonly CROVE_PROBER_DB_PASSWORD: string | undefined;
+  readonly CROVE_REPORTER_DB_PASSWORD: string | undefined;
 };
 
+export type Config = Omit<z.infer<typeof schema>, 'AUTH_ISSUER' | 'AUTH_SESSION_CHECK' | 'EINVOICE_SANDBOX' | 'ADS_SANDBOX'> &
+  LegacyBrandedConfig & {
+    AUTH_ISSUER: string;
+    AUTH_SESSION_CHECK: SessionCheckMode;
+    EINVOICE_SANDBOX: 'true' | 'false';
+    ADS_SANDBOX: 'true' | 'false';
+  };
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const parsed = schema.safeParse(env);
+  const parsed = schema.safeParse(normalizeBrandedEnv(env));
   if (!parsed.success) {
     const fields = parsed.error.issues.map((i) => (i.code === 'custom' ? `${i.path.join('.')} (${i.message})` : i.path.join('.'))).join(', ');
     throw new Error(`invalid configuration: ${fields}`);
@@ -701,14 +866,43 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   const config: Config = {
     ...raw,
+    CROVE_MODULES: raw.LUDY_MODULES,
+    CROVE_SHARED_DATABASE: raw.LUDY_SHARED_DATABASE,
+    CROVE_SHARED_DATABASE_SWITCH: raw.LUDY_SHARED_DATABASE_SWITCH,
+    CROVE_CONTEXT_TOKEN_KEY: raw.LUDY_CONTEXT_TOKEN_KEY,
+    CROVE_BUILD: raw.LUDY_BUILD,
+    CROVE_BUILD_TIME: raw.LUDY_BUILD_TIME,
+    CROVE_ALLOW_ALL_IN_ONE: raw.LUDY_ALLOW_ALL_IN_ONE,
+    CROVE_APP_DB_PASSWORD: raw.LUDY_APP_DB_PASSWORD,
+    CROVE_WORKER_DB_PASSWORD: raw.LUDY_WORKER_DB_PASSWORD,
+    CROVE_PROBER_DB_PASSWORD: raw.LUDY_PROBER_DB_PASSWORD,
+    CROVE_REPORTER_DB_PASSWORD: raw.LUDY_REPORTER_DB_PASSWORD,
     AUTH_ISSUER: raw.AUTH_ISSUER,
     AUTH_SESSION_CHECK: raw.AUTH_SESSION_CHECK ?? (raw.AUTH_UPSTREAM_URL ? 'db' : 'jwt'),
     EINVOICE_SANDBOX: raw.EINVOICE_SANDBOX ?? (isLocalUrl(raw.PUBLIC_URL) ? 'true' : 'false'),
     // Same rule as EINVOICE_SANDBOX: compose passes it through empty, so a public URL never inherits a sandbox default.
     ADS_SANDBOX: raw.ADS_SANDBOX ?? (isLocalUrl(raw.PUBLIC_URL) ? 'true' : 'false'),
   };
+  // #2503: the MISA adapter is built and off. This is the same refusal as einvoiceProvidersOf's, said at start so a deployment never boots with it half on.
+  if (config.EINVOICE_PROVIDERS.split(',').some((id) => id.trim() === 'misa') && misaBlockers().length > 0) {
+    throw new Error(`EINVOICE_PROVIDERS=misa is refused until ${misaBlockers().map((b) => `#${b.issue}`).join(' and ')} are done and written in issue #2503: leave misa out of EINVOICE_PROVIDERS`);
+  }
+  // #62 / #3554: live Vietnam public CA remote signing (VNPT SmartCA, Viettel MySign, MISA WeSign) stays off at boot until legal sign-off (#62) and worker egress wiring land.
+  if (config.SIGN_LIVE_CA_ENABLED === 'true') {
+    throw new Error('SIGN_LIVE_CA_ENABLED=true is refused until #62 legal review and live CA egress gate are completed: keep SIGN_LIVE_CA_ENABLED=false');
+  }
   if (!config.AUTH_JWT_SECRET && !config.AUTH_JWKS_URL) {
     throw new Error('set AUTH_JWT_SECRET (self-hosted Supabase Auth) or AUTH_JWKS_URL (hosted Supabase Auth)');
+  }
+  if (Boolean(config.AUTH_HOSTED_LOGIN_URL) !== Boolean(config.AUTH_HOSTED_LOGIN_TOKEN_URL)) {
+    throw new Error('set both AUTH_HOSTED_LOGIN_URL and AUTH_HOSTED_LOGIN_TOKEN_URL, or neither');
+  }
+  for (const [name, value] of [['AUTH_HOSTED_LOGIN_URL', config.AUTH_HOSTED_LOGIN_URL], ['AUTH_HOSTED_LOGIN_TOKEN_URL', config.AUTH_HOSTED_LOGIN_TOKEN_URL]] as const) {
+    const problem = value === undefined ? null : checkHostedLoginUrl(name, value);
+    if (problem) throw new Error(problem);
+  }
+  if (config.AUTH_HOSTED_LOGIN_NAME !== undefined && hostedLoginName(config.AUTH_HOSTED_LOGIN_NAME) === null) {
+    throw new Error('AUTH_HOSTED_LOGIN_NAME is at most 40 characters, with no control characters, < or >');
   }
   if (config.AUTH_JWT_SECRET && config.AUTH_JWT_SECRET.length < 32) {
     throw new Error('AUTH_JWT_SECRET must be at least 32 characters');
@@ -735,6 +929,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   if (config.AUTH_SIGNUP_POLICY !== 'allowlist' && config.AUTH_SIGNUP_ALLOWED_DOMAINS.length > 0) {
     throw new Error(`AUTH_SIGNUP_ALLOWED_DOMAINS applies to AUTH_SIGNUP_POLICY=allowlist only (it is ${config.AUTH_SIGNUP_POLICY}); set the policy or remove the domains`);
+  }
+  // The /auth/v1 proxy refuses /authorize and /callback under a restricted policy, so a provider button there would land on its 403.
+  if (config.AUTH_OAUTH_PROVIDERS.length > 0 && config.AUTH_UPSTREAM_URL && config.AUTH_SIGNUP_POLICY !== 'open') {
+    throw new Error(
+      `AUTH_OAUTH_PROVIDERS needs AUTH_SIGNUP_POLICY=open (it is ${config.AUTH_SIGNUP_POLICY}) behind the bundled Supabase Auth: the /auth/v1 proxy refuses provider sign-in under a restricted policy; use a remote identity provider (AUTH_UPSTREAM_URL empty) or leave AUTH_OAUTH_PROVIDERS unset`,
+    );
   }
   if (config.AUTH_SIGNUP_POLICY !== 'open' && !config.AUTH_UPSTREAM_URL) {
     throw new Error(
@@ -828,6 +1028,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (config.CHANNEL_GOOGLE_ADS_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CHANNEL_GOOGLE_ADS_CLIENT_ID)) throw new Error('CHANNEL_GOOGLE_ADS_CLIENT_ID is the client id of a Google OAuth web client');
   if (Boolean(config.CALENDAR_GOOGLE_CLIENT_ID) !== Boolean(config.CALENDAR_GOOGLE_CLIENT_SECRET)) throw new Error('set both CALENDAR_GOOGLE_CLIENT_ID and CALENDAR_GOOGLE_CLIENT_SECRET, or neither');
   if (config.CALENDAR_GOOGLE_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CALENDAR_GOOGLE_CLIENT_ID)) throw new Error('CALENDAR_GOOGLE_CLIENT_ID is the client id of a Google OAuth web client');
+  if (Boolean(config.CALENDAR_MICROSOFT_CLIENT_ID) !== Boolean(config.CALENDAR_MICROSOFT_CLIENT_SECRET)) throw new Error('set both CALENDAR_MICROSOFT_CLIENT_ID and CALENDAR_MICROSOFT_CLIENT_SECRET, or neither');
+  if (config.CALENDAR_MICROSOFT_CLIENT_ID && !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(config.CALENDAR_MICROSOFT_CLIENT_ID)) throw new Error('CALENDAR_MICROSOFT_CLIENT_ID is the application (client) id of a Microsoft Entra app registration, a UUID');
+  if (Boolean(config.MEETINGS_GOOGLE_CLIENT_ID) !== Boolean(config.MEETINGS_GOOGLE_CLIENT_SECRET)) throw new Error('set both MEETINGS_GOOGLE_CLIENT_ID and MEETINGS_GOOGLE_CLIENT_SECRET, or neither');
+  if (config.MEETINGS_GOOGLE_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.MEETINGS_GOOGLE_CLIENT_ID)) throw new Error('MEETINGS_GOOGLE_CLIENT_ID is the client id of a Google OAuth web client');
+  if (Boolean(config.ZOOM_OAUTH_CLIENT_ID) !== Boolean(config.ZOOM_OAUTH_CLIENT_SECRET)) throw new Error('set both ZOOM_OAUTH_CLIENT_ID and ZOOM_OAUTH_CLIENT_SECRET, or neither');
+  if (Boolean(config.TEAMS_OAUTH_CLIENT_ID) !== Boolean(config.TEAMS_OAUTH_CLIENT_SECRET)) throw new Error('set both TEAMS_OAUTH_CLIENT_ID and TEAMS_OAUTH_CLIENT_SECRET, or neither');
+  if (config.TEAMS_OAUTH_CLIENT_ID && !/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(config.TEAMS_OAUTH_CLIENT_ID)) throw new Error('TEAMS_OAUTH_CLIENT_ID is the application (client) id of a Microsoft Entra app registration, a UUID');
+  if (config.ZOOM_OAUTH_CLIENT_ID && !/^[A-Za-z0-9_-]{8,64}$/.test(config.ZOOM_OAUTH_CLIENT_ID)) throw new Error('ZOOM_OAUTH_CLIENT_ID is the client id of the Zoom app (letters, digits, - and _)');
+  if (config.ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS !== undefined && config.ZOOM_WEBHOOK_SECRET_TOKEN === undefined) throw new Error('ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS is set without ZOOM_WEBHOOK_SECRET_TOKEN');
+  for (const name of ['ZOOM_WEBHOOK_SECRET_TOKEN', 'ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS'] as const) {
+    const value = config[name];
+    // 16 at least: an unsigned URL validation challenge hands anyone the HMAC of a plainToken they choose, so a short token could be guessed offline. Zoom's own are random and about 22 characters.
+    if (value !== undefined && !/^\S{16,200}$/.test(value)) throw new Error(`${name} is the secret token of the Zoom app: 16 to 200 characters, no whitespace`);
+  }
+  if (config.ZOOM_WEBHOOK_SECRET_TOKEN !== undefined && !config.ZOOM_OAUTH_CLIENT_ID) throw new Error('ZOOM_WEBHOOK_SECRET_TOKEN needs ZOOM_OAUTH_CLIENT_ID and ZOOM_OAUTH_CLIENT_SECRET');
+  if (config.ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS !== undefined && config.ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS === config.ZOOM_WEBHOOK_SECRET_TOKEN) throw new Error('ZOOM_WEBHOOK_SECRET_TOKEN_PREVIOUS is the same as ZOOM_WEBHOOK_SECRET_TOKEN: remove it');
+  if (config.CALENDAR_MICROSOFT_TENANT && !/^(?:common|organizations|consumers|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}|(?:[A-Za-z0-9-]{1,63}\.)+[A-Za-z]{2,63})$/.test(config.CALENDAR_MICROSOFT_TENANT)) throw new Error('CALENDAR_MICROSOFT_TENANT is common, organizations, consumers, a directory id or a verified domain');
   if (config.CHANNEL_GOOGLE_BUSINESS === 'true' && !config.CHANNEL_GOOGLE_CLIENT_ID) throw new Error('CHANNEL_GOOGLE_BUSINESS needs CHANNEL_GOOGLE_CLIENT_ID and CHANNEL_GOOGLE_CLIENT_SECRET');
   if (config.CHANNEL_GOOGLE_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CHANNEL_GOOGLE_CLIENT_ID)) throw new Error('CHANNEL_GOOGLE_CLIENT_ID is the client id of a Google OAuth web client');
   if (Boolean(config.CHANNEL_X_CLIENT_ID) !== Boolean(config.CHANNEL_X_CLIENT_SECRET)) throw new Error('set both CHANNEL_X_CLIENT_ID and CHANNEL_X_CLIENT_SECRET, or neither');
@@ -844,6 +1061,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (config.BANK_FEED_SANDBOX !== 'true') throw new Error('BANK_FEED_SANDBOX_WEBHOOK_SECRET is set without BANK_FEED_SANDBOX=true');
     if (config.BANK_FEED_SANDBOX_WEBHOOK_SECRET.length < 32) throw new Error('BANK_FEED_SANDBOX_WEBHOOK_SECRET must be at least 32 characters');
   }
+  if (config.BANK_FEED_TINGEE_UAT === 'true' && config.BANK_FEED_TINGEE !== 'true') throw new Error('BANK_FEED_TINGEE_UAT=true is set without BANK_FEED_TINGEE=true');
+  if (config.BANK_FEED_TINGEE === 'true' && config.CREDENTIAL_KEY === undefined && config.CREDENTIAL_KEY_FILE === undefined) {
+    throw new Error('BANK_FEED_TINGEE=true seals each org\'s Tingee credential: set CREDENTIAL_KEY (or CREDENTIAL_KEY_FILE)');
+  }
   if (Boolean(config.CHANNEL_ZALO_APP_ID) !== Boolean(config.CHANNEL_ZALO_APP_SECRET)) throw new Error('set both CHANNEL_ZALO_APP_ID and CHANNEL_ZALO_APP_SECRET, or neither');
   if (config.CHANNEL_ZALO_APP_ID && !/^\d{1,32}$/.test(config.CHANNEL_ZALO_APP_ID)) throw new Error('CHANNEL_ZALO_APP_ID is the numeric id of the Zalo app');
   if (config.CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS !== undefined) {
@@ -855,15 +1076,31 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (!config.CHANNEL_ZALO_APP_ID) throw new Error('CHANNEL_ZALO_OA_SECRET_KEY needs CHANNEL_ZALO_APP_ID and CHANNEL_ZALO_APP_SECRET');
     if (!/^\S{8,200}$/.test(config.CHANNEL_ZALO_OA_SECRET_KEY)) throw new Error('CHANNEL_ZALO_OA_SECRET_KEY is the OA secret key of the Zalo app: 8 to 200 characters, no spaces');
   }
+  if (config.CHANNEL_WHATSAPP_APP_SECRET !== undefined && !/^\S{8,200}$/.test(config.CHANNEL_WHATSAPP_APP_SECRET)) throw new Error('CHANNEL_WHATSAPP_APP_SECRET is the secret of the Meta app of the WhatsApp product: 8 to 200 characters, no whitespace');
+  if (config.CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS !== undefined) {
+    if (config.CHANNEL_WHATSAPP_APP_SECRET === undefined) throw new Error('CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS is set without CHANNEL_WHATSAPP_APP_SECRET');
+    if (!/^\S{8,200}$/.test(config.CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS)) throw new Error('CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS is a Meta app secret: 8 to 200 characters, no whitespace');
+    if (config.CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS === config.CHANNEL_WHATSAPP_APP_SECRET) throw new Error('CHANNEL_WHATSAPP_APP_SECRET_PREVIOUS is the same as CHANNEL_WHATSAPP_APP_SECRET: remove it');
+  }
+  if (config.CHANNEL_WHATSAPP_VERIFY_TOKEN !== undefined) {
+    if (config.CHANNEL_WHATSAPP_APP_SECRET === undefined) throw new Error('CHANNEL_WHATSAPP_VERIFY_TOKEN needs CHANNEL_WHATSAPP_APP_SECRET');
+    if (!/^\S{8,200}$/.test(config.CHANNEL_WHATSAPP_VERIFY_TOKEN)) throw new Error('CHANNEL_WHATSAPP_VERIFY_TOKEN is the verify token of the WhatsApp webhook: 8 to 200 characters, no spaces');
+  }
+  if (config.CHANNEL_WHATSAPP_MEDIA_HOSTS !== undefined) {
+    const hosts = zaloMediaHostsOf(config.CHANNEL_WHATSAPP_MEDIA_HOSTS);
+    if (hosts.length === 0 || hosts.length > 20 || hosts.some((h) => !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/.test(h))) {
+      throw new Error('CHANNEL_WHATSAPP_MEDIA_HOSTS is up to 20 domain names (for example fbsbx.com) separated by commas, each matching the domain and its subdomains');
+    }
+  }
   if (config.CHANNEL_ZALO_MEDIA_HOSTS !== undefined) {
     const hosts = zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS);
     if (hosts.length === 0 || hosts.length > 20 || hosts.some((h) => !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/.test(h))) {
       throw new Error('CHANNEL_ZALO_MEDIA_HOSTS is up to 20 domain names (for example zdn.vn) separated by commas, each matching the domain and its subdomains');
     }
   }
-  if (config.CROVE_CONTEXT_TOKEN_KEY !== undefined) {
-    const bytes = /^[A-Za-z0-9+/_-]+={0,2}$/.test(config.CROVE_CONTEXT_TOKEN_KEY.trim()) ? Buffer.from(config.CROVE_CONTEXT_TOKEN_KEY.trim(), 'base64') : Buffer.alloc(0);
-    if (bytes.length < 32 || bytes.length > 64) throw new Error('CROVE_CONTEXT_TOKEN_KEY must be base64 of 32 to 64 random bytes');
+  if (config.LUDY_CONTEXT_TOKEN_KEY !== undefined) {
+    const bytes = /^[A-Za-z0-9+/_-]+={0,2}$/.test(config.LUDY_CONTEXT_TOKEN_KEY.trim()) ? Buffer.from(config.LUDY_CONTEXT_TOKEN_KEY.trim(), 'base64') : Buffer.alloc(0);
+    if (bytes.length < 32 || bytes.length > 64) throw new Error('LUDY_CONTEXT_TOKEN_KEY must be base64 of 32 to 64 random bytes');
   }
   // A web app on another origin than the API calls it cross-origin, which the browser allows only for a listed origin.
   if (config.APP_URL !== undefined && URL.canParse(config.PUBLIC_URL)) {
@@ -874,20 +1111,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   // Temporary objects can exist in a shared database (PUBLIC keeps TEMPORARY), and only the pool's own reset after each
   // checkout (DISCARD TEMP) clears them, which a transaction-mode pooler would send to another backend.
-  if (config.CROVE_SHARED_DATABASE === 'true' && config.AUTH_SESSION_CHECK === 'db') {
-    throw new Error('CROVE_SHARED_DATABASE=true cannot use AUTH_SESSION_CHECK=db: its auth-grants step is refused in a shared database; use AUTH_SESSION_CHECK=jwt');
+  if (config.LUDY_SHARED_DATABASE === 'true' && config.AUTH_SESSION_CHECK === 'db') {
+    throw new Error('LUDY_SHARED_DATABASE=true cannot use AUTH_SESSION_CHECK=db: its auth-grants step is refused in a shared database; use AUTH_SESSION_CHECK=jwt');
   }
   // Supabase's transaction-mode pooler listens on port 6543 (its session mode and the direct connection on 5432): the one
   // URL-level sign of the pooler the reset cannot work behind. Another pooler is the operator's to keep out (runbook).
-  if (config.CROVE_SHARED_DATABASE === 'true') {
+  if (config.LUDY_SHARED_DATABASE === 'true') {
     for (const [name, url] of [['DATABASE_URL', config.DATABASE_URL], ['WORKER_DATABASE_URL', config.WORKER_DATABASE_URL]] as const) {
       if (url !== undefined && URL.canParse(url) && new URL(url).port === '6543') {
-        throw new Error(`${name} points at port 6543, Supabase's transaction-mode pooler: CROVE_SHARED_DATABASE=true needs a direct or session-mode connection (port 5432), so that temporary objects are cleared after each checkout`);
+        throw new Error(`${name} points at port 6543, Supabase's transaction-mode pooler: LUDY_SHARED_DATABASE=true needs a direct or session-mode connection (port 5432), so that temporary objects are cleared after each checkout`);
       }
     }
   }
-  if (config.CROVE_SHARED_DATABASE === 'true' && config.DB_RESET_ON_RELEASE === 'false') {
-    throw new Error('CROVE_SHARED_DATABASE=true needs DB_RESET_ON_RELEASE=true: temporary objects are cleared after each checkout, which a transaction-mode pooler cannot do; use a direct or session-mode connection');
+  if (config.LUDY_SHARED_DATABASE === 'true' && config.DB_RESET_ON_RELEASE === 'false') {
+    throw new Error('LUDY_SHARED_DATABASE=true needs DB_RESET_ON_RELEASE=true: temporary objects are cleared after each checkout, which a transaction-mode pooler cannot do; use a direct or session-mode connection');
   }
   if (config.OAUTH_SERVER === 'on') {
     if (config.OAUTH_JWKS === undefined) throw new Error('OAUTH_SERVER=on needs OAUTH_JWKS, the private JSON Web Key Set (ES256) the access tokens are signed with');
@@ -914,15 +1151,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     }
   }
   if (!isLocalUrl(config.PUBLIC_URL)) {
-    if (config.CROVE_CONTEXT_TOKEN_KEY !== undefined) {
+    // A hosted login on this machine would send every visitor to their own localhost.
+    for (const [name, value] of [['AUTH_HOSTED_LOGIN_URL', config.AUTH_HOSTED_LOGIN_URL], ['AUTH_HOSTED_LOGIN_TOKEN_URL', config.AUTH_HOSTED_LOGIN_TOKEN_URL]] as const) {
+      if (value !== undefined && isLocalUrl(value)) throw new Error(`${name} is a localhost address on a public PUBLIC_URL; use the provider's https address`);
+    }
+    if (config.LUDY_CONTEXT_TOKEN_KEY !== undefined) {
       // Compared as bytes, so the unpadded or base64url spelling of the test key is the test key too.
-      const bytes = Buffer.from(config.CROVE_CONTEXT_TOKEN_KEY.trim(), 'base64');
+      const bytes = Buffer.from(config.LUDY_CONTEXT_TOKEN_KEY.trim(), 'base64');
       if (SAMPLE_CONTEXT_TOKEN_KEYS.some((sample) => sample.equals(bytes))) {
-        throw new Error('CROVE_CONTEXT_TOKEN_KEY is the test suite key; generate a random key before exposing Crove');
+        throw new Error('LUDY_CONTEXT_TOKEN_KEY is the test suite key; generate a random key before exposing Crove');
       }
       // A key that decodes to printable text is a passphrase, not random bytes (one in about 10^14 random keys is).
       if (bytes.every((byte) => byte >= 0x20 && byte <= 0x7e)) {
-        throw new Error('CROVE_CONTEXT_TOKEN_KEY decodes to printable text; generate random bytes (openssl rand -base64 32) before exposing Crove');
+        throw new Error('LUDY_CONTEXT_TOKEN_KEY decodes to printable text; generate random bytes (openssl rand -base64 32) before exposing Crove');
       }
     }
     if (config.AUTH_JWT_SECRET && SAMPLE_SECRETS.has(config.AUTH_JWT_SECRET)) {
@@ -941,23 +1182,27 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (config.AUTH_AUTOCONFIRM === 'true') {
       throw new Error('AUTH_AUTOCONFIRM=true lets anyone claim any email address; set it to false and configure SMTP');
     }
+    // The Tingee UAT host answers with test data, so a public deployment keeps to production.
+    if (config.BANK_FEED_TINGEE_UAT === 'true') {
+      throw new Error('BANK_FEED_TINGEE_UAT=true reads Tingee\'s test environment; it is for the UAT run only');
+    }
     // ADR-0039 point 3: the sandbox feed writes made-up bank lines, so it stays on development deployments.
     if (config.BANK_FEED_SANDBOX === 'true') {
       throw new Error('BANK_FEED_SANDBOX=true writes made-up bank lines into the books; it is for local development only');
     }
     // ADR-0040: the sandbox ad platform reports made-up spend, which the Ads screen sets beside the real ledger. docker
     // compose falls back to ADS_SANDBOX=true, so a public deployment that runs the ads module must set it to false.
-    if (config.ADS_SANDBOX === 'true' && (config.CROVE_MODULES as readonly string[]).includes('ads')) {
+    if (config.ADS_SANDBOX === 'true' && (config.LUDY_MODULES as readonly string[]).includes('ads')) {
       throw new Error('ADS_SANDBOX=true shows made-up ad spend next to the real books; it is for local development only: set ADS_SANDBOX=false');
     }
     // ADR-0045 point 7 (#2519): the offline marketplace provider serves made-up orders, which a member could confirm into the stock book; it stays on development deployments. docker
     // compose falls back to MARKETPLACE_PROVIDERS=sandbox, so a public deployment that runs the finance module must set it to an empty list.
-    if (config.MARKETPLACE_PROVIDERS.split(',').some((id) => id.trim() === 'sandbox') && (config.CROVE_MODULES as readonly string[]).includes('finance')) {
+    if (config.MARKETPLACE_PROVIDERS.split(',').some((id) => id.trim() === 'sandbox') && (config.LUDY_MODULES as readonly string[]).includes('finance')) {
       throw new Error('MARKETPLACE_PROVIDERS=sandbox offers made-up marketplace orders to the stock book; it is for local development only: set MARKETPLACE_PROVIDERS to an empty list');
     }
     // ADR-0044 point 8 (#2502): the offline provider "issues" invoices that the intake reads into sales of the books, so it stays on development deployments. docker compose
     // falls back to EINVOICE_SANDBOX=true, so a public deployment that runs the finance module must set it to false.
-    if (config.EINVOICE_SANDBOX === 'true' && (config.CROVE_MODULES as readonly string[]).includes('finance')) {
+    if (config.EINVOICE_SANDBOX === 'true' && (config.LUDY_MODULES as readonly string[]).includes('finance')) {
       throw new Error('EINVOICE_SANDBOX=true issues made-up sales invoices into the books; it is for local development only: set EINVOICE_SANDBOX=false');
     }
     // ADR-0043 (#2296, W2-3): creating the objects of a campaign at Meta is for the owner's own live check, not for a deployment others reach, until the activation,
@@ -985,7 +1230,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     }
     // A provider sends the authorization code to APP_URL (else PUBLIC_URL)/channels/oauth/<provider>/callback (#375), a
     // page of the web app.
-    const oauthApps = [config.CHANNEL_META_APP_ID, config.CHANNEL_INSTAGRAM_APP_ID, config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_META_ADS_WRITE_APP_ID, config.CHANNEL_GOOGLE_ADS_CLIENT_ID, config.CHANNEL_ZALO_APP_ID, config.CHANNEL_THREADS_APP_ID, config.CHANNEL_LINKEDIN_CLIENT_ID, config.CHANNEL_LINKEDIN_PAGE_CLIENT_ID, config.CHANNEL_GOOGLE_CLIENT_ID, config.CHANNEL_TIKTOK_CLIENT_KEY, config.CHANNEL_X_CLIENT_ID, config.CHANNEL_PINTEREST_APP_ID, config.CALENDAR_GOOGLE_CLIENT_ID];
+    const oauthApps = [config.CHANNEL_META_APP_ID, config.CHANNEL_INSTAGRAM_APP_ID, config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_META_ADS_WRITE_APP_ID, config.CHANNEL_GOOGLE_ADS_CLIENT_ID, config.CHANNEL_ZALO_APP_ID, config.CHANNEL_THREADS_APP_ID, config.CHANNEL_LINKEDIN_CLIENT_ID, config.CHANNEL_LINKEDIN_PAGE_CLIENT_ID, config.CHANNEL_GOOGLE_CLIENT_ID, config.CHANNEL_TIKTOK_CLIENT_KEY, config.CHANNEL_X_CLIENT_ID, config.CHANNEL_PINTEREST_APP_ID, config.CALENDAR_GOOGLE_CLIENT_ID, config.CALENDAR_MICROSOFT_CLIENT_ID];
     if (oauthApps.some(Boolean) && !appUrl(config).startsWith('https://')) {
       throw new Error('channel OAuth sends authorization codes back to the web app (APP_URL, else PUBLIC_URL); on a public deployment it must be https when a CHANNEL_* or CALENDAR_* app is set');
     }
@@ -1125,13 +1370,13 @@ export function assertExportKey(config: Pick<Config, 'PUBLIC_URL' | 'EXPORT_ENCR
 // hold, and a DATABASE_LISTEN_URL on the worker's login. A LISTEN url on the app login is the API's own (its SSE stream reads it), so only the
 // worker login in it is refused; the login is read from the URL's user name, and no message carries a value.
 export function assertSplitRoles(
-  config: Pick<Config, 'PUBLIC_URL' | 'CROVE_ALLOW_ALL_IN_ONE' | 'WORKER_DATABASE_URL' | 'ADMIN_DATABASE_URL' | 'DATABASE_LISTEN_URL'>,
+  config: Pick<Config, 'PUBLIC_URL' | 'LUDY_ALLOW_ALL_IN_ONE' | 'WORKER_DATABASE_URL' | 'ADMIN_DATABASE_URL' | 'DATABASE_LISTEN_URL'>,
   role: 'api' | 'worker' | 'all',
 ): void {
-  if (role === 'all' && !isLocalUrl(config.PUBLIC_URL) && config.CROVE_ALLOW_ALL_IN_ONE !== 'true') {
+  if (role === 'all' && !isLocalUrl(config.PUBLIC_URL) && config.LUDY_ALLOW_ALL_IN_ONE !== 'true') {
     throw new Error(
       'the all role runs the API on the worker database login and every secret; on a public PUBLIC_URL run api and worker as separate processes ' +
-        '(docs/runbooks/deploy.md, "The pilot layout"), or set CROVE_ALLOW_ALL_IN_ONE=true to accept that',
+        '(docs/runbooks/deploy.md, "The pilot layout"), or set LUDY_ALLOW_ALL_IN_ONE=true to accept that',
     );
   }
   if (role === 'api' && !isLocalUrl(config.PUBLIC_URL) && config.WORKER_DATABASE_URL !== undefined) {
@@ -1147,7 +1392,8 @@ export function assertSplitRoles(
           'remove it from the api container (docs/runbooks/deploy.md, "The pilot layout")',
       );
     }
-    if (config.DATABASE_LISTEN_URL !== undefined && databaseLogin(config.DATABASE_LISTEN_URL) === 'crove_worker') {
+    const listenLogin = config.DATABASE_LISTEN_URL !== undefined ? databaseLogin(config.DATABASE_LISTEN_URL) : undefined;
+    if (listenLogin === 'ludy_worker' || listenLogin === 'crove_worker') {
       throw new Error(
         'the api role must not hold a DATABASE_LISTEN_URL on the worker login on a public PUBLIC_URL: that login enters the system context of every org; ' +
           'point it at the app login (docs/runbooks/deploy.md, "The pilot layout")',

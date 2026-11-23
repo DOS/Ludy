@@ -18,8 +18,8 @@ import {
   type ExtractedPortalList,
   type PortalListField,
   type PortalListSkipReason,
-} from '@crove/extract-contract';
-import { Decimal, isCalendarDate, normalizeNumber, normalizeSeries, parseTaxCode, toMoney } from '@crove/l10n-vn';
+} from '@ludy/extract-contract';
+import { Decimal, isCalendarDate, normalizeNumber, normalizeSeries, parseTaxCode, toMoney } from '@ludy/l10n-vn';
 import { readFirstSheet, serialToDate, XlsxError, type SheetCell, type SheetRow } from './xlsx.ts';
 
 export class PortalListError extends Error {

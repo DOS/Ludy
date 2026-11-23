@@ -7,22 +7,28 @@
 // session of the SPA: the provider's own cookies authorize only an interaction, never /api.
 //
 // What this file fixes, so a deployment cannot weaken it:
-//   - one resource, `PUBLIC_URL/mcp`, one scope, `ludy.read`; any other resource is `invalid_target`, any other scope `invalid_scope`;
+//   - one resource, `PUBLIC_URL/mcp`, the scopes `ludy.read` and the write scopes `ludy.social.draft` (#3227: a Social draft for a person to review), `ludy.engage.write` and `ludy.ads.draft` (#3858,
+//     per-line scopes), each of which a person must tick on the consent page and a company grant alone can hold; any other resource is `invalid_target`, any other scope `invalid_scope`;
 //   - public clients only (no client secret, `token_endpoint_auth_method: none`), authorization code with PKCE, refresh token;
 //   - access tokens are JWTs (RFC 9068), ES256, 10 minutes, audience exactly the resource, with the grant and org of the live agent_grant
-//     as claims; the token is refused at the endpoint the moment the grant is no longer in good standing (crove_kernel.mcp_grant_verify);
+//     as claims; the token is refused at the endpoint the moment the grant is no longer in good standing (ludy_kernel.mcp_grant_verify);
 //   - a code lives 60 seconds, a refresh token 30 days and rotates (a reused one destroys the grant's tokens), the authorization server's own
 //     session 15 minutes, an interaction 10 minutes;
 //   - the consent page is the SPA's, on this origin (OAUTH_SERVER=on refuses another APP_URL).
 import { sql } from 'kysely';
 import { createLocalJWKSet, exportJWK, importJWK, jwtVerify, type JSONWebKeySet, type JWK } from 'jose';
 import Provider, { errors, type Configuration } from 'oidc-provider';
-import type { Db } from '@crove/db';
-import { MCP_SCOPE_IDS } from '@crove/kernel-contract';
+import type { Db } from '@ludy/db';
+import { MCP_SCOPE_IDS, MCP_WRITE_SCOPE_IDS } from '@ludy/kernel-contract';
+import { createAccountEmailAccess } from './auth-access.ts';
 import type { Config } from './config.ts';
 import { oauthAdapterFor } from './oauth-adapter.ts';
 
 export const MCP_SCOPE = MCP_SCOPE_IDS[0];
+// The scope of the one MCP write (#3227): a draft Social post. Never part of a grant unless the person ticked it on the consent page.
+export const MCP_DRAFT_SCOPE = MCP_SCOPE_IDS[2];
+// Every scope this server offers a client: the read scope and the write scopes (each a choice the person makes on the consent page, off by default; ADR-0051 decision 11).
+export const MCP_OFFERED_SCOPES = [MCP_SCOPE, ...MCP_WRITE_SCOPE_IDS] as const;
 export const ACCESS_TOKEN_SECONDS = 600;
 const CODE_SECONDS = 60;
 const REFRESH_SECONDS = 30 * 24 * 3600;
@@ -84,6 +90,8 @@ export async function createOauthServer(config: Config, run: RunDb): Promise<Oau
   const publicSet = await publicKeySet(privateSet);
   const verifyKeys = createLocalJWKSet(publicSet);
   const allowedOrigins = (config.MCP_ALLOWED_ORIGINS ?? '').split(',').map((o) => o.trim()).filter((o) => o.length > 0);
+  // AUTH_ALLOWED_EMAILS for a refresh (issue #3223): no access token is signed for the grant of an account the list leaves out; null while the list is unset.
+  const accountAccess = createAccountEmailAccess(config.AUTH_ALLOWED_EMAILS);
   const cookieKeys = (config.OAUTH_COOKIE_KEYS ?? '').split(',').map((k) => k.trim()).filter((k) => k.length > 0);
 
   const configuration: Configuration = {
@@ -92,10 +100,10 @@ export async function createOauthServer(config: Config, run: RunDb): Promise<Oau
     cookies: { keys: cookieKeys },
     // Dynamic registration and metadata documents only: no client is configured here.
     clients: [],
-    // `ludy.read` is the one resource server's scope (getResourceServerInfo) and is listed here too, because the provider accepts a scope in a client's
+    // `ludy.read` and the write scopes (`ludy.social.draft`, `ludy.engage.write`, `ludy.ads.draft`) are the resource server's scopes (getResourceServerInfo) and are listed here too, because the provider accepts a scope in a client's
     // registration or request only from this list, and the official MCP client registers with the scope the resource metadata advertises. The consent grants it
     // as a resource scope and also as a scope of the provider (see mcp-endpoint.ts), so an authorization that names it does not loop back to the consent page.
-    scopes: ['openid', 'ludy.read'],
+    scopes: ['openid', ...MCP_OFFERED_SCOPES],
     claims: {},
     // Public clients only: a client holds no secret, so nothing to steal from its registration.
     clientAuthMethods: ['none'],
@@ -154,7 +162,7 @@ export async function createOauthServer(config: Config, run: RunDb): Promise<Oau
         useGrantedResource: async () => true,
         getResourceServerInfo: async (_ctx, indicator) => {
           if (indicator !== resource) throw new errors.InvalidTarget();
-          return { scope: MCP_SCOPE, audience: resource, accessTokenTTL: ACCESS_TOKEN_SECONDS, accessTokenFormat: 'jwt', jwt: { sign: { alg: 'ES256' } } };
+          return { scope: MCP_OFFERED_SCOPES.join(' '), audience: resource, accessTokenTTL: ACCESS_TOKEN_SECONDS, accessTokenFormat: 'jwt', jwt: { sign: { alg: 'ES256' } } };
         },
       },
     },
@@ -180,17 +188,44 @@ export async function createOauthServer(config: Config, run: RunDb): Promise<Oau
       jwks: '/oauth/jwks',
     },
     // The account of a grant is a person's user_account id. Nothing else is known of them here.
-    findAccount: async (_ctx, id) => ({ accountId: id, claims: async () => ({ sub: id }) }),
+    // With AUTH_ALLOWED_EMAILS set, the account behind the grant the token belongs to is checked here too (#3223): this runs in the refresh grant
+    // before the old refresh token is consumed and the rotated one saved, so a refused refresh leaves the client's token usable once the account is
+    // listed again, instead of tripping the provider's reuse detection and revoking the grant for good. A grant with no agent_grant row yet (the
+    // code exchange) passes here and is judged by extraTokenClaims.
+    findAccount: async (_ctx, id, token) => {
+      const grantId = (token as { grantId?: string } | undefined)?.grantId;
+      if (accountAccess && grantId) {
+        const { rows } = await run((db) =>
+          sql<{ email: string | null }>`SELECT ludy_kernel.mcp_grant_account_email(g.grant_id) AS email FROM ludy_kernel.mcp_grant_for_oauth(${grantId}::text) g`.execute(db),
+        );
+        if (rows[0]) {
+          try {
+            accountAccess(rows[0].email);
+          } catch {
+            return undefined;
+          }
+        }
+      }
+      return { accountId: id, claims: async () => ({ sub: id }) };
+    },
     // The access token names the live grant and org. Without one (revoked, expired, stopped, the person no longer an owner or admin) no token is
     // signed, so a refresh after a revoke fails here as well as at its destroyed refresh token.
     extraTokenClaims: async (_ctx, token) => {
       const grantId = (token as { grantId?: string }).grantId;
       if (!grantId) throw new errors.InvalidGrant('no grant');
       const { rows } = await run((db) =>
-        sql<{ grant_id: string; org_id: string }>`SELECT grant_id, org_id FROM crove_kernel.mcp_grant_for_oauth(${grantId}::text)`.execute(db),
+        sql<{ grant_id: string; org_id: string }>`SELECT grant_id, org_id FROM ludy_kernel.mcp_grant_for_oauth(${grantId}::text)`.execute(db),
       );
       const row = rows[0];
       if (!row) throw new errors.InvalidGrant('the grant is no longer valid');
+      if (accountAccess) {
+        const { rows: owner } = await run((db) => sql<{ email: string | null }>`SELECT ludy_kernel.mcp_grant_account_email(${row.grant_id}::uuid) AS email`.execute(db));
+        try {
+          accountAccess(owner[0]?.email);
+        } catch {
+          throw new errors.InvalidGrant('the account is not allowed to use this deployment');
+        }
+      }
       return { [GRANT_CLAIM]: row.grant_id, [ORG_CLAIM]: row.org_id };
     },
     // Errors are JSON with the OAuth error code, never a page: the clients are programs, and nothing of the server's state is shown.

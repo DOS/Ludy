@@ -3,8 +3,9 @@
 // and merges, orders and checks what they answer. That each line's read scopes to the member is that line's own test;
 // here the reads are stubs.
 import { describe, expect, it } from 'vitest';
-import { DomainError, type Lookup, type QueryContext } from '@crove/kernel-runtime';
-import { TODAY_READS, todayQuery } from '@crove/kernel';
+import { DomainError, type Lookup, type QueryContext } from '@ludy/kernel-runtime';
+import { zTodayList } from '@ludy/kernel-contract';
+import { TODAY_READS, todayQuery } from '@ludy/kernel';
 
 const item = (over: Record<string, unknown> = {}) => ({
   kind: 'proposal',
@@ -32,17 +33,19 @@ function contextOf(reads: Reads, absent: readonly string[] = [], asked: string[]
   } as unknown as QueryContext;
 }
 
+// The coworkers' names come from the org's agents (a database read, tested in today-coworkers.db.test.ts); here a stub answers.
+const NAMES = { gm: 'Vy', finance: 'Ly', sales: 'Dy', marketing: 'Uy' };
 const run = (reads: Reads, options: { reads?: readonly string[]; absent?: readonly string[]; asked?: string[] } = {}) =>
-  todayQuery(options.reads ? { reads: options.reads } : {}).handler(contextOf(reads, options.absent, options.asked), {});
+  todayQuery({ coworkers: async () => NAMES, ...(options.reads ? { reads: options.reads } : {}) }).handler(contextOf(reads, options.absent, options.asked), {});
 
 describe('kernel.today', () => {
-  it('names the five reads the lines agreed to expose and the cross-app rule of the kernel', () => {
-    expect([...TODAY_READS]).toEqual(['finance.today', 'crm.today', 'social.today', 'ads.today', 'kernel.conversation.today', 'kernel.signals.deal_without_invoice', 'kernel.signals.receivable_with_open_deal', 'kernel.signals.supplier_bank_changed']);
+  it('names the reads the lines agreed to expose and the cross-app rules of the kernel', () => {
+    expect([...TODAY_READS]).toEqual(['finance.today', 'crm.today', 'projects.today', 'social.today', 'ads.today', 'sign.today', 'sign.obligations.today', 'hr.today', 'kernel.conversation.today', 'kernel.wake.today', 'kernel.signals.deal_without_invoice', 'kernel.signals.receivable_with_open_deal', 'kernel.signals.supplier_bank_changed', 'kernel.signals.conversation_unanswered']);
   });
 
   it('shows nothing when no read is registered yet, and when the modules are off', async () => {
-    expect(await run({})).toEqual({ items: [], dropped: 0, truncated: 0, failed: 0 });
-    expect(await run({}, { absent: ['finance', 'crm', 'social', 'ads'] })).toEqual({ items: [], dropped: 0, truncated: 0, failed: 0 });
+    expect(await run({})).toEqual({ items: [], coworkers: NAMES, dropped: 0, truncated: 0, failed: 0 });
+    expect(await run({}, { absent: ['finance', 'crm', 'projects', 'social', 'ads', 'sign', 'hr'] })).toEqual({ items: [], coworkers: NAMES, dropped: 0, truncated: 0, failed: 0 });
   });
 
   it('merges the reads that are registered, flags first, and skips the ones that are not', async () => {
@@ -59,6 +62,16 @@ describe('kernel.today', () => {
     expect(result.items.map((i) => `${i.kind}:${i.app}:${i.id}`)).toEqual(['flag:finance:f1', 'proposal:finance:p1', 'message:conversations:m1', 'deadline:crm:d1']);
     // Every agreed read was asked, in order, with a not-yet-registered one skipped rather than failing the list.
     expect(asked).toEqual([...TODAY_READS]);
+  });
+
+  it('answers with the coworkers\' names beside the items, and no item carries one', async () => {
+    const result = await run({ 'finance.today': [item({ id: 'a' })] });
+    expect(result.coworkers).toEqual(NAMES);
+    expect(zTodayList.safeParse(result).success).toBe(true);
+    // A line that tries to name a coworker on its own item is dropped like any other extra field.
+    const named = await run({ 'finance.today': [item({ id: 'x', coworker: 'Ly' })] });
+    expect(named.items).toEqual([]);
+    expect(named.dropped).toBe(1);
   });
 
   it('drops an item that does not match the shape, and counts it', async () => {

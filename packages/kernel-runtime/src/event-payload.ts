@@ -2,7 +2,7 @@
 // outbox archive keeps every payload as plain JSON for 400 days under Object Lock, so no erasure can reach a value once
 // it is emitted. ctx.emit reduces the codes a provider gave (normalizeEventPayload) and refuses a payload that still
 // breaks the rule (eventPayloadProblem), so every test that emits checks it; the database holds every insert into
-// crove_kernel.outbox_event to the same rule (crove_kernel.event_payload_problem, #1970), so a definer that writes an
+// ludy_kernel.outbox_event to the same rule (ludy_kernel.event_payload_problem, #1970), so a definer that writes an
 // event directly is held too. A test keeps the two in step. What it can tell is the shape: free text,
 // a name, an email (anything with a space, an @ or a letter outside ASCII) and any value under a key that names
 // personal data. A phone number or a tax code under another key looks like any other run of digits (an account code),
@@ -22,7 +22,7 @@ const MAX_DEPTH = 8;
 
 // The task titles an event may hand to the agents' task maker (agent_task.title, packages/kernel/src/agents.ts), one
 // template per event type and nothing else (#1970): the module's fixed words and a count, never a value an org or a
-// person wrote. The database holds the same list (crove_kernel.event_payload_problem).
+// person wrote. The database holds the same list (ludy_kernel.event_payload_problem).
 const TASK_TITLES: Record<string, RegExp> = {
   'social.post.submitted': /^Rà soát bài gửi duyệt: [0-9]{1,4} kênh$/,
   'crm.booking.cancelled': /^Khách hủy lịch hẹn$/,

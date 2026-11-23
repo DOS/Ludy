@@ -7,7 +7,8 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { migrate } from '@ludy/db/migrate';
+import { createDbClient, createRawPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -26,19 +27,20 @@ const suite = ADMIN ? describe : describe.skip;
 suite('auth email budget (#190)', () => {
   const dbName = `crove_test_authemail_inv_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let admin: pg.Client;
   let app: pg.Pool;
   const clients: pg.Client[] = [];
 
   const loginUrl = (user: string, password: string) => {
     const url = new URL(adminUrl);
-    url.username = user;
+    url.username = dbIds ? dbIds.roleName(user) : user;
     url.password = password;
     return url.toString();
   };
 
   async function connect(url: string): Promise<pg.Client> {
-    const client = new pg.Client({ connectionString: url });
+    const client = createDbClient({ connectionString: url }, dbIds);
     await client.connect();
     clients.push(client);
     return client;
@@ -60,9 +62,10 @@ suite('auth email budget (#190)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw', crove_prober: 'test-prober-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw', crove_prober: 'test-prober-pw' }, dbIds);
     admin = await connect(adminUrl);
-    app = new pg.Pool({ connectionString: loginUrl('crove_app', 'test-app-pw'), max: 8 });
+    app = createRawPool({ connectionString: loginUrl('crove_app', 'test-app-pw'), max: 8 }, dbIds);
   });
 
   afterAll(async () => {

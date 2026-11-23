@@ -1,6 +1,6 @@
 import './share-boot.ts';
 import './zod-jitless.ts';
-import { IconDefaults } from '@crove/ui/components/icon-defaults';
+import { IconDefaults } from '@ludy/ui/components/icon-defaults';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
 import { StrictMode } from 'react';
@@ -13,9 +13,12 @@ import { startThemeSync } from './lib/theme-runtime.ts';
 import { queryClient } from './lib/api.ts';
 import { forgetShare } from './lib/social-share.ts';
 import { forgetPushDevice } from './lib/push.ts';
-import { auth, loadConfig, settleCallback } from './lib/auth.ts';
+import { stopAndSave } from './lib/recording-controller.ts';
+import { auth, captureHostedCallback, discardHostedLogin, loadConfig, settleCallback } from './lib/auth.ts';
 import './styles.css';
 
+// The hosted login's one-time code leaves the address bar before anything can fail or read it (lib/auth.ts).
+captureHostedCallback();
 const root = createRoot(document.getElementById('root') as HTMLElement);
 startLocaleSync();
 startThemeSync();
@@ -31,6 +34,7 @@ async function start() {
     setBrandName((await loadConfig()).brandName);
     document.title = brandName();
   } catch {
+    discardHostedLogin();
     root.render(
       <IconDefaults>
         <I18nProvider>
@@ -48,6 +52,8 @@ async function start() {
       forgetShare();
       // Nor are this browser's push notices (#1238); the session is gone, so only the browser's subscription ends.
       void forgetPushDevice();
+      // The session is gone: a recording still running here ends and keeps its copy on the device (the upload cannot go out), so the microphone stops (#3197).
+      void stopAndSave({ quiet: true });
       queryClient.clear();
       void router.navigate({ to: '/login' });
     }

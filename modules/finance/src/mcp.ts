@@ -10,9 +10,12 @@
 // description and a void reason are text a person, a supplier's XML or an import wrote, and they reach the client as data, never as an instruction. The legal entity is
 // not chosen here: the row policy of the caller's scope decides which entities' invoices are visible, as it does on the documents screen. Money stays a decimal string.
 import { z } from 'zod';
-import { plainLine, zLocalDate } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { plainLine, zLocalDate } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
+import { mcpOpenBalances } from './mcp-open-balances.ts';
+import { mcpPaymentReminder } from './mcp-payment-reminder.ts';
+import { mcpOverview } from './mcp-overview.ts';
 
 const GRANTORS: readonly MemberRole[] = ['owner', 'admin'];
 export const MCP_INVOICES_DEFAULT = 25;
@@ -57,14 +60,14 @@ export const mcpInvoices = defineQuery({
   handler: async (ctx, input): Promise<McpInvoices> => {
     if (ctx.actor.type !== 'user' || !ctx.actor.mcp) throw new DomainError('FORBIDDEN', 403, 'Chỉ khách MCP mới dùng được truy vấn này');
     const filtered = () => {
-      let query = ctx.trx.selectFrom('crove_finance.purchase_document as d').where('d.org_id', '=', ctx.orgId);
+      let query = ctx.trx.selectFrom('ludy_finance.purchase_document as d').where('d.org_id', '=', ctx.orgId);
       if (input.direction) query = query.where('d.direction', '=', input.direction);
       if (input.since) query = query.where('d.invoice_date', '>=', input.since);
       return query;
     };
     const rows = await filtered()
-      .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
-      .leftJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
+      .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
+      .leftJoin('ludy_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
       .select([
         'd.id',
         'd.direction',
@@ -93,7 +96,7 @@ export const mcpInvoices = defineQuery({
     const lineCounts = new Map<string, number>();
     if (ids.length > 0) {
       const described = await ctx.trx
-        .selectFrom('crove_finance.purchase_line as l')
+        .selectFrom('ludy_finance.purchase_line as l')
         .select(['l.document_id', 'l.line_no', 'l.description'])
         .where('l.org_id', '=', ctx.orgId)
         .where('l.document_id', 'in', ids)
@@ -107,7 +110,7 @@ export const mcpInvoices = defineQuery({
         lines.set(l.document_id, list);
       }
       const counts = await ctx.trx
-        .selectFrom('crove_finance.purchase_line as l')
+        .selectFrom('ludy_finance.purchase_line as l')
         .select(['l.document_id', (eb) => eb.fn.countAll<string>().as('n')])
         .where('l.org_id', '=', ctx.orgId)
         .where('l.document_id', 'in', ids)
@@ -136,4 +139,4 @@ export const mcpInvoices = defineQuery({
   },
 });
 
-export const mcpFinanceQueries = [mcpInvoices];
+export const mcpFinanceQueries = [mcpInvoices, mcpOverview, mcpOpenBalances, mcpPaymentReminder];

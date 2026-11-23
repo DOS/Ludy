@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Marks the words a meeting search matched, in the line it found. The server decides what matches (crove_kernel.search_fold in SQL: lower case, Vietnamese marks and đ
+// Marks the words a meeting search matched, in the line it found. The server decides what matches (ludy_kernel.search_fold in SQL: lower case, Vietnamese marks and đ
 // removed, every typed word a word prefix, all required); this only repeats that fold on the client to show which words of an already found line to mark, so a
 // difference could at worst mark a word too many or too few and never change what was found.
 export function foldWord(word: string): string {

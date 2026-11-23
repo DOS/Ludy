@@ -4,9 +4,9 @@
 // are the statements' own lines (domain/overview.ts builds them with buildB01 and buildB02), read from the same summed balances finance.statements.period
 // reads, in ONE statement (#365) so every card and chart sees the same entries even in the query's READ COMMITTED transaction.
 import { sql } from 'kysely';
-import type { MemberRole } from '@crove/db';
-import { zFinanceOverviewInput, type FinanceOverview } from '@crove/kernel-contract';
-import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { zFinanceOverviewInput, type FinanceOverview } from '@ludy/kernel-contract';
+import { defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
 import { buildOverview, overviewMonths, overviewPeriods } from './domain/overview.ts';
@@ -46,13 +46,13 @@ async function overviewRows(ctx: QueryContext, entity: string, periods: ReturnTy
   return split;
 }
 
-async function financeOverview(ctx: QueryContext, input: { range: FinanceOverview['range']; asOf?: string | undefined; legalEntityId?: string | undefined }): Promise<FinanceOverview> {
+export async function financeOverview(ctx: QueryContext, input: { range: FinanceOverview['range']; asOf?: string | undefined; legalEntityId?: string | undefined }): Promise<FinanceOverview> {
   const entity = await resolveLegalEntity(ctx, input.legalEntityId);
   const today = input.asOf ?? (await databaseToday(ctx.trx));
   const periods = overviewPeriods(input.range, today);
   const months = overviewMonths(periods.to);
   const rows = await overviewRows(ctx, entity, periods, months);
-  const any = await ctx.trx.selectFrom('crove_finance.journal_entry').select('id').where('org_id', '=', ctx.orgId).where('legal_entity_id', '=', entity).limit(1).executeTakeFirst();
+  const any = await ctx.trx.selectFrom('ludy_finance.journal_entry').select('id').where('org_id', '=', ctx.orgId).where('legal_entity_id', '=', entity).limit(1).executeTakeFirst();
   return buildOverview({
     range: input.range,
     periods,

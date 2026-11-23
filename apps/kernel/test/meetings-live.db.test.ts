@@ -8,13 +8,13 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { BlobNotFoundError, DomainError, Runtime, decryptBlobBuffer, fileKey, sha256Hex, unwrapMediaKeyWithSubkey, type BlobStore, type CredentialBroker, type UserActor } from '@crove/kernel-runtime';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { BlobNotFoundError, DomainError, Runtime, decryptBlobBuffer, fileKey, sha256Hex, unwrapMediaKeyWithSubkey, type BlobStore, type CredentialBroker, type UserActor } from '@ludy/kernel-runtime';
 import { hashExtensionSecret } from '../src/auth-extension.ts';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
-import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
+import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp, type HttpDeps } from '../src/http.ts';
@@ -116,7 +116,7 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
     expect(invited.status).toBe(200);
     const accepted = await rpc('invites/accept', name, { token: String(invited.body.acceptPath).split('#')[1] }, null);
     expect(accepted.status).toBe(200);
-    userIds.set(name, (await rows<{ id: string }>('SELECT id FROM crove_kernel.user_account WHERE email = $1', [email]))[0]!.id);
+    userIds.set(name, (await rows<{ id: string }>('SELECT id FROM ludy_kernel.user_account WHERE email = $1', [email]))[0]!.id);
   }
 
   async function createMeeting(name: string, body: Record<string, unknown> = {}, org = slug) {
@@ -158,18 +158,18 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, pw: string) => {
       const url = new URL(adminUrl);
       url.username = user;
       url.password = pw;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 8 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 8 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     const db = createDb(pool);
     workerDb = createDb(workerPool);
-    const config = loadConfig({ DATABASE_URL: login('crove_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
+    const config = loadConfig({ DATABASE_URL: login('ludy_app', 'test-app-pw'), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
     const registry = { commands: [...kernelCommands, ...financeCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries, ...meetingsQueries] };
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register(registry);
     appRuntime = runtime;
@@ -180,7 +180,7 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
     expect(created.status).toBe(200);
     slug = String(created.body.slug);
     orgId = String(created.body.orgId);
-    userIds.set('owner', (await rows<{ id: string }>('SELECT id FROM crove_kernel.user_account WHERE email = $1', [accounts.get('owner')?.email]))[0]!.id);
+    userIds.set('owner', (await rows<{ id: string }>('SELECT id FROM ludy_kernel.user_account WHERE email = $1', [accounts.get('owner')?.email]))[0]!.id);
     await joinOrg('recorder', 'member');
     await joinOrg('attendee', 'member');
     await joinOrg('otherMember', 'member');
@@ -222,17 +222,17 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
     return { status: res.status, body: (await res.json().catch(() => ({}))) as Record<string, unknown> };
   }
 
-  const chunkCount = (meetingId: string) => count('SELECT 1 FROM crove_meetings.live_chunk WHERE meeting_id = $1', [meetingId]);
-  const liveKeyCount = (meetingId: string) => count("SELECT 1 FROM crove_meetings.media_key WHERE meeting_id = $1 AND kind LIKE 'live:%'", [meetingId]);
+  const chunkCount = (meetingId: string) => count('SELECT 1 FROM ludy_meetings.live_chunk WHERE meeting_id = $1', [meetingId]);
+  const liveKeyCount = (meetingId: string) => count("SELECT 1 FROM ludy_meetings.media_key WHERE meeting_id = $1 AND kind LIKE 'live:%'", [meetingId]);
   const chunkObjects = async (meetingId: string) =>
-    (await rows<{ storage_key: string }>(`SELECT f.storage_key FROM crove_kernel.file f WHERE f.source = 'meeting_audio' AND f.filename LIKE $1`, [`meeting-${meetingId}-live-%`])).map((r) => r.storage_key);
+    (await rows<{ storage_key: string }>(`SELECT f.storage_key FROM ludy_kernel.file f WHERE f.source = 'meeting_audio' AND f.filename LIKE $1`, [`meeting-${meetingId}-live-%`])).map((r) => r.storage_key);
 
   // What a chunk decrypts to: its own wrapped key opened with the deployment's wrap key, its ciphertext read from the store.
   async function plaintextOf(meetingId: string, seq: number): Promise<Buffer> {
-    const key = (await rows<{ key_id: string; wrapped_key: Buffer }>('SELECT key_id, wrapped_key FROM crove_meetings.media_key WHERE meeting_id = $1 AND kind = $2', [meetingId, `live:${seq}`]))[0]!;
+    const key = (await rows<{ key_id: string; wrapped_key: Buffer }>('SELECT key_id, wrapped_key FROM ludy_meetings.media_key WHERE meeting_id = $1 AND kind = $2', [meetingId, `live:${seq}`]))[0]!;
     const file = (
       await rows<{ storage_key: string }>(
-        'SELECT f.storage_key FROM crove_kernel.file f JOIN crove_meetings.live_chunk c ON c.org_id = f.org_id AND c.file_id = f.id WHERE c.meeting_id = $1 AND c.seq = $2',
+        'SELECT f.storage_key FROM ludy_kernel.file f JOIN ludy_meetings.live_chunk c ON c.org_id = f.org_id AND c.file_id = f.id WHERE c.meeting_id = $1 AND c.seq = $2',
         [meetingId, seq],
       )
     )[0]!;
@@ -268,7 +268,7 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
     expect(await chunkObjects(meetingId)).toEqual([]);
     // The opt-in is fixed when the meeting is created: no command changes it afterwards.
     const grants = await rows<{ role: string }>(
-      `SELECT r.rolname AS role FROM pg_roles r WHERE has_column_privilege(r.oid, 'crove_meetings.meeting', 'live_notes', 'UPDATE') AND r.rolname IN ('crove_tenant', 'crove_app', 'crove_worker')`,
+      `SELECT r.rolname AS role FROM pg_roles r WHERE has_column_privilege(r.oid, 'ludy_meetings.meeting', 'live_notes', 'UPDATE') AND r.rolname IN ('ludy_tenant', 'ludy_app', 'ludy_worker')`,
     );
     expect(grants).toEqual([]);
   });
@@ -284,7 +284,7 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
     }
     expect(store.storage.size).toBe(before + 3);
     expect(await chunkCount(meetingId)).toBe(3);
-    expect((await rows<{ kind: string }>("SELECT kind FROM crove_meetings.media_key WHERE meeting_id = $1 ORDER BY kind", [meetingId])).map((r) => r.kind)).toEqual(['live:0', 'live:1', 'live:2']);
+    expect((await rows<{ kind: string }>("SELECT kind FROM ludy_meetings.media_key WHERE meeting_id = $1 ORDER BY kind", [meetingId])).map((r) => r.kind)).toEqual(['live:0', 'live:1', 'live:2']);
     // Ciphertext only: no stored object holds a marker or the container header, and each opens to exactly what was sent under its own key.
     for (const seq of [0, 1, 2]) {
       expect(await plaintextOf(meetingId, seq)).toEqual(piece(`marker${seq}`, seq));
@@ -294,11 +294,11 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
       expect(stored.includes(Buffer.from('marker'))).toBe(false);
       expect(stored.includes(WEBM)).toBe(false);
     }
-    const keys = await rows<{ wrapped_key: Buffer }>("SELECT wrapped_key FROM crove_meetings.media_key WHERE meeting_id = $1", [meetingId]);
+    const keys = await rows<{ wrapped_key: Buffer }>("SELECT wrapped_key FROM ludy_meetings.media_key WHERE meeting_id = $1", [meetingId]);
     expect(new Set(keys.map((k) => k.wrapped_key.toString('hex'))).size).toBe(3);
     // The files are meeting audio rows with a neutral name; the first piece names the container, the others are opaque.
     const files = await rows<{ filename: string; source: string; content_type: string }>(
-      `SELECT f.filename, f.source, f.content_type FROM crove_kernel.file f JOIN crove_meetings.live_chunk c ON c.org_id = f.org_id AND c.file_id = f.id WHERE c.meeting_id = $1 ORDER BY c.seq`,
+      `SELECT f.filename, f.source, f.content_type FROM ludy_kernel.file f JOIN ludy_meetings.live_chunk c ON c.org_id = f.org_id AND c.file_id = f.id WHERE c.meeting_id = $1 ORDER BY c.seq`,
       [meetingId],
     );
     expect(files.map((f) => [f.filename, f.source, f.content_type])).toEqual([
@@ -310,7 +310,7 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
     expect((await rpc('meetings/get', 'recorder', { meetingId })).body.hasAudio).toBe(false);
     expect((await play('recorder', meetingId, 'audio')).status).toBeGreaterThanOrEqual(400);
     // The audit row names the piece and its size, never a key, a storage address or bytes.
-    const audits = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.live.chunk' AND outcome = 'ok' AND target_id = $2 ORDER BY occurred_at", [orgId, meetingId]);
+    const audits = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.live.chunk' AND outcome = 'ok' AND target_id = $2 ORDER BY occurred_at", [orgId, meetingId]);
     expect(audits).toHaveLength(3);
     expect(audits[0]!.detail).toMatchObject({ meetingId, seq: 0 });
     expect(JSON.stringify(audits)).not.toMatch(/wrapped|storage|sha256|marker/i);
@@ -348,12 +348,12 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
   it('refuses a piece for a meeting without its consent record', async () => {
     const meetingId = await liveMeeting();
     // The columns cannot be null; a record is the recorder's confirmation with a notice version, and a meeting that lost either has none.
-    await rows("UPDATE crove_meetings.meeting SET consent_notice_version = '' WHERE id = $1", [meetingId]);
+    await rows("UPDATE ludy_meetings.meeting SET consent_notice_version = '' WHERE id = $1", [meetingId]);
     const stored = store.storage.size;
     const sent = await sendChunk('recorder', meetingId, 0, piece('a', 0));
     expect(sent.status).toBe(409);
     expect(sent.body.code).toBe('CONSENT_MISSING');
-    await rows("UPDATE crove_meetings.meeting SET consent_notice_version = '2026-11-v1', consent_confirmed_by = $2 WHERE id = $1", [meetingId, userIds.get('attendee')]);
+    await rows("UPDATE ludy_meetings.meeting SET consent_notice_version = '2026-11-v1', consent_confirmed_by = $2 WHERE id = $1", [meetingId, userIds.get('attendee')]);
     await refusedWith(() => appRuntime.execute('meetings.live.chunk', rawInput(meetingId), { actor: userActor('recorder'), orgId }), 'CONSENT_MISSING');
     expect(await chunkCount(meetingId)).toBe(0);
     expect(store.storage.size).toBe(stored);
@@ -369,11 +369,11 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
     expect(store.storage.size).toBe(stored);
 
     const expired = await liveMeeting();
-    await rows(`UPDATE crove_meetings.meeting SET audio_retention_date = ${yesterday} WHERE id = $1`, [expired]);
+    await rows(`UPDATE ludy_meetings.meeting SET audio_retention_date = ${yesterday} WHERE id = $1`, [expired]);
     expect((await sendChunk('recorder', expired, 0, piece('a', 0))).body.code).toBe('MEDIA_RETENTION_PASSED');
 
     const old = await liveMeeting();
-    await rows("UPDATE crove_meetings.meeting SET started_at = now() - interval '5 hours' WHERE id = $1", [old]);
+    await rows("UPDATE ludy_meetings.meeting SET started_at = now() - interval '5 hours' WHERE id = $1", [old]);
     expect((await sendChunk('recorder', old, 0, piece('a', 0))).body.code).toBe('LIVE_CLOSED');
     expect(await chunkCount(old)).toBe(0);
     expect(store.storage.size).toBe(stored);
@@ -403,11 +403,11 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
     expect((await sendChunk('recorder', meetingId, 0, piece('a', 0))).status).toBe(200);
     const file = randomUUID();
     await rows(
-      `INSERT INTO crove_kernel.file (org_id, id, filename, content_type, size_bytes, sha256, storage_key, source, created_by)
+      `INSERT INTO ludy_kernel.file (org_id, id, filename, content_type, size_bytes, sha256, storage_key, source, created_by)
        VALUES ($1, $2, 'filler.bin', 'application/octet-stream', 10, $3, $4, 'meeting_audio', $5)`,
       [orgId, file, 'f'.repeat(64), fileKey(orgId, 'f'.repeat(64)), userIds.get('recorder')],
     );
-    await rows(`INSERT INTO crove_meetings.live_chunk (org_id, id, meeting_id, seq, file_id, size_bytes, length_seconds) VALUES ($1, $2, $3, 500, $4, ${300 * 1024 * 1024 - 10}, 15)`, [orgId, randomUUID(), meetingId, file]);
+    await rows(`INSERT INTO ludy_meetings.live_chunk (org_id, id, meeting_id, seq, file_id, size_bytes, length_seconds) VALUES ($1, $2, $3, 500, $4, ${300 * 1024 * 1024 - 10}, 15)`, [orgId, randomUUID(), meetingId, file]);
     const withFirst = store.storage.size;
     const full = await sendChunk('recorder', meetingId, 1, piece('a', 1));
     expect(full.status).toBe(413);
@@ -444,23 +444,26 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
       const [late] = await Promise.all([sendChunk('recorder', meetingId, 1, piece('r', 1)), upload('recorder', meetingId, 'audio', 'race')]);
       expect([200, 409]).toContain(late.status);
       // Whichever came first, the recording is recorded and no piece or live key outlives it.
-      expect(await count('SELECT 1 FROM crove_meetings.audio_segment WHERE meeting_id = $1', [meetingId])).toBe(1);
+      expect(await count('SELECT 1 FROM ludy_meetings.audio_segment WHERE meeting_id = $1', [meetingId])).toBe(1);
       expect(await chunkCount(meetingId)).toBe(0);
       expect(await liveKeyCount(meetingId)).toBe(0);
     }
   });
 
   it('replaces the pieces with the final recording: the audio is kept once, the pieces lose their keys at once and their objects in the next sweep', async () => {
-    const meetingId = await liveMeeting();
+    // A live capture (ADR-0055 slice 1, #4123): the recorder's app opens it with the meeting, and the final recording ends it.
+    const meetingId = await liveMeeting('recorder', { capture: {} });
+    expect(await rows('SELECT kind, ended_reason FROM ludy_meetings.capture_session WHERE meeting_id = $1', [meetingId])).toEqual([{ kind: 'app', ended_reason: null }]);
     for (const seq of [0, 1, 2]) expect((await sendChunk('recorder', meetingId, seq, piece('s', seq))).status).toBe(200);
     const pieces = await chunkObjects(meetingId);
     expect(pieces).toHaveLength(3);
     const finalBytes = await upload('recorder', meetingId, 'audio', 'final');
+    expect(await rows('SELECT ended_reason FROM ludy_meetings.capture_session WHERE meeting_id = $1', [meetingId])).toEqual([{ ended_reason: 'media' }]);
     // One audio segment, one audio key; the pieces' rows and keys are gone in the same commit.
-    expect(await count('SELECT 1 FROM crove_meetings.audio_segment WHERE meeting_id = $1', [meetingId])).toBe(1);
-    expect((await rows<{ kind: string }>('SELECT kind FROM crove_meetings.media_key WHERE meeting_id = $1', [meetingId])).map((r) => r.kind)).toEqual(['audio']);
+    expect(await count('SELECT 1 FROM ludy_meetings.audio_segment WHERE meeting_id = $1', [meetingId])).toBe(1);
+    expect((await rows<{ kind: string }>('SELECT kind FROM ludy_meetings.media_key WHERE meeting_id = $1', [meetingId])).map((r) => r.kind)).toEqual(['audio']);
     expect(await chunkCount(meetingId)).toBe(0);
-    const audit = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.media.record' AND target_id = $2 AND outcome = 'ok'", [orgId, meetingId]);
+    const audit = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.media.record' AND target_id = $2 AND outcome = 'ok'", [orgId, meetingId]);
     expect(audit[0]!.detail).toMatchObject({ kind: 'audio', liveChunksDiscarded: 3 });
     // The pieces' file rows are orphans now; the sweep deletes their objects and rows, and never the final audio.
     for (const key of pieces) expect(store.storage.has(key)).toBe(true);
@@ -468,7 +471,7 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
     expect(swept.failed).toBe(0);
     for (const key of pieces) expect(store.storage.has(key)).toBe(false);
     expect(await chunkObjects(meetingId)).toEqual([]);
-    expect(await count('SELECT 1 FROM crove_kernel.file f JOIN crove_meetings.audio_segment s ON s.org_id = f.org_id AND s.file_id = f.id WHERE s.meeting_id = $1', [meetingId])).toBe(1);
+    expect(await count('SELECT 1 FROM ludy_kernel.file f JOIN ludy_meetings.audio_segment s ON s.org_id = f.org_id AND s.file_id = f.id WHERE s.meeting_id = $1', [meetingId])).toBe(1);
     // The recording plays as it always did, and the batch path sees one complete audio.
     const played = await play('recorder', meetingId, 'audio');
     expect(played.status).toBe(200);
@@ -498,14 +501,14 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
     // Not due yet: the nightly run leaves them.
     expect((await retention()).shredded.audio).toBe(0);
     expect(await liveKeyCount(meetingId)).toBe(2);
-    await rows(`UPDATE crove_meetings.meeting SET audio_retention_date = ${yesterday} WHERE id = $1`, [meetingId]);
+    await rows(`UPDATE ludy_meetings.meeting SET audio_retention_date = ${yesterday} WHERE id = $1`, [meetingId]);
     const run = await retention();
     expect(run.failed).toBe(0);
     expect(run.shredded.audio).toBe(1);
     expect(await liveKeyCount(meetingId)).toBe(0);
     expect(await chunkCount(meetingId)).toBe(0);
     // The meeting itself stays (its text date has not come); the ciphertext goes in the sweep.
-    expect(await count('SELECT 1 FROM crove_meetings.meeting WHERE id = $1', [meetingId])).toBe(1);
+    expect(await count('SELECT 1 FROM ludy_meetings.meeting WHERE id = $1', [meetingId])).toBe(1);
     await sweep();
     for (const key of pieces) expect(store.storage.has(key)).toBe(false);
     expect((await retention()).shredded.audio).toBe(0);
@@ -522,10 +525,10 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
     const purged = await liveMeeting();
     for (const seq of [0, 1]) await sendChunk('recorder', purged, seq, piece('y', seq));
     const purgedPieces = await chunkObjects(purged);
-    await rows(`UPDATE crove_meetings.meeting SET text_retention_date = ${yesterday} WHERE id = $1`, [purged]);
+    await rows(`UPDATE ludy_meetings.meeting SET text_retention_date = ${yesterday} WHERE id = $1`, [purged]);
     const run = await retention();
     expect(run.failed).toBe(0);
-    expect(await count('SELECT 1 FROM crove_meetings.meeting WHERE id = $1', [purged])).toBe(0);
+    expect(await count('SELECT 1 FROM ludy_meetings.meeting WHERE id = $1', [purged])).toBe(0);
     expect(await chunkCount(purged)).toBe(0);
     expect(await liveKeyCount(purged)).toBe(0);
 
@@ -539,7 +542,7 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
       const bearer = `crx_${randomBytes(32).toString('base64url')}`;
       const id = randomUUID();
       await rows(
-        `INSERT INTO crove_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
+        `INSERT INTO ludy_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
          VALUES ($1, $2, $3, $4, 'Test device', ARRAY['meetings'], now(), now() + interval '30 days', $3)`,
         [orgId, id, recorder, hashExtensionSecret(bearer)],
       );
@@ -568,7 +571,7 @@ suite('meetings live notes capture on PostgreSQL (#3109)', () => {
     expect((await sendChunk('recorder', notLive, 0, piece('t', 0), { bearer: mine.bearer })).body.code).toBe('LIVE_NOTES_NOT_ENABLED');
     expect(await chunkCount(inApp)).toBe(0);
     // The audit row names the token.
-    const audit = await rows<{ actor_id: string; detail: Record<string, unknown> }>("SELECT actor_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.live.chunk' AND outcome = 'ok' AND target_id = $2", [orgId, live]);
+    const audit = await rows<{ actor_id: string; detail: Record<string, unknown> }>("SELECT actor_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.live.chunk' AND outcome = 'ok' AND target_id = $2", [orgId, live]);
     expect(audit).toHaveLength(2);
     expect(JSON.stringify(audit)).toContain(mine.id);
   });

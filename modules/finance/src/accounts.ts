@@ -1,5 +1,5 @@
-// The org's chart of accounts (issue #319): the TT133 accounts every org shares (crove_finance.account, read-only) and
-// the org's own sub-accounts (crove_finance.org_account), plus the vendor default account.
+// The org's chart of accounts (issue #319): the TT133 accounts every org shares (ludy_finance.account, read-only) and
+// the org's own sub-accounts (ludy_finance.org_account), plus the vendor default account.
 // - finance.account.create / finance.account.update: owners and admins add, rename, deactivate and reactivate
 //   sub-accounts. R1: they change no amount and no posted entry, and each is undone by the other (deactivate and
 //   reactivate, rename back). A sub-account is never deleted and its code never changes, so every journal line that
@@ -9,9 +9,9 @@
 // The database holds the same rules (20261019060000_crove_finance_sub_accounts.sql); the checks here come first so the
 // refusal says what to do.
 import { z } from 'zod';
-import { isTaggedCode, subAccountCodeProblem, zAccountCode, zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
+import { isTaggedCode, subAccountCodeProblem, zAccountCode, zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type QueryContext } from '@ludy/kernel-runtime';
 import type { OpeningChartAccount } from './domain/opening-balance.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
@@ -33,9 +33,9 @@ export interface OrgChartAccount {
 // The org's chart, or the accounts of it named in `codes`: TT133 accounts first match, then the org's sub-accounts.
 export async function chartAccounts(ctx: QueryContext, codes?: readonly string[]): Promise<Map<string, OrgChartAccount>> {
   if (codes && codes.length === 0) return new Map();
-  let tt133 = ctx.trx.selectFrom('crove_finance.account').select(['code', 'name', 'parent_code']);
+  let tt133 = ctx.trx.selectFrom('ludy_finance.account').select(['code', 'name', 'parent_code']);
   let own = ctx.trx
-    .selectFrom('crove_finance.org_account')
+    .selectFrom('ludy_finance.org_account')
     .select(['code', 'name', 'parent_code', 'root_code', 'active'])
     .where('org_id', '=', ctx.orgId);
   if (codes) {
@@ -45,7 +45,7 @@ export async function chartAccounts(ctx: QueryContext, codes?: readonly string[]
   return mergeChart(await tt133.execute(), await own.execute());
 }
 
-// A row of crove_finance.account (the TT133 accounts) and of crove_finance.org_account (the org's sub-accounts).
+// A row of ludy_finance.account (the TT133 accounts) and of ludy_finance.org_account (the org's sub-accounts).
 export interface Tt133AccountRow {
   code: string;
   name: string;
@@ -137,7 +137,7 @@ export const createAccount = defineCommand({
     const parentActive = parent.custom
       ? (
           await ctx.trx
-            .selectFrom('crove_finance.org_account')
+            .selectFrom('ludy_finance.org_account')
             .select('active')
             .where('org_id', '=', ctx.orgId)
             .where('code', '=', parentCode)
@@ -156,7 +156,7 @@ export const createAccount = defineCommand({
       throw new DomainError('PARENT_NOT_DEEPEST', 422, `Mã ${code} nằm dưới tài khoản ${deeper}; hãy chọn ${deeper} làm tài khoản cha`, { parentCode: deeper });
     }
     const created = await ctx.trx
-      .insertInto('crove_finance.org_account')
+      .insertInto('ludy_finance.org_account')
       .values({ org_id: ctx.orgId, code, name, parent_code: parentCode, created_by: ctx.actor.type === 'user' ? ctx.actor.userId : null })
       .returning('id')
       .executeTakeFirstOrThrow()
@@ -181,13 +181,13 @@ export const updateAccount = defineCommand({
   access: MANAGERS,
   handler: async (ctx, input) => {
     const { code } = input;
-    const tt133 = await ctx.trx.selectFrom('crove_finance.account').select('code').where('code', '=', code).executeTakeFirst();
+    const tt133 = await ctx.trx.selectFrom('ludy_finance.account').select('code').where('code', '=', code).executeTakeFirst();
     if (tt133) {
       throw new DomainError('ACCOUNT_READ_ONLY', 422, `Tài khoản ${code} theo TT133 không sửa hay ngừng dùng được; hãy tạo tài khoản con của nó`);
     }
     // Locked first: a vendor default being set on it (which takes a share lock) finishes before the checks below.
     const account = await ctx.trx
-      .selectFrom('crove_finance.org_account')
+      .selectFrom('ludy_finance.org_account')
       .select(['id', 'name', 'active', 'parent_code'])
       .where('org_id', '=', ctx.orgId)
       .where('code', '=', code)
@@ -198,8 +198,8 @@ export const updateAccount = defineCommand({
     const active = input.active ?? account.active;
     if (account.active && !active) {
       const vendors = await ctx.trx
-        .selectFrom('crove_finance.vendor_account_rule as r')
-        .innerJoin('crove_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'r.org_id').onRef('p.id', '=', 'r.party_id'))
+        .selectFrom('ludy_finance.vendor_account_rule as r')
+        .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'r.org_id').onRef('p.id', '=', 'r.party_id'))
         .select(['p.id', 'p.name'])
         .where('r.org_id', '=', ctx.orgId)
         .where('r.debit_account', '=', code)
@@ -216,7 +216,7 @@ export const updateAccount = defineCommand({
         );
       }
       const children = await ctx.trx
-        .selectFrom('crove_finance.org_account')
+        .selectFrom('ludy_finance.org_account')
         .select('code')
         .where('org_id', '=', ctx.orgId)
         .where('parent_code', '=', code)
@@ -233,7 +233,7 @@ export const updateAccount = defineCommand({
     }
     if (!account.active && active) {
       const parent = await ctx.trx
-        .selectFrom('crove_finance.org_account')
+        .selectFrom('ludy_finance.org_account')
         .select('active')
         .where('org_id', '=', ctx.orgId)
         .where('code', '=', account.parent_code)
@@ -244,7 +244,7 @@ export const updateAccount = defineCommand({
     }
     if (name === account.name && active === account.active) return { code, name, active };
     await ctx.trx
-      .updateTable('crove_finance.org_account')
+      .updateTable('ludy_finance.org_account')
       .set({ name, active, updated_by: ctx.actor.type === 'user' ? ctx.actor.userId : null })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', account.id)
@@ -272,7 +272,7 @@ export const setVendorDefaultAccount = defineCommand({
   access: MANAGERS,
   handler: async (ctx, { partyId, accountCode }) => {
     const party = await ctx.trx
-      .selectFrom('crove_kernel.party')
+      .selectFrom('ludy_kernel.party')
       .select(['id', 'name'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', partyId)
@@ -283,7 +283,7 @@ export const setVendorDefaultAccount = defineCommand({
     const current = async () =>
       (
         await ctx.trx
-          .selectFrom('crove_finance.vendor_account_rule')
+          .selectFrom('ludy_finance.vendor_account_rule')
           .select('debit_account')
           .where('org_id', '=', ctx.orgId)
           .where('party_id', '=', partyId)
@@ -299,7 +299,7 @@ export const setVendorDefaultAccount = defineCommand({
       throw error;
     };
     if (accountCode === null) {
-      await ctx.trx.deleteFrom('crove_finance.vendor_account_rule').where('org_id', '=', ctx.orgId).where('party_id', '=', partyId).execute();
+      await ctx.trx.deleteFrom('ludy_finance.vendor_account_rule').where('org_id', '=', ctx.orgId).where('party_id', '=', partyId).execute();
     } else {
       await assertUsableAccounts(ctx, [accountCode]);
       // With no default there was no row to lock. The insert claims it; if another change inserted one first, the
@@ -307,7 +307,7 @@ export const setVendorDefaultAccount = defineCommand({
       const inserted =
         before === null
           ? await ctx.trx
-              .insertInto('crove_finance.vendor_account_rule')
+              .insertInto('ludy_finance.vendor_account_rule')
               .values({ org_id: ctx.orgId, party_id: partyId, debit_account: accountCode, confirmed_by: by })
               .onConflict((oc) => oc.columns(['org_id', 'party_id']).doNothing())
               .returning('party_id')
@@ -320,7 +320,7 @@ export const setVendorDefaultAccount = defineCommand({
           if (before === accountCode) return { partyId, accountCode };
         }
         await ctx.trx
-          .updateTable('crove_finance.vendor_account_rule')
+          .updateTable('ludy_finance.vendor_account_rule')
           .set({ debit_account: accountCode, confirmed_by: by, updated_at: ctx.now })
           .where('org_id', '=', ctx.orgId)
           .where('party_id', '=', partyId)

@@ -8,13 +8,13 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import type { ExtractClient } from '@crove/extract-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { nextVatDeadline, taxDues, vietnamToday, type TaxProfile } from '@crove/kernel-contract';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries, recordExtractionFailure } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { nextVatDeadline, taxDues, vietnamToday, type TaxProfile } from '@ludy/kernel-contract';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { extractAndPropose, financeCommands, financeQueries, recordExtractionFailure } from '@ludy/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -184,17 +184,17 @@ suite('multi-client home screen (#318)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    const appUrl = login('crove_app', 'test-app-pw');
+    const appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -307,7 +307,7 @@ suite('multi-client home screen (#318)', () => {
       async (c) =>
         (
           await c.query(
-            `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.set_vat_filing_period' AND outcome = 'ok'`,
+            `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.set_vat_filing_period' AND outcome = 'ok'`,
             [firm.orgId],
           )
         ).rows,
@@ -315,7 +315,7 @@ suite('multi-client home screen (#318)', () => {
     expect(audit).toEqual([{ detail: expect.objectContaining({ previous: null, vatFilingPeriod: 'month' }) }]);
     const activity = await admin(
       async (c) =>
-        (await c.query(`SELECT summary FROM crove_kernel.activity WHERE org_id = $1 AND kind = 'org.vat_filing_period_changed'`, [firm.orgId])).rows,
+        (await c.query(`SELECT summary FROM ludy_kernel.activity WHERE org_id = $1 AND kind = 'org.vat_filing_period_changed'`, [firm.orgId])).rows,
     );
     expect(activity).toEqual([{ summary: 'Chọn kỳ khai thuế GTGT theo tháng' }]);
 
@@ -364,7 +364,7 @@ suite('multi-client home screen (#318)', () => {
     const audit = await admin(
       async (c) =>
         (
-          await c.query(`SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'kernel.tax_%' AND outcome = 'ok' ORDER BY occurred_at`, [
+          await c.query(`SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'kernel.tax_%' AND outcome = 'ok' ORDER BY occurred_at`, [
             firm.orgId,
           ])
         ).rows,
@@ -381,7 +381,7 @@ suite('multi-client home screen (#318)', () => {
     const after = row(await clients(accountant), quiet)?.overview;
     expect(after?.pendingProposals).toBe(1);
     const newest = await admin(
-      async (c) => (await c.query<{ at: Date }>(`SELECT max(occurred_at) AS at FROM crove_kernel.activity WHERE org_id = $1`, [quiet.orgId])).rows[0]?.at,
+      async (c) => (await c.query<{ at: Date }>(`SELECT max(occurred_at) AS at FROM ludy_kernel.activity WHERE org_id = $1`, [quiet.orgId])).rows[0]?.at,
     );
     expect(after?.lastActivityAt).toBe(newest?.toISOString());
   });
@@ -399,7 +399,7 @@ suite('multi-client home screen (#318)', () => {
     const lock = new pg.Client({ connectionString: adminUrl });
     await lock.connect();
     await lock.query('BEGIN');
-    await lock.query('LOCK TABLE crove_kernel.activity IN ACCESS EXCLUSIVE MODE');
+    await lock.query('LOCK TABLE ludy_kernel.activity IN ACCESS EXCLUSIVE MODE');
     let first: ReturnType<typeof rpc> | undefined;
     let other: ReturnType<typeof rpc> | undefined;
     try {
@@ -409,7 +409,7 @@ suite('multi-client home screen (#318)', () => {
         (
           await admin((c) =>
             c.query<{ n: number }>(
-              `SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%crove_kernel%activity%'`,
+              `SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND query ILIKE '%ludy_kernel%activity%'`,
             ),
           )
         ).rows[0]?.n ?? 0;

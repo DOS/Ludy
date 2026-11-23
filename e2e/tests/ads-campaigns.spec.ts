@@ -33,19 +33,20 @@ test('an owner starts a campaign from a post, sees the most it can spend, and wh
     await page.getByLabel('Tên kênh thử').fill('Trang Chiến dịch');
     await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
     await expect(page.getByText('Trang Chiến dịch').first()).toBeVisible();
-    await page.getByRole('link', { name: 'Quay lại' }).click();
-    await page.getByRole('link', { name: 'Soạn bài' }).click();
+    await page.getByRole('link', { name: 'Về Bài đăng' }).click();
+    await page.getByRole('link', { name: 'Soạn bài' }).first().click();
     await page.getByLabel('Nội dung chung').fill('Khai trương chi nhánh mới vào thứ Bảy này. Mời bạn ghé thử cà phê mới.');
     await page.getByRole('button', { name: 'Lưu nháp' }).click();
     await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
     postId = page.url().split('/').pop() ?? '';
   });
 
-  await test.step('Campaigns is an item of the Marketing group, and with no ad account it says to connect one first', async () => {
+  await test.step('Campaigns is a tab of Quảng cáo, an item of the Marketing group, and with no ad account it says to connect one first', async () => {
     await nav.getByRole('link', { name: 'Engage' }).click();
     const group = nav.getByRole('region', { name: 'Marketing' });
     await expect(group).toBeVisible();
-    await group.getByRole('link', { name: 'Chiến dịch', exact: true }).click();
+    await group.getByRole('link', { name: 'Quảng cáo', exact: true }).click();
+    await page.getByRole('link', { name: 'Chiến dịch', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/ads/campaigns$`));
     await expect(page.getByRole('heading', { name: 'Chiến dịch', level: 1 })).toBeVisible();
     await expect(page.getByText('Hãy kết nối một tài khoản quảng cáo ở màn Quảng cáo trước.')).toBeVisible();
@@ -58,7 +59,7 @@ test('an owner starts a campaign from a post, sees the most it can spend, and wh
     await form.getByLabel('Tên tài khoản quảng cáo').fill('Quảng cáo chiến dịch E2E');
     await form.getByLabel('Đơn vị tiền').selectOption('VND');
     await form.getByRole('button', { name: 'Kết nối tài khoản thử' }).click();
-    await expect(page.getByText('Tiền tệ VND, múi giờ Asia/Ho_Chi_Minh')).toBeVisible({ timeout: 90_000 });
+    await expect(page.getByText('Tiền tệ VND, giờ Việt Nam (UTC+7)')).toBeVisible({ timeout: 90_000 });
   });
 
   await test.step('the builder is there with the account, and without AI no request panel is offered', async () => {
@@ -96,7 +97,7 @@ test('an owner starts a campaign from a post, sees the most it can spend, and wh
     await builder.getByLabel('Trang mà quảng cáo mở ra').fill('http://khong-an-toan.example');
     await builder.getByRole('button', { name: 'Lưu bản nháp' }).click();
     await expect(builder.getByText('Đường dẫn phải là địa chỉ đầy đủ bắt đầu bằng https://.')).toBeVisible();
-    expect(sql<{ n: number }>(`SELECT count(*)::int AS n FROM crove_ads.ad_campaign_draft d JOIN crove_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`, { slug })).toEqual([{ n: 0 }]);
+    expect(sql<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_ads.ad_campaign_draft d JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`, { slug })).toEqual([{ n: 0 }]);
   });
 
   await test.step('saving keeps the draft and lists what is to fix in words: no spend cap yet and running ads off', async () => {
@@ -108,12 +109,15 @@ test('an owner starts a campaign from a post, sees the most it can spend, and wh
     await expect(issues).toContainText('Cần sửa trước khi được duyệt');
     await expect(issues).toContainText('Chưa đặt hạn mức chi tiêu nào.');
     await expect(issues).toContainText('Việc chạy quảng cáo đang tắt cho tổ chức.');
+    // A Traffic ad runs as a Page too (#3864): with none chosen the plan says so, and the field says it under itself.
+    await expect(issues).toContainText('Còn thiếu: Trang Facebook.');
+    await expect(builder.getByText('Hãy chọn Trang Facebook mà quảng cáo chạy dưới tên: thiếu Trang thì quảng cáo không chạy được.')).toBeVisible();
     // Held back until nothing is to fix, and the draft is listed.
     await expect(builder.getByRole('button', { name: 'Gửi duyệt' })).toBeDisabled();
     await expect(page.getByTestId('campaign-drafts').getByText('Khai trương chi nhánh mới', { exact: false })).toBeVisible();
     const rows = sql<{ status: string; origin: string; source_post_id: string | null; budget_ok: boolean; spend_ok: boolean }>(
       `SELECT d.status, d.origin, d.source_post_id::text AS source_post_id, d.daily_budget = 100000 AS budget_ok, d.max_spend = 700000 AS spend_ok
-         FROM crove_ads.ad_campaign_draft d JOIN crove_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`,
+         FROM ludy_ads.ad_campaign_draft d JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`,
       { slug },
     );
     // The post is kept as an opaque id, and a draft a person wrote is not marked as the AI's.
@@ -144,7 +148,7 @@ test('an owner starts a campaign from a post, sees the most it can spend, and wh
     await dialog.getByRole('button', { name: 'Bỏ', exact: true }).click();
     await expect(page.getByText('Đã bỏ bản nháp.')).toBeVisible();
     await expect(page.getByTestId('campaign-drafts')).toHaveCount(0);
-    const rows = sql<{ status: string }>(`SELECT d.status FROM crove_ads.ad_campaign_draft d JOIN crove_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`, { slug });
+    const rows = sql<{ status: string }>(`SELECT d.status FROM ludy_ads.ad_campaign_draft d JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`, { slug });
     expect(rows).toEqual([{ status: 'discarded' }]);
   });
 });

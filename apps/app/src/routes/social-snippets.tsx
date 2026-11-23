@@ -4,15 +4,15 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { Textarea } from '@crove/ui/components/textarea';
-import { PROVIDERS } from '@crove/mod-social/contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { Textarea } from '@ludy/ui/components/textarea';
+import { PROVIDERS } from '@ludy/mod-social/contract';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { Empty, ErrorText, PageHeader, Spinner } from '../components/ui.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -153,7 +153,7 @@ export function SocialSnippetsPage() {
       />
       {canWrite && (
         <Card className="block p-4">
-          <h3 className="mb-3 text-sm font-medium text-foreground">{t('new')}</h3>
+          <h2 className="mb-3 text-sm font-medium text-foreground">{t('new')}</h2>
           <SnippetForm key={formKey} initial={EMPTY} onSave={(d) => create.mutate(d)} pending={create.isPending} error={create.error} />
         </Card>
       )}
@@ -162,7 +162,17 @@ export function SocialSnippetsPage() {
       ) : list.error ? (
         <ErrorText>{errorMessage(list.error)}</ErrorText>
       ) : (list.data ?? []).length === 0 ? (
-        <Empty title={t('empty')} hint={t('emptyHint')} />
+        <Empty
+          title={t('empty')}
+          hint={t('emptyHint')}
+          action={
+            canWrite ? (
+              <Button size="lg" onClick={() => document.getElementById('snippet-name')?.focus()}>
+                {t('new')}
+              </Button>
+            ) : undefined
+          }
+        />
       ) : (
         <div className="space-y-3">
           {(list.data ?? []).map((s) => (

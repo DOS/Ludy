@@ -10,12 +10,12 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { tableWrite } from '@crove/kernel-contract';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, type CommandDef, type QueryDef } from '@crove/kernel-runtime';
-import { hrCommands, hrManifest, hrQueries } from '@crove/mod-hr';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { tableWrite } from '@ludy/kernel-contract';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, defineCommand, defineQuery, parseVaultKey, type CommandDef, type QueryDef } from '@ludy/kernel-runtime';
+import { hrCommands, hrManifest, hrQueries } from '@ludy/mod-hr';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -46,10 +46,10 @@ suite('HR bank template on PostgreSQL (#2532)', () => {
     risk: 'R1',
     sideEffect: 'internal',
     access: ['owner', 'admin', 'member', 'viewer'],
-    writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_bank_template', ['id', 'legal_entity_id', 'name', 'layout'])],
+    writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_bank_template', ['id', 'legal_entity_id', 'name', 'layout'])],
     handler: async (ctx, input) => {
       const row = await ctx.trx
-        .insertInto('crove_hr.payroll_bank_template')
+        .insertInto('ludy_hr.payroll_bank_template')
         .values({ org_id: ctx.orgId, name: input.name, layout: JSON.stringify(input.layout) })
         .returning(['id', 'legal_entity_id'])
         .executeTakeFirstOrThrow();
@@ -62,12 +62,12 @@ suite('HR bank template on PostgreSQL (#2532)', () => {
     risk: 'R1',
     sideEffect: 'internal',
     access: ['owner', 'admin', 'member', 'viewer'],
-    writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_bank_template', ['name', 'layout', 'updated_at'])],
+    writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_bank_template', ['name', 'layout', 'updated_at'])],
     handler: async (ctx, input) => {
       const set: { name?: string; layout?: string; updated_at: Date } = { updated_at: ctx.now };
       if (input.name !== undefined) set.name = input.name;
       if (input.layout !== undefined) set.layout = JSON.stringify(input.layout);
-      const rows = await ctx.trx.updateTable('crove_hr.payroll_bank_template').set(set).where('org_id', '=', ctx.orgId).where('id', '=', input.id).returning('id').execute();
+      const rows = await ctx.trx.updateTable('ludy_hr.payroll_bank_template').set(set).where('org_id', '=', ctx.orgId).where('id', '=', input.id).returning('id').execute();
       return { changed: rows.length };
     },
   }) as CommandDef<unknown, unknown>;
@@ -77,10 +77,10 @@ suite('HR bank template on PostgreSQL (#2532)', () => {
     risk: 'R1',
     sideEffect: 'internal',
     access: ['owner', 'admin'],
-    writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_bank_template', ['legal_entity_id'])],
+    writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_bank_template', ['legal_entity_id'])],
     handler: async (ctx, input) => {
       await ctx.trx.executeQuery({
-        sql: 'UPDATE crove_hr.payroll_bank_template SET legal_entity_id = $1 WHERE org_id = $2 AND id = $3',
+        sql: 'UPDATE ludy_hr.payroll_bank_template SET legal_entity_id = $1 WHERE org_id = $2 AND id = $3',
         parameters: [input.legalEntityId, ctx.orgId, input.id],
         query: { kind: 'RawNode' },
       } as never);
@@ -93,9 +93,9 @@ suite('HR bank template on PostgreSQL (#2532)', () => {
     risk: 'R1',
     sideEffect: 'internal',
     access: ['owner', 'admin', 'member', 'viewer'],
-    writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_bank_template', ['id'])],
+    writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_bank_template', ['id'])],
     handler: async (ctx, input) => {
-      const rows = await ctx.trx.deleteFrom('crove_hr.payroll_bank_template').where('org_id', '=', ctx.orgId).where('id', '=', input.id).returning('id').execute();
+      const rows = await ctx.trx.deleteFrom('ludy_hr.payroll_bank_template').where('org_id', '=', ctx.orgId).where('id', '=', input.id).returning('id').execute();
       return { removed: rows.length };
     },
   }) as CommandDef<unknown, unknown>;
@@ -104,7 +104,7 @@ suite('HR bank template on PostgreSQL (#2532)', () => {
     input: z.object({}),
     access: ['owner', 'admin', 'member', 'viewer'],
     handler: async (ctx) => {
-      const rows = await ctx.trx.selectFrom('crove_hr.payroll_bank_template').select(['id', 'name']).where('org_id', '=', ctx.orgId).orderBy('name').execute();
+      const rows = await ctx.trx.selectFrom('ludy_hr.payroll_bank_template').select(['id', 'name']).where('org_id', '=', ctx.orgId).orderBy('name').execute();
       return rows;
     },
   }) as QueryDef<unknown, unknown>;
@@ -128,7 +128,7 @@ suite('HR bank template on PostgreSQL (#2532)', () => {
     const viewer = await person('viewer');
     const { orgId } = await createOrg(rt, asUser(owner), `Ngân hàng ${tag}`);
     await withAdmin((c) =>
-      c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, admin, member, viewer]),
+      c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, admin, member, viewer]),
     );
     const exec = <O>(userId: string, name: string, input: unknown = {}) => rt.execute<O>(name, input, { actor: asUser(userId), orgId });
     const peek = <O>(userId: string) => rt.query<O>('t2532.peek', {}, { actor: asUser(userId), orgId });
@@ -144,8 +144,8 @@ suite('HR bank template on PostgreSQL (#2532)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    url.username = 'crove_app';
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     rt = new Runtime(createDb(pool), {
@@ -213,7 +213,7 @@ suite('HR bank template on PostgreSQL (#2532)', () => {
     expect(await o.exec(o.admin, 't2532.change', { id: made.id, name: 'Bank A (new)', layout: layout({ content: 'Pay {month}' }) })).toEqual({ changed: 1 });
     const other = await withAdmin(async (c) => {
       const { rows } = await c.query<{ id: string }>(
-        `INSERT INTO crove_kernel.legal_entity (org_id, name, is_default, created_by) VALUES ($1, 'Second entity', false, $2) RETURNING id`,
+        `INSERT INTO ludy_kernel.legal_entity (org_id, name, is_default, created_by) VALUES ($1, 'Second entity', false, $2) RETURNING id`,
         [o.orgId, o.owner],
       );
       return rows[0]?.id as string;
@@ -221,7 +221,7 @@ suite('HR bank template on PostgreSQL (#2532)', () => {
     expect(other).toBeTruthy();
     await expect(o.exec(o.owner, 't2532.move', { id: made.id, legalEntityId: other })).rejects.toThrow();
     // Still in the entity it was made in.
-    expect(await withAdmin(async (c) => (await c.query('SELECT 1 FROM crove_hr.payroll_bank_template WHERE org_id = $1 AND id = $2 AND legal_entity_id = $3', [o.orgId, made.id, made.legalEntityId])).rowCount)).toBe(1);
+    expect(await withAdmin(async (c) => (await c.query('SELECT 1 FROM ludy_hr.payroll_bank_template WHERE org_id = $1 AND id = $2 AND legal_entity_id = $3', [o.orgId, made.id, made.legalEntityId])).rowCount)).toBe(1);
     expect(await o.exec(o.owner, 't2532.remove', { id: made.id })).toEqual({ removed: 1 });
     expect(await o.peek<unknown[]>(o.owner)).toEqual([]);
   });

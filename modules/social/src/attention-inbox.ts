@@ -2,8 +2,8 @@
 // channel of which failed, needs a person to settle an unclear outcome, or waits paused on such a channel. Each opens
 // where it is fixed. Owners and admins fix them (reconnect, retry, resolve), so members and viewers get an empty list.
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { defineQuery } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { defineQuery } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const EXCERPT = 200;
@@ -39,19 +39,20 @@ export const attentionInbox = defineQuery({
   handler: async (ctx): Promise<{ channels: AttentionChannel[]; posts: AttentionPost[]; total: number }> => {
     if (ctx.actor.type !== 'user' || (ctx.role !== 'owner' && ctx.role !== 'admin')) return { channels: [], posts: [], total: 0 };
     const channels = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
+      .selectFrom('ludy_kernel.channel_connection')
       .select(['id', 'provider', 'display_name', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('status', 'in', ATTENTION_CHANNEL_STATUSES)
       // An e-invoice provider's connection is the finance module's: its account id holds the seller's tax code, and the screen it links to is Social's.
       .where('provider', 'not like', 'einvoice\\_%')
+      .where('provider', 'not like', 'accounting\\_%')
       .orderBy('updated_at', 'asc')
       .limit(ATTENTION_INBOX_MAX)
       .execute();
     const rows = await ctx.trx
-      .selectFrom('crove_social.post_variant as v')
-      .innerJoin('crove_social.post as p', (j) => j.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.post_id'))
-      .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'v.org_id').onRef('c.id', '=', 'v.channel_connection_id'))
+      .selectFrom('ludy_social.post_variant as v')
+      .innerJoin('ludy_social.post as p', (j) => j.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.post_id'))
+      .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'v.org_id').onRef('c.id', '=', 'v.channel_connection_id'))
       .select(['v.id as variant_id', 'v.post_id', 'v.provider', 'v.status', 'v.error_code', 'v.updated_at', 'v.body as variant_body', 'p.body', 'c.display_name'])
       .where('v.org_id', '=', ctx.orgId)
       // Not an archived post's (#1299): a failed channel of it waits for its restore.

@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { QUOTE_DESCRIPTION_MAX, QUOTE_LINE_KINDS, QUOTE_UNIT_MAX, zQuoteLine } from './crm-quotes.ts';
 import { zId } from './schemas.ts';
 
-// The sets are the product's: the CHECK constraints of crove_crm.sales_order say the same (packages/db/test/check-unions.db.test.ts compares them).
+// The sets are the product's: the CHECK constraints of ludy_crm.sales_order say the same (packages/db/test/check-unions.db.test.ts compares them).
 export const SALES_ORDER_STATUSES = ['confirmed', 'cancelled'] as const;
 export type SalesOrderStatus = (typeof SALES_ORDER_STATUSES)[number];
 // How the customer's yes arrived: a record of it, not a proof (ADR-0050 point 1).

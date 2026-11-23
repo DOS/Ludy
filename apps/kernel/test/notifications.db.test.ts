@@ -12,13 +12,13 @@ import { fileURLToPath } from 'node:url';
 import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import type { ExtractClient } from '@crove/extract-contract';
-import { zNotifications, type Notifications } from '@crove/kernel-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries, recordExtractionFailure, sweepPeriodClosing } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { zNotifications, type Notifications } from '@ludy/kernel-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { extractAndPropose, financeCommands, financeQueries, recordExtractionFailure, sweepPeriodClosing } from '@ludy/mod-finance';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -79,7 +79,7 @@ suite('in-app notifications of the kernel and finance (#671)', () => {
   // worker's kernel-notify job does (the same command twice for each, to show a replay writes nothing).
   const dispatched = new Set<string>();
   async function dispatch(type: string, orgId = org.orgId): Promise<number> {
-    const { rows } = await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY id', [orgId, type]));
+    const { rows } = await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY id', [orgId, type]));
     const command = type.startsWith('finance.') ? 'finance.notification.dispatch' : 'kernel.notification.dispatch';
     let sent = 0;
     for (const { id } of rows) {
@@ -122,15 +122,15 @@ suite('in-app notifications of the kernel and finance (#671)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const db = createDb(pool);
     workerDb = createDb(workerPool);
     const register = (target: Db) =>
@@ -167,12 +167,14 @@ suite('in-app notifications of the kernel and finance (#671)', () => {
     expect(await dispatch('kernel.proposal.created')).toBe(2);
     const owner = await list(people.owner);
     expect(owner.unread).toBe(1);
+    // The notice is about a finance proposal Home counts as a proposal, so the bell leaves it out (#3591).
+    expect(owner.unreadWork).toBe(0);
     // The proposal's title, read when the notice is shown; the notice keeps no copy of it (#1977).
-    const { title } = (await admin((c) => c.query<{ title: string }>('SELECT title FROM crove_kernel.proposal WHERE id = $1', [proposalId]))).rows[0] as { title: string };
+    const { title } = (await admin((c) => c.query<{ title: string }>('SELECT title FROM ludy_kernel.proposal WHERE id = $1', [proposalId]))).rows[0] as { title: string };
     expect(owner.items).toEqual([
       expect.objectContaining({ kind: 'kernel.approval_waiting', subjectType: 'kernel.proposal', subjectId: proposalId, read: false, detail: { title: title.slice(0, 200) } }),
     ]);
-    expect((await admin((c) => c.query(`SELECT DISTINCT detail FROM crove_kernel.notification WHERE subject_id = $1`, [proposalId]))).rows).toEqual([{ detail: {} }]);
+    expect((await admin((c) => c.query(`SELECT DISTINCT detail FROM ludy_kernel.notification WHERE subject_id = $1`, [proposalId]))).rows).toEqual([{ detail: {} }]);
     expect(await kinds(people.admin)).toEqual(['kernel.approval_waiting']);
     // Members and viewers may not approve a purchase: nothing for them.
     expect(await kinds(people.member)).toEqual([]);
@@ -181,7 +183,7 @@ suite('in-app notifications of the kernel and finance (#671)', () => {
     // The admin approves (four-eyes: the member uploaded it): the owner's notice no longer counts as unread.
     // The fixture carries no signature (#674), so the approver confirms that, as for any unverified invoice.
     await runtime.execute('kernel.proposal.approve', { id: proposalId, revision: 1, acceptUnverifiedSignature: true }, { actor: asMfa(people.admin), orgId: org.orgId, idempotencyKey: randomUUID() });
-    expect(await list(people.owner)).toMatchObject({ unread: 0, items: [expect.objectContaining({ subjectId: proposalId, read: true })] });
+    expect(await list(people.owner)).toMatchObject({ unread: 0, unreadWork: 0, items: [expect.objectContaining({ subjectId: proposalId, read: true })] });
   });
 
   it('tells the uploader of a file that failed to read, and nobody for a kind they turned off', async () => {
@@ -190,7 +192,7 @@ suite('in-app notifications of the kernel and finance (#671)', () => {
     expect(await dispatch('kernel.file.read_failed')).toBe(1);
     expect((await list(people.member)).items).toEqual([expect.objectContaining({ kind: 'kernel.file_unreadable', subjectId: fileId, detail: { filename: 'rac.xml' } })]);
     // The name is the file's, read when the notice is shown (#1977).
-    expect((await admin((c) => c.query(`SELECT detail FROM crove_kernel.notification WHERE subject_id = $1`, [fileId]))).rows).toEqual([{ detail: {} }]);
+    expect((await admin((c) => c.query(`SELECT detail FROM ludy_kernel.notification WHERE subject_id = $1`, [fileId]))).rows).toEqual([{ detail: {} }]);
 
     // Turned off: the next one is not written for them.
     await runtime.execute('kernel.notification.mute', { kind: 'kernel.file_unreadable', muted: true }, { actor: asUser(people.member), orgId: org.orgId });
@@ -218,7 +220,7 @@ suite('in-app notifications of the kernel and finance (#671)', () => {
     await admin(async (c) => {
       const { rows } = await c.query<{ grantee: string; privilege_type: string; column_name: string }>(
         `SELECT grantee, privilege_type, column_name FROM information_schema.column_privileges
-         WHERE table_schema = 'crove_kernel' AND table_name = 'notification' AND privilege_type = 'UPDATE' AND grantee = 'crove_tenant'`,
+         WHERE table_schema = 'ludy_kernel' AND table_name = 'notification' AND privilege_type = 'UPDATE' AND grantee = 'ludy_tenant'`,
       );
       expect(rows.map((r) => r.column_name)).toEqual(['read_at']);
     });
@@ -228,7 +230,7 @@ suite('in-app notifications of the kernel and finance (#671)', () => {
     const importId = randomUUID();
     // The event finance.bank.import emits; written here as emit() writes it, with the admin as the actor.
     await admin((c) =>
-      c.query(`INSERT INTO crove_kernel.outbox_event (org_id, type, payload, actor_type, actor_id) VALUES ($1, 'finance.bank.imported', $2, 'user', $3)`, [
+      c.query(`INSERT INTO ludy_kernel.outbox_event (org_id, type, payload, actor_type, actor_id) VALUES ($1, 'finance.bank.imported', $2, 'user', $3)`, [
         org.orgId,
         JSON.stringify({ importId, bankAccount: '1121', ambiguous: 2 }),
         people.admin,
@@ -242,7 +244,7 @@ suite('in-app notifications of the kernel and finance (#671)', () => {
   it('tells the importer and the owners and admins about a portal list with missing invoices or that failed to read', async () => {
     const pendingList = async () => {
       const fileId = await ingest(people.member, new TextEncoder().encode(`list ${randomUUID()}`), 'bang-ke.xlsx');
-      return admin(async (c) => (await c.query<{ id: string }>(`INSERT INTO crove_finance.portal_invoice_list (org_id, period, file_id, filename, created_by) VALUES ($1, '2026-09', $2, 'bang-ke.xlsx', $3) RETURNING id`, [org.orgId, fileId, people.member])).rows[0]?.id as string);
+      return admin(async (c) => (await c.query<{ id: string }>(`INSERT INTO ludy_finance.portal_invoice_list (org_id, period, file_id, filename, created_by) VALUES ($1, '2026-09', $2, 'bang-ke.xlsx', $3) RETURNING id`, [org.orgId, fileId, people.member])).rows[0]?.id as string);
     };
     const failed = await pendingList();
     await workerRuntime.execute('finance.portal_list.record', { listId: failed, status: 'failed', error: 'Không đọc được' }, { actor: SYSTEM, orgId: org.orgId });
@@ -288,10 +290,10 @@ suite('in-app notifications of the kernel and finance (#671)', () => {
     expect((await list(people.outsider, other.orgId)).items).toEqual([expect.objectContaining({ kind: 'finance.period_closing' })]);
     await admin(async (c) => {
       const { rows } = await c.query<{ role: string }>(
-        `SELECT r AS role FROM unnest(ARRAY['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant']) r
-         WHERE has_function_privilege(r, 'crove_finance.period_close_due(uuid, int)', 'EXECUTE')`,
+        `SELECT r AS role FROM unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) r
+         WHERE has_function_privilege(r, 'ludy_finance.period_close_due(uuid, int)', 'EXECUTE')`,
       );
-      expect(rows.map((r) => r.role)).toEqual(['crove_worker']);
+      expect(rows.map((r) => r.role)).toEqual(['ludy_worker']);
     });
   });
 
@@ -299,15 +301,15 @@ suite('in-app notifications of the kernel and finance (#671)', () => {
     // Two more entities for the org, each with a lock of its own (one row per org and entity since #1503).
     const [second, third] = await admin(async (c) => {
       const add = async (name: string) =>
-        (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, $2, 'branch', $3) RETURNING id`, [org.orgId, name, people.owner]))
+        (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, $2, 'branch', $3) RETURNING id`, [org.orgId, name, people.owner]))
           .rows[0]?.id as string;
       return [await add('Chi nhánh Một'), await add('Chi nhánh Hai')];
     });
     const lock = (entity: string | null, from: string | null, through: string | null) =>
       admin((c) =>
         c.query(
-          `INSERT INTO crove_finance.period_lock (org_id, legal_entity_id, locked_from, locked_through)
-           VALUES ($1, coalesce($2::uuid, (SELECT e.id FROM crove_kernel.legal_entity e WHERE e.org_id = $1 AND e.is_default)), $3::date, $4::date)
+          `INSERT INTO ludy_finance.period_lock (org_id, legal_entity_id, locked_from, locked_through)
+           VALUES ($1, coalesce($2::uuid, (SELECT e.id FROM ludy_kernel.legal_entity e WHERE e.org_id = $1 AND e.is_default)), $3::date, $4::date)
            ON CONFLICT (org_id, legal_entity_id) DO UPDATE SET locked_from = EXCLUDED.locked_from, locked_through = EXCLUDED.locked_through`,
           [org.orgId, entity, from, through],
         ),
@@ -321,7 +323,7 @@ suite('in-app notifications of the kernel and finance (#671)', () => {
       let after: string | null = null;
       for (;;) {
         const { rows }: { rows: Array<{ org_id: string; locked_through: string | null }> } = await sql<{ org_id: string; locked_through: string | null }>`
-          SELECT org_id, pg_catalog.to_char(locked_through, 'YYYY-MM-DD') AS locked_through FROM crove_finance.period_close_due(${after}::uuid, ${page}::int)`.execute(workerDb);
+          SELECT org_id, pg_catalog.to_char(locked_through, 'YYYY-MM-DD') AS locked_through FROM ludy_finance.period_close_due(${after}::uuid, ${page}::int)`.execute(workerDb);
         if (rows.length === 0) return seen;
         seen.push(...rows);
         after = rows.at(-1)?.org_id ?? null;

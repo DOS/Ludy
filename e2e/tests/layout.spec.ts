@@ -31,13 +31,17 @@ test('the sidebar keeps sign-out and Settings in view on a short window, and eac
   const signOut = sidebar.getByRole('button', { name: 'Đăng xuất', exact: true });
   await expect(signOut).toBeInViewport();
   await expect(sidebar.getByRole('link', { name: 'Cài đặt' })).toBeInViewport();
+  // A new org opens on the overview, which belongs to no app: the rail shows, and no app menu, not even the Cộng tác one (#3588).
+  await expect(sidebar.getByRole('list', { name: 'Ứng dụng' })).toBeVisible();
+  await expect(sidebar.getByRole('link', { name: 'Việc nhóm' })).toHaveCount(0);
+  await expect(sidebar.getByRole('list', { name: 'Ứng dụng' }).locator('[aria-current="true"]')).toHaveCount(0);
 
   // A deep link opens with its app selected, and only that app's menu shows.
   const apps = sidebar.getByRole('list', { name: 'Ứng dụng' });
   await page.goto(`/o/${slug}/journal`);
-  await expect(apps.getByRole('link', { name: 'Kế toán', exact: true })).toHaveAttribute('aria-current', 'true');
+  await expect(apps.getByRole('link', { name: 'Tài chính', exact: true })).toHaveAttribute('aria-current', 'true');
   await expect(sidebar.getByRole('link', { name: 'Sổ sách' })).toBeVisible();
-  await expect(sidebar.getByRole('link', { name: 'Chứng từ chờ duyệt' })).toHaveCount(0);
+  await expect(sidebar.getByRole('link', { name: 'Việc nhóm' })).toHaveCount(0);
 
   // On a 1366x768 laptop no app's menu scrolls.
   await page.setViewportSize({ width: 1366, height: 768 });
@@ -96,7 +100,7 @@ async function phoneWidthProblems(page: Page, paths: readonly string[]): Promise
   const problems: string[] = [];
   for (const theme of ['light', 'dark'] as const) {
     // The theme the app reads at load (lib/theme.ts), from this browser only.
-    await page.evaluate((value) => localStorage.setItem('crove-theme', value), theme);
+    await page.evaluate((value) => localStorage.setItem('ludy-theme', value), theme);
     for (const path of paths) {
       await page.goto(path);
       await page.waitForLoadState('networkidle');
@@ -177,8 +181,8 @@ test('every sidebar screen and the detail pages pass the 360px and axe walk on a
     await page.getByLabel('Tên kênh thử').fill('Fanpage Kiểm tra');
     await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
     await expect(page.getByText('Fanpage Kiểm tra').first()).toBeVisible();
-    await page.getByRole('link', { name: 'Quay lại' }).click();
-    await page.getByRole('link', { name: 'Soạn bài' }).click();
+    await page.getByRole('link', { name: 'Về Bài đăng' }).click();
+    await page.getByRole('link', { name: 'Soạn bài' }).first().click();
     await page.getByLabel('Nội dung chung').fill('Khai trương chi nhánh mới, giảm 10% tuần đầu.');
     await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();
     await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
@@ -209,20 +213,25 @@ test('the agents screen with its legal-entity pickers passes the 360px and axe w
   await signInNewUser(page, newEmail('layout-a11y-entities'));
   const slug = await createOrg(page, 'Công ty Hai pháp nhân');
   await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+  await page.getByRole('button', { name: 'Thêm pháp nhân' }).click();
   const add = page.getByRole('form', { name: 'Thêm pháp nhân' });
   await add.getByLabel('Tên pháp nhân').fill('Chi nhánh Đà Nẵng');
   await add.getByRole('button', { name: 'Thêm', exact: true }).click();
   await expect(page.getByRole('main').getByText('Chi nhánh Đà Nẵng').first()).toBeVisible();
   await page.goto(`/o/${slug}/agents`);
-  await expect(page.getByRole('main').getByRole('group', { name: 'Pháp nhân', exact: true })).toBeVisible();
+  // Add position is a dialog behind a button (#3608); its options hold the entity picker.
+  await page.getByRole('main').getByRole('button', { name: 'Thêm vị trí' }).click();
+  const addPosition = page.getByRole('dialog', { name: 'Thêm vị trí' });
+  await addPosition.getByRole('button', { name: 'Tùy chọn khác' }).click();
+  await expect(addPosition.getByRole('group', { name: 'Pháp nhân', exact: true })).toBeVisible();
   // Both pickers start on the default entity: the new branch is not chosen in either.
-  const branch = page.getByRole('main').getByRole('checkbox', { name: 'Chi nhánh Đà Nẵng' });
+  const branch = page.getByRole('checkbox', { name: 'Chi nhánh Đà Nẵng' });
   await expect(branch.first()).toBeVisible();
   for (const box of await branch.all()) await expect(box).not.toBeChecked();
   expect(await phoneWidthProblems(page, [`/o/${slug}/agents`])).toEqual([]);
 });
 
-// The Social home's nine tabs at phone width (#1043): they wrap inside the screen, and the page never scrolls sideways.
+// The Social home's tabs at phone width (#1043): they wrap inside the screen, and the page never scrolls sideways.
 // Its own user, created confirmed without the sign-up form, so it draws nothing from the sign-up budget.
 test.describe('at phone width', () => {
   test.use({ viewport: { width: 360, height: 780 } });
@@ -231,9 +240,14 @@ test.describe('at phone width', () => {
     await signInNewUser(page, newEmail('layout-social'));
     const slug = await createOrg(page, 'Công ty Màn hình hẹp');
     await page.goto(`/o/${slug}/social`);
+    // Six status tabs and three views, not ten tabs (#3655); the photo library and the figures are in the tools menu.
     const tabs = page.getByRole('tab');
-    await expect(tabs).toHaveCount(10);
-    await expect(page.getByRole('tab', { name: 'Thư viện ảnh' })).toBeVisible();
+    await expect(tabs).toHaveCount(6);
+    await expect(page.getByRole('button', { name: 'Công cụ' })).toBeVisible();
+    await expect(page.getByRole('group', { name: 'Cách xem bài' }).getByRole('button')).toHaveCount(3);
+    // The header is the tools menu and "Soạn bài", on one row at this width (#3655: no more than two rows on a phone).
+    const header = await Promise.all([page.getByRole('button', { name: 'Công cụ' }), page.getByRole('button', { name: 'Soạn bài' })].map((b) => b.evaluate((el) => el.getBoundingClientRect().top)));
+    expect(Math.abs((header[0] ?? 0) - (header[1] ?? 0))).toBeLessThan(8);
     // Every tab lies inside the screen, without scrolling the page or the tab row.
     for (const box of await tabs.evaluateAll((els) => els.map((el) => el.getBoundingClientRect().toJSON() as { left: number; right: number }))) {
       expect(box.left).toBeGreaterThanOrEqual(0);
@@ -250,12 +264,31 @@ test.describe('at phone width', () => {
     await signInNewUser(page, newEmail('layout-drawer'));
     await createOrg(page, 'Công ty Menu điện thoại');
     const open = page.getByRole('button', { name: 'Mở menu' });
+    // The header (#3588): the menu button and the search are 44px, the search is an icon, and the org's name has room.
+    for (const control of [open, page.getByTestId('phone-search')]) expect((await control.boundingBox())?.height).toBeGreaterThanOrEqual(44);
+    await expect(page.getByTestId('phone-search')).toHaveText('');
     await open.click();
     const drawer = page.getByRole('dialog', { name: 'Menu chính' });
-    await expect(drawer.getByRole('region', { name: 'Trang chủ' }).getByRole('link', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
-    await drawer.getByRole('link', { name: 'Kế toán', exact: true }).click();
+    // The overview shows the rail and no app menu (#3588); the app's menu comes with the app.
+    await expect(drawer.getByRole('link', { name: 'Tài chính', exact: true })).toBeVisible();
+    await expect(drawer.getByRole('link', { name: 'Việc nhóm' })).toHaveCount(0);
+    await drawer.getByRole('link', { name: 'Cộng tác', exact: true }).click();
+    await expect(drawer.getByRole('region', { name: 'Ludy Cộng tác' }).getByRole('link', { name: 'Việc nhóm' })).toBeVisible();
+    await drawer.getByRole('link', { name: 'Tài chính', exact: true }).click();
     await expect(page).toHaveURL(/\/accounting$/);
-    await expect(drawer.getByRole('region', { name: 'Kế toán' }).getByRole('link', { name: 'Sổ sách' })).toBeVisible();
+    await expect(drawer.getByRole('region', { name: 'Sổ sách & Thuế' }).getByRole('link', { name: 'Sổ sách' })).toBeVisible();
+    // The drawer scrolls as one column (#3588): the last group of Tài chính is reachable, and nothing scrolls inside the nav but the nav.
+    const tax = drawer.getByRole('region', { name: 'Sổ sách & Thuế' }).getByRole('link', { name: 'Thuế', exact: true });
+    await tax.scrollIntoViewIfNeeded();
+    await expect(tax).toBeInViewport();
+    const nestedScrollers = await drawer.evaluate(
+      (root) =>
+        [...root.querySelectorAll('*')].filter((el) => {
+          const overflow = getComputedStyle(el).overflowY;
+          return (overflow === 'auto' || overflow === 'scroll') && el.scrollHeight > el.clientHeight + 1;
+        }).length,
+    );
+    expect(nestedScrollers).toBeLessThanOrEqual(1);
     await expect(drawer.getByRole('button', { name: 'Đăng xuất', exact: true })).toBeVisible();
     await drawer.getByRole('link', { name: 'Sổ sách' }).click();
     await expect(page).toHaveURL(/\/ledger$/);

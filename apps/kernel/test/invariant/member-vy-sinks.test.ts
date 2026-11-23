@@ -12,8 +12,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { MEMBER_VY_KNOWN_CONSUMERS, MEMBER_VY_SINKS, kernelCommands } from '@crove/kernel';
-import { meetingsCommands } from '@crove/mod-meetings';
+import { MEMBER_VY_KNOWN_CONSUMERS, MEMBER_VY_SINKS, kernelCommands } from '@ludy/kernel';
+import { meetingsCommands } from '@ludy/mod-meetings';
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 const SCANNED = [...readdirSync(join(ROOT, 'apps')).map((app) => `apps/${app}/src`), 'modules', 'packages'].filter((dir) => existsSync(join(ROOT, dir)));
@@ -36,7 +36,7 @@ const CONSUMER_FILES = ['modules/meetings/src/live-notes.ts', 'modules/meetings/
 // Consumer files and barrel importers whose feature PR has not landed yet (the two-step rule of AGENTS.md: this file, which runs from the base
 // branch, accepts the new file before it exists). A pending path is exempt ONLY while it is absent: the moment the file exists every check below
 // applies to it in full, so the ratchet is unchanged by it. Empty: add an entry only in an invariant-only PR that precedes the change. One path per line, sorted.
-const PENDING_FILES = new Set<string>(['modules/meetings/src/translate.ts']);
+const PENDING_FILES = new Set<string>([]);
 const pending = (path: string): boolean => PENDING_FILES.has(path) && !existsSync(join(ROOT, path));
 const READER_FILES = [...Object.keys(KERNEL_FILES), ...CONSUMER_FILES];
 // The files that import a reader file whose helpers could carry the private rows out (the kernel's internals and the db package import their own files freely).
@@ -65,7 +65,7 @@ const IMPORTERS: Record<string, string[]> = {
 };
 
 // The package entries (barrels) that re-export a reader file, with the files that import them: frozen like the others.
-// Only the meetings entry is listed: the @crove/kernel and @crove/db entries are imported by nearly every file, and what they export of the Vy files is the kernel's own
+// Only the meetings entry is listed: the @ludy/kernel and @ludy/db entries are imported by nearly every file, and what they export of the Vy files is the kernel's own
 // namespaces (member_vy.*, vy_data.*, personal_data.*), which the importers lists above and the namespace check already pin.
 const BARREL_IMPORTERS: Record<string, string[]> = {
   'modules/meetings/src/index.ts': ['apps/kernel/src/kernel.ts', 'apps/kernel/src/media-seal.ts', 'apps/kernel/src/meetings-live-notes.ts', 'apps/kernel/src/meetings-transcribe.ts'],
@@ -223,7 +223,7 @@ function sources(dir: string, inSrc = false): string[] {
 
 const rel = (path: string) => relative(ROOT, path).replace(/\\/g, '/');
 const files = SCANNED.flatMap((dir) => sources(join(ROOT, dir))).map((path) => ({ path: rel(path), abs: path, text: readFileSync(path, 'utf8') }));
-// Workspace packages by name, so an import of '@crove/mod-meetings' or '@crove/kernel/x' resolves to the file it enters (a barrel's importers are not missed).
+// Workspace packages by name, so an import of '@ludy/mod-meetings' or '@ludy/kernel/x' resolves to the file it enters (a barrel's importers are not missed).
 const packageEntries: Record<string, string> = {};
 const packageNames: Record<string, string[]> = {};
 for (const group of ['apps', 'modules', 'packages']) {
@@ -332,6 +332,7 @@ describe('the scan recognizes what it must', () => {
     for (const text of [
       reader,
       `const y = defineCommand<I, O>({ name: 'a.b.d', handler: async (ctx) => { await ctx.trx.selectFrom('crove_kernel.member_vy_result as v').execute(); } });`,
+      `const y2 = defineCommand<I, O>({ name: 'a.b.e', handler: async (ctx) => { await ctx.trx.selectFrom('ludy_kernel.member_vy_result as v').execute(); } });`,
       `const T = 'member_vy_result';`,
       "const t = 'member_vy_' + kind;",
       'const u = `member_vy_${kind}`;',

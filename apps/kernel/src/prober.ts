@@ -1,4 +1,4 @@
-// The `prober` image role (plan §4.13, issues #39 and #151): reads crove_kernel.health() as crove_prober, compares
+// The `prober` image role (plan §4.13, issues #39 and #151): reads ludy_kernel.health() as ludy_prober, compares
 // it with thresholds and notifies on news only (alert-gate.ts): a new or changed problem, a resolved one, and the
 // same problem again every ALERT_REPEAT_MINUTES. Runs once and exits (cron, a scheduler), or repeats with
 // `--every <seconds>` (the Compose profile). `--test-alert` sends a test alert and needs no database, and so does
@@ -17,7 +17,8 @@
 // /auth/v1 proxy at PUBLIC_URL, or PUBLIC_AUTH_URL when Auth is hosted elsewhere, or PROBER_AUTH_URL to name another
 // path), and an `auth` finding goes out after PROBER_AUTH_MISSES failed answers in a row. Before, nobody learned of an
 // Auth outage until a member could not sign in.
-import { createS3Client } from '@crove/kernel-runtime';
+import { createS3Client } from '@ludy/kernel-runtime';
+import { checkEnvPair } from '@ludy/db';
 import pg from 'pg';
 import { z } from 'zod';
 import { isHostedSupabase, modulesSetting } from './config.ts';
@@ -48,7 +49,7 @@ const unsetWhenBlank = (value: unknown) => (typeof value === 'string' && value.t
 const seconds = (fallback: number) => z.preprocess(unsetWhenBlank, z.coerce.number().int().min(0).max(604_800).default(fallback));
 
 const schema = z.object({
-  // Connect as crove_prober (password CROVE_PROBER_DB_PASSWORD, set by `migrate`).
+  // Connect as ludy_prober (password CROVE_PROBER_DB_PASSWORD, set by `migrate`).
   PROBER_DATABASE_URL: optional,
   // ALERT_WEBHOOK_URL, ALERT_WEBHOOK_FORMAT, ALERT_TELEGRAM_CHAT_ID, ALERT_INSTANCE and PUBLIC_URL (alert.ts).
   ...WEBHOOK_ENV,
@@ -100,7 +101,7 @@ const schema = z.object({
   // The modules the deployment runs, the API's and the worker's value (#1894): their queued jobs count in job_age
   // even when no worker records the module, so a module whose workers all stopped still alerts. Unset or empty: every
   // module, as for the API.
-  CROVE_MODULES: modulesSetting,
+  LUDY_MODULES: modulesSetting,
   // Supabase Auth's base URL, ending in /auth/v1 (#1994). Unset: PUBLIC_AUTH_URL, else PUBLIC_URL/auth/v1 (the
   // kernel's proxy, the way the app signs in). With neither, Auth is not checked.
   PROBER_AUTH_URL: optional.pipe(z.url({ protocol: /^https?$/ }).optional()),
@@ -208,7 +209,17 @@ export interface Thresholds {
 }
 
 export function loadProberConfig(env: NodeJS.ProcessEnv = process.env, everySeconds: number | null = null): ProberConfig {
-  const parsed = schema.safeParse(env);
+  const modules = checkEnvPair(env, 'LUDY_MODULES', 'CROVE_MODULES');
+  if (!modules.ok) {
+    throw new Error(`invalid prober configuration: ${modules.error}`);
+  }
+  const normalizedEnv: Record<string, string | undefined> = { ...env };
+  if (modules.value !== undefined) {
+    normalizedEnv.LUDY_MODULES = modules.value;
+  } else {
+    delete normalizedEnv.LUDY_MODULES;
+  }
+  const parsed = schema.safeParse(normalizedEnv);
   if (!parsed.success) {
     const fields = parsed.error.issues.map((i) => i.path.join('.')).join(', ');
     throw new Error(`invalid prober configuration: ${fields}`);
@@ -239,7 +250,7 @@ export function loadProberConfig(env: NodeJS.ProcessEnv = process.env, everySeco
     heartbeatUrl: raw.PROBER_HEARTBEAT_URL,
     backupHeartbeatUrl: raw.BACKUP_HEARTBEAT_URL,
     statusFile: raw.PROBER_STATUS_FILE,
-    modules: raw.CROVE_MODULES,
+    modules: raw.LUDY_MODULES,
     authHealthUrl: authHealthUrl(raw),
     authAnonKey: raw.PUBLIC_AUTH_ANON_KEY,
     authMisses: raw.PROBER_AUTH_MISSES,
@@ -389,7 +400,7 @@ function authHealthUrl(raw: {
 }
 
 /**
- * One row of crove_kernel.health(), plus pg_notification_queue_usage(). Ages in seconds, null when there is nothing
+ * One row of ludy_kernel.health(), plus pg_notification_queue_usage(). Ages in seconds, null when there is nothing
  * to age.
  */
 export interface HealthSnapshot {
@@ -480,7 +491,7 @@ export function evaluateHealth(h: HealthSnapshot, t: Thresholds, deadLetterWindo
     });
   }
   if (!h.jobs_schema_present) {
-    findings.push({ check: 'jobs_schema', value: null, threshold: null, message: 'the job queue schema crove_jobs is missing: run the migrate role' });
+    findings.push({ check: 'jobs_schema', value: null, threshold: null, message: 'the job queue schema ludy_jobs is missing: run the migrate role' });
   }
   if (h.job_oldest_queued_age_seconds !== null && h.job_oldest_queued_age_seconds > t.jobAgeSeconds) {
     findings.push({
@@ -566,8 +577,8 @@ export function evaluateHealth(h: HealthSnapshot, t: Thresholds, deadLetterWindo
 }
 
 /**
- * Reads crove_kernel.health() over its own short-lived connection. Refuses a privileged login. `modules`, the modules
- * the deployment runs, reach health() as the session setting crove.prober_modules: their queues count in the job age
+ * Reads ludy_kernel.health() over its own short-lived connection. Refuses a privileged login. `modules`, the modules
+ * the deployment runs, reach health() as the session setting ludy.prober_modules: their queues count in the job age
  * whatever the workers record (#1894).
  */
 export async function readHealth(databaseUrl: string, deadLetterWindowSeconds: number, modules: readonly string[] = [], extractionWindowSeconds = 3600): Promise<HealthSnapshot> {
@@ -584,29 +595,29 @@ export async function readHealth(databaseUrl: string, deadLetterWindowSeconds: n
       'SELECT rolname, (rolsuper OR rolbypassrls) AS privileged FROM pg_catalog.pg_roles WHERE rolname = current_user',
     );
     if (who[0]?.privileged) {
-      throw new Error(`refusing to probe as ${who[0].rolname}, a superuser or BYPASSRLS role: connect PROBER_DATABASE_URL as crove_prober`);
+      throw new Error(`refusing to probe as ${who[0].rolname}, a superuser or BYPASSRLS role: connect PROBER_DATABASE_URL as ludy_prober`);
     }
     // One read-only transaction with the setting local to it: a transaction-mode pooler (PgBouncer, Supavisor) keeps
     // both statements on one server connection and leaves nothing set on it (#1894 review).
     await client.query('BEGIN READ ONLY');
-    await client.query(`SELECT pg_catalog.set_config('crove.prober_modules', $1, true)`, [modules.join(',')]);
+    await client.query(`SELECT pg_catalog.set_config('ludy.prober_modules', $1, true)`, [modules.join(',')]);
     const { rows } = await client.query<
       Omit<HealthSnapshot, 'notify_queue_usage' | 'archive_verify_age_seconds' | 'archive_lag_seconds' | 'extraction_service_failures' | 'extraction_document_failures'>
     >(
       `SELECT checked_at::text AS checked_at, outbox_pending, outbox_oldest_age_seconds, inbound_pending, inbound_oldest_age_seconds,
               jobs_schema_present, jobs_queued, job_oldest_queued_age_seconds, dead_letter_count, worker_heartbeat_age_seconds
-       FROM crove_kernel.health($1::int)`,
+       FROM ludy_kernel.health($1::int)`,
       [deadLetterWindowSeconds],
     );
     const row = rows[0];
-    if (!row) throw new Error('crove_kernel.health() returned no row');
+    if (!row) throw new Error('ludy_kernel.health() returned no row');
     // The WORM archive's two ages (#1997), from a function of their own: health()'s columns never change.
     const { rows: archive } = await client.query<Pick<HealthSnapshot, 'archive_verify_age_seconds' | 'archive_lag_seconds'>>(
-      'SELECT archive_verify_age_seconds, archive_lag_seconds FROM crove_kernel.archive_health()',
+      'SELECT archive_verify_age_seconds, archive_lag_seconds FROM ludy_kernel.archive_health()',
     );
     // Failed document readings of the window (#1998), from a function of their own too.
     const { rows: extraction } = await client.query<{ service_failures: number; document_failures: number }>(
-      'SELECT service_failures, document_failures FROM crove_kernel.extraction_health($1::int)',
+      'SELECT service_failures, document_failures FROM ludy_kernel.extraction_health($1::int)',
       [extractionWindowSeconds],
     );
     const { rows: queue } = await client.query<{ usage: number }>('SELECT pg_catalog.pg_notification_queue_usage() AS usage');
@@ -843,7 +854,7 @@ async function probe(config: ProberConfig, deps: ProbeDeps): Promise<{ code: num
   };
 
   if (!config.databaseUrl) {
-    error('[prober] PROBER_DATABASE_URL is not set; connect it as crove_prober');
+    error('[prober] PROBER_DATABASE_URL is not set; connect it as ludy_prober');
     return { code: EXIT.probeFailed, failing: null, at: null };
   }
   // Supabase Auth first (#1994): its own short timeout, and counted even when the database turns out unreadable.
@@ -880,8 +891,8 @@ async function probe(config: ProberConfig, deps: ProbeDeps): Promise<{ code: num
     // cannot be kept in the database, so the in-process gate de-duplicates it.
     // One line: a driver message with a line break could otherwise start a Markdown heading or quote in a chat.
     const reason = (e instanceof Error ? e.message : String(e)).replace(/\s+/g, ' ').trim();
-    error(`[prober] FAIL probe: could not read crove_kernel.health(): ${reason}`);
-    const findings: Finding[] = [{ check: 'probe', value: null, threshold: null, message: `the prober could not read crove_kernel.health(): ${reason}` }];
+    error(`[prober] FAIL probe: could not read ludy_kernel.health(): ${reason}`);
+    const findings: Finding[] = [{ check: 'probe', value: null, threshold: null, message: `the prober could not read ludy_kernel.health(): ${reason}` }];
     const result = await outage.decide('probe', now);
     const sent = (await notify(outage, result, notification(result, { instance: config.instance, at }, findings))) && markerDelivered;
     return { code: sent ? EXIT.probeFailed : EXIT.deliveryFailed, failing: null, at: now };

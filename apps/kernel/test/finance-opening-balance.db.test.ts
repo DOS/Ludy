@@ -9,12 +9,12 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { normalizeStatementAmount } from '@crove/kernel-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries, OPENING_BALANCE_SOURCE } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { normalizeStatementAmount } from '@ludy/kernel-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { Runtime, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries, OPENING_BALANCE_SOURCE } from '@ludy/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -115,12 +115,12 @@ suite('opening balances from Excel (#320)', () => {
     await admin(async (c) => {
       await c.query('BEGIN');
       const { rows } = await c.query<{ id: string }>(
-        `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, $2, 'Bán hàng', 'test.sale', $3) RETURNING id`,
+        `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, $2, 'Bán hàng', 'test.sale', $3) RETURNING id`,
         [orgId, entryDate, randomUUID()],
       );
       const id = rows[0]?.id;
       await c.query(
-        `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '111', 500, 0), ($1, $2, 2, '511', 0, 500)`,
+        `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '111', 500, 0), ($1, $2, 2, '511', 0, 500)`,
         [orgId, id],
       );
       await c.query('COMMIT');
@@ -136,9 +136,9 @@ suite('opening balances from Excel (#320)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 6 });
     db = createDb(pool);
@@ -205,7 +205,7 @@ suite('opening balances from Excel (#320)', () => {
     ]);
     // Members and viewers do not post, so they do not preview either.
     expect(await rpc('openingBalance/preview', await tokenFor(member), balanced('2025-12-31'))).toMatchObject({ status: 403, body: { code: 'FORBIDDEN' } });
-    expect(await admin((c) => c.query('SELECT count(*)::int AS n FROM crove_finance.journal_entry WHERE org_id = $1', [org.orgId]))).toMatchObject({
+    expect(await admin((c) => c.query('SELECT count(*)::int AS n FROM ludy_finance.journal_entry WHERE org_id = $1', [org.orgId]))).toMatchObject({
       rows: [{ n: 0 }],
     });
   });
@@ -247,7 +247,7 @@ suite('opening balances from Excel (#320)', () => {
       ],
     });
     const audit = await admin((c) =>
-      c.query(`SELECT outcome, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.opening_balance.post' AND outcome = 'ok'`, [org.orgId]),
+      c.query(`SELECT outcome, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.opening_balance.post' AND outcome = 'ok'`, [org.orgId]),
     );
     expect(audit.rows).toEqual([
       expect.objectContaining({ detail: expect.objectContaining({ as_of: '2025-12-31', lines: 3, total_debit: '100000000', aal: 'aal2' }) }),
@@ -317,7 +317,7 @@ suite('opening balances from Excel (#320)', () => {
     expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
     expect(results.find((r) => r.status === 'rejected')).toMatchObject({ reason: { code: 'OPENING_BALANCE_EXISTS' } });
     const { rows } = await admin((c) =>
-      c.query('SELECT count(*)::int AS n FROM crove_finance.journal_entry WHERE org_id = $1 AND source_type = $2', [orgId, OPENING_BALANCE_SOURCE]),
+      c.query('SELECT count(*)::int AS n FROM ludy_finance.journal_entry WHERE org_id = $1 AND source_type = $2', [orgId, OPENING_BALANCE_SOURCE]),
     );
     expect(rows).toEqual([{ n: 1 }]);
   });
@@ -347,11 +347,11 @@ suite('opening balances from Excel (#320)', () => {
       await c.query('BEGIN');
       try {
         const { rows } = await c.query<{ id: string }>(
-          `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, $2, 'Thử', $3, $4) RETURNING id`,
+          `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, $2, 'Thử', $3, $4) RETURNING id`,
           [orgId, entryDate, sourceType, randomUUID()],
         );
         await c.query(
-          `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '111', 500, 0), ($1, $2, 2, '411', 0, 500)`,
+          `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '111', 500, 0), ($1, $2, 2, '411', 0, 500)`,
           [orgId, rows[0]?.id],
         );
         await c.query('COMMIT');
@@ -392,8 +392,8 @@ suite('opening balances from Excel (#320)', () => {
     const opening = await admin(async (c) =>
       (
         await c.query<{ id: string }>(
-          `SELECT id FROM crove_finance.journal_entry o WHERE org_id = $1 AND source_type = $2
-           AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry r WHERE r.org_id = o.org_id AND r.reverses_entry_id = o.id)`,
+          `SELECT id FROM ludy_finance.journal_entry o WHERE org_id = $1 AND source_type = $2
+           AND NOT EXISTS (SELECT 1 FROM ludy_finance.journal_entry r WHERE r.org_id = o.org_id AND r.reverses_entry_id = o.id)`,
           [org.orgId, OPENING_BALANCE_SOURCE],
         )
       ).rows[0]?.id,
@@ -401,7 +401,7 @@ suite('opening balances from Excel (#320)', () => {
     const earlyReversal = await admin(async (c) =>
       c
         .query(
-          `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, reverses_entry_id) VALUES ($1, '2025-12-30', 'Đảo', 'kernel.proposal', $2, $3)`,
+          `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, reverses_entry_id) VALUES ($1, '2025-12-30', 'Đảo', 'kernel.proposal', $2, $3)`,
           [org.orgId, randomUUID(), opening],
         )
         .then(
@@ -456,11 +456,11 @@ suite('opening balances from Excel (#320)', () => {
       await client.connect();
       await client.query('BEGIN');
       const { rows } = await client.query<{ id: string }>(
-        `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, $2, 'Thử', $3, $4) RETURNING id`,
+        `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, $2, 'Thử', $3, $4) RETURNING id`,
         [orgId, entryDate, sourceType, randomUUID()],
       );
       await client.query(
-        `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '111', 500, 0), ($1, $2, 2, '411', 0, 500)`,
+        `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '111', 500, 0), ($1, $2, 2, '411', 0, 500)`,
         [orgId, rows[0]?.id],
       );
       return client;
@@ -490,7 +490,7 @@ suite('opening balances from Excel (#320)', () => {
     }
     const { rows } = await admin((c) =>
       c.query<{ entry_date: string; source_type: string }>(
-        `SELECT entry_date::text, source_type FROM crove_finance.journal_entry WHERE org_id = $1 ORDER BY entry_date, source_type`,
+        `SELECT entry_date::text, source_type FROM ludy_finance.journal_entry WHERE org_id = $1 ORDER BY entry_date, source_type`,
         [orgId],
       ),
     );
@@ -506,7 +506,7 @@ suite('opening balances from Excel (#320)', () => {
     const orgId = String(fresh.body?.orgId);
     // A vendor already in the books is reused by its tax code; the others are created. Fake tax codes only.
     const known = randomUUID();
-    await admin((c) => c.query(`INSERT INTO crove_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Nhà cung cấp Cũ', '0312345670')`, [orgId, known]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Nhà cung cấp Cũ', '0312345670')`, [orgId, known]));
     const party = (accountCode: string, debit: string, credit: string, partyTaxCode: string, partyName: string) => ({
       ...row(accountCode, debit, credit),
       ...(partyTaxCode ? { partyTaxCode } : {}),
@@ -527,7 +527,7 @@ suite('opening balances from Excel (#320)', () => {
     // A party on another account is refused, and nothing is created while the sheet is refused.
     const refused = await post(owner, { ...input, rows: [...input.rows.slice(0, -1), party('411', '', '112000000', '0309876546', '')] }, slug);
     expect(refused).toMatchObject({ status: 422, body: { code: 'OPENING_BALANCE_INVALID' } });
-    expect((await admin((c) => c.query('SELECT count(*)::int AS n FROM crove_kernel.party WHERE org_id = $1', [orgId]))).rows[0].n).toBe(1);
+    expect((await admin((c) => c.query('SELECT count(*)::int AS n FROM ludy_kernel.party WHERE org_id = $1', [orgId]))).rows[0].n).toBe(1);
 
     const preview = await rpc('openingBalance/preview', await tokenFor(owner), input, slug);
     expect(preview.body).toMatchObject({ ok: true, lines: 6 });
@@ -543,7 +543,7 @@ suite('opening balances from Excel (#320)', () => {
     expect(posted).toMatchObject({ status: 200, body: { lines: 6 } });
 
     const parties = await admin(
-      async (c) => (await c.query<{ id: string; name: string; tax_code: string | null }>('SELECT id, name, tax_code FROM crove_kernel.party WHERE org_id = $1 ORDER BY name', [orgId])).rows,
+      async (c) => (await c.query<{ id: string; name: string; tax_code: string | null }>('SELECT id, name, tax_code FROM ludy_kernel.party WHERE org_id = $1 ORDER BY name', [orgId])).rows,
     );
     expect(parties.map((p) => [p.name, p.tax_code])).toEqual([
       ['Công ty Khách A', '0101234564'],
@@ -553,7 +553,7 @@ suite('opening balances from Excel (#320)', () => {
     const idOf = (name: string) => parties.find((p) => p.name === name)?.id;
     const lines = await admin(
       async (c) =>
-        (await c.query('SELECT account_code, party_id, debit::text, credit::text FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY line_no', [orgId, posted.body.journalEntryId]))
+        (await c.query('SELECT account_code, party_id, debit::text, credit::text FROM ludy_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY line_no', [orgId, posted.body.journalEntryId]))
           .rows,
     );
     expect(lines.map((l) => [l.account_code, l.party_id])).toEqual([
@@ -564,7 +564,7 @@ suite('opening balances from Excel (#320)', () => {
       ['331', known],
       ['411', null],
     ]);
-    const audit = await admin((c) => c.query(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.opening_balance.post' AND outcome = 'ok'`, [orgId]));
+    const audit = await admin((c) => c.query(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.opening_balance.post' AND outcome = 'ok'`, [orgId]));
     expect(audit.rows[0].detail).toMatchObject({ lines: 6, parties: 3 });
 
     // The receivables and payables report of the next month opens with each party's balance and the unallocated rest.
@@ -601,7 +601,7 @@ suite('opening balances from Excel (#320)', () => {
       slug,
     );
     expect(imported.status).toBe(200);
-    const [line] = (await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_finance.bank_line WHERE org_id = $1', [orgId]))).rows;
+    const [line] = (await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_finance.bank_line WHERE org_id = $1', [orgId]))).rows;
     const suggested = await rpc('bank/lineVoucher', await tokenFor(owner), { bankLineId: line?.id }, slug);
     expect(suggested.body).toMatchObject({ voucher: { counterAccount: '331', amount: '25000000' }, suggested: { party: { id: known }, reason: 'balance' } });
   });

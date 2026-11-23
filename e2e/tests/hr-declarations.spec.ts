@@ -71,7 +71,7 @@ test('an owner records the identifiers, reads each declaration list with its lay
     expect(await page.evaluate(() => (window as unknown as { printed: number }).printed)).toBe(1);
     // The view the print comes from left the same audit row a file leaves (counts only), written by the server.
     const rows = sql<{ via: string; kind: string }>(
-      `SELECT a.detail->>'via' AS via, a.detail->>'kind' AS kind FROM crove_kernel.audit_event a JOIN crove_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug' AND a.command = 'hr.payroll.declaration.export' AND a.outcome = 'ok'`,
+      `SELECT a.detail->>'via' AS via, a.detail->>'kind' AS kind FROM ludy_kernel.audit_event a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug' AND a.command = 'hr.payroll.declaration.export' AND a.outcome = 'ok'`,
       { slug },
     );
     expect(rows.length).toBeGreaterThan(0);
@@ -80,7 +80,7 @@ test('an owner records the identifiers, reads each declaration list with its lay
 
   await test.step('each kind opens with its own layout version', async () => {
     for (const [kind, version, row] of [
-      ['d02lt', 'ludy-hr-d02lt/1', 'dòng 9'],
+      ['d02lt', 'ludy-hr-d02lt/2', 'dòng 9'],
       ['qtt', 'ludy-hr-05qtt/1', 'dòng 14'],
       ['certificate', 'ludy-hr-03tncn/1', 'dòng 15'],
     ] as const) {
@@ -98,7 +98,7 @@ test('an owner records the identifiers, reads each declaration list with its lay
   });
 
   await test.step('the route refuses a request with no sign-in', async () => {
-    const response = await page.context().request.get(`/api/payroll-export/kk.xlsx?period=2026-Q3`, { headers: { 'x-crove-org': slug } });
+    const response = await page.context().request.get(`/api/payroll-export/kk.xlsx?period=2026-Q3`, { headers: { 'x-ludy-org': slug } });
     expect(response.status()).toBe(401);
   });
 });

@@ -1,7 +1,7 @@
 // Ledger reports for a period (issue #321), as pure functions over posted journal lines:
 // - the trial balance (bảng cân đối số phát sinh, form F01-DNN of Circular 133/2016/TT-BTC): per account the opening
 //   balance, the period's debits and credits and the closing balance, each sub-account rolled up into its parent
-//   along the chart (crove_finance.account.parent_code);
+//   along the chart (ludy_finance.account.parent_code);
 // - the general ledger of an account (sổ cái, sổ chi tiết tài khoản): the opening balance, every line of the period on
 //   the account or its sub-accounts with the accounts on the other side of the entry, and the running balance;
 // - receivables and payables per party (sổ chi tiết thanh toán với người mua, người bán: 131 and 331): opening
@@ -17,8 +17,8 @@
 // credit balances of the vendors still owed, not a smaller credit balance. Other accounts show their net balance.
 //
 // Amounts are decimal strings; arithmetic goes through decimal.js, never JS numbers.
-import { LEDGER_PERIOD_PATTERN } from '@crove/kernel-contract';
-import { money, type DecimalValue, type Money } from '@crove/l10n-vn';
+import { LEDGER_PERIOD_PATTERN } from '@ludy/kernel-contract';
+import { money, type DecimalValue, type Money } from '@ludy/l10n-vn';
 import { canonical, parseDecimal } from './money.ts';
 import { vatPeriod } from './vat-return.ts';
 
@@ -139,7 +139,7 @@ function toMoney(a: Amounts): TrialBalanceAmounts {
 // hold every account a line names: the TT133 accounts and the org's sub-accounts (#319), whose parent_code makes them
 // roll up. An account missing from it (the database refuses such a line) would be its own top. A cycle (also
 // impossible) stops at the first repeat.
-class Chart {
+export class Chart {
   readonly byCode: ReadonlyMap<string, ChartAccount>;
   constructor(accounts: ReadonlyArray<ChartAccount>) {
     this.byCode = new Map(accounts.map((a) => [a.code, a]));

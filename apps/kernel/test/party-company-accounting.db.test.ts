@@ -7,13 +7,13 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { PARTY_KIND_HOLDERS, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { Party } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
-import { crmCommands, crmQueries } from '@crove/mod-crm';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { PARTY_KIND_HOLDERS, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { Party } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
+import { crmCommands, crmQueries } from '@ludy/mod-crm';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -47,13 +47,13 @@ suite('the company of a person and the accounting (#2438)', () => {
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const member = await identity('member');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]));
     return { orgId, owner, member };
   }
   const execute = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.execute<T>(name, input, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
   const query = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.query<T>(name, input, { actor: asUser(user), orgId: o.orgId });
   const create = (o: Org, input: Record<string, unknown>) => execute<{ partyId: string; version: number }>(o, 'kernel.party.create', input);
-  const partiesWithTax = async (o: Org, taxCode: string) => admin(async (c) => (await c.query<{ id: string; company_id: string | null }>('SELECT id, company_id FROM crove_kernel.party WHERE org_id = $1 AND tax_code = $2', [o.orgId, taxCode])).rows);
+  const partiesWithTax = async (o: Org, taxCode: string) => admin(async (c) => (await c.query<{ id: string; company_id: string | null }>('SELECT id, company_id FROM ludy_kernel.party WHERE org_id = $1 AND tax_code = $2', [o.orgId, taxCode])).rows);
   // The opening balances: a receivable of the customer company, a payable of the vendor, and cash that balances them.
   const books = (o: Org) =>
     execute(o, 'finance.opening_balance.post', {
@@ -75,9 +75,9 @@ suite('the company of a person and the accounting (#2438)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -110,7 +110,7 @@ suite('the company of a person and the accounting (#2438)', () => {
     await books(plain);
     expect(await partiesWithTax(linked, CUSTOMER_TAX_CODE)).toEqual([{ id: company, company_id: null }]);
     expect((await partiesWithTax(plain, CUSTOMER_TAX_CODE)).length).toBe(1);
-    expect((await admin((c) => c.query<{ company_id: string | null }>('SELECT company_id FROM crove_kernel.party WHERE id = $1', [lan.partyId]))).rows[0]?.company_id).toBe(company);
+    expect((await admin((c) => c.query<{ company_id: string | null }>('SELECT company_id FROM ludy_kernel.party WHERE id = $1', [lan.partyId]))).rows[0]?.company_id).toBe(company);
     // The reads answer the same: the same parties, the same fields, no field of the link, and the person is no customer or vendor for having a company.
     const customers = async (o: Org) => (await query<{ items: Array<Record<string, unknown>> }>(o, 'finance.customers.list', {})).items;
     const vendors = async (o: Org, all: boolean) => query<Party[]>(o, 'finance.vendors.list', { all });
@@ -139,7 +139,7 @@ suite('the company of a person and the accounting (#2438)', () => {
     const o = await org();
     await books(o);
     const booked = (await partiesWithTax(o, CUSTOMER_TAX_CODE))[0]?.id as string;
-    const bookedVersion = Number((await admin((c) => c.query<{ version: number }>('SELECT version FROM crove_kernel.party WHERE id = $1', [booked]))).rows[0]?.version);
+    const bookedVersion = Number((await admin((c) => c.query<{ version: number }>('SELECT version FROM ludy_kernel.party WHERE id = $1', [booked]))).rows[0]?.version);
     const rename = (partyId: string, version: number, kind: 'person' | 'organization', name = 'Tên mới') =>
       execute<{ partyId: string; version: number }>(o, 'kernel.party.update', { partyId, version, name, taxCode: null, address: null, email: null, phone: null, kind });
     // The booked company has a receivable: it stays a company. (The tax code stays: it cannot be removed, so the call keeps it.)
@@ -148,10 +148,10 @@ suite('the company of a person and the accounting (#2438)', () => {
     const fresh = await create(o, { kind: 'organization', name: 'Người nhập nhầm là công ty' });
     const FRESH = 'Người nhập nhầm là công ty';
     const asPerson = await rename(fresh.partyId, fresh.version, 'person', FRESH);
-    expect((await admin((c) => c.query<{ kind: string }>('SELECT kind FROM crove_kernel.party WHERE id = $1', [fresh.partyId]))).rows[0]?.kind).toBe('person');
+    expect((await admin((c) => c.query<{ kind: string }>('SELECT kind FROM ludy_kernel.party WHERE id = $1', [fresh.partyId]))).rows[0]?.kind).toBe('person');
     const back = await rename(fresh.partyId, asPerson.version, 'organization', FRESH);
     expect(back.version).toBe(asPerson.version + 1);
-    const audit = (await admin((c) => c.query<{ detail: { changed?: string[] } }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.party.update' AND outcome = 'ok' AND detail ->> 'partyId' = $2 ORDER BY id", [o.orgId, fresh.partyId]))).rows;
+    const audit = (await admin((c) => c.query<{ detail: { changed?: string[] } }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.party.update' AND outcome = 'ok' AND detail ->> 'partyId' = $2 ORDER BY id", [o.orgId, fresh.partyId]))).rows;
     expect(audit.map((r) => r.detail.changed)).toEqual([['kind'], ['kind']]);
     // A company people work at stays a company; a person with a company clears the link before becoming a company.
     const person = await create(o, { kind: 'person', name: 'Bình Lê' });
@@ -170,13 +170,13 @@ suite('the company of a person and the accounting (#2438)', () => {
     // An accountant limited to a branch: the books of the default entity are not theirs to see, so "nothing points at it" is not theirs to say.
     const accountant = await identity('accountant');
     await admin(async (c) => {
-      const branch = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [o.orgId, o.owner])).rows[0]?.id;
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [o.orgId, accountant]);
-      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [o.orgId, accountant, branch, o.owner]);
+      const branch = (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [o.orgId, o.owner])).rows[0]?.id;
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [o.orgId, accountant]);
+      await c.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [o.orgId, accountant, branch, o.owner]);
     });
     const edit = (partyId: string, version: number, kind: 'person' | 'organization', name: string, user: string) =>
       execute<{ partyId: string; version: number }>(o, 'kernel.party.update', { partyId, version, name, taxCode: null, address: null, email: null, phone: null, kind }, user);
-    const version = async (partyId: string) => Number((await admin((c) => c.query<{ version: number }>('SELECT version FROM crove_kernel.party WHERE id = $1', [partyId]))).rows[0]?.version);
+    const version = async (partyId: string) => Number((await admin((c) => c.query<{ version: number }>('SELECT version FROM ludy_kernel.party WHERE id = $1', [partyId]))).rows[0]?.version);
     await expect(edit(fresh.partyId, fresh.version, 'person', 'Công ty nhập nhầm', accountant)).rejects.toMatchObject({ code: 'PARTY_KIND_SCOPE', status: 403 });
     // A member who sees every entity but is neither owner nor admin cannot read every conversation (a private message is for owners and admins), so the
     // check could miss a thread that names the party: the change is theirs to ask an owner for.
@@ -213,7 +213,7 @@ suite('the company of a person and the accounting (#2438)', () => {
     const binh = await create(o, { kind: 'person', name: 'Bình Lê' });
     await execute(o, 'kernel.party.set_company', { partyId: lan.partyId, companyId: company.partyId, version: lan.version });
     await execute(o, 'kernel.party.set_company', { partyId: binh.partyId, companyId: company.partyId, version: binh.version });
-    const companyOf = async (partyId: string) => (await admin((c) => c.query<{ company_id: string | null }>('SELECT company_id FROM crove_kernel.party WHERE id = $1', [partyId]))).rows[0]?.company_id;
+    const companyOf = async (partyId: string) => (await admin((c) => c.query<{ company_id: string | null }>('SELECT company_id FROM ludy_kernel.party WHERE id = $1', [partyId]))).rows[0]?.company_id;
     // An erasure is irreversible (R3): it needs a session of the owner.
     const erase = (value: string) => rt.execute('kernel.personal_data.erase', { value }, { actor: { ...asUser(o.owner), sessionId: randomUUID() }, orgId: o.orgId, idempotencyKey: randomUUID() });
     // Erasing the company by its email (it has no document, so it is forgotten): both people are no one's staff of it any more.
@@ -221,7 +221,7 @@ suite('the company of a person and the accounting (#2438)', () => {
     expect(await companyOf(lan.partyId)).toBeNull();
     expect(await companyOf(binh.partyId)).toBeNull();
     // The two people the bulk clear unlinked are counted: the company had no link of its own.
-    expect(forgotten.erased).toContainEqual({ column: 'crove_kernel.party.company_id', rows: 2 });
+    expect(forgotten.erased).toContainEqual({ column: 'ludy_kernel.party.company_id', rows: 2 });
     // Erasing a person with a company (undocumented) clears their own link too.
     const another = await create(o, { kind: 'organization', name: 'Công ty khác' });
     const mai = await create(o, { kind: 'person', name: 'Mai Phạm', email: 'mai-pham@example.test' });
@@ -239,8 +239,8 @@ suite('the company of a person and the accounting (#2438)', () => {
     // A line of the ledger names the person (a receivable), so the books keep their place and their name.
     await admin(async (c) => {
       await c.query('BEGIN');
-      const entry = (await c.query<{ id: string }>("INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, current_date, 'Bán hàng', 'test.sale', $2) RETURNING id", [o.orgId, randomUUID()])).rows[0]?.id;
-      await c.query("INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, 1, '131', 500000, 0, $3), ($1, $2, 2, '511', 0, 500000, NULL)", [o.orgId, entry, hoa.partyId]);
+      const entry = (await c.query<{ id: string }>("INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, current_date, 'Bán hàng', 'test.sale', $2) RETURNING id", [o.orgId, randomUUID()])).rows[0]?.id;
+      await c.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, 1, '131', 500000, 0, $3), ($1, $2, 2, '511', 0, 500000, NULL)", [o.orgId, entry, hoa.partyId]);
       await c.query('COMMIT');
     });
     const erased = await rt.execute<{ erased: Array<{ column: string; rows: number }>; kept: Array<{ column: string }> }>(
@@ -248,25 +248,30 @@ suite('the company of a person and the accounting (#2438)', () => {
       { value: 'hoa-chung-tu@example.test' },
       { actor: { ...asUser(o.owner), sessionId: randomUUID() }, orgId: o.orgId, idempotencyKey: randomUUID() },
     );
-    const row = (await admin((c) => c.query<{ name: string; company_id: string | null; email: string | null }>('SELECT name, company_id, email FROM crove_kernel.party WHERE id = $1', [hoa.partyId]))).rows[0];
+    const row = (await admin((c) => c.query<{ name: string; company_id: string | null; email: string | null }>('SELECT name, company_id, email FROM ludy_kernel.party WHERE id = $1', [hoa.partyId]))).rows[0];
     // The books keep the name; the employer and the contact details go.
     expect(row).toEqual({ name: 'Hoa Nguyễn', company_id: null, email: null });
-    expect(erased.erased).toContainEqual({ column: 'crove_kernel.party.company_id', rows: 1 });
-    expect(erased.erased).toContainEqual({ column: 'crove_kernel.party.email', rows: 1 });
-    expect(erased.erased.map((e) => e.column)).not.toContain('crove_kernel.party.name');
+    expect(erased.erased).toContainEqual({ column: 'ludy_kernel.party.company_id', rows: 1 });
+    expect(erased.erased).toContainEqual({ column: 'ludy_kernel.party.email', rows: 1 });
+    expect(erased.erased.map((e) => e.column)).not.toContain('ludy_kernel.party.name');
   });
 
   it('knows every table that points at a party: each foreign key to party either holds its kind or is listed as not reading it', async () => {
     // A table added later with a foreign key to party fails here until it is put on one side: PARTY_KIND_HOLDERS (the rows that pin a party's kind) or this list.
     // A sales e-invoice draft keeps its own buyer kind and details (#2500): the party it was picked from is only where the details came from, and a removed one leaves them.
     const NOT_READING_THE_KIND = [
-      'crove_notes.link.party_id',
-      'crove_crm.import_row.match_party_id',
-      'crove_crm.import_row.company_party_id',
-      'crove_finance.customer_collection.party_id',
-      'crove_finance.einvoice_draft.buyer_party_id',
+      'ludy_notes.link.party_id',
+      'ludy_crm.import_row.match_party_id',
+      'ludy_crm.import_row.company_party_id',
+      'ludy_finance.customer_collection.party_id',
+      'ludy_finance.einvoice_draft.buyer_party_id',
       // A meeting's link to a contact (L1, #2587) only names the party: a person or a company both link.
-      'crove_meetings.meeting_link.party_id',
+      'ludy_meetings.meeting_link.party_id',
+      // A supplier's bank account and its change history (#3113 S1) only name the supplier: no command reads the party's kind, and the sealed number and holder are shredded by the supplier's subject key, not by its kind.
+      'ludy_finance.supplier_bank_account.party_id',
+      'ludy_finance.supplier_bank_account_change.party_id',
+      // A supplier payment (#3113 S2) only names the supplier it pays: no command reads the party's kind, and the account it pins carries the sealed number.
+      'ludy_finance.supplier_payment.party_id',
     ];
     const { rows } = await admin((c) =>
       c.query<{ ref: string }>(
@@ -276,7 +281,7 @@ suite('the company of a person and the accounting (#2438)', () => {
            JOIN pg_namespace n ON n.oid = c.relnamespace
            JOIN LATERAL unnest(k.conkey) AS u (attnum) ON true
            JOIN pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = u.attnum
-          WHERE k.contype = 'f' AND k.confrelid = 'crove_kernel.party'::regclass AND a.attname <> 'org_id'`,
+          WHERE k.contype = 'f' AND k.confrelid = 'ludy_kernel.party'::regclass AND a.attname <> 'org_id'`,
       ),
     );
     const holders = PARTY_KIND_HOLDERS.map(([table, column]) => `${table}.${column}`);
@@ -285,7 +290,7 @@ suite('the company of a person and the accounting (#2438)', () => {
     expect(holders.filter((h) => NOT_READING_THE_KIND.includes(h))).toEqual([]);
     // Everything listed as pinning the kind exists (a renamed column fails here and in the kind-change test), but the ledger line has no foreign key: it is the one
     // holder the catalog cannot show.
-    expect(holders.filter((h) => !rows.some((r) => r.ref === h))).toEqual(['crove_finance.journal_line.party_id']);
+    expect(holders.filter((h) => !rows.some((r) => r.ref === h))).toEqual(['ludy_finance.journal_line.party_id']);
   });
 
   it('refuses a company the writer cannot see, as the legal-entity policy to come on party will hide one (#1538)', async () => {
@@ -295,12 +300,12 @@ suite('the company of a person and the accounting (#2438)', () => {
     const visible = await create(o, { kind: 'organization', name: 'Công ty thấy được' });
     // The guard trigger and the command both read party as the writer, so a row the writer's policies hide is a company they cannot name. A restrictive policy
     // on party stands in for the one #1538 will add.
-    await admin((c) => c.query(`CREATE POLICY test_hide_company ON crove_kernel.party AS RESTRICTIVE FOR SELECT TO crove_tenant USING (id <> '${hidden.partyId}'::uuid)`));
+    await admin((c) => c.query(`CREATE POLICY test_hide_company ON ludy_kernel.party AS RESTRICTIVE FOR SELECT TO ludy_tenant USING (id <> '${hidden.partyId}'::uuid)`));
     try {
       await expect(execute(o, 'kernel.party.set_company', { partyId: lan.partyId, companyId: hidden.partyId, version: lan.version }, o.member)).rejects.toMatchObject({ code: 'PARTY_NOT_FOUND', status: 404 });
       await execute(o, 'kernel.party.set_company', { partyId: lan.partyId, companyId: visible.partyId, version: lan.version }, o.member);
     } finally {
-      await admin((c) => c.query('DROP POLICY IF EXISTS test_hide_company ON crove_kernel.party'));
+      await admin((c) => c.query('DROP POLICY IF EXISTS test_hide_company ON ludy_kernel.party'));
     }
   });
 });

@@ -15,13 +15,14 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, createRawPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -36,6 +37,7 @@ interface Row {
 suite('activity rows of one legal entity whose record names none (#1725, #1728)', () => {
   const dbName = `crove_test_activity_entity_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appPool: pg.Pool;
   let kyselyPool: pg.Pool;
   let runtime: Runtime;
@@ -49,7 +51,7 @@ suite('activity rows of one legal entity whose record names none (#1725, #1728)'
   const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = createDbClient({ connectionString: adminUrl }, dbIds);
     await client.connect();
     try {
       return await fn(client);
@@ -59,7 +61,7 @@ suite('activity rows of one legal entity whose record names none (#1725, #1728)'
   }
   const login = (user: string, password: string) => {
     const url = new URL(adminUrl);
-    url.username = user;
+    url.username = dbIds ? dbIds.roleName(user) : user;
     url.password = password;
     return url.toString();
   };
@@ -111,9 +113,10 @@ suite('activity rows of one legal entity whose record names none (#1725, #1728)'
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    appPool = new pg.Pool({ connectionString: login('crove_app', 'test-app-pw'), max: 3 });
-    kyselyPool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 3 });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
+    appPool = createRawPool({ connectionString: login('crove_app', 'test-app-pw'), max: 3 }, dbIds);
+    kyselyPool = createDbPool({ connectionString: login('crove_app', 'test-app-pw'), max: 3 }, dbIds);
     const db = createDb(kyselyPool);
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
       commands: [...kernelCommands, ...financeCommands],

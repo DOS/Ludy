@@ -7,12 +7,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { Note, NoteRecordPanel, NoteSummary, NoteWritten, NotesExport, TodoWritten } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
-import { notesCommands, notesQueries } from '@crove/mod-notes';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { Note, NoteRecordPanel, NoteSummary, NoteWritten, NotesExport, TodoWritten } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
+import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { sweepNotesFormerMembers } from '../src/notes-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -54,8 +54,8 @@ suite('notes on PostgreSQL (#1671)', () => {
     const { orgId } = await createOrg(app, asUser(owner), `Ghi chú ${tag}`);
     const party = randomUUID();
     await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, author, other, viewer]);
-      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Khách')`, [orgId, party]);
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, author, other, viewer]);
+      await c.query(`INSERT INTO ludy_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Khách')`, [orgId, party]);
     });
     const exec = <O>(userId: string, name: string, input: unknown = {}) => app.execute<O>(name, input, { actor: asUser(userId), orgId });
     const query = <O>(userId: string, name: string, input: unknown = {}) => app.query<O>(name, input, { actor: asUser(userId), orgId });
@@ -69,7 +69,7 @@ suite('notes on PostgreSQL (#1671)', () => {
       async (c) =>
         (
           await c.query<{ id: string }>(
-            `SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.member.removed' AND payload ->> 'userId' = $2 ORDER BY id DESC LIMIT 1`,
+            `SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.member.removed' AND payload ->> 'userId' = $2 ORDER BY id DESC LIMIT 1`,
             [orgId, userId],
           )
         ).rows[0]?.id as string,
@@ -81,7 +81,7 @@ suite('notes on PostgreSQL (#1671)', () => {
     admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '31 days' WHERE org_id = $1 AND command = 'kernel.member.remove' AND target_id = $2`, [
+      await c.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '31 days' WHERE org_id = $1 AND command = 'kernel.member.remove' AND target_id = $2`, [
         orgId,
         userId,
       ]);
@@ -105,7 +105,7 @@ suite('notes on PostgreSQL (#1671)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const runtimeFor = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
@@ -114,8 +114,8 @@ suite('notes on PostgreSQL (#1671)', () => {
       pools.push(pool);
       return new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...notesCommands], queries: [...kernelQueries({ inboundDomain: null }), ...notesQueries] });
     };
-    app = runtimeFor('crove_app', 'test-app-pw');
-    worker = runtimeFor('crove_worker', 'test-worker-pw');
+    app = runtimeFor('ludy_app', 'test-app-pw');
+    worker = runtimeFor('ludy_worker', 'test-worker-pw');
   }, 300_000);
 
   afterAll(async () => {
@@ -146,7 +146,7 @@ suite('notes on PostgreSQL (#1671)', () => {
     expect(await o.list(o.viewer, 'shared')).toEqual([]);
     await expect(o.exec(o.viewer, 'notes.note.create', { title: 'Ghi chú' })).rejects.toMatchObject({ status: 403 });
     // A party's timeline shows the shared note with a fixed summary, never the private one or a title.
-    const activity = await admin((c) => c.query<{ summary: string }>(`SELECT summary FROM crove_kernel.activity WHERE org_id = $1 AND record_id = $2`, [o.orgId, o.party]));
+    const activity = await admin((c) => c.query<{ summary: string }>(`SELECT summary FROM ludy_kernel.activity WHERE org_id = $1 AND record_id = $2`, [o.orgId, o.party]));
     expect(activity.rows).toEqual([{ summary: 'Thêm ghi chú' }]);
   });
 
@@ -155,7 +155,7 @@ suite('notes on PostgreSQL (#1671)', () => {
     const n = await written(o);
     await o.exec(o.author, 'notes.note.update', { noteId: n.priv, revision: 1, title: `${PRIVATE_TITLE} mới`, body: `${PRIVATE_BODY} nữa`, tags: [] });
     const rows = await admin((c) =>
-      c.query<{ command: string; detail: Record<string, unknown> }>(`SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.%' ORDER BY occurred_at, id`, [o.orgId]),
+      c.query<{ command: string; detail: Record<string, unknown> }>(`SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.%' ORDER BY occurred_at, id`, [o.orgId]),
     );
     expect(rows.rows.map((r) => r.command)).toEqual(['notes.note.create', 'notes.note.create', 'notes.note.update']);
     expect(rows.rows[0]?.detail).toMatchObject({ noteId: n.priv, visibility: 'private', title: { redacted: 'pii' }, tags: { redacted: 'pii' } });
@@ -169,7 +169,7 @@ suite('notes on PostgreSQL (#1671)', () => {
     await o.exec(o.author, 'notes.link.add', { noteId: n.priv, targetType: 'kernel.party', targetId: o.party });
     const audits = await admin((c) =>
       c.query<{ command: string; detail: Record<string, unknown> }>(
-        `SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.%' AND detail ->> 'noteId' = $2 ORDER BY occurred_at, id`,
+        `SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.%' AND detail ->> 'noteId' = $2 ORDER BY occurred_at, id`,
         [o.orgId, n.priv],
       ),
     );
@@ -209,7 +209,7 @@ suite('notes on PostgreSQL (#1671)', () => {
     const o = await org();
     const n = await written(o);
     const other = await o.exec<NoteWritten>(o.other, 'notes.note.create', { title: 'Của người khác', visibility: 'org' });
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [o.orgId, o.author]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [o.orgId, o.author]));
     expect((await o.list(o.author, 'mine')).sort()).toEqual([n.priv, n.shared].sort());
     expect(await o.list(o.author, 'shared')).toEqual([n.shared]);
     await expect(o.query(o.author, 'notes.note.get', { noteId: other.noteId })).rejects.toMatchObject({ code: 'NOTE_NOT_FOUND' });
@@ -236,9 +236,9 @@ suite('notes on PostgreSQL (#1671)', () => {
     expect(await o.list(o.author, 'trash')).toEqual([]);
     await o.exec(o.author, 'notes.note.delete', { noteId: n.priv });
     expect(await worker.execute('notes.trash.empty', {}, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 0 });
-    await admin((c) => c.query(`UPDATE crove_notes.note SET deleted_at = now() - interval '31 days' WHERE org_id = $1 AND id = $2`, [o.orgId, n.priv]));
+    await admin((c) => c.query(`UPDATE ludy_notes.note SET deleted_at = now() - interval '31 days' WHERE org_id = $1 AND id = $2`, [o.orgId, n.priv]));
     expect(await worker.execute('notes.trash.empty', {}, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 1 });
-    expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_notes.note WHERE id = $1', [n.priv])).rowCount)).toBe(0);
+    expect(await admin(async (c) => (await c.query('SELECT 1 FROM ludy_notes.note WHERE id = $1', [n.priv])).rowCount)).toBe(0);
     // A member runs neither system command.
     await expect(o.exec(o.owner, 'notes.trash.empty')).rejects.toMatchObject({ status: 403 });
   });
@@ -290,7 +290,7 @@ suite('notes on PostgreSQL (#1671)', () => {
     // An owner reads the shared notes but downloads only their own: none here.
     expect(await o.query<NotesExport>(o.owner, 'notes.mine.export')).toMatchObject({ notes: [], todos: [] });
     // A member who became a viewer still takes what they wrote.
-    await admin((c) => c.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [o.orgId, o.author]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [o.orgId, o.author]));
     expect((await o.query<NotesExport>(o.author, 'notes.mine.export')).notes).toHaveLength(2);
   });
 
@@ -306,14 +306,14 @@ suite('notes on PostgreSQL (#1671)', () => {
     expect(await worker.execute('notes.member_items.purge', { userId: o.author, eventId }, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 0 });
     await ageRemovals(o.orgId, o.author);
     expect(await worker.execute('notes.member_items.purge', { userId: o.author, eventId }, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 1 });
-    const left = await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_notes.note WHERE org_id = $1', [o.orgId]));
+    const left = await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_notes.note WHERE org_id = $1', [o.orgId]));
     expect(left.rows.map((r) => r.id)).toEqual([n.shared]);
     // Back in the org before the purge: nothing is removed.
     const p = await org();
     const m = await written(p);
     await app.execute('kernel.member.remove', { userId: p.author }, { actor: asMfa(p.owner), orgId: p.orgId });
     const first = await removalEvent(p.orgId, p.author);
-    await admin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [p.orgId, p.author]));
+    await admin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [p.orgId, p.author]));
     expect(await worker.execute('notes.member_items.purge', { userId: p.author, eventId: first }, { actor: SYSTEM, orgId: p.orgId })).toEqual({ removed: 0 });
     expect((await p.list(p.author, 'mine')).sort()).toEqual([m.priv, m.shared].sort());
     // Removed again: the first removal's job leaves the notes to the second's, 30 days after it.
@@ -330,7 +330,7 @@ suite('notes on PostgreSQL (#1671)', () => {
     const n = await written(o);
     await app.execute('kernel.member.remove', { userId: o.author }, { actor: asMfa(o.owner), orgId: o.orgId });
     const workerDb = createDb(pools[1] as pg.Pool);
-    const notesOf = () => admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_notes.note WHERE org_id = $1 ORDER BY id', [o.orgId])).rows.map((r) => r.id));
+    const notesOf = () => admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_notes.note WHERE org_id = $1 ORDER BY id', [o.orgId])).rows.map((r) => r.id));
     // Removed today: neither the sweep nor the command without an event purges yet.
     await sweepNotesFormerMembers({ runtime: worker, workerDb });
     expect(await worker.execute('notes.member_items.purge', { userId: o.author }, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 0 });
@@ -344,7 +344,7 @@ suite('notes on PostgreSQL (#1671)', () => {
     expect(await notesOf()).toEqual([kept.noteId, n.shared].sort());
     // Nor one whose membership ended with no removal in the audit trail (an SQL delete): no date to count from, so the
     // sweep keeps their items (fails closed).
-    await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.other]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.other]));
     await sweepNotesFormerMembers({ runtime: worker, workerDb });
     expect(await notesOf()).toEqual([kept.noteId, n.shared].sort());
   });

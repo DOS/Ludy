@@ -3,25 +3,29 @@
 //
 // The org keeps three settings on its tenant row (meetings.settings.set, an owner or admin): how long audio, a kept video and text live. Each is stamped on
 // a meeting when it is recorded, so the period the participants were told stays true when a setting changes later. The worker's nightly job
-// (apps/kernel/src/meetings-retention.ts) reads the meetings whose period has ended through crove_meetings.meetings_due and runs the system commands below
+// (apps/kernel/src/meetings-retention.ts) reads the meetings whose period has ended through ludy_meetings.meetings_due and runs the system commands below
 // in each meeting's own org; the database checks every date again, so a bug in the job can fail a run but never shred early.
 //
 // Shredding is deleting the kind's media_key row: every copy of the ciphertext (current and old versions, bucket backups) is unreadable from that commit on.
-// The file rows and the objects follow as the store allows: a segment or video row deleted with its key leaves its crove_kernel.file row an orphan, which the
+// The file rows and the objects follow as the store allows: a segment or video row deleted with its key leaves its ludy_kernel.file row an orphan, which the
 // worker's sweep (meetings.media.orphan_keys, meetings.media.discard) deletes after the object, so a crash between the two steps repeats, never loses.
 import { sql } from 'kysely';
 import {
   MEETING_RETENTION_DEFAULTS,
   meetingSettingsProblem,
+  zMeetingConsentPolicy,
+  zMeetingConsentPolicyGet,
   zMeetingMediaDiscard,
   zMeetingOrphanKeys,
   zMeetingRetentionShred,
   zMeetingSettingsGet,
   zMeetingShredReplay,
   zMeetingSettingsSet,
+  type MeetingConsentPolicy,
+  type MeetingConsentPolicyState,
   type MeetingSettings,
-} from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { dropFollowupPayloads } from './followup-erase.ts';
 
 // The retention periods count calendar days in Vietnam (UTC+7, no daylight saving), the zone the nightly job and the database's due check use.
@@ -89,12 +93,43 @@ function settingsOf(row: TenantRetentionRow): MeetingSettings {
 /** The org's retention settings; the defaults for an org whose row cannot be read. */
 export async function readRetentionSettings(trx: QueryContext['trx'], orgId: string): Promise<MeetingSettings> {
   const row = await trx
-    .selectFrom('crove_kernel.tenant')
+    .selectFrom('ludy_kernel.tenant')
     .select(['meeting_audio_retention_days', 'meeting_video_retention_days', 'meeting_text_retention_days'])
     .where('org_id', '=', orgId)
     .executeTakeFirst();
   return row ? settingsOf(row) : { ...MEETING_RETENTION_DEFAULTS };
 }
+
+/** The org's consent policy (A2, #3160); 'standard' for an org whose row cannot be read. */
+export async function readConsentPolicy(trx: QueryContext['trx'], orgId: string): Promise<MeetingConsentPolicy> {
+  const row = await trx.selectFrom('ludy_kernel.tenant').select(['meeting_consent_policy']).where('org_id', '=', orgId).executeTakeFirst();
+  return row?.meeting_consent_policy ?? 'standard';
+}
+
+// Every member reads it: the recorder's screens hide the methods a strict org does not accept.
+export const meetingConsentPolicyGet = defineQuery({
+  name: 'meetings.consent_policy.get',
+  input: zMeetingConsentPolicyGet,
+  access: ['owner', 'admin', 'member'],
+  handler: async (ctx): Promise<MeetingConsentPolicyState> => ({ policy: await readConsentPolicy(ctx.trx, ctx.orgId) }),
+});
+
+// "Cần xác nhận trước khi ghi" (A2, #3160): only an owner or admin, and only for meetings created afterwards (nothing is re-stamped; meetings.meeting.create
+// reads the policy when a meeting is made). The database's guard trigger holds every other writer. The audit row holds codes only.
+export const meetingConsentPolicySet = defineCommand({
+  name: 'meetings.consent_policy.set',
+  input: zMeetingConsentPolicy,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ['owner', 'admin'],
+  handler: async (ctx, input): Promise<MeetingConsentPolicyState> => {
+    if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Only authenticated members can perform this action');
+    const previous = await readConsentPolicy(ctx.trx, ctx.orgId);
+    await ctx.trx.updateTable('ludy_kernel.tenant').set({ meeting_consent_policy: input.policy }).where('org_id', '=', ctx.orgId).execute();
+    ctx.audit({ policy: input.policy, previous });
+    return { policy: input.policy };
+  },
+});
 
 export const meetingSettingsGet = defineQuery({
   name: 'meetings.settings.get',
@@ -118,7 +153,7 @@ export const meetingSettingsSet = defineCommand({
     const before = await readRetentionSettings(ctx.trx, ctx.orgId);
     // Audio may not drop below the video in the same stroke: the table's check holds the pair, so write both in one statement.
     await ctx.trx
-      .updateTable('crove_kernel.tenant')
+      .updateTable('ludy_kernel.tenant')
       .set({
         meeting_audio_retention_days: input.audioRetentionDays,
         meeting_video_retention_days: input.videoRetentionDays,
@@ -145,6 +180,7 @@ export interface RetentionOutcome {
 // meeting's id is the audit target.
 export const meetingRetentionShred = defineCommand({
   name: 'meetings.retention.shred',
+  runsWhenOff: 'applies the org\'s retention period to recordings, which still runs while the app is off',
   input: zMeetingRetentionShred,
   risk: 'R3',
   sideEffect: 'irreversible',
@@ -157,20 +193,20 @@ export const meetingRetentionShred = defineCommand({
     if (input.kind === 'draft') {
       // Drafts the recorder never published, 30 days after they were made (one statement per table tests stage and age, so a row published meanwhile stays).
       const { rows } = await sql<{ n: number }>`
-        SELECT crove_meetings.meeting_draft_purge(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS n`.execute(ctx.trx);
+        SELECT ludy_meetings.meeting_draft_purge(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS n`.execute(ctx.trx);
       const rowCount = rows[0]?.n ?? 0;
       ctx.audit({ meetingId: input.meetingId, kind: input.kind, applied: rowCount > 0, rows: rowCount });
       return { applied: rowCount > 0, kind: input.kind };
     }
     if (input.kind === 'text') {
       const { rows } = await sql<{ done: boolean }>`
-        SELECT crove_meetings.meeting_text_purge(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS done`.execute(ctx.trx);
+        SELECT ludy_meetings.meeting_text_purge(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS done`.execute(ctx.trx);
       applied = rows[0]?.done === true;
       // The follow-up mails hold a copy of the text the purge just deleted: it goes with it (#3016). Only when the purge ran (a meeting not yet due keeps its text).
       if (applied) mailPayloads = await dropFollowupPayloads(ctx, input.meetingId);
     } else {
       const { rows } = await sql<{ n: number }>`
-        SELECT crove_meetings.meeting_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${input.kind}::text) AS n`.execute(ctx.trx);
+        SELECT ludy_meetings.meeting_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${input.kind}::text) AS n`.execute(ctx.trx);
       applied = (rows[0]?.n ?? 0) > 0;
     }
     ctx.audit({ meetingId: input.meetingId, kind: input.kind, applied, mailPayloads });
@@ -181,6 +217,7 @@ export const meetingRetentionShred = defineCommand({
 // After a restore: deletes a meeting a shred reference of the archive store names (ADR-0017 section 8). Idempotent.
 export const meetingShredReplay = defineCommand({
   name: 'meetings.shred.replay',
+  runsWhenOff: 'replays a restore\'s shred list so deleted meetings stay deleted while the app is off',
   input: zMeetingShredReplay,
   risk: 'R3',
   sideEffect: 'irreversible',
@@ -189,7 +226,7 @@ export const meetingShredReplay = defineCommand({
   handler: async (ctx, input): Promise<{ deleted: boolean }> => {
     requireSystem(ctx);
     const { rows } = await sql<{ done: boolean }>`
-      SELECT crove_meetings.meeting_replay_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS done`.execute(ctx.trx);
+      SELECT ludy_meetings.meeting_replay_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS done`.execute(ctx.trx);
     const deleted = rows[0]?.done === true;
     // The same for the follow-up mails' copy of the text (#3016).
     const mailPayloads = await dropFollowupPayloads(ctx, input.meetingId);
@@ -198,18 +235,19 @@ export const meetingShredReplay = defineCommand({
   },
 });
 
-// The storage keys of orphan meeting media files (ids from crove_meetings.meetings_orphan_media), for the worker to delete the objects before their rows. A key
+// The storage keys of orphan meeting media files (ids from ludy_meetings.meetings_orphan_media), for the worker to delete the objects before their rows. A key
 // another file row of the org also names is reported as shared and never deleted: the objects are content addressed.
 export const meetingMediaOrphanKeys = defineQuery({
   name: 'meetings.media.orphan_keys',
+  runsWhenOff: 'lists recording keys that no meeting uses, for the retention that still runs while the app is off',
   input: zMeetingOrphanKeys,
   access: 'system',
   handler: async (ctx, input): Promise<Array<{ fileId: string; storageKey: string; shared: boolean }>> => {
     requireSystem(ctx);
     const { rows } = await sql<{ id: string; storage_key: string; shared: boolean }>`
       SELECT f.id, f.storage_key,
-             EXISTS (SELECT 1 FROM crove_kernel.file o WHERE o.org_id = f.org_id AND o.storage_key = f.storage_key AND o.id <> f.id) AS shared
-        FROM crove_kernel.file f
+             EXISTS (SELECT 1 FROM ludy_kernel.file o WHERE o.org_id = f.org_id AND o.storage_key = f.storage_key AND o.id <> f.id) AS shared
+        FROM ludy_kernel.file f
        WHERE f.org_id = ${ctx.orgId}::uuid AND f.id = ANY (${input.fileIds}::uuid[]) AND f.source IN ('meeting_audio', 'meeting_video')`.execute(ctx.trx);
     return rows.map((r) => ({ fileId: r.id, storageKey: r.storage_key, shared: r.shared }));
   },
@@ -218,6 +256,7 @@ export const meetingMediaOrphanKeys = defineQuery({
 // Deletes one orphan meeting media file row once its object is gone; the definer refuses a row a segment or video row still names.
 export const meetingMediaDiscard = defineCommand({
   name: 'meetings.media.discard',
+  runsWhenOff: 'deletes the media of a meeting the retention removed, while the app is off',
   input: zMeetingMediaDiscard,
   risk: 'R3',
   sideEffect: 'irreversible',
@@ -225,7 +264,7 @@ export const meetingMediaDiscard = defineCommand({
   handler: async (ctx, input): Promise<{ discarded: boolean }> => {
     requireSystem(ctx);
     const { rows } = await sql<{ done: boolean }>`
-      SELECT crove_meetings.meeting_media_discard(${ctx.orgId}::uuid, ${input.fileId}::uuid) AS done`.execute(ctx.trx);
+      SELECT ludy_meetings.meeting_media_discard(${ctx.orgId}::uuid, ${input.fileId}::uuid) AS done`.execute(ctx.trx);
     const discarded = rows[0]?.done === true;
     ctx.audit({ fileId: input.fileId, discarded });
     return { discarded };

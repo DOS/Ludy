@@ -12,12 +12,13 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { enterUser } from './fixtures/context-token.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -37,6 +38,7 @@ type Outcome = { ok: true; value: unknown } | { ok: false; code: string | undefi
 suite('ledger rows naming a proposal on PostgreSQL (#1853)', () => {
   const dbName = `crove_test_effect_proposal_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   let pool: pg.Pool | undefined;
@@ -45,7 +47,7 @@ suite('ledger rows naming a proposal on PostgreSQL (#1853)', () => {
   let otherOrg = '';
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -57,7 +59,7 @@ suite('ledger rows naming a proposal on PostgreSQL (#1853)', () => {
   // One transaction as the given writer (the owner, the worker's system context, or another member), always rolled
   // back.
   async function as(writer: string, fn: (c: pg.Client) => Promise<unknown>): Promise<Outcome> {
-    const c = new pg.Client({ connectionString: writer === 'system' ? workerUrl : appUrl });
+    const c = createDbClient({ connectionString: writer === 'system' ? workerUrl : appUrl }, dbIds);
     await c.connect();
     try {
       await c.query('BEGIN');
@@ -113,6 +115,9 @@ suite('ledger rows naming a proposal on PostgreSQL (#1853)', () => {
     );
   const journalVoucher = (proposalId: string) => (c: pg.Client) =>
     c.query(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id) VALUES ($1, '2026-10-15', 'chứng từ', $2)`, [orgId, proposalId]);
+  // The posting of a stored marketplace settlement (#2516): a journal voucher that names the settlement.
+  const settlementVoucher = (proposalId: string) => (c: pg.Client) =>
+    c.query(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, settlement_id) VALUES ($1, '2026-10-15', 'đối soát sàn', $2, $3)`, [orgId, proposalId, randomUUID()]);
   // An entry, then its reversal ordered by the proposal (source kernel.proposal), as finance.journal.reverse posts it.
   const reversal = (proposalId: string) => async (c: pg.Client) => {
     const { rows } = await c.query<{ id: string }>(
@@ -126,11 +131,22 @@ suite('ledger rows naming a proposal on PostgreSQL (#1853)', () => {
     ]);
   };
 
+  // The posting of a platform's payout (#2516): a journal voucher that names the settlement it pays and the bank line of the transfer.
+  const payoutVoucher = (proposalId: string) => (c: pg.Client) =>
+    c.query(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, payout_settlement_id, payout_bank_line_id) VALUES ($1, '2026-10-15', 'sàn trả', $2, $3, $4)`, [orgId, proposalId, randomUUID(), randomUUID()]);
+
+  // The clearing of the fees on 1388 by a platform's fee invoice (#2516): a journal voucher that names the purchase document it clears.
+  const feeClearingVoucher = (proposalId: string) => (c: pg.Client) =>
+    c.query(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, fee_document_id) VALUES ($1, '2026-10-15', 'cấn trừ phí sàn', $2, $3)`, [orgId, proposalId, randomUUID()]);
+
   const PATHS = [
     { name: 'purchase document', command: 'finance.purchase.record', write: purchaseDocument },
     { name: 'cash voucher', command: 'finance.voucher.record', write: cashVoucher },
     { name: 'payroll payment voucher', command: 'finance.payroll_payment.record', write: payrollPaymentVoucher },
     { name: 'journal voucher', command: 'finance.journal_voucher.record', write: journalVoucher },
+    { name: 'marketplace settlement voucher', command: 'finance.marketplace_settlement.record', write: settlementVoucher },
+    { name: 'marketplace payout voucher', command: 'finance.marketplace_payout.record', write: payoutVoucher },
+    { name: 'marketplace fee clearing voucher', command: 'finance.marketplace_fee_clearing.record', write: feeClearingVoucher },
     { name: 'reversal entry', command: 'finance.journal.reverse', write: reversal },
   ] as const;
 
@@ -143,16 +159,17 @@ suite('ledger rows naming a proposal on PostgreSQL (#1853)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const login = (user: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = user;
+      url.username = dbIds ? dbIds.roleName(user) : user;
       url.password = password;
       return url.toString();
     };
     appUrl = login('crove_app', 'test-app-pw');
     workerUrl = login('crove_worker', 'test-worker-pw');
-    pool = createPool({ connectionString: appUrl, max: 2 });
+    pool = createDbPool({ connectionString: appUrl, max: 2 }, dbIds);
     const db = createDb(pool);
     const rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
     owner = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: 'owner@effect-proposal.test', name: null });

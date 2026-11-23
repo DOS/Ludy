@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The e-invoice connection card in Settings (#2501, ADR-0044 point 2): what the screen works out from the API's answers. The server decides every rule; these only
 // choose what to show.
-import type { EInvoiceConnection, EInvoiceConnectionState, EInvoiceSeries } from '@crove/kernel-contract';
+import type { EInvoiceConnection, EInvoiceConnectionState, EInvoiceSeries } from '@ludy/kernel-contract';
 
 // A series symbol read in parts (Circular 91, Appendix I): C (coded by the tax authority) or K, a two-digit year, a type letter, then two characters the seller chose.
 // A symbol of any other shape is shown as it is, with no reading.

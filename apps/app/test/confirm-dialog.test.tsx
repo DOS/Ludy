@@ -3,7 +3,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it } from 'vitest';
-import { Button } from '@crove/ui/components/button';
+import { Button } from '@ludy/ui/components/button';
 import { ConfirmDialog } from '../src/components/confirm-dialog.tsx';
 import { catalog } from '../src/i18n/runtime.ts';
 

@@ -3,7 +3,19 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { accountingEn } from '../src/content/accounting-en';
+import { accountingVi } from '../src/content/accounting-vi';
 import { en } from '../src/content/en';
+import { engageEn } from '../src/content/engage-en';
+import { engageVi } from '../src/content/engage-vi';
+import { esignEn } from '../src/content/esign-en';
+import { esignVi } from '../src/content/esign-vi';
+import { hrmEn } from '../src/content/hrm-en';
+import { hrmVi } from '../src/content/hrm-vi';
+import { privacyEn } from '../src/content/privacy-en';
+import { privacyVi } from '../src/content/privacy-vi';
+import { teamworkEn } from '../src/content/teamwork-en';
+import { teamworkVi } from '../src/content/teamwork-vi';
 import { vi } from '../src/content/vi';
 import { N, ROSTER, team } from '../src/content/roster';
 
@@ -44,10 +56,27 @@ function code(line: string): string {
 describe('brand on the landing page (#1683)', () => {
   it('no copy says Crove', () => {
     for (const dict of [vi, en]) {
-      const offenders = strings(dict, '').filter(([path, text]) => /\bCrove\b/.test(text) && !(path in ALLOWED_COPY));
+      const offenders = strings(dict, '').filter(([path, text]) => /\bcrove\b/i.test(text) && !(path in ALLOWED_COPY));
       expect(offenders, dict.lang).toEqual([]);
       expect(dict.meta.title, dict.lang).toMatch(/^Ludy: /);
       expect(dict.footer.copyright, dict.lang).toContain('Ludy');
+    }
+    for (const [label, copy] of [
+      ['accountingVi', accountingVi],
+      ['accountingEn', accountingEn],
+      ['engageVi', engageVi],
+      ['engageEn', engageEn],
+      ['esignVi', esignVi],
+      ['esignEn', esignEn],
+      ['hrmVi', hrmVi],
+      ['hrmEn', hrmEn],
+      ['teamworkVi', teamworkVi],
+      ['teamworkEn', teamworkEn],
+      ['privacyVi', privacyVi],
+      ['privacyEn', privacyEn],
+    ] as const) {
+      const offenders = strings(copy, '').filter(([, text]) => /\bcrove\b/i.test(text));
+      expect(offenders, label).toEqual([]);
     }
   });
 
@@ -135,8 +164,36 @@ describe('brand on the landing page (#1683)', () => {
     expect(en.modules.social.name).toBe('Ludy Engage');
   });
 
-  it('names the products Ludy Accounting and Ludy Engage', () => {
-    expect([vi.modules.finance.name, vi.modules.social.name]).toEqual(['Ludy Kế toán', 'Ludy Engage']);
-    expect([en.modules.finance.name, en.modules.social.name]).toEqual(['Ludy Accounting', 'Ludy Engage']);
+  it('names the products after the regrouped app shell (#3235, #3536, #3550)', () => {
+    expect([vi.modules.notes.name, vi.modules.finance.name, vi.modules.social.name, vi.modules.hr.name, vi.modules.sign.name]).toEqual([
+      'Ludy Cộng tác',
+      'Ludy Tài chính',
+      'Ludy Engage',
+      'Ludy Nhân sự',
+      'Ludy eSign',
+    ]);
+    expect([en.modules.notes.name, en.modules.finance.name, en.modules.social.name, en.modules.hr.name, en.modules.sign.name]).toEqual([
+      'Ludy Teamwork',
+      'Ludy Finance',
+      'Ludy Engage',
+      'Ludy HR',
+      'Ludy eSign',
+    ]);
+    expect(vi.appCards.items.map((item) => [item.name, item.agent])).toEqual([
+      ['Ludy Cộng tác', N.gm],
+      ['Ludy Tài chính', N.finance],
+      ['Ludy Engage', `${N.sales}, ${N.marketing}`],
+      ['Ludy Nhân sự', N.finance],
+      ['Ludy eSign', N.gm],
+      ['Ludy AI', ''],
+    ]);
+    expect(en.appCards.items.map((item) => [item.name, item.agent])).toEqual([
+      ['Ludy Teamwork', N.gm],
+      ['Ludy Finance', N.finance],
+      ['Ludy Engage', `${N.sales}, ${N.marketing}`],
+      ['Ludy HR', N.finance],
+      ['Ludy eSign', N.gm],
+      ['Ludy AI', ''],
+    ]);
   });
 });

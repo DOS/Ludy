@@ -2,8 +2,8 @@
 // kernel.file.archive.record (the entries of a ZIP, #314).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { ACCEPTED_ARCHIVE_TYPES, zId } from '@crove/kernel-contract';
-import { DomainError, GENERATION_PATTERN, contentGeneration, fileKey, type CommandContext } from '@crove/kernel-runtime';
+import { ACCEPTED_ARCHIVE_TYPES, zId } from '@ludy/kernel-contract';
+import { DomainError, GENERATION_PATTERN, contentGeneration, fileKey, type CommandContext } from '@ludy/kernel-runtime';
 
 // A file reference is the triple (storageKey, generation, sha256) of plan §7.6 (ADR-0013): generation is what the
 // store's put returned for the bytes it wrote.
@@ -17,7 +17,9 @@ export const zIngestFile = z.object({
   // social: an image or video for a Social post (#372, #409), stored like any file but never sent to extraction.
   // import: a spreadsheet for a module's import (#465), also never sent to extraction.
   // meeting_audio, meeting_video: encrypted meeting media (issue #2576, ADR-0047), never sent to extraction.
-  source: z.enum(['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video']),
+  // sign_document, sign_sealed, sign_certificate, sign_attachment: eSign PDFs, canonical certificate JSON, and verified signer supporting attachments (#3323, #3818), never sent to Finance extraction.
+  // agreement: the signed agreement of an e-invoice correction (#2504), an evidence file, never sent to extraction.
+  source: z.enum(['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate', 'sign_attachment', 'agreement']),
   // A video's duration, read by the server from the file (#409).
   durationMs: z.number().int().min(0).max(86_400_000).optional(),
   // An image's size as shown, read by the server from its header (#636); both or neither.
@@ -35,6 +37,11 @@ export type IngestFile = z.infer<typeof zIngestFile>;
 
 // Sources whose files are accounting documents, read by the extraction job.
 const isDocumentSource = (source: string) => source === 'upload' || source === 'email';
+const SIGN_FILE_SOURCES: readonly IngestFile['source'][] = ['sign_document', 'sign_sealed', 'sign_certificate', 'sign_attachment'];
+// Sources whose files are kept apart from every other use of the same bytes: eSign artifacts, and the signed agreement of an invoice correction (#2504), which is an evidence file and
+// must never be an Inbox document (nor a document an agreement).
+const ISOLATED_FILE_SOURCES: readonly IngestFile['source'][] = [...SIGN_FILE_SOURCES, 'agreement'];
+const isIsolatedSource = (source: string): boolean => (ISOLATED_FILE_SOURCES as readonly string[]).includes(source);
 
 // A ZIP archive (#314): stored and recorded like a document, then opened by the worker instead of being read.
 export function isArchiveType(contentType: string): boolean {
@@ -47,6 +54,10 @@ export function isArchiveType(contentType: string): boolean {
 // from command input.
 export async function ingestFileRow(ctx: CommandContext, input: IngestFile, createdBy: string | null): Promise<{ fileId: string; duplicate: boolean }> {
   if (input.storageKey !== fileKey(ctx.orgId, input.sha256)) throw new DomainError('INVALID_STORAGE_KEY', 400, 'Khóa lưu trữ không hợp lệ');
+  // Generated eSign evidence and public ceremony attachments can only be recorded by system actors.
+  if ((input.source === 'sign_sealed' || input.source === 'sign_certificate' || input.source === 'sign_attachment') && ctx.actor.type !== 'system') {
+    throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới ghi nhận được tài liệu đã niêm phong, chứng nhận ký hoặc tệp đính kèm người ký');
+  }
   // The link to a mail is the receive path's alone: a member could otherwise name any mail of the org as the source of
   // their upload, and the Inbox would show that mail's sender next to it.
   if (input.inboundMessageId !== undefined && (ctx.actor.type !== 'system' || input.source !== 'email')) {
@@ -58,11 +69,11 @@ export async function ingestFileRow(ctx: CommandContext, input: IngestFile, crea
   // An entity the writer sees (read under its own policies): one that does not exist and one hidden from it answer the
   // same. The database checks it again (file_upload_entity).
   if (input.legalEntityId !== undefined) {
-    const entity = await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.legalEntityId).executeTakeFirst();
+    const entity = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.legalEntityId).executeTakeFirst();
     if (!entity) throw new DomainError('LEGAL_ENTITY_NOT_ALLOWED', 403, 'Bạn không có quyền với sổ sách của pháp nhân này');
   }
   const inserted = await ctx.trx
-    .insertInto('crove_kernel.file')
+    .insertInto('ludy_kernel.file')
     .values({
       org_id: ctx.orgId,
       sha256: input.sha256,
@@ -88,7 +99,7 @@ export async function ingestFileRow(ctx: CommandContext, input: IngestFile, crea
     // the meeting's readers (#2874), so this read cannot see one. That is harmless: meeting media is ciphertext sealed in the browser, so a user's bytes never share
     // a sha256 with it, and this path is the generic ingest, which refuses those sources.
     const existing = await ctx.trx
-      .selectFrom('crove_kernel.file')
+      .selectFrom('ludy_kernel.file')
       .select(['id', 'source', 'original_deleted_at'])
       .where('org_id', '=', ctx.orgId)
       .where('sha256', '=', input.sha256)
@@ -96,7 +107,7 @@ export async function ingestFileRow(ctx: CommandContext, input: IngestFile, crea
       .executeTakeFirstOrThrow();
     // The original of a marketplace report deleted after 90 days (#2516, ADR-0045 point 8): the same bytes arriving again were stored under the same content-addressed key, so the original
     // is back. The marker is cleared so the file reads and downloads again, and the nightly run deletes this copy again; left set, the copy would be kept for ever.
-    if (existing.original_deleted_at) await sql`SELECT crove_kernel.file_original_restore(${existing.id}::uuid)`.execute(ctx.trx);
+    if (existing.original_deleted_at) await sql`SELECT ludy_kernel.file_original_restore(${existing.id}::uuid)`.execute(ctx.trx);
     // Files are deduplicated by content, so the same bytes can arrive as a document and as an image for a Social
     // post (#372). A document is never offered for publishing: an image upload of a document's bytes is refused.
     if (input.source === 'social' && existing.source !== 'social') {
@@ -116,9 +127,15 @@ export async function ingestFileRow(ctx: CommandContext, input: IngestFile, crea
     if (input.source === 'import' && existing.source !== 'import') {
       throw new DomainError('FILE_IS_NOT_IMPORT', 409, 'Tệp này đã có trong chứng từ của tổ chức nên không nhập làm danh sách được; hãy xuất lại danh sách từ cổng thuế rồi tải lên');
     }
+    // Emailed copies (direct attachments or entries inside an emailed archive) of an existing eSign artifact stay a
+    // duplicate (preserving the sign source so one colliding PDF never fails the whole inbound message, #506/#3323).
+    // Direct uploads or sign writes with mismatched sources still fail with FILE_SOURCE_CONFLICT.
+    if ((isIsolatedSource(input.source) || (isIsolatedSource(existing.source) && input.source !== 'email')) && input.source !== existing.source) {
+      throw new DomainError('FILE_SOURCE_CONFLICT', 409, 'Tệp này đã tồn tại với mục đích khác trong tổ chức; hãy dùng tệp khác');
+    }
     // A document whose bytes were first uploaded as a post image is still read as a document, once.
     if (isDocumentSource(input.source) && existing.source === 'social') {
-      const read = await ctx.trx.selectFrom('crove_kernel.extraction').select('id').where('org_id', '=', ctx.orgId).where('file_id', '=', existing.id).limit(1).executeTakeFirst();
+      const read = await ctx.trx.selectFrom('ludy_kernel.extraction').select('id').where('org_id', '=', ctx.orgId).where('file_id', '=', existing.id).limit(1).executeTakeFirst();
       if (!read) {
         await ctx.activity('kernel.file', existing.id, 'file.received', 'Nhận chứng từ');
         await ctx.emit('kernel.file.ingested', { fileId: existing.id });

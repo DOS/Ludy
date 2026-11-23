@@ -34,6 +34,16 @@ export const zJournalVoucherRequest = z.object({
 });
 export type JournalVoucherRequest = z.infer<typeof zJournalVoucherRequest>;
 
+// The resolution of the surplus of a confirmed count of stock (#3712 slice 2a): the surplus waits on 3381 after the count is confirmed, and a person decides where it goes. Asked for
+// through the same proposal command (finance.journal_voucher.record) with this input instead of lines: the server builds the voucher, Dr 3381 / Cr `account`, for the count's whole
+// surplus. The amount is never sent; the account is one of the three below, and 331 names the supplier whose goods they were.
+export const SURPLUS_ACCOUNTS = ['711', '3388', '331'] as const;
+export type SurplusAccount = (typeof SURPLUS_ACCOUNTS)[number];
+export const zSurplusResolutionRequest = z.strictObject({
+  surplus: z.strictObject({ countId: zId, account: z.enum(SURPLUS_ACCOUNTS), partyId: zId.optional() }),
+});
+export type SurplusResolutionRequest = z.infer<typeof zSurplusResolutionRequest>;
+
 // NVK00001 and the like.
 export function journalVoucherCode(number: number): string {
   return `NVK${String(number).padStart(5, '0')}`;
@@ -58,7 +68,7 @@ export const zMonth = z.string().regex(/^(20\d{2}|2100)-(0[1-9]|1[0-2])$/, 'YYYY
 export const zDepreciationRequest = z.object({ month: zMonth, legalEntityId: zId.optional() });
 export type DepreciationRequest = z.infer<typeof zDepreciationRequest>;
 // The proposal (kind finance.journal_voucher, shown as one) with the month and each asset's amount, which recording
-// writes to crove_finance.depreciation_line.
+// writes to ludy_finance.depreciation_line.
 export const zDepreciationProposal = zJournalVoucherProposal.extend({
   depreciationMonth: zMonth,
   assets: z.array(z.object({ assetId: zId, amount: zJournalAmount })).min(1).max(2000),

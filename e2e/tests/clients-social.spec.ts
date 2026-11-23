@@ -17,8 +17,8 @@ test('an agency sees each client’s Social figures on the overview and opens th
     await page.getByLabel('Tên kênh thử').fill('Fanpage An Bình');
     await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
     await expect(page.getByText('Fanpage An Bình').first()).toBeVisible();
-    await page.getByRole('link', { name: 'Quay lại' }).click();
-    await page.getByRole('link', { name: 'Soạn bài' }).click();
+    await page.getByRole('link', { name: 'Về Bài đăng' }).click();
+    await page.getByRole('link', { name: 'Soạn bài' }).first().click();
     await page.getByLabel('Nội dung chung').fill('Khuyến mãi cuối tuần của An Bình');
     await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();
     await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
@@ -49,7 +49,7 @@ test('an agency sees each client’s Social figures on the overview and opens th
   });
 
   await test.step('a channel whose sign-in expired shows as one to reconnect, leading to the channels page', async () => {
-    exec(`UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE org_id = (SELECT org_id FROM crove_kernel.tenant WHERE slug = :'slug')`, { slug: first });
+    exec(`UPDATE ludy_kernel.channel_connection SET status = 'expired' WHERE org_id = (SELECT org_id FROM ludy_kernel.tenant WHERE slug = :'slug')`, { slug: first });
     await page.goto('/clients');
     const anBinh = page.getByRole('row').filter({ hasText: 'Công ty An Bình' });
     await expect(anBinh.getByRole('link', { name: '1 kênh cần kết nối lại' })).toBeVisible();

@@ -9,11 +9,11 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@crove/kernel-runtime';
-import { hrCommands, hrQueries } from '@crove/mod-hr';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CredentialVault, Runtime, SUBJECT_WRAP_INFO, SubjectVault, parseVaultKey } from '@ludy/kernel-runtime';
+import { hrCommands, hrQueries } from '@ludy/mod-hr';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -61,12 +61,12 @@ suite('saved bank templates through the commands (#2893)', () => {
     const member = await person('member');
     const viewer = await person('viewer');
     const { orgId } = await createOrg(rt, asUser(owner), `Mẫu ngân hàng ${tag}`);
-    await withAdmin((c) => c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, admin, member, viewer]));
+    await withAdmin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, admin, member, viewer]));
     const exec = <O>(userId: string, name: string, input: unknown) => rt.execute<O>(name, input, { actor: asUser(userId), orgId });
     const list = (userId: string, input: unknown = {}) => rt.query<Template[]>('hr.payroll.bank_template.list', input, { actor: asUser(userId), orgId });
     const create = (userId: string, input: unknown) => exec<{ templateId: string }>(userId, 'hr.payroll.bank_template.create', input);
-    const branch = () => withAdmin(async (c) => (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner])).rows[0]?.id as string);
-    const audits = (command: string) => withAdmin(async (c) => (await c.query<{ outcome: string; detail: unknown }>('SELECT outcome, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY id', [orgId, command])).rows);
+    const branch = () => withAdmin(async (c) => (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner])).rows[0]?.id as string);
+    const audits = (command: string) => withAdmin(async (c) => (await c.query<{ outcome: string; detail: unknown }>('SELECT outcome, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY id', [orgId, command])).rows);
     return { orgId, owner, admin, member, viewer, exec, list, create, branch, audits };
   }
 
@@ -79,8 +79,8 @@ suite('saved bank templates through the commands (#2893)', () => {
     url.pathname = `/${dbName}`;
     adminUrl = url.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    url.username = 'crove_app';
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
     rt = new Runtime(createDb(pool), {
@@ -110,7 +110,7 @@ suite('saved bank templates through the commands (#2893)', () => {
     await o.exec(o.admin, 'hr.payroll.bank_template.edit', { templateId: a.templateId, name: '  VCB  ', layout: layout({ columns: [...COLUMNS].reverse() }) });
     const edited = (await o.list(o.owner)).find((t) => t.id === a.templateId);
     expect(edited?.name).toBe('VCB');
-    const stamped = await withAdmin(async (c) => (await c.query<{ moved: boolean }>('SELECT updated_at > created_at AS moved FROM crove_hr.payroll_bank_template WHERE org_id = $1 AND id = $2', [o.orgId, a.templateId])).rows[0]?.moved);
+    const stamped = await withAdmin(async (c) => (await c.query<{ moved: boolean }>('SELECT updated_at > created_at AS moved FROM ludy_hr.payroll_bank_template WHERE org_id = $1 AND id = $2', [o.orgId, a.templateId])).rows[0]?.moved);
     expect(stamped).toBe(true);
     expect(edited?.layout.columns.map((c) => c.key)).toEqual(['content', 'amount', 'bank', 'account', 'name', 'sequence']);
     await o.exec(o.owner, 'hr.payroll.bank_template.delete', { templateId: b.templateId });

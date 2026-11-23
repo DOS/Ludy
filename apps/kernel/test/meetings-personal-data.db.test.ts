@@ -7,12 +7,12 @@ import { appendFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import type { PersonalDataResult } from '@crove/kernel-contract';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import type { PersonalDataResult } from '@ludy/kernel-contract';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -50,20 +50,20 @@ suite('the personal-data finder in meeting text (#2594, L5 part 1)', () => {
   async function meeting(org: string, recorder: string, title: string, visibility: 'attendees' | 'org', readers: string[] = []): Promise<string> {
     const id = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, $3, 'vi', '2026-11-10T03:00:00Z', '2026-11-10T03:30:00Z', 1800, $4, $5, 'ready', 'told_at_start', $4, now(), '1.0', current_date + 30, current_date + 365)`,
       [org, id, title, users[recorder], visibility],
     );
-    for (const reader of readers) await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [org, randomUUID(), id, users[reader]]);
+    for (const reader of readers) await sqlAdmin(`INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [org, randomUUID(), id, users[reader]]);
     return id;
   }
   const segment = (org: string, meetingId: string, text: string, stage: 'draft' | 'published') =>
-    sqlAdmin(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, 0, 10, 'Hà', $3, $4)`, [org, meetingId, text, stage]);
+    sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, 0, 10, 'Hà', $3, $4)`, [org, meetingId, text, stage]);
   const result = (org: string, meetingId: string, summary: string, decisions: string[], stage: 'draft' | 'published') =>
-    sqlAdmin(`INSERT INTO crove_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage) VALUES ($1, $2, $3, $4::jsonb, 'manual', $5)`, [org, meetingId, summary, JSON.stringify(decisions), stage]);
+    sqlAdmin(`INSERT INTO ludy_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage) VALUES ($1, $2, $3, $4::jsonb, 'manual', $5)`, [org, meetingId, summary, JSON.stringify(decisions), stage]);
   const item = (org: string, meetingId: string, title: string, stage: 'draft' | 'published') =>
-    sqlAdmin(`INSERT INTO crove_meetings.action_item (org_id, meeting_id, title, stage) VALUES ($1, $2, $3, $4)`, [org, meetingId, title, stage]);
-  const meetingColumns = (r: PersonalDataResult) => r.matches.filter((m) => m.column.startsWith('crove_meetings.')).map((m) => m.column).sort();
+    sqlAdmin(`INSERT INTO ludy_meetings.action_item (org_id, meeting_id, title, stage) VALUES ($1, $2, $3, $4)`, [org, meetingId, title, stage]);
+  const meetingColumns = (r: PersonalDataResult) => r.matches.filter((m) => m.column.startsWith('ludy_meetings.')).map((m) => m.column).sort();
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -74,9 +74,9 @@ suite('the personal-data finder in meeting text (#2594, L5 part 1)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
     const pool = createPool({ connectionString: url.toString(), max: 4 });
@@ -85,7 +85,7 @@ suite('the personal-data finder in meeting text (#2594, L5 part 1)', () => {
     for (const key of ['owner', 'admin', 'recorder', 'attendee', 'outsider']) users[key] = await upsertIdentity(createDb(pool), { issuer: 'meetings-finder', subject: key, email: `${key}@meetings-finder.test`, name: null });
     orgId = (await createOrg(runtime, asUser('owner'), 'Tìm trong họp')).orgId;
     otherOrgId = (await createOrg(runtime, asUser('outsider'), 'Org khác')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.admin, users.recorder, users.attendee]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member')`, [orgId, users.admin, users.recorder, users.attendee]);
   }, 300_000);
 
   afterAll(async () => {
@@ -117,7 +117,7 @@ suite('the personal-data finder in meeting text (#2594, L5 part 1)', () => {
 
     const owner = await find('owner', EMAIL);
     // The owner reads: the shared meeting's three published rows and own draft line.
-    expect(meetingColumns(owner)).toEqual(['crove_meetings.action_item.title', 'crove_meetings.meeting_result.decisions', 'crove_meetings.meeting_result.summary', 'crove_meetings.transcript_segment.text', 'crove_meetings.transcript_segment.text'].sort());
+    expect(meetingColumns(owner)).toEqual(['ludy_meetings.action_item.title', 'ludy_meetings.meeting_result.decisions', 'ludy_meetings.meeting_result.summary', 'ludy_meetings.transcript_segment.text', 'ludy_meetings.transcript_segment.text'].sort());
     expect(owner.meetingText).toEqual([
       // The recorder's attendees-only meeting: 1 meeting + its title, 1 published line, 1 draft summary, 1 draft item; plus the draft line of the shared meeting (another meeting).
       { recorderUserId: users.recorder, meetings: 2, lines: 2, results: 1, items: 1, titles: 1 },
@@ -125,7 +125,7 @@ suite('the personal-data finder in meeting text (#2594, L5 part 1)', () => {
     const answer = JSON.stringify(owner);
     for (const secret of [HIDDEN_TITLE, HIDDEN_LINE, 'Tóm tắt kín', 'Việc kín', 'Nháp riêng của người ghi', 'Của org khác']) expect(answer, secret).not.toContain(secret);
     // The audit row holds counts only.
-    const audit = JSON.stringify((await sqlAdmin(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.find' ORDER BY id DESC LIMIT 1`, [orgId])).rows);
+    const audit = JSON.stringify((await sqlAdmin(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.personal_data.find' ORDER BY id DESC LIMIT 1`, [orgId])).rows);
     expect(audit).toContain('meeting_text');
     for (const secret of [EMAIL, HIDDEN_TITLE, HIDDEN_LINE]) expect(audit, secret).not.toContain(secret);
   });
@@ -133,7 +133,7 @@ suite('the personal-data finder in meeting text (#2594, L5 part 1)', () => {
   it('gives an admin the rows they read and no counts, and a member nothing', async () => {
     const admin = await find('admin', EMAIL);
     expect(admin.meetingText).toBeNull();
-    expect(meetingColumns(admin)).toEqual(['crove_meetings.action_item.title', 'crove_meetings.meeting_result.decisions', 'crove_meetings.meeting_result.summary', 'crove_meetings.transcript_segment.text'].sort());
+    expect(meetingColumns(admin)).toEqual(['ludy_meetings.action_item.title', 'ludy_meetings.meeting_result.decisions', 'ludy_meetings.meeting_result.summary', 'ludy_meetings.transcript_segment.text'].sort());
     await expect(find('recorder', EMAIL)).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
@@ -164,14 +164,18 @@ suite('the personal-data finder in meeting text (#2594, L5 part 1)', () => {
 
   it('counts a large body of transcript text in one linear scan', async () => {
     const big = await meeting(orgId, 'recorder', 'Họp dài', 'attendees');
+    // `search` is a stored generated column (ludy_kernel.search_vector(text)), and computing it for 120 000 lines was more than half of this test's time (about 24 s of 47 s on a laptop). The finder
+    // under test reads the text alone and nothing else in this file reads `search`, so in this file's own throwaway database it becomes a plain column first (the column and its index stay, the
+    // lines keep a null vector). The insert, the lines, the scans and every assertion below are unchanged.
+    await sqlAdmin(`ALTER TABLE ludy_meetings.transcript_segment ALTER COLUMN search DROP EXPRESSION`);
     // 120 000 lines of about 200 characters, a few of them holding the value, and one line of 4000 digits and spaces that no pattern may take long over.
     await sqlAdmin(
-      `INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage)
+      `INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage)
        SELECT $1, $2, g, g + 1, 'Hà', pg_catalog.repeat('Chúng ta bàn về giá và hạn giao hàng tháng này, ', 4) || CASE WHEN g % 40000 = 0 THEN 'liên hệ ${EMAIL}' ELSE '' END, 'published'
          FROM pg_catalog.generate_series(1, 120000) AS g`,
       [orgId, big],
     );
-    await sqlAdmin(`INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, 0, 1, 'Hà', pg_catalog.repeat('0 ', 2000), 'published')`, [orgId, big]);
+    await sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, 0, 1, 'Hà', pg_catalog.repeat('0 ', 2000), 'published')`, [orgId, big]);
     const started = Date.now();
     const found = await find('owner', EMAIL);
     const seconds = (Date.now() - started) / 1000;
@@ -180,11 +184,14 @@ suite('the personal-data finder in meeting text (#2594, L5 part 1)', () => {
     await find('owner', PHONE);
     const phoneSeconds = (Date.now() - phoneStarted) / 1000;
     expect(found.meetingTextSkipped).toBe(false);
-    if (process.env.CROVE_TEST_TIMING_FILE) appendFileSync(process.env.CROVE_TEST_TIMING_FILE, `finder over 120000 lines: email ${seconds.toFixed(2)} s, phone ${phoneSeconds.toFixed(2)} s\n`);
+    const timingFile = process.env.LUDY_TEST_TIMING_FILE ?? process.env.CROVE_TEST_TIMING_FILE;
+    if (timingFile) appendFileSync(timingFile, `finder over 120000 lines: email ${seconds.toFixed(2)} s, phone ${phoneSeconds.toFixed(2)} s\n`);
     expect(found.meetingText?.find((m) => m.recorderUserId === users.recorder)?.lines).toBeGreaterThanOrEqual(3);
-    // A generous budget for a shared runner: the point is that it is seconds, not minutes.
-    expect(seconds).toBeLessThan(30);
-    expect(phoneSeconds).toBeLessThan(30);
+    // A budget for a shared runner, tightened with the prefilter of ludy_kernel.text_mentions (#3832): the phone search took about 20 s on a laptop before it and about 6 s after, so a regression to the
+    // regex on every line (20 s) fails the 18 s phone budget here, while a runner up to three times slower than the laptop still passes. The email search is about 2.5 s after and about 3 s before (a text
+    // with no '@' was already cheap), so its 10 s budget is a sanity bound and not a guard of the prefilter.
+    expect(seconds).toBeLessThan(10);
+    expect(phoneSeconds).toBeLessThan(18);
   }, 120_000);
 
   // After the large meeting above: a search that the connection's statement timeout stops in the meeting text goes on without it, says so, and leaves the rest of the answer whole.
@@ -193,10 +200,10 @@ suite('the personal-data finder in meeting text (#2594, L5 part 1)', () => {
     pools.push(fast);
     const quick = new Runtime(createDb(fast), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] });
     // A party that holds the value, outside meeting text.
-    await sqlAdmin(`INSERT INTO crove_kernel.party (org_id, name, email) VALUES ($1, 'Khách thử', $2)`, [orgId, EMAIL]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.party (org_id, name, email) VALUES ($1, 'Khách thử', $2)`, [orgId, EMAIL]);
     const found = await quick.execute<PersonalDataResult>('kernel.personal_data.find', { value: EMAIL }, { actor: asUser('owner'), orgId, idempotencyKey: randomUUID() });
     expect(found.meetingTextSkipped).toBe(true);
-    expect(found.matches.some((m) => m.column === 'crove_kernel.party.email')).toBe(true);
+    expect(found.matches.some((m) => m.column === 'ludy_kernel.party.email')).toBe(true);
     expect(found.meetingText).toEqual([]);
     // The erasure goes through, lists the meeting text as not searched, and the party is erased.
     const erased = await quick.execute<{ erased: Array<{ column: string }>; kept: Array<{ column: string; reason: string }> }>(
@@ -204,7 +211,7 @@ suite('the personal-data finder in meeting text (#2594, L5 part 1)', () => {
       { value: EMAIL },
       { actor: { type: 'user', userId: users.owner as string, aal: 'aal2', sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) }, orgId, idempotencyKey: randomUUID() },
     );
-    expect(erased.erased.some((e) => e.column === 'crove_kernel.party.email')).toBe(true);
-    expect(erased.kept.find((k) => k.column === 'crove_meetings')?.reason).toMatch(/too large to search/);
+    expect(erased.erased.some((e) => e.column === 'ludy_kernel.party.email')).toBe(true);
+    expect(erased.kept.find((k) => k.column === 'ludy_meetings')?.reason).toMatch(/too large to search/);
   }, 120_000);
 });

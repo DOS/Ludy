@@ -16,14 +16,15 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createExtractApp } from '@crove/extract';
-import { createExtractClient } from '@crove/extract-contract';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, defineCommand, fileKey, sha256Hex, type BlobStore, type CommandDef } from '@crove/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, type Db } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createExtractApp } from '@ludy/extract';
+import { createExtractClient } from '@ludy/extract-contract';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, defineCommand, fileKey, sha256Hex, type BlobStore, type CommandDef } from '@ludy/kernel-runtime';
+import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 // The kernel's proposal edit command: the only command that runs a reviser.
@@ -61,6 +62,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('proposal gate follow-ups on PostgreSQL (#161)', () => {
   const dbName = `crove_test_gate_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let pool: pg.Pool;
   let workerPool: pg.Pool;
   let db: Db;
@@ -79,7 +81,7 @@ suite('proposal gate follow-ups on PostgreSQL (#161)', () => {
   });
 
   async function withAdmin<T>(fn: (admin: pg.Client) => Promise<T>): Promise<T> {
-    const admin = new pg.Client({ connectionString: adminUrl });
+    const admin = createDbClient({ connectionString: adminUrl }, dbIds);
     await admin.connect();
     try {
       return await fn(admin);
@@ -191,10 +193,11 @@ suite('proposal gate follow-ups on PostgreSQL (#161)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const loginUrl = (username: string, password: string) => {
       const url = new URL(adminUrl);
-      url.username = username;
+      url.username = dbIds ? dbIds.roleName(username) : username;
       url.password = password;
       return url.toString();
     };
@@ -203,10 +206,10 @@ suite('proposal gate follow-ups on PostgreSQL (#161)', () => {
         commands: [...kernelCommands, ...financeCommands],
         queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries],
       });
-    pool = createPool({ connectionString: loginUrl('crove_app', 'test-app-pw'), max: 4 });
+    pool = createDbPool({ connectionString: loginUrl('crove_app', 'test-app-pw'), max: 4 }, dbIds);
     db = createDb(pool);
     runtime = register(db);
-    workerPool = createPool({ connectionString: loginUrl('crove_worker', 'test-worker-pw'), max: 4 });
+    workerPool = createDbPool({ connectionString: loginUrl('crove_worker', 'test-worker-pw'), max: 4 }, dbIds);
     workerRuntime = register(createDb(workerPool));
   });
 
@@ -532,7 +535,7 @@ suite('proposal gate follow-ups on PostgreSQL (#161)', () => {
       const demote = () => runtime.execute('kernel.member.change_role', { userId: owner, role: 'admin' }, { actor: asMfa(coOwner), orgId });
       const approve = () => approveAs(orgId, owner, id, 2);
       const settle = <T>(p: Promise<T>) => p.then((value) => ({ ok: true as const, value }), (error: unknown) => ({ ok: false as const, error }));
-      const holder = new pg.Client({ connectionString: adminUrl });
+      const holder = createDbClient({ connectionString: adminUrl }, dbIds);
       // A failure below must not leave the owner rows locked (the racers would hang) or crash the run when the
       // database is dropped under the holder.
       holder.on('error', () => {});

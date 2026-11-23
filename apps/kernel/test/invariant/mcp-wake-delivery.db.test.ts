@@ -10,14 +10,15 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, DomainError, Runtime, parseVaultKey, type UserActor } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
-import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CredentialVault, DomainError, Runtime, parseVaultKey, type UserActor } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
+import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { makeWakeSecret } from '../../src/mcp-wake-setup.ts';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { auditRoleFunctionExecute, auditRoleTablePrivileges, createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -26,6 +27,7 @@ const suite = ADMIN ? describe : describe.skip;
 suite('the wake-up delivery of an MCP grant (#3024, step b)', () => {
   const dbName = `crove_test_mcp_wake_delivery_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let workerUrl = '';
   const pools: pg.Pool[] = [];
@@ -42,7 +44,7 @@ suite('the wake-up delivery of an MCP grant (#3024, step b)', () => {
   const mcp = (userId: string, grantId: string): UserActor => ({ type: 'user', userId, aal: 'aal1', mcp: { grantId, clientId: 'client-1', clientName: 'Test client', scopes: ['ludy.read'] } });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -83,15 +85,16 @@ suite('the wake-up delivery of an MCP grant (#3024, step b)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
-    url.username = 'crove_worker';
+    url.username = dbIds ? dbIds.roleName('crove_worker') : 'crove_worker';
     url.password = 'test-worker-pw';
     workerUrl = url.toString();
-    const pool = createPool({ connectionString: appUrl, max: 6 });
+    const pool = createDbPool({ connectionString: appUrl, max: 6 }, dbIds);
     pools.push(pool);
     runtime = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({
       commands: [...kernelCommands, ...financeCommands, ...meetingsCommands],
@@ -117,12 +120,17 @@ suite('the wake-up delivery of an MCP grant (#3024, step b)', () => {
 
   it('is reachable by no login role: not the tables, and the functions only by the delivery worker', async () => {
     await admin(async (c) => {
-      const roles = (await c.query(`SELECT rolname FROM pg_catalog.pg_roles WHERE rolname LIKE 'crove\\_%'`)).rows.map((r: { rolname: string }) => r.rolname);
       for (const table of ['crove_kernel.agent_wake_delivery', 'crove_kernel.agent_wake_signal_seen']) {
-        for (const role of roles) {
-          for (const right of ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER']) {
-            expect((await c.query(`SELECT has_table_privilege($1, $2, $3) AS ok`, [role, table, right])).rows[0].ok, `${role} ${right} on ${table}`).toBe(false);
-          }
+        const privs = await auditRoleTablePrivileges(
+          c,
+          dbIds,
+          table,
+          ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'],
+          'brand',
+        );
+        expect(privs.length, `${table} role privileges audited`).toBeGreaterThan(0);
+        for (const { rolname, privilege, ok } of privs) {
+          expect(ok, `${rolname} ${privilege} on ${table}`).toBe(false);
         }
         expect((await c.query(`SELECT has_table_privilege('public', $1, 'SELECT') AS ok`, [table])).rows[0].ok).toBe(false);
         expect((await c.query(`SELECT relrowsecurity FROM pg_catalog.pg_class WHERE oid = $1::regclass`, [table])).rows[0].relrowsecurity, `${table} row-level security`).toBe(true);
@@ -145,8 +153,13 @@ suite('the wake-up delivery of an MCP grant (#3024, step b)', () => {
         ...nobody.map((f): [string, string[]] => [f, []]),
       ];
       for (const [fn, allowed] of grants) {
-        for (const role of roles) {
-          expect((await c.query(`SELECT has_function_privilege($1, $2, 'EXECUTE') AS ok`, [role, fn])).rows[0].ok, `${role} execute ${fn}`).toBe(allowed.includes(role));
+        const { rows: roles, activeAllowed } = await auditRoleFunctionExecute(c, dbIds, fn, allowed, 'brand');
+        expect(roles.length, `${fn} roles audited`).toBeGreaterThan(0);
+        for (const role of activeAllowed) {
+          expect(roles.some((r) => r.rolname === role && r.ok), `active role ${role} execute ${fn}`).toBe(true);
+        }
+        for (const { rolname, ok, expected } of roles) {
+          expect(ok, `${rolname} execute ${fn}`).toBe(expected);
         }
         expect((await c.query(`SELECT has_function_privilege('public', $1, 'EXECUTE') AS ok`, [fn])).rows[0].ok, `public ${fn}`).toBe(false);
         const meta = (await c.query(`SELECT proconfig FROM pg_catalog.pg_proc WHERE oid = $1::regprocedure`, [fn])).rows[0];
@@ -154,8 +167,8 @@ suite('the wake-up delivery of an MCP grant (#3024, step b)', () => {
       }
     });
     // Through the real logins: the API cannot list or write a delivery, and the worker's lists carry ids, never a body or a URL.
-    const asApp = new pg.Client({ connectionString: appUrl });
-    const asWorker = new pg.Client({ connectionString: workerUrl });
+    const asApp = createDbClient({ connectionString: appUrl }, dbIds);
+    const asWorker = createDbClient({ connectionString: workerUrl }, dbIds);
     await asApp.connect();
     await asWorker.connect();
     try {
@@ -217,6 +230,32 @@ suite('the wake-up delivery of an MCP grant (#3024, step b)', () => {
         await expect(row, name).rejects.toThrow();
       }
     }
+    // The type that may join the set (#3803: sent to a company grant when the minutes of an org-visible meeting are published): optional here so each side can land on its own. When the database accepts
+    // it, it accepts exactly two data keys, an id and an instant, with the ids of its own row; whatever it does or does not accept yet, it never stores a title, a summary, a name, the camelCase keys or
+    // another row's ids.
+    const minutes = { ...head, type: 'meetings.minutes_published' };
+    const minutesData = { meeting_id: randomUUID(), published_at: '2026-11-12T02:59:58.123Z' };
+    const insertMinutes = (body: unknown) =>
+      admin((c) => c.query(`INSERT INTO crove_kernel.agent_wake_delivery (org_id, id, grant_id, type, body) VALUES ($1, $2, $3, 'meetings.minutes_published', $4::jsonb)`, [orgA, id, grant, JSON.stringify(body)]));
+    await insertMinutes({ ...minutes, data: minutesData }).then(
+      () => admin((c) => c.query(`DELETE FROM crove_kernel.agent_wake_delivery WHERE id = $1`, [id])),
+      () => undefined,
+    );
+    const hostileMinutes: Array<[string, unknown]> = [
+      ['a title beside the meeting id', { ...minutes, data: { ...minutesData, title: 'Nguyen Van A họp giá' } }],
+      ['a summary in the minutes event', { ...minutes, data: { ...minutesData, summary: 'Hai khoản cần xem' } }],
+      ['the camelCase keys', { ...minutes, data: { meetingId: minutesData.meeting_id, publishedAt: minutesData.published_at } }],
+      ['a name for the meeting id', { ...minutes, data: { meeting_id: 'Nguyen Van A', published_at: minutesData.published_at } }],
+      ['text for the published instant', { ...minutes, data: { meeting_id: minutesData.meeting_id, published_at: 'thứ hai' } }],
+      ['a date for the published instant', { ...minutes, data: { meeting_id: minutesData.meeting_id, published_at: '2026-11-12' } }],
+      ['no meeting id', { ...minutes, data: { published_at: minutesData.published_at } }],
+      ['items in the minutes event', { ...minutes, data: { items: [] } }],
+      ['a note at the top', { ...minutes, data: minutesData, note: 'gọi lại khách' }],
+      ['another org\'s id', { ...minutes, org: orgB, data: minutesData }],
+      ['another grant\'s id', { ...minutes, grant: randomUUID(), data: minutesData }],
+      ['another event id', { ...minutes, id: randomUUID(), data: minutesData }],
+    ];
+    for (const [name, body] of hostileMinutes) await expect(insertMinutes(body), name).rejects.toThrow();
     // The signal keys table holds only a rule's short name and ids.
     for (const key of ['Nguyen Van A', 'deal_without_invoice', 'deal_without_invoice:not-an-id', `Deal:${randomUUID()}`, 'x'.repeat(300)]) {
       await expect(admin((c) => c.query(`INSERT INTO crove_kernel.agent_wake_signal_seen (org_id, grant_id, key) VALUES ($1, $2, $3)`, [orgA, grant, key])), key).rejects.toThrow();

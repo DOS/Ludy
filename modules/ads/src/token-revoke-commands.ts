@@ -6,8 +6,8 @@
 // and nothing it takes or returns is a token: ids, states, counts and error codes.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, type AdsTokenRevokeView } from '@crove/kernel-contract';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { zId, type AdsTokenRevokeView } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, type CommandContext } from '@ludy/kernel-runtime';
 import { settleAttempt, type RevokeOutcome } from './token-revoke.ts';
 
 const zOutcome = z.discriminatedUnion('kind', [
@@ -45,6 +45,7 @@ function revokeError(error: unknown): never {
 
 export const adsTokenRevokeRecord = defineCommand({
   name: 'ads.token_revoke.record',
+  runsWhenOff: 'records that a revoked ad token was revoked at the platform while the app is off',
   input: zAdsTokenRevokeRecord,
   // It changes only the record of what the platform answered: the call itself was the job's, and it spends nothing.
   risk: 'R1',
@@ -53,7 +54,7 @@ export const adsTokenRevokeRecord = defineCommand({
   handler: async (ctx: CommandContext, input: AdsTokenRevokeRecordInput): Promise<AdsTokenRevokeRecorded> => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới thực hiện được việc này');
     const row = await ctx.trx
-      .selectFrom('crove_ads.ad_token_revoke')
+      .selectFrom('ludy_ads.ad_token_revoke')
       .select(['state', 'attempts', 'created_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.revokeId)
@@ -72,7 +73,7 @@ export const adsTokenRevokeRecord = defineCommand({
     const errorKind = outcome.kind === 'failed' ? outcome.error : null;
     const errorCode = outcome.kind === 'done' ? null : outcome.code;
     await sql`
-      SELECT crove_ads.token_revoke_settle(
+      SELECT ludy_ads.token_revoke_settle(
         ${ctx.orgId}::uuid, ${input.revokeId}::uuid, ${input.leaseToken}::uuid, ${settled.state}, ${settled.nextAttemptAt?.toISOString() ?? null}::timestamptz,
         ${settled.how}, ${settled.giveUp}, ${errorKind}, ${errorCode})`
       .execute(ctx.trx)
@@ -102,15 +103,15 @@ export async function tokenRevokeViews(ctx: { trx: CommandContext['trx']; orgId:
     created_at: Date;
   }>`
     (SELECT r.id, r.ad_account_id, a.name AS account_name, r.provider, r.external_account_id, r.kind, r.state, r.give_up, r.attempts, r.next_attempt_at, r.last_error_kind, r.created_at
-     FROM crove_ads.ad_token_revoke r
-     LEFT JOIN crove_ads.ad_account a ON a.org_id = r.org_id AND a.id = r.ad_account_id
+     FROM ludy_ads.ad_token_revoke r
+     LEFT JOIN ludy_ads.ad_account a ON a.org_id = r.org_id AND a.id = r.ad_account_id
      WHERE r.org_id = ${ctx.orgId}::uuid AND r.state = 'pending'
      ORDER BY r.created_at DESC, r.id DESC
      LIMIT 50)
     UNION ALL
     (SELECT r.id, r.ad_account_id, a.name AS account_name, r.provider, r.external_account_id, r.kind, r.state, r.give_up, r.attempts, r.next_attempt_at, r.last_error_kind, r.created_at
-     FROM crove_ads.ad_token_revoke r
-     LEFT JOIN crove_ads.ad_account a ON a.org_id = r.org_id AND a.id = r.ad_account_id
+     FROM ludy_ads.ad_token_revoke r
+     LEFT JOIN ludy_ads.ad_account a ON a.org_id = r.org_id AND a.id = r.ad_account_id
      WHERE r.org_id = ${ctx.orgId}::uuid AND r.state = 'gave_up' AND r.settled_at > pg_catalog.now() - pg_catalog.make_interval(days => 30)
      ORDER BY r.created_at DESC, r.id DESC
      LIMIT 50)

@@ -10,11 +10,11 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { Publisher, PublishResult, ReconcileResult } from '@crove/channel';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
+import type { Publisher, PublishResult, ReconcileResult } from '@ludy/channel';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
 import {
   RECURRING_FIRST_GAP_MS,
   localTime,
@@ -28,7 +28,7 @@ import {
   type Recurrence,
   type RecurringResult,
   type TextVariation,
-} from '@crove/mod-social';
+} from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -85,7 +85,7 @@ suite('social text variations on PostgreSQL (#1260, #1001)', () => {
     const { orgId } = await createOrg(api, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const people = { member: await person('member'), viewer: await person('viewer') };
     for (const [role, id] of Object.entries(people)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
     }
     return { orgId, owner, ...people };
   }
@@ -99,12 +99,12 @@ suite('social text variations on PostgreSQL (#1260, #1001)', () => {
   const repostNow = (o: Org, postId: string) => worker.execute<{ postId: string | null }>('social.post.repost_evergreen', { postId }, { actor: SYSTEM, orgId: o.orgId });
   const nextCopy = (o: Org, postId: string) => worker.execute<RecurringResult>('social.recurring.next', { postId }, { actor: SYSTEM, orgId: o.orgId });
   const reposts = (sourceId: string) =>
-    admin(async (c) => (await c.query<{ id: string; body: string; tainted: boolean }>('SELECT id, body, tainted FROM crove_social.post WHERE repost_of = $1 ORDER BY created_at, id', [sourceId])).rows);
+    admin(async (c) => (await c.query<{ id: string; body: string; tainted: boolean }>('SELECT id, body, tainted FROM ludy_social.post WHERE repost_of = $1 ORDER BY created_at, id', [sourceId])).rows);
   const copies = (seriesId: string) =>
-    admin(async (c) => (await c.query<{ id: string; body: string; scheduled_at: Date | null }>('SELECT id, body, scheduled_at FROM crove_social.post WHERE recurrence_source_id = $1 ORDER BY created_at, id', [seriesId])).rows);
+    admin(async (c) => (await c.query<{ id: string; body: string; scheduled_at: Date | null }>('SELECT id, body, scheduled_at FROM ludy_social.post WHERE recurrence_source_id = $1 ORDER BY created_at, id', [seriesId])).rows);
   const cancel = async (o: Org, postId: string) => exec(o, 'social.variant.cancel', { variantIds: (await get(o, postId)).variants.map((v) => v.id) });
   // The last repost made long enough ago for the next one to be due.
-  const ageReposts = (sourceId: string) => admin((c) => c.query("UPDATE crove_social.post SET created_at = created_at - interval '8 days' WHERE repost_of = $1", [sourceId]));
+  const ageReposts = (sourceId: string) => admin((c) => c.query("UPDATE ludy_social.post SET created_at = created_at - interval '8 days' WHERE repost_of = $1", [sourceId]));
 
   async function connect(o: Org) {
     const account = `acct-${randomUUID().slice(0, 8)}`;
@@ -128,7 +128,7 @@ suite('social text variations on PostgreSQL (#1260, #1001)', () => {
     const post = await get(o, postId);
     await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
     await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
     for (const v of post.variants) await runPublishJob({ runtime: worker, broker: vault, publishers: { sandbox: platform }, callTimeoutMs: 2_000 }, o.orgId, v.id, 'sandbox');
     expect((await get(o, postId)).status).toBe('published');
     return { postId, connectionId, body };
@@ -138,7 +138,7 @@ suite('social text variations on PostgreSQL (#1260, #1001)', () => {
   async function evergreen(o: Org, body?: string) {
     const p = await published(o, body);
     await exec(o, 'social.post.set_evergreen', { postId: p.postId, days: 7 });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET published_at = now() - interval '8 days' WHERE post_id = $1", [p.postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET published_at = now() - interval '8 days' WHERE post_id = $1", [p.postId]));
     return p;
   }
 
@@ -147,18 +147,18 @@ suite('social text variations on PostgreSQL (#1260, #1001)', () => {
   async function xChannel(o: Org) {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, id, 'x', `acct-${id.slice(0, 8)}`, 'Kênh X', o.owner]),
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, id, 'x', `acct-${id.slice(0, 8)}`, 'Kênh X', o.owner]),
     );
     return id;
   }
   const markPublished = (postId: string) =>
     admin(async (c) => {
       await c.query(
-        `UPDATE crove_social.post_variant v SET status = 'published', published_at = now(), content_frozen = true, body = coalesce(v.body, p.body), external_post_id = 'x-' || v.id
-           FROM crove_social.post p WHERE p.org_id = v.org_id AND p.id = v.post_id AND v.post_id = $1`,
+        `UPDATE ludy_social.post_variant v SET status = 'published', published_at = now(), content_frozen = true, body = coalesce(v.body, p.body), external_post_id = 'x-' || v.id
+           FROM ludy_social.post p WHERE p.org_id = v.org_id AND p.id = v.post_id AND v.post_id = $1`,
         [postId],
       );
-      await c.query("UPDATE crove_social.post SET status = 'published' WHERE id = $1", [postId]);
+      await c.query("UPDATE ludy_social.post SET status = 'published' WHERE id = $1", [postId]);
     });
 
   beforeAll(async () => {
@@ -170,15 +170,15 @@ suite('social text variations on PostgreSQL (#1260, #1001)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 4 });
     appDb = createDb(appPool);
     workerDb = createDb(workerPool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
@@ -204,7 +204,7 @@ suite('social text variations on PostgreSQL (#1260, #1001)', () => {
       const e = await evergreen(a);
       const s = await published(a);
       await setRule(a, s.postId, { time: '09:00' });
-      await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE id = ANY($1::uuid[])", [[e.connectionId, s.connectionId]]));
+      await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'expired' WHERE id = ANY($1::uuid[])", [[e.connectionId, s.connectionId]]));
     }
     const e = await evergreen(b);
     const s = await published(b);
@@ -218,13 +218,13 @@ suite('social text variations on PostgreSQL (#1260, #1001)', () => {
     const can = await admin(async (c) =>
       (
         await c.query<{ fn: string; role: string }>(
-          `SELECT f AS fn, r AS role FROM unnest(ARRAY['crove_social.evergreen_due(int, uuid[])', 'crove_social.recurring_due(int, uuid[])']) f,
-             unnest(ARRAY['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant']) r WHERE has_function_privilege(r, f, 'EXECUTE') ORDER BY 1, 2`,
+          `SELECT f AS fn, r AS role FROM unnest(ARRAY['ludy_social.evergreen_due(int, uuid[])', 'ludy_social.recurring_due(int, uuid[])']) f,
+             unnest(ARRAY['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant']) r WHERE has_function_privilege(r, f, 'EXECUTE') ORDER BY 1, 2`,
         )
       ).rows,
     );
-    expect(can.map((r) => r.role)).toEqual(['crove_worker', 'crove_worker']);
-    await expect(appPool.query("SELECT * FROM crove_social.recurring_due(10, '{}')")).rejects.toMatchObject({ code: '42501' });
+    expect(can.map((r) => r.role)).toEqual(['ludy_worker', 'ludy_worker']);
+    await expect(appPool.query("SELECT * FROM ludy_social.recurring_due(10, '{}')")).rejects.toMatchObject({ code: '42501' });
   });
 
   it('sends variations 1, 2 and 3 on three evergreen cycles, then 1 again', async () => {
@@ -331,19 +331,19 @@ suite('social text variations on PostgreSQL (#1260, #1001)', () => {
     const o = await org();
     const { postId } = await published(o);
     await setRule(o, postId, { time: '11:00' });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'removed', removed_at = now() WHERE post_id = $1", [postId]));
-    expect(await admin(async (c) => (await c.query<{ post_id: string }>("SELECT post_id FROM crove_social.recurring_due(500, '{}')")).rows.map((r) => r.post_id))).toContain(postId);
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'removed', removed_at = now() WHERE post_id = $1", [postId]));
+    expect(await admin(async (c) => (await c.query<{ post_id: string }>("SELECT post_id FROM ludy_social.recurring_due(500, '{}')")).rows.map((r) => r.post_id))).toContain(postId);
     expect(await nextCopy(o, postId)).toEqual({ postId: null, reason: 'taken_down' });
     expect((await get(o, postId)).recurrence).toBeNull();
     expect(await copies(postId)).toEqual([]);
-    const audit = await admin(async (c) => (await c.query<{ detail: { reason?: string } }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.recurring.next' AND outcome = 'ok'", [o.orgId])).rows);
+    const audit = await admin(async (c) => (await c.query<{ detail: { reason?: string } }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.recurring.next' AND outcome = 'ok'", [o.orgId])).rows);
     expect(audit.map((r) => r.detail.reason)).toContain('taken_down');
   });
 
   it('makes the first copy no sooner than the gap after the original went out (#1001)', async () => {
     const o = await org();
     const { postId } = await published(o);
-    const firstAt = (await admin(async (c) => (await c.query<{ at: Date }>('SELECT min(published_at) AS at FROM crove_social.post_variant WHERE post_id = $1', [postId])).rows[0]?.at)) as Date;
+    const firstAt = (await admin(async (c) => (await c.query<{ at: Date }>('SELECT min(published_at) AS at FROM ludy_social.post_variant WHERE post_id = $1', [postId])).rows[0]?.at)) as Date;
     // Every day, two hours after the original went out: today's occurrence is too close, so the first copy is tomorrow's.
     const soon = localTime(firstAt.getTime() + 2 * 3_600_000, HCM);
     const time = `${String(soon.hour).padStart(2, '0')}:${String(soon.minute).padStart(2, '0')}`;
@@ -371,16 +371,16 @@ suite('social text variations on PostgreSQL (#1260, #1001)', () => {
     await expect(setVariations(o, postId, ['A', ' A '])).rejects.toBeDefined();
     await expect(setVariations(o, postId, ['1', '2', '3', '4', '5', '6'])).rejects.toBeDefined();
     // The cursor follows its text when the list is reordered, and an AI mark is never dropped from a kept text.
-    await admin((c) => c.query('UPDATE crove_social.post SET text_variation_next = 1 WHERE id = $1', [postId]));
+    await admin((c) => c.query('UPDATE ludy_social.post SET text_variation_next = 1 WHERE id = $1', [postId]));
     await setVariations(o, postId, [{ text: 'B', ai: true }, 'A']);
     expect(await setVariations(o, postId, ['C', 'B', 'A'])).toEqual({ postId, variations: [{ text: 'C', ai: false }, { text: 'B', ai: true }, { text: 'A', ai: false }], next: 1 });
     expect((await get(o, postId)).textVariations).toEqual([{ text: 'C', ai: false }, { text: 'B', ai: true }, { text: 'A', ai: false }]);
     // The table refuses what no command writes.
     for (const bad of ['{}', '"A"', '[{"text":"A"}]', '[{"text":"A","ai":"no"}]', '[{"text":"  ","ai":false}]', '[{"text":"A","ai":false},{"text":"A","ai":false}]', '[{"text":"A","ai":false,"x":1}]', '[1]', JSON.stringify(Array.from({ length: 6 }, (_, i) => ({ text: `T${i}`, ai: false })))]) {
-      await expect(admin((c) => c.query('UPDATE crove_social.post SET text_variations = $2::jsonb, text_variation_next = 0 WHERE id = $1', [postId, bad])), bad).rejects.toMatchObject({ code: '23514' });
+      await expect(admin((c) => c.query('UPDATE ludy_social.post SET text_variations = $2::jsonb, text_variation_next = 0 WHERE id = $1', [postId, bad])), bad).rejects.toMatchObject({ code: '23514' });
     }
-    await expect(admin((c) => c.query('UPDATE crove_social.post SET text_variation_next = 3 WHERE id = $1', [postId]))).rejects.toMatchObject({ code: '23514' });
-    await expect(admin((c) => c.query("UPDATE crove_social.post SET text_variations = '[]', text_variation_next = 1 WHERE id = $1", [postId]))).rejects.toMatchObject({ code: '23514' });
+    await expect(admin((c) => c.query('UPDATE ludy_social.post SET text_variation_next = 3 WHERE id = $1', [postId]))).rejects.toMatchObject({ code: '23514' });
+    await expect(admin((c) => c.query("UPDATE ludy_social.post SET text_variations = '[]', text_variation_next = 1 WHERE id = $1", [postId]))).rejects.toMatchObject({ code: '23514' });
     // A copy of a series takes its series' variations, never its own.
     const series = await published(o);
     await setRule(o, series.postId, { time: '08:00' });

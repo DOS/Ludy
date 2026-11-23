@@ -8,12 +8,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { MyWork, TodoHandedOver, TodoSummary, TodoWritten } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
-import { notesCommands, notesQueries } from '@crove/mod-notes';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import type { MyWork, TodoHandedOver, TodoSummary, TodoWritten } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
+import { notesCommands, notesQueries } from '@ludy/mod-notes';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -63,11 +63,11 @@ suite('to-do hand-over and My work on PostgreSQL (#1674)', () => {
     const viewer = await user('viewer');
     const { orgId } = await createOrg(app, asUser(owner), `Giao việc ${tag}`);
     const positions = await admin(async (c) => {
-      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, mine, other, viewer]);
+      await c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgId, mine, other, viewer]);
       const add = async (title: string, holder: string | null, status: string) =>
         (
           await c.query<{ id: string }>(
-            `INSERT INTO crove_kernel.position (org_id, title, module, role_key, holder_user_id, status) VALUES ($1, $2, 'kernel', 'staff', $3, $4) RETURNING id`,
+            `INSERT INTO ludy_kernel.position (org_id, title, module, role_key, holder_user_id, status) VALUES ($1, $2, 'kernel', 'staff', $3, $4) RETURNING id`,
             [orgId, title, holder, status],
           )
         ).rows[0]?.id as string;
@@ -87,9 +87,9 @@ suite('to-do hand-over and My work on PostgreSQL (#1674)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -130,7 +130,7 @@ suite('to-do hand-over and My work on PostgreSQL (#1674)', () => {
         tainted: false,
       });
     }
-    const row = await admin((c) => c.query(`SELECT title, description, source_ref FROM crove_kernel.task WHERE id = $1`, [handed.taskId]));
+    const row = await admin((c) => c.query(`SELECT title, description, source_ref FROM ludy_kernel.task WHERE id = $1`, [handed.taskId]));
     for (const secret of [TITLE, DETAILS, STEP]) expect(JSON.stringify(row.rows)).not.toContain(secret);
 
     // The to-do is handed over, out of the open list, and names its task.
@@ -149,15 +149,15 @@ suite('to-do hand-over and My work on PostgreSQL (#1674)', () => {
 
     // The audit row and the events keep ids and markers, never the to-do's or the task's text.
     const audit = await admin((c) =>
-      c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'notes.todo.hand_over' AND outcome = 'ok'`, [o.orgId]),
+      c.query<{ detail: Record<string, unknown> }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'notes.todo.hand_over' AND outcome = 'ok'`, [o.orgId]),
     );
     expect(audit.rows).toHaveLength(1);
     expect(audit.rows[0]?.detail).toMatchObject({ todoId, taskId: handed.taskId, positionId: o.positions.team, title: { redacted: 'pii' }, description: { redacted: 'pii' } });
     // The kernel's nested command writes its own row, with ids only.
-    const all = await admin((c) => c.query<{ command: string; detail: unknown }>(`SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1`, [o.orgId]));
+    const all = await admin((c) => c.query<{ command: string; detail: unknown }>(`SELECT command, detail FROM ludy_kernel.audit_event WHERE org_id = $1`, [o.orgId]));
     expect(all.rows.find((r) => r.command === 'kernel.task.create_from_todo')?.detail).toMatchObject({ taskId: handed.taskId, todoId });
     for (const secret of [TITLE, DETAILS, STEP, TEAM_TEXT]) expect(JSON.stringify(all.rows)).not.toContain(secret);
-    const events = await admin((c) => c.query<{ type: string; payload: unknown }>(`SELECT type, payload FROM crove_kernel.outbox_event WHERE org_id = $1`, [o.orgId]));
+    const events = await admin((c) => c.query<{ type: string; payload: unknown }>(`SELECT type, payload FROM ludy_kernel.outbox_event WHERE org_id = $1`, [o.orgId]));
     expect(events.rows.map((e) => e.type)).toEqual(expect.arrayContaining(['notes.todo.handed_over', 'kernel.task.created']));
     for (const secret of [TITLE, DETAILS, STEP, TEAM_TITLE, TEAM_TEXT]) {
       expect(JSON.stringify(audit.rows)).not.toContain(secret);
@@ -170,7 +170,7 @@ suite('to-do hand-over and My work on PostgreSQL (#1674)', () => {
     const { todoId } = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', { title: TITLE });
     const handOver = (userId: string, input: Record<string, unknown> = {}) =>
       o.exec(userId, 'notes.todo.hand_over', { todoId, revision: 1, positionId: o.positions.team, title: TEAM_TITLE, description: '', ...input });
-    const tasks = () => admin((c) => c.query(`SELECT id FROM crove_kernel.task WHERE org_id = $1`, [o.orgId])).then((r) => r.rowCount);
+    const tasks = () => admin((c) => c.query(`SELECT id FROM ludy_kernel.task WHERE org_id = $1`, [o.orgId])).then((r) => r.rowCount);
 
     await expect(handOver(o.mine, { positionId: o.positions.archived })).rejects.toMatchObject({ code: 'POSITION_ARCHIVED', status: 409 });
     await expect(handOver(o.mine, { positionId: randomUUID() })).rejects.toMatchObject({ code: 'POSITION_NOT_FOUND', status: 404 });
@@ -181,14 +181,14 @@ suite('to-do hand-over and My work on PostgreSQL (#1674)', () => {
     await o.exec(o.mine, 'notes.todo.delete', { todoId });
     await expect(handOver(o.mine)).rejects.toMatchObject({ code: 'TODO_IN_TRASH', status: 409 });
     expect(await tasks()).toBe(0);
-    const [todo] = (await admin((c) => c.query<{ status: string; task_id: string | null }>(`SELECT status, task_id FROM crove_notes.todo WHERE id = $1`, [todoId]))).rows;
+    const [todo] = (await admin((c) => c.query<{ status: string; task_id: string | null }>(`SELECT status, task_id FROM ludy_notes.todo WHERE id = $1`, [todoId]))).rows;
     expect(todo).toEqual({ status: 'open', task_id: null });
   });
 
   it('carries a tainted to-do’s taint to its task', async () => {
     const o = await org();
     const { todoId } = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', { title: TITLE });
-    await admin((c) => c.query(`UPDATE crove_notes.todo SET tainted = true WHERE id = $1`, [todoId]));
+    await admin((c) => c.query(`UPDATE ludy_notes.todo SET tainted = true WHERE id = $1`, [todoId]));
     const handed = await o.exec<TodoHandedOver>(o.mine, 'notes.todo.hand_over', { todoId, revision: 1, positionId: o.positions.team, title: TEAM_TITLE, description: '' });
     const { task } = await o.query<{ task: TaskView }>(o.other, 'kernel.task.get', { id: handed.taskId });
     expect(task.tainted).toBe(true);
@@ -213,7 +213,7 @@ suite('to-do hand-over and My work on PostgreSQL (#1674)', () => {
     const teamTask = await give('Việc của người khác', o.positions.team);
     const rootTask = await give('Việc của chủ sở hữu', null);
     const closedTask = await give('Đã xong', o.positions.own);
-    await admin((c) => c.query(`UPDATE crove_kernel.task SET status = 'done' WHERE id = $1`, [closedTask]));
+    await admin((c) => c.query(`UPDATE ludy_kernel.task SET status = 'done' WHERE id = $1`, [closedTask]));
 
     const work = await o.query<MyWork>(o.mine, 'notes.my_work', { timeZone: 'Asia/Ho_Chi_Minh' });
     expect(work.todos.map((t) => t.id)).toEqual([todoId]);

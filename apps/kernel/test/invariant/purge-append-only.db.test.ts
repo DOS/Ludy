@@ -14,12 +14,13 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -35,11 +36,12 @@ const suite = ADMIN ? describe : describe.skip;
 suite('the org purge alone deletes task comments and post approvals (#1032, #2011)', () => {
   const dbName = `crove_test_purgeappend_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let pool: pg.Pool;
   let runtime: Runtime;
 
   async function withClient<T>(url: string, fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: url });
+    const c = createDbClient({ connectionString: url }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -114,7 +116,11 @@ suite('the org purge alone deletes task comments and post approvals (#1032, #201
         const context = session.context;
         if (context && 'system' in context) await c.query('SELECT crove_kernel.enter_system_context($1)', [context.system]);
         else if (context) await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [context.user.orgId, contextToken(context.user.owner, context.user.orgId)]);
-        const { rows } = await c.query<{ n: string }>('SELECT crove_kernel.t2011_probe($1, $2, $3) AS n', [mark, statement, target]);
+        const { rows } = await c.query<{ n: string }>('SELECT crove_kernel.t2011_probe($1, $2, $3) AS n', [
+          mark,
+          dbIds ? dbIds.rewriteSql(statement) : statement,
+          target,
+        ]);
         return `${rows[0]?.n} row(s)`;
       } catch (e) {
         return (e as Error).message;
@@ -143,11 +149,12 @@ suite('the org purge alone deletes task comments and post approvals (#1032, #201
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     app.password = 'test-app-pw';
-    pool = createPool({ connectionString: app.toString(), max: 2 });
+    pool = createDbPool({ connectionString: app.toString(), max: 2 }, dbIds);
     runtime = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
   }, 120_000);
 
@@ -217,8 +224,8 @@ suite('the org purge alone deletes task comments and post approvals (#1032, #201
       ).rows;
       return { guarded, truncate, shape };
     });
-    expect(guarded).toEqual(GUARDED.map((t) => `${t} append_only_row`).sort());
-    expect(truncate).toEqual([...GUARDED].sort());
+    expect([...guarded].sort()).toEqual(GUARDED.map((t) => `${t} append_only_row`).sort());
+    expect([...truncate].sort()).toEqual([...GUARDED].sort());
     expect(shape).toEqual([{ definer: false, config: ['search_path=pg_catalog, pg_temp'], public: false }]);
 
     const org = await seeded('offboarding');
@@ -233,8 +240,8 @@ suite('the org purge alone deletes task comments and post approvals (#1032, #201
   // function runs as given (EXECUTE p_sql), a DELETE built by string concatenation, and a cascade from a parent table
   // (today only crove_kernel.tenant, whose rows tenant_no_delete keeps).
   it('has no function but org_purge delete from task comments or post approvals', async () => {
-    const STATIC = String.raw`delete\s+from\s+(only\s+)?"?(crove_kernel"?\s*\.\s*"?task_comment|crove_social"?\s*\.\s*"?post_approval)\M`;
-    const DYNAMIC = String.raw`delete\s+from\s+(only\s+)?("?(crove_kernel|crove_social)"?\s*\.\s*)?%`;
+    const STATIC = String.raw`delete\s+from\s+(only\s+)?"?((?:crove|ludy)_kernel"?\s*\.\s*"?task_comment|(?:crove|ludy)_social"?\s*\.\s*"?post_approval)\M`;
+    const DYNAMIC = String.raw`delete\s+from\s+(only\s+)?("?(?:crove|ludy)_(?:kernel|social)"?\s*\.\s*)?%`;
     const deleters = async (c: pg.Client, pattern: string) =>
       (
         await c.query<{ fn: string }>(
@@ -244,7 +251,9 @@ suite('the org purge alone deletes task comments and post approvals (#1032, #201
            ORDER BY 1`,
           [pattern],
         )
-      ).rows.map((r) => r.fn);
+      ).rows
+        .map((r) => r.fn)
+        .sort();
     await withClient(adminUrl, async (c) => {
       expect(await deleters(c, STATIC)).toEqual(['crove_kernel.org_purge(integer)']);
       expect(await deleters(c, DYNAMIC)).toEqual(['crove_kernel.org_purge(integer)']);

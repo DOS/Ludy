@@ -6,18 +6,19 @@
 // authors first, and the erasure then deletes the ones a notice named and edits the value out of shared notes.
 // An owner also finds here every meeting of the org, the ones they cannot read included, as metadata only, to delete one (#2703).
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { PersonalDataResult } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
-import { TableCell, TableRow } from '@crove/ui/components/table';
+import type { PersonalDataResult } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { MeetingOwnerDeletion } from '../components/meeting-owner-deletion.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, PageSkeleton, TableSkeleton } from '../components/ui.tsx';
 import { errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
-import { getConfig } from '../lib/auth.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 const HANDLING_BADGE = { erase: 'warning', keep_legal: 'secondary', keep_org: 'secondary', keep_record: 'secondary' } as const;
 
@@ -34,6 +35,7 @@ function download(value: string, result: PersonalDataResult) {
 }
 
 export function PersonalDataPage() {
+  useModulesVersion(); // the apps of the org can change while this screen is open
   const t = useTranslations('personalData');
   const org = useQuery(orpc.org.get.queryOptions());
   const canRead = org.data?.role === 'owner' || org.data?.role === 'admin';
@@ -127,12 +129,26 @@ export function PersonalDataPage() {
         )}
       </form>
       <p className="mb-4 max-w-3xl text-xs text-muted-foreground">{t('hint')}</p>
+      {/* Customer conversations are not found by this search (their names and addresses are erased with their threads): the Inbox is where they go (#3635). */}
+      {installedModules().includes('social') && org.data && (
+        <p className="mb-4 max-w-3xl text-xs text-muted-foreground" data-testid="personal-data-conversations">
+          {t('conversations')}{' '}
+          <Link to="/o/$slug/social/inbox" params={{ slug: org.data.slug }} className="text-link underline">
+            {t('conversationsLink')}
+          </Link>
+        </p>
+      )}
       {erase.data && (
         <div className="mb-4 max-w-3xl space-y-1 rounded-lg border p-3 text-sm">
           <p className="font-medium text-foreground">{t('erased')}</p>
           {erase.data.erased.map((e) => (
             <p key={e.column} className="font-mono text-xs text-muted-foreground">
               {t('erasedRow', { column: e.column, rows: e.rows })}
+            </p>
+          ))}
+          {(erase.data.meetingNotes ?? []).map((n) => (
+            <p key={n.recorderUserId} className="text-xs text-muted-foreground">
+              {t('erasedNotes', { name: nameOf(n.recorderUserId), notes: n.notes })}
             </p>
           ))}
           {erase.data.kept.length > 0 && <p className="pt-2 font-medium text-foreground">{t('kept')}</p>}
@@ -205,6 +221,7 @@ export function PersonalDataPage() {
               {meetingText.map((m) => (
                 <p key={m.recorderUserId} className="text-xs text-muted-foreground">
                   {t('meetingTextRecorder', { name: nameOf(m.recorderUserId), meetings: m.meetings, lines: m.lines, results: m.results, items: m.items, titles: m.titles })}
+                  {m.notes ? t('meetingTextNotes', { notes: m.notes }) : null}
                 </p>
               ))}
               <p className="pt-1 text-xs text-muted-foreground">{t('meetingTextHint')}</p>
@@ -230,7 +247,7 @@ export function PersonalDataPage() {
         </>
       )}
       {/* A separate section: the owner's compliance deletion of meetings, which never shows a meeting's title or text. */}
-      {isOwner && getConfig().modules.includes('meetings') && <MeetingOwnerDeletion nameOf={nameOf} />}
+      {isOwner && installedModules().includes('meetings') && <MeetingOwnerDeletion nameOf={nameOf} />}
     </>
   );
 }

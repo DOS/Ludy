@@ -7,11 +7,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, sweepReminders, type NotificationItem, type PostView } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, sweepReminders, type NotificationItem, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -25,7 +25,7 @@ suite('social review reminders on PostgreSQL (#703)', () => {
   let db: Db;
   let rt: Runtime;
   let workerPool: pg.Pool;
-  // The worker's runtime (the crove_worker login): only it enters an org's system context.
+  // The worker's runtime (the ludy_worker login): only it enters an org's system context.
   let worker: Runtime;
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
   const system = { type: 'system' as const, component: 'test' };
@@ -51,7 +51,7 @@ suite('social review reminders on PostgreSQL (#703)', () => {
     const roles = { admin: await person('admin'), member: await person('member'), other: await person('other'), viewer: await person('viewer') };
     const role = { admin: 'admin', member: 'member', other: 'member', viewer: 'viewer' } as const;
     for (const [key, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
     }
     return { orgId, owner, ...roles, dispatched: new Set() };
   }
@@ -60,7 +60,7 @@ suite('social review reminders on PostgreSQL (#703)', () => {
     const id = randomUUID();
     await admin((c) =>
       c.query(
-        'INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
+        'INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
         [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, 'Kênh thử', owner],
       ),
     );
@@ -75,7 +75,7 @@ suite('social review reminders on PostgreSQL (#703)', () => {
 
   // What the worker does for each new event of the org: the dispatch, in the org's system context.
   async function deliver(o: Org): Promise<number> {
-    const events = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 ORDER BY created_at, id', [o.orgId])).rows);
+    const events = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 ORDER BY created_at, id', [o.orgId])).rows);
     let sent = 0;
     for (const e of events) {
       if (o.dispatched.has(e.id)) continue;
@@ -94,16 +94,16 @@ suite('social review reminders on PostgreSQL (#703)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
     const asWorker = new URL(adminUrl);
-    asWorker.username = 'crove_worker';
+    asWorker.username = 'ludy_worker';
     asWorker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorker.toString(), max: 2 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
@@ -123,12 +123,12 @@ suite('social review reminders on PostgreSQL (#703)', () => {
   const backdate = (postId: string, hours: number) =>
     admin(async (c) => {
       await c.query("SET session_replication_role = 'replica'");
-      await c.query("UPDATE crove_social.post_variant SET review_since = now() - make_interval(hours => $2::int) WHERE post_id = $1", [postId, hours]);
+      await c.query("UPDATE ludy_social.post_variant SET review_since = now() - make_interval(hours => $2::int) WHERE post_id = $1", [postId, hours]);
     });
   const sweep = () => sweepReminders({ runtime: worker, workerDb: createDb(workerPool) });
   const reminders = async (o: Org, user: string) => (await list(o, user)).items.filter((i) => i.kind === 'review_reminder').map((i) => i.detail.stage);
   const clock = (postId: string) =>
-    admin(async (c) => (await c.query<{ since: boolean; waiting: boolean; due: boolean }>('SELECT review_since IS NOT NULL AS since, reminded_waiting_at IS NOT NULL AS waiting, reminded_due_at IS NOT NULL AS due FROM crove_social.post_variant WHERE post_id = $1', [postId])).rows);
+    admin(async (c) => (await c.query<{ since: boolean; waiting: boolean; due: boolean }>('SELECT review_since IS NOT NULL AS since, reminded_waiting_at IS NOT NULL AS waiting, reminded_due_at IS NOT NULL AS due FROM ludy_social.post_variant WHERE post_id = $1', [postId])).rows);
 
   it('reminds the reviewers once when a review has waited a day, and starts again with a new round', async () => {
     const o = await org();
@@ -210,8 +210,8 @@ suite('social review reminders on PostgreSQL (#703)', () => {
     const { postId } = await exec<{ postId: string }>(o, o.member, 'social.post.create', { body: 'Bài thử', channels: [{ connectionId: conn }] });
     await exec(o, o.member, 'social.post.submit', { postId });
     // A write that leaves the status alone keeps the clock as the database set it.
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET review_since = now() - interval '5 days', updated_at = now() WHERE post_id = $1", [postId]));
-    const { rows } = await admin((c) => c.query<{ fresh: boolean }>("SELECT review_since > now() - interval '1 hour' AS fresh FROM crove_social.post_variant WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET review_since = now() - interval '5 days', updated_at = now() WHERE post_id = $1", [postId]));
+    const { rows } = await admin((c) => c.query<{ fresh: boolean }>("SELECT review_since > now() - interval '1 hour' AS fresh FROM ludy_social.post_variant WHERE post_id = $1", [postId]));
     expect(rows).toEqual([{ fresh: true }]);
     await expect(worker.execute('social.review.remind', { postId }, { actor: system, orgId: o.orgId })).resolves.toEqual({ stage: null });
     await expect(exec(o, o.owner, 'social.review.remind', { postId })).rejects.toThrow();

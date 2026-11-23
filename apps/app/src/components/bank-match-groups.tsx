@@ -9,10 +9,11 @@ import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { BankMatchLine } from '@crove/kernel-contract';
-import { Alert, AlertDescription } from '@crove/ui/components/alert';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
+import type { BankMatchLine } from '@ludy/kernel-contract';
+import { Alert, AlertDescription } from '@ludy/ui/components/alert';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { BankCandidatesSentence } from './bank-candidates-sentence.tsx';
 import { useChosenEntity } from './entity-switcher.tsx';
 import { useMatchText } from './bank-match-text.ts';
 import { StepUpPrompt } from './two-factor.tsx';
@@ -33,6 +34,9 @@ interface Run {
   sending: boolean;
   stopped: boolean;
 }
+
+// The lines of the list that ask for a sentence: a model call costs, so the first few lines that need a look get one and the rest show as they did.
+const LOOK_SENTENCES_MAX = 5;
 
 const empty = (): BulkProgress => ({ results: [], next: 0, error: null });
 
@@ -185,9 +189,10 @@ export function BankMatchGroups({ slug, bankAccount, month, canApprove }: { slug
         <div>
           <p className="text-sm font-medium text-foreground">{t('lookTitle', { count: look.length })}</p>
           <ul className="mt-1 space-y-1 text-xs text-muted-foreground">
-            {look.map((item) => (
+            {look.map((item, index) => (
               <li key={item.line.id} data-testid="match-look-line">
                 {f.date(item.line.date)} {f.money(item.line.amount.replace(/^-/, ''))}: {item.why ? say.look(item.why) : ''}
+                {index < LOOK_SENTENCES_MAX && item.candidates.length > 0 && (item.candidates.length > 1 || !item.suggested) && <BankCandidatesSentence bankLineId={item.line.id} />}
               </li>
             ))}
           </ul>

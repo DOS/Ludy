@@ -2,10 +2,10 @@
 // The figures of Vy's daily brief (#2383): the member's Home list (kernel.today) reduced to counts, the sum of the waiting
 // proposals' amounts per currency and the nearest due dates. Nothing of an item's title, id or link goes further: the brief
 // is told numbers and dates only (packages/agent/src/today.ts).
-import { Decimal } from '@crove/l10n-vn';
-import { VIETNAM_TIME_ZONE, todayCurrency, type TodayBrief, type TodayItem } from '@crove/kernel-contract';
+import { Decimal } from '@ludy/l10n-vn';
+import { VIETNAM_TIME_ZONE, isTodayAnnotation, todayCurrency, type TodayBrief, type TodayItem } from '@ludy/kernel-contract';
 import { type DraftTicket } from './ai-draft-limit.ts';
-import { AiBudgetExhaustedError, templateBrief, type BriefFacts, type BriefResult } from '@crove/agent';
+import { AiBudgetExhaustedError, templateBrief, type BriefFacts, type BriefResult } from '@ludy/agent';
 
 const DUE_DATES_MAX = 3;
 const dayFormat = new Intl.DateTimeFormat('en-CA', { timeZone: VIETNAM_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -16,6 +16,7 @@ export function vietnamDay(iso: string): string {
 }
 
 export function briefFactsOf(items: readonly TodayItem[], language: 'vi' | 'en', today: string): BriefFacts {
+  // An annotation is the same things as the items it marks (a failed check on a waiting proposal), so it adds to no total but "blocking".
   const sum = (pick: (item: TodayItem) => boolean) => items.filter(pick).reduce((n, item) => n + (item.count ?? 1), 0);
   const amounts = new Map<string, InstanceType<typeof Decimal>>();
   for (const item of items) {
@@ -23,14 +24,17 @@ export function briefFactsOf(items: readonly TodayItem[], language: 'vi' | 'en',
     const currency = todayCurrency(item);
     amounts.set(currency, (amounts.get(currency) ?? new Decimal(0)).plus(item.amount));
   }
+  const proposals = sum((i) => i.kind === 'proposal' && !isTodayAnnotation(i));
   const dueDates = [...new Set(items.filter((item) => item.dueAt !== undefined).map((item) => vietnamDay(item.dueAt as string)))].sort().slice(0, DUE_DATES_MAX);
   return {
     language,
     today,
     dueDates,
-    flags: sum((i) => i.kind === 'flag'),
-    blocking: sum((i) => i.kind === 'flag' && i.severity === 'block'),
-    proposals: sum((i) => i.kind === 'proposal'),
+    flags: sum((i) => i.kind === 'flag' && !isTodayAnnotation(i)),
+    // A failed check on proposals is a fact about the proposals listed, so it never exceeds them (the read flags every pending proposal of the books,
+    // some of which wait for another approver); the chip on Home is capped the same way (proposalChips).
+    blocking: sum((i) => i.kind === 'flag' && i.severity === 'block' && !isTodayAnnotation(i)) + Math.min(sum((i) => i.severity === 'block' && i.annotates === 'proposal'), proposals),
+    proposals,
     messages: sum((i) => i.kind === 'message'),
     deadlines: sum((i) => i.kind === 'deadline'),
     proposalAmounts: [...amounts].map(([currency, amount]) => ({ currency, amount: amount.toFixed() })),

@@ -6,12 +6,12 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { Publisher, PublishResult, ReconcileResult } from '@crove/channel';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
-import { runPublishJob, socialCommands, socialQueries, sweepEvergreen, type PostView } from '@crove/mod-social';
+import type { Publisher, PublishResult, ReconcileResult } from '@ludy/channel';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
+import { runPublishJob, socialCommands, socialQueries, sweepEvergreen, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -91,7 +91,7 @@ suite('social reposts and evergreen posts on PostgreSQL (S9)', () => {
     const post = await get(o, postId);
     await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
     await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
     const platform = new Platform();
     for (const v of post.variants) await runPublishJob({ runtime: worker, broker: vault, publishers: { sandbox: platform }, callTimeoutMs: 2_000 }, o.orgId, v.id, 'sandbox');
     expect((await get(o, postId)).status).toBe('published');
@@ -99,9 +99,9 @@ suite('social reposts and evergreen posts on PostgreSQL (S9)', () => {
   }
 
   const reposts = (sourceId: string) =>
-    admin(async (c) => (await c.query<{ id: string; status: string }>('SELECT id, status FROM crove_social.post WHERE repost_of = $1 ORDER BY created_at', [sourceId])).rows);
+    admin(async (c) => (await c.query<{ id: string; status: string }>('SELECT id, status FROM ludy_social.post WHERE repost_of = $1 ORDER BY created_at', [sourceId])).rows);
   const agePublished = (postId: string, days: number) =>
-    admin((c) => c.query('UPDATE crove_social.post_variant SET published_at = now() - make_interval(days => $2) WHERE post_id = $1', [postId, days]));
+    admin((c) => c.query('UPDATE ludy_social.post_variant SET published_at = now() - make_interval(days => $2) WHERE post_id = $1', [postId, days]));
   const sweep = () => sweepEvergreen({ runtime: worker, workerDb });
   const repostNow = (o: Org, postId: string) =>
     worker.execute<{ postId: string | null }>('social.post.repost_evergreen', { postId }, { actor: { type: 'system', component: 'social-evergreen-test' }, orgId: o.orgId });
@@ -112,7 +112,7 @@ suite('social reposts and evergreen posts on PostgreSQL (S9)', () => {
     const sha = createHash('sha256').update(id).digest('hex');
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
          VALUES ($1, $2, $3, $4, $5, 'anh.jpg', 'image/jpeg', 120000, 'social')`,
         [orgId, id, sha, `org/${orgId}/${sha}`, `content:${sha}`],
       ),
@@ -129,15 +129,15 @@ suite('social reposts and evergreen posts on PostgreSQL (S9)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 4 });
     appDb = createDb(appPool);
     workerDb = createDb(workerPool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
@@ -175,7 +175,7 @@ suite('social reposts and evergreen posts on PostgreSQL (S9)', () => {
     const { postId } = await published(o);
     // The second channel went out with an image the post no longer has.
     const own = await image(o.orgId);
-    await admin((c) => c.query('UPDATE crove_social.post_variant SET media = $2::jsonb WHERE post_id = $1 AND position = 1', [postId, JSON.stringify([own])]));
+    await admin((c) => c.query('UPDATE ludy_social.post_variant SET media = $2::jsonb WHERE post_id = $1 AND position = 1', [postId, JSON.stringify([own])]));
     const { postId: copy } = await exec<{ postId: string }>(o, 'social.post.repost', { postId });
     const view = await get(o, copy);
     expect(view.variants.map((v) => v.media.map((m) => m.fileId))).toEqual([[], [own.fileId]]);
@@ -192,8 +192,8 @@ suite('social reposts and evergreen posts on PostgreSQL (S9)', () => {
     await exec(o, 'social.post.update', { postId, revision: before.revision, title: 'Tiêu đề mới', linkUrl: 'https://example.com/moi' });
     // The second channel went out with an image that has been removed since.
     const own = await image(o.orgId);
-    await admin((c) => c.query('UPDATE crove_social.post_variant SET media = $2::jsonb WHERE post_id = $1 AND position = 1', [postId, JSON.stringify([own])]));
-    await admin((c) => c.query('DELETE FROM crove_kernel.file WHERE org_id = $1 AND id = $2', [o.orgId, own.fileId]));
+    await admin((c) => c.query('UPDATE ludy_social.post_variant SET media = $2::jsonb WHERE post_id = $1 AND position = 1', [postId, JSON.stringify([own])]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.file WHERE org_id = $1 AND id = $2', [o.orgId, own.fileId]));
     const { postId: copy } = await exec<{ postId: string }>(o, 'social.post.repost', { postId });
     const view = await get(o, copy);
     expect([view.body, view.title, view.linkUrl]).toEqual([body, null, null]);
@@ -218,11 +218,11 @@ suite('social reposts and evergreen posts on PostgreSQL (S9)', () => {
     // A draft with a planned time and a channel disconnected since: the copy has no time and only the other channel.
     const [a, b] = [await connect(o), await connect(o)];
     const { postId } = await exec<{ postId: string }>(o, 'social.post.create', { body: 'Nháp', scheduledAt: new Date(Date.now() + 86_400_000).toISOString(), channels: [{ connectionId: a }, { connectionId: b }] });
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [b]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [b]));
     const second = await get(o, (await exec<{ postId: string }>(o, 'social.post.duplicate', { postId })).postId);
     expect([second.scheduledAt, second.variants.map((v) => v.connectionId)]).toEqual([null, [a]]);
 
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [a]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'revoked' WHERE id = $1", [a]));
     await expect(exec(o, 'social.post.duplicate', { postId })).rejects.toMatchObject({ code: 'NOTHING_TO_DUPLICATE' });
   });
 
@@ -233,7 +233,7 @@ suite('social reposts and evergreen posts on PostgreSQL (S9)', () => {
     expect((await get(o, postId)).evergreenDays).toBe(30);
     await expect(exec(o, 'social.post.set_evergreen', { postId, days: 3 })).rejects.toBeDefined();
     await expect(exec(o, 'social.post.repost_evergreen', { postId })).rejects.toBeDefined();
-    await expect(appPool.query('SELECT * FROM crove_social.evergreen_due(10, ARRAY[]::uuid[])')).rejects.toMatchObject({ code: '42501' });
+    await expect(appPool.query('SELECT * FROM ludy_social.evergreen_due(10, ARRAY[]::uuid[])')).rejects.toMatchObject({ code: '42501' });
     expect(await exec(o, 'social.post.set_evergreen', { postId, days: null })).toEqual({ postId, evergreenDays: null });
   });
 
@@ -259,7 +259,7 @@ suite('social reposts and evergreen posts on PostgreSQL (S9)', () => {
     await exec(o, 'social.variant.cancel', { variantIds: view.variants.map((v) => v.id) });
     await sweep();
     expect(await reposts(postId)).toHaveLength(1);
-    await admin((c) => c.query("UPDATE crove_social.post SET created_at = now() - interval '8 days' WHERE id = $1", [first.id]));
+    await admin((c) => c.query("UPDATE ludy_social.post SET created_at = now() - interval '8 days' WHERE id = $1", [first.id]));
     await sweep();
     expect(await reposts(postId)).toHaveLength(2);
   });
@@ -284,12 +284,12 @@ suite('social reposts and evergreen posts on PostgreSQL (S9)', () => {
     const o = await org();
     const { postId, connections } = await published(o);
     await exec(o, 'social.post.set_evergreen', { postId, days: 7 });
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE id = ANY($1::uuid[])", [connections]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'expired' WHERE id = ANY($1::uuid[])", [connections]));
     await agePublished(postId, 8);
     await sweep();
     expect(await reposts(postId)).toEqual([]);
     expect((await get(o, postId)).evergreenDays).toBe(7);
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'active' WHERE id = ANY($1::uuid[])", [connections]));
+    await admin((c) => c.query("UPDATE ludy_kernel.channel_connection SET status = 'active' WHERE id = ANY($1::uuid[])", [connections]));
     await sweep();
     expect(await reposts(postId)).toHaveLength(1);
   });

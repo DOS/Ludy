@@ -5,9 +5,9 @@ import { z } from 'zod';
 import { zId, zJournalVoucherProposal, zLocalDate } from './schemas.ts';
 
 export const STOCK_ITEM_KINDS = ['goods'] as const;
-export const STOCK_TRADES = ['goods', 'services', 'catering', 'other'] as const;
+export const STOCK_TRADES = ['goods', 'services', 'catering', 'digital_content', 'other'] as const;
 export type StockTradeKey = (typeof STOCK_TRADES)[number];
-export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal', 'order_line', 'count', 'crm_order_line'] as const;
+export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal', 'order_line', 'count', 'crm_order_line', 'sale_return'] as const;
 export type StockMoveSourceKey = (typeof STOCK_MOVE_SOURCES)[number];
 
 // A signed decimal quantity with at most six decimals, not zero.
@@ -72,8 +72,19 @@ export const zStockMove = z.object({
   reversesMoveId: zId.nullable(),
   // Reversed by another move already.
   reversed: z.boolean(),
+  // A return (source `sale_return`): the sale's stock-out it gave back (#3712).
+  returnOfMoveId: zId.nullable(),
+  // For a stock-out of a sale: how much of it can still be returned (what was sold less the returns not undone); '0' when it is not a sale move, is reversed, or is returned in full.
+  returnable: z.string(),
 });
 export type StockMove = z.infer<typeof zStockMove>;
+
+// The partial return of a sale's goods (#3712 slice 1): the sale's stock-out and a positive quantity, at most what is still returnable.
+export const zStockMoveReturn = z.strictObject({
+  moveId: zId,
+  quantity: zStockQuantity.refine((v) => !v.startsWith('-'), 'a return is a positive quantity'),
+});
+export type StockMoveReturn = z.infer<typeof zStockMoveReturn>;
 
 export const zStockUnassignedInput = z.strictObject({ legalEntityId: zId.optional(), limit: z.number().int().min(1).max(500).optional() });
 
@@ -177,6 +188,18 @@ export type StockCloseProposal = z.infer<typeof zStockCloseProposal>;
 // A month with no cost to post closes at once, with no entry: the number of items whose figures it stored.
 export const zStockCloseEmptyResult = z.object({ periodId: zId, items: z.number().int().min(0) });
 export type StockCloseEmptyResult = z.infer<typeof zStockCloseEmptyResult>;
+
+// What a person should know before closing a month of stock (#3712 slice 3): the books regime of the entity on the month's last day, the balance of account 1381 (goods waiting to be resolved,
+// a count's shortage beyond the norm) at that day in whole dong, and whether Circular 99's rule applies: a 1381 balance with no evidence of its cause is expensed at the reporting date.
+// A warning for the screen, never a block: the close goes on whatever it says.
+export const zStockCloseCheck = z.object({
+  month: zStockMonth,
+  legalEntityId: zId,
+  regime: z.string(),
+  balance1381: z.string(),
+  applies: z.boolean(),
+});
+export type StockCloseCheck = z.infer<typeof zStockCloseCheck>;
 
 // The finance coworker on stock (#2514). Read-only: a suggestion is never a match (a person assigns the line, which teaches the name), and the low-stock list and the reorder text
 // move nothing and send nothing.
@@ -303,10 +326,40 @@ export const zStockCount = z.object({
   createdAt: z.string(),
   confirmedAt: z.string().nullable(),
   voucherId: zId.nullable(),
+  // What a confirmed count's surplus is worth, whole dong ('0' for a count with none and for one not confirmed), the voucher that resolved it (#3712 slice 2a) and the proposal of one that waits.
+  surplus: z.string(),
+  surplusVoucherId: zId.nullable(),
+  surplusProposalId: zId.nullable(),
   // A draft is worked out from the books as they read now; a confirmed count shows what its adjustments made.
   lines: z.array(zStockCountLine),
 });
 export type StockCount = z.infer<typeof zStockCount>;
+
+// What a person needs to decide where the surplus of a confirmed count goes (#3712 slice 2b). All of it is the code's, read from the books: the items in surplus (the largest by value first, at most
+// STOCK_SURPLUS_NOTE_ITEMS and how many more), the total in whole dong, the supplier the goods were last received from when there is one (a hint, never chosen for the person), whether a person made
+// a manual entry on 3381 since the count (the surplus may already be settled by hand), and where the resolution stands. `explanation` is the accounting coworker's plain words about it, or null; `ai`
+// says why there is none ('off': no model on this deployment; 'busy': the member asks too often; 'budget': the AI budget is spent; 'failed': the call failed; 'refused': the answer named something
+// the facts do not). The core works the same with AI off, and the person chooses the account.
+export const STOCK_SURPLUS_NOTE_ITEMS = 8;
+export const STOCK_SURPLUS_NOTE_STATES = ['used', 'off', 'busy', 'budget', 'failed', 'refused'] as const;
+export const zStockSurplusNoteInput = z.strictObject({ countId: zId, lang: z.enum(['vi', 'en']).optional() });
+export const zStockSurplusSource = z.object({
+  countId: zId,
+  countDate: zLocalDate,
+  total: z.string(),
+  items: z.array(z.object({ name: z.string(), quantity: z.string(), unit: z.string(), value: z.string() })).max(STOCK_SURPLUS_NOTE_ITEMS),
+  moreItems: z.number().int().min(0),
+  supplier: z.object({ partyId: zId, name: z.string(), lastReceived: zLocalDate }).nullable(),
+  manualEntry: z.boolean(),
+  voucherId: zId.nullable(),
+  proposalId: zId.nullable(),
+});
+export type StockSurplusSource = z.infer<typeof zStockSurplusSource>;
+export const zStockSurplusNote = zStockSurplusSource.extend({
+  ai: z.enum(STOCK_SURPLUS_NOTE_STATES),
+  explanation: z.string().nullable(),
+});
+export type StockSurplusNote = z.infer<typeof zStockSurplusNote>;
 export const STOCK_COUNT_COMMAND = 'finance.stock.count_confirm';
 // The proposal (kind finance.journal_voucher, shown as one) with the count it posts. The lines of the count are not in it: approving builds them again from the books, and lineCount and
 // figuresHash (SHA-256 of the canonical figures) are what make a proposal stale when a figure changed since it was asked for.

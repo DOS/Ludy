@@ -72,6 +72,8 @@ type ActorType = (typeof ACTOR_TYPES)[number];
 export const TENANT_STATUSES = ['active', 'offboarding', 'closed'] as const;
 // How often the org files its VAT return (issue #318); null until an owner or admin chooses.
 export const VAT_FILING_PERIODS = ['month', 'quarter'] as const;
+// "Cần xác nhận trước khi ghi" (Meetings A2, #3160): which consent methods a new meeting may use.
+export const MEETING_CONSENT_POLICIES = ['standard', 'strict'] as const;
 
 export type TenantTable = Refine<
   G.KernelTenantTable,
@@ -79,6 +81,7 @@ export type TenantTable = Refine<
     // 'offboarding': only owners may enter (kernel.org.offboard, issue #38); 'closed' is set by staff.
     status: Generated<(typeof TENANT_STATUSES)[number]>;
     vat_filing_period: (typeof VAT_FILING_PERIODS)[number] | null;
+    meeting_consent_policy: Generated<(typeof MEETING_CONSENT_POLICIES)[number]>;
     // inbound_token is the active inbound token. Every token ever issued, retired ones included, is in
     // crove_kernel.inbound_address, which only definers read and write; rotation is the command kernel.inbound.rotate.
   }
@@ -87,7 +90,7 @@ export type TenantTable = Refine<
 export type TenantMemberTable = Refine<G.KernelTenantMemberTable, { role: MemberRole }>;
 
 // The tax calendar of an org (issue #921): the obligations that apply to it and its settings (one row per org), and
-// the obligations marked done per period. The rules themselves are data in @crove/kernel-contract (tax-calendar.ts).
+// the obligations marked done per period. The rules themselves are data in @ludy/kernel-contract (tax-calendar.ts).
 export const TAX_OBLIGATION_CODES = ['vat_return', 'pit_withholding', 'cit_provisional', 'cit_finalization', 'pit_finalization', 'financial_statements', 'license_fee'] as const;
 export const PIT_FILING_PERIODS = ['month', 'quarter'] as const;
 export type TaxProfileTable = Refine<
@@ -120,7 +123,7 @@ export const NUMBER_RESETS = ['yearly', 'monthly', 'never'] as const;
 export type NumberSeriesPolicyTable = Refine<G.KernelNumberSeriesPolicyTable, { reset: (typeof NUMBER_RESETS)[number] }>;
 
 // The calendar core (issue #1313): a member's weekly working hours and the events on their calendar. Holidays and the
-// slot rules are in @crove/kernel-contract (calendar.ts).
+// slot rules are in @ludy/kernel-contract (calendar.ts).
 export const CALENDAR_EVENT_KINDS = ['manual', 'time_off', 'booking', 'google', 'microsoft', 'caldav'] as const;
 export const CALENDAR_CONNECTION_STATUSES = ['active', 'expired', 'disconnecting'] as const;
 export const CALENDAR_PROVIDERS = ['google', 'microsoft', 'caldav'] as const;
@@ -142,6 +145,19 @@ export type CalendarConnectionTable = Refine<
     status: Generated<(typeof CALENDAR_CONNECTION_STATUSES)[number]>;
   }
 >;
+
+// Meeting platforms a member connects and the recordings they offer (meetings integrations C1, #3173). The recording rows are written by definers alone.
+export const MEETING_PLATFORM_PROVIDERS = ['sandbox', 'google_meet', 'zoom', 'microsoft_teams'] as const;
+export const MEETING_PLATFORM_CONNECTION_STATUSES = ['active', 'expired'] as const;
+export const MEETING_PLATFORM_RECORDING_STATUSES = ['suggested', 'importing', 'staged', 'claimed', 'imported', 'failed', 'dismissed'] as const;
+export type MeetingPlatformConnectionTable = Refine<
+  G.KernelMeetingPlatformConnectionTable,
+  {
+    provider: ColumnType<(typeof MEETING_PLATFORM_PROVIDERS)[number], (typeof MEETING_PLATFORM_PROVIDERS)[number], never>;
+    status: Generated<(typeof MEETING_PLATFORM_CONNECTION_STATUSES)[number]>;
+  }
+>;
+export type MeetingPlatformRecordingTable = Refine<G.KernelMeetingPlatformRecordingTable, { status: ColumnType<(typeof MEETING_PLATFORM_RECORDING_STATUSES)[number], never, never> }>;
 
 // The legal entities of an org (issue #1278): a company or other organization, a branch or other dependent unit, or a
 // household or individual business. One default per org, created with the org.
@@ -191,6 +207,7 @@ export type PartyTable = Refine<
   {
     kind: Generated<(typeof PARTY_KINDS)[number]>;
     source_trust: Generated<(typeof PARTY_SOURCE_TRUSTS)[number]>;
+    actor_origin: Generated<ActorOrigin>;
   }
 >;
 
@@ -199,14 +216,14 @@ export type PartyTable = Refine<
 // keeps UPDATE only to lock the row (SELECT ... FOR UPDATE), so no column has an update type here.
 // social: an image uploaded for a Social post (#372); import: a spreadsheet for a module's import (#465). Neither is
 // extracted or shown in the Inbox. meeting_audio and meeting_video: encrypted meeting recordings (#2576).
-export const FILE_SOURCES = ['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video'] as const;
+export const FILE_SOURCES = ['upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'sign_sealed', 'sign_certificate', 'sign_attachment', 'agreement'] as const;
 type Frozen<T> = ColumnType<SelectType<T>, InsertType<T>, G.NotGranted>;
 export type FileTable = Refine<
   G.KernelFileTable,
   { [K in Exclude<keyof G.KernelFileTable, 'source'>]: Frozen<G.KernelFileTable[K]> } & { source: Frozen<(typeof FILE_SOURCES)[number]> }
 >;
 
-export const FILE_UPLOAD_PURPOSES = ['document', 'social', 'import', 'meeting_audio', 'meeting_video'] as const;
+export const FILE_UPLOAD_PURPOSES = ['document', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'agreement'] as const;
 export type FileUploadPurpose = (typeof FILE_UPLOAD_PURPOSES)[number];
 export type FileUploadTable = Refine<G.KernelFileUploadTable, { purpose: Generated<FileUploadPurpose> }>;
 
@@ -268,6 +285,8 @@ export type AgentKind = (typeof AGENT_KINDS)[number];
 export const MEMBER_PERMISSION_OVERRIDE_PERMISSIONS = ['vy.use'] as const;
 export const MEMBER_VY_TABLE_MODES = ['read', 'write'] as const;
 export const MCP_MEMBER_TABLE_MODES = ['read'] as const;
+// The write scopes an MCP proposal may be listed under (crove_kernel.mcp_proposal_command, #3858 slice d): the same three as the grant's CHECK.
+export const MCP_PROPOSAL_COMMAND_SCOPES = ['ludy.social.draft', 'ludy.engage.write', 'ludy.ads.draft'] as const;
 export const MEMBER_VY_RESULT_STATUSES = ['running', 'ready', 'failed'] as const;
 export type MemberVyResultStatus = (typeof MEMBER_VY_RESULT_STATUSES)[number];
 export const AGENT_RUNTIMES = ['builtin', 'external'] as const;
@@ -391,7 +410,7 @@ export const EXCHANGE_RATE_SOURCES = ['invoice', 'entered'] as const;
 export type ExchangeRateSource = (typeof EXCHANGE_RATE_SOURCES)[number];
 
 // The legal entity of a finance or kernel row (#1280): the parent's, or the one the writer names, or the org's default
-// entity, filled in by the insert trigger b_legal_entity (crove_finance.legal_entity_fill, crove_kernel.legal_entity_fill)
+// entity, filled in by the insert trigger b_legal_entity (ludy_finance.legal_entity_fill, crove_kernel.legal_entity_fill)
 // and never changed afterwards.
 type LegalEntityColumn = ColumnType<string, string | undefined, never>;
 
@@ -413,7 +432,7 @@ export type PurchaseDocumentTable = Refine<
   'legal_entity_id'
 >;
 
-// Entries are written only by crove_finance.post_journal_entry().
+// Entries are written only by ludy_finance.post_journal_entry().
 export type JournalEntryTable = Refine<
   G.FinanceJournalEntryTable,
   {
@@ -480,20 +499,43 @@ export type VatReturnFiledTable = Refine<
 // Learned bank-line rules (#2402): what a statement line's key is the key of. The key is stored only as a keyed hash.
 export const BANK_PARTY_RULE_KINDS = ['text', 'account'] as const;
 export type BankPartyRuleKind = (typeof BANK_PARTY_RULE_KINDS)[number];
+
+// How the last pull of a mapped bank feed account ended (#4244): a closed kind, never a provider's text. The same set as the
+// CHECK on bank_feed_account.last_pull_outcome and the contract's BANK_FEED_PULL_OUTCOMES.
+export const BANK_FEED_PULL_OUTCOMES = ['ok', 'credentials', 'clock', 'rate_limited', 'upstream', 'config', 'bad_page', 'too_many_lines'] as const;
+export type BankFeedPullOutcome = (typeof BANK_FEED_PULL_OUTCOMES)[number];
+export type BankFeedAccountTable = Refine<G.FinanceBankFeedAccountTable, { last_pull_outcome: ColumnType<BankFeedPullOutcome | null, BankFeedPullOutcome | null, BankFeedPullOutcome | null> }>;
 // A sales e-invoice draft (#2500, ADR-0044): its state, and the kind of buyer it is for (a business, a named individual, a consumer).
 export const EINVOICE_DRAFT_STATES = ['draft', 'submitting', 'pending', 'issued', 'rejected', 'failed'] as const;
 export const EINVOICE_BUYER_KINDS = ['business', 'individual', 'consumer'] as const;
+// What an individual buyer gives instead of a tax code (#3678): a CCCD, a passport number or a budget-relation unit code.
+export const EINVOICE_BUYER_IDENTITY_KINDS = ['cccd', 'passport', 'budget_code'] as const;
+// The day the 8% of an adjusting or a replacing invoice's lines is judged on, as a person confirmed it (#3709): the original's date or the correction's own.
+export const EINVOICE_CORRECTION_RATE_BASES = ['original', 'correction_date'] as const;
 export type EInvoiceDraftTable = Refine<
   G.FinanceEinvoiceDraftTable,
-  { state: Generated<(typeof EINVOICE_DRAFT_STATES)[number]>; buyer_kind: (typeof EINVOICE_BUYER_KINDS)[number]; legal_entity_id: LegalEntityColumn },
+  { state: Generated<(typeof EINVOICE_DRAFT_STATES)[number]>; buyer_kind: (typeof EINVOICE_BUYER_KINDS)[number]; buyer_identity_kind: (typeof EINVOICE_BUYER_IDENTITY_KINDS)[number] | null; correction_rate_basis: (typeof EINVOICE_CORRECTION_RATE_BASES)[number] | null; legal_entity_id: LegalEntityColumn },
   'legal_entity_id'
 >;
 // Stock (#2512, ADR-0045 point 1): the kind of an item, the trade it is sold in, and where a move of stock comes from.
 export const STOCK_ITEM_KINDS = ['goods'] as const;
 export type StockItemKind = (typeof STOCK_ITEM_KINDS)[number];
-export const STOCK_TRADES = ['goods', 'services', 'catering', 'other'] as const;
+export const STOCK_TRADES = ['goods', 'services', 'catering', 'digital_content', 'other'] as const;
 export type StockTrade = (typeof STOCK_TRADES)[number];
-export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal', 'order_line', 'count', 'crm_order_line'] as const;
+// The household business kind (#2517): the fixed sets its CHECK constraints keep.
+export const HOUSEHOLD_PIT_METHODS = ['percentage', 'income'] as const;
+export const HOUSEHOLD_VAT_CUT_ANSWERS = ['yes', 'no'] as const;
+export type HouseholdVatCutAnswer = (typeof HOUSEHOLD_VAT_CUT_ANSWERS)[number];
+export const HOUSEHOLD_RULE_STATUSES = ['commentary', 'confirmed'] as const;
+export const HOUSEHOLD_EXPENSE_GROUPS = ['materials_goods', 'wages_insurance', 'depreciation', 'outside_services', 'interest', 'other'] as const;
+export const HOUSEHOLD_BOOKS = ['S1a', 'S2a', 'S2b', 'S2c', 'S2d', 'S2e', 'S3a'] as const;
+export const HOUSEHOLD_RETURN_FORMS = ['01/CNKD'] as const;
+export type HouseholdPitMethod = (typeof HOUSEHOLD_PIT_METHODS)[number];
+export type HouseholdRuleStatus = (typeof HOUSEHOLD_RULE_STATUSES)[number];
+export type HouseholdExpenseGroup = (typeof HOUSEHOLD_EXPENSE_GROUPS)[number];
+export type HouseholdBook = (typeof HOUSEHOLD_BOOKS)[number];
+export type HouseholdReturnForm = (typeof HOUSEHOLD_RETURN_FORMS)[number];
+export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal', 'order_line', 'count', 'crm_order_line', 'sale_return'] as const;
 export type StockMoveSource = (typeof STOCK_MOVE_SOURCES)[number];
 export type StockItemTable = Refine<
   G.FinanceStockItemTable,
@@ -501,6 +543,26 @@ export type StockItemTable = Refine<
   'legal_entity_id'
 >;
 export type StockAliasTable = Refine<G.FinanceStockAliasTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+// The household business kind (#2517): the profile of an entity of kind household, and the law as dated rows (global, read-only for every org).
+export type HouseholdProfileTable = Refine<
+  G.FinanceHouseholdProfileTable,
+  { pit_method: HouseholdPitMethod | null; trades: StockTrade[]; vat_cut_eligible: ColumnType<HouseholdVatCutAnswer | null, HouseholdVatCutAnswer | null, G.NotGranted>; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
+// The VAT method of an entity's marketplace sales (#4303 S3a): `deduction` carries a rate, `none` carries no output VAT line.
+export const MARKETPLACE_VAT_METHODS = ['deduction', 'none'] as const;
+export type MarketplaceVatMethod = (typeof MARKETPLACE_VAT_METHODS)[number];
+export type MarketplaceVatRateTable = Refine<G.FinanceMarketplaceVatRateTable, { method: MarketplaceVatMethod; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+export type HouseholdThresholdTable = Refine<G.FinanceHouseholdThresholdTable, { status: HouseholdRuleStatus }>;
+// The 2026 reductions as dated law rows (#3710): `kind` is the tax the cut applies to.
+export const HOUSEHOLD_REDUCTION_KINDS = ['vat', 'pit'] as const;
+export type HouseholdReductionKind = (typeof HOUSEHOLD_REDUCTION_KINDS)[number];
+export type HouseholdTaxReductionTable = Refine<G.FinanceHouseholdTaxReductionTable, { kind: HouseholdReductionKind; status: HouseholdRuleStatus }>;
+export type HouseholdTradeRateTable = Refine<G.FinanceHouseholdTradeRateTable, { trade: StockTrade; status: HouseholdRuleStatus }>;
+export type HouseholdExpenseGroupMapTable = Refine<G.FinanceHouseholdExpenseGroupMapTable, { expense_group: HouseholdExpenseGroup; status: HouseholdRuleStatus }>;
+export type HouseholdFormVersionTable = Refine<G.FinanceHouseholdFormVersionTable, { book: HouseholdBook; pit_methods: Array<'none' | HouseholdPitMethod>; status: HouseholdRuleStatus }>;
+// The return worksheet's form version (#2518): a global law table of its own, so a return never shows up in the list of books.
+export type HouseholdReturnFormVersionTable = Refine<G.FinanceHouseholdReturnFormVersionTable, { form: HouseholdReturnForm; pit_methods: HouseholdPitMethod[]; status: HouseholdRuleStatus }>;
 // Marketplace orders (#2515, ADR-0045 point 5): the platform, how far a line has got, and which move of an order line a stock move is (a shipment out, a return in).
 export const CHANNEL_PLATFORMS = ['shopee', 'tiktok_shop', 'lazada'] as const;
 export type ChannelPlatform = (typeof CHANNEL_PLATFORMS)[number];
@@ -534,14 +596,118 @@ export type EInvoiceConnectionTable = Refine<
   { last_test_state: EInvoiceConnectionState | null; legal_entity_id: LegalEntityColumn },
   'legal_entity_id'
 >;
+// The notice of an error only in the non-core content of an issued sales e-invoice (#2504): the field that was wrong, and two steps the seller does outside Ludy, each ticked once.
+export const EINVOICE_NOTICE_FIELDS = ['buyer_name', 'buyer_address', 'amount_in_words'] as const;
+export type EInvoiceNoticeField = (typeof EINVOICE_NOTICE_FIELDS)[number];
+export const EINVOICE_NOTICE_BUYER_STATES = ['todo', 'sent'] as const;
+export const EINVOICE_NOTICE_FORM_STATES = ['todo', 'filed'] as const;
+export type EInvoiceNoticeTable = Refine<
+  G.FinanceEinvoiceNoticeTable,
+  { field: EInvoiceNoticeField; buyer_notice_state: Generated<(typeof EINVOICE_NOTICE_BUYER_STATES)[number]>; form_state: Generated<(typeof EINVOICE_NOTICE_FORM_STATES)[number]>; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
+// A supplier's bank account and the history of its changes (#3113): an account is active or retired, a change adds, replaces or retires one.
+export const SUPPLIER_BANK_ACCOUNT_STATUSES = ['active', 'retired'] as const;
+export const SUPPLIER_BANK_ACCOUNT_CHANGE_KINDS = ['added', 'replaced', 'retired'] as const;
+export type SupplierBankAccountChangeKind = (typeof SUPPLIER_BANK_ACCOUNT_CHANGE_KINDS)[number];
+export type SupplierBankAccountTable = Refine<G.FinanceSupplierBankAccountTable, { status: Generated<(typeof SUPPLIER_BANK_ACCOUNT_STATUSES)[number]> }>;
+export type SupplierBankAccountChangeTable = Refine<G.FinanceSupplierBankAccountChangeTable, { kind: SupplierBankAccountChangeKind }>;
+// A payment to a supplier approved in Ludy (#3113 S2): approved, paid, cancelled or stale (the supplier's account changed after the approval); the hold reason and the channel the supplier confirmed by are closed lists.
+export const SUPPLIER_PAYMENT_STATUSES = ['approved', 'paid', 'cancelled', 'stale'] as const;
+export const SUPPLIER_PAYMENT_HOLD_REASONS = ['new_account'] as const;
+export const SUPPLIER_PAYMENT_CHANNELS = ['phone_on_file', 'in_person', 'email_on_file'] as const;
+export type SupplierPaymentTable = Refine<
+  G.FinanceSupplierPaymentTable,
+  {
+    status: Generated<(typeof SUPPLIER_PAYMENT_STATUSES)[number]>;
+    hold_reason: (typeof SUPPLIER_PAYMENT_HOLD_REASONS)[number] | null;
+    confirmed_channel: (typeof SUPPLIER_PAYMENT_CHANNELS)[number] | null;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
 // A connection to a marketplace (#2519): the result of its last test and of its last poll, as states and never the platform's own text.
 export const MARKETPLACE_TEST_STATES = ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable'] as const;
 export type MarketplaceTestState = (typeof MARKETPLACE_TEST_STATES)[number];
+export const MARKETPLACE_AUTHORIZE_STATES = ['pending', 'authorized', 'refused', 'failed', 'shop_changed'] as const;
+export type MarketplaceAuthorizeState = (typeof MARKETPLACE_AUTHORIZE_STATES)[number];
 export const MARKETPLACE_POLL_STATES = ['ok', 'unreachable', 'credentials', 'rate_limited', 'too_large', 'not_recognized'] as const;
 export type MarketplacePollState = (typeof MARKETPLACE_POLL_STATES)[number];
+// A connection to MISA AMIS Kế toán (#3875): the result of its last test, as a state and never MISA's own text; a tenant updates only that (the entity, the channel connection and the code are fixed for the row's life).
+export const MISA_AMIS_TEST_STATES = ['works', 'wrong_credentials', 'unreachable'] as const;
+export type MisaAmisTestState = (typeof MISA_AMIS_TEST_STATES)[number];
+// The MISA product a connection is for (#4111, S2 of #4103): AMIS Kế toán (the default) or MISA ASP. Fixed for the row's life; the channel connection's provider must be the product's (a guard).
+export const MISA_AMIS_PRODUCTS = ['amis', 'asp'] as const;
+export type MisaAmisProduct = (typeof MISA_AMIS_PRODUCTS)[number];
+export type MisaAmisConnectionTable = Refine<
+  G.FinanceMisaAmisConnectionTable,
+  { last_test_state: MisaAmisTestState | null; product: ColumnType<MisaAmisProduct, MisaAmisProduct | undefined, G.NotGranted>; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
+// The vouchers pushed to MISA AMIS (#3902, S3b of #3854): one row per AMIS voucher part. queued -> sending -> sent -> accepted | refused; ambiguous after a lost answer; failed when ours could not send.
+export const MISA_AMIS_PUSH_STATES = ['queued', 'sending', 'sent', 'accepted', 'refused', 'ambiguous', 'failed'] as const;
+export type MisaAmisPushState = (typeof MISA_AMIS_PUSH_STATES)[number];
+export const MISA_AMIS_PUSH_SOURCES = ['cash_voucher', 'purchase_document', 'sales_document'] as const;
+export type MisaAmisPushSource = (typeof MISA_AMIS_PUSH_SOURCES)[number];
+export type MisaAmisPushTable = Refine<
+  G.FinanceMisaAmisPushTable,
+  {
+    source_type: ColumnType<MisaAmisPushSource, MisaAmisPushSource, G.NotGranted>;
+    state: ColumnType<MisaAmisPushState, MisaAmisPushState | undefined, MisaAmisPushState>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+// The check of a column mapping on an unrecognised marketplace order report (#4036, slice 1c of #3850): the last request per file, and what the worker found (the masked sheet, the check's refusal, a preview).
+export const MARKETPLACE_COLUMN_CHECK_STATES = ['requested', 'done', 'failed'] as const;
+export type MarketplaceColumnCheckState = (typeof MARKETPLACE_COLUMN_CHECK_STATES)[number];
+export const MARKETPLACE_COLUMN_CHECK_FAILURES = ['not_a_sheet', 'too_large', 'unavailable', 'unreadable'] as const;
+export type MarketplaceColumnCheckFailure = (typeof MARKETPLACE_COLUMN_CHECK_FAILURES)[number];
+export const MARKETPLACE_COLUMN_CHECK_REFUSALS = ['no_header', 'bad_column', 'buyer_column', 'field_twice', 'column_twice', 'no_order_no', 'no_line', 'nothing_read', 'row_stops_file', 'too_many_rows', 'rows_without_order', 'return_without_status', 'quantity_exceeds_amount', 'dates_swapped', 'buyer_text'] as const;
+export type MarketplaceColumnCheckRefusal = (typeof MARKETPLACE_COLUMN_CHECK_REFUSALS)[number];
+export type MarketplaceColumnCheckTable = Refine<
+  G.FinanceMarketplaceColumnCheckTable,
+  {
+    platform: ChannelPlatform | null;
+    state: Generated<MarketplaceColumnCheckState>;
+    failure: MarketplaceColumnCheckFailure | null;
+    refusal: MarketplaceColumnCheckRefusal | null;
+  }
+>;
+// The check of a connection's vouchers against the firm's MISA catalogue (#4112, S3a of #4103): the last request, and what the worker found for each party (by tax code) and item (by code).
+export const MISA_AMIS_MATCH_CHECK_STATES = ['requested', 'done', 'failed'] as const;
+export type MisaAmisMatchCheckState = (typeof MISA_AMIS_MATCH_CHECK_STATES)[number];
+export const MISA_AMIS_MATCH_FAILURES = ['credentials', 'unreachable', 'invalid_response', 'catalogue_too_large'] as const;
+export type MisaAmisMatchFailure = (typeof MISA_AMIS_MATCH_FAILURES)[number];
+export type MisaAmisMatchCheckTable = Refine<
+  G.FinanceMisaAmisMatchCheckTable,
+  {
+    state: Generated<MisaAmisMatchCheckState>;
+    failure: MisaAmisMatchFailure | null;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+// `party_name` (S3b, #4124): a party with no tax code, keyed by its id in Ludy and found by name.
+export const MISA_AMIS_MATCH_KINDS = ['party', 'item', 'party_name', 'unit', 'stock'] as const;
+export type MisaAmisMatchKind = (typeof MISA_AMIS_MATCH_KINDS)[number];
+export const MISA_AMIS_MATCH_STATES = ['matched', 'unknown', 'ambiguous', 'name_proposal', 'confirmed'] as const;
+export type MisaAmisMatchState = (typeof MISA_AMIS_MATCH_STATES)[number];
+export type MisaAmisMatchTable = Refine<
+  G.FinanceMisaAmisMatchTable,
+  {
+    kind: ColumnType<MisaAmisMatchKind, MisaAmisMatchKind, G.NotGranted>;
+    state: ColumnType<MisaAmisMatchState, MisaAmisMatchState, G.NotGranted>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+// The mapping of a marketplace report's columns a person confirmed (#4037): append-only, the latest row of an org and platform wins. `columns` is a jsonb list of the mapped columns (the place, the
+// header text as the file words it and the standard field), never a cell value or a buyer column; the module reads it through its contract schema.
+export type MarketplaceColumnProfileTable = Refine<G.FinanceMarketplaceColumnProfileTable, { platform: ColumnType<ChannelPlatform, ChannelPlatform, never> }>;
 export type MarketplaceConnectionTable = Refine<
   G.FinanceMarketplaceConnectionTable,
-  { platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>; last_test_state: MarketplaceTestState | null; last_poll_state: MarketplacePollState | null; legal_entity_id: LegalEntityColumn },
+  { platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>; last_test_state: MarketplaceTestState | null; last_poll_state: MarketplacePollState | null; authorize_state: MarketplaceAuthorizeState | null; legal_entity_id: LegalEntityColumn },
   'legal_entity_id'
 >;
 export type BankPartyRuleTable = Refine<G.FinanceBankPartyRuleTable, { kind: ColumnType<BankPartyRuleKind, BankPartyRuleKind, never>; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
@@ -795,16 +961,16 @@ export type CrmEventTypeTable = Refine<
 export const PIPELINE_STAGE_KINDS = ['open', 'won', 'lost'] as const;
 export const DEAL_CURRENCIES = ['VND'] as const;
 export type CrmPipelineStageTable = Refine<G.CrmPipelineStageTable, { kind: (typeof PIPELINE_STAGE_KINDS)[number] }>;
-export type CrmDealTable = Refine<G.CrmDealTable, { currency: Generated<(typeof DEAL_CURRENCIES)[number]> }>;
+export type CrmDealTable = Refine<G.CrmDealTable, { currency: Generated<(typeof DEAL_CURRENCIES)[number]>; actor_origin: Generated<ActorOrigin> }>;
 // A quote of a deal (#2693): a draft until a person sends it (crm.quote.send, #2694); the status, the number and the sent columns change only through the guard trigger's transitions.
 export const QUOTE_STATUSES = ['draft', 'sent', 'accepted', 'declined', 'superseded'] as const;
 export const QUOTE_SENT_VIA = ['link', 'email'] as const;
 export const QUOTE_LINE_KINDS = ['item', 'text'] as const;
 export type CrmQuoteTable = Refine<
   G.CrmQuoteTable,
-  { status: Generated<(typeof QUOTE_STATUSES)[number]>; sent_via: (typeof QUOTE_SENT_VIA)[number] | null }
+  { status: Generated<(typeof QUOTE_STATUSES)[number]>; sent_via: (typeof QUOTE_SENT_VIA)[number] | null; actor_origin: Generated<ActorOrigin> }
 >;
-export type CrmQuoteLineTable = Refine<G.CrmQuoteLineTable, { kind: (typeof QUOTE_LINE_KINDS)[number] }>;
+export type CrmQuoteLineTable = Refine<G.CrmQuoteLineTable, { kind: (typeof QUOTE_LINE_KINDS)[number]; actor_origin: Generated<ActorOrigin> }>;
 // The sales order of an accepted quote (#2696, ADR-0050): confirmed until a person cancels it; a person records how the customer's yes arrived.
 export const SALES_ORDER_STATUSES = ['confirmed', 'cancelled'] as const;
 export const QUOTE_ACCEPTED_VIA = ['chat', 'email', 'phone', 'in_person', 'other'] as const;
@@ -880,10 +1046,18 @@ export type ConversationDraftTable = Refine<
 >;
 // The inbox (#2306): the marker of a member typing a reply to a thread (its kind is the thread's), and a member's availability for new conversations.
 export const MEMBER_AVAILABILITY_STATUSES = ['available', 'away'] as const;
+// Where a row came from: a connected AI app in its sealed write context ('mcp'), or not ('ui': a person's own act, and also what the system or an org-chart agent writes), stamped by the database (#4149).
+export const ACTOR_ORIGINS = ['ui', 'mcp'] as const;
+type ActorOrigin = (typeof ACTOR_ORIGINS)[number];
+export type ActivityTable = Refine<G.KernelActivityTable, { actor_origin: Generated<ActorOrigin> }>;
+// The other five tables that carry the mark (a note, a contact, a deal, a quote and a quote line): their CHECK is a compound one (the origin is `ui` or `mcp`, and `mcp` only with `tainted`), which check-unions reads.
+export type ConversationNoteTable = Refine<G.KernelConversationNoteTable, { actor_origin: Generated<ActorOrigin> }>;
 export type ConversationComposingTable = Refine<G.KernelConversationComposingTable, { kind: (typeof CONVERSATION_KINDS)[number] }>;
 export type MemberPermissionOverrideTable = Refine<G.KernelMemberPermissionOverrideTable, { permission: (typeof MEMBER_PERMISSION_OVERRIDE_PERMISSIONS)[number] }>;
 export type MemberVyTableTable = Refine<G.KernelMemberVyTableTable, { mode: (typeof MEMBER_VY_TABLE_MODES)[number] }>;
 export type McpMemberTableTable = Refine<G.KernelMcpMemberTableTable, { mode: (typeof MCP_MEMBER_TABLE_MODES)[number] }>;
+export type McpWakeEventTypeTable = Refine<G.KernelMcpWakeEventTypeTable, { scope: (typeof MCP_PROPOSAL_COMMAND_SCOPES)[number] }>;
+export type McpProposalCommandTable = Refine<G.KernelMcpProposalCommandTable, { scope: (typeof MCP_PROPOSAL_COMMAND_SCOPES)[number] }>;
 export type PermissionDefaultTable = Refine<G.KernelPermissionDefaultTable, { base_role: MemberRole }>;
 export type MemberVyResultTable = Refine<G.KernelMemberVyResultTable, { status: Generated<MemberVyResultStatus> }>;
 export type MemberAvailabilityTable = Refine<G.KernelMemberAvailabilityTable, { status: Generated<(typeof MEMBER_AVAILABILITY_STATUSES)[number]> }>;
@@ -911,11 +1085,16 @@ export type CrmBookingTable = Refine<
 >;
 
 // The notes module (issue #1671, ADR-0037): a note is private to its author or shared with the org, and links to a
-// party, a file, a purchase document, a journal entry or a booking (#1672).
+// party, a file, a purchase document, a journal entry, a booking, a task, a project or a meeting (#1672, #2595, #1679).
 export const NOTE_VISIBILITIES = ['private', 'org'] as const;
-export const NOTE_LINK_TARGET_TYPES = ['kernel.party', 'kernel.file', 'finance.purchase_document', 'finance.journal_entry', 'crm.booking'] as const;
+export const NOTE_LINK_TARGET_TYPES = ['kernel.party', 'kernel.file', 'kernel.task', 'finance.purchase_document', 'finance.journal_entry', 'crm.booking', 'projects.project', 'meetings.meeting'] as const;
+export const NOTE_ATTACHMENT_EXTRACT_STATUSES = ['pending', 'done', 'skipped', 'failed'] as const;
+export type NoteAttachmentExtractStatus = (typeof NOTE_ATTACHMENT_EXTRACT_STATUSES)[number];
 export type NotesNoteTable = Refine<G.NotesNoteTable, { visibility: Generated<(typeof NOTE_VISIBILITIES)[number]> }>;
+export type NotesNoteTemplateTable = Refine<G.NotesNoteTemplateTable, { visibility: Generated<(typeof NOTE_VISIBILITIES)[number]> }>;
+export type NotesNotebookTable = Refine<G.NotesNotebookTable, { visibility: Generated<(typeof NOTE_VISIBILITIES)[number]> }>;
 export type NotesLinkTable = Refine<G.NotesLinkTable, { target_type: (typeof NOTE_LINK_TARGET_TYPES)[number] }>;
+export type NotesAttachmentTable = Refine<G.NotesAttachmentTable, { extract_status: Generated<NoteAttachmentExtractStatus> }>;
 // A member's own to-do (#1673): open, done, handed over to a position (N5) or cancelled.
 export const TODO_STATUSES = ['open', 'done', 'handed_over', 'cancelled'] as const;
 export type TodoStatus = (typeof TODO_STATUSES)[number];
@@ -980,6 +1159,20 @@ export type AdsAdLaunchTable = Refine<
   }
 >;
 
+// The changes of a running ad (#3835, W4): what was asked (pause, resume, archive, a lower or raised daily budget, a shorter or longer schedule) and where it stands
+// (queued until the platform confirms it). The database's guard holds who inserts and who moves it.
+export const AD_MANAGE_KINDS = ['pause', 'resume', 'archive', 'budget_lower', 'budget_raise', 'schedule_shorten', 'schedule_extend'] as const;
+export const AD_MANAGE_STATES = ['queued', 'applied', 'failed', 'cancelled', 'unclear'] as const;
+export const AD_MANAGE_LEVELS = ['campaign', 'ad_set', 'ad'] as const;
+export type AdsAdManageChangeTable = Refine<
+  G.AdsAdManageChangeTable,
+  {
+    kind: (typeof AD_MANAGE_KINDS)[number];
+    level: (typeof AD_MANAGE_LEVELS)[number];
+    state: Generated<(typeof AD_MANAGE_STATES)[number]>;
+  }
+>;
+
 // What a launch created at the platform (#2296, W2-3): the level of each object and what Ludy set it to (paused or archived; nothing here un-pauses). The
 // database's guard holds who writes it.
 export const AD_OBJECT_LEVELS = ['campaign', 'ad_set', 'creative', 'ad'] as const;
@@ -1013,20 +1206,134 @@ export type AdsAdTokenRevokeTable = Refine<
 // The HR module (#2530, payroll plan 6.1): an employee is active or ended; the terms of an employment name a contract type and a wage region (Decree 74/2024).
 export const HR_EMPLOYEE_STATUSES = ['active', 'ended'] as const;
 export const HR_CONTRACT_TYPES = ['indefinite', 'fixed_term', 'none'] as const;
+export const HR_CONTRACT_FORMS = ['written', 'electronic', 'oral'] as const;
+export const HR_PROBATION_ROLE_TIERS = ['enterprise_manager', 'college_or_above', 'intermediate_technical', 'other'] as const;
 export const HR_REGIONS = ['I', 'II', 'III', 'IV'] as const;
 export const HR_PAY_FUNCTIONS = ['admin', 'sales', 'production', 'overhead', 'construction'] as const;
+export const HR_PAY_BASES = ['monthly', 'hourly', 'piece_rate'] as const;
+export const HR_JOB_OPENING_STATUSES = ['open', 'closed'] as const;
+export const HR_CANDIDATE_STAGES = ['applied', 'screening', 'interview', 'offer', 'hired', 'rejected'] as const;
+export const HR_CANDIDATE_SOURCES = ['direct', 'zalo_oa', 'facebook', 'referral', 'job_board', 'other'] as const;
+export type HrCandidateSource = (typeof HR_CANDIDATE_SOURCES)[number];
+// Departments per legal entity (#3412): optional team structure with default pay_function.
+export type HrDepartmentTable = Refine<
+  G.HrDepartmentTable,
+  {
+    legal_entity_id: LegalEntityColumn;
+    pay_function: Generated<(typeof HR_PAY_FUNCTIONS)[number]>;
+  },
+  'legal_entity_id'
+>;
+export type HrJobOpeningTable = Refine<
+  G.HrJobOpeningTable,
+  {
+    legal_entity_id: LegalEntityColumn;
+    contract_type: Generated<(typeof HR_CONTRACT_TYPES)[number]>;
+    region: Generated<(typeof HR_REGIONS)[number]>;
+    pay_function: Generated<(typeof HR_PAY_FUNCTIONS)[number]>;
+    status: Generated<(typeof HR_JOB_OPENING_STATUSES)[number]>;
+  },
+  'legal_entity_id'
+>;
+export type HrCandidateTable = Refine<
+  G.HrCandidateTable,
+  {
+    legal_entity_id: LegalEntityColumn;
+    stage: Generated<(typeof HR_CANDIDATE_STAGES)[number]>;
+    source: Generated<HrCandidateSource>;
+  },
+  'legal_entity_id'
+>;
 // A bank template (#2532): the entity is filled by the trigger b_legal_entity (the one the writer names or the org's default); the layout is a JSON object checked by the database.
 export type HrPayrollBankTemplateTable = Refine<G.HrPayrollBankTemplateTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 export type HrPayrollEmployeeTable = Refine<G.HrPayrollEmployeeTable, { status: Generated<(typeof HR_EMPLOYEE_STATUSES)[number]> }>;
 export type HrPayrollEmploymentTable = Refine<
   G.HrPayrollEmploymentTable,
-  { contract_type: ColumnType<(typeof HR_CONTRACT_TYPES)[number], (typeof HR_CONTRACT_TYPES)[number], never>; region: ColumnType<(typeof HR_REGIONS)[number], (typeof HR_REGIONS)[number], never>; pay_function: ColumnType<(typeof HR_PAY_FUNCTIONS)[number], (typeof HR_PAY_FUNCTIONS)[number] | undefined, never> }
+  {
+    contract_type: ColumnType<(typeof HR_CONTRACT_TYPES)[number], (typeof HR_CONTRACT_TYPES)[number], never>;
+    contract_form: ColumnType<(typeof HR_CONTRACT_FORMS)[number] | null, (typeof HR_CONTRACT_FORMS)[number] | null, never>;
+    probation_role_tier: ColumnType<(typeof HR_PROBATION_ROLE_TIERS)[number] | null, (typeof HR_PROBATION_ROLE_TIERS)[number] | null, never>;
+    region: ColumnType<(typeof HR_REGIONS)[number], (typeof HR_REGIONS)[number], never>;
+    pay_function: ColumnType<(typeof HR_PAY_FUNCTIONS)[number], (typeof HR_PAY_FUNCTIONS)[number] | undefined, never>;
+    pay_basis: ColumnType<(typeof HR_PAY_BASES)[number], (typeof HR_PAY_BASES)[number] | undefined, never>;
+  }
 >;
 // The pay run (#2531): a run is a draft until a person approves it; the posting and payment builds (#2532) take it on to paid and closed. A line is a pay line or a signed adjustment, and
 // is calculated or refused by the calculator.
 export const HR_RUN_STATUSES = ['draft', 'approved', 'paid', 'closed'] as const;
 export const HR_LINE_KINDS = ['pay', 'adjustment'] as const;
 export const HR_LINE_STATUSES = ['calculated', 'refused'] as const;
+export const HR_LEAVE_ENTRY_KINDS = ['opening_balance', 'annual_leave', 'personal_paid', 'unpaid_leave', 'sickness_bhxh', 'maternity_bhxh'] as const;
+export type HrLeaveEntryKind = (typeof HR_LEAVE_ENTRY_KINDS)[number];
+export const HR_LEAVE_REQUEST_KINDS = ['annual_leave', 'personal_paid', 'unpaid_leave'] as const;
+export type HrLeaveRequestKind = (typeof HR_LEAVE_REQUEST_KINDS)[number];
+export const HR_LEAVE_REQUEST_STATUSES = ['pending_l1', 'pending_final', 'approved', 'rejected', 'cancelled'] as const;
+export type HrLeaveRequestStatus = (typeof HR_LEAVE_REQUEST_STATUSES)[number];
+export type HrPayrollLeaveEntryTable = Refine<
+  G.HrPayrollLeaveEntryTable,
+  { kind: ColumnType<HrLeaveEntryKind, HrLeaveEntryKind, never>; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
+export type HrLeaveRequestTable = Refine<
+  G.HrLeaveRequestTable,
+  {
+    kind: ColumnType<HrLeaveRequestKind, HrLeaveRequestKind, never>;
+    status: Generated<HrLeaveRequestStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export const HR_ATTENDANCE_METHODS = ['web', 'qr', 'manual'] as const;
+export type HrAttendanceMethod = (typeof HR_ATTENDANCE_METHODS)[number];
+export const HR_ATTENDANCE_STATUSES = ['present', 'half_day', 'missing_checkout', 'adjusted'] as const;
+export type HrAttendanceStatus = (typeof HR_ATTENDANCE_STATUSES)[number];
+export type HrAttendanceLogTable = Refine<
+  G.HrAttendanceLogTable,
+  {
+    check_in_method: Generated<HrAttendanceMethod>;
+    status: Generated<HrAttendanceStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export type HrAttendanceQrConfigTable = Refine<
+  G.HrAttendanceQrConfigTable,
+  { legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
+export const HR_ONBOARDING_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'] as const;
+export type HrOnboardingStatus = (typeof HR_ONBOARDING_STATUSES)[number];
+export type HrOnboardingSubmissionTable = Refine<
+  G.HrOnboardingSubmissionTable,
+  {
+    status: Generated<HrOnboardingStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export const HR_OVERTIME_DAY_TYPES = ['weekday', 'weekend', 'holiday'] as const;
+export type HrOvertimeDayType = (typeof HR_OVERTIME_DAY_TYPES)[number];
+export const HR_OVERTIME_STATUSES = ['pending_l1', 'pending_final', 'approved', 'rejected', 'cancelled'] as const;
+export type HrOvertimeStatus = (typeof HR_OVERTIME_STATUSES)[number];
+export type HrOvertimeRequestTable = Refine<
+  G.HrOvertimeRequestTable,
+  {
+    day_type: ColumnType<HrOvertimeDayType, HrOvertimeDayType, never>;
+    status: Generated<HrOvertimeStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export const HR_PROBATION_DECISIONS = ['pass', 'extend', 'terminate'] as const;
+export type HrProbationDecision = (typeof HR_PROBATION_DECISIONS)[number];
+export type HrProbationReviewTable = Refine<
+  G.HrProbationReviewTable,
+  {
+    decision: HrProbationDecision;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
 export type HrPayrollRunTable = Refine<G.HrPayrollRunTable, { status: Generated<(typeof HR_RUN_STATUSES)[number]> }>;
 export type HrPayrollLineTable = Refine<
   G.HrPayrollLineTable,
@@ -1038,10 +1345,20 @@ export const MEETING_VISIBILITIES = ['attendees', 'org'] as const;
 export type MeetingVisibility = (typeof MEETING_VISIBILITIES)[number];
 export const MEETING_LANGUAGES = ['vi', 'en'] as const;
 export type MeetingLanguage = (typeof MEETING_LANGUAGES)[number];
+// The languages a translation can be made into (E3, #3186): the two a meeting is held in, and Chinese, Japanese and Korean as targets only (kernel-contract's TRANSLATION_TARGETS names the same five).
+export const TRANSLATION_TARGET_LANGUAGES = ['vi', 'en', 'zh', 'ja', 'ko'] as const;
+export type TranslationTargetLanguage = (typeof TRANSLATION_TARGET_LANGUAGES)[number];
 export const MEETING_STATUSES = ['ready', 'processing', 'completed', 'error'] as const;
 export type MeetingStatus = (typeof MEETING_STATUSES)[number];
-export const MEETING_CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing'] as const;
+export const MEETING_CONSENT_METHODS = ['told_at_start', 'in_invite', 'in_writing', 'in_call_chat', 'platform_notice'] as const;
 export type MeetingConsentMethod = (typeof MEETING_CONSENT_METHODS)[number];
+// Why a recording stopped without the recorder's own click (A1, #3159): a code, never text.
+export const MEETING_RECORDING_STOP_REASONS = ['tab_closed', 'mic_lost', 'permission_lost', 'storage_full', 'left_screen', 'unknown'] as const;
+export type MeetingRecordingStopReason = (typeof MEETING_RECORDING_STOP_REASONS)[number];
+// The minutes template a recorder picked for a meeting (A4, #3162): a code, never text. The sections of each live in code (packages/kernel-contract); 'custom' (#3578) is a template the org
+// wrote, whose sections are the meeting's own copy (minutes_template_sections).
+export const MEETING_SUMMARY_TEMPLATES = ['general', 'briefing', 'customer', 'supplier', 'one_on_one', 'custom'] as const;
+export type MeetingSummaryTemplate = (typeof MEETING_SUMMARY_TEMPLATES)[number];
 
 export type MeetingsMeetingTable = Refine<
   G.MeetingsMeetingTable,
@@ -1050,17 +1367,23 @@ export type MeetingsMeetingTable = Refine<
     language: Generated<MeetingLanguage>;
     status: Generated<MeetingStatus>;
     consent_method: MeetingConsentMethod;
+    summary_template: Generated<MeetingSummaryTemplate>;
+    recording_stop_reason: ColumnType<MeetingRecordingStopReason | null, MeetingRecordingStopReason | null | undefined, MeetingRecordingStopReason | null>;
   }
 >;
 
 // The transcript of a meeting (#2578): a segment is a draft, the recorder's own copy, until the recorder publishes it.
 export const TRANSCRIPT_STAGES = ['draft', 'published'] as const;
 export type TranscriptStageValue = (typeof TRANSCRIPT_STAGES)[number];
+// Whose transcription a line is (C2, #3174; C4, #3176): Ludy's own (or typed by the recorder), or the one Google Meet or Microsoft Teams wrote.
+export const TRANSCRIPTION_MAKERS = ['ludy', 'google_meet', 'microsoft_teams'] as const;
+export type TranscriptionMakerValue = (typeof TRANSCRIPTION_MAKERS)[number];
 
 export type MeetingsTranscriptSegmentTable = Refine<
   G.MeetingsTranscriptSegmentTable,
   {
     stage: ColumnType<TranscriptStageValue, TranscriptStageValue | undefined, never>;
+    source: ColumnType<TranscriptionMakerValue, TranscriptionMakerValue | undefined, never>;
   }
 >;
 
@@ -1080,7 +1403,15 @@ export type MeetingsMeetingResultTable = Refine<
   }
 >;
 
-// status is written only by crove_meetings.action_item_accept (the generated type keeps it NotGranted for update).
+// The chapters (table of contents) of a meeting (#3844): a draft the recorder writes, published with the minutes.
+export type MeetingsMeetingChapterTable = Refine<
+  G.MeetingsMeetingChapterTable,
+  {
+    stage: Generated<MeetingResultStage>;
+  }
+>;
+
+// status is written only by ludy_meetings.action_item_accept (the generated type keeps it NotGranted for update).
 export type MeetingsActionItemTable = Refine<
   G.MeetingsActionItemTable,
   {
@@ -1089,144 +1420,511 @@ export type MeetingsActionItemTable = Refine<
   }
 >;
 
+// The machine translation of a meeting's summary (meetings integrations E1, #3184): what kind of text it translates, in which language, and which stage of the summary it was made from.
+export const TRANSLATION_KINDS = ['summary', 'transcript'] as const;
+export type TranslationKind = (typeof TRANSLATION_KINDS)[number];
+export type MeetingsTranslationTable = Refine<
+  G.MeetingsTranslationTable,
+  {
+    kind: TranslationKind;
+    target_language: TranslationTargetLanguage;
+    source_stage: MeetingResultStage;
+  }
+>;
+
+// The org's channels for minutes (meetings integrations B4, #3168): which service the webhook belongs to, and how far one click's post got.
+export const MEETING_CHAT_KINDS = ['slack', 'teams'] as const;
+export type MeetingChatKind = (typeof MEETING_CHAT_KINDS)[number];
+export const MEETING_CHAT_POST_STATES = ['queued', 'sent', 'failed', 'ambiguous', 'dropped'] as const;
+export type MeetingChatPostState = (typeof MEETING_CHAT_POST_STATES)[number];
+export type MeetingsChatChannelTable = Refine<G.MeetingsChatChannelTable, { kind: MeetingChatKind }>;
+export type MeetingsChatPostTable = Refine<G.MeetingsChatPostTable, { state: Generated<MeetingChatPostState> }>;
+
+// The capture session of a call (ADR-0055 slice 1, #4123): which kind of client holds a capture, and why a finished one ended.
+export const MEETING_CAPTURE_KINDS = ['extension', 'app'] as const;
+export type MeetingCaptureKind = (typeof MEETING_CAPTURE_KINDS)[number];
+export const MEETING_CAPTURE_ENDED_REASONS = ['media', 'stopped', 'lost'] as const;
+export type MeetingCaptureEndedReason = (typeof MEETING_CAPTURE_ENDED_REASONS)[number];
+export type MeetingsCaptureSessionTable = Refine<
+  G.MeetingsCaptureSessionTable,
+  { kind: MeetingCaptureKind; ended_reason: MeetingCaptureEndedReason | null }
+>;
+
+// Projects that group kernel tasks (#2591, ADR-0048), custom board columns (#2605, ADR-0056), and private projects (#2604, ADR-0056).
+export const PROJECT_STATUSES = ['active', 'on_hold', 'done', 'archived'] as const;
+export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
+export const PROJECT_VISIBILITIES = ['org', 'private'] as const;
+export type ProjectVisibility = (typeof PROJECT_VISIBILITIES)[number];
+export const PROJECT_COLUMN_STATUSES = ['todo', 'in_progress', 'waiting', 'in_review', 'done'] as const;
+export type ProjectColumnStatus = (typeof PROJECT_COLUMN_STATUSES)[number];
+export const PROJECT_COLUMN_COLORS = ['neutral', 'primary', 'warning', 'proposal', 'success', 'destructive'] as const;
+export type ProjectColumnColor = (typeof PROJECT_COLUMN_COLORS)[number];
+
+export const ROADMAP_ITEM_SOURCES = ['internal', 'public_submission'] as const;
+export type RoadmapItemSource = (typeof ROADMAP_ITEM_SOURCES)[number];
+
+export const ROADMAP_ITEM_MODERATION_STATUSES = ['pending', 'published', 'merged', 'archived'] as const;
+export type RoadmapItemModerationStatus = (typeof ROADMAP_ITEM_MODERATION_STATUSES)[number];
+
+export const ROADMAP_ITEM_STAGES = ['under_review', 'planned', 'in_progress', 'shipped'] as const;
+export type RoadmapItemStage = (typeof ROADMAP_ITEM_STAGES)[number];
+
+export type ProjectsProjectTable = Refine<
+  G.ProjectsProjectTable,
+  {
+    status: Generated<ProjectStatus>;
+    visibility: Generated<ProjectVisibility>;
+  }
+>;
+
+export type ProjectsProjectColumnTable = Refine<
+  G.ProjectsProjectColumnTable,
+  {
+    task_status: ProjectColumnStatus;
+    color: Generated<ProjectColumnColor>;
+  }
+>;
+
+export const PROJECT_CYCLE_STATUSES = ['upcoming', 'active', 'completed'] as const;
+export type ProjectCycleStatus = (typeof PROJECT_CYCLE_STATUSES)[number];
+
+export type ProjectsProjectCycleTable = Refine<
+  G.ProjectsProjectCycleTable,
+  {
+    status: Generated<ProjectCycleStatus>;
+  }
+>;
+
+export const ROADMAP_ANNOUNCEMENT_STATUSES = ['draft', 'published'] as const;
+export type RoadmapAnnouncementStatus = (typeof ROADMAP_ANNOUNCEMENT_STATUSES)[number];
+
+export type ProjectsRoadmapAnnouncementTable = Refine<
+  G.ProjectsRoadmapAnnouncementTable,
+  {
+    status: Generated<RoadmapAnnouncementStatus>;
+  }
+>;
+
+export type ProjectsRoadmapItemTable = Refine<
+  G.ProjectsRoadmapItemTable,
+  {
+    source: RoadmapItemSource;
+    moderation_status: Generated<RoadmapItemModerationStatus>;
+    stage: Generated<RoadmapItemStage>;
+  }
+>;
+
+// Electronic signatures (Sign, #3323): envelope workflow, signers, fields, AI analysis, and hash-chained events.
+export const SIGN_ENVELOPE_STATUSES = ['draft', 'sent', 'in_progress', 'completed', 'declined', 'voided', 'expired'] as const;
+export type SignEnvelopeStatus = (typeof SIGN_ENVELOPE_STATUSES)[number];
+export const SIGN_ROUTING_MODES = ['parallel', 'sequential'] as const;
+export type SignRoutingMode = (typeof SIGN_ROUTING_MODES)[number];
+export const SIGN_SOURCE_KINDS = [
+  'standalone',
+  'crm_quote',
+  'crm_order',
+  'hr_contract',
+  'project_acceptance',
+  'meeting_minutes',
+] as const;
+export type SignSourceKind = (typeof SIGN_SOURCE_KINDS)[number];
+export const SIGN_INSPECT_STATUSES = ['pending', 'passed', 'failed'] as const;
+export type SignInspectStatus = (typeof SIGN_INSPECT_STATUSES)[number];
+export const SIGN_SEAL_STATUSES = ['pending', 'sealed', 'failed'] as const;
+export type SignSealStatus = (typeof SIGN_SEAL_STATUSES)[number];
+export const SIGN_SIGNER_ROLES = ['signer', 'approver', 'cc'] as const;
+export type SignSignerRole = (typeof SIGN_SIGNER_ROLES)[number];
+export const SIGN_DELIVERY_MODES = ['link', 'email'] as const;
+export type SignDeliveryMode = (typeof SIGN_DELIVERY_MODES)[number];
+export const SIGN_SIGNER_STATUSES = ['waiting', 'pending', 'viewed', 'signed', 'declined', 'voided', 'expired'] as const;
+export type SignSignerStatus = (typeof SIGN_SIGNER_STATUSES)[number];
+export const SIGN_SIGNATURE_KINDS = ['draw', 'type'] as const;
+export type SignSignatureKind = (typeof SIGN_SIGNATURE_KINDS)[number];
+export const SIGN_FIELD_TYPES = [
+  'signature',
+  'initials',
+  'stamp',
+  'date',
+  'text',
+  'checkbox',
+  'dropdown',
+  'radio',
+  'attachment',
+] as const;
+export type SignFieldType = (typeof SIGN_FIELD_TYPES)[number];
+export const SIGN_ATTACHMENT_CONTENT_TYPES = ['application/pdf', 'image/png', 'image/jpeg'] as const;
+export type SignAttachmentContentType = (typeof SIGN_ATTACHMENT_CONTENT_TYPES)[number];
+export const SIGN_MEMBER_SIGNATURE_KINDS = ['signature', 'initials'] as const;
+export type SignMemberSignatureKind = (typeof SIGN_MEMBER_SIGNATURE_KINDS)[number];
+export const SIGN_ORG_STAMP_KINDS = ['company', 'title', 'custom'] as const;
+export type SignOrgStampKind = (typeof SIGN_ORG_STAMP_KINDS)[number];
+export const SIGN_ORG_STAMP_STATUSES = ['active', 'archived'] as const;
+export type SignOrgStampStatus = (typeof SIGN_ORG_STAMP_STATUSES)[number];
+export const SIGN_AI_ANALYSIS_STATUSES = ['pending', 'completed', 'failed'] as const;
+export type SignAiAnalysisStatus = (typeof SIGN_AI_ANALYSIS_STATUSES)[number];
+export const SIGN_ACTOR_TYPES = ['user', 'signer', 'system', 'ai'] as const;
+export type SignActorType = (typeof SIGN_ACTOR_TYPES)[number];
+export const SIGN_EVENT_TYPES = [
+  'envelope_created',
+  'document_inspected',
+  'document_inspect_failed',
+  'envelope_updated',
+  'envelope_shared_summary_updated',
+  'signer_added',
+  'signer_removed',
+  'signers_reordered',
+  'fields_set',
+  'envelope_sent',
+  'link_created',
+  'in_person_session_started',
+  'signer_reminded',
+  'signer_pre_expiry_reminded',
+  'signer_corrected',
+  'signer_delegated',
+  'signer_viewed',
+  'signer_otp_verified',
+  'attachment_uploaded',
+  'signer_signed',
+  'in_person_signed',
+  'signer_declined',
+  'envelope_decline_acknowledged',
+  'envelope_completed',
+  'envelope_voided',
+  'envelope_expired',
+  'envelope_sealed',
+  'envelope_seal_failed',
+  'ca_requested',
+  'ca_completed',
+  'ca_failed',
+] as const;
+export type SignEventType = (typeof SIGN_EVENT_TYPES)[number];
+export const SIGN_TEMPLATE_STATUSES = ['draft', 'active', 'archived'] as const;
+export type SignTemplateStatus = (typeof SIGN_TEMPLATE_STATUSES)[number];
+export const SIGN_CA_PROVIDERS = ['sandbox', 'vnpt_smartca', 'viettel_mysign', 'misa_wesign'] as const;
+export type SignCaProvider = (typeof SIGN_CA_PROVIDERS)[number];
+export const SIGN_CA_CONNECTION_STATUSES = ['active', 'disabled'] as const;
+export type SignCaConnectionStatus = (typeof SIGN_CA_CONNECTION_STATUSES)[number];
+export const SIGN_CA_TEST_STATES = [
+  'works',
+  'wrong_credentials',
+  'api_not_enabled',
+  'ip_not_allowed',
+  'unreachable',
+  'signing_needs_person',
+  'usb_token_unsupported',
+] as const;
+export type SignCaTestState = (typeof SIGN_CA_TEST_STATES)[number];
+export const SIGN_CA_REQUEST_STATUSES = ['pending', 'signed', 'rejected', 'expired', 'failed'] as const;
+export type SignCaRequestStatus = (typeof SIGN_CA_REQUEST_STATUSES)[number];
+export const SIGN_CA_RETRY_SAFETIES = ['reconcile_only'] as const;
+export type SignCaRetrySafety = (typeof SIGN_CA_RETRY_SAFETIES)[number];
+export const SIGN_CA_SUBFILTERS = ['ETSI.CAdES.detached', 'adbe.pkcs7.detached'] as const;
+export type SignCaSubFilter = (typeof SIGN_CA_SUBFILTERS)[number];
+export const SIGN_OBLIGATION_STATUSES = ['proposed', 'confirmed', 'dismissed'] as const;
+export type SignObligationStatus = (typeof SIGN_OBLIGATION_STATUSES)[number];
+export const SIGN_PLAYBOOK_SEVERITIES = ['info', 'warn', 'critical'] as const;
+export type SignPlaybookSeverity = (typeof SIGN_PLAYBOOK_SEVERITIES)[number];
+export const SIGN_PLAYBOOK_MODES = ['ai', 'deterministic', 'manual'] as const;
+export type SignPlaybookMode = (typeof SIGN_PLAYBOOK_MODES)[number];
+export const SIGN_KYC_CHECK_STATUSES = ['pending', 'matched', 'mismatch', 'needs_review'] as const;
+export type SignKycCheckStatus = (typeof SIGN_KYC_CHECK_STATUSES)[number];
+export const SIGN_KYC_CHECK_MODES = ['deterministic', 'ai', 'manual'] as const;
+export type SignKycCheckMode = (typeof SIGN_KYC_CHECK_MODES)[number];
+
+export type SignEnvelopeTable = Refine<
+  G.SignEnvelopeTable,
+  {
+    status: Generated<SignEnvelopeStatus>;
+    routing_mode: Generated<SignRoutingMode>;
+    source_kind: Generated<SignSourceKind>;
+    inspect_status: Generated<SignInspectStatus>;
+    seal_status: SignSealStatus | null;
+  }
+>;
+
+export type SignSignerTable = Refine<
+  G.SignSignerTable,
+  {
+    signer_role: Generated<SignSignerRole>;
+    delivery_mode: Generated<SignDeliveryMode>;
+    status: Generated<SignSignerStatus>;
+    signature_kind: SignSignatureKind | null;
+  }
+>;
+
+export type SignFieldTable = Refine<
+  G.SignFieldTable,
+  {
+    field_type: SignFieldType;
+    attachment_content_type: SignAttachmentContentType | null;
+  }
+>;
+export type SignAiAnalysisTable = Refine<G.SignAiAnalysisTable, { status: Generated<SignAiAnalysisStatus> }>;
+export type SignSigningEventTable = Refine<G.SignSigningEventTable, { actor_type: SignActorType }>;
+export type SignTemplateTable = Refine<
+  G.SignTemplateTable,
+  {
+    routing_mode: Generated<SignRoutingMode>;
+    inspect_status: Generated<SignInspectStatus>;
+    status: Generated<SignTemplateStatus>;
+  }
+>;
+export type SignTemplateRoleTable = Refine<
+  G.SignTemplateRoleTable,
+  {
+    signer_role: Generated<SignSignerRole>;
+    delivery_mode: Generated<SignDeliveryMode>;
+  }
+>;
+export type SignTemplateFieldTable = Refine<G.SignTemplateFieldTable, { field_type: SignFieldType }>;
+export type SignCaSigningRequestTable = Refine<
+  G.SignCaSigningRequestTable,
+  {
+    provider: SignCaProvider;
+    status: Generated<SignCaRequestStatus>;
+    retry_safety: Generated<SignCaRetrySafety>;
+    sub_filter: SignCaSubFilter | null;
+  }
+>;
+export type SignEnvelopeObligationTable = Refine<
+  G.SignEnvelopeObligationTable,
+  { status: Generated<SignObligationStatus> }
+>;
+export type SignKycCheckTable = Refine<
+  G.SignKycCheckTable,
+  {
+    status: Generated<SignKycCheckStatus>;
+    mode: SignKycCheckMode;
+  }
+>;
+export type SignMemberSignatureTable = Refine<
+  G.SignMemberSignatureTable,
+  {
+    kind: SignMemberSignatureKind;
+    signature_kind: SignSignatureKind;
+  }
+>;
+export type SignOrgStampTable = Refine<
+  G.SignOrgStampTable,
+  {
+    stamp_kind: Generated<SignOrgStampKind>;
+    status: Generated<SignOrgStampStatus>;
+  }
+>;
+export type SignPlaybookCheckTable = Refine<
+  G.SignPlaybookCheckTable,
+  {
+    mode: Generated<SignPlaybookMode>;
+  }
+>;
+export type SignPlaybookRuleTable = Refine<
+  G.SignPlaybookRuleTable,
+  {
+    severity: Generated<SignPlaybookSeverity>;
+  }
+>;
 type Refined = Tables<{
-  'crove_ads.ad_account': AdsAdAccountTable;
-  'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
-  'crove_ads.ad_campaign_request': AdsAdCampaignRequestTable;
-  'crove_ads.ad_launch': AdsAdLaunchTable;
-  'crove_ads.ad_object': AdsAdObjectTable;
-  'crove_ads.ad_spend_cap': AdsAdSpendCapTable;
-  'crove_ads.ad_spend_day': AdsAdSpendDayTable;
-  'crove_ads.ad_sync_run': AdsAdSyncRunTable;
-  'crove_ads.ad_token_revoke': AdsAdTokenRevokeTable;
-  'crove_crm.booking': CrmBookingTable;
-  'crove_crm.deal': CrmDealTable;
-  'crove_crm.deal_next_step': CrmDealNextStepTable;
-  'crove_crm.event_type': CrmEventTypeTable;
-  'crove_crm.import_batch': CrmImportBatchTable;
-  'crove_crm.import_row': CrmImportRowTable;
-  'crove_crm.pipeline_stage': CrmPipelineStageTable;
-  'crove_crm.quote': CrmQuoteTable;
-  'crove_crm.quote_line': CrmQuoteLineTable;
-  'crove_crm.sales_order': CrmSalesOrderTable;
-  'crove_crm.sales_order_delivery': CrmSalesOrderDeliveryTable;
-  'crove_crm.sales_order_line': CrmSalesOrderLineTable;
-  'crove_hr.payroll_bank_template': HrPayrollBankTemplateTable;
-  'crove_hr.payroll_employee': HrPayrollEmployeeTable;
-  'crove_hr.payroll_employment': HrPayrollEmploymentTable;
-  'crove_hr.payroll_line': HrPayrollLineTable;
-  'crove_hr.payroll_run': HrPayrollRunTable;
-  'crove_meetings.action_item': MeetingsActionItemTable;
-  'crove_meetings.meeting': MeetingsMeetingTable;
-  'crove_meetings.meeting_result': MeetingsMeetingResultTable;
-  'crove_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
-  'crove_notes.link': NotesLinkTable;
-  'crove_notes.note': NotesNoteTable;
-  'crove_notes.todo': NotesTodoTable;
-  'crove_kernel.calendar_connection': CalendarConnectionTable;
-  'crove_kernel.calendar_event': CalendarEventTable;
-  'crove_kernel.calendar_event_link': CalendarEventLinkTable;
-  'crove_kernel.legal_entity': LegalEntityTable;
-  'crove_kernel.number_series_policy': NumberSeriesPolicyTable;
-  'crove_kernel.role': RoleTable;
-  'crove_kernel.role_assignment': RoleAssignmentTable;
-  'crove_kernel.tax_obligation_done': TaxObligationDoneTable;
-  'crove_kernel.tax_profile': TaxProfileTable;
-  'crove_kernel.tenant': TenantTable;
-  'crove_kernel.tenant_member': TenantMemberTable;
-  'crove_kernel.member_invite': MemberInviteTable;
-  'crove_kernel.audit_event': AuditEventTable;
-  'crove_kernel.party': PartyTable;
-  'crove_kernel.file': FileTable;
-  'crove_kernel.file_upload': FileUploadTable;
-  'crove_kernel.extraction': ExtractionTable;
-  'crove_kernel.notification': NotificationTable;
-  'crove_kernel.inbox_item': InboxItemTable;
-  'crove_kernel.record_le': RecordLeTable;
-  'crove_kernel.proposal': ProposalTable;
-  'crove_kernel.agent_template': AgentTemplateTable;
-  'crove_kernel.agent': AgentTable;
-  'crove_kernel.position': PositionTable;
-  'crove_kernel.ai_run': AiRunTable;
-  'crove_kernel.task': TaskTable;
-  'crove_kernel.task_comment': TaskCommentTable;
-  'crove_kernel.agent_wakeup': AgentWakeupTable;
-  'crove_kernel.kill_switch': KillSwitchTable;
-  'crove_kernel.budget_policy': BudgetPolicyTable;
-  'crove_kernel.channel_connection': ChannelConnectionTable;
-  'crove_kernel.conversation': ConversationTable;
-  'crove_kernel.conversation_message': ConversationMessageTable;
-  'crove_kernel.conversation_attachment': ConversationAttachmentTable;
-  'crove_kernel.conversation_composing': ConversationComposingTable;
-  'crove_kernel.conversation_draft': ConversationDraftTable;
-  'crove_kernel.external_call': ExternalCallTable;
-  'crove_kernel.member_availability': MemberAvailabilityTable;
-  'crove_kernel.member_permission_override': MemberPermissionOverrideTable;
-  'crove_kernel.member_vy_result': MemberVyResultTable;
-  'crove_kernel.member_vy_table': MemberVyTableTable;
-  'crove_kernel.mcp_member_table': McpMemberTableTable;
-  'crove_kernel.permission_default': PermissionDefaultTable;
-  'crove_kernel.mail_message': MailMessageTable;
-  'crove_kernel.mail_suppression': MailSuppressionTable;
-  'crove_kernel.mail_event': MailEventTable;
-  'crove_kernel.org_usage': OrgUsageTable;
-  'crove_kernel.today_mail': TodayMailTable;
-  'crove_kernel.usage_deferral': UsageDeferralTable;
-  'crove_finance.purchase_document': PurchaseDocumentTable;
-  'crove_finance.journal_entry': JournalEntryTable;
-  'crove_finance.org_account': OrgAccountTable;
-  'crove_finance.cash_voucher': CashVoucherTable;
-  'crove_finance.fixed_asset': FixedAssetTable;
-  'crove_finance.bank_party_rule': BankPartyRuleTable;
-  'crove_finance.einvoice_draft': EInvoiceDraftTable;
-  'crove_finance.einvoice_connection': EInvoiceConnectionTable;
-  'crove_finance.marketplace_connection': MarketplaceConnectionTable;
-  'crove_finance.stock_item': StockItemTable;
-  'crove_finance.channel_order': ChannelOrderTable;
-  'crove_finance.channel_order_line': ChannelOrderLineTable;
-  'crove_finance.channel_settlement': ChannelSettlementTable;
-  'crove_finance.channel_settlement_line': ChannelSettlementLineTable;
-  'crove_finance.stock_alias': StockAliasTable;
-  'crove_finance.stock_move': StockMoveTable;
-  'crove_finance.stock_period': StockPeriodTable;
-  'crove_finance.stock_period_item': StockPeriodItemTable;
-  'crove_finance.stock_count': StockCountTable;
-  'crove_finance.stock_count_line': StockCountLineTable;
-  'crove_finance.categorization_rule': CategorizationRuleTable;
-  'crove_finance.chart': ChartTable;
-  'crove_finance.legal_entity_books': LegalEntityBooksTable;
-  'crove_finance.input_vat_check': InputVatCheckTable;
-  'crove_finance.vat_return_filed': VatReturnFiledTable;
-  'crove_finance.journal_voucher': JournalVoucherTable;
-  'crove_finance.portal_invoice_list': PortalInvoiceListTable;
-  'crove_finance.portal_invoice_row': PortalInvoiceRowTable;
-  'crove_finance.bank_line': BankLineTable;
-  'crove_finance.depreciation_line': DepreciationLineTable;
-  'crove_finance.purchase_line': PurchaseLineTable;
-  'crove_finance.purchase_tax_rate': PurchaseTaxRateTable;
-  'crove_finance.purchase_document_void': PurchaseDocumentVoidTable;
-  'crove_social.post': SocialPostTable;
-  'crove_social.post_variant': SocialPostVariantTable;
-  'crove_social.post_approval': SocialPostApprovalTable;
-  'crove_social.review_feedback': SocialReviewFeedbackTable;
-  'crove_social.review_link': SocialReviewLinkTable;
-  'crove_social.account_snapshot': SocialAccountSnapshotTable;
-  'crove_social.external_import': SocialExternalImportTable;
-  'crove_social.link_preview': SocialLinkPreviewTable;
-  'crove_social.channel_option': SocialChannelOptionTable;
-  'crove_social.notification': SocialNotificationTable;
-  'crove_social.notification_mute': SocialNotificationMuteTable;
-  'crove_social.calendar_note': SocialCalendarNoteTable;
-  'crove_social.media_attribution': SocialMediaAttributionTable;
-  'crove_social.watermark': SocialWatermarkTable;
-  'crove_social.chat_alert': SocialChatAlertTable;
-  'crove_social.label': SocialLabelTable;
-  'crove_social.idea': SocialIdeaTable;
-  'crove_social.report_schedule': SocialReportScheduleTable;
-  'crove_social.report_link': SocialReportLinkTable;
-  'crove_social.report_schedule_run': SocialReportScheduleRunTable;
-  'crove_social.banned_word': SocialBannedWordTable;
-  'crove_social.post_comment': SocialPostCommentTable;
+  'ludy_ads.ad_account': AdsAdAccountTable;
+  'ludy_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
+  'ludy_ads.ad_campaign_request': AdsAdCampaignRequestTable;
+  'ludy_ads.ad_launch': AdsAdLaunchTable;
+  'ludy_ads.ad_manage_change': AdsAdManageChangeTable;
+  'ludy_ads.ad_object': AdsAdObjectTable;
+  'ludy_ads.ad_spend_cap': AdsAdSpendCapTable;
+  'ludy_ads.ad_spend_day': AdsAdSpendDayTable;
+  'ludy_ads.ad_sync_run': AdsAdSyncRunTable;
+  'ludy_ads.ad_token_revoke': AdsAdTokenRevokeTable;
+  'ludy_crm.booking': CrmBookingTable;
+  'ludy_crm.deal': CrmDealTable;
+  'ludy_crm.deal_next_step': CrmDealNextStepTable;
+  'ludy_crm.event_type': CrmEventTypeTable;
+  'ludy_crm.import_batch': CrmImportBatchTable;
+  'ludy_crm.import_row': CrmImportRowTable;
+  'ludy_crm.pipeline_stage': CrmPipelineStageTable;
+  'ludy_crm.quote': CrmQuoteTable;
+  'ludy_crm.quote_line': CrmQuoteLineTable;
+  'ludy_crm.sales_order': CrmSalesOrderTable;
+  'ludy_crm.sales_order_delivery': CrmSalesOrderDeliveryTable;
+  'ludy_crm.sales_order_line': CrmSalesOrderLineTable;
+  'ludy_hr.attendance_log': HrAttendanceLogTable;
+  'ludy_hr.attendance_qr_config': HrAttendanceQrConfigTable;
+  'ludy_hr.candidate': HrCandidateTable;
+  'ludy_hr.department': HrDepartmentTable;
+  'ludy_hr.job_opening': HrJobOpeningTable;
+  'ludy_hr.leave_request': HrLeaveRequestTable;
+  'ludy_hr.onboarding_submission': HrOnboardingSubmissionTable;
+  'ludy_hr.overtime_request': HrOvertimeRequestTable;
+  'ludy_hr.payroll_bank_template': HrPayrollBankTemplateTable;
+  'ludy_hr.payroll_employee': HrPayrollEmployeeTable;
+  'ludy_hr.payroll_employment': HrPayrollEmploymentTable;
+  'ludy_hr.payroll_leave_entry': HrPayrollLeaveEntryTable;
+  'ludy_hr.payroll_line': HrPayrollLineTable;
+  'ludy_hr.payroll_run': HrPayrollRunTable;
+  'ludy_hr.probation_review': HrProbationReviewTable;
+  'ludy_meetings.action_item': MeetingsActionItemTable;
+  'ludy_meetings.capture_session': MeetingsCaptureSessionTable;
+  'ludy_meetings.chat_channel': MeetingsChatChannelTable;
+  'ludy_meetings.chat_post': MeetingsChatPostTable;
+  'ludy_meetings.meeting': MeetingsMeetingTable;
+  'ludy_meetings.meeting_chapter': MeetingsMeetingChapterTable;
+  'ludy_meetings.meeting_result': MeetingsMeetingResultTable;
+  'ludy_meetings.transcript_segment': MeetingsTranscriptSegmentTable;
+  'ludy_meetings.translation': MeetingsTranslationTable;
+  'ludy_notes.attachment': NotesAttachmentTable;
+  'ludy_notes.link': NotesLinkTable;
+  'ludy_notes.note': NotesNoteTable;
+  'ludy_notes.note_template': NotesNoteTemplateTable;
+  'ludy_notes.notebook': NotesNotebookTable;
+  'ludy_notes.todo': NotesTodoTable;
+  'ludy_projects.project': ProjectsProjectTable;
+  'ludy_projects.project_column': ProjectsProjectColumnTable;
+  'ludy_projects.project_cycle': ProjectsProjectCycleTable;
+  'ludy_projects.roadmap_announcement': ProjectsRoadmapAnnouncementTable;
+  'ludy_projects.roadmap_item': ProjectsRoadmapItemTable;
+  'ludy_sign.ai_analysis': SignAiAnalysisTable;
+  'ludy_sign.ca_signing_request': SignCaSigningRequestTable;
+  'ludy_sign.envelope': SignEnvelopeTable;
+  'ludy_sign.envelope_obligation': SignEnvelopeObligationTable;
+  'ludy_sign.field': SignFieldTable;
+  'ludy_sign.kyc_check': SignKycCheckTable;
+  'ludy_sign.member_signature': SignMemberSignatureTable;
+  'ludy_sign.org_stamp': SignOrgStampTable;
+  'ludy_sign.playbook_check': SignPlaybookCheckTable;
+  'ludy_sign.playbook_rule': SignPlaybookRuleTable;
+  'ludy_sign.signer': SignSignerTable;
+  'ludy_sign.signing_event': SignSigningEventTable;
+  'ludy_sign.template': SignTemplateTable;
+  'ludy_sign.template_field': SignTemplateFieldTable;
+  'ludy_sign.template_role': SignTemplateRoleTable;
+  'ludy_kernel.calendar_connection': CalendarConnectionTable;
+  'ludy_kernel.calendar_event': CalendarEventTable;
+  'ludy_kernel.calendar_event_link': CalendarEventLinkTable;
+  'ludy_kernel.meeting_platform_connection': MeetingPlatformConnectionTable;
+  'ludy_kernel.meeting_platform_recording': MeetingPlatformRecordingTable;
+  'ludy_kernel.legal_entity': LegalEntityTable;
+  'ludy_kernel.number_series_policy': NumberSeriesPolicyTable;
+  'ludy_kernel.role': RoleTable;
+  'ludy_kernel.role_assignment': RoleAssignmentTable;
+  'ludy_kernel.tax_obligation_done': TaxObligationDoneTable;
+  'ludy_kernel.tax_profile': TaxProfileTable;
+  'ludy_kernel.tenant': TenantTable;
+  'ludy_kernel.tenant_member': TenantMemberTable;
+  'ludy_kernel.member_invite': MemberInviteTable;
+  'ludy_kernel.audit_event': AuditEventTable;
+  'ludy_kernel.party': PartyTable;
+  'ludy_kernel.file': FileTable;
+  'ludy_kernel.file_upload': FileUploadTable;
+  'ludy_kernel.extraction': ExtractionTable;
+  'ludy_kernel.notification': NotificationTable;
+  'ludy_kernel.inbox_item': InboxItemTable;
+  'ludy_kernel.record_le': RecordLeTable;
+  'ludy_kernel.proposal': ProposalTable;
+  'ludy_kernel.agent_template': AgentTemplateTable;
+  'ludy_kernel.agent': AgentTable;
+  'ludy_kernel.position': PositionTable;
+  'ludy_kernel.ai_run': AiRunTable;
+  'ludy_kernel.task': TaskTable;
+  'ludy_kernel.task_comment': TaskCommentTable;
+  'ludy_kernel.agent_wakeup': AgentWakeupTable;
+  'ludy_kernel.kill_switch': KillSwitchTable;
+  'ludy_kernel.budget_policy': BudgetPolicyTable;
+  'ludy_kernel.channel_connection': ChannelConnectionTable;
+  'ludy_kernel.conversation': ConversationTable;
+  'ludy_kernel.conversation_message': ConversationMessageTable;
+  'ludy_kernel.conversation_attachment': ConversationAttachmentTable;
+  'ludy_kernel.conversation_composing': ConversationComposingTable;
+  'ludy_kernel.conversation_draft': ConversationDraftTable;
+  'ludy_kernel.conversation_note': ConversationNoteTable;
+  'ludy_kernel.external_call': ExternalCallTable;
+  'ludy_kernel.activity': ActivityTable;
+  'ludy_kernel.member_availability': MemberAvailabilityTable;
+  'ludy_kernel.member_permission_override': MemberPermissionOverrideTable;
+  'ludy_kernel.member_vy_result': MemberVyResultTable;
+  'ludy_kernel.member_vy_table': MemberVyTableTable;
+  'ludy_kernel.mcp_member_table': McpMemberTableTable;
+  'ludy_kernel.mcp_proposal_command': McpProposalCommandTable;
+  'ludy_kernel.mcp_wake_event_type': McpWakeEventTypeTable;
+  'ludy_kernel.permission_default': PermissionDefaultTable;
+  'ludy_kernel.mail_message': MailMessageTable;
+  'ludy_kernel.mail_suppression': MailSuppressionTable;
+  'ludy_kernel.mail_event': MailEventTable;
+  'ludy_kernel.org_usage': OrgUsageTable;
+  'ludy_kernel.today_mail': TodayMailTable;
+  'ludy_kernel.usage_deferral': UsageDeferralTable;
+  'ludy_finance.purchase_document': PurchaseDocumentTable;
+  'ludy_finance.journal_entry': JournalEntryTable;
+  'ludy_finance.org_account': OrgAccountTable;
+  'ludy_finance.cash_voucher': CashVoucherTable;
+  'ludy_finance.fixed_asset': FixedAssetTable;
+  'ludy_finance.bank_party_rule': BankPartyRuleTable;
+  'ludy_finance.bank_feed_account': BankFeedAccountTable;
+  'ludy_finance.einvoice_draft': EInvoiceDraftTable;
+  'ludy_finance.einvoice_connection': EInvoiceConnectionTable;
+  'ludy_finance.einvoice_notice': EInvoiceNoticeTable;
+  'ludy_finance.marketplace_column_check': MarketplaceColumnCheckTable;
+  'ludy_finance.marketplace_column_profile': MarketplaceColumnProfileTable;
+  'ludy_finance.marketplace_connection': MarketplaceConnectionTable;
+  'ludy_finance.misa_amis_connection': MisaAmisConnectionTable;
+  'ludy_finance.misa_amis_match': MisaAmisMatchTable;
+  'ludy_finance.misa_amis_match_check': MisaAmisMatchCheckTable;
+  'ludy_finance.misa_amis_push': MisaAmisPushTable;
+  'ludy_finance.stock_item': StockItemTable;
+  'ludy_finance.channel_order': ChannelOrderTable;
+  'ludy_finance.channel_order_line': ChannelOrderLineTable;
+  'ludy_finance.channel_settlement': ChannelSettlementTable;
+  'ludy_finance.channel_settlement_line': ChannelSettlementLineTable;
+  'ludy_finance.stock_alias': StockAliasTable;
+  'ludy_finance.household_profile': HouseholdProfileTable;
+  'ludy_finance.marketplace_vat_rate': MarketplaceVatRateTable;
+  'ludy_finance.household_threshold': HouseholdThresholdTable;
+  'ludy_finance.household_trade_rate': HouseholdTradeRateTable;
+  'ludy_finance.household_tax_reduction': HouseholdTaxReductionTable;
+  'ludy_finance.household_expense_group_map': HouseholdExpenseGroupMapTable;
+  'ludy_finance.household_form_version': HouseholdFormVersionTable;
+  'ludy_finance.household_return_form_version': HouseholdReturnFormVersionTable;
+  'ludy_finance.stock_move': StockMoveTable;
+  'ludy_finance.stock_period': StockPeriodTable;
+  'ludy_finance.stock_period_item': StockPeriodItemTable;
+  'ludy_finance.supplier_bank_account': SupplierBankAccountTable;
+  'ludy_finance.supplier_bank_account_change': SupplierBankAccountChangeTable;
+  'ludy_finance.supplier_payment': SupplierPaymentTable;
+  'ludy_finance.stock_count': StockCountTable;
+  'ludy_finance.stock_count_line': StockCountLineTable;
+  'ludy_finance.categorization_rule': CategorizationRuleTable;
+  'ludy_finance.chart': ChartTable;
+  'ludy_finance.legal_entity_books': LegalEntityBooksTable;
+  'ludy_finance.input_vat_check': InputVatCheckTable;
+  'ludy_finance.vat_return_filed': VatReturnFiledTable;
+  'ludy_finance.journal_voucher': JournalVoucherTable;
+  'ludy_finance.portal_invoice_list': PortalInvoiceListTable;
+  'ludy_finance.portal_invoice_row': PortalInvoiceRowTable;
+  'ludy_finance.bank_line': BankLineTable;
+  'ludy_finance.depreciation_line': DepreciationLineTable;
+  'ludy_finance.purchase_line': PurchaseLineTable;
+  'ludy_finance.purchase_tax_rate': PurchaseTaxRateTable;
+  'ludy_finance.purchase_document_void': PurchaseDocumentVoidTable;
+  'ludy_social.post': SocialPostTable;
+  'ludy_social.post_variant': SocialPostVariantTable;
+  'ludy_social.post_approval': SocialPostApprovalTable;
+  'ludy_social.review_feedback': SocialReviewFeedbackTable;
+  'ludy_social.review_link': SocialReviewLinkTable;
+  'ludy_social.account_snapshot': SocialAccountSnapshotTable;
+  'ludy_social.external_import': SocialExternalImportTable;
+  'ludy_social.link_preview': SocialLinkPreviewTable;
+  'ludy_social.channel_option': SocialChannelOptionTable;
+  'ludy_social.notification': SocialNotificationTable;
+  'ludy_social.notification_mute': SocialNotificationMuteTable;
+  'ludy_social.calendar_note': SocialCalendarNoteTable;
+  'ludy_social.media_attribution': SocialMediaAttributionTable;
+  'ludy_social.watermark': SocialWatermarkTable;
+  'ludy_social.chat_alert': SocialChatAlertTable;
+  'ludy_social.label': SocialLabelTable;
+  'ludy_social.idea': SocialIdeaTable;
+  'ludy_social.report_schedule': SocialReportScheduleTable;
+  'ludy_social.report_link': SocialReportLinkTable;
+  'ludy_social.report_schedule_run': SocialReportScheduleRunTable;
+  'ludy_social.banned_word': SocialBannedWordTable;
+  'ludy_social.post_comment': SocialPostCommentTable;
 }>;
 
 // Every table crove_tenant may read: the generated table type, or its refinement above.

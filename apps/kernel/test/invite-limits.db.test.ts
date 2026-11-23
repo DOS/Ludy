@@ -1,5 +1,5 @@
 // Invite mail limits (#185) on a real PostgreSQL 17: the per-org and per-(org, email) counts of the last 24 hours are
-// exact under concurrency (crove_kernel.invite_mail_gate counts under a lock per org and one per recipient), a busy
+// exact under concurrency (ludy_kernel.invite_mail_gate counts under a lock per org and one per recipient), a busy
 // lock answers 429 instead of parking a connection, and one address gets at most the configured number of invites
 // from all orgs together, except an org's first invite of it, which other orgs cannot block. That the cap reveals nothing about accounts is in test/invariant/invites.db.test.ts. Set
 // CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
@@ -8,10 +8,10 @@ import { fileURLToPath } from 'node:url';
 import { sql, type Transaction } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createDb, createPool, type Database, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { MAX_INVITES_PER_DAY, MAX_INVITES_PER_EMAIL_PER_DAY, buildKernelCommands, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb, createPool, type Database, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { MAX_INVITES_PER_DAY, MAX_INVITES_PER_EMAIL_PER_DAY, buildKernelCommands, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { toORPCError } from '../src/rpc.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
@@ -74,7 +74,7 @@ suite('invite mail limits on PostgreSQL (#185)', () => {
   async function sent(orgId: string, inviter: string, emails: string[], hoursAgo = 0) {
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.member_invite (org_id, email, role, token_sha256, invited_by, status, revoked_at, revoked_by, created_at, expires_at)
+        `INSERT INTO ludy_kernel.member_invite (org_id, email, role, token_sha256, invited_by, status, revoked_at, revoked_by, created_at, expires_at)
          SELECT $1::uuid, e, 'member', encode(sha256(convert_to(gen_random_uuid()::text, 'UTF8')), 'hex'), $2::uuid, 'revoked',
                 now(), $2::uuid, now() - make_interval(hours => $4::int), now() - make_interval(hours => $4::int) + interval '7 days'
          FROM unnest($3::text[]) e`,
@@ -84,7 +84,7 @@ suite('invite mail limits on PostgreSQL (#185)', () => {
   }
 
   async function invitesOf(where: string, params: unknown[]) {
-    return admin(async (c) => (await c.query<{ n: number }>(`SELECT count(*)::int AS n FROM crove_kernel.member_invite WHERE ${where}`, params)).rows[0]?.n);
+    return admin(async (c) => (await c.query<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_kernel.member_invite WHERE ${where}`, params)).rows[0]?.n);
   }
 
   function outcomes(results: PromiseSettledResult<unknown>[]) {
@@ -101,9 +101,9 @@ suite('invite mail limits on PostgreSQL (#185)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const appUrl = new URL(adminUrl);
-    appUrl.username = 'crove_app';
+    appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     // Enough connections that every parallel invite below runs in its own transaction at once.
     pool = createPool({ connectionString: appUrl.toString(), max: 16 });
@@ -254,9 +254,9 @@ suite('invite mail limits on PostgreSQL (#185)', () => {
     // At the pending cap and the org's daily limit: still TOO_MANY_INVITES.
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.member_invite (org_id, email, role, token_sha256, invited_by)
+        `INSERT INTO ludy_kernel.member_invite (org_id, email, role, token_sha256, invited_by)
          SELECT $1::uuid, 'held-' || g || '-' || $1::text || '@limits.test', 'member', encode(sha256(convert_to(gen_random_uuid()::text, 'UTF8')), 'hex'), $2::uuid
-         FROM generate_series(1, 100 - (SELECT count(*)::int FROM crove_kernel.member_invite WHERE org_id = $1 AND status = 'pending')) g`,
+         FROM generate_series(1, 100 - (SELECT count(*)::int FROM ludy_kernel.member_invite WHERE org_id = $1 AND status = 'pending')) g`,
         [orgId, owner.id],
       ),
     );
@@ -320,7 +320,7 @@ suite('invite mail limits on PostgreSQL (#185)', () => {
         '...@gmail.com',
         'odd',
       ];
-      const { rows } = await c.query<{ k: string }>('SELECT crove_kernel.invite_cap_key(e) AS k FROM unnest($1::text[]) WITH ORDINALITY u(e, n) ORDER BY n', [cases]);
+      const { rows } = await c.query<{ k: string }>('SELECT ludy_kernel.invite_cap_key(e) AS k FROM unnest($1::text[]) WITH ORDINALITY u(e, n) ORDER BY n', [cases]);
       return Object.fromEntries(cases.map((e, i) => [e, rows[i]?.k]));
     });
     expect(keys).toEqual({
@@ -343,8 +343,8 @@ suite('invite mail limits on PostgreSQL (#185)', () => {
       try {
         await c.query('SET LOCAL enable_seqscan = off');
         const { rows } = await c.query<{ 'QUERY PLAN': string }>(
-          `EXPLAIN SELECT 1 FROM crove_kernel.member_invite i
-           WHERE crove_kernel.invite_cap_key(i.email) = 'ab@gmail.com' AND i.created_at > clock_timestamp() - interval '24 hours'`,
+          `EXPLAIN SELECT 1 FROM ludy_kernel.member_invite i
+           WHERE ludy_kernel.invite_cap_key(i.email) = 'ab@gmail.com' AND i.created_at > clock_timestamp() - interval '24 hours'`,
         );
         return rows.map((r) => r['QUERY PLAN']).join('\n');
       } finally {
@@ -423,7 +423,7 @@ suite('invite mail limits on PostgreSQL (#185)', () => {
     }
     const after = await dbNow();
     const created = await admin(
-      async (c) => (await c.query<{ created_at: Date }>('SELECT created_at FROM crove_kernel.member_invite WHERE org_id = $1 ORDER BY created_at', [orgId])).rows,
+      async (c) => (await c.query<{ created_at: Date }>('SELECT created_at FROM ludy_kernel.member_invite WHERE org_id = $1 ORDER BY created_at', [orgId])).rows,
     );
     expect(created).toHaveLength(MAX_INVITES_PER_EMAIL_PER_DAY);
     for (const row of created) {
@@ -493,11 +493,11 @@ suite('invite mail limits on PostgreSQL (#185)', () => {
     await runtime.executeOrgless('kernel.member.invite.accept', { token }, { actor: asUser(viewer.id) });
     const asApp = <T>(userId: string, fn: (trx: Transaction<Database>) => Promise<T>) =>
       db.transaction().execute(async (trx) => {
-        await sql`SELECT crove_kernel.enter_user_context(${orgId}::uuid, ${contextToken(userId, orgId)}::text)`.execute(trx);
+        await sql`SELECT ludy_kernel.enter_user_context(${orgId}::uuid, ${contextToken(userId, orgId)}::text)`.execute(trx);
         return fn(trx);
       });
     const gate = (email: string, limits: [number, number, number] = [50, 3, 5]) =>
-      sql`SELECT crove_kernel.invite_mail_gate(${email}, ${limits[0]}::int, ${limits[1]}::int, ${limits[2]}::int)`;
+      sql`SELECT ludy_kernel.invite_mail_gate(${email}, ${limits[0]}::int, ${limits[1]}::int, ${limits[2]}::int)`;
 
     const setting = await asApp(owner.id, async (trx) => {
       await sql`SELECT set_config('lock_timeout', '7s', true)`.execute(trx);
@@ -509,7 +509,7 @@ suite('invite mail limits on PostgreSQL (#185)', () => {
 
     // The precheck (#270) checks the same, without the locks.
     const precheck = (email: string, limits: [number, number, number] = [50, 3, 5]) =>
-      sql`SELECT crove_kernel.invite_mail_precheck(${email}, ${limits[0]}::int, ${limits[1]}::int, ${limits[2]}::int)`;
+      sql`SELECT ludy_kernel.invite_mail_precheck(${email}, ${limits[0]}::int, ${limits[1]}::int, ${limits[2]}::int)`;
     for (const call of [gate, precheck]) {
       await expect(db.transaction().execute((trx) => call('nobody@limits.test').execute(trx))).rejects.toThrow(/NO_CONTEXT/);
       await expect(asApp(viewer.id, (trx) => call('someone@limits.test').execute(trx))).rejects.toThrow(/INVITE_GATE_FORBIDDEN/);

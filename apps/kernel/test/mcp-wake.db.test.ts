@@ -8,10 +8,10 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { CredentialVault, parseVaultKey, Runtime, type BlobStore } from '@crove/kernel-runtime';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { CredentialVault, parseVaultKey, Runtime, type BlobStore } from '@ludy/kernel-runtime';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { noCredentialBroker } from '../src/credentials.ts';
@@ -95,9 +95,9 @@ suite('the wake-up webhook of an MCP grant through the API (#3024)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const appUrl = url.toString();
     pool = createPool({ connectionString: appUrl, max: 4 });
@@ -124,7 +124,7 @@ suite('the wake-up webhook of an MCP grant through the API (#3024)', () => {
     grantId = randomUUID();
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
+        `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
          VALUES ($1, $2, $3, $5, 'Test client', 'client.example.com', ARRAY['ludy.read'], $4, now(), now() + interval '30 days', $3)`,
         [org.orgId, grantId, owner.userId, `oauth-${grantId}`, `client-${grantId}`],
       ),
@@ -150,7 +150,7 @@ suite('the wake-up webhook of an MCP grant through the API (#3024)', () => {
     first = String(made.body.secret);
     expect(first).toMatch(/^whsec_[A-Za-z0-9_-]{43}$/);
     expect(made.body.secretHint).toMatch(/^whk_[0-9a-f]{8}$/);
-    const row = await admin((c) => c.query(`SELECT secret_sealed FROM crove_kernel.agent_grant_wake WHERE grant_id = $1`, [grantId]).then((r) => r.rows[0].secret_sealed as { keyId: string; envelope: string }));
+    const row = await admin((c) => c.query(`SELECT secret_sealed FROM ludy_kernel.agent_grant_wake WHERE grant_id = $1`, [grantId]).then((r) => r.rows[0].secret_sealed as { keyId: string; envelope: string }));
     const binding = { orgId: org.orgId, provider: 'mcp-wake', externalAccountId: grantId };
     expect(vault.open({ keyId: row.keyId, envelope: Buffer.from(row.envelope, 'base64') }, binding)).toBe(first);
     expect(() => vault.open({ keyId: row.keyId, envelope: Buffer.from(row.envelope, 'base64') }, { ...binding, externalAccountId: randomUUID() })).toThrow();
@@ -167,7 +167,7 @@ suite('the wake-up webhook of an MCP grant through the API (#3024)', () => {
     expect(again.status).toBe(200);
     expect(again.body.secret).toBeNull();
     expect(again.body).toMatchObject({ url: 'https://hooks.example.com/other', schedule: 'weekly', minute: 60, weekday: 3 });
-    const row = await admin((c) => c.query(`SELECT secret_sealed FROM crove_kernel.agent_grant_wake WHERE grant_id = $1`, [grantId]).then((r) => r.rows[0].secret_sealed as { keyId: string; envelope: string }));
+    const row = await admin((c) => c.query(`SELECT secret_sealed FROM ludy_kernel.agent_grant_wake WHERE grant_id = $1`, [grantId]).then((r) => r.rows[0].secret_sealed as { keyId: string; envelope: string }));
     expect(vault.open({ keyId: row.keyId, envelope: Buffer.from(row.envelope, 'base64') }, { orgId: org.orgId, provider: 'mcp-wake', externalAccountId: grantId })).toBe(first);
   });
 
@@ -178,7 +178,7 @@ suite('the wake-up webhook of an MCP grant through the API (#3024)', () => {
     expect(next).toMatch(/^whsec_/);
     expect(next).not.toBe(first);
     expect(rotated.body.previousUntil).not.toBeNull();
-    const row = await admin((c) => c.query(`SELECT secret_sealed, previous_sealed FROM crove_kernel.agent_grant_wake WHERE grant_id = $1`, [grantId]).then((r) => r.rows[0] as { secret_sealed: { keyId: string; envelope: string }; previous_sealed: { keyId: string; envelope: string } }));
+    const row = await admin((c) => c.query(`SELECT secret_sealed, previous_sealed FROM ludy_kernel.agent_grant_wake WHERE grant_id = $1`, [grantId]).then((r) => r.rows[0] as { secret_sealed: { keyId: string; envelope: string }; previous_sealed: { keyId: string; envelope: string } }));
     const binding = { orgId: org.orgId, provider: 'mcp-wake', externalAccountId: grantId };
     expect(vault.open({ keyId: row.secret_sealed.keyId, envelope: Buffer.from(row.secret_sealed.envelope, 'base64') }, binding)).toBe(next);
     expect(vault.open({ keyId: row.previous_sealed.keyId, envelope: Buffer.from(row.previous_sealed.envelope, 'base64') }, binding)).toBe(first);
@@ -189,7 +189,7 @@ suite('the wake-up webhook of an MCP grant through the API (#3024)', () => {
     const other = randomUUID();
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
+        `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, created_by)
          VALUES ($1, $2, $3, $5, 'Test client', 'client.example.com', ARRAY['ludy.read'], $4, now(), now() + interval '30 days', $3)`,
         [org.orgId, other, owner.userId, `oauth-${other}`, `client-${other}`],
       ),
@@ -202,7 +202,7 @@ suite('the wake-up webhook of an MCP grant through the API (#3024)', () => {
       const refused = await rpc('mcp/wake/set', token, { grantId: other, url });
       expect([400, 422], url).toContain(refused.status);
     }
-    expect(await admin((c) => c.query(`SELECT count(*)::int AS n FROM crove_kernel.agent_grant_wake WHERE grant_id = $1`, [other]).then((r) => r.rows[0].n))).toBe(0);
+    expect(await admin((c) => c.query(`SELECT count(*)::int AS n FROM ludy_kernel.agent_grant_wake WHERE grant_id = $1`, [other]).then((r) => r.rows[0].n))).toBe(0);
   });
 
   it('answers 503 without a credential key, and refuses a viewer every procedure but the read of their own', async () => {

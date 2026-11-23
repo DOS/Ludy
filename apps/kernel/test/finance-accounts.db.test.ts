@@ -9,12 +9,12 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import type { ExtractClient } from '@crove/extract-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { kernelCommands, kernelQueries } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -86,13 +86,13 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
     }
   }
 
-  // One statement as crove_app in the given user's context of an org, rolled back.
+  // One statement as ludy_app in the given user's context of an org, rolled back.
   async function asApp<T>(userId: string, orgId: string, fn: (c: pg.Client) => Promise<T>): Promise<T> {
     const client = new pg.Client({ connectionString: appUrl });
     await client.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+      await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
       return await fn(client);
     } finally {
       await client.query('ROLLBACK').catch(() => {});
@@ -106,7 +106,7 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
     await client.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
+      await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(userId, orgId)]);
       const out = await fn(client);
       await client.query('COMMIT');
       return out;
@@ -187,17 +187,17 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 2 });
     const register = (target: Db, sessions = false) =>
       new Runtime(target, { manifests: TEST_MANIFESTS, ...(sessions ? { sessions: createSessionStatusSource('off'), stepUp: 'required' } : {}) }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -268,7 +268,7 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
     expect(await create({ parentCode: '133', code: '13321', name: 'x' })).toMatchObject({ status: 422, body: { code: 'PARENT_NOT_DEEPEST', data: { parentCode: '1332' } } });
     expect(await create({ parentCode: '1121', code: '112112', name: 'x' })).toMatchObject({ status: 422, body: { code: 'PARENT_NOT_DEEPEST', data: { parentCode: '11211' } } });
     await expect(
-      admin((c) => c.query(`INSERT INTO crove_finance.org_account (org_id, code, name, parent_code) VALUES ($1, '13321', 'x', '133')`, [org.orgId])),
+      admin((c) => c.query(`INSERT INTO ludy_finance.org_account (org_id, code, name, parent_code) VALUES ($1, '13321', 'x', '133')`, [org.orgId])),
     ).rejects.toThrow(/most detailed account/);
     expect(await create({ parentCode: '133', code: '1331', name: 'x' })).toMatchObject({ status: 409, body: { code: 'ACCOUNT_CODE_TAKEN' } });
     expect(await create({ parentCode: '6422', code: '6422.MKT', name: 'x' })).toMatchObject({ status: 409, body: { code: 'ACCOUNT_CODE_TAKEN' } });
@@ -296,7 +296,7 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
     expect(proposed.payload.lines.every((l) => l.debitAccount === '6422.MKT')).toBe(true);
     const posted = await approve(second, proposed.revision);
     const lines = await admin(async (c) =>
-      (await c.query<{ account_code: string }>('SELECT DISTINCT account_code FROM crove_finance.journal_line WHERE entry_id = $1 ORDER BY 1', [posted.journalEntryId])).rows,
+      (await c.query<{ account_code: string }>('SELECT DISTINCT account_code FROM ludy_finance.journal_line WHERE entry_id = $1 ORDER BY 1', [posted.journalEntryId])).rows,
     );
     expect(lines.map((l) => l.account_code)).toEqual(['1331', '331', '6422.MKT']);
   });
@@ -306,7 +306,7 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
     expect(await rpc('accounts/create', owner, { parentCode: '331', code: '331.NCC', name: 'Phải trả nhà cung cấp dịch vụ' })).toMatchObject({ status: 200 });
     const [vendor] = (await rpc('parties/list', owner, {})).body as Array<{ id: string }>;
     await commitAsApp(owner.userId, org.orgId, (c) =>
-      c.query(`SELECT crove_finance.post_journal_entry('2026-09-20', 'Phí dịch vụ', 'test', $1::uuid, $2::jsonb)`, [
+      c.query(`SELECT ludy_finance.post_journal_entry('2026-09-20', 'Phí dịch vụ', 'test', $1::uuid, $2::jsonb)`, [
         randomUUID(),
         JSON.stringify([
           { line_no: 1, account_code: '6422.MKT', debit: '50000', credit: '0' },
@@ -318,8 +318,8 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
       (await c.query<{ prefix: string; debit: string; credit: string }>(
         `SELECT p AS prefix, coalesce(sum(l.debit), 0)::text AS debit, coalesce(sum(l.credit), 0)::text AS credit
            FROM unnest(ARRAY['642', '6422', '6422.MKT', '331']) p
-           LEFT JOIN crove_finance.journal_line l ON l.org_id = $1 AND l.account_code LIKE p || '%'
-           LEFT JOIN crove_finance.journal_entry j ON j.org_id = l.org_id AND j.id = l.entry_id
+           LEFT JOIN ludy_finance.journal_line l ON l.org_id = $1 AND l.account_code LIKE p || '%'
+           LEFT JOIN ludy_finance.journal_entry j ON j.org_id = l.org_id AND j.id = l.entry_id
           WHERE j.entry_date IS NULL OR j.entry_date BETWEEN '2026-09-01' AND '2026-09-30'
           GROUP BY p`,
         [org.orgId],
@@ -363,7 +363,7 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
     expect(await rpc('parties/setDefaultAccount', owner, { partyId, accountCode: '6422.MKT' })).toEqual({ status: 200, body: { partyId, accountCode: '6422.MKT' } });
     const audit = await admin(async (c) =>
       (await c.query<{ detail: Record<string, unknown> }>(
-        `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.vendor.set_default_account' AND outcome = 'ok' ORDER BY occurred_at, id`,
+        `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.vendor.set_default_account' AND outcome = 'ok' ORDER BY occurred_at, id`,
         [org.orgId],
       )).rows,
     );
@@ -379,7 +379,7 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
     const audits = async () =>
       admin(async (c) =>
         (await c.query<{ detail: { previous: string | null; accountCode: string | null } }>(
-          `SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.vendor.set_default_account' AND outcome = 'ok' ORDER BY occurred_at, id`,
+          `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.vendor.set_default_account' AND outcome = 'ok' ORDER BY occurred_at, id`,
           [org.orgId],
         )).rows.map((r) => r.detail),
       );
@@ -422,12 +422,12 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
 
     try {
       // A default exists (6422.MKT): both changes wait for its row.
-      chained(await race(`SELECT 1 FROM crove_finance.vendor_account_rule WHERE org_id = $1 AND party_id = $2 FOR UPDATE`, [org.orgId, partyId]), '6422.MKT');
+      chained(await race(`SELECT 1 FROM ludy_finance.vendor_account_rule WHERE org_id = $1 AND party_id = $2 FOR UPDATE`, [org.orgId, partyId]), '6422.MKT');
 
       // No default yet: both changes find no row, and their inserts wait for one being written (here 6422.MKT).
-      await admin((c) => c.query(`DELETE FROM crove_finance.vendor_account_rule WHERE org_id = $1 AND party_id = $2`, [org.orgId, partyId]));
+      await admin((c) => c.query(`DELETE FROM ludy_finance.vendor_account_rule WHERE org_id = $1 AND party_id = $2`, [org.orgId, partyId]));
       chained(
-        await race(`INSERT INTO crove_finance.vendor_account_rule (org_id, party_id, debit_account) VALUES ($1, $2, '6422.MKT')`, [org.orgId, partyId]),
+        await race(`INSERT INTO ludy_finance.vendor_account_rule (org_id, party_id, debit_account) VALUES ($1, $2, '6422.MKT')`, [org.orgId, partyId]),
         '6422.MKT',
       );
     } finally {
@@ -442,7 +442,7 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
     expect(String(refused.body.message)).toContain(SELLER);
     expect(await rpc('accounts/update', owner, { code: '11211', active: false })).toMatchObject({ status: 409, body: { code: 'ACCOUNT_HAS_SUB_ACCOUNTS' } });
     // The database refuses the same, whoever writes.
-    await expect(admin((c) => c.query(`UPDATE crove_finance.org_account SET active = false WHERE org_id = $1 AND code = '6422.MKT'`, [org.orgId]))).rejects.toThrow(
+    await expect(admin((c) => c.query(`UPDATE ludy_finance.org_account SET active = false WHERE org_id = $1 AND code = '6422.MKT'`, [org.orgId]))).rejects.toThrow(
       /default account of a vendor/,
     );
   });
@@ -475,7 +475,7 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
     expect(await rpc('parties/setDefaultAccount', owner, { partyId: vendor?.id, accountCode: '6422.MKT' })).toMatchObject({ status: 422, body: { code: 'ACCOUNT_INACTIVE' } });
     await expect(
       asApp(owner.userId, org.orgId, (c) =>
-        c.query(`INSERT INTO crove_finance.vendor_account_rule (org_id, party_id, debit_account) VALUES ($1, $2, '6422.MKT')
+        c.query(`INSERT INTO ludy_finance.vendor_account_rule (org_id, party_id, debit_account) VALUES ($1, $2, '6422.MKT')
                  ON CONFLICT (org_id, party_id) DO UPDATE SET debit_account = excluded.debit_account`, [org.orgId, vendor?.id]),
       ),
     ).rejects.toMatchObject({ code: '23503' });
@@ -489,7 +489,7 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
     expect(asked.status).toBe(200);
     const reversal = await approve(String(asked.body.proposalId), 1);
     const mirrored = await admin(async (c) =>
-      (await c.query<{ account_code: string }>(`SELECT account_code FROM crove_finance.journal_line WHERE entry_id = $1 AND account_code LIKE '6422.%'`, [reversal.journalEntryId])).rows,
+      (await c.query<{ account_code: string }>(`SELECT account_code FROM ludy_finance.journal_line WHERE entry_id = $1 AND account_code LIKE '6422.%'`, [reversal.journalEntryId])).rows,
     );
     expect(mirrored.length).toBeGreaterThan(0);
 
@@ -500,13 +500,13 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
     // No new sub-account goes under an inactive one, at the database either.
     expect(await rpc('accounts/create', owner, { parentCode: '11211', code: '11211.ACB', name: 'x' })).toMatchObject({ status: 422, body: { code: 'PARENT_INACTIVE' } });
     await expect(
-      admin((c) => c.query(`INSERT INTO crove_finance.org_account (org_id, code, name, parent_code) VALUES ($1, '11211.ACB', 'x', '11211')`, [org.orgId])),
+      admin((c) => c.query(`INSERT INTO ludy_finance.org_account (org_id, code, name, parent_code) VALUES ($1, '11211.ACB', 'x', '11211')`, [org.orgId])),
     ).rejects.toThrow(/active sub-account/);
     expect(await rpc('accounts/update', owner, { code: '6422.MKT', active: true })).toMatchObject({ status: 200, body: { active: true } });
 
     const audit = await admin(async (c) =>
       (await c.query<{ command: string; n: number }>(
-        `SELECT command, count(*)::int AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.account.%' AND outcome = 'ok' GROUP BY 1 ORDER BY 1`,
+        `SELECT command, count(*)::int AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.account.%' AND outcome = 'ok' GROUP BY 1 ORDER BY 1`,
         [org.orgId],
       )).rows,
     );
@@ -542,33 +542,33 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
       idempotencyKey: randomUUID(),
     });
     const lines = await admin(async (c) =>
-      (await c.query<{ account_code: string }>('SELECT account_code FROM crove_finance.journal_line WHERE entry_id = $1 ORDER BY line_no', [posted.journalEntryId])).rows,
+      (await c.query<{ account_code: string }>('SELECT account_code FROM ludy_finance.journal_line WHERE entry_id = $1 ORDER BY line_no', [posted.journalEntryId])).rows,
     );
     expect(lines.map((l) => l.account_code)).toEqual(['1121.ACB', '4111']);
   });
 
   it('never deletes a sub-account or changes its code, and keeps the TT133 codes', async () => {
-    await expect(asApp(owner.userId, org.orgId, (c) => c.query(`DELETE FROM crove_finance.org_account WHERE code = '6422.MKT'`))).rejects.toThrow(/permission denied/);
-    await expect(asApp(owner.userId, org.orgId, (c) => c.query(`UPDATE crove_finance.org_account SET code = '6422.ADS' WHERE code = '6422.MKT'`))).rejects.toThrow(
+    await expect(asApp(owner.userId, org.orgId, (c) => c.query(`DELETE FROM ludy_finance.org_account WHERE code = '6422.MKT'`))).rejects.toThrow(/permission denied/);
+    await expect(asApp(owner.userId, org.orgId, (c) => c.query(`UPDATE ludy_finance.org_account SET code = '6422.ADS' WHERE code = '6422.MKT'`))).rejects.toThrow(
       /permission denied/,
     );
     // Not even the owner of the table.
-    await expect(admin((c) => c.query(`DELETE FROM crove_finance.org_account WHERE org_id = $1`, [org.orgId]))).rejects.toThrow(/never deleted/);
-    await expect(admin((c) => c.query(`UPDATE crove_finance.org_account SET code = '6422.ADS' WHERE code = '6422.MKT'`))).rejects.toThrow(/only its name/);
-    await expect(admin((c) => c.query(`TRUNCATE crove_finance.org_account CASCADE`))).rejects.toThrow(/never deleted/);
-    await expect(admin((c) => c.query(`DELETE FROM crove_finance.account WHERE code = '811'`))).rejects.toThrow(/never deleted or changed/);
-    await expect(admin((c) => c.query(`UPDATE crove_finance.account SET code = '8111' WHERE code = '811'`))).rejects.toThrow(/never deleted or changed/);
+    await expect(admin((c) => c.query(`DELETE FROM ludy_finance.org_account WHERE org_id = $1`, [org.orgId]))).rejects.toThrow(/never deleted/);
+    await expect(admin((c) => c.query(`UPDATE ludy_finance.org_account SET code = '6422.ADS' WHERE code = '6422.MKT'`))).rejects.toThrow(/only its name/);
+    await expect(admin((c) => c.query(`TRUNCATE ludy_finance.org_account CASCADE`))).rejects.toThrow(/never deleted/);
+    await expect(admin((c) => c.query(`DELETE FROM ludy_finance.account WHERE code = '811'`))).rejects.toThrow(/never deleted or changed/);
+    await expect(admin((c) => c.query(`UPDATE ludy_finance.account SET code = '8111' WHERE code = '811'`))).rejects.toThrow(/never deleted or changed/);
     // A TT133 code that an org already uses for a sub-account cannot be added to the global chart.
-    await expect(admin((c) => c.query(`INSERT INTO crove_finance.account (code, name, parent_code) VALUES ('11211', 'Tài khoản thanh toán', '1121')`))).rejects.toThrow(
+    await expect(admin((c) => c.query(`INSERT INTO ludy_finance.account (code, name, parent_code) VALUES ('11211', 'Tài khoản thanh toán', '1121')`))).rejects.toThrow(
       /already a sub-account/,
     );
-    expect(await admin(async (c) => (await c.query(`UPDATE crove_finance.account SET name = name WHERE code = '811'`)).rowCount)).toBe(1);
+    expect(await admin(async (c) => (await c.query(`UPDATE ludy_finance.account SET name = name WHERE code = '811'`)).rowCount)).toBe(1);
   });
 
   it('posts only on accounts of the org: another org sub-account or an unknown code is a foreign key error', async () => {
     const post = (account: string) =>
       asApp(owner.userId, org.orgId, (c) =>
-        c.query(`SELECT crove_finance.post_journal_entry('2026-10-01', 'x', 'test', $1::uuid, $2::jsonb)`, [
+        c.query(`SELECT ludy_finance.post_journal_entry('2026-10-01', 'x', 'test', $1::uuid, $2::jsonb)`, [
           randomUUID(),
           JSON.stringify([
             { line_no: 1, account_code: account, debit: '100', credit: '0' },
@@ -582,9 +582,9 @@ suite('chart of accounts: TT133 plus the org sub-accounts (#319)', () => {
     // Purchase lines are held to the same rule.
     await expect(
       asApp(owner.userId, org.orgId, async (c) => {
-        const { rows } = await c.query<{ id: string }>(`SELECT id FROM crove_finance.purchase_document LIMIT 1`);
+        const { rows } = await c.query<{ id: string }>(`SELECT id FROM ludy_finance.purchase_document LIMIT 1`);
         return c.query(
-          `INSERT INTO crove_finance.purchase_line (org_id, document_id, line_no, description, amount, debit_account) VALUES ($1, $2, 99, 'x', 1, '64229')`,
+          `INSERT INTO ludy_finance.purchase_line (org_id, document_id, line_no, description, amount, debit_account) VALUES ($1, $2, 99, 'x', 1, '64229')`,
           [org.orgId, rows[0]?.id],
         );
       }),

@@ -10,13 +10,14 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, type AgentActor } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, type AgentActor } from '@ludy/kernel-runtime';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -28,6 +29,7 @@ type Actor = { type: 'user'; userId: string; aal: 'aal1' | 'aal2'; sessionId?: s
 suite('approval policy presets on PostgreSQL (#1402)', () => {
   const dbName = `crove_test_presets_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   let pool: pg.Pool;
   let rt: Runtime;
@@ -46,14 +48,14 @@ suite('approval policy presets on PostgreSQL (#1402)', () => {
   });
 
   async function connect(url: string): Promise<pg.Client> {
-    const client = new pg.Client({ connectionString: url });
+    const client = createDbClient({ connectionString: url }, dbIds);
     await client.connect();
     clients.push(client);
     return client;
   }
 
   async function withAdmin<T>(fn: (admin: pg.Client) => Promise<T>): Promise<T> {
-    const admin = new pg.Client({ connectionString: adminUrl });
+    const admin = createDbClient({ connectionString: adminUrl }, dbIds);
     await admin.connect();
     try {
       return await fn(admin);
@@ -166,20 +168,21 @@ suite('approval policy presets on PostgreSQL (#1402)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
-    pool = createPool({ connectionString: appUrl, max: 4 });
+    pool = createDbPool({ connectionString: appUrl, max: 4 }, dbIds);
     rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({
       commands: [...kernelCommands, ...financeCommands],
       queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
     });
     const workerUrl = new URL(adminUrl);
-    workerUrl.username = 'crove_worker';
+    workerUrl.username = dbIds ? dbIds.roleName('crove_worker') : 'crove_worker';
     workerUrl.password = 'test-worker-pw';
-    workerPool = createPool({ connectionString: workerUrl.toString(), max: 2 });
+    workerPool = createDbPool({ connectionString: workerUrl.toString(), max: 2 }, dbIds);
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({
       commands: [...kernelCommands, ...financeCommands],
       queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
@@ -294,8 +297,13 @@ suite('approval policy presets on PostgreSQL (#1402)', () => {
       eligible_approvers: 1,
     });
     // Pinned as a literal on purpose: every change to who approves what raises it and goes through the two-step route.
-    // 10: the payment of a pay run's net pay or a remittance was given its approval policy (#2532). 11: a payroll posting or payment is verified from the run's totals, so a member chief accountant approves (#2751).
-    expect((approvedAudit as { policy_version?: unknown }).policy_version).toBe(11);
+    // 10: the payment of a pay run's net pay or a remittance was given its approval policy (#2532). 11: a payroll posting or payment is verified from the run's totals, so a member chief accountant approves (#2751). 12: the posting of a stored marketplace settlement was given its approval policy (#2516). 13: the posting of a platform's payout was given its approval policy (#2516). 14: the clearing of a platform's waiting fees by its invoice was given its approval policy (#2516).  15: the payment of a supplier invoice to the supplier bank account was given its approval policy (#3699).
+    // 16: the settlement of an approved supplier payment by its bank line was given its approval policy (#3700 S3c; two-step, finished by #3778).
+    // 17: a resume, a raised budget and a longer schedule of a running ad were given their approval policy (#3835, ads W4; two-step, finished by the follow-up that pins 17 only).
+    // 18: the proposal-only twins of the Engage commands were given their approval policy (#3863, Engage E4 part 1; two-step, finished by the follow-up that pins 18 only).
+    // 19: the proposal-only twin that cancels a queued change of a running ad that would start or raise spend was given its approval policy (#4181; two-step, finished by the follow-up that pins 19 only).
+    // 20: the proposal-only twin that creates a team task linked to a thread was given its approval policy (#4148; two-step, finished by the follow-up that pins 20 only).
+    expect((approvedAudit as { policy_version?: unknown }).policy_version).toBe(20);
 
     // Back on founder, the owner approves the earlier proposal again (it is in its snapshot), flagged with the version.
     await o.setPreset(asMfa(o.owner), 'founder');

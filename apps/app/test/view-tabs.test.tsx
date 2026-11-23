@@ -6,7 +6,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FilterAst } from '@crove/kernel-contract';
+import type { FilterAst } from '@ludy/kernel-contract';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 
@@ -27,7 +27,7 @@ vi.mock('../src/lib/api.ts', async () => {
   return { orpc: node([]), client: node(['client']), queryClient: client.current, errorMessage: (e: unknown) => String(e) };
 });
 
-const { ViewTabs } = await import('../src/components/view-tabs.tsx');
+const { ViewTabs, completeSavedViewCreate } = await import('../src/components/view-tabs.tsx');
 
 const ME = '00000000-0000-7000-8000-000000000001';
 const OTHER = '00000000-0000-7000-8000-000000000002';
@@ -54,6 +54,35 @@ function render(role: 'owner' | 'member' | 'viewer', filters: FilterAst = none):
 describe('ViewTabs', () => {
   beforeEach(() => client.current.clear());
 
+  it('shows no strip while there is no saved view and the filter is as it was (#3647): one lone "Tất cả" tab does nothing', () => {
+    const qc = client.current;
+    qc.setQueryData(['org', 'get', null], { role: 'member' });
+    qc.setQueryData(['savedViews', 'list', { scope: 'crm.party' }], []);
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <IntlProvider locale="vi" messages={catalog('vi')}>
+          <ViewTabs scope="crm.party" filters={none} sort={null} onApply={() => undefined} />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+    expect(html).toBe('');
+  });
+
+  it('comes with a changed filter, to offer saving it', () => {
+    const qc = client.current;
+    qc.setQueryData(['org', 'get', null], { role: 'member' });
+    qc.setQueryData(['savedViews', 'list', { scope: 'crm.party' }], []);
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <IntlProvider locale="vi" messages={catalog('vi')}>
+          <ViewTabs scope="crm.party" filters={{ v: 1, all: [{ field: 'kind', op: 'is', value: 'person' }] }} sort={null} onApply={() => undefined} />
+        </IntlProvider>
+      </QueryClientProvider>,
+    );
+    expect(html).toContain(viMessages.savedViews.all);
+    expect(html).toContain(viMessages.savedViews.save);
+  });
+
   it('lists "Tất cả", then the member’s own views, then the shared ones with their badge', () => {
     const html = render('member');
     const order = [viMessages.savedViews.all, 'Công ty có email', 'Của nhóm'].map((label) => html.indexOf(label));
@@ -73,5 +102,54 @@ describe('ViewTabs', () => {
     const html = render('viewer', { v: 1, all: [{ field: 'kind', op: 'is', value: 'person' }] });
     expect(html).toContain('Của nhóm');
     expect(html).toContain(`>${viMessages.savedViews.save}<`);
+  });
+
+  it('activates the created tab only when no other tab was picked while refresh was pending', async () => {
+    let seq = 1;
+    let activated: string | null = null;
+    let closed = 0;
+
+    const applied = await completeSavedViewCreate({
+      viewId: 'view-1',
+      seqAtStart: seq,
+      currentSeq: () => seq,
+      refresh: () => Promise.resolve(),
+      selectCreated: (id) => {
+        activated = id;
+      },
+      closeForm: () => {
+        closed += 1;
+      },
+    });
+    expect(applied).toBe(true);
+    expect(activated).toBe('view-1');
+    expect(closed).toBe(1);
+
+    // Simulate user picking "Tất cả" while refresh() is still in flight.
+    activated = null;
+    closed = 0;
+    const seqAtSave = seq;
+    let resolveRefresh!: () => void;
+    const pending = completeSavedViewCreate({
+      viewId: 'view-2',
+      seqAtStart: seqAtSave,
+      currentSeq: () => seq,
+      refresh: () =>
+        new Promise<void>((resolve) => {
+          resolveRefresh = resolve;
+        }),
+      selectCreated: (id) => {
+        activated = id;
+      },
+      closeForm: () => {
+        closed += 1;
+      },
+    });
+    seq += 1;
+    resolveRefresh();
+    const cancelled = await pending;
+    expect(cancelled).toBe(false);
+    expect(activated).toBeNull();
+    expect(closed).toBe(1);
   });
 });

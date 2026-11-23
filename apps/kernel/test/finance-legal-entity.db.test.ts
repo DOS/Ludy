@@ -13,14 +13,15 @@ import { fileURLToPath } from 'node:url';
 import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { findPeriodBalanceDifferences } from '../src/period-balance.ts';
 import { GENESIS_SHA256, LocalArchiveStore, archiveKey, batchSha256, chainSha256, verifyArchive, type ArchiveBatch } from '../src/worm.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { enterUser } from './context-token.ts';
+import { createPreCutoverClient, createPreCutoverPool } from './pre-cutover-db.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -28,23 +29,23 @@ const THIS_VERSION = '20261102140000';
 // Entries posted before the migration, two lines and two deltas each.
 const LEGACY_ENTRIES = 1500;
 const PER_ENTITY = [
-  'crove_finance.journal_entry',
-  'crove_finance.journal_line',
-  'crove_finance.period_balance_delta',
-  'crove_finance.cash_voucher',
-  'crove_finance.journal_voucher',
-  'crove_finance.purchase_document',
-  'crove_finance.purchase_line',
-  'crove_finance.purchase_tax_rate',
-  'crove_finance.purchase_document_void',
-  'crove_finance.input_vat_check',
-  'crove_finance.bank_line',
-  'crove_finance.fixed_asset',
-  'crove_finance.depreciation_line',
-  'crove_finance.portal_invoice_list',
-  'crove_finance.portal_invoice_row',
-  'crove_finance.categorization_rule',
-  'crove_finance.vat_return_filed',
+  'ludy_finance.journal_entry',
+  'ludy_finance.journal_line',
+  'ludy_finance.period_balance_delta',
+  'ludy_finance.cash_voucher',
+  'ludy_finance.journal_voucher',
+  'ludy_finance.purchase_document',
+  'ludy_finance.purchase_line',
+  'ludy_finance.purchase_tax_rate',
+  'ludy_finance.purchase_document_void',
+  'ludy_finance.input_vat_check',
+  'ludy_finance.bank_line',
+  'ludy_finance.fixed_asset',
+  'ludy_finance.depreciation_line',
+  'ludy_finance.portal_invoice_list',
+  'ludy_finance.portal_invoice_row',
+  'ludy_finance.categorization_rule',
+  'ludy_finance.vat_return_filed',
 ];
 const RLS_DENIED = /new row violates row-level security policy/;
 
@@ -58,6 +59,7 @@ suite('finance books per legal entity (#1280)', () => {
   let db: Db;
   let worker: Db;
   let before = '';
+  let upgraded = false;
   let archiveDir = '';
   let store: LocalArchiveStore;
   let orgId = '';
@@ -68,7 +70,7 @@ suite('finance books per legal entity (#1280)', () => {
   let rewriteMs = 0;
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = upgraded ? new pg.Client({ connectionString: adminUrl }) : createPreCutoverClient({ connectionString: adminUrl });
     await client.connect();
     try {
       return await fn(client);
@@ -84,7 +86,7 @@ suite('finance books per legal entity (#1280)', () => {
     return url.toString();
   };
 
-  // Runs fn as crove_app in the context of userId, in one transaction that rolls back unless commit is set.
+  // Runs fn as ludy_app in the context of userId, in one transaction that rolls back unless commit is set.
   async function asUser<T>(userId: string, fn: (c: pg.PoolClient) => Promise<T>, commit = false): Promise<T> {
     const c = await pool.connect();
     try {
@@ -102,7 +104,7 @@ suite('finance books per legal entity (#1280)', () => {
   }
 
   const post = (c: pg.PoolClient, amount: string, date = '2026-09-15') =>
-    c.query<{ id: string }>(`SELECT crove_finance.post_journal_entry($1::date, 'le test', 'test.le', $2::uuid, $3::jsonb, NULL::uuid, 1) AS id`, [
+    c.query<{ id: string }>(`SELECT ludy_finance.post_journal_entry($1::date, 'le test', 'test.le', $2::uuid, $3::jsonb, NULL::uuid, 1) AS id`, [
       date,
       randomUUID(),
       JSON.stringify([
@@ -117,12 +119,12 @@ suite('finance books per legal entity (#1280)', () => {
     admin(async (a) => {
       await a.query('BEGIN');
       const { rows } = await a.query<{ id: string }>(
-        `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id)
+        `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id)
          VALUES ($1, '2026-09-20', 'branch', 'test.branch', $2, $3) RETURNING id`,
         [orgId, randomUUID(), branch],
       );
       const entry = rows[0]?.id as string;
-      await a.query(`INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '1111', $3, 0), ($1, $2, 2, '5111', 0, $3)`, [
+      await a.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '1111', $3, 0), ($1, $2, 2, '5111', 0, $3)`, [
         orgId,
         entry,
         amount,
@@ -147,25 +149,25 @@ suite('finance books per legal entity (#1280)', () => {
     }
     await migrate({ adminUrl, dir: before });
     await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 2 });
+    pool = createPreCutoverPool({ connectionString: login('crove_app', 'test-app-pw'), max: 2 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 1 });
+    workerPool = createPreCutoverPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 1 });
     worker = createDb(workerPool);
     // The database is still before the keyed input hash's migration (20261103180000_crove_kernel_input_hash.sql), where
-    // crove_kernel.command_input_hash does not exist yet: this runtime writes the plain hash (#1741).
+    // ludy_kernel.command_input_hash does not exist yet: this runtime writes the plain hash (#1741).
     // No context token key: the database starts at a version before enter_user_context (#1822).
     const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, contextTokenKey: null, inputHash: 'sha256' }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) });
     owner = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: 'owner@le-books.test', name: null });
     member = await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: 'member@le-books.test', name: null });
     ({ orgId } = await createOrg(runtime, { type: 'user', userId: owner, aal: 'aal1' }, 'Sổ theo pháp nhân'));
     await admin(async (a) => {
-      defaultEntity = (await a.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
+      defaultEntity = (await a.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId])).rows[0]?.id as string;
       branch = (
-        await a.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner])
+        await a.query<{ id: string }>(`INSERT INTO ludy_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [orgId, owner])
       ).rows[0]?.id as string;
-      await a.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, member]);
+      await a.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, member]);
       // The member keeps the branch's books only (an entity-scoped assignment narrows enter_context's le_scope).
-      await a.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
+      await a.query(`INSERT INTO ludy_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [
         orgId,
         member,
         branch,
@@ -183,8 +185,8 @@ suite('finance books per legal entity (#1280)', () => {
     );
     await admin(async (a) => {
       await a.query('SET session_replication_role = replica');
-      await a.query(`UPDATE crove_kernel.audit_event SET occurred_at = occurred_at - interval '2 hours' WHERE org_id = $1`, [orgId]);
-      await a.query(`UPDATE crove_finance.journal_entry SET created_at = created_at - interval '2 hours' WHERE org_id = $1`, [orgId]);
+      await a.query(`UPDATE ludy_kernel.audit_event SET occurred_at = occurred_at - interval '2 hours' WHERE org_id = $1`, [orgId]);
+      await a.query(`UPDATE ludy_finance.journal_entry SET created_at = created_at - interval '2 hours' WHERE org_id = $1`, [orgId]);
     });
     archiveDir = mkdtempSync(join(tmpdir(), 'crove-le-archive-'));
     store = new LocalArchiveStore(archiveDir);
@@ -194,9 +196,9 @@ suite('finance books per legal entity (#1280)', () => {
     const to = new Date(Date.now() - 60 * 60_000).toISOString();
     const rows = (
       await sql<{ ref: string; row_sha256: string }>`
-        SELECT ref, row_sha256 FROM crove_kernel.archive_row_hashes(${epoch}::timestamptz, ${to}::timestamptz)
+        SELECT ref, row_sha256 FROM ludy_kernel.archive_row_hashes(${epoch}::timestamptz, ${to}::timestamptz)
         UNION ALL
-        SELECT ref, row_sha256 FROM crove_kernel.archive_number_hashes(${epoch}::timestamptz, ${to}::timestamptz)`.execute(worker)
+        SELECT ref, row_sha256 FROM ludy_kernel.archive_number_hashes(${epoch}::timestamptz, ${to}::timestamptz)`.execute(worker)
     ).rows
       .map((r): [string, string] => [r.ref, r.row_sha256])
       .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
@@ -214,12 +216,20 @@ suite('finance books per legal entity (#1280)', () => {
       chainSha256: chainSha256(GENESIS_SHA256, 1, epoch, to, hash),
     };
     await store.put(archiveKey(1), new TextEncoder().encode(JSON.stringify(batch)));
-    await sql`SELECT crove_kernel.archive_record(1, ${epoch}::timestamptz, ${to}::timestamptz, ${rows.length}::int, ${hash}, ${batch.chainSha256}, ${archiveKey(1)})`.execute(worker);
+    await sql`SELECT ludy_kernel.archive_record(1, ${epoch}::timestamptz, ${to}::timestamptz, ${rows.length}::int, ${hash}, ${batch.chainSha256}, ${archiveKey(1)})`.execute(worker);
 
     const started = performance.now();
     const applied = await migrate({ adminUrl, dir: MIGRATIONS });
     rewriteMs = performance.now() - started;
     expect(applied.some((v) => v.startsWith(THIS_VERSION))).toBe(true);
+    upgraded = true;
+    await pool.end();
+    await workerPool.end();
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 2 });
+    db = createDb(pool);
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 1 });
+    worker = createDb(workerPool);
   }, 300_000);
 
   afterAll(async () => {
@@ -238,9 +248,9 @@ suite('finance books per legal entity (#1280)', () => {
     console.info(`#1280 backfill: ${LEGACY_ENTRIES} entries, ${LEGACY_ENTRIES * 2} lines and deltas rewritten in ${Math.round(rewriteMs)} ms (whole migrate run)`);
     await admin(async (a) => {
       const counts = await a.query<{ entries: string; lines: string; deltas: string }>(
-        `SELECT (SELECT count(*) FROM crove_finance.journal_entry WHERE org_id = $1 AND legal_entity_id = $2) AS entries,
-                (SELECT count(*) FROM crove_finance.journal_line WHERE org_id = $1 AND legal_entity_id = $2) AS lines,
-                (SELECT count(*) FROM crove_finance.period_balance_delta WHERE org_id = $1 AND legal_entity_id = $2) AS deltas`,
+        `SELECT (SELECT count(*) FROM ludy_finance.journal_entry WHERE org_id = $1 AND legal_entity_id = $2) AS entries,
+                (SELECT count(*) FROM ludy_finance.journal_line WHERE org_id = $1 AND legal_entity_id = $2) AS lines,
+                (SELECT count(*) FROM ludy_finance.period_balance_delta WHERE org_id = $1 AND legal_entity_id = $2) AS deltas`,
         [orgId, defaultEntity],
       );
       expect(counts.rows[0]).toEqual({ entries: String(LEGACY_ENTRIES), lines: String(LEGACY_ENTRIES * 2), deltas: String(LEGACY_ENTRIES * 2) });
@@ -249,13 +259,13 @@ suite('finance books per legal entity (#1280)', () => {
         const { rows } = await a.query<{ notnull: boolean; restrictive: boolean; fk: boolean; always: boolean }>(
           `SELECT a.attnotnull AS notnull,
                   EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = $1::regclass AND p.polname = 'le_scope' AND NOT p.polpermissive) AS restrictive,
-                  EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid = $1::regclass AND c.contype = 'f' AND c.confrelid = 'crove_kernel.legal_entity'::regclass) AS fk,
+                  EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid = $1::regclass AND c.contype = 'f' AND c.confrelid = 'ludy_kernel.legal_entity'::regclass) AS fk,
                   EXISTS (SELECT 1 FROM pg_trigger t WHERE t.tgrelid = $1::regclass AND t.tgname = 'b_legal_entity' AND t.tgenabled = 'A') AS always
            FROM pg_attribute a WHERE a.attrelid = $1::regclass AND a.attname = 'legal_entity_id'`,
           [table],
         );
         expect(rows[0], `${schema}.${name}`).toEqual({ notnull: true, restrictive: true, fk: true, always: true });
-        const off = await a.query(`SELECT 1 FROM ${table} WHERE legal_entity_id IS DISTINCT FROM crove_finance.org_default_legal_entity(org_id) LIMIT 1`);
+        const off = await a.query(`SELECT 1 FROM ${table} WHERE legal_entity_id IS DISTINCT FROM ludy_finance.org_default_legal_entity(org_id) LIMIT 1`);
         expect(off.rowCount, `${table} rows outside the default entity`).toBe(0);
       }
     });
@@ -268,18 +278,18 @@ suite('finance books per legal entity (#1280)', () => {
   it('gives a new row its parent entity or the default one, and refuses a mismatch or a change', async () => {
     const entry = await branchEntry('500000');
     await admin(async (a) => {
-      const lines = await a.query<{ legal_entity_id: string }>('SELECT DISTINCT legal_entity_id FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2', [orgId, entry]);
+      const lines = await a.query<{ legal_entity_id: string }>('SELECT DISTINCT legal_entity_id FROM ludy_finance.journal_line WHERE org_id = $1 AND entry_id = $2', [orgId, entry]);
       expect(lines.rows).toEqual([{ legal_entity_id: branch }]);
       // A line naming another entity than its entry's.
       await a.query('BEGIN');
       const other = (
         await a.query<{ id: string }>(
-          `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, '2026-09-21', 'x', 'test.mismatch', $2, $3) RETURNING id`,
+          `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, '2026-09-21', 'x', 'test.mismatch', $2, $3) RETURNING id`,
           [orgId, randomUUID(), branch],
         )
       ).rows[0]?.id;
       await expect(
-        a.query(`INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, legal_entity_id) VALUES ($1, $2, 1, '1111', 1, 0, $3)`, [
+        a.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, legal_entity_id) VALUES ($1, $2, 1, '1111', 1, 0, $3)`, [
           orgId,
           other,
           defaultEntity,
@@ -291,9 +301,9 @@ suite('finance books per legal entity (#1280)', () => {
     const id = await asUser(owner, async (c) => (await post(c, '70000')).rows[0]?.id as string, true);
     await admin(async (a) => {
       const { rows } = await a.query<{ t: string; legal_entity_id: string }>(
-        `SELECT 'entry' AS t, legal_entity_id FROM crove_finance.journal_entry WHERE org_id = $1 AND id = $2
-         UNION SELECT 'line', legal_entity_id FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2
-         UNION SELECT 'delta', legal_entity_id FROM crove_finance.period_balance_delta WHERE org_id = $1 AND entry_id = $2 ORDER BY 1`,
+        `SELECT 'entry' AS t, legal_entity_id FROM ludy_finance.journal_entry WHERE org_id = $1 AND id = $2
+         UNION SELECT 'line', legal_entity_id FROM ludy_finance.journal_line WHERE org_id = $1 AND entry_id = $2
+         UNION SELECT 'delta', legal_entity_id FROM ludy_finance.period_balance_delta WHERE org_id = $1 AND entry_id = $2 ORDER BY 1`,
         [orgId, id],
       );
       expect(rows).toEqual([
@@ -304,11 +314,11 @@ suite('finance books per legal entity (#1280)', () => {
       // The entity never changes, for any writer.
       const rule = (
         await a.query<{ id: string }>(
-          `INSERT INTO crove_finance.categorization_rule (org_id, match_kind, match_text, debit_account) VALUES ($1, 'keyword', 'van phong pham', '6422') RETURNING id`,
+          `INSERT INTO ludy_finance.categorization_rule (org_id, match_kind, match_text, debit_account) VALUES ($1, 'keyword', 'van phong pham', '6422') RETURNING id`,
           [orgId],
         )
       ).rows[0]?.id;
-      await expect(a.query('UPDATE crove_finance.categorization_rule SET legal_entity_id = $2 WHERE id = $1', [rule, branch])).rejects.toMatchObject({
+      await expect(a.query('UPDATE ludy_finance.categorization_rule SET legal_entity_id = $2 WHERE id = $1', [rule, branch])).rejects.toMatchObject({
         code: '23514',
         message: 'LEGAL_ENTITY_IMMUTABLE',
       });
@@ -318,7 +328,7 @@ suite('finance books per legal entity (#1280)', () => {
   it('keeps rules unique per entity, not per org', async () => {
     await admin(async (a) => {
       const insert = (entity: string) =>
-        a.query(`INSERT INTO crove_finance.categorization_rule (org_id, legal_entity_id, match_kind, match_text, debit_account) VALUES ($1, $2, 'keyword', 'cuoc dien thoai', '6422')`, [
+        a.query(`INSERT INTO ludy_finance.categorization_rule (org_id, legal_entity_id, match_kind, match_text, debit_account) VALUES ($1, $2, 'keyword', 'cuoc dien thoai', '6422')`, [
           orgId,
           entity,
         ]);
@@ -331,14 +341,14 @@ suite('finance books per legal entity (#1280)', () => {
   it('shows a member limited to the branch only the branch books, and refuses their writes elsewhere', async () => {
     const entry = await branchEntry('120000');
     const seen = await asUser(member, async (c) => {
-      const entities = (await c.query<{ id: string }>('SELECT DISTINCT legal_entity_id AS id FROM crove_finance.journal_entry')).rows.map((r) => r.id);
-      const lines = (await c.query<{ id: string }>('SELECT DISTINCT legal_entity_id AS id FROM crove_finance.journal_line')).rows.map((r) => r.id);
-      const own = (await c.query('SELECT 1 FROM crove_finance.journal_entry WHERE id = $1', [entry])).rowCount;
+      const entities = (await c.query<{ id: string }>('SELECT DISTINCT legal_entity_id AS id FROM ludy_finance.journal_entry')).rows.map((r) => r.id);
+      const lines = (await c.query<{ id: string }>('SELECT DISTINCT legal_entity_id AS id FROM ludy_finance.journal_line')).rows.map((r) => r.id);
+      const own = (await c.query('SELECT 1 FROM ludy_finance.journal_entry WHERE id = $1', [entry])).rowCount;
       return { entities, lines, own };
     });
     expect(seen).toEqual({ entities: [branch], lines: [branch], own: 1 });
     // The owner sees both entities.
-    const ownerSees = await asUser(owner, async (c) => (await c.query<{ id: string }>('SELECT DISTINCT legal_entity_id AS id FROM crove_finance.journal_entry ORDER BY 1')).rows.map((r) => r.id));
+    const ownerSees = await asUser(owner, async (c) => (await c.query<{ id: string }>('SELECT DISTINCT legal_entity_id AS id FROM ludy_finance.journal_entry ORDER BY 1')).rows.map((r) => r.id));
     expect(ownerSees).toEqual([defaultEntity, branch].sort());
     // Posting without an entity books in the default entity, which the member cannot see: refused, nothing written (by
     // the posting path itself since part 2a, LEGAL_ENTITY_NOT_ALLOWED).
@@ -346,7 +356,7 @@ suite('finance books per legal entity (#1280)', () => {
     // Naming the default entity on a top-level row is refused the same way.
     await expect(
       asUser(member, (c) =>
-        c.query(`INSERT INTO crove_finance.categorization_rule (org_id, legal_entity_id, match_kind, match_text, debit_account) VALUES ($1, $2, 'keyword', 'phi ngan hang', '6422')`, [
+        c.query(`INSERT INTO ludy_finance.categorization_rule (org_id, legal_entity_id, match_kind, match_text, debit_account) VALUES ($1, $2, 'keyword', 'phi ngan hang', '6422')`, [
           orgId,
           defaultEntity,
         ]),
@@ -354,10 +364,10 @@ suite('finance books per legal entity (#1280)', () => {
     ).rejects.toThrow(RLS_DENIED);
     // Nor reverse an entry of the default entity through the posting definer: the reversed entry is unseen, so the
     // reversal gets no entity and is refused.
-    const defaultEntry = await admin(async (a) => (await a.query<{ id: string }>('SELECT id FROM crove_finance.journal_entry WHERE org_id = $1 AND legal_entity_id = $2 LIMIT 1', [orgId, defaultEntity])).rows[0]?.id);
+    const defaultEntry = await admin(async (a) => (await a.query<{ id: string }>('SELECT id FROM ludy_finance.journal_entry WHERE org_id = $1 AND legal_entity_id = $2 LIMIT 1', [orgId, defaultEntity])).rows[0]?.id);
     await expect(
       asUser(member, (c) =>
-        c.query(`SELECT crove_finance.post_journal_entry('2026-09-25'::date, 'reverse', 'test.reverse', $1::uuid, $2::jsonb, $3::uuid, 1)`, [
+        c.query(`SELECT ludy_finance.post_journal_entry('2026-09-25'::date, 'reverse', 'test.reverse', $1::uuid, $2::jsonb, $3::uuid, 1)`, [
           randomUUID(),
           JSON.stringify([
             { line_no: 1, account_code: '331', debit: '1000', credit: '0' },
@@ -371,28 +381,28 @@ suite('finance books per legal entity (#1280)', () => {
     // naming the branch and a default-entity purchase document as its source loses its entity and is refused.
     const document = await admin(async (a) => {
       await a.query('BEGIN');
-      const party = (await a.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, name) VALUES ($1, 'Nhà cung cấp') RETURNING id`, [orgId])).rows[0]?.id;
+      const party = (await a.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, name) VALUES ($1, 'Nhà cung cấp') RETURNING id`, [orgId])).rows[0]?.id;
       const doc = (
         await a.query<{ id: string }>(
-          `INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total)
+          `INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total)
            VALUES ($1, $2, '00000042', '2026-09-10', 100, 0, 100) RETURNING id`,
           [orgId, party],
         )
       ).rows[0]?.id as string;
       const e = (
         await a.query<{ id: string }>(
-          `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-10', 'mua', 'finance.purchase_document', $2) RETURNING id`,
+          `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-10', 'mua', 'finance.purchase_document', $2) RETURNING id`,
           [orgId, doc],
         )
       ).rows[0]?.id;
-      await a.query(`INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 100, 0), ($1, $2, 2, '331', 0, 100)`, [orgId, e]);
+      await a.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 100, 0), ($1, $2, 2, '331', 0, 100)`, [orgId, e]);
       await a.query('COMMIT');
       return doc;
     });
     await expect(
       asUser(member, (c) =>
         c.query(
-          `INSERT INTO crove_finance.categorization_rule (org_id, legal_entity_id, match_kind, match_text, debit_account, source_document_id) VALUES ($1, $2, 'keyword', 'muc in', '6422', $3)`,
+          `INSERT INTO ludy_finance.categorization_rule (org_id, legal_entity_id, match_kind, match_text, debit_account, source_document_id) VALUES ($1, $2, 'keyword', 'muc in', '6422', $3)`,
           [orgId, branch, document],
         ),
       ),
@@ -403,15 +413,15 @@ suite('finance books per legal entity (#1280)', () => {
     const entry = await branchEntry('99000');
     // A delta written around the trigger, by the database owner, naming the default entity for the branch entry.
     await admin(async (a) => {
-      await a.query('ALTER TABLE crove_finance.period_balance_delta DISABLE TRIGGER b_legal_entity');
+      await a.query('ALTER TABLE ludy_finance.period_balance_delta DISABLE TRIGGER b_legal_entity');
       try {
         await a.query(
-          `INSERT INTO crove_finance.period_balance_delta (org_id, entry_id, account_code, period_month, debit, credit, line_count, legal_entity_id)
+          `INSERT INTO ludy_finance.period_balance_delta (org_id, entry_id, account_code, period_month, debit, credit, line_count, legal_entity_id)
            VALUES ($1, $2, '1111', '2026-09-01', 99000, 0, 1, $3), ($1, $2, '5111', '2026-09-01', 0, 99000, 1, $4)`,
           [orgId, entry, defaultEntity, branch],
         );
       } finally {
-        await a.query('ALTER TABLE crove_finance.period_balance_delta ENABLE ALWAYS TRIGGER b_legal_entity');
+        await a.query('ALTER TABLE ludy_finance.period_balance_delta ENABLE ALWAYS TRIGGER b_legal_entity');
       }
     });
     const differences = (await findPeriodBalanceDifferences(worker)).filter((d) => d.entryId === entry);

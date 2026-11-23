@@ -13,6 +13,8 @@ const TITLES: Array<{ key: string; params: Record<string, string | number> }> = 
   { key: 'signals.supplierBankChangedMore', params: { count: 5 } },
   { key: 'signals.supplierBankChangedUnchecked', params: { count: 3 } },
   { key: 'signals.supplierBankChangedPartial', params: {} },
+  { key: 'signals.conversationUnanswered', params: { hours: 26 } },
+  { key: 'signals.conversationUnansweredMore', params: { count: 4 } },
 ];
 
 type Say = (key: string, values?: Record<string, string | number>) => string;

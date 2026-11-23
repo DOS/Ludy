@@ -5,12 +5,12 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { QUOTE_BANK_NOTE_MAX, QUOTE_PHONE_MAX, QUOTE_TEXT_MAX, QUOTE_VALID_DAYS_MAX, QUOTE_VALID_DAYS_MIN, type Quote, type QuoteLinkCreated, type QuoteSummary } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect } from '@crove/ui/components/native-select';
-import { Textarea } from '@crove/ui/components/textarea';
+import { QUOTE_BANK_NOTE_MAX, QUOTE_PHONE_MAX, QUOTE_TEXT_MAX, QUOTE_VALID_DAYS_MAX, QUOTE_VALID_DAYS_MIN, type Quote, type QuoteLinkCreated, type QuoteSummary } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect } from '@ludy/ui/components/native-select';
+import { Textarea } from '@ludy/ui/components/textarea';
 import { QuoteLogoField } from './quote-logo.tsx';
 import { ErrorText, Field } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -172,14 +172,15 @@ export function QuoteLinks({ quote, canEdit }: { quote: Quote; canEdit: boolean 
 }
 
 // The org's quote defaults and the letterhead the document prints: owners and admins only. An empty field prints nothing.
-export function QuoteSettingsForm({ onDone }: { onDone: () => void }) {
+// The card in Settings (#3645); it says "Đã lưu" after Save. The logo saves on its own, as soon as it is picked.
+export function QuoteSettingsForm() {
   const setting = useQuery(orpc.crm.quotes.setting.queryOptions({ input: {} }));
   if (setting.isPending) return null;
   if (setting.error || !setting.data) return <ErrorText>{errorMessage(setting.error)}</ErrorText>;
-  return <SettingsFields initial={setting.data} onDone={onDone} />;
+  return <SettingsFields initial={setting.data} />;
 }
 
-function SettingsFields({ initial, onDone }: { initial: { validDays: number; defaultVat: string; defaultTerms: string | null; phone: string | null; email: string | null; bankNote: string | null; logoFileId: string | null }; onDone: () => void }) {
+function SettingsFields({ initial }: { initial: { validDays: number; defaultVat: string; defaultTerms: string | null; phone: string | null; email: string | null; bankNote: string | null; logoFileId: string | null } }) {
   const t = useTranslations('quotes.settings');
   const [validDays, setValidDays] = useState(String(initial.validDays));
   const [vat, setVat] = useState(initial.defaultVat);
@@ -187,23 +188,24 @@ function SettingsFields({ initial, onDone }: { initial: { validDays: number; def
   const [phone, setPhone] = useState(initial.phone ?? '');
   const [email, setEmail] = useState(initial.email ?? '');
   const [bank, setBank] = useState(initial.bankNote ?? '');
+  const [saved, setSaved] = useState(false);
   const save = useMutation({
     mutationFn: () =>
       client.crm.quotes.setSetting({ validDays: Number(validDays), defaultVat: vat, defaultTerms: terms.trim() || null, phone: phone.trim() || null, email: email.trim() || null, bankNote: bank.trim() || null }),
     onSuccess: () => {
       refreshQuoteQueries();
-      onDone();
+      setSaved(true);
     },
   });
   const submit = (e: FormEvent) => {
     e.preventDefault();
+    setSaved(false);
     save.mutate();
   };
   const days = Number(validDays);
   const valid = Number.isInteger(days) && days >= QUOTE_VALID_DAYS_MIN && days <= QUOTE_VALID_DAYS_MAX;
   return (
-    <form onSubmit={submit} className="grid gap-3 rounded-lg border border-border p-4 sm:grid-cols-2" aria-label={t('title')} data-testid="quote-settings">
-      <h3 className="text-base font-medium sm:col-span-2">{t('title')}</h3>
+    <form onSubmit={submit} onChange={() => setSaved(false)} className="grid gap-3 sm:grid-cols-2" aria-label={t('title')} data-testid="quote-settings">
       <Field label={t('validDays')} hint={t('validDaysHint', { min: String(QUOTE_VALID_DAYS_MIN), max: String(QUOTE_VALID_DAYS_MAX) })}>
         {(c) => <Input {...c} inputMode="numeric" value={validDays} onChange={(e) => setValidDays(e.target.value)} />}
       </Field>
@@ -236,9 +238,14 @@ function SettingsFields({ initial, onDone }: { initial: { validDays: number; def
         <Button type="submit" loading={save.isPending} disabled={!valid}>
           {t('save')}
         </Button>
-        <Button type="button" variant="ghost" onClick={onDone}>
-          {t('cancel')}
-        </Button>
+        {saved && (
+          <span role="status" className="self-center text-sm text-muted-foreground">
+            {t('saved')}
+          </span>
+        )}
+        {!valid && (
+          <span className="self-center text-xs text-muted-foreground">{t('validDaysHint', { min: String(QUOTE_VALID_DAYS_MIN), max: String(QUOTE_VALID_DAYS_MAX) })}</span>
+        )}
       </div>
     </form>
   );

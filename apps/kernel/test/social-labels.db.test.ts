@@ -5,11 +5,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { LABEL_LIMIT, socialCommands, socialQueries, type Label, type MetricsRow, type PostView } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { LABEL_LIMIT, socialCommands, socialQueries, type Label, type MetricsRow, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -43,12 +43,12 @@ suite('social labels on PostgreSQL (#639)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const roles: Record<'admin' | 'member' | 'viewer', string> = { admin: await person('admin'), member: await person('member'), viewer: await person('viewer') };
     for (const [role, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
     }
     const connection = randomUUID();
     await admin((c) =>
       c.query(
-        'INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
+        'INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
         [orgId, connection, 'sandbox', `acct-${connection.slice(0, 8)}`, 'Trang thử', owner],
       ),
     );
@@ -73,9 +73,9 @@ suite('social labels on PostgreSQL (#639)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -129,7 +129,7 @@ suite('social labels on PostgreSQL (#639)', () => {
   it(`keeps an org to ${LABEL_LIMIT} labels`, async () => {
     const o = await org();
     await admin((c) =>
-      c.query("INSERT INTO crove_social.label (org_id, name, created_by) SELECT $1, 'Nhãn ' || g, $2 FROM generate_series(1, $3::int - 1) g", [o.orgId, o.owner, LABEL_LIMIT]),
+      c.query("INSERT INTO ludy_social.label (org_id, name, created_by) SELECT $1, 'Nhãn ' || g, $2 FROM generate_series(1, $3::int - 1) g", [o.orgId, o.owner, LABEL_LIMIT]),
     );
     const last = await create(o, o.member, 'Cuối cùng');
     await expect(create(o, o.member, 'Quá số')).rejects.toMatchObject({ code: 'LABEL_LIMIT', status: 409 });
@@ -192,7 +192,7 @@ suite('social labels on PostgreSQL (#639)', () => {
     expect((await get(o, second)).labelIds).toEqual([]);
     await exec(o, o.owner, 'social.label.delete', { labelId: a });
     expect((await get(o, first)).labelIds).toEqual([c]);
-    expect(await admin(async (cl) => (await cl.query('SELECT 1 FROM crove_social.post_label WHERE label_id = $1', [a])).rowCount)).toBe(0);
+    expect(await admin(async (cl) => (await cl.query('SELECT 1 FROM ludy_social.post_label WHERE label_id = $1', [a])).rowCount)).toBe(0);
   });
 
   it('compares posts by label, format and hashtag in What works (#705)', async () => {
@@ -208,8 +208,8 @@ suite('social labels on PostgreSQL (#639)', () => {
       const postId = await post(o, body);
       if (tagged) await exec(o, o.member, 'social.post.set_labels', { postId, labelIds: [sale] });
       await admin(async (c) => {
-        const { rows: v } = await c.query<{ id: string }>("UPDATE crove_social.post_variant SET status = 'published', published_at = now() WHERE post_id = $1 RETURNING id", [postId]);
-        await c.query('INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, $3, $4)', [o.orgId, v[0]?.id, 'k1', JSON.stringify({ reactions })]);
+        const { rows: v } = await c.query<{ id: string }>("UPDATE ludy_social.post_variant SET status = 'published', published_at = now() WHERE post_id = $1 RETURNING id", [postId]);
+        await c.query('INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, $3, $4)', [o.orgId, v[0]?.id, 'k1', JSON.stringify({ reactions })]);
       });
     }
     type Insights = { channels: { posts: number; median: number; best: { excerpt: string; engagement: number }[]; byLabel: unknown[]; byFormat: { key: string }[]; byHashtag: unknown[] }[]; truncated: boolean };
@@ -235,8 +235,8 @@ suite('social labels on PostgreSQL (#639)', () => {
     await exec(o, o.member, 'social.post.set_labels', { postId: tagged, labelIds: [campaign, client] });
     for (const postId of [tagged, plain]) {
       await admin(async (c) => {
-        const { rows } = await c.query<{ id: string }>("UPDATE crove_social.post_variant SET status = 'published', published_at = now() WHERE post_id = $1 RETURNING id", [postId]);
-        await c.query("INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, 'k1', '{\"reach\": 7}')", [o.orgId, rows[0]?.id]);
+        const { rows } = await c.query<{ id: string }>("UPDATE ludy_social.post_variant SET status = 'published', published_at = now() WHERE post_id = $1 RETURNING id", [postId]);
+        await c.query("INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, 'k1', '{\"reach\": 7}')", [o.orgId, rows[0]?.id]);
       });
     }
     const summary = (input: Record<string, unknown>) => query<MetricsRow[]>(o, o.viewer, 'social.metrics.summary', input);
@@ -256,7 +256,7 @@ suite('social labels on PostgreSQL (#639)', () => {
     expect(rows.find((l) => l.startsWith(plain))).toContain(',Bài không nhãn,,');
     const audits = await admin(
       async (c) =>
-        (await c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.metrics.export' AND outcome = 'ok' ORDER BY occurred_at", [o.orgId]))
+        (await c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.metrics.export' AND outcome = 'ok' ORDER BY occurred_at", [o.orgId]))
           .rows,
     );
     expect(audits.map((a) => a.detail.labelId ?? null)).toEqual([campaign, null]);
@@ -275,7 +275,7 @@ suite('social labels on PostgreSQL (#639)', () => {
       admin(async (c) =>
         (
           await c.query<{ column_name: string }>(
-            "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = $1 AND privilege_type = 'UPDATE' ORDER BY 1",
+            "SELECT column_name FROM information_schema.column_privileges WHERE grantee = 'ludy_tenant' AND table_schema = 'ludy_social' AND table_name = $1 AND privilege_type = 'UPDATE' ORDER BY 1",
             [table],
           )
         ).rows.map((r) => r.column_name),
@@ -287,27 +287,27 @@ suite('social labels on PostgreSQL (#639)', () => {
       admin(async (c) => {
         await c.query('BEGIN');
         try {
-          await c.query('SET LOCAL ROLE crove_tenant');
+          await c.query('SET LOCAL ROLE ludy_tenant');
           await c.query(statement, params);
         } finally {
           await c.query('ROLLBACK');
         }
       });
-    await expect(asTenant('UPDATE crove_social.label SET created_by = $1 WHERE id = $2', [o.owner, labelId])).rejects.toThrow(/permission denied/);
-    await expect(asTenant('UPDATE crove_social.label SET created_at = now() WHERE id = $1', [labelId])).rejects.toThrow(/permission denied/);
-    await expect(asTenant('UPDATE crove_social.label SET org_id = $1 WHERE id = $2', [stranger.orgId, labelId])).rejects.toThrow(/permission denied/);
+    await expect(asTenant('UPDATE ludy_social.label SET created_by = $1 WHERE id = $2', [o.owner, labelId])).rejects.toThrow(/permission denied/);
+    await expect(asTenant('UPDATE ludy_social.label SET created_at = now() WHERE id = $1', [labelId])).rejects.toThrow(/permission denied/);
+    await expect(asTenant('UPDATE ludy_social.label SET org_id = $1 WHERE id = $2', [stranger.orgId, labelId])).rejects.toThrow(/permission denied/);
     // The campaign's columns are writable (RLS still keeps the row to its org; this transaction sets none, so it sees
     // and changes nothing).
-    await asTenant("UPDATE crove_social.label SET starts_on = '2027-01-01', ends_on = '2027-01-31', utm_campaign = 'tet', utm_medium = 'social' WHERE id = $1", [labelId]);
+    await asTenant("UPDATE ludy_social.label SET starts_on = '2027-01-01', ends_on = '2027-01-31', utm_campaign = 'tet', utm_medium = 'social' WHERE id = $1", [labelId]);
   });
 
   it('keeps a campaign label to real dates and UTM tags, whoever writes it (#1169)', async () => {
     const o = await org();
     const labelId = await create(o, o.member, 'Thường');
-    const set = (columns: string, values: unknown[]) => admin((c) => c.query(`UPDATE crove_social.label SET ${columns} WHERE id = $1`, [labelId, ...values]));
+    const set = (columns: string, values: unknown[]) => admin((c) => c.query(`UPDATE ludy_social.label SET ${columns} WHERE id = $1`, [labelId, ...values]));
     // A label without a campaign keeps NULL in all four.
     expect(
-      await admin(async (c) => (await c.query('SELECT starts_on, ends_on, utm_campaign, utm_medium FROM crove_social.label WHERE id = $1', [labelId])).rows[0]),
+      await admin(async (c) => (await c.query('SELECT starts_on, ends_on, utm_campaign, utm_medium FROM ludy_social.label WHERE id = $1', [labelId])).rows[0]),
     ).toEqual({ starts_on: null, ends_on: null, utm_campaign: null, utm_medium: null });
     await set("starts_on = '2027-02-01', ends_on = '2027-02-01'", []);
     await set("starts_on = NULL, ends_on = '2027-02-01'", []);
@@ -357,7 +357,7 @@ suite('social labels on PostgreSQL (#639)', () => {
     const o = await org();
     const second = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         second,
         'sandbox',

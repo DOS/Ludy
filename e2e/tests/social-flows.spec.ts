@@ -52,8 +52,8 @@ async function connectSandbox(page: Page, ...names: string[]): Promise<void> {
 // From the channels screen: opens the composer with the shared text filled in. With one channel it is chosen for
 // you; with several, each named one is picked.
 async function compose(page: Page, body: string, channels: string[] = []): Promise<void> {
-  await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('link', { name: 'Soạn bài' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
   await page.getByLabel('Nội dung chung').fill(body);
   for (const name of channels) {
     const pick = page.getByRole('button', { name });
@@ -62,13 +62,19 @@ async function compose(page: Page, body: string, channels: string[] = []): Promi
   }
 }
 
-// A channel's card on the post screen: the one with that channel's name and its own-text box (the review panel names
-// every channel too, but has no such box).
+// A channel's card on the post screen: the one with that channel's name (the review panel names every channel too, but is
+// no channel card).
 function channelCard(page: Page, name: string): Locator {
-  return page.locator('[data-slot="card"]').filter({ hasText: name }).filter({ hasText: 'Viết riêng cho kênh này' });
+  return page.getByTestId('channel-card').filter({ hasText: name });
 }
 
-// The calendar feed card of the Social calendar tab, by its title.
+// Opens an entry of the Posts screen's tools menu (#3655): the figures, the photo library, ideas, import, channels and the rest.
+async function openTool(page: Page, name: string): Promise<void> {
+  await page.getByRole('button', { name: 'Công cụ' }).click();
+  await page.getByRole('menuitem', { name, exact: true }).click();
+}
+
+// The calendar feed card of the Channels screen's general settings (#3655), by its title.
 const calendarCard = (page: Page) => page.locator('[data-slot="card"]').filter({ has: page.getByRole('heading', { name: 'Đăng ký lịch', exact: true }) });
 
 const postIdOf = (page: Page) => new URL(page.url()).pathname.split('/').pop() ?? '';
@@ -90,7 +96,7 @@ async function publishOnSandbox(page: Page, channel: string, body: string): Prom
   await compose(page, body);
   await submitApproveSchedule(page, [channel]);
   const postId = postIdOf(page);
-  exec(`UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postId });
+  exec(`UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postId });
   await expect(channelCard(page, channel).getByText('Đã đăng', { exact: true })).toBeVisible({ timeout: 45_000 });
   return postId;
 }
@@ -130,11 +136,11 @@ test('a channel that needs two approvals waits for a second admin, then is appro
   const reviewerPage = await reviewerContext.newPage();
   await signInNewUser(reviewerPage, reviewer);
   await expect
-    .poll(() => sql<{ id: string }>(`SELECT id FROM crove_kernel.user_account WHERE lower(email) = lower(:'email')`, { email: reviewer }).length)
+    .poll(() => sql<{ id: string }>(`SELECT id FROM ludy_kernel.user_account WHERE lower(email) = lower(:'email')`, { email: reviewer }).length)
     .toBe(1);
   exec(
-    `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
-     SELECT t.org_id, u.id, 'admin' FROM crove_kernel.tenant t, crove_kernel.user_account u
+    `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
+     SELECT t.org_id, u.id, 'admin' FROM ludy_kernel.tenant t, ludy_kernel.user_account u
       WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
     { slug, email: reviewer },
   );
@@ -150,7 +156,7 @@ test('a channel that needs two approvals waits for a second admin, then is appro
   await expect(card.getByText('Đã duyệt', { exact: true })).toBeVisible();
 
   const approvers = sql<{ n: number }>(
-    `SELECT count(DISTINCT decided_by)::int AS n FROM crove_social.post_approval WHERE post_id = :'post' AND decision = 'approved'`,
+    `SELECT count(DISTINCT decided_by)::int AS n FROM ludy_social.post_approval WHERE post_id = :'post' AND decision = 'approved'`,
     { post: postIdOf(page) },
   );
   expect(approvers).toEqual([{ n: 2 }]);
@@ -171,8 +177,8 @@ test('retries a failed channel and settles the channels Crove could not account 
   // What a platform's refusal and a lost answer leave behind, which the sandbox never produces on its own.
   const setVariant = (channel: string, values: string) =>
     exec(
-      `UPDATE crove_social.post_variant v SET ${values}, updated_at = now()
-         FROM crove_kernel.channel_connection c
+      `UPDATE ludy_social.post_variant v SET ${values}, updated_at = now()
+         FROM ludy_kernel.channel_connection c
         WHERE v.post_id = :'post' AND c.org_id = v.org_id AND c.id = v.channel_connection_id AND c.display_name = :'channel'`,
       { post: postId, channel },
     );
@@ -197,7 +203,8 @@ test('retries a failed channel and settles the channels Crove could not account 
   // The person found the post on the platform: the channel counts as published.
   await seenCard.getByRole('button', { name: 'Đã thấy bài trên trang' }).click();
   await expect(seenCard.getByText('Đã đăng', { exact: true })).toBeVisible();
-  await expect(seenCard.getByText(/^Đã đăng lúc/)).toBeVisible();
+  // The time it went out is in the result at the top of the page (#3656).
+  await expect(page.getByTestId('published-summary').getByText(/^Đã đăng lúc/)).toBeVisible();
 
   // The person drops the channel instead: it is cancelled, with nothing left to do on it.
   await droppedCard.getByRole('button', { name: 'Bỏ bài trên kênh này' }).click();
@@ -210,8 +217,8 @@ test('retries a failed channel and settles the channels Crove could not account 
   await expect(failedCard.getByText('Nền tảng từ chối bài này.')).toHaveCount(0);
 
   const rows = sql<{ display_name: string; status: string }>(
-    `SELECT c.display_name, v.status FROM crove_social.post_variant v
-       JOIN crove_kernel.channel_connection c ON c.org_id = v.org_id AND c.id = v.channel_connection_id
+    `SELECT c.display_name, v.status FROM ludy_social.post_variant v
+       JOIN ludy_kernel.channel_connection c ON c.org_id = v.org_id AND c.id = v.channel_connection_id
       WHERE v.post_id = :'post'`,
     { post: postId },
   );
@@ -226,14 +233,14 @@ test('publishes many failed posts again at once from the attention list (#1456)'
   const posts: string[] = [];
   for (const body of ['Bài lỗi thứ nhất', 'Bài lỗi thứ hai']) {
     await page.goto(`/o/${slug}/social`);
-    await page.getByRole('link', { name: 'Soạn bài' }).click();
+    await page.getByRole('link', { name: 'Soạn bài' }).first().click();
     await page.getByLabel('Nội dung chung').fill(body);
     await submitApproveSchedule(page, [channel]);
     posts.push(postIdOf(page));
   }
   // What a platform outage leaves behind, which the sandbox never produces on its own.
   exec(
-    `UPDATE crove_social.post_variant SET status = 'failed', error_kind = 'bad_request', error_code = 'E2E_REFUSED', updated_at = now() WHERE post_id IN (:'a', :'b')`,
+    `UPDATE ludy_social.post_variant SET status = 'failed', error_kind = 'bad_request', error_code = 'E2E_REFUSED', updated_at = now() WHERE post_id IN (:'a', :'b')`,
     { a: posts[0] ?? '', b: posts[1] ?? '' },
   );
 
@@ -254,7 +261,7 @@ test('publishes many failed posts again at once from the attention list (#1456)'
 
   // Each is a new attempt due now: the worker's sweep publishes both to the sandbox.
   await expect
-    .poll(() => sql<{ status: string }>(`SELECT status FROM crove_social.post_variant WHERE post_id IN (:'a', :'b')`, { a: posts[0] ?? '', b: posts[1] ?? '' }).map((r) => r.status), { timeout: 45_000 })
+    .poll(() => sql<{ status: string }>(`SELECT status FROM ludy_social.post_variant WHERE post_id IN (:'a', :'b')`, { a: posts[0] ?? '', b: posts[1] ?? '' }).map((r) => r.status), { timeout: 45_000 })
     .toEqual(['published', 'published']);
 });
 
@@ -267,13 +274,13 @@ test('asks in the app\'s dialog before cancelling many posts and before revoking
   // Two posts waiting in review: the review list is where a post that has not gone out can be cancelled in bulk.
   for (const body of ['Bài hủy thứ nhất', 'Bài hủy thứ hai']) {
     await page.goto(`/o/${slug}/social`);
-    await page.getByRole('link', { name: 'Soạn bài' }).click();
+    await page.getByRole('link', { name: 'Soạn bài' }).first().click();
     await page.getByLabel('Nội dung chung').fill(body);
     await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();
     await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
     posts.push(postIdOf(page));
   }
-  const statuses = () => sql<{ status: string }>(`SELECT status FROM crove_social.post_variant WHERE post_id IN (:'a', :'b')`, { a: posts[0] ?? '', b: posts[1] ?? '' }).map((r) => r.status);
+  const statuses = () => sql<{ status: string }>(`SELECT status FROM ludy_social.post_variant WHERE post_id IN (:'a', :'b')`, { a: posts[0] ?? '', b: posts[1] ?? '' }).map((r) => r.status);
 
   // The browser's own dialog must never open: answering it would hide the very thing this test is about.
   const browserDialogs: string[] = [];
@@ -306,7 +313,7 @@ test('asks in the app\'s dialog before cancelling many posts and before revoking
   });
 
   await test.step('revoking the calendar address asks first, and Escape changes nothing', async () => {
-    await page.goto(`/o/${slug}/social?tab=calendar`);
+    await page.goto(`/o/${slug}/social/channels`);
     // Found by its title: the button it holds changes once an address exists, so a locator built on it would lose the card.
     const card = calendarCard(page);
     await card.getByRole('button', { name: 'Tạo địa chỉ đăng ký' }).click();
@@ -343,13 +350,13 @@ test('keeps uploaded images in the library with the posts that use them', async 
   await page.getByRole('button', { name: 'Lưu nháp' }).click();
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
 
-  await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('tab', { name: 'Thư viện ảnh' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
+  await openTool(page, 'Thư viện ảnh');
   const item = page.getByRole('tabpanel').getByRole('button', { name: /thu-vien\.png/ });
   await expect(item).toContainText('Dùng trong 1 bài');
 
   // The second post takes the same image from the library instead of uploading it again.
-  await page.getByRole('link', { name: 'Soạn bài' }).click();
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
   await page.getByLabel('Nội dung chung').fill('Bài thứ hai dùng lại ảnh');
   await page.getByRole('button', { name: 'Chọn từ thư viện' }).click();
   await page.getByRole('button', { name: 'Chọn ảnh thu-vien.png' }).click();
@@ -358,8 +365,8 @@ test('keeps uploaded images in the library with the posts that use them', async 
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
 
   // One file in the library, used by both posts, which its panel lists.
-  await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('tab', { name: 'Thư viện ảnh' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
+  await openTool(page, 'Thư viện ảnh');
   await expect(item).toHaveCount(1);
   await expect(item).toContainText('Dùng trong 2 bài');
   await item.click();
@@ -406,8 +413,8 @@ test('imports a sheet with images, alt texts, labels and a first comment as draf
     `"Khai trương chi nhánh mới, giảm 20% ${run}",Trang Nhập Ảnh,"MAT-TIEN.png\nquay-pha-che.png","Mặt tiền chi nhánh\nQuầy pha chế",Xem thực đơn ở trang của quán,"Khai trương, Tháng 11"\r\n` +
     `Bài có ảnh nội bộ ${run},Trang Nhập Ảnh,https://127.0.0.1/anh.jpg,,,Tháng 11\r\n` +
     `Bài thiếu ảnh ${run},Trang Nhập Ảnh,khong-co.jpg,,,\r\n`;
-  await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('link', { name: 'Nhập từ tệp' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
+  await openTool(page, 'Nhập từ tệp');
   await page.getByLabel('Chọn tệp CSV hoặc Excel').setInputFiles([{ name: 'ke-hoach.csv', mimeType: 'text/csv', buffer: Buffer.from(sheet) }]);
   await expect(page.getByText('1 trên 3 dòng sẵn sàng.')).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText('Không tải ảnh từ "https://127.0.0.1/anh.jpg" vì đây là địa chỉ trong mạng nội bộ')).toBeVisible();
@@ -420,10 +427,10 @@ test('imports a sheet with images, alt texts, labels and a first comment as draf
   await expect(page).toHaveURL(/\/social$/);
   const [post] = sql<{ id: string; media: { name: string; alt: string | null }[]; labels: string[]; comments: string[] }>(
     `SELECT p.id,
-            (SELECT json_agg(json_build_object('name', f.filename, 'alt', m.alt_text) ORDER BY m.position) FROM crove_social.post_media m JOIN crove_kernel.file f ON f.org_id = m.org_id AND f.id = m.file_id WHERE m.org_id = p.org_id AND m.post_id = p.id) AS media,
-            (SELECT json_agg(l.name ORDER BY l.name) FROM crove_social.post_label pl JOIN crove_social.label l ON l.org_id = pl.org_id AND l.id = pl.label_id WHERE pl.org_id = p.org_id AND pl.post_id = p.id) AS labels,
-            (SELECT json_agg(v.settings->>'firstComment') FROM crove_social.post_variant v WHERE v.org_id = p.org_id AND v.post_id = p.id AND v.status = 'draft') AS comments
-       FROM crove_social.post p WHERE p.body = :'body'`,
+            (SELECT json_agg(json_build_object('name', f.filename, 'alt', m.alt_text) ORDER BY m.position) FROM ludy_social.post_media m JOIN ludy_kernel.file f ON f.org_id = m.org_id AND f.id = m.file_id WHERE m.org_id = p.org_id AND m.post_id = p.id) AS media,
+            (SELECT json_agg(l.name ORDER BY l.name) FROM ludy_social.post_label pl JOIN ludy_social.label l ON l.org_id = pl.org_id AND l.id = pl.label_id WHERE pl.org_id = p.org_id AND pl.post_id = p.id) AS labels,
+            (SELECT json_agg(v.settings->>'firstComment') FROM ludy_social.post_variant v WHERE v.org_id = p.org_id AND v.post_id = p.id AND v.status = 'draft') AS comments
+       FROM ludy_social.post p WHERE p.body = :'body'`,
     { body: `Khai trương chi nhánh mới, giảm 20% ${run}` },
   );
   expect(post?.media).toEqual([
@@ -432,7 +439,7 @@ test('imports a sheet with images, alt texts, labels and a first comment as draf
   ]);
   expect(post?.labels).toEqual(['Khai trương', 'Tháng 11']);
   expect(post?.comments).toEqual(['Xem thực đơn ở trang của quán']);
-  expect(sql<{ n: number }>(`SELECT count(*)::int AS n FROM crove_social.post WHERE body IN (:'a', :'b')`, { a: `Bài có ảnh nội bộ ${run}`, b: `Bài thiếu ảnh ${run}` })).toEqual([{ n: 0 }]);
+  expect(sql<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_social.post WHERE body IN (:'a', :'b')`, { a: `Bài có ảnh nội bộ ${run}`, b: `Bài thiếu ảnh ${run}` })).toEqual([{ n: 0 }]);
   // The draft shows its two images on its page.
   await page.goto(`${new URL(page.url()).pathname}/${post?.id}`);
   await expect(page.getByText('2/20')).toBeVisible();
@@ -443,38 +450,43 @@ test('turns on evergreen reposting for a published post', async ({ page }) => {
   await createOrg(page, 'Công ty Đăng Lại Định Kỳ');
   const postId = await publishOnSandbox(page, 'Trang Định Kỳ', 'Bài đăng lại mỗi tháng');
 
-  // The panel shows once the post is out; reposting is off until someone turns it on.
-  const evergreen = page.getByLabel('Tự đăng lại');
+  // The choice shows once the post is out, under "Tùy chọn khác"; reposting is off until someone turns it on.
+  await page.getByText('Tùy chọn khác', { exact: true }).click();
+  await expect(page.getByRole('radio', { name: 'Không tự đăng lại' })).toBeChecked();
+  await page.getByRole('radio', { name: 'Theo chu kỳ' }).check();
+  const evergreen = page.getByLabel('Chu kỳ đăng lại');
   await expect(evergreen).toHaveValue('');
   await evergreen.selectOption('30');
   await expect(evergreen).toHaveValue('30');
   await page.reload();
-  await expect(page.getByLabel('Tự đăng lại')).toHaveValue('30');
-  await expect(page.getByLabel('Tự đăng lại').locator('option:checked')).toHaveText('Mỗi 30 ngày');
-  expect(sql<{ evergreen_days: number | null }>(`SELECT evergreen_days FROM crove_social.post WHERE id = :'post'`, { post: postId })).toEqual([{ evergreen_days: 30 }]);
+  // A repeat that is on opens "Tùy chọn khác" by itself.
+  await expect(page.getByRole('radio', { name: 'Theo chu kỳ' })).toBeChecked();
+  await expect(page.getByLabel('Chu kỳ đăng lại')).toHaveValue('30');
+  await expect(page.getByLabel('Chu kỳ đăng lại').locator('option:checked')).toHaveText('Mỗi 30 ngày');
+  expect(sql<{ evergreen_days: number | null }>(`SELECT evergreen_days FROM ludy_social.post WHERE id = :'post'`, { post: postId })).toEqual([{ evergreen_days: 30 }]);
 
   // And off again.
-  await page.getByLabel('Tự đăng lại').selectOption('');
-  await expect(page.getByLabel('Tự đăng lại')).toHaveValue('');
+  await page.getByRole('radio', { name: 'Không tự đăng lại' }).check();
   await expect
-    .poll(() => sql<{ evergreen_days: number | null }>(`SELECT evergreen_days FROM crove_social.post WHERE id = :'post'`, { post: postId }))
+    .poll(() => sql<{ evergreen_days: number | null }>(`SELECT evergreen_days FROM ludy_social.post WHERE id = :'post'`, { post: postId }))
     .toEqual([{ evergreen_days: null }]);
 });
 
-test('shows the latest metrics of a published channel on the post and in the Metrics tab, and in a client report', async ({ page, browser }) => {
+test('shows the latest metrics of a published channel on the post and in the report, and in a client report', async ({ page, browser }) => {
   await signInNewUser(page, newEmail('social-metrics'));
   await createOrg(page, 'Công ty Số Liệu');
   const channel = 'Trang Số Liệu';
   const body = 'Bài có số liệu tương tác';
   const postId = await publishOnSandbox(page, channel, body);
-  const card = channelCard(page, channel);
+  // The numbers are in the result at the top of the page (#3656), per channel.
+  const card = page.getByTestId('published-summary').getByRole('region', { name: channel });
 
   // A capture as the worker records it. Taken now, it is newer than any capture the worker's own sweep may have made
   // since the post went out, and the sweep asks again only after 6 hours.
   exec(
-    `INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics)
+    `INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics)
      SELECT v.org_id, v.id, 'e2e-capture', '{"reach": 1234, "impressions": 2345, "reactions": 56, "comments": 7, "shares": 3}'::jsonb
-       FROM crove_social.post_variant v WHERE v.post_id = :'post'`,
+       FROM ludy_social.post_variant v WHERE v.post_id = :'post'`,
     { post: postId },
   );
   await page.reload();
@@ -488,10 +500,13 @@ test('shows the latest metrics of a published channel on the post and in the Met
   await expect(card.getByRole('term').filter({ hasText: 'Lượt lưu' })).toHaveCount(0);
   await expect(card.getByText(/^Số liệu lúc/)).toBeVisible();
 
-  // The Metrics tab: the window's totals and the channel's row.
-  await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('tab', { name: 'Số liệu' }).click();
-  const panel = page.getByRole('tabpanel');
+  // The report: the window's totals and the channel's row.
+  // Posts keeps one line and a link; the figures and the report tools are in Reports > Bài đăng (#3658).
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
+  await expect(page.getByTestId('report-line')).toContainText('1 bài');
+  await page.getByRole('link', { name: 'Xem báo cáo' }).click();
+  await expect(page).toHaveURL(/\/reports\?area=posts$/);
+  const panel = page.getByTestId('reports-posts');
   const row = panel.getByRole('row').filter({ has: page.getByRole('link', { name: body }) });
   await expect(row.getByRole('cell')).toHaveText([new RegExp(`^${body}`), '1.234', '56', '7', '3']);
   await expect(row).toContainText(channel);
@@ -499,15 +514,14 @@ test('shows the latest metrics of a published channel on the post and in the Met
   // The best post of the window (#645), and the channel's followers over it from the daily snapshots.
   await expect(panel.locator('[data-slot="card"]').filter({ hasText: 'Bài nổi bật trong khoảng này' })).toContainText(body);
   exec(
-    `INSERT INTO crove_social.account_snapshot (org_id, channel_connection_id, captured_on, followers)
-     SELECT c.org_id, c.id, d.day, d.n FROM crove_kernel.channel_connection c,
+    `INSERT INTO ludy_social.account_snapshot (org_id, channel_connection_id, captured_on, followers)
+     SELECT c.org_id, c.id, d.day, d.n FROM ludy_kernel.channel_connection c,
        (VALUES ((now() AT TIME ZONE 'UTC')::date - 3, 1000), ((now() AT TIME ZONE 'UTC')::date, 1080)) AS d(day, n)
      WHERE c.display_name = :'channel'`,
     { channel },
   );
   await page.reload();
-  await page.getByRole('tab', { name: 'Số liệu' }).click();
-  const growth = page.getByRole('tabpanel').locator('[data-slot="card"]').filter({ hasText: 'Tăng trưởng kênh trong 30 ngày' });
+  const growth = page.getByTestId('reports-posts').locator('[data-slot="card"]').filter({ hasText: 'Tăng trưởng kênh trong 30 ngày' });
   await expect(growth).toContainText('1.080 người theo dõi');
   await expect(growth).toContainText('+80');
 
@@ -560,8 +574,10 @@ test('says AI drafting is off on a server without a model', async ({ page, reque
   await connectSandbox(page, 'Trang Không AI');
   await compose(page, 'Bài viết tay, không nhờ AI');
 
-  await expect(page.getByText(/^Soạn cùng \p{Lu}\p{Ll}+$/u)).toBeVisible();
-  await expect(page.getByText('Máy chủ chưa cấu hình AI (AI_BASE_URL, AI_MODEL).')).toBeVisible();
+  await expect(page.getByText(/^Soạn cùng \p{Lu}\p{Ll}+, đồng nghiệp AI phụ trách đăng bài$/u)).toBeVisible();
+  // In plain words, with no setting names (#3652).
+  await expect(page.getByText(/chưa sẵn sàng: tính năng này chưa bật\. Liên hệ người quản trị hệ thống\./)).toBeVisible();
+  await expect(page.getByText('AI_BASE_URL')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /^Nhờ \p{Lu}\p{Ll}+ soạn nháp$/u })).toHaveCount(0);
   await expect(page.getByRole('button', { name: /^Nhờ \p{Lu}\p{Ll}+ viết lại$/u })).toHaveCount(0);
 });
@@ -570,13 +586,13 @@ test('approves several posts at once from the review list (#635)', async ({ page
   await signInNewUser(page, newEmail('social-bulk'));
   await createOrg(page, 'Công ty Duyệt Nhiều');
   await connectSandbox(page, 'Trang Duyệt Nhiều');
-  await page.getByRole('link', { name: 'Quay lại' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
   for (const body of ['Bài thứ nhất', 'Bài thứ hai']) {
-    await page.getByRole('link', { name: 'Soạn bài' }).click();
+    await page.getByRole('link', { name: 'Soạn bài' }).first().click();
     await page.getByLabel('Nội dung chung').fill(body);
     await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();
     await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
-    await page.getByRole('link', { name: 'Quay lại' }).click();
+    await page.getByRole('link', { name: 'Về Bài đăng' }).click();
   }
   await page.getByRole('tab', { name: /Cần duyệt/ }).click();
   await page.getByText('Chọn mọi bài đang hiện').click();
@@ -617,11 +633,117 @@ test('lets an owner approve and schedule their own post in one step (#638)', asy
   await page.getByRole('button', { name: 'Lưu hàng đợi' }).click();
   await expect(page.getByText(/Khung giờ trống kế tiếp:/)).toBeVisible();
   await compose(page, 'Khai trương chi nhánh mới');
-  await page.getByRole('button', { name: 'Duyệt và lên lịch' }).click();
+  // The channel has slots, so the next free slot is the default and the button says so (#3653).
+  await expect(page.getByRole('button', { name: 'Khung giờ trống kế tiếp', pressed: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Duyệt và đăng vào khung giờ kế tiếp' }).click();
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
   await expect(channelCard(page, 'Trang Một Bước').getByText('Đã lên lịch', { exact: true })).toBeVisible();
-  const decided = sql<{ n: number }>(`SELECT count(*)::int AS n FROM crove_social.post_approval WHERE post_id = :'post' AND decision = 'approved'`, { post: postIdOf(page) });
+  const decided = sql<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_social.post_approval WHERE post_id = :'post' AND decision = 'approved'`, { post: postIdOf(page) });
   expect(decided).toEqual([{ n: 1 }]);
+});
+
+test('a new owner posts from a fresh channel by choosing when, with no empty-queue error (#3653)', async ({ page }) => {
+  await signInNewUser(page, newEmail('social-when'));
+  await createOrg(page, 'Công ty Chọn Giờ');
+  // A fresh channel has no queue slots.
+  await connectSandbox(page, 'Trang Chọn Giờ');
+  await compose(page, 'Bài đầu tiên của chủ mới');
+  // The card asks when; the next free slot is not offered, a time is already filled in, and the button names it.
+  await expect(page.getByText('Khi nào đăng?')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Giờ cụ thể', pressed: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Khung giờ trống kế tiếp' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Chọn giờ sau' })).toBeVisible();
+  const publish = page.getByRole('button', { name: /^Duyệt và đăng lúc \d{2}:\d{2} ngày \d{2}\/\d{2}$/ });
+  await expect(publish).toBeEnabled();
+  // A time of the person's own is the one sent.
+  await page.getByLabel('Ngày và giờ đăng').getByRole('textbox', { name: 'Giờ' }).fill('15:30');
+  await expect(page.getByRole('button', { name: /^Duyệt và đăng lúc 15:30 ngày / })).toBeVisible();
+  await publish.click();
+  await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
+  await expect(channelCard(page, 'Trang Chọn Giờ').getByText('Đã lên lịch', { exact: true })).toBeVisible();
+  await expect(page.getByText(/hàng đợi/)).toHaveCount(0);
+  const rows = sql<{ at: string | null; slot: string | null }>(
+    `SELECT to_char(scheduled_at AT TIME ZONE :'zone', 'HH24:MI') AS at, queue_slot_at::text AS slot FROM ludy_social.post_variant WHERE post_id = :'post'`,
+    { post: postIdOf(page), zone: TIME_ZONE },
+  );
+  expect(rows).toEqual([{ at: '15:30', slot: null }]);
+});
+
+test('a draft saved from the composer keeps no time the person did not choose (#3653)', async ({ page }) => {
+  await signInNewUser(page, newEmail('social-when-draft'));
+  await createOrg(page, 'Công ty Nháp Không Giờ');
+  await connectSandbox(page, 'Trang Nháp Không Giờ');
+  await compose(page, 'Nháp chưa chọn giờ');
+  await page.getByRole('button', { name: 'Lưu nháp' }).click();
+  await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
+  const planned = sql<{ at: string | null }>(`SELECT scheduled_at::text AS at FROM ludy_social.post WHERE id = :'post'`, { post: postIdOf(page) });
+  expect(planned).toEqual([{ at: null }]);
+});
+
+test('puts the connect card first on a phone and folds the general settings below the channels (#3651)', async ({ page }) => {
+  await signInNewUser(page, newEmail('social-connect-first'));
+  const slug = await createOrg(page, 'Công ty Kết Nối Trước');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/o/${slug}/social/channels`);
+  const connect = page.getByTestId('connect-card');
+  await expect(connect).toBeVisible();
+  // The demo channel is labelled and below any real platform; no noise about what the server cannot do.
+  await expect(connect.getByText('Kênh thử (chỉ để dùng thử)')).toBeVisible();
+  await expect(page.getByText('Chưa cấu hình')).toHaveCount(0);
+  await expect(page.getByText('Kênh thử đã tắt trên máy chủ này.')).toHaveCount(0);
+  // The settings of the whole line are one folded group, under the connect card.
+  const settings = page.getByRole('button', { name: /Cài đặt chung/ });
+  await expect(settings).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByTestId('conversation-replies-card')).toBeHidden();
+  const cardBox = await connect.boundingBox();
+  const settingsBox = await settings.boundingBox();
+  expect(cardBox && settingsBox && cardBox.y < settingsBox.y).toBe(true);
+  await settings.click();
+  await expect(settings).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.getByTestId('conversation-replies-card')).toBeVisible();
+  // With a channel connected, the connect card is still above it on a phone.
+  await page.getByLabel('Tên kênh thử').fill('Trang Kết Nối Trước');
+  await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
+  await expect(page.getByText('Trang Kết Nối Trước').first()).toBeVisible();
+  const after = await connect.boundingBox();
+  const channelBox = await page.getByText('Trang Kết Nối Trước').first().boundingBox();
+  expect(after && channelBox && after.y < channelBox.y).toBe(true);
+  // A wide screen keeps the settings open, beside the connect card's column.
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.reload();
+  await expect(page.getByRole('button', { name: /Cài đặt chung/ })).toHaveAttribute('aria-expanded', 'true');
+});
+
+test('opens Posts on the post waiting for review, and the schedule tab shows an action when empty (#3654)', async ({ page }) => {
+  await signInNewUser(page, newEmail('social-default-tab'));
+  const slug = await createOrg(page, 'Công ty Mở Đúng Tab');
+  await connectSandbox(page, 'Trang Mở Đúng Tab');
+  // Nothing waits yet: the schedule is the first view, and its empty state offers to write a post.
+  await page.goto(`/o/${slug}/social`);
+  await expect(page.getByRole('heading', { name: 'Bài đăng', exact: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Lịch đăng' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('Chưa có bài nào lên lịch', { exact: true })).toBeVisible();
+  await expect(page.getByText(/4 tuần/)).toHaveCount(0);
+  // The header's link and the empty state's own action.
+  await expect(page.getByRole('link', { name: 'Soạn bài' })).toHaveCount(2);
+  // A post goes to review: Posts now opens on it, with no tab in the address.
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
+  await page.getByLabel('Nội dung chung').fill('Bài đang chờ duyệt ở tab đầu');
+  await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();
+  await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
+  await page.goto(`/o/${slug}/social`);
+  await expect(page.getByRole('tab', { name: /Cần duyệt/ })).toHaveAttribute('aria-selected', 'true');
+  // The post's own row (the same text is also in the review proposals panel).
+  await expect(page.getByRole('link', { name: 'Bài đang chờ duyệt ở tab đầu' })).toBeVisible();
+  // The schedule is one click away and stays chosen across a reload.
+  await page.getByRole('tab', { name: 'Lịch đăng' }).click();
+  await expect(page).toHaveURL(/tab=upcoming/);
+  await page.reload();
+  await expect(page.getByRole('tab', { name: 'Lịch đăng' })).toHaveAttribute('aria-selected', 'true');
+  // An empty list has its action: drafts offer to write a post.
+  await page.getByRole('tab', { name: 'Nháp', exact: true }).click();
+  await expect(page.getByText('Chưa có bản nháp')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Soạn bài' })).toHaveCount(2);
 });
 
 test('posts a Story of one image, with no text, in a phone frame (#644)', async ({ page }) => {
@@ -642,7 +764,7 @@ test('posts a Story of one image, with no text, in a phone frame (#644)', async 
   await expect(page.getByText('Tin (Story) cần đúng một ảnh hoặc một video')).toHaveCount(0);
   await page.getByRole('button', { name: 'Lưu nháp' }).click();
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
-  const saved = sql<{ post_type: string }>(`SELECT settings->>'postType' AS post_type FROM crove_social.post_variant WHERE post_id = :'post'`, { post: postIdOf(page) });
+  const saved = sql<{ post_type: string }>(`SELECT settings->>'postType' AS post_type FROM ludy_social.post_variant WHERE post_id = :'post'`, { post: postIdOf(page) });
   expect(saved).toEqual([{ post_type: 'story' }]);
   // The saved post keeps the type in its channel's editor.
   await expect(page.getByLabel('Kiểu bài')).toHaveValue('story');
@@ -663,7 +785,7 @@ test('crops a post image to a frame, and the server reads the new size (#636)', 
   await page.getByRole('button', { name: 'Lưu nháp' }).click();
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
   const media = sql<{ image_width: number; image_height: number; content_type: string }>(
-    `SELECT f.image_width, f.image_height, f.content_type FROM crove_social.post_media m JOIN crove_kernel.file f ON f.org_id = m.org_id AND f.id = m.file_id WHERE m.post_id = :'post'`,
+    `SELECT f.image_width, f.image_height, f.content_type FROM ludy_social.post_media m JOIN ludy_kernel.file f ON f.org_id = m.org_id AND f.id = m.file_id WHERE m.post_id = :'post'`,
     { post: postIdOf(page) },
   );
   expect(media).toEqual([{ image_width: 1080, image_height: 1080, content_type: 'image/png' }]);
@@ -672,8 +794,8 @@ test('turns an idea on the board into a draft, which moves it to Drafted (#701)'
   await signInNewUser(page, newEmail('social-idea'));
   await createOrg(page, 'Công ty Ý Tưởng');
   await connectSandbox(page, 'Trang Ý Tưởng');
-  await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('link', { name: 'Ý tưởng', exact: true }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
+  await openTool(page, 'Ý tưởng');
   await page.getByRole('button', { name: 'Thêm ý tưởng' }).click();
   await page.getByLabel('Ý tưởng', { exact: true }).fill('Món mới mùa thu');
   await page.getByLabel('Ghi chú (không bắt buộc)').fill('Chụp ở quầy, ánh sáng buổi sáng');
@@ -692,7 +814,7 @@ test('turns an idea on the board into a draft, which moves it to Drafted (#701)'
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
   await expect(page.getByText('Bài này được viết từ ý tưởng')).toBeVisible();
   const saved = sql<{ stage: string; linked: boolean; link_url: string | null }>(
-    `SELECT i.stage, i.post_id = p.id AS linked, p.link_url FROM crove_social.idea i JOIN crove_social.post p ON p.org_id = i.org_id AND p.id = :'post'`,
+    `SELECT i.stage, i.post_id = p.id AS linked, p.link_url FROM ludy_social.idea i JOIN ludy_social.post p ON p.org_id = i.org_id AND p.id = :'post'`,
     { post: postIdOf(page) },
   );
   expect(saved).toEqual([{ stage: 'drafted', linked: true, link_url: 'https://cuahang.vn/thu' }]);
@@ -716,16 +838,16 @@ test('moves a draft to review on the board and approves it with four-eyes; an il
   await page.getByRole('button', { name: 'Lưu nháp' }).click();
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
   const postId = postIdOf(page);
-  const statuses = () => sql<{ status: string }>(`SELECT status FROM crove_social.post_variant WHERE post_id = :'post'`, { post: postId }).map((r) => r.status);
-  const approvals = () => sql<{ n: number }>(`SELECT count(*)::int AS n FROM crove_social.post_approval WHERE post_id = :'post'`, { post: postId })[0]?.n;
+  const statuses = () => sql<{ status: string }>(`SELECT status FROM ludy_social.post_variant WHERE post_id = :'post'`, { post: postId }).map((r) => r.status);
+  const approvals = () => sql<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_social.post_approval WHERE post_id = :'post'`, { post: postId })[0]?.n;
 
   // The board's moves that reach the server, so a refused drop can be shown to send nothing.
   const moves: string[] = [];
   page.on('request', (r) => {
     if (/\/api\/rpc\/social\/(posts\/submit|variants\/(decide|schedule|unschedule))/.test(r.url())) moves.push(r.url());
   });
-  await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('tab', { name: 'Bảng' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
+  await page.getByRole('button', { name: 'Bảng', exact: true }).click();
   await expect(page).toHaveURL(/tab=board/);
   const column = (name: string) => page.getByRole('region', { name, exact: true });
   const card = page.getByTestId('board-card').filter({ hasText: 'Bài chuyển trên bảng' });
@@ -761,11 +883,11 @@ test('moves a draft to review on the board and approves it with four-eyes; an il
   const reviewerPage = await reviewerContext.newPage();
   await signInNewUser(reviewerPage, reviewer);
   await expect
-    .poll(() => sql<{ id: string }>(`SELECT id FROM crove_kernel.user_account WHERE lower(email) = lower(:'email')`, { email: reviewer }).length)
+    .poll(() => sql<{ id: string }>(`SELECT id FROM ludy_kernel.user_account WHERE lower(email) = lower(:'email')`, { email: reviewer }).length)
     .toBe(1);
   exec(
-    `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
-     SELECT t.org_id, u.id, 'admin' FROM crove_kernel.tenant t, crove_kernel.user_account u
+    `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
+     SELECT t.org_id, u.id, 'admin' FROM ludy_kernel.tenant t, ludy_kernel.user_account u
       WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
     { slug, email: reviewer },
   );
@@ -778,7 +900,7 @@ test('moves a draft to review on the board and approves it with four-eyes; an il
   await expect(reviewerColumn('Đã duyệt').getByTestId('board-card')).toHaveCount(1);
   expect(statuses()).toEqual(['approved']);
   const decided = sql<{ email: string; decision: string }>(
-    `SELECT u.email, a.decision FROM crove_social.post_approval a JOIN crove_kernel.user_account u ON u.id = a.decided_by WHERE a.post_id = :'post'`,
+    `SELECT u.email, a.decision FROM ludy_social.post_approval a JOIN ludy_kernel.user_account u ON u.id = a.decided_by WHERE a.post_id = :'post'`,
     { post: postId },
   );
   expect(decided).toEqual([{ email: reviewer.toLowerCase(), decision: 'approved' }]);
@@ -794,7 +916,7 @@ test('plans an undated draft by dropping it on a day, then moves its time from t
   await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
   const postId = postIdOf(page);
   const planned = () =>
-    sql<{ at: string | null }>(`SELECT to_char(scheduled_at AT TIME ZONE :'zone', 'YYYY-MM-DD HH24:MI') AS at FROM crove_social.post WHERE id = :'post'`, { post: postId, zone: TIME_ZONE })[0]?.at;
+    sql<{ at: string | null }>(`SELECT to_char(scheduled_at AT TIME ZONE :'zone', 'YYYY-MM-DD HH24:MI') AS at FROM ludy_social.post WHERE id = :'post'`, { post: postId, zone: TIME_ZONE })[0]?.at;
   expect(planned()).toBeNull();
   const updates: string[] = [];
   page.on('request', (r) => {
@@ -845,10 +967,10 @@ test('puts an approved post in an open queue slot by dropping it there, then mov
   await page.getByRole('button', { name: 'Duyệt', exact: true }).click();
   await expect(page.getByText('Lên lịch 1 kênh đã duyệt')).toBeVisible();
   const postId = postIdOf(page);
-  const [channel] = sql<{ id: string }>(`SELECT channel_connection_id AS id FROM crove_social.post_variant WHERE post_id = :'post'`, { post: postId });
+  const [channel] = sql<{ id: string }>(`SELECT channel_connection_id AS id FROM ludy_social.post_variant WHERE post_id = :'post'`, { post: postId });
   const slotOf = () =>
     sql<{ status: string; at: string | null }>(
-      `SELECT status, to_char(queue_slot_at AT TIME ZONE :'zone', 'YYYY-MM-DD HH24:MI') AS at FROM crove_social.post_variant WHERE post_id = :'post'`,
+      `SELECT status, to_char(queue_slot_at AT TIME ZONE :'zone', 'YYYY-MM-DD HH24:MI') AS at FROM ludy_social.post_variant WHERE post_id = :'post'`,
       { post: postId, zone: TIME_ZONE },
     )[0];
 
@@ -891,10 +1013,10 @@ test('corrects a published post on its channel: a blocked word is refused, the t
   await submitApproveSchedule(page, [channel]);
   const postId = postIdOf(page);
   const postUrl = page.url();
-  exec(`UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postId });
+  exec(`UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postId });
   const card = channelCard(page, channel);
   await expect(card.getByText('Đã đăng', { exact: true })).toBeVisible({ timeout: 45_000 });
-  const variantId = sql<{ id: string }>(`SELECT id FROM crove_social.post_variant WHERE post_id = :'post'`, { post: postId })[0]?.id as string;
+  const variantId = sql<{ id: string }>(`SELECT id FROM ludy_social.post_variant WHERE post_id = :'post'`, { post: postId })[0]?.id as string;
 
   // A blocked word in the new text is refused, with nothing sent.
   await card.getByRole('button', { name: 'Sửa nội dung đã đăng' }).click();
@@ -903,20 +1025,32 @@ test('corrects a published post on its channel: a blocked word is refused, the t
   await text.fill('Phở bò rẻ nhất phố: 45.000đ');
   await card.getByRole('button', { name: 'Cập nhật lên kênh' }).click();
   await expect(card.getByText('Bài có từ bị cấm: «rẻ nhất»')).toBeVisible();
-  expect(sql<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.external_call WHERE key LIKE :'key'`, { key: `social.publish:${variantId}:%:edit%` })).toEqual([{ n: '0' }]);
-  expect(sql<{ edit_state: string | null }>(`SELECT edit_state FROM crove_social.post_variant WHERE id = :'id'`, { id: variantId })).toEqual([{ edit_state: null }]);
+  expect(sql<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.external_call WHERE key LIKE :'key'`, { key: `social.publish:${variantId}:%:edit%` })).toEqual([{ n: '0' }]);
+  expect(sql<{ edit_state: string | null }>(`SELECT edit_state FROM ludy_social.post_variant WHERE id = :'id'`, { id: variantId })).toEqual([{ edit_state: null }]);
 
   // The corrected text goes to the channel; the page follows until the platform confirms it.
   await text.fill('Phở bò giá 45.000đ');
   await card.getByRole('button', { name: 'Cập nhật lên kênh' }).click();
   await expect(card.getByLabel('Nội dung mới')).toHaveCount(0);
   await expect
-    .poll(() => sql<{ revision: number; body: string | null; edit_state: string | null }>(`SELECT revision, body, edit_state FROM crove_social.post_variant WHERE id = :'id'`, { id: variantId }), { timeout: 45_000 })
+    .poll(() => sql<{ revision: number; body: string | null; edit_state: string | null }>(`SELECT revision, body, edit_state FROM ludy_social.post_variant WHERE id = :'id'`, { id: variantId }), { timeout: 45_000 })
     .toEqual([{ revision: 2, body: 'Phở bò giá 45.000đ', edit_state: null }]);
-  expect(sql<{ state: string }>(`SELECT state FROM crove_kernel.external_call WHERE key = :'key'`, { key: `social.publish:${variantId}:1:1:edit` })).toEqual([{ state: 'succeeded' }]);
+  expect(sql<{ state: string }>(`SELECT state FROM ludy_kernel.external_call WHERE key = :'key'`, { key: `social.publish:${variantId}:1:1:edit` })).toEqual([{ state: 'succeeded' }]);
   await expect(card.getByText('Đang cập nhật nội dung đã sửa lên kênh')).toHaveCount(0, { timeout: 15_000 });
   await expect(card.getByText('Phở bò giá 45.000đ').first()).toBeVisible();
 
+  // A second member joins first: the versions of a post show for a team of two or more (#3656).
+  const writer = newEmail('social-live-edit-member');
+  const memberContext = await browser.newContext({ baseURL: new URL(postUrl).origin, locale: 'vi-VN', timezoneId: TIME_ZONE });
+  const memberPage = await memberContext.newPage();
+  await signInNewUser(memberPage, writer);
+  await expect.poll(() => sql<{ id: string }>(`SELECT id FROM ludy_kernel.user_account WHERE lower(email) = lower(:'email')`, { email: writer }).length).toBe(1);
+  exec(
+    `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role)
+     SELECT t.org_id, u.id, 'member' FROM ludy_kernel.tenant t, ludy_kernel.user_account u
+      WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
+    { slug, email: writer },
+  );
   // The timeline: the owner corrected it, and the channel shows the corrected text.
   await page.reload();
   await expect(page.getByText('đã sửa nội dung bài đã đăng').first()).toBeVisible();
@@ -931,17 +1065,6 @@ test('corrects a published post on its channel: a blocked word is refused, the t
   await expect(first.getByRole('button', { name: 'Khôi phục' })).toHaveCount(0);
 
   // A member sees no such action, and the server refuses them with 403.
-  const writer = newEmail('social-live-edit-member');
-  const memberContext = await browser.newContext({ baseURL: new URL(postUrl).origin, locale: 'vi-VN', timezoneId: TIME_ZONE });
-  const memberPage = await memberContext.newPage();
-  await signInNewUser(memberPage, writer);
-  await expect.poll(() => sql<{ id: string }>(`SELECT id FROM crove_kernel.user_account WHERE lower(email) = lower(:'email')`, { email: writer }).length).toBe(1);
-  exec(
-    `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role)
-     SELECT t.org_id, u.id, 'member' FROM crove_kernel.tenant t, crove_kernel.user_account u
-      WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
-    { slug, email: writer },
-  );
   const read = memberPage.waitForRequest((r) => r.url().includes('/api/rpc/social/posts/get'));
   await memberPage.goto(postUrl);
   const headers = (await read).headers();
@@ -949,11 +1072,11 @@ test('corrects a published post on its channel: a blocked word is refused, the t
   await expect(memberCard.getByText('Đã đăng', { exact: true })).toBeVisible();
   await expect(memberCard.getByRole('button', { name: /Sửa (lại )?nội dung đã đăng/ })).toHaveCount(0);
   const refused = await memberPage.request.post('/api/rpc/social/variants/editPublished', {
-    headers: Object.fromEntries(Object.entries(headers).filter(([k]) => k === 'authorization' || k.startsWith('x-crove'))),
+    headers: Object.fromEntries(Object.entries(headers).filter(([k]) => k === 'authorization' || k.startsWith('x-ludy') || k.startsWith('x-crove'))),
     data: { json: { variantId, revision: 2, body: 'Thành viên sửa bài' } },
   });
   expect(refused.status()).toBe(403);
-  expect(sql<{ revision: number }>(`SELECT revision FROM crove_social.post_variant WHERE id = :'id'`, { id: variantId })).toEqual([{ revision: 2 }]);
+  expect(sql<{ revision: number }>(`SELECT revision FROM ludy_social.post_variant WHERE id = :'id'`, { id: variantId })).toEqual([{ revision: 2 }]);
   await memberContext.close();
 });
 
@@ -978,12 +1101,12 @@ test('draws a post on six channels as one chip, and "+9" opens every post of the
   // Two days ahead is always in the month view. The six-channel draft is planned at 08:00 and the other at 09:00; ten
   // copies of the other, written with SQL, fill the day to twelve posts, hourly from 10:00.
   const day = new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE }).format(new Date(Date.now() + 2 * 86_400_000));
-  exec(`UPDATE crove_social.post SET scheduled_at = (:'day' || ' 08:00+07')::timestamptz WHERE id = :'six'`, { day, six });
-  exec(`UPDATE crove_social.post SET scheduled_at = (:'day' || ' 09:00+07')::timestamptz WHERE id = :'second'`, { day, second });
+  exec(`UPDATE ludy_social.post SET scheduled_at = (:'day' || ' 08:00+07')::timestamptz WHERE id = :'six'`, { day, six });
+  exec(`UPDATE ludy_social.post SET scheduled_at = (:'day' || ' 09:00+07')::timestamptz WHERE id = :'second'`, { day, second });
   // Every column but the generated ones (search_text, #1360), which an insert may not name.
   const columns = (table: string) =>
     sql<{ list: string }>(
-      `SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position) AS list FROM information_schema.columns WHERE table_schema = 'crove_social' AND table_name = :'table' AND is_generated = 'NEVER'`,
+      `SELECT string_agg(quote_ident(column_name), ', ' ORDER BY ordinal_position) AS list FROM information_schema.columns WHERE table_schema = 'ludy_social' AND table_name = :'table' AND is_generated = 'NEVER'`,
       { table },
     )[0]?.list as string;
   const postColumns = columns('post');
@@ -991,16 +1114,16 @@ test('draws a post on six channels as one chip, and "+9" opens every post of the
   exec(
     `WITH n AS (SELECT g, gen_random_uuid() AS id FROM generate_series(3, 12) g),
           copies AS (
-            INSERT INTO crove_social.post (${postColumns})
+            INSERT INTO ludy_social.post (${postColumns})
             SELECT ${postColumns} FROM (SELECT (jsonb_populate_record(p, jsonb_build_object('id', n.id, 'body', 'Bài số ' || n.g, 'scheduled_at', (:'day' || ' ' || lpad((n.g + 7)::text, 2, '0') || ':00+07')::timestamptz))).*
-              FROM crove_social.post p, n WHERE p.id = :'second') r RETURNING id)
-     INSERT INTO crove_social.post_variant (${variantColumns})
-     SELECT ${variantColumns} FROM (SELECT (jsonb_populate_record(v, jsonb_build_object('id', gen_random_uuid(), 'post_id', n.id))).* FROM crove_social.post_variant v, n WHERE v.post_id = :'second') r`,
+              FROM ludy_social.post p, n WHERE p.id = :'second') r RETURNING id)
+     INSERT INTO ludy_social.post_variant (${variantColumns})
+     SELECT ${variantColumns} FROM (SELECT (jsonb_populate_record(v, jsonb_build_object('id', gen_random_uuid(), 'post_id', n.id))).* FROM ludy_social.post_variant v, n WHERE v.post_id = :'second') r`,
     { day, second },
   );
   const planned = (body: string) =>
     sql<{ at: string }>(
-      `SELECT to_char(scheduled_at AT TIME ZONE :'zone', 'YYYY-MM-DD HH24:MI') AS at FROM crove_social.post WHERE body = :'body' AND org_id = (SELECT org_id FROM crove_social.post WHERE id = :'six')`,
+      `SELECT to_char(scheduled_at AT TIME ZONE :'zone', 'YYYY-MM-DD HH24:MI') AS at FROM ludy_social.post WHERE body = :'body' AND org_id = (SELECT org_id FROM ludy_social.post WHERE id = :'six')`,
       { body, six, zone: TIME_ZONE },
     )[0]?.at;
   expect(planned('Bài số 12')).toBe(`${day} 19:00`);
@@ -1039,7 +1162,7 @@ test('draws a post on six channels as one chip, and "+9" opens every post of the
   await expect(dialog.getByTestId('day-post')).toHaveCount(12);
   for (const n of [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) await expect(dialog.getByRole('link', { name: `Bài số ${n}`, exact: true })).toBeVisible();
   const sixRow = dialog.getByTestId('day-post').filter({ hasText: 'Bài sáu kênh' });
-  for (const name of channels) await expect(sixRow.getByText(`Sandbox (${name}) · Nháp`)).toBeVisible();
+  for (const name of channels) await expect(sixRow.getByText(`Kênh thử (${name}) · Nháp`)).toBeVisible();
   // Tab walks the rows inside the dialog down to the last post's link, never leaving it.
   const focused = () => page.evaluate(() => ({ inDialog: document.activeElement?.closest('dialog') !== null, text: document.activeElement?.textContent ?? '' }));
   let reached = false;
@@ -1070,18 +1193,19 @@ test('draws a post on six channels as one chip, and "+9" opens every post of the
   // And opens from its link.
   await dialog.getByRole('link', { name: 'Bài số 7', exact: true }).focus();
   await page.keyboard.press('Enter');
-  const [seventh] = sql<{ id: string }>(`SELECT id FROM crove_social.post WHERE body = 'Bài số 7' AND org_id = (SELECT org_id FROM crove_social.post WHERE id = :'six')`, { six });
+  const [seventh] = sql<{ id: string }>(`SELECT id FROM ludy_social.post WHERE body = 'Bài số 7' AND org_id = (SELECT org_id FROM ludy_social.post WHERE id = :'six')`, { six });
   await expect(page).toHaveURL(new RegExp(`/social/${seventh?.id ?? 'missing'}$`));
 
-  // At phone width the month and the day's list fit the screen, and "+9" still opens it.
+  // At phone width the month and the day's list fit the screen: the day shows dots, not chips (#3655), and a tap on them opens the list.
   await page.setViewportSize({ width: 360, height: 780 });
   await page.goto(`/o/${slug}/social?tab=calendar`);
   await cell.scrollIntoViewIfNeeded();
   const inside = (box: { x: number; width: number } | null) => box !== null && box.x >= 0 && box.x + box.width <= 360;
   expect(inside(await cell.locator('xpath=..').boundingBox())).toBe(true);
-  const narrowMore = cell.getByRole('button', { name: /^\+9 bài nữa/ });
-  expect(inside(await narrowMore.boundingBox())).toBe(true);
-  await narrowMore.click();
+  await expect(cell.getByTestId('calendar-chip').first()).toBeHidden();
+  const dots = cell.getByTestId('calendar-day-dots');
+  expect(inside(await dots.boundingBox())).toBe(true);
+  await dots.click();
   await expect(dialog).toBeVisible();
   expect(inside(await dialog.boundingBox())).toBe(true);
   await dialog.getByRole('button', { name: 'Đóng' }).click();
@@ -1116,20 +1240,20 @@ test('makes a client report link without the best posts and the audience, which 
   const body = 'Bài không được lộ trong báo cáo';
   const postId = await publishOnSandbox(page, channel, body);
   exec(
-    `INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics)
-     SELECT v.org_id, v.id, 'e2e-sections', '{"reach": 4321, "reactions": 21}'::jsonb FROM crove_social.post_variant v WHERE v.post_id = :'post'`,
+    `INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics)
+     SELECT v.org_id, v.id, 'e2e-sections', '{"reach": 4321, "reactions": 21}'::jsonb FROM ludy_social.post_variant v WHERE v.post_id = :'post'`,
     { post: postId },
   );
   exec(
-    `INSERT INTO crove_social.account_snapshot (org_id, channel_connection_id, captured_on, followers, audience)
+    `INSERT INTO ludy_social.account_snapshot (org_id, channel_connection_id, captured_on, followers, audience)
      SELECT c.org_id, c.id, (now() AT TIME ZONE 'UTC')::date, 100, '{"age": [{"key": "18-24", "count": 60}], "gender": [], "cities": [{"key": "Hanoi, Hanoi", "count": 40}], "countries": []}'::jsonb
-       FROM crove_kernel.channel_connection c WHERE c.display_name = :'channel'
+       FROM ludy_kernel.channel_connection c WHERE c.display_name = :'channel'
      ON CONFLICT DO NOTHING`,
     { channel },
   );
-  await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('tab', { name: 'Số liệu' }).click();
-  const panel = page.getByRole('tabpanel');
+  // The figures and the report tools are in Reports > Bài đăng (#3658).
+  await page.goto(`/o/${new URL(page.url()).pathname.split('/')[2]}/reports?area=posts`);
+  const panel = page.getByTestId('reports-posts');
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE }).format(new Date());
   await panel.getByLabel('Từ ngày', { exact: true }).fill(today);
   await panel.getByLabel('Đến ngày', { exact: true }).fill(today);

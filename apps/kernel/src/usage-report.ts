@@ -1,12 +1,12 @@
 // The `usage-report` image role (issue #311, backlog review 2026-10-17 section 3): prints the weekly usage counts of
-// the MVP goal from crove_kernel.usage_weekly(), read as crove_reporter. Deployment-wide and for the operator only:
+// the MVP goal from ludy_kernel.usage_weekly(), read as ludy_reporter. Deployment-wide and for the operator only:
 // counts per ISO week, and per org (id and name) with --by-org. No tenant content. Runs once and exits.
 //
 //   usage-report [--weeks <1-104>] [--by-org] [--csv] [--time-zone <IANA name>] [--post]
 //
 // --post (issue #344) also sends a summary of the last complete week, against the week before, to the alert webhook
 // (ALERT_WEBHOOK_URL, the prober's sink in alert.ts): deployment totals only, never an org row or name. The report
-// keeps its own login; crove_prober still reads no usage. Without ALERT_WEBHOOK_URL, --post fails before reading.
+// keeps its own login; ludy_prober still reads no usage. Without ALERT_WEBHOOK_URL, --post fails before reading.
 //
 // Exit codes: 0 printed (and posted), 2 the report could not run (configuration, connection, permissions), 3 printed
 // but the summary could not be posted.
@@ -23,7 +23,7 @@ export interface UsageArgs {
   post: boolean;
 }
 
-/** One row of crove_kernel.usage_weekly(). org_id and org_name are null on the deployment row of a week. */
+/** One row of ludy_kernel.usage_weekly(). org_id and org_name are null on the deployment row of a week. */
 export interface UsageRow {
   week_start: string;
   iso_week: string;
@@ -72,7 +72,7 @@ export function parseUsageArgs(argv: readonly string[]): UsageArgs {
   return args;
 }
 
-/** Reads crove_kernel.usage_weekly() over its own short-lived connection. Refuses a privileged login. */
+/** Reads ludy_kernel.usage_weekly() over its own short-lived connection. Refuses a privileged login. */
 export async function readUsage(databaseUrl: string, args: Omit<UsageArgs, 'post'>): Promise<UsageRow[]> {
   const client = new pg.Client({
     connectionString: databaseUrl,
@@ -89,13 +89,13 @@ export async function readUsage(databaseUrl: string, args: Omit<UsageArgs, 'post
       'SELECT rolname, (rolsuper OR rolbypassrls) AS privileged FROM pg_catalog.pg_roles WHERE rolname = current_user',
     );
     if (who[0]?.privileged) {
-      throw new Error(`refusing to report as ${who[0].rolname}, a superuser or BYPASSRLS role: connect REPORTER_DATABASE_URL as crove_reporter`);
+      throw new Error(`refusing to report as ${who[0].rolname}, a superuser or BYPASSRLS role: connect REPORTER_DATABASE_URL as ludy_reporter`);
     }
     const { rows } = await client.query<UsageRow>(
       `SELECT week_start::text AS week_start, iso_week, org_id, org_name, active_orgs, active_users, documents_uploaded,
               documents_emailed, proposals_approved, approved_without_edits, proposals_rejected,
               median_upload_to_approval_seconds, journal_exports, org_exports
-       FROM crove_kernel.usage_weekly($1::int, $2::boolean, $3::text)`,
+       FROM ludy_kernel.usage_weekly($1::int, $2::boolean, $3::text)`,
       [args.weeks, args.byOrg, args.timeZone],
     );
     return rows;
@@ -173,7 +173,7 @@ export function usageSummary(rows: readonly UsageRow[], timeZone: string, instan
   const hours = (r: UsageRow) => (medianHours(r) === '' ? 'none' : `${medianHours(r)} h`);
   const line = (label: string, now: string, was: string) => `- ${label}: ${now} [${was}]`;
   const text = [
-    `[Crove] Weekly usage on ${instance}: ${week.iso_week}, from ${week.week_start} (${timeZone}). In brackets: ${before.iso_week}.`,
+    `[Ludy] Weekly usage on ${instance}: ${week.iso_week}, from ${week.week_start} (${timeZone}). In brackets: ${before.iso_week}.`,
     line('active orgs', String(week.active_orgs), String(before.active_orgs)),
     line('active users', String(week.active_users), String(before.active_users)),
     line('documents uploaded', String(week.documents_uploaded), String(before.documents_uploaded)),
@@ -187,7 +187,7 @@ export function usageSummary(rows: readonly UsageRow[], timeZone: string, instan
   ].join('\n');
   return {
     text,
-    crove: { kind: 'usage', severity: 'info', instance, at: at.toISOString(), time_zone: timeZone, week: totals(week), previous: totals(before) },
+    ludy: { kind: 'usage', severity: 'info', instance, at: at.toISOString(), time_zone: timeZone, week: totals(week), previous: totals(before) },
   };
 }
 
@@ -215,7 +215,7 @@ export async function runUsageReport(argv: readonly string[], env: NodeJS.Proces
   }
   const url = env.REPORTER_DATABASE_URL?.trim();
   if (!url) {
-    error('[usage-report] REPORTER_DATABASE_URL is not set; connect it as crove_reporter');
+    error('[usage-report] REPORTER_DATABASE_URL is not set; connect it as ludy_reporter');
     return USAGE_EXIT.failed;
   }
   // --post fails closed before anything is read: a webhook that is unset or malformed would drop the summary.
@@ -236,7 +236,7 @@ export async function runUsageReport(argv: readonly string[], env: NodeJS.Proces
   try {
     rows = await (deps.readUsage ?? readUsage)(url, args);
   } catch (e) {
-    error(`[usage-report] could not read crove_kernel.usage_weekly(): ${oneLine(e)}`);
+    error(`[usage-report] could not read ludy_kernel.usage_weekly(): ${oneLine(e)}`);
     return USAGE_EXIT.failed;
   }
   log(formatUsage(rows, args));

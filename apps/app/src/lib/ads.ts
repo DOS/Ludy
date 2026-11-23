@@ -3,7 +3,7 @@
 // the ad account's own time zone, the comparison with the books as exact decimals, what the settings form changes, and
 // the few facts it reads from an account. The server decides every rule; these only choose what to show and what to send.
 // Money is a decimal string (AGENTS.md): the sums go through lib/decimal.ts, never through JS numbers.
-import { ACCOUNT_CODE_PATTERN, ADS_BACKFILL_MONTHS, OAUTH_AD_PROVIDERS, isAdWriteProviderId, normalizeAccountCode, zonedDate, type AdAccountView } from '@crove/kernel-contract';
+import { ACCOUNT_CODE_PATTERN, ADS_BACKFILL_MONTHS, OAUTH_AD_PROVIDERS, isAdWriteProviderId, normalizeAccountCode, zonedDate, type AdAccountView } from '@ludy/kernel-contract';
 import { fromUnits, isZeroAmount, toUnits } from './decimal.ts';
 
 // The periods of the range control, in the order the control lists them.
@@ -15,6 +15,8 @@ export const DEFAULT_ADS_RANGE: AdsRangeKind = 'thisMonth';
 export interface AdsSearch {
   account?: string;
   range?: AdsRangeKind;
+  // ?settings=true is the Ads settings (#3640): the connections, thresholds, running ads and the account's own settings, apart from the figures. Left out for the figures.
+  settings?: true;
 }
 
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -24,6 +26,7 @@ export function parseAdsSearch(search: Record<string, unknown>): AdsSearch {
   const out: AdsSearch = {};
   if (typeof search.account === 'string' && ID.test(search.account)) out.account = search.account.toLowerCase();
   if (typeof search.range === 'string' && (ADS_RANGES as readonly string[]).includes(search.range)) out.range = search.range as AdsRangeKind;
+  if (search.settings === true || search.settings === 'true' || search.settings === 1) out.settings = true;
   return out;
 }
 
@@ -233,6 +236,109 @@ export function booksExpense(ledger: { lines: readonly LedgerLine[] }): string {
   return fromUnits(net);
 }
 
+// The names an ad platform's own invoices and receipts carry as seller (plan docs/plan/ads.md section 6, slice D). A constant
+// of the app, not a setting: an invoice names the platform's billing company, which does not change with the account. A seller
+// matches when it holds one of the names as whole words, with Vietnamese marks and case set aside, so "Google Asia Pacific
+// Pte. Ltd." is Google and "Googlers Cafe" is not. The pilot accountant may add names (#61). The sandbox platform bills
+// under its own name, so the offline stack can be tried end to end. Slice D2 (card and bank lines) matches its payees on
+// the same names.
+export const AD_PLATFORM_SELLER_NAMES: Readonly<Record<string, readonly string[]>> = {
+  meta_ads: ['Meta Platforms', 'Facebook'],
+  metawrite_ads: ['Meta Platforms', 'Facebook'],
+  google_ads: ['Google'],
+  tiktok_ads: ['TikTok'],
+  sandbox_ads: ['Sandbox Ads'],
+};
+
+// Lower case, Vietnamese marks and đ removed, every run of other characters one space, so a name matches whole words.
+export function foldSellerName(text: string): string {
+  return text
+    .normalize('NFD')
+    .replace(/\p{M}+/gu, '')
+    .replace(/[đĐ]/g, 'd')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+// Whether `seller` is one of the platform's names (a seller that only contains a name counts: "Meta Platforms Ireland
+// Limited"). A provider the app has no names for matches nothing.
+export function sellerIsPlatform(provider: string, seller: string): boolean {
+  const names = AD_PLATFORM_SELLER_NAMES[provider] ?? [];
+  const folded = ` ${foldSellerName(seller)} `;
+  return names.some((name) => folded.includes(` ${foldSellerName(name)} `));
+}
+
+// The most documents finance.documents.list returns for a range (modules/finance/src/queries.ts, newest first). A full
+// answer may have left older documents out, so no month is called empty from it.
+export const DOCUMENTS_LIST_LIMIT = 1000;
+
+// The days a list of documents has to cover for the months of the books strip: the first day of the first month to the
+// last day of the last month, as `YYYY-MM-DD`. Null for no months.
+export function documentsRange(months: readonly { month: string }[]): { from: string; to: string } | null {
+  const first = months[0];
+  const last = months[months.length - 1];
+  if (!first || !last) return null;
+  const [y, m] = last.month.split('-').map(Number) as [number, number];
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return { from: `${first.month}-01`, to: `${last.month}-${pad(lastDay)}` };
+}
+
+interface RecordedDocument {
+  direction: string;
+  partyName: string;
+  issueDate: string;
+  voided: unknown;
+}
+
+// How many recorded documents of each month name the platform as seller: purchase documents (an invoice or a receipt the
+// business received) that are not voided, by the month of their issue date. A month with none is absent from the map, and
+// a month with a document and no spend is never asked for. Counts only: no amount is compared.
+export function documentCounts(documents: readonly RecordedDocument[], provider: string): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const d of documents) {
+    if (d.direction !== 'purchase' || d.voided !== null || !sellerIsPlatform(provider, d.partyName)) continue;
+    const month = d.issueDate.slice(0, 7);
+    counts.set(month, (counts.get(month) ?? 0) + 1);
+  }
+  return counts;
+}
+
+interface PlatformBankLine {
+  id: string;
+  bankAccount: string;
+  date: string;
+  description: string;
+  amount: string;
+}
+
+// One month's bank and card lines that name the platform (slice D2) and what they paid in all: money out is a negative
+// amount on a statement, so the total is the money out less any money back (a refund), positive when more went out.
+export interface BankMonth<L extends PlatformBankLine> {
+  month: string;
+  lines: L[];
+  paid: string;
+}
+
+// The lines of the platform grouped by the month of their date, newest month first and, in a month, the order given.
+// A line counts when its description holds one of the platform's names as whole words (the rule of the seller names of
+// the documents), so a line the server's coarser read returned for another reason is left out. Exact decimals, no JS numbers.
+export function bankLinesByMonth<L extends PlatformBankLine>(lines: readonly L[], provider: string): BankMonth<L>[] {
+  const byMonth = new Map<string, { lines: L[]; units: bigint }>();
+  for (const line of lines) {
+    if (!sellerIsPlatform(provider, line.description)) continue;
+    const month = line.date.slice(0, 7);
+    const entry = byMonth.get(month) ?? { lines: [], units: 0n };
+    entry.lines.push(line);
+    entry.units -= toUnits(line.amount);
+    byMonth.set(month, entry);
+  }
+  return [...byMonth.entries()].sort(([a], [b]) => (a < b ? 1 : a > b ? -1 : 0)).map(([month, e]) => ({ month, lines: e.lines, paid: fromUnits(e.units) }));
+}
+
+// The bank screen at the account and month of a line (its route reads ?account= and ?month=).
+export const bankLineSearch = (line: { bankAccount: string; date: string }): { account: string; month: string } => ({ account: line.bankAccount, month: line.date.slice(0, 7) });
+
 // The platform's spend less the books' expense: positive when the platform reports more than the books hold. Shown as it
 // is, never explained away.
 export function booksDifference(platformSpend: string, books: string): string {
@@ -257,6 +363,19 @@ export function isCalmRefusal(error: unknown): boolean {
 // the account until then (ADS_SYNC_ON_HOLD).
 export const syncHeld = (account: Pick<AdAccountView, 'nextRunAt'>, nowMs: number): boolean =>
   account.nextRunAt !== null && Date.parse(account.nextRunAt) > nowMs;
+
+// How long before a connection's recorded end the Ads screen says so (as the Social channels do). A Meta ad connection is a
+// long-lived token of about 60 days with no refresh, so without it the account is paused when the day comes and the figures stop.
+export const CONNECTION_WARN_MS = 14 * 86_400_000;
+
+// Whether an active connection ends within the warning time (or already has, before the sweep marked it): it records an end
+// date and the platform is not Google, whose Testing-mode token has its own words. A paused or closed account says its own
+// state instead.
+export function connectionEndsSoon(account: Pick<AdAccountView, 'connectionStatus' | 'connectionExpiresAt' | 'provider'>, nowMs: number): boolean {
+  if (account.connectionStatus !== 'active' || account.provider === 'google_ads' || account.connectionExpiresAt === null) return false;
+  const ends = Date.parse(account.connectionExpiresAt);
+  return Number.isFinite(ends) && ends - nowMs <= CONNECTION_WARN_MS;
+}
 
 // Formats a signed decimal money change (`spendDelta`, `cprDelta`) with `+` for an increase, `-` for a decrease, and no sign for zero.
 export function signedMoney(amount: string, formatMoney: (value: string) => string): string {

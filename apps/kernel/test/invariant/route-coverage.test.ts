@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { Hono } from 'hono';
 import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
-import { DomainError, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { DomainError, EXTENSION_SCOPES, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
 import type { AuthUser } from '../../src/auth.ts';
 import { EXTENSION_ROUTES } from '../../src/auth-extension.ts';
 import { loadConfig } from '../../src/config.ts';
@@ -31,6 +31,12 @@ const PUBLIC: Record<string, string> = {
   '/api/inbound/email': 'the inbound mail relay, checked by INBOUND_SECRET (constant-time)',
   '/api/bank-feed/:provider/webhook':
     "a bank feed provider's signed notice (ADR-0039, #2044): the adapter checks its signature and timestamp before anything else, it is rate limited per address, stores nothing of its body, and only asks the worker for a pull of a connection that lists an account it names",
+  '/api/bank-feed/:provider/webhook/:hookKey':
+    "a bank feed provider's signed notice at the address of one connection (Tingee S3 of #2045, #4203, ADR-0039): the hook key in the path is looked up by its SHA-256 before anything is stored, the per-address limit and the 16 KB cap run first, and the worker verifies the provider's signature with the connection's sealed secret",
+  '/api/marketplace/:adapter/webhook/:hookKey':
+    "a marketplace's signed push (TikTok Shop, Shopee, Lazada; #4346, S2 of #4315) at the address of one connection: the adapter must be one the deployment runs, the per-address limit and the 16 KB cap run first, the hook key in the path is looked up by its SHA-256 before anything is stored (the org and the connection come from our own row, never the body), every answer is an empty 2xx or a 404 with a fixed code, and the worker verifies the platform's signature with the connection's sealed secret",
+  '/api/webhooks/misa-amis':
+    "MISA AMIS's callback with the result of a save (#3903, S4 of #3854): the body is capped and the client address limited before it is read, the HMAC of its signed `data` (the ClientID as the key, constant time) is checked before anything else is read, a refusal is a fixed code with nothing stored or logged, the organisation is found only from our own stored push row by org_refid (never from the unsigned envelope), the company code must equal the located connection's, a refid found in two organisations is refused, and a verified message is always answered 200 and only moves a row forward through finance.misa_amis.push_record",
   '/api/ads/meta/data-deletion':
     "Meta's data deletion callback for the Ads connection (ads plan section 9, #2219), POST and GET: the POST is checked by Meta's signed_request (HMAC-SHA256 with the app secret, constant time, not expired) before anything else, has a body cap, is rate limited per address, stores no body, and only queues the keyed hash of the user id for the worker, which erases the ad accounts that user granted; the GET is the status page Meta shows the person, answered by the confirmation code (128 random bits) and showing no tenant data",
   '/api/channels/zalo/webhook':
@@ -39,6 +45,10 @@ const PUBLIC: Record<string, string> = {
     "Telegram's webhook of customers' private-chat messages (conversation core, #3132, plan docs/plan/conversations-channels.md section 4.2): the :hook in the path is the opaque id a connection holds and names a connection's hook, never an org; the route derives the secret of that hook from the deployment's key and compares X-Telegram-Bot-Api-Secret-Token in constant time before it reads the body or asks the database, refuses a body over its size cap before reading it, answers every refusal (a missing header, a hook of the wrong shape, an unknown hook, a wrong secret) with the same 401, names no org in its path or answer, writes no tenant row (it only parks the verified update for the worker, which finds the org from the stored connection by the hook), and charges its per-address limit to refused requests only",
   '/api/channels/facebook/webhook':
     "Meta's Page webhook for comments on connected Facebook Pages (conversation core CV2, #2307, plan docs/plan/conversations.md section 6.1): GET answers the hub.verify_token subscription challenge in constant time; POST checks X-Hub-Signature-256 (HMAC-SHA256 with the app secret, constant time) over the raw body before anything else and refuses a body over its size cap before reading it, names no org in its path or answer, writes no tenant row (it only parks the signed body for the worker, which finds the org from the stored connection), and answers 401 to a missing or wrong signature without saying why",
+  '/api/channels/whatsapp/webhook':
+    "WhatsApp Business webhook for customers' messages (conversation core, #3131, plan docs/plan/conversations-channels.md section 4.1): GET answers the hub.verify_token subscription challenge in constant time; POST checks X-Hub-Signature-256 (HMAC-SHA256 with the WhatsApp app's secret, constant time) over the raw body before anything else and refuses a body over its size cap before reading it, names no org in its path or answer, writes no tenant row (it only parks the signed body for the worker, which finds the org from the stored connection by the phone number id), and answers 401 to a missing or wrong signature without saying why",
+  '/api/meeting-platform/zoom/webhook':
+    "Zoom's signed notice that a cloud recording finished (meetings integrations C3, #3175, plan docs/plan/meetings-integrations.md section 6.3; design comment on the issue): a doorbell, never data. It refuses a body over its size cap before reading it, then checks x-zm-signature (HMAC-SHA256 of v0:<timestamp>:<body> with the app's secret token, constant time, a 5 minute timestamp window) over the raw body before it looks at the event; it is rate limited per address, answers the same for a missing, malformed or wrong signature, and stores and logs nothing of the body. The one event it answers without a verified signature, if Zoom sends none, is the URL validation challenge, and only for a plainToken of [A-Za-z0-9_-]{1,128}, so the HMAC it returns can never be the signature of a v0: message. A verified recording.completed only asks the sweep to list the matching connections again at its next pass (a definer clears their last listing time; it names no org in the path or the answer, writes no recording row and downloads nothing), and answers 200 whether or not a connection matched. It exists only when ZOOM_WEBHOOK_SECRET_TOKEN is set and the Meetings module is installed",
   '/api/extension/token':
     "the Ludy extension's one-time code exchange (#2582, ADR-0047 point 10): the code (256 random bits, 5 minutes, single use, stored only as its SHA-256) is the credential and PKCE S256 binds it to the verifier only the extension holds; a body cap of 1 KB, a per-client rate limit, the code and verifier checked for shape before the database, one 400 answer for every refusal, only hashes reach SQL, and nothing of any org in the answer but for a valid exchange",
   '/api/meetings/:id/video/stream':
@@ -50,6 +60,21 @@ const PUBLIC: Record<string, string> = {
   '/api/review/answer': "the reviewer's answer, through the same review link",
   '/api/quote/view': "a sent quote's page (#2694): a signed, expiring, revocable quote link is the credential; rate limited per client, it answers one quote document and nothing else",
   '/api/quote/logo': "the logo of a sent quote's letterhead (#2814): the quote link's token is the credential, as for /api/quote/view; rate limited per client, it answers that one quote's seller logo and nothing else",
+  '/api/sign/view': 'public eSign link view (#3324): single-use fragment token is the credential in the JSON body; rate limited per IP and token hash, enforces org_app_on and entitlement with opaque 404',
+  '/api/sign/pdf': 'public eSign source PDF stream (#3324): same token in JSON body; enforces OTP gate (403 OTP_REQUIRED), bounded concurrency, and opaque 404',
+  '/api/sign/otp/request': 'public eSign email OTP challenge request (#3324): same token in JSON body; rate limited per IP, token hash, and DB hourly cap',
+  '/api/sign/otp/verify': 'public eSign email OTP verification (#3324): same token in JSON body; locks OTP after 5 failed attempts without leaking secrets',
+  '/api/sign/submit': 'public eSign single-use submission (#3324): same token in JSON body; enforces OTP gate (403 SIGN_OTP_REQUIRED) and atomic token consume preventing concurrent replay (409 SIGN_ALREADY_SUBMITTED)',
+  '/api/sign/decline': 'public eSign single-use decline (#3324): same token in JSON body; enforces OTP gate (403 SIGN_OTP_REQUIRED), atomic token consume preventing concurrent replay (409 SIGN_ALREADY_SUBMITTED), and revokes remaining envelope tokens',
+  '/api/sign/delegate': 'public eSign audited signer delegation (#3819): same token in JSON body; enforces org_app_on + entitlement opaque 404, OTP gate (403 SIGN_OTP_REQUIRED), allow_delegation = true, delegation_count < 2 anti-relay cap, single-mailbox RFC validation, mail_suppression check, and atomic token consume',
+  '/api/sign/attachment': 'public eSign signer supporting attachment upload (#3818): active signing token in body, OTP gate (403 SIGN_OTP_REQUIRED), <= 10 MB magic-byte verified PDF/PNG/JPEG, isolated sign_attachment storage, and opaque 404',
+  '/api/sign/verify': 'public eSign certificate integrity lookup (#3324): takes certificateCode and client-hashed sealed PDF sha256; checks org_app_on + entitlement with opaque 404',
+  '/api/sign/direct/view': 'public eSign direct template link view (#3551): fragment token resolves 1-signer template metadata with org_app_on + entitlement opaque 404',
+  '/api/sign/direct/pdf': 'public eSign direct link template PDF stream (#3551): fragment token + optional OTP gate (403 OTP_REQUIRED), bounded concurrency, and opaque 404',
+  '/api/sign/direct/otp/request': 'public eSign direct link email OTP request (#3551): rate limited per IP, token hash, email bucket, and DB hourly cap with opaque 404',
+  '/api/sign/direct/otp/verify': 'public eSign direct link email OTP verify (#3551): validates 6-digit OTP, locks after 5 attempts, and returns short-lived verified claim',
+  '/api/sign/direct/start': 'public eSign direct link self-service start (#3551): atomically enforces max_uses + optional OTP, instantiates sent envelope, and returns single-use signing token without storing plaintext tokens',
+  '/api/sign/public-hub/:orgSlug': 'public eSign self-service template hub (#3820): GET lists only active 1-signer templates with listed_on_public_hub = true (opaque 404 when empty/off/unentitled); POST runs view/pdf/otp/start via crove_sign.public_hub_* definers without exposing direct-link tokens',
   '/api/report/view': "Social's client report link (#643): a signed, expiring report link is the credential",
   '/cal/:file': 'the posting calendar feed (#862): an unguessable feed token in the file name is the credential',
   '/l/:code': 'short link redirects (#706): public by design, they only redirect to the stored target',
@@ -71,6 +96,17 @@ const PUBLIC: Record<string, string> = {
     "the embedded OAuth 2.1 authorization server (ADR-0032, #2975): authorize, token, registration, revocation and JWKS. Public by protocol: a request proves itself with PKCE (S256 only), a single-use code or a rotating refresh token stored only as a hash, is rate limited per address, and grants nothing until a signed-in owner or admin consents on the SPA through /api/rpc",
   '/mcp':
     "the MCP endpoint (ADR-0051 decision 2, #2975): it does not take a browser session, only an access token the embedded authorization server issued for this resource, checked at the edge (signature, issuer, audience) and again against the live grant in the request's own transaction; with no token it answers 401 with the resource metadata challenge and runs no query",
+  '/api/projects/public-roadmap/:orgSlug/:boardSlug': 'public Projects roadmap read (#4398 / #4399, ADR-0057): zero-login read via narrow orgless SECURITY DEFINER resolver checking org_app_on, billing entitlement, and board.enabled = true with identical opaque 404, per-IP rate limit, no-store/no-referrer headers, and zero exposure of internal projects, tasks, or voter hashes/emails',
+  '/api/projects/public-roadmap/:orgSlug/:boardSlug/otp/request': 'public Projects roadmap email OTP challenge request (#4398 / #4399, ADR-0057): zero CAPTCHA per #203; checks org_app_on, entitlement, board.enabled, and mail_suppression with opaque 404, edge IP/board/email rate limits, 2 KB body cap, DB hourly caps in roadmap_otp, and hashes 6-digit OTP via SHA-256',
+  '/api/projects/public-roadmap/:orgSlug/:boardSlug/otp/verify': 'public Projects roadmap email OTP verification (#4398 / #4399, ADR-0057): checks org_app_on, entitlement, and board.enabled with opaque 404, per-IP rate limit, 2 KB body cap, constant-time SHA-256 match locked after 5 failed attempts, and mints short-lived HMAC-signed voter claim',
+  '/api/projects/public-roadmap/:orgSlug/:boardSlug/ideas': 'public Projects roadmap idea submission (#4398 / #4399, ADR-0057): requires valid HMAC voter claim (or signed-in workspace session), enforces org_app_on + entitlement + allow_submissions opaque 404/403, per-IP rate limit, 16 KB body cap, schema check, and forces tainted = true and moderation_status = pending',
+  '/api/projects/public-roadmap/:orgSlug/:boardSlug/votes': 'public Projects roadmap vote toggle and unsubscribe POST (#4398 / #4399, ADR-0057): requires valid HMAC voter claim (or signed-in session) for voting or unsubscribe_token_sha256 match for POST unsubscribe, enforces org_app_on + entitlement + allow_voting, per-IP rate limit, 2 KB body cap, and stores only keyed voter_email_hash',
+  '/api/v1/sign/envelopes': 'external eSign REST envelope list (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:read scope, org_app_on + entitlement opaque 404, per-key rate limit, and excludes hr_contract and meeting_minutes envelopes',
+  '/api/v1/sign/envelopes/:id': 'external eSign REST envelope detail (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:read scope, org_app_on + entitlement opaque 404, excludes hr_contract and meeting_minutes envelopes, and omits signing tokens and OTPs',
+  '/api/v1/sign/envelopes/:id/sealed': 'external eSign REST sealed PDF download (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:read scope, org_app_on + entitlement opaque 404, completed status, and excludes hr_contract and meeting_minutes envelopes',
+  '/api/v1/sign/envelopes/:id/certificate': 'external eSign REST audit certificate download (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:read scope, org_app_on + entitlement opaque 404, completed status, and excludes hr_contract and meeting_minutes envelopes',
+  '/api/v1/sign/templates': 'external eSign REST reusable template list (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:read scope, org_app_on + entitlement opaque 404, and never returns direct-link capability tokens',
+  '/api/v1/sign/envelopes/from-template': 'external eSign REST draft-only envelope creation from template (#4438 / #4441): Bearer org API key hashed via SHA-256, enforces sign:draft scope, org_app_on + entitlement opaque 404, creates status = draft only for human review, and never auto-sends or mints signing tokens',
 };
 
 // Public routes an open PR adds. CI runs the base branch's copy of this suite on a PR, so a new public route is listed
@@ -106,6 +142,11 @@ function app(authenticate: HttpDeps['authenticate']) {
     mailer: { name: 'test', enabled: true, sendRetrySafety: 'unsafe', send: unused, parseWebhook: () => [] } as unknown as NonNullable<HttpDeps['mailer']>,
     // An adapter that takes signed notices, so the bank feed route is registered and listed (ADR-0039, #2044).
     bankFeedWebhooks: { bank_sandbox: { id: 'bank_sandbox', hosts: [], verifyWebhook: () => [] } } as unknown as NonNullable<HttpDeps['bankFeedWebhooks']>,
+    bankFeedHooks: { bank_tingee: { id: 'bank_tingee', hosts: [], hookTimestampFresh: () => true, verifyHook: () => 'ok' } } as unknown as NonNullable<HttpDeps['bankFeedHooks']>,
+    // A marketplace that takes signed pushes, so its route is registered and listed (#4346).
+    marketplacePush: { adapters: ['shopee'] },
+    // The ClientID of MISA AMIS, so its callback is registered and listed (#3903).
+    misaAmisCallback: { clientId: 'misa-client-id-0001' },
     // The Meta app of Ads, so the data deletion callback is registered and listed (ads plan section 9, #2219).
     adsDeletion: { appSecret: 'z'.repeat(32) },
     // The Zalo app and its OA secret key, so the webhook of customers' messages is registered and listed (conversation core, #2304).
@@ -114,6 +155,10 @@ function app(authenticate: HttpDeps['authenticate']) {
     telegramWebhook: { keys: () => [Buffer.alloc(32, 1)] },
     // The Meta app and its verify token, so the Page webhook is registered and listed (conversation core CV2, #2307).
     facebookWebhook: { appSecret: 's'.repeat(32), verifyToken: 'v'.repeat(24) },
+    // Zoom's secret token, so the recording webhook is registered and listed (meetings integrations C3, #3175).
+    zoomWebhook: { secretToken: 'z'.repeat(24) },
+    // The WhatsApp app's secret and verify token, so its webhook is registered and listed (conversation core, #3131).
+    whatsappWebhook: { appSecret: 'w'.repeat(32), verifyToken: 'u'.repeat(24) },
     stream: { hub: { ready: false }, tickets: unused, slots: unused, recheckSeconds: 30 } as unknown as NonNullable<HttpDeps['stream']>,
     // The MCP endpoint's authorization server, so /mcp, /oauth/* and the well-known routes are registered and listed (#2975).
     oauth: { provider: { callback: () => async () => undefined }, issuer: 'http://localhost', resource: 'http://localhost/mcp', verifyAccessToken: async () => null } as unknown as NonNullable<HttpDeps['oauth']>,
@@ -201,6 +246,8 @@ describe('route enumeration (ADR-0028, gate T1)', () => {
 // enumerates the whole route table with such a user, so a route added tomorrow is refused to a token unless someone puts
 // it on the list, in a PR the security review reads. Nothing that reads a meeting's content is on it.
 const UUID = randomUUID();
+// Every scope a token may hold (the runtime's list): a token with all of them reaches exactly the listed routes, and a token with one scope only those of that scope (B2, #3166, the `agenda` scope).
+const ALL_SCOPES = [...EXTENSION_SCOPES];
 
 function extensionAuthenticate(scopes: readonly string[]): HttpDeps['authenticate'] {
   return async (): Promise<AuthUser> => ({
@@ -232,7 +279,7 @@ describe('route enumeration with an extension token (#2582)', () => {
     EXTENSION_ROUTES.some((r) => r.method === method && r.path.replace(':id', UUID) === path);
 
   it('refuses a token on every route of the table but the listed ones', async () => {
-    const target = app(extensionAuthenticate(['meetings']));
+    const target = app(extensionAuthenticate(ALL_SCOPES));
     const open: string[] = [];
     for (const { method, path } of routesOf(target)) {
       if (isPublic(path)) continue;
@@ -249,12 +296,20 @@ describe('route enumeration with an extension token (#2582)', () => {
   });
 
   it('opens exactly the listed routes to a token that holds their scope, and refuses them to one that does not', async () => {
-    const holder = app(extensionAuthenticate(['meetings']));
+    const holder = app(extensionAuthenticate(ALL_SCOPES));
     const other = app(extensionAuthenticate(['somethingelse']));
     for (const route of EXTENSION_ROUTES) {
       const path = route.path.replace(':id', UUID);
       expect(await edgeRefused(holder, route.method, path), `${route.method} ${route.path} for the scope holder`).toBe(false);
       expect(await edgeRefused(other, route.method, path), `${route.method} ${route.path} for another scope`).toBe(route.scope !== null ? true : false);
+    }
+    // A token with one scope opens the routes of that scope and the scope-free ones, and nothing of another scope: the agenda scope opens no meetings route and the meetings scope no agenda route.
+    for (const scope of ALL_SCOPES) {
+      const single = app(extensionAuthenticate([scope]));
+      for (const route of EXTENSION_ROUTES) {
+        const path = route.path.replace(':id', UUID);
+        expect(await edgeRefused(single, route.method, path), `${route.method} ${route.path} for a token with only ${scope}`).toBe(route.scope !== null && route.scope !== scope);
+      }
     }
     // A listed path with another method, a trailing slash, a different case, an encoded segment or a dot segment is no route.
     for (const route of EXTENSION_ROUTES) {
@@ -273,16 +328,53 @@ describe('route enumeration with an extension token (#2582)', () => {
   });
 
   it('keeps every way to read a meeting, a file or the account closed to a token', async () => {
-    const target = app(extensionAuthenticate(['meetings']));
+    const target = app(extensionAuthenticate(ALL_SCOPES));
     const closed: Array<[string, string]> = [
       ['POST', '/api/rpc/meetings/get'],
       ['POST', '/api/rpc/meetings/list'],
       ['POST', '/api/rpc/meetings/delete'],
       ['POST', '/api/rpc/meetings/readers/add'],
       ['POST', '/api/rpc/meetings/settings/get'],
+      // The member's calendar (B1, #3165): only the `agenda` scope's one read (listed in auth-extension.ts) reaches it; the list, the suggestion, the switch and the link stay closed to every token.
+      ['POST', '/api/rpc/meetings/agenda/list'],
+      ['POST', '/api/rpc/meetings/agenda/suggest'],
+      ['POST', '/api/rpc/meetings/agenda/setReadEvents'],
+      ['POST', '/api/rpc/meetings/agenda/link'],
       ['POST', '/api/rpc/extension/tokens/list'],
       ['POST', '/api/rpc/extension/tokens/revoke'],
       ['POST', '/api/rpc/me/get'],
+      // Notes and personal to-dos (Notes v2 E4, #3555 / #3560): the extension's `notes` scope will be write-only; every read route stays closed to a token.
+      ['POST', '/api/rpc/notes/get'],
+      ['POST', '/api/rpc/notes/list'],
+      ['POST', '/api/rpc/notes/search'],
+      ['POST', '/api/rpc/notes/panel'],
+      ['POST', '/api/rpc/notes/exportMine'],
+      ['POST', '/api/rpc/notes/todoPlan'],
+      ['POST', '/api/rpc/notes/organize'],
+      ['POST', '/api/rpc/notes/vyResults'],
+      ['POST', '/api/rpc/notes/privateCounts'],
+      ['POST', '/api/rpc/notes/todos/list'],
+      ['POST', '/api/rpc/notes/todos/get'],
+      ['POST', '/api/rpc/notes/todos/myWork'],
+      ['POST', '/api/rpc/notes/todos/counts'],
+      ['POST', '/api/rpc/notes/create'],
+      ['POST', '/api/rpc/notes/update'],
+      ['POST', '/api/rpc/notes/setVisibility'],
+      ['POST', '/api/rpc/notes/delete'],
+      ['POST', '/api/rpc/notes/versions'],
+      ['POST', '/api/rpc/notes/restoreVersion'],
+      ['POST', '/api/rpc/notes/templates/list'],
+      ['POST', '/api/rpc/notes/templates/create'],
+      ['POST', '/api/rpc/notes/templates/update'],
+      ['POST', '/api/rpc/notes/templates/delete'],
+      ['POST', '/api/rpc/notes/todos/create'],
+      ['POST', '/api/rpc/notes/todos/update'],
+      ['POST', '/api/rpc/notes/todos/complete'],
+      ['POST', '/api/rpc/notes/todos/delete'],
+      ['POST', '/api/rpc/notes/attachments/list'],
+      ['POST', '/api/rpc/notes/attachments/delete'],
+      ['POST', `/api/notes/${UUID}/attachments`],
+      ['GET', `/api/notes/attachments/${UUID}`],
       ['GET', `/api/meetings/${UUID}/audio`],
       ['GET', `/api/meetings/${UUID}/video`],
       ['GET', `/api/files/${UUID}`],
@@ -300,13 +392,13 @@ describe('route enumeration with an extension token (#2582)', () => {
   });
 
   it('lists no route that does not exist, and none that reads content', async () => {
-    const target = app(extensionAuthenticate(['meetings']));
+    const target = app(extensionAuthenticate(ALL_SCOPES));
     const paths = new Set(routesOf(target).map((r) => r.path));
     for (const route of EXTENSION_ROUTES) {
       // The RPC procedures live under the one wildcard route; every other entry is a route of its own.
       const own = route.path.startsWith('/api/rpc/') ? '/api/rpc/*' : route.path;
       expect(paths.has(own), `${route.method} ${route.path}`).toBe(true);
-      expect(route.path, 'a route that streams media or files').not.toMatch(/\/(audio|video)$|^\/api\/files\/:id$|export/);
+      expect(route.path, 'a route that streams media or files').not.toMatch(/\/(audio|video|attachments)$|^\/api\/(files|notes\/attachments)\/:id$|export/);
     }
   });
 });

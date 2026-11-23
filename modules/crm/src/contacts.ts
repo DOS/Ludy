@@ -19,10 +19,10 @@ import {
   type ContactPage,
   type FilterAst,
   type SavedViewSort,
-} from '@crove/kernel-contract';
-import { filterCondition, flagIs, hasText, sortTerms, textContains, valueIs, withinLastDays, type FieldCondition } from '@crove/kernel';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+} from '@ludy/kernel-contract';
+import { filterCondition, flagIs, hasText, sortTerms, textContains, valueIs, withinLastDays, type FieldCondition } from '@ludy/kernel';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery } from '@ludy/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
@@ -55,14 +55,14 @@ const searchContacts: FieldCondition = (op, value, ctx) => {
   const typed = String(value);
   const key = PHONE_TYPED.test(typed) ? phoneKey(typed) : null;
   if (key === null || key.length < 4) return text;
-  return sql<boolean>`(${text} OR crove_kernel.phone_key(p.phone) LIKE ${`${key.replace(/[\\%_]/g, (c) => `\\${c}`)}%`})`;
+  return sql<boolean>`(${text} OR ludy_kernel.phone_key(p.phone) LIKE ${`${key.replace(/[\\%_]/g, (c) => `\\${c}`)}%`})`;
 };
 
 // The company filter (#2438): the people who work at one company, read through a merge (a company merged into another stands for the one kept), or the people with none.
 const companyIs: FieldCondition = (op, value) =>
   op === 'is_empty'
     ? sql<boolean>`p.company_id IS NULL`
-    : sql<boolean>`EXISTS (SELECT 1 FROM crove_kernel.party c0 WHERE c0.org_id = p.org_id AND c0.id = p.company_id AND coalesce(c0.duplicate_of, c0.id) = ${value as string}::uuid)`;
+    : sql<boolean>`EXISTS (SELECT 1 FROM ludy_kernel.party c0 WHERE c0.org_id = p.org_id AND c0.id = p.company_id AND coalesce(c0.duplicate_of, c0.id) = ${value as string}::uuid)`;
 
 // The condition of each field of the `crm.party` scope over the party table (alias p). A contact "has an open deal" when a
 // deal of it sits in an open stage (not Won or Lost); deals are the crm module's own tables (step K1).
@@ -75,7 +75,7 @@ export function contactFields(): Record<string, FieldCondition> {
     has_tax_code: flagIs(hasText(sql`p.tax_code`)),
     company: companyIs,
     has_open_deal: flagIs(sql<boolean>`EXISTS (
-      SELECT 1 FROM crove_crm.deal d JOIN crove_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id
+      SELECT 1 FROM ludy_crm.deal d JOIN ludy_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id
       WHERE d.org_id = p.org_id AND d.party_id = p.id AND s.kind = 'open')`),
     created: withinLastDays(sql`p.created_at`),
   };
@@ -120,6 +120,8 @@ interface Row {
   company_name: string | null;
   people_count: number;
   open_deals: number;
+  actor_origin: 'ui' | 'mcp';
+  tainted: boolean;
   sort_value: string;
 }
 
@@ -156,18 +158,18 @@ export const contactList = defineQuery({
     }
 
     const result = await sql<Row>`
-      SELECT p.id, p.kind, p.name, p.tax_code, p.address, p.email, p.phone, p.version, p.created_at, (${by.text}) AS sort_value,
+      SELECT p.id, p.kind, p.name, p.tax_code, p.address, p.email, p.phone, p.version, p.created_at, p.actor_origin, p.tainted, (${by.text}) AS sort_value,
         -- The company of a person, through a merge to the one kept (#2438).
         c.id AS company_id, c.name AS company_name,
         -- The people who work at a company (the ones linked to a company merged into it too), and the open deals of the party.
-        (SELECT count(*)::int FROM crove_kernel.party x
+        (SELECT count(*)::int FROM ludy_kernel.party x
           WHERE x.org_id = p.org_id AND x.duplicate_of IS NULL AND p.kind = 'organization'
-            AND (x.company_id = p.id OR x.company_id IN (SELECT m.id FROM crove_kernel.party m WHERE m.org_id = p.org_id AND m.duplicate_of = p.id))) AS people_count,
-        (SELECT count(*)::int FROM crove_crm.deal dl JOIN crove_crm.pipeline_stage st ON st.org_id = dl.org_id AND st.id = dl.stage_id
+            AND (x.company_id = p.id OR x.company_id IN (SELECT m.id FROM ludy_kernel.party m WHERE m.org_id = p.org_id AND m.duplicate_of = p.id))) AS people_count,
+        (SELECT count(*)::int FROM ludy_crm.deal dl JOIN ludy_crm.pipeline_stage st ON st.org_id = dl.org_id AND st.id = dl.stage_id
           WHERE dl.org_id = p.org_id AND dl.party_id = p.id AND st.kind = 'open') AS open_deals
-      FROM crove_kernel.party p
-      LEFT JOIN crove_kernel.party c0 ON c0.org_id = p.org_id AND c0.id = p.company_id
-      LEFT JOIN crove_kernel.party c ON c.org_id = c0.org_id AND c.id = coalesce(c0.duplicate_of, c0.id)
+      FROM ludy_kernel.party p
+      LEFT JOIN ludy_kernel.party c0 ON c0.org_id = p.org_id AND c0.id = p.company_id
+      LEFT JOIN ludy_kernel.party c ON c.org_id = c0.org_id AND c.id = coalesce(c0.duplicate_of, c0.id)
       WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND ${where} AND ${after}
       ORDER BY ${sql.join(order, sql`, `)}
       LIMIT ${limit + 1}`.execute(ctx.trx);
@@ -188,6 +190,8 @@ export const contactList = defineQuery({
       company: r.company_id === null || r.company_name === null ? null : { id: r.company_id, name: r.company_name },
       peopleCount: r.people_count,
       openDeals: r.open_deals,
+      actorOrigin: r.actor_origin,
+      tainted: r.tainted,
     }));
     return { items, next: more ? encodeCursor({ f: sorted.field, d: sorted.dir, id: last.id, v: last.sort_value }) : null };
   },

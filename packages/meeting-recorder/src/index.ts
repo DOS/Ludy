@@ -4,6 +4,8 @@
 // store that keeps a recording on the device as it goes, so a reload or a closed tab does not lose it. The screen
 // (routes/meeting-record.tsx) owns the browser APIs; nothing here calls a model, and nothing leaves the device.
 
+import type { RecordingStopReason } from './stop-reason.ts';
+
 export type RecordingKind = 'audio' | 'video';
 
 // Browsers differ: Chrome, Edge and Firefox record WebM (Opus; Firefox audio may be Ogg Opus), Safari records MP4 (AAC).
@@ -108,6 +110,9 @@ export interface RecordingMeta {
   chunkCount: number;
   // Touched while the recording is live (every chunk and a heartbeat), so another tab can tell it is still being written.
   updatedAt: number;
+  // How the recording ended (A1, #3159): 'user' when the recorder clicked stop, a reason code when it ended by itself; absent while
+  // it runs or when nobody saw it end (a closed tab). The upload sends a reason code so the meeting can say it stopped early.
+  stopped?: 'user' | RecordingStopReason;
 }
 
 // Where the chunks live. The screen uses IndexedDB; tests use a map.
@@ -119,7 +124,8 @@ export interface ChunkStore {
   remove(id: string): Promise<void>;
 }
 
-const DB_NAME = 'crove-meeting-recordings';
+export const RECORDINGS_DB_NAME = 'ludy-meeting-recordings';
+export const LEGACY_RECORDINGS_DB_NAME = 'crove-meeting-recordings';
 
 function request<T>(req: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -136,18 +142,87 @@ function done(tx: IDBTransaction): Promise<void> {
   });
 }
 
+async function hasLegacyDb(factory: IDBFactory): Promise<boolean> {
+  if (typeof factory.databases !== 'function') return true;
+  try {
+    const entries = await factory.databases();
+    return entries.some((entry) => entry.name === LEGACY_RECORDINGS_DB_NAME);
+  } catch {
+    return true;
+  }
+}
+
+async function openLegacyDb(factory: IDBFactory): Promise<IDBDatabase> {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    const open = factory.open(LEGACY_RECORDINGS_DB_NAME);
+    open.onsuccess = () => resolve(open.result);
+    open.onerror = () => reject(open.error ?? new Error('Failed to open legacy IndexedDB'));
+  });
+}
+
+// Migrates any un-uploaded recordings and chunks left in `crove-meeting-recordings` once on first store open, without
+// overwriting entries already in `ludy-meeting-recordings` or deleting the legacy database if copying fails.
+async function migrateLegacyRecordings(factory: IDBFactory, newDb: IDBDatabase): Promise<void> {
+  if (!(await hasLegacyDb(factory))) return;
+  const legacyDb = await openLegacyDb(factory);
+  let shouldDeleteLegacy = false;
+  try {
+    if (!legacyDb.objectStoreNames.contains('recordings') || !legacyDb.objectStoreNames.contains('chunks')) {
+      shouldDeleteLegacy = true;
+      return;
+    }
+    const readTx = legacyDb.transaction(['recordings', 'chunks'], 'readonly');
+    const readDone = done(readTx);
+    const recordingsReq = request(readTx.objectStore('recordings').getAll()) as Promise<RecordingMeta[]>;
+    const chunksReq = request(readTx.objectStore('chunks').getAll()) as Promise<Array<{ id: string; seq: number; chunk: Blob }>>;
+    const [recordings, chunks] = await Promise.all([recordingsReq, chunksReq, readDone]);
+
+    if (recordings.length > 0) {
+      const existingTx = newDb.transaction(['recordings'], 'readonly');
+      const existingDone = done(existingTx);
+      const existingReq = request(existingTx.objectStore('recordings').getAll()) as Promise<RecordingMeta[]>;
+      const [existing] = await Promise.all([existingReq, existingDone]);
+      const existingIds = new Set(existing.map((r) => r.id));
+      const toCopy = recordings.filter((r) => !existingIds.has(r.id));
+      if (toCopy.length > 0) {
+        const copiedIds = new Set(toCopy.map((r) => r.id));
+        const writeTx = newDb.transaction(['recordings', 'chunks'], 'readwrite');
+        const writeDone = done(writeTx);
+        for (const meta of toCopy) writeTx.objectStore('recordings').put(meta);
+        for (const row of chunks) {
+          if (copiedIds.has(row.id)) writeTx.objectStore('chunks').put(row);
+        }
+        await writeDone;
+      }
+    }
+    shouldDeleteLegacy = true;
+  } finally {
+    legacyDb.close();
+    if (shouldDeleteLegacy) {
+      try {
+        const del = factory.deleteDatabase(LEGACY_RECORDINGS_DB_NAME);
+        del.onerror = () => undefined;
+        del.onblocked = () => undefined;
+      } catch {
+        // Ignore cleanup errors if IndexedDB refuses deleting the legacy database.
+      }
+    }
+  }
+}
+
 export function createIndexedDbChunkStore(factory: IDBFactory = indexedDB): ChunkStore {
   const opened = new Promise<IDBDatabase>((resolve, reject) => {
-    const open = factory.open(DB_NAME, 1);
+    const open = factory.open(RECORDINGS_DB_NAME, 1);
     open.onupgradeneeded = () => {
       const db = open.result;
       db.createObjectStore('recordings', { keyPath: 'id' });
       db.createObjectStore('chunks', { keyPath: ['id', 'seq'] });
     };
     open.onsuccess = () => {
+      const db = open.result;
       // A newer version of the app in another tab may upgrade the database: let it.
-      open.result.onversionchange = () => open.result.close();
-      resolve(open.result);
+      db.onversionchange = () => db.close();
+      void migrateLegacyRecordings(factory, db).catch(() => undefined).then(() => resolve(db));
     };
     open.onerror = () => reject(open.error ?? new Error('IndexedDB is not available'));
   });
@@ -185,6 +260,8 @@ export interface RecordingWriter {
   meta: () => RecordingMeta;
   addChunk(chunk: Blob, elapsedMs: number): Promise<void>;
   touch(elapsedMs: number): Promise<void>;
+  // Records how the recording ended, once (the first word wins), and saves it with the chunks.
+  markStopped(by: 'user' | RecordingStopReason): Promise<void>;
 }
 
 export async function beginRecording(store: ChunkStore, meta: Omit<RecordingMeta, 'chunkCount' | 'elapsedMs' | 'updatedAt'>): Promise<RecordingWriter> {
@@ -210,6 +287,15 @@ export async function beginRecording(store: ChunkStore, meta: Omit<RecordingMeta
         await store.put(current);
       });
       queue = next.catch(() => undefined);
+      return next;
+    },
+    markStopped(by) {
+      // Set at once (the screen reads it right after), saved behind the chunks.
+      if (current.stopped !== undefined) return Promise.resolve();
+      current = { ...current, stopped: by };
+      // Never rejects: the mark is already in memory, and a device too full to save it must not stop the recording from ending.
+      const next = queue.then(() => store.put(current)).catch(() => undefined);
+      queue = next;
       return next;
     },
   };
@@ -289,3 +375,11 @@ export async function prepareCapture<S extends CaptureStream, R extends CaptureR
 
 // Live notes (ADR-0052 L4a): the sender, the audio-only live recorder wrapper and the stop order.
 export * from './live.ts';
+export * from './notice.ts';
+export * from './stop-reason.ts';
+
+// The reason code an upload of this recording carries (A1, #3159): none when the recorder stopped it, the code when it ended by itself,
+// 'unknown' when nobody saw it end (a closed tab, a crash) and it is being recovered.
+export function stopReasonForUpload(meta: Pick<RecordingMeta, 'stopped'>): RecordingStopReason | undefined {
+  return meta.stopped === 'user' ? undefined : (meta.stopped ?? 'unknown');
+}

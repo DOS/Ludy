@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { DIRECT_UPLOAD_MAX_BYTES, MAX_UPLOAD_BYTES, ORG_HEADER } from '@crove/kernel-contract';
+import { ORG_NOT_OFFBOARDING, type OrgExportView } from '@ludy/kernel';
+import { DIRECT_UPLOAD_MAX_BYTES, MAX_UPLOAD_BYTES, ORG_HEADER } from '@ludy/kernel-contract';
 import {
   BlobConflictError,
   BlobNotFoundError,
@@ -18,7 +19,7 @@ import {
   newInboundBlobId,
   type BlobStore,
   type Runtime,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 import type { AuthUser } from '../src/auth.ts';
 import { ConcurrencyLimiter } from '../src/concurrency.ts';
 import { assertExportKey, assertSplitRoles, extractConcurrency, loadConfig } from '../src/config.ts';
@@ -67,6 +68,14 @@ describe('configuration guards', () => {
     // The sandbox bank feed (ADR-0039): made-up bank lines, never on a deployment others reach.
     expect(() => loadConfig({ ...base, BANK_FEED_SANDBOX: 'true' })).not.toThrow();
     expect(() => loadConfig({ ...base, BANK_FEED_SANDBOX: 'true', PUBLIC_URL: 'https://books.example.com' })).toThrow(/BANK_FEED_SANDBOX/);
+    // The Tingee bank feed (ADR-0039, #2045): off by default; it seals each org's credential, so it needs the credential key; its UAT host is for the UAT run, never a public deployment.
+    expect(loadConfig({ ...base }).BANK_FEED_TINGEE).toBe('false');
+    expect(() => loadConfig({ ...base, BANK_FEED_TINGEE: 'true' })).toThrow(/CREDENTIAL_KEY/);
+    expect(() => loadConfig({ ...base, BANK_FEED_TINGEE: 'true', CREDENTIAL_KEY: Buffer.alloc(32, 7).toString('base64') })).not.toThrow();
+    expect(() => loadConfig({ ...base, BANK_FEED_TINGEE_UAT: 'true' })).toThrow(/BANK_FEED_TINGEE_UAT/);
+    const tingee = { ...base, BANK_FEED_TINGEE: 'true', BANK_FEED_TINGEE_UAT: 'true', CREDENTIAL_KEY: Buffer.alloc(32, 7).toString('base64') };
+    expect(() => loadConfig(tingee)).not.toThrow();
+    expect(() => loadConfig({ ...tingee, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' })).toThrow(/BANK_FEED_TINGEE_UAT/);
     // The sandbox ad platform (ADR-0040): made-up ad spend next to the real books, never on a deployment others reach that
     // runs the ads module. Unset, it is off on a public URL.
     const publicUrl = { PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' };
@@ -120,30 +129,32 @@ describe('configuration guards', () => {
       expect(() => loadConfig(sample(name, 'r4nd0m-Pa55-0123456789abcdef'))).not.toThrow();
     }
     // The password may also come as a query parameter, which node-postgres reads.
-    expect(() => loadConfig({ ...publicBase, DATABASE_URL: 'postgres://crove_app@db:5432/postgres?password=local-app-password' })).toThrow(/DATABASE_URL carries a database password/);
+    expect(() => loadConfig({ ...publicBase, DATABASE_URL: 'postgres://ludy_app@db:5432/postgres?password=local-app-password' })).toThrow(/DATABASE_URL carries a database password/);
     // Locally the compose fallbacks are the documented default.
-    expect(() => loadConfig({ ...base, DATABASE_URL: 'postgres://crove_app:local-app-password@db:5432/postgres' })).not.toThrow();
-    expect(() => loadConfig({ ...base, PUBLIC_URL: 'http://localhost:8080', DATABASE_URL: 'postgres://crove_app:local-app-password@db:5432/postgres' })).not.toThrow();
+    expect(() => loadConfig({ ...base, DATABASE_URL: 'postgres://ludy_app:local-app-password@db:5432/postgres' })).not.toThrow();
+    expect(() => loadConfig({ ...base, PUBLIC_URL: 'http://localhost:8080', DATABASE_URL: 'postgres://ludy_app:local-app-password@db:5432/postgres' })).not.toThrow();
     // No password in the URL, or no URL at all (the connection fails on its own later), is not a sample password.
     expect(() => loadConfig({ ...publicBase, DATABASE_URL: 'postgres://localhost/x' })).not.toThrow();
   });
 
   // #2118: a missing compose.pilot.yml or a stray profile must not silently run the API on the worker's login.
-  it('starts the all role on a public PUBLIC_URL only with CROVE_ALLOW_ALL_IN_ONE=true', () => {
+  it('starts the all role on a public PUBLIC_URL only with LUDY_ALLOW_ALL_IN_ONE=true / CROVE_ALLOW_ALL_IN_ONE=true', () => {
     const publicConfig = (extra: Record<string, string> = {}) => loadConfig({ ...base, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1', ...extra });
-    expect(() => assertSplitRoles(publicConfig(), 'all')).toThrow(/CROVE_ALLOW_ALL_IN_ONE=true/);
+    expect(() => assertSplitRoles(publicConfig(), 'all')).toThrow(/LUDY_ALLOW_ALL_IN_ONE=true/);
     expect(() => assertSplitRoles(publicConfig({ CROVE_ALLOW_ALL_IN_ONE: 'false' }), 'all')).toThrow(/separate processes/);
     expect(() => assertSplitRoles(publicConfig({ CROVE_ALLOW_ALL_IN_ONE: '' }), 'all')).toThrow(/separate processes/);
     expect(() => assertSplitRoles(publicConfig({ CROVE_ALLOW_ALL_IN_ONE: 'true' }), 'all')).not.toThrow();
+    expect(() => assertSplitRoles(publicConfig({ LUDY_ALLOW_ALL_IN_ONE: 'true' }), 'all')).not.toThrow();
     for (const role of ['api', 'worker'] as const) expect(() => assertSplitRoles(publicConfig(), role)).not.toThrow();
     // A laptop needs no opt-in.
     expect(() => assertSplitRoles(loadConfig(base), 'all')).not.toThrow();
-    expect(() => loadConfig({ ...base, CROVE_ALLOW_ALL_IN_ONE: 'yes' })).toThrow(/CROVE_ALLOW_ALL_IN_ONE/);
+    expect(() => loadConfig({ ...base, CROVE_ALLOW_ALL_IN_ONE: 'yes' })).toThrow(/LUDY_ALLOW_ALL_IN_ONE/);
+    expect(() => loadConfig({ ...base, LUDY_ALLOW_ALL_IN_ONE: 'true', CROVE_ALLOW_ALL_IN_ONE: 'false' })).toThrow(/LUDY_ALLOW_ALL_IN_ONE and CROVE_ALLOW_ALL_IN_ONE are both set with conflicting values/);
   });
 
   // #2133: keeping the worker's all-org login out of the API does not rest on how the container was composed.
   it('refuses the api role on a public PUBLIC_URL when it holds WORKER_DATABASE_URL, and only then', () => {
-    const worker = { WORKER_DATABASE_URL: 'postgres://crove_worker:worker-ref@db:5432/postgres' };
+    const worker = { WORKER_DATABASE_URL: 'postgres://ludy_worker:worker-ref@db:5432/postgres' };
     const publicConfig = (extra: Record<string, string> = {}) => loadConfig({ ...base, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1', ...extra });
     expect(() => assertSplitRoles(publicConfig(worker), 'api')).toThrow(/api role must not hold WORKER_DATABASE_URL/);
     // The message names the setting and never its value.
@@ -162,8 +173,8 @@ describe('configuration guards', () => {
   it('refuses the api role on a public PUBLIC_URL when it holds the admin login, or a LISTEN url on the worker login, and only then', () => {
     const publicConfig = (extra: Record<string, string> = {}) => loadConfig({ ...base, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1', ...extra });
     const admin = { ADMIN_DATABASE_URL: 'postgres://postgres:admin-ref@db:5432/postgres' };
-    const listenWorker = { DATABASE_LISTEN_URL: 'postgres://crove_worker:listen-ref@db:5432/postgres' };
-    const listenApp = { DATABASE_LISTEN_URL: 'postgres://crove_app:listen-ref@db:5432/postgres' };
+    const listenWorker = { DATABASE_LISTEN_URL: 'postgres://ludy_worker:listen-ref@db:5432/postgres' };
+    const listenApp = { DATABASE_LISTEN_URL: 'postgres://ludy_app:listen-ref@db:5432/postgres' };
     expect(() => assertSplitRoles(publicConfig(admin), 'api')).toThrow(/api role must not hold ADMIN_DATABASE_URL/);
     expect(() => assertSplitRoles(publicConfig(listenWorker), 'api')).toThrow(/api role must not hold a DATABASE_LISTEN_URL on the worker login/);
     // The message names the setting and never a value.
@@ -215,14 +226,16 @@ describe('configuration guards', () => {
 
   // Plan Decision 12, ADR-0031.
   it('enables every module by default, always keeps kernel and refuses an unknown module', () => {
-    expect(loadConfig(base).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings']);
-    expect(loadConfig({ ...base, CROVE_MODULES: '  ' }).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings']);
-    expect(loadConfig({ ...base, CROVE_MODULES: ',' }).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings']);
-    expect(loadConfig({ ...base, CROVE_MODULES: ' , ,' }).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings']);
+    expect(loadConfig(base).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
+    expect(loadConfig({ ...base, CROVE_MODULES: '  ' }).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
+    expect(loadConfig({ ...base, CROVE_MODULES: ',' }).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
+    expect(loadConfig({ ...base, CROVE_MODULES: ' , ,' }).CROVE_MODULES).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes', 'hr', 'meetings', 'projects', 'sign']);
     expect(loadConfig({ ...base, CROVE_MODULES: 'kernel' }).CROVE_MODULES).toEqual(['kernel']);
     expect(loadConfig({ ...base, CROVE_MODULES: ' Finance ' }).CROVE_MODULES).toEqual(['kernel', 'finance']);
     expect(loadConfig({ ...base, CROVE_MODULES: 'finance,kernel' }).CROVE_MODULES).toEqual(['kernel', 'finance']);
-    expect(() => loadConfig({ ...base, CROVE_MODULES: 'kernel,service' })).toThrow(/CROVE_MODULES \(unknown module\(s\) service; available: kernel, finance, social, ads, crm, notes, hr, meetings\)/);
+    expect(() => loadConfig({ ...base, CROVE_MODULES: 'kernel,service' })).toThrow(/LUDY_MODULES \(unknown module\(s\) service; available: kernel, finance, social, ads, crm, notes, hr, meetings, projects, sign\)/);
+    expect(loadConfig({ ...base, LUDY_MODULES: 'finance,crm', CROVE_MODULES: 'finance,crm' }).LUDY_MODULES).toEqual(['kernel', 'finance', 'crm']);
+    expect(() => loadConfig({ ...base, LUDY_MODULES: 'finance', CROVE_MODULES: 'crm' })).toThrow(/LUDY_MODULES and CROVE_MODULES are both set with conflicting values/);
   });
 
   it('never resolves the session check to "no check" by default', () => {
@@ -373,6 +386,25 @@ describe('configuration guards', () => {
     };
     expect(await config({})).toBeNull();
     expect(await config({ SUPPORT_URL: 'mailto:support@example.com' })).toBe('mailto:support@example.com');
+  });
+
+  // #2704: the sign-in buttons the app shows besides email and password come from AUTH_OAUTH_PROVIDERS.
+  it('hands the sign-in provider ids to the app through /api/config, or none', async () => {
+    const providers = async (env: Record<string, string>) => {
+      const app = createHttpApp({
+        config: loadConfig({ ...base, WEB_DIST: '/nonexistent', ...env }),
+        runtime: { installed: () => true, modules: () => ['kernel'] } as unknown as Runtime,
+        store: {} as BlobStore,
+        authenticate: async () => {
+          throw new Error('not used');
+        },
+        pool: {} as pg.Pool,
+        aiEnabled: false,
+      });
+      return ((await (await app.request('/api/config')).json()) as { authProviders: unknown }).authProviders;
+    };
+    expect(await providers({})).toEqual([]);
+    expect(await providers({ AUTH_OAUTH_PROVIDERS: 'google,github' })).toEqual(['google', 'github']);
   });
 
   // #2192: a store without browser transfers (R2) can still sign a read for the platforms that fetch media by URL, and the
@@ -557,7 +589,7 @@ describe('GET /version', () => {
     expect(midway.status).toBe(503);
     expect(await midway.json()).toEqual({ build: 'v1.2.3', migrationsMissing: null });
     // A database no migration has run on misses every migration.
-    const fresh = Object.assign(new Error('relation "crove_meta.schema_migrations" does not exist'), { code: '42P01' });
+    const fresh = Object.assign(new Error('relation "ludy_meta.schema_migrations" does not exist'), { code: '42P01' });
     const empty = { connect: async () => ({ query: async () => Promise.reject(fresh), release: () => undefined }) } as unknown as Partial<pg.Pool>;
     expect(await (await app({}, empty).request('/version')).json()).toEqual({
       build: 'dev',
@@ -566,8 +598,11 @@ describe('GET /version', () => {
   });
 
   it('takes a build id of letters, digits, dot, dash and underscore only', () => {
-    expect(loadConfig({ ...base, CROVE_BUILD: ' ' }).CROVE_BUILD).toBeUndefined();
-    for (const bad of ['a b', '<script>', 'x'.repeat(65)]) expect(() => loadConfig({ ...base, CROVE_BUILD: bad }), bad).toThrow(/CROVE_BUILD/);
+    expect(loadConfig({ ...base, LUDY_BUILD: ' ' }).LUDY_BUILD).toBeUndefined();
+    expect(loadConfig({ ...base, CROVE_BUILD: 'abc-123' }).LUDY_BUILD).toBe('abc-123');
+    expect(loadConfig({ ...base, LUDY_BUILD: 'abc-123', CROVE_BUILD: 'abc-123' }).CROVE_BUILD).toBe('abc-123');
+    expect(() => loadConfig({ ...base, LUDY_BUILD: 'abc', CROVE_BUILD: 'def' })).toThrow(/LUDY_BUILD and CROVE_BUILD are both set with conflicting values/);
+    for (const bad of ['a b', '<script>', 'x'.repeat(65)]) expect(() => loadConfig({ ...base, CROVE_BUILD: bad }), bad).toThrow(/LUDY_BUILD/);
   });
 });
 
@@ -986,6 +1021,30 @@ describe('ZIP uploads (bulk intake, #314)', () => {
     expect(await rar.json()).toMatchObject({ code: 'UNSUPPORTED_TYPE' });
     expect(executed.length).toBe(count);
   });
+
+  it('stores the signed agreement of an invoice correction as a file of source agreement, a PDF or an image and nothing else (#2504)', async () => {
+    const pdf = new Uint8Array([...new TextEncoder().encode('%PDF-1.4\n'), 1, 2, 3]);
+    const ok = await post(pdf, 'bien-ban.pdf', 'agreement');
+    expect(ok.status).toBe(200);
+    const ingest = executed.at(-1);
+    expect(ingest?.name).toBe('kernel.file.ingest');
+    expect(ingest?.input).toMatchObject({ contentType: 'application/pdf', source: 'agreement', sizeBytes: pdf.byteLength });
+    // The photo or scan of the signed paper is accepted too, whatever the extension says: the content decides.
+    const jpg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0, 0xff, 0xd9]);
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 0x1f, 0x15, 0xc4, 0x89]);
+    const webp = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0x1a, 0, 0, 0, 0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x4c, 0x0d, 0, 0, 0, 0x2f, 0, 0, 0, 0x10, 0x07, 0x10, 0x11, 0x11, 0x88, 0x88, 0xfe, 7, 0]);
+    for (const [bytes, type] of [[jpg, 'image/jpeg'], [png, 'image/png'], [webp, 'image/webp']] as const) {
+      expect((await post(bytes, 'scan.bin', 'agreement')).status).toBe(200);
+      expect(executed.at(-1)?.input).toMatchObject({ contentType: type, source: 'agreement' });
+    }
+    // An invoice XML or an archive is no agreement, and nothing is recorded for it.
+    const count = executed.length;
+    const xml = await post(FIXTURE, 'hd.xml', 'agreement');
+    expect(xml.status).toBe(415);
+    expect(await xml.json()).toMatchObject({ code: 'UNSUPPORTED_TYPE' });
+    expect((await post(zip, 'bien-ban.zip', 'agreement')).status).toBe(415);
+    expect(executed.length).toBe(count);
+  });
 });
 
 describe('uploads through the kernel (#432)', () => {
@@ -1202,5 +1261,271 @@ describe('export slots', () => {
     } finally {
       failure = null;
     }
+  });
+});
+
+describe('org export owner-run route (#4137)', () => {
+  const orgId = randomUUID();
+  const owner: AuthUser = { userId: randomUUID(), email: 'owner@example.com', name: null, aal: 'aal1', sessionId: randomUUID(), mfaAt: null };
+  const view: OrgExportView = { status: 'active', requestedAt: null, ownerRunTables: [], export: null };
+  const stream = vi.fn();
+  const app = createHttpApp({
+    config: loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: 'crove-auth', WEB_DIST: '/nonexistent' }),
+    runtime: {
+      installed: () => true,
+      modules: () => ['kernel'],
+      forUser: async () => [{ orgId, slug: 'acme', name: 'Acme', role: 'owner' }],
+      query: async (name: string) => {
+        if (name === 'kernel.org.export.get') return view;
+        throw new Error(`unexpected query ${name}`);
+      },
+      execute: async () => ({}),
+      stream,
+    } as unknown as Runtime,
+    store: {} as BlobStore,
+    authenticate: async () => owner,
+    pool: {} as pg.Pool,
+    aiEnabled: false,
+  });
+
+  it('refuses owner-run export tables on an active org with the shared ORG_NOT_OFFBOARDING message', async () => {
+    for (const table of ['meetings.glossary_term', 'hr.payroll_employee']) {
+      const response = await app.request(`/api/org-export/${table}`, {
+        headers: { authorization: 'Bearer owner', [ORG_HEADER]: 'acme' },
+      });
+      expect(response.status, table).toBe(409);
+      expect(await response.json(), table).toEqual({
+        code: ORG_NOT_OFFBOARDING,
+        message: 'Chỉ tải được các tệp này khi tổ chức đang được đóng',
+      });
+    }
+    expect(stream).not.toHaveBeenCalled();
+  });
+});
+
+describe('dual LUDY_* / CROVE_* env, dual headers and fail-closed conflicts (#3967)', () => {
+  const base = { DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: 'ludy-auth', WEB_DIST: '/nonexistent' };
+
+  it('fails closed on conflicting LUDY_* vs CROVE_* env vars without echoing secret values', () => {
+    const keyA = Buffer.alloc(32, 7).toString('base64');
+    const keyB = Buffer.alloc(32, 8).toString('base64');
+    let contextErr = '';
+    try {
+      loadConfig({ ...base, LUDY_CONTEXT_TOKEN_KEY: keyA, CROVE_CONTEXT_TOKEN_KEY: keyB });
+    } catch (error) {
+      contextErr = (error as Error).message;
+    }
+    expect(contextErr).toMatch(/LUDY_CONTEXT_TOKEN_KEY and CROVE_CONTEXT_TOKEN_KEY are both set with conflicting values/);
+    expect(contextErr).not.toContain(keyA);
+    expect(contextErr).not.toContain(keyB);
+    expect(() => loadConfig({ ...base, LUDY_BUILD_TIME: '2026-11-22T00:00:00Z', CROVE_BUILD_TIME: '2026-11-22T01:00:00Z' })).toThrow(
+      /LUDY_BUILD_TIME and CROVE_BUILD_TIME are both set with conflicting values/,
+    );
+    expect(loadConfig({ ...base, LUDY_CONTEXT_TOKEN_KEY: keyA, CROVE_CONTEXT_TOKEN_KEY: keyA }).LUDY_CONTEXT_TOKEN_KEY).toBe(keyA);
+  });
+
+  it('accepts x-ludy-org and x-crove-org equally and rejects conflicting values on routes and /api/rpc/*', async () => {
+    const orgId = randomUUID();
+    const owner: AuthUser = { userId: randomUUID(), email: 'owner@example.com', name: null, aal: 'aal1', sessionId: randomUUID(), mfaAt: null };
+    const app = createHttpApp({
+      config: loadConfig(base),
+      runtime: {
+        installed: () => true,
+        modules: () => ['kernel'],
+        forUser: async () => [{ orgId, slug: 'acme', name: 'Acme', role: 'owner' }],
+        query: async () => ({ status: 'active', requestedAt: null, ownerRunTables: [], export: null }),
+        execute: async () => ({}),
+      } as unknown as Runtime,
+      store: {} as BlobStore,
+      authenticate: async () => owner,
+      pool: {} as pg.Pool,
+      aiEnabled: false,
+    });
+
+    for (const headers of [
+      { [ORG_HEADER]: 'acme' },
+      { 'x-crove-org': 'acme' },
+      { [ORG_HEADER]: 'acme', 'x-crove-org': 'acme' },
+    ]) {
+      const response = await app.request('/api/org-export/meetings.glossary_term', { headers: { authorization: 'Bearer owner', ...headers } });
+      expect(response.status, JSON.stringify(headers)).toBe(409);
+      expect(await response.json()).toMatchObject({ code: ORG_NOT_OFFBOARDING });
+    }
+
+    const routeConflict = await app.request('/api/org-export/meetings.glossary_term', {
+      headers: { authorization: 'Bearer owner', [ORG_HEADER]: 'acme', 'x-crove-org': 'beta' },
+    });
+    expect(routeConflict.status).toBe(400);
+    expect(await routeConflict.json()).toEqual({ code: 'ORG_HEADER_CONFLICT', message: 'Conflicting x-ludy-org and x-crove-org headers' });
+
+    const rpcConflict = await app.request('/api/rpc/orgs/list', {
+      method: 'POST',
+      headers: { authorization: 'Bearer owner', 'content-type': 'application/json', [ORG_HEADER]: 'acme', 'x-crove-org': 'beta' },
+      body: '{}',
+    });
+    expect(rpcConflict.status).toBe(400);
+    expect(await rpcConflict.json()).toEqual({ code: 'ORG_HEADER_CONFLICT', message: 'Conflicting x-ludy-org and x-crove-org headers' });
+  });
+
+  it('accepts x-ludy-invite / x-crove-invite equally, fails closed on mismatch, and drops both before upstream forwarding', async () => {
+    const seen: Array<{ path: string; headers: IncomingHttpHeaders }> = [];
+    const upstream = createServer((req, res) => {
+      seen.push({ path: req.url ?? '', headers: req.headers });
+      res.setHeader('content-type', 'application/json');
+      res.end('{"ok":true}');
+    });
+    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+    try {
+      const { port } = upstream.address() as AddressInfo;
+      const validToken = 'a'.repeat(43);
+      const otherToken = 'b'.repeat(43);
+      let checkedTokens: string[] = [];
+      const app = createHttpApp({
+        config: loadConfig({ ...base, AUTH_UPSTREAM_URL: `http://127.0.0.1:${port}`, AUTH_SIGNUP_POLICY: 'invite_only' }),
+        runtime: { installed: () => true, modules: () => ['kernel'] } as unknown as Runtime,
+        store: {} as BlobStore,
+        authenticate: async () => {
+          throw new Error('not used');
+        },
+        pool: {} as pg.Pool,
+        aiEnabled: false,
+        emailLimiter: {
+          reserve: async () => ({ allowed: true, reservation: 'slot' }),
+          release: async () => {},
+        },
+        signupRefusalLimiter: {
+          reserve: async () => ({ allowed: true, release: async () => {} }),
+        },
+        signupInviteChecks: {
+          held: async () => false,
+          matches: async (_email, token) => {
+            checkedTokens.push(token);
+            return token === validToken;
+          },
+        },
+      });
+
+      const signup = (headers: Record<string, string>) =>
+        app.request('/auth/v1/signup', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...headers },
+          body: JSON.stringify({ email: 'invited@example.test', password: 'correct-horse-battery-staple' }),
+        });
+
+      for (const headers of [
+        { 'x-ludy-invite': validToken },
+        { 'x-crove-invite': validToken },
+        { 'x-ludy-invite': validToken, 'x-crove-invite': validToken },
+      ]) {
+        seen.length = 0;
+        checkedTokens = [];
+        const res = await signup(headers);
+        expect(res.status, JSON.stringify(headers)).toBe(200);
+        expect(checkedTokens).toEqual([validToken]);
+        expect(seen).toHaveLength(1);
+        expect(seen[0]?.headers['x-ludy-invite']).toBeUndefined();
+        expect(seen[0]?.headers['x-crove-invite']).toBeUndefined();
+      }
+
+      seen.length = 0;
+      checkedTokens = [];
+      const conflict = await signup({ 'x-ludy-invite': validToken, 'x-crove-invite': otherToken });
+      expect(conflict.status).toBe(403);
+      expect(checkedTokens).toEqual([]);
+      expect(seen).toHaveLength(0);
+
+      seen.length = 0;
+      const proxied = await app.request('/auth/v1/token?grant_type=password', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-ludy-invite': validToken, 'x-crove-invite': otherToken },
+        body: '{}',
+      });
+      expect(proxied.status).toBe(200);
+      expect(seen).toHaveLength(1);
+      expect(seen[0]?.headers['x-ludy-invite']).toBeUndefined();
+      expect(seen[0]?.headers['x-crove-invite']).toBeUndefined();
+
+      const allowlistApp = createHttpApp({
+        config: loadConfig({ ...base, AUTH_UPSTREAM_URL: `http://127.0.0.1:${port}`, AUTH_SIGNUP_POLICY: 'allowlist', AUTH_SIGNUP_ALLOWED_DOMAINS: 'allowed.test' }),
+        runtime: { installed: () => true, modules: () => ['kernel'] } as unknown as Runtime,
+        store: {} as BlobStore,
+        authenticate: async () => {
+          throw new Error('not used');
+        },
+        pool: {} as pg.Pool,
+        aiEnabled: false,
+        emailLimiter: {
+          reserve: async () => ({ allowed: true, reservation: 'slot' }),
+          release: async () => {},
+        },
+        signupRefusalLimiter: {
+          reserve: async () => ({ allowed: true, release: async () => {} }),
+        },
+        signupInviteChecks: {
+          held: async () => false,
+          matches: async (_email, token) => token === validToken,
+        },
+      });
+      seen.length = 0;
+      const allowlistConflict = await allowlistApp.request('/auth/v1/signup', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-ludy-invite': validToken, 'x-crove-invite': otherToken },
+        body: JSON.stringify({ email: 'newcomer@allowed.test', password: 'correct-horse-battery-staple' }),
+      });
+      expect(allowlistConflict.status).toBe(403);
+      expect(seen).toHaveLength(0);
+    } finally {
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+    }
+  });
+
+  it('accepts x-ludy-recipient and x-crove-recipient equally on inbound email and returns 400 on conflict', async () => {
+    const INBOUND_SECRET = 'z'.repeat(32);
+    const stored: string[] = [];
+    const app = createHttpApp({
+      config: loadConfig({ ...base, INBOUND_DOMAIN: 'in.test', INBOUND_SECRET }),
+      runtime: {
+        installed: () => true,
+        modules: () => ['kernel'],
+        orgless: async () => true,
+      } as unknown as Runtime,
+      store: {
+        put: async (key: string) => {
+          stored.push(key);
+          return 'content:test';
+        },
+        get: async () => new Uint8Array(),
+        delete: async () => {},
+      } as unknown as BlobStore,
+      authenticate: async () => {
+        throw new Error('not used');
+      },
+      pool: {} as pg.Pool,
+      aiEnabled: false,
+    });
+    const addr = `${'a'.repeat(24)}@in.test`;
+    const send = (headers: Record<string, string>) =>
+      app.request('/api/inbound/email', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${INBOUND_SECRET}`, ...headers },
+        body: 'From: sender@example.test\r\nSubject: Hi\r\n\r\nBody',
+      });
+
+    for (const headers of [
+      { 'x-ludy-recipient': addr },
+      { 'x-crove-recipient': addr },
+      { 'x-ludy-recipient': addr, 'x-crove-recipient': addr },
+    ]) {
+      stored.length = 0;
+      const res = await send(headers);
+      expect(res.status, JSON.stringify(headers)).toBe(202);
+      expect(stored).toHaveLength(1);
+    }
+
+    stored.length = 0;
+    const conflict = await send({ 'x-ludy-recipient': addr, 'x-crove-recipient': `${'b'.repeat(24)}@in.test` });
+    expect(conflict.status).toBe(400);
+    expect(await conflict.json()).toEqual({ code: 'RECIPIENT_HEADER_CONFLICT', message: 'Conflicting x-ludy-recipient and x-crove-recipient headers' });
+    expect(stored).toHaveLength(0);
   });
 });

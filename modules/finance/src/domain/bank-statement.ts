@@ -4,8 +4,8 @@
 // stored facts and inserts what this calls new or ambiguous; the database's unique key on (account, dedupe_key) is the
 // last word on duplicates.
 // Amounts go through decimal.js, never JS numbers.
-import { isCalendarDate, type BankFeedLine, type BankImportPreview, type BankLineStatus, type BankRowError, type BankStatementImport } from '@crove/kernel-contract';
-import { Decimal, type DecimalValue, type Money } from '@crove/l10n-vn';
+import { isCalendarDate, type BankFeedLine, type BankImportPreview, type BankLineStatus, type BankRowError, type BankStatementImport } from '@ludy/kernel-contract';
+import { Decimal, type DecimalValue, type Money } from '@ludy/l10n-vn';
 import { AMOUNT_LIMIT } from './money.ts';
 
 // A row that parsed: position is its place in the file once put oldest first (1-based).
@@ -247,6 +247,27 @@ export interface StatementCheck {
   lines: Array<StatementLine & { key: string | null; ambiguous: boolean }>;
   // Every parsed line's key, for looking up the stored ones.
   keys: string[];
+}
+
+// A statement checked for an account a feed supplies from `from` on (#4218): the file's lines dated on or after it are
+// skipped, shown as duplicates (the feed already holds or will bring them) and never stored, and the balance breaks
+// they would have shown go with them. Lines before the day are checked and stored as ever. The preview says how many
+// were skipped, so the screen can warn.
+export function skipFedLines(checked: StatementCheck, from: string): StatementCheck {
+  let leftOut = 0;
+  const counts = { ...checked.preview.counts };
+  const rows = checked.preview.rows.map((row) => {
+    if (row.date === null || row.date < from || row.status === null || row.status === 'duplicate') return row;
+    counts[row.status]--;
+    counts.duplicate++;
+    leftOut++;
+    return { ...row, status: 'duplicate' as const, clash: null };
+  });
+  return {
+    ...checked,
+    lines: checked.lines.filter((l) => l.date < from),
+    preview: { ...checked.preview, rows, counts, breaks: checked.preview.breaks.filter((b) => b.date < from), feed: { from, leftOut } },
+  };
 }
 
 // The rows of a file, parsed and put oldest first, with their keys. Rows with errors are kept for the preview.

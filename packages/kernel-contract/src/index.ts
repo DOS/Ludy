@@ -2,26 +2,42 @@ export * from './schemas.ts';
 export * from './contract.ts';
 export * from './opening-balance.ts';
 export * from './accounts.ts';
+export * from './misa-check.ts';
+export * from './misa-amis-match.ts';
+export * from './misa-amis-preview.ts';
+export * from './misa-amis-push.ts';
 export * from './misa-goods.ts';
 export * from './tax-code.ts';
 export * from './legal-entity.ts';
 export * from './roles.ts';
 export * from './cash-voucher.ts';
+export * from './household.ts';
+export * from './marketplace-vat-rate.ts';
 export * from './journal-voucher.ts';
 export * from './personal-data.ts';
 export * from './portal-list.ts';
 export * from './portal-sync.ts';
 export * from './vat-deadline.ts';
+export * from './vat-late.ts';
 export * from './tax-calendar.ts';
 export * from './vietnam-time.ts';
 export * from './bank-statement.ts';
 export * from './payment-reminder.ts';
+export * from './finance-month-close.ts';
+export * from './finance-cash-forecast.ts';
 export * from './finance-overview.ts';
+export * from './finance-expense-variance.ts';
 export * from './einvoice.ts';
+export * from './einvoice-notice.ts';
+export * from './supplier-bank.ts';
+export * from './supplier-payment.ts';
 export * from './stock.ts';
 export * from './marketplace.ts';
+export * from './marketplace-columns.ts';
 export * from './marketplace-connections.ts';
+export * from './misa-amis-connections.ts';
 export * from './marketplace-balance.ts';
+export * from './marketplace-column-profile.ts';
 export * from './timeline.ts';
 export * from './audit.ts';
 export * from './sort-key.ts';
@@ -34,12 +50,16 @@ export * from './finance-orders.ts';
 export * from './contact-company.ts';
 export * from './contact-import.ts';
 export * from './conversations.ts';
+export * from './engage-wake.ts';
 export * from './mail-address.ts';
 export * from './signals.ts';
 export * from './today.ts';
 export * from './coworkers.ts';
+export * from './sign.ts';
+export * from './projects-roadmap.ts';
 
-export const ORG_HEADER = 'x-crove-org';
+export const ORG_HEADER = 'x-ludy-org';
+export const LEGACY_ORG_HEADER = 'x-crove-org';
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 // When the store takes presigned uploads, files of at most this size still go through the kernel (POST /api/files):
 // bulk intake (#314) sends a batch of 200 e-invoice XML files that way instead of opening 200 upload grants. The
@@ -47,6 +67,8 @@ export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 export const DIRECT_UPLOAD_MAX_BYTES = 4 * 1024 * 1024;
 // text/csv: a bank statement (#2142), read into bank lines by the finance module instead of an invoice proposal; an .xlsx
 // statement arrives as a ZIP and is told from an archive of invoices when the worker reads it.
+// The signed agreement of an invoice correction (#2504): a PDF, or the photo or scan of the signed paper.
+export const AGREEMENT_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
 export const ACCEPTED_UPLOAD_TYPES = ['application/xml', 'text/xml', 'application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'text/csv'];
 // Bulk intake (#314): a ZIP of documents, up to MAX_UPLOAD_BYTES like any document. It is stored as a file, opened in
 // the parsing sandbox by the worker, and every entry the sandbox returns becomes a document of its own.
@@ -74,11 +96,16 @@ export const MAX_SOCIAL_VIDEO_MS = 3 * 3600 * 1000;
 // Meeting audio and video (issue #2576, ADR-0047, meetings plan M2): audio up to 300 MB, video up to 2 GB.
 export const MAX_MEETING_AUDIO_BYTES = 300 * 1024 * 1024;
 export const MAX_MEETING_VIDEO_BYTES = 2 * 1024 * 1024 * 1024;
+// The longest meeting the server takes (plan §10: 2 hours; a test ties it to the media sandbox's limit). The in-app recorder stops at it,
+// so a recording that runs on is never refused at upload for its length.
+export const MAX_MEETING_SECONDS = 2 * 60 * 60;
 export const MEETING_AUDIO_TYPES = ['audio/ogg', 'audio/webm', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/x-m4a', 'audio/aac'];
 export const MEETING_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime'];
 // import: a spreadsheet for a module's import (the tax portal's purchase list, #465). Stored with source 'import' and
 // never read as a document; the module that imports it has it read in the parsing sandbox.
-export const UPLOAD_PURPOSES = ['document', 'social', 'import', 'meeting_audio', 'meeting_video'] as const;
+// sign_document: a PDF contract uploaded for eSign (#3323), stored with source 'sign_document' and never sent to Finance extraction.
+// agreement: the signed agreement of an e-invoice correction (#2504), a PDF or an image, stored with source 'agreement': never extracted, never in the Inbox. Direct and staged uploads.
+export const UPLOAD_PURPOSES = ['document', 'social', 'import', 'meeting_audio', 'meeting_video', 'sign_document', 'agreement'] as const;
 // An import spreadsheet is an .xlsx workbook (a ZIP container) of at most this size.
 export const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 export const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -89,7 +116,14 @@ export type UploadPurpose = (typeof UPLOAD_PURPOSES)[number];
 // both a recorded and a voided purchase document. note is a member's note (#1671), private or shared, and todo a
 // member's own to-do (#1673): every open app of the org gets its id, and only those its policies let read it see a
 // change.
-export const STREAM_HINT_TYPES = ['proposal', 'file', 'extraction', 'journal_entry', 'document', 'social_post', 'social_notification', 'notification', 'note', 'todo'] as const;
+// org_apps: the org's owner switched an app on or off (ADR-0053); its id is the org's. Every stream of the org gets it, and re-checks first, so the apps it
+// filters by are the new ones; the app then reads kernel.org.apps again.
+// crm_deal and crm_party (#3293, crm.md section 5): a deal, or a party's contact details, changed; the deal board, the deals list and the contact panels read again. The id only,
+// as every hint. The names use an underscore, not the dot of the entity types (crm.deal), because the channel payload carries no dot (social_post is the same).
+export const STREAM_HINT_TYPES = ['proposal', 'file', 'extraction', 'journal_entry', 'document', 'social_post', 'social_notification', 'notification', 'note', 'todo', 'org_apps', 'crm_deal', 'crm_party'] as const;
+// The id a crm_deal or crm_party hint carries when a transaction changed more than 20 deals or contacts of the org (#3423: a contact import, the org purge, a member's removal): it names no row, and a stream
+// reads it as "many changed" and re-reads every view of that type, whichever row an open panel is about. The database sends it (ludy_kernel.stream_hint_bounded).
+export const STREAM_HINT_MANY_ID = '00000000-0000-0000-0000-000000000000';
 export type StreamHintType = (typeof STREAM_HINT_TYPES)[number];
 export interface StreamHint {
   type: StreamHintType;
@@ -106,20 +140,53 @@ export * from './brand.ts';
 export * from './calendar.ts';
 export * from './crm.ts';
 export * from './hr.ts';
+export * from './hr-leave.ts';
+export * from './hr-attendance.ts';
+export * from './hr-onboarding.ts';
+export * from './hr-overtime.ts';
 export * from './hr-payroll.ts';
+export * from './hr-probation.ts';
 export * from './hr-declarations.ts';
+export * from './hr-recruiting.ts';
 export * from './hr-bank-template.ts';
 export * from './notes.ts';
+export * from './notes-import.ts';
 export * from './extension.ts';
 export * from './mcp.ts';
+export * from './meeting-agenda.ts';
+export * from './meeting-capture.ts';
+export * from './meeting-chat.ts';
+export * from './meeting-ask.ts';
+export * from './meeting-brief.ts';
+export * from './meeting-digest.ts';
+export * from './meeting-today.ts';
+export * from './meeting-morning.ts';
+export * from './meeting-assignee.ts';
+export * from './meeting-adherence.ts';
+export * from './meeting-chapters.ts';
+export * from './meeting-title.ts';
+export * from './meeting-commitments.ts';
+export * from './invisible-chars.ts';
+export * from './meeting-glossary.ts';
+export * from './meeting-minutes-templates.ts';
+export * from './meeting-templates.ts';
 export * from './meetings.ts';
 export * from './meeting-followup.ts';
+export * from './meeting-hook.ts';
+export * from './meeting-hook-body.ts';
+export * from './meeting-zalo-draft.ts';
+export * from './meeting-platform.ts';
+export * from './projects.ts';
 export * from './ads.ts';
+export * from './ads-boost.ts';
 export * from './ads-campaign.ts';
+export * from './ads-manage.ts';
 export * from './manifest.ts';
+export * from './apps.ts';
 export * from './screens.ts';
 export * from './saved-view.ts';
 export * from './phone.ts';
 export * from './contacts.ts';
 export * from './phone-cases.ts';
 export * from './plain-line.ts';
+export * from './engage-proposals.ts';

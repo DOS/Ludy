@@ -22,9 +22,9 @@
 //   org-wide items and those channels' items only.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { SOCIAL_REVIEW_CHECKS_MAX, zId, zSocialReviewCheckLabel } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { SOCIAL_REVIEW_CHECKS_MAX, zId, zSocialReviewCheckLabel } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { channelScope } from './channel-access.ts';
 import { approvalsInRound } from './domain/approval.ts';
 import type { Trx } from './variants.ts';
@@ -55,7 +55,7 @@ export const zReviewChecklistSet = z.strictObject({
     .refine((items) => new Set(items.map((i) => `${i.connectionId?.toLowerCase() ?? ''}\u0000${i.label}`)).size === items.length, 'each item once per channel'),
 });
 
-const lockKey = (orgId: string) => `crove_social.review_check:${orgId}`;
+const lockKey = (orgId: string) => `ludy_social.review_check:${orgId}`;
 // One save at a time per org (exclusive); an approval reads the list under the shared lock, so a save waits for the
 // approvals in progress and an approval never reads half a save.
 const lockList = (ctx: Pick<CommandContext, 'trx' | 'orgId'>) => sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${lockKey(ctx.orgId)}, 0))`.execute(ctx.trx);
@@ -68,7 +68,7 @@ const lockListShared = (ctx: Pick<CommandContext, 'trx' | 'orgId'>) => sql`SELEC
  */
 export async function reviewChecksOf(trx: Trx, orgId: string): Promise<ReviewCheck[]> {
   const rows = await trx
-    .selectFrom('crove_social.review_check')
+    .selectFrom('ludy_social.review_check')
     .select(['id', 'channel_connection_id', 'position', 'label'])
     .where('org_id', '=', orgId)
     .orderBy('position')
@@ -157,21 +157,21 @@ export const reviewChecklistSet = defineCommand({
     const connectionIds = [...new Set(items.flatMap((i) => (i.connectionId === null ? [] : [i.connectionId])))].sort();
     if (connectionIds.length > 0) {
       // The org's channels, of any status: a disconnected channel may keep its items until it is removed.
-      const found = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', connectionIds).execute();
+      const found = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', connectionIds).execute();
       if (found.length !== connectionIds.length) {
         const known = new Set(found.map((c) => c.id));
         throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Có kênh không thuộc tổ chức này', { connectionIds: connectionIds.filter((id) => !known.has(id)) });
       }
     }
     await lockList(ctx);
-    const before = await ctx.trx.selectFrom('crove_social.review_check').select((eb) => eb.fn.countAll<string>().as('n')).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
-    await ctx.trx.deleteFrom('crove_social.review_check').where('org_id', '=', ctx.orgId).execute();
+    const before = await ctx.trx.selectFrom('ludy_social.review_check').select((eb) => eb.fn.countAll<string>().as('n')).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    await ctx.trx.deleteFrom('ludy_social.review_check').where('org_id', '=', ctx.orgId).execute();
     // The position is the item's place in the whole list, so a channel's checklist keeps the order the list gives.
     const rows =
       items.length === 0
         ? []
         : await ctx.trx
-            .insertInto('crove_social.review_check')
+            .insertInto('ludy_social.review_check')
             .values(items.map((i, position) => ({ org_id: ctx.orgId, channel_connection_id: i.connectionId, position, label: i.label, created_by: by, created_at: ctx.now })))
             .returning(['id', 'channel_connection_id', 'position', 'label'])
             .execute();

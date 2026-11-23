@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What an MCP grant can reach once it is past the HTTP edge (ADR-0051 decision 2, ADR-0032, issue #2975), through the runtime every command and query runs on:
-// - no command can carry `mcp`, and a grant runs no command at all, whatever the command declares;
+// - exactly the commands WRITES and ENGAGE_WRITES run for a grant (the Social draft command of #3227, owner decision 2026-11-14, and the thirteen Engage R1 twins of #3861), each pinned to its scope and to the narrow shape
+//   the sealed write context runs (R1, internal, owners and admins, no permission, extension, agent or member-mode declaration), and a grant runs no other command, whatever the command declares; the only other
+//   commands that carry `mcp` are the proposal-only Engage twins of E4 (#3863, #4181, #4148), each declared `{ scope, mode: 'proposal' }`: a call to one never runs it, it leaves a pending proposal a person approves
+//   (pinned below, and in mcp-proposals.db.test.ts);
 // - a grant reaches a query only if that query declares the scope (`mcp`), the set of queries that do is pinned here (a new one is a change to this protected
 //   file), and none of them is sensitive, open to member mode or an extension token, or holds data private to one member (member-bound grants are a later step);
 // - the grant's standing is read in the transaction of every call, with no session check configured: a revoked or expired grant, a consenting user who is no
@@ -13,32 +16,109 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { DomainError, Runtime, type UserActor } from '@crove/kernel-runtime';
-import { adsCommands, adsQueries } from '@crove/mod-ads';
-import { crmCommands, crmQueries } from '@crove/mod-crm';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
-import { hrCommands, hrQueries } from '@crove/mod-hr';
-import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
-import { notesCommands, notesQueries } from '@crove/mod-notes';
-import { socialCommands, socialQueries } from '@crove/mod-social';
+import { createDb } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { DomainError, Runtime, type UserActor } from '@ludy/kernel-runtime';
+import { adsCommands, adsQueries } from '@ludy/mod-ads';
+import { crmCommands, crmQueries } from '@ludy/mod-crm';
+import { financeCommands, financeQueries } from '@ludy/mod-finance';
+import { hrCommands, hrQueries } from '@ludy/mod-hr';
+import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
+import { notesCommands, notesQueries } from '@ludy/mod-notes';
+import { signCommands, signQueries } from '@ludy/mod-sign';
+import { socialCommands, socialQueries } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
 // Every query an MCP grant may run, with its scope. Adding one is a security change: read what it returns first, and keep member-private data out.
-const REACHABLE = ['kernel.mcp.about:ludy.read', 'kernel.mcp.parties:ludy.read', 'finance.mcp.invoices:ludy.read'];
-// The cross-app signals (Vy V4 and V5, #2967 and #2969) may join the set, each one when its line has reviewed what it returns: the three kernel rules and the six line reads they
+const REACHABLE = [
+  'kernel.mcp.about:ludy.read',
+  'kernel.mcp.parties:ludy.read',
+  'finance.mcp.invoices:ludy.read',
+  // Tool 1 of #3849 (`ludy_finance_overview`): four money figures of a period; pinned in test/invariant/mcp-overview-projection.db.test.ts.
+  'finance.mcp.overview:ludy.read',
+  // Tool 2 of #3849 (`ludy_finance_open_balances`): per party the open amount and its age buckets; pinned in test/invariant/mcp-open-balances-projection.db.test.ts.
+  'finance.mcp.open_balances:ludy.read',
+  // Tool 3 of #3849 (`ludy_payment_reminder_draft`): one overdue customer's reminder draft with the fixed template words; pinned in test/invariant/mcp-payment-reminder-projection.db.test.ts.
+  'finance.mcp.payment_reminder:ludy.read',
+  // The two Social reads (#3227, plan section 3.8: `ludy_social_posts_list` and `ludy_social_review_queue`). Their privacy review is the comment at the top of modules/social/src/mcp.ts; neither is
+  // sensitive, and the checks below apply to them as to every query.
+  'social.mcp.posts:ludy.read',
+  'social.mcp.review_queue:ludy.read',
+  // The two Meetings reads of a company grant (#3731, owner decision 2026-11-18, Meetings PO design review): the published results of meetings whose visibility is 'org', nothing else. Their privacy pins
+  // are in test/invariant/mcp-meetings-company.db.test.ts and the projection test of the read.
+  'meetings.mcp.list:ludy.read',
+  'meetings.mcp.minutes:ludy.read',
+  // The Meetings read of the open action items across those same meetings (#3804, step 3 of the two-step landing): published, unflagged items no task was made from, of org-visible meetings inside their
+  // text period, for a company grant only. Its projection pins are in test/invariant/meetings-mcp-projection.db.test.ts.
+  'meetings.mcp.open_actions:ludy.read',
+  // The Meetings read of the open action items of one series of meetings (#3837, step 3 of the two-step landing): keyed on a meeting, never on a series id, over the same readable meetings as the two reads
+  // above, for a company grant only. Its projection pins are in test/invariant/meetings-mcp-projection.db.test.ts.
+  'meetings.mcp.series_open_items:ludy.read',
+  // The Meetings read of the published decisions of the last 7, 14 or 30 days (#4016, step 3 of the three-step landing): the decisions of the same readable meetings as the reads above, started inside the
+  // window, for a company grant only. Its projection pins are in test/invariant/meetings-mcp-projection.db.test.ts.
+  'meetings.mcp.decisions:ludy.read',
+  // The Meetings read that searches the published minutes (#4030, step 3 of the three-step landing): it matches only the views the minutes tool can return, of the same readable meetings as the reads above,
+  // for a company grant only; the typed words never reach SQL. Its projection pins are in test/invariant/meetings-mcp-projection.db.test.ts.
+  'meetings.mcp.search:ludy.read',
+  // The Engage reads of epic #3857, E1 (#3860, owner decision 2026-11-19: Dy and Uy work Engage through MCP; step 3 of the three-step landing, #4052 and #4068 before it). A missing name now fails.
+  // Results of Social and Ads, for a company grant only (their privacy review is the comment at the top of each query's file; the output is pinned in the DB tests engage-mcp-results.db.test.ts):
+  'social.mcp.metrics_summary:ludy.read',
+  'social.mcp.metrics_totals:ludy.read',
+  'ads.mcp.spend:ludy.read',
+  'ads.mcp.today:ludy.read',
+  'ads.mcp.flags:ludy.read',
+  // The Ads read of the ad launches that have started (#4147, E4b of epic #3857; step 3 of the three-step landing, #4175 and #4176 before it): the ids the proposal tools that stop or reduce spend need, for a company
+  // grant's owner or admin only. Its projection pins (ids, names, state, budgets as decimal strings, the end day; no proposal, plan hash, creator, platform id or token) are in engage-mcp-launches.db.test.ts. A missing name now fails.
+  'ads.mcp.launches:ludy.read',
+  // The Ads read of the org's active Facebook Pages (#4367, follow-up of #3864; step 3 of the three-step landing, #4384 and #4385 before it): the ids a campaign draft names as `pageConnectionId`, for a company
+  // grant's owner or admin only. Its projection pins (an id and a plain-line name per Page; no connection, token, platform id, status or other provider's channel; another org's Pages never) are in the DB test
+  // engage-mcp-results.db.test.ts.
+  'ads.mcp.pages:ludy.read',
+  // The kernel read of the org chart's active seats (#4369, follow-up of #4148; step 3 of the three-step landing, #4412 and #4413 before it): the ids a proposed follow-up task names as `assigneePositionId`, for a
+  // company grant's owner or admin only. Its projection pins (an id and a plain-line title per seat; no holder, role, module, job description or reporting line; paused and archived seats and other orgs' never) are
+  // in the DB test engage-mcp-results.db.test.ts. Named `kernel.mcp.*` like the conversation reads, so the check below that keeps the screens' own `kernel.*` queries out of a grant's reach still holds.
+  'kernel.mcp.seats:ludy.read',
+  // The CRM records: deals and quotes for every role (the CRM tables carry the org policy only, so a member-bound grant reads the whole org's, as that member does in the app); the bookings, a guest's
+  // contact details, for a company grant only. Pinned in engage-mcp-crm.db.test.ts.
+  'crm.mcp.deals:ludy.read',
+  'crm.mcp.deal:ludy.read',
+  'crm.mcp.quotes:ludy.read',
+  'crm.mcp.quote:ludy.read',
+  'crm.mcp.bookings:ludy.read',
+  // The Hộp thư conversations, read inside the sealed grant contexts of #3858 slice b (a company grant the whole org, a member-bound grant what its member may read), as paged allowlist projections. They are
+  // named `kernel.mcp.*` on purpose: the check below keeps every `kernel.conversation.*` and `kernel.inbox*` name, the screens' own queries, out of a grant's reach. Pinned in
+  // test/invariant/mcp-conversation-reads.db.test.ts.
+  'kernel.mcp.conversations:ludy.read',
+  'kernel.mcp.conversation:ludy.read',
+  // The wake rules of Engage (#3862, E3 of epic #3857; ADR-0051 decision 13): the two reads the wake sweep runs as a company grant, in its sealed context, to tell an AI coworker there is work, and that Home runs as
+  // the member. Ids, a kind, instants, days and an amount, with exactly those keys, and none of the words a customer, a deal or a guest wrote; a company grant reads its own org's rows only and a member-bound grant
+  // is refused by both, the CRM read for a plain member too. Pinned in test/invariant/mcp-wake-engage-reach.db.test.ts and mcp-wake-engage.test.ts.
+  'kernel.wake.conversations:ludy.read',
+  'crm.wake.facts:ludy.read',
+  // The four eSign read-only projections for a company grant (#4438 / #4441, Slice 5c): non-confidential envelopes, single envelope progress with confirmed obligations,
+  // upcoming renewals, and reusable templates. Never returns hr_contract or meeting_minutes envelopes, signing tokens, OTPs, counterparty names, or signer emails/phones;
+  // pinned in test/invariant/mcp-sign-company.db.test.ts.
+  'sign.mcp.envelopes:ludy.read',
+  'sign.mcp.envelope_get:ludy.read',
+  'sign.mcp.renewals:ludy.read',
+  'sign.mcp.templates:ludy.read',
+];
+// The cross-app signals (Vy V4 and V5, #2967 and #2969) may join the set, each one when its line has reviewed what it returns: the kernel rules and the line reads they
 // call (a query run inside a query keeps the caller's identity, so a rule over MCP needs every read it calls to declare the scope as well). They are optional here so each can land
 // on its own; a name outside this list still fails, and so does a missing name of REACHABLE.
 const SIGNALS = [
   'kernel.signals.deal_without_invoice:ludy.read',
   'kernel.signals.receivable_with_open_deal:ludy.read',
   'kernel.signals.supplier_bank_changed:ludy.read',
+  // The fourth rule (#3124): a customer conversation unanswered past its reply window on an open deal. The screens' own conversation read (`kernel.conversation.*`) declares no scope on purpose, so over MCP that
+  // read refuses and this rule reports `not_available`, never an empty "all clear"; a grant reads conversations only through the two paged projections `kernel.mcp.conversations` and `kernel.mcp.conversation` (above).
+  'kernel.signals.conversation_unanswered:ludy.read',
   'finance.signals.sales:ludy.read',
   'finance.signals.overdue_receivables:ludy.read',
   'finance.signals.supplier_bank_changes:ludy.read',
@@ -49,33 +129,127 @@ const SIGNALS = [
   'kernel.mcp.signals:ludy.read',
 ];
 
-const commands = [...kernelCommands, ...financeCommands, ...meetingsCommands, ...socialCommands, ...adsCommands, ...crmCommands, ...hrCommands, ...notesCommands];
-const queries = [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries, ...socialQueries, ...adsQueries, ...crmQueries, ...hrQueries, ...notesQueries];
+// The finance reads of the connected coworker (#3849, plan docs/plan/vy.md section 5 C2 and C3, owner decision 2026-11-18): the overview figures, the open receivables and payables per party, and one payment
+// reminder draft. They may join the set one at a time, each when its line and the PO's security review have read what it returns (step 1 of the landing, like the signals above: this list lets a name in, it
+// does not require it). A name outside this list still fails, and so do the checks below on every query that carries `mcp`: never sensitive, streamed, role-less or open to member mode or an extension token.
+// Must never be returned by any of them (each tool PR pins it under test/invariant/): a customer's email or phone, the org's bank account numbers or holders (the reminder read leaves out `payTo`), the lines of an invoice, anything from a query that is `sensitive`.
+const FINANCE_READS: readonly string[] = [
+];
+
+// Graduated into REACHABLE in #4441 (Slice 5c).
+const SIGN_READS: readonly string[] = [];
+
+// The one command an MCP grant may run (#3227, step 3, owner decision 2026-11-14: one new write scope and exactly one command, "create a draft post for a person to review"). Exactly this one,
+// with exactly this scope: a second command that carries `mcp`, or this one with another scope, fails, and so does its absence.
+const WRITES = ['social.mcp.draft_create:ludy.social.draft'];
+// The R1 write twins of the Engage coworkers (epic #3857, E2, issue #3861; ADR-0051 decisions 10 and 11, owner decision 2026-11-19): each runs the same steps a person's click runs for the app's own
+// command (assign, resolve, reopen, note, link a contact, new contact, new deal, move a deal, save or revise a draft quote, mark a next step done or snoozed, save an ads draft), under
+// `ludy.engage.write` (the ads draft under `ludy.ads.draft`), each in its own sealed write context (test/invariant/mcp-engage-write.db.test.ts pins the database side). This list is exact: all thirteen
+// carry `mcp`, none else does, and each with the scope named here. (`kernel.conversation.follow_up` has no R1 twin: its task is an event and wakes an agent, which the sealed context does not allow; a coworker asks for it as a proposal, #4148.)
+const ENGAGE_WRITES: readonly string[] = [
+  'kernel.mcp.conversation_assign:ludy.engage.write',
+  'kernel.mcp.conversation_resolve:ludy.engage.write',
+  'kernel.mcp.conversation_reopen:ludy.engage.write',
+  'kernel.mcp.conversation_note:ludy.engage.write',
+  'kernel.mcp.conversation_link_contact:ludy.engage.write',
+  'kernel.mcp.party_create:ludy.engage.write',
+  'crm.mcp.deal_create:ludy.engage.write',
+  'crm.mcp.deal_move:ludy.engage.write',
+  'crm.mcp.quote_save:ludy.engage.write',
+  'crm.mcp.quote_revise:ludy.engage.write',
+  'crm.mcp.next_step_done:ludy.engage.write',
+  'crm.mcp.next_step_snooze:ludy.engage.write',
+  'ads.mcp.campaign_draft_save:ludy.ads.draft',
+];
+const commands = [...kernelCommands, ...financeCommands, ...meetingsCommands, ...socialCommands, ...adsCommands, ...crmCommands, ...hrCommands, ...notesCommands, ...signCommands];
+const queries = [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries, ...socialQueries, ...adsQueries, ...crmQueries, ...hrQueries, ...notesQueries, ...signQueries];
 
 describe('which definitions an MCP grant can reach (#2975)', () => {
-  it('has no command that carries `mcp`', () => {
-    expect(commands.filter((c) => (c as { mcp?: unknown }).mcp !== undefined).map((c) => c.name)).toEqual([]);
+  it('has exactly the commands that run for a grant that WRITES and ENGAGE_WRITES name, with their scope, and each is R1, internal and for owners and admins', () => {
+    // A command of mode 'proposal' (the 14 proposal-only twins of E4, #3863) never runs for a grant: it is pinned in the test below and in mcp-proposals.db.test.ts.
+    const carrying = commands.filter((c) => (c as { mcp?: unknown }).mcp !== undefined && (c as { mcp: { mode?: string } }).mcp.mode !== 'proposal');
+    const named = carrying.map((c) => `${c.name}:${(c as { mcp: { scope: string } }).mcp.scope}`).sort();
+    expect(named).toStrictEqual([...WRITES, ...ENGAGE_WRITES].sort());
+    for (const c of carrying) {
+      expect([c.risk, c.sideEffect, c.access], c.name).toEqual(['R1', 'internal', ['owner', 'admin']]);
+      const scope = (c as { mcp: { scope: string } }).mcp.scope;
+      // Only the scope, in the mode that runs the command (a command of mode 'proposal' is R2 or R3, and is pinned in mcp-proposals.db.test.ts).
+      expect((c as { mcp: unknown }).mcp, c.name).toStrictEqual({ scope });
+      expect(WRITES.concat(ENGAGE_WRITES), c.name).toContain(`${c.name}:${scope}`);
+      expect(c.permission, c.name).toBeUndefined();
+      expect(c.extension, c.name).toBeUndefined();
+      expect(c.agent, c.name).toBeUndefined();
+      expect(c.memberVy, c.name).toBeUndefined();
+      expect(c.bootstrap, c.name).toBeUndefined();
+      expect(c.sealedInput, c.name).toBeUndefined();
+      expect((c as { sensitive?: unknown }).sensitive, c.name).toBeUndefined();
+    }
+  });
+
+  // The commands a grant reaches only as a proposal (#3858 slice d; Engage E4, #3863): proposal-only twins of the Engage commands, R2, never run for a grant (the proposer runs in their place), each under its line's scope.
+  const PROPOSALS: Record<string, string> = {
+    'kernel.conversation.reply_approved': 'ludy.engage.write',
+    'kernel.conversation.reply_privately_approved': 'ludy.engage.write',
+    'kernel.conversation.hide_approved': 'ludy.engage.write',
+    'crm.quote.send_approved': 'ludy.engage.write',
+    'crm.booking.move_approved': 'ludy.engage.write',
+    'crm.booking.cancel_approved': 'ludy.engage.write',
+    'social.post.submit_approved': 'ludy.engage.write',
+    'social.variant.schedule_approved': 'ludy.engage.write',
+    'ads.launch.stop_approved': 'ludy.ads.draft',
+    'ads.pause_all_approved': 'ludy.ads.draft',
+    'ads.object.pause_approved': 'ludy.ads.draft',
+    'ads.object.archive_approved': 'ludy.ads.draft',
+    'ads.budget.lower_approved': 'ludy.ads.draft',
+    'ads.schedule.shorten_approved': 'ludy.ads.draft',
+    // Step 1 of 2 for #4181: the twin that cancels a queued raise of a running ad; the change that adds it is the next PR.
+    'ads.manage.cancel_approved': 'ludy.ads.draft',
+    // Step 1 of 2 for #4148: the twin that creates a team task linked to a thread, run as the approver; the change that adds it is the next PR.
+    'kernel.conversation.follow_up_approved': 'ludy.engage.write',
+  };
+  it('has only the proposal-only twins of the Engage commands (E4) as commands a grant reaches as a proposal, each R2, access proposal, under its scope', () => {
+    const proposing = commands.filter((c) => (c as { mcp?: { mode?: string } }).mcp?.mode === 'proposal');
+    expect(proposing.filter((c) => !Object.hasOwn(PROPOSALS, c.name)).map((c) => c.name)).toEqual([]);
+    for (const c of proposing) {
+      // Exactly the scope and the mode, nothing more (a command that runs for a grant carries the scope alone).
+      expect((c as { mcp: unknown }).mcp, c.name).toStrictEqual({ scope: PROPOSALS[c.name], mode: 'proposal' });
+      expect([c.risk, c.access], c.name).toEqual(['R2', 'proposal']);
+      expect(c.permission, c.name).toBeUndefined();
+      expect(c.extension, c.name).toBeUndefined();
+      expect(c.agent, c.name).toBeUndefined();
+      expect(c.memberVy, c.name).toBeUndefined();
+      expect(c.bootstrap, c.name).toBeUndefined();
+      expect(c.sealedInput, c.name).toBeUndefined();
+      expect((c as { sensitive?: unknown }).sensitive, c.name).toBeUndefined();
+    }
   });
 
   it('pins the queries that carry `mcp`, and none is sensitive, streamed, role-less or open to member mode or an extension token', () => {
     const carrying = queries.filter((q) => (q as { mcp?: unknown }).mcp !== undefined);
     const names = carrying.map((q) => `${q.name}:${(q as { mcp: { scope: string } }).mcp.scope}`).sort();
-    expect(names.filter((n) => !SIGNALS.includes(n))).toEqual([...REACHABLE].sort());
+    expect(names.filter((n) => !SIGNALS.includes(n) && !FINANCE_READS.includes(n) && !SIGN_READS.includes(n))).toStrictEqual([...REACHABLE].sort());
     for (const q of carrying) {
       expect(Array.isArray(q.access), q.name).toBe(true);
       expect(q.sensitive === true, q.name).toBe(false);
       expect(q.stream === true, q.name).toBe(false);
       expect(q.memberVy, q.name).toBeUndefined();
       expect(q.extension, q.name).toBeUndefined();
-      // Member-private data (ADR-0049, ADR-0037): nothing from the notes, the member's own results or memory, until the member-bound grant exists.
-      expect(q.name.startsWith('notes.') || q.name.startsWith('kernel.member_vy.') || q.name.startsWith('kernel.inbox'), q.name).toBe(false);
+      // Member-private data (ADR-0049, ADR-0037): nothing from the notes, the member's own results or memory, until the member-bound grant exists. The screens' own conversation queries (`kernel.conversation.*`, `kernel.inbox*`) stay out of a grant's reach (the signals rule over them reports not_available); a grant reads conversations only through `kernel.mcp.conversations` and `kernel.mcp.conversation`, which read inside the sealed grant context and are pinned in mcp-conversation-reads.db.test.ts.
+      expect(q.name.startsWith('notes.') || q.name.startsWith('kernel.member_vy.') || q.name.startsWith('kernel.inbox') || q.name.startsWith('kernel.conversation.'), q.name).toBe(false);
     }
   });
 
   it('refuses at register() a command that declares `mcp`, and a query that is sensitive or open to member mode with it', () => {
     const base = { name: 'kernel.test.x', input: z.strictObject({}), risk: 'R1', sideEffect: 'internal', access: ['owner'] };
     const rt = new Runtime({} as never, { manifests: TEST_MANIFESTS });
-    expect(() => rt.register({ commands: [{ ...base, mcp: { scope: 'ludy.read' }, handler: async () => ({}) } as never], queries: [] })).toThrow();
+    // A command may declare only a write scope, and only as the narrow kind the sealed write context runs; a read scope on a command, and a write scope on a query, are refused.
+    expect(() => rt.register({ commands: [{ ...base, mcp: { scope: 'ludy.read' }, handler: async () => ({}) } as never], queries: [] })).toThrow(/scope/);
+    const draft = { ...base, access: ['owner', 'admin'], mcp: { scope: 'ludy.social.draft' }, handler: async () => ({}) };
+    expect(() => new Runtime({} as never, { manifests: TEST_MANIFESTS }).register({ commands: [draft as never], queries: [] })).not.toThrow();
+    for (const bad of [{ risk: 'R2', sideEffect: 'external' }, { access: ['owner', 'member'] }, { access: ['member'] }, { access: [] }, { access: 'system' }, { sensitive: true }, { permission: 'finance.post' }, { extension: { scope: 'meetings.record' } }, { mcp: { scope: 'ludy.social.write' } }]) {
+      expect(() => new Runtime({} as never, { manifests: TEST_MANIFESTS }).register({ commands: [{ ...draft, ...bad } as never], queries: [] }), JSON.stringify(bad)).toThrow();
+    }
+    expect(() => new Runtime({} as never, { manifests: TEST_MANIFESTS }).register({ commands: [], queries: [{ name: 'kernel.test.w', input: z.strictObject({}), access: ['owner'], mcp: { scope: 'ludy.social.draft' }, handler: async () => ({}) } as never] })).toThrow(/scope/);
     const q = { name: 'kernel.test.q', input: z.strictObject({}), access: ['owner'], mcp: { scope: 'ludy.read' }, handler: async () => ({}) };
     expect(() => new Runtime({} as never, { manifests: TEST_MANIFESTS }).register({ commands: [], queries: [{ ...q, sensitive: true } as never] })).toThrow(/MCP grant/);
     expect(() => new Runtime({} as never, { manifests: TEST_MANIFESTS }).register({ commands: [], queries: [{ ...q, memberVy: { reads: [] }, name: 'kernel.member_vy.q' } as never] })).toThrow(/MCP grant/);
@@ -86,6 +260,7 @@ describe('which definitions an MCP grant can reach (#2975)', () => {
 suite('an MCP grant past the HTTP edge: scope, standing and storage (#2975)', () => {
   const dbName = `crove_test_mcp_scope_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appUrl = '';
   const pools: pg.Pool[] = [];
   let runtime: Runtime;
@@ -97,7 +272,7 @@ suite('an MCP grant past the HTTP edge: scope, standing and storage (#2975)', ()
   const mcp = (userId: string, grantId: string, scopes: readonly string[] = ['ludy.read']): UserActor => ({ type: 'user', userId, aal: 'aal1', mcp: { grantId, clientId: 'client-1', clientName: 'Test client', scopes } });
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
-    const c = new pg.Client({ connectionString: adminUrl });
+    const c = createDbClient({ connectionString: adminUrl }, dbIds);
     await c.connect();
     try {
       return await fn(c);
@@ -138,18 +313,19 @@ suite('an MCP grant past the HTTP edge: scope, standing and storage (#2975)', ()
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     url.password = 'test-app-pw';
     appUrl = url.toString();
-    const pool = createPool({ connectionString: appUrl, max: 6 });
+    const pool = createDbPool({ connectionString: appUrl, max: 6 }, dbIds);
     pools.push(pool);
     const db = createDb(pool);
     // No session source: a grant's standing is checked whatever the deployment's session mode.
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
-      commands: [...kernelCommands, ...financeCommands, ...meetingsCommands],
-      queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries],
+      commands: [...kernelCommands, ...financeCommands, ...meetingsCommands, ...signCommands],
+      queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries, ...signQueries],
     });
     for (const key of Object.keys(users) as Array<keyof typeof users>) {
       users[key] = await upsertIdentity(db, { issuer: 'mcp-scope', subject: key, email: `${key}@mcp-scope.test`, name: null });
@@ -173,7 +349,7 @@ suite('an MCP grant past the HTTP edge: scope, standing and storage (#2975)', ()
     const about = await runtime.query<{ orgName: string; clientName: string }>('kernel.mcp.about', {}, { actor: mcp(users.ownerA, grant), orgId: orgA });
     expect(about).toMatchObject({ orgName: 'Org A', clientName: 'Test client' });
     // Every other registered query that takes an empty input is closed (rule mcp_scope), whoever the user is and whatever their role: the check precedes the role check.
-    const registered = [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries].map((q) => q.name);
+    const registered = [...kernelQueries({ inboundDomain: 'in.test' }), ...financeQueries, ...meetingsQueries, ...signQueries].map((q) => q.name);
     const closed = queries.filter((q) => registered.includes(q.name) && (q as { mcp?: unknown }).mcp === undefined && q.input.safeParse({}).success && q.stream !== true);
     expect(closed.length).toBeGreaterThan(20);
     for (const q of closed) {
@@ -281,7 +457,7 @@ suite('an MCP grant past the HTTP edge: scope, standing and storage (#2975)', ()
   });
 
   it('lets the API login reach the grant tables and the authorization storage only through the definers, and the worker not at all', async () => {
-    const app = new pg.Client({ connectionString: appUrl });
+    const app = createDbClient({ connectionString: appUrl }, dbIds);
     await app.connect();
     try {
       for (const table of ['crove_kernel.agent_grant', 'crove_kernel.oauth_record']) {

@@ -5,7 +5,7 @@
 // the member approves for one org), trades a one-time PKCE code for an opaque token, and sends that token as a bearer
 // token. `authenticate()` treats it as its own kind of credential:
 //   - the token is `crx_` and 43 random base64url characters; only its SHA-256 reaches the database, and only the
-//     crove_kernel.verify_extension_token definer can turn that hash back into a (token, org, member, scopes) row;
+//     ludy_kernel.verify_extension_token definer can turn that hash back into a (token, org, member, scopes) row;
 //   - the row exists only while the token is not revoked or expired, its org is active and its member is still an
 //     owner, admin or member who joined before the token was made;
 //   - the request then runs as that member in that org, with an actor that carries the token's id and scopes, so the
@@ -15,9 +15,9 @@
 // handler runs and which the route enumeration test (#693) reads: a token is refused on every other route.
 import { createHash, randomBytes } from 'node:crypto';
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import { EXTENSION_ID_FORMAT } from '@crove/kernel-contract';
-import { DomainError, EXTENSION_SCOPES, toDomainError, type ExtensionScope } from '@crove/kernel-runtime';
+import type { Db } from '@ludy/db';
+import { EXTENSION_ID_FORMAT } from '@ludy/kernel-contract';
+import { DomainError, EXTENSION_SCOPES, toDomainError, type ExtensionScope } from '@ludy/kernel-runtime';
 import { logEvent } from './log.ts';
 
 // The extension id an `Origin` header names: chrome-extension://<32 letters a to p>, nothing else (no path, port, userinfo or other
@@ -79,7 +79,7 @@ export async function verifyExtensionBearer(db: Db, token: string): Promise<Exte
   let rows: Array<{ token_id: string; org_id: string; user_id: string; scopes: string[]; expires_at: Date }>;
   try {
     ({ rows } = await sql<{ token_id: string; org_id: string; user_id: string; scopes: string[]; expires_at: Date }>`
-      SELECT token_id, org_id, user_id, scopes, expires_at FROM crove_kernel.verify_extension_token(${hashExtensionSecret(token)}::bytea, ${null}::text)`.execute(db));
+      SELECT token_id, org_id, user_id, scopes, expires_at FROM ludy_kernel.verify_extension_token(${hashExtensionSecret(token)}::bytea, ${null}::text)`.execute(db));
   } catch (error) {
     throw toDomainError(error);
   }
@@ -89,6 +89,18 @@ export async function verifyExtensionBearer(db: Db, token: string): Promise<Exte
   // A token holding a scope this build does not know is not trusted with the ones it does: it is refused outright.
   if (scopes.length === 0 || scopes.length !== row.scopes.length) throw invalidToken();
   return { tokenId: row.token_id, orgId: row.org_id, userId: row.user_id, scopes, expiresAt: new Date(row.expires_at).toISOString() };
+}
+
+// The email of the account that owns a token, for AUTH_ALLOWED_EMAILS (issue #3223): null when no token has this value. Read-only (a STABLE
+// definer), unlike verifyExtensionBearer, which stamps last_used_at, so the edge asks it first and a refused account costs no write. It looks at
+// no standing: a revoked or expired token still answers here and is then refused by verifyExtensionBearer as before.
+export async function extensionTokenAccountEmail(db: Db, token: string): Promise<string | null> {
+  try {
+    const { rows } = await sql<{ email: string | null }>`SELECT ludy_kernel.extension_token_account_email(${hashExtensionSecret(token)}::bytea) AS email`.execute(db);
+    return rows[0]?.email ?? null;
+  } catch (error) {
+    throw toDomainError(error);
+  }
 }
 
 export interface ExtensionExchange {
@@ -114,7 +126,7 @@ export async function exchangeExtensionCode(db: Db, code: string, verifier: stri
   try {
     ({ rows } = await sql<{ token_id: string; org_id: string; user_id: string; scopes: string[]; expires_at: Date; code_id: string }>`
       SELECT token_id, org_id, user_id, scopes, expires_at, code_id
-      FROM crove_kernel.exchange_extension_auth_code(${hashExtensionSecret(code)}::bytea, ${verifier}::text, ${token.hash}::bytea, ${extensionId}::text)`.execute(db));
+      FROM ludy_kernel.exchange_extension_auth_code(${hashExtensionSecret(code)}::bytea, ${verifier}::text, ${token.hash}::bytea, ${extensionId}::text)`.execute(db));
   } catch (error) {
     throw toDomainError(error);
   }
@@ -131,7 +143,7 @@ export async function exchangeExtensionCode(db: Db, code: string, verifier: stri
 // it as a system revoke. true when a row was revoked. Never throws: the caller is already handling a failure.
 export async function voidUndeliveredExtensionToken(db: Db, token: string): Promise<boolean> {
   try {
-    const { rows } = await sql<{ voided: boolean }>`SELECT crove_kernel.void_undelivered_extension_token(${hashExtensionSecret(token)}::bytea) AS voided`.execute(db);
+    const { rows } = await sql<{ voided: boolean }>`SELECT ludy_kernel.void_undelivered_extension_token(${hashExtensionSecret(token)}::bytea) AS voided`.execute(db);
     return rows[0]?.voided === true;
   } catch (error) {
     // Never the token or its hash: the class of the failure only.
@@ -153,14 +165,19 @@ export interface ExtensionRoute {
 
 // The routes an extension token may reach, and nothing else (deny by default). None reads a meeting's content: the
 // meetings scope creates a meeting with its consent record, gets an upload grant, finishes the upload of a meeting
-// the same token created and reads its status.
+// the same token created and reads its status. The agenda scope reads the member's next few calendar events, title, times and join host.
 export const EXTENSION_ROUTES: readonly ExtensionRoute[] = Object.freeze([
   { method: 'GET', path: '/api/extension/me', scope: null, why: 'who the token is for: org, scopes, end date and the features this deployment runs; no tenant data' },
   { method: 'POST', path: '/api/rpc/meetings/create', scope: 'meetings', why: 'create a meeting with its consent record (meetings.meeting.create)' },
   { method: 'POST', path: '/api/rpc/meetings/extensionStatus', scope: 'meetings', why: "a meeting this token created: its status and whether its audio and video arrived, never its content (meetings.meeting.extension_status)" },
+  { method: 'POST', path: '/api/rpc/meetings/recordingStopped', scope: 'meetings', why: 'a recording of this token ended with no media reaching the server: its end time and a stop code on a meeting this token created, once, so the recording chip lets go (meetings.meeting.recording_stopped)' },
+  { method: 'POST', path: '/api/rpc/meetings/captureHeartbeat', scope: 'meetings', why: "keep alive, or end, the capture of a recording this token created (ADR-0055 slice 1, #4123): a meeting id and whether to end it, and the answer is one boolean (meetings.capture.heartbeat)" },
+  { method: 'POST', path: '/api/rpc/meetings/agenda/next', scope: 'agenda', why: "the member's next calendar events for the popup's \"Sắp họp\" card: at most 5 within 30 minutes, title, times and join host only, from their own cache (meetings.agenda.next, B2)" },
   { method: 'POST', path: '/api/files/uploads', scope: 'meetings', why: 'an upload grant, for the meeting_audio and meeting_video purposes only (the handler refuses any other purpose for a token)' },
   { method: 'POST', path: '/api/meetings/:id/media', scope: 'meetings', why: 'finish the upload of the media of a meeting this token created (meetings.media.record)' },
   { method: 'POST', path: '/api/meetings/:id/live-chunk', scope: 'meetings', why: 'a piece of the recording of a live-notes meeting this token created, sealed and stored by the route (meetings.live.chunk, ADR-0052 L4a)' },
+  { method: 'POST', path: '/api/rpc/notes/clip', scope: 'notes', why: 'save a quick note or clipped web page, always private and tainted (notes.note.clip, E4)' },
+  { method: 'POST', path: '/api/rpc/notes/todos/quickCapture', scope: 'notes', why: 'save a quick-captured personal to-do, always private and tainted (notes.todo.quick_capture, E4)' },
 ]);
 
 const ROUTE_PATTERNS = EXTENSION_ROUTES.map((route) => ({

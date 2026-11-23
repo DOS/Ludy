@@ -4,8 +4,8 @@
 // plan and the same caps always give the same answer, so a draft the AI coworker wrote is judged exactly as one a person wrote. Money is a decimal string
 // and every product and comparison goes through decimal.js (AGENTS.md "Money"); amounts of different currencies are never compared.
 import { Decimal } from 'decimal.js';
-import { ADS_PLAN_LIMITS, zAdsCampaignPlan, type AdsCampaignPlan, type AdsCampaignPlanDraft, type AdsPlanIssue } from '@crove/kernel-contract';
-import { sha256Hex } from '@crove/kernel-runtime';
+import { ADS_PLAN_LIMITS, zAdsCampaignPlan, type AdsCampaignPlan, type AdsCampaignPlanDraft, type AdsPlanIssue } from '@ludy/kernel-contract';
+import { sha256Hex } from '@ludy/kernel-runtime';
 import { currencyDecimals } from './domain.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -46,7 +46,7 @@ export interface PlanContext {
   writeEnabled: boolean;
   accountWriteEnabled: boolean;
   launchesBlocked: boolean;
-  // Whether the Page a Messenger ad names is a connection of the org (null when no Page is named).
+  // Whether the Page an ad names is a connection of the org (null when no Page is named).
   pageOk: boolean | null;
 }
 
@@ -66,7 +66,8 @@ export function validatePlan(draft: AdsCampaignPlanDraft, context: PlanContext):
   if (!draft.targeting) missing.push('targeting');
   if (!draft.variants || draft.variants.length === 0) missing.push('variants');
   if (draft.objective !== 'messenger' && !draft.linkUrl) missing.push('linkUrl');
-  if (draft.objective === 'messenger' && !draft.pageConnectionId) missing.push('pageConnectionId');
+  // Every ad runs as a Facebook Page (the launch job stops a plan with none as page_required), so every objective needs one, not only Messenger.
+  if (!draft.pageConnectionId) missing.push('pageConnectionId');
   for (const field of missing) error('missing_field', field);
 
   const days = flightDays(draft.startOn, draft.endOn);
@@ -82,7 +83,7 @@ export function validatePlan(draft: AdsCampaignPlanDraft, context: PlanContext):
     if ([...variant.primaryText].length > ADS_PLAN_LIMITS.primaryTextSoft) warning('primary_text_long', 'variants', { variant: index + 1, soft: ADS_PLAN_LIMITS.primaryTextSoft });
     if (draft.objective === 'messenger' && variant.callToAction !== 'send_message') warning('messenger_call_to_action', 'variants', { variant: index + 1 });
   }
-  if (draft.objective === 'messenger' && draft.pageConnectionId && context.pageOk === false) error('page_not_found', 'pageConnectionId');
+  if (draft.pageConnectionId && context.pageOk === false) error('page_not_found', 'pageConnectionId');
 
   // The money: a currency to be in, whole units where the currency has no cents, and the caps.
   const currency = context.currency;

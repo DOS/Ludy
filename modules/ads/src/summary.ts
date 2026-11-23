@@ -6,8 +6,8 @@
 // so only a day carries it.
 import { Decimal } from 'decimal.js';
 import { sql } from 'kysely';
-import { ADS_SUMMARY_MAX_DAYS, zAdsSummaryInput, type AdsMetric, type AdsSummary } from '@crove/kernel-contract';
-import { DomainError, defineQuery } from '@crove/kernel-runtime';
+import { ADS_SUMMARY_MAX_DAYS, zAdsSummaryInput, type AdsMetric, type AdsSummary, type AdsSummaryInput } from '@ludy/kernel-contract';
+import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { costPerResult, resultsText, spendText } from './domain.ts';
 
 const ALL = ['owner', 'admin', 'member', 'viewer'] as const;
@@ -40,101 +40,104 @@ function metric(sums: Sums, currency: string | null): AdsMetric {
 
 const day = (value: Date | string | null): string | null => (value === null ? null : typeof value === 'string' ? value.slice(0, 10) : value.toISOString().slice(0, 10));
 
+// The summary of one account over a stretch of days, for the Ads screen and, with a smaller `campaignLimit`, for an MCP grant's read (ads.mcp.spend).
+export async function loadSpendSummary(ctx: Pick<QueryContext, 'trx' | 'orgId'>, input: AdsSummaryInput, campaignLimit = 500): Promise<AdsSummary> {
+  if (input.from > input.to) throw new DomainError('ADS_RANGE_INVALID', 422, 'Khoảng ngày không hợp lệ');
+  if ((Date.parse(`${input.to}T00:00:00Z`) - Date.parse(`${input.from}T00:00:00Z`)) / 86_400_000 >= ADS_SUMMARY_MAX_DAYS) {
+    throw new DomainError('ADS_RANGE_INVALID', 422, `Chỉ xem được tối đa ${ADS_SUMMARY_MAX_DAYS} ngày một lần`);
+  }
+  const account = await ctx.trx
+    .selectFrom('ludy_ads.ad_account')
+    .select(['id', 'currency', 'time_zone', 'result_kind', 'settled_through', 'synced_through'])
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', input.adAccountId)
+    .executeTakeFirst();
+  if (!account) throw new DomainError('ADS_ACCOUNT_NOT_FOUND', 404, 'Không tìm thấy tài khoản quảng cáo này');
+  const kind = account.result_kind;
+  const hasKind = kind !== null;
+  // The chosen result's count, as a decimal string, or null when the row has none of that action type.
+  const resultOf = kind === null ? sql<string | null>`NULL::text` : sql<string | null>`(d.results ->> ${kind})`;
+
+  const dayRows = await ctx.trx
+    .selectFrom('ludy_ads.ad_spend_day as d')
+    .select([
+      sql<string>`d.day::text`.as('day'),
+      sql<string>`d.spend::text`.as('spend'),
+      sql<string>`d.impressions::text`.as('impressions'),
+      sql<string>`d.clicks::text`.as('clicks'),
+      sql<string | null>`d.reach::text`.as('reach'),
+      resultOf.as('result'),
+      sql<boolean>`d.settled_at IS NOT NULL`.as('settled'),
+    ])
+    .where('d.org_id', '=', ctx.orgId)
+    .where('d.ad_account_id', '=', account.id)
+    .where('d.level', '=', 'account')
+    .where('d.day', '>=', input.from)
+    .where('d.day', '<=', input.to)
+    .orderBy('d.day')
+    .execute();
+  const total = empty(hasKind);
+  const months = new Map<string, Sums>();
+  const days: AdsSummary['days'] = [];
+  for (const r of dayRows) {
+    add(total, r.spend, r.impressions, r.clicks, r.result);
+    const month = r.day.slice(0, 7);
+    let m = months.get(month);
+    if (!m) months.set(month, (m = empty(hasKind)));
+    add(m, r.spend, r.impressions, r.clicks, r.result);
+    const one = empty(hasKind);
+    add(one, r.spend, r.impressions, r.clicks, r.result);
+    days.push({ day: r.day, ...metric(one, account.currency), reach: r.reach === null ? null : Number(r.reach), settled: r.settled });
+  }
+
+  const campaignRows = await ctx.trx
+    .selectFrom('ludy_ads.ad_spend_day as d')
+    .select([
+      'd.external_object_id',
+      // The latest name the platform gave it.
+      sql<string>`(pg_catalog.array_agg(d.object_name ORDER BY d.day DESC))[1]`.as('name'),
+      sql<string>`pg_catalog.sum(d.spend)::text`.as('spend'),
+      sql<string>`pg_catalog.sum(d.impressions)::text`.as('impressions'),
+      sql<string>`pg_catalog.sum(d.clicks)::text`.as('clicks'),
+      kind === null ? sql<string | null>`NULL::text`.as('result') : sql<string | null>`pg_catalog.sum((d.results ->> ${kind})::numeric)::text`.as('result'),
+    ])
+    .where('d.org_id', '=', ctx.orgId)
+    .where('d.ad_account_id', '=', account.id)
+    .where('d.level', '=', 'campaign')
+    .where('d.day', '>=', input.from)
+    .where('d.day', '<=', input.to)
+    .groupBy('d.external_object_id')
+    .orderBy(sql`pg_catalog.sum(d.spend)`, 'desc')
+    .orderBy('d.external_object_id')
+    .limit(campaignLimit)
+    .execute();
+  const campaigns = campaignRows.map((r) => {
+    const one = empty(hasKind);
+    add(one, r.spend, r.impressions, r.clicks, r.result);
+    return { externalObjectId: r.external_object_id, name: r.name, ...metric(one, account.currency) };
+  });
+
+  return {
+    adAccountId: account.id,
+    currency: account.currency,
+    timeZone: account.time_zone,
+    resultKind: kind,
+    from: input.from,
+    to: input.to,
+    total: metric(total, account.currency),
+    months: [...months.entries()].map(([month, sums]) => ({ month, ...metric(sums, account.currency) })),
+    campaigns,
+    days,
+    settledThrough: day(account.settled_through),
+    syncedThrough: day(account.synced_through),
+  };
+}
+
 export const adsSpendSummary = defineQuery({
   name: 'ads.spend.summary',
   input: zAdsSummaryInput,
   access: ALL,
-  handler: async (ctx, input): Promise<AdsSummary> => {
-    if (input.from > input.to) throw new DomainError('ADS_RANGE_INVALID', 422, 'Khoảng ngày không hợp lệ');
-    if ((Date.parse(`${input.to}T00:00:00Z`) - Date.parse(`${input.from}T00:00:00Z`)) / 86_400_000 >= ADS_SUMMARY_MAX_DAYS) {
-      throw new DomainError('ADS_RANGE_INVALID', 422, `Chỉ xem được tối đa ${ADS_SUMMARY_MAX_DAYS} ngày một lần`);
-    }
-    const account = await ctx.trx
-      .selectFrom('crove_ads.ad_account')
-      .select(['id', 'currency', 'time_zone', 'result_kind', 'settled_through', 'synced_through'])
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', input.adAccountId)
-      .executeTakeFirst();
-    if (!account) throw new DomainError('ADS_ACCOUNT_NOT_FOUND', 404, 'Không tìm thấy tài khoản quảng cáo này');
-    const kind = account.result_kind;
-    const hasKind = kind !== null;
-    // The chosen result's count, as a decimal string, or null when the row has none of that action type.
-    const resultOf = kind === null ? sql<string | null>`NULL::text` : sql<string | null>`(d.results ->> ${kind})`;
-
-    const dayRows = await ctx.trx
-      .selectFrom('crove_ads.ad_spend_day as d')
-      .select([
-        sql<string>`d.day::text`.as('day'),
-        sql<string>`d.spend::text`.as('spend'),
-        sql<string>`d.impressions::text`.as('impressions'),
-        sql<string>`d.clicks::text`.as('clicks'),
-        sql<string | null>`d.reach::text`.as('reach'),
-        resultOf.as('result'),
-        sql<boolean>`d.settled_at IS NOT NULL`.as('settled'),
-      ])
-      .where('d.org_id', '=', ctx.orgId)
-      .where('d.ad_account_id', '=', account.id)
-      .where('d.level', '=', 'account')
-      .where('d.day', '>=', input.from)
-      .where('d.day', '<=', input.to)
-      .orderBy('d.day')
-      .execute();
-    const total = empty(hasKind);
-    const months = new Map<string, Sums>();
-    const days: AdsSummary['days'] = [];
-    for (const r of dayRows) {
-      add(total, r.spend, r.impressions, r.clicks, r.result);
-      const month = r.day.slice(0, 7);
-      let m = months.get(month);
-      if (!m) months.set(month, (m = empty(hasKind)));
-      add(m, r.spend, r.impressions, r.clicks, r.result);
-      const one = empty(hasKind);
-      add(one, r.spend, r.impressions, r.clicks, r.result);
-      days.push({ day: r.day, ...metric(one, account.currency), reach: r.reach === null ? null : Number(r.reach), settled: r.settled });
-    }
-
-    const campaignRows = await ctx.trx
-      .selectFrom('crove_ads.ad_spend_day as d')
-      .select([
-        'd.external_object_id',
-        // The latest name the platform gave it.
-        sql<string>`(pg_catalog.array_agg(d.object_name ORDER BY d.day DESC))[1]`.as('name'),
-        sql<string>`pg_catalog.sum(d.spend)::text`.as('spend'),
-        sql<string>`pg_catalog.sum(d.impressions)::text`.as('impressions'),
-        sql<string>`pg_catalog.sum(d.clicks)::text`.as('clicks'),
-        kind === null ? sql<string | null>`NULL::text`.as('result') : sql<string | null>`pg_catalog.sum((d.results ->> ${kind})::numeric)::text`.as('result'),
-      ])
-      .where('d.org_id', '=', ctx.orgId)
-      .where('d.ad_account_id', '=', account.id)
-      .where('d.level', '=', 'campaign')
-      .where('d.day', '>=', input.from)
-      .where('d.day', '<=', input.to)
-      .groupBy('d.external_object_id')
-      .orderBy(sql`pg_catalog.sum(d.spend)`, 'desc')
-      .orderBy('d.external_object_id')
-      .limit(500)
-      .execute();
-    const campaigns = campaignRows.map((r) => {
-      const one = empty(hasKind);
-      add(one, r.spend, r.impressions, r.clicks, r.result);
-      return { externalObjectId: r.external_object_id, name: r.name, ...metric(one, account.currency) };
-    });
-
-    return {
-      adAccountId: account.id,
-      currency: account.currency,
-      timeZone: account.time_zone,
-      resultKind: kind,
-      from: input.from,
-      to: input.to,
-      total: metric(total, account.currency),
-      months: [...months.entries()].map(([month, sums]) => ({ month, ...metric(sums, account.currency) })),
-      campaigns,
-      days,
-      settledThrough: day(account.settled_through),
-      syncedThrough: day(account.synced_through),
-    };
-  },
+  handler: async (ctx, input): Promise<AdsSummary> => loadSpendSummary(ctx, input),
 });
 
 export const summaryQueries = [adsSpendSummary];

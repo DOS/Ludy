@@ -4,7 +4,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { LegalEntity } from '@crove/kernel-contract';
+import type { LegalEntity } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 
@@ -73,12 +73,12 @@ describe('LegalEntitiesCard', () => {
     expect(rows[1]).toContain('Under Công ty TNHH Mẫu');
   });
 
-  it('offers the form to add one, with every kind and every entity as a parent', () => {
+  // #3608: adding an entity is a button that opens a dialog; no form is open under the list.
+  it('offers a button to add one and no always-open form', () => {
     const html = card();
-    expect(html).toContain(`aria-label="${en.legalEntities.addTitle}"`);
-    for (const kind of Object.values(en.legalEntities.kinds)) expect(html).toContain(`>${kind}<`);
-    expect(html).toContain(`>${en.legalEntities.noParent}<`);
-    expect(html).toContain('>Công ty TNHH Mẫu (0101234564)<');
-    expect(html).toContain('>Chi nhánh Hà Nội<');
+    expect(html).not.toContain('<form');
+    expect(html).toContain(`>${en.legalEntities.addTitle}<`);
+    // Changing one stays on its row.
+    expect(html).toContain(`>${en.legalEntities.edit}<`);
   });
 });

@@ -8,12 +8,12 @@ import { fileURLToPath } from 'node:url';
 import { sql, type Transaction } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createDb, createPool, type Database, type Db } from '@crove/db';
-import type { ExtractClient } from '@crove/extract-contract';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, createOrgCommand, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { DomainError, Runtime, fileKey, type CommandDef, inboundKey, newInboundBlobId, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries, recordExtractionFailure } from '@crove/mod-finance';
+import { createDb, createPool, type Database, type Db } from '@ludy/db';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, createOrgCommand, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { DomainError, Runtime, fileKey, type CommandDef, inboundKey, newInboundBlobId, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { extractAndPropose, financeCommands, financeQueries, recordExtractionFailure } from '@ludy/mod-finance';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { processInboundEmail } from '../src/inbound.ts';
@@ -54,11 +54,11 @@ suite('kernel on PostgreSQL', () => {
   let workerUrl: string;
   let pool: pg.Pool;
   let db: Db;
-  // The API login role (crove_app): user actors only.
+  // The API login role (ludy_app): user actors only.
   let runtime: Runtime;
   let workerPool: pg.Pool;
   let workerDb: Db;
-  // The worker login role (crove_worker): the only one that may run system actors.
+  // The worker login role (ludy_worker): the only one that may run system actors.
   let workerRuntime: Runtime;
   const store = new MemoryStore();
   // The real crove-extract service on a random port: worker code parses through HTTP and the sandbox.
@@ -125,15 +125,15 @@ suite('kernel on PostgreSQL', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const loginUrl = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    appUrl = loginUrl('crove_app', 'test-app-pw');
-    workerUrl = loginUrl('crove_worker', 'test-worker-pw');
+    appUrl = loginUrl('ludy_app', 'test-app-pw');
+    workerUrl = loginUrl('ludy_worker', 'test-worker-pw');
     const register = (target: Db) =>
       new Runtime(target, { manifests: TEST_MANIFESTS }).register({
         commands: [...kernelCommands, ...financeCommands],
@@ -199,7 +199,7 @@ suite('kernel on PostgreSQL', () => {
   const securityEvents = (userId: string) =>
     withAdmin(async (admin) => {
       const { rows } = await admin.query<{ command: string; code: string; target_org: string | null; refusals: number }>(
-        `SELECT command, code, target_org, refusals::int FROM crove_kernel.security_event WHERE caller = $1 ORDER BY command, code`,
+        `SELECT command, code, target_org, refusals::int FROM ludy_kernel.security_event WHERE caller = $1 ORDER BY command, code`,
         [`user:${userId}`],
       );
       return rows;
@@ -208,7 +208,7 @@ suite('kernel on PostgreSQL', () => {
   const auditRows = (orgId: string, command: string, outcome: string) =>
     withAdmin(async (admin) => {
       const { rows } = await admin.query<{ n: number }>(
-        `SELECT count(*)::int AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = $3`,
+        `SELECT count(*)::int AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 AND outcome = $3`,
         [orgId, command, outcome],
       );
       return rows[0]?.n;
@@ -278,7 +278,7 @@ suite('kernel on PostgreSQL', () => {
     await join(orgId, owner, member, `rm-member-${tag}@example.com`, 'member');
     // The member is removed (committed) after the refused command rolled back and before its audit is written.
     const removed = refusalAuditHook(async () => {
-      await withAdmin((admin) => admin.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [orgId, member]));
+      await withAdmin((admin) => admin.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [orgId, member]));
     });
 
     await captureErrors(async (logged) => {
@@ -309,7 +309,7 @@ suite('kernel on PostgreSQL', () => {
     // kernel.org.create's definer and checks, with a handler that refuses after the org exists in the transaction.
     const failing: CommandDef<any, any> = {
       ...createOrgCommand,
-      name: 'test.org.create_then_fail',
+      name: 'kernel.org.create_then_fail',
       handler: async () => {
         throw new DomainError('INVALID', 422, 'refused after creation');
       },
@@ -318,15 +318,15 @@ suite('kernel on PostgreSQL', () => {
 
     await captureErrors(async (logged) => {
       await expect(
-        hooked.runtime.executeOrgless('test.org.create_then_fail', { name: `Hoàn tác ${tag}` }, { actor: asUser(founder) }),
+        hooked.runtime.executeOrgless('kernel.org.create_then_fail', { name: `Hoàn tác ${tag}` }, { actor: asUser(founder) }),
       ).rejects.toMatchObject({ code: 'INVALID', status: 422 });
       // No refusal-audit transaction was opened: the org rolled back, there is nothing to audit in. The refusal is
       // noted in security_event instead, with no target org (#1006).
       expect(hooked.seen.transactions).toBe(1);
       expect(logged).not.toHaveBeenCalled();
     });
-    expect(await securityEvents(founder)).toEqual([{ command: 'test.org.create_then_fail', code: 'INVALID', target_org: null, refusals: 1 }]);
-    const left = await withAdmin(async (admin) => (await admin.query('SELECT 1 FROM crove_kernel.tenant WHERE created_by = $1', [founder])).rows.length);
+    expect(await securityEvents(founder)).toEqual([{ command: 'kernel.org.create_then_fail', code: 'INVALID', target_org: null, refusals: 1 }]);
+    const left = await withAdmin(async (admin) => (await admin.query('SELECT 1 FROM ludy_kernel.tenant WHERE created_by = $1', [founder])).rows.length);
     expect(left).toBe(0);
   });
 
@@ -337,7 +337,7 @@ suite('kernel on PostgreSQL', () => {
     const leak = async (target: pg.Pool) => {
       const c = await target.connect();
       const { rows } = await c.query<{ pid: number }>('SELECT pg_backend_pid() AS pid');
-      await c.query('SELECT pg_advisory_lock(1129467734, pg_backend_pid())');
+      await c.query('SELECT pg_advisory_lock(1280656473, pg_backend_pid())');
       c.release();
       return rows[0]?.pid;
     };
@@ -411,7 +411,7 @@ suite('kernel on PostgreSQL', () => {
     expect(replay).toEqual(first);
     await withAdmin(async (admin) => {
       const { rows } = await admin.query(
-        'SELECT created_by, created_xact_id IS NOT NULL AS stamped FROM crove_finance.journal_entry WHERE id = $1',
+        'SELECT created_by, created_xact_id IS NOT NULL AS stamped FROM ludy_finance.journal_entry WHERE id = $1',
         [first.journalEntryId],
       );
       expect(rows).toEqual([{ created_by: users.owner, stamped: true }]);
@@ -490,9 +490,9 @@ suite('kernel on PostgreSQL', () => {
     });
     const roundedRecorded = await runtime.execute<{ journalEntryId: string }>('kernel.proposal.approve', rounded, asAdmin);
     const roundedBooks = await withAdmin(async (c) => ({
-      lines: (await c.query(`SELECT l.line_no, l.amount::text FROM crove_finance.purchase_line l JOIN crove_finance.purchase_document d ON d.org_id = l.org_id AND d.id = l.document_id WHERE d.org_id = $1 AND d.proposal_id = $2 ORDER BY l.line_no`, [orgA, rounded.id])).rows,
-      document: (await c.query(`SELECT subtotal::text, vat_amount::text, total::text FROM crove_finance.purchase_document WHERE org_id = $1 AND proposal_id = $2`, [orgA, rounded.id])).rows[0],
-      entry: (await c.query(`SELECT account_code, debit::text, credit::text FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY account_code`, [orgA, roundedRecorded.journalEntryId])).rows,
+      lines: (await c.query(`SELECT l.line_no, l.amount::text FROM ludy_finance.purchase_line l JOIN ludy_finance.purchase_document d ON d.org_id = l.org_id AND d.id = l.document_id WHERE d.org_id = $1 AND d.proposal_id = $2 ORDER BY l.line_no`, [orgA, rounded.id])).rows,
+      document: (await c.query(`SELECT subtotal::text, vat_amount::text, total::text FROM ludy_finance.purchase_document WHERE org_id = $1 AND proposal_id = $2`, [orgA, rounded.id])).rows[0],
+      entry: (await c.query(`SELECT account_code, debit::text, credit::text FROM ludy_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY account_code`, [orgA, roundedRecorded.journalEntryId])).rows,
     }));
     expect(roundedBooks.lines.map((l: { line_no: number; amount: string }) => [l.line_no, Number(l.amount)])).toEqual([[1, 10], [2, 20], [3, 31]]);
     expect(roundedBooks.document).toEqual({ subtotal: '61.0000', vat_amount: '6.0000', total: '67.0000' });
@@ -537,7 +537,7 @@ suite('kernel on PostgreSQL', () => {
     const documentOf = (proposalId: string | null) =>
       withAdmin(async (c) => (await c.query(
         `SELECT currency, subtotal::text, vat_amount::text, total::text, exchange_rate::text, exchange_rate_source, foreign_subtotal::text, foreign_vat_amount::text, foreign_total::text
-           FROM crove_finance.purchase_document WHERE org_id = $1 AND proposal_id = $2`,
+           FROM ludy_finance.purchase_document WHERE org_id = $1 AND proposal_id = $2`,
         [orgA, proposalId],
       )).rows[0]);
 
@@ -592,8 +592,8 @@ suite('kernel on PostgreSQL', () => {
     expect(ownPayload.payload.checks.find((c) => c.id === 'currency')).toMatchObject({ status: 'warn', code: 'currency.converted' });
     const recorded = await runtime.execute<{ journalEntryId: string }>('kernel.proposal.approve', own, asAdmin);
     const entry = await withAdmin(async (c) => ({
-      description: (await c.query(`SELECT description FROM crove_finance.journal_entry WHERE org_id = $1 AND id = $2`, [orgA, recorded.journalEntryId])).rows[0].description,
-      lines: (await c.query(`SELECT account_code, debit::text, credit::text FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY line_no`, [orgA, recorded.journalEntryId])).rows,
+      description: (await c.query(`SELECT description FROM ludy_finance.journal_entry WHERE org_id = $1 AND id = $2`, [orgA, recorded.journalEntryId])).rows[0].description,
+      lines: (await c.query(`SELECT account_code, debit::text, credit::text FROM ludy_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY line_no`, [orgA, recorded.journalEntryId])).rows,
     }));
     expect(entry.description).toContain('(USD 1980000, tỷ giá 25450)');
     const debit = entry.lines.reduce((acc: number, l: { debit: string }) => acc + Number(l.debit), 0);
@@ -607,12 +607,12 @@ suite('kernel on PostgreSQL', () => {
     expect(await documentOf(lower.id)).toMatchObject({ currency: 'VND', exchange_rate: null });
 
     // The database refuses a foreign-currency document without its rate, and a VND one with a rate.
-    const party = (await withAdmin((c) => c.query(`SELECT party_id FROM crove_finance.purchase_document WHERE org_id = $1 AND proposal_id = $2`, [orgA, own.id]))).rows[0].party_id;
+    const party = (await withAdmin((c) => c.query(`SELECT party_id FROM ludy_finance.purchase_document WHERE org_id = $1 AND proposal_id = $2`, [orgA, own.id]))).rows[0].party_id;
     for (const [currency, rate] of [['USD', null], ['VND', '25450']] as const) {
       await expect(
         withAdmin((c) =>
           c.query(
-            `INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_number, invoice_date, currency, exchange_rate, subtotal, vat_amount, total)
+            `INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_number, invoice_date, currency, exchange_rate, subtotal, vat_amount, total)
              VALUES ($1, $2, $3, '2026-10-01', $4, $5, 100, 10, 110)`,
             [orgA, party, `FX-${currency}`, currency, rate],
           ),
@@ -654,7 +654,7 @@ suite('kernel on PostgreSQL', () => {
       aiEnabled: false,
     });
     const token = await withAdmin(async (admin) => {
-      const { rows } = await admin.query<{ inbound_token: string }>('SELECT inbound_token FROM crove_kernel.tenant WHERE org_id = $1', [orgA]);
+      const { rows } = await admin.query<{ inbound_token: string }>('SELECT inbound_token FROM ludy_kernel.tenant WHERE org_id = $1', [orgA]);
       return rows[0]?.inbound_token ?? '';
     });
     const attachment = Buffer.from(variant('1240')).toString('base64').replace(/.{76}/g, '$&\r\n');
@@ -689,14 +689,14 @@ suite('kernel on PostgreSQL', () => {
       withAdmin(async (admin) => Number((await admin.query<{ n: string }>(query, params)).rows[0]?.n ?? 0));
     const emailProposals = () =>
       count(
-        `SELECT count(*) AS n FROM crove_kernel.proposal p
-         JOIN crove_kernel.file f ON f.org_id = p.org_id AND f.id = p.source_file_id
+        `SELECT count(*) AS n FROM ludy_kernel.proposal p
+         JOIN ludy_kernel.file f ON f.org_id = p.org_id AND f.id = p.source_file_id
          WHERE p.org_id = $1 AND f.source = 'email'`,
         [orgA],
       );
     const receiveAudits = () =>
-      count(`SELECT count(*) AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.inbound.receive' AND actor_type = 'system'`, [orgA]);
-    const pending = () => count('SELECT count(*) AS n FROM crove_kernel.inbound_pending', []);
+      count(`SELECT count(*) AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.inbound.receive' AND actor_type = 'system'`, [orgA]);
+    const pending = () => count('SELECT count(*) AS n FROM ludy_kernel.inbound_pending', []);
     const until = async (check: () => Promise<boolean>) => {
       const deadline = Date.now() + 60_000;
       while (!(await check())) {
@@ -715,11 +715,11 @@ suite('kernel on PostgreSQL', () => {
     // The duplicate delivery's blob was deleted again, so one blob backs the one pending row.
     expect(await pending()).toBe(1);
     expect(store.keys('inbound/')).toHaveLength(1);
-    expect(await count('SELECT count(*) AS n FROM crove_kernel.inbound_message WHERE org_id = $1', [orgA])).toBe(0);
+    expect(await count('SELECT count(*) AS n FROM ludy_kernel.inbound_message WHERE org_id = $1', [orgA])).toBe(0);
 
     // Backpressure: past 10000 pending messages the API answers 503 and keeps nothing.
     await withAdmin((admin) =>
-      admin.query(`INSERT INTO crove_kernel.inbound_pending (blob_id, raw_sha256, size_bytes)
+      admin.query(`INSERT INTO ludy_kernel.inbound_pending (blob_id, raw_sha256, size_bytes)
         SELECT encode(sha256(('filler-' || i)::bytea), 'hex'), encode(sha256(('filler-' || i)::bytea), 'hex'), 1
         FROM generate_series(1, 10000) i`),
     );
@@ -727,14 +727,14 @@ suite('kernel on PostgreSQL', () => {
     expect(overloaded.status).toBe(503);
     expect(await overloaded.json()).toMatchObject({ code: 'OVERLOADED' });
     expect(store.keys('inbound/')).toHaveLength(1);
-    await withAdmin((admin) => admin.query(`DELETE FROM crove_kernel.inbound_pending WHERE size_bytes = 1`));
+    await withAdmin((admin) => admin.query(`DELETE FROM ludy_kernel.inbound_pending WHERE size_bytes = 1`));
     expect(await pending()).toBe(1);
 
-    // pg-boss functions (from the vendored crove_jobs migration) are SECURITY INVOKER, which is why the hardening
+    // pg-boss functions (from the vendored ludy_jobs migration) are SECURITY INVOKER, which is why the hardening
     // guard skips them; a rerun of the runner (and its guard) passes with the job schema installed.
     await withAdmin(async (admin) => {
       const { rows } = await admin.query<{ total: number; definers: number }>(
-        `SELECT count(*)::int AS total, count(*) FILTER (WHERE prosecdef)::int AS definers FROM pg_proc WHERE pronamespace = 'crove_jobs'::regnamespace`,
+        `SELECT count(*)::int AS total, count(*) FILTER (WHERE prosecdef)::int AS definers FROM pg_proc WHERE pronamespace = 'ludy_jobs'::regnamespace`,
       );
       expect(rows[0]?.total).toBeGreaterThan(0);
       expect(rows[0]?.definers).toBe(0);
@@ -742,7 +742,7 @@ suite('kernel on PostgreSQL', () => {
     expect(await migrate({ adminUrl, dir: MIGRATIONS })).toEqual([]);
     const stop = await startWorker({ connectionString: workerUrl, workerDb, runtime: workerRuntime, store, extractor: null, extract, inboundDomain: 'in.test', instance: 'kernel-db-worker' });
     const modulesOf = async () =>
-      (await withAdmin((admin) => admin.query<{ modules: string[] | null }>(`SELECT modules FROM crove_kernel.worker_heartbeat WHERE instance = 'kernel-db-worker'`))).rows[0]?.modules;
+      (await withAdmin((admin) => admin.query<{ modules: string[] | null }>(`SELECT modules FROM ludy_kernel.worker_heartbeat WHERE instance = 'kernel-db-worker'`))).rows[0]?.modules;
     // A running worker records the modules it works, the kernel among them (#1877).
     expect(await modulesOf()).toContain('kernel');
     try {
@@ -757,7 +757,7 @@ suite('kernel on PostgreSQL', () => {
       // The same message delivered again later is recorded once (idempotent on Message-ID).
       expect((await deliver(inboundSecret)).status).toBe(202);
       await until(async () => (await receiveAudits()) === 2);
-      expect(await count(`SELECT count(*) AS n FROM crove_kernel.inbound_message WHERE org_id = $1 AND message_id LIKE '%hd-1240@vendor.example%'`, [orgA])).toBe(1);
+      expect(await count(`SELECT count(*) AS n FROM ludy_kernel.inbound_message WHERE org_id = $1 AND message_id LIKE '%hd-1240@vendor.example%'`, [orgA])).toBe(1);
       expect(await emailProposals()).toBe(1);
       await until(async () => store.keys('inbound/').length === 0);
     } finally {

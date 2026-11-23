@@ -1,26 +1,27 @@
 // Crove Social home: what goes out next (an agenda by day), what waits for review, drafts, and what went out.
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
-import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, Navigate, useNavigate, useParams, useSearch } from '@tanstack/react-router';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
-import { Badge } from '@crove/ui/components/badge';
-import { Button, buttonVariants } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Input } from '@crove/ui/components/input';
-import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { SOCIAL_IMAGE_TYPES, SOCIAL_VIDEO_TYPES } from '@crove/kernel-contract';
-import { AGENDA_STATUSES, bestTimes, engagementRateOfBases, type PublishedSample } from '@crove/mod-social/contract';
-import { cn } from '@crove/ui/lib/utils';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button, buttonVariants } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuLinkItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@ludy/ui/components/dropdown-menu';
+import { Input } from '@ludy/ui/components/input';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { SOCIAL_IMAGE_TYPES, SOCIAL_VIDEO_TYPES } from '@ludy/kernel-contract';
+import { AGENDA_STATUSES } from '@ludy/mod-social/contract';
+import { cn } from '@ludy/ui/lib/utils';
 import { DateInput } from '../components/date-input.tsx';
 import { MediaTagEditor, TagFilter, Thumb, sizeLabel, useLibrary, type LibraryItem } from '../components/social-media.tsx';
 import { PEXELS_URL, StockCredit, StockPhotoSearch, pexelsHref, useStockPhotosEnabled } from '../components/social-stock-photos.tsx';
 import { SocialBoard } from '../components/social-board.tsx';
 import { OpenComments } from '../components/social-activity.tsx';
+import { UnansweredComments, UnansweredProvider } from '../components/social-unanswered.tsx';
 import { useChannelScope } from '../components/social-channel-access.tsx';
 import { SocialCalendar } from '../components/social-calendar.tsx';
 import { SavedViews } from '../components/social-saved-views.tsx';
-import { CalendarFeedCard } from '../components/social-calendar-feed.tsx';
 import { InstagramGrid } from '../components/social-instagram-grid.tsx';
 import { PostLabels, useLabels, type SocialLabel } from '../components/social-labels.tsx';
 import { isOverdue } from '../lib/social-assign.ts';
@@ -28,36 +29,21 @@ import { BulkBar } from '../components/social-bulk.tsx';
 import { DraftsFromMediaPanel } from '../components/social-bulk-drafts.tsx';
 import { DraftFromPhotoLink, useAiPhotos } from '../components/social-ai-photos.tsx';
 import { DRAFTS_FROM_MEDIA_MAX, togglePick } from '../lib/social-bulk-drafts.ts';
-import { PlanFromPosts, PlanReviewCard } from '../components/social-plan-review.tsx';
-import { ReportLinks } from '../components/social-report-links.tsx';
-import { MetricsSummary, useCanSummarize, useMetricsSummary } from '../components/social-summary.tsx';
-import { GoalsCard } from '../components/social-goals.tsx';
-import { TeamReport } from '../components/social-team-report.tsx';
-import { ReportSchedules } from '../components/social-report-schedules.tsx';
+import { PlanFromPosts } from '../components/social-plan-review.tsx';
 import type { BulkAction } from '../lib/social-bulk.ts';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { Empty, ErrorText, PageHeader, Spinner } from '../components/ui.tsx';
-import { AccountGrowth, ChangeChip, ChannelTotals, EngagementRateCard, TopPosts } from '../components/social-growth.tsx';
-import { FollowerAudiences } from '../components/social-audience.tsx';
-import { ProfilePerformance } from '../components/social-performance.tsx';
-import { WhatWorks } from '../components/social-insights.tsx';
-import { OutsidePostCell, OutsideSwitch } from '../components/social-external-posts.tsx';
-import { mergePublished } from '../lib/social-external.ts';
-import { StoryLine, StoryTotals } from '../components/social-story-metrics.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient, uploadFiles } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
-import { dayKey, dayRange, providerName, SOCIAL_TABS, variantStatusKey, variantTone, type SocialSearch, type SocialTab } from '../lib/social.ts';
+import { dayKey, dayRange, defaultSocialTab, isSocialScreen, providerName, rememberSocialList, SOCIAL_STATUS_TABS, SOCIAL_VIEWS, tabOfView, variantStatusKey, variantTone, viewOfTab, type SocialSearch, type SocialTab, type SocialView } from '../lib/social.ts';
 import { pollEvery, SAFETY_POLL_MS, useStreamLive } from '../lib/stream-hook.ts';
 
 type Tab = SocialTab;
-const TABS = SOCIAL_TABS;
 // Posts a list page shows; Load more asks for the next ones.
 const PAGE = 50;
 type ListTab = 'review' | 'attention' | 'drafts' | 'done' | 'archived';
 type PostCursor = { updatedAt: string; postId: string };
-// The counts the analytics table shows, in order; a platform that does not report one shows a dash.
-const METRIC_COLUMNS = ['reach', 'reactions', 'comments', 'shares'] as const;
 const DAY = 86_400_000;
 // The agenda lists what goes out in the next year, day by day.
 const AGENDA_DAYS = 366;
@@ -77,15 +63,18 @@ function ChannelChips({ post, names }: { post: Post; names: Map<string, string> 
       {post.variants
         .filter((v) => v.status !== 'cancelled')
         .map((v) => (
-          <Badge key={v.id} variant={variantTone(v)} title={names.get(v.connectionId)}>
-            {providerName(v.provider)} · {t(`status.${variantStatusKey(v)}`)}
+          // The channel's own name is on the chip (#3655): on a phone a title shows nothing, and two Pages of one network look alike.
+          <Badge key={v.id} variant={variantTone(v)} title={names.get(v.connectionId)} className="max-w-full">
+            <span className="truncate">
+              {names.get(v.connectionId) ? `${providerName(v.provider)} (${names.get(v.connectionId)})` : providerName(v.provider)} · {t(`status.${variantStatusKey(v)}`)}
+            </span>
           </Badge>
         ))}
     </div>
   );
 }
 
-function PostRow({ post, slug, names, labels, right }: { post: Post; slug: string; names: Map<string, string>; labels: readonly SocialLabel[]; right?: string }) {
+export function PostRow({ post, slug, names, labels, right }: { post: Post; slug: string; names: Map<string, string>; labels: readonly SocialLabel[]; right?: string }) {
   const t = useTranslations('social');
   return (
     <Link
@@ -100,199 +89,11 @@ function PostRow({ post, slug, names, labels, right }: { post: Post; slug: strin
       </div>
       <div className="flex shrink-0 items-center gap-2">
         <OpenComments count={post.openComments} />
+        <UnansweredComments postId={post.id} />
         {isOverdue(post, Date.now()) && <Badge variant="destructive">{t('assign.overdue')}</Badge>}
         {right && <span className="text-xs text-subtle-foreground tabular-nums">{right}</span>}
       </div>
     </Link>
-  );
-}
-
-// How published posts did (S8): totals over the window, then each published channel with its latest capture; with a
-// label chosen (#639), only the posts that carry it, on the screen and in the export. With the outside switch on
-// (#1054), the posts the channels published outside Crove count in the totals and show in the table with their chip;
-// they carry no label, so a label filter turns the switch off.
-function Metrics({ slug, names, labelId }: { slug: string; names: Map<string, string>; labelId: string | undefined }) {
-  const t = useTranslations('social');
-  const f = useFormat();
-  const [days, setDays] = useState(30);
-  const [outside, setOutside] = useState(false);
-  const counting = outside && !labelId;
-  const label = labelId ? { labelId } : {};
-  const rows = useQuery(orpc.social.metrics.summary.queryOptions({ input: { days, ...label } }));
-  // The totals over every published channel of the window, summed by the server (#397); the list below stops at 500.
-  const totals = useQuery(orpc.social.metrics.totals.queryOptions({ input: { days, ...label, ...(counting ? { includeExternal: true } : {}) } }));
-  const outsideRows = useQuery({ ...orpc.social.metrics.external.queryOptions({ input: { days } }), enabled: counting });
-  // An AI summary of the window shown (#1237), for members and above on a server with AI; never saved.
-  const canSummarize = useCanSummarize();
-  const summary = useMetricsSummary();
-  // The window as a CSV file, built and audited by the server, saved by the browser.
-  const exportCsv = useMutation({
-    mutationFn: () => client.social.metrics.export({ days, ...label }),
-    onSuccess: (file) => {
-      const url = URL.createObjectURL(new Blob([file.csv], { type: 'text/csv;charset=utf-8' }));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = file.filename;
-      a.click();
-      // Some browsers still read the link a moment after the click.
-      setTimeout(() => URL.revokeObjectURL(url), 10_000);
-    },
-  });
-  if (rows.isLoading) return <Spinner />;
-  if (rows.error) return <ErrorText>{errorMessage(rows.error)}</ErrorText>;
-  const data = rows.data ?? [];
-  const extra = counting ? (outsideRows.data ?? []) : [];
-  const total = (name: string) => totals.data?.metrics[name] ?? [...data, ...extra].reduce((sum, r) => sum + (r.metrics[name] ?? 0), 0);
-  // Clicks on Crove's short links (#706), where a channel sends its links through them.
-  const clicks = totals.data ? totals.data.clicks : data.some((r) => r.clicks !== null) ? data.reduce((sum, r) => sum + (r.clicks ?? 0), 0) : null;
-  const hasClicks = clicks !== null;
-  // The same totals of the window just before (#947), for the change next to each.
-  const previous = totals.data?.previous;
-  const against = t('growth.change.days', { days: String(days) });
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        {[7, 30, 90].map((d) => (
-          <Button key={d} variant={d === days ? 'secondary' : 'ghost'} size="sm" onClick={() => setDays(d)}>
-            {t('metricsDays', { days: String(d) })}
-          </Button>
-        ))}
-        {(data.length > 0 || extra.length > 0) && canSummarize && (
-          <Button variant="outline" size="sm" className="ml-auto" disabled={summary.write.isPending} onClick={() => summary.start({ days, labelId, includeExternal: counting })}>
-            {t('summary.open')}
-          </Button>
-        )}
-        {data.length > 0 && (
-          <Button variant="outline" size="sm" className={canSummarize ? undefined : 'ml-auto'} disabled={exportCsv.isPending} onClick={() => exportCsv.mutate()}>
-            {t('metricsExport')}
-          </Button>
-        )}
-      </div>
-      <MetricsSummary summary={summary} />
-      <OutsideSwitch checked={outside} onChange={setOutside} disabled={Boolean(labelId)} />
-      {exportCsv.error && <ErrorText>{errorMessage(exportCsv.error)}</ErrorText>}
-      {/* Without the server's totals the cards sum the listed rows only. */}
-      {totals.error && <ErrorText>{errorMessage(totals.error)}</ErrorText>}
-      {counting && outsideRows.error && <ErrorText>{errorMessage(outsideRows.error)}</ErrorText>}
-      {exportCsv.data?.truncated && <p className="text-xs text-warning">{t('metricsExportCut')}</p>}
-      <AccountGrowth days={days} names={names} />
-      <FollowerAudiences days={days} names={names} />
-      <ProfilePerformance days={days} names={names} />
-      {data.length === 0 && extra.length === 0 ? (
-        <Empty title={t('empty.metrics')} hint={t('metricsHint')} />
-      ) : (
-        <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {totals.data && (
-              <Card className="block p-4">
-                <p className="text-xs text-subtle-foreground">{t('growth.posts')}</p>
-                <p className="mt-1 text-xl font-semibold text-foreground tabular-nums">{f.number(totals.data.posts)}</p>
-                <ChangeChip current={totals.data.posts} previous={previous?.posts} against={against} withPrevious className="mt-1" />
-              </Card>
-            )}
-            {METRIC_COLUMNS.map((m) => (
-              <Card key={m} className="block p-4">
-                <p className="text-xs text-subtle-foreground">{t(`metric.${m}`)}</p>
-                <p className="mt-1 text-xl font-semibold text-foreground tabular-nums">{totals.isLoading ? '…' : f.number(total(m))}</p>
-                {previous && <ChangeChip current={total(m)} previous={previous.metrics[m]} against={against} withPrevious className="mt-1" />}
-              </Card>
-            ))}
-            {/* The engagement rate over the posts that report reach (else impressions, #1164), never a mean of rates (#1157). */}
-            {totals.data && <EngagementRateCard current={engagementRateOfBases([totals.data.rateBases])} previous={previous ? engagementRateOfBases([previous.rateBases]) : null} against={against} />}
-            {hasClicks && (
-              <Card className="block p-4">
-                <p className="text-xs text-subtle-foreground">{t('metricsClicks')}</p>
-                <p className="mt-1 text-xl font-semibold text-foreground tabular-nums">{totals.isLoading ? '…' : f.number(clicks ?? 0)}</p>
-                {previous && <ChangeChip current={clicks} previous={previous.clicks} against={against} withPrevious className="mt-1" />}
-              </Card>
-            )}
-          </div>
-          {totals.data && <StoryTotals metrics={totals.data.metrics} />}
-          {totals.data && totals.data.channels.length > 0 && <ChannelTotals current={totals.data.channels} previous={previous?.channels ?? []} days={days} names={names} />}
-          {data.length >= 500 && <p className="text-xs text-subtle-foreground">{t(totals.data ? 'metricsCapped' : 'metricsCappedPartial')}</p>}
-          <BestTimes rows={data} names={names} />
-      <WhatWorks slug={slug} days={days} labelId={labelId} names={names} />
-          <TopPosts rows={data} names={names} slug={slug} />
-          <div className="overflow-x-auto rounded-xl border">
-            <table className="w-full text-sm">
-              <thead className="bg-muted text-xs text-subtle-foreground">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium">{t('metricsPost')}</th>
-                  {METRIC_COLUMNS.map((m) => (
-                    <th key={m} className="px-3 py-2 text-right font-medium">
-                      {t(`metric.${m}`)}
-                    </th>
-                  ))}
-                  {hasClicks && <th className="px-3 py-2 text-right font-medium">{t('metricsClicks')}</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {mergePublished(data, extra).map((item) => {
-                  const r = item.row;
-                  const meta = [providerName(r.provider), names.get(r.connectionId), r.publishedAt ? f.dateTime(r.publishedAt) : null, r.capturedAt ? t('metricsAsOf', { when: f.dateTime(r.capturedAt) }) : t('metricsPending')]
-                    .filter(Boolean)
-                    .join(' · ');
-                  return (
-                    <tr key={item.kind === 'crove' ? item.row.variantId : `outside-${item.row.id}`} className="border-t">
-                      <td className="max-w-md px-3 py-2">
-                        {item.kind === 'crove' ? (
-                          <>
-                            <Link to="/o/$slug/social/$id" params={{ slug, id: item.row.postId }} className="line-clamp-1 text-foreground hover:underline">
-                              {item.row.excerpt || t('emptyText')}
-                            </Link>
-                            <p className="text-xs text-subtle-foreground">{meta}</p>
-                            <StoryLine metrics={r.metrics} />
-                          </>
-                        ) : (
-                          <OutsidePostCell excerpt={item.row.excerpt} url={item.row.url} meta={meta} />
-                        )}
-                      </td>
-                      {METRIC_COLUMNS.map((m) => (
-                        <td key={m} className="px-3 py-2 text-right text-foreground tabular-nums">
-                          {r.metrics[m] === undefined ? '-' : f.number(r.metrics[m])}
-                        </td>
-                      ))}
-                      {hasClicks && <td className="px-3 py-2 text-right text-foreground tabular-nums">{item.kind === 'crove' && item.row.clicks !== null ? f.number(item.row.clicks) : '-'}</td>}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-const DAY_KEYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
-
-// When each channel's posts drew the most engagement, in the viewer's time zone, from the posts in the window.
-function BestTimes({ rows, names }: { rows: readonly PublishedSample[]; names: Map<string, string> }) {
-  const t = useTranslations('social');
-  const f = useFormat();
-  const best = useMemo(() => bestTimes(rows, Intl.DateTimeFormat().resolvedOptions().timeZone), [rows]);
-  if (best.size === 0) return null;
-  return (
-    <Card className="block space-y-3 p-4">
-      <div>
-        <p className="text-sm font-medium text-foreground">{t('bestTimesTitle')}</p>
-        <p className="text-xs text-subtle-foreground">{t('bestTimesHint')}</p>
-      </div>
-      <ul className="space-y-2">
-        {[...best.entries()].map(([connectionId, slots]) => (
-          <li key={connectionId} className="text-sm">
-            <span className="text-foreground">{names.get(connectionId) ?? connectionId.slice(0, 8)}</span>
-            <span className="text-subtle-foreground">
-              {': '}
-              {slots
-                .map((s) => t('bestTimesSlot', { day: t(`weekday.${DAY_KEYS[s.weekday - 1] ?? 'mon'}`), hour: String(s.hour).padStart(2, '0'), engagement: f.number(Math.round(s.engagement)), posts: String(s.posts) }))
-                .join(' · ')}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </Card>
   );
 }
 
@@ -430,7 +231,16 @@ function Library({ slug, canWrite }: { slug: string; canWrite: boolean }) {
       ) : library.error ? (
         <ErrorText>{errorMessage(library.error)}</ErrorText>
       ) : items.length === 0 ? (
-        <Empty title={tag ? t('libraryNoTagMatch') : search.trim() ? t('libraryNoMatch') : archived ? t('libraryArchivedEmpty') : t('libraryEmpty')} />
+        <Empty
+          title={tag ? t('libraryNoTagMatch') : search.trim() ? t('libraryNoMatch') : archived ? t('libraryArchivedEmpty') : t('libraryEmpty')}
+          action={
+            canWrite && !archived && !tag && !search.trim() ? (
+              <Button size="lg" disabled={upload.isPending} onClick={() => picker.current?.click()}>
+                {t('libraryAdd')}
+              </Button>
+            ) : undefined
+          }
+        />
       ) : (
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
           <ul className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-5">
@@ -530,8 +340,11 @@ function Agenda({
   labels,
   picked,
   onPick,
+  action,
 }: {
   posts: Post[];
+  // The one action of an empty agenda (#3654).
+  action?: ReactNode;
   slug: string;
   names: Map<string, string>;
   labels: readonly SocialLabel[];
@@ -545,7 +358,7 @@ function Agenda({
   const items = posts
     .flatMap((post) => post.variants.filter((v) => (AGENDA_STATUSES as readonly string[]).includes(v.status) && v.effectiveAt).map((v) => ({ post, v })))
     .sort((a, b) => Date.parse(a.v.effectiveAt as string) - Date.parse(b.v.effectiveAt as string));
-  if (items.length === 0) return <Empty title={t('agendaEmpty')} hint={t('agendaEmptyHint')} />;
+  if (items.length === 0) return <Empty title={t('agendaEmpty')} hint={t('agendaEmptyHint')} action={action} />;
   const days = new Map<string, Array<{ post: Post; v: Variant }>>();
   for (const item of items) {
     const key = dayKey(item.v.effectiveAt as string);
@@ -602,6 +415,22 @@ function Agenda({
   );
 }
 
+// One line of the post figures, with the way to the report (#3658): the figures themselves are in Reports > Bài đăng.
+function ReportLine({ slug }: { slug: string }) {
+  const t = useTranslations('social');
+  const totals = useQuery(orpc.social.metrics.totals.queryOptions({ input: { days: 30 } }));
+  const data = totals.data;
+  if (!data || data.posts === 0) return null;
+  return (
+    <p className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground" data-testid="report-line">
+      <span>{t('reportLine', { days: 30, posts: data.posts, reach: data.metrics.reach ?? 0, reactions: data.metrics.reactions ?? 0 })}</span>
+      <Link to="/o/$slug/reports" params={{ slug }} search={{ area: 'posts' }} className="text-link hover:underline">
+        {t('reportOpen')}
+      </Link>
+    </p>
+  );
+}
+
 // Drops empty filters, so the address shows only what is set.
 const clean = (s: { [K in keyof SocialSearch]?: SocialSearch[K] | undefined }): SocialSearch => Object.fromEntries(Object.entries(s).filter(([, v]) => v !== undefined && v !== '')) as SocialSearch;
 
@@ -612,13 +441,36 @@ export function SocialPage() {
   const live = useStreamLive();
   const search: SocialSearch = useSearch({ strict: false });
   const navigate = useNavigate();
-  const tab: Tab = search.tab ?? 'upcoming';
+  // The Review tab's count, whatever list is open.
+  const review = useQuery({ ...orpc.social.posts.list.queryOptions({ input: { stage: 'review', limit: 200 } }), refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
+  // Posts with a channel that failed, needs a person or waits on its channel (#579): their count on the tab.
+  const attention = useQuery({ ...orpc.social.posts.list.queryOptions({ input: { stage: 'attention', limit: 200 } }), refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
+  // With no tab in the address the page opens on what waits for a person (#3654): the posts in review, else the posts that
+  // failed or need someone, else the schedule. Read once the two counts are in, then kept for the visit, so approving
+  // the last post does not move the screen under the reviewer; the schedule tab is asked for by name in the address.
+  const [landed, setLanded] = useState<Tab | null>(null);
+  useEffect(() => {
+    // Not while either count is still being read: a cached count from an earlier visit may be stale (a post just sent to review).
+    if (landed !== null || review.isPending || attention.isPending || review.isFetching || attention.isFetching) return;
+    setLanded(defaultSocialTab({ review: review.data?.length ?? 0, attention: attention.data?.length ?? 0 }));
+  }, [landed, review.isPending, attention.isPending, review.isFetching, attention.isFetching, review.data, attention.data]);
+  const resolving = !search.tab && landed === null;
+  const tab: Tab = search.tab ?? landed ?? 'upcoming';
+  // The posts' views (#3655): the status lists are one, the calendar and the board the others; the figures and the photo
+  // library are screens of their own with a way back to the status list the visit came from.
+  const screen = isSocialScreen(tab);
+  const view: SocialView = viewOfTab(tab) ?? 'list';
+  // The list, calendar or board the visit came from: the way back from a screen (#3655).
+  const [lastStatus, setLastStatus] = useState<SocialTab>('upcoming');
+  useEffect(() => {
+    if (!isSocialScreen(tab)) setLastStatus(tab);
+  }, [tab]);
   // Changes the address, so the back button and a shared link keep the list; replaces rather than piles up history.
   const setSearch = useCallback(
     (next: { [K in keyof SocialSearch]?: SocialSearch[K] | undefined }) => void navigate({ to: '/o/$slug/social', params: { slug }, search: (prev: SocialSearch) => clean({ ...prev, ...next }), replace: true }),
     [navigate, slug],
   );
-  const setTab = (next: Tab) => setSearch({ tab: next === 'upcoming' ? undefined : next });
+  const setTab = (next: Tab) => setSearch({ tab: next });
   // The search box writes the address a moment after typing stops.
   const [text, setText] = useState(search.q ?? '');
   // The address changed from outside (back, a link, Clear): the box follows, unless it already says the same.
@@ -643,7 +495,9 @@ export function SocialPage() {
   const me = useQuery(orpc.me.get.queryOptions());
   const role = me.data?.orgs.find((o) => o.slug === slug)?.role;
   const canWrite = role === 'owner' || role === 'admin' || role === 'member';
-  const upcoming = useQuery({ ...orpc.social.posts.list.queryOptions({ input: { ...range, ...filters, limit: 200 } }), enabled: tab === 'upcoming', refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
+  // Only owners and admins connect channels (#3651): a member is told whom to ask, with no button they cannot use.
+  const canConnect = role === 'owner' || role === 'admin';
+  const upcoming = useQuery({ ...orpc.social.posts.list.queryOptions({ input: { ...range, ...filters, limit: 200 } }), enabled: tab === 'upcoming' && !resolving, refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
   const listTab: ListTab | null = tab === 'review' || tab === 'attention' || tab === 'drafts' || tab === 'done' || tab === 'archived' ? tab : null;
   // The server filters and pages (#574); a page at a time, newest change first.
   const list = useInfiniteQuery({
@@ -666,10 +520,6 @@ export function SocialPage() {
     enabled: listTab !== null || tab === 'board',
     refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS),
   });
-  // The Review tab's count, whatever list is open.
-  const review = useQuery({ ...orpc.social.posts.list.queryOptions({ input: { stage: 'review', limit: 200 } }), refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
-  // Posts with a channel that failed, needs a person or waits on its channel (#579): their count on the tab.
-  const attention = useQuery({ ...orpc.social.posts.list.queryOptions({ input: { stage: 'attention', limit: 200 } }), refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
   const names = new Map((channels.data ?? []).map((c) => [c.id, c.displayName]));
   const noChannels = channels.isSuccess && channels.data.length === 0;
 
@@ -680,11 +530,34 @@ export function SocialPage() {
   // The post filters (label, channel, search, mine) are the same in the lists, the board and the calendar (#1022): one
   // state, in the address. The metrics take the label only; the calendar's own month or week is its date range.
   const postFilters = tab === 'upcoming' || listTab !== null || tab === 'board' || tab === 'calendar';
-  const labelFilter = (postFilters || tab === 'metrics') && (labelList.length > 0 || Boolean(search.label));
+  const labelFilter = postFilters && (labelList.length > 0 || Boolean(search.label));
   // Posts picked for a bulk action (#635), in the list on screen; a new tab or filter starts afresh.
   const [picked, setPicked] = useState<Set<string>>(new Set());
   useEffect(() => setPicked(new Set()), [tab, search.channel, search.label, search.q, search.from, search.to, search.assignee, search.author]);
   const canDecide = role === 'owner' || role === 'admin';
+  // Kept for the way back from a post (#3656): the tab and filters on screen, once the tab is settled.
+  const addressNow = JSON.stringify({ ...search, tab });
+  useEffect(() => {
+    if (!resolving) rememberSocialList(slug, JSON.parse(addressNow) as SocialSearch);
+  }, [addressNow, resolving, slug]);
+  // The one action of an empty list (#3654): write a post (the first one, or another), or connect the first channel; none for
+  // a viewer, who can do neither.
+  const postAction = (first: boolean): ReactNode =>
+    !canWrite ? undefined : noChannels ? (
+      canDecide ? (
+        <Link to="/o/$slug/social/channels" params={{ slug }} className={buttonVariants({ size: 'lg' })}>
+          {t('connectFirst')}
+        </Link>
+      ) : undefined
+    ) : (
+      <Link to="/o/$slug/social/new" params={{ slug }} className={buttonVariants({ size: 'lg' })}>
+        {t(first ? 'composeFirst' : 'compose')}
+      </Link>
+    );
+  const clearFilters = () => {
+    setText('');
+    setSearch({ channel: undefined, label: undefined, q: undefined, from: undefined, to: undefined, assignee: undefined, author: undefined });
+  };
   // Moving by days or hours (#945) is for owners and admins, like a single reschedule; the agenda offers only that.
   // Members and above send drafts to review in bulk on the Drafts and Attention lists (#1178); owners and admins publish
   // the failed channels there again (#1456).
@@ -745,6 +618,9 @@ export function SocialPage() {
   const excerptOf = (postId: string) => excerpt((rows.find((p) => p.id === postId) ?? upcoming.data?.find((p) => p.id === postId))?.body ?? '', 60) || t('emptyText');
   const channelName = (connectionId: string) => names.get(connectionId) ?? t('bulk.move.channelGone');
 
+  // The figures are in Reports > Bài đăng (#3658); an old link to the Số liệu screen opens there, with its label.
+  if (tab === 'metrics') return <Navigate to="/o/$slug/reports" params={{ slug }} search={{ area: 'posts', ...(search.label ? { label: search.label } : {}) }} replace />;
+
   return (
     <>
       <PageHeader
@@ -752,29 +628,35 @@ export function SocialPage() {
         subtitle={t('subtitle')}
         actions={
           <>
-            <Link to="/o/$slug/social/channels" params={{ slug }} className={buttonVariants({ variant: 'outline', size: 'lg' })}>
-              {t('channels')}
-            </Link>
-            {canWrite && !noChannels && (
-              <Link to="/o/$slug/social/import" params={{ slug }} className={buttonVariants({ variant: 'outline', size: 'lg' })}>
-                {t('import.open')}
-              </Link>
-            )}
-            <Link to="/o/$slug/social/ideas" params={{ slug }} className={buttonVariants({ variant: 'outline', size: 'lg' })}>
-              {t('ideas.title')}
-            </Link>
-            <Link to="/o/$slug/social/bio" params={{ slug }} className={buttonVariants({ variant: 'outline', size: 'lg' })}>
-              {t('bio.pageTitle')}
-            </Link>
-            <Link to="/o/$slug/social/feeds" params={{ slug }} className={buttonVariants({ variant: 'outline', size: 'lg' })}>
-              {t('feeds.title')}
-            </Link>
-            <Link to="/o/$slug/social/snippets" params={{ slug }} className={buttonVariants({ variant: 'outline', size: 'lg' })}>
-              {t('snippets.title')}
-            </Link>
-            <Link to="/o/$slug/social/labels" params={{ slug }} className={buttonVariants({ variant: 'outline', size: 'lg' })}>
-              {t('labels.title')}
-            </Link>
+            {/* One main action and one menu (#3655): the tools and settings are not equal to writing a post. */}
+            <DropdownMenu>
+              <DropdownMenuTrigger render={<Button variant="outline" size="lg" />}>
+                {t('tools.open')}
+                <span aria-hidden="true" className="text-muted-foreground">
+                  ▾
+                </span>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                {canWrite && (
+                  <DropdownMenuLinkItem render={<Link to="/o/$slug/social/ideas" params={{ slug }} />}>{t('ideas.title')}</DropdownMenuLinkItem>
+                )}
+                {canWrite && !noChannels && (
+                  <DropdownMenuLinkItem render={<Link to="/o/$slug/social/import" params={{ slug }} />}>{t('import.open')}</DropdownMenuLinkItem>
+                )}
+                <DropdownMenuLinkItem render={<Link to="/o/$slug/social" params={{ slug }} search={(prev: SocialSearch) => clean({ ...prev, tab: 'library' })} />}>{t('tabs.library')}</DropdownMenuLinkItem>
+                <DropdownMenuLinkItem render={<Link to="/o/$slug/reports" params={{ slug }} search={{ area: 'posts' }} />}>{t('tabs.metrics')}</DropdownMenuLinkItem>
+                {canWrite && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLinkItem render={<Link to="/o/$slug/social/channels" params={{ slug }} />}>{t('channels')}</DropdownMenuLinkItem>
+                    <DropdownMenuLinkItem render={<Link to="/o/$slug/social/feeds" params={{ slug }} />}>{t('feeds.title')}</DropdownMenuLinkItem>
+                    <DropdownMenuLinkItem render={<Link to="/o/$slug/social/snippets" params={{ slug }} />}>{t('snippets.title')}</DropdownMenuLinkItem>
+                    <DropdownMenuLinkItem render={<Link to="/o/$slug/social/labels" params={{ slug }} />}>{t('labels.title')}</DropdownMenuLinkItem>
+                    <DropdownMenuLinkItem render={<Link to="/o/$slug/social/bio" params={{ slug }} />}>{t('bio.pageTitle')}</DropdownMenuLinkItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
             {!canWrite ? null : noChannels ? (
               <Button size="lg" disabled>
                 {t('compose')}
@@ -791,33 +673,52 @@ export function SocialPage() {
         <Card className="mb-6 flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="text-sm font-medium text-foreground">{t('noChannelsTitle')}</p>
-            <p className="mt-1 text-sm text-muted-foreground">{t('noChannelsHint')}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{t(role !== undefined && !canConnect ? 'noChannelsMember' : 'noChannelsHint')}</p>
           </div>
-          <Link to="/o/$slug/social/channels" params={{ slug }} className={buttonVariants({ size: 'lg' })}>
-            {t('connectFirst')}
-          </Link>
+          {canConnect && (
+            <Link to="/o/$slug/social/channels" params={{ slug }} className={buttonVariants({ size: 'lg' })}>
+              {t('connectFirst')}
+            </Link>
+          )}
         </Card>
       )}
+      {!resolving && !noChannels && tab !== 'library' && <ReportLine slug={slug} />}
+      {resolving ? (
+        <Spinner />
+      ) : (
       <Tabs className="gap-4" value={tab} onValueChange={(value) => setTab(value as Tab)}>
-        {/* Nine tabs do not fit on one line at phone width: they wrap, so the page never scrolls sideways (#1043). The
-            active tab's underline sits at the foot of its own tab, so on a first row it is not left in the gap (#1230). */}
-        <TabsList variant="line" className="w-full flex-wrap justify-start gap-y-2 border-b group-data-horizontal/tabs:h-auto">
-          {TABS.map((id) => (
-            <TabsTrigger key={id} value={id} className="h-8 flex-none px-3 group-data-horizontal/tabs:after:bottom-0">
-              {t(`tabs.${id}`)}
-              {id === 'review' && reviewCount > 0 && <span className="ml-1.5 rounded-full bg-primary px-1.5 text-xs text-primary-foreground">{reviewCount}</span>}
-              {id === 'attention' && attentionCount > 0 && <span className="ml-1.5 rounded-full bg-destructive px-1.5 text-xs text-primary-foreground">{attentionCount}</span>}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-        {/* Named filters, private or shared with the team (#1300): applied in one click, the address takes them. */}
-        {postFilters && (
-          <SavedViews
-            search={search}
-            members={members}
-            canShare={canWrite}
-            onApply={(next) => void navigate({ to: '/o/$slug/social', params: { slug }, search: next, replace: true })}
-          />
+        {screen ? (
+          // The figures and the photo library are screens of their own (#3655): a way back, then the screen.
+          <div className="flex flex-wrap items-center gap-3">
+            <Link to="/o/$slug/social" params={{ slug }} search={(prev: SocialSearch) => clean({ ...prev, tab: lastStatus })} className={buttonVariants({ variant: 'ghost' })}>
+              {t('screenBack')}
+            </Link>
+            <h2 className="text-base font-semibold text-foreground">{t(`tabs.${tab}`)}</h2>
+          </div>
+        ) : (
+          <>
+            {/* The status lists, and beside them how to look at the posts: a list, the calendar or the board (#3655). Six
+                tabs and three views, not ten tabs. The tabs wrap at phone width so the page never scrolls sideways (#1043);
+                the active tab's underline sits at the foot of its own tab (#1230). */}
+            <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-b">
+              <TabsList variant="line" className="flex-wrap justify-start gap-y-2 group-data-horizontal/tabs:h-auto">
+                {SOCIAL_STATUS_TABS.map((id) => (
+                  <TabsTrigger key={id} value={id} className="h-8 flex-none px-3 group-data-horizontal/tabs:after:bottom-0">
+                    {t(`tabs.${id}`)}
+                    {id === 'review' && reviewCount > 0 && <span className="ml-1.5 rounded-full bg-primary px-1.5 text-xs text-primary-foreground">{reviewCount}</span>}
+                    {id === 'attention' && attentionCount > 0 && <span className="ml-1.5 rounded-full bg-destructive px-1.5 text-xs text-primary-foreground">{attentionCount}</span>}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+              <div className="flex gap-1 pb-1" role="group" aria-label={t('postViews.label')}>
+                {SOCIAL_VIEWS.map((v) => (
+                  <Button key={v} variant={view === v ? 'secondary' : 'ghost'} size="sm" aria-pressed={view === v} onClick={() => setTab(tabOfView(v, lastStatus))}>
+                    {t(`postViews.${v}`)}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </>
         )}
         {(postFilters || labelFilter) && (
           <div className="flex flex-wrap items-end gap-3">
@@ -865,7 +766,8 @@ export function SocialPage() {
                 )}
               </>
             )}
-            {postFilters && (
+            {/* Whose posts matters from two members on (#3655); a link that names someone still shows the filter. */}
+            {postFilters && (members.length >= 2 || Boolean(search.assignee || search.author)) && (
               <>
                 {memberFilter('assignee')}
                 {memberFilter('author')}
@@ -877,6 +779,18 @@ export function SocialPage() {
               </Button>
             )}
           </div>
+        )}
+        {/* Named filters, private or shared with the team (#1300), applied in one click, the address takes them. Offered after
+            the filters, and "save" only while one is set (#3655). */}
+        {postFilters && (
+          <SavedViews
+            // The tab on screen, which the address may not name (#3654): a view saved here keeps it.
+            search={{ ...search, tab }}
+            members={members}
+            canShare={canWrite}
+            canSave={filtered}
+            onApply={(next) => void navigate({ to: '/o/$slug/social', params: { slug }, search: { tab: 'upcoming' as const, ...next }, replace: true })}
+          />
         )}
         <TabsContent value="upcoming">
           {agendaActions.length > 0 && (
@@ -900,7 +814,7 @@ export function SocialPage() {
           ) : upcoming.error ? (
             <ErrorText>{errorMessage(upcoming.error)}</ErrorText>
           ) : (
-            <Agenda posts={upcoming.data ?? []} slug={slug} names={names} labels={labelList} picked={agendaActions.length > 0 ? picked : null} onPick={setPicked} />
+            <Agenda posts={upcoming.data ?? []} slug={slug} names={names} labels={labelList} picked={agendaActions.length > 0 ? picked : null} onPick={setPicked} action={postAction(false)} />
           )}
         </TabsContent>
         <TabsContent value="calendar">
@@ -934,8 +848,6 @@ export function SocialPage() {
                 }
               />
               <InstagramGrid slug={slug} channels={(channels.data ?? []).filter((c) => c.provider === 'instagram' && c.status !== 'revoked')} canDecide={role === 'owner' || role === 'admin'} />
-              <PlanReviewCard channels={channels.data ?? []} canManage={canDecide} />
-              <CalendarFeedCard canManage={role === 'owner' || role === 'admin'} />
             </div>
           )}
         </TabsContent>
@@ -987,15 +899,6 @@ export function SocialPage() {
             </>
           )}
         </TabsContent>
-        <TabsContent value="metrics">
-          <div className="space-y-4">
-            <GoalsCard channels={channels.data ?? []} />
-            <Metrics slug={slug} names={names} labelId={search.label} />
-            <TeamReport key={slug} />
-            <ReportLinks channels={channels.data ?? []} />
-            <ReportSchedules channels={channels.data ?? []} />
-          </div>
-        </TabsContent>
         <TabsContent value="library">{tab === 'library' && <Library slug={slug} canWrite={canWrite} />}</TabsContent>
         {(['review', 'attention', 'drafts', 'done', 'archived'] as const).map((id) => (
           <TabsContent key={id} value={id}>
@@ -1024,8 +927,28 @@ export function SocialPage() {
                 ) : list.error && rows.length === 0 ? (
                   <ErrorText>{errorMessage(list.error)}</ErrorText>
                 ) : rows.length === 0 ? (
-                  <Empty title={filtered ? t('filters.noMatch') : t(`empty.${id}`)} />
+                  <Empty
+                    title={filtered ? t('filters.noMatch') : t(`empty.${id}`)}
+                    action={
+                      filtered ? (
+                        <Button size="lg" onClick={clearFilters}>
+                          {t('filters.clear')}
+                        </Button>
+                      ) : id === 'attention' ? (
+                        <Button size="lg" onClick={() => setTab('upcoming')}>
+                          {t('seeSchedule')}
+                        </Button>
+                      ) : id === 'archived' ? (
+                        <Button size="lg" onClick={() => setTab('done')}>
+                          {t('seePublished')}
+                        </Button>
+                      ) : (
+                        postAction(id === 'done')
+                      )
+                    }
+                  />
                 ) : (
+                  <UnansweredProvider posts={rows}>
                   <div className="space-y-2">
                     {listActions.length > 0 && (
                       <>
@@ -1047,6 +970,7 @@ export function SocialPage() {
                       </div>
                     ))}
                   </div>
+                  </UnansweredProvider>
                 )}
                 {list.hasNextPage && (
                   <div className="mt-4 flex justify-center">
@@ -1060,6 +984,7 @@ export function SocialPage() {
           </TabsContent>
         ))}
       </Tabs>
+      )}
     </>
   );
 }

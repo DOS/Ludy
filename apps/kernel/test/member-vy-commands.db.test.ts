@@ -7,10 +7,10 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 import { contextToken } from './invariant/fixtures/context-token.ts';
 
@@ -41,8 +41,8 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
       await c.end();
     }
   };
-  const runStatus = async (runId: string) => (await sqlAdmin<{ status: string }>('SELECT status FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2', [orgId, runId]))[0]?.status;
-  const resetRuns = () => sqlAdmin(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND status = 'running'`, [orgId]);
+  const runStatus = async (runId: string) => (await sqlAdmin<{ status: string }>('SELECT status FROM ludy_kernel.ai_run WHERE org_id = $1 AND id = $2', [orgId, runId]))[0]?.status;
+  const resetRuns = () => sqlAdmin(`UPDATE ludy_kernel.ai_run SET status = 'cancelled', finished_at = now() WHERE org_id = $1 AND status = 'running'`, [orgId]);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -53,9 +53,9 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -65,7 +65,7 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
       users[key] = await upsertIdentity(db, { issuer: 'member-vy-cmd', subject: key, email: `${key}@member-vy-cmd.test`, name: null });
     }
     orgId = (await createOrg(runtime, asUser(users.owner), 'Vy lệnh')).orgId;
-    await sqlAdmin(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')`, [orgId, users.admin, users.alice, users.bob, users.viewer]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')`, [orgId, users.admin, users.alice, users.bob, users.viewer]);
   }, 300_000);
 
   afterAll(async () => {
@@ -83,7 +83,7 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     const second = await start(users.alice);
     expect(await runStatus(first.runId), 'the next start closes an abandoned run of the same member').toBe('cancelled');
     expect(await runStatus(second.runId)).toBe('running');
-    const agents = await sqlAdmin(`SELECT id FROM crove_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2`, [orgId, users.alice]);
+    const agents = await sqlAdmin(`SELECT id FROM ludy_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2`, [orgId, users.alice]);
     expect(agents, 'one Vy per member').toHaveLength(1);
     const got = await query<{ status: string; privateRead: boolean; tainted: boolean }>(users.alice, 'kernel.member_vy.result.get', { runId: second.runId });
     expect(got).toMatchObject({ status: 'running', privateRead: true, tainted: true });
@@ -97,14 +97,14 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     expect(await store(users.alice, run.runId, { status: 'ready', body: SECRET, sourceRevision: 3 })).toEqual({ stored: true, status: 'ready' });
     expect(await runStatus(run.runId)).toBe('succeeded');
     expect(await query(users.alice, 'kernel.member_vy.result.get', { runId: run.runId })).toMatchObject({ status: 'ready', body: SECRET, sourceRevision: 3, privateRead: true, tainted: true });
-    expect((await sqlAdmin<{ private_read: boolean }>('SELECT private_read FROM crove_kernel.ai_run WHERE org_id = $1 AND id = $2', [orgId, run.runId]))[0]?.private_read).toBe(true);
+    expect((await sqlAdmin<{ private_read: boolean }>('SELECT private_read FROM ludy_kernel.ai_run WHERE org_id = $1 AND id = $2', [orgId, run.runId]))[0]?.private_read).toBe(true);
     await expect(store(users.alice, run.runId, { status: 'ready', body: 'lần hai' }), 'a second store of the same run').rejects.toMatchObject({ code: 'VY_RUN_NOT_LIVE' });
     // The audit trail, the activity feed and the outbox never carry the text (decision 4).
     for (const table of ['audit_event', 'activity', 'outbox_event']) {
-      const rows = await sqlAdmin<{ t: string }>(`SELECT row_to_json(x)::text AS t FROM crove_kernel.${table} x WHERE org_id = $1`, [orgId]);
+      const rows = await sqlAdmin<{ t: string }>(`SELECT row_to_json(x)::text AS t FROM ludy_kernel.${table} x WHERE org_id = $1`, [orgId]);
       expect(rows.filter((r) => r.t.includes('giảm giá')), `${table} holds none of the text`).toEqual([]);
     }
-    const audited = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.member_vy.result.store'`, [orgId]);
+    const audited = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.member_vy.result.store'`, [orgId]);
     expect(Number(audited[0]?.n)).toBeGreaterThan(0);
   });
 
@@ -114,7 +114,7 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     await expect(store(users.bob, run.runId, { status: 'ready', body: 'x' })).rejects.toMatchObject({ code: 'VY_RUN_NOT_LIVE' });
     await expect(store(users.alice, randomUUID(), { status: 'ready', body: 'x' })).rejects.toMatchObject({ code: 'VY_RUN_NOT_LIVE' });
     // Triggers off for this one statement: the 4-hour bound (#2856) forbids moving the start of a member_vy run, and an expired run needs both moved (CHECK expires_at > started_at).
-    await sqlAdmin(`SET LOCAL session_replication_role = replica; UPDATE crove_kernel.ai_run SET expires_at = now() - interval '1 minute', started_at = now() - interval '1 hour' WHERE org_id = '${orgId}' AND id = '${run.runId}'`);
+    await sqlAdmin(`SET LOCAL session_replication_role = replica; UPDATE ludy_kernel.ai_run SET expires_at = now() - interval '1 minute', started_at = now() - interval '1 hour' WHERE org_id = '${orgId}' AND id = '${run.runId}'`);
     await expect(store(users.alice, run.runId, { status: 'ready', body: 'x' }), 'an expired run').rejects.toMatchObject({ code: 'VY_RUN_NOT_LIVE' });
     // A failed run stores a fixed code and no text.
     await resetRuns();
@@ -130,7 +130,7 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     expect(await store(users.alice, run.runId, { status: 'ready', body: 'Bản đầu' })).toEqual({ stored: true, status: 'ready' });
     expect(await runStatus(run.runId), 'the member\'s own store closes the run').toBe('succeeded');
     // The member accepts it (the taint goes): as the superuser here, outside any context.
-    await sqlAdmin(`UPDATE crove_kernel.member_vy_result SET tainted = false WHERE org_id = $1 AND run_id = $2`, [orgId, run.runId]);
+    await sqlAdmin(`UPDATE ludy_kernel.member_vy_result SET tainted = false WHERE org_id = $1 AND run_id = $2`, [orgId, run.runId]);
     await expect(store(users.alice, run.runId, { status: 'ready', body: 'Bản thay' })).rejects.toMatchObject({ code: 'VY_RUN_NOT_LIVE' });
     const after = await query<{ body: string | null; tainted: boolean }>(users.alice, 'kernel.member_vy.result.get', { runId: run.runId });
     expect(after).toMatchObject({ body: 'Bản đầu', tainted: false });
@@ -167,16 +167,16 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     const moduleSwitch = await exec<{ killSwitchId: string; stoppedRuns: number }>(users.owner, 'kernel.agent.kill_switch.engage', { scope: 'module', target: 'notes' });
     expect(moduleSwitch.stoppedRuns, 'a module switch ends the runs metered under the module').toBeGreaterThan(0);
     // The run was ended by the switch; a store that still reached the database (a model call that finished in flight, its run revived here) meets the switch itself.
-    await sqlAdmin(`UPDATE crove_kernel.ai_run SET status = 'running', finished_at = NULL, error = NULL WHERE org_id = $1 AND id = $2`, [orgId, run.runId]);
-    await sqlAdmin(`UPDATE crove_kernel.member_vy_result SET status = 'running', error_code = NULL WHERE org_id = $1 AND run_id = $2`, [orgId, run.runId]);
+    await sqlAdmin(`UPDATE ludy_kernel.ai_run SET status = 'running', finished_at = NULL, error = NULL WHERE org_id = $1 AND id = $2`, [orgId, run.runId]);
+    await sqlAdmin(`UPDATE ludy_kernel.member_vy_result SET status = 'running', error_code = NULL WHERE org_id = $1 AND run_id = $2`, [orgId, run.runId]);
     expect(await store(users.alice, run.runId, { status: 'ready', body: SECRET })).toEqual({ stored: false, status: 'failed' });
     expect(await query(users.alice, 'kernel.member_vy.result.get', { runId: run.runId })).toMatchObject({ status: 'failed', errorCode: 'AI_STOPPED', body: null });
     await expect(start(users.alice)).rejects.toMatchObject({ code: 'AI_BUDGET_EXHAUSTED' });
     await runtime.execute('kernel.agent.kill_switch.release', { id: moduleSwitch.killSwitchId }, { actor: asMfa(users.owner), orgId });
     // A spent hard-stop budget of the org.
-    await sqlAdmin(`INSERT INTO crove_kernel.budget_policy (org_id, scope, target, monthly_limit, warn_percent, hard_stop, updated_by) VALUES ($1, 'org', '*', 0, 80, true, $2)`, [orgId, users.owner]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.budget_policy (org_id, scope, target, monthly_limit, warn_percent, hard_stop, updated_by) VALUES ($1, 'org', '*', 0, 80, true, $2)`, [orgId, users.owner]);
     await expect(start(users.alice)).rejects.toMatchObject({ code: 'AI_BUDGET_EXHAUSTED' });
-    await sqlAdmin(`DELETE FROM crove_kernel.budget_policy WHERE org_id = $1`, [orgId]);
+    await sqlAdmin(`DELETE FROM ludy_kernel.budget_policy WHERE org_id = $1`, [orgId]);
     await resetRuns();
     expect(await start(users.alice)).toMatchObject({ runId: expect.any(String) });
   });
@@ -186,7 +186,7 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     const live = await start(users.bob);
     await store(users.bob, live.runId, { status: 'ready', body: 'của Bob' });
     const second = await start(users.bob);
-    const rowsOf = async () => (await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.member_vy_result WHERE org_id = $1 AND member_user_id = $2', [orgId, users.bob]))[0]?.n;
+    const rowsOf = async () => (await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND member_user_id = $2', [orgId, users.bob]))[0]?.n;
     const before = await rowsOf();
     await runtime.execute('kernel.member.remove', { userId: users.bob }, { actor: asMfa(users.owner), orgId });
     expect(await runStatus(second.runId)).toBe('cancelled');
@@ -197,15 +197,15 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     await resetRuns();
     const run = await start(users.alice);
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     // A cancel by the owner, held open: it has ended the run and the result and not yet committed.
     const cancel = new pg.Client({ connectionString: url.toString() });
     await cancel.connect();
     try {
       await cancel.query('BEGIN');
-      await cancel.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(users.owner, orgId)]);
-      const ended = await cancel.query<{ n: string }>(`SELECT crove_kernel.member_vy_runs_cancel(NULL, $1::uuid, NULL, 'TEST') AS n`, [users.alice]);
+      await cancel.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(users.owner, orgId)]);
+      const ended = await cancel.query<{ n: string }>(`SELECT ludy_kernel.member_vy_runs_cancel(NULL, $1::uuid, NULL, 'TEST') AS n`, [users.alice]);
       expect(ended.rows[0]?.n).toBe('1');
       // The store checks the run while the cancel holds it: it waits for the row, then sees the run ended.
       const racing = store(users.alice, run.runId, { status: 'ready', body: SECRET });
@@ -224,15 +224,15 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
   it('derives the agent of the meter\'s doors from the member, and keeps the spend as figures', async () => {
     await resetRuns();
     await start(users.alice);
-    const own = (await sqlAdmin<{ id: string }>(`SELECT id FROM crove_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2`, [orgId, users.alice]))[0]?.id;
+    const own = (await sqlAdmin<{ id: string }>(`SELECT id FROM ludy_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id = $2`, [orgId, users.alice]))[0]?.id;
     expect(await query(users.alice, 'kernel.member_vy.meter.check', { feature: 'notes.summary' })).toEqual({ allowed: true });
     expect(await exec(users.alice, 'kernel.member_vy.meter.record', { feature: 'notes.summary', inputTokens: 120, outputTokens: 30, cost: '0.000150' })).toEqual({ recorded: true });
-    const usage = await sqlAdmin<{ agent_id: string; module: string; feature: string }>(`SELECT agent_id, module, feature FROM crove_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost' AND feature = 'notes.summary'`, [orgId]);
+    const usage = await sqlAdmin<{ agent_id: string; module: string; feature: string }>(`SELECT agent_id, module, feature FROM ludy_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost' AND feature = 'notes.summary'`, [orgId]);
     expect(usage).toEqual([{ agent_id: own, module: 'notes', feature: 'notes.summary' }]);
     // The input has no agent field: one a caller adds is dropped, and the spend still goes to the member's own Vy.
-    const other = (await sqlAdmin<{ id: string }>(`SELECT id FROM crove_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id <> $2 LIMIT 1`, [orgId, users.alice]))[0]?.id ?? randomUUID();
+    const other = (await sqlAdmin<{ id: string }>(`SELECT id FROM ludy_kernel.agent WHERE org_id = $1 AND kind = 'member_vy' AND member_user_id <> $2 LIMIT 1`, [orgId, users.alice]))[0]?.id ?? randomUUID();
     await exec(users.alice, 'kernel.member_vy.meter.record', { feature: 'notes.summary', inputTokens: 1, outputTokens: 1, cost: '0', agentId: other });
-    expect(await sqlAdmin(`SELECT 1 FROM crove_kernel.org_usage WHERE org_id = $1 AND agent_id = $2`, [orgId, other])).toHaveLength(0);
+    expect(await sqlAdmin(`SELECT 1 FROM ludy_kernel.org_usage WHERE org_id = $1 AND agent_id = $2`, [orgId, other])).toHaveLength(0);
   });
 
   it('keeps what Vy remembers about the member to the member, who writes and deletes it', async () => {
@@ -255,7 +255,7 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.todo_suggest', subjectId: randomUUID() }), 'another subject').toEqual({ live: false });
     expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.summary' }), 'another feature').toEqual({ live: false });
     expect(await query(users.owner, 'kernel.member_vy.run.live', { feature: 'notes.todo_suggest', subjectId }), 'another member\'s run is invisible').toEqual({ live: false });
-    await sqlAdmin(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now(), error = 'RUN_CANCELLED' WHERE org_id = $1 AND id = $2`, [orgId, run.runId]);
+    await sqlAdmin(`UPDATE ludy_kernel.ai_run SET status = 'cancelled', finished_at = now(), error = 'RUN_CANCELLED' WHERE org_id = $1 AND id = $2`, [orgId, run.runId]);
     expect(await query(users.admin, 'kernel.member_vy.run.live', { feature: 'notes.todo_suggest' }), 'a run that ended').toEqual({ live: false });
   });
 
@@ -269,7 +269,7 @@ suite('member Vy commands (ADR-0049 stage A slice 3)', () => {
     expect(await query(users.owner, 'kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId }), 'another member sees nothing of it').toBeNull();
     expect(await query(users.admin, 'kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId: randomUUID() }), 'another subject').toBeNull();
     // A run that ended while its result stayed running shows as failed with the fixed word RUN_ENDED, never as running for ever.
-    await sqlAdmin(`UPDATE crove_kernel.ai_run SET status = 'cancelled', finished_at = now(), error = 'RUN_CANCELLED' WHERE org_id = $1 AND id = $2`, [orgId, run.runId]);
+    await sqlAdmin(`UPDATE ludy_kernel.ai_run SET status = 'cancelled', finished_at = now(), error = 'RUN_CANCELLED' WHERE org_id = $1 AND id = $2`, [orgId, run.runId]);
     const ended = await query<Record<string, unknown>>(users.admin, 'kernel.member_vy.run.latest', { feature: 'notes.todo_suggest', subjectType: 'note', subjectId });
     expect(ended).toMatchObject({ runId: run.runId, state: 'failed', errorCode: 'RUN_ENDED' });
   });

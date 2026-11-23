@@ -7,10 +7,10 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { DomainError, Runtime, type UserActor } from '@crove/kernel-runtime';
+import { createDb, createPool } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { DomainError, Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -56,7 +56,7 @@ suite('the runtime wiring of a member-bound MCP grant (#2975, slice 3, step 3b-2
     counter += 1;
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, revoked_at, created_by, kind, member_id)
+        `INSERT INTO ludy_kernel.agent_grant (org_id, id, user_id, client_id, client_name, client_host, scopes, oauth_grant_id, created_at, expires_at, revoked_at, created_by, kind, member_id)
          VALUES ($1, $2, $3, $4, 'Test client', 'client.example.com', ARRAY['ludy.read'], $5, ${over.expired ? "now() - interval '2 days'" : 'clock_timestamp()'}, ${over.expired ? "now() - interval '1 day'" : "now() + interval '30 days'"},
                  ${over.revoked ? 'now()' : 'NULL'}, $3, 'member', $3)`,
         [orgA, id, userId, `client-${counter}-${id}`, `oauth-${id}`],
@@ -64,7 +64,7 @@ suite('the runtime wiring of a member-bound MCP grant (#2975, slice 3, step 3b-2
     );
     return id;
   }
-  const setSwitch = (on: boolean) => admin((c) => c.query(`UPDATE crove_kernel.tenant SET mcp_member_grants = $2 WHERE org_id = $1`, [orgA, on]));
+  const setSwitch = (on: boolean) => admin((c) => c.query(`UPDATE ludy_kernel.tenant SET mcp_member_grants = $2 WHERE org_id = $1`, [orgA, on]));
   const about = (actor: UserActor) => runtime.query<{ orgName: string }>('kernel.mcp.about', {}, { actor, orgId: orgA });
 
   beforeAll(async () => {
@@ -77,9 +77,9 @@ suite('the runtime wiring of a member-bound MCP grant (#2975, slice 3, step 3b-2
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const url = new URL(adminUrl);
-    url.username = 'crove_app';
+    url.username = 'ludy_app';
     url.password = 'test-app-pw';
     const pool = createPool({ connectionString: url.toString(), max: 4 });
     pools.push(pool);
@@ -90,7 +90,7 @@ suite('the runtime wiring of a member-bound MCP grant (#2975, slice 3, step 3b-2
     }
     orgA = (await createOrg(runtime, browser(users.ownerA), 'Org A')).orgId;
     await admin((c) =>
-      c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgA, users.adminA, users.memberA, users.viewerA]),
+      c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'viewer')`, [orgA, users.adminA, users.memberA, users.viewerA]),
     );
     await setSwitch(true);
   }, 120_000);
@@ -156,7 +156,7 @@ suite('the runtime wiring of a member-bound MCP grant (#2975, slice 3, step 3b-2
       expect(error.message).toBe(answers[0]?.message);
     }
     // The specific reason is in the security event, not in the answer.
-    const codes = await admin((c) => c.query(`SELECT DISTINCT code FROM crove_kernel.security_event WHERE target_org = $1 AND command = 'kernel.mcp.about'`, [orgA]).then((r) => r.rows.map((x) => x.code as string)));
+    const codes = await admin((c) => c.query(`SELECT DISTINCT code FROM ludy_kernel.security_event WHERE target_org = $1 AND command = 'kernel.mcp.about'`, [orgA]).then((r) => r.rows.map((x) => x.code as string)));
     expect(codes).toEqual(expect.arrayContaining(['MCP_GRANT_REVOKED', 'MCP_GRANT_EXPIRED', 'MCP_MEMBER_GRANTS_OFF', 'MCP_GRANT_INVALID']));
   });
 

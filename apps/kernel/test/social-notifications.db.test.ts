@@ -6,11 +6,11 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, type NotificationItem, type PostView } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, type NotificationItem, type PostView } from '@ludy/mod-social';
 import { reviewAnswer } from '../src/review-link.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
@@ -26,7 +26,7 @@ suite('social in-app notifications on PostgreSQL (#637)', () => {
   let db: Db;
   let rt: Runtime;
   let workerPool: pg.Pool;
-  // The worker's runtime (the crove_worker login): only it enters an org's system context.
+  // The worker's runtime (the ludy_worker login): only it enters an org's system context.
   let worker: Runtime;
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
   const system = { type: 'system' as const, component: 'test' };
@@ -52,7 +52,7 @@ suite('social in-app notifications on PostgreSQL (#637)', () => {
     const roles = { admin: await person('admin'), member: await person('member'), other: await person('other'), viewer: await person('viewer') };
     const role = { admin: 'admin', member: 'member', other: 'member', viewer: 'viewer' } as const;
     for (const [key, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role[key as keyof typeof role]]));
     }
     return { orgId, owner, ...roles, dispatched: new Set() };
   }
@@ -61,7 +61,7 @@ suite('social in-app notifications on PostgreSQL (#637)', () => {
     const id = randomUUID();
     await admin((c) =>
       c.query(
-        'INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
+        'INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
         [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, 'Kênh thử', owner],
       ),
     );
@@ -77,7 +77,7 @@ suite('social in-app notifications on PostgreSQL (#637)', () => {
 
   // What the worker does for each new event of the org: the dispatch, in the org's system context.
   async function deliver(o: Org): Promise<number> {
-    const events = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 ORDER BY created_at, id', [o.orgId])).rows);
+    const events = await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 ORDER BY created_at, id', [o.orgId])).rows);
     let sent = 0;
     for (const e of events) {
       if (o.dispatched.has(e.id)) continue;
@@ -96,16 +96,16 @@ suite('social in-app notifications on PostgreSQL (#637)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
     const asWorker = new URL(adminUrl);
-    asWorker.username = 'crove_worker';
+    asWorker.username = 'ludy_worker';
     asWorker.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: asWorker.toString(), max: 2 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
@@ -232,16 +232,16 @@ suite('social in-app notifications on PostgreSQL (#637)', () => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.admin, o.orgId)]);
-      const { rows } = await client.query<{ user_id: string }>('SELECT user_id FROM crove_social.notification');
+      await client.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.admin, o.orgId)]);
+      const { rows } = await client.query<{ user_id: string }>('SELECT user_id FROM ludy_social.notification');
       expect(new Set(rows.map((r) => r.user_id))).toEqual(new Set([o.admin]));
-      await expect(client.query('UPDATE crove_social.notification SET user_id = $1', [o.owner])).rejects.toMatchObject({ code: '42501' });
+      await expect(client.query('UPDATE ludy_social.notification SET user_id = $1', [o.owner])).rejects.toMatchObject({ code: '42501' });
     } finally {
       await client.query('ROLLBACK');
       client.release();
     }
     await expect(
-      admin((c) => c.query('INSERT INTO crove_social.notification (org_id, user_id, kind, event_id) VALUES ($1, $2, $3, $4)', [o.orgId, o.owner, 'pinned', randomUUID()])),
+      admin((c) => c.query('INSERT INTO ludy_social.notification (org_id, user_id, kind, event_id) VALUES ($1, $2, $3, $4)', [o.orgId, o.owner, 'pinned', randomUUID()])),
     ).rejects.toMatchObject({ code: '23514' });
 
     // Turned off: the next one of that kind is not written; turned on again, it is.
@@ -256,11 +256,11 @@ suite('social in-app notifications on PostgreSQL (#637)', () => {
     expect((await list(o, o.admin)).muted).toEqual([]);
 
     // Someone no longer a member is not told.
-    await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.admin]));
+    await admin((c) => c.query('DELETE FROM ludy_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.admin]));
     const five = await exec<{ postId: string }>(o, o.member, 'social.post.create', { body: 'Năm', channels: [{ connectionId: conn }] });
     await exec(o, o.member, 'social.post.submit', { postId: five.postId });
     await deliver(o);
-    const left = await admin(async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_social.notification WHERE org_id = $1 AND user_id = $2', [o.orgId, o.admin])).rows[0]?.n);
+    const left = await admin(async (c) => (await c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_social.notification WHERE org_id = $1 AND user_id = $2', [o.orgId, o.admin])).rows[0]?.n);
     expect(left).toBe(3);
   });
 
@@ -300,9 +300,9 @@ suite('social in-app notifications on PostgreSQL (#637)', () => {
       await deliver(o);
       ids.push(((await list(o, o.owner)).items[0] as NotificationItem).id);
     }
-    await admin((c) => c.query("UPDATE crove_social.notification SET read_at = now() - interval '31 days' WHERE id = $1", [ids[0]]));
-    await admin((c) => c.query("UPDATE crove_social.notification SET created_at = now() - interval '91 days' WHERE id = $1", [ids[1]]));
-    await admin((c) => c.query("UPDATE crove_social.notification SET read_at = now() - interval '2 days' WHERE id = $1", [ids[2]]));
+    await admin((c) => c.query("UPDATE ludy_social.notification SET read_at = now() - interval '31 days' WHERE id = $1", [ids[0]]));
+    await admin((c) => c.query("UPDATE ludy_social.notification SET created_at = now() - interval '91 days' WHERE id = $1", [ids[1]]));
+    await admin((c) => c.query("UPDATE ludy_social.notification SET read_at = now() - interval '2 days' WHERE id = $1", [ids[2]]));
     const { postId } = await exec<{ postId: string }>(o, o.member, 'social.post.create', { body: 'Bài mới', channels: [{ connectionId: conn }] });
     await exec(o, o.member, 'social.post.submit', { postId });
     await deliver(o);

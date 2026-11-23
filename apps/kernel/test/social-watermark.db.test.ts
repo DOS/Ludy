@@ -5,11 +5,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { socialCommands, socialQueries, type Watermark } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { socialCommands, socialQueries, type Watermark } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -41,7 +41,7 @@ suite('social logo watermark on PostgreSQL (#834)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const member = await person('member');
     const viewer = await person('viewer');
-    await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
+    await admin((c) => c.query("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
     return { orgId, owner, member, viewer };
   }
 
@@ -54,9 +54,9 @@ suite('social logo watermark on PostgreSQL (#834)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
@@ -76,7 +76,7 @@ suite('social logo watermark on PostgreSQL (#834)', () => {
     const id = randomUUID();
     const sha = createHash('sha256').update(id).digest('hex');
     await admin((c) =>
-      c.query("INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, created_by) VALUES ($1, $2, $3, $4, $5, 'logo.png', $6, 1000, $7, $8)", [orgId, id, sha, `org/${orgId}/${sha}`, `content:${sha}`, type, source, owner]),
+      c.query("INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source, created_by) VALUES ($1, $2, $3, $4, $5, 'logo.png', $6, 1000, $7, $8)", [orgId, id, sha, `org/${orgId}/${sha}`, `content:${sha}`, type, source, owner]),
     );
     return id;
   }
@@ -93,7 +93,7 @@ suite('social logo watermark on PostgreSQL (#834)', () => {
     const other = await socialFile(o.orgId, o.owner, 'image/webp');
     await exec(o.owner, 'social.watermark.save', { fileId: other, corner: 'top_left', scalePercent: 50, opacityPercent: 10 });
     expect(await get(o.member)).toMatchObject({ fileId: other, mime: 'image/webp', corner: 'top_left', scalePercent: 50, opacityPercent: 10 });
-    expect(await admin(async (c) => (await c.query('SELECT count(*)::int AS n FROM crove_social.watermark WHERE org_id = $1', [o.orgId])).rows[0].n)).toBe(1);
+    expect(await admin(async (c) => (await c.query('SELECT count(*)::int AS n FROM ludy_social.watermark WHERE org_id = $1', [o.orgId])).rows[0].n)).toBe(1);
 
     await expect(exec(o.member, 'social.watermark.save', { fileId: logo, corner: 'bottom_right', scalePercent: 20, opacityPercent: 80 })).rejects.toMatchObject({ status: 403 });
     await expect(exec(o.member, 'social.watermark.remove', {})).rejects.toMatchObject({ status: 403 });

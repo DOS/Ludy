@@ -6,7 +6,7 @@
 // connection's secret opens nothing of the other's. The kernel never opens either secret on the API side; the writer is called
 // by a job or a command that was handed the opened one.
 import { createHash, randomBytes } from 'node:crypto';
-import type { ConnectedAccount } from '@crove/channel';
+import type { ConnectedAccount } from '@ludy/channel';
 import { AdPlatformError, SANDBOX_CURRENCIES, type SandboxCurrency } from './index.ts';
 import {
   AD_WRITER_OBJECTIVES,
@@ -92,6 +92,14 @@ export interface SandboxWrittenObject {
   status: string;
   // The campaign of an ad set, the ad set of an ad (a creative has none).
   parentId: string | null;
+  // What the sandbox's read of states (sandbox-state.ts) answers instead of the status above, as a test sets it: the platform's own effective status (`PENDING_REVIEW`,
+  // `DISAPPROVED`), the reason code of a refusal, and whether the object is gone at the platform.
+  effectiveStatus?: string;
+  reviewReason?: string | null;
+  deleted?: boolean;
+  // An ad set's daily budget (a decimal string in the account currency's own units) and end time, as it was created and as the manager (sandbox-manage.ts) changes them.
+  dailyBudget?: string;
+  endTime?: string;
 }
 
 // A failure the sandbox can be told to make, so a test can kill a launch between a create and its record: `after` makes the object and loses the answer (the
@@ -100,8 +108,9 @@ export interface SandboxWriterFault {
   level: AdObjectLevel;
   // `find` fails a `findByTag` of the level (by default as an answer with more pages than the first, which is unknowable); `status` fails a `setStatus` of an
   // object of the level, with nothing changed.
-  // `status_after` makes the change of an object's status and loses the answer; `read` fails the read of an object's status (the activation's, sandbox-activate.ts).
-  when: 'before' | 'after' | 'find' | 'status' | 'status_after' | 'read';
+  // `status_after` makes the change of an object's status and loses the answer; `read` fails the read of an object's status (the activation's, sandbox-activate.ts);
+  // `state` fails the read of an object's effective status and review reason (the state job's, sandbox-state.ts).
+  when: 'before' | 'after' | 'find' | 'status' | 'status_after' | 'read' | 'state';
   error?: AdPlatformError;
   times?: number;
 }
@@ -210,7 +219,13 @@ export class SandboxAdWriter implements AdWriter {
   async createAdSet(secret: string, account: AdWriterAccount, input: AdCreateAdSet): Promise<{ id: string }> {
     this.parent(this.reach(secret, account), 'campaign', input.campaignId);
     if (!BUDGET.test(input.dailyBudget)) throw new AdPlatformError('bad_request', 'BUDGET_INVALID');
-    return this.make(secret, account, 'ad_set', input.name, input.campaignId);
+    const made = this.make(secret, account, 'ad_set', input.name, input.campaignId);
+    const created = this.objects.get(made.id);
+    if (created) {
+      created.dailyBudget = input.dailyBudget;
+      created.endTime = input.endTime;
+    }
+    return made;
   }
 
   async createCreative(secret: string, account: AdWriterAccount, input: AdCreateCreative): Promise<{ id: string }> {

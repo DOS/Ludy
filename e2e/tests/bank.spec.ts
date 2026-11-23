@@ -29,7 +29,7 @@ test('import a bank statement, then an overlapping one, and find each line once'
   };
 
   await test.step('the first export: checked line by line, then imported', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Ngân hàng' }).click();
     await expect(page.getByRole('heading', { name: 'Sao kê ngân hàng' })).toBeVisible();
     await expect(page.getByLabel('Tài khoản ngân hàng')).toHaveValue('1121');
@@ -59,8 +59,8 @@ test('import a bank statement, then an overlapping one, and find each line once'
     await page.getByRole('button', { name: /^Lập chứng từ cho dòng ngày 03\/09\/2026/ }).click();
     await expect(page.getByText(/Lập từ dòng sao kê ngày 03\/09\/2026: 11\.000/)).toBeVisible();
     // The type, date, bank account and amount follow the line.
-    await expect(page.getByLabel('Loại chứng từ').first()).toHaveValue('bank_debit');
-    await expect(page.getByLabel('Loại chứng từ').first()).toBeDisabled();
+    await expect(page.getByRole('dialog').getByLabel('Loại chứng từ')).toHaveValue('bank_debit');
+    await expect(page.getByRole('dialog').getByLabel('Loại chứng từ')).toBeDisabled();
     await expect(page.getByLabel('Ngày chứng từ')).toHaveValue('03/09/2026');
     // Amount fields show Vietnamese digit grouping when not being typed in (#1391).
     await expect(page.getByLabel('Số tiền dòng 1')).toHaveValue('11.000');
@@ -69,14 +69,17 @@ test('import a bank statement, then an overlapping one, and find each line once'
     await page.getByLabel('Tài khoản đối ứng dòng 1').selectOption('6422');
     await page.getByRole('button', { name: 'Gửi đề xuất' }).click();
     await expect(page.getByText('Đã tạo đề xuất Giấy báo Nợ.')).toBeVisible();
+    // The panel keeps its answer until it is closed; the screen behind it is not reachable while it is open (#3607).
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.getByRole('row').filter({ hasText: 'FT002' }).getByRole('link', { name: 'Chờ duyệt' })).toBeVisible();
     // Other lines can still get theirs.
     await expect(page.getByRole('button', { name: /^Lập chứng từ cho dòng ngày 05\/09\/2026/ })).toBeVisible();
   });
 
   await test.step('the Inbox lists the lines still without a voucher and opens their account and month', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await page.getByRole('navigation').getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
     await expect(page.getByText('Dòng sao kê ngân hàng chưa lập chứng từ')).toBeVisible();
     // FT002 waits for approval; the three others are open.
     await page.getByRole('link', { name: '1121: 3 dòng; cũ nhất ngày 01/09/2026' }).click();
@@ -90,7 +93,7 @@ test('import a bank statement, then an overlapping one, and find each line once'
 
   await test.step('each line once in the database', async () => {
     const rows = sql<{ ref: string; amount: string }>(
-      `SELECT l.bank_ref AS ref, l.amount::text AS amount FROM crove_finance.bank_line l JOIN crove_kernel.tenant t ON t.org_id = l.org_id
+      `SELECT l.bank_ref AS ref, l.amount::text AS amount FROM ludy_finance.bank_line l JOIN ludy_kernel.tenant t ON t.org_id = l.org_id
        WHERE t.slug = :'slug' ORDER BY l.value_date`,
       { slug },
     );

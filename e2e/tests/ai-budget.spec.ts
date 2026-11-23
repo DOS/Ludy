@@ -33,12 +33,13 @@ test('the AI meter says AI is off, the Agents page shows the month by feature, a
       ['finance.invoice_extract', 'finance', '0.001'],
     ] as const) {
       exec(
-        `INSERT INTO crove_kernel.org_usage (org_id, metric, amount, feature, module, input_tokens, output_tokens)
-         SELECT t.org_id, 'ai_cost', :'amount'::numeric, :'feature', :'module', 1000, 100 FROM crove_kernel.tenant t WHERE t.slug = :'slug'`,
+        `INSERT INTO ludy_kernel.org_usage (org_id, metric, amount, feature, module, input_tokens, output_tokens)
+         SELECT t.org_id, 'ai_cost', :'amount'::numeric, :'feature', :'module', 1000, 100 FROM ludy_kernel.tenant t WHERE t.slug = :'slug'`,
         { slug, feature, module, amount },
       );
     }
-    await page.getByRole('navigation').getByRole('link', { name: 'Sơ đồ và AI' }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Ludy AI', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Ngân sách AI' }).click();
     await expect(page.getByRole('heading', { name: 'Dùng AI tháng này' })).toBeVisible();
     const rows = page.getByTestId('ai-use-feature');
     await expect(rows).toHaveCount(2);
@@ -48,8 +49,10 @@ test('the AI meter says AI is off, the Agents page shows the month by feature, a
   });
 
   await test.step('an owner sets the monthly budget with a fresh second factor, and it shows as spent', async () => {
-    await page.getByLabel('Hạn mức mỗi tháng').fill('0.004');
     await page.getByRole('button', { name: 'Đặt ngân sách' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Đặt ngân sách' });
+    await dialog.getByLabel('Hạn mức mỗi tháng').fill('0.004');
+    await dialog.getByRole('button', { name: 'Đặt ngân sách' }).click();
     await page.getByRole('button', { name: 'Bật xác thực hai lớp' }).click();
     const secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
     await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
@@ -65,6 +68,6 @@ test('the AI meter says AI is off, the Agents page shows the month by feature, a
     await page.goto(`/o/${slug}/inbox`);
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByTestId('recent-file').filter({ hasText: 'einvoice-basic.xml' })).toContainText('Chờ duyệt');
+    await expect(page.getByTestId('recent-file')).toHaveCount(0);
   });
 });

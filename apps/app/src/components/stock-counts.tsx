@@ -6,14 +6,15 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { vietnamToday, type StockCount } from '@crove/kernel-contract';
-import { Alert, AlertDescription } from '@crove/ui/components/alert';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Card } from '@crove/ui/components/card';
-import { Input } from '@crove/ui/components/input';
-import { Label } from '@crove/ui/components/label';
-import { TableCell, TableRow } from '@crove/ui/components/table';
+import { SURPLUS_ACCOUNTS, vietnamToday, type StockCount, type SurplusAccount } from '@ludy/kernel-contract';
+import { Alert, AlertDescription } from '@ludy/ui/components/alert';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Card } from '@ludy/ui/components/card';
+import { Input } from '@ludy/ui/components/input';
+import { Label } from '@ludy/ui/components/label';
+import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { DataTable, ErrorText, TableSkeleton } from './ui.tsx';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -136,6 +137,145 @@ function CountForm({ legalEntityId, onDone, onCancel }: { legalEntityId: string 
   );
 }
 
+// The surplus of a confirmed count waits on 3381 until a person says where it goes (#3712 slice 2a): 711 by default, 3388 for goods of someone not known, 331 for a supplier's goods. The server
+// builds the voucher and its amount from the books; this only sends the choice, as a proposal an owner or an admin approves in the Inbox. Nothing here needs AI.
+function SurplusResolution({ count, canWrite, slug }: { count: StockCount; canWrite: boolean; slug: string }) {
+  const t = useTranslations('stock.counts');
+  const f = useFormat();
+  const [account, setAccount] = useState<SurplusAccount>('711');
+  const [partyId, setPartyId] = useState('');
+  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
+  const parties = useQuery({ ...orpc.parties.list.queryOptions({ input: { all: true } }), enabled: account === '331' });
+  const { locale } = useLocaleSetting();
+  const waiting = count.status === 'confirmed' && !isZero(count.surplus) && !count.surplusVoucherId && !count.surplusProposalId;
+  // The facts (items, total, supplier hint, manual-entry flag) come from the books and the coworker's words are an extra: with AI off, busy or refused the screen shows its own line. Kept for a while.
+  const note = useQuery({
+    ...orpc.stock.counts.surplusNote.queryOptions({ input: { countId: count.id, lang: locale.startsWith('vi') ? 'vi' : 'en' } }),
+    enabled: waiting && canWrite,
+    staleTime: 5 * 60 * 1000,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+  const request = useMutation({
+    mutationFn: () =>
+      client.inbox.request({
+        command: 'finance.journal_voucher.record',
+        idempotencyKey,
+        input: { surplus: { countId: count.id, account, ...(account === '331' ? { partyId } : {}) } },
+      }),
+    // The list shows the waiting proposal once it is refreshed; a rejected one leaves the surplus open to ask again, under a new key.
+    onSuccess: () => setIdempotencyKey(crypto.randomUUID()),
+    onSettled: () => void queryClient.invalidateQueries(),
+  });
+  if (count.status !== 'confirmed' || isZero(count.surplus)) return null;
+  const proposalId = count.surplusProposalId;
+  return (
+    <div className="mt-3 rounded-md border border-border p-3" data-testid="stock-surplus">
+      <h4 className="text-sm font-medium text-foreground">{t('surplusTitle')}</h4>
+      {count.surplusVoucherId ? (
+        <p className="mt-1 text-sm text-subtle-foreground" data-testid="stock-surplus-done">
+          {t('surplusDone')} {t('surplusDoneReversed')}
+        </p>
+      ) : proposalId ? (
+        <Alert className="mt-2">
+          <AlertDescription data-testid="stock-surplus-pending">
+            {t('surplusPending')}{' '}
+            <Link to="/o/$slug/inbox/$id" params={{ slug, id: proposalId }} className="text-link underline">
+              {t('viewProposal')}
+            </Link>
+          </AlertDescription>
+        </Alert>
+      ) : (
+        <>
+          <p className="mt-1 text-sm text-subtle-foreground">{t('surplusWaits', { amount: f.money(count.surplus, 'VND') })}</p>
+          {note.data && (
+            <div className="mt-2 flex flex-col gap-1 text-sm" data-testid="stock-surplus-note">
+              <p className="text-subtle-foreground" data-testid="stock-surplus-items">
+                {t('surplusItems', { items: note.data.items.map((i) => `${i.name} ${i.quantity} ${i.unit}`).join(', ') })}
+                {note.data.moreItems > 0 ? `, ${t('surplusMoreItems', { count: String(note.data.moreItems) })}` : ''}
+              </p>
+              {note.data.explanation && (
+                <p className="text-subtle-foreground" data-testid="stock-surplus-explanation">
+                  <span className="font-medium">{t('surplusAiLabel')}: </span>
+                  {note.data.explanation} <span className="text-xs">({t('surplusAiNote')})</span>
+                </p>
+              )}
+              {note.data.supplier && (
+                <p className="text-subtle-foreground" data-testid="stock-surplus-supplier">
+                  {t('surplusSupplier', { name: note.data.supplier.name, date: f.date(note.data.supplier.lastReceived) })}
+                  {canWrite && (
+                    <Button
+                      variant="link"
+                      size="sm"
+                      onClick={() => {
+                        setAccount('331');
+                        setPartyId(note.data?.supplier?.partyId ?? '');
+                        setIdempotencyKey(crypto.randomUUID());
+                      }}
+                      data-testid="stock-surplus-use-supplier"
+                    >
+                      {t('surplusUseSupplier')}
+                    </Button>
+                  )}
+                </p>
+              )}
+              {note.data.manualEntry && (
+                <Alert>
+                  <AlertDescription data-testid="stock-surplus-manual-entry">{t('surplusManualEntry')}</AlertDescription>
+                </Alert>
+              )}
+            </div>
+          )}
+          {canWrite && (
+            <div className="mt-2 flex flex-col gap-2">
+              <Label className="text-xs">
+                {t('surplusChoose')}
+                <NativeSelect className="mt-1 w-full" value={account} onChange={(e) => {
+                    setAccount(e.target.value as SurplusAccount);
+                    setIdempotencyKey(crypto.randomUUID());
+                  }} data-testid="stock-surplus-account">
+                  {SURPLUS_ACCOUNTS.map((a) => (
+                    <NativeSelectOption key={a} value={a}>
+                      {t(`surplusAccount${a}`)}
+                    </NativeSelectOption>
+                  ))}
+                </NativeSelect>
+              </Label>
+              {account === '331' && (
+                <Label className="text-xs">
+                  {t('surplusParty')}
+                  <NativeSelect className="mt-1 w-full" value={partyId} onChange={(e) => {
+                      setPartyId(e.target.value);
+                      setIdempotencyKey(crypto.randomUUID());
+                    }} data-testid="stock-surplus-party">
+                    <NativeSelectOption value="">{t('surplusChooseParty')}</NativeSelectOption>
+                    {(parties.data ?? []).map((p) => (
+                      <NativeSelectOption key={p.id} value={p.id}>
+                        {p.taxCode ? `${p.name} (${p.taxCode})` : p.name}
+                      </NativeSelectOption>
+                    ))}
+                  </NativeSelect>
+                </Label>
+              )}
+              <div>
+                <Button
+                  loading={request.isPending}
+                  disabled={account === '331' && partyId === ''}
+                  onClick={() => request.mutate()}
+                  data-testid="stock-surplus-request"
+                >
+                  {t('surplusRequest')}
+                </Button>
+              </div>
+            </div>
+          )}
+          {request.error && <ErrorText>{errorMessage(request.error)}</ErrorText>}
+        </>
+      )}
+    </div>
+  );
+}
+
 function CountCard({ count, canWrite, slug }: { count: StockCount; canWrite: boolean; slug: string }) {
   const t = useTranslations('stock.counts');
   const f = useFormat();
@@ -217,6 +357,7 @@ function CountCard({ count, canWrite, slug }: { count: StockCount; canWrite: boo
           </div>
         )
       )}
+      <SurplusResolution count={count} canWrite={canWrite} slug={slug} />
       {error && <ErrorText>{errorMessage(error)}</ErrorText>}
     </Card>
   );

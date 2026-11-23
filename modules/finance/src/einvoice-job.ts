@@ -15,21 +15,21 @@
 // No audit fact, ledger row or error carries a credential, the buyer's data or a provider's own text: ids, codes and counts only.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { Db } from '@crove/db';
-import type { EInvoiceRequest } from '@crove/einvoice';
-import { zId } from '@crove/kernel-contract';
-import { defineCommand, type CommandContext } from '@crove/kernel-runtime';
-import { money } from '@crove/l10n-vn';
+import type { Db } from '@ludy/db';
+import type { EInvoiceRequest } from '@ludy/einvoice';
+import { zId } from '@ludy/kernel-contract';
+import { defineCommand, type CommandContext } from '@ludy/kernel-runtime';
+import { buyerNameOnInvoice, money } from '@ludy/l10n-vn';
 import { AMBIGUOUS_RETRY_SECONDS, EINVOICE_ERROR_CODES, FILES_RETRY_SECONDS, IN_FLIGHT_SECONDS, nextCheckDelaySeconds, rejectionCode, statusDeadlinePassed } from './domain/einvoice-job.ts';
 import { computeDraft } from './domain/einvoice-draft.ts';
 
 const plain = (value: string): string => money(value).toFixed();
 
-// A page of the drafts whose time has come (crove_finance.einvoice_due, the worker login's alone), for the worker's sweep, which pages through them all in key order.
+// A page of the drafts whose time has come (ludy_finance.einvoice_due, the worker login's alone), for the worker's sweep, which pages through them all in key order.
 export const EINVOICE_DUE_PAGE = 1000;
 export async function einvoiceDue(workerDb: Db, after: { orgId: string; draftId: string } | null): Promise<Array<{ orgId: string; draftId: string }>> {
   const { rows } = await sql<{ org_id: string; draft_id: string }>`
-    SELECT org_id, draft_id FROM crove_finance.einvoice_due(${after?.orgId ?? null}::uuid, ${after?.draftId ?? null}::uuid, ${EINVOICE_DUE_PAGE}::int)`.execute(workerDb);
+    SELECT org_id, draft_id FROM ludy_finance.einvoice_due(${after?.orgId ?? null}::uuid, ${after?.draftId ?? null}::uuid, ${EINVOICE_DUE_PAGE}::int)`.execute(workerDb);
   return rows.map((r) => ({ orgId: r.org_id, draftId: r.draft_id }));
 }
 
@@ -43,14 +43,14 @@ type ErrorKind = 'token_expired' | 'permission' | 'bad_request' | 'rate_limited'
 // Records a call as started before it is made: a new row, or, for the same key, the same call made again (only while it has not ended).
 async function startCall(ctx: CommandContext, call: { key: string; target: string; step: string; safety: Safety }): Promise<'new' | 'again' | 'closed'> {
   const inserted = await ctx.trx
-    .insertInto('crove_kernel.external_call')
+    .insertInto('ludy_kernel.external_call')
     .values({ org_id: ctx.orgId, key: call.key, module: 'finance', target: call.target, step: call.step, retry_safety: call.safety, started_at: ctx.now })
     .onConflict((oc) => oc.columns(['org_id', 'key']).doNothing())
     .returning('id')
     .executeTakeFirst();
   if (inserted) return 'new';
   const again = await ctx.trx
-    .updateTable('crove_kernel.external_call')
+    .updateTable('ludy_kernel.external_call')
     .set({ state: 'started', calls: sql<number>`calls + 1`, updated_at: ctx.now })
     .where('org_id', '=', ctx.orgId)
     .where('key', '=', call.key)
@@ -69,14 +69,14 @@ async function endCall(ctx: CommandContext, key: string, end: CallEnd): Promise<
       : end.state === 'failed'
         ? { state: 'failed' as const, error_kind: end.kind, error_code: end.code, finished_at: ctx.now, updated_at: ctx.now }
         : { state: 'ambiguous' as const, error_kind: end.kind, error_code: end.code, updated_at: ctx.now };
-  await ctx.trx.updateTable('crove_kernel.external_call').set(set).where('org_id', '=', ctx.orgId).where('key', '=', key).where('state', 'in', ['started', 'ambiguous']).execute();
+  await ctx.trx.updateTable('ludy_kernel.external_call').set(set).where('org_id', '=', ctx.orgId).where('key', '=', key).where('state', 'in', ['started', 'ambiguous']).execute();
 }
 
 const selectCall = (ctx: CommandContext, key: string) =>
-  ctx.trx.selectFrom('crove_kernel.external_call').select(['state', 'calls', 'external_ref', 'updated_at']).where('org_id', '=', ctx.orgId).where('key', '=', key).executeTakeFirst();
+  ctx.trx.selectFrom('ludy_kernel.external_call').select(['state', 'calls', 'external_ref', 'updated_at']).where('org_id', '=', ctx.orgId).where('key', '=', key).executeTakeFirst();
 
 const selectDraft = (ctx: CommandContext, draftId: string) =>
-  ctx.trx.selectFrom('crove_finance.einvoice_draft').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', draftId.toLowerCase()).forUpdate().executeTakeFirst();
+  ctx.trx.selectFrom('ludy_finance.einvoice_draft').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', draftId.toLowerCase()).forUpdate().executeTakeFirst();
 type DraftRow = NonNullable<Awaited<ReturnType<typeof selectDraft>>>;
 
 export type EInvoiceJobBegin =
@@ -102,13 +102,13 @@ const none = (reason: string): EInvoiceJobBegin => ({ action: 'none', reason });
 // connection) and issues it again with a new approval; the code stays on the draft until then.
 async function releaseDraft(ctx: CommandContext, draft: DraftRow, code: string): Promise<void> {
   await ctx.trx
-    .updateTable('crove_finance.einvoice_draft')
+    .updateTable('ludy_finance.einvoice_draft')
     .set({ state: 'failed', error_code: code, next_check_at: null, updated_at: ctx.now })
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', draft.id)
     .execute();
   await ctx.trx
-    .updateTable('crove_finance.einvoice_draft')
+    .updateTable('ludy_finance.einvoice_draft')
     .set({ state: 'draft', idempotency_key: sql`pg_catalog.gen_random_uuid()`, provider_ref: null, submitted_at: null, next_check_at: null, check_attempts: 0, channel_connection_id: null, updated_at: ctx.now })
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', draft.id)
@@ -121,7 +121,7 @@ async function releaseDraft(ctx: CommandContext, draft: DraftRow, code: string):
 async function holdDraft(ctx: CommandContext, draft: DraftRow, code: string): Promise<string> {
   if (draft.submitted_at && statusDeadlinePassed(new Date(draft.submitted_at), ctx.now)) {
     await ctx.trx
-      .updateTable('crove_finance.einvoice_draft')
+      .updateTable('ludy_finance.einvoice_draft')
       .set({ state: 'failed', error_code: EINVOICE_ERROR_CODES.statusUnknown, next_check_at: null, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', draft.id)
@@ -130,7 +130,7 @@ async function holdDraft(ctx: CommandContext, draft: DraftRow, code: string): Pr
     return 'failed';
   }
   await ctx.trx
-    .updateTable('crove_finance.einvoice_draft')
+    .updateTable('ludy_finance.einvoice_draft')
     .set({ error_code: code, next_check_at: new Date(ctx.now.getTime() + AMBIGUOUS_RETRY_SECONDS * 1000), check_attempts: draft.check_attempts + 1, updated_at: ctx.now })
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', draft.id)
@@ -144,13 +144,13 @@ async function holdDraft(ctx: CommandContext, draft: DraftRow, code: string): Pr
 // first send went through, written on the draft, and no other; when that one is gone or not active the answer is PROVIDER_NOT_READY and the draft is held, never sent through another.
 export async function connectionFor(ctx: CommandContext, draft: Pick<DraftRow, 'legal_entity_id' | 'series_id' | 'channel_connection_id'>, first: boolean) {
   const series = draft.series_id
-    ? await ctx.trx.selectFrom('crove_finance.einvoice_series').select(['provider', 'template_no', 'symbol']).where('org_id', '=', ctx.orgId).where('id', '=', draft.series_id).executeTakeFirst()
+    ? await ctx.trx.selectFrom('ludy_finance.einvoice_series').select(['provider', 'template_no', 'symbol']).where('org_id', '=', ctx.orgId).where('id', '=', draft.series_id).executeTakeFirst()
     : undefined;
   if (!series) return { code: EINVOICE_ERROR_CODES.providerNotReady } as const;
-  const entity = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', draft.legal_entity_id).executeTakeFirst();
+  const entity = await ctx.trx.selectFrom('ludy_kernel.legal_entity').select(['name', 'tax_code']).where('org_id', '=', ctx.orgId).where('id', '=', draft.legal_entity_id).executeTakeFirst();
   const rows = await ctx.trx
-    .selectFrom('crove_finance.einvoice_connection as c')
-    .innerJoin('crove_kernel.channel_connection as cc', (join) => join.onRef('cc.org_id', '=', 'c.org_id').onRef('cc.id', '=', 'c.channel_connection_id'))
+    .selectFrom('ludy_finance.einvoice_connection as c')
+    .innerJoin('ludy_kernel.channel_connection as cc', (join) => join.onRef('cc.org_id', '=', 'c.org_id').onRef('cc.id', '=', 'c.channel_connection_id'))
     .select(['c.channel_connection_id', 'c.provider', 'c.seller_tax_code'])
     .where('c.org_id', '=', ctx.orgId)
     .where('c.legal_entity_id', '=', draft.legal_entity_id)
@@ -178,7 +178,7 @@ export async function connectionFor(ctx: CommandContext, draft: Pick<DraftRow, '
 
 // The request as the provider is sent it, from the stored rows only, and whether what is stored equals what its lines compute to.
 async function requestFor(ctx: CommandContext, draft: DraftRow, target: { sellerTaxCode: string; sellerName: string; templateNo: string; symbol: string }): Promise<{ request: EInvoiceRequest; consistent: boolean }> {
-  const lines = await ctx.trx.selectFrom('crove_finance.einvoice_draft_line').selectAll().where('org_id', '=', ctx.orgId).where('draft_id', '=', draft.id).orderBy('line_no').execute();
+  const lines = await ctx.trx.selectFrom('ludy_finance.einvoice_draft_line').selectAll().where('org_id', '=', ctx.orgId).where('draft_id', '=', draft.id).orderBy('line_no').execute();
   const stored = lines.map((l) => ({
     description: l.description,
     unit: l.unit,
@@ -197,6 +197,18 @@ async function requestFor(ctx: CommandContext, draft: DraftRow, target: { seller
     same(computed.vatAmount, draft.vat_amount) &&
     same(computed.total, draft.total) &&
     computed.lines.every((l, i) => same(l.amount, stored[i]?.amount ?? '0') && same(l.vatAmount, stored[i]?.vatAmount ?? '0'));
+  // A correcting invoice names the invoice it corrects: the reference (series, number, date) is read from the original's stored row, which must be issued, never from the draft (#2504).
+  let original: EInvoiceRequest['original'];
+  let originalOk = true;
+  if (draft.correction_kind === 'adjustment' || draft.correction_kind === 'replacement') {
+    const base = draft.original_draft_id
+      ? await ctx.trx.selectFrom('ludy_finance.einvoice_draft').select(['state', 'series_id', 'issued_number', 'invoice_date', 'legal_entity_id']).where('org_id', '=', ctx.orgId).where('id', '=', draft.original_draft_id).executeTakeFirst()
+      : undefined;
+    const series = base?.series_id ? await ctx.trx.selectFrom('ludy_finance.einvoice_series').select(['template_no', 'symbol']).where('org_id', '=', ctx.orgId).where('id', '=', base.series_id).executeTakeFirst() : undefined;
+    if (base && series && base.state === 'issued' && base.issued_number !== null && base.legal_entity_id === draft.legal_entity_id && draft.reason_code !== null) {
+      original = { kind: draft.correction_kind, templateNo: series.template_no, symbol: series.symbol, number: base.issued_number, date: typeof base.invoice_date === 'string' ? base.invoice_date : new Date(base.invoice_date).toISOString().slice(0, 10), reasonCode: draft.reason_code };
+    } else originalOk = false;
+  }
   const request: EInvoiceRequest = {
     key: draft.idempotency_key,
     templateNo: target.templateNo,
@@ -204,13 +216,15 @@ async function requestFor(ctx: CommandContext, draft: DraftRow, target: { seller
     date: typeof draft.invoice_date === 'string' ? draft.invoice_date : new Date(draft.invoice_date).toISOString().slice(0, 10),
     currency: draft.currency,
     seller: { taxCode: target.sellerTaxCode, name: target.sellerName },
-    buyer: { kind: draft.buyer_kind, taxCode: draft.buyer_tax_code, name: draft.buyer_name, address: draft.buyer_address, email: draft.buyer_email },
+    // A consumer gave no name: the provider's document says "Bán cho người tiêu dùng" (#3709), set here once so the sandbox and every adapter carry the same words.
+    buyer: { kind: draft.buyer_kind, taxCode: draft.buyer_tax_code, name: buyerNameOnInvoice(draft.buyer_kind, draft.buyer_name), address: draft.buyer_address, email: draft.buyer_email, identity: draft.buyer_identity_kind && draft.buyer_identity ? { kind: draft.buyer_identity_kind, value: draft.buyer_identity, nationality: draft.buyer_nationality } : null },
     lines: stored,
     subtotal: plain(draft.subtotal),
     vatAmount: plain(draft.vat_amount),
     total: plain(draft.total),
+    ...(original ? { original } : {}),
   };
-  return { request, consistent };
+  return { request, consistent: consistent && originalOk };
 }
 
 export const einvoiceJobBegin = defineCommand({
@@ -244,7 +258,7 @@ export const einvoiceJobBegin = defineCommand({
       if (action === 'issue') await releaseDraft(ctx, draft, target.code);
       else if (action === 'files') {
         await ctx.trx
-          .updateTable('crove_finance.einvoice_draft')
+          .updateTable('ludy_finance.einvoice_draft')
           .set({ error_code: target.code, next_check_at: new Date(ctx.now.getTime() + FILES_RETRY_SECONDS * 1000), updated_at: ctx.now })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', draft.id)
@@ -263,7 +277,7 @@ export const einvoiceJobBegin = defineCommand({
     if (action === 'issue') {
       // The connection of the first send is written with the call, in the same transaction, and never changes: every later question goes through it.
       await ctx.trx
-        .updateTable('crove_finance.einvoice_draft')
+        .updateTable('ludy_finance.einvoice_draft')
         .set({ channel_connection_id: target.connectionId, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', draft.id)
@@ -273,7 +287,7 @@ export const einvoiceJobBegin = defineCommand({
     } else if (action === 'ask') {
       // The call was started and never answered: it is ambiguous now, and what is asked next is the provider's record under the key.
       await ctx.trx
-        .updateTable('crove_kernel.external_call')
+        .updateTable('ludy_kernel.external_call')
         .set({ state: 'ambiguous', updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('key', '=', issueKey(draft.idempotency_key))
@@ -325,7 +339,7 @@ export const einvoiceJobRecord = defineCommand({
     const askKey = async () => statusKey(draft.idempotency_key, `ask:${(await selectCall(ctx, issueCall))?.calls ?? 1}`);
     const pollKey = statusKey(draft.idempotency_key, `poll:${draft.check_attempts}`);
     const closeStatus = async (state: CallEnd) => endCall(ctx, input.step === 'ask' ? await askKey() : pollKey, state);
-    const update = (set: Record<string, unknown>) => ctx.trx.updateTable('crove_finance.einvoice_draft').set({ ...set, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', draft.id).execute();
+    const update = (set: Record<string, unknown>) => ctx.trx.updateTable('ludy_finance.einvoice_draft').set({ ...set, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', draft.id).execute();
 
     switch (result.outcome) {
       case 'issued': {
@@ -382,7 +396,7 @@ export const einvoiceJobRecord = defineCommand({
         // Asked by the key and the provider has nothing: the send never happened. The call goes back to started, made again, and the request is handed back to send.
         await closeStatus({ state: 'succeeded' });
         const again = await ctx.trx
-          .updateTable('crove_kernel.external_call')
+          .updateTable('ludy_kernel.external_call')
           .set({ state: 'started', calls: sql<number>`calls + 1`, updated_at: ctx.now })
           .where('org_id', '=', ctx.orgId)
           .where('key', '=', issueCall)
@@ -440,7 +454,7 @@ export const einvoiceJobFiles = defineCommand({
     if (!draft || draft.state !== 'issued') return { ok: false, ref: null, signedFileId: null };
     const key = filesKey(draft.idempotency_key);
     const target = await ctx.trx
-      .selectFrom('crove_finance.einvoice_connection')
+      .selectFrom('ludy_finance.einvoice_connection')
       .select('provider')
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', draft.legal_entity_id)
@@ -457,7 +471,7 @@ export const einvoiceJobFiles = defineCommand({
       await endCall(ctx, key, { state: 'ambiguous', kind: 'transient', code: 'FILES_UNAVAILABLE' });
       // Fetched again after a wait, not on every sweep.
       await ctx.trx
-        .updateTable('crove_finance.einvoice_draft')
+        .updateTable('ludy_finance.einvoice_draft')
         .set({ error_code: 'FILES_UNAVAILABLE', next_check_at: new Date(ctx.now.getTime() + FILES_RETRY_SECONDS * 1000), updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', draft.id)
@@ -465,7 +479,7 @@ export const einvoiceJobFiles = defineCommand({
       return { ok: false, ref: draft.provider_ref, signedFileId: null };
     }
     await ctx.trx
-      .updateTable('crove_finance.einvoice_draft')
+      .updateTable('ludy_finance.einvoice_draft')
       .set({ signed_file_id: step.signedFileId, pdf_file_id: step.pdfFileId, error_code: null, next_check_at: null, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', draft.id)

@@ -6,12 +6,12 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { SandboxPublisher, type Publisher, type RemoveInput, type RemoveResult } from '@crove/channel';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
-import { runPublishJob, runRemoveJob, socialCommands, socialQueries, type ActivityItem, type PostView } from '@crove/mod-social';
+import { SandboxPublisher, type Publisher, type RemoveInput, type RemoveResult } from '@ludy/channel';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { CredentialVault, Runtime, parseVaultKey } from '@ludy/kernel-runtime';
+import { runPublishJob, runRemoveJob, socialCommands, socialQueries, type ActivityItem, type PostView } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -51,7 +51,7 @@ suite('removing a published post on PostgreSQL (#860)', () => {
 
   async function member(o: Org, role: 'admin' | 'member' | 'viewer'): Promise<string> {
     const id = await person(role);
-    await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [o.orgId, id, role]));
+    await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [o.orgId, id, role]));
     return id;
   }
 
@@ -79,7 +79,7 @@ suite('removing a published post on PostgreSQL (#860)', () => {
     const post = await get(o, postId);
     await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
     await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
     const id = post.variants[0]?.id as string;
     expect(await runPublishJob({ runtime: worker, broker: vault, publishers: { sandbox: platform }, callTimeoutMs: 2_000 }, o.orgId, id, 'sandbox')).toMatchObject({ status: 'published' });
     return { postId, id, account };
@@ -88,11 +88,11 @@ suite('removing a published post on PostgreSQL (#860)', () => {
   const deps = (platform: Publisher) => ({ runtime: worker, broker: vault, publishers: { sandbox: platform }, callTimeoutMs: 2_000 });
   const variant = async (o: Org, postId: string) => (await get(o, postId)).variants[0] as PostView['variants'][number];
   const events = (o: Org, type: string) =>
-    admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>('SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY created_at', [o.orgId, type])).rows.map((r) => r.payload));
+    admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>('SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY created_at', [o.orgId, type])).rows.map((r) => r.payload));
   const removeCalls = (id: string) =>
-    admin(async (c) => (await c.query<{ key: string; state: string; retry_safety: string; error_code: string | null }>("SELECT key, state, retry_safety, error_code FROM crove_kernel.external_call WHERE key LIKE $1 ORDER BY started_at, key", [`social.publish:${id}:%:remove%`])).rows);
+    admin(async (c) => (await c.query<{ key: string; state: string; retry_safety: string; error_code: string | null }>("SELECT key, state, retry_safety, error_code FROM ludy_kernel.external_call WHERE key LIKE $1 ORDER BY started_at, key", [`social.publish:${id}:%:remove%`])).rows);
   const metricsDue = async (id: string) =>
-    admin(async (c) => (await c.query<{ variant_id: string }>("SELECT variant_id FROM crove_social.metrics_due(1000, ARRAY['sandbox'], 600)")).rows.some((r) => r.variant_id === id));
+    admin(async (c) => (await c.query<{ variant_id: string }>("SELECT variant_id FROM ludy_social.metrics_due(1000, ARRAY['sandbox'], 600)")).rows.some((r) => r.variant_id === id));
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -103,15 +103,15 @@ suite('removing a published post on PostgreSQL (#860)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const as = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: as('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: as('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createPool({ connectionString: as('ludy_app', 'test-app-pw'), max: 4 });
+    workerPool = createPool({ connectionString: as('ludy_worker', 'test-worker-pw'), max: 4 });
     appDb = createDb(appPool);
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     api = new Runtime(appDb, { manifests: TEST_MANIFESTS }).register(registry);
@@ -151,7 +151,7 @@ suite('removing a published post on PostgreSQL (#860)', () => {
     expect((await get(o, postId)).status).toBe('cancelled');
     expect(await removeCalls(id)).toEqual([{ key: `social.publish:${id}:1:1:remove`, state: 'succeeded', retry_safety: 'idempotent', error_code: null }]);
     expect(await events(o, 'social.variant.removed')).toEqual([{ post_id: postId, variant_id: id, provider: 'sandbox', by: o.owner }]);
-    const audit = await admin(async (c) => (await c.query<{ actor_id: string; target_id: string; detail: Record<string, unknown> }>("SELECT actor_id, target_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'social.variant.remove' AND outcome = 'ok' ORDER BY occurred_at", [o.orgId])).rows);
+    const audit = await admin(async (c) => (await c.query<{ actor_id: string; target_id: string; detail: Record<string, unknown> }>("SELECT actor_id, target_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'social.variant.remove' AND outcome = 'ok' ORDER BY occurred_at", [o.orgId])).rows);
     expect(audit[0]).toEqual({ actor_id: o.owner, target_id: id, detail: { post_id: postId, variant_id: id, provider: 'sandbox', reason: 'Sai giá khuyến mãi' } });
     // Metrics stop: the sweep reads published variants only.
     expect(await metricsDue(id)).toBe(false);
@@ -165,6 +165,25 @@ suite('removing a published post on PostgreSQL (#860)', () => {
     // A removed channel is history: never edited, cancelled or published again.
     await expect(exec(o, 'social.variant.cancel', { variantIds: [id] })).rejects.toMatchObject({ code: 'VARIANT_STATE' });
     await expect(exec(o, 'social.variant.retry', { variantIds: [id] })).rejects.toMatchObject({ code: 'VARIANT_STATE' });
+  });
+
+  it('still takes a post down, and still schedules and watches a planned takedown, while Social is switched off for the org (ADR-0053, C3c)', async () => {
+    const o = await org();
+    const sandbox = new SandboxPublisher();
+    const { postId, id, account } = await publishedPost(o, sandbox);
+    expect(await exec(o, 'social.variant.remove', { variantId: id, reason: 'Sai giá' })).toMatchObject({ queued: true });
+    await api.execute('kernel.org.set_app', { module: 'social', enabled: false }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    // The app is off: a person's own call into it is refused.
+    await expect(exec(o, 'social.variant.remove', { variantId: id })).rejects.toMatchObject({ status: 404 });
+    // The ask made before still goes out: begin and record run, and the post comes down.
+    expect(await runRemoveJob(deps(sandbox), o.orgId, id, 'sandbox', null)).toEqual({ action: 'call', state: 'succeeded' });
+    expect(sandbox.posts(account)).toHaveLength(0);
+    // The planned takedown's schedule and watch are not refused either: they answer, nothing is due.
+    const system = { type: 'system' as const, component: 'social-remove-off-test' };
+    await expect(worker.execute('social.remove.schedule', { variantId: id }, { actor: system, orgId: o.orgId })).resolves.toMatchObject({ queued: false });
+    await expect(worker.execute('social.remove.watch', { variantId: id, after: null }, { actor: system, orgId: o.orgId })).resolves.toMatchObject({ told: false });
+    await api.execute('kernel.org.set_app', { module: 'social', enabled: true }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    expect((await variant(o, postId)).status).toBe('removed');
   });
 
   it('keeps the post up when the platform refuses, and asks again once per ask', async () => {
@@ -223,7 +242,7 @@ suite('removing a published post on PostgreSQL (#860)', () => {
 
     // A published channel on a platform whose adapter has no remove (as if it were a Threads account).
     const other = await publishedPost(o, sandbox);
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET provider = 'threads' WHERE id = $1", [other.id]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET provider = 'threads' WHERE id = $1", [other.id]));
     await expect(exec(o, 'social.variant.remove', { variantId: other.id })).rejects.toMatchObject({ code: 'REMOVE_NOT_SUPPORTED' });
     // And the job never removes what the command did not ask for.
     expect(await runRemoveJob(deps(sandbox), o.orgId, other.id, 'sandbox', null)).toEqual({ action: 'none', reason: 'provider_mismatch' });

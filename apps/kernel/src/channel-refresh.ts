@@ -9,10 +9,10 @@
 //   the next refresh is refused and the connection is marked expired, so an owner or admin reconnects it. Nothing
 //   is posted with a token nobody has.
 import { sql } from 'kysely';
-import type { Refresher } from '@crove/channel';
-import type { Db } from '@crove/db';
-import { DomainError, type CredentialBroker, type Runtime, type SystemActor } from '@crove/kernel-runtime';
-import type { SealedChannelCredential } from '@crove/kernel';
+import type { Refresher } from '@ludy/channel';
+import type { Db } from '@ludy/db';
+import { DomainError, type CredentialBroker, type Runtime, type SystemActor } from '@ludy/kernel-runtime';
+import type { SealedChannelCredential } from '@ludy/kernel';
 
 const ACTOR: SystemActor = { type: 'system', component: 'kernel.channel.refresh' };
 // Refresh tokens that expire within this window: Zalo's access tokens last 25 hours, so a sweep every 10 minutes
@@ -57,7 +57,7 @@ export async function refreshChannels(deps: RefreshDeps): Promise<RefreshOutcome
         const horizon = deps.refreshers[provider]?.horizonSeconds ?? REFRESH_HORIZON_SECONDS;
         const { rows: part } = await sql<Due>`
         SELECT org_id, connection_id, provider, version
-          FROM crove_kernel.channel_refresh_due(${REFRESH_LIMIT}::int, ${[provider]}::text[], ${horizon}::int)`.execute(db);
+          FROM ludy_kernel.channel_refresh_due(${REFRESH_LIMIT}::int, ${[provider]}::text[], ${horizon}::int)`.execute(db);
         due.rows.push(...part);
       }
       for (const row of due.rows) {

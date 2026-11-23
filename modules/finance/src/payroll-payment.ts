@@ -5,16 +5,17 @@
 // - finance.payroll_payment.prepare: checks that the run has been posted (its voucher names it) and that posting stands (not reversed, #2854), and that this kind of payment is not already recorded
 //   (a reversed payment voucher does not count: it can be recorded again), then builds the proposal as any voucher
 //   (its accounts in the entity's chart, the bank line it settles) and raises the flag of a cash payment at the 5 million limit. It writes nothing. Owners and admins only, like the proposal it serves.
-// - finance.payroll_payment.record: runs only through kernel.proposal.approve. It asks the HR module to rebuild the obligation from the run (in the approver's context, owners and admins) and
-//   refuses a stored proposal that differs from it (the entity, the month, the chart, the lines, the total); then it records the voucher with the run and the kind on it (one live voucher per run and kind: a
-//   trigger holds it, 20261212114500) and posts its entry, in the same transaction. The database checks at commit that the proposal has such a voucher (crove_finance.ledger_effect_recorded).
+// - finance.payroll_payment.record: runs only through kernel.proposal.approve. It asks the HR module to rebuild the obligation from the run (in the approver's context: an owner, an admin, or a
+//   member holding finance.proposal.approve org-wide, #2751) and refuses a stored proposal that differs from it (the entity, the month, the chart, the description, the lines, the total, the cash
+//   flag, the co-author); then it records the voucher with the run and the kind on it (one live voucher per run and kind: a trigger holds it, 20261212114500) and posts its entry, in the same
+//   transaction. The database checks at commit that the proposal has such a voucher (ludy_finance.ledger_effect_recorded).
 // No finance code reads a payroll table, and Ludy never initiates a payment: the voucher records one the business made.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { PAYROLL_PAYMENT_COMMAND, PAYROLL_PAYMENT_KINDS, PAYROLL_REGIMES, VOUCHER_KIND, zCashVoucherRequest, zId, zPayrollPaymentProposal } from '@crove/kernel-contract';
-import { money } from '@crove/l10n-vn';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type QueryContext } from '@crove/kernel-runtime';
+import { PAYROLL_PAYMENT_COMMAND, PAYROLL_PAYMENT_KINDS, PAYROLL_REGIMES, VOUCHER_KIND, zCashVoucherRequest, zId, zPayrollPaymentProposal } from '@ludy/kernel-contract';
+import { money, payrollPaymentReason } from '@ludy/l10n-vn';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineCommand, type QueryContext } from '@ludy/kernel-runtime';
 import { buildVoucherProposal, recordVoucherPayload } from './cash-voucher.ts';
 import { payrollCashCheck } from './domain/anomaly.ts';
 import { VOUCHER_SOURCE, voucherTitle } from './domain/cash-voucher.ts';
@@ -30,7 +31,7 @@ const PAYMENT_TYPES = ['cash_payment', 'bank_debit'] as const;
 async function checkPayable(ctx: QueryContext, runId: string, kind: string): Promise<void> {
   // A run can be posted again after a reversal (#2931), so it may hold several posting vouchers: it is payable against the one that stands.
   const postings = await ctx.trx
-    .selectFrom('crove_finance.journal_voucher as j')
+    .selectFrom('ludy_finance.journal_voucher as j')
     .select(['j.id', reversedSource('j', JOURNAL_VOUCHER_SOURCE).as('reversed')])
     .where('j.org_id', '=', ctx.orgId)
     .where('j.payroll_run_id', '=', runId)
@@ -38,7 +39,7 @@ async function checkPayable(ctx: QueryContext, runId: string, kind: string): Pro
   if (postings.length === 0) throw new DomainError('HR_PAYMENT_NOT_POSTED', 409, 'Bảng lương này chưa được hạch toán; hãy hạch toán trước khi ghi chi lương hay nộp các khoản');
   if (postings.every((p) => p.reversed)) throw new DomainError('HR_PAYMENT_POSTING_REVERSED', 409, 'Bút toán hạch toán của bảng lương này đã bị đảo nên chưa chi lương hay nộp các khoản được');
   const paid = await ctx.trx
-    .selectFrom('crove_finance.cash_voucher as v')
+    .selectFrom('ludy_finance.cash_voucher as v')
     .select('v.id')
     .where('v.org_id', '=', ctx.orgId)
     .where('v.payroll_run_id', '=', runId)
@@ -99,6 +100,10 @@ export const recordPayrollPayment = defineCommand({
     if (expected.month !== payload.payroll.month || expected.regime !== payload.payroll.regime) {
       throw new DomainError('HR_POSTING_MISMATCH', 422, 'Chứng từ chi lương không khớp tháng hoặc chế độ kế toán của bảng lương; hãy lập lại đề xuất', { what: 'month' });
     }
+    // The voucher's description is the fixed reason the HR preparer builds for this kind and month (never free text or a person's name, which would enter Kế toán's books on a tampered proposal row, #2853).
+    if (payload.description !== payrollPaymentReason(kind, expected.month)) {
+      throw new DomainError('HR_POSTING_MISMATCH', 422, 'Diễn giải của chứng từ chi không khớp bảng lương; hãy lập lại đề xuất', { what: 'description' });
+    }
     // The lines are the run's, account by account and amount by amount (money-equal), whatever their order; so is the total.
     const key = (l: { account: string; amount: string }) => `${l.account}:${money(l.amount).toFixed()}`;
     const have = payload.lines.map(key).sort();
@@ -116,7 +121,7 @@ export const recordPayrollPayment = defineCommand({
     if (!sameFlag) throw new DomainError('HR_POSTING_MISMATCH', 422, 'Cảnh báo chi tiền mặt của đề xuất không khớp bảng lương; hãy lập lại đề xuất', { what: 'checks' });
     // The person who approved the run is listed on the proposal as a co-author (the preparer writes it; a proposal row written some other way must too).
     if (expected.approvedBy) {
-      const own = await ctx.trx.selectFrom('crove_kernel.proposal').select('co_authors').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
+      const own = await ctx.trx.selectFrom('ludy_kernel.proposal').select('co_authors').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
       if (!(own?.co_authors ?? []).map((id) => id.toLowerCase()).includes(expected.approvedBy.toLowerCase())) {
         throw new DomainError('HR_POSTING_MISMATCH', 422, 'Đề xuất chi lương không ghi người đã duyệt bảng lương là đồng tác giả; hãy lập lại đề xuất', { what: 'coAuthors' });
       }

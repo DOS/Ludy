@@ -96,6 +96,9 @@ export const zBankImportPreview = z.object({
   to: zLocalDate.nullable(),
   // No row has an error: the import can go ahead.
   ok: z.boolean(),
+  // Set when the account is fed from a cut-over day on (#4218): the file's lines on or after `from` are skipped (shown as
+  // duplicates), `leftOut` of them.
+  feed: z.object({ from: zLocalDate, leftOut: z.number().int().nonnegative() }).optional(),
 });
 export type BankImportPreview = z.infer<typeof zBankImportPreview>;
 
@@ -198,6 +201,27 @@ export const zBankLines = z.object({
   moneyOut: zMoney,
 });
 export type BankLines = z.infer<typeof zBankLines>;
+
+// The most lines finance.bank.platform_lines returns for a range; a fuller answer says `truncated`.
+export const BANK_PLATFORM_LINES_LIMIT = 500;
+// The statement lines of all of a legal entity's bank and card accounts in a range whose description names one of the
+// given names (an ad platform's, slice D2 of Ads), newest first: the line, the account it is on and what became of it.
+export const zBankPlatformLines = z.object({
+  from: zLocalDate,
+  to: zLocalDate,
+  lines: z.array(
+    z.object({
+      id: zId,
+      bankAccount: z.string(),
+      date: zLocalDate,
+      description: z.string(),
+      amount: zMoney,
+      state: zBankLineState,
+    }),
+  ),
+  truncated: z.boolean(),
+});
+export type BankPlatformLines = z.infer<typeof zBankPlatformLines>;
 
 export const zBankLineCandidate = z.object({
   party: z.object({ id: zId, name: z.string(), taxCode: z.string().nullable() }),
@@ -318,7 +342,41 @@ export function statementAmountText(cell: { kind: string; value: string } | unde
 // A bank feed provider's id as its channel connections name it (ADR-0039): `bank_` and the adapter (`bank_sandbox`),
 // under the channel layer's provider pattern. The Social screens leave these connections out.
 const BANK_FEED_PROVIDER_ID = /^bank_[a-z0-9_]{1,27}$/;
+// How many days back a provider's first pull reaches (the adapters' own windows: packages/bank-feed tingee.ts FIRST_PULL_DAYS, the
+// sandbox's SANDBOX_FIRST_DAYS). A cut-over day (#4218) earlier than that would skip file lines the feed never fetches, so the
+// earliest day an owner may name is today (Vietnam) minus these days.
+export const BANK_FEED_FIRST_PULL_DAYS: Readonly<Record<string, number>> = { bank_sandbox: 7, bank_tingee: 31 };
+
 export const isBankFeedProviderId = (provider: string): boolean => BANK_FEED_PROVIDER_ID.test(provider);
+
+// Connects a Tingee account (#2045): the Client ID and Secret Token the org made in its own Tingee portal. The secret is sealed by the API and opened only by the worker; it is never returned, logged or
+// put in an error. A control character in either value is refused (the database would refuse the row).
+const zTingeeCredentialText = z.string().trim().min(1).max(200).regex(/^[^\p{Cc}]+$/u);
+export const zBankFeedConnectTingee = z.strictObject({
+  clientId: zTingeeCredentialText,
+  secretToken: zTingeeCredentialText,
+  displayName: z.string().trim().min(1).max(200).optional(),
+});
+export type BankFeedConnectTingee = z.infer<typeof zBankFeedConnectTingee>;
+
+// The webhook hook key of a bank feed connection (#4203, Tingee S3, ADR-0039 as amended): a provider that signs its notices with each customer's own secret posts them to an address that carries a key of the connection's
+// own. `hookSet` makes the hook or replaces its key (the old address stops at once) and answers the key ONCE: 128 random bits, 22 characters, the path to paste is /api/bank-feed/<provider>/webhook/<key>. Only its SHA-256
+// is kept. `hook` is the status, never the key.
+export const zBankFeedHookSet = z.strictObject({ connectionId: zId });
+export type BankFeedHookSet = z.infer<typeof zBankFeedHookSet>;
+export const BANK_FEED_HOOK_KEY_LENGTH = 22;
+export const zBankFeedHookCreated = z.strictObject({ provider: z.string().regex(/^bank_[a-z0-9_]{1,27}$/), key: z.string().length(BANK_FEED_HOOK_KEY_LENGTH).regex(/^[A-Za-z0-9_-]+$/), created: z.boolean() });
+export type BankFeedHookCreated = z.infer<typeof zBankFeedHookCreated>;
+export const zBankFeedHookStatus = z.strictObject({
+  exists: z.boolean(),
+  createdAt: z.string().nullable(),
+  rotatedAt: z.string().nullable(),
+  lastSeenAt: z.string().nullable(),
+  // Notices the worker refused in the current hour; ten stop the hook until it is rotated.
+  rejectedCount: z.number().int().min(0),
+  stopped: z.boolean(),
+});
+export type BankFeedHookStatus = z.infer<typeof zBankFeedHookStatus>;
 
 // Maps an account a bank feed connection reaches to one of the org's bank accounts in one legal entity (#2044).
 export const zBankFeedMap = z.strictObject({
@@ -326,8 +384,25 @@ export const zBankFeedMap = z.strictObject({
   externalAccountId: z.string().trim().min(1).max(200),
   bankAccount: zAccountCode,
   legalEntityId: zId.optional(),
+  // The day the feed takes over from statement files for this account (#4218): a file's lines on or after it are
+  // skipped. Absent leaves the date as it is on a remap; null clears it.
+  feedFrom: zLocalDate.nullable().optional(),
 });
 export type BankFeedMap = z.infer<typeof zBankFeedMap>;
+
+// How the last pull of a mapped account ended (#4244): `ok`, or why it stopped, in a closed list that the database's CHECK keeps too. Fixed sentences on the card say what each means; nothing of a provider's own text is kept.
+export const BANK_FEED_PULL_OUTCOMES = ['ok', 'credentials', 'clock', 'rate_limited', 'upstream', 'config', 'bad_page', 'too_many_lines'] as const;
+export const zBankFeedPullOutcome = z.enum(BANK_FEED_PULL_OUTCOMES);
+export type BankFeedPullOutcome = z.infer<typeof zBankFeedPullOutcome>;
+// The most a page's line position may be: a page holds at most 200 transactions (the database's CHECK allows far more, so a provider with larger pages needs no migration).
+export const BANK_FEED_MAX_ITEM_INDEX = 100_000;
+export const zBankFeedLastPull = z.object({
+  outcome: zBankFeedPullOutcome,
+  at: z.string(),
+  // The refused line's number, 1-based, only for `bad_page`.
+  item: z.number().int().min(1).max(BANK_FEED_MAX_ITEM_INDEX + 1).nullable(),
+});
+export type BankFeedLastPull = z.infer<typeof zBankFeedLastPull>;
 
 export const zBankFeedAccountView = z.object({
   id: zId,
@@ -339,6 +414,13 @@ export const zBankFeedAccountView = z.object({
   bankAccount: z.string(),
   legalEntityId: zId,
   lastSyncedAt: z.string().nullable(),
+  // The cut-over day (#4218), or null when statement files and the feed are only deduplicated.
+  feedFrom: zLocalDate.nullable(),
+  // The earliest day the cut-over may be set to now (#4218): what the date field takes as its minimum; the server refuses an earlier one.
+  // Null when the account's cursor cannot be read: no day can be set then.
+  feedFromEarliest: zLocalDate.nullable(),
+  // How the last pull of this account ended (#4244), or null before the first one: a closed kind and, for a page with a line it cannot read, that line's number (1-based); never a provider's text.
+  lastPull: zBankFeedLastPull.nullable(),
 });
 export type BankFeedAccountView = z.infer<typeof zBankFeedAccountView>;
 
@@ -369,6 +451,22 @@ export const zBankFeedRecordPull = z.strictObject({
 });
 export type BankFeedRecordPull = z.infer<typeof zBankFeedRecordPull>;
 
+// Why a pull stopped (#4244), recorded by the sync (the worker, as the system) when a call or a page is refused: the connection, the account it concerns (without one, every mapped account of the connection:
+// a refusal at the account listing or the credential comes before any pull) and a closed kind. `item` is the refused line's position in the page (0-based), only with `bad_page`. `ok` is not recorded
+// here: a good record_pull clears the reason in the same transaction as its lines.
+export const zBankFeedRecordOutcome = z
+  .strictObject({
+    connectionId: zId,
+    feedAccountId: zId.optional(),
+    // Where the refused page was to start from: the reason is recorded only while the account's cursor is still there, so a late sync cannot write over what a newer pull recorded. Only with `feedAccountId`.
+    fromCursor: z.string().min(1).max(500).nullable().optional(),
+    kind: zBankFeedPullOutcome.exclude(['ok']),
+    item: z.number().int().min(0).max(BANK_FEED_MAX_ITEM_INDEX).optional(),
+  })
+  .refine((v) => v.item === undefined || v.kind === 'bad_page', { message: 'a line position goes only with bad_page', path: ['item'] })
+  .refine((v) => v.fromCursor === undefined || v.feedAccountId !== undefined, { message: 'a cursor goes only with an account', path: ['fromCursor'] });
+export type BankFeedRecordOutcome = z.infer<typeof zBankFeedRecordOutcome>;
+
 // The payroll payments a money-out line may be (#2532, payroll plan 6.4): the payments of posted pay runs, not yet recorded or asked for, whose amount equals the line's. Code decides by the amount
 // and the direction; `amount_note` says the line's description also names what the payment is (the words for wages, insurance, union fee or tax), which only ranks it. A candidate names the run, the
 // month, the kind and the amount, never a person: the person then asks the payment with the line (hr.payroll.payment.prepare, `bankLineId`) and it is approved like any other.
@@ -392,3 +490,11 @@ export const zBankPayrollExplainAsk = z.strictObject({ bankLineId: zId, runId: z
 export type BankPayrollExplainAsk = z.infer<typeof zBankPayrollExplainAsk>;
 export const zBankPayrollExplanation = z.strictObject({ ai: z.enum(['used', 'off', 'busy', 'budget', 'failed', 'none']), text: z.string().nullable() });
 export type BankPayrollExplanation = z.infer<typeof zBankPayrollExplanation>;
+
+// The coworker's one sentence on an open bank line the matcher could not settle (#4219, Tingee S4c): the line and its candidates are read again by the server from the books, never taken from the caller, and the
+// model only words that several candidates fit or none stands out. `ai` names the state when there is no text (off: no model; busy: too many calls; budget: the AI budget is spent; failed: the call failed or its
+// text was refused; none: the line is not one the matcher left open to choice), and the screen then shows the line as it is. The sentence is a read: it picks no candidate and makes no voucher.
+export const zBankCandidatesLineAsk = z.strictObject({ bankLineId: zId, lang: z.enum(['vi', 'en']).optional() });
+export type BankCandidatesLineAsk = z.infer<typeof zBankCandidatesLineAsk>;
+export const zBankCandidatesLine = z.strictObject({ ai: z.enum(['used', 'off', 'busy', 'budget', 'failed', 'none']), text: z.string().nullable() });
+export type BankCandidatesLine = z.infer<typeof zBankCandidatesLine>;

@@ -4,8 +4,8 @@
 // records an outbox event; the worker then runs this command, which settles the post's waiting variants. An answer for
 // content that changed since, or a comment, settles nothing.
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
-import { DomainError, defineCommand } from '@crove/kernel-runtime';
+import { zId } from '@ludy/kernel-contract';
+import { DomainError, defineCommand } from '@ludy/kernel-runtime';
 import { approvalsRequired, clientApprovalOn, clientVerdict, decisionsOf } from './policy.ts';
 import { CLEAR_ERROR, POLICY_RAISED, approvedValues, base, lockPost, lockVariants, refreshPostStatus, setVariant, step } from './variants.ts';
 import { bannedCheckerOf, isBlocked } from './banned-words.ts';
@@ -19,7 +19,7 @@ export const clientSettle = defineCommand({
   access: 'system',
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
-    const event = await ctx.trx.selectFrom('crove_kernel.outbox_event').select(['type', 'payload']).where('org_id', '=', ctx.orgId).where('id', '=', input.eventId).executeTakeFirst();
+    const event = await ctx.trx.selectFrom('ludy_kernel.outbox_event').select(['type', 'payload']).where('org_id', '=', ctx.orgId).where('id', '=', input.eventId).executeTakeFirst();
     const postId = (event?.payload as { post_id?: unknown } | undefined)?.post_id;
     if (event?.type !== 'social.review.answered' || typeof postId !== 'string') return { settled: [] as string[], verdict: null };
     const post = await lockPost(ctx.trx, ctx.orgId, postId).catch(() => null);

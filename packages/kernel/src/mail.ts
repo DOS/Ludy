@@ -1,24 +1,24 @@
 // Outbound mail in the kernel, step E1a of the Email plan (docs/plan/email.md §3.2-3.3, ADR-0034, issue #538).
-// Every mail Crove sends gets a crove_kernel.mail_message row in the transaction of the command that sends it, after a
+// Every mail Crove sends gets a ludy_kernel.mail_message row in the transaction of the command that sends it, after a
 // check against the org's suppression list, so a mail to an address that bounced hard or was stopped by hand is
 // recorded as suppressed and never handed to a mailer. Addresses are matched by a keyed hash
-// (crove_kernel.mail_address_hash), which outlives an erasure of the address.
+// (ludy_kernel.mail_address_hash), which outlives an erasure of the address.
 //
 // E1a sends nothing itself: the invite mail carries the raw invite token, which no table may hold, so the request
 // that holds the token reads the row back (kernel.mail.direct.get), sends the mail unless it is suppressed and records
 // the outcome with kernel.mail.record_direct.
 //
 // Queued mail (step E1b, #548): a command writes the row 'queued' with its merge data, and the worker sends it. One
-// send per attempt through crove_kernel.external_call (key mail:<message>:<attempt>): kernel.mail.queue.begin checks
+// send per attempt through ludy_kernel.external_call (key mail:<message>:<attempt>): kernel.mail.queue.begin checks
 // the suppression list again, marks the mail 'sending' and writes the call 'started' in one transaction; the worker
 // renders and sends the mail outside it; kernel.mail.queue.record writes the outcome. An unknown outcome is
 // 'ambiguous': marketing is never sent again, transactional mail only through a mailer that dedupes.
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import { isMailAddress, zId } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import { ROADMAP_SHIPPED_MAIL_SOURCE, ROADMAP_SHIPPED_MAIL_TEMPLATE, isMailAddress, zId } from '@ludy/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -28,7 +28,7 @@ export type MailScope = 'all' | 'marketing';
 
 // The right-hand side of the Message-ID when the deployment names none: a reserved name (RFC 2606) no mail system
 // resolves, for tests and mail that is only logged.
-export const DEFAULT_MESSAGE_ID_DOMAIN = 'crove.invalid';
+export const DEFAULT_MESSAGE_ID_DOMAIN = 'ludy.invalid';
 // The deployment's own domain for the Message-ID (the SMTP_FROM domain, else the PUBLIC_URL host), set once at boot so
 // mail a module queues without naming one (the scheduled report, #704) is not sent with the reserved name.
 let deploymentMessageIdDomain: string | undefined;
@@ -40,7 +40,7 @@ export const DIRECT_RECORD_WINDOW_MS = 10 * 60 * 1000;
 
 // The keyed hash of an address (lower-cased, trimmed and folded as invite_cap_key folds it).
 export async function mailAddressHash(ctx: Pick<CommandContext, 'trx'>, address: string): Promise<string> {
-  const { rows } = await sql<{ hash: string | null }>`SELECT crove_kernel.mail_address_hash(${address}) AS hash`.execute(ctx.trx);
+  const { rows } = await sql<{ hash: string | null }>`SELECT ludy_kernel.mail_address_hash(${address}) AS hash`.execute(ctx.trx);
   const hash = rows[0]?.hash;
   if (!hash) throw new DomainError('VALIDATION', 422, 'Địa chỉ email trống');
   return hash;
@@ -56,8 +56,8 @@ export const SOFT_BOUNCE_PAUSE_MS = 30 * 24 * 60 * 60 * 1000;
 async function softBouncePaused(ctx: Pick<CommandContext, 'trx' | 'orgId'>, hash: string, now: Date): Promise<boolean> {
   const since = new Date(now.getTime() - SOFT_BOUNCE_PAUSE_MS - SOFT_BOUNCE_WINDOW_MS);
   const { rows } = await sql<{ at: Date }>`
-    SELECT e.occurred_at AS at FROM crove_kernel.mail_event e
-    JOIN crove_kernel.mail_message m ON m.org_id = e.org_id AND m.id = e.message_id
+    SELECT e.occurred_at AS at FROM ludy_kernel.mail_event e
+    JOIN ludy_kernel.mail_message m ON m.org_id = e.org_id AND m.id = e.message_id
     WHERE e.org_id = ${ctx.orgId} AND m.to_hash = ${hash} AND e.kind = 'bounce_soft' AND e.occurred_at >= ${since}
     ORDER BY e.occurred_at`.execute(ctx.trx);
   // A bounce that completes SOFT_BOUNCE_LIMIT within the window, recent enough that its pause still runs.
@@ -74,7 +74,7 @@ async function softBouncePaused(ctx: Pick<CommandContext, 'trx' | 'orgId'>, hash
 export async function isSuppressed(ctx: Pick<CommandContext, 'trx' | 'orgId'>, hash: string, stream: MailStream, now: Date = new Date()): Promise<boolean> {
   const scopes: MailScope[] = stream === 'marketing' ? ['all', 'marketing'] : ['all'];
   const row = await ctx.trx
-    .selectFrom('crove_kernel.mail_suppression')
+    .selectFrom('ludy_kernel.mail_suppression')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('to_hash', '=', hash)
@@ -118,7 +118,7 @@ export async function createMailMessage(ctx: CommandContext, mail: MailToSend): 
   const status = (await isSuppressed(ctx, hash, mail.stream, ctx.now)) ? 'suppressed' : mail.status;
   const messageIdHeader = `<${randomUUID()}@${mail.messageIdDomain ?? deploymentMessageIdDomain ?? DEFAULT_MESSAGE_ID_DOMAIN}>`;
   const row = await ctx.trx
-    .insertInto('crove_kernel.mail_message')
+    .insertInto('ludy_kernel.mail_message')
     .values({
       org_id: ctx.orgId,
       stream: mail.stream,
@@ -163,7 +163,7 @@ export const directMailGet = defineQuery({
   handler: async (ctx, input): Promise<DirectMail | null> => {
     if (ctx.actor.type !== 'user') return null;
     const row = await ctx.trx
-      .selectFrom('crove_kernel.mail_message')
+      .selectFrom('ludy_kernel.mail_message')
       .select(['id', 'status', 'message_id_header'])
       .where('org_id', '=', ctx.orgId)
       .where('source', '=', input.source)
@@ -174,7 +174,7 @@ export const directMailGet = defineQuery({
       .limit(1)
       .executeTakeFirst();
     if (!row) return null;
-    const { rows } = await sql<{ token: string | null }>`SELECT crove_kernel.mail_bounce_token(${row.id}) AS token`.execute(ctx.trx);
+    const { rows } = await sql<{ token: string | null }>`SELECT ludy_kernel.mail_bounce_token(${row.id}) AS token`.execute(ctx.trx);
     return { messageId: row.id, status: row.status, messageIdHeader: row.message_id_header, bounceToken: rows[0]?.token ?? null };
   },
 });
@@ -203,7 +203,7 @@ export const recordDirectMail = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người gửi mới ghi được kết quả gửi thư');
     const row = await ctx.trx
-      .selectFrom('crove_kernel.mail_message')
+      .selectFrom('ludy_kernel.mail_message')
       .select(['id', 'attempts'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.messageId)
@@ -214,7 +214,7 @@ export const recordDirectMail = defineCommand({
       .executeTakeFirst();
     if (!row) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy thư đang gửi');
     await ctx.trx
-      .updateTable('crove_kernel.mail_message')
+      .updateTable('ludy_kernel.mail_message')
       .set({
         status: input.outcome,
         attempts: row.attempts + 1,
@@ -248,7 +248,7 @@ export const addMailSuppression = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới chặn được địa chỉ');
     const hash = await mailAddressHash(ctx, input.email);
     const inserted = await ctx.trx
-      .insertInto('crove_kernel.mail_suppression')
+      .insertInto('ludy_kernel.mail_suppression')
       .values({ org_id: ctx.orgId, to_hash: hash, scope: input.scope, reason: 'manual', created_by: ctx.actor.userId })
       .onConflict((oc) => oc.columns(['org_id', 'to_hash', 'scope']).where('lifted_at', 'is', null).doNothing())
       .returning('id')
@@ -270,7 +270,7 @@ export const liftMailSuppression = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới bỏ chặn được địa chỉ');
     const hash = await mailAddressHash(ctx, input.email);
     const live = await ctx.trx
-      .selectFrom('crove_kernel.mail_suppression')
+      .selectFrom('ludy_kernel.mail_suppression')
       .select(['id', 'reason'])
       .where('org_id', '=', ctx.orgId)
       .where('to_hash', '=', hash)
@@ -283,7 +283,7 @@ export const liftMailSuppression = defineCommand({
       throw new DomainError('MAIL_COMPLAINT_LIFT', 409, 'Người nhận đã báo thư là spam; chỉ chính họ đăng ký lại mới bỏ chặn được');
     }
     await ctx.trx
-      .updateTable('crove_kernel.mail_suppression')
+      .updateTable('ludy_kernel.mail_suppression')
       .set({ lifted_at: ctx.now, lifted_by: ctx.actor.userId, lift_reason: input.reason })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', live.id)
@@ -323,7 +323,7 @@ export const recordMailEvent = defineCommand({
   access: 'system',
   handler: async (ctx, input) => {
     const mail = await ctx.trx
-      .selectFrom('crove_kernel.mail_message')
+      .selectFrom('ludy_kernel.mail_message')
       .select(['id', 'status', 'to_hash'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.messageId)
@@ -331,7 +331,7 @@ export const recordMailEvent = defineCommand({
       .executeTakeFirst();
     if (!mail) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy thư');
     const event = await ctx.trx
-      .insertInto('crove_kernel.mail_event')
+      .insertInto('ludy_kernel.mail_event')
       .values({
         org_id: ctx.orgId,
         message_id: mail.id,
@@ -349,7 +349,7 @@ export const recordMailEvent = defineCommand({
     let status = mail.status;
     if (next && STATUS_MOVES[mail.status]?.includes(next)) {
       await ctx.trx
-        .updateTable('crove_kernel.mail_message')
+        .updateTable('ludy_kernel.mail_message')
         .set({ status: next, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', mail.id)
@@ -365,7 +365,7 @@ export const recordMailEvent = defineCommand({
     let suppressed: MailScope | null = null;
     if (suppression) {
       const added = await ctx.trx
-        .insertInto('crove_kernel.mail_suppression')
+        .insertInto('ludy_kernel.mail_suppression')
         .values({ org_id: ctx.orgId, to_hash: mail.to_hash, scope: suppression.scope, reason: suppression.reason, source_message_id: mail.id })
         .onConflict((oc) => oc.columns(['org_id', 'to_hash', 'scope']).where('lifted_at', 'is', null).doNothing())
         .returning('id')
@@ -378,7 +378,7 @@ export const recordMailEvent = defineCommand({
 });
 
 export type MailRetrySafety = 'safe' | 'idempotent' | 'reconcile_only' | 'never';
-// Sends of one transactional mail after an unknown outcome, the first included (crove_kernel.mail_queued_due).
+// Sends of one transactional mail after an unknown outcome, the first included (ludy_kernel.mail_queued_due).
 export const MAIL_MAX_ATTEMPTS = 3;
 export const mailCallKey = (messageId: string, attempt: number) => `mail:${messageId}:${attempt}`;
 const zProviderName = z.string().regex(/^[a-z][a-z0-9_]{0,31}$/);
@@ -420,10 +420,10 @@ const REPLY_FROM: Readonly<Record<'sent' | 'failed' | 'unknown', readonly SendSt
   unknown: ['queued', 'sending'],
 };
 async function settleConversationReply(ctx: CommandContext, mailId: string, state: 'sent' | 'failed' | 'unknown', code: string | null): Promise<void> {
-  const mail = await ctx.trx.selectFrom('crove_kernel.mail_message').select(['source', 'source_id', 'message_id_header']).where('org_id', '=', ctx.orgId).where('id', '=', mailId).executeTakeFirst();
+  const mail = await ctx.trx.selectFrom('ludy_kernel.mail_message').select(['source', 'source_id', 'message_id_header']).where('org_id', '=', ctx.orgId).where('id', '=', mailId).executeTakeFirst();
   if (mail?.source !== 'kernel.conversation.reply' || !mail.source_id) return;
   await ctx.trx
-    .updateTable('crove_kernel.conversation_message')
+    .updateTable('ludy_kernel.conversation_message')
     .set({ send_state: state, send_error_code: state === 'sent' ? null : (code ?? (state === 'failed' ? 'SEND_FAILED' : 'OUTCOME_UNKNOWN')) })
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', mail.source_id)
@@ -438,7 +438,7 @@ async function settleConversationReply(ctx: CommandContext, mailId: string, stat
 async function stop(ctx: CommandContext, messageId: string, again: boolean, reason: string): Promise<QueuedMailBegin> {
   if (!again) {
     await ctx.trx
-      .updateTable('crove_kernel.mail_message')
+      .updateTable('ludy_kernel.mail_message')
       .set({ status: 'failed', error_code: reason, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', messageId)
@@ -461,7 +461,7 @@ export const beginQueuedMail = defineCommand({
   handler: async (ctx, input): Promise<QueuedMailBegin> => {
     requireSystem(ctx);
     const mail = await ctx.trx
-      .selectFrom('crove_kernel.mail_message')
+      .selectFrom('ludy_kernel.mail_message')
       .select(['id', 'stream', 'status', 'attempts', 'template_key', 'template_version', 'to_address', 'to_hash', 'subject', 'payload', 'message_id_header'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.messageId)
@@ -479,7 +479,7 @@ export const beginQueuedMail = defineCommand({
     if (await isSuppressed(ctx, mail.to_hash, mail.stream, ctx.now)) {
       // A queued mail is stopped before any call; one whose last send is unknown is not tried again.
       await ctx.trx
-        .updateTable('crove_kernel.mail_message')
+        .updateTable('ludy_kernel.mail_message')
         .set(again ? { status: 'failed', error_code: 'SUPPRESSED', updated_at: ctx.now } : { status: 'suppressed', updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', mail.id)
@@ -490,20 +490,20 @@ export const beginQueuedMail = defineCommand({
     }
     const attempt = mail.attempts + 1;
     const inserted = await ctx.trx
-      .insertInto('crove_kernel.external_call')
+      .insertInto('ludy_kernel.external_call')
       .values({ org_id: ctx.orgId, key: mailCallKey(mail.id, attempt), module: 'kernel', target: input.provider, step: 'mail_send', retry_safety: input.safety, started_at: ctx.now })
       .onConflict((oc) => oc.columns(['org_id', 'key']).doNothing())
       .returning('id')
       .executeTakeFirst();
     if (!inserted) return stop(ctx, mail.id, again, 'CALL_EXISTS');
     await ctx.trx
-      .updateTable('crove_kernel.mail_message')
+      .updateTable('ludy_kernel.mail_message')
       .set({ status: 'sending', attempts: attempt, provider: input.provider, error_code: null, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', mail.id)
       .execute();
-    const { rows } = await sql<{ token: string | null }>`SELECT crove_kernel.mail_bounce_token(${mail.id}) AS token`.execute(ctx.trx);
-    const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select(['inbound_token', 'conversation_token']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const { rows } = await sql<{ token: string | null }>`SELECT ludy_kernel.mail_bounce_token(${mail.id}) AS token`.execute(ctx.trx);
+    const tenant = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['inbound_token', 'conversation_token']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     const payload = mail.payload && typeof mail.payload === 'object' && !Array.isArray(mail.payload) ? (mail.payload as Record<string, unknown>) : {};
     return {
       action: 'send',
@@ -555,7 +555,7 @@ export const recordQueuedMail = defineCommand({
   handler: async (ctx, input) => {
     requireSystem(ctx);
     const mail = await ctx.trx
-      .selectFrom('crove_kernel.mail_message')
+      .selectFrom('ludy_kernel.mail_message')
       .select(['id', 'to_hash'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.messageId)
@@ -566,7 +566,7 @@ export const recordQueuedMail = defineCommand({
     if (!mail) return { recorded: false };
     const sent = input.outcome === 'sent';
     await ctx.trx
-      .updateTable('crove_kernel.mail_message')
+      .updateTable('ludy_kernel.mail_message')
       .set({
         status: input.outcome,
         error_code: sent ? null : (input.errorCode ?? (input.outcome === 'failed' ? 'SEND_FAILED' : 'OUTCOME_UNKNOWN')),
@@ -578,7 +578,7 @@ export const recordQueuedMail = defineCommand({
       .where('id', '=', mail.id)
       .execute();
     await ctx.trx
-      .updateTable('crove_kernel.external_call')
+      .updateTable('ludy_kernel.external_call')
       .set(
         sent
           ? { state: 'succeeded', external_ref: input.providerMessageId ?? null, finished_at: ctx.now, updated_at: ctx.now }
@@ -598,7 +598,7 @@ export const recordQueuedMail = defineCommand({
           : null;
     if (stop) {
       await ctx.trx
-        .insertInto('crove_kernel.mail_suppression')
+        .insertInto('ludy_kernel.mail_suppression')
         .values({ org_id: ctx.orgId, to_hash: mail.to_hash, scope: 'all', reason: stop, source_message_id: mail.id })
         .onConflict((oc) => oc.columns(['org_id', 'to_hash', 'scope']).where('lifted_at', 'is', null).doNothing())
         .execute();
@@ -639,7 +639,7 @@ export const queueContactMail = defineCommand({
   sideEffect: 'external',
   access: CONTACT_MAIL_ROLES,
   handler: async (ctx, input) => {
-    const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select('contact_email').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const tenant = await ctx.trx.selectFrom('ludy_kernel.tenant').select('contact_email').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     if (!tenant.contact_email) {
       throw new DomainError('CONTACT_EMAIL_REQUIRED', 409, 'Công ty chưa có email liên hệ; chủ sở hữu hoặc quản trị viên nhập email này trong Cài đặt');
     }
@@ -658,5 +658,125 @@ export const queueContactMail = defineCommand({
   },
 });
 
-export const mailCommands = [recordDirectMail, addMailSuppression, liftMailSuppression, recordMailEvent, beginQueuedMail, recordQueuedMail];
+// Internal helper command for modules (without direct kernel DB imports) to queue one transactional email per
+// deliverable org member in `userIds`, respecting mail suppressions and never exposing email addresses in audit rows.
+export const queueMemberMail = defineCommand({
+  name: 'kernel.mail.members.queue',
+  input: z.object({
+    userIds: z.array(zId).min(1).max(200),
+    source: zSource,
+    sourceId: zId.optional(),
+    templateKey: zSource,
+    subject: z
+      .string()
+      .trim()
+      .min(1)
+      .max(300)
+      .refine((v) => !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(v), 'one line'),
+    payload: z.record(z.string().max(64), z.unknown()).refine((p) => Buffer.byteLength(JSON.stringify(p), 'utf8') <= MAIL_PAYLOAD_MAX_BYTES, 'too large'),
+  }),
+  risk: 'R2',
+  sideEffect: 'external',
+  access: CONTACT_MAIL_ROLES,
+  handler: async (ctx, input) => {
+    const requestedIds = [...new Set(input.userIds)];
+    const { rows } = await sql<{ user_id: string; email: string | null }>`
+      SELECT user_id, email FROM ludy_kernel.member_profiles(${requestedIds}::uuid[])`.execute(ctx.trx);
+    const emailByUser = new Map<string, string>();
+    for (const row of rows) {
+      const normalized = row.email?.trim().toLowerCase() ?? '';
+      if (normalized && isMailAddress(normalized)) emailByUser.set(row.user_id, normalized);
+    }
+    const seenEmails = new Set<string>();
+    const mailedUserIds: string[] = [];
+    let sentCount = 0;
+    let skippedCount = 0;
+    for (const uid of requestedIds) {
+      const address = emailByUser.get(uid);
+      if (!address || seenEmails.has(address)) {
+        skippedCount += 1;
+        continue;
+      }
+      seenEmails.add(address);
+      const mail = await createMailMessage(ctx, {
+        stream: 'transactional',
+        source: input.source,
+        sourceId: input.sourceId ?? null,
+        templateKey: input.templateKey,
+        to: address,
+        subject: input.subject,
+        payload: input.payload,
+        status: 'queued',
+      });
+      if (mail.status === 'queued') {
+        sentCount += 1;
+        mailedUserIds.push(uid);
+      } else {
+        skippedCount += 1;
+      }
+    }
+    ctx.audit({
+      source: input.source,
+      templateKey: input.templateKey,
+      requestedCount: requestedIds.length,
+      sentCount,
+      skippedCount,
+    });
+    return { sentCount, skippedCount, mailedUserIds };
+  },
+});
+
+export const queueRoadmapShippedMail = defineCommand({
+  name: 'kernel.mail.roadmap_shipped.queue',
+  input: z.object({
+    announcementId: zId,
+    subscriberId: zId,
+    to: z.string().trim().min(3).max(320),
+    subject: z
+      .string()
+      .trim()
+      .min(1)
+      .max(300)
+      .refine((v) => !/[\p{Cc}\p{Zl}\p{Zp}]/u.test(v), 'one line'),
+    payload: z.record(z.string().max(64), z.unknown()).refine((p) => Buffer.byteLength(JSON.stringify(p), 'utf8') <= MAIL_PAYLOAD_MAX_BYTES, 'too large'),
+  }),
+  risk: 'R2',
+  sideEffect: 'external',
+  access: 'system',
+  handler: async (ctx, input): Promise<{ status: 'queued' | 'suppressed' | 'already_queued'; messageId: string }> => {
+    requireSystem(ctx);
+    const to = input.to.trim().toLowerCase();
+    if (!isMailAddress(to)) {
+      throw new DomainError('VALIDATION', 422, 'Địa chỉ email người nhận không hợp lệ');
+    }
+    const hash = await mailAddressHash(ctx, to);
+    const existing = await ctx.trx
+      .selectFrom('ludy_kernel.mail_message')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('source', '=', ROADMAP_SHIPPED_MAIL_SOURCE)
+      .where('source_id', '=', input.announcementId)
+      .where('to_hash', '=', hash)
+      .executeTakeFirst();
+    if (existing) {
+      ctx.audit({ announcementId: input.announcementId, subscriberId: input.subscriberId, messageId: existing.id, outcome: 'already_queued' });
+      return { status: 'already_queued', messageId: existing.id };
+    }
+
+    const mail = await createMailMessage(ctx, {
+      stream: 'marketing',
+      source: ROADMAP_SHIPPED_MAIL_SOURCE,
+      sourceId: input.announcementId,
+      templateKey: ROADMAP_SHIPPED_MAIL_TEMPLATE,
+      to,
+      subject: input.subject,
+      payload: input.payload,
+      status: 'queued',
+    });
+    ctx.audit({ announcementId: input.announcementId, subscriberId: input.subscriberId, messageId: mail.id, outcome: mail.status });
+    return { status: mail.status === 'queued' ? 'queued' : 'suppressed', messageId: mail.id };
+  },
+});
+
+export const mailCommands = [recordDirectMail, addMailSuppression, liftMailSuppression, recordMailEvent, beginQueuedMail, recordQueuedMail, queueRoadmapShippedMail];
 export const mailQueries = [directMailGet];

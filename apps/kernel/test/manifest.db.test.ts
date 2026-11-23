@@ -2,7 +2,7 @@
 // PostgreSQL 17: after every migration, each table of a crove_* schema belongs to exactly one module manifest, under that
 // manifest's schema, each table a manifest names exists, every column of those tables has a data class and every
 // classified column exists, personal data the PDPL registry (#923) erases or keeps is not classified internal, and every
-// permission a crove_kernel.role_permission row grants, a command or the approval policy names, or a database function
+// permission a ludy_kernel.role_permission row grants, a command or the approval policy names, or a database function
 // or policy checks is declared, with exactly the seeded rows as its default roles (manifest-permissions.ts), and every
 // entity matches its table's legal_entity_id column and append-only trigger and the numbering series its table's
 // triggers allocate, and every command's audit target is an entity (manifest-entities.ts). Set CROVE_TEST_ADMIN_URL to a
@@ -10,23 +10,23 @@
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { migrate } from '@crove/db/migrate';
-import { PERSONAL_DATA_COLUMNS, type PersonalDataColumn, type PersonalDataHandling, type PersonalDataKind } from '@crove/kernel';
-import { DATA_CLASSES, columns, type DataClass, type ModuleManifest } from '@crove/kernel-contract';
+import { migrate } from '@ludy/db/migrate';
+import { PERSONAL_DATA_COLUMNS, type PersonalDataColumn, type PersonalDataHandling, type PersonalDataKind } from '@ludy/kernel';
+import { DATA_CLASSES, columns, type DataClass, type ModuleManifest } from '@ludy/kernel-contract';
 import { commandTargetTypes, entityProblems, numberingCalls, type NumberingCall } from './manifest-entities.ts';
 import { MODULE_MANIFESTS, permissionProblems, sqlPermissionUses, staticPermissionUses, type Grant, type Manifests, type PermissionUse } from './manifest-permissions.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
-// The control plane's tables in crove_kernel (plan §3.6): no app, module or package source may name them (the
+// The control plane's tables in ludy_kernel (plan §3.6): no app, module or package source may name them (the
 // control-plane-reads invariant), so their owner is declared here, beside the module manifests.
 const CONTROL_PLANE: ModuleManifest = {
   id: 'control-plane',
   dependsOn: [],
   tables: {
-    crove_kernel: {
+    ludy_kernel: {
       // The MCP endpoint's grants (#2975): a client's name and host as it declared them, never a secret.
-      agent_grant: columns(['org_id', 'id', 'user_id', 'client_id', 'client_name', 'client_host', 'scopes', 'max_risk', 'kind', 'member_id', 'oauth_grant_id', 'created_at', 'expires_at', 'revoked_at', 'last_used_at', 'created_by', 'rows_day', 'rows_used']),
+      agent_grant: columns(['org_id', 'id', 'user_id', 'client_id', 'client_name', 'client_host', 'scopes', 'max_risk', 'kind', 'member_id', 'oauth_grant_id', 'created_at', 'expires_at', 'revoked_at', 'last_used_at', 'created_by', 'rows_day', 'rows_used', 'engage_reads_due', 'engage_reads_told_at']),
       // The wake-up receiver of an MCP grant (#3024): the URL can carry a token in its path and the secrets are sealed; none of the three is ever returned to a member who is not an owner or admin.
       agent_grant_wake: columns(['org_id', 'id', 'grant_id', 'enabled', 'paused_reason', 'previous_until', 'secret_hint', 'schedule', 'schedule_minute', 'schedule_weekday', 'next_due_at', 'failing_since', 'consecutive_failures', 'last_delivery_at', 'last_status', 'signals_checked_at', 'created_at', 'updated_at', 'created_by'], { url: 'sensitive', secret_sealed: 'sensitive', previous_sealed: 'sensitive' }),
       // One wake-up to send (#3024): its body holds ids, dates and amounts of the org's records, no text; and the keys of the signals already sent for a grant.
@@ -114,12 +114,12 @@ suite('module manifests against the catalog (#1588, #1599)', () => {
     const c = new pg.Client({ connectionString: base.toString() });
     await c.connect();
     try {
-      // Tables and partitioned tables of every crove_* schema; partitions belong to their parent (pg-boss makes one per
+      // Tables and partitioned tables of every ludy_* or crove_* schema; partitions belong to their parent (pg-boss makes one per
       // queue at runtime).
       catalog = (
         await c.query<{ schema: string; table: string }>(
           `SELECT n.nspname AS schema, c.relname AS table FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-           WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition AND n.nspname LIKE 'crove\\_%' ORDER BY 1, 2`,
+           WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition AND (n.nspname LIKE 'ludy\\_%' OR n.nspname LIKE 'crove\\_%') ORDER BY 1, 2`,
         )
       ).rows;
       columnRows = (
@@ -128,28 +128,28 @@ suite('module manifests against the catalog (#1588, #1599)', () => {
              FROM pg_catalog.pg_attribute a
              JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
              JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-            WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition AND n.nspname LIKE 'crove\\_%' AND a.attnum > 0 AND NOT a.attisdropped
+            WHERE c.relkind IN ('r', 'p') AND NOT c.relispartition AND (n.nspname LIKE 'ludy\\_%' OR n.nspname LIKE 'crove\\_%') AND a.attnum > 0 AND NOT a.attisdropped
             ORDER BY 1, 2, a.attnum`,
         )
       ).rows;
-      grants = (await c.query<Grant>('SELECT role_key, permission FROM crove_kernel.role_permission ORDER BY 1, 2')).rows;
-      // The bodies of every function of a crove_* schema and the expressions of every row-level security policy on its
+      grants = (await c.query<Grant>('SELECT role_key, permission FROM ludy_kernel.role_permission ORDER BY 1, 2')).rows;
+      // The bodies of every function of a ludy_* or crove_* schema and the expressions of every row-level security policy on its
       // tables, for the permissions they check.
       const texts = (
         await c.query<{ source: string; text: string }>(
           `SELECT 'function ' || n.nspname || '.' || p.proname AS source, p.prosrc AS text
              FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-            WHERE n.nspname LIKE 'crove\\_%' AND p.prosrc IS NOT NULL
+            WHERE (n.nspname LIKE 'ludy\\_%' OR n.nspname LIKE 'crove\\_%') AND p.prosrc IS NOT NULL
            UNION ALL
            SELECT 'policy ' || schemaname || '.' || tablename || '.' || policyname, COALESCE(qual, '') || ' ' || COALESCE(with_check, '')
-             FROM pg_catalog.pg_policies WHERE schemaname LIKE 'crove\\_%'
+             FROM pg_catalog.pg_policies WHERE schemaname LIKE 'ludy\\_%' OR schemaname LIKE 'crove\\_%'
            ORDER BY 1`,
         )
       ).rows;
       const read = texts.map((t) => sqlPermissionUses(t.source, t.text));
       sqlUses = read.flatMap((r) => r.uses);
       sqlProblems = read.flatMap((r) => r.problems);
-      // The tables crove_kernel.make_append_only() guards: its row trigger refuses every UPDATE and DELETE.
+      // The tables ludy_kernel.make_append_only() guards: its row trigger refuses every UPDATE and DELETE.
       appendOnly = new Set(
         (
           await c.query<{ table: string }>(
@@ -159,11 +159,11 @@ suite('module manifests against the catalog (#1588, #1599)', () => {
                JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
                JOIN pg_catalog.pg_proc p ON p.oid = t.tgfoid
                JOIN pg_catalog.pg_namespace pn ON pn.oid = p.pronamespace
-              WHERE t.tgname = 'append_only_row' AND pn.nspname = 'crove_kernel' AND p.proname = 'reject_mutation' AND n.nspname LIKE 'crove\\_%'`,
+              WHERE t.tgname = 'append_only_row' AND pn.nspname = 'ludy_kernel' AND p.proname = 'reject_mutation' AND (n.nspname LIKE 'ludy\\_%' OR n.nspname LIKE 'crove\\_%')`,
           )
         ).rows.map((r) => r.table),
       );
-      // The numbering series (#1401) the triggers on crove_* tables allocate their rows' numbers in.
+      // The numbering series (#1401) the triggers on ludy_* / crove_* tables allocate their rows' numbers in.
       const triggers = (
         await c.query<{ table: string; by: string; body: string }>(
           `SELECT n.nspname || '.' || c.relname AS table, 'trigger ' || t.tgname || ' (' || pn.nspname || '.' || p.proname || ')' AS by, p.prosrc AS body
@@ -172,7 +172,7 @@ suite('module manifests against the catalog (#1588, #1599)', () => {
              JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
              JOIN pg_catalog.pg_proc p ON p.oid = t.tgfoid
              JOIN pg_catalog.pg_namespace pn ON pn.oid = p.pronamespace
-            WHERE NOT t.tgisinternal AND n.nspname LIKE 'crove\\_%' AND p.prosrc LIKE '%crove\\_kernel.number\\_allocate(%'
+            WHERE NOT t.tgisinternal AND (n.nspname LIKE 'ludy\\_%' OR n.nspname LIKE 'crove\\_%') AND p.prosrc LIKE '%ludy\\_kernel.number\\_allocate(%'
             ORDER BY 1, 2`,
         )
       ).rows;
@@ -185,7 +185,7 @@ suite('module manifests against the catalog (#1588, #1599)', () => {
       allocators = (
         await c.query<{ fn: string }>(
           `SELECT n.nspname || '.' || p.proname AS fn FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-            WHERE p.prosrc LIKE '%crove\\_kernel.number\\_allocate(%' AND p.prorettype <> 'pg_catalog.trigger'::pg_catalog.regtype ORDER BY 1`,
+            WHERE p.prosrc LIKE '%ludy\\_kernel.number\\_allocate(%' AND p.prorettype <> 'pg_catalog.trigger'::pg_catalog.regtype ORDER BY 1`,
         )
       ).rows.map((r) => r.fn);
     } finally {
@@ -272,11 +272,11 @@ suite('module manifests against the catalog (#1588, #1599)', () => {
     // The voucher triggers number on main (#1401); a series numbered through ctx.numbering.allocate has no trigger, and
     // its first command extends this check.
     expect(numbering.map((n) => `${n.table} ${n.docType} ${n.targetType}`)).toEqual([
-      'crove_finance.cash_voucher finance.cash_voucher.<voucher_type> finance.cash_voucher',
-      'crove_finance.journal_voucher finance.journal_voucher finance.journal_voucher',
+      'ludy_finance.cash_voucher finance.cash_voucher.<voucher_type> finance.cash_voucher',
+      'ludy_finance.journal_voucher finance.journal_voucher finance.journal_voucher',
     ]);
-    expect(allocators).toEqual(['crove_kernel.allocate_number']);
-    expect(appendOnly.has('crove_finance.journal_entry')).toBe(true);
+    expect(allocators).toEqual(['ludy_kernel.allocate_number']);
+    expect(appendOnly.has('ludy_finance.journal_entry')).toBe(true);
     const cols = new Map<string, Set<string>>();
     for (const r of columnRows) cols.set(`${r.schema}.${r.table}`, (cols.get(`${r.schema}.${r.table}`) ?? new Set()).add(r.column));
     const targets = commandTargetTypes();
@@ -293,7 +293,7 @@ suite('module manifests against the catalog (#1588, #1599)', () => {
       const types = manifest.entities.map((e) => e.type);
       expect(types, file).toEqual([...types].sort());
     }
-    for (const id of ['finance', 'social', 'crm', 'notes']) expect(Object.keys(MANIFESTS[id]!.manifest.tables), id).toEqual([`crove_${id}`]);
+    for (const id of ['finance', 'social', 'crm', 'notes']) expect(Object.keys(MANIFESTS[id]!.manifest.tables), id).toEqual([`ludy_${id}`]);
   });
 });
 

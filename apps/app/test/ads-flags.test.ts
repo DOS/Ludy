@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // What the Ads screen says about a flag (#2378): the numbers each flag is based on, in the reader's language and in the flag's own currency.
 import { describe, expect, it } from 'vitest';
-import type { AdsFlag } from '@crove/kernel-contract';
+import type { AdsFlag } from '@ludy/kernel-contract';
 import { flagKey, flagText, type FlagFormat } from '../src/lib/ads-flags.ts';
 import { translatorFor } from '../src/i18n/runtime.ts';
 
@@ -9,7 +9,7 @@ const inEn = translatorFor('en');
 const inVi = translatorFor('vi');
 const f: FlagFormat = { money: (value, currency) => `${value} ${currency ?? ''}`.trim(), date: (value) => value ?? '' };
 
-const pace: AdsFlag = { kind: 'pace', scope: 'org', adAccountId: null, accountName: null, currency: 'VND', skippedAccounts: 0, cap: '280000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30 };
+const pace: AdsFlag = { kind: 'pace', scope: 'org', adAccountId: null, accountName: null, currency: 'VND', skippedAccounts: 0, cap: '280000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30, month: '2026-11-01' };
 const paceAccount: AdsFlag = { ...pace, scope: 'account', adAccountId: '0190c4a1-0000-7000-8000-000000000001', accountName: 'Cửa hàng', currency: 'USD', cap: '250.00', spent: '90.00', projected: '300.00' };
 const day: AdsFlag = { kind: 'day', scope: 'account', adAccountId: '0190c4a1-0000-7000-8000-000000000001', accountName: 'Cửa hàng', currency: 'VND', skippedAccounts: 0, period: 'daily', cap: '5000', share: '5000', day: '2026-11-09', spend: '10000', ratio: '2.00' };
 const cpr: AdsFlag = { kind: 'cpr', adAccountId: '0190c4a1-0000-7000-8000-000000000001', accountName: 'Cửa hàng', campaignId: 'c1', campaignName: 'Chiến dịch A', currency: 'VND', day: '2026-11-09', recentCost: '3000', medianCost: '1000', ratio: '3.00', recentResults: '300', historyDays: 6 };

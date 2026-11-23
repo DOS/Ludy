@@ -8,19 +8,25 @@
 import type { Locale } from '../i18n/locale.ts';
 import type { Translate } from '../i18n/runtime.ts';
 import { KERNEL_LOCALE, kernelErrorMessage } from './kernel-errors.ts';
+import { isNetworkFailure } from './network-error.ts';
 
 export class ApiError extends Error {
   readonly code: string;
   readonly status: number;
   // The kernel's own message (written in Vietnamese), or null when the answer had none.
   readonly serverMessage: string | null;
+  // The refusals of the supplier bank file name the payment they are about (never a holder, a number or an amount), and the time of an earlier file.
+  readonly paymentId: string | null;
+  readonly exportedAt: string | null;
 
-  constructor(code: string, status: number, serverMessage: string | null) {
+  constructor(code: string, status: number, serverMessage: string | null, paymentId: string | null = null, exportedAt: string | null = null) {
     super(serverMessage ?? `HTTP ${status}`);
     this.name = 'ApiError';
     this.code = code;
     this.status = status;
     this.serverMessage = serverMessage;
+    this.paymentId = paymentId;
+    this.exportedAt = exportedAt;
   }
 }
 
@@ -39,10 +45,10 @@ export class ClientError extends Error {
 // The kernel answers non-RPC errors as JSON `{ code, message }`. A body that is not JSON, or lacks a field, still
 // gives an ApiError with the HTTP status, so the checks below never depend on the body.
 export async function apiErrorFromResponse(response: Response): Promise<ApiError> {
-  const body = (await response.json().catch(() => null)) as { code?: unknown; message?: unknown } | null;
+  const body = (await response.json().catch(() => null)) as { code?: unknown; message?: unknown; paymentId?: unknown; exportedAt?: unknown } | null;
   const code = typeof body?.code === 'string' && body.code ? body.code : `HTTP_${response.status}`;
   const message = typeof body?.message === 'string' && body.message ? body.message : null;
-  return new ApiError(code, response.status, message);
+  return new ApiError(code, response.status, message, typeof body?.paymentId === 'string' ? body.paymentId : null, typeof body?.exportedAt === 'string' ? body.exportedAt : null);
 }
 
 function serverMessageOf(error: unknown): string | null {
@@ -53,6 +59,7 @@ function serverMessageOf(error: unknown): string | null {
 
 // Any error in words for the user, in `locale`:
 // - an error of the SPA's own: its message;
+// - a request that got no answer (the browser's "Failed to fetch" and its like): the catalog's network message;
 // - a kernel error with a code the SPA knows (kernel-errors.ts): the kernel's message when the locale is the kernel's
 //   language (Vietnamese; it is the most specific, for example which role a FORBIDDEN was about), otherwise the
 //   SPA's message for the code and its details;
@@ -60,6 +67,7 @@ function serverMessageOf(error: unknown): string | null {
 //   message.
 export function describeError(error: unknown, t: Translate, locale: Locale): string {
   if (error instanceof ClientError) return error.describe(t);
+  if (isNetworkFailure(error)) return t('common.networkError');
   const e = (error ?? {}) as { code?: unknown; data?: unknown };
   const server = serverMessageOf(error);
   const code = typeof e.code === 'string' ? e.code : null;
@@ -79,6 +87,12 @@ export function isMfaRequired(error: unknown): boolean {
   return (error as { code?: string } | null)?.code === 'MFA_REQUIRED';
 }
 
+// The server answered and refused (a 4xx with its code, from the RPC path or a fetch path): nothing it was asked to do was done. A lost response, a timeout or a 5xx says nothing about whether it was done.
+export function isServerRefusal(error: unknown): boolean {
+  const status = (error as { status?: unknown } | null)?.status;
+  return typeof status === 'number' && status >= 400 && status < 500;
+}
+
 // The org's owner revoked this session for that org only (issue #247): leave the org, keep the session.
 export function isOrgAccessRevoked(error: unknown): boolean {
   return (error as { code?: string } | null)?.code === 'SESSION_REVOKED_IN_ORG';
@@ -87,6 +101,13 @@ export function isOrgAccessRevoked(error: unknown): boolean {
 // R3 work (approve, membership changes) needs a second factor verified in the last 5 minutes (policy P11).
 export function isStepUpRequired(error: unknown): boolean {
   return (error as { code?: string } | null)?.code === 'STEP_UP_REQUIRED';
+}
+
+// Per-org disabled module refusal (ADR-0053): MODULE_OFF 404 carrying optional `data.module`.
+export function isModuleOff(error: unknown, module?: string): boolean {
+  const e = error as { code?: string; data?: { module?: unknown } } | null;
+  if (e?.code !== 'MODULE_OFF') return false;
+  return module === undefined || e.data?.module === module;
 }
 
 export function isUnauthenticated(error: unknown): boolean {

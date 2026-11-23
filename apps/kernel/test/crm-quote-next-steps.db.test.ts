@@ -7,12 +7,12 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { zTodayItems, type Deal, type NextStepChanged, type NextStepPage, type PipelineStage, type TodayItem } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
-import { crmCommands, crmQueries } from '@crove/mod-crm';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { zTodayItems, type Deal, type NextStepChanged, type NextStepPage, type PipelineStage, type TodayItem } from '@ludy/kernel-contract';
+import { Runtime } from '@ludy/kernel-runtime';
+import { crmCommands, crmQueries } from '@ludy/mod-crm';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -64,37 +64,37 @@ suite('quote follow-up next steps and the quote report on PostgreSQL (#2699)', (
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const [adm, member, other, viewer] = [await person('admin'), await person('member'), await person('other'), await person('viewer')];
-    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [orgId, adm, member, other, viewer]);
+    await rows("INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'viewer')", [orgId, adm, member, other, viewer]);
     const exec = <T>(user: string, command: string, input: unknown) => rt.execute<T>(command, input, { actor: asUser(user), orgId });
     const query = <T>(user: string, command: string, input: unknown) => rt.query<T>(command, input, { actor: asUser(user), orgId });
-    const party = (name: string) => rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
+    const party = (name: string) => rows<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind) VALUES ($1, $2, 'organization') RETURNING id", [orgId, name]).then((r) => (r[0] as { id: string }).id);
     const stageNamed = async (name: string) => ((await exec<PipelineStage[]>(owner, 'crm.pipeline.setup', {})).find((s) => s.name === name) as PipelineStage);
     const newDeal = (user: string, partyId: string, over: Record<string, unknown> = {}) =>
       exec<Deal>(user, 'crm.deal.create', { partyId, title: SECRET_TITLE, amount: '15000000', expectedClose: null, ...over });
     // Makes the deal's last change `days` days ago (a superuser's statement: the commands always stamp now).
-    const age = (dealId: string, days: number) => rows('UPDATE crove_crm.deal SET updated_at = now() - make_interval(days => $3) WHERE org_id = $1 AND id = $2', [orgId, dealId, days]);
+    const age = (dealId: string, days: number) => rows('UPDATE ludy_crm.deal SET updated_at = now() - make_interval(days => $3) WHERE org_id = $1 AND id = $2', [orgId, dealId, days]);
     const raise = () => worker.execute<{ raised: number; closed: number }>('crm.next_step.raise', {}, { actor: SYSTEM, orgId });
     const steps = () =>
       rows<StepRow>(
         `SELECT id, deal_id, reason, assignee_user_id, to_char(since_on, 'YYYY-MM-DD') AS since_on, status, snoozed_until, resolved_at, resolved_by, closed_reason
-         FROM crove_crm.deal_next_step WHERE org_id = $1 ORDER BY raised_at, id`,
+         FROM ludy_crm.deal_next_step WHERE org_id = $1 ORDER BY raised_at, id`,
         [orgId],
       );
     const stepsOf = async (dealId: string) => (await steps()).filter((s) => s.deal_id === dealId);
     const list = (user: string, scope: 'mine' | 'all' = 'mine') => query<NextStepPage>(user, 'crm.next_step.list', { scope });
     const done = (user: string, nextStepIds: string[]) => exec<NextStepChanged>(user, 'crm.next_step.done', { nextStepIds });
-    const auditOf = (command: string) => rows<{ detail: Record<string, unknown> }>('SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY occurred_at', [orgId, command]);
+    const auditOf = (command: string) => rows<{ detail: Record<string, unknown> }>('SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = $2 ORDER BY occurred_at', [orgId, command]);
     // A quote of the deal as a person makes it, then sent as the database owner makes a send (Q2's step): `sentDaysAgo` days ago, valid until `validIn` days from today.
     const sentQuote = async (dealId: string, sentDaysAgo: number, validIn: number, number = `BG-2026-${Math.floor(Math.random() * 9000) + 1000}`) => {
       const draft = await exec<{ id: string }>(member, 'crm.quote.save', { dealId, lines: [{ kind: 'item', description: 'Dòng bí mật 777', unit: 'cái', quantity: '2', unitPrice: '123456', vatRate: '10%' }] });
       await rows(
-        "UPDATE crove_crm.quote SET status = 'sent', number = $3, sent_at = now() - make_interval(days => $4), sent_via = 'link', valid_until = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + $5::int WHERE org_id = $1 AND id = $2",
+        "UPDATE ludy_crm.quote SET status = 'sent', number = $3, sent_at = now() - make_interval(days => $4), sent_via = 'link', valid_until = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + $5::int WHERE org_id = $1 AND id = $2",
         [orgId, draft.id, number, sentDaysAgo, validIn],
       );
       return { id: draft.id, number };
     };
     const setStatus = (quoteId: string, status: string) =>
-      rows("UPDATE crove_crm.quote SET status = $3, decided_at = CASE WHEN $3 IN ('accepted', 'declined') THEN now() ELSE NULL END WHERE org_id = $1 AND id = $2", [orgId, quoteId, status]);
+      rows("UPDATE ludy_crm.quote SET status = $3, decided_at = CASE WHEN $3 IN ('accepted', 'declined') THEN now() ELSE NULL END WHERE org_id = $1 AND id = $2", [orgId, quoteId, status]);
     return { orgId, owner, admin: adm, member, other, viewer, exec, query, party, stageNamed, newDeal, age, raise, steps, stepsOf, list, done, auditOf, sentQuote, setStatus };
   }
 
@@ -107,17 +107,17 @@ suite('quote follow-up next steps and the quote report on PostgreSQL (#2699)', (
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (user: string, password: string) => {
       const u = new URL(adminUrl);
       u.username = user;
       u.password = password;
       return u.toString();
     };
-    appUrl = login('crove_app', 'test-app-pw');
+    appUrl = login('ludy_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
-    workerUrl = login('crove_worker', 'test-worker-pw');
+    workerUrl = login('ludy_worker', 'test-worker-pw');
     workerPool = createPool({ connectionString: workerUrl, max: 2 });
     workerDb = createDb(workerPool);
     const registered = { commands: [...kernelCommands, ...crmCommands], queries: [...kernelQueries({ inboundDomain: null }), ...crmQueries] };
@@ -143,7 +143,7 @@ suite('quote follow-up next steps and the quote report on PostgreSQL (#2699)', (
     expect(await o.raise()).toMatchObject({ raised: 1 });
     const [step] = await o.stepsOf(deal.id);
     expect(step).toMatchObject({ reason: 'quote_unanswered', assignee_user_id: o.member, status: 'open' });
-    const sent = (await rows<{ d: string }>("SELECT to_char((sent_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'YYYY-MM-DD') AS d FROM crove_crm.quote WHERE org_id = $1", [o.orgId]))[0]?.d;
+    const sent = (await rows<{ d: string }>("SELECT to_char((sent_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'YYYY-MM-DD') AS d FROM ludy_crm.quote WHERE org_id = $1", [o.orgId]))[0]?.d;
     expect(step?.since_on).toBe(sent);
     expect(await o.raise()).toMatchObject({ raised: 0 });
     expect(await o.stepsOf(deal.id)).toHaveLength(1);
@@ -156,7 +156,7 @@ suite('quote follow-up next steps and the quote report on PostgreSQL (#2699)', (
     await o.sentQuote(deal.id, 8, 2);
     await o.raise();
     const [step] = await o.stepsOf(deal.id);
-    const until = (await rows<{ d: string }>("SELECT to_char(valid_until, 'YYYY-MM-DD') AS d FROM crove_crm.quote WHERE org_id = $1", [o.orgId]))[0]?.d;
+    const until = (await rows<{ d: string }>("SELECT to_char(valid_until, 'YYYY-MM-DD') AS d FROM ludy_crm.quote WHERE org_id = $1", [o.orgId]))[0]?.d;
     expect(step).toMatchObject({ reason: 'quote_expiring', since_on: until });
   });
 
@@ -216,7 +216,7 @@ suite('quote follow-up next steps and the quote report on PostgreSQL (#2699)', (
     const p = await o.party('Công ty F');
     const deal = await o.newDeal(o.member, p);
     const quote = await o.sentQuote(deal.id, 7, 9);
-    const { rows: listed } = await workerPool.query<{ org_id: string }>('SELECT org_id FROM crove_crm.deal_stale_orgs(NULL, 1000)');
+    const { rows: listed } = await workerPool.query<{ org_id: string }>('SELECT org_id FROM ludy_crm.deal_stale_orgs(NULL, 1000)');
     expect(listed.map((r) => r.org_id)).toContain(o.orgId);
     await o.raise();
     const audit = JSON.stringify(await o.auditOf('crm.next_step.raise'));
@@ -227,7 +227,7 @@ suite('quote follow-up next steps and the quote report on PostgreSQL (#2699)', (
     expect(items.find((i) => i.id === `next-step:${step.id}`)).toMatchObject({ kind: 'flag', app: 'crm', severity: 'info', title: { key: 'crm.quoteUnanswered' }, href: '/deals?tab=next' });
     expect(JSON.stringify(items)).not.toMatch(new RegExp(`${quote.number}|bí mật|Dòng`, 'i'));
     // An org whose follow-ups are all raised drops out of the list.
-    const { rows: after } = await workerPool.query<{ org_id: string }>('SELECT org_id FROM crove_crm.deal_stale_orgs(NULL, 1000)');
+    const { rows: after } = await workerPool.query<{ org_id: string }>('SELECT org_id FROM ludy_crm.deal_stale_orgs(NULL, 1000)');
     expect(after.map((r) => r.org_id)).not.toContain(o.orgId);
   });
 
@@ -246,7 +246,7 @@ suite('quote follow-up next steps and the quote report on PostgreSQL (#2699)', (
     await o.setStatus(declined.id, 'declined');
     await o.setStatus(replaced.id, 'superseded');
     // One quote made 100 days ago: in the whole history, not in the last 90 days.
-    await rows('UPDATE crove_crm.quote SET created_at = now() - interval \'100 days\' WHERE org_id = $1 AND id = $2', [o.orgId, waiting.id]);
+    await rows('UPDATE ludy_crm.quote SET created_at = now() - interval \'100 days\' WHERE org_id = $1 AND id = $2', [o.orgId, waiting.id]);
     type Report = { days: number | null; sent: { count: number; total: string }; byStatus: Array<{ status: string; count: number; total: string }> };
     const report = (user: string, input: Record<string, unknown>) => o.query<Report>(user, 'crm.quote.report', input);
     const ninety = await report(o.viewer, {});

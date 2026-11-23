@@ -1,6 +1,6 @@
 // Browser push on the notification settings (#1238). The e2e stack has no VAPID keys, so the option is hidden there;
 // the second test answers the push status as a deployment with keys would and stands in for the browser's push
-// service (headless Chromium has none), so the real service worker registers under the real CSP through the crove-sw
+// service (headless Chromium has none), so the real service worker registers under the real CSP through the ludy-sw
 // Trusted Types policy, the subscription reaches the API and turning it off removes it. The sending side (encryption,
 // VAPID, the worker job) is covered by apps/kernel/test/web-push.test.ts and social-push.db.test.ts.
 import { expect, test, type Page, type Route } from '@playwright/test';
@@ -20,6 +20,8 @@ test('the push option is hidden on a deployment without VAPID keys', async ({ pa
   await signInNewUser(page, newEmail('social-push-off'));
   const slug = await createOrg(page, 'Công ty Không Đẩy');
   await page.goto(`/o/${slug}/social/notifications`);
+  // The settings are one disclosure (#3658): opened first.
+  await page.getByText('Nhận thông báo về...', { exact: true }).click();
   await expect(page.getByText('Bản tin hằng tuần')).toBeVisible();
   await expect(page.getByText('Thông báo đẩy trên thiết bị này')).toHaveCount(0);
 });
@@ -52,7 +54,7 @@ async function fakePushService(page: Page) {
   );
 }
 
-test('a member turns push on for this device and off again; the worker registers through the crove-sw policy', async ({ page, context }) => {
+test('a member turns push on for this device and off again; the worker registers through the ludy-sw policy', async ({ page, context }) => {
   const violations = await collectCspViolations(page);
   await signInNewUser(page, newEmail('social-push-on'));
   const slug = await createOrg(page, 'Công ty Đẩy');
@@ -78,6 +80,7 @@ test('a member turns push on for this device and off again; the worker registers
   });
 
   await page.goto(`/o/${slug}/social/notifications`);
+  await page.getByText('Nhận thông báo về...', { exact: true }).click();
   const toggle = page.getByRole('checkbox', { name: /Thông báo đẩy trên thiết bị này/ });
   await expect(toggle).not.toBeChecked();
   await toggle.click();
@@ -98,7 +101,7 @@ test('a member turns push on for this device and off again; the worker registers
   expect(
     await page.evaluate(() => {
       const tt = (window as unknown as { trustedTypes: { createPolicy(name: string, rules: object): unknown } }).trustedTypes;
-      return ['crove-sw', 'other'].map((name) => {
+      return ['ludy-sw', 'other'].map((name) => {
         try {
           tt.createPolicy(name, {});
           return 'created';
@@ -111,6 +114,8 @@ test('a member turns push on for this device and off again; the worker registers
 
   // On again after a reload: the browser's subscription is the listed device.
   await page.reload();
+  // The settings fold again after a reload (#3658).
+  await page.getByText('Nhận thông báo về...', { exact: true }).click();
   await expect(toggle).toBeChecked();
   await toggle.click();
   await expect(page.getByText('Các thiết bị đang nhận thông báo đẩy')).toHaveCount(0);

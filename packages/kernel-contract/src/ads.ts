@@ -3,7 +3,8 @@
 // results their platforms report, read only. The inputs its commands and queries take and the views they return; the app
 // reads the same types. Money is a decimal string, never a number (AGENTS.md); counts are whole numbers.
 import { z } from 'zod';
-import { zAdsCampaignPlan } from './ads-campaign.ts';
+import { zAdsBudget, zAdsCampaignPlan } from './ads-campaign.ts';
+import { zAdsManageSlot } from './ads-manage.ts';
 import { zTimeZone } from './calendar.ts';
 import { zAccountCode, zId, zLocalDate, zMoney } from './schemas.ts';
 
@@ -16,7 +17,7 @@ export const isAdProviderId = (provider: string): boolean => AD_PROVIDER_ID.test
 // provider id is the read provider's own kind with a write twin (the ids match the pattern above, so the Social screens leave them
 // out too): `metawrite_ads` beside `meta_ads`, `sandboxwrite_ads` beside `sandbox_ads`. A write connection is never an ad account of
 // its own: it hangs off the account the read connection linked (`ad_account.write_connection_id`), and it never goes through
-// `ads.account.link`. The readers (@crove/ad-platform adPlatforms) never see these ids.
+// `ads.account.link`. The readers (@ludy/ad-platform adPlatforms) never see these ids.
 export const AD_WRITE_PROVIDERS = ['metawrite_ads', 'sandboxwrite_ads'] as const;
 export type AdWriteProviderId = (typeof AD_WRITE_PROVIDERS)[number];
 export const isAdWriteProviderId = (provider: string): provider is AdWriteProviderId => (AD_WRITE_PROVIDERS as readonly string[]).includes(provider);
@@ -54,7 +55,7 @@ const zResults = z
   .record(z.string().min(1).max(100), zResultCount)
   .refine((r) => Object.keys(r).length <= ADS_RESULTS_MAX_KEYS, `at most ${ADS_RESULTS_MAX_KEYS} result keys`);
 
-// One day of one object as an adapter reports it (@crove/ad-platform AdDailyRow); the sync command checks the whole answer
+// One day of one object as an adapter reports it (@ludy/ad-platform AdDailyRow); the sync command checks the whole answer
 // again, since an adapter's answer is external data.
 export const zAdDailyRow = z.strictObject({
   level: z.enum(ADS_LEVELS),
@@ -74,7 +75,7 @@ export const zAdsAccountLink = z.strictObject({
   connectionId: zId,
   legalEntityId: zId.optional(),
   expenseAccountCode: zAccountCode.nullable().optional(),
-  // A keyed hash of the platform user who granted the connection (@crove/ad-platform platformUserHash), so the platform's data
+  // A keyed hash of the platform user who granted the connection (@ludy/ad-platform platformUserHash), so the platform's data
   // deletion callback can find the accounts that person granted without the id being stored (plan section 9).
   // null: the platform did not name the person this time, so a hash kept from an earlier grant is dropped, not left to name someone
   // who did not grant this one. Left out: a link that says nothing of it (the sandbox, a link made again) keeps what is there.
@@ -213,9 +214,53 @@ export const zAdsChange = z.discriminatedUnion('change', [
     origin: z.enum(['human', 'ai']),
     aiFields: z.array(z.string().max(64)),
   }),
+  // What can start or raise spend on a running ad (W4, #3835): the largest amount the launch can spend with the change is what the approver signs.
+  z.object({
+    change: z.literal('object_resume'),
+    launchId: zId,
+    adAccountId: zId,
+    adAccountName: z.string(),
+    campaignName: z.string(),
+    slot: zAdsManageSlot,
+    objectName: z.string(),
+    currency: zCurrency,
+    dailyBudget: z.string(),
+    endOn: z.string(),
+    amount: z.string(),
+    previousAmount: z.string(),
+  }),
+  z.object({
+    change: z.literal('budget_raise'),
+    launchId: zId,
+    adAccountId: zId,
+    adAccountName: z.string(),
+    campaignName: z.string(),
+    currency: zCurrency,
+    fromBudget: z.string(),
+    toBudget: z.string(),
+    endOn: z.string(),
+    amount: z.string(),
+    previousAmount: z.string(),
+  }),
+  z.object({
+    change: z.literal('schedule_extend'),
+    launchId: zId,
+    adAccountId: zId,
+    adAccountName: z.string(),
+    campaignName: z.string(),
+    currency: zCurrency,
+    dailyBudget: z.string(),
+    fromEndOn: z.string(),
+    toEndOn: z.string(),
+    amount: z.string(),
+    previousAmount: z.string(),
+  }),
 ]);
 export type AdsChange = z.infer<typeof zAdsChange>;
-export const zAdsProposalView = z.object({ change: zAdsChange.nullable() });
+// `canLaunch` (#3675) is asked for a plan to launch only (null for every other request): whether this deployment has a launch writer for the plan's ad account, so the card
+// never promises a launch the server will not make (ADS_LIVE_LAUNCH off, as a public deployment must have it, leaves an approved plan queued with its amount held and nothing created).
+// It holds no secret and no provider id.
+export const zAdsProposalView = z.object({ change: zAdsChange.nullable(), canLaunch: z.boolean().nullable() });
 
 // Asking for one of those changes (the API call: owners and admins; it makes a proposal in the Inbox, never the change).
 export const zAdsChangeRequest = z.discriminatedUnion('change', [
@@ -234,6 +279,10 @@ export const zAdsChangeRequest = z.discriminatedUnion('change', [
     .refine(capNamesAccount, capNamesAccountIssue),
   z.strictObject({ change: z.literal('launches_unblock'), idempotencyKey: zId }),
   z.strictObject({ change: z.literal('campaign_launch'), draftId: zId, idempotencyKey: zId }),
+  // Resuming a paused object, raising a daily budget and extending a schedule (W4, #3835): each is a proposal approved like a launch.
+  z.strictObject({ change: z.literal('object_resume'), launchId: zId, slot: zAdsManageSlot, idempotencyKey: zId }),
+  z.strictObject({ change: z.literal('budget_raise'), launchId: zId, dailyBudget: zAdsBudget, idempotencyKey: zId }),
+  z.strictObject({ change: z.literal('schedule_extend'), launchId: zId, endOn: zLocalDate, idempotencyKey: zId }),
 ]);
 export type AdsChangeRequest = z.infer<typeof zAdsChangeRequest>;
 
@@ -247,6 +296,27 @@ export const zAdsCapView = z.object({
   setAt: z.string(),
 });
 export type AdsCapView = z.infer<typeof zAdsCapView>;
+
+// The committed spend of one account's month (#3297, plan docs/plan/ads-write.md sections 3.3 and 8): what the launches that still commit can spend in the month
+// (each one's daily budget times its days in it, the lock's own sum), the monthly cap in force and the room left, for the account (its cap against its own
+// launches) and for the org (its cap against every launch of the currency), as decimal strings in the account's currency, never numbers and never converted.
+// `cap` and `left` are null when that scope has no monthly cap; `left` is below zero when a cap was lowered under what is committed. `hasCap` is whether any cap,
+// daily or monthly, the account's or the org's, is in force in the currency: none means every launch is refused until one is set. Owners and admins read it.
+export const zAdsCommittedInput = z.strictObject({ adAccountId: zId, month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'a month as YYYY-MM') });
+export type AdsCommittedInput = z.infer<typeof zAdsCommittedInput>;
+export const zAdsCommittedLine = z.object({ committed: z.string(), cap: z.string().nullable(), left: z.string().nullable() });
+export type AdsCommittedLine = z.infer<typeof zAdsCommittedLine>;
+export const zAdsCommitted = z.object({
+  adAccountId: zId,
+  month: z.string(),
+  currency: zCurrency,
+  hasCap: z.boolean(),
+  // A cap of the org or of this account is in another currency than the account's: local validation refuses every launch (`cap_currency`) until they match.
+  capCurrencyMismatch: z.boolean(),
+  account: zAdsCommittedLine,
+  org: zAdsCommittedLine,
+});
+export type AdsCommitted = z.infer<typeof zAdsCommitted>;
 
 // The removal of the app's permissions at the platform after a connection that runs ads was closed (W2-1, #2296, ADR-0043 point 4): still being tried
 // ("pending": Ludy holds a sealed copy of the token for that alone, for at most 7 days) or given up ("gave_up": the copy is gone and the person removes the
@@ -296,6 +366,8 @@ export const zAdsFlag = z.discriminatedUnion('kind', [
     projected: z.string(),
     elapsedDays: z.number().int(),
     daysInMonth: z.number().int(),
+    // The first day of the month the pace is about, in the ad account's own time zone (an org flag takes the first judged account's): the key of the month, so a reader in another calendar never names a different month.
+    month: zLocalDate,
     // The accounts of the cap's currency that were left out because they have not read yesterday yet (an org flag is about the others).
     skippedAccounts: z.number().int(),
   }),

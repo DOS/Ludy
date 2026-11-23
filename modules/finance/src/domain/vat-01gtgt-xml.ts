@@ -15,7 +15,7 @@
 // accountant completes them in HTKK before filing.
 // Two choices of the accountant's (#692): the taxpayer's address is written when the org has one (#324), and [25]
 // may be filled with [24] (all input VAT deducted) for the accountant to reduce; it stays 0 unless asked.
-import { Decimal, money, type DecimalValue, type Money } from '@crove/l10n-vn';
+import { Decimal, money, type DecimalValue, type Money } from '@ludy/l10n-vn';
 import { el, serializeXml, type XmlElement } from './xml.ts';
 import type { FormIndicator, VatPeriod } from './vat-return.ts';
 
@@ -27,7 +27,7 @@ export const HTKK_01GTGT = {
   xmlVersion: '2.8.3',
   // The software that made the file. GDT's own services name themselves here (a return filed through the public
   // service portal reads "TTGQ TTHC"); Crove names itself rather than pose as HTKK.
-  service: { code: 'CROVE', name: 'Crove', version: '1.0' },
+  service: { code: 'LUDY', name: 'Ludy', version: '1.0' },
   // [01a] Ordinary production and business, the default line of business of the form.
   businessLine: { code: '00', name: 'Hoạt động sản xuất kinh doanh thông thường' },
   // The budget sub-item of domestic VAT.
@@ -151,7 +151,7 @@ function periodElements(period: VatPeriod): XmlElement[] {
 }
 
 export interface Vat01Options extends Vat01Values {
-  // The day the file is made, YYYY-MM-DD (Vietnam time, @crove/kernel-contract vietnamToday); it is the return's date
+  // The day the file is made, YYYY-MM-DD (Vietnam time, @ludy/kernel-contract vietnamToday); it is the return's date
   // and the signing date.
   today: string;
 }

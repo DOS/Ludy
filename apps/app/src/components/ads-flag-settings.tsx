@@ -6,12 +6,13 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { Button } from '@crove/ui/components/button';
-import { Input } from '@crove/ui/components/input';
+import { Button } from '@ludy/ui/components/button';
+import { Input } from '@ludy/ui/components/input';
 import { formOf, isFlagFieldValid, sameForm, settingOf, wrongFlagFields, type FlagField, type FlagForm } from '../lib/ads-flag-settings.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { toast } from '../lib/toast.ts';
-import { ErrorText, Field } from './ui.tsx';
+import { AdsCardError } from './ads-card-error.tsx';
+import { CardSkeleton, ErrorText, Field } from './ui.tsx';
 
 const EMPTY: FlagForm = { paceMinDays: '', dayFactor: '', cprFactor: '', cprMinResults: '', cprMinHistoryDays: '' };
 
@@ -36,14 +37,8 @@ export function AdsFlagSettingsCard() {
       },
     }),
   );
-  if (settings.isError) {
-    return (
-      <p className="text-sm text-muted-foreground" role="status">
-        {t('error')}
-      </p>
-    );
-  }
-  if (!settings.data) return null;
+  if (settings.isError) return <AdsCardError message={t('error')} onRetry={() => void settings.refetch()} />;
+  if (!settings.data) return <CardSkeleton />;
   const defaults = settings.data.defaults;
   const wrong = wrongFlagFields(form);
   const changed = !sameForm(form, stored);

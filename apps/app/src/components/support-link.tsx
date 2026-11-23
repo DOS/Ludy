@@ -1,5 +1,5 @@
 import { useTranslations } from 'use-intl';
-import { cn } from '@crove/ui/lib/utils';
+import { cn } from '@ludy/ui/lib/utils';
 import { getConfig } from '../lib/auth.ts';
 import { supportLink } from '../lib/support.ts';
 

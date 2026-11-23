@@ -6,12 +6,13 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import pg from 'pg';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ORG_HEADER } from '@crove/kernel-contract';
-import type { BlobStore, Runtime } from '@crove/kernel-runtime';
+import { ORG_HEADER } from '@ludy/kernel-contract';
+import type { BlobStore, Runtime } from '@ludy/kernel-runtime';
 import type { AuthUser } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { describeError, installJsonLogs, orgIdOf, parseLogFormat, redact, runWithLogContext, setLogContext, withJobLogContext, type LogLevel } from '../src/log.ts';
+import { DomainError } from '@ludy/kernel-runtime';
 
 const SECRET = 'x'.repeat(32);
 const NOW = new Date('2026-10-31T12:34:56.789Z');
@@ -97,9 +98,9 @@ describe('JSON log lines', () => {
     expect(jwt.split('.')).toHaveLength(3);
     expect(redact(`Authorization: Bearer abc.def-ghi_jkl=== and more`)).toBe('Authorization: Bearer [redacted] and more');
     expect(redact(`token ${jwt} end`)).toBe('token [jwt redacted] end');
-    expect(redact('connect ECONNREFUSED postgres://crove_app:s3cret-pw@db:5432/postgres')).toBe('connect ECONNREFUSED postgres://crove_app:[redacted]@db:5432/postgres');
+    expect(redact('connect ECONNREFUSED postgres://ludy_app:s3cret-pw@db:5432/postgres')).toBe('connect ECONNREFUSED postgres://ludy_app:[redacted]@db:5432/postgres');
     // A URL with no password, or a host and port, is left alone.
-    expect(redact('http://localhost:8080/api and postgres://crove_app@db:5432/x')).toBe('http://localhost:8080/api and postgres://crove_app@db:5432/x');
+    expect(redact('http://localhost:8080/api and postgres://ludy_app@db:5432/x')).toBe('http://localhost:8080/api and postgres://ludy_app@db:5432/x');
     const log = capture();
     console.error(`[db] failed for ${jwt} at postgres://u:pw@h/x`);
     expect(log.raw[0]).not.toContain('pw@');
@@ -174,8 +175,8 @@ describe('JSON log lines', () => {
 
   it('blanks a URL password that spans the cut of an enormous message', () => {
     // 32,768 characters of filler, then a URL whose password straddles the cut, then more text.
-    const head = 'x'.repeat(32_768 - 30);
-    const out = redact(`${head}postgres://crove_app:straddling-password-value@db:5432/x and the rest`);
+    const head = `${'x'.repeat(32_768 - 31)} `;
+    const out = redact(`${head}postgres://ludy_app:straddling-password-value@db:5432/x and the rest`);
     expect(out).not.toContain('straddling-password');
     expect(out).not.toContain('straddling');
     expect(out).toMatch(/more characters\]$/);
@@ -343,6 +344,67 @@ describe('the lines of a job (#2175)', () => {
     expect(log.raw.join('\n')).not.toContain('payload-secret');
   });
 
+  it('ends a job whose app is off for the org without a failure, a retry or a stack trace, and rethrows anything else (ADR-0053)', async () => {
+    const log = capture('worker');
+    const { boss, run } = fakeBoss();
+    const org = randomUUID();
+    const off = new DomainError('MODULE_OFF', 404, 'Ứng dụng social đã được tắt cho công ty này', { module: 'social' });
+    await boss.work('social-link-preview', async () => {
+      throw off;
+    });
+    await boss.work('kernel-other', async () => {
+      throw new Error('boom');
+    });
+    // The handler resolves: pg-boss records the job as done, so it is neither retried nor sent to the dead letter queue.
+    await expect(run('social-link-preview', [{ id: 'job-1', data: { orgId: org, body: 'payload-secret' } }])).resolves.toBeUndefined();
+    await expect(run('kernel-other', [{ id: 'job-2' }])).rejects.toThrow('boom');
+    const text = log.raw.join('\n');
+    // One line says the job was skipped, with the queue, the app and the org's first characters, and no payload.
+    expect(text).toContain('[jobs] social-link-preview skipped: social is off');
+    expect(text).toContain(org.slice(0, 8));
+    expect(text).not.toContain('payload-secret');
+    expect(text).not.toContain('[jobs] social-link-preview handler failed');
+    expect(text).toContain('[jobs] kernel-other handler failed');
+    // A second skip within the minute adds no line for the same queue and app.
+    const before = log.raw.length;
+    await run('social-link-preview', [{ id: 'job-3', data: { orgId: org } }]);
+    expect(log.raw.length).toBe(before);
+  });
+
+  it('does not end quietly a job of a keeping queue: a refusal there is a defect and fails loudly', async () => {
+    const log = capture('worker');
+    const handlers = new Map<string, Handler>();
+    const boss = {
+      work: async (name: string, ...rest: unknown[]) => {
+        handlers.set(name, rest.at(-1) as Handler);
+        return 'worker-id';
+      },
+    };
+    withJobLogContext(boss, { loudQueues: new Set(['kernel-ads-pause']) });
+    const off = new DomainError('MODULE_OFF', 404, 'off', { module: 'ads' });
+    await boss.work('kernel-ads-pause', async () => {
+      throw off;
+    });
+    await boss.work('kernel-ads-sync', async () => {
+      throw off;
+    });
+    await expect(handlers.get('kernel-ads-pause')!([{ id: 'j1' }])).rejects.toBe(off);
+    await expect(handlers.get('kernel-ads-sync')!([{ id: 'j2' }])).resolves.toBeUndefined();
+    expect(log.raw.join('\n')).toContain('[jobs] kernel-ads-pause handler failed');
+    expect(log.raw.join('\n')).toContain('[jobs] kernel-ads-sync skipped: ads is off');
+  });
+
+  it('ends a job quietly only for a DomainError: a provider error that copies the code MODULE_OFF still fails loudly', async () => {
+    const log = capture('worker');
+    const { boss, run } = fakeBoss();
+    const provider = Object.assign(new Error('provider body'), { code: 'MODULE_OFF', details: { module: 'social' } });
+    await boss.work('social-comment', async () => {
+      throw provider;
+    });
+    await expect(run('social-comment', [{ id: 'job-9' }])).rejects.toBe(provider);
+    expect(log.raw.join('\n')).toContain('[jobs] social-comment handler failed');
+  });
+
   it('has no org for a job whose payload names none (or not a uuid), and no job id for a batch; a handler without options still works', async () => {
     const log = capture('worker');
     const { boss, run } = fakeBoss();
@@ -408,7 +470,7 @@ describe('the lines of a job (#2175)', () => {
   it('is installed in the worker before any job is registered, and the logger is started by main for the long-running roles', () => {
     const worker = readFileSync(join(import.meta.dirname, '..', 'src', 'worker.ts'), 'utf8');
     const created = worker.indexOf('new PgBoss(');
-    const wrapped = worker.indexOf('withJobLogContext(boss)');
+    const wrapped = worker.indexOf('withJobLogContext(boss');
     const firstWork = worker.indexOf('boss.work');
     expect(created).toBeGreaterThan(0);
     expect(wrapped).toBeGreaterThan(created);

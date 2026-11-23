@@ -11,8 +11,8 @@ COPY . .
 
 # The web app is built with its development dependencies; only its static output reaches the image.
 FROM base AS web
-RUN pnpm install --frozen-lockfile --filter "@crove/app..." \
- && pnpm --filter @crove/app build
+RUN pnpm install --frozen-lockfile --filter "@ludy/app..." \
+ && pnpm --filter @ludy/app build
 
 # The kernel with production dependencies only. --filter-prod follows dependencies, never devDependencies, when
 # it selects workspace projects: with --filter, crove-extract (a devDependency the database tests start) would be
@@ -22,7 +22,7 @@ RUN pnpm install --frozen-lockfile --filter "@crove/app..." \
 # exceljs's dist (browser and ES5 builds, which bundle or load saxes; Node loads lib/). The image check fails if
 # any XML reader is left (apps/kernel/test/container/image-check.mjs, #1719).
 FROM base AS kernel
-RUN pnpm install --frozen-lockfile --prod --filter-prod "@crove/kernel-server..." \
+RUN pnpm install --frozen-lockfile --prod --filter-prod "@ludy/kernel-server..." \
  && rm -rf apps/extract apps/media apps/app apps/web packages/ui \
  && rm -rf node_modules/.pnpm/saxes@* node_modules/.pnpm/xmlchars@* \
       node_modules/.pnpm/node_modules/saxes node_modules/.pnpm/node_modules/xmlchars \
@@ -40,11 +40,16 @@ COPY --from=kernel --chown=node:node /app /app
 COPY --from=web --chown=node:node /app/apps/app/dist /app/apps/app/dist
 RUN mkdir -p /data/files /data/keys /data/status /data/archive && chown node:node /data/files /data/keys /data/status /data/archive && chmod 700 /data/keys
 # The build id GET /version reports (#892): the release workflow passes the git SHA, and its committer date as
-# CROVE_BUILD_TIME, which orders builds for the API's /readyz (worker build >= API build, #1952). Last, so a new SHA
-# rebuilds no layer above.
+# LUDY_BUILD_TIME (or legacy CROVE_BUILD_TIME), which orders builds for the API's /readyz (worker build >= API build, #1952).
+# Last, so a new SHA rebuilds no layer above.
+ARG LUDY_BUILD=
 ARG CROVE_BUILD=
+ARG LUDY_BUILD_TIME=
 ARG CROVE_BUILD_TIME=
-ENV CROVE_BUILD=$CROVE_BUILD CROVE_BUILD_TIME=$CROVE_BUILD_TIME
+ENV LUDY_BUILD=${LUDY_BUILD:-$CROVE_BUILD} \
+    CROVE_BUILD=${CROVE_BUILD:-$LUDY_BUILD} \
+    LUDY_BUILD_TIME=${LUDY_BUILD_TIME:-$CROVE_BUILD_TIME} \
+    CROVE_BUILD_TIME=${CROVE_BUILD_TIME:-$LUDY_BUILD_TIME}
 USER node
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --retries=6 CMD node -e "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"

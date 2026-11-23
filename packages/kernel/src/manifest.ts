@@ -1,17 +1,17 @@
 // The kernel module's manifest (plan §5.2, #1588, #1599): the tables it owns and the class of every column. A migration
 // that adds or drops a table or column of these schemas changes this list in the same PR; apps/kernel/test/manifest.db.test.ts
 // checks it against the catalog. A column is internal unless the second argument of columns() classifies it.
-// crove_meta is the migration runner's bookkeeping, and crove_jobs the vendored pg-boss schema (its partitions are left
-// out: pg-boss creates one per queue at runtime). The control-plane tables of crove_kernel (plan §3.6) are not listed
+// ludy_meta is the migration runner's bookkeeping, and ludy_jobs the vendored pg-boss schema (its partitions are left
+// out: pg-boss creates one per queue at runtime). The control-plane tables of ludy_kernel (plan §3.6) are not listed
 // here: no source may name them (the control-plane-reads invariant), so the manifest test declares them itself.
-import { MODULE_SCREENS, columns, defineModule } from '@crove/kernel-contract';
+import { MODULE_SCREENS, columns, defineModule } from '@ludy/kernel-contract';
 
 export const kernelManifest = defineModule({
   id: 'kernel',
   dependsOn: [],
   tables: {
-    crove_kernel: {
-      activity: columns(['org_id', 'id', 'record_type', 'record_id', 'kind', 'actor_id', 'occurred_at', 'agent_id', 'legal_entity_id'], { summary: 'pii' }),
+    ludy_kernel: {
+      activity: columns(['org_id', 'id', 'record_type', 'record_id', 'kind', 'actor_id', 'occurred_at', 'agent_id', 'legal_entity_id', 'actor_origin'], { summary: 'pii' }),
       agent: columns(['org_id', 'id', 'template_key', 'display_name', 'runtime', 'model_alias', 'status', 'max_risk', 'daily_run_cap', 'created_by', 'created_at', 'updated_at', 'kind', 'member_user_id']),
       agent_template: columns(['key', 'module', 'title', 'role_key', 'max_risk', 'job_description', 'subscribes', 'daily_run_cap']),
       agent_wakeup: columns(['org_id', 'id', 'agent_id', 'status', 'reasons', 'request_count', 'tainted', 'request_depth', 'run_id', 'created_at', 'updated_at']),
@@ -23,20 +23,22 @@ export const kernelManifest = defineModule({
       auth_session_org: columns(['org_id', 'user_id', 'session_id', 'status', 'first_seen_at', 'last_seen_at', 'revoked_at', 'revoked_by', 'reason']),
       availability_rule: columns(['org_id', 'id', 'user_id', 'weekday', 'start_minute', 'end_minute', 'time_zone', 'created_by', 'created_at']),
       budget_policy: columns(['org_id', 'id', 'scope', 'target', 'monthly_limit', 'warn_percent', 'hard_stop', 'updated_by', 'updated_at']),
-      calendar_connection: columns(['org_id', 'id', 'user_id', 'provider', 'scopes', 'status', 'status_reason', 'expires_at', 'last_synced_at', 'write_back', 'connected_at', 'updated_at'], { external_account: 'contact', display_name: 'contact' }),
+      calendar_connection: columns(['org_id', 'id', 'user_id', 'provider', 'scopes', 'status', 'status_reason', 'expires_at', 'last_synced_at', 'write_back', 'read_events', 'connected_at', 'updated_at'], { external_account: 'contact', display_name: 'contact' }),
       calendar_credential: columns(['org_id', 'id', 'key_id', 'created_at', 'sealed_at'], { envelope: 'sensitive' }),
       calendar_event: columns(['org_id', 'id', 'user_id', 'starts_at', 'ends_at', 'time_zone', 'title', 'kind', 'status', 'created_by', 'created_at', 'cancelled_by', 'cancelled_at', 'source_id', 'external_id', 'conference']),
       calendar_event_link: columns(['org_id', 'id', 'connection_id', 'event_id', 'user_id', 'external_id', 'state', 'synced_hash', 'attempts', 'last_error', 'updated_at']),
       channel_access: columns(['org_id', 'id', 'user_id', 'channel_connection_id', 'created_by', 'created_at']),
-      // chat_hook (#3132) is the capability half of a Telegram webhook's address: sensitive, so an export never carries it.
-      channel_connection: columns(['org_id', 'id', 'provider', 'scopes', 'status', 'status_reason', 'connected_by', 'expires_at', 'connected_at', 'updated_at', 'history_synced_at', 'gap_from', 'gap_to', 'history_requested_at', 'chat_state', 'chat_error', 'chat_bot_id', 'chat_changed_at', 'comments_enabled', 'quota_reset_at', 'quota_poll_units', 'quota_reply_units', 'quota_blocked_until', 'history_next_at', 'history_idle_polls'], { external_account_id: 'pii', display_name: 'pii', granted_by_hash: 'sensitive', chat_hook: 'sensitive', chat_hook_next: 'sensitive' }),
+      // chat_hook (#3132) is the capability half of a Telegram webhook's address: sensitive, so an export never carries it. chat_business (#3191) holds
+      // the business accounts the bot is connected to (each account's Telegram user id and name): personal data of the org's own people.
+      channel_connection: columns(['org_id', 'id', 'provider', 'scopes', 'status', 'status_reason', 'connected_by', 'expires_at', 'connected_at', 'updated_at', 'history_synced_at', 'gap_from', 'gap_to', 'history_requested_at', 'chat_state', 'chat_error', 'chat_bot_id', 'chat_changed_at', 'comments_enabled', 'quota_reset_at', 'quota_poll_units', 'quota_reply_units', 'quota_blocked_until', 'history_next_at', 'history_idle_polls'], { external_account_id: 'pii', display_name: 'pii', granted_by_hash: 'sensitive', chat_hook: 'sensitive', chat_hook_next: 'sensitive', chat_business: 'pii' }),
       context_key: columns(['id', 'created_at'], { k_ipad: 'sensitive', k_opad: 'sensitive' }),
       context_token_key: columns(['slot', 'installed_at'], { k_ipad: 'sensitive', k_opad: 'sensitive' }),
       conversation: columns(['org_id', 'id', 'channel_connection_id', 'kind', 'parent_conversation_id', 'identity_id', 'party_id', 'sender_unverified', 'status', 'assignee_user_id', 'last_seq', 'last_inbound_at', 'last_message_at', 'reply_window_until', 'opened_at', 'resolved_at', 'resolved_by', 'intent', 'intent_set_by', 'intent_set_at', 'created_at', 'updated_at'], { external_thread_id: 'pii', external_post_id: 'pii', subject: 'pii' }),
-      // A customer's image of a message (#2357): its platform address is personal data (cleared when the bytes are stored), the rest is metadata.
+      // A customer's image of a message (#2357): its platform address, or the reference its adapter turns into bytes with the connection's token (#3131), is personal
+      // data (cleared when the bytes are stored), the rest is metadata.
       conversation_attachment: columns(
         ['org_id', 'id', 'message_id', 'channel_connection_id', 'kind', 'state', 'storage_key', 'generation', 'sha256', 'content_type', 'size_bytes', 'width', 'height', 'requested_at', 'fetch_attempts', 'created_at', 'stored_at'],
-        { source_url: 'pii' },
+        { source_url: 'pii', source_ref: 'pii' },
       ),
       // The "you are replying" marker (CV3, #2306): who is typing and until when; ids and times only.
       conversation_composing: columns(['org_id', 'id', 'conversation_id', 'channel_connection_id', 'kind', 'user_id', 'expires_at', 'updated_at']),
@@ -47,9 +49,9 @@ export const kernelManifest = defineModule({
       ),
       conversation_identity: columns(['org_id', 'id', 'provider', 'party_id', 'created_at', 'updated_at', 'erased_at', 'profile_checked_at', 'profile_requested_at'], { external_user_id: 'contact', display_name: 'pii' }),
       conversation_message: columns(['org_id', 'id', 'conversation_id', 'channel_connection_id', 'kind', 'seq', 'direction', 'sent_at', 'received_at', 'author_kind', 'author_user_id', 'attachments', 'author_identity_id', 'send_state', 'send_attempt', 'send_error_code', 'hidden_at', 'hidden_by', 'hide_request', 'hide_attempt', 'hide_error_code', 'platform_removed_at', 'tainted', 'sender_verified'], { external_message_id: 'pii', body: 'pii', email_refs: 'pii' }),
-      conversation_note: columns(['org_id', 'id', 'conversation_id', 'author_user_id', 'created_at'], { body: 'pii' }),
+      conversation_note: columns(['org_id', 'id', 'conversation_id', 'author_user_id', 'created_at', 'actor_origin', 'tainted'], { body: 'pii' }),
       conversation_read: columns(['org_id', 'id', 'conversation_id', 'user_id', 'last_read_seq', 'updated_at']),
-      conversation_setting: columns(['org_id', 'id', 'retention_months', 'auto_draft', 'set_by', 'created_at', 'updated_at']),
+      conversation_setting: columns(['org_id', 'id', 'retention_months', 'auto_draft', 'wake_unanswered_hours', 'wake_reply_window_hours', 'wake_quote_days', 'set_by', 'created_at', 'updated_at']),
       credential: columns(['org_id', 'connection_id', 'key_id', 'created_at', 'sealed_at'], { envelope: 'sensitive' }),
       currency: columns(['code', 'minor_units']),
       ddl_event: columns(['id', 'occurred_at', 'session_role', 'set_role', 'command_tag', 'object_type', 'schema_name', 'object_identity', 'backend_pid', 'backend_start', 'alerted_at'], { client_addr: 'pii' }),
@@ -71,6 +73,16 @@ export const kernelManifest = defineModule({
       mail_suppression: columns(['org_id', 'id', 'to_hash', 'scope', 'reason', 'source_message_id', 'created_by', 'created_at', 'lifted_at', 'lifted_by', 'lift_reason']),
       // A member's availability for the inbox (CV3, #2306): available or away, which decides whom a new conversation is told to.
       mcp_member_table: columns(['table_name', 'mode', 'adr']),
+      mcp_proposal_command: columns(['command', 'scope', 'kind', 'adr']),
+      mcp_wake_event_type: columns(['type', 'scope', 'fields', 'adr']),
+      // Meeting platforms a member connects (meetings integrations C1, #3173): the account is contact data, the sealed tokens sensitive, the recording's title is the platform's words (pii) and the
+      // staging key is the random address of the bytes waiting for the member's own request (sensitive).
+      meeting_platform_connection: columns(['org_id', 'id', 'user_id', 'provider', 'scopes', 'status', 'status_reason', 'expires_at', 'last_synced_at', 'connected_at', 'updated_at'], { external_account: 'contact', display_name: 'contact' }),
+      meeting_platform_credential: columns(['org_id', 'id', 'key_id', 'created_at', 'sealed_at'], { envelope: 'sensitive' }),
+      meeting_platform_recording: columns(
+        ['org_id', 'id', 'connection_id', 'user_id', 'external_id', 'started_at', 'length_seconds', 'size_bytes', 'has_audio', 'has_video', 'has_transcript', 'status', 'meeting_id', 'staged_at', 'error_code', 'created_at', 'updated_at'],
+        { title: 'pii', staging_key: 'sensitive' },
+      ),
       member_availability: columns(['org_id', 'id', 'user_id', 'status', 'until', 'updated_at']),
       member_invite: columns(['org_id', 'id', 'role', 'token_sha256', 'status', 'invited_by', 'created_at', 'expires_at', 'accepted_at', 'accepted_by', 'revoked_at', 'revoked_by', 'legal_entity_ids', 'role_key', 'role_scope'], { email: 'contact' }),
       member_permission_override: columns(['org_id', 'id', 'user_id', 'permission', 'allowed', 'set_by', 'set_by_owner', 'set_at']),
@@ -87,13 +99,14 @@ export const kernelManifest = defineModule({
       org_usage: columns(['org_id', 'id', 'metric', 'amount', 'created_at', 'feature', 'module', 'agent_id', 'input_tokens', 'output_tokens']),
       outbox_archive: columns(['org_id', 'day', 'object_key', 'sha256', 'row_count', 'archived_at', 'purged_at', 'purged_rows']),
       outbox_event: columns(['org_id', 'id', 'type', 'actor_id', 'command_id', 'created_at', 'actor_type', 'agent_id', 'agent_run'], { payload: 'pii' }),
+      outbox_held: columns(['org_id', 'id', 'event_id', 'module', 'held_at']),
       outbox_pending: columns(['seq', 'org_id', 'event_id', 'attempts', 'last_error', 'held_type']),
-      party: columns(['org_id', 'id', 'kind', 'source_trust', 'verified_at', 'verified_by', 'version', 'created_at', 'updated_at', 'duplicate_of', 'company_id'], { name: 'pii', tax_code: 'national_id_if_individual', address: 'contact', email: 'contact', phone: 'contact', search: 'pii' }),
+      party: columns(['org_id', 'id', 'kind', 'source_trust', 'verified_at', 'verified_by', 'version', 'created_at', 'updated_at', 'duplicate_of', 'company_id', 'actor_origin', 'tainted'], { name: 'pii', tax_code: 'national_id_if_individual', address: 'contact', email: 'contact', phone: 'contact', search: 'pii' }),
       permission_catalog: columns(['permission', 'grantable_to_viewer', 'entity_roles_count']),
       permission_default: columns(['base_role', 'permission']),
       position: columns(['org_id', 'id', 'title', 'module', 'role_key', 'reports_to', 'holder_user_id', 'holder_agent_id', 'le_scope', 'flags', 'job_description', 'status', 'created_at', 'updated_at']),
       prober_alert_state: columns(['id', 'problem', 'started_at', 'notified_at', 'updated_at']),
-      proposal: columns(['org_id', 'id', 'kind', 'command', 'status', 'title', 'revision', 'source_file_id', 'extraction_id', 'duplicate_of', 'created_at', 'decided_by', 'decided_at', 'decision_note', 'executed_command_id', 'eligible_approvers', 'authors', 'co_authors', 'requested_by_agent', 'requested_by_run', 'source_task_id', 'request_event_id', 'tainted', 'policy_flags', 'decided_by_agent', 'reminded_at', 'escalated_at', 'resubmitted_from', 'legal_entity_id'], { payload: 'pii', result: 'pii', request_input: 'pii' }),
+      proposal: columns(['org_id', 'id', 'kind', 'command', 'status', 'title', 'revision', 'source_file_id', 'extraction_id', 'duplicate_of', 'created_at', 'decided_by', 'decided_at', 'decision_note', 'executed_command_id', 'eligible_approvers', 'authors', 'co_authors', 'requested_by_agent', 'requested_by_run', 'source_task_id', 'request_event_id', 'tainted', 'policy_flags', 'decided_by_agent', 'reminded_at', 'escalated_at', 'resubmitted_from', 'legal_entity_id', 'requested_by_grant', 'mcp_client_name', 'mcp_client_host', 'approvers_told_at'], { payload: 'pii', result: 'pii', request_input: 'pii' }),
       proposal_policy: columns(['org_id', 'id', 'remind_after_days', 'escalate_after_days', 'updated_by', 'created_at', 'updated_at', 'expire_after_days']),
       record_le: columns(['org_id', 'id', 'record_type', 'record_id', 'legal_entity_id', 'created_by', 'created_at']),
       refusal_tally: columns(['org_id', 'window_start', 'actor_key', 'command', 'code', 'refusals', 'audited', 'first_at', 'last_at']),
@@ -107,23 +120,23 @@ export const kernelManifest = defineModule({
       security_signal_seen: columns(['signal', 'subject', 'alerted_at']),
       // The wrapped data key of one subject (ADR-0017, #2640): definer-only, no login role reads it. The ref names an id or a keyed hash, never a value.
       subject_key: columns(['org_id', 'id', 'ref', 'key_id', 'created_at'], { wrapped_key: 'sensitive' }),
-      task: columns(['org_id', 'id', 'kind', 'assignee_position_id', 'parent_task_id', 'source', 'source_ref', 'source_event_id', 'created_by_type', 'created_by_id', 'created_by_run', 'status', 'due', 'request_depth', 'tainted', 'checkout_run_id', 'lock_expires_at', 'fence', 'created_at', 'updated_at', 'legal_entity_id'], { title: 'pii', description: 'pii', pending_draft: 'pii' }),
+      task: columns(['org_id', 'id', 'kind', 'assignee_position_id', 'parent_task_id', 'source', 'source_ref', 'source_event_id', 'created_by_type', 'created_by_id', 'created_by_run', 'status', 'due', 'request_depth', 'tainted', 'checkout_run_id', 'lock_expires_at', 'fence', 'created_at', 'updated_at', 'legal_entity_id'], { title: 'pii', description: 'pii', checklist: 'pii', pending_draft: 'pii' }),
       task_comment: columns(['org_id', 'id', 'task_id', 'author_type', 'author_id', 'run_id', 'tainted', 'created_at'], { body: 'pii' }),
       tax_obligation_done: columns(['org_id', 'id', 'obligation', 'period', 'done_by', 'done_at', 'legal_entity_id']),
       tax_profile: columns(['org_id', 'id', 'obligations', 'pit_filing_period', 'fiscal_year_end_month', 'updated_by', 'created_at', 'updated_at']),
-      tenant: columns(['org_id', 'slug', 'name', 'status', 'base_currency', 'created_by', 'created_at', 'vat_filing_period', 'missing_invoice_reminder_day', 'approval_preset', 'approval_policy_version', 'meeting_audio_retention_days', 'meeting_video_retention_days', 'meeting_text_retention_days', 'mcp_member_grants'], { inbound_token: 'sensitive', conversation_token: 'sensitive', tax_code: 'national_id_if_individual', address: 'contact', contact_email: 'contact' }),
+      tenant: columns(['org_id', 'slug', 'name', 'status', 'base_currency', 'created_by', 'created_at', 'vat_filing_period', 'missing_invoice_reminder_day', 'approval_preset', 'approval_policy_version', 'meeting_audio_retention_days', 'meeting_video_retention_days', 'meeting_text_retention_days', 'meeting_consent_policy', 'meeting_hooks', 'mcp_member_grants', 'apps_off', 'apps_version'], { inbound_token: 'sensitive', conversation_token: 'sensitive', tax_code: 'national_id_if_individual', address: 'contact', contact_email: 'contact' }),
       tenant_member: columns(['org_id', 'user_id', 'role', 'created_at']),
       // The members who opted in to the daily brief by email (#2406); last_sent_day is the Vietnam day of the last mail.
       today_mail: columns(['org_id', 'id', 'user_id', 'created_at', 'last_sent_day', 'language']),
       usage_deferral: columns(['org_id', 'id', 'metric', 'subject_type', 'subject_id', 'retry_at', 'notified', 'created_at']),
       worker_heartbeat: columns(['instance', 'beat_at', 'modules', 'build', 'build_time']),
     },
-    crove_meta: {
+    ludy_meta: {
       deployment: columns(['key', 'value', 'updated_at']),
       pipeline_session: columns(['pid', 'backend_start', 'step', 'marked_at']),
       schema_migrations: columns(['version', 'name', 'sha256', 'applied_at']),
     },
-    crove_jobs: {
+    ludy_jobs: {
       bam: columns(['id', 'name', 'version', 'status', 'queue', 'table_name', 'command', 'error', 'created_on', 'started_on', 'completed_on']),
       instance: columns(['id', 'name', 'host', 'pid', 'version', 'node_version', 'application_name', 'heartbeat_seconds', 'supervise', 'schedule', 'migrate', 'persist_queue_stats', 'persist_warnings', 'pool_max', 'pool_total', 'pool_idle', 'pool_waiting', 'workers', 'metrics', 'config', 'crash_restarts', 'crash_restarts_since', 'started_on', 'heartbeat_on', 'stopped_on']),
       job: columns(['id', 'name', 'priority', 'state', 'retry_limit', 'retry_count', 'retry_delay', 'retry_backoff', 'retry_delay_max', 'expire_seconds', 'deletion_seconds', 'singleton_key', 'singleton_on', 'group_id', 'group_tier', 'start_after', 'created_on', 'started_on', 'completed_on', 'keep_until', 'dead_letter', 'policy', 'heartbeat_on', 'heartbeat_seconds', 'blocked', 'blocking', 'pending_dependencies', 'source_name', 'source_id', 'source_created_on', 'source_retry_count', 'source_root_id', 'trace_context', 'upsert_by_key'], { data: 'pii', output: 'pii', source_output: 'pii' }),
@@ -160,6 +173,8 @@ export const kernelManifest = defineModule({
     { type: 'kernel.file_upload', table: 'file_upload', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.inbox_item', table: 'inbox_item', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.kill_switch', table: 'kill_switch', legalEntityScoped: false, audit: 'command' },
+    { type: 'kernel.meeting_platform_connection', table: 'meeting_platform_connection', legalEntityScoped: false, audit: 'command' },
+    { type: 'kernel.meeting_platform_recording', table: 'meeting_platform_recording', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.member_invite', table: 'member_invite', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.member_vy_memory', table: 'member_vy_memory', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.number_allocation', table: 'number_allocation', legalEntityScoped: true, audit: 'append_only' },
@@ -170,6 +185,6 @@ export const kernelManifest = defineModule({
     { type: 'kernel.saved_reply', table: 'saved_reply', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.task', table: 'task', legalEntityScoped: true, audit: 'command' },
   ],
-  // Its screens in the app and its menu items (#1652), kept with the other modules' in @crove/kernel-contract.
+  // Its screens in the app and its menu items (#1652), kept with the other modules' in @ludy/kernel-contract.
   ...MODULE_SCREENS.kernel,
 });

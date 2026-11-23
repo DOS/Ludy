@@ -26,8 +26,8 @@ test('composes, reviews and schedules a post on the sandbox channel', async ({ p
   await page.getByRole('button', { name: 'Lưu hàng đợi' }).click();
   await expect(page.getByText(/Khung giờ trống kế tiếp:/)).toBeVisible();
 
-  await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('link', { name: 'Soạn bài' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
   // The sandbox allows 1,000 characters: one more is flagged as typed and blocks submitting.
   await page.getByLabel('Nội dung chung').fill('x'.repeat(1001));
   await expect(page.getByText('Nội dung dài 1.001 ký tự, kênh này cho tối đa 1.000')).toBeVisible();
@@ -45,7 +45,7 @@ test('composes, reviews and schedules a post on the sandbox channel', async ({ p
   await expect(page.getByText('Đã lên lịch', { exact: true })).toBeVisible();
 
   const postUrl = page.url();
-  await page.getByRole('link', { name: 'Quay lại' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
   await expect(page.getByRole('tab', { name: 'Lịch đăng' })).toBeVisible();
   await expect(page.getByText('Ra mắt Crove Social: soạn một lần, duyệt rồi đăng đúng giờ.')).toBeVisible();
   await expect(page.getByText('09:00')).toBeVisible();
@@ -53,9 +53,9 @@ test('composes, reviews and schedules a post on the sandbox channel', async ({ p
   // Its slot comes now instead of at 09:00: the worker's sweep finds it and publishes it to the sandbox, and the page
   // follows without a reload.
   await page.goto(postUrl);
-  exec(`UPDATE crove_social.post_variant SET queue_slot_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postUrl.split('/').pop() ?? '' });
+  exec(`UPDATE ludy_social.post_variant SET queue_slot_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postUrl.split('/').pop() ?? '' });
   await expect(page.getByText('Đã đăng', { exact: true }).first()).toBeVisible({ timeout: 45_000 });
-  await expect(page.getByText(/Đã đăng lúc/)).toBeVisible();
+  await expect(page.getByTestId('published-summary').getByText(/Đã đăng lúc/)).toBeVisible();
 });
 
 // A 1x1 PNG.
@@ -70,8 +70,8 @@ test('attaches images to a post, shows them in the preview and keeps them out of
   await page.getByLabel('Tên kênh thử').fill('Trang Ảnh');
   await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
   await expect(page.getByText('Trang Ảnh').first()).toBeVisible();
-  await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('link', { name: 'Soạn bài' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
   await page.getByLabel('Nội dung chung').fill('Bài có ảnh');
 
   await page.locator('input[type="file"]').setInputFiles([{ name: 'mat-tien.png', mimeType: 'image/png', buffer: PNG }]);
@@ -86,8 +86,8 @@ test('attaches images to a post, shows them in the preview and keeps them out of
   await expect(page.getByRole('textbox', { name: 'Mô tả ảnh 1' })).toHaveValue('Mặt tiền cửa hàng');
 
   // An image for a post is not a document: the Inbox stays empty.
-  await page.getByRole('navigation').getByRole('link', { name: 'Trang chủ', exact: true }).click();
-  await page.getByRole('navigation').getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
   await expect(page.getByText('mat-tien.png')).toHaveCount(0);
 });
 
@@ -100,8 +100,8 @@ test('keeps unsaved edits when another tab approves the post', async ({ page, co
   await page.getByLabel('Tên kênh thử').fill('Trang Hai Tab');
   await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
   await expect(page.getByText('Trang Hai Tab').first()).toBeVisible();
-  await page.getByRole('link', { name: 'Quay lại' }).click();
-  await page.getByRole('link', { name: 'Soạn bài' }).click();
+  await page.getByRole('link', { name: 'Về Bài đăng' }).click();
+  await page.getByRole('link', { name: 'Soạn bài' }).first().click();
   await page.getByLabel('Nội dung chung').fill('Bản gốc');
   await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();
   await expect(page.getByText('Chờ duyệt', { exact: true })).toBeVisible();

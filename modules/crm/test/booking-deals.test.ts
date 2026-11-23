@@ -3,7 +3,7 @@
 // changed deal, then the id; at most three are offered; an address differs by case only and a number by its form only ("+84 901 234 567" is "0901234567"); a guest with no email and
 // no phone (an erased one) and a deal of nobody they know give nothing.
 import { describe, expect, it } from 'vitest';
-import { BOOKING_DEAL_SUGGESTIONS_MAX } from '@crove/kernel-contract';
+import { BOOKING_DEAL_SUGGESTIONS_MAX } from '@ludy/kernel-contract';
 import { suggestDeals, type MatchBooking, type MatchDeal } from '../src/booking-deals.ts';
 
 const deal = (id: string, over: Partial<MatchDeal> = {}): MatchDeal => ({

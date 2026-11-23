@@ -7,11 +7,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime } from '@crove/kernel-runtime';
-import { reviewTokenHash, socialCommands, socialQueries, type PostView, type ReviewFeedbackView, type ReviewLinkView, type ReviewPlanLinkView } from '@crove/mod-social';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime } from '@ludy/kernel-runtime';
+import { reviewTokenHash, socialCommands, socialQueries, type PostView, type ReviewFeedbackView, type ReviewLinkView, type ReviewPlanLinkView } from '@ludy/mod-social';
 import { reviewAnswer } from '../src/review-link.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -50,7 +50,7 @@ suite('social plan review links on PostgreSQL (#902)', () => {
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     const roles = { admin: await person('admin'), member: await person('member') };
     for (const [role, id] of Object.entries(roles)) {
-      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
+      await admin((c) => c.query('INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, id, role]));
     }
     return { orgId, owner, ...roles };
   }
@@ -58,7 +58,7 @@ suite('social plan review links on PostgreSQL (#902)', () => {
   async function connection(o: Org, name = 'Kênh thử') {
     const id = randomUUID();
     await admin((c) =>
-      c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
+      c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [
         o.orgId,
         id,
         'sandbox',
@@ -80,13 +80,13 @@ suite('social plan review links on PostgreSQL (#902)', () => {
   type PlanPost = { id: string; gone: boolean; at?: string | null; changed?: boolean; body?: string | null; channels?: { channel: string; body: string | null; media: { id: string }[] }[]; answers?: number; feedback?: { name: string; verdict: string }[] };
   type Page = { kind?: 'plan'; org: string; posts?: PlanPost[]; channels?: unknown[] } | null;
   // The public side runs as the API login role, with no org context, as the HTTP edge does.
-  const view = async (token: string) => (await pool.query<{ page: Page }>('SELECT crove_social.review_link_view($1) AS page', [token])).rows[0]?.page ?? null;
+  const view = async (token: string) => (await pool.query<{ page: Page }>('SELECT ludy_social.review_link_view($1) AS page', [token])).rows[0]?.page ?? null;
   const answer = async (token: string, postId: string, verdict: 'approved' | 'changes_requested' | 'comment', body: string | null = null) =>
-    (await pool.query<{ done: { recorded: boolean } | null }>('SELECT crove_social.review_plan_feedback_add($1, $2::uuid, $3, $4, $5) AS done', [token, postId, 'Chị Lan (khách)', verdict, body])).rows[0]?.done ?? null;
+    (await pool.query<{ done: { recorded: boolean } | null }>('SELECT ludy_social.review_plan_feedback_add($1, $2::uuid, $3, $4, $5) AS done', [token, postId, 'Chị Lan (khách)', verdict, body])).rows[0]?.done ?? null;
   const plans = (o: Org) => rt.query<ReviewPlanLinkView[]>('social.review_link.list_plans', {}, { actor: asUser(o.member), orgId: o.orgId });
   const links = (o: Org, postId: string) => rt.query<{ links: ReviewLinkView[]; feedback: ReviewFeedbackView[] }>('social.review_link.list', { postId }, { actor: asUser(o.member), orgId: o.orgId });
   const settle = async (o: Org) => {
-    const event = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'social.review.answered' ORDER BY created_at DESC, id DESC LIMIT 1", [o.orgId])).rows[0]?.id);
+    const event = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.review.answered' ORDER BY created_at DESC, id DESC LIMIT 1", [o.orgId])).rows[0]?.id);
     return worker.execute<{ settled: string[]; verdict: string | null }>('social.review.client_settle', { eventId: event as string }, { actor: system, orgId: o.orgId });
   };
   const seen = (p: PostView) => p.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash }));
@@ -100,16 +100,16 @@ suite('social plan review links on PostgreSQL (#902)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const registry = { commands: [...kernelCommands, ...socialCommands], queries: [...kernelQueries({ inboundDomain: null }), ...socialQueries] };
     const app = new URL(adminUrl);
-    app.username = 'crove_app';
+    app.username = 'ludy_app';
     app.password = 'test-app-pw';
     pool = createPool({ connectionString: app.toString(), max: 4 });
     db = createDb(pool);
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
     const w = new URL(adminUrl);
-    w.username = 'crove_worker';
+    w.username = 'ludy_worker';
     w.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: w.toString(), max: 2 });
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registry);
@@ -138,14 +138,14 @@ suite('social plan review links on PostgreSQL (#902)', () => {
 
     const made = await plan(o, o.admin, { postIds: [untimed, late, early], days: 14 });
     expect(made).toMatchObject({ posts: 3, token: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) });
-    const stored = await admin(async (c) => (await c.query('SELECT kind, post_id, token_sha256, plan_from FROM crove_social.review_link WHERE id = $1', [made.linkId])).rows[0]);
+    const stored = await admin(async (c) => (await c.query('SELECT kind, post_id, token_sha256, plan_from FROM ludy_social.review_link WHERE id = $1', [made.linkId])).rows[0]);
     expect(stored).toEqual({ kind: 'plan', post_id: null, token_sha256: reviewTokenHash(made.token), plan_from: null });
     const leaks = await admin(async (c) =>
       Number(
         (
           await c.query<{ n: string }>(
-            `SELECT (SELECT count(*) FROM crove_kernel.audit_event a WHERE a.detail::text LIKE '%' || $1 || '%')
-                  + (SELECT count(*) FROM crove_kernel.outbox_event e WHERE e.payload::text LIKE '%' || $1 || '%') AS n`,
+            `SELECT (SELECT count(*) FROM ludy_kernel.audit_event a WHERE a.detail::text LIKE '%' || $1 || '%')
+                  + (SELECT count(*) FROM ludy_kernel.outbox_event e WHERE e.payload::text LIKE '%' || $1 || '%') AS n`,
             [made.token],
           )
         ).rows[0]?.n,
@@ -228,12 +228,12 @@ suite('social plan review links on PostgreSQL (#902)', () => {
     expect((await plans(o))[0]).toMatchObject({ posts: 3, answered: 2 });
 
     // The plan's answers name a post: the single-post function refuses the token, and the HTTP edge maps the codes.
-    await expect(pool.query("SELECT crove_social.review_feedback_add($1, 'Khách', 'approved', NULL)", [token])).rejects.toMatchObject({ code: '22023' });
+    await expect(pool.query("SELECT ludy_social.review_feedback_add($1, 'Khách', 'approved', NULL)", [token])).rejects.toMatchObject({ code: '22023' });
     await expect(reviewAnswer(rt, { token, postId: randomUUID(), name: 'Khách', verdict: 'approved' })).rejects.toMatchObject({ code: 'REVIEW_ANSWER_INVALID' });
     expect(await reviewAnswer(rt, { token, postId: third, name: 'Khách', verdict: 'approved' })).toEqual({ recorded: true });
 
     // At most 20 answers per post.
-    await pool.query("SELECT crove_social.review_plan_feedback_add($1, $2::uuid, 'Khách', 'comment', 'Thêm') FROM generate_series(1, 18)", [token, third]);
+    await pool.query("SELECT ludy_social.review_plan_feedback_add($1, $2::uuid, 'Khách', 'comment', 'Thêm') FROM generate_series(1, 18)", [token, third]);
     await expect(answer(token, third, 'approved')).rejects.toMatchObject({ code: '54000' });
     expect(await answer(token, first, 'approved')).toEqual({ recorded: true });
   });
@@ -246,13 +246,13 @@ suite('social plan review links on PostgreSQL (#902)', () => {
     const fileId = randomUUID();
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
+        `INSERT INTO ludy_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
          VALUES ($1, $2, $3, $4, $5, 'anh.jpg', 'image/jpeg', $6, 'social')`,
         [o.orgId, fileId, sha, `org/${o.orgId}/${sha}`, `content:${sha}`, bytes.byteLength],
       ),
     );
     const { postId } = await exec<{ postId: string }>(o, o.member, 'social.post.create', { body: 'Ảnh khai trương', media: [{ fileId }], channels: [{ connectionId: conn }] });
-    const file = async (t: string) => (await pool.query<{ file: unknown }>('SELECT crove_social.review_link_file($1, $2::uuid) AS file', [t, fileId])).rows[0]?.file ?? null;
+    const file = async (t: string) => (await pool.query<{ file: unknown }>('SELECT ludy_social.review_link_file($1, $2::uuid) AS file', [t, fileId])).rows[0]?.file ?? null;
 
     const revoked = await plan(o, o.owner, { postIds: [postId] });
     expect((await view(revoked.token))?.posts?.[0]?.channels?.[0]?.media).toEqual([{ id: fileId, type: 'image/jpeg' }]);
@@ -264,7 +264,7 @@ suite('social plan review links on PostgreSQL (#902)', () => {
     expect(await file(revoked.token)).toBeNull();
 
     const expired = await plan(o, o.owner, { postIds: [postId], days: 1 });
-    await admin((c) => c.query("UPDATE crove_social.review_link SET created_at = now() - interval '3 days', expires_at = now() - interval '1 minute' WHERE id = $1", [expired.linkId]));
+    await admin((c) => c.query("UPDATE ludy_social.review_link SET created_at = now() - interval '3 days', expires_at = now() - interval '1 minute' WHERE id = $1", [expired.linkId]));
     expect(await view(expired.token)).toBeNull();
     expect(await answer(expired.token, postId, 'approved')).toBeNull();
     expect(await file(expired.token)).toBeNull();
@@ -286,22 +286,22 @@ suite('social plan review links on PostgreSQL (#902)', () => {
     expect(await plans(stranger)).toEqual([]);
     await expect(exec(stranger, stranger.owner, 'social.review_link.revoke', { linkId })).rejects.toMatchObject({ code: 'REVIEW_LINK_NOT_FOUND' });
     // The database holds it too: a plan row naming another org's post, or feedback outside its link, is refused.
-    await expect(admin((c) => c.query('INSERT INTO crove_social.review_link_post (org_id, link_id, post_id, position) VALUES ($1, $2, $3, 1)', [o.orgId, linkId, theirs]))).rejects.toMatchObject({ code: '23503' });
+    await expect(admin((c) => c.query('INSERT INTO ludy_social.review_link_post (org_id, link_id, post_id, position) VALUES ($1, $2, $3, 1)', [o.orgId, linkId, theirs]))).rejects.toMatchObject({ code: '23503' });
     await expect(
-      admin((c) => c.query("INSERT INTO crove_social.review_feedback (org_id, link_id, post_id, reviewer_name, verdict) VALUES ($1, $2, $3, 'Khách', 'approved')", [o.orgId, linkId, outside])),
+      admin((c) => c.query("INSERT INTO ludy_social.review_feedback (org_id, link_id, post_id, reviewer_name, verdict) VALUES ($1, $2, $3, 'Khách', 'approved')", [o.orgId, linkId, outside])),
     ).rejects.toMatchObject({ code: '23503' });
 
     const grants = await admin(async (c) =>
       (
         await c.query<{ p: string }>(
-          "SELECT privilege_type AS p FROM information_schema.role_table_grants WHERE grantee = 'crove_tenant' AND table_schema = 'crove_social' AND table_name = 'review_link_post' ORDER BY 1",
+          "SELECT privilege_type AS p FROM information_schema.role_table_grants WHERE grantee = 'ludy_tenant' AND table_schema = 'ludy_social' AND table_name = 'review_link_post' ORDER BY 1",
         )
       ).rows.map((r) => r.p),
     );
     // The tenant role reads a plan's posts; only review_plan_posts_add adds them, once (#930).
     expect(grants).toEqual(['SELECT']);
-    const fns = ['crove_social.review_plan_feedback_add(text,uuid,text,text,text)', 'crove_social.review_plan_page(crove_social.review_link)', 'crove_social.review_feedback_in_link()'];
-    const roles = ['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant', 'public'];
+    const fns = ['ludy_social.review_plan_feedback_add(text,uuid,text,text,text)', 'ludy_social.review_plan_page(ludy_social.review_link)', 'ludy_social.review_feedback_in_link()'];
+    const roles = ['ludy_app', 'ludy_worker', 'ludy_tenant', 'ludy_definer_tenant', 'public'];
     const matrix = await admin(async (c) => {
       const { rows } = await c.query<{ fn: string; role: string; can: boolean }>(
         `SELECT f AS fn, r AS role, has_function_privilege(r, f, 'EXECUTE') AS can FROM unnest($1::text[]) f CROSS JOIN unnest($2::text[]) r`,
@@ -310,9 +310,9 @@ suite('social plan review links on PostgreSQL (#902)', () => {
       return Object.fromEntries(fns.map((f) => [f, roles.filter((r) => rows.some((row) => row.fn === f && row.role === r && row.can))]));
     });
     expect(matrix).toEqual({
-      'crove_social.review_plan_feedback_add(text,uuid,text,text,text)': ['crove_app'],
-      'crove_social.review_plan_page(crove_social.review_link)': [],
-      'crove_social.review_feedback_in_link()': [],
+      'ludy_social.review_plan_feedback_add(text,uuid,text,text,text)': ['ludy_app'],
+      'ludy_social.review_plan_page(ludy_social.review_link)': [],
+      'ludy_social.review_feedback_in_link()': [],
     });
   });
 
@@ -344,7 +344,7 @@ suite('social plan review links on PostgreSQL (#902)', () => {
     const mine = await plan(o, o.admin, { postIds: [postId] });
     const theirs = await plan(o, o.owner, { postIds: [postId] });
     await rt.execute('kernel.member.change_role', { userId: o.admin, role: 'member' }, { actor: asMfa(o.owner), orgId: o.orgId });
-    const eventId = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.member.role_changed' ORDER BY created_at DESC, id DESC LIMIT 1", [o.orgId])).rows[0]?.id as string);
+    const eventId = await admin(async (c) => (await c.query<{ id: string }>("SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.member.role_changed' ORDER BY created_at DESC, id DESC LIMIT 1", [o.orgId])).rows[0]?.id as string);
     expect(await worker.execute('social.links.revoke_for_member', { eventId }, { actor: system, orgId: o.orgId })).toMatchObject({ review: 1 });
     expect(await view(mine.token)).toBeNull();
     expect(await view(theirs.token)).not.toBeNull();

@@ -1,14 +1,14 @@
 // The worker's side of queued mail, step E1b of the Email plan (docs/plan/email.md §3.2, issue #548). A sweep finds
-// the mail waiting to be sent (crove_kernel.mail_queued_due) and queues one job per mail: system and transactional
+// the mail waiting to be sent (ludy_kernel.mail_queued_due) and queues one job per mail: system and transactional
 // mail on kernel-mail-send, marketing on kernel-mail-bulk, worked one at a time with a gap so a campaign never holds
 // up an invoice. A job runs kernel.mail.queue.begin (the suppression check and the 'started' call, committed), renders
 // the mail from its template and merge data, sends it once, and records the outcome with kernel.mail.queue.record.
 // Logs carry codes only: never an address, a subject or a provider's message.
 import { sql } from 'kysely';
-import type { Db } from '@crove/db';
-import type { QueuedMailBegin } from '@crove/kernel';
-import type { Runtime } from '@crove/kernel-runtime';
-import type { MailAttachment, MailErrorKind, MailProvider, OutboundMail, SendResult } from '@crove/mail';
+import type { Db } from '@ludy/db';
+import type { QueuedMailBegin } from '@ludy/kernel';
+import type { BlobStore, CredentialBroker, Runtime } from '@ludy/kernel-runtime';
+import type { MailAttachment, MailErrorKind, MailProvider, OutboundMail, SendResult } from '@ludy/mail';
 import { bounceAddress } from './invite-mail.ts';
 import { DEFAULT_BRAND_NAME } from './config.ts';
 import { jobKey } from './job-keys.ts';
@@ -37,6 +37,8 @@ export interface MailJob {
 // whose link must carry a secret (a report link's token) gets it here, at send time, through a command of the mail's
 // org (`execute`, as the worker): the secret is then only in the mail, never in the queue.
 export interface MailTemplateInput {
+  orgId?: string;
+  broker?: CredentialBroker;
   messageId: string;
   subject: string | null;
   payload: Readonly<Record<string, unknown>>;
@@ -48,7 +50,9 @@ export interface MailTemplateInput {
   conversationAddress?: string | null;
   // The product name users see (BRAND_NAME, #1040), for the template's own texts.
   brand: string;
+  store?: BlobStore;
   execute<T>(command: string, input: unknown): Promise<T>;
+  query?<T>(name: string, input: unknown): Promise<T>;
 }
 export interface MailTemplate {
   render(input: MailTemplateInput): Promise<{ subject: string; text: string; html: string; replyTo?: string; inReplyTo?: string; references?: readonly string[]; fromName?: string; attachments?: readonly MailAttachment[] } | null>;
@@ -59,6 +63,7 @@ export interface MailQueueDeps {
   runtime: Runtime;
   mailer: MailProvider;
   templates: MailTemplates;
+  broker?: CredentialBroker;
   publicUrl: string;
   // INBOUND_DOMAIN when mail reaches this deployment (INBOUND_SECRET set): the Return-Path of each mail, and the domain
   // of the org's inbound address a template may name as the Reply-To.
@@ -69,15 +74,16 @@ export interface MailQueueDeps {
   sendTimeoutMs?: number;
   // The worker's connection, to read the operator's mail switch (#886) before a send.
   workerDb?: Db;
+  store?: BlobStore;
 }
 
 interface Sender {
   send(queue: string, data: MailJob, options: Record<string, unknown>): Promise<unknown>;
 }
 
-// Whether the operator holds every org's mail (crove_kernel.global_kill_switch_on('mail'), #886).
+// Whether the operator holds every org's mail (ludy_kernel.global_kill_switch_on('mail'), #886).
 export async function mailHeld(db: Db): Promise<boolean> {
-  const { rows } = await sql<{ on: boolean }>`SELECT crove_kernel.global_kill_switch_on('mail') AS on`.execute(db);
+  const { rows } = await sql<{ on: boolean }>`SELECT ludy_kernel.global_kill_switch_on('mail') AS on`.execute(db);
   return rows[0]?.on === true;
 }
 
@@ -87,7 +93,7 @@ export async function sweepMail(boss: Sender, workerDb: Db, runtime: Runtime, ma
   if (await mailHeld(workerDb)) return 0;
   const repeatable = mailer.enabled && (mailer.sendRetrySafety === 'idempotent' || mailer.sendRetrySafety === 'safe');
   const { rows } = await sql<{ org_id: string; message_id: string; stream: string; state: string; attempts: number }>`
-    SELECT org_id, message_id, stream, state, attempts FROM crove_kernel.mail_queued_due(${SWEEP_LIMIT}::int, ${MAIL_STALE_SECONDS}::int, ${repeatable}::boolean)`.execute(workerDb);
+    SELECT org_id, message_id, stream, state, attempts FROM ludy_kernel.mail_queued_due(${SWEEP_LIMIT}::int, ${MAIL_STALE_SECONDS}::int, ${repeatable}::boolean)`.execute(workerDb);
   let queued = 0;
   for (const row of rows) {
     if (row.state === 'stale') {
@@ -140,6 +146,8 @@ async function sendOne(deps: MailQueueDeps, job: MailJob, mail: Extract<QueuedMa
   let content: Awaited<ReturnType<MailTemplate['render']>>;
   try {
     content = await template.render({
+      orgId: job.orgId,
+      ...(deps.broker ? { broker: deps.broker } : {}),
       messageId: job.messageId,
       subject: mail.subject,
       payload: mail.payload,
@@ -147,7 +155,9 @@ async function sendOne(deps: MailQueueDeps, job: MailJob, mail: Extract<QueuedMa
       brand: deps.brand ?? DEFAULT_BRAND_NAME,
       inboundAddress: deps.bounceDomain ? `${mail.inboundToken}@${deps.bounceDomain.toLowerCase()}` : null,
       conversationAddress: deps.bounceDomain && mail.conversationToken ? `${mail.conversationToken}@${deps.bounceDomain.toLowerCase()}` : null,
+      ...(deps.store ? { store: deps.store } : {}),
       execute: <T>(command: string, input: unknown) => deps.runtime.execute<T>(command, input, { actor: ACTOR, orgId: job.orgId }),
+      query: <T>(name: string, input: unknown) => deps.runtime.query<T>(name, input, { actor: ACTOR, orgId: job.orgId }),
     });
   } catch {
     content = null;
@@ -221,11 +231,11 @@ async function withTimeout(mailer: MailProvider, mail: OutboundMail, ms: number)
 }
 
 // Mail retention: the address and subject 13 months after a mail was written, its merge data 30 days after a final
-// status (crove_kernel.mail_retention_purge), in batches until none is left or the run's budget is spent.
+// status (ludy_kernel.mail_retention_purge), in batches until none is left or the run's budget is spent.
 export async function purgeMail(workerDb: Db, batch = 10_000, maxBatches = 100): Promise<Record<string, number>> {
   const cleared: Record<string, number> = {};
   for (let i = 0; i < maxBatches; i++) {
-    const { rows } = await sql<{ store: string; deleted: number; more: boolean }>`SELECT store, deleted, more FROM crove_kernel.mail_retention_purge(${batch}::int)`.execute(workerDb);
+    const { rows } = await sql<{ store: string; deleted: number; more: boolean }>`SELECT store, deleted, more FROM ludy_kernel.mail_retention_purge(${batch}::int)`.execute(workerDb);
     for (const row of rows) cleared[row.store] = (cleared[row.store] ?? 0) + row.deleted;
     const stuck = rows.filter((r) => r.more && r.deleted === 0).map((r) => r.store);
     if (stuck.length > 0) {

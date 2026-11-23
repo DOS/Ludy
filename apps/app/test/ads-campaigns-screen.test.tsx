@@ -9,7 +9,7 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
-import { COWORKER_ROSTER, type AdAccountView, type AdsCampaignDraftView, type AdsCampaignRequestView } from '@crove/kernel-contract';
+import { COWORKER_ROSTER, type AdAccountView, type AdsCampaignDraftView, type AdsCampaignRequestView } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
@@ -124,8 +124,8 @@ const draft = (over: Partial<AdsCampaignDraftView> = {}): AdsCampaignDraftView =
   ...over,
 });
 
-const builder = (over: { draft?: AdsCampaignDraftView | null; canManage?: boolean; seed?: ReturnType<typeof formFromPost> | null } = {}) => (
-  <CampaignBuilder slug="demo" account={account()} draft={over.draft === undefined ? draft() : over.draft} seed={over.seed ?? null} canManage={over.canManage ?? true} pages={[]} onSaved={() => undefined} onDiscarded={() => undefined} />
+const builder = (over: { draft?: AdsCampaignDraftView | null; canManage?: boolean; seed?: ReturnType<typeof formFromPost> | null; pages?: Array<{ id: string; name: string }> } = {}) => (
+  <CampaignBuilder slug="demo" account={account()} draft={over.draft === undefined ? draft() : over.draft} seed={over.seed ?? null} canManage={over.canManage ?? true} pages={over.pages ?? []} onSaved={() => undefined} onDiscarded={() => undefined} />
 );
 
 // Whether the button with this text is there, and off (its own `disabled` attribute: the class names carry the word too).
@@ -213,13 +213,36 @@ describe('the builder of a saved draft', () => {
     expect(html).not.toContain('Set the daily budget and the dates to see the most it can spend.');
   });
 
-  it('offers the Page of a Messenger ad in place of the link, and the link of the others', () => {
-    const messenger = render(builder({ draft: draft({ plan: { ...draft().plan, objective: 'messenger', linkUrl: null } }) }));
-    expect(messenger).toContain('The Facebook Page');
-    expect(messenger).not.toContain('Where the ad leads');
-    const traffic = render(builder());
-    expect(traffic).toContain('Where the ad leads');
-    expect(traffic).not.toContain('The Facebook Page');
+  it('offers the Facebook Page for every objective, and the link only for Traffic and Engagement (#3864)', () => {
+    for (const objective of ['traffic', 'engagement', 'messenger'] as const) {
+      const html = render(builder({ draft: draft({ plan: { ...draft().plan, objective, linkUrl: objective === 'messenger' ? null : 'https://example.com/khai-truong' } }) }));
+      expect(html, objective).toContain('The Facebook Page');
+      expect(html, objective).toContain('Every ad runs as a Facebook Page');
+      expect(html.includes('Where the ad leads'), objective).toBe(objective !== 'messenger');
+    }
+    expect(render(builder(), 'vi')).toContain('Trang Facebook');
+  });
+
+  it('lists the org’s Pages, keeps the chosen one for a Traffic ad and says so when none is connected', () => {
+    const pages = [{ id: ID, name: 'Trang Cà phê Sài Gòn' }];
+    const chosen = render(builder({ pages, draft: draft({ plan: { ...draft().plan, pageConnectionId: ID } }) }));
+    expect(chosen).toContain('Trang Cà phê Sài Gòn');
+    expect(chosen).toMatch(new RegExp(`<option[^>]*value="${ID}"[^>]*selected`));
+    expect(render(builder({ pages }))).toContain('Choose a Page');
+    expect(render(builder())).toContain('No Facebook Page connected');
+  });
+
+  it('says under the Page field, in both languages, that a checked plan has no Page or one that is not the org’s', () => {
+    const missing = draft({ issues: [{ code: 'missing_field', severity: 'error', field: 'pageConnectionId', params: {} }] });
+    const en = render(builder({ draft: missing }));
+    expect(en).toContain('Choose the Facebook Page the ad runs as: an ad cannot launch without one.');
+    expect(en).toContain('aria-invalid="true"');
+    expect(render(builder({ draft: missing }), 'vi')).toContain('Hãy chọn Trang Facebook mà quảng cáo chạy dưới tên');
+    const foreign = draft({ issues: [{ code: 'page_not_found', severity: 'error', field: 'pageConnectionId', params: {} }] });
+    expect(render(builder({ draft: foreign }))).toContain('The Page you chose is not a connected Facebook Page of this org. Choose another.');
+    // A plan with its Page has nothing to say about it.
+    const fine = render(builder({ draft: draft({ plan: { ...draft().plan, pageConnectionId: ID } }), pages: [{ id: ID, name: 'Trang A' }] }));
+    expect(fine).not.toContain('an ad cannot launch without one');
   });
 
   it('shows a day of a finding the way the date fields write it', () => {
@@ -289,6 +312,9 @@ describe('a draft that is frozen', () => {
     finishedAt: null,
     windDown: null,
     objects: [],
+    provider: 'meta_ads',
+    statesReadAt: null,
+    statesReadOk: null,
     ...over,
   });
 
@@ -345,6 +371,33 @@ describe('a draft that is frozen', () => {
     expect(vi).toContain('Dừng lần chạy này');
   });
 
+  // When Ludy last asked the platform (#3419): one line under the objects, said as a failure (with the last known state) when that read did not work, and nothing for a launch never read.
+  it('says when Ludy last asked the platform about the objects, and that the state shown is the last known one after a failed read', () => {
+    const objects = [{ slot: 'ad_1', level: 'ad' as const, externalId: 'ad_404', name: 'x [ludy:0123456789]', effectiveStatus: 'PENDING_REVIEW', reviewReason: 'in_review' }];
+    const live = (over: Partial<NonNullable<AdsCampaignDraftView['launch']>>) => launch({ state: 'live', step: 'live', objects, ...over });
+    const read = render(builder({ draft: draft({ status: 'approved', launch: live({ statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: true }) }) }));
+    expect(read).toContain('data-testid="campaign-launch-read"');
+    expect(read).toMatch(/Asked Meta at [^<]*2026/);
+    expect(read).not.toContain('last known state');
+    const failed = render(builder({ draft: draft({ status: 'approved', launch: live({ statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: false }) }) }));
+    expect(failed).toMatch(/Could not ask Meta at [^<]*2026[^<]*; showing the last known state/);
+    const vi = render(builder({ draft: draft({ status: 'approved', launch: live({ statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: false }) }) }), 'vi');
+    expect(vi).toContain('Không hỏi được Meta lúc');
+    expect(vi).toContain('đang hiện trạng thái đã biết gần nhất');
+    // The sandbox has no platform name of its own, so the line says "the ad platform".
+    const sandbox = render(builder({ draft: draft({ status: 'approved', launch: live({ provider: 'sandbox_ads', statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: true }) }) }));
+    expect(sandbox).toMatch(/Asked the ad platform at /);
+    expect(sandbox).not.toContain('sandbox_ads');
+    // Never read: no line, no epoch, no empty label.
+    const never = render(builder({ draft: draft({ status: 'approved', launch: live({}) }) }));
+    expect(never).not.toContain('campaign-launch-read');
+    expect(never).not.toContain('Asked');
+    expect(never).not.toContain('1970');
+    // A stopped launch shows the line too, since its objects are still listed.
+    const stopped = render(builder({ draft: draft({ status: 'approved', launch: live({ state: 'stopped', statesReadAt: '2026-11-15T03:04:00.000Z', statesReadOk: true }) }) }));
+    expect(stopped).toContain('campaign-launch-read');
+  });
+
   it('lists the objects created on the ad platform and shows whether they are active or paused', () => {
     const objects = [
       { slot: 'campaign', level: 'campaign' as const, externalId: 'cmp_101', name: 'Khai trương [ludy:0123456789]', effectiveStatus: null, reviewReason: null },
@@ -356,9 +409,13 @@ describe('a draft that is frozen', () => {
     expect(pausedHtml).toContain('Created on the ad platform');
     expect(pausedHtml).toContain('Campaign: ');
     expect(pausedHtml).toContain('cmp_101');
+    // The platform's id is behind a details link, not printed after the name (AD-11).
+    expect(pausedHtml).toContain('<summary');
+    expect(pausedHtml).toContain('Platform id: cmp_101');
+    expect(pausedHtml).not.toContain('(cmp_101)');
     expect(pausedHtml).toContain('Ad set: ');
     expect(pausedHtml).toContain('set_202');
-    expect(pausedHtml).toContain('PENDING_REVIEW (in_review)');
+    expect(pausedHtml).toContain('In review (the platform is reviewing it)');
     const liveHtml = render(
       builder({
         draft: draft({
@@ -389,6 +446,19 @@ describe('a draft that is frozen', () => {
     expect(vi).toContain('Chiến dịch: ');
     expect(vi).toContain('Nhóm quảng cáo: ');
     expect(vi).toContain('Đang bật');
+  });
+
+  it('shows a rejected ad with the reason the sync stored, and renders whatever the platform sent as text, never as markup', () => {
+    const rejected = [{ slot: 'ad_1', level: 'ad' as const, externalId: 'ad_404', name: 'Khai trương', effectiveStatus: 'DISAPPROVED', reviewReason: 'issue_1487079' }];
+    const html = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'live', step: 'live', objects: rejected }) }) }));
+    expect(html).toContain('Rejected (platform issue code 1487079)');
+    expect(render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'live', step: 'live', objects: rejected }) }) }), 'vi')).toContain('Bị từ chối (mã vấn đề 1487079 của nền tảng)');
+    // A value that is not a code this build knows is shown as it is, escaped.
+    const hostile = [{ slot: 'ad_1', level: 'ad' as const, externalId: 'ad_404', name: 'Khai trương', effectiveStatus: 'X<IMG_SRC=x>', reviewReason: '<script>alert(1)</script>' }];
+    const escaped = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'live', step: 'live', objects: hostile }) }) }));
+    expect(escaped).not.toContain('<script>');
+    expect(escaped).not.toContain('<IMG');
+    expect(escaped).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
   });
 
   it('a stopped launch says its commitment stays and where the pause of its ads stands: being paused, paused, or to be paused by hand', () => {

@@ -1,5 +1,5 @@
 // The media library (Social plan S9, issue #395): the org's post images, uploaded with purpose=social (#372), to reuse
-// across posts, find by name and see where each is used. A library item is a crove_kernel.file row with source
+// across posts, find by name and see where each is used. A library item is a ludy_kernel.file row with source
 // 'social'; an upload of the same bytes is the same file, so an image is in the library once. Members tag files to
 // find them again (#904, media-tags.ts).
 //
@@ -10,17 +10,17 @@
 // itself. The library's list stays org-wide otherwise (#1099).
 //
 // Archived files (#1302): members take failed crops and rejected designs out of the library with social.media.archive
-// and bring them back with social.media.restore, up to 100 at once. The mark lives in crove_social.media_archive, since
-// crove_kernel.file never changes. An archived file leaves the library's list (shown only when asked for) and every
+// and bring them back with social.media.restore, up to 100 at once. The mark lives in ludy_social.media_archive, since
+// ludy_kernel.file never changes. An archived file leaves the library's list (shown only when asked for) and every
 // picker; posts that already use it keep it, since publishing and previews read the file itself. Every command that
 // attaches files refuses an archived file, and a file the member may not use, with 403 MEDIA_NOT_ALLOWED
 // (refuseUnusableMedia, #1273): the post and variant create and edit, add channels, duplicate, drafts from media, the
 // CSV import and the AI draft's photos; a file a post or channel already holds stays attached.
 import { sql, type RawBuilder } from 'kysely';
 import { z } from 'zod';
-import { SOCIAL_IMAGE_TYPES, SOCIAL_VIDEO_TYPES, zId } from '@crove/kernel-contract';
-import type { MemberRole } from '@crove/db';
-import { DomainError, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { SOCIAL_IMAGE_TYPES, SOCIAL_VIDEO_TYPES, zId } from '@ludy/kernel-contract';
+import type { MemberRole } from '@ludy/db';
+import { DomainError, defineQuery, type CommandContext } from '@ludy/kernel-runtime';
 import { normalizeMediaTag } from './domain/media-tags.ts';
 import { isFileId } from './domain/plan-csv.ts';
 import { channelScope, postInScope, type ChannelScope } from './channel-access.ts';
@@ -71,9 +71,9 @@ export interface LibraryUse {
 
 // Posts of the org that show a file, as a subquery over the file row f.
 const postsUsing = sql`(
-  SELECT m.post_id FROM crove_social.post_media m WHERE m.org_id = f.org_id AND m.file_id = f.id
+  SELECT m.post_id FROM ludy_social.post_media m WHERE m.org_id = f.org_id AND m.file_id = f.id
   UNION
-  SELECT v.post_id FROM crove_social.post_variant v WHERE v.org_id = f.org_id AND v.media @> jsonb_build_array(jsonb_build_object('fileId', f.id::text))
+  SELECT v.post_id FROM ludy_social.post_variant v WHERE v.org_id = f.org_id AND v.media @> jsonb_build_array(jsonb_build_object('fileId', f.id::text))
 )`;
 
 // SQL over a file row (alias f by default): the file is another channel's own media only, for a member limited to some
@@ -84,15 +84,15 @@ export function mediaHidden(scope: ChannelScope, alias = 'f'): RawBuilder<boolea
   const id = sql.ref(`${alias}.id`);
   const ids = [...scope];
   const own = (mine: boolean) =>
-    sql`EXISTS (SELECT 1 FROM crove_social.post_variant v WHERE v.org_id = ${org} AND v.media @> jsonb_build_array(jsonb_build_object('fileId', ${id}::text)) AND ${
+    sql`EXISTS (SELECT 1 FROM ludy_social.post_variant v WHERE v.org_id = ${org} AND v.media @> jsonb_build_array(jsonb_build_object('fileId', ${id}::text)) AND ${
       mine ? sql`v.channel_connection_id = ANY(${ids}::uuid[])` : sql`NOT (v.channel_connection_id = ANY(${ids}::uuid[]))`
     })`;
-  return sql<boolean>`(${own(false)} AND NOT EXISTS (SELECT 1 FROM crove_social.post_media m WHERE m.org_id = ${org} AND m.file_id = ${id}) AND NOT ${own(true)})`;
+  return sql<boolean>`(${own(false)} AND NOT EXISTS (SELECT 1 FROM ludy_social.post_media m WHERE m.org_id = ${org} AND m.file_id = ${id}) AND NOT ${own(true)})`;
 }
 
 // SQL over a file row (alias f by default): the file is archived (#1302).
 export function mediaArchived(alias = 'f'): RawBuilder<boolean> {
-  return sql<boolean>`EXISTS (SELECT 1 FROM crove_social.media_archive x WHERE x.org_id = ${sql.ref(`${alias}.org_id`)} AND x.file_id = ${sql.ref(`${alias}.id`)})`;
+  return sql<boolean>`EXISTS (SELECT 1 FROM ludy_social.media_archive x WHERE x.org_id = ${sql.ref(`${alias}.org_id`)} AND x.file_id = ${sql.ref(`${alias}.id`)})`;
 }
 
 // Why a file may not be attached: another channel's own media (#1081), or archived (#1302).
@@ -109,7 +109,7 @@ export async function refuseUnusableMedia(ctx: Pick<CommandContext, 'trx' | 'org
   if (ids.length === 0) return;
   const scope = await channelScope(ctx);
   const found = await ctx.trx
-    .selectFrom('crove_kernel.file as f')
+    .selectFrom('ludy_kernel.file as f')
     .select(['f.id', mediaHidden(scope).as('hidden')])
     .where('f.org_id', '=', ctx.orgId)
     .where('f.id', 'in', ids)
@@ -122,12 +122,12 @@ export async function refuseUnusableMedia(ctx: Pick<CommandContext, 'trx' | 'org
 // LIKE wildcards in a search are matched as themselves.
 export const likeTerm = (s: string) => `%${s.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
-// What a Social search box matches (#1360): the typed text folded as crove_kernel.search_fold folds it (#673: marks, đ,
+// What a Social search box matches (#1360): the typed text folded as ludy_kernel.search_fold folds it (#673: marks, đ,
 // case and punctuation aside, so "dien thoai" finds "Điện thoại" and "điện-thoại" too) inside folded text. A term with
 // nothing left once folded (emoji, another script) matches the raw texts as typed, case aside. A folded term holds only
 // a-z, 0-9 and single spaces, so it has no LIKE wildcard.
 export function searchMatch(search: string, folded: RawBuilder<unknown>, raw: ReadonlyArray<RawBuilder<unknown>>): RawBuilder<boolean> {
-  const term = sql`crove_kernel.search_fold(${search})`;
+  const term = sql`ludy_kernel.search_fold(${search})`;
   const typed = likeTerm(search);
   const asTyped = sql.join(
     raw.map((r) => sql`${r} ILIKE ${typed}`),
@@ -154,9 +154,9 @@ export const mediaList = defineQuery({
   handler: async (ctx, input): Promise<{ items: LibraryItem[]; more: boolean }> => {
     const limit = input.limit ?? LIBRARY_PAGE;
     let q = ctx.trx
-      .selectFrom('crove_kernel.file as f')
-      .leftJoin('crove_social.media_attribution as a', (j) => j.onRef('a.org_id', '=', 'f.org_id').onRef('a.file_id', '=', 'f.id'))
-      .leftJoin('crove_social.media_archive as x', (j) => j.onRef('x.org_id', '=', 'f.org_id').onRef('x.file_id', '=', 'f.id'))
+      .selectFrom('ludy_kernel.file as f')
+      .leftJoin('ludy_social.media_attribution as a', (j) => j.onRef('a.org_id', '=', 'f.org_id').onRef('a.file_id', '=', 'f.id'))
+      .leftJoin('ludy_social.media_archive as x', (j) => j.onRef('x.org_id', '=', 'f.org_id').onRef('x.file_id', '=', 'f.id'))
       .select([
         'f.id',
         'f.filename',
@@ -167,7 +167,7 @@ export const mediaList = defineQuery({
         'f.image_height',
         'f.created_at',
         sql<string>`(SELECT count(*) FROM ${postsUsing} u)`.as('used_in'),
-        sql<string[]>`ARRAY(SELECT t.tag FROM crove_social.media_tag t WHERE t.org_id = f.org_id AND t.file_id = f.id ORDER BY lower(t.tag), t.tag)`.as('tags'),
+        sql<string[]>`ARRAY(SELECT t.tag FROM ludy_social.media_tag t WHERE t.org_id = f.org_id AND t.file_id = f.id ORDER BY lower(t.tag), t.tag)`.as('tags'),
         'a.provider',
         'a.photographer',
         'a.photographer_url',
@@ -181,10 +181,10 @@ export const mediaList = defineQuery({
       .where('x.id', input.archived && !input.usable ? 'is not' : 'is', null);
     if (input.usable) q = q.where(sql<boolean>`NOT ${mediaHidden(await channelScope(ctx))}`);
     // Folded here, not stored (#1360): the list stops at a page.
-    if (input.search) q = q.where(searchMatch(input.search, sql`crove_kernel.search_fold(f.filename)`, [sql`f.filename`]));
+    if (input.search) q = q.where(searchMatch(input.search, sql`ludy_kernel.search_fold(f.filename)`, [sql`f.filename`]));
     if (input.tag) {
       const tag = input.tag;
-      q = q.where(sql<boolean>`EXISTS (SELECT 1 FROM crove_social.media_tag t WHERE t.org_id = f.org_id AND t.file_id = f.id AND lower(t.tag) = lower(${tag}))`);
+      q = q.where(sql<boolean>`EXISTS (SELECT 1 FROM ludy_social.media_tag t WHERE t.org_id = f.org_id AND t.file_id = f.id AND lower(t.tag) = lower(${tag}))`);
     }
     if (input.before) {
       const at = new Date(Date.parse(input.before.createdAt));
@@ -225,17 +225,17 @@ export const mediaUsage = defineQuery({
   access: ALL,
   handler: async (ctx, input): Promise<LibraryUse[]> => {
     const rows = await ctx.trx
-      .selectFrom('crove_social.post as p')
+      .selectFrom('ludy_social.post as p')
       .select(['p.id', 'p.status', 'p.body', 'p.updated_at'])
       .where('p.org_id', '=', ctx.orgId)
       // A member limited to some channels (#1081) sees the posts they may see.
       .where(postInScope(await channelScope(ctx)))
       .where((eb) =>
         eb.or([
-          eb.exists(eb.selectFrom('crove_social.post_media as m').select('m.id').whereRef('m.org_id', '=', 'p.org_id').whereRef('m.post_id', '=', 'p.id').where('m.file_id', '=', input.fileId)),
+          eb.exists(eb.selectFrom('ludy_social.post_media as m').select('m.id').whereRef('m.org_id', '=', 'p.org_id').whereRef('m.post_id', '=', 'p.id').where('m.file_id', '=', input.fileId)),
           eb.exists(
             eb
-              .selectFrom('crove_social.post_variant as v')
+              .selectFrom('ludy_social.post_variant as v')
               .select('v.id')
               .whereRef('v.org_id', '=', 'p.org_id')
               .whereRef('v.post_id', '=', 'p.id')
@@ -258,7 +258,7 @@ export const mediaStored = defineQuery({
   access: MEMBERS,
   handler: async (ctx, input): Promise<{ storageKey: string; generation: string | null; sha256: string; contentType: string; sizeBytes: number }> => {
     const file = await ctx.trx
-      .selectFrom('crove_kernel.file')
+      .selectFrom('ludy_kernel.file')
       .select(['storage_key', 'generation', 'sha256', 'content_type', 'size_bytes'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.fileId)
@@ -281,7 +281,7 @@ export const mediaDraftImages = defineQuery({
   handler: async (ctx, input): Promise<{ fileId: string; storageKey: string; generation: string | null; sha256: string; contentType: string; sizeBytes: number }[]> => {
     const scope = await channelScope(ctx);
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.file as f')
+      .selectFrom('ludy_kernel.file as f')
       .select([
         'f.id',
         'f.storage_key',
@@ -334,7 +334,7 @@ export const mediaResolve = defineQuery({
     const ids = [...new Set(input.refs.filter(isFileId).map((r) => r.toLowerCase()))];
     const names = [...new Set(input.refs.filter((r) => !isFileId(r)).map(keyOf))];
     const rows = await ctx.trx
-      .selectFrom('crove_kernel.file as f')
+      .selectFrom('ludy_kernel.file as f')
       .select([
         'f.id',
         'f.filename',

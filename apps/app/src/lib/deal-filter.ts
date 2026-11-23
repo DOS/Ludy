@@ -4,7 +4,7 @@
 // saved view (a contact, created within N days, several stages) stays in `rest`, shown as a chip the person can remove, so
 // opening a view and saving it again never drops a condition the bar cannot draw. No browser or API imports, so it is
 // unit tested.
-import { SAVED_VIEW_SCOPES, type FilterAst, type FilterCondition, type SavedViewSort } from '@crove/kernel-contract';
+import { SAVED_VIEW_SCOPES, type FilterAst, type FilterCondition, type SavedViewSort } from '@ludy/kernel-contract';
 import { normalizeAmount } from './vouchers.ts';
 
 export type DealStatusFilter = '' | 'open' | 'won' | 'lost';
@@ -83,10 +83,4 @@ export function dealSortValue(sort: SavedViewSort | null | undefined): string {
 export function dealSortOfValue(value: string): SavedViewSort | null {
   const [field, dir] = value.split(':');
   return field && (dir === 'asc' || dir === 'desc') && DEAL_SORT_OPTIONS.includes(value) ? { field, dir } : null;
-}
-
-// What a condition the bar cannot draw says, for its chip: the field's label from the registry and the operator's value.
-export function dealConditionLabel(c: FilterCondition): string {
-  const spec = (SAVED_VIEW_SCOPES['crm.deal'].fields as Record<string, { label: string }>)[c.field];
-  return `${spec?.label ?? c.field}: ${c.op}${c.value === undefined ? '' : ` ${String(c.value)}`}`;
 }

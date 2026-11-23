@@ -3,10 +3,10 @@
 // PDF, only links on a table host, and the provider lists of the contract and of l10n-vn are the same.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { LOOKUP_PROVIDER_IDS, zPurchaseProposal, type PurchaseProposal } from '@crove/kernel-contract';
-import type { ExtractClient } from '@crove/extract-contract';
-import { sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
-import { LOOKUP_PROVIDERS, type ParsedInvoice } from '@crove/l10n-vn';
+import { LOOKUP_PROVIDER_IDS, zPurchaseProposal, type PurchaseProposal } from '@ludy/kernel-contract';
+import type { ExtractClient } from '@ludy/extract-contract';
+import { sha256Hex, type BlobStore, type Runtime } from '@ludy/kernel-runtime';
+import { LOOKUP_PROVIDERS, type ParsedInvoice } from '@ludy/l10n-vn';
 import { extractAndPropose } from '../src/extract.ts';
 
 const ORG = '00000000-0000-4000-8000-000000000001';

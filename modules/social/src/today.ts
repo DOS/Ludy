@@ -15,9 +15,9 @@
 // short title a post may carry, which the org's own members typed. A href is a path inside the org (Home puts the org in front).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import type { MemberRole } from '@crove/db';
-import type { TodayItem } from '@crove/kernel-contract';
-import { defineQuery } from '@crove/kernel-runtime';
+import type { MemberRole } from '@ludy/db';
+import type { TodayItem } from '@ludy/kernel-contract';
+import { defineQuery } from '@ludy/kernel-runtime';
 import { ATTENTION_CHANNEL_STATUSES } from './attention-inbox.ts';
 import { channelScope, connectionInScope } from './channel-access.ts';
 import { SOCIAL_FIGURE_MAX } from './client-overview.ts';
@@ -73,7 +73,7 @@ export const socialToday = defineQuery({
     // Channels whose sign-in expired or broke: an owner or admin reconnects them, so only they are told.
     if (manager) {
       const channels = await ctx.trx
-        .selectFrom('crove_kernel.channel_connection')
+        .selectFrom('ludy_kernel.channel_connection')
         .select(sql<string>`count(*)`.as('n'))
         .where('org_id', '=', ctx.orgId)
         .where('status', 'in', [...ATTENTION_CHANNEL_STATUSES])
@@ -81,6 +81,7 @@ export const socialToday = defineQuery({
         .where('provider', 'not like', 'bank\\_%')
         .where('provider', 'not like', '%\\_ads')
         .where('provider', 'not like', 'einvoice\\_%')
+        .where('provider', 'not like', 'accounting\\_%')
         .executeTakeFirstOrThrow();
       const n = Number(channels.n);
       if (n > 0) items.push({ kind: 'flag', app: 'social', id: 'channels', title: { key: 'social.channels', params: { count: n } }, count: n, severity: 'warn', href: '/social/channels' });
@@ -99,8 +100,8 @@ export const socialToday = defineQuery({
     // posts are looked at, so "N more" is exact below that.
     const at = sql<Date>`coalesce(v.queue_slot_at, v.scheduled_at, p.scheduled_at)`;
     const rows = await ctx.trx
-      .selectFrom('crove_social.post_variant as v')
-      .innerJoin('crove_social.post as p', (j) => j.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.post_id'))
+      .selectFrom('ludy_social.post_variant as v')
+      .innerJoin('ludy_social.post as p', (j) => j.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.post_id'))
       .select(['p.id as post_id', 'p.title', sql<Date>`min(${at})`.as('at')])
       .where('v.org_id', '=', ctx.orgId)
       .where('v.status', '=', 'in_review')

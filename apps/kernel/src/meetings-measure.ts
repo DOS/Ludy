@@ -11,7 +11,7 @@ import {
   MediaClientError,
   type MediaMeasureClient,
   type MediaProbeResult,
-} from '@crove/media-contract/measure';
+} from '@ludy/media-contract/measure';
 import {
   DomainError,
   decryptBlobChunks,
@@ -19,7 +19,7 @@ import {
   plaintextLengthFromCiphertextLength,
   type BlobMediaBinding,
   type BlobStore,
-} from '@crove/kernel-runtime';
+} from '@ludy/kernel-runtime';
 
 // One window of plaintext at a time (the same size the playback route reads).
 export const MEASURE_WINDOW_BYTES = 4 * 1024 * 1024;
@@ -68,8 +68,8 @@ export const MEDIA_TOO_LONG = 'MEDIA_TOO_LONG';
 
 export const unavailable = () =>
   new DomainError(MEDIA_PROBE_UNAVAILABLE, 503, 'The media service that measures recordings is not available, so this recording cannot be stored (Dịch vụ đo thời lượng bản ghi chưa sẵn sàng)');
-const failed = (why: string) => new DomainError(MEDIA_PROBE_FAILED, 422, `The recording could not be read as ${why} (Không đọc được bản ghi)`);
-const tooLong = () =>
+export const failed = (why: string) => new DomainError(MEDIA_PROBE_FAILED, 422, `The recording could not be read as ${why} (Không đọc được bản ghi)`);
+export const tooLong = () =>
   new DomainError(MEDIA_TOO_LONG, 413, `The recording is longer than ${MEDIA_LIMITS.maxDurationSeconds / 3600} hours (Bản ghi dài quá ${MEDIA_LIMITS.maxDurationSeconds / 3600} giờ)`);
 
 // What a failed call to the sandbox means for the user. A sandbox that is down, busy or timing out is "unavailable" (the upload is

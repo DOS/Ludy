@@ -8,11 +8,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
+import { createDb, createPool, type Db } from '@ludy/db';
+import { migrate, setRolePasswords } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { extractAndPropose, financeCommands, financeQueries } from '@ludy/mod-finance';
 import { orgPurgeCommand, parseOrgPurgeArgs, runOrgPurge, type HeldCheck } from '../src/org-purge.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { KEPT, purgeCoverageProblems, readMigrations, readPurgeCatalog } from './org-purge-coverage.ts';
@@ -98,7 +98,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
     // after it must not make the removal trigger write an audit row of a purged org.
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.extension_token (org_id, user_id, token_hash, device_name, scopes, expires_at, created_by)
+        `INSERT INTO ludy_kernel.extension_token (org_id, user_id, token_hash, device_name, scopes, expires_at, created_by)
          VALUES ($1, $2, $3, 'Purge test device', ARRAY['meetings'], now() + interval '30 days', $2)`,
         [org.orgId, member, randomBytes(32)],
       ),
@@ -119,37 +119,41 @@ suite('org purge on PostgreSQL (#1024)', () => {
 
     const partyEmail = `seller-${tag}@purge.test`;
     const ids = await admin(async (c) => {
-      await c.query(`UPDATE crove_kernel.party SET email = $2, phone = '0900000000' WHERE org_id = $1`, [org.orgId, partyEmail]);
-      const stray = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, kind, name, email) VALUES ($1, 'person', 'Stray', $2) RETURNING id`, [org.orgId, `stray-${tag}@purge.test`])).rows[0]?.id;
-      const position = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.position (org_id, title, module, role_key) VALUES ($1, 'Kế toán', 'finance', 'accountant') RETURNING id`, [org.orgId])).rows[0]?.id;
-      const parent = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.task (org_id, title, source, created_by_type) VALUES ($1, 'Parent', 'human', 'system') RETURNING id`, [org.orgId])).rows[0]?.id;
+      await c.query(`UPDATE ludy_kernel.party SET email = $2, phone = '0900000000' WHERE org_id = $1`, [org.orgId, partyEmail]);
+      const stray = (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, kind, name, email) VALUES ($1, 'person', 'Stray', $2) RETURNING id`, [org.orgId, `stray-${tag}@purge.test`])).rows[0]?.id;
+      const position = (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.position (org_id, title, module, role_key) VALUES ($1, 'Kế toán', 'finance', 'accountant') RETURNING id`, [org.orgId])).rows[0]?.id;
+      const parent = (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type) VALUES ($1, 'Parent', 'human', 'system') RETURNING id`, [org.orgId])).rows[0]?.id;
       const pinned = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.task (org_id, title, source, created_by_type, parent_task_id, assignee_position_id) VALUES ($1, 'Pinned', 'human', 'system', $2, $3) RETURNING id`,
+          `INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type, parent_task_id, assignee_position_id) VALUES ($1, 'Pinned', 'human', 'system', $2, $3) RETURNING id`,
           [org.orgId, parent, position],
         )
       ).rows[0]?.id;
-      await c.query(`INSERT INTO crove_kernel.task_comment (org_id, task_id, body, author_type) VALUES ($1, $2, 'Đã xem', 'system')`, [org.orgId, pinned]);
+      await c.query(`INSERT INTO ludy_kernel.task_comment (org_id, task_id, body, author_type) VALUES ($1, $2, 'Đã xem', 'system')`, [org.orgId, pinned]);
+      // A minutes template the org wrote (#3578): a working row, deleted with the org's others.
+      await c.query(`INSERT INTO ludy_meetings.minutes_template (org_id, name, sections, created_by) VALUES ($1, 'Mẫu họp dự án', '[{"key":"s1","title":"Nội dung","hint":""}]'::jsonb, $2)`, [org.orgId, owner]);
+      // A term of the org's glossary (#4043): a working row, deleted with the org's others.
+      await c.query(`INSERT INTO ludy_meetings.glossary_term (org_id, term, created_by) VALUES ($1, 'Crove', $2)`, [org.orgId, owner]);
       // A bank feed account (#2044) and its connection: the account is deleted before the connection it references.
       const feedConnection = randomUUID();
       await c.query(
-        'INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
+        'INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
         [org.orgId, feedConnection, 'bank_sandbox', `feed-${tag}`, 'Ngân hàng', owner],
       );
-      await c.query(`INSERT INTO crove_finance.bank_feed_account (org_id, channel_connection_id, external_account_id, bank_account) VALUES ($1, $2, 'SBX-001', '1121')`, [org.orgId, feedConnection]);
+      await c.query(`INSERT INTO ludy_finance.bank_feed_account (org_id, channel_connection_id, external_account_id, bank_account) VALUES ($1, $2, 'SBX-001', '1121')`, [org.orgId, feedConnection]);
       // The number of a bank account (#2183), recorded without a bank feed: a working row, deleted with the org's others.
-      await c.query(`INSERT INTO crove_finance.bank_account_number (org_id, bank_account, account_number) VALUES ($1, '1121', '0123456789')`, [org.orgId]);
+      await c.query(`INSERT INTO ludy_finance.bank_account_number (org_id, bank_account, account_number) VALUES ($1, '1121', '0123456789')`, [org.orgId]);
       // A sales e-invoice (#2500): a series, and a draft with two lines. The issue job's move on is made below, in a system context: the guards of a draft and its
       // lines let one that has left `draft` go only with the org.
-      const einvoiceSeries = (await c.query<{ id: string }>(`INSERT INTO crove_finance.einvoice_series (org_id, provider, template_no, symbol, is_default) VALUES ($1, 'sandbox', '1', 'C26TSB', true) RETURNING id`, [org.orgId])).rows[0]?.id;
+      const einvoiceSeries = (await c.query<{ id: string }>(`INSERT INTO ludy_finance.einvoice_series (org_id, provider, template_no, symbol, is_default) VALUES ($1, 'sandbox', '1', 'C26TSB', true) RETURNING id`, [org.orgId])).rows[0]?.id;
       const einvoiceDraft = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_finance.einvoice_draft (org_id, series_id, invoice_date, buyer_kind, subtotal, vat_amount, total) VALUES ($1, $2, current_date, 'consumer', 300000, 30000, 330000) RETURNING id`,
+          `INSERT INTO ludy_finance.einvoice_draft (org_id, series_id, invoice_date, buyer_kind, subtotal, vat_amount, total) VALUES ($1, $2, current_date, 'consumer', 300000, 30000, 330000) RETURNING id`,
           [org.orgId, einvoiceSeries],
         )
       ).rows[0]?.id;
       await c.query(
-        `INSERT INTO crove_finance.einvoice_draft_line (org_id, draft_id, line_no, description, quantity, unit_price, amount, vat_rate, vat_amount) VALUES
+        `INSERT INTO ludy_finance.einvoice_draft_line (org_id, draft_id, line_no, description, quantity, unit_price, amount, vat_rate, vat_amount) VALUES
            ($1, $2, 1, 'Hàng A', 1, 100000, 100000, '10%', 10000), ($1, $2, 2, 'Hàng B', 2, 100000, 200000, '10%', 20000)`,
         [org.orgId, einvoiceDraft],
       );
@@ -157,55 +161,70 @@ suite('org purge on PostgreSQL (#1024)', () => {
       // org's working rows, before the channel connection it references.
       const einvoiceChannel = randomUUID();
       await c.query(
-        'INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
+        'INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
         [org.orgId, einvoiceChannel, 'einvoice_sandbox', `einvoice-${tag}`, 'Hóa đơn thử', owner],
       );
-      await c.query(`INSERT INTO crove_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', '0101234564')`, [org.orgId, einvoiceChannel]);
+      await c.query(`INSERT INTO ludy_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', '0101234564')`, [org.orgId, einvoiceChannel]);
       // A connection to a marketplace (#2519): its channel connection and the row that files it under the entity and a platform; deleted with the working rows, before the channel connection.
       const marketplaceChannel = randomUUID();
       await c.query(
-        'INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
+        'INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
         [org.orgId, marketplaceChannel, 'marketplace_sandbox', `marketplace-${tag}`, 'Sàn thử', owner],
       );
-      await c.query(`INSERT INTO crove_finance.marketplace_connection (org_id, channel_connection_id, provider, platform) VALUES ($1, $2, 'marketplace_sandbox', 'shopee')`, [org.orgId, marketplaceChannel]);
+      await c.query(`INSERT INTO ludy_finance.marketplace_connection (org_id, channel_connection_id, provider, platform) VALUES ($1, $2, 'marketplace_sandbox', 'shopee')`, [org.orgId, marketplaceChannel]);
+      // A connection to MISA AMIS (#3875): its channel connection and the row that files it under the entity; deleted with the working rows, before the channel connection.
+      const misaAmisChannel = randomUUID();
+      await c.query(
+        'INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
+        [org.orgId, misaAmisChannel, 'accounting_misa_amis', `misa-amis-${tag}`, 'MISA AMIS thử', owner],
+      );
+      const misaAmisConnection = (
+        await c.query<{ id: string; legal_entity_id: string }>(`INSERT INTO ludy_finance.misa_amis_connection (org_id, channel_connection_id) VALUES ($1, $2) RETURNING id, legal_entity_id`, [org.orgId, misaAmisChannel])
+      ).rows[0] as { id: string; legal_entity_id: string };
+      // A voucher part pushed to it (#3902): deleted with the connection's working rows, before the connection.
+      await c.query(
+        `INSERT INTO ludy_finance.misa_amis_push (org_id, legal_entity_id, connection_id, source_type, source_id, voucher_type, org_refid, org_refno, payload_digest)
+         VALUES ($1, $2, $3, 'cash_voucher', $4, 5, $5, 'PT-PURGE', $6)`,
+        [org.orgId, misaAmisConnection.legal_entity_id, misaAmisConnection.id, randomUUID(), randomUUID(), 'b'.repeat(64)],
+      );
       // Stock (#2512): an item, the name a source uses for it and two moves (the second a reversal of the first), the first made by the owner. The moves are append-only and the
       // purge keeps them with the books: removing the owner's membership must not touch the row that names them.
       const stockItem = (
-        await c.query<{ id: string }>(`INSERT INTO crove_finance.stock_item (org_id, code, name, unit, stock_account) VALUES ($1, 'SP-PURGE', 'Hàng thử', 'cái', '156') RETURNING id`, [org.orgId])
+        await c.query<{ id: string }>(`INSERT INTO ludy_finance.stock_item (org_id, code, name, unit, stock_account) VALUES ($1, 'SP-PURGE', 'Hàng thử', 'cái', '156') RETURNING id`, [org.orgId])
       ).rows[0]?.id;
-      await c.query(`INSERT INTO crove_finance.stock_alias (org_id, item_id, alias_key) VALUES ($1, $2, 'hàng thử')`, [org.orgId, stockItem]);
-      const stockIn = (await c.query<{ id: string }>(`INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, created_by) VALUES ($1, $2, current_date, 5, 'manual', $3) RETURNING id`, [org.orgId, stockItem, owner])).rows[0]?.id;
-      await c.query(`INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, reverses_move_id) VALUES ($1, $2, current_date, -5, 'reversal', $3)`, [org.orgId, stockItem, stockIn]);
+      await c.query(`INSERT INTO ludy_finance.stock_alias (org_id, item_id, alias_key) VALUES ($1, $2, 'hàng thử')`, [org.orgId, stockItem]);
+      const stockIn = (await c.query<{ id: string }>(`INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type, created_by) VALUES ($1, $2, current_date, 5, 'manual', $3) RETURNING id`, [org.orgId, stockItem, owner])).rows[0]?.id;
+      await c.query(`INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type, reverses_move_id) VALUES ($1, $2, current_date, -5, 'reversal', $3)`, [org.orgId, stockItem, stockIn]);
       // An approved Social post (append-only approval, #1032): its approval, variant, post and channel connection.
       const connection = randomUUID();
       await c.query(
-        'INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
+        'INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
         [org.orgId, connection, 'sandbox', `acct-${tag}`, 'Kênh', owner],
       );
-      const post = (await c.query<{ id: string }>(`INSERT INTO crove_social.post (org_id, body, author_user_id) VALUES ($1, 'Bài đã duyệt', $2) RETURNING id`, [org.orgId, owner])).rows[0]?.id;
+      const post = (await c.query<{ id: string }>(`INSERT INTO ludy_social.post (org_id, body, author_user_id) VALUES ($1, 'Bài đã duyệt', $2) RETURNING id`, [org.orgId, owner])).rows[0]?.id;
       const hash = `sha256:${'a'.repeat(64)}`;
       const variant = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_social.post_variant (org_id, post_id, channel_connection_id, provider, content_hash, status) VALUES ($1, $2, $3, 'sandbox', $4, 'approved') RETURNING id`,
+          `INSERT INTO ludy_social.post_variant (org_id, post_id, channel_connection_id, provider, content_hash, status) VALUES ($1, $2, $3, 'sandbox', $4, 'approved') RETURNING id`,
           [org.orgId, post, connection, hash],
         )
       ).rows[0]?.id;
       await c.query(
-        `INSERT INTO crove_social.post_approval (org_id, post_id, variant_id, revision, content_hash, decision, decided_by, snapshot) VALUES ($1, $2, $3, 1, $4, 'approved', $5, '{}')`,
+        `INSERT INTO ludy_social.post_approval (org_id, post_id, variant_id, revision, content_hash, decision, decided_by, snapshot) VALUES ($1, $2, $3, 1, $4, 'approved', $5, '{}')`,
         [org.orgId, post, variant, hash, member],
       );
-      const free = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.task (org_id, title, source, created_by_type) VALUES ($1, 'Free', 'human', 'system') RETURNING id`, [org.orgId])).rows[0]?.id;
+      const free = (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.task (org_id, title, source, created_by_type) VALUES ($1, 'Free', 'human', 'system') RETURNING id`, [org.orgId])).rows[0]?.id;
       // A customer's two images (CV5c, #2357): one stored, with its blob in the store under its own key, one still pending. Deleted with the
       // org's other rows, the stored one's blob in the same command.
       const thread = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.conversation (org_id, channel_connection_id, kind, external_thread_id) VALUES ($1, $2, 'direct', $3) RETURNING id`,
+          `INSERT INTO ludy_kernel.conversation (org_id, channel_connection_id, kind, external_thread_id) VALUES ($1, $2, 'direct', $3) RETURNING id`,
           [org.orgId, connection, `thread-${tag}`],
         )
       ).rows[0]?.id;
       const message = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, external_message_id, sent_at, author_kind, body)
+          `INSERT INTO ludy_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, external_message_id, sent_at, author_kind, body)
            VALUES ($1, $2, $3, 'direct', 1, 'in', $4, now(), 'contact', '[Khách gửi ảnh]') RETURNING id`,
           [org.orgId, thread, connection, `msg-${tag}`],
         )
@@ -215,35 +234,35 @@ suite('org purge on PostgreSQL (#1024)', () => {
       const pendingKey = `conversation/${org.orgId}/${randomBytes(32).toString('hex')}`;
       store.blobs.set(imageKey, imageBytes);
       await c.query(
-        `INSERT INTO crove_kernel.conversation_attachment (org_id, message_id, channel_connection_id, kind, state, source_url, storage_key, generation, sha256, content_type, size_bytes, stored_at)
+        `INSERT INTO ludy_kernel.conversation_attachment (org_id, message_id, channel_connection_id, kind, state, source_url, storage_key, generation, sha256, content_type, size_bytes, stored_at)
          VALUES ($1, $2, $3, 'direct', 'stored', NULL, $4, $5, $6, 'image/png', $7, now()),
                 ($1, $2, $3, 'direct', 'pending', $8, $9, NULL, NULL, NULL, NULL, NULL)`,
         [org.orgId, message, connection, imageKey, `content:${'b'.repeat(64)}`, 'b'.repeat(64), imageBytes.byteLength, `https://cdn.zdn.vn/${tag}.png`, pendingKey],
       );
       // A customer only a ledger line names (a sale on 131): no foreign key points at it. A person who works at a company no voucher names (#2438): the company goes
       // and the kept person's link with it (ON DELETE SET NULL), instead of the purge stopping on the foreign key.
-      const ledgerParty = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, kind, name, email) VALUES ($1, 'person', 'Khách nợ', $2) RETURNING id`, [org.orgId, `ledger-${tag}@purge.test`])).rows[0]?.id;
-      const oldCompany = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, kind, name) VALUES ($1, 'organization', 'Công ty cũ của khách nợ') RETURNING id`, [org.orgId])).rows[0]?.id;
-      await c.query('UPDATE crove_kernel.party SET company_id = $3 WHERE org_id = $1 AND id = $2', [org.orgId, ledgerParty, oldCompany]);
+      const ledgerParty = (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, kind, name, email) VALUES ($1, 'person', 'Khách nợ', $2) RETURNING id`, [org.orgId, `ledger-${tag}@purge.test`])).rows[0]?.id;
+      const oldCompany = (await c.query<{ id: string }>(`INSERT INTO ludy_kernel.party (org_id, kind, name) VALUES ($1, 'organization', 'Công ty cũ của khách nợ') RETURNING id`, [org.orgId])).rows[0]?.id;
+      await c.query('UPDATE ludy_kernel.party SET company_id = $3 WHERE org_id = $1 AND id = $2', [org.orgId, ledgerParty, oldCompany]);
       await c.query('BEGIN');
       const entry = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, current_date, 'Bán hàng', 'test.sale', $2) RETURNING id`,
+          `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, current_date, 'Bán hàng', 'test.sale', $2) RETURNING id`,
           [org.orgId, randomUUID()],
         )
       ).rows[0]?.id;
       await c.query(
-        `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, 1, '131', 500000, 0, $3), ($1, $2, 2, '511', 0, 500000, NULL)`,
+        `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, 1, '131', 500000, 0, $3), ($1, $2, 2, '511', 0, 500000, NULL)`,
         [org.orgId, entry, ledgerParty],
       );
       await c.query('COMMIT');
       // A proposal nothing booked: deleted. The booked invoice's proposal is the approval trail and stays.
       await c.query(
-        `INSERT INTO crove_kernel.proposal (org_id, kind, command, title, payload, status) VALUES ($1, 'finance.purchase', 'finance.purchase.record', 'Stray', '{}', 'rejected')`,
+        `INSERT INTO ludy_kernel.proposal (org_id, kind, command, title, payload, status) VALUES ($1, 'finance.purchase', 'finance.purchase.record', 'Stray', '{}', 'rejected')`,
         [org.orgId],
       );
       // The owner's browser push subscription (#1238): deleted with the org's other Social rows.
-      await c.query(`INSERT INTO crove_social.push_subscription (org_id, user_id, endpoint, p256dh, auth) VALUES ($1, $2, $3, $4, $5)`, [
+      await c.query(`INSERT INTO ludy_social.push_subscription (org_id, user_id, endpoint, p256dh, auth) VALUES ($1, $2, $3, $4, $5)`, [
         org.orgId,
         owner,
         `https://push.example.com/${tag}`,
@@ -251,61 +270,71 @@ suite('org purge on PostgreSQL (#1024)', () => {
         Buffer.alloc(16, 9).toString('base64url'),
       ]);
       // The owner's saved view of the posts, shared with the org (#1300): deleted with the org's other Social rows.
-      await c.query(`INSERT INTO crove_social.saved_view (org_id, user_id, name, filters, shared) VALUES ($1, $2, 'Tuần này', '{"tab":"calendar"}', true)`, [org.orgId, owner]);
+      await c.query(`INSERT INTO ludy_social.saved_view (org_id, user_id, name, filters, shared) VALUES ($1, $2, 'Tuần này', '{"tab":"calendar"}', true)`, [org.orgId, owner]);
       // The owner's saved view of the deals (CRM K3, #2227), private: deleted before the members it names.
-      await c.query(`INSERT INTO crove_kernel.saved_view (org_id, user_id, scope, name, filters) VALUES ($1, $2, 'crm.deal', 'Của tôi', '{"v":1,"all":[{"field":"owner","op":"is_me"}]}')`, [org.orgId, owner]);
+      await c.query(`INSERT INTO ludy_kernel.saved_view (org_id, user_id, scope, name, filters) VALUES ($1, $2, 'crm.deal', 'Của tôi', '{"v":1,"all":[{"field":"owner","op":"is_me"}]}')`, [org.orgId, owner]);
       // A booking linked to a deal (#3103): both are deleted with the org, the booking first, and the link is no obstacle to either.
-      const stage = (await c.query<{ id: string }>(`INSERT INTO crove_crm.pipeline_stage (org_id, name, kind, position) VALUES ($1, 'Mới', 'open', 1) RETURNING id`, [org.orgId])).rows[0]?.id;
-      const linkedDeal = (await c.query<{ id: string }>(`INSERT INTO crove_crm.deal (org_id, party_id, title, stage_id, sort_key, created_by) VALUES ($1, $2, 'Cơ hội có lịch hẹn', $3, 'V', $4) RETURNING id`, [org.orgId, stray, stage, owner])).rows[0]?.id;
-      const linkedType = (await c.query<{ id: string }>(`INSERT INTO crove_crm.event_type (org_id, slug, title, duration_min, host_user_id, created_by) VALUES ($1, 'tu-van', 'Tư vấn', 30, $2, $2) RETURNING id`, [org.orgId, owner])).rows[0]?.id;
+      const stage = (await c.query<{ id: string }>(`INSERT INTO ludy_crm.pipeline_stage (org_id, name, kind, position) VALUES ($1, 'Mới', 'open', 1) RETURNING id`, [org.orgId])).rows[0]?.id;
+      const linkedDeal = (await c.query<{ id: string }>(`INSERT INTO ludy_crm.deal (org_id, party_id, title, stage_id, sort_key, created_by) VALUES ($1, $2, 'Cơ hội có lịch hẹn', $3, 'V', $4) RETURNING id`, [org.orgId, stray, stage, owner])).rows[0]?.id;
+      const linkedType = (await c.query<{ id: string }>(`INSERT INTO ludy_crm.event_type (org_id, slug, title, duration_min, host_user_id, created_by) VALUES ($1, 'tu-van', 'Tư vấn', 30, $2, $2) RETURNING id`, [org.orgId, owner])).rows[0]?.id;
       const linkedEvent = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_kernel.calendar_event (org_id, user_id, starts_at, ends_at, time_zone, title, kind, created_by) VALUES ($1, $2, '2032-01-01T01:00:00Z', '2032-01-01T01:30:00Z', 'Asia/Ho_Chi_Minh', 'Tư vấn', 'booking', $2) RETURNING id`,
+          `INSERT INTO ludy_kernel.calendar_event (org_id, user_id, starts_at, ends_at, time_zone, title, kind, created_by) VALUES ($1, $2, '2032-01-01T01:00:00Z', '2032-01-01T01:30:00Z', 'Asia/Ho_Chi_Minh', 'Tư vấn', 'booking', $2) RETURNING id`,
           [org.orgId, owner],
         )
       ).rows[0]?.id;
       await c.query(
-        `INSERT INTO crove_crm.booking (org_id, event_type_id, starts_at, ends_at, status, calendar_event_id, party_id, visitor_name, email, time_zone, deal_id)
+        `INSERT INTO ludy_crm.booking (org_id, event_type_id, starts_at, ends_at, status, calendar_event_id, party_id, visitor_name, email, time_zone, deal_id)
          VALUES ($1, $2, '2032-01-01T01:00:00Z', '2032-01-01T01:30:00Z', 'confirmed', $3, $4, 'Stray', $5, 'Asia/Ho_Chi_Minh', $6)`,
         [org.orgId, linkedType, linkedEvent, stray, `stray-${tag}@purge.test`, linkedDeal],
       );
       // Archive marks on a loose file and on the file the books keep (#1302): both deleted with the org's other Social
       // rows, though the booked file stays.
-      await c.query(`INSERT INTO crove_social.media_archive (org_id, file_id, archived_by) VALUES ($1, $2, $4), ($1, $3, $4)`, [org.orgId, loose.fileId, booked.fileId, owner]);
+      await c.query(`INSERT INTO ludy_social.media_archive (org_id, file_id, archived_by) VALUES ($1, $2, $4), ($1, $3, $4)`, [org.orgId, loose.fileId, booked.fileId, owner]);
       // Notes (#1671): the owner's private note on the stray party and the member's shared one: both deleted, the
       // private one included, before the party they link to.
-      const privateNote = (await c.query<{ id: string }>(`INSERT INTO crove_notes.note (org_id, author_user_id, title, body) VALUES ($1, $2, 'Riêng', 'Mật khẩu') RETURNING id`, [org.orgId, owner])).rows[0]?.id;
-      await c.query(`INSERT INTO crove_notes.note (org_id, author_user_id, visibility, title) VALUES ($1, $2, 'org', 'Dùng chung')`, [org.orgId, member]);
-      await c.query(`INSERT INTO crove_notes.link (org_id, note_id, target_type, target_id, party_id, created_by) VALUES ($1, $2, 'kernel.party', $3, $3, $4)`, [org.orgId, privateNote, stray, owner]);
+      const privateNote = (await c.query<{ id: string }>(`INSERT INTO ludy_notes.note (org_id, author_user_id, title, body) VALUES ($1, $2, 'Riêng', 'Mật khẩu') RETURNING id`, [org.orgId, owner])).rows[0]?.id;
+      await c.query(`INSERT INTO ludy_notes.note (org_id, author_user_id, visibility, title) VALUES ($1, $2, 'org', 'Dùng chung')`, [org.orgId, member]);
+      await c.query(`INSERT INTO ludy_notes.link (org_id, note_id, target_type, target_id, party_id, created_by) VALUES ($1, $2, 'kernel.party', $3, $3, $4)`, [org.orgId, privateNote, stray, owner]);
       // A member's own to-do (#1673), made from the private note: deleted too, before the note it names.
-      await c.query(`INSERT INTO crove_notes.todo (org_id, owner_user_id, title, sort_key, source_note_id) VALUES ($1, $2, 'Việc riêng', 'V', $3)`, [org.orgId, member, privateNote]);
-      // The people payroll is run for (#2530): an employee, an append-only employment row and a dependent, all deleted with the org (the employment through its own guard).
-      const employee = (await c.query<{ id: string }>(`INSERT INTO crove_hr.payroll_employee (org_id, display_name) VALUES ($1, 'Nhân viên') RETURNING id`, [org.orgId])).rows[0]?.id;
-      await c.query(`INSERT INTO crove_hr.payroll_employment (org_id, employee_id, effective_from, contract_type, region, base_wage) VALUES ($1, $2, '2026-01-01', 'indefinite', 'I', 1000000)`, [org.orgId, employee]);
-      await c.query(`INSERT INTO crove_hr.payroll_dependent (org_id, employee_id, display_name, relation, registered_on) VALUES ($1, $2, 'Người phụ thuộc', 'child', '2026-01-01')`, [org.orgId, employee]);
-      // An approved pay run with a line (#2531): frozen against everyone, deleted only by the closing org's purge.
-      const run = (await c.query<{ id: string }>(`INSERT INTO crove_hr.payroll_run (org_id, month, working_days) VALUES ($1, '2026-01', 26) RETURNING id`, [org.orgId])).rows[0]?.id;
+      await c.query(`INSERT INTO ludy_notes.todo (org_id, owner_user_id, title, sort_key, source_note_id) VALUES ($1, $2, 'Việc riêng', 'V', $3)`, [org.orgId, member, privateNote]);
+      // A file attached to the private note (#3561): its row goes before the note and its blob, under notes/<org>/<id>, in the same command.
+      const noteAttachmentId = randomUUID();
+      const noteAttachmentKey = `notes/${org.orgId}/${noteAttachmentId}`;
+      const noteAttachmentBytes = new TextEncoder().encode(`%PDF-1.4 note-${tag}`);
+      store.blobs.set(noteAttachmentKey, noteAttachmentBytes);
       await c.query(
-        `INSERT INTO crove_hr.payroll_line (org_id, run_id, employee_id, gross, employee_insurance, employer_insurance, union_fee, taxable_income, pit, net, employer_cost) VALUES ($1, $2, $3, 1000000, 105000, 215000, 20000, 1000000, 0, 895000, 1235000)`,
+        `INSERT INTO ludy_notes.attachment (org_id, id, note_id, author_user_id, filename, content_type, size_bytes, sha256, storage_key)
+         VALUES ($1, $2, $3, $4, 'hop-dong.pdf', 'application/pdf', $5, $6, $7)`,
+        [org.orgId, noteAttachmentId, privateNote, owner, noteAttachmentBytes.byteLength, 'c'.repeat(64), noteAttachmentKey],
+      );
+      // The people payroll is run for (#2530): an employee, an append-only employment row and a dependent, all deleted with the org (the employment through its own guard).
+      const employee = (await c.query<{ id: string }>(`INSERT INTO ludy_hr.payroll_employee (org_id, display_name) VALUES ($1, 'Nhân viên') RETURNING id`, [org.orgId])).rows[0]?.id;
+      await c.query(`INSERT INTO ludy_hr.payroll_employment (org_id, employee_id, effective_from, contract_type, region, base_wage) VALUES ($1, $2, '2026-01-01', 'indefinite', 'I', 1000000)`, [org.orgId, employee]);
+      await c.query(`INSERT INTO ludy_hr.payroll_dependent (org_id, employee_id, display_name, relation, registered_on) VALUES ($1, $2, 'Người phụ thuộc', 'child', '2026-01-01')`, [org.orgId, employee]);
+      // An approved pay run with a line (#2531): frozen against everyone, deleted only by the closing org's purge.
+      const run = (await c.query<{ id: string }>(`INSERT INTO ludy_hr.payroll_run (org_id, month, working_days) VALUES ($1, '2026-01', 26) RETURNING id`, [org.orgId])).rows[0]?.id;
+      await c.query(
+        `INSERT INTO ludy_hr.payroll_line (org_id, run_id, employee_id, gross, employee_insurance, employer_insurance, union_fee, taxable_income, pit, net, employer_cost) VALUES ($1, $2, $3, 1000000, 105000, 215000, 20000, 1000000, 0, 895000, 1235000)`,
         [org.orgId, run, employee],
       );
-      await c.query(`UPDATE crove_hr.payroll_run SET status = 'approved', approved_at = now(), approved_by = $2, approval = '{}'::jsonb WHERE id = $1`, [run, owner]);
-      return { stray, position, parent, pinned, free, ledgerParty, imageKey, pendingKey, einvoiceDraft };
+      await c.query(`UPDATE ludy_hr.payroll_run SET status = 'approved', approved_at = now(), approved_by = $2, approval = '{}'::jsonb WHERE id = $1`, [run, owner]);
+      return { stray, position, parent, pinned, free, ledgerParty, imageKey, pendingKey, einvoiceDraft, noteAttachmentKey };
     });
     // The first step, draft to submitting, is a person's approved issue (finance-einvoice-issue.db.test.ts); here it is set up as the database owner with the triggers off.
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_finance.einvoice_draft SET state = 'submitting', submitted_at = pg_catalog.now() WHERE org_id = $1 AND id = $2`, [org.orgId, ids.einvoiceDraft]);
+      await c.query(`UPDATE ludy_finance.einvoice_draft SET state = 'submitting', submitted_at = pg_catalog.now() WHERE org_id = $1 AND id = $2`, [org.orgId, ids.einvoiceDraft]);
       await c.query('COMMIT');
     });
     // The issue job's own path: a worker login in the org's system context moves the draft to issued, with the guards on.
     const job = await workerPool.connect();
     try {
       await job.query('BEGIN');
-      await job.query('SELECT crove_kernel.enter_system_context($1::uuid)', [org.orgId]);
-      await job.query(`UPDATE crove_finance.einvoice_draft SET state = 'issued', provider_ref = 'sbx-purge', issued_number = 'C26TSB/1', issued_at = pg_catalog.now() WHERE org_id = $1 AND id = $2`, [org.orgId, ids.einvoiceDraft]);
-      await job.query('UPDATE crove_finance.einvoice_draft SET signed_file_id = $3 WHERE org_id = $1 AND id = $2', [org.orgId, ids.einvoiceDraft, signed.fileId]);
+      await job.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [org.orgId]);
+      await job.query(`UPDATE ludy_finance.einvoice_draft SET state = 'issued', provider_ref = 'sbx-purge', issued_number = 'C26TSB/1', issued_at = pg_catalog.now() WHERE org_id = $1 AND id = $2`, [org.orgId, ids.einvoiceDraft]);
+      await job.query('UPDATE ludy_finance.einvoice_draft SET signed_file_id = $3 WHERE org_id = $1 AND id = $2', [org.orgId, ids.einvoiceDraft, signed.fileId]);
       await job.query('COMMIT');
     } catch (error) {
       await job.query('ROLLBACK').catch(() => undefined);
@@ -320,11 +349,11 @@ suite('org purge on PostgreSQL (#1024)', () => {
   async function offboard(orgId: string, options: { requestedDaysAgo?: number; exportedDaysAgo?: number | null; format?: string } = {}) {
     const { requestedDaysAgo = 40, exportedDaysAgo = 31, format = 'crove.org-export.v2' } = options;
     await admin(async (c) => {
-      const owner = (await c.query<{ user_id: string }>(`SELECT user_id FROM crove_kernel.tenant_member WHERE org_id = $1 AND role = 'owner' LIMIT 1`, [orgId])).rows[0]?.user_id;
+      const owner = (await c.query<{ user_id: string }>(`SELECT user_id FROM ludy_kernel.tenant_member WHERE org_id = $1 AND role = 'owner' LIMIT 1`, [orgId])).rows[0]?.user_id;
       // As staff, without the triggers: the request's audit row below is backdated, not the one of this transaction.
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.tenant SET status = 'offboarding' WHERE org_id = $1 AND status = 'active'`, [orgId]);
+      await c.query(`UPDATE ludy_kernel.tenant SET status = 'offboarding' WHERE org_id = $1 AND status = 'active'`, [orgId]);
       await c.query('COMMIT');
       await recordAudit(c, orgId, 'kernel.org.offboard', 'user', owner ?? null, new Date(Date.now() - requestedDaysAgo * DAY), {});
       if (exportedDaysAgo !== null) {
@@ -335,16 +364,16 @@ suite('org purge on PostgreSQL (#1024)', () => {
 
   async function recordAudit(c: pg.Client, orgId: string, command: string, actorType: string, actorId: string | null, when: Date, detail: Record<string, unknown>) {
     await c.query(
-      `INSERT INTO crove_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
+      `INSERT INTO ludy_kernel.audit_event (org_id, occurred_at, actor_type, actor_id, command, command_id, outcome, input_sha256, detail)
        VALUES ($1, $2, $3, $4, $5, $6, 'ok', $7, $8)`,
       [orgId, when, actorType, actorId, command, randomUUID(), '0'.repeat(64), JSON.stringify(detail)],
     );
   }
 
-  const status = async (orgId: string) => (await one<{ status: string }>('SELECT status FROM crove_kernel.tenant WHERE org_id = $1', [orgId])).status;
+  const status = async (orgId: string) => (await one<{ status: string }>('SELECT status FROM ludy_kernel.tenant WHERE org_id = $1', [orgId])).status;
   const purgeAudits = (orgId: string) =>
     admin(async (c) => (await c.query<{ outcome: string; actor_type: string; detail: Record<string, unknown> }>(
-      `SELECT outcome, actor_type, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.purge' ORDER BY occurred_at, id`,
+      `SELECT outcome, actor_type, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.purge' ORDER BY occurred_at, id`,
       [orgId],
     )).rows);
 
@@ -359,7 +388,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
     admin(async (c) => {
       const { rows } = await c.query<{ t: string; q: string }>(
         `SELECT n.nspname || '.' || c.relname AS t, format('%I.%I', n.nspname, c.relname) AS q FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-         WHERE c.relkind = 'r' AND n.nspname LIKE 'crove\\_%' AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname = 'org_id' AND NOT a.attisdropped)
+         WHERE c.relkind = 'r' AND (n.nspname LIKE 'ludy\\_%' OR n.nspname LIKE 'crove\\_%') AND EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid = c.oid AND a.attname = 'org_id' AND NOT a.attisdropped)
          ORDER BY 1`,
       );
       const out: Record<string, number> = {};
@@ -376,18 +405,18 @@ suite('org purge on PostgreSQL (#1024)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    await setRolePasswords(adminUrl, { ludy_app: 'test-app-pw', ludy_worker: 'test-worker-pw' });
     const login = (username: string, password: string) => {
       const url = new URL(adminUrl);
       url.username = username;
       url.password = password;
       return url.toString();
     };
-    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
+    pool = createPool({ connectionString: login('ludy_app', 'test-app-pw'), max: 4 });
     db = createDb(pool);
     const registry = { commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registry);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 4 });
+    workerPool = createPool({ connectionString: login('ludy_worker', 'test-worker-pw'), max: 4 });
     workerDb = createDb(workerPool);
     worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register(registry).register({ commands: [orgPurgeCommand({ store, held: isHeld })] });
   });
@@ -410,14 +439,14 @@ suite('org purge on PostgreSQL (#1024)', () => {
     expect(() => parseOrgPurgeArgs(['a', '--force', '--reason', 'x'])).toThrow(/unknown argument --force/);
   });
 
-  // Every crove_* table with an org_id is deleted by crove_kernel.org_purge or on KEPT with a reason, and the runbook's
+  // Every crove_* table with an org_id is deleted by ludy_kernel.org_purge or on KEPT with a reason, and the runbook's
   // deletion map says which (#1217): a table a migration adds without restating org_purge, or whose restatement another
   // migration's overwrote, fails here with its name and the migration to restate. The reading and its messages are
   // org-purge-coverage.ts and org-purge-coverage.test.ts.
   it('has a rule for every table with an org_id', async () => {
     const catalog = await admin(readPurgeCatalog);
-    expect(catalog.tables).toContain('crove_kernel.tenant_member');
-    expect(catalog.cascades).toContainEqual({ child: 'crove_kernel.role_assignment', parent: 'crove_kernel.tenant_member' });
+    expect(catalog.tables).toContain('ludy_kernel.tenant_member');
+    expect(catalog.cascades).toContainEqual({ child: 'ludy_kernel.role_assignment', parent: 'ludy_kernel.tenant_member' });
     expect(purgeCoverageProblems(catalog, KEPT, readMigrations())).toEqual([]);
   });
 
@@ -438,7 +467,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
     expect(await run(s.org.slug)).toMatchObject({ code: 1, out: expect.stringContaining('younger than ORG_PURGE_MIN_DAYS') });
     expect(await status(s.org.orgId)).toBe('offboarding');
     // Only the refused attempts are noted (their audit rows and the refusal tally).
-    expect(await snapshot(s.org.orgId)).toMatchObject({ ...before, 'crove_kernel.audit_event': expect.any(Number), 'crove_kernel.refusal_tally': expect.any(Number) });
+    expect(await snapshot(s.org.orgId)).toMatchObject({ ...before, 'ludy_kernel.audit_event': expect.any(Number), 'ludy_kernel.refusal_tally': expect.any(Number) });
 
     const t = await seed('Công ty Đang xuất');
     await offboard(t.org.orgId, { requestedDaysAgo: 40, exportedDaysAgo: 35 });
@@ -448,7 +477,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
     expect(await run(t.org.slug)).toMatchObject({ code: 1, out: expect.stringContaining('newer export') });
     expect(await status(t.org.orgId)).toBe('offboarding');
     // Refusals inside the command are audited as refused, with nothing else written.
-    expect(await count('crove_kernel.tenant_member', t.org.orgId)).toBe(2);
+    expect(await count('ludy_kernel.tenant_member', t.org.orgId)).toBe(2);
   });
 
   it('keeps the books, deletes the rest with its blobs, the append-only working rows included, and closes the org', async () => {
@@ -466,91 +495,104 @@ suite('org purge on PostgreSQL (#1024)', () => {
 
     const after = await snapshot(s.org.orgId);
     // The extension device went with the org, and the member rows going after it left no audit row (the +1 below is the purge's own).
-    expect(before['crove_kernel.extension_token']).toBe(1);
+    expect(before['ludy_kernel.extension_token']).toBe(1);
     // The booking linked to a deal and the deal went with the org (#3103); the other org's stay.
-    expect([before['crove_crm.booking'], before['crove_crm.deal']]).toEqual([1, 1]);
-    expect([after['crove_crm.booking'] ?? 0, after['crove_crm.deal'] ?? 0]).toEqual([0, 0]);
-    expect([otherBefore['crove_crm.booking'], otherBefore['crove_crm.deal']]).toEqual([1, 1]);
-    expect(after['crove_kernel.extension_token'] ?? 0).toBe(0);
-    expect(await admin(async (c) => (await c.query(`SELECT 1 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.extension.token.auto_revoked'`, [s.org.orgId])).rowCount)).toBe(0);
+    expect([before['ludy_crm.booking'], before['ludy_crm.deal']]).toEqual([1, 1]);
+    expect([after['ludy_crm.booking'] ?? 0, after['ludy_crm.deal'] ?? 0]).toEqual([0, 0]);
+    expect([otherBefore['ludy_crm.booking'], otherBefore['ludy_crm.deal']]).toEqual([1, 1]);
+    expect(after['ludy_kernel.extension_token'] ?? 0).toBe(0);
+    expect(await admin(async (c) => (await c.query(`SELECT 1 FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.extension.token.auto_revoked'`, [s.org.orgId])).rowCount)).toBe(0);
     // Kept whole: the books, the audit and outbox streams, inbound addresses.
     // Bank feed accounts (#2044) are working rows, deleted with the connections they map; so are the sales e-invoice series, drafts and lines (#2500) and the stock aliases
     // (#2512). The stock moves are kept with the books, and the item they name with them.
-    const workingRows = new Set(['crove_finance.vendor_account_rule', 'crove_finance.bank_feed_account', 'crove_finance.bank_account_number', 'crove_finance.einvoice_series', 'crove_finance.einvoice_draft', 'crove_finance.einvoice_draft_line', 'crove_finance.einvoice_connection', 'crove_finance.marketplace_connection', 'crove_finance.stock_alias']);
-    for (const table of Object.keys(before).filter((t) => t.startsWith('crove_finance.') && !workingRows.has(t))) {
+    const workingRows = new Set(['ludy_finance.vendor_account_rule', 'ludy_finance.bank_feed_account', 'ludy_finance.bank_account_number', 'ludy_finance.einvoice_series', 'ludy_finance.einvoice_draft', 'ludy_finance.einvoice_draft_line', 'ludy_finance.einvoice_connection', 'ludy_finance.marketplace_connection', 'ludy_finance.misa_amis_connection', 'ludy_finance.misa_amis_push', 'ludy_finance.stock_alias']);
+    for (const table of Object.keys(before).filter((t) => t.startsWith('ludy_finance.') && !workingRows.has(t))) {
       expect([table, after[table]]).toEqual([table, before[table]]);
     }
-    expect(after['crove_finance.purchase_document']).toBe(1);
-    expect(after['crove_finance.journal_entry']).toBeGreaterThan(0);
-    expect(after['crove_kernel.outbox_event']).toBe(before['crove_kernel.outbox_event']);
-    expect(after['crove_kernel.inbound_address']).toBe(before['crove_kernel.inbound_address']);
-    expect(after['crove_kernel.audit_event']).toBe((before['crove_kernel.audit_event'] ?? 0) + 1);
+    expect(after['ludy_finance.purchase_document']).toBe(1);
+    expect(after['ludy_finance.journal_entry']).toBeGreaterThan(0);
+    expect(after['ludy_kernel.outbox_event']).toBe(before['ludy_kernel.outbox_event']);
+    expect(after['ludy_kernel.inbound_address']).toBe(before['ludy_kernel.inbound_address']);
+    expect(after['ludy_kernel.audit_event']).toBe((before['ludy_kernel.audit_event'] ?? 0) + 1);
     // The booked file and its blob stay, and so does the signed XML of the issued sales invoice though its draft is gone; the loose one goes with its blob.
-    expect(after['crove_kernel.file']).toBe(2);
-    expect((await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.file WHERE org_id = $1', [s.org.orgId])).rows)).map((r) => r.id).sort()).toEqual([s.booked.fileId, s.signed.fileId].sort());
+    expect(after['ludy_kernel.file']).toBe(2);
+    expect((await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.file WHERE org_id = $1', [s.org.orgId])).rows)).map((r) => r.id).sort()).toEqual([s.booked.fileId, s.signed.fileId].sort());
     expect(store.blobs.has(s.booked.storageKey)).toBe(true);
     expect(store.blobs.has(s.signed.storageKey)).toBe(true);
     expect(store.blobs.has(s.loose.storageKey)).toBe(false);
+    // The org's minutes template goes with the org, and the other org's stays (#3578).
+    expect(before['ludy_meetings.minutes_template']).toBe(1);
+    expect(after['ludy_meetings.minutes_template'] ?? 0).toBe(0);
+    expect(otherBefore['ludy_meetings.minutes_template']).toBe(1);
+    // The org's glossary goes with the org, and the other org's stays (#4043).
+    expect(before['ludy_meetings.glossary_term']).toBe(1);
+    expect(after['ludy_meetings.glossary_term'] ?? 0).toBe(0);
+    expect(otherBefore['ludy_meetings.glossary_term']).toBe(1);
     // A customer's images (CV5c): both rows and the stored one's blob go in the same command; the pending image's key waits in the queue of
     // doomed blobs for the worker (nothing was written under it), and the other org's image and blob stay.
-    expect(before['crove_kernel.conversation_attachment']).toBe(2);
-    expect(after['crove_kernel.conversation_attachment'] ?? 0).toBe(0);
+    expect(before['ludy_kernel.conversation_attachment']).toBe(2);
+    expect(after['ludy_kernel.conversation_attachment'] ?? 0).toBe(0);
     expect(store.blobs.has(s.imageKey)).toBe(false);
     expect(store.blobs.has(other.imageKey)).toBe(true);
-    expect((await admin(async (c) => (await c.query('SELECT storage_key FROM crove_kernel.conversation_blob_doomed WHERE storage_key LIKE $1', [`conversation/${s.org.orgId}/%`])).rows)).map((r) => r.storage_key).sort()).toEqual([s.imageKey, s.pendingKey].sort());
+    expect((await admin(async (c) => (await c.query('SELECT storage_key FROM ludy_kernel.conversation_blob_doomed WHERE storage_key LIKE $1', [`conversation/${s.org.orgId}/%`])).rows)).map((r) => r.storage_key).sort()).toEqual([s.imageKey, s.pendingKey].sort());
+    // A note's attachment (#3561): its row and its blob go in the same command, and the other org's stay.
+    expect(before['ludy_notes.attachment']).toBe(1);
+    expect(after['ludy_notes.attachment'] ?? 0).toBe(0);
+    expect(store.blobs.has(s.noteAttachmentKey)).toBe(false);
+    expect(store.blobs.has(other.noteAttachmentKey)).toBe(true);
     // The booked party and the one only a ledger line names stay, anonymized; the stray one is deleted.
-    expect(after['crove_kernel.party']).toBe(2);
+    expect(after['ludy_kernel.party']).toBe(2);
     expect(
-      await admin(async (c) => (await c.query('SELECT name IS NOT NULL AS named, email, phone, address FROM crove_kernel.party WHERE org_id = $1', [s.org.orgId])).rows),
+      await admin(async (c) => (await c.query('SELECT name IS NOT NULL AS named, email, phone, address FROM ludy_kernel.party WHERE org_id = $1', [s.org.orgId])).rows),
     ).toEqual([
       { named: true, email: null, phone: null, address: null },
       { named: true, email: null, phone: null, address: null },
     ]);
-    expect(await one('SELECT id FROM crove_kernel.party WHERE org_id = $1 AND id = $2', [s.org.orgId, s.ledgerParty])).toEqual({ id: s.ledgerParty });
+    expect(await one('SELECT id FROM ludy_kernel.party WHERE org_id = $1 AND id = $2', [s.org.orgId, s.ledgerParty])).toEqual({ id: s.ledgerParty });
     // The kept person's company went with the purge and the link was cleared, not left to stop it.
-    expect(await one('SELECT company_id FROM crove_kernel.party WHERE org_id = $1 AND id = $2', [s.org.orgId, s.ledgerParty])).toEqual({ company_id: null });
+    expect(await one('SELECT company_id FROM ludy_kernel.party WHERE org_id = $1 AND id = $2', [s.org.orgId, s.ledgerParty])).toEqual({ company_id: null });
     // The booked invoice's proposal stays (the approval trail); the stray one is deleted.
-    expect(await admin(async (c) => (await c.query('SELECT id FROM crove_kernel.proposal WHERE org_id = $1', [s.org.orgId])).rows)).toEqual([{ id: s.proposalId }]);
+    expect(await admin(async (c) => (await c.query('SELECT id FROM ludy_kernel.proposal WHERE org_id = $1', [s.org.orgId])).rows)).toEqual([{ id: s.proposalId }]);
     // The task comment and the post approval are deleted (#1032), and so is what they used to pin: the commented task,
     // its parent and assignee position, the approved variant, its post and channel connection.
-    for (const table of ['crove_kernel.task_comment', 'crove_kernel.task', 'crove_kernel.position', 'crove_social.post_approval', 'crove_social.post_variant', 'crove_social.post', 'crove_kernel.channel_connection', 'crove_finance.einvoice_draft_line', 'crove_finance.einvoice_draft', 'crove_finance.einvoice_series', 'crove_finance.einvoice_connection', 'crove_finance.marketplace_connection', 'crove_finance.stock_alias']) {
+    for (const table of ['ludy_kernel.task_comment', 'ludy_kernel.task', 'ludy_kernel.position', 'ludy_social.post_approval', 'ludy_social.post_variant', 'ludy_social.post', 'ludy_kernel.channel_connection', 'ludy_finance.einvoice_draft_line', 'ludy_finance.einvoice_draft', 'ludy_finance.einvoice_series', 'ludy_finance.einvoice_connection', 'ludy_finance.marketplace_connection', 'ludy_finance.misa_amis_connection', 'ludy_finance.misa_amis_push', 'ludy_finance.stock_alias']) {
       expect([table, before[table]]).not.toEqual([table, 0]);
       expect([table, after[table] ?? 0]).toEqual([table, 0]);
     }
     // The stock book stays like the ledger: both moves (the entry and its reversal) and the item they name; the alias went.
-    expect([after['crove_finance.stock_move'], after['crove_finance.stock_item'], after['crove_finance.stock_alias'] ?? 0]).toEqual([2, 1, 0]);
+    expect([after['ludy_finance.stock_move'], after['ludy_finance.stock_item'], after['ludy_finance.stock_alias'] ?? 0]).toEqual([2, 1, 0]);
     // Members, invites, proposals, extractions, activity: gone. Every other table of the org is empty.
     const keptTables = new Set([
-      'crove_kernel.tenant',
-      'crove_kernel.legal_entity',
-      'crove_kernel.audit_event',
-      'crove_kernel.outbox_event',
-      'crove_kernel.inbound_address',
-      'crove_kernel.org_usage',
-      'crove_kernel.outbox_archive',
-      'crove_kernel.external_call',
-      'crove_kernel.file',
-      'crove_kernel.party',
-      'crove_kernel.proposal',
-      'crove_kernel.number_allocation',
-      'crove_kernel.number_series',
-      'crove_kernel.number_series_policy',
-      'crove_kernel.number_void',
+      'ludy_kernel.tenant',
+      'ludy_kernel.legal_entity',
+      'ludy_kernel.audit_event',
+      'ludy_kernel.outbox_event',
+      'ludy_kernel.inbound_address',
+      'ludy_kernel.org_usage',
+      'ludy_kernel.outbox_archive',
+      'ludy_kernel.external_call',
+      'ludy_kernel.file',
+      'ludy_kernel.party',
+      'ludy_kernel.proposal',
+      'ludy_kernel.number_allocation',
+      'ludy_kernel.number_series',
+      'ludy_kernel.number_series_policy',
+      'ludy_kernel.number_void',
     ]);
-    const leftovers = Object.entries(after).filter(([t, n]) => n > 0 && !keptTables.has(t) && !(t.startsWith('crove_finance.') && t !== 'crove_finance.vendor_account_rule'));
+    const leftovers = Object.entries(after).filter(([t, n]) => n > 0 && !keptTables.has(t) && !(t.startsWith('ludy_finance.') && t !== 'ludy_finance.vendor_account_rule'));
     expect(leftovers).toEqual([]);
     // The org's default legal entity stays with the tenant row (#1278).
-    expect(after['crove_kernel.legal_entity']).toBe(1);
-    expect(before['crove_kernel.tenant_member']).toBe(2);
-    expect(before['crove_kernel.proposal']).toBe(2);
-    expect(before['crove_social.push_subscription']).toBe(1);
-    expect(before['crove_social.saved_view']).toBe(1);
-    expect(before['crove_kernel.saved_view']).toBe(1);
-    expect(before['crove_social.media_archive']).toBe(2);
-    expect(before['crove_notes.note']).toBe(2);
-    expect(before['crove_notes.link']).toBe(1);
-    expect(before['crove_notes.todo']).toBe(1);
-    expect([before['crove_hr.payroll_employee'], before['crove_hr.payroll_employment'], before['crove_hr.payroll_dependent'], before['crove_hr.payroll_run'], before['crove_hr.payroll_line']]).toEqual([1, 1, 1, 1, 1]);
+    expect(after['ludy_kernel.legal_entity']).toBe(1);
+    expect(before['ludy_kernel.tenant_member']).toBe(2);
+    expect(before['ludy_kernel.proposal']).toBe(2);
+    expect(before['ludy_social.push_subscription']).toBe(1);
+    expect(before['ludy_social.saved_view']).toBe(1);
+    expect(before['ludy_kernel.saved_view']).toBe(1);
+    expect(before['ludy_social.media_archive']).toBe(2);
+    expect(before['ludy_notes.note']).toBe(2);
+    expect(before['ludy_notes.link']).toBe(1);
+    expect(before['ludy_notes.todo']).toBe(1);
+    expect([before['ludy_hr.payroll_employee'], before['ludy_hr.payroll_employment'], before['ludy_hr.payroll_dependent'], before['ludy_hr.payroll_run'], before['ludy_hr.payroll_line']]).toEqual([1, 1, 1, 1, 1]);
 
     // One audit row: by the system, with counts and the reason, and no personal data.
     const audits = await purgeAudits(s.org.orgId);
@@ -561,42 +603,45 @@ suite('org purge on PostgreSQL (#1024)', () => {
       detail: {
         reason: 'Owner left, export downloaded',
         minDays: 30,
-        blobs: { deleted: 2, held: 0 },
+        blobs: { deleted: 3, held: 0 },
         counts: {
           deleted: expect.objectContaining({
-            'crove_kernel.conversation_attachment': 2,
-            'crove_kernel.tenant_member': 2,
-            'crove_kernel.file': 1,
-            'crove_kernel.party': 2,
-            'crove_kernel.task': 3,
-            'crove_kernel.task_comment': 1,
-            'crove_kernel.position': 1,
-            'crove_kernel.proposal': 1,
-            'crove_social.post_approval': 1,
-            'crove_social.post_variant': 1,
-            'crove_social.post': 1,
-            'crove_kernel.channel_connection': 4,
-            'crove_finance.bank_feed_account': 1,
-            'crove_finance.einvoice_connection': 1,
-            'crove_finance.marketplace_connection': 1,
-            'crove_finance.stock_alias': 1,
-            'crove_finance.stock_item': 0,
-            'crove_finance.bank_account_number': 1,
-            'crove_social.push_subscription': 1,
-            'crove_social.saved_view': 1,
-            'crove_kernel.saved_view': 1,
-            'crove_social.media_archive': 2,
-            'crove_notes.note': 2,
-            'crove_notes.link': 1,
-            'crove_notes.todo': 1,
-            'crove_hr.payroll_employee': 1,
-            'crove_hr.payroll_employment': 1,
-            'crove_hr.payroll_dependent': 1,
-            'crove_hr.payroll_run': 1,
-            'crove_hr.payroll_line': 1,
+            'ludy_kernel.conversation_attachment': 2,
+            'ludy_notes.attachment': 1,
+            'ludy_kernel.tenant_member': 2,
+            'ludy_kernel.file': 1,
+            'ludy_kernel.party': 2,
+            'ludy_kernel.task': 3,
+            'ludy_kernel.task_comment': 1,
+            'ludy_kernel.position': 1,
+            'ludy_kernel.proposal': 1,
+            'ludy_social.post_approval': 1,
+            'ludy_social.post_variant': 1,
+            'ludy_social.post': 1,
+            'ludy_kernel.channel_connection': 5,
+            'ludy_finance.bank_feed_account': 1,
+            'ludy_finance.einvoice_connection': 1,
+            'ludy_finance.marketplace_connection': 1,
+            'ludy_finance.misa_amis_connection': 1,
+            'ludy_finance.misa_amis_push': 1,
+            'ludy_finance.stock_alias': 1,
+            'ludy_finance.stock_item': 0,
+            'ludy_finance.bank_account_number': 1,
+            'ludy_social.push_subscription': 1,
+            'ludy_social.saved_view': 1,
+            'ludy_kernel.saved_view': 1,
+            'ludy_social.media_archive': 2,
+            'ludy_notes.note': 2,
+            'ludy_notes.link': 1,
+            'ludy_notes.todo': 1,
+            'ludy_hr.payroll_employee': 1,
+            'ludy_hr.payroll_employment': 1,
+            'ludy_hr.payroll_dependent': 1,
+            'ludy_hr.payroll_run': 1,
+            'ludy_hr.payroll_line': 1,
           }),
-          pinned: expect.objectContaining({ 'crove_kernel.task_comment': 0, 'crove_kernel.task': 0, 'crove_kernel.position': 0, 'crove_social.post_approval': 0, 'crove_social.post_variant': 0, 'crove_finance.stock_item': 1 }),
-          anonymized: { 'crove_kernel.party': 2 },
+          pinned: expect.objectContaining({ 'ludy_kernel.task_comment': 0, 'ludy_kernel.task': 0, 'ludy_kernel.position': 0, 'ludy_social.post_approval': 0, 'ludy_social.post_variant': 0, 'ludy_finance.stock_item': 1 }),
+          anonymized: { 'ludy_kernel.party': 2 },
           keptFiles: 2,
           keptParties: 2,
           keptProposals: 1,
@@ -607,10 +652,10 @@ suite('org purge on PostgreSQL (#1024)', () => {
     for (const secret of [s.ownerEmail, s.partyEmail, 'Đã xem', 'Bài đã duyệt', 'booked.xml', 'loose.xml', 'Mật khẩu']) expect(text).not.toContain(secret);
 
     // Every other writer still meets the append-only rule on the two tables, the database owner's session included.
-    const otherComment = await one('SELECT org_id, id FROM crove_kernel.task_comment WHERE org_id = $1 LIMIT 1', [other.org.orgId]);
-    await expect(admin((c) => c.query('DELETE FROM crove_kernel.task_comment WHERE org_id = $1', [other.org.orgId]))).rejects.toThrow(/append-only/);
-    await expect(admin((c) => c.query('UPDATE crove_social.post_approval SET comment = $2 WHERE org_id = $1', [other.org.orgId, 'x']))).rejects.toThrow(/append-only/);
-    expect(await one('SELECT org_id, id FROM crove_kernel.task_comment WHERE org_id = $1 LIMIT 1', [other.org.orgId])).toEqual(otherComment);
+    const otherComment = await one('SELECT org_id, id FROM ludy_kernel.task_comment WHERE org_id = $1 LIMIT 1', [other.org.orgId]);
+    await expect(admin((c) => c.query('DELETE FROM ludy_kernel.task_comment WHERE org_id = $1', [other.org.orgId]))).rejects.toThrow(/append-only/);
+    await expect(admin((c) => c.query('UPDATE ludy_social.post_approval SET comment = $2 WHERE org_id = $1', [other.org.orgId, 'x']))).rejects.toThrow(/append-only/);
+    expect(await one('SELECT org_id, id FROM ludy_kernel.task_comment WHERE org_id = $1 LIMIT 1', [other.org.orgId])).toEqual(otherComment);
 
     // The other org is untouched, its blobs included.
     expect(await snapshot(other.org.orgId)).toEqual(otherBefore);
@@ -636,7 +681,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
     }
     expect(await status(s.org.orgId)).toBe('offboarding');
     // Only the refused attempts are noted (their audit rows and the refusal tally).
-    expect(await snapshot(s.org.orgId)).toMatchObject({ ...before, 'crove_kernel.audit_event': expect.any(Number), 'crove_kernel.refusal_tally': expect.any(Number) });
+    expect(await snapshot(s.org.orgId)).toMatchObject({ ...before, 'ludy_kernel.audit_event': expect.any(Number), 'ludy_kernel.refusal_tally': expect.any(Number) });
     expect(store.blobs.has(s.loose.storageKey)).toBe(true);
     expect(await run(s.org.slug)).toMatchObject({ code: 0 });
     expect(await status(s.org.orgId)).toBe('closed');
@@ -650,7 +695,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
     const s = await seed('Công ty Đang ghi');
     await offboard(s.org.orgId);
     const login = new URL(adminUrl);
-    login.username = 'crove_worker';
+    login.username = 'ludy_worker';
     login.password = 'test-worker-pw';
     const inFlight = new pg.Client({ connectionString: login.toString() });
     const late = new pg.Client({ connectionString: login.toString() });
@@ -658,7 +703,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
     await late.connect();
     try {
       await inFlight.query('BEGIN');
-      await inFlight.query('SELECT crove_kernel.enter_system_context($1)', [s.org.orgId]);
+      await inFlight.query('SELECT ludy_kernel.enter_system_context($1)', [s.org.orgId]);
       let settled = false;
       const purge = run(s.org.slug).finally(() => {
         settled = true;
@@ -676,7 +721,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
       expect(await purgeWaiting()).toBe(true);
       // A transaction that enters now waits too.
       await late.query('BEGIN');
-      const entered = late.query('SELECT crove_kernel.enter_system_context($1)', [s.org.orgId]).then(
+      const entered = late.query('SELECT ludy_kernel.enter_system_context($1)', [s.org.orgId]).then(
         () => 'entered',
         (e: Error) => e.message,
       );
@@ -701,14 +746,14 @@ suite('org purge on PostgreSQL (#1024)', () => {
     const s = await seed('Công ty Giả dấu');
     await offboard(s.org.orgId);
     const login = new URL(adminUrl);
-    login.username = 'crove_worker';
+    login.username = 'ludy_worker';
     login.password = 'test-worker-pw';
     const before = {
-      comments: await count('crove_kernel.task_comment', s.org.orgId),
-      approvals: await count('crove_social.post_approval', s.org.orgId),
-      drafts: await count('crove_finance.einvoice_draft', s.org.orgId),
-      draftLines: await count('crove_finance.einvoice_draft_line', s.org.orgId),
-      stockMoves: await count('crove_finance.stock_move', s.org.orgId),
+      comments: await count('ludy_kernel.task_comment', s.org.orgId),
+      approvals: await count('ludy_social.post_approval', s.org.orgId),
+      drafts: await count('ludy_finance.einvoice_draft', s.org.orgId),
+      draftLines: await count('ludy_finance.einvoice_draft_line', s.org.orgId),
+      stockMoves: await count('ludy_finance.stock_move', s.org.orgId),
     };
     expect(before.stockMoves).toBe(2);
     expect(before.comments).toBeGreaterThan(0);
@@ -719,21 +764,21 @@ suite('org purge on PostgreSQL (#1024)', () => {
     await client.connect();
     try {
       for (const statement of [
-        'DELETE FROM crove_kernel.task_comment WHERE org_id = $1',
-        'DELETE FROM crove_social.post_approval WHERE org_id = $1',
-        "UPDATE crove_kernel.task_comment SET body = 'x' WHERE org_id = $1",
-        "UPDATE crove_social.post_approval SET comment = 'x' WHERE org_id = $1",
-        'DELETE FROM crove_finance.einvoice_draft_line WHERE org_id = $1',
-        'DELETE FROM crove_finance.einvoice_draft WHERE org_id = $1',
-        "UPDATE crove_finance.einvoice_draft SET state = 'draft', idempotency_key = gen_random_uuid() WHERE org_id = $1",
-        "UPDATE crove_finance.einvoice_draft_line SET description = 'x' WHERE org_id = $1",
-        'DELETE FROM crove_finance.stock_move WHERE org_id = $1',
-        'UPDATE crove_finance.stock_move SET quantity = 1 WHERE org_id = $1',
+        'DELETE FROM ludy_kernel.task_comment WHERE org_id = $1',
+        'DELETE FROM ludy_social.post_approval WHERE org_id = $1',
+        "UPDATE ludy_kernel.task_comment SET body = 'x' WHERE org_id = $1",
+        "UPDATE ludy_social.post_approval SET comment = 'x' WHERE org_id = $1",
+        'DELETE FROM ludy_finance.einvoice_draft_line WHERE org_id = $1',
+        'DELETE FROM ludy_finance.einvoice_draft WHERE org_id = $1',
+        "UPDATE ludy_finance.einvoice_draft SET state = 'draft', idempotency_key = gen_random_uuid() WHERE org_id = $1",
+        "UPDATE ludy_finance.einvoice_draft_line SET description = 'x' WHERE org_id = $1",
+        'DELETE FROM ludy_finance.stock_move WHERE org_id = $1',
+        'UPDATE ludy_finance.stock_move SET quantity = 1 WHERE org_id = $1',
       ]) {
         await client.query('BEGIN');
         try {
-          await client.query('SELECT crove_kernel.enter_system_context($1)', [s.org.orgId]);
-          await client.query("SELECT pg_catalog.set_config('crove.org_purge', $1, true)", [s.org.orgId]);
+          await client.query('SELECT ludy_kernel.enter_system_context($1)', [s.org.orgId]);
+          await client.query("SELECT pg_catalog.set_config('ludy.org_purge', $1, true)", [s.org.orgId]);
           const outcome = await client.query(statement, [s.org.orgId]).then(
             (r) => `${r.rowCount ?? 0} row(s)`,
             (e: Error) => e.message,
@@ -748,13 +793,13 @@ suite('org purge on PostgreSQL (#1024)', () => {
       await client.end();
     }
     expect({
-      comments: await count('crove_kernel.task_comment', s.org.orgId),
-      approvals: await count('crove_social.post_approval', s.org.orgId),
-      drafts: await count('crove_finance.einvoice_draft', s.org.orgId),
-      draftLines: await count('crove_finance.einvoice_draft_line', s.org.orgId),
-      stockMoves: await count('crove_finance.stock_move', s.org.orgId),
+      comments: await count('ludy_kernel.task_comment', s.org.orgId),
+      approvals: await count('ludy_social.post_approval', s.org.orgId),
+      drafts: await count('ludy_finance.einvoice_draft', s.org.orgId),
+      draftLines: await count('ludy_finance.einvoice_draft_line', s.org.orgId),
+      stockMoves: await count('ludy_finance.stock_move', s.org.orgId),
     }).toEqual(before);
-    expect(await one('SELECT state, provider_ref FROM crove_finance.einvoice_draft WHERE org_id = $1', [s.org.orgId])).toEqual({ state: 'issued', provider_ref: 'sbx-purge' });
+    expect(await one('SELECT state, provider_ref FROM ludy_finance.einvoice_draft WHERE org_id = $1', [s.org.orgId])).toEqual({ state: 'issued', provider_ref: 'sbx-purge' });
   });
 
   it('leaves a held blob in place and reports it', async () => {
@@ -764,12 +809,12 @@ suite('org purge on PostgreSQL (#1024)', () => {
     try {
       const { code, out } = await run(s.org.slug);
       expect(code).toBe(0);
-      // The org's customer image (CV5c) is deleted, the held file's blob is not.
-      expect(out).toContain('blobs deleted 1, held 1 (under a retention hold, left in place)');
+      // The org's customer image (CV5c) and its note attachment (#3561) are deleted, the held file's blob is not.
+      expect(out).toContain('blobs deleted 2, held 1 (under a retention hold, left in place)');
     } finally {
       held = null;
     }
     expect(store.blobs.has(s.loose.storageKey)).toBe(true);
-    expect((await purgeAudits(s.org.orgId))[0]?.detail).toMatchObject({ blobs: { deleted: 1, held: 1 } });
+    expect((await purgeAudits(s.org.orgId))[0]?.detail).toMatchObject({ blobs: { deleted: 2, held: 1 } });
   });
 });

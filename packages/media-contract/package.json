@@ -1,5 +1,5 @@
 {
-  "name": "@crove/media-contract",
+  "name": "@ludy/media-contract",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,6 +9,7 @@
     ".": "./src/index.ts",
     "./transport": "./src/transport.ts",
     "./measure": "./src/measure.ts",
+    "./extract": "./src/extract.ts",
     "./types": "./src/types.ts"
   },
   "scripts": {

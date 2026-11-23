@@ -12,6 +12,7 @@ import { exec, sql } from '../lib/db.ts';
 import { createOrg, newEmail, signInNewUser } from '../lib/session.ts';
 import { confirmUnverifiedSignature } from '../lib/inbox.ts';
 import { nextTotp } from '../lib/totp.ts';
+import { openSettingsTab } from '../lib/settings.ts';
 
 const FIXTURE = readFileSync(fileURLToPath(new URL('../../apps/extract/test/fixtures/einvoice-basic.xml', import.meta.url)), 'utf8');
 const SELLER = 'CÔNG TY TNHH DỊCH VỤ MẪU';
@@ -24,8 +25,8 @@ const invoice = (number: number, month: string) => ({
 });
 
 async function goToInbox(page: Page) {
-  await page.getByRole('navigation').getByRole('link', { name: 'Trang chủ', exact: true }).click();
-  await page.getByRole('navigation').getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Tài chính', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: /^Chứng từ(\s+\d+\+?)?$/ }).click();
 }
 
 test('a vendor group of clean invoices is approved in one action, and a rule shows how often it was corrected', async ({ page }) => {
@@ -34,6 +35,8 @@ test('a vendor group of clean invoices is approved in one action, and a rule sho
   const slug = await test.step('teach the vendor rule: change the internet line to 242 on the first invoice and approve it', async () => {
     await signInNewUser(page, newEmail('groups'));
     const created = await createOrg(page, 'Công ty nhóm hóa đơn');
+    // A new org opens on the overview (#3225); the uploads are on the Inbox.
+    await page.goto(page.url().replace(/\/overview$/, '/inbox'));
     await goToInbox(page);
     await page.locator('input[type=file]').setInputFiles(invoice(4201, '9/2026'));
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
@@ -62,14 +65,14 @@ test('a vendor group of clean invoices is approved in one action, and a rule sho
 
   await test.step('with no warning left they are clean, and the Inbox groups them under the rule', async () => {
     exec(
-      `UPDATE crove_kernel.proposal p
+      `UPDATE ludy_kernel.proposal p
           SET payload = jsonb_set(
                 jsonb_set(p.payload, '{signature}', '{"status":"verified","reason":null}'::jsonb),
                 '{checks}',
                 (SELECT jsonb_agg(CASE WHEN c ->> 'id' = 'signature' THEN c || '{"status":"pass","code":"signature.verified"}'::jsonb
                                   WHEN c ->> 'status' = 'warn' THEN c || '{"status":"pass"}'::jsonb ELSE c END)
                    FROM jsonb_array_elements(p.payload -> 'checks') c))
-         FROM crove_kernel.tenant t
+         FROM ludy_kernel.tenant t
         WHERE t.org_id = p.org_id AND t.slug = :'slug' AND p.status = 'pending' AND p.kind = 'finance.purchase'`,
       { slug },
     );
@@ -102,7 +105,7 @@ test('a vendor group of clean invoices is approved in one action, and a rule sho
     // Both left the pending list.
     await expect(page.getByRole('link', { name: SELLER })).toHaveCount(0);
     const documents = sql<{ n: number }>(
-      `SELECT count(*) AS n FROM crove_finance.purchase_document d JOIN crove_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`,
+      `SELECT count(*) AS n FROM ludy_finance.purchase_document d JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`,
       { slug },
     );
     expect(documents[0]?.n).toBe(3);
@@ -129,6 +132,7 @@ test('a vendor group of clean invoices is approved in one action, and a rule sho
     }
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
     await page.getByRole('navigation').getByRole('link', { name: 'Cài đặt' }).click();
+    await openSettingsTab(page, 'accounting');
     const card = page.locator('[aria-label="Quy tắc định khoản đã học"]');
     const row = card.getByRole('listitem');
     await expect(row).toHaveCount(1);

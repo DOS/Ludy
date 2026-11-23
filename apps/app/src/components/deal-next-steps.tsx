@@ -6,14 +6,15 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { NEXT_STEP_BULK_MAX, NEXT_STEP_SNOOZE_DAYS, type NextStep, type NextStepCursor, type NextStepSnoozeDays } from '@crove/kernel-contract';
-import { Badge } from '@crove/ui/components/badge';
-import { Button } from '@crove/ui/components/button';
-import { Checkbox } from '@crove/ui/components/checkbox';
-import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
+import { NEXT_STEP_BULK_MAX, NEXT_STEP_SNOOZE_DAYS, type NextStep, type NextStepCursor, type NextStepSnoozeDays } from '@ludy/kernel-contract';
+import { Badge } from '@ludy/ui/components/badge';
+import { Button } from '@ludy/ui/components/button';
+import { Checkbox } from '@ludy/ui/components/checkbox';
+import { NativeSelect } from '@ludy/ui/components/native-select';
+import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
-import { formatMoney } from '../lib/format.ts';
+import { formatDate, formatMoney } from '../lib/format.ts';
 import { refreshDeals } from './deal-form.tsx';
 import { FollowupDraftAction } from './followup-draft.tsx';
 import { Empty, ErrorText } from './ui.tsx';
@@ -45,18 +46,22 @@ function Row({ step, canEdit, picked, busy, onPick, onDone, onSnooze }: { step: 
           {step.partyName} · {step.stageName} · <span className="tabular-nums">{formatMoney(step.amount, locale, step.currency)}</span>
           {step.assigneeUserId === null && <> · {t('unowned')}</>}
         </p>
-        <p className="text-xs text-foreground">{t(REASON[step.reason], { date: step.sinceOn })}</p>
+        <p className="text-xs text-foreground">{t(REASON[step.reason], { date: formatDate(step.sinceOn, locale) })}</p>
       </div>
       {canEdit && (
         <div className="flex flex-wrap items-center gap-1">
           <Button type="button" size="sm" disabled={busy} aria-label={t('doneOne', { title: step.dealTitle })} onClick={onDone}>
             {t('done')}
           </Button>
-          {NEXT_STEP_SNOOZE_DAYS.map((days) => (
-            <Button key={days} type="button" size="sm" variant="outline" disabled={busy} aria-label={t('snoozeOne', { title: step.dealTitle, days: String(days) })} onClick={() => onSnooze(days)}>
-              {t('snoozeDays', { days: String(days) })}
-            </Button>
-          ))}
+          {/* One "Hoãn..." menu in place of three buttons (#3650): "Xong" is the main action, the draft the second, a snooze the rare one. */}
+          <NativeSelect size="sm" value="" disabled={busy} aria-label={t('snoozeMenuOne', { title: step.dealTitle })} onChange={(e) => e.target.value && onSnooze(Number(e.target.value) as NextStepSnoozeDays)}>
+            <option value="">{t('snoozeMenu')}</option>
+            {NEXT_STEP_SNOOZE_DAYS.map((days) => (
+              <option key={days} value={days}>
+                {t('snoozeDays', { days: String(days) })}
+              </option>
+            ))}
+          </NativeSelect>
         </div>
       )}
       {canEdit && <FollowupDraftAction stepId={step.id} dealTitle={step.dealTitle} />}
@@ -148,21 +153,24 @@ export function DealNextSteps({ canEdit }: { canEdit: boolean }) {
               >
                 {t('bulkDone', { count: String(chosen.length) })}
               </Button>
-              {NEXT_STEP_SNOOZE_DAYS.map((days) => (
-                <Button
-                  key={days}
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => {
-                    begin();
-                    snooze.mutate({ nextStepIds: chosen, days });
-                  }}
-                >
-                  {t('bulkSnooze', { days: String(days) })}
-                </Button>
-              ))}
+              <NativeSelect
+                size="sm"
+                value=""
+                disabled={busy}
+                aria-label={t('bulkSnoozeMenu')}
+                onChange={(e) => {
+                  if (!e.target.value) return;
+                  begin();
+                  snooze.mutate({ nextStepIds: chosen, days: Number(e.target.value) as NextStepSnoozeDays });
+                }}
+              >
+                <option value="">{t('bulkSnoozeMenu')}</option>
+                {NEXT_STEP_SNOOZE_DAYS.map((days) => (
+                  <option key={days} value={days}>
+                    {t('bulkSnooze', { days: String(days) })}
+                  </option>
+                ))}
+              </NativeSelect>
               <span role="status" className="text-xs text-muted-foreground">
                 {chosen.length >= NEXT_STEP_BULK_MAX ? t('bulkMax', { max: String(NEXT_STEP_BULK_MAX) }) : ''}
               </span>

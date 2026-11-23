@@ -25,13 +25,13 @@
 // bulk-edit `audit(ctx, result, facts)`, where a call whose facts are not written out is a finding) or as a fact's value
 // (`done(reason)`); a helper with no call in its file is a finding. Any other destructured name is checked by its name
 // only, and the db tests (audit-facts.db.test.ts and each command's own) check what the rows hold.
-// auditValue (@crove/kernel-contract) replaces a classified value with a marker naming its class. Facts whose key or value
+// auditValue (@ludy/kernel-contract) replaces a classified value with a marker naming its class. Facts whose key or value
 // names a classified column but hold internal data (an account's name, a command's name) are listed below per file,
 // each as the exact fact key and value it covers, with its reason; an entry covers nothing else in its file (#1632).
 import { readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { auditValue, columns, type DataClass } from '@crove/kernel-contract';
+import { auditValue, columns, type DataClass } from '@ludy/kernel-contract';
 import {
   BUILT,
   COPY_OF,
@@ -65,7 +65,11 @@ const MASKS = /(?:^|\.)(?:auditValue|keyedHash|hashText|sha256|count|Boolean|is[
 const ALLOWED: Record<string, Record<string, string>> = {
   'packages/kernel/src/agents.ts': {
     'proposal_command <- info.name': 'the name of the command a proposal runs',
-    'title <- before.title': 'the title of a position in the org chart (crove_kernel.position.title, internal)',
+    'title <- before.title': 'the title of a position in the org chart (ludy_kernel.position.title, internal)',
+    // `reason` is also the name of ludy_finance.misa_amis_push.reason (MISA AMIS's refusal text, personal data since #4015); none of these facts carries it.
+    'reason <- reason': 'why a run did not start, a code of the run-start result (a closed set)',
+    "reason <- ' '": "why a proposal was not created or approved, a code written out at the call (a closed set)",
+    'decision <- decision.reason': "the approval policy's decision code (a closed set), not free text",
   },
   'modules/social/src/review-links.ts': {
     'cleared <- body === null': 'whether the reply was cleared, a boolean',
@@ -78,13 +82,18 @@ const ALLOWED: Record<string, Record<string, string>> = {
   'packages/kernel/src/org-address.ts': { 'cleared <- email === null': 'whether the contact address was cleared, a boolean' },
   'modules/crm/src/booking-feed.ts': { 'member <- userId = data.data.userId': "the removed member's user id, from the event's parsed payload (zod's .data)" },
   'modules/finance/src/accounts.ts': {
-    'name <- account.name': "the previous name of an account of the org's chart (crove_finance.account.name, internal)",
-    'name <- name = input.name ?? account.name': "the new name of an account of the org's chart (crove_finance.account.name, internal)",
+    'name <- account.name': "the previous name of an account of the org's chart (ludy_finance.account.name, internal)",
+    'name <- name = input.name ?? account.name': "the new name of an account of the org's chart (ludy_finance.account.name, internal)",
   },
   // Not classified before the meetings transcript's `text` column (#2578) made the name one; neither fact carries a classified value.
-  'modules/finance/src/cash-voucher.ts': { 'learned_bank_rule <- learned.text': "the id of the crove_finance.bank_party_rule row the voucher taught (learnFromVoucher returns the new row's id as `text`), not a keyword or a statement line" },
-  'modules/finance/src/categorization.ts': { 'matchText <- text = keywordRuleText(input.keyword)': "the keyword of a categorization rule of the org's chart (crove_finance.categorization_rule, internal)" },
-  'modules/finance/src/bank.ts': { 'bankAccount <- input.bankAccount': 'the chart account code (112x) the statement is for, not a bank account number' },
+  'modules/finance/src/cash-voucher.ts': { 'learned_bank_rule <- learned.text': "the id of the ludy_finance.bank_party_rule row the voucher taught (learnFromVoucher returns the new row's id as `text`), not a keyword or a statement line" },
+  'modules/finance/src/categorization.ts': { 'matchText <- text = keywordRuleText(input.keyword)': "the keyword of a categorization rule of the org's chart (ludy_finance.categorization_rule, internal)" },
+  // The posting date of a sale or purchase recorded late: `late` is why it was posted late, the word `opening` or `locked`, not the free text of ludy_finance.einvoice_draft.late_reason that shares the name (#3535).
+  'modules/finance/src/record.ts': { 'late_reason <- late = lateDate ? await lateReason(ctx, legalEntityId, invoice.issueDate, lateDate) : null': 'why a document was posted on a later date, the word opening or locked (ludy_finance.purchase_document.late_reason, a closed set)' },
+  'modules/finance/src/bank.ts': {
+    'bankAccount <- input.bankAccount': 'the chart account code (112x) the statement is for, not a bank account number',
+    'filename <- input.filename': 'the filename of a bank statement import (internal, not personal data)',
+  },
   'modules/finance/src/bank-account-number.ts': {
     'bankAccount <- input.bankAccount': 'the chart account code (112x) a bank account number is recorded on, not the number',
     'bankAccount <- removed.bank_account': 'the chart account code (112x) the removed number was recorded on, not the number',
@@ -95,11 +104,42 @@ const ALLOWED: Record<string, Record<string, string>> = {
   },
   'modules/finance/src/missing-invoices.ts': { 'skipped <- skipped': 'the periods too large to reconcile' },
   'modules/finance/src/portal-list.ts': { 'skipped <- input.skippedCount': "the count of the portal list's skipped rows, not the rows" },
-  'modules/social/src/archive.ts': { 'skipped <- result.skipped.map((s) => ({ post_id: s.postId, reason: s.reason }))': 'the post ids left out and why' },
-  'modules/social/src/bulk-edit.ts': { 'skipped <- result.skipped.map((s) => ({ post_id: s.postId, reason: s.reason }))': 'the post ids left out and why' },
+  // `reason` below is the name that ludy_finance.misa_amis_push.reason (MISA AMIS's refusal text, personal data since #4015) shares; no fact of these files carries that column.
+  'modules/social/src/archive.ts': {
+    'skipped <- result.skipped.map((s) => ({ post_id: s.postId, reason: s.reason }))': 'the post ids left out and why',
+    'reason <- s.reason': "why a post was left out, a code of the archive result (a closed set)",
+  },
+  'modules/social/src/bulk-edit.ts': {
+    'skipped <- result.skipped.map((s) => ({ post_id: s.postId, reason: s.reason }))': 'the post ids left out and why',
+    'reason <- s.reason': "why a post was left out, a code of the bulk edit result (a closed set)",
+  },
+  'modules/social/src/evergreen.ts': { "reason <- ' '": 'why evergreen was switched off, a code written out at the call' },
+  'modules/social/src/publish-hold.ts': {
+    'reason <- input.reason': "the hold's own reason, a member's free text (ludy_social.publish_hold.reason), in the audit log as before and not in the personal-data registry: #4109",
+    'reason <- live.reason': "the released hold's own reason, a member's free text (ludy_social.publish_hold.reason), in the audit log as before and not in the personal-data registry: #4109",
+  },
+  'modules/social/src/recurring.ts': { 'reason <- reason': 'why a recurrence was switched off, a code of the caller (a closed set)' },
+  'modules/social/src/remove.ts': { 'reason <- reason = input.reason ? input.reason : null': "why a variant removal was asked, a member's free text (ludy_social.post_variant.remove_reason), in the audit log as before and not in the personal-data registry: #4109" },
+  'packages/kernel/src/calendar-connections.ts': { 'reason <- input.reason': "why a calendar connection was revoked or marked, the command's own input, in the audit log as before; free text not in the personal-data registry: #4109" },
+  'packages/kernel/src/commands.ts': { 'signature_reason <- signature.reason': "the reason of an inbound mail's signature check, a code of the verifier (a closed set)" },
+  'packages/kernel/src/numbering.ts': { 'reason <- input.reason': "the reason a document number was voided, a member's free text, in the audit log as before and not in the personal-data registry: #4109" },
+  'modules/ads/src/launch-run.ts': { 'reason <- reason': "why a launch step was dropped, 'stale' or 'settled'" },
+  'modules/crm/src/sales-orders.ts': { 'hasReason <- reason !== null': 'whether a decline gave a reason, a boolean' },
+  'modules/finance/src/period-lock.ts': { 'reason <- input.reason': "why a period was locked, a member's free text, in the audit log as before and not in the personal-data registry: #4109" },
+  'modules/meetings/src/links.ts': { "reason <- ' '": 'the code DEAL_DELETED written out at the call' },
+  'modules/meetings/src/meetings.ts': { 'reason <- input.reason': "why a recording was stopped, the command's own input, in the audit log as before; free text not in the personal-data registry: #4109" },
+  'apps/kernel/src/org-purge.ts': { 'reason <- input.reason': "why an owner purged an org, the owner's free text, in the audit log as before and not in the personal-data registry: #4109" },
   'modules/social/src/digest.ts': { 'skipped <- skipped = 0': 'the count of digest mails that failed' },
-  'modules/social/src/report-branding.ts': { 'name <- name = input.name ? input.name : null': "the org's own brand name on its reports (crove_social.report_branding.display_name, internal)" },
+  'modules/social/src/report-branding.ts': { 'name <- name = input.name ? input.name : null': "the org's own brand name on its reports (ludy_social.report_branding.display_name, internal)" },
   'modules/social/src/report-schedules.ts': { 'recipients <- recipients.length': 'the count of recipients, never their addresses' },
+  // Not classified before ludy_hr.candidate.notes (#3425) made the plural name `notes` one; every fact is a count or id of private notes, never text.
+  'packages/kernel/src/personal-data.ts': {
+    'private <- result.privateItems === null ? null : { authors: result.privateItems.length, notes: result.privateItems.reduce((n, p) => n + p.notes, 0), todos: result.privateItems.reduce((n, p) => n + p.todos, 0) }': 'counts of private items per author',
+    'notes <- result.privateItems.reduce((n, p) => n + p.notes, 0)': 'count of private notes matched',
+    "notes <- items(' ')": 'list of matched note id:revision pairs',
+    "event <- event = named.length > 0 ? await ctx.emit(' ', { authors: named.map((a) => ({ userId: a.authorUserId, notes: a.notes, todos: a.todos, meetings: a.meetings })) }) : null": 'the outbox notification event id holding author counts',
+    'notes <- privateRows.flatMap((r) => r.note_ids)': 'ids of deleted private notes',
+  },
 };
 
 // An expression with every auditValue(...) call cut out (blanked, so offsets keep).
@@ -129,7 +169,7 @@ interface Fn {
 }
 
 // A function that passes one of its parameters on to ctx.audit: as the facts (`...facts`, `ctx.audit(facts)`), or as a
-// fact's value (`{ reason }`).
+// fact's value (`{ outcome }`).
 interface Wrapper {
   fn: Fn;
   param: number;
@@ -764,7 +804,7 @@ describe('audit facts and classified columns (#1626, #1632)', () => {
     // Built in a loop and passed by name: each write is checked.
     const loop = (rhs: string) =>
       [
-        "const before = await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'kind']).executeTakeFirstOrThrow();",
+        "const before = await ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'kind']).executeTakeFirstOrThrow();",
         'const previous: Record<string, unknown> = {};',
         `for (const field of changed) previous[field] = ${rhs};`,
         'ctx.audit({ partyId: before.id, previous });',
@@ -791,7 +831,7 @@ describe('audit facts and classified columns (#1626, #1632)', () => {
       'previous: previous.tax_code is a classified column and its value is not auditValue(...)',
     ]);
     // A whole row, spread or passed by name.
-    const row = "const before = await ctx.trx.selectFrom('crove_kernel.party').selectAll().executeTakeFirstOrThrow();";
+    const row = "const before = await ctx.trx.selectFrom('ludy_kernel.party').selectAll().executeTakeFirstOrThrow();";
     expect(check(`${row}\nctx.audit({ ...before });`)).toHaveLength(1);
     expect(check(`${row}\nctx.audit({ previous: before });`)).toHaveLength(1);
     expect(check(`${row}\nctx.audit(before);`)).toHaveLength(1);
@@ -800,7 +840,7 @@ describe('audit facts and classified columns (#1626, #1632)', () => {
       'code: the value reads the classified column tax_code outside auditValue(...)',
     ]);
     // A query's result carries the columns it selects or returns.
-    const picked = "const before = await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'p.tax_code as code']).executeTakeFirstOrThrow();";
+    const picked = "const before = await ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'p.tax_code as code']).executeTakeFirstOrThrow();";
     expect(check(`${picked}\nctx.audit({ previous: before });`)).toEqual(['previous: before holds the classified column tax_code from the database']);
     expect(check("const done = await ctx.trx.updateTable('t').set({ a: 1 }).returning('id').execute();\nctx.audit({ done });")).toEqual([]);
     // A spread of a call: a function of the file has what it returns read as facts; another's result cannot be read.
@@ -897,7 +937,7 @@ describe('audit facts and classified columns (#1626, #1632)', () => {
     expect(check(`${wrapper}\naudit(ctx, result, { email: input.email });`)).toEqual(['email: the key names a classified column and its value is not auditValue(...)']);
     expect(check(`${wrapper}\naudit(ctx, result, someFacts);`)).toEqual(['audit(...): audit passes its argument to ctx.audit; write the facts out as an object literal at the call']);
     // A helper that passes a parameter on as a fact's value: each call's argument is read as that value.
-    const done = 'const done = (reason: string) => {\n  ctx.audit({ agent: agent.id, reason });\n  return null;\n};';
+    const done = 'const done = (outcome: string) => {\n  ctx.audit({ agent: agent.id, outcome });\n  return null;\n};';
     expect(check(`${done}\nif (x) return done('not_runnable');`)).toEqual([]);
     expect(check(`${done}\nif (x) return done(party.email);`)).toEqual(['done(...): the value reads the classified column email outside auditValue(...)']);
     // A parameter the helper masks itself does not make it a wrapper; one with no call in its file cannot be read.
@@ -913,7 +953,7 @@ describe('audit facts and classified columns (#1626, #1632)', () => {
     const untracedFacts = 'facts: the facts are a name the scan cannot trace; write them out';
     const unfollowed = 'facts: facts is written by a destructuring assignment or a for...of the scan cannot follow; assign it plainly';
     // A query's column read by the alias it was selected as.
-    const aliased = "const before = await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'tax_code as code']).executeTakeFirstOrThrow();";
+    const aliased = "const before = await ctx.trx.selectFrom('ludy_kernel.party').select(['id', 'tax_code as code']).executeTakeFirstOrThrow();";
     expect(check(`${aliased}\nctx.audit({ previous: before.code });`)).toEqual(['previous: the value reads the classified column tax_code as code outside auditValue(...)']);
     expect(check(`${aliased}\nctx.audit({ partyId: before.id });`)).toEqual([]);
     // What a name is given after its declaration: an assignment, a merge, Object.assign, a declaration with no value.

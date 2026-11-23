@@ -5,7 +5,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { EInvoiceConnection, LegalEntity } from '@crove/kernel-contract';
+import type { EInvoiceConnection, LegalEntity } from '@ludy/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 
@@ -97,12 +97,25 @@ describe('IntegrationsSection', () => {
       return section({ bank: false, providers: false });
     };
     const platforms = [{ platform: 'shopee', adapter: true, adapters: ['sandbox'] }];
-    const on = withMarketplace({ adapters: [{ id: 'sandbox', offline: true, connectFields: [], platforms: ['shopee'] }], platforms }, []);
+    const on = withMarketplace({ adapters: [{ id: 'sandbox', offline: true, push: false, connectFields: [], platforms: ['shopee'] }], platforms }, []);
     expect(on).toContain(`>${en.integrations.title}<`);
     expect(on).toContain(`>${en.marketplaceConnections.title}<`);
     expect(on).toContain('role="group"');
     const off = withMarketplace({ adapters: [], platforms: [{ platform: 'shopee', adapter: false, adapters: [] }] }, []);
     expect(off).toBe('');
+  });
+
+  it('draws the MISA card where the deployment holds only the ASP ClientID (#4111), and not where it holds neither', () => {
+    const qc = client.current;
+    const withMisa = (status: { offered: boolean; pushOffered: boolean; aspOffered: boolean; aspPushOffered?: boolean }) => {
+      qc.setQueryData(['misaAmis', 'status'], status);
+      qc.setQueryData(['misaAmis', 'connections', 'list'], []);
+      return section({ bank: false, providers: false });
+    };
+    const aspOnly = withMisa({ offered: false, pushOffered: false, aspOffered: true });
+    expect(aspOnly).toContain(`>${en.integrations.title}<`);
+    expect(aspOnly).toContain(`aria-label="${en.misaAmisConnections.connectTitleAsp}"`);
+    expect(withMisa({ offered: false, pushOffered: false, aspOffered: false })).toBe('');
   });
 
   it('keeps showing an org\'s e-invoice connection when the deployment no longer offers a provider', () => {

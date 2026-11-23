@@ -17,12 +17,13 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity, type ChannelConnectInput, type SealedChannelCredential } from '@crove/kernel';
-import { CredentialVault, parseVaultKey, Runtime, type CredentialBinding } from '@crove/kernel-runtime';
+import { createDb, type Db } from '@ludy/db';
+import { migrate } from '@ludy/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity, type ChannelConnectInput, type SealedChannelCredential } from '@ludy/kernel';
+import { CredentialVault, parseVaultKey, Runtime, type CredentialBinding } from '@ludy/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
+import { createDbClient, createDbPool, resolveDbIdentifiers, setActiveRolePasswords, type DbIdentifiers } from './fixtures/db-identifiers.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -34,14 +35,23 @@ const suite = ADMIN ? describe : describe.skip;
 // crove_ads.ad_token_seal is the copy a closed ads connection keeps for at most seven days, to revoke the permissions at the platform (#2296, ADR-0025's
 // amendment of 2026-11-03): its behaviour is pinned by invariant/ads-token-seal.db.test.ts and ads-token-seal-source.test.ts, which replaced the dated
 // allowance the step before it carried.
-const SEALED_STORES = ['crove_ads.ad_token_seal.envelope', 'crove_kernel.calendar_credential.envelope', 'crove_kernel.credential.envelope', 'crove_social.chat_alert_target.envelope'];
+const SEALED_STORES = [
+  'crove_ads.ad_token_seal.envelope',
+  'crove_kernel.calendar_credential.envelope',
+  'crove_kernel.credential.envelope',
+  'crove_kernel.meeting_platform_credential.envelope',
+  'crove_meetings.chat_channel_target.envelope',
+  'crove_social.chat_alert_target.envelope',
+];
 // Stores that are allowed until a date, each with the issue and the reason. The test accepts the store being absent (the table lands in a later change) or
 // present, and fails on the day after `expires` (yyyy-mm-dd), so the allowance is replaced by pinned tests or removed before then. None is open.
-const SEALED_ALLOWANCES: Readonly<Record<string, { issue: string; expires: string; reason: string }>> = {};
+const SEALED_ALLOWANCES: Readonly<Record<string, { issue: string; expires: string; reason: string }>> = {
+};
 
 suite('channel credentials on PostgreSQL (ADR-0025)', () => {
   const dbName = `crove_test_channels_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
+  let dbIds: DbIdentifiers | undefined;
   let appPool: pg.Pool;
   let workerPool: pg.Pool;
   let api: Runtime;
@@ -52,7 +62,7 @@ suite('channel credentials on PostgreSQL (ADR-0025)', () => {
   const system = { type: 'system' as const, component: 'channel-test' };
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
-    const client = new pg.Client({ connectionString: adminUrl });
+    const client = createDbClient({ connectionString: adminUrl }, dbIds);
     await client.connect();
     try {
       return await fn(client);
@@ -92,9 +102,9 @@ suite('channel credentials on PostgreSQL (ADR-0025)', () => {
   // Runs SQL as crove_app in a member's context, the way the runtime enters it, skipping the commands.
   async function asMemberSql<T extends pg.QueryResultRow>(userId: string, orgId: string, text: string, values: unknown[]): Promise<pg.QueryResult<T>> {
     const u = new URL(adminUrl);
-    u.username = 'crove_app';
+    u.username = dbIds ? dbIds.roleName('crove_app') : 'crove_app';
     u.password = 'test-app-pw';
-    const client = new pg.Client({ connectionString: u.toString() });
+    const client = createDbClient({ connectionString: u.toString() }, dbIds);
     await client.connect();
     try {
       await client.query('BEGIN');
@@ -109,9 +119,9 @@ suite('channel credentials on PostgreSQL (ADR-0025)', () => {
   // Runs and commits SQL as crove_worker in the system context of an org, as a provider job would.
   async function asWorkerSql(orgId: string, text: string, values: unknown[]): Promise<void> {
     const u = new URL(adminUrl);
-    u.username = 'crove_worker';
+    u.username = dbIds ? dbIds.roleName('crove_worker') : 'crove_worker';
     u.password = 'test-worker-pw';
-    const client = new pg.Client({ connectionString: u.toString() });
+    const client = createDbClient({ connectionString: u.toString() }, dbIds);
     await client.connect();
     try {
       await client.query('BEGIN');
@@ -141,15 +151,16 @@ suite('channel credentials on PostgreSQL (ADR-0025)', () => {
     base.pathname = `/${dbName}`;
     adminUrl = base.toString();
     await migrate({ adminUrl, dir: MIGRATIONS });
-    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    dbIds = await resolveDbIdentifiers(adminUrl);
+    await setActiveRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' }, dbIds);
     const url = (user: string, password: string) => {
       const u = new URL(adminUrl);
-      u.username = user;
+      u.username = dbIds ? dbIds.roleName(user) : user;
       u.password = password;
       return u.toString();
     };
-    appPool = createPool({ connectionString: url('crove_app', 'test-app-pw'), max: 4 });
-    workerPool = createPool({ connectionString: url('crove_worker', 'test-worker-pw'), max: 4 });
+    appPool = createDbPool({ connectionString: url('crove_app', 'test-app-pw'), max: 4 }, dbIds);
+    workerPool = createDbPool({ connectionString: url('crove_worker', 'test-worker-pw'), max: 4 }, dbIds);
     appDb = createDb(appPool);
     const defs = { commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) };
     api = new Runtime(appDb, { manifests: TEST_MANIFESTS }).register(defs);
@@ -194,7 +205,7 @@ suite('channel credentials on PostgreSQL (ADR-0025)', () => {
          FROM pg_catalog.pg_attribute a
          JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-         WHERE c.relkind IN ('r', 'p') AND n.nspname LIKE 'crove\\_%' AND a.attnum > 0 AND NOT a.attisdropped
+         WHERE c.relkind IN ('r', 'p') AND (n.nspname LIKE 'crove\\_%' OR n.nspname LIKE 'ludy\\_%') AND a.attnum > 0 AND NOT a.attisdropped
            AND a.atttypid = 'bytea'::regtype AND a.attname ~* 'envelope'
          ORDER BY 1`,
       ),

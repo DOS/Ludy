@@ -17,6 +17,15 @@ describe('migration files', () => {
     expect(a?.sha256).toBe(b?.sha256);
   });
 
+  it('accepts ludy-named migration files and concurrent index markers (#3970)', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ludy-mig-'));
+    const name = '20270315070000_ludy_kernel_test.sql';
+    await writeFile(join(dir, name), 'SELECT 1;\n');
+    const [file] = await readMigrations(dir);
+    expect(file?.name).toBe(name);
+    expect(concurrentIndexes(name, `-- ludy:concurrent-index\nCREATE INDEX CONCURRENTLY IF NOT EXISTS i ON ludy_kernel.t (a);\n`)).toHaveLength(1);
+  });
+
   it('rejects files that break the naming rule', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'crove-bad-'));
     await writeFile(join(dir, 'bad.sql'), 'SELECT 1;');
@@ -140,20 +149,20 @@ describe('migration files', () => {
       return {
         query: async (sql: string) => {
           if (sql.includes('pg_try_advisory_lock')) return { rows: [{ ok: ++tries > freeAfter }] };
-          if (sql.includes('pg_locks')) return { rows: [{ holder: 'pid 42 (crove-migrate, active)' }] };
+          if (sql.includes('pg_locks')) return { rows: [{ holder: 'pid 42 (ludy-migrate, active)' }] };
           throw new Error(`unexpected query: ${sql}`);
         },
       } as unknown as Parameters<typeof takeMigrateLock>[0];
     };
     const log: string[] = [];
     await takeMigrateLock(client(2), { log: (m) => log.push(m), pollMs: 1, logEveryMs: 60_000 });
-    expect(log).toEqual(['waiting for the migration lock, held by pid 42 (crove-migrate, active) (waited 0s)', 'took the migration lock after 0s']);
+    expect(log).toEqual(['waiting for the migration lock, held by pid 42 (ludy-migrate, active) (waited 0s)', 'took the migration lock after 0s']);
     // Free at once: nothing logged.
     const quiet: string[] = [];
     await takeMigrateLock(client(0), { log: (m) => quiet.push(m), pollMs: 1 });
     expect(quiet).toEqual([]);
     await expect(takeMigrateLock(client(Number.POSITIVE_INFINITY), { pollMs: 1, maxWaitMs: 20 })).rejects.toThrow(
-      /another run has held the migration lock for longer than 0s \(pid 42 \(crove-migrate, active\)\)/,
+      /another run has held the migration lock for longer than 0s \(pid 42 \(ludy-migrate, active\)\)/,
     );
   });
 
@@ -174,7 +183,7 @@ describe('shared-database mode (#2284)', () => {
     for (const off of [undefined, '', '  ', 'false']) expect(sharedDatabaseSetting(off), String(off)).toBe(false);
     expect(sharedDatabaseSetting('true')).toBe(true);
     expect(sharedDatabaseSetting(' true ')).toBe(true);
-    for (const bad of ['TRUE', '1', 'yes', 'on']) expect(() => sharedDatabaseSetting(bad), bad).toThrow(/CROVE_SHARED_DATABASE/);
+    for (const bad of ['TRUE', '1', 'yes', 'on']) expect(() => sharedDatabaseSetting(bad), bad).toThrow(/LUDY_SHARED_DATABASE/);
   });
 
   const migrations = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
