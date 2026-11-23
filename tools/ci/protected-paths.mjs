@@ -31,6 +31,7 @@ export const PROTECTED_PATHS = [
   [/^\.mcp\.json$/, 'agent tool config'],
   [/^CLAUDE\.md$/, 'agent policy'],
   [/^AGENTS\.md$/, 'agent policy'],
+  [/^docs\/product-owner-config\.md$/, 'Product Owner authority config'],
   // Dependencies and test runners: they decide what code and which tests run in CI.
   // Every package.json: `exports`/`main`/`imports` can repoint a package the invariant suite imports,
   // and `scripts`/`pnpm` fields run code, all without touching the lockfile.
@@ -60,6 +61,17 @@ export const PROTECTED_PATHS = [
   [/(^|\/)auth(\/|\.ts$|-[^/]*\.ts$)/, 'authentication'],
   [/^apps\/kernel\/src\/(auth|sessions)[^/]*\.ts$/, 'identity adapter'],
   [/^apps\/kernel\/src\/http\.ts$/, 'HTTP edge (authentication, inbound secret)'],
+  [/^apps\/kernel\/src\/oauth-(server|adapter)\.ts$/, 'OAuth 2.1 authorization server'],
+  [/^apps\/kernel\/src\/mcp-(endpoint|protocol|wake[^/]*)\.ts$/, 'MCP edge and wake-up webhook'],
+  [/^apps\/kernel\/src\/(sign-link|sign-direct-link|review-link|quote-link|report-link|booking-page)\.ts$/, 'public-link capability resolver'],
+  [/^apps\/kernel\/src\/(media-ticket|stream)\.ts$/, 'ticket and SSE stream edge'],
+  [/^apps\/kernel\/src\/credentials\.ts$/, 'credential broker'],
+  [/^apps\/kernel\/src\/export-seal\.ts$/, 'export sealing'],
+  // Sandboxes, media wrapper and browser extension permission policy.
+  [/^apps\/extract\/src\/sandbox\.ts$/, 'extraction parser sandbox'],
+  [/^apps\/extract\/src\/seal\.ts$/, 'PDF inspection and sealing'],
+  [/^apps\/media\/src\/ffmpeg\.ts$/, 'media processing wrapper'],
+  [/^apps\/extension\/src\/manifest-policy\.ts$/, 'extension manifest permission policy'],
   // Schema: every migration change (G6 lists GRANT/POLICY/DEFINER/ROLE; any SQL can drop a trigger or
   // replace a function, so all of them count).
   [/^supabase\/migrations\//, 'migration'],
