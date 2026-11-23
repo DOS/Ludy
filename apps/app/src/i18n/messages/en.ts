@@ -166,6 +166,8 @@ export const en = {
     openMenu: 'Open the menu',
     skipToContent: 'Skip to content',
     closeMenu: 'Close the menu',
+    collapseSidebar: 'Collapse sidebar ([)',
+    expandSidebar: 'Expand sidebar ([)',
     account: 'Account',
     socialNotifications: 'Post updates',
     socialPosts: 'Posts',

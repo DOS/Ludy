@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Outlet, useLocation, useNavigate, useParams, useRouter } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
+import { cn } from '@ludy/ui/lib/utils';
 import { NavDrawer, ShellNav } from '../components/app-nav.tsx';
 import { PhoneHeader } from '../components/phone-header.tsx';
 import { CommandPalette, type PaletteEntry } from '../components/command-palette.tsx';
@@ -26,6 +27,7 @@ import { proposalName } from '../lib/review.ts';
 import { THEMES } from '../lib/theme.ts';
 import { useThemeSetting } from '../lib/theme-runtime.ts';
 import { signOut } from '../lib/session-actions.ts';
+import { hasSecondaryNav, isSidebarToggleShortcut, useSidebarCollapsed } from '../lib/sidebar-rail.ts';
 import { useRouteFocus } from '../lib/route-focus.ts';
 import { useScrollRoom } from '../lib/scroll-room.ts';
 import { SAFETY_POLL_MS, pollEvery, useInvalidationStream, useStreamLive } from '../lib/stream-hook.ts';
@@ -129,6 +131,9 @@ export function OrgLayout() {
   const [theme, setTheme] = useThemeSetting();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
+  const [userCollapsed, setUserCollapsed] = useSidebarCollapsed();
+  const hasSecondary = hasSecondaryNav(screenApp, apps, pathname);
+  const sidebarCollapsed = !hasSecondary || userCollapsed;
   // The org's search (#673): parties, documents and journal entries for what is typed in the palette, where finance runs;
   // and the notes the member may read, where notes runs (#1675).
   const financeOn = NAV.some((n) => n.module === 'finance');
@@ -163,6 +168,7 @@ export function OrgLayout() {
 
   // Ctrl K (Cmd K on a Mac) opens or closes the command palette from any screen of the org.
   // Alt+Q opens the quick capture modal when the notes module is active and focus is not in an editable field.
+  // `[` toggles the desktop secondary sidebar menu when the route owns one and focus is not in an editable field.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (isPaletteShortcut(event)) {
@@ -183,11 +189,23 @@ export function OrgLayout() {
         setMenuOpen(false);
         setPaletteOpen(false);
         setQuickCaptureOpen(true);
+        return;
+      }
+      if (
+        isSidebarToggleShortcut(event, {
+          hasSecondary,
+          modalOpen: paletteOpen || quickCaptureOpen || menuOpen || hasOpenModalDialog(typeof document !== 'undefined' ? document : null),
+          isDesktop: typeof window === 'undefined' || !window.matchMedia ? true : window.matchMedia('(min-width: 768px)').matches,
+          activeElement: typeof document !== 'undefined' ? document.activeElement : null,
+        })
+      ) {
+        event.preventDefault();
+        setUserCollapsed((prev) => !prev);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [notesOn, me.isSuccess, org, roleHere]);
+  }, [notesOn, me.isSuccess, org, roleHere, hasSecondary, paletteOpen, quickCaptureOpen, menuOpen, setUserCollapsed]);
 
   const paletteEntries = useMemo<PaletteEntry[]>(
     () => [
@@ -304,7 +322,7 @@ export function OrgLayout() {
   // The count on a tab: the pending proposals on Chứng từ's first tab.
   const tabBadges = { inbox: menuBadges.inbox };
 
-  const shellNav = (onNavigate?: () => void) => (
+  const shellNav = ({ mode, onNavigate }: { mode: 'sidebar' | 'drawer'; onNavigate?: () => void }) => (
     <ShellNav
       slug={slug}
       apps={apps}
@@ -314,6 +332,13 @@ export function OrgLayout() {
       badges={{ documents: menuBadges.inbox, social: menuBadges.social, alerts: workUnread, socialNotifications: unread }}
       orgs={me.data?.orgs ?? []}
       email={me.data?.email}
+      mode={mode}
+      {...(mode === 'sidebar'
+        ? {
+            secondaryCollapsed: sidebarCollapsed,
+            onToggleSecondary: hasSecondary ? () => setUserCollapsed((prev) => !prev) : undefined,
+          }
+        : {})}
       onOpenPalette={() => {
         onNavigate?.();
         setPaletteOpen(true);
@@ -348,11 +373,20 @@ export function OrgLayout() {
       <div role="status" aria-live="polite" data-route-announcer className="sr-only">
         <span key={screenName.seq}>{screenName.name}</span>
       </div>
-      <aside className="sticky top-0 hidden h-screen w-72 shrink-0 border-r bg-sidebar md:flex print:hidden">{shellNav()}</aside>
+      <aside
+        data-testid="desktop-sidebar"
+        data-collapsed={sidebarCollapsed ? 'true' : 'false'}
+        className={cn(
+          'sticky top-0 hidden h-screen shrink-0 border-r bg-sidebar md:flex print:hidden',
+          sidebarCollapsed ? 'w-16' : 'w-72',
+        )}
+      >
+        {shellNav({ mode: 'sidebar' })}
+      </aside>
       <div className="min-w-0 flex-1">
         <PhoneHeader headerRef={phoneHeader} orgName={org?.name} attention={menuBadges.inbox !== null} onOpenMenu={() => setMenuOpen(true)} onOpenPalette={() => setPaletteOpen(true)} />
         <NavDrawer open={menuOpen} onOpenChange={setMenuOpen}>
-          {shellNav(() => setMenuOpen(false))}
+          {shellNav({ mode: 'drawer', onNavigate: () => setMenuOpen(false) })}
         </NavDrawer>
         {/* Focusable from code only: where the focus goes when the toast that held it leaves (#2026). */}
         <main ref={main} id="main-content" tabIndex={-1} className="mx-auto w-full max-w-6xl px-4 py-6 outline-none md:px-8 md:py-8 print:max-w-none print:p-0">

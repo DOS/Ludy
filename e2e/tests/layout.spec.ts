@@ -31,17 +31,41 @@ test('the sidebar keeps sign-out and Settings in view on a short window, and eac
   const account = sidebar.getByRole('button', { name: /^Tài khoản:/ });
   await expect(account).toBeInViewport();
   await expect(sidebar.getByRole('link', { name: 'Cài đặt' })).toBeInViewport();
-  // A new org opens on the overview, which belongs to no app: the rail shows, and no app menu, not even the Cộng tác one (#3588).
+  // A new org opens on the overview, which belongs to no app: the 64px rail shows with no 224px secondary panel (#3588, #4519).
+  expect(Math.round((await sidebar.boundingBox())?.width ?? 0)).toBe(64);
+  await expect(sidebar.getByTestId('rail-search-btn')).toBeInViewport();
+  await expect(sidebar.getByTestId('sidebar-toggle-btn')).toHaveCount(0);
   await expect(sidebar.getByRole('list', { name: 'Ứng dụng' })).toBeVisible();
   await expect(sidebar.getByRole('link', { name: 'Việc nhóm' })).toHaveCount(0);
   await expect(sidebar.getByRole('list', { name: 'Ứng dụng' }).locator('[aria-current="true"]')).toHaveCount(0);
 
-  // A deep link opens with its app selected, and only that app's menu shows.
+  // A deep link opens with its app selected, and only that app's menu shows (288px expanded sidebar).
   const apps = sidebar.getByRole('list', { name: 'Ứng dụng' });
   await page.goto(`/o/${slug}/journal`);
   await expect(apps.getByRole('link', { name: 'Tài chính', exact: true })).toHaveAttribute('aria-current', 'true');
+  expect(Math.round((await sidebar.boundingBox())?.width ?? 0)).toBe(288);
   await expect(sidebar.getByRole('link', { name: 'Sổ sách' })).toBeVisible();
   await expect(sidebar.getByRole('link', { name: 'Việc nhóm' })).toHaveCount(0);
+
+  // Clicking the collapse toggle or pressing `[` collapses/expands the secondary sidebar and persists across reload (#4519).
+  await sidebar.getByTestId('sidebar-toggle-btn').click();
+  expect(Math.round((await sidebar.boundingBox())?.width ?? 0)).toBe(64);
+  await expect(sidebar.getByRole('link', { name: 'Sổ sách' })).toHaveCount(0);
+  await page.reload();
+  await expect(apps.getByRole('link', { name: 'Tài chính', exact: true })).toBeVisible();
+  expect(Math.round((await sidebar.boundingBox())?.width ?? 0)).toBe(64);
+  // `[` inside an input field does not toggle the sidebar.
+  await page.goto(`/o/${slug}/my-work`);
+  const quickInput = page.getByRole('textbox', { name: 'Thêm việc, Enter để lưu' });
+  await quickInput.focus();
+  await page.keyboard.press('[');
+  await expect(quickInput).toHaveValue('[');
+  expect(Math.round((await sidebar.boundingBox())?.width ?? 0)).toBe(64);
+  await quickInput.evaluate((el) => (el as HTMLElement).blur());
+  await page.keyboard.press('[');
+  expect(Math.round((await sidebar.boundingBox())?.width ?? 0)).toBe(288);
+  await expect(sidebar.getByRole('link', { name: 'Việc của tôi' })).toBeVisible();
+  await page.goto(`/o/${slug}/journal`);
 
   // On a 1366x768 laptop no app's menu scrolls.
   await page.setViewportSize({ width: 1366, height: 768 });

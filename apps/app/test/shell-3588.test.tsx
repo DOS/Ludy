@@ -80,7 +80,18 @@ function render(locale: 'vi' | 'en', node: React.ReactNode): string {
 
 const apps = installedApps(Object.keys(MODULE_SCREENS));
 const LONG_NAME = 'Công ty TNHH Thương mại và Dịch vụ Vận tải Quốc tế Sao Mai';
-const shell = (pathname: string, locale: 'vi' | 'en' = 'vi', modules?: readonly string[], onNavigate?: () => void) => {
+const shell = (
+  pathname: string,
+  locale: 'vi' | 'en' = 'vi',
+  modules?: readonly string[],
+  onNavigate?: () => void,
+  extra?: {
+    mode?: 'sidebar' | 'drawer';
+    secondaryCollapsed?: boolean;
+    onToggleSecondary?: () => void;
+    onOpenQuickCapture?: () => void;
+  },
+) => {
   state.pathname = pathname;
   state.links = [];
   return render(
@@ -96,6 +107,7 @@ const shell = (pathname: string, locale: 'vi' | 'en' = 'vi', modules?: readonly 
       onOpenPalette={() => undefined}
       paletteKeys="Ctrl K"
       {...(onNavigate ? { onNavigate } : {})}
+      {...extra}
     />,
   );
 };
@@ -270,14 +282,22 @@ describe('SH-4: 44px targets under the phone breakpoint', () => {
 });
 
 describe('SH-5: bottom AccountPopover keeps active org context and uses segmented chrome toggles (#4502)', () => {
-  it('puts the full org name and e-mail address in titles on the bottom account trigger, with no top org menu or <details>', () => {
-    const html = shell('/o/acme/overview');
-    expect(html).toContain('data-testid="account-menu-trigger"');
-    expect(html).toContain(`title="${LONG_NAME}"`);
-    expect(html).toContain('title="chu.cong.ty@example.com"');
-    expect(html).not.toContain('data-testid="org-menu"');
-    expect(html).not.toContain('<details');
-    expect(html).not.toContain('<select');
+  it('puts the full org name and e-mail address in titles on the bottom account trigger in expanded sidebars, and in compact rail aria-label/title on Overview (#4519)', () => {
+    const expanded = shell('/o/acme/journal');
+    expect(expanded).toContain('data-testid="account-menu-trigger"');
+    expect(expanded).toContain(`title="${LONG_NAME}"`);
+    expect(expanded).toContain('title="chu.cong.ty@example.com"');
+    expect(expanded).not.toContain('data-testid="org-menu"');
+    expect(expanded).not.toContain('<details');
+    expect(expanded).not.toContain('<select');
+
+    const railOverview = shell('/o/acme/overview');
+    expect(railOverview).toContain('data-testid="account-menu-trigger"');
+    expect(railOverview).toContain(`title="chu.cong.ty@example.com · ${LONG_NAME}"`);
+    expect(railOverview).toContain(`aria-label="Tài khoản: chu.cong.ty@example.com · ${LONG_NAME}"`);
+    expect(railOverview).not.toContain('data-testid="org-menu"');
+    expect(railOverview).not.toContain('<details');
+    expect(railOverview).not.toContain('<select');
   });
 
   it('houses org switcher, icon theme toggle, VI/EN locale toggle, support/status links, and sign-out inside AccountPanel', () => {
@@ -341,5 +361,88 @@ describe('SH-7: "hoa don" finds Chứng từ in Ctrl K', () => {
   it('leaves the rest as it was: a word no keyword holds finds nothing extra', () => {
     expect(filterPalette(vi, 'chung tu').map((e) => e.label)).toContain('Chứng từ');
     expect(Object.keys(NAV_KEYWORDS).sort()).toEqual(['documents', 'tax']);
+  });
+});
+
+describe('SH-8: smart 64px no-app rail and user-toggleable secondary sidebar (#4519)', () => {
+  it.each(['/o/acme/overview', '/o/acme/notifications', '/o/acme/audit', '/o/acme/personal-data'])(
+    'collapses %s to the 64px rail with Cmd+K, optional +, and compact account trigger in the rail',
+    (path) => {
+      const withQuickAdd = shell(path, 'vi', undefined, undefined, {
+        mode: 'sidebar',
+        onToggleSecondary: () => undefined,
+        onOpenQuickCapture: () => undefined,
+      });
+      // No secondary 224px column or collapse button on no-app org routes.
+      expect(withQuickAdd).not.toContain(`>${viMessages.palette.open}</span>`);
+      expect(withQuickAdd).not.toContain('overflow-y-auto max-md:overflow-y-visible');
+      expect(withQuickAdd).not.toContain('data-testid="sidebar-toggle-btn"');
+      // Rail search, quick-capture, and compact account trigger carry accessible labels, titles, and focus-visible rings.
+      expect(withQuickAdd).toContain('data-testid="rail-search-btn"');
+      expect(withQuickAdd).toContain(`aria-label="${viMessages.palette.open} (Ctrl K)"`);
+      expect(withQuickAdd).toContain(`title="${viMessages.palette.open} (Ctrl K)"`);
+      expect(withQuickAdd).toContain('data-testid="shell-quick-capture-btn"');
+      expect(withQuickAdd).toContain(`aria-label="${viMessages.myWork.quickCaptureTrigger}"`);
+      expect(withQuickAdd).toContain('data-testid="account-menu-trigger"');
+      expect(withQuickAdd).toContain('focus-visible:ring-3');
+
+      const withoutQuickAdd = shell(path, 'en', undefined, undefined, { mode: 'sidebar' });
+      expect(withoutQuickAdd).not.toContain('data-testid="shell-quick-capture-btn"');
+      expect(withoutQuickAdd).toContain(`aria-label="${enMessages.palette.open} (Ctrl K)"`);
+      expect(withoutQuickAdd).toContain(`aria-label="Account: chu.cong.ty@example.com · ${LONG_NAME}"`);
+    },
+  );
+
+  it('renders the collapse/expand toggle on App and Settings routes and hides the secondary column when collapsed', () => {
+    for (const path of ['/o/acme/journal', '/o/acme/settings']) {
+      const expanded = shell(path, 'vi', undefined, undefined, {
+        mode: 'sidebar',
+        secondaryCollapsed: false,
+        onToggleSecondary: () => undefined,
+      });
+      expect(expanded).toContain('data-testid="sidebar-toggle-btn"');
+      expect(expanded).toContain('aria-expanded="true"');
+      expect(expanded).toContain(`aria-label="${viMessages.nav.collapseSidebar}"`);
+      expect(expanded).toContain(`>${viMessages.palette.open}</span>`);
+      expect(expanded).not.toContain('data-testid="rail-search-btn"');
+
+      const collapsed = shell(path, 'vi', undefined, undefined, {
+        mode: 'sidebar',
+        secondaryCollapsed: true,
+        onToggleSecondary: () => undefined,
+        onOpenQuickCapture: () => undefined,
+      });
+      expect(collapsed).toContain('data-testid="sidebar-toggle-btn"');
+      expect(collapsed).toContain('aria-expanded="false"');
+      expect(collapsed).toContain(`aria-label="${viMessages.nav.expandSidebar}"`);
+      expect(collapsed).not.toContain(`>${viMessages.palette.open}</span>`);
+      expect(collapsed).not.toContain('overflow-y-auto max-md:overflow-y-visible');
+      expect(collapsed).toContain('data-testid="rail-search-btn"');
+      expect(collapsed).toContain('data-testid="shell-quick-capture-btn"');
+      expect(collapsed).toContain(`title="chu.cong.ty@example.com · ${LONG_NAME}"`);
+    }
+
+    const enCollapsed = shell('/o/acme/settings', 'en', undefined, undefined, {
+      mode: 'sidebar',
+      secondaryCollapsed: true,
+      onToggleSecondary: () => undefined,
+    });
+    expect(enCollapsed).toContain(`aria-label="${enMessages.nav.expandSidebar}"`);
+  });
+
+  it('keeps mobile NavDrawer expanded on Overview and even when desktop secondaryCollapsed is true', () => {
+    for (const path of ['/o/acme/overview', '/o/acme/journal', '/o/acme/settings']) {
+      const drawer = shell(path, 'vi', undefined, undefined, {
+        mode: 'drawer',
+        secondaryCollapsed: true,
+        onToggleSecondary: () => undefined,
+      });
+      expect(drawer).toContain(viMessages.palette.open);
+      expect(drawer).toContain(`title="${LONG_NAME}"`);
+      expect(drawer).toContain('title="chu.cong.ty@example.com"');
+      expect(drawer).not.toContain('data-testid="sidebar-toggle-btn"');
+      expect(drawer).not.toContain('data-testid="rail-search-btn"');
+      expect(drawer).toContain('min-h-11');
+    }
   });
 });

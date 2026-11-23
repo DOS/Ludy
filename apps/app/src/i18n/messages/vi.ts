@@ -164,6 +164,8 @@ export const vi = {
     openMenu: 'Mở menu',
     skipToContent: 'Bỏ qua tới nội dung',
     closeMenu: 'Đóng menu',
+    collapseSidebar: 'Thu gọn thanh bên ([)',
+    expandSidebar: 'Mở rộng thanh bên ([)',
     account: 'Tài khoản',
     socialNotifications: 'Cập nhật bài đăng',
     socialPosts: 'Bài đăng',
