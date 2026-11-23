@@ -1265,7 +1265,16 @@ export function createRpcHandler(
         preview: os.hr.probation.preview.handler(hrQuery('hr.probation.preview')),
         draftSummary: os.hr.probation.draftSummary.handler(({ context, input }) =>
           inHr(context, (orgId, actor) =>
-            draftProbationSummary(probationAi, hrProbationPorts(orgId, actor), runtime, orgId, actor, input),
+            draftProbationSummary(
+              probationAi,
+              hrProbationPorts(orgId, actor),
+              runtime,
+              orgId,
+              actor,
+              input,
+              aiMeter ? aiMeter(actor) : 'runtime',
+              aiPrice ? { price: aiPrice } : undefined,
+            ),
           ),
         ),
         decide: os.hr.probation.decide.handler(hrCommand('hr.probation.decide')),

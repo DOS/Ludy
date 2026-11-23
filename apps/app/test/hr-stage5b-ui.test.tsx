@@ -71,9 +71,14 @@ vi.mock('../src/lib/api.ts', async () => {
 });
 
 const { HrSelfOnboardingCard, HrSelfOvertimeCard } = await import('../src/components/hr-onboarding-ot-card.tsx');
-const { HrProbationPanel } = await import('../src/components/hr-probation-panel.tsx');
+const {
+  HrProbationPanel,
+  canSubmitProbationDecision,
+  previewMatchesProbationRange,
+  probationScopeKey,
+} = await import('../src/components/hr-probation-panel.tsx');
 const { HrOnboardingReviewQueue, HrOvertimeReviewQueue } = await import('../src/components/hr-stage5b-queues.tsx');
-const { Sheet } = await import('../src/routes/hr-payroll.tsx');
+const { Sheet, buildLineInputsUpdatePayload, stateOf } = await import('../src/routes/hr-payroll.tsx');
 const { I18nProvider } = await import('../src/i18n/provider.tsx');
 const { setActiveLocale } = await import('../src/i18n/runtime.ts');
 
@@ -449,5 +454,86 @@ describe('HR Stage 5B UI & i18n (#4448)', () => {
     const offHtml = wrap(<HrProbationPanel employeeId={EMP_ID} />, 'en');
     expect(offHtml).toContain(en.hrEmployees.probation.projectsOffBadge);
     expect(offHtml).toContain('data-testid="hr-probation-tasks-empty"');
+
+    // Scope & evidence mismatch protections: editing period dates blocks submission until facts are reloaded for the new range.
+    expect(
+      previewMatchesProbationRange({
+        preview: previewOn,
+        isFetching: false,
+        isError: false,
+        employeeId: EMP_ID,
+        effectiveStart: '2026-10-01',
+        effectiveEnd: '2026-11-30',
+      }),
+    ).toBe(true);
+    expect(
+      previewMatchesProbationRange({
+        preview: previewOn,
+        isFetching: false,
+        isError: false,
+        employeeId: EMP_ID,
+        effectiveStart: '2026-10-05',
+        effectiveEnd: '2026-11-30',
+      }),
+    ).toBe(false);
+    expect(
+      previewMatchesProbationRange({
+        preview: previewOn,
+        isFetching: true,
+        isError: false,
+        employeeId: EMP_ID,
+        effectiveStart: '2026-10-01',
+        effectiveEnd: '2026-11-30',
+      }),
+    ).toBe(false);
+    expect(
+      previewMatchesProbationRange({
+        preview: previewOn,
+        isFetching: false,
+        isError: true,
+        employeeId: EMP_ID,
+        effectiveStart: '2026-10-01',
+        effectiveEnd: '2026-11-30',
+      }),
+    ).toBe(false);
+    expect(
+      canSubmitProbationDecision({
+        decision: 'pass',
+        rangeValid: true,
+        previewMatchesRange: false,
+        extendedUntil: '',
+        effectiveEnd: '2026-11-30',
+      }),
+    ).toBe(false);
+    expect(
+      canSubmitProbationDecision({
+        decision: 'pass',
+        rangeValid: true,
+        previewMatchesRange: true,
+        extendedUntil: '',
+        effectiveEnd: '2026-11-30',
+      }),
+    ).toBe(true);
+    expect(probationScopeKey(EMP_ID, '2026-10-01', '2026-11-30')).not.toBe(
+      probationScopeKey(EMP_ID, '2026-10-05', '2026-11-30'),
+    );
+
+    // Editing only bonus omits untouched overtime from payload; modifying overtime includes it.
+    const initialState = stateOf({
+      overtime: [{ dayKind: 'normal_day', night: false, hours: '2' }],
+      bonus: '0',
+    });
+    const bonusOnlyPayload = buildLineInputsUpdatePayload(
+      { ...initialState, bonus: '500000' },
+      initialState.overtime,
+    );
+    expect(bonusOnlyPayload.bonus).toBe('500000');
+    expect('overtime' in bonusOnlyPayload).toBe(false);
+
+    const editedOtPayload = buildLineInputsUpdatePayload(
+      { ...initialState, overtime: [{ dayKind: 'normal_day', night: false, hours: '3' }] },
+      initialState.overtime,
+    );
+    expect(editedOtPayload.overtime).toEqual([{ dayKind: 'normal_day', night: false, hours: '3' }]);
   });
 });

@@ -748,6 +748,14 @@ export function retentionEnds(endedOn: string): string {
 // The erasure of an ended employee after the retention (plan 6.6): the name, the address, the birth date, the bank and the dependents' names are cleared, and the person's key is shredded, so the identity
 // number and the account number, which stay in their row byte for byte, can never be opened again. The employment rows stay: amounts that tie to no person. R3 for owners: it
 // cannot be undone, so it asks for a fresh second factor first; subject_key_shred itself asserts an owner.
+export async function lockEmployeeErasure(
+  trx: QueryContext['trx'],
+  orgId: string,
+  employeeId: string,
+): Promise<void> {
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`hr_emp_erase:${orgId}:${employeeId}`}, 0))`.execute(trx);
+}
+
 export const employeeErase = defineCommand({
   name: 'hr.payroll.employee.erase',
   runsWhenOff: 'erases an ended employee\'s personal data after the retention, which the owner may still do while the app is off',
@@ -768,6 +776,7 @@ export const employeeErase = defineCommand({
     tableWrite(kernelManifest.tables, 'ludy_kernel', 'subject_key', ['ref']),
   ],
   handler: async (ctx, input): Promise<HrEmployeeErased> => {
+    await lockEmployeeErasure(ctx.trx, ctx.orgId, input.employeeId);
     const employee = await loadEmployee(ctx, input.employeeId);
     if (employee.status !== 'ended' || employee.ended_on === null) {
       throw new DomainError('HR_EMPLOYEE_NOT_ENDED', 409, 'Chỉ xóa được hồ sơ của nhân viên đã nghỉ việc');

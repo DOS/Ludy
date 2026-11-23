@@ -24,6 +24,7 @@ import {
   IDENTITY_PLACE,
   INSURANCE_PLACE,
   MANAGERS,
+  lockEmployeeErasure,
   requireKnownBank,
   TAX_CODE_PLACE,
   subjectOf,
@@ -233,13 +234,14 @@ export const selfOnboardingSubmit = defineCommand({
     const emp = await resolveSelfEmployee(ctx.trx, ctx.orgId, callerUserId);
     if (!emp) throw selfNotLinked();
 
+    await lockEmployeeErasure(ctx.trx, ctx.orgId, emp.id);
     const record = await ctx.trx
       .selectFrom('crove_hr.payroll_employee')
       .select(['status', 'erased_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', emp.id)
-      .executeTakeFirstOrThrow();
-    if (record.erased_at !== null) {
+      .executeTakeFirst();
+    if (!record || record.erased_at !== null) {
       throw new DomainError('HR_EMPLOYEE_ERASED', 409, 'Hồ sơ nhân viên này đã được xóa theo yêu cầu');
     }
     if (record.status !== 'active') {

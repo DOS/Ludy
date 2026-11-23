@@ -506,10 +506,10 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
     expect(adminSynced.inputs.overtimeFromRequests).toBe(true);
     expect(otHoursOnLine(adminSynced)).toBe(2);
 
-    // Editing an unrelated field (bonus) without passing overtimeFromRequests keeps the manual OT flag (false).
+    // Editing an unrelated field (bonus) without passing overtime preserves both manual OT and the manual flag (false).
     await o.exec(o.owner, 'hr.payroll.line.inputs.set', {
       lineId: line2!.id,
-      inputs: { overtime: [{ dayKind: 'normal_day', night: false, hours: '1' }], bonus: '500000' },
+      inputs: { bonus: '500000' },
     });
     await o.exec(o.owner, 'hr.payroll.run.sync_overtime', { runId: run.runId });
     const afterUnrelatedEdit = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
@@ -987,5 +987,175 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
     expect((finalLine?.breakdown as PayrollBreakdown | null)?.pay.overtime).toEqual(rolledOvertimeLines);
     expect(finalLine?.figures?.gross).toBe(rolledGross);
     expect(finalLine?.figures?.net).toBe(rolledNet);
+  });
+
+  it('enforces RLS INSERT state restrictions for owner/admin and self L1 routing, and updates contractTermMonths when sync_overtime switches employment_id', async () => {
+    const o = await setupOrg();
+    const { departmentId: deptActive } = await o.exec<{ departmentId: string }>(
+      o.owner,
+      'hr.department.add',
+      { name: 'Sản xuất', code: 'SX', payFunction: 'production' },
+      asMfa(o.owner),
+    );
+    await o.exec(
+      o.owner,
+      'hr.department.set_manager',
+      { departmentId: deptActive, managerUserId: o.manager },
+      asMfa(o.owner),
+    );
+    const empWithMgr = (
+      await o.exec<HrWritten>(
+        o.owner,
+        'hr.payroll.employee.add',
+        {
+          displayName: 'Trần RLS OT',
+          departmentId: deptActive,
+          employment: {
+            effectiveFrom: '2026-09-01',
+            contractType: 'indefinite',
+            region: 'I',
+            baseWage: '18000000',
+          },
+        },
+        asMfa(o.owner),
+      )
+    ).employeeId as string;
+    const empNoMgr = (
+      await o.exec<HrWritten>(
+        o.owner,
+        'hr.payroll.employee.add',
+        {
+          displayName: 'Lê Không Trưởng Bộ Phận',
+          employment: {
+            effectiveFrom: '2026-09-01',
+            contractType: 'indefinite',
+            region: 'I',
+            baseWage: '16000000',
+          },
+        },
+        asMfa(o.owner),
+      )
+    ).employeeId as string;
+    await o.exec(o.owner, 'hr.payroll.employee.link_member', { employeeId: empWithMgr, userId: o.staffA }, asMfa(o.owner));
+    await o.exec(o.owner, 'hr.payroll.employee.link_member', { employeeId: empNoMgr, userId: o.staffB }, asMfa(o.owner));
+
+    // Owner/admin cannot direct-INSERT pre-approved onboarding submissions or OT requests via RLS WITH CHECK.
+    const cOwner = await appPool.connect();
+    try {
+      await cOwner.query('BEGIN');
+      await enterUser(cOwner, o.owner, o.orgId);
+      await expect(
+        cOwner.query(
+          `INSERT INTO crove_hr.onboarding_submission (org_id, employee_id, status, reviewed_by, reviewed_at)
+           VALUES ($1, $2, 'approved', $3, now())`,
+          [o.orgId, empWithMgr, o.owner],
+        ),
+      ).rejects.toThrow(/row-level security/i);
+      await cOwner.query('ROLLBACK');
+
+      await cOwner.query('BEGIN');
+      await enterUser(cOwner, o.owner, o.orgId);
+      await expect(
+        cOwner.query(
+          `INSERT INTO crove_hr.overtime_request (org_id, employee_id, department_id, month, work_date, hours, day_type, status, final_acted_by, final_acted_at)
+           VALUES ($1, $2, $3, '2026-10', '2026-10-12', 2, 'weekday', 'approved', $4, now())`,
+          [o.orgId, empWithMgr, deptActive, o.owner],
+        ),
+      ).rejects.toThrow(/row-level security/i);
+      await cOwner.query('ROLLBACK');
+    } finally {
+      await cOwner.query('ROLLBACK').catch(() => {});
+      cOwner.release();
+    }
+
+    // Self-employee in active dept with non-viewer manager must insert status='pending_l1' with matching department_id.
+    const cSelf = await appPool.connect();
+    try {
+      await cSelf.query('BEGIN');
+      await enterUser(cSelf, o.staffA, o.orgId);
+      await expect(
+        cSelf.query(
+          `INSERT INTO crove_hr.overtime_request (org_id, employee_id, department_id, month, work_date, hours, day_type, status)
+           VALUES ($1, $2, $3, '2026-10', '2026-10-13', 2, 'weekday', 'pending_final')`,
+          [o.orgId, empWithMgr, deptActive],
+        ),
+      ).rejects.toThrow(/row-level security/i);
+      await cSelf.query('ROLLBACK');
+
+      await cSelf.query('BEGIN');
+      await enterUser(cSelf, o.staffA, o.orgId);
+      await expect(
+        cSelf.query(
+          `INSERT INTO crove_hr.overtime_request (org_id, employee_id, department_id, month, work_date, hours, day_type, status)
+           VALUES ($1, $2, NULL, '2026-10', '2026-10-13', 2, 'weekday', 'pending_final')`,
+          [o.orgId, empWithMgr],
+        ),
+      ).rejects.toThrow(/row-level security/i);
+      await cSelf.query('ROLLBACK');
+
+      await cSelf.query('BEGIN');
+      await enterUser(cSelf, o.staffA, o.orgId);
+      await cSelf.query(
+        `INSERT INTO crove_hr.overtime_request (org_id, employee_id, department_id, month, work_date, hours, day_type, status, created_by)
+         VALUES ($1, $2, $3, '2026-10', '2026-10-13', 2, 'weekday', 'pending_l1', $4)`,
+        [o.orgId, empWithMgr, deptActive, o.staffA],
+      );
+      await cSelf.query('COMMIT');
+
+      // Linked employee without active department manager cannot force 'pending_l1', while 'pending_final' succeeds.
+      await cSelf.query('BEGIN');
+      await enterUser(cSelf, o.staffB, o.orgId);
+      await expect(
+        cSelf.query(
+          `INSERT INTO crove_hr.overtime_request (org_id, employee_id, department_id, month, work_date, hours, day_type, status)
+           VALUES ($1, $2, NULL, '2026-10', '2026-10-14', 2, 'weekday', 'pending_l1')`,
+          [o.orgId, empNoMgr],
+        ),
+      ).rejects.toThrow(/row-level security/i);
+      await cSelf.query('ROLLBACK');
+
+      await cSelf.query('BEGIN');
+      await enterUser(cSelf, o.staffB, o.orgId);
+      await cSelf.query(
+        `INSERT INTO crove_hr.overtime_request (org_id, employee_id, department_id, month, work_date, hours, day_type, status, created_by)
+         VALUES ($1, $2, NULL, '2026-10', '2026-10-14', 2, 'weekday', 'pending_final', $3)`,
+        [o.orgId, empNoMgr, o.staffB],
+      );
+      await cSelf.query('COMMIT');
+    } finally {
+      await cSelf.query('ROLLBACK').catch(() => {});
+      cSelf.release();
+    }
+
+    // Adding a newer fixed-term employment term and syncing OT updates contractTermMonths along with employment_id.
+    const run = await o.exec<HrRunWritten>(o.owner, 'hr.payroll.run.open', { month: '2026-10', workingDays: '26' }, asMfa(o.owner));
+    await o.exec(
+      o.owner,
+      'hr.payroll.employment.add',
+      {
+        employeeId: empNoMgr,
+        effectiveFrom: '2026-10-01',
+        contractType: 'fixed_term',
+        termMonths: 12,
+        region: 'I',
+        baseWage: '19000000',
+      },
+      asMfa(o.owner),
+    );
+    const otTerm = await o.exec<HrSelfOvertimeSubmitResult>(o.staffB, 'hr.self.overtime.submit', {
+      workDate: '2026-10-16',
+      hours: '1.5',
+      dayType: 'weekday',
+    });
+    const finTerm = await o.exec<HrOvertimeActionResult>(o.owner, 'hr.overtime.approve_final', {
+      requestId: otTerm.requestId,
+    });
+    expect(finTerm).toMatchObject({ status: 'approved', payrollRunUpdated: true });
+
+    const syncedSheet = await o.query<HrRunSheet>(o.owner, 'hr.payroll.run.sheet', { runId: run.runId });
+    const updatedLine = syncedSheet.lines.find((l) => l.employeeId === empNoMgr && l.kind === 'pay');
+    expect(updatedLine?.inputs.contractTermMonths).toBe(12);
+    expect(updatedLine?.inputs.overtimeFromRequests).toBe(true);
+    expect(otHoursOnLine(updatedLine)).toBe(1.5);
   });
 });

@@ -103,6 +103,7 @@ const zHrLineInputsEdit = zHrPayrollInputsObject
     sicknessBhxhFromLedger: z.boolean().nullable().optional(),
     maternityBhxhDays: zHrBhxhDays.optional(),
     maternityBhxhFromLedger: z.boolean().nullable().optional(),
+    overtime: z.array(zHrOvertimeEntry).max(30).optional(),
     overtimeFromRequests: z.boolean().nullable().optional(),
   })
   .refine(

@@ -496,6 +496,7 @@ export const runOpen = defineCommand({
       ? await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.legalEntityId).executeTakeFirst()
       : await ctx.trx.selectFrom('ludy_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst();
     if (!entity) throw new DomainError('HR_LEGAL_ENTITY_REQUIRED', 422, 'Hãy chọn pháp nhân của bảng lương');
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`hr_ot_run:${ctx.orgId}:${entity.id}:${input.month}`}, 0))`.execute(ctx.trx);
     const exists = await ctx.trx
       .selectFrom('crove_hr.payroll_run')
       .select('id')
@@ -738,6 +739,7 @@ export const lineInputsSet = defineCommand({
             ? existing.maternityBhxhFromLedger
             : input.inputs.maternityBhxhFromLedger)
         : false;
+    const overtime = input.inputs.overtime === undefined ? existing.overtime : input.inputs.overtime;
     const overtimeFromRequests =
       input.inputs.overtime === undefined || sameOvertimeEntries(input.inputs.overtime, existing.overtime)
         ? (input.inputs.overtimeFromRequests === undefined
@@ -746,6 +748,7 @@ export const lineInputsSet = defineCommand({
         : false;
     const nextInputs = zHrPayrollInputs.parse({
       ...input.inputs,
+      overtime,
       contractTermMonths,
       leaveCategory,
       standardAnnualDays,
@@ -769,11 +772,11 @@ export async function lockDraftLines(ctx: Ctx, runId: string, lineIds?: readonly
   const run = await loadRun(ctx, runId);
   if (run.status !== 'draft') throw notDraft();
   if (lineIds !== undefined && lineIds.length === 0) {
-    return { payRun: run, locked: [], byLineId: new Map<string, { id: string; employee_id: string; kind: 'pay' | 'adjustment'; inputs: unknown }>(), people: new Map<string, Person>() };
+    return { payRun: run, locked: [], byLineId: new Map<string, { id: string; employee_id: string; employment_id: string | null; kind: 'pay' | 'adjustment'; inputs: unknown }>(), people: new Map<string, Person>() };
   }
   const locked = await ctx.trx
     .selectFrom('crove_hr.payroll_line')
-    .select(['id', 'employee_id', 'kind', 'inputs'])
+    .select(['id', 'employee_id', 'employment_id', 'kind', 'inputs'])
     .where('org_id', '=', ctx.orgId)
     .where('run_id', '=', run.id)
     .$if(lineIds !== undefined, (q) => q.where('id', 'in', [...(lineIds as readonly string[])]))
@@ -787,7 +790,7 @@ export async function lockDraftLines(ctx: Ctx, runId: string, lineIds?: readonly
 }
 
 export function resolveDraftLineTarget(
-  byLineId: ReadonlyMap<string, { id: string; employee_id: string; kind: 'pay' | 'adjustment'; inputs: unknown }>,
+  byLineId: ReadonlyMap<string, { id: string; employee_id: string; employment_id: string | null; kind: 'pay' | 'adjustment'; inputs: unknown }>,
   people: ReadonlyMap<string, Person>,
   lineId: string,
 ) {
@@ -1114,8 +1117,13 @@ export const runSyncOvertime = defineCommand({
       const { line, person, existing } = resolveDraftLineTarget(byLineId, people, row.id);
       const patch = syncOvertimePatch(existing, overtimeByEmployee.get(line.employee_id) ?? []);
       if (!patch) continue;
+      const contractTermPatch =
+        person.terms.termMonths !== null && line.employment_id !== person.terms.id
+          ? { contractTermMonths: person.terms.termMonths }
+          : {};
       const merged = zHrPayrollInputs.parse({
         ...existing,
+        ...contractTermPatch,
         ...patch,
       });
       updates.push({
@@ -1149,7 +1157,7 @@ export async function syncEmployeeDraftPayrollOvertime(
   if (!payRun) return false;
   const line = await ctx.trx
     .selectFrom('crove_hr.payroll_line')
-    .select(['id', 'employee_id', 'kind', 'inputs'])
+    .select(['id', 'employee_id', 'employment_id', 'kind', 'inputs'])
     .where('org_id', '=', ctx.orgId)
     .where('run_id', '=', payRun.id)
     .where('employee_id', '=', employeeId)
@@ -1165,8 +1173,13 @@ export async function syncEmployeeDraftPayrollOvertime(
   const overtimeByEmployee = await loadApprovedOvertimeByEmployee(ctx, [employeeId], month);
   const patch = syncOvertimePatch(parsed, overtimeByEmployee.get(employeeId) ?? []);
   if (!patch) return false;
+  const contractTermPatch =
+    person.terms.termMonths !== null && line.employment_id !== person.terms.id
+      ? { contractTermMonths: person.terms.termMonths }
+      : {};
   const merged = zHrPayrollInputs.parse({
     ...parsed,
+    ...contractTermPatch,
     ...patch,
   });
   const f = figuresOf(person, merged, payRun.month, payRun.working_days);

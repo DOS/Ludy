@@ -213,6 +213,11 @@ CREATE POLICY hr_onboarding_submission_select ON crove_hr.onboarding_submission 
 CREATE POLICY hr_onboarding_submission_insert ON crove_hr.onboarding_submission AS RESTRICTIVE FOR INSERT TO ludy_tenant
   WITH CHECK (
     (SELECT ludy_kernel.ctx_actor_type()) = 'user'
+    AND onboarding_submission.status = 'pending'
+    AND onboarding_submission.reviewed_by IS NULL
+    AND onboarding_submission.reviewed_at IS NULL
+    AND onboarding_submission.decision_note IS NULL
+    AND (onboarding_submission.created_by IS NULL OR onboarding_submission.created_by = (SELECT ludy_kernel.ctx_user_id()))
     AND (
       EXISTS (
         SELECT 1 FROM ludy_kernel.tenant_member m
@@ -220,14 +225,7 @@ CREATE POLICY hr_onboarding_submission_insert ON crove_hr.onboarding_submission 
            AND m.user_id = (SELECT ludy_kernel.ctx_user_id())
            AND m.role IN ('owner', 'admin')
       )
-      OR (
-        crove_hr.is_self_employee(onboarding_submission.org_id, onboarding_submission.employee_id)
-        AND onboarding_submission.status = 'pending'
-        AND onboarding_submission.reviewed_by IS NULL
-        AND onboarding_submission.reviewed_at IS NULL
-        AND onboarding_submission.decision_note IS NULL
-        AND (onboarding_submission.created_by IS NULL OR onboarding_submission.created_by = (SELECT ludy_kernel.ctx_user_id()))
-      )
+      OR crove_hr.is_self_employee(onboarding_submission.org_id, onboarding_submission.employee_id)
     )
   );
 
@@ -465,6 +463,64 @@ END $$;
 REVOKE ALL ON FUNCTION crove_hr.overtime_request_employee_name(uuid, uuid) FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_hr.overtime_request_employee_name(uuid, uuid) TO ludy_tenant;
 
+CREATE OR REPLACE FUNCTION crove_hr.overtime_self_initial_status(
+  p_org_id uuid,
+  p_employee_id uuid,
+  p_department_id uuid
+)
+RETURNS text
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_org uuid := ludy_kernel.ctx_org_id();
+  v_actor text := ludy_kernel.ctx_actor_type();
+  v_user uuid := ludy_kernel.ctx_user_id();
+  v_role text;
+  v_emp_dept_id uuid;
+  v_mgr_id uuid;
+  v_archived_at timestamptz;
+BEGIN
+  IF v_org IS NULL OR p_org_id IS DISTINCT FROM v_org OR p_employee_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+  IF v_actor IS DISTINCT FROM 'user' OR v_user IS NULL THEN
+    RETURN NULL;
+  END IF;
+  SELECT m.role INTO v_role
+    FROM ludy_kernel.tenant_member m
+   WHERE m.org_id = v_org AND m.user_id = v_user;
+  IF v_role IS NULL OR v_role NOT IN ('owner', 'admin', 'member') THEN
+    RETURN NULL;
+  END IF;
+  SELECT e.department_id INTO v_emp_dept_id
+    FROM crove_hr.payroll_employee e
+   WHERE e.org_id = v_org AND e.id = p_employee_id AND e.user_id = v_user AND e.erased_at IS NULL;
+  IF NOT FOUND THEN
+    RETURN NULL;
+  END IF;
+  -- Self cannot supply a different or omitted department_id to bypass active L1 routing.
+  IF p_department_id IS DISTINCT FROM v_emp_dept_id THEN
+    RETURN NULL;
+  END IF;
+  IF v_emp_dept_id IS NULL THEN
+    RETURN 'pending_final';
+  END IF;
+  SELECT d.manager_user_id, d.archived_at INTO v_mgr_id, v_archived_at
+    FROM crove_hr.department d
+   WHERE d.org_id = v_org AND d.id = v_emp_dept_id;
+  IF NOT FOUND OR v_archived_at IS NOT NULL OR v_mgr_id IS NULL OR v_mgr_id = v_user THEN
+    RETURN 'pending_final';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM ludy_kernel.tenant_member m
+     WHERE m.org_id = v_org AND m.user_id = v_mgr_id AND m.role <> 'viewer'
+  ) THEN
+    RETURN 'pending_l1';
+  END IF;
+  RETURN 'pending_final';
+END $$;
+REVOKE ALL ON FUNCTION crove_hr.overtime_self_initial_status(uuid, uuid, uuid) FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_hr.overtime_self_initial_status(uuid, uuid, uuid) TO ludy_tenant;
+
 DROP POLICY IF EXISTS le_scope ON crove_hr.overtime_request;
 CREATE POLICY le_scope ON crove_hr.overtime_request AS RESTRICTIVE FOR ALL TO ludy_tenant
   USING ('*' = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT ludy_kernel.ctx_le_scope())::text[]))
@@ -496,6 +552,13 @@ CREATE POLICY hr_overtime_request_select ON crove_hr.overtime_request AS RESTRIC
 CREATE POLICY hr_overtime_request_insert ON crove_hr.overtime_request AS RESTRICTIVE FOR INSERT TO ludy_tenant
   WITH CHECK (
     (SELECT ludy_kernel.ctx_actor_type()) = 'user'
+    AND overtime_request.status IN ('pending_l1', 'pending_final')
+    AND overtime_request.l1_approver_user_id IS NULL
+    AND overtime_request.l1_acted_at IS NULL
+    AND overtime_request.final_acted_by IS NULL
+    AND overtime_request.final_acted_at IS NULL
+    AND overtime_request.decision_note IS NULL
+    AND (overtime_request.created_by IS NULL OR overtime_request.created_by = (SELECT ludy_kernel.ctx_user_id()))
     AND (
       EXISTS (
         SELECT 1 FROM ludy_kernel.tenant_member m
@@ -509,13 +572,13 @@ CREATE POLICY hr_overtime_request_insert ON crove_hr.overtime_request AS RESTRIC
           overtime_request.department_id IS NULL
           OR crove_hr.is_self_department(overtime_request.org_id, overtime_request.department_id)
         )
-        AND overtime_request.status IN ('pending_l1', 'pending_final')
-        AND overtime_request.l1_approver_user_id IS NULL
-        AND overtime_request.l1_acted_at IS NULL
-        AND overtime_request.final_acted_by IS NULL
-        AND overtime_request.final_acted_at IS NULL
-        AND overtime_request.decision_note IS NULL
-        AND (overtime_request.created_by IS NULL OR overtime_request.created_by = (SELECT ludy_kernel.ctx_user_id()))
+        AND overtime_request.status = (
+          SELECT crove_hr.overtime_self_initial_status(
+            overtime_request.org_id,
+            overtime_request.employee_id,
+            overtime_request.department_id
+          )
+        )
       )
     )
   );

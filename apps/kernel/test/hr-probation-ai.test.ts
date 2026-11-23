@@ -189,4 +189,51 @@ describe('draftProbationSummary kernel orchestration (#4448)', () => {
     );
     expect(noDataOut).toMatchObject({ status: 'no_data', draftNote: null });
   });
+
+  it('forwards runtime meterOptions price when charging monthly HR budget', async () => {
+    const query = vi.fn(async () => ({ allowed: true, hasOrgBudget: true }));
+    const execute = vi.fn(async () => ({}));
+    const runtimeStub: Pick<Runtime, 'execute' | 'query'> = { query, execute } as unknown as Pick<Runtime, 'execute' | 'query'>;
+    const ports: HrProbationPorts = {
+      read: async () => ({ preview: samplePreview(), aiStopped: false, aiBudgetSpent: false }),
+      isAiStopped: async () => false,
+      record: async () => undefined,
+    };
+    const ai = hrProbationAi(
+      {
+        hrProbationSummary: async () => {
+          await metered('hr.probation_summary', async () => ({
+            usage: { inputTokens: 1_000_000, outputTokens: 500_000 },
+          }));
+          return { summary: 'P1 hoàn thành 3 công việc.', ai: { ok: true, reason: 'ok' } };
+        },
+      },
+      new DraftBudget(),
+    );
+
+    const out = await draftProbationSummary(
+      ai,
+      ports,
+      runtimeStub,
+      ORG_ID,
+      ACTOR,
+      { employeeId: EMP_ID },
+      'runtime',
+      { price: { inputPerMTok: '2', outputPerMTok: '6' } },
+    );
+
+    expect(out.status).toBe('used');
+    expect(query).toHaveBeenCalledWith('kernel.ai.budget.check_member', { module: 'hr', agentId: null }, { actor: ACTOR, orgId: ORG_ID });
+    expect(execute).toHaveBeenCalledWith(
+      'kernel.ai.usage.record_member',
+      expect.objectContaining({
+        feature: 'hr.probation_summary',
+        module: 'hr',
+        inputTokens: 1_000_000,
+        outputTokens: 500_000,
+        cost: '5.000000',
+      }),
+      { actor: ACTOR, orgId: ORG_ID },
+    );
+  });
 });

@@ -22,7 +22,7 @@ import {
 } from '@ludy/kernel-contract';
 import { money } from '@ludy/l10n-vn';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
-import { MANAGERS, userOf } from './employees.ts';
+import { MANAGERS, lockEmployeeErasure, userOf } from './employees.ts';
 import { assertNotSelfApprover } from './leave-requests.ts';
 import { hrManifest } from './manifest.ts';
 import { isoDate as iso } from './payroll-dates.ts';
@@ -334,6 +334,21 @@ export const probationDecide = defineCommand({
     const callerUserId = userOf(ctx.actor);
     const role = ctx.role;
     if (!role) throw new DomainError('FORBIDDEN', 403, 'Chưa xác định vai trò trong tổ chức');
+
+    await lockEmployeeErasure(ctx.trx, ctx.orgId, input.employeeId);
+    const lockedEmp = await ctx.trx
+      .selectFrom('crove_hr.payroll_employee')
+      .select(['id', 'erased_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.employeeId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!lockedEmp) {
+      throw new DomainError('HR_EMPLOYEE_NOT_FOUND', 404, 'Không tìm thấy nhân viên này');
+    }
+    if (lockedEmp.erased_at !== null) {
+      throw new DomainError('HR_EMPLOYEE_ERASED', 409, 'Hồ sơ nhân viên đã được xóa theo yêu cầu');
+    }
 
     const selfApproved = await assertNotSelfApprover(ctx.trx, ctx.orgId, callerUserId, role, input.employeeId, true);
     const facts = await loadProbationFacts(ctx, input.employeeId, input.periodStart, input.periodEnd);

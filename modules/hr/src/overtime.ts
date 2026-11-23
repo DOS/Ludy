@@ -507,11 +507,13 @@ export const overtimeApproveFinal = defineCommand({
 
     const preRead = await ctx.trx
       .selectFrom('crove_hr.overtime_request')
-      .select(['id', 'employee_id', 'status'])
+      .select(['id', 'legal_entity_id', 'employee_id', 'month', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.requestId)
       .executeTakeFirst();
     if (!preRead) throw otNotFound();
+
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`hr_ot_run:${ctx.orgId}:${preRead.legal_entity_id}:${preRead.month}`}, 0))`.execute(ctx.trx);
 
     const selfApproved = await assertNotSelfApprover(ctx.trx, ctx.orgId, callerUserId, role, preRead.employee_id, true);
     await assertEmployeeNotErasedForRequest(ctx.trx, ctx.orgId, preRead.id);

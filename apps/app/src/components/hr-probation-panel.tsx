@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Modular end-of-probation review panel with deterministic Projects facts and optional Ly draft note (#4448, Stage 5B).
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import {
   HR_PROBATION_DECISIONS,
   type HrProbationAiState,
   type HrProbationDecision,
+  type HrProbationPreviewResult,
   type HrProbationReviewView,
 } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
@@ -27,10 +28,55 @@ const DECISION_BADGE = {
   terminate: 'destructive',
 } as const;
 
+export function probationScopeKey(employeeId: string, periodStart: string, periodEnd: string): string {
+  return `${employeeId}|${periodStart}|${periodEnd}`;
+}
+
+export function previewMatchesProbationRange(args: {
+  preview: HrProbationPreviewResult | undefined;
+  isFetching: boolean;
+  isError: boolean;
+  employeeId: string;
+  effectiveStart: string;
+  effectiveEnd: string;
+}): boolean {
+  return (
+    Boolean(args.preview) &&
+    !args.isFetching &&
+    !args.isError &&
+    args.preview?.employeeId === args.employeeId &&
+    args.preview?.periodStart === args.effectiveStart &&
+    args.preview?.periodEnd === args.effectiveEnd
+  );
+}
+
+export function canSubmitProbationDecision(args: {
+  decision: HrProbationDecision | null;
+  rangeValid: boolean;
+  previewMatchesRange: boolean;
+  extendedUntil: string;
+  effectiveEnd: string;
+}): boolean {
+  return (
+    Boolean(args.decision) &&
+    args.rangeValid &&
+    args.previewMatchesRange &&
+    (args.decision !== 'extend' || (Boolean(args.extendedUntil) && args.extendedUntil > args.effectiveEnd))
+  );
+}
+
+interface ProbationDraftAiVars {
+  employeeId: string;
+  periodStart: string;
+  periodEnd: string;
+  lang: 'en' | 'vi';
+}
+
 export function HrProbationPanel({ employeeId }: { employeeId: string }) {
   const t = useTranslations('hrEmployees.probation');
   const f = useFormat();
   const { locale } = useLocaleSetting();
+  const [prevEmployeeId, setPrevEmployeeId] = useState(employeeId);
   const [periodStart, setPeriodStart] = useState('');
   const [periodEnd, setPeriodEnd] = useState('');
   const [submittedRange, setSubmittedRange] = useState<{ employeeId: string; periodStart?: string; periodEnd?: string }>({
@@ -41,6 +87,18 @@ export function HrProbationPanel({ employeeId }: { employeeId: string }) {
   const [decision, setDecision] = useState<HrProbationDecision | null>(null);
   const [extendedUntil, setExtendedUntil] = useState('');
   const [reviewNote, setReviewNote] = useState('');
+
+  if (prevEmployeeId !== employeeId) {
+    setPrevEmployeeId(employeeId);
+    setPeriodStart('');
+    setPeriodEnd('');
+    setSubmittedRange({ employeeId });
+    setAiStatus(null);
+    setAiDraftNote('');
+    setDecision(null);
+    setExtendedUntil('');
+    setReviewNote('');
+  }
 
   const activeAsk =
     submittedRange.employeeId === employeeId ? submittedRange : { employeeId };
@@ -63,16 +121,30 @@ export function HrProbationPanel({ employeeId }: { employeeId: string }) {
   const effectiveStart = periodStart || preview?.periodStart || '';
   const effectiveEnd = periodEnd || preview?.periodEnd || '';
   const rangeValid = Boolean(effectiveStart) && Boolean(effectiveEnd) && effectiveEnd >= effectiveStart;
+  const currentScopeKey = probationScopeKey(employeeId, effectiveStart, effectiveEnd);
+  const scopeKeyRef = useRef(currentScopeKey);
+  scopeKeyRef.current = currentScopeKey;
+  const previewMatchesRange = previewMatchesProbationRange({
+    preview,
+    isFetching: previewQ.isFetching,
+    isError: previewQ.isError,
+    employeeId,
+    effectiveStart,
+    effectiveEnd,
+  });
 
   const draftAi = useMutation({
-    mutationFn: () =>
+    mutationFn: (vars: ProbationDraftAiVars) =>
       client.hr.probation.draftSummary({
-        employeeId,
-        ...(effectiveStart ? { periodStart: effectiveStart } : {}),
-        ...(effectiveEnd ? { periodEnd: effectiveEnd } : {}),
-        lang: locale === 'en' ? 'en' : 'vi',
+        employeeId: vars.employeeId,
+        ...(vars.periodStart ? { periodStart: vars.periodStart } : {}),
+        ...(vars.periodEnd ? { periodEnd: vars.periodEnd } : {}),
+        lang: vars.lang,
       }),
-    onSuccess: (res) => {
+    onSuccess: (res, vars) => {
+      if (probationScopeKey(vars.employeeId, vars.periodStart, vars.periodEnd) !== scopeKeyRef.current) {
+        return;
+      }
       setAiStatus(res.status);
       if (res.draftNote) {
         setAiDraftNote(res.draftNote);
@@ -83,7 +155,7 @@ export function HrProbationPanel({ employeeId }: { employeeId: string }) {
 
   const decide = useMutation({
     mutationFn: () => {
-      if (!decision) throw new Error('decision is required');
+      if (!decision || !previewMatchesRange) throw new Error('decision and matching preview are required');
       return client.hr.probation.decide({
         employeeId,
         periodStart: effectiveStart,
@@ -107,6 +179,9 @@ export function HrProbationPanel({ employeeId }: { employeeId: string }) {
   const handleLoadFacts = (ev: FormEvent) => {
     ev.preventDefault();
     if (!rangeValid) return;
+    setAiStatus(null);
+    setAiDraftNote('');
+    draftAi.reset();
     if (
       submittedRange.employeeId === employeeId &&
       submittedRange.periodStart === effectiveStart &&
@@ -122,10 +197,13 @@ export function HrProbationPanel({ employeeId }: { employeeId: string }) {
     });
   };
 
-  const canSubmit =
-    Boolean(decision) &&
-    rangeValid &&
-    (decision !== 'extend' || (Boolean(extendedUntil) && extendedUntil > effectiveEnd));
+  const canSubmit = canSubmitProbationDecision({
+    decision,
+    rangeValid,
+    previewMatchesRange,
+    extendedUntil,
+    effectiveEnd,
+  });
 
   const history: readonly HrProbationReviewView[] = listQ.data ?? [];
 
@@ -144,7 +222,12 @@ export function HrProbationPanel({ employeeId }: { employeeId: string }) {
             type="date"
             className={PHONE_TARGET}
             value={effectiveStart}
-            onChange={(ev) => setPeriodStart(ev.target.value)}
+            onChange={(ev) => {
+              setPeriodStart(ev.target.value);
+              setAiStatus(null);
+              setAiDraftNote('');
+              draftAi.reset();
+            }}
             data-testid="hr-probation-start"
           />
         </div>
@@ -155,7 +238,12 @@ export function HrProbationPanel({ employeeId }: { employeeId: string }) {
             type="date"
             className={PHONE_TARGET}
             value={effectiveEnd}
-            onChange={(ev) => setPeriodEnd(ev.target.value)}
+            onChange={(ev) => {
+              setPeriodEnd(ev.target.value);
+              setAiStatus(null);
+              setAiDraftNote('');
+              draftAi.reset();
+            }}
             data-testid="hr-probation-end"
           />
         </div>
@@ -246,8 +334,15 @@ export function HrProbationPanel({ employeeId }: { employeeId: string }) {
                 size="sm"
                 className={PHONE_TARGET}
                 loading={draftAi.isPending}
-                disabled={!rangeValid}
-                onClick={() => draftAi.mutate()}
+                disabled={!rangeValid || !previewMatchesRange}
+                onClick={() =>
+                  draftAi.mutate({
+                    employeeId,
+                    periodStart: effectiveStart,
+                    periodEnd: effectiveEnd,
+                    lang: locale === 'en' ? 'en' : 'vi',
+                  })
+                }
                 data-testid="hr-probation-draft-ai"
               >
                 {t('draftAiBtn')}
