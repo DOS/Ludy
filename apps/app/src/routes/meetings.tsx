@@ -56,9 +56,9 @@ import {
 } from '../lib/meetings-list.ts';
 import { toast } from '../lib/toast.ts';
 
-const STATUS_VARIANTS: Record<string, 'default' | 'secondary' | 'outline' | 'destructive'> = {
-  ready: 'default',
-  completed: 'default',
+const STATUS_VARIANTS: Record<string, 'success' | 'secondary' | 'outline' | 'destructive'> = {
+  ready: 'success',
+  completed: 'success',
   processing: 'secondary',
   error: 'destructive',
 };
@@ -147,7 +147,7 @@ function RetentionSettingsCard() {
         </div>
         {error ? <ErrorText>{error}</ErrorText> : null}
         {canEdit ? (
-          <Button onClick={() => void save()} disabled={!draft || saving}>
+          <Button onClick={() => void save()} loading={saving} disabled={!draft}>
             {t('save')}
           </Button>
         ) : (
@@ -922,7 +922,7 @@ export function MeetingsPage() {
               <DialogClose render={<Button type="button" variant="outline" disabled={submitting} />}>
                 {t('form.cancel')}
               </DialogClose>
-              <Button type="submit" disabled={!consentAgreed || !consentMethod || submitting} loading={submitting}>
+              <Button type="submit" disabled={!consentAgreed || !consentMethod} loading={submitting}>
                 {t('form.submit')}
               </Button>
             </DialogFooter>

@@ -263,6 +263,7 @@ describe('HR declarations org isolation, stale-request guards, and print styling
 
     html = renderProbe('org-a');
     expect(html).toContain('Tài liệu Org A');
+    expect(/<h2[^>]*data-testid="hr-declaration-notice"[^>]*>/.exec(html)?.[0] ?? '').not.toContain('uppercase');
     expect(apiSpies.apiFetch).toHaveBeenCalledWith(expect.stringContaining('/api/payroll-export/kk.json?period='), { orgSlug: 'org-a' });
 
     // Switching org clears any previously loaded document.

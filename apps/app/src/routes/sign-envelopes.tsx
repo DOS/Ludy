@@ -290,7 +290,6 @@ export function SignEnvelopesPage() {
             <Button
               type="button"
               variant="outline"
-              className="min-h-11"
               onClick={() => setDiffOpen(true)}
               data-testid="sign-open-version-diff-btn"
             >
@@ -299,7 +298,6 @@ export function SignEnvelopesPage() {
             <Button
               type="button"
               variant="outline"
-              className="min-h-11"
               onClick={() => setDrafterOpen(true)}
               data-testid="sign-open-drafter-btn"
             >
@@ -307,7 +305,6 @@ export function SignEnvelopesPage() {
             </Button>
             <Button
               type="button"
-              className="min-h-11"
               onClick={() => setCreateOpen(true)}
               data-testid="sign-new-envelope-btn"
             >
