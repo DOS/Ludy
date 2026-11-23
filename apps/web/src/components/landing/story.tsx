@@ -14,12 +14,12 @@ const LOOK: Record<string, string> = {
   approve: 'border-line-strong/60',
   done: 'border-ok/60 bg-ok-soft',
 };
-const TILE: Record<string, string> = {
-  drop: 'bg-surface-2 text-fg',
-  read: 'bg-accent-soft text-accent-ink',
-  check: 'bg-surface-2 text-fg',
-  approve: 'bg-accent-soft text-accent-ink',
-  done: 'bg-surface text-ok',
+const ICON_COLOR: Record<string, string> = {
+  drop: 'text-fg',
+  read: 'text-accent-ink',
+  check: 'text-fg',
+  approve: 'text-accent-ink',
+  done: 'text-ok',
 };
 
 // The story of one invoice in five steps, in everyday words (owner request, 2026-11-12): what the person does, what the AI does and what
@@ -31,7 +31,7 @@ export function Story({ dict }: { dict: Dictionary }) {
       <SectionHead id="story-title" title={story.title} lead={story.lead} />
       <div className="relative">
         {/* The line the dot travels along, behind the cards, on wide screens only. */}
-        <div aria-hidden="true" className="absolute inset-x-[10%] top-[2.1rem] hidden h-px bg-line-strong/50 lg:block">
+        <div aria-hidden="true" className="absolute inset-x-[10%] top-[1.625rem] hidden h-px bg-line-strong/50 lg:block">
           <span className="story-dot absolute -top-[3px] left-0 size-[7px] rounded-full bg-accent" />
         </div>
         <ol className="relative grid gap-4 lg:grid-cols-5 lg:gap-5">
@@ -41,19 +41,17 @@ export function Story({ dict }: { dict: Dictionary }) {
               <li
                 key={step.key}
                 style={{ '--i': i } as CSSProperties}
-                className={`story-step relative flex gap-4 rounded-xl border bg-surface p-4 lg:flex-col lg:gap-3 ${LOOK[step.key] ?? ''}`}
+                className={`story-step relative flex flex-col rounded-xl border bg-surface p-4 ${LOOK[step.key] ?? ''}`}
               >
-                <span className={`flex size-12 shrink-0 items-center justify-center rounded-xl ${TILE[step.key] ?? ''}`}>
-                  <Icon className="size-6" aria-hidden="true" />
-                </span>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2 text-xs font-medium text-subtle">
-                    <span className="num inline-flex size-5 items-center justify-center rounded-full bg-accent text-[11px] font-semibold text-accent-fg">{i + 1}</span>
-                    {step.who}
-                  </div>
-                  <h3 className="mt-1.5 font-display text-lg leading-snug font-semibold">{step.title}</h3>
-                  <p className="mt-1.5 text-sm text-muted">{step.body}</p>
+                <div className="flex items-center gap-2 text-xs font-medium text-subtle">
+                  <span className="num inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-accent text-[11px] font-semibold text-accent-fg">{i + 1}</span>
+                  <span>{step.who}</span>
                 </div>
+                <h3 className="mt-2.5 flex items-start gap-2 font-display text-lg leading-snug font-semibold">
+                  <Icon className={`mt-0.5 size-5 shrink-0 ${ICON_COLOR[step.key] ?? 'text-fg'}`} aria-hidden="true" />
+                  <span>{step.title}</span>
+                </h3>
+                <p className="mt-1.5 text-sm text-muted">{step.body}</p>
               </li>
             );
           })}
