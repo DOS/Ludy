@@ -6,7 +6,7 @@
 // answer is not lost. The caller keeps its own state and mutation; this only decides where the form lives.
 // Two habits live here so every form in a panel has them (#3606): Cmd or Ctrl plus Enter saves from any field, and a form
 // that holds input (`dirty`) asks before Escape or the close button throws it away.
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import { Button } from '@ludy/ui/components/button';
 import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@ludy/ui/components/sheet';
@@ -20,35 +20,47 @@ export function FormPanel({
   title,
   description,
   label,
+  testId,
   wide = false,
   busy = false,
+  noValidate = false,
+  formId: formIdProp,
   opener: openerProp,
   dirty = false,
   onClose,
   onSubmit,
+  outside,
   footer,
   children,
 }: {
   title: string;
-  description?: string;
+  description?: ReactNode | undefined;
   // The accessible name of the form when it differs from the title.
-  label?: string;
+  label?: string | undefined;
+  testId?: string | undefined;
   // A form with a row of columns (the voucher's lines) takes a wider column from sm up.
   wide?: boolean;
   busy?: boolean;
+  noValidate?: boolean;
+  // Optional form id used when `outside` places secondary forms/sections in SheetBody and the footer submit button binds via `form={formId}`.
+  formId?: string | undefined;
   // The element to give focus back to on close, for a panel that opens a moment after the press (it reads something first); by default the element focused when the panel mounts.
   opener?: Element | null;
   // The form holds input that has not been saved: closing it asks first, and says what is lost.
   dirty?: boolean;
   onClose: () => void;
   // Without it the panel shows a result (no form), with only the footer's buttons.
-  onSubmit?: (event: FormEvent<HTMLFormElement>) => void;
+  onSubmit?: ((event: FormEvent<HTMLFormElement>) => void) | undefined;
+  // Secondary sections or independent sub-forms rendered inside SheetBody outside the main form so HTML forms never nest.
+  outside?: ReactNode | undefined;
   // The buttons, cancel first: on a phone they stack with the first one last, so the main action is on top. A function gets the
   // panel's own close, which asks first when there is unsaved input: the cancel button goes through it like Escape does.
   footer: ReactNode | ((requestClose: () => void) => ReactNode);
   children: ReactNode;
 }) {
   const root = useTranslations();
+  const generatedFormId = useId();
+  const activeFormId = formIdProp ?? generatedFormId;
   const formRef = useRef<HTMLFormElement>(null);
   // The panel is mounted when its button is pressed and unmounted when it closes, so the dialog does not know what opened it: the
   // element that had focus at that moment is remembered and gets focus back when the panel goes away (keyboard users land where they were).
@@ -73,8 +85,8 @@ export function FormPanel({
   };
   const keepEditing = () => {
     setAsking(false);
-    // The warning's own button is about to go away, so focus goes back to the first field instead of to the page.
-    formRef.current?.querySelector<HTMLElement>('input:not([type=hidden]), textarea, select')?.focus();
+    // The warning's own button is about to go away, so focus goes back to the first enabled field instead of to the page.
+    formRef.current?.querySelector<HTMLElement>('input:not([type=hidden]):not(:disabled), textarea:not(:disabled), select:not(:disabled)')?.focus();
   };
   const onKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
     // A field that already took the key (the new-step box adds its step on Enter) has had its say: saving too would read a form the add has not reached yet.
@@ -83,33 +95,40 @@ export function FormPanel({
     // Not while the discard question is up (the keys then answer that question), and not while a save is on its way.
     if (!busy && !asking) event.currentTarget.requestSubmit();
   };
+  const footerArea = asking ? (
+    <div role="alert" data-testid="panel-discard" className="space-y-3 border-t border-border bg-muted/50 p-4">
+      <p className="text-sm text-foreground">{root('common.discardAsk')}</p>
+      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+        <Button type="button" variant="destructive" disabled={busy} onClick={onClose}>
+          {root('common.discard')}
+        </Button>
+        <Button type="button" autoFocus onClick={keepEditing}>
+          {root('common.keepEditing')}
+        </Button>
+      </div>
+    </div>
+  ) : (
+    <SheetFooter>{typeof footer === 'function' ? footer(requestClose) : footer}</SheetFooter>
+  );
+  const fields = (
+    <>
+      {/* While a save is on its way the fields are locked, so what is typed after pressing Save is not silently dropped when the panel closes. */}
+      {onSubmit ? (
+        <fieldset disabled={busy} className="m-0 min-w-0 space-y-4 border-0 p-0">
+          {children}
+        </fieldset>
+      ) : (
+        children
+      )}
+    </>
+  );
   const content = (
     <>
       <SheetBody className="space-y-4">
-        {/* While a save is on its way the fields are locked, so what is typed after pressing Save is not silently dropped when the panel closes. */}
-        {onSubmit ? (
-          <fieldset disabled={busy} className="m-0 min-w-0 space-y-4 border-0 p-0">
-            {children}
-          </fieldset>
-        ) : (
-          children
-        )}
+        {fields}
+        {!onSubmit ? outside : null}
       </SheetBody>
-      {asking ? (
-        <div role="alert" data-testid="panel-discard" className="space-y-3 border-t border-border bg-muted/50 p-4">
-          <p className="text-sm text-foreground">{root('common.discardAsk')}</p>
-          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <Button type="button" variant="destructive" disabled={busy} onClick={onClose}>
-              {root('common.discard')}
-            </Button>
-            <Button type="button" autoFocus onClick={keepEditing}>
-              {root('common.keepEditing')}
-            </Button>
-          </div>
-        </div>
-      ) : (
-        <SheetFooter>{typeof footer === 'function' ? footer(requestClose) : footer}</SheetFooter>
-      )}
+      {footerArea}
     </>
   );
   return (
@@ -121,15 +140,43 @@ export function FormPanel({
         if (!open) requestClose();
       }}
     >
-      <SheetContent closeLabel={root('common.close')} className={wide ? 'sm:max-w-2xl' : undefined}>
+      <SheetContent closeLabel={root('common.close')} className={wide ? 'sm:max-w-2xl' : undefined} {...(testId ? { 'data-testid': testId } : {})}>
         <SheetHeader>
           <SheetTitle>{title}</SheetTitle>
           {description && <SheetDescription>{description}</SheetDescription>}
         </SheetHeader>
         {onSubmit ? (
-          <form ref={formRef} aria-label={label ?? title} className="flex min-h-0 flex-1 flex-col" onSubmit={onSubmit} onKeyDown={onKeyDown}>
-            {content}
-          </form>
+          outside !== undefined ? (
+            <>
+              <SheetBody className="space-y-4">
+                <form
+                  id={activeFormId}
+                  ref={formRef}
+                  aria-label={label ?? title}
+                  noValidate={noValidate}
+                  className="space-y-4"
+                  onSubmit={onSubmit}
+                  onKeyDown={onKeyDown}
+                >
+                  {fields}
+                </form>
+                {outside}
+              </SheetBody>
+              {footerArea}
+            </>
+          ) : (
+            <form
+              {...(formIdProp ? { id: formIdProp } : {})}
+              ref={formRef}
+              aria-label={label ?? title}
+              noValidate={noValidate}
+              className="flex min-h-0 flex-1 flex-col"
+              onSubmit={onSubmit}
+              onKeyDown={onKeyDown}
+            >
+              {content}
+            </form>
+          )
         ) : (
           content
         )}
