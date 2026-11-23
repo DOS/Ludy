@@ -31,6 +31,11 @@ export function inviteRoleChoices(catalog: readonly CatalogRole[], baseRole: str
   return catalog.filter((role) => !roleNeedsEntity(role) && !(baseRole === 'viewer' && grantsMoreThanVy(role)));
 }
 
+// The hint key of a role in the member and invite screens. The Marketing role (social.marketer) names ads only when the org runs the
+// ads app (#2612); every other role has one hint.
+export const roleHintKey = (key: BuiltinRoleKey, modules: readonly string[]): BuiltinRoleKey | 'social.marketerAds' =>
+  key === 'social.marketer' && modules.includes('ads') ? 'social.marketerAds' : key;
+
 // A role key the kernel sent as a plain string (an invite's), as the catalog's union, so a translation key built from it is
 // checked against the few role names and not against every key of the catalog (a string there slows the typecheck to a crawl).
 export const asRoleKey = (key: string) => key as BuiltinRoleKey;

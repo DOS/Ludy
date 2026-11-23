@@ -8,7 +8,7 @@ import { BUILTIN_ROLE_KEYS, type LegalEntity, type MemberRoles } from '@ludy/ker
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog, translatorFor } from '../src/i18n/runtime.ts';
-import { assignableRoles, inviteRoleChoices, roleNeedsEntity } from '../src/lib/member-roles.ts';
+import { assignableRoles, inviteRoleChoices, roleHintKey, roleNeedsEntity } from '../src/lib/member-roles.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 
@@ -112,6 +112,20 @@ describe('assignableRoles', () => {
     expect(viMessages.memberRoles.roles.finance.chief_accountant).toBe('Kế toán trưởng');
     expect(viMessages.memberRoles.roles.social.marketer).toBe('Marketing');
     expect(en.memberRoles.roles.social.marketer).toBe('Marketing');
-    expect(viMessages.memberRoles.hints.social.marketer).toBe('Đăng bài, trả lời bình luận và tin nhắn, chạy quảng cáo. Có thể làm việc với Vy.');
+  });
+
+  it('names ads in the Marketing hint only when the org runs ads, and never promises access the role does not grant (#2612)', () => {
+    expect(roleHintKey('social.marketer', ['social'])).toBe('social.marketer');
+    expect(roleHintKey('social.marketer', ['social', 'ads'])).toBe('social.marketerAds');
+    expect(roleHintKey('finance.accountant', ['social', 'ads'])).toBe('finance.accountant');
+    for (const locale of ['vi', 'en'] as const) {
+      const t = translatorFor(locale);
+      const plain = t('memberRoles.hints.social.marketer');
+      const withAds = t('memberRoles.hints.social.marketerAds');
+      expect(plain, locale).not.toMatch(/quảng cáo|\bads?\b/i);
+      expect(withAds, locale).toMatch(/quảng cáo|\bads\b/i);
+      expect(plain, locale).toMatch(/vai trò cơ bản|base role/);
+      expect(withAds, locale).toMatch(/vai trò cơ bản|base role/);
+    }
   });
 });

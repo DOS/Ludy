@@ -7913,7 +7913,10 @@ export const vi = {
         viewer: 'Cho biết thành viên chỉ theo dõi số liệu kế toán. Chưa thêm quyền nào ngoài quyền của vai trò cơ bản.',
         entity_chief_accountant: 'Mở khóa các tháng đã khóa sổ và đánh dấu đã nộp tờ khai GTGT, chỉ của các pháp nhân được giao. Mỗi lần giao là một pháp nhân; có thể giao thêm. Duyệt đề xuất ghi sổ vẫn cần kế toán trưởng của cả tổ chức. Nếu đây là vai trò duy nhất của người này, hãy giao cho họ vai trò Kế toán thuê ngoài cho pháp nhân đó trước khi thu hồi.',
       },
-      social: { marketer: 'Đăng bài, trả lời bình luận và tin nhắn, chạy quảng cáo. Có thể làm việc với Vy.' },
+      social: {
+        marketer: 'Dành cho người đăng bài, trả lời bình luận và tin nhắn; quyền này đến từ vai trò cơ bản. Chưa thêm quyền nào ngoài quyền của vai trò cơ bản, trừ quyền làm việc với Vy nếu chủ sở hữu không từ chối.',
+        marketerAds: 'Dành cho người đăng bài, trả lời bình luận và tin nhắn, chạy quảng cáo; quyền này đến từ vai trò cơ bản. Chưa thêm quyền nào ngoài quyền của vai trò cơ bản, trừ quyền làm việc với Vy nếu chủ sở hữu không từ chối.',
+      },
       crm: { sales: 'Chưa thêm quyền nào ngoài quyền của vai trò cơ bản, trừ quyền làm việc với Vy nếu chủ sở hữu không từ chối.' },
       desk: { agent: 'Chưa thêm quyền nào ngoài quyền của vai trò cơ bản, trừ quyền làm việc với Vy nếu chủ sở hữu không từ chối.' },
       hr: { manager: 'Chưa thêm quyền nào ngoài quyền của vai trò cơ bản, trừ quyền làm việc với Vy nếu chủ sở hữu không từ chối.' },
