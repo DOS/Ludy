@@ -129,7 +129,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.member_permission_override',
   'crove_kernel.member_vy_memory',
   'crove_kernel.member_vy_result',
-  'crove_meetings.capture_session',
   'crove_meetings.live_line',
   'crove_meetings.meeting_link',
   'crove_notes.link',
