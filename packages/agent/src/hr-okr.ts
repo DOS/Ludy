@@ -84,7 +84,7 @@ const FENCE_TAGS_GLOBAL_RE = /\[\/?\s*UNTRUSTED_OKR_DATA\s*\]/giu;
 
 // Reject subjective evaluation, scoring, grading, ranking, or employment/pay decisions (AI Law 134/2025/QH15).
 const OKR_SCORING_OR_ACTION_EN_RE =
-  /(?<![\p{L}\p{N}])(?:(?:score|rating|grade|rank(?:ing)?)\s*(?::|is|of|=)?\s*\d+|(?:top|bottom)\s+\d+%?|\d+(?:\.\d+)?\s*\/\s*(?:5|10)\b|(?:should|must|recommend|suggest|advise)\s+(?:to\s+)?(?:promote|demote|bonus|reward|penalize|terminate|fire|dismiss|pip|warn))\b(?![\p{L}\p{N}])/iu;
+  /(?<![\p{L}\p{N}])(?:(?:score|rating|grade|rank(?:ing)?)\s*(?::|is|of|=)?\s*\d+|(?:top|bottom)\s+\d+%?|(?:score|rating|grade|rank(?:ing)?)\s*(?::|is|of|=)?\s*\d+(?:\.\d+)?\s*\/\s*(?:5|10)\b|(?:should|must|recommend|suggest|advise)\s+(?:to\s+)?(?:promote|demote|bonus|reward|penalize|terminate|fire|dismiss|pip|warn))\b(?![\p{L}\p{N}])/iu;
 const OKR_SCORING_OR_ACTION_VI_RE =
   /(?<![\p{L}\p{N}])(?:(?:chấm\s+điểm|xếp\s+loại|xếp\s+hạng|điểm\s+đánh\s+giá|đánh\s+giá\s+năng\s+lực)|(?:nên|cần|đề\s+nghị|đề\s+xuất)\s+(?:thưởng|khen\s+thưởng|tăng\s+lương|thăng\s+chức|giáng\s+chức|kỷ\s+luật|sa\s+thải|cho\s+nghỉ|chấm\s+dứt))(?![\p{L}\p{N}])/iu;
 

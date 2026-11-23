@@ -400,7 +400,7 @@ CREATE POLICY hr_okr_objective_update ON ludy_hr.okr_objective AS RESTRICTIVE FO
         okr_objective.scope = 'individual'
         AND (
           (okr_objective.department_id IS NOT NULL AND ludy_hr.is_active_dept_manager(okr_objective.org_id, okr_objective.department_id))
-          OR (okr_objective.owner_employee_id IS NOT NULL AND ludy_hr.is_active_dept_manager_of_employee(okr_objective.org_id, okr_objective.owner_employee_id))
+          OR (okr_objective.department_id IS NULL AND okr_objective.owner_employee_id IS NOT NULL AND ludy_hr.is_active_dept_manager_of_employee(okr_objective.org_id, okr_objective.owner_employee_id))
         )
       )
     )
@@ -574,7 +574,7 @@ BEGIN
     RETURN false;
   END IF;
   IF v_owner_emp_id IS NULL THEN
-    RETURN true;
+    RETURN false;
   END IF;
   RETURN EXISTS (
     SELECT 1 FROM ludy_hr.payroll_employee e
@@ -669,6 +669,9 @@ CREATE INDEX IF NOT EXISTS okr_key_result_objective_idx
 CREATE INDEX IF NOT EXISTS okr_key_result_project_idx
   ON ludy_hr.okr_key_result (org_id, linked_project_id)
   WHERE linked_project_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS okr_key_result_checkin_by_idx
+  ON ludy_hr.okr_key_result (org_id, last_checkin_by)
+  WHERE last_checkin_by IS NOT NULL;
 CREATE INDEX IF NOT EXISTS okr_key_result_entity_idx
   ON ludy_hr.okr_key_result (legal_entity_id, org_id);
 

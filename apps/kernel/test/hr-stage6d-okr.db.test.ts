@@ -411,6 +411,33 @@ suite('HR Stage 6D quarterly OKRs and Ludy Projects linkage (#4529)', () => {
     expect(onDraft.status).toBe('used');
     expect(onDraft.draftNote).toContain('P1');
 
+    // Whole-project link keeps persisted current/target/progress_pct invariant for non-manager self check-in even after new task added.
+    const krWholeProj = await o.exec<HrOkrKeyResultMutationResult>(o.manager, 'hr.okr.kr.add', {
+      objectiveId: indObj.objectiveId,
+      title: 'Đồng bộ toàn bộ dự án Giao hàng Q4',
+      metricType: 'project_tasks',
+      linkedProjectId: orgProjId,
+      linkedTaskIds: [],
+    });
+    await o.exec<{ taskId: string }>(o.owner, 'projects.task.create', {
+      projectId: orgProjId,
+      title: 'Tác vụ phát sinh thêm sau khi tạo KR',
+      assigneePositionId: seatA,
+      status: 'todo',
+    });
+    const wholeSyncedSelf = await o.exec<HrOkrKeyResultMutationResult>(o.staffA, 'hr.okr.kr.sync_projects', {
+      keyResultId: krWholeProj.keyResultId,
+    });
+    // Manager target (2) is unchanged by self sync, 2 of 3 tasks done => current=1.33, target=2, progress=66.5%.
+    expect(wholeSyncedSelf.targetValue).toBe('2');
+    expect(wholeSyncedSelf.currentValue).toBe('1.33');
+    expect(wholeSyncedSelf.progressPct).toBe('66.5');
+    // Removing KR is blocked when objective is archived; changing parent quarter with children is blocked.
+    await expect(
+      o.exec(o.admin, 'hr.okr.objective.update', { objectiveId: companyObj.objectiveId, quarter: '2027-Q1' }),
+    ).rejects.toMatchObject({ code: 'HR_OKR_HAS_CHILDREN_QUARTER', status: 409 });
+    await o.exec(o.admin, 'hr.okr.kr.remove', { keyResultId: krWholeProj.keyResultId });
+
     // Archiving department immediately revokes L1 manager visibility and write authority.
     await o.exec(o.owner, 'hr.department.archive', { departmentId: deptTech });
     const afterArchiveTree = await o.query<HrOkrTreeResult>(o.manager, 'hr.okr.tree', { quarter: '2026-Q4' });

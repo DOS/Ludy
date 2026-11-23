@@ -377,7 +377,10 @@ export function HrOkrPanel({ mode }: { mode: 'manager' | 'self' }) {
                     setNewScope(next);
                     if (next === 'company') {
                       setNewDepartmentId('');
+                      setNewOwnerEmployeeId('');
                       setNewParentId('');
+                    } else if (next === 'department') {
+                      setNewOwnerEmployeeId('');
                     }
                   }}
                 >
@@ -494,6 +497,9 @@ export function HrOkrPanel({ mode }: { mode: 'manager' | 'self' }) {
         </div>
       ) : (
         <div className="mt-4 space-y-3" data-testid="hr-okr-tree">
+          {(setObjStatus.error || removeKr.error || syncProjects.error) && (
+            <ErrorText>{errorMessage(setObjStatus.error ?? removeKr.error ?? syncProjects.error)}</ErrorText>
+          )}
           {treeNodes.map(({ objective: obj, depth, parentTitle }) => (
             <div
               key={obj.id}
@@ -707,6 +713,7 @@ export function HrOkrPanel({ mode }: { mode: 'manager' | 'self' }) {
                               <input
                                 type="checkbox"
                                 checked={krTaskIds.includes(task.id)}
+                                disabled={!krTaskIds.includes(task.id) && krTaskIds.length >= 50}
                                 onChange={() => toggleTaskSelection(task.id)}
                               />
                               <span className={task.completed ? 'line-through text-muted-foreground' : 'text-foreground'}>
@@ -891,6 +898,7 @@ export function HrOkrPanel({ mode }: { mode: 'manager' | 'self' }) {
                             />
                           </div>
                           {saveCheckin.error && <ErrorText>{errorMessage(saveCheckin.error)}</ErrorText>}
+                          {draftAi.error && <ErrorText>{errorMessage(draftAi.error)}</ErrorText>}
                           <div className="flex flex-wrap gap-2">
                             <Button type="submit" size="sm" className={PHONE_TARGET} disabled={saveCheckin.isPending}>
                               {t('saveCheckin')}

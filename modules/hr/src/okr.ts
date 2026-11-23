@@ -412,7 +412,7 @@ export const hrOkrTree = defineQuery({
       objQuery = objQuery.where('owner_employee_id', '=', input.employeeId);
     }
 
-    const objectiveRows = await objQuery.execute();
+    const objectiveRows = await objQuery.limit(200).execute();
     const objectiveIds = objectiveRows.map((o) => o.id);
     const krRows =
       objectiveIds.length > 0
@@ -602,7 +602,7 @@ async function resolveAndValidateObjectiveInput(
       throw new DomainError('HR_EMPLOYEE_NOT_FOUND', 404, 'Không tìm thấy nhân viên trong phạm vi quản lý của bạn');
     }
     if (ownerEmp.status === 'ended') {
-      throw new DomainError('HR_EMPLOYEE_ENDED', 409, 'Không thể giao OKR mới cho nhân viên đã nghỉ việc');
+      throw new DomainError('HR_OKR_EMPLOYEE_ENDED', 409, 'Không thể giao OKR mới cho nhân viên đã nghỉ việc');
     }
     if (legalEntityId && ownerEmp.legal_entity_id !== legalEntityId) {
       throw new DomainError('HR_OKR_ENTITY_MISMATCH', 409, 'Nhân viên không thuộc cùng pháp nhân với mục tiêu');
@@ -761,6 +761,17 @@ export const hrOkrObjectiveUpdate = defineCommand({
     }
 
     const nextQuarter = input.quarter ?? existing.quarter;
+    if (nextQuarter !== existing.quarter) {
+      const child = await ctx.trx
+        .selectFrom('ludy_hr.okr_objective')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('parent_objective_id', '=', existing.id)
+        .executeTakeFirst();
+      if (child) {
+        throw new DomainError('HR_OKR_HAS_CHILDREN_QUARTER', 409, 'Không thể đổi quý khi đang có mục tiêu con liên kết');
+      }
+    }
     const nextDepartmentId = input.departmentId === undefined ? existing.department_id : input.departmentId;
     const nextOwnerEmployeeId = input.ownerEmployeeId === undefined ? existing.owner_employee_id : input.ownerEmployeeId;
     const nextParentId = input.parentObjectiveId === undefined ? existing.parent_objective_id : input.parentObjectiveId;
@@ -1101,6 +1112,9 @@ export const hrOkrKeyResultRemove = defineCommand({
       .executeTakeFirst();
     if (!parent) throw objectiveNotFound();
     if (!canManageObjective(caller, parent)) throw okrForbidden();
+    if (parent.status === 'archived') {
+      throw new DomainError('HR_OKR_ARCHIVED', 409, 'Mục tiêu đã lưu trữ không thể xóa kết quả then chốt');
+    }
 
     await ctx.trx
       .deleteFrom('ludy_hr.okr_key_result')
@@ -1162,9 +1176,14 @@ async function applyProjectSyncAndCheckin(
 
     if (options.syncFromProjects && projectAccessible) {
       if (existing.metric_type === 'project_tasks') {
-        nextCurrent = String(completedLinkedTasks);
-        if (isManager && existing.linked_task_ids.length === 0 && totalLinkedTasks > 0) {
+        if (existing.linked_task_ids.length > 0) {
+          nextCurrent = String(completedLinkedTasks);
+        } else if (isManager && totalLinkedTasks > 0) {
+          nextCurrent = String(completedLinkedTasks);
           nextTarget = String(totalLinkedTasks);
+        } else if (totalLinkedTasks > 0 && money(nextTarget).gt(0)) {
+          // Non-manager self sync cannot mutate target_value; keep current/target/progress_pct strictly invariant.
+          nextCurrent = formatOkrDecimal(money(completedLinkedTasks).div(totalLinkedTasks).mul(money(nextTarget)));
         }
       } else if (options.explicitCurrentValue === undefined && totalLinkedTasks > 0) {
         const computed = money(completedLinkedTasks).div(totalLinkedTasks).mul(money(nextTarget));
@@ -1173,16 +1192,7 @@ async function applyProjectSyncAndCheckin(
     }
   }
 
-  const effectiveTargetForRatio =
-    options.syncFromProjects &&
-    projectAccessible &&
-    existing.metric_type === 'project_tasks' &&
-    existing.linked_task_ids.length === 0 &&
-    totalLinkedTasks > 0
-      ? String(totalLinkedTasks)
-      : nextTarget;
-
-  const nextProgress = computeKrProgressPct(existing.metric_type, nextCurrent, effectiveTargetForRatio);
+  const nextProgress = computeKrProgressPct(existing.metric_type, nextCurrent, nextTarget);
   const nextNote = options.note === undefined ? existing.last_checkin_note : options.note;
 
   // Non-manager self check-in must never modify target_value (enforced by okr_key_result_write_guard trigger).
