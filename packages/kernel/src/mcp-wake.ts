@@ -373,13 +373,19 @@ export const mcpWakeMinutesTargets = defineCommand({
     const published = zMinutesPublishedEvent.parse(event.payload);
     // Stale when it would be sent: older than 24 hours at the moment the worker asks.
     const stale = Date.parse(input.now) - event.created_at.getTime() > MINUTES_WAKE_MAX_AGE_MS;
-    const grants = stale
+    // And closed when the meeting is no longer one its minutes may be announced for (#4536): the org-visibility test ran at publish and this job can run a day later, so a recorder who narrowed the meeting
+    // to attendees only, deleted it or let its text period end meanwhile is honoured here. The worker-only definer answers one boolean, asked only when the event is not already stale.
+    const open = stale
+      ? false
+      : (await sql<{ open: boolean }>`SELECT ludy_meetings.minutes_wake_open(${ctx.orgId}::uuid, ${published.meetingId}::uuid, ${input.now}::timestamptz) AS open`.execute(ctx.trx)).rows[0]?.open === true;
+    const dropped = stale || !open;
+    const grants = dropped
       ? []
       : (await sql<{ grant_id: string }>`SELECT grant_id FROM ludy_kernel.mcp_wake_company_targets(${ctx.orgId}::uuid, ${MINUTES_WAKE_GRANTS_MAX}::int)`.execute(ctx.trx)).rows.map((r) => r.grant_id);
-    // The event's id and what came of it: never a body.
+    // The event's id and what came of it: never a body. `reason` is a fixed word that says why a drop happened.
     // `capped` says the list stopped at its limit, so a count equal to it is never read as the whole.
-    ctx.audit({ eventId: input.eventId, dropped: stale, grants: grants.length, capped: grants.length >= MINUTES_WAKE_GRANTS_MAX });
-    return { meetingId: published.meetingId, publishedAt: published.publishedAt, grants, dropped: stale };
+    ctx.audit({ eventId: input.eventId, dropped, ...(stale ? { reason: 'stale' } : !open ? { reason: 'meeting_closed' } : {}), grants: grants.length, capped: grants.length >= MINUTES_WAKE_GRANTS_MAX });
+    return { meetingId: published.meetingId, publishedAt: published.publishedAt, grants, dropped };
   },
 });
 
