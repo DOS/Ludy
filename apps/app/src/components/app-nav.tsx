@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { Button } from '@ludy/ui/components/button';
@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from '@ludy/ui/components/dropdown-menu';
 import { NavIcon } from '@ludy/ui/components/nav-icon';
+import { Popover, PopoverContent, PopoverTrigger } from '@ludy/ui/components/popover';
 import { ProjectIcon } from '@ludy/ui/components/project-icon';
 import { LocaleSwitcher } from '../i18n/provider.tsx';
 import { APP_ICON, menuIcon } from '../lib/menu-icons.ts';
@@ -169,20 +170,10 @@ export function ShellNav({ slug, apps, app, settingsItems, badges, orgs, email, 
           </ul>
         </div>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col px-3 py-0 md:py-4">
-          <div className="mb-4 hidden px-2 md:block">
+          <div className="mb-3 hidden px-2 md:block">
             <Logo />
           </div>
-          <div className="px-2">
-            {orgs.length > 1 && (
-              <Link to="/clients" onClick={onNavigate} className="mb-2 flex min-h-11 items-center text-sm text-link hover:underline md:min-h-6">
-                {t('allClients')}
-              </Link>
-            )}
-            <OrgMenu slug={slug} orgs={orgs} onNavigate={onNavigate} />
-            {/* The legal entity of the finance books (#1486), when the caller sees more than one. */}
-            <EntitySwitcher slug={slug} />
-          </div>
-          <div className="mt-2 flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={onOpenPalette}
@@ -206,6 +197,8 @@ export function ShellNav({ slug, apps, app, settingsItems, badges, orgs, email, 
               </Button>
             )}
           </div>
+          {/* The legal entity of the finance books (#1486), when the caller sees more than one. */}
+          <EntitySwitcher slug={slug} />
           {/* The menu scrolls only on a very short window, so the account menu below it always stays on screen. On Overview,
               Notifications, and Audit there is no menu, only the rail (#3588); Settings shows its sub-pages (#4499). On a phone the nav scrolls instead (above). */}
           <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-y-auto max-md:overflow-y-visible">
@@ -252,7 +245,7 @@ export function ShellNav({ slug, apps, app, settingsItems, badges, orgs, email, 
               );
             })}
           </div>
-          <AccountMenu email={email} />
+          <AccountPopover slug={slug} orgs={orgs} email={email} onNavigate={onNavigate} />
         </div>
       </div>
     </nav>
@@ -311,38 +304,134 @@ export function OrgMenu({ slug, orgs, onNavigate }: { slug: string; orgs: readon
   );
 }
 
-// The account at the foot of the menu: the support link (#310) stays in view, the email opens status, language and
-// theme, and sign out stays in view (#516) under it.
-function AccountMenu({ email }: { email: string | undefined }) {
+// The account popover body (DESIGN.md 3.8, #4502): identity, active org switcher, segmented theme and language
+// toggles, help/status links, and sign-out. Exported separately so SSR unit tests can inspect the panel contents.
+export function AccountPanel({
+  slug,
+  orgs,
+  email,
+  onNavigate,
+  onSignOut,
+}: {
+  slug: string;
+  orgs: readonly ShellOrg[];
+  email: string | undefined;
+  onNavigate?: (() => void) | undefined;
+  onSignOut: () => void;
+}) {
   const t = useTranslations('nav');
   const tc = useTranslations('common');
   return (
-    <div className="mt-3 shrink-0 border-t pt-2">
-      <SupportLink className="mb-1 flex min-h-11 items-center px-2 text-sm text-link md:min-h-6" />
-      <details className="group">
-        <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-lg px-2 py-1.5 md:min-h-0 text-sm text-muted-foreground hover:bg-sidebar-accent hover:text-foreground [&::-webkit-details-marker]:hidden">
-          <span className="sr-only">{t('account')}: </span>
-          <span className="min-w-0 flex-1 truncate" title={email}>
+    <div className="space-y-3">
+      {email && (
+        <div className="border-b px-1 pb-2.5">
+          <p className="text-xs font-medium text-foreground [overflow-wrap:anywhere]" title={email}>
             {email}
-          </span>
-          <NavIcon name="expand" className="transition-transform group-open:rotate-180 motion-reduce:transition-none" />
-        </summary>
-        <div className="mt-2 flex flex-col gap-2 px-2 pb-1 text-xs text-subtle-foreground">
-          <StatusLink className="flex min-h-11 items-center text-sm text-link md:min-h-6" />
-          {/* One per row: side by side, both names were cut off at the sidebar's width. Each has its name above it (#3588); the select keeps its own accessible name. */}
-          <div className="flex flex-col gap-1">
-            <span aria-hidden="true">{tc('language')}</span>
-            <LocaleSwitcher className="w-full text-muted-foreground" />
-          </div>
-          <div className="flex flex-col gap-1">
-            <span aria-hidden="true">{tc('theme')}</span>
-            <ThemeSwitcher className="w-full text-muted-foreground" />
-          </div>
+          </p>
         </div>
-      </details>
-      <button type="button" className="mt-1 inline-flex min-h-11 items-center px-2 text-xs text-subtle-foreground hover:text-muted-foreground md:min-h-6" onClick={() => void signOut()}>
-        {tc('signOut')}
-      </button>
+      )}
+      <div className="space-y-1.5">
+        <p className="px-1 text-xs font-medium text-muted-foreground">{t('org')}</p>
+        <OrgMenu slug={slug} orgs={orgs} onNavigate={onNavigate} />
+        {orgs.length > 1 && (
+          <Link
+            to="/clients"
+            onClick={onNavigate}
+            className="flex min-h-11 items-center rounded-md px-2 text-sm text-link hover:bg-accent hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:min-h-8"
+          >
+            {t('allClients')}
+          </Link>
+        )}
+      </div>
+      <div className="space-y-2 border-t pt-2.5">
+        <div className="flex items-center justify-between gap-2 px-1">
+          <span aria-hidden="true" className="text-xs font-medium text-muted-foreground">
+            {tc('theme')}
+          </span>
+          <ThemeSwitcher />
+        </div>
+        <div className="flex items-center justify-between gap-2 px-1">
+          <span aria-hidden="true" className="text-xs font-medium text-muted-foreground">
+            {tc('language')}
+          </span>
+          <LocaleSwitcher />
+        </div>
+      </div>
+      <div className="space-y-0.5 border-t pt-2">
+        <SupportLink className="flex min-h-11 items-center rounded-md px-2 text-sm text-link hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:min-h-8" />
+        <StatusLink className="flex min-h-11 items-center rounded-md px-2 text-sm text-link hover:bg-accent focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:min-h-8" />
+        <button
+          type="button"
+          className="flex min-h-11 w-full items-center rounded-md px-2 text-left text-sm text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none md:min-h-8"
+          onClick={onSignOut}
+        >
+          {tc('signOut')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// The account menu at the foot of the navigation (#4502): keeps subtle active-org context visible on the trigger and
+// houses OrgMenu, theme/language segmented controls, support/status links, and sign-out inside a clean Popover.
+export function AccountPopover({
+  slug,
+  orgs,
+  email,
+  onNavigate,
+}: {
+  slug: string;
+  orgs: readonly ShellOrg[];
+  email: string | undefined;
+  onNavigate?: (() => void) | undefined;
+}) {
+  const t = useTranslations('nav');
+  const [open, setOpen] = useState(false);
+  const host = useRef<HTMLDivElement>(null);
+  const current = orgs.find((o) => o.slug === slug);
+  const orgName = current?.name ?? slug;
+  const initial = (email?.trim()[0] ?? orgName.trim()[0] ?? 'L').toUpperCase();
+  const closeAndNavigate = () => {
+    setOpen(false);
+    onNavigate?.();
+  };
+  return (
+    <div ref={host} className="mt-3 shrink-0 border-t pt-2">
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger
+          data-testid="account-menu-trigger"
+          className="group/account flex min-h-11 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left outline-none hover:bg-sidebar-accent focus-visible:ring-3 focus-visible:ring-ring/50 data-popup-open:bg-sidebar-accent md:min-h-10"
+        >
+          <span className="sr-only">{t('account')}: </span>
+          <span aria-hidden="true" className="grid size-7 shrink-0 place-items-center rounded-full bg-primary/15 text-xs font-semibold text-primary">
+            {initial}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-xs font-medium text-foreground" title={email}>
+              {email ?? t('account')}
+            </span>{' '}
+            <span className="block truncate text-xs text-muted-foreground" title={orgName}>
+              {orgName}
+            </span>
+          </span>
+          <NavIcon
+            name="expand"
+            className="shrink-0 text-muted-foreground transition-transform group-data-popup-open/account:rotate-180 motion-reduce:transition-none"
+          />
+        </PopoverTrigger>
+        <PopoverContent container={host} side="top" align="start" sideOffset={8} className="w-72 p-3" data-testid="account-popover">
+          <AccountPanel
+            slug={slug}
+            orgs={orgs}
+            email={email}
+            onNavigate={closeAndNavigate}
+            onSignOut={() => {
+              setOpen(false);
+              void signOut();
+            }}
+          />
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }

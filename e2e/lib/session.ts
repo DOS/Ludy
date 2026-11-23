@@ -71,11 +71,17 @@ export async function signIn(page: Page, email: string, password = PASSWORD): Pr
   await page.getByRole('button', { name: 'Đăng nhập' }).click();
 }
 
-// The app's own sign-out control: the sidebar's inside an org, the only one elsewhere (onboarding, /mfa). The
-// sessions card in Settings has a "Đăng xuất" button per device as well.
+// The app's own sign-out control: inside an org, open the bottom account popover first; elsewhere (onboarding, /mfa,
+// /clients), click the visible sign-out button directly.
 export async function signOut(page: Page): Promise<void> {
-  const sidebar = page.getByRole('complementary').getByRole('button', { name: 'Đăng xuất', exact: true });
-  await ((await sidebar.count()) > 0 ? sidebar : page.getByRole('button', { name: 'Đăng xuất', exact: true })).click();
+  const sidebar = page.getByRole('complementary');
+  const account = sidebar.getByRole('button', { name: /^Tài khoản:/ });
+  if ((await account.count()) > 0) {
+    await account.click();
+    await sidebar.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
+    return;
+  }
+  await page.getByRole('button', { name: 'Đăng xuất', exact: true }).click();
 }
 
 export async function createOrg(page: Page, name: string): Promise<string> {
