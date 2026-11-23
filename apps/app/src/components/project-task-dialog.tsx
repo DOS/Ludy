@@ -6,6 +6,8 @@ import {
   PROJECT_CYCLE_DURATION_WEEKS_MIN,
   PROJECT_TASK_STORY_POINTS_MAX,
   PROJECT_TASK_STORY_POINTS_MIN,
+  TASK_CHECKLIST_STEPS_MAX,
+  TASK_CHECKLIST_STEP_MAX,
   serializeTaskChecklist,
   type ProjectBoard,
   type ProjectCandidateTask,
@@ -20,7 +22,7 @@ import {
   type TaskChecklistStep,
 } from '@ludy/kernel-contract';
 import { Link } from '@tanstack/react-router';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
@@ -36,6 +38,8 @@ import { Textarea } from '@ludy/ui/components/textarea';
 import { VisibilityIcon } from '@ludy/ui/components/visibility-icon';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { DateInput } from './date-input.tsx';
+import { FormDialog } from './form-dialog.tsx';
+import { FormPanel } from './form-panel.tsx';
 import { TaskChecklistEditor, hasBlankChecklistStep, normalizeChecklistSteps } from './task-checklist.tsx';
 import { ProjectDependencies } from './project-dependencies.tsx';
 import { TaskTimeTrackingPanel } from './project-time-panel.tsx';
@@ -140,29 +144,25 @@ export function CreateProjectDialog({
   onOpenChange: (open: boolean) => void;
   onCreated: (projectId: string) => void;
 }) {
+  if (!open) return null;
+  return <CreateProjectFormDialog onOpenChange={onOpenChange} onCreated={onCreated} />;
+}
+
+function CreateProjectFormDialog({
+  onOpenChange,
+  onCreated,
+}: {
+  onOpenChange: (open: boolean) => void;
+  onCreated: (projectId: string) => void;
+}) {
   const t = useTranslations('projects');
-  const tc = useTranslations('common');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [visibility, setVisibility] = useState<ProjectVisibility>('org');
   const [nameError, setNameError] = useState(false);
-  const [idemKey, setIdemKey] = useState(() => crypto.randomUUID());
+  const [idemKey] = useState(() => crypto.randomUUID());
 
   const create = useMutation(orpc.projects.create.mutationOptions());
-
-  useEffect(() => {
-    if (open) {
-      setName('');
-      setDescription('');
-      setVisibility('org');
-      setNameError(false);
-      setIdemKey(crypto.randomUUID());
-      create.reset();
-    }
-    // Reset only when dialog opens.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
-
   const nameField = fieldControl('create-project-name', { error: nameError });
 
   const submit = (e: FormEvent) => {
@@ -191,51 +191,46 @@ export function CreateProjectDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent closeLabel={tc('close')} data-testid="create-project-dialog">
-        <DialogHeader>
-          <DialogTitle>{t('createTitle')}</DialogTitle>
-          <DialogDescription>{t('createSubtitle')}</DialogDescription>
-        </DialogHeader>
-        <form noValidate onSubmit={submit} className="space-y-4">
-          <ProjectVisibilityField id="create-project-visibility" value={visibility} onChange={setVisibility} />
-          <div className="space-y-1.5">
-            <Label htmlFor={nameField.id}>{t('modals.createNameLabel')}</Label>
-            <Input
-              {...nameField}
-              autoFocus
-              required
-              maxLength={200}
-              placeholder={t('modals.createNamePlaceholder')}
-              value={name}
-              onChange={(e) => {
-                setName(e.target.value);
-                if (nameError && e.target.value.trim()) setNameError(false);
-              }}
-            />
-            <FieldError id={nameField.id}>{nameError ? t('errors.nameRequired') : null}</FieldError>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="create-project-desc">{t('modals.createDescLabel')}</Label>
-            <Textarea
-              id="create-project-desc"
-              rows={3}
-              maxLength={2000}
-              placeholder={t('modals.createDescPlaceholder')}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-          </div>
-          {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
-          <DialogFooter>
-            <DialogClose render={<Button type="button" variant="outline" />}>{tc('cancel')}</DialogClose>
-            <Button type="submit" loading={create.isPending}>
-              {t('createSubmit')}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <FormDialog
+      testId="create-project-dialog"
+      title={t('createTitle')}
+      description={t('createSubtitle')}
+      busy={create.isPending}
+      dirty={name.trim() !== '' || description.trim() !== '' || visibility !== 'org'}
+      submitLabel={t('createSubmit')}
+      onClose={() => onOpenChange(false)}
+      onSubmit={submit}
+    >
+      <ProjectVisibilityField id="create-project-visibility" value={visibility} onChange={setVisibility} />
+      <div className="space-y-1.5">
+        <Label htmlFor={nameField.id}>{t('modals.createNameLabel')}</Label>
+        <Input
+          {...nameField}
+          autoFocus
+          required
+          maxLength={200}
+          placeholder={t('modals.createNamePlaceholder')}
+          value={name}
+          onChange={(e) => {
+            setName(e.target.value);
+            if (nameError && e.target.value.trim()) setNameError(false);
+          }}
+        />
+        <FieldError id={nameField.id}>{nameError ? t('errors.nameRequired') : null}</FieldError>
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="create-project-desc">{t('modals.createDescLabel')}</Label>
+        <Textarea
+          id="create-project-desc"
+          rows={3}
+          maxLength={2000}
+          placeholder={t('modals.createDescPlaceholder')}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+        />
+      </div>
+      {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
+    </FormDialog>
   );
 }
 
@@ -385,87 +380,122 @@ export function EditProjectTaskDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  if (!open || !task) return null;
+  return (
+    <EditProjectTaskPanel
+      key={task.id}
+      slug={slug}
+      projectId={projectId}
+      canWrite={canWrite}
+      task={task}
+      projectTasks={projectTasks}
+      seats={seats}
+      cyclesEnabled={cyclesEnabled}
+      pointsEnabled={pointsEnabled}
+      cycles={cycles}
+      onOpenChange={onOpenChange}
+    />
+  );
+}
+
+function EditProjectTaskPanel({
+  slug,
+  projectId,
+  canWrite,
+  task,
+  projectTasks,
+  seats,
+  cyclesEnabled,
+  pointsEnabled,
+  cycles,
+  onOpenChange,
+}: {
+  slug: string;
+  projectId: string;
+  canWrite: boolean;
+  task: ProjectTaskCard;
+  projectTasks?: readonly ProjectTaskCard[] | undefined;
+  seats: readonly ProjectSeat[];
+  cyclesEnabled: boolean;
+  pointsEnabled: boolean;
+  cycles: readonly ProjectCycle[];
+  onOpenChange: (open: boolean) => void;
+}) {
   const t = useTranslations('projects');
   const tt = useTranslations('tasks');
   const tc = useTranslations('common');
   const tz = browserTimeZone();
+  const formId = useId();
 
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [assignee, setAssignee] = useState('');
-  const [dueOn, setDueOn] = useState('');
-  const [cycleId, setCycleId] = useState('');
-  const [pointsText, setPointsText] = useState('');
-  const [checklist, setChecklist] = useState<TaskChecklistStep[]>([]);
+  const initialDueOn = taskDueDay(task.due, tz);
+  const initialChecklist = (task.checklist ?? []).map((s) => ({ ...s }));
+  const initialBaseline = {
+    title: task.title,
+    description: task.description ?? '',
+    assignee: task.assigneePositionId ?? '',
+    dueOn: initialDueOn,
+    checklistJson: serializeTaskChecklist(normalizeChecklistSteps(initialChecklist)),
+    cycleId: task.cycleId ?? null,
+    points: task.storyPoints ?? null,
+  };
+
+  const [title, setTitle] = useState(initialBaseline.title);
+  const [description, setDescription] = useState(initialBaseline.description);
+  const [assignee, setAssignee] = useState(initialBaseline.assignee);
+  const [dueOn, setDueOn] = useState(initialBaseline.dueOn);
+  const [cycleId, setCycleId] = useState(initialBaseline.cycleId ?? '');
+  const [pointsText, setPointsText] = useState(initialBaseline.points === null ? '' : String(initialBaseline.points));
+  const [checklist, setChecklist] = useState<TaskChecklistStep[]>(initialChecklist);
+  const [stepDraft, setStepDraft] = useState('');
+  const [checklistEpoch, setChecklistEpoch] = useState(0);
+  const [baseline, setBaseline] = useState(initialBaseline);
   const [titleError, setTitleError] = useState(false);
   const [stepError, setStepError] = useState(false);
   const [pointsError, setPointsError] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [recurrenceOverride, setRecurrenceOverride] = useState<ProjectTaskRecurrenceView | null>(null);
 
-  const activeSessionRef = useRef<string | null>(null);
-  const committedPatchBaselineRef = useRef({
-    title: '',
-    description: '',
-    assignee: '',
-    dueOn: '',
-    checklistJson: '[]',
-  });
-  const committedCycleRef = useRef<string | null>(null);
-  const committedPointsRef = useRef<number | null>(null);
+  const activeRef = useRef(true);
+  useEffect(
+    () => () => {
+      activeRef.current = false;
+    },
+    [],
+  );
 
   const update = useMutation(orpc.tasks.update.mutationOptions());
   const setTaskCycle = useMutation(orpc.projects.setTaskCycle.mutationOptions());
   const setTaskPoints = useMutation(orpc.projects.setTaskPoints.mutationOptions());
-
-  useEffect(() => {
-    if (open && task) {
-      const initialDueOn = taskDueDay(task.due, tz);
-      const initialCycle = task.cycleId ?? null;
-      const initialPoints = task.storyPoints ?? null;
-      const normalizedList = normalizeChecklistSteps((task.checklist ?? []).map((s) => ({ ...s })));
-      activeSessionRef.current = task.id;
-      committedPatchBaselineRef.current = {
-        title: task.title,
-        description: task.description ?? '',
-        assignee: task.assigneePositionId ?? '',
-        dueOn: initialDueOn,
-        checklistJson: serializeTaskChecklist(normalizedList),
-      };
-      committedCycleRef.current = initialCycle;
-      committedPointsRef.current = initialPoints;
-
-      setTitle(task.title);
-      setDescription(task.description ?? '');
-      setAssignee(task.assigneePositionId ?? '');
-      setDueOn(initialDueOn);
-      setCycleId(initialCycle ?? '');
-      setPointsText(initialPoints === null ? '' : String(initialPoints));
-      setChecklist((task.checklist ?? []).map((s) => ({ ...s })));
-      setTitleError(false);
-      setStepError(false);
-      setPointsError(false);
-      setIsSaving(false);
-      setRecurrenceOverride(null);
-      update.reset();
-      setTaskCycle.reset();
-      setTaskPoints.reset();
-    } else {
-      activeSessionRef.current = null;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, task?.id]);
-
-  if (!task) return null;
 
   // A tainted title that holds characters nobody can see in the field is written out beside it (#4423); the field is described by it.
   const hiddenInTitle = taskTitleHidden({ title, tainted: task.tainted });
   const titleField = fieldControl(`edit-project-task-${task.id}`, { error: titleError, hint: hiddenInTitle !== null });
   const activeSeats = seats.filter((s) => s.status !== 'archived' || s.id === task.assigneePositionId);
 
+  const pendingStep = stepDraft.trim();
+  const effectiveChecklist = normalizeChecklistSteps(
+    pendingStep && checklist.length < TASK_CHECKLIST_STEPS_MAX
+      ? [...checklist, { text: pendingStep.slice(0, TASK_CHECKLIST_STEP_MAX), done: false }]
+      : checklist,
+  );
+  const effectiveChecklistJson = serializeTaskChecklist(effectiveChecklist);
+  const initialPointsText = baseline.points === null ? '' : String(baseline.points);
+  const dirty =
+    !task.checkedOut &&
+    (title !== baseline.title ||
+      description !== baseline.description ||
+      assignee !== baseline.assignee ||
+      dueOn !== baseline.dueOn ||
+      effectiveChecklistJson !== baseline.checklistJson ||
+      pendingStep !== '' ||
+      (cyclesEnabled && (cycleId || null) !== baseline.cycleId) ||
+      (pointsEnabled && pointsText !== initialPointsText));
+
+  const busy = isSaving || update.isPending || setTaskCycle.isPending || setTaskPoints.isPending;
+
   const submit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (task.checkedOut || isSaving || update.isPending || setTaskCycle.isPending || setTaskPoints.isPending) return;
+    if (task.checkedOut || busy) return;
     const nextTitle = title.trim();
     if (!nextTitle) {
       setTitleError(true);
@@ -481,18 +511,15 @@ export function EditProjectTaskDialog({
     }
     const nextDesc = description.trim() ? description.trim() : null;
     const nextAssignee = assignee || null;
-    const nextChecklist = normalizeChecklistSteps(checklist);
-    const nextChecklistJson = serializeTaskChecklist(nextChecklist);
-    const baseline = committedPatchBaselineRef.current;
     const patch = {
       ...(nextTitle !== baseline.title ? { title: nextTitle } : {}),
       ...(description !== baseline.description ? { description: nextDesc } : {}),
       ...(nextAssignee !== baseline.assignee ? { assigneePositionId: nextAssignee } : {}),
       ...(dueOn !== baseline.dueOn ? { due: taskDueFromDay(dueOn, tz) } : {}),
-      ...(nextChecklistJson !== baseline.checklistJson ? { checklist: nextChecklist } : {}),
+      ...(effectiveChecklistJson !== baseline.checklistJson ? { checklist: effectiveChecklist } : {}),
     };
     const nextCycleId = cycleId || null;
-    const cycleChanged = cyclesEnabled && nextCycleId !== committedCycleRef.current;
+    const cycleChanged = cyclesEnabled && nextCycleId !== baseline.cycleId;
     const trimmedPts = pointsText.trim();
     let nextPoints: number | null = null;
     if (pointsEnabled && trimmedPts !== '') {
@@ -507,7 +534,7 @@ export function EditProjectTaskDialog({
       }
       nextPoints = parsedPts;
     }
-    const pointsChanged = pointsEnabled && nextPoints !== committedPointsRef.current;
+    const pointsChanged = pointsEnabled && nextPoints !== baseline.points;
 
     if (Object.keys(patch).length === 0 && !cycleChanged && !pointsChanged) {
       onOpenChange(false);
@@ -529,14 +556,18 @@ export function EditProjectTaskDialog({
         if (Object.keys(patch).length > 0) {
           await update.mutateAsync({ id: submitTaskId, ...patch, idempotencyKey: crypto.randomUUID() });
           anyWriteSucceeded = true;
-          if (activeSessionRef.current === submitTaskId) {
-            committedPatchBaselineRef.current = {
+          if (activeRef.current) {
+            setChecklist(effectiveChecklist);
+            setStepDraft('');
+            if (pendingStep) setChecklistEpoch((n) => n + 1);
+            setBaseline((prev) => ({
+              ...prev,
               title: nextTitle,
               description,
               assignee: nextAssignee ?? '',
               dueOn,
-              checklistJson: nextChecklistJson,
-            };
+              checklistJson: effectiveChecklistJson,
+            }));
           }
         }
         if (cycleChanged) {
@@ -547,8 +578,8 @@ export function EditProjectTaskDialog({
             idempotencyKey: crypto.randomUUID(),
           });
           anyWriteSucceeded = true;
-          if (activeSessionRef.current === submitTaskId) {
-            committedCycleRef.current = nextCycleId;
+          if (activeRef.current) {
+            setBaseline((prev) => ({ ...prev, cycleId: nextCycleId }));
           }
         }
         if (pointsChanged) {
@@ -559,15 +590,15 @@ export function EditProjectTaskDialog({
             idempotencyKey: crypto.randomUUID(),
           });
           anyWriteSucceeded = true;
-          if (activeSessionRef.current === submitTaskId) {
-            committedPointsRef.current = nextPoints;
+          if (activeRef.current) {
+            setBaseline((prev) => ({ ...prev, points: nextPoints }));
           }
         }
-        if (activeSessionRef.current === submitTaskId) {
+        if (activeRef.current) {
           onOpenChange(false);
         }
       } finally {
-        setIsSaving(false);
+        if (activeRef.current) setIsSaving(false);
         if (anyWriteSucceeded) await refreshProjectQueries();
       }
     };
@@ -575,208 +606,212 @@ export function EditProjectTaskDialog({
   };
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!next && isSaving) return;
-        onOpenChange(next);
-      }}
-    >
-      <DialogContent closeLabel={tc('close')} data-testid="edit-project-task-dialog">
-        <DialogHeader>
-          <DialogTitle>{t('modals.editTaskTitle')}</DialogTitle>
-          <DialogDescription>
-            <Link
-              to="/o/$slug/tasks/$id"
-              params={{ slug, id: task.id }}
-              className="rounded text-xs text-link hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-            >
-              {t('task.openDetail')}
-            </Link>
-          </DialogDescription>
-        </DialogHeader>
-        {task.checkedOut && (
-          <Alert className="border-warning/30 bg-warning/10">
-            <NavIcon name="agents" className="text-warning" />
-            <AlertDescription className="text-xs text-foreground">{t('task.checkedOutLocked')}</AlertDescription>
-          </Alert>
-        )}
-        <form noValidate onSubmit={submit} className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor={titleField.id}>{t('modals.taskTitleLabel')}</Label>
-            <Input
-              {...titleField}
-              required
-              disabled={task.checkedOut}
-              maxLength={300}
-              value={title}
-              onChange={(e) => {
-                setTitle(e.target.value);
-                if (titleError && e.target.value.trim()) setTitleError(false);
-              }}
-            />
-            <FieldError id={titleField.id}>{titleError ? t('errors.taskTitleRequired') : null}</FieldError>
-            {hiddenInTitle !== null && (
-              <p id={fieldHintId(titleField.id)} className="break-words text-xs text-warning" data-testid="task-title-hidden">
-                {tt('titleHidden', { marked: hiddenInTitle })}
-              </p>
-            )}
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor={`edit-seat-${task.id}`}>{t('modals.taskSeatLabel')}</Label>
-              <NativeSelect
-                id={`edit-seat-${task.id}`}
-                className="w-full"
-                disabled={task.checkedOut}
-                value={assignee}
-                onChange={(e) => setAssignee(e.target.value)}
-              >
-                <NativeSelectOption value="">{tt('rootAssignee')}</NativeSelectOption>
-                {activeSeats.map((seat) => (
-                  <NativeSelectOption key={seat.id} value={seat.id}>
-                    {seatOptionLabel(seat, t('modals.aiSeatSuffix'), t('modals.openSeatSuffix'))}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor={`edit-due-${task.id}`}>{t('modals.taskDueLabel')}</Label>
-              <DateInput
-                id={`edit-due-${task.id}`}
-                disabled={task.checkedOut}
-                value={dueOn}
-                onChange={setDueOn}
-                aria-label={t('modals.taskDueLabel')}
-              />
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor={`edit-desc-${task.id}`}>{t('modals.taskDescLabel')}</Label>
-            <Textarea
-              id={`edit-desc-${task.id}`}
-              rows={3}
-              disabled={task.checkedOut}
-              maxLength={10000}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-          </div>
-          {(cyclesEnabled || pointsEnabled) && (
-            <div className="grid gap-3 sm:grid-cols-2">
-              {cyclesEnabled && (
-                <div className="space-y-1.5">
-                  <Label htmlFor={`edit-cycle-${task.id}`}>{t('cycles.taskCycleLabel')}</Label>
-                  <NativeSelect
-                    id={`edit-cycle-${task.id}`}
-                    className="w-full max-md:[&>select]:h-11"
-                    disabled={task.checkedOut || !canWrite}
-                    value={cycleId}
-                    onChange={(e) => setCycleId(e.target.value)}
-                  >
-                    <NativeSelectOption value="">{t('cycles.backlogOption')}</NativeSelectOption>
-                    {cycles
-                      .filter((c) => c.status !== 'completed' || c.id === task.cycleId)
-                      .map((c) => (
-                        <NativeSelectOption key={c.id} value={c.id} disabled={c.status === 'completed'}>
-                          {t('cycles.cycleLabel', { number: c.number, name: c.name })}
-                        </NativeSelectOption>
-                      ))}
-                  </NativeSelect>
-                </div>
-              )}
-              {pointsEnabled && (
-                <div className="space-y-1.5">
-                  <Label htmlFor={`edit-points-${task.id}`}>{t('cycles.pointsInputLabel')}</Label>
-                  <Input
-                    id={`edit-points-${task.id}`}
-                    type="number"
-                    min={PROJECT_TASK_STORY_POINTS_MIN}
-                    max={PROJECT_TASK_STORY_POINTS_MAX}
-                    step={1}
-                    inputMode="numeric"
-                    aria-invalid={pointsError || undefined}
-                    className="max-md:h-11"
-                    disabled={task.checkedOut || !canWrite}
-                    placeholder={t('cycles.pointsPlaceholder')}
-                    value={pointsText}
-                    onChange={(e) => {
-                      setPointsText(e.target.value);
-                      if (pointsError) setPointsError(false);
-                    }}
-                  />
-                  {pointsError && <ErrorText>{t('cycles.pointsInvalid')}</ErrorText>}
-                </div>
-              )}
-            </div>
-          )}
-          <TaskChecklistEditor
-            idPrefix={`edit-project-task-${task.id}`}
-            disabled={task.checkedOut}
-            label={t('modals.taskChecklistLabel')}
-            value={checklist}
-            stepError={stepError}
-            onChange={(next) => {
-              setChecklist(next);
-              if (stepError && !hasBlankChecklistStep(next)) setStepError(false);
+    <FormPanel
+      testId="edit-project-task-dialog"
+      title={t('modals.editTaskTitle')}
+      description={
+        <Link
+          to="/o/$slug/tasks/$id"
+          params={{ slug, id: task.id }}
+          className="inline-flex max-md:min-h-11 items-center rounded text-xs text-link hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        >
+          {t('task.openDetail')}
+        </Link>
+      }
+      wide
+      noValidate
+      formId={formId}
+      busy={busy}
+      dirty={dirty}
+      onClose={() => onOpenChange(false)}
+      onSubmit={submit}
+      footer={(requestClose) => (
+        <>
+          <Button type="button" variant="outline" disabled={busy} onClick={requestClose}>
+            {tc('cancel')}
+          </Button>
+          <Button type="submit" form={formId} disabled={task.checkedOut || busy} loading={busy}>
+            {t('modals.saveTask')}
+          </Button>
+        </>
+      )}
+      outside={
+        <div className="space-y-4 border-t border-border pt-4">
+          <ProjectDependencies
+            projectId={projectId}
+            taskId={task.id}
+            canWrite={canWrite && !task.checkedOut}
+            projectTasks={projectTasks}
+            onChanged={refreshProjectQueries}
+          />
+          <TaskTimeTrackingPanel
+            projectId={projectId}
+            taskId={task.id}
+            taskTitle={taskTitleText(task)}
+            canWrite={canWrite && !task.checkedOut}
+          />
+          <TaskRecurrenceControl
+            projectId={projectId}
+            taskId={task.id}
+            canEdit={canWrite && !task.checkedOut}
+            view={
+              recurrenceOverride ?? {
+                projectId,
+                taskId: task.id,
+                recurrence: task.recurrence ?? null,
+                recurrenceCount: task.recurrenceCount ?? 0,
+                recurrenceLastDue: task.recurrenceLastDue ?? null,
+                recurrenceNextAt: task.recurrenceNextAt ?? null,
+                recurrenceSourceTaskId: task.recurrenceSourceTaskId ?? null,
+              }
+            }
+            onUpdated={(next) => {
+              setRecurrenceOverride(next);
+              refreshProjectQueries();
             }}
           />
-          {(update.error ?? setTaskCycle.error ?? setTaskPoints.error) && (
-            <ErrorText>{errorMessage(update.error ?? setTaskCycle.error ?? setTaskPoints.error)}</ErrorText>
-          )}
-          {(task.openBlockerCount ?? 0) > 0 && (
-            <Alert data-testid="edit-task-open-blockers-warning">
-              <AlertDescription>
-                {t('dependencies.moveBlockedWarning', { count: task.openBlockerCount ?? 0 })}
-              </AlertDescription>
-            </Alert>
-          )}
-          <DialogFooter>
-            <DialogClose render={<Button type="button" variant="outline" disabled={isSaving} />}>{tc('cancel')}</DialogClose>
-            <Button
-              type="submit"
-              disabled={task.checkedOut || isSaving}
-              loading={isSaving || update.isPending || setTaskCycle.isPending || setTaskPoints.isPending}
-            >
-              {t('modals.saveTask')}
-            </Button>
-          </DialogFooter>
-        </form>
-        <ProjectDependencies
-          projectId={projectId}
-          taskId={task.id}
-          canWrite={canWrite && !task.checkedOut}
-          projectTasks={projectTasks}
-          onChanged={refreshProjectQueries}
-        />
-        <TaskTimeTrackingPanel
-          projectId={projectId}
-          taskId={task.id}
-          taskTitle={taskTitleText(task)}
-          canWrite={canWrite && !task.checkedOut}
-        />
-        <TaskRecurrenceControl
-          projectId={projectId}
-          taskId={task.id}
-          canEdit={canWrite && !task.checkedOut}
-          view={
-            recurrenceOverride ?? {
-              projectId,
-              taskId: task.id,
-              recurrence: task.recurrence ?? null,
-              recurrenceCount: task.recurrenceCount ?? 0,
-              recurrenceLastDue: task.recurrenceLastDue ?? null,
-              recurrenceNextAt: task.recurrenceNextAt ?? null,
-              recurrenceSourceTaskId: task.recurrenceSourceTaskId ?? null,
-            }
-          }
-          onUpdated={(next) => {
-            setRecurrenceOverride(next);
-            refreshProjectQueries();
+        </div>
+      }
+    >
+      {task.checkedOut && (
+        <Alert className="border-warning/30 bg-warning/10">
+          <NavIcon name="agents" className="text-warning" />
+          <AlertDescription className="text-xs text-foreground">{t('task.checkedOutLocked')}</AlertDescription>
+        </Alert>
+      )}
+      <div className="space-y-1.5">
+        <Label htmlFor={titleField.id}>{t('modals.taskTitleLabel')}</Label>
+        <Input
+          {...titleField}
+          autoFocus={!task.checkedOut}
+          required
+          disabled={task.checkedOut}
+          maxLength={300}
+          value={title}
+          onChange={(e) => {
+            setTitle(e.target.value);
+            if (titleError && e.target.value.trim()) setTitleError(false);
           }}
         />
-      </DialogContent>
-    </Dialog>
+        <FieldError id={titleField.id}>{titleError ? t('errors.taskTitleRequired') : null}</FieldError>
+        {hiddenInTitle !== null && (
+          <p id={fieldHintId(titleField.id)} className="break-words text-xs text-warning" data-testid="task-title-hidden">
+            {tt('titleHidden', { marked: hiddenInTitle })}
+          </p>
+        )}
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label htmlFor={`edit-seat-${task.id}`}>{t('modals.taskSeatLabel')}</Label>
+          <NativeSelect
+            id={`edit-seat-${task.id}`}
+            className="w-full"
+            disabled={task.checkedOut}
+            value={assignee}
+            onChange={(e) => setAssignee(e.target.value)}
+          >
+            <NativeSelectOption value="">{tt('rootAssignee')}</NativeSelectOption>
+            {activeSeats.map((seat) => (
+              <NativeSelectOption key={seat.id} value={seat.id}>
+                {seatOptionLabel(seat, t('modals.aiSeatSuffix'), t('modals.openSeatSuffix'))}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor={`edit-due-${task.id}`}>{t('modals.taskDueLabel')}</Label>
+          <DateInput
+            id={`edit-due-${task.id}`}
+            disabled={task.checkedOut}
+            value={dueOn}
+            onChange={setDueOn}
+            aria-label={t('modals.taskDueLabel')}
+          />
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor={`edit-desc-${task.id}`}>{t('modals.taskDescLabel')}</Label>
+        <Textarea
+          id={`edit-desc-${task.id}`}
+          rows={3}
+          disabled={task.checkedOut}
+          maxLength={10000}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+        />
+      </div>
+      {(cyclesEnabled || pointsEnabled) && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {cyclesEnabled && (
+            <div className="space-y-1.5">
+              <Label htmlFor={`edit-cycle-${task.id}`}>{t('cycles.taskCycleLabel')}</Label>
+              <NativeSelect
+                id={`edit-cycle-${task.id}`}
+                className="w-full max-md:[&>select]:min-h-11"
+                disabled={task.checkedOut || !canWrite}
+                value={cycleId}
+                onChange={(e) => setCycleId(e.target.value)}
+              >
+                <NativeSelectOption value="">{t('cycles.backlogOption')}</NativeSelectOption>
+                {cycles
+                  .filter((c) => c.status !== 'completed' || c.id === task.cycleId)
+                  .map((c) => (
+                    <NativeSelectOption key={c.id} value={c.id} disabled={c.status === 'completed'}>
+                      {t('cycles.cycleLabel', { number: c.number, name: c.name })}
+                    </NativeSelectOption>
+                  ))}
+              </NativeSelect>
+            </div>
+          )}
+          {pointsEnabled && (
+            <div className="space-y-1.5">
+              <Label htmlFor={`edit-points-${task.id}`}>{t('cycles.pointsInputLabel')}</Label>
+              <Input
+                id={`edit-points-${task.id}`}
+                type="number"
+                min={PROJECT_TASK_STORY_POINTS_MIN}
+                max={PROJECT_TASK_STORY_POINTS_MAX}
+                step={1}
+                inputMode="numeric"
+                aria-invalid={pointsError || undefined}
+                className="max-md:min-h-11"
+                disabled={task.checkedOut || !canWrite}
+                placeholder={t('cycles.pointsPlaceholder')}
+                value={pointsText}
+                onChange={(e) => {
+                  setPointsText(e.target.value);
+                  if (pointsError) setPointsError(false);
+                }}
+              />
+              {pointsError && <ErrorText>{t('cycles.pointsInvalid')}</ErrorText>}
+            </div>
+          )}
+        </div>
+      )}
+      <TaskChecklistEditor
+        key={checklistEpoch}
+        idPrefix={`edit-project-task-${task.id}`}
+        disabled={task.checkedOut}
+        label={t('modals.taskChecklistLabel')}
+        value={checklist}
+        onDraftChange={setStepDraft}
+        stepError={stepError}
+        onChange={(next) => {
+          setChecklist(next);
+          if (stepError && !hasBlankChecklistStep(next)) setStepError(false);
+        }}
+      />
+      {(update.error ?? setTaskCycle.error ?? setTaskPoints.error) && (
+        <ErrorText>{errorMessage(update.error ?? setTaskCycle.error ?? setTaskPoints.error)}</ErrorText>
+      )}
+      {(task.openBlockerCount ?? 0) > 0 && (
+        <Alert data-testid="edit-task-open-blockers-warning">
+          <AlertDescription>
+            {t('dependencies.moveBlockedWarning', { count: task.openBlockerCount ?? 0 })}
+          </AlertDescription>
+        </Alert>
+      )}
+    </FormPanel>
   );
 }
 
@@ -813,15 +848,39 @@ export function ProjectSettingsDialog({
   project: ProjectDetail;
   members: ProjectBoard['members'];
 }) {
+  if (!open) return null;
+  return <ProjectSettingsPanel key={project.id} project={project} members={members} onOpenChange={onOpenChange} />;
+}
+
+function ProjectSettingsPanel({
+  onOpenChange,
+  project,
+  members,
+}: {
+  onOpenChange: (open: boolean) => void;
+  project: ProjectDetail;
+  members: ProjectBoard['members'];
+}) {
   const t = useTranslations('projects');
   const tc = useTranslations('common');
+  const formId = useId();
 
-  const [name, setName] = useState(project.name);
-  const [description, setDescription] = useState(project.description ?? '');
-  const [visibility, setVisibility] = useState<ProjectVisibility>(project.visibility);
-  const [cyclesEnabled, setCyclesEnabled] = useState(project.cyclesEnabled ?? false);
-  const [cycleDurationWeeks, setCycleDurationWeeks] = useState(project.cycleDurationWeeks ?? 2);
-  const [pointsEnabled, setPointsEnabled] = useState(project.pointsEnabled ?? false);
+  const initialBaseline = {
+    name: project.name,
+    description: project.description ?? '',
+    visibility: project.visibility,
+    cyclesEnabled: project.cyclesEnabled ?? false,
+    cycleDurationWeeks: project.cycleDurationWeeks ?? 2,
+    pointsEnabled: project.pointsEnabled ?? false,
+  };
+
+  const [name, setName] = useState(initialBaseline.name);
+  const [description, setDescription] = useState(initialBaseline.description);
+  const [visibility, setVisibility] = useState<ProjectVisibility>(initialBaseline.visibility);
+  const [cyclesEnabled, setCyclesEnabled] = useState(initialBaseline.cyclesEnabled);
+  const [cycleDurationWeeks, setCycleDurationWeeks] = useState(initialBaseline.cycleDurationWeeks);
+  const [pointsEnabled, setPointsEnabled] = useState(initialBaseline.pointsEnabled);
+  const [baseline, setBaseline] = useState(initialBaseline);
   const [nameError, setNameError] = useState(false);
 
   const update = useMutation(orpc.projects.update.mutationOptions({ onSuccess: refreshProjectQueries }));
@@ -838,163 +897,98 @@ export function ProjectSettingsDialog({
     }),
   );
 
-  useEffect(() => {
-    if (open) {
-      setName(project.name);
-      setDescription(project.description ?? '');
-      setVisibility(project.visibility);
-      setCyclesEnabled(project.cyclesEnabled ?? false);
-      setCycleDurationWeeks(project.cycleDurationWeeks ?? 2);
-      setPointsEnabled(project.pointsEnabled ?? false);
-      setNameError(false);
-      update.reset();
-      setStatus.reset();
-      setOwner.reset();
-      addMember.reset();
-      removeMember.reset();
-      archive.reset();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, project.id, project.visibility]);
-
   const editable = project.canManage && project.status !== 'archived';
   const nameField = fieldControl(`settings-project-name-${project.id}`, { error: nameError });
-  const mutationError = update.error ?? setStatus.error ?? setOwner.error ?? addMember.error ?? removeMember.error ?? archive.error;
+  const otherMutationError = setStatus.error ?? setOwner.error ?? addMember.error ?? removeMember.error ?? archive.error;
   const eligibleOwners = members.filter((m) => m.role !== 'viewer');
   const projectMemberCount = members.filter((m) => m.onProject).length;
+  const dirty =
+    editable &&
+    (name !== baseline.name ||
+      description !== baseline.description ||
+      visibility !== baseline.visibility ||
+      cyclesEnabled !== baseline.cyclesEnabled ||
+      cycleDurationWeeks !== baseline.cycleDurationWeeks ||
+      pointsEnabled !== baseline.pointsEnabled);
 
   const saveDetails = (e: FormEvent) => {
     e.preventDefault();
-    if (!editable) return;
+    if (!editable || update.isPending) return;
     const trimmed = name.trim();
     if (!trimmed) {
       setNameError(true);
       return;
     }
     const nextDesc = description.trim() ? description.trim() : null;
-    update.mutate({
-      ...buildProjectDetailsUpdateInput({
-        projectId: project.id,
-        name: trimmed,
-        description: nextDesc,
-        visibility,
-        currentVisibility: project.visibility,
-        cyclesEnabled,
-        cycleDurationWeeks,
-        pointsEnabled,
-      }),
-      idempotencyKey: crypto.randomUUID(),
-    });
+    update.mutate(
+      {
+        ...buildProjectDetailsUpdateInput({
+          projectId: project.id,
+          name: trimmed,
+          description: nextDesc,
+          visibility,
+          currentVisibility: baseline.visibility,
+          cyclesEnabled,
+          cycleDurationWeeks,
+          pointsEnabled,
+        }),
+        idempotencyKey: crypto.randomUUID(),
+      },
+      {
+        onSuccess: () => {
+          const savedDesc = nextDesc ?? '';
+          setName(trimmed);
+          setDescription(savedDesc);
+          setBaseline({
+            name: trimmed,
+            description: savedDesc,
+            visibility,
+            cyclesEnabled,
+            cycleDurationWeeks,
+            pointsEnabled,
+          });
+        },
+      },
+    );
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent closeLabel={tc('close')} className="sm:max-w-lg" data-testid="project-settings-dialog">
-        <DialogHeader>
-          <DialogTitle>{t('modals.editProjectTitle')}</DialogTitle>
-          <DialogDescription className="flex flex-wrap items-center gap-2">
-            <Badge variant={projectStatusVariant(project.status)}>{t(`status.${project.status}`)}</Badge>
-            {project.visibility === 'private' && (
-              <Badge variant="secondary" className="gap-1">
-                <VisibilityIcon shared={false} className="size-3" />
-                {t('visibility.privateBadge')}
-              </Badge>
-            )}
-          </DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-5">
-          {mutationError && <ErrorText>{errorMessage(mutationError)}</ErrorText>}
-
-          <form noValidate onSubmit={saveDetails} className="space-y-3">
-            <div className="space-y-1.5">
-              <Label htmlFor={nameField.id}>{t('modals.nameLabel')}</Label>
-              <Input
-                {...nameField}
-                disabled={!editable}
-                maxLength={200}
-                value={name}
-                onChange={(e) => {
-                  setName(e.target.value);
-                  if (nameError && e.target.value.trim()) setNameError(false);
-                }}
-              />
-              <FieldError id={nameField.id}>{nameError ? t('errors.nameRequired') : null}</FieldError>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor={`settings-desc-${project.id}`}>{t('modals.descLabel')}</Label>
-              <Textarea
-                id={`settings-desc-${project.id}`}
-                rows={2}
-                disabled={!editable}
-                maxLength={2000}
-                placeholder={t('modals.descPlaceholder')}
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-              />
-            </div>
-            <ProjectVisibilityField
-              id={`settings-visibility-${project.id}`}
-              value={visibility}
-              onChange={setVisibility}
-              disabled={!editable || update.isPending}
-            />
-            <div className="space-y-3 rounded-lg border border-border bg-muted/25 p-3">
-              <p className="text-xs font-semibold text-foreground">{t('cycles.settingsHeading')}</p>
-              <label className="flex min-h-11 cursor-pointer items-start gap-2.5 text-xs text-foreground">
-                <Checkbox
-                  checked={cyclesEnabled}
-                  disabled={!editable}
-                  onCheckedChange={(checked) => setCyclesEnabled(checked === true)}
-                  data-testid="settings-cycles-enabled"
-                />
-                <span className="space-y-0.5">
-                  <span className="block font-medium">{t('cycles.enableCyclesLabel')}</span>
-                  <span className="block text-[11px] text-muted-foreground">{t('cycles.enableCyclesHint')}</span>
-                </span>
-              </label>
-              {cyclesEnabled && (
-                <div className="space-y-1.5 pl-6">
-                  <Label htmlFor={`settings-cycle-weeks-${project.id}`}>{t('cycles.durationWeeksLabel')}</Label>
-                  <NativeSelect
-                    id={`settings-cycle-weeks-${project.id}`}
-                    className="w-full max-md:[&>select]:h-11"
-                    disabled={!editable}
-                    value={String(cycleDurationWeeks)}
-                    onChange={(e) => setCycleDurationWeeks(Number(e.target.value))}
-                  >
-                    {Array.from(
-                      { length: PROJECT_CYCLE_DURATION_WEEKS_MAX - PROJECT_CYCLE_DURATION_WEEKS_MIN + 1 },
-                      (_, i) => PROJECT_CYCLE_DURATION_WEEKS_MIN + i,
-                    ).map((w) => (
-                      <NativeSelectOption key={w} value={String(w)}>
-                        {w === 1 ? t('cycles.weekSingleOption') : t('cycles.weeksOption', { weeks: w })}
-                      </NativeSelectOption>
-                    ))}
-                  </NativeSelect>
-                </div>
-              )}
-              <label className="flex min-h-11 cursor-pointer items-start gap-2.5 text-xs text-foreground">
-                <Checkbox
-                  checked={pointsEnabled}
-                  disabled={!editable}
-                  onCheckedChange={(checked) => setPointsEnabled(checked === true)}
-                  data-testid="settings-points-enabled"
-                />
-                <span className="space-y-0.5">
-                  <span className="block font-medium">{t('cycles.enablePointsLabel')}</span>
-                  <span className="block text-[11px] text-muted-foreground">{t('cycles.enablePointsHint')}</span>
-                </span>
-              </label>
-            </div>
-            {editable && (
-              <div className="flex justify-end">
-                <Button type="submit" size="sm" className="min-h-11" loading={update.isPending}>
-                  {t('modals.saveDetails')}
-                </Button>
-              </div>
-            )}
-          </form>
+    <FormPanel
+      testId="project-settings-dialog"
+      title={t('modals.editProjectTitle')}
+      description={
+        <span className="flex flex-wrap items-center gap-2">
+          <Badge variant={projectStatusVariant(project.status)}>{t(`status.${project.status}`)}</Badge>
+          {project.visibility === 'private' && (
+            <Badge variant="secondary" className="gap-1">
+              <VisibilityIcon shared={false} className="size-3" />
+              {t('visibility.privateBadge')}
+            </Badge>
+          )}
+        </span>
+      }
+      wide
+      noValidate
+      formId={formId}
+      busy={update.isPending}
+      dirty={dirty}
+      onClose={() => onOpenChange(false)}
+      onSubmit={editable ? saveDetails : undefined}
+      footer={(requestClose) => (
+        <>
+          <Button type="button" variant="outline" disabled={update.isPending} onClick={requestClose}>
+            {tc('close')}
+          </Button>
+          {editable && (
+            <Button type="submit" form={formId} loading={update.isPending}>
+              {t('modals.saveDetails')}
+            </Button>
+          )}
+        </>
+      )}
+      outside={
+        <div className="space-y-4">
+          {otherMutationError && <ErrorText>{errorMessage(otherMutationError)}</ErrorText>}
 
           <div className="grid gap-3 border-t pt-4 sm:grid-cols-2">
             <div className="space-y-1.5">
@@ -1137,11 +1131,90 @@ export function ProjectSettingsDialog({
             </div>
           )}
         </div>
-
-        <DialogFooter>
-          <DialogClose render={<Button type="button" variant="outline" />}>{tc('close')}</DialogClose>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      }
+    >
+      {update.error && <ErrorText>{errorMessage(update.error)}</ErrorText>}
+      <div className="space-y-1.5">
+        <Label htmlFor={nameField.id}>{t('modals.nameLabel')}</Label>
+        <Input
+          {...nameField}
+          autoFocus={editable}
+          disabled={!editable}
+          maxLength={200}
+          value={name}
+          onChange={(e) => {
+            setName(e.target.value);
+            if (nameError && e.target.value.trim()) setNameError(false);
+          }}
+        />
+        <FieldError id={nameField.id}>{nameError ? t('errors.nameRequired') : null}</FieldError>
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor={`settings-desc-${project.id}`}>{t('modals.descLabel')}</Label>
+        <Textarea
+          id={`settings-desc-${project.id}`}
+          rows={2}
+          disabled={!editable}
+          maxLength={2000}
+          placeholder={t('modals.descPlaceholder')}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+        />
+      </div>
+      <ProjectVisibilityField
+        id={`settings-visibility-${project.id}`}
+        value={visibility}
+        onChange={setVisibility}
+        disabled={!editable || update.isPending}
+      />
+      <div className="space-y-3 rounded-lg border border-border bg-muted/25 p-3">
+        <p className="text-xs font-semibold text-foreground">{t('cycles.settingsHeading')}</p>
+        <label className="flex min-h-11 cursor-pointer items-start gap-2.5 text-xs text-foreground">
+          <Checkbox
+            checked={cyclesEnabled}
+            disabled={!editable}
+            onCheckedChange={(checked) => setCyclesEnabled(checked === true)}
+            data-testid="settings-cycles-enabled"
+          />
+          <span className="space-y-0.5">
+            <span className="block font-medium">{t('cycles.enableCyclesLabel')}</span>
+            <span className="block text-[11px] text-muted-foreground">{t('cycles.enableCyclesHint')}</span>
+          </span>
+        </label>
+        {cyclesEnabled && (
+          <div className="space-y-1.5 pl-6">
+            <Label htmlFor={`settings-cycle-weeks-${project.id}`}>{t('cycles.durationWeeksLabel')}</Label>
+            <NativeSelect
+              id={`settings-cycle-weeks-${project.id}`}
+              className="w-full max-md:[&>select]:min-h-11"
+              disabled={!editable}
+              value={String(cycleDurationWeeks)}
+              onChange={(e) => setCycleDurationWeeks(Number(e.target.value))}
+            >
+              {Array.from(
+                { length: PROJECT_CYCLE_DURATION_WEEKS_MAX - PROJECT_CYCLE_DURATION_WEEKS_MIN + 1 },
+                (_, i) => PROJECT_CYCLE_DURATION_WEEKS_MIN + i,
+              ).map((w) => (
+                <NativeSelectOption key={w} value={String(w)}>
+                  {w === 1 ? t('cycles.weekSingleOption') : t('cycles.weeksOption', { weeks: w })}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          </div>
+        )}
+        <label className="flex min-h-11 cursor-pointer items-start gap-2.5 text-xs text-foreground">
+          <Checkbox
+            checked={pointsEnabled}
+            disabled={!editable}
+            onCheckedChange={(checked) => setPointsEnabled(checked === true)}
+            data-testid="settings-points-enabled"
+          />
+          <span className="space-y-0.5">
+            <span className="block font-medium">{t('cycles.enablePointsLabel')}</span>
+            <span className="block text-[11px] text-muted-foreground">{t('cycles.enablePointsHint')}</span>
+          </span>
+        </label>
+      </div>
+    </FormPanel>
   );
 }

@@ -15,6 +15,7 @@ import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { ContractDrafterDialog } from '../components/sign/contract-drafter-dialog.tsx';
 import { ContractVaultBar } from '../components/sign/contract-vault-bar.tsx';
 import { VersionDiffDialog } from '../components/sign/version-diff-dialog.tsx';
+import { FormDialog } from '../components/form-dialog.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import {
@@ -97,44 +98,17 @@ function triggerBlobDownload(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function SignEnvelopesPage() {
+export function CreateEnvelopeDialog({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (envelopeId: string) => Promise<void> | void;
+}) {
   const t = useTranslations('sign');
-  const common = useTranslations('common');
-  const f = useFormat();
-  const navigate = useNavigate();
-  const { slug = '' } = useParams({ strict: false }) as { slug?: string };
-
-  const [tab, setTab] = useState<EnvelopeFilterTab>('all');
-  const [createOpen, setCreateOpen] = useState(false);
-  const [diffOpen, setDiffOpen] = useState(false);
-  const [drafterOpen, setDrafterOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
-  const [sharedLinkDialog, setSharedLinkDialog] = useState<{ title: string; url: string } | null>(null);
-
-  const hasMeQuery = Boolean((orpc as { me?: { get?: { queryOptions?: () => unknown } } }).me?.get?.queryOptions);
-  const meQuery = useQuery(
-    hasMeQuery
-      ? orpc.me.get.queryOptions()
-      : { queryKey: ['me', 'get', 'noop'], queryFn: async () => null, enabled: false },
-  );
-  const currentOrgInfo = meQuery.data?.orgs.find((o) => o.slug === slug);
-  const defaultPartyAName = currentOrgInfo?.name ?? '';
-  const canAskVy = !meQuery.data || Boolean(currentOrgInfo?.role && currentOrgInfo.role !== 'viewer');
-  const isRenewalsTab = tab === 'renewals';
-
-  const envelopesQuery = useQuery({
-    queryKey: ['sign', 'envelopes', slug, tab],
-    queryFn: () => fetchEnvelopesForTab(tab),
-    enabled: !isRenewalsTab,
-  });
-
-  const renewalsQuery = useQuery({
-    queryKey: ['sign', 'renewals', slug],
-    queryFn: () => signApi.listRenewalEnvelopes({ limit: 100 }),
-    enabled: isRenewalsTab,
-  });
 
   const createMutation = useMutation({
     mutationFn: async (input: { title: string; file: File }) => {
@@ -146,15 +120,8 @@ export function SignEnvelopesPage() {
       });
     },
     onSuccess: async (created) => {
-      setCreateOpen(false);
-      setTitle('');
-      setSelectedFile(null);
-      setFormError(null);
       toast(t('createdToast'));
-      await queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] });
-      if (slug) {
-        await navigate({ to: '/o/$slug/sign/envelopes/$id', params: { slug, id: created.envelopeId } });
-      }
+      await onCreated(created.envelopeId);
     },
     onError: (error) => {
       setFormError(errorMessage(error));
@@ -191,14 +158,89 @@ export function SignEnvelopesPage() {
 
   const handleCreateSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (createMutation.isPending) return;
     setFormError(null);
     if (!selectedFile) {
       setFormError(t('pdfRequired'));
       return;
     }
-    const cleanTitle = title.trim() || selectedFile.name.replace(/\.pdf$/i, '');
+    const cleanTitle = title.trim() || selectedFile.name.replace(/\.pdf$/i, '') || selectedFile.name;
     createMutation.mutate({ title: cleanTitle, file: selectedFile });
   };
+
+  return (
+    <FormDialog
+      testId="sign-create-dialog"
+      title={t('createTitle')}
+      description={t('createHint')}
+      busy={createMutation.isPending}
+      dirty={title.trim() !== '' || selectedFile !== null}
+      submitLabel={t('createSubmit')}
+      submitTestId="sign-create-submit-btn"
+      onClose={onClose}
+      onSubmit={handleCreateSubmit}
+    >
+      {formError ? <ErrorText>{formError}</ErrorText> : null}
+      <div className="space-y-1.5">
+        <Label htmlFor="sign-new-pdf">{t('pdfLabel')}</Label>
+        <Input
+          id="sign-new-pdf"
+          type="file"
+          accept="application/pdf,.pdf"
+          autoFocus
+          onChange={(e) => void handleFileChange(e)}
+          data-testid="sign-upload-pdf-input"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="sign-new-title">{t('titleLabel')}</Label>
+        <Input
+          id="sign-new-title"
+          placeholder={t('titlePlaceholder')}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          required
+        />
+      </div>
+    </FormDialog>
+  );
+}
+
+export function SignEnvelopesPage() {
+  const t = useTranslations('sign');
+  const common = useTranslations('common');
+  const f = useFormat();
+  const navigate = useNavigate();
+  const { slug = '' } = useParams({ strict: false }) as { slug?: string };
+
+  const [tab, setTab] = useState<EnvelopeFilterTab>('all');
+  const [createOpen, setCreateOpen] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(false);
+  const [drafterOpen, setDrafterOpen] = useState(false);
+  const [sharedLinkDialog, setSharedLinkDialog] = useState<{ title: string; url: string } | null>(null);
+
+  const hasMeQuery = Boolean((orpc as { me?: { get?: { queryOptions?: () => unknown } } }).me?.get?.queryOptions);
+  const meQuery = useQuery(
+    hasMeQuery
+      ? orpc.me.get.queryOptions()
+      : { queryKey: ['me', 'get', 'noop'], queryFn: async () => null, enabled: false },
+  );
+  const currentOrgInfo = meQuery.data?.orgs.find((o) => o.slug === slug);
+  const defaultPartyAName = currentOrgInfo?.name ?? '';
+  const canAskVy = !meQuery.data || Boolean(currentOrgInfo?.role && currentOrgInfo.role !== 'viewer');
+  const isRenewalsTab = tab === 'renewals';
+
+  const envelopesQuery = useQuery({
+    queryKey: ['sign', 'envelopes', slug, tab],
+    queryFn: () => fetchEnvelopesForTab(tab),
+    enabled: !isRenewalsTab,
+  });
+
+  const renewalsQuery = useQuery({
+    queryKey: ['sign', 'renewals', slug],
+    queryFn: () => signApi.listRenewalEnvelopes({ limit: 100 }),
+    enabled: isRenewalsTab,
+  });
 
   const getDueSigners = (signers: readonly { id: string; signerRole: string; status: string; deliveryMode: string; email: string | null }[]) =>
     signers.filter((s) => s.signerRole !== 'cc' && (s.status === 'pending' || s.status === 'viewed'));
@@ -540,45 +582,18 @@ export function SignEnvelopesPage() {
         </>
       )}
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="sm:max-w-md" closeLabel={common('close')}>
-          <DialogHeader>
-            <DialogTitle>{t('createTitle')}</DialogTitle>
-            <DialogDescription>{t('createHint')}</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleCreateSubmit} className="space-y-4">
-            {formError ? <ErrorText>{formError}</ErrorText> : null}
-            <div className="space-y-1.5">
-              <Label htmlFor="sign-new-pdf">{t('pdfLabel')}</Label>
-              <Input
-                id="sign-new-pdf"
-                type="file"
-                accept="application/pdf,.pdf"
-                onChange={(e) => void handleFileChange(e)}
-                data-testid="sign-upload-pdf-input"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="sign-new-title">{t('titleLabel')}</Label>
-              <Input
-                id="sign-new-title"
-                placeholder={t('titlePlaceholder')}
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                required
-              />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
-                {common('cancel')}
-              </Button>
-              <Button type="submit" loading={createMutation.isPending} data-testid="sign-create-submit-btn">
-                {t('createSubmit')}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      {createOpen ? (
+        <CreateEnvelopeDialog
+          onClose={() => setCreateOpen(false)}
+          onCreated={async (envelopeId) => {
+            setCreateOpen(false);
+            await queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] });
+            if (slug) {
+              await navigate({ to: '/o/$slug/sign/envelopes/$id', params: { slug, id: envelopeId } });
+            }
+          }}
+        />
+      ) : null}
 
       <Dialog open={sharedLinkDialog !== null} onOpenChange={(next) => !next && setSharedLinkDialog(null)}>
         <DialogContent className="sm:max-w-lg" closeLabel={common('close')}>

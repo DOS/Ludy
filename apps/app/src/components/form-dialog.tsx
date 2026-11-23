@@ -26,6 +26,8 @@ export function FormDialog({
   title,
   description,
   label,
+  testId,
+  submitTestId,
   busy = false,
   dirty = false,
   submitLabel,
@@ -36,9 +38,11 @@ export function FormDialog({
   children,
 }: {
   title: string;
-  description?: string;
+  description?: string | undefined;
   // The accessible name of the form when it differs from the title.
-  label?: string;
+  label?: string | undefined;
+  testId?: string | undefined;
+  submitTestId?: string | undefined;
   busy?: boolean;
   // The form holds input that has not been saved: closing it asks first, and says what is lost.
   dirty?: boolean;
@@ -47,7 +51,7 @@ export function FormDialog({
   onClose: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   // Content under the form but inside the dialog: a prompt that has a form of its own (the second-factor step-up) cannot sit inside this one.
-  outside?: ReactNode;
+  outside?: ReactNode | undefined;
   children: ReactNode;
 }) {
   const root = useTranslations();
@@ -71,7 +75,7 @@ export function FormDialog({
   };
   const keepEditing = () => {
     setAsking(false);
-    formRef.current?.querySelector<HTMLElement>('input:not([type=hidden]), textarea, select')?.focus();
+    formRef.current?.querySelector<HTMLElement>('input:not([type=hidden]):not(:disabled), textarea:not(:disabled), select:not(:disabled)')?.focus();
   };
   const onKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
     if (event.defaultPrevented || !isSaveShortcut({ key: event.key, metaKey: event.metaKey, ctrlKey: event.ctrlKey, isComposing: event.nativeEvent.isComposing })) return;
@@ -87,7 +91,7 @@ export function FormDialog({
         if (!open) requestClose();
       }}
     >
-      <DialogContent closeLabel={root('common.close')}>
+      <DialogContent closeLabel={root('common.close')} {...(testId ? { 'data-testid': testId } : {})}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           {description && <DialogDescription>{description}</DialogDescription>}
@@ -114,7 +118,7 @@ export function FormDialog({
               <Button type="button" variant="ghost" disabled={busy} onClick={requestClose}>
                 {root('common.cancel')}
               </Button>
-              <Button type="submit" loading={busy} disabled={busy || submitDisabled}>
+              <Button type="submit" loading={busy} disabled={busy || submitDisabled} {...(submitTestId ? { 'data-testid': submitTestId } : {})}>
                 {submitLabel}
               </Button>
             </DialogFooter>
