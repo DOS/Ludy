@@ -1052,13 +1052,13 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
           });
         },
         feature: 'meetings.live_summary',
-        resultBody: JSON.stringify({ template: 'general', summary: `Tóm tắt trực tiếp ${PHONE_PII}`, decisions: [], items: [], dropped: 0 }),
+        resultBody: JSON.stringify({ template: 'general', summary: `Tóm tắt trực tiếp ${PHONE_PII}`, decisions: [], items: [{ title: `Gọi lại ${PHONE_PII}`, who: 'An', when: '', seconds: null }], dropped: 0 }),
         copyCommand: 'meetings.live.notes_copy',
         expectedCode: 'LIVE_NOTES_NOT_FOUND',
       });
-      // Nothing of the copy reached the draft: the summary is the redacted one, and no row came from the run.
+      // Nothing of the copy reached the draft: the run's item (with the phone number) was never written, so no action item of the meeting came from a run at all.
       const liveCopied = await sqlAdmin<{ c: string }>(
-        `SELECT count(*)::text AS c FROM ludy_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2 AND tainted = true`,
+        `SELECT count(*)::text AS c FROM ludy_meetings.action_item WHERE org_id = $1 AND meeting_id = $2 AND source_run_id IS NOT NULL`,
         [orgId, mRaceCopy],
       );
       expect(Number(liveCopied[0]?.c)).toBe(0);
