@@ -774,6 +774,9 @@ export const employeeErase = defineCommand({
     tableWrite(hrManifest.tables, 'ludy_hr', 'onboarding_submission', ['status', 'address', 'birth_date', 'national_id_sealed', 'bank_code', 'bank_account_sealed', 'tax_code_sealed', 'insurance_number_sealed', 'note', 'decision_note', 'updated_at']),
     tableWrite(hrManifest.tables, 'ludy_hr', 'overtime_request', ['status', 'reason', 'decision_note', 'updated_at']),
     tableWrite(hrManifest.tables, 'ludy_hr', 'probation_review', ['completed_tasks_snapshot', 'attendance_snapshot', 'review_note', 'ai_draft_note', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'salary_advance_request', ['status', 'reason', 'decision_note', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_adjustment_item', ['status', 'reason', 'decision_note', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'business_trip_request', ['status', 'destination', 'purpose', 'decision_note', 'updated_at']),
     // The person's key, deleted by ludy_kernel.subject_key_shred.
     tableWrite(kernelManifest.tables, 'ludy_kernel', 'subject_key', ['ref']),
   ],
@@ -815,6 +818,30 @@ export const employeeErase = defineCommand({
       .execute();
     const cancelledOvertime = await ctx.trx
       .updateTable('ludy_hr.overtime_request')
+      .set({ status: 'cancelled', updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', input.employeeId)
+      .where('status', 'in', ['pending_l1', 'pending_final'])
+      .returning('id')
+      .execute();
+    const cancelledAdvances = await ctx.trx
+      .updateTable('ludy_hr.salary_advance_request')
+      .set({ status: 'cancelled', updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', input.employeeId)
+      .where('status', 'in', ['pending_l1', 'pending_final'])
+      .returning('id')
+      .execute();
+    const cancelledAdjustments = await ctx.trx
+      .updateTable('ludy_hr.payroll_adjustment_item')
+      .set({ status: 'cancelled', updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', input.employeeId)
+      .where('status', '=', 'pending')
+      .returning('id')
+      .execute();
+    const cancelledTrips = await ctx.trx
+      .updateTable('ludy_hr.business_trip_request')
       .set({ status: 'cancelled', updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', input.employeeId)
@@ -895,6 +922,27 @@ export const employeeErase = defineCommand({
       )
       .returning('id')
       .execute();
+    await ctx.trx
+      .updateTable('ludy_hr.salary_advance_request')
+      .set({ reason: null, decision_note: null, updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', input.employeeId)
+      .where((eb) => eb.or([eb('reason', 'is not', null), eb('decision_note', 'is not', null)]))
+      .execute();
+    await ctx.trx
+      .updateTable('ludy_hr.payroll_adjustment_item')
+      .set({ reason: null, decision_note: null, updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', input.employeeId)
+      .where((eb) => eb.or([eb('reason', 'is not', null), eb('decision_note', 'is not', null)]))
+      .execute();
+    await ctx.trx
+      .updateTable('ludy_hr.business_trip_request')
+      .set({ destination: null, purpose: null, decision_note: null, updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('employee_id', '=', input.employeeId)
+      .where((eb) => eb.or([eb('destination', 'is not', null), eb('purpose', 'is not', null), eb('decision_note', 'is not', null)]))
+      .execute();
     const { rows } = await sql<{ n: number }>`SELECT ludy_kernel.subject_key_shred(ARRAY[${subjectOf(input.employeeId)}]::text[]) AS n`.execute(ctx.trx);
     const shreddedKeys = Number(rows[0]?.n ?? 0);
     ctx.audit({
@@ -904,6 +952,9 @@ export const employeeErase = defineCommand({
       cancelledLeaveRequests: cancelledRequests.length,
       cancelledOnboardingSubmissions: cancelledOnboarding.length,
       cancelledOvertimeRequests: cancelledOvertime.length,
+      cancelledSalaryAdvances: cancelledAdvances.length,
+      cancelledPayrollAdjustments: cancelledAdjustments.length,
+      cancelledBusinessTrips: cancelledTrips.length,
       erasedOnboardingSubmissions: erasedOnboarding.length,
       erasedProbationReviews: erasedProbation.length,
       retentionEnded: until,
@@ -925,6 +976,9 @@ export const employeeErase = defineCommand({
         'onboarding submissions',
         'overtime request notes',
         'probation review snapshots and notes',
+        'salary advance notes',
+        'payroll adjustment notes',
+        'business trip details',
       ],
       kept: [
         { what: 'the identity number, the account number, the tax code, the insurance number and the work permit number', reason: 'They stay in their row, but the key that opens them is deleted: nobody can read them again' },

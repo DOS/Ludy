@@ -119,12 +119,14 @@ export interface LudyFinanceSchema {
 export interface LudyHrSchema {
   'ludy_hr.attendance_log': HrAttendanceLogTable;
   'ludy_hr.attendance_qr_config': HrAttendanceQrConfigTable;
+  'ludy_hr.business_trip_request': HrBusinessTripRequestTable;
   'ludy_hr.candidate': HrCandidateTable;
   'ludy_hr.department': HrDepartmentTable;
   'ludy_hr.job_opening': HrJobOpeningTable;
   'ludy_hr.leave_request': HrLeaveRequestTable;
   'ludy_hr.onboarding_submission': HrOnboardingSubmissionTable;
   'ludy_hr.overtime_request': HrOvertimeRequestTable;
+  'ludy_hr.payroll_adjustment_item': HrPayrollAdjustmentItemTable;
   'ludy_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'ludy_hr.payroll_dependent': HrPayrollDependentTable;
   'ludy_hr.payroll_employee': HrPayrollEmployeeTable;
@@ -133,6 +135,7 @@ export interface LudyHrSchema {
   'ludy_hr.payroll_line': HrPayrollLineTable;
   'ludy_hr.payroll_run': HrPayrollRunTable;
   'ludy_hr.probation_review': HrProbationReviewTable;
+  'ludy_hr.salary_advance_request': HrSalaryAdvanceRequestTable;
 }
 
 export interface LudyKernelSchema {
@@ -2016,6 +2019,29 @@ export interface HrAttendanceQrConfigTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/** ludy_hr.business_trip_request */
+export interface HrBusinessTripRequestTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  department_id: ColumnType<string | null, string | null, NotGranted>;
+  destination: string | null;
+  purpose: string | null;
+  start_on: ColumnType<string, string, NotGranted>;
+  end_on: ColumnType<string, string, NotGranted>;
+  estimated_allowance: ColumnType<string, string | undefined, NotGranted>;
+  status: Generated<string>;
+  l1_approver_user_id: string | null;
+  l1_acted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  final_acted_by: string | null;
+  final_acted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  decision_note: string | null;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** ludy_hr.candidate */
 export interface HrCandidateTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -2151,6 +2177,26 @@ export interface HrOvertimeRequestTable {
   final_acted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   reason: string | null;
   decision_note: string | null;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_hr.payroll_adjustment_item */
+export interface HrPayrollAdjustmentItemTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  month: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  amount: ColumnType<string, string, NotGranted>;
+  reason: string | null;
+  status: Generated<string>;
+  reviewed_by: string | null;
+  reviewed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  decision_note: string | null;
+  payroll_run_id: string | null;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
@@ -2317,6 +2363,28 @@ export interface HrProbationReviewTable {
   review_note: string | null;
   ai_draft_note: string | null;
   decided_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_hr.salary_advance_request */
+export interface HrSalaryAdvanceRequestTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  department_id: ColumnType<string | null, string | null, NotGranted>;
+  month: ColumnType<string, string, NotGranted>;
+  amount: ColumnType<string, string, NotGranted>;
+  reason: string | null;
+  status: Generated<string>;
+  l1_approver_user_id: string | null;
+  l1_acted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  final_acted_by: string | null;
+  final_acted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  decision_note: string | null;
+  payroll_run_id: string | null;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;

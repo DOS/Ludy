@@ -333,12 +333,78 @@ export async function hrTodayItemsForManager(ctx: QueryContext, todayVn: string)
     });
   }
 
+  const advFinalRow = await ctx.trx
+    .selectFrom('ludy_hr.salary_advance_request as r')
+    .innerJoin('ludy_hr.payroll_employee as e', (join) =>
+      join.onRef('e.org_id', '=', 'r.org_id').onRef('e.id', '=', 'r.employee_id'),
+    )
+    .select(sql<number>`pg_catalog.count(*)::int`.as('total'))
+    .where('r.org_id', '=', ctx.orgId)
+    .where('r.status', '=', 'pending_final')
+    .where('e.erased_at', 'is', null)
+    .executeTakeFirst();
+  const pendingAdvanceFinalCount = Number(advFinalRow?.total ?? 0);
+  if (pendingAdvanceFinalCount > 0) {
+    items.push({
+      app: 'hr',
+      kind: 'proposal',
+      id: 'salary-advance-approvals',
+      title: hrTitle('salaryAdvancePendingFinal', { count: pendingAdvanceFinalCount }),
+      count: pendingAdvanceFinalCount,
+      href: '/hr/employees',
+    });
+  }
+
+  const tripFinalRow = await ctx.trx
+    .selectFrom('ludy_hr.business_trip_request as r')
+    .innerJoin('ludy_hr.payroll_employee as e', (join) =>
+      join.onRef('e.org_id', '=', 'r.org_id').onRef('e.id', '=', 'r.employee_id'),
+    )
+    .select(sql<number>`pg_catalog.count(*)::int`.as('total'))
+    .where('r.org_id', '=', ctx.orgId)
+    .where('r.status', '=', 'pending_final')
+    .where('e.erased_at', 'is', null)
+    .executeTakeFirst();
+  const pendingTripFinalCount = Number(tripFinalRow?.total ?? 0);
+  if (pendingTripFinalCount > 0) {
+    items.push({
+      app: 'hr',
+      kind: 'proposal',
+      id: 'business-trip-approvals',
+      title: hrTitle('businessTripPendingFinal', { count: pendingTripFinalCount }),
+      count: pendingTripFinalCount,
+      href: '/hr/employees',
+    });
+  }
+
+  const adjPendingRow = await ctx.trx
+    .selectFrom('ludy_hr.payroll_adjustment_item as a')
+    .innerJoin('ludy_hr.payroll_employee as e', (join) =>
+      join.onRef('e.org_id', '=', 'a.org_id').onRef('e.id', '=', 'a.employee_id'),
+    )
+    .select(sql<number>`pg_catalog.count(*)::int`.as('total'))
+    .where('a.org_id', '=', ctx.orgId)
+    .where('a.status', '=', 'pending')
+    .where('e.erased_at', 'is', null)
+    .executeTakeFirst();
+  const pendingAdjustmentsCount = Number(adjPendingRow?.total ?? 0);
+  if (pendingAdjustmentsCount > 0) {
+    items.push({
+      app: 'hr',
+      kind: 'proposal',
+      id: 'payroll-adjustments-pending',
+      title: hrTitle('payrollAdjustmentsPending', { count: pendingAdjustmentsCount }),
+      count: pendingAdjustmentsCount,
+      href: '/hr/payroll',
+    });
+  }
+
   return items;
 }
 
 /**
  * Builds Today alerts for a `member` who manages at least one active department:
- * only waiting `pending_l1` leave requests in their managed department(s),
+ * only waiting `pending_l1` leave, advance, and business trip requests in their managed department(s),
  * excluding their own linked employee requests and erased employees.
  */
 export async function hrTodayItemsForL1Manager(ctx: QueryContext): Promise<TodayItem[]> {
@@ -355,6 +421,8 @@ export async function hrTodayItemsForL1Manager(ctx: QueryContext): Promise<Today
   if (managedDepts.length === 0) return [];
 
   const managedDeptIds = managedDepts.map((d) => d.id);
+  const out: TodayItem[] = [];
+
   const countRow = await ctx.trx
     .selectFrom('ludy_hr.leave_request as r')
     .select(sql<number>`pg_catalog.count(*)::int`.as('total'))
@@ -364,20 +432,61 @@ export async function hrTodayItemsForL1Manager(ctx: QueryContext): Promise<Today
     .where(sql<boolean>`NOT ludy_hr.is_self_employee(r.org_id, r.employee_id)`)
     .where(sql<boolean>`ludy_hr.leave_request_employee_name(r.org_id, r.id) IS NOT NULL`)
     .executeTakeFirst();
-
   const pendingL1Count = Number(countRow?.total ?? 0);
-  if (pendingL1Count <= 0) return [];
-
-  return [
-    {
+  if (pendingL1Count > 0) {
+    out.push({
       app: 'hr',
       kind: 'proposal',
       id: 'leave-approvals-l1',
       title: hrTitle('deptLeave', { count: pendingL1Count }),
       count: pendingL1Count,
       href: '/hr/my',
-    },
-  ];
+    });
+  }
+
+  const advL1Row = await ctx.trx
+    .selectFrom('ludy_hr.salary_advance_request as r')
+    .select(sql<number>`pg_catalog.count(*)::int`.as('total'))
+    .where('r.org_id', '=', ctx.orgId)
+    .where('r.department_id', 'in', managedDeptIds)
+    .where('r.status', '=', 'pending_l1')
+    .where(sql<boolean>`NOT ludy_hr.is_self_employee(r.org_id, r.employee_id)`)
+    .where(sql<boolean>`ludy_hr.hr_stage6b_request_employee_name(r.org_id, 'salary_advance', r.id) IS NOT NULL`)
+    .executeTakeFirst();
+  const pendingAdvL1Count = Number(advL1Row?.total ?? 0);
+  if (pendingAdvL1Count > 0) {
+    out.push({
+      app: 'hr',
+      kind: 'proposal',
+      id: 'salary-advance-approvals-l1',
+      title: hrTitle('deptSalaryAdvances', { count: pendingAdvL1Count }),
+      count: pendingAdvL1Count,
+      href: '/hr/my',
+    });
+  }
+
+  const tripL1Row = await ctx.trx
+    .selectFrom('ludy_hr.business_trip_request as r')
+    .select(sql<number>`pg_catalog.count(*)::int`.as('total'))
+    .where('r.org_id', '=', ctx.orgId)
+    .where('r.department_id', 'in', managedDeptIds)
+    .where('r.status', '=', 'pending_l1')
+    .where(sql<boolean>`NOT ludy_hr.is_self_employee(r.org_id, r.employee_id)`)
+    .where(sql<boolean>`ludy_hr.hr_stage6b_request_employee_name(r.org_id, 'business_trip', r.id) IS NOT NULL`)
+    .executeTakeFirst();
+  const pendingTripL1Count = Number(tripL1Row?.total ?? 0);
+  if (pendingTripL1Count > 0) {
+    out.push({
+      app: 'hr',
+      kind: 'proposal',
+      id: 'business-trip-approvals-l1',
+      title: hrTitle('deptBusinessTrips', { count: pendingTripL1Count }),
+      count: pendingTripL1Count,
+      href: '/hr/my',
+    });
+  }
+
+  return out;
 }
 
 // Not `sensitive: true`: `kernel.today` invokes this via `ctx.query(...)`, which rejects `sensitive: true` queries,

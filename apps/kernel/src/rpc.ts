@@ -1244,6 +1244,16 @@ export function createRpcHandler(
           submit: os.hr.self.overtime.submit.handler(hrCommand('hr.self.overtime.submit')),
           cancel: os.hr.self.overtime.cancel.handler(hrCommand('hr.self.overtime.cancel')),
         },
+        salaryAdvance: {
+          list: os.hr.self.salaryAdvance.list.handler(hrQuery('hr.self.salary_advance.list')),
+          submit: os.hr.self.salaryAdvance.submit.handler(hrCommand('hr.self.salary_advance.submit')),
+          cancel: os.hr.self.salaryAdvance.cancel.handler(hrCommand('hr.self.salary_advance.cancel')),
+        },
+        businessTrips: {
+          list: os.hr.self.businessTrips.list.handler(hrQuery('hr.self.business_trip.list')),
+          submit: os.hr.self.businessTrips.submit.handler(hrCommand('hr.self.business_trip.submit')),
+          cancel: os.hr.self.businessTrips.cancel.handler(hrCommand('hr.self.business_trip.cancel')),
+        },
       },
       attendance: {
         list: os.hr.attendance.list.handler(hrQuery('hr.attendance.list')),
@@ -1268,6 +1278,18 @@ export function createRpcHandler(
         approveL1: os.hr.overtimeRequests.approveL1.handler(hrCommand('hr.overtime.approve_l1')),
         approveFinal: os.hr.overtimeRequests.approveFinal.handler(hrCommand('hr.overtime.approve_final')),
         reject: os.hr.overtimeRequests.reject.handler(hrCommand('hr.overtime.reject')),
+      },
+      salaryAdvances: {
+        list: os.hr.salaryAdvances.list.handler(hrQuery('hr.salary_advance.list')),
+        approveL1: os.hr.salaryAdvances.approveL1.handler(hrCommand('hr.salary_advance.approve_l1')),
+        approveFinal: os.hr.salaryAdvances.approveFinal.handler(hrCommand('hr.salary_advance.approve_final')),
+        reject: os.hr.salaryAdvances.reject.handler(hrCommand('hr.salary_advance.reject')),
+      },
+      businessTrips: {
+        list: os.hr.businessTrips.list.handler(hrQuery('hr.business_trip.list')),
+        approveL1: os.hr.businessTrips.approveL1.handler(hrCommand('hr.business_trip.approve_l1')),
+        approveFinal: os.hr.businessTrips.approveFinal.handler(hrCommand('hr.business_trip.approve_final')),
+        reject: os.hr.businessTrips.reject.handler(hrCommand('hr.business_trip.reject')),
       },
       probation: {
         preview: os.hr.probation.preview.handler(hrQuery('hr.probation.preview')),
@@ -1331,7 +1353,15 @@ export function createRpcHandler(
           applyThirteenthMonth: os.hr.payroll.runs.applyThirteenthMonth.handler(hrCommand('hr.payroll.run.apply_thirteenth_month')),
           syncLeave: os.hr.payroll.runs.syncLeave.handler(hrCommand('hr.payroll.run.sync_leave')),
           syncOvertime: os.hr.payroll.runs.syncOvertime.handler(hrCommand('hr.payroll.run.sync_overtime')),
+          syncStage6b: os.hr.payroll.runs.syncStage6b.handler(hrCommand('hr.payroll.run.sync_stage6b')),
           approve: os.hr.payroll.runs.approve.handler(hrCommand('hr.payroll.run.approve')),
+        },
+        adjustments: {
+          list: os.hr.payroll.adjustments.list.handler(hrQuery('hr.payroll.adjustment.list')),
+          create: os.hr.payroll.adjustments.create.handler(hrCommand('hr.payroll.adjustment.create')),
+          approve: os.hr.payroll.adjustments.approve.handler(hrCommand('hr.payroll.adjustment.approve')),
+          reject: os.hr.payroll.adjustments.reject.handler(hrCommand('hr.payroll.adjustment.reject')),
+          cancel: os.hr.payroll.adjustments.cancel.handler(hrCommand('hr.payroll.adjustment.cancel')),
         },
         leave: {
           balance: os.hr.payroll.leave.balance.handler(hrQuery('hr.payroll.leave.balance')),

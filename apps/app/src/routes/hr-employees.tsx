@@ -53,6 +53,7 @@ import { LeaveBalancePanel } from '../components/hr-leave-panel.tsx';
 import { HrProbationPanel } from '../components/hr-probation-panel.tsx';
 import { SeveranceCalculatorPanel } from '../components/hr-severance-panel.tsx';
 import { HrOnboardingReviewQueue, HrOvertimeReviewQueue } from '../components/hr-stage5b-queues.tsx';
+import { HrStage6bApprovalQueues } from '../components/hr-stage6b-cards.tsx';
 import { signEnvelopePollMs, useSignAppEnabled } from '../components/quote-sign-handoff.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, FieldError, PageHeader, TableSkeleton, fieldControl, focusFirstInvalid, useFieldErrors } from '../components/ui.tsx';
@@ -2532,6 +2533,7 @@ export function HrEmployeesPage() {
           <LeaveApprovalQueue />
           <HrOnboardingReviewQueue />
           <HrOvertimeReviewQueue />
+          <HrStage6bApprovalQueues entities={entities} />
         </>
       )}
     </>
