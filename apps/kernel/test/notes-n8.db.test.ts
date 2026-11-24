@@ -47,6 +47,7 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
   let adminUrl = '';
   const pools: pg.Pool[] = [];
   let app: Runtime;
+  let worker: Runtime;
   let db: Db;
 
   const asUser = (userId: string, aal: 'aal1' | 'aal2' = 'aal1'): UserActor => ({
@@ -180,10 +181,18 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
     const pool = createPool({ connectionString: appUrl.toString(), max: 4 });
     pools.push(pool);
     db = createDb(pool);
-    app = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
+    const registered = {
       commands: [...kernelCommands, ...notesCommands],
       queries: [...kernelQueries({ inboundDomain: 'in.test' }), ...notesQueries],
-    });
+    };
+    app = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registered);
+
+    const workerUrl = new URL(adminUrl);
+    workerUrl.username = 'ludy_worker';
+    workerUrl.password = 'test-worker-pw';
+    const workerPool = createPool({ connectionString: workerUrl.toString(), max: 2 });
+    pools.push(workerPool);
+    worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registered);
   }, 300_000);
 
   afterAll(async () => {
@@ -509,7 +518,7 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
         }),
       ).rejects.toMatchObject({ code: 'VY_RUN_ALREADY_ACCEPTED', status: 409 });
 
-      // Soft-deleting a note immediately hides stored Vy results and blocks acceptance; permanent deletion makes readNotesVyResults reject with NOTE_NOT_FOUND (#3453 tracks immediate row cleanup).
+      // Soft-deleting a note immediately hides stored Vy results and blocks acceptance; permanent deletion immediately purges member_vy_result rows via note_discard_vy_tr and makes readNotesVyResults reject with NOTE_NOT_FOUND (#3453).
       const trashNote = await exec<NoteWritten>(owner.userId, 'notes.note.create', {
         title: 'Ghi chu chuan bi dua vao thung rac',
         body: 'Noi dung bi xoa khoi danh sach chinh.',
@@ -537,6 +546,11 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
         }),
       ).rejects.toMatchObject({ code: 'NOTE_IN_TRASH', status: 409 });
       await sqlAdmin(`DELETE FROM ludy_notes.note WHERE org_id = $1 AND id = $2`, [orgId, trashNote.noteId]);
+      const leftoverAfterHardDelete = await sqlAdmin<{ n: number }>(
+        `SELECT count(*)::int AS n FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`,
+        [orgId, trashNote.noteId],
+      );
+      expect(leftoverAfterHardDelete.rows[0]?.n).toBe(0);
       await expect(readNotesVyResults(deps, orgId, asUser(owner.userId), trashNote.noteId)).rejects.toMatchObject({
         code: 'NOTE_NOT_FOUND',
       });
@@ -932,5 +946,196 @@ suite('Notes N8: member-scoped Vy summary, suggested to-dos, and monotonic taint
         items: [{ title: 'Module off todo' }],
       }),
     ).rejects.toMatchObject({ code: 'MODULE_OFF', details: { module: 'notes' } });
+  });
+
+  it('immediately purges member_vy_result rows and cancels running Vy runs on note trash purge or delete without touching other notes or orgs (#3453)', async () => {
+    const org1 = await setupOrg();
+    const org2 = await setupOrg();
+
+    const model: ModelPort = {
+      generate: async (_who, prompt) => {
+        if (prompt.feature === 'notes.summary') {
+          return {
+            text: JSON.stringify({ summary: 'Tom tat ngan gon.', bullets: ['Diem chinh 1'] }),
+            usage: { inputTokens: 20, outputTokens: 15 },
+          };
+        }
+        return {
+          text: JSON.stringify({ suggestions: [] }),
+          usage: { inputTokens: 15, outputTokens: 10 },
+        };
+      },
+    };
+    const deps = makeDeps(model);
+
+    const targetNote = await org1.exec<NoteWritten>(org1.owner.userId, 'notes.note.create', {
+      title: 'Ghi chu sap bi xoa vinh vien',
+      body: 'Noi dung can xoa sach ket qua Vy.',
+      visibility: 'private',
+    });
+    const siblingNote = await org1.exec<NoteWritten>(org1.alice.userId, 'notes.note.create', {
+      title: 'Ghi chu khac trong cung org',
+      body: 'Khong duoc cham toi ket qua Vy cua ghi chu nay.',
+      visibility: 'private',
+    });
+    const directDeleteNote = await org1.exec<NoteWritten>(org1.owner.userId, 'notes.note.create', {
+      title: 'Ghi chu bi xoa truc tiep',
+      body: 'Kiem tra trigger khi xoa truc tiep qua SQL.',
+      visibility: 'private',
+    });
+    const otherOrgNote = await org2.exec<NoteWritten>(org2.owner.userId, 'notes.note.create', {
+      title: 'Ghi chu cua org khac',
+      body: 'Cach ly hoan toan giua cac org.',
+      visibility: 'private',
+    });
+
+    // Seed both finished ('ready') and live ('running') note-bound Vy runs across both subject_type conventions
+    // ('notes.note' for notes.summary / notes.todo_suggest / projects.tasks_from_source, and 'note' for projects.tasks_from_note).
+    const targetSum = await runNotesSummarize(deps, org1.orgId, asUser(org1.owner.userId), { noteId: targetNote.noteId });
+    expect(targetSum.state).toBe('ready');
+    const targetSuggestRun = await org1.exec<{ runId: string }>(org1.owner.userId, 'kernel.member_vy.run.start', {
+      feature: 'notes.todo_suggest',
+      subjectType: 'notes.note',
+      subjectId: targetNote.noteId,
+    });
+    const targetProjectRun = await org1.exec<{ runId: string }>(org1.owner.userId, 'kernel.member_vy.run.start', {
+      feature: 'projects.tasks_from_note',
+      subjectType: 'note',
+      subjectId: targetNote.noteId,
+    });
+    // Non-note run for the same owner (subject_type = 'member') must stay untouched when targetNote is purged.
+    const ownerPlanRun = await org1.exec<{ runId: string }>(org1.owner.userId, 'kernel.member_vy.run.start', {
+      feature: 'notes.todo_plan',
+      subjectType: 'member',
+      subjectId: org1.owner.userId,
+    });
+
+    // Sibling note in org1 (Alice) and note in org2 (Owner2).
+    const siblingSum = await runNotesSummarize(deps, org1.orgId, asUser(org1.alice.userId), { noteId: siblingNote.noteId });
+    expect(siblingSum.state).toBe('ready');
+    const siblingSuggestRun = await org1.exec<{ runId: string }>(org1.alice.userId, 'kernel.member_vy.run.start', {
+      feature: 'notes.todo_suggest',
+      subjectType: 'notes.note',
+      subjectId: siblingNote.noteId,
+    });
+    const siblingProjectRun = await org1.exec<{ runId: string }>(org1.alice.userId, 'kernel.member_vy.run.start', {
+      feature: 'projects.tasks_from_note',
+      subjectType: 'note',
+      subjectId: siblingNote.noteId,
+    });
+    const otherOrgSum = await runNotesSummarize(deps, org2.orgId, asUser(org2.owner.userId), { noteId: otherOrgNote.noteId });
+    expect(otherOrgSum.state).toBe('ready');
+    const otherOrgSuggestRun = await org2.exec<{ runId: string }>(org2.owner.userId, 'kernel.member_vy.run.start', {
+      feature: 'notes.todo_suggest',
+      subjectType: 'notes.note',
+      subjectId: otherOrgNote.noteId,
+    });
+
+    const resultCount = async (orgId: string, subjectId: string) =>
+      (
+        await sqlAdmin<{ n: number }>(
+          `SELECT count(*)::int AS n FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`,
+          [orgId, subjectId],
+        )
+      ).rows[0]!.n;
+    const runState = async (orgId: string, runId: string) =>
+      (
+        await sqlAdmin<{ status: string; error: string | null; finished_at: Date | null }>(
+          `SELECT status, error, finished_at FROM ludy_kernel.ai_run WHERE org_id = $1 AND id = $2`,
+          [orgId, runId],
+        )
+      ).rows[0]!;
+
+    expect(await resultCount(org1.orgId, targetNote.noteId)).toBe(3);
+    expect(await resultCount(org1.orgId, siblingNote.noteId)).toBe(3);
+    expect(await resultCount(org2.orgId, otherOrgNote.noteId)).toBe(2);
+
+    // Soft-deleting (moving to trash) preserves running runs until permanent purge, then notes.trash.empty fires note_discard_vy_tr.
+    await org1.exec(org1.owner.userId, 'notes.note.delete', { noteId: targetNote.noteId });
+    expect((await runState(org1.orgId, targetSuggestRun.runId)).status).toBe('running');
+    await sqlAdmin(`UPDATE ludy_notes.note SET deleted_at = now() - interval '31 days' WHERE org_id = $1 AND id = $2`, [
+      org1.orgId,
+      targetNote.noteId,
+    ]);
+    expect(
+      await worker.execute('notes.trash.empty', {}, { actor: { type: 'system', component: 'notes' }, orgId: org1.orgId }),
+    ).toEqual({ removed: 1 });
+
+    expect(await resultCount(org1.orgId, targetNote.noteId)).toBe(0);
+    expect(await runState(org1.orgId, targetSuggestRun.runId)).toMatchObject({
+      status: 'cancelled',
+      error: 'NOTE_REMOVED',
+    });
+    expect((await runState(org1.orgId, targetSuggestRun.runId)).finished_at).not.toBeNull();
+    expect(await runState(org1.orgId, targetProjectRun.runId)).toMatchObject({
+      status: 'cancelled',
+      error: 'NOTE_REMOVED',
+    });
+    expect((await runState(org1.orgId, targetProjectRun.runId)).finished_at).not.toBeNull();
+    // Already-finished run for the deleted note preserves its terminal status.
+    expect(await runState(org1.orgId, targetSum.runId!)).toMatchObject({
+      status: 'succeeded',
+      error: null,
+    });
+    // Storing into a run cancelled by note deletion is rejected cleanly.
+    await expect(
+      org1.exec(org1.owner.userId, 'kernel.member_vy.result.store', {
+        runId: targetSuggestRun.runId,
+        outcome: { status: 'ready', body: '{"suggestions":[],"dropped":0}', sourceRevision: 1 },
+      }),
+    ).rejects.toMatchObject({ code: 'VY_RUN_NOT_LIVE', status: 409 });
+
+    // Sibling note, member-level todo_plan run, and other org's note stay untouched.
+    expect(await resultCount(org1.orgId, siblingNote.noteId)).toBe(3);
+    expect(await runState(org1.orgId, siblingSuggestRun.runId)).toMatchObject({ status: 'running', error: null });
+    expect(await runState(org1.orgId, siblingProjectRun.runId)).toMatchObject({ status: 'running', error: null });
+    expect(await resultCount(org1.orgId, org1.owner.userId)).toBe(1);
+    expect(await runState(org1.orgId, ownerPlanRun.runId)).toMatchObject({ status: 'running', error: null });
+    expect(await resultCount(org2.orgId, otherOrgNote.noteId)).toBe(2);
+    expect(await runState(org2.orgId, otherOrgSuggestRun.runId)).toMatchObject({ status: 'running', error: null });
+
+    // Direct SQL delete also fires BEFORE DELETE trigger for projects.tasks_from_source ('notes.note').
+    const directSourceRun = await org1.exec<{ runId: string }>(org1.owner.userId, 'kernel.member_vy.run.start', {
+      feature: 'projects.tasks_from_source',
+      subjectType: 'notes.note',
+      subjectId: directDeleteNote.noteId,
+    });
+    expect(await resultCount(org1.orgId, directDeleteNote.noteId)).toBe(1);
+    await sqlAdmin(`DELETE FROM ludy_notes.note WHERE org_id = $1 AND id = $2`, [org1.orgId, directDeleteNote.noteId]);
+    expect(await resultCount(org1.orgId, directDeleteNote.noteId)).toBe(0);
+    expect(await runState(org1.orgId, directSourceRun.runId)).toMatchObject({
+      status: 'cancelled',
+      error: 'NOTE_REMOVED',
+    });
+
+    // Verify trigger function security metadata and zero runtime EXECUTE grants.
+    const fnInfo = await sqlAdmin<{
+      definer: boolean;
+      config: string[] | null;
+      pub: boolean;
+      tenant: boolean;
+      app: boolean;
+      workerRole: boolean;
+      definerTenant: boolean;
+    }>(
+      `SELECT p.prosecdef AS definer,
+              p.proconfig AS config,
+              pg_catalog.has_function_privilege('public', p.oid, 'EXECUTE') AS pub,
+              pg_catalog.has_function_privilege('ludy_tenant', p.oid, 'EXECUTE') AS tenant,
+              pg_catalog.has_function_privilege('ludy_app', p.oid, 'EXECUTE') AS app,
+              pg_catalog.has_function_privilege('ludy_worker', p.oid, 'EXECUTE') AS "workerRole",
+              pg_catalog.has_function_privilege('ludy_definer_tenant', p.oid, 'EXECUTE') AS "definerTenant"
+         FROM pg_catalog.pg_proc p
+        WHERE p.oid = 'ludy_notes.note_discard_vy()'::pg_catalog.regprocedure`,
+    );
+    expect(fnInfo.rows[0]).toEqual({
+      definer: true,
+      config: ['search_path=pg_catalog, pg_temp'],
+      pub: false,
+      tenant: false,
+      app: false,
+      workerRole: false,
+      definerTenant: false,
+    });
   });
 });
