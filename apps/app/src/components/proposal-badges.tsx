@@ -7,6 +7,13 @@ import { Badge } from '@ludy/ui/components/badge';
 import { REVERSAL_KIND } from '../lib/reversal.ts';
 import { isAdsProposalKind, isEngageKind, showMatched } from '../lib/review.ts';
 import { VOUCHER_KIND } from '../lib/vouchers.ts';
+export {
+  CoworkerAttribution,
+  ProposalSurface,
+  type CoworkerAttributionProps,
+  type ProposalCoworkerKey,
+  type ProposalSurfaceProps,
+} from './proposal-surface.tsx';
 
 // What the badges read of a list item (kernel.inbox.list).
 export interface ProposalBadgesItem {
