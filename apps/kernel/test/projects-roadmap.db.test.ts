@@ -48,6 +48,7 @@ import { roadmapIpHash } from '../src/projects-public-roadmap.ts';
 import { dispatchRoadmapAnnouncementNotifications, sweepRoadmapOtpCleanup } from '../src/projects-roadmap-worker.ts';
 import { RateLimiter } from '../src/rate-limit.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
+import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -897,6 +898,340 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
         await c.query(`UPDATE ludy_projects.project SET visibility = 'private' WHERE id = $1`, [linkedPublicProj.projectId]);
       }),
     ).rejects.toThrow(/ROADMAP_PRIVATE_PROJECT_FORBIDDEN/);
+
+    // Converting a standalone-board roadmap_item into an org project's task blocks org -> private flip (both RPC and DB trigger).
+    const standaloneBoard = await runtime.execute<{ board: { id: string } }>(
+      'projects.roadmap.board.create',
+      { title: 'Standalone Guard Board', slug: 'standalone-item-guard', enabled: true, projectId: null },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const standaloneItem = await runtime.execute<{ item: { id: string } }>(
+      'projects.roadmap.item.create',
+      { boardId: standaloneBoard.board.id, publicTitle: 'Standalone linked item' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const taskLinkedProj = await runtime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Du an nhan task tu standalone board' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    await runtime.execute(
+      'projects.roadmap.item.convert_to_task',
+      { itemId: standaloneItem.item.id, projectId: taskLinkedProj.projectId },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    await expect(
+      runtime.execute(
+        'projects.project.update',
+        { projectId: taskLinkedProj.projectId, visibility: 'private' },
+        { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+      ),
+    ).rejects.toMatchObject({ status: 422, code: 'ROADMAP_PRIVATE_PROJECT_FORBIDDEN' });
+    await expect(
+      admin(async (c) => {
+        await c.query(`UPDATE ludy_projects.project SET visibility = 'private' WHERE org_id = $1 AND id = $2`, [
+          orgId,
+          taskLinkedProj.projectId,
+        ]);
+      }),
+    ).rejects.toThrow(/ROADMAP_PRIVATE_PROJECT_FORBIDDEN/);
+
+    // Direct SQL linking of a private project's task into roadmap_item.linked_task_id is blocked by roadmap_item_privacy_guard_tr.
+    const privTask = await runtime.execute<{ taskId: string }>(
+      'projects.task.create',
+      { projectId: privProj.projectId, title: 'Viec rieng tu khong duoc gan lo trinh', assigneePositionId: null },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const unlinkedPrivCheckItem = await runtime.execute<{ item: { id: string } }>(
+      'projects.roadmap.item.create',
+      { boardId: standaloneBoard.board.id, publicTitle: 'Khong duoc gan task rieng tu' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    await expect(
+      admin(async (c) => {
+        await c.query(`UPDATE ludy_projects.roadmap_item SET linked_task_id = $3 WHERE org_id = $1 AND id = $2`, [
+          orgId,
+          unlinkedPrivCheckItem.item.id,
+          privTask.taskId,
+        ]);
+      }),
+    ).rejects.toThrow(/ROADMAP_PRIVATE_PROJECT_FORBIDDEN/);
+
+    // Concurrent READ COMMITTED serialization between org -> private project.update and roadmap.item.convert_to_task / linked_task_id write.
+    const waitForLock = async () => {
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        const locked = await admin(async (c) => {
+          const { rows } = await c.query<{ cnt: number }>(
+            `SELECT count(*)::int AS cnt
+               FROM pg_catalog.pg_stat_activity
+              WHERE datname = pg_catalog.current_database()
+                AND wait_event_type = 'Lock'
+                AND pid <> pg_catalog.pg_backend_pid()`,
+          );
+          return (rows[0]?.cnt ?? 0) > 0;
+        });
+        if (locked) return true;
+        await new Promise((r) => setTimeout(r, 15));
+      }
+      return false;
+    };
+
+    // Race Direction 1: Tx A updates project org -> private (uncommitted); concurrent convert_to_task blocks on FOR SHARE, sees private after commit, and rejects 422.
+    const raceProj1 = await runtime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Du an dua 1' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const raceItem1 = await runtime.execute<{ item: { id: string } }>(
+      'projects.roadmap.item.create',
+      { boardId: standaloneBoard.board.id, publicTitle: 'Muc dua 1' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const c1 = await appPool!.connect();
+    let convertOutcome: Promise<{ ok: true; value: unknown } | { ok: false; err: unknown }> | undefined;
+    try {
+      await c1.query('BEGIN');
+      await enterUser(c1, ownerUserId, orgId);
+      await c1.query('SET LOCAL ROLE ludy_tenant');
+      await c1.query(`UPDATE ludy_projects.project SET visibility = 'private' WHERE org_id = $1 AND id = $2`, [
+        orgId,
+        raceProj1.projectId,
+      ]);
+
+      convertOutcome = runtime
+        .execute(
+          'projects.roadmap.item.convert_to_task',
+          { itemId: raceItem1.item.id, projectId: raceProj1.projectId },
+          { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+        )
+        .then(
+          (value) => ({ ok: true as const, value }),
+          (err: unknown) => ({ ok: false as const, err }),
+        );
+      expect(await waitForLock()).toBe(true);
+      await c1.query('COMMIT');
+    } catch (err) {
+      await c1.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      c1.release();
+    }
+    expect(await convertOutcome).toMatchObject({
+      ok: false,
+      err: { code: 'ROADMAP_PRIVATE_PROJECT_FORBIDDEN', status: 422 },
+    });
+    await admin(async (c) => {
+      const { rows } = await c.query<{ linked_task_id: string | null }>(
+        `SELECT linked_task_id FROM ludy_projects.roadmap_item WHERE org_id = $1 AND id = $2`,
+        [orgId, raceItem1.item.id],
+      );
+      expect(rows[0]!.linked_task_id).toBeNull();
+    });
+
+    // Race Direction 2: Tx A sets linked_task_id inside FOR SHARE (uncommitted); concurrent project.update -> private blocks on FOR UPDATE, sees linked_task_id after commit, and rejects 422.
+    const raceProj2 = await runtime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Du an dua 2' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const raceTask2 = await runtime.execute<{ taskId: string }>(
+      'projects.task.create',
+      { projectId: raceProj2.projectId, title: 'Viec dua 2', assigneePositionId: null },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const raceItem2 = await runtime.execute<{ item: { id: string } }>(
+      'projects.roadmap.item.create',
+      { boardId: standaloneBoard.board.id, publicTitle: 'Muc dua 2' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const c2 = await appPool!.connect();
+    let privUpdateOutcome: Promise<{ ok: true; value: unknown } | { ok: false; err: unknown }> | undefined;
+    try {
+      await c2.query('BEGIN');
+      await enterUser(c2, ownerUserId, orgId);
+      await c2.query('SET LOCAL ROLE ludy_tenant');
+      await c2.query(`UPDATE ludy_projects.roadmap_item SET linked_task_id = $3 WHERE org_id = $1 AND id = $2`, [
+        orgId,
+        raceItem2.item.id,
+        raceTask2.taskId,
+      ]);
+
+      privUpdateOutcome = runtime
+        .execute(
+          'projects.project.update',
+          { projectId: raceProj2.projectId, visibility: 'private' },
+          { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+        )
+        .then(
+          (value) => ({ ok: true as const, value }),
+          (err: unknown) => ({ ok: false as const, err }),
+        );
+      expect(await waitForLock()).toBe(true);
+      await c2.query('COMMIT');
+    } catch (err) {
+      await c2.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      c2.release();
+    }
+    expect(await privUpdateOutcome).toMatchObject({
+      ok: false,
+      err: { code: 'ROADMAP_PRIVATE_PROJECT_FORBIDDEN', status: 422 },
+    });
+    await admin(async (c) => {
+      const { rows } = await c.query<{ visibility: string }>(
+        `SELECT visibility FROM ludy_projects.project WHERE org_id = $1 AND id = $2`,
+        [orgId, raceProj2.projectId],
+      );
+      expect(rows[0]!.visibility).toBe('org');
+    });
+
+    // Direct SQL project_task.project_id -> private update is blocked while task is linked from a roadmap item.
+    const directMovePrivProj = await runtime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Du an rieng tu chan SQL', visibility: 'private' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    await expect(
+      admin((c) =>
+        c.query(`UPDATE ludy_projects.project_task SET project_id = $3 WHERE org_id = $1 AND task_id = $2`, [
+          orgId,
+          raceTask2.taskId,
+          directMovePrivProj.projectId,
+        ]),
+      ),
+    ).rejects.toMatchObject({ code: '23514' });
+
+    // Race Direction 3 (EPQ): Tx A moves task to private project (uncommitted); concurrent roadmap_item.linked_task_id update blocks on project_task FOR SHARE, re-fetches project_id via EPQ, and rejects 23514.
+    const raceProj3Org = await runtime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Du an dua 3 org' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const raceProj3Priv = await runtime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Du an dua 3 private', visibility: 'private' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const raceTask3 = await runtime.execute<{ taskId: string }>(
+      'projects.task.create',
+      { projectId: raceProj3Org.projectId, title: 'Viec dua 3', assigneePositionId: null },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const raceItem3 = await runtime.execute<{ item: { id: string } }>(
+      'projects.roadmap.item.create',
+      { boardId: standaloneBoard.board.id, publicTitle: 'Muc dua 3' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const c3A = await appPool!.connect();
+    const c3B = await appPool!.connect();
+    let linkPrivRaceOutcome: Promise<void> | undefined;
+    try {
+      await c3A.query('BEGIN');
+      await enterUser(c3A, ownerUserId, orgId);
+      await c3A.query('SET LOCAL ROLE ludy_tenant');
+      await c3A.query(`UPDATE ludy_projects.project_task SET project_id = $3 WHERE org_id = $1 AND task_id = $2`, [
+        orgId,
+        raceTask3.taskId,
+        raceProj3Priv.projectId,
+      ]);
+
+      await c3B.query('BEGIN');
+      await enterUser(c3B, ownerUserId, orgId);
+      await c3B.query('SET LOCAL ROLE ludy_tenant');
+      linkPrivRaceOutcome = c3B
+        .query(`UPDATE ludy_projects.roadmap_item SET linked_task_id = $3 WHERE org_id = $1 AND id = $2`, [
+          orgId,
+          raceItem3.item.id,
+          raceTask3.taskId,
+        ])
+        .then(() => undefined);
+
+      expect(await waitForLock()).toBe(true);
+      await c3A.query('COMMIT');
+      await expect(linkPrivRaceOutcome).rejects.toMatchObject({ code: '23514' });
+      await c3B.query('ROLLBACK').catch(() => {});
+    } catch (err) {
+      await c3A.query('ROLLBACK').catch(() => {});
+      await c3B.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      c3A.release();
+      c3B.release();
+    }
+    await admin(async (c) => {
+      const { rows } = await c.query<{ linked_task_id: string | null }>(
+        `SELECT linked_task_id FROM ludy_projects.roadmap_item WHERE org_id = $1 AND id = $2`,
+        [orgId, raceItem3.item.id],
+      );
+      expect(rows[0]!.linked_task_id).toBeNull();
+    });
+
+    // Race Direction 4: Tx A sets roadmap_item.linked_task_id (uncommitted, FOR SHARE on project_task); concurrent UPDATE project_task.project_id -> private waits, fires AFTER trigger against newly committed roadmap_item, and rejects 23514.
+    const raceProj4Org = await runtime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Du an dua 4 org' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const raceProj4Priv = await runtime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Du an dua 4 private', visibility: 'private' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const raceTask4 = await runtime.execute<{ taskId: string }>(
+      'projects.task.create',
+      { projectId: raceProj4Org.projectId, title: 'Viec dua 4', assigneePositionId: null },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const raceItem4 = await runtime.execute<{ item: { id: string } }>(
+      'projects.roadmap.item.create',
+      { boardId: standaloneBoard.board.id, publicTitle: 'Muc dua 4' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const c4A = await appPool!.connect();
+    const c4B = await appPool!.connect();
+    let moveTaskPrivRaceOutcome: Promise<void> | undefined;
+    try {
+      await c4A.query('BEGIN');
+      await enterUser(c4A, ownerUserId, orgId);
+      await c4A.query('SET LOCAL ROLE ludy_tenant');
+      await c4A.query(`UPDATE ludy_projects.roadmap_item SET linked_task_id = $3 WHERE org_id = $1 AND id = $2`, [
+        orgId,
+        raceItem4.item.id,
+        raceTask4.taskId,
+      ]);
+
+      await c4B.query('BEGIN');
+      await enterUser(c4B, ownerUserId, orgId);
+      await c4B.query('SET LOCAL ROLE ludy_tenant');
+      moveTaskPrivRaceOutcome = c4B
+        .query(`UPDATE ludy_projects.project_task SET project_id = $3 WHERE org_id = $1 AND task_id = $2`, [
+          orgId,
+          raceTask4.taskId,
+          raceProj4Priv.projectId,
+        ])
+        .then(() => undefined);
+
+      expect(await waitForLock()).toBe(true);
+      await c4A.query('COMMIT');
+      await expect(moveTaskPrivRaceOutcome).rejects.toMatchObject({ code: '23514' });
+      await c4B.query('ROLLBACK').catch(() => {});
+    } catch (err) {
+      await c4A.query('ROLLBACK').catch(() => {});
+      await c4B.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      c4A.release();
+      c4B.release();
+    }
+    await admin(async (c) => {
+      const { rows } = await c.query<{ project_id: string }>(
+        `SELECT project_id FROM ludy_projects.project_task WHERE org_id = $1 AND task_id = $2`,
+        [orgId, raceTask4.taskId],
+      );
+      expect(rows[0]!.project_id).toBe(raceProj4Org.projectId);
+    });
 
     // PDPL lookup + erase handles roadmap_otp & roadmap_subscriber machinery cleanly.
     const pdplEmail = 'pdpl-voter@example.test';
