@@ -47,6 +47,11 @@ const TITLES: Array<{ key: string; params: Record<string, string | number> }> = 
   { key: 'hr.laborReport01Pli', params: { period: '2026', date: '2026-12-05' } },
   { key: 'hr.leaveApprovalsPending', params: { count: 4 } },
   { key: 'hr.deptLeave', params: { count: 2 } },
+  { key: 'hr.salaryAdvancePendingFinal', params: { count: 2 } },
+  { key: 'hr.businessTripPendingFinal', params: { count: 1 } },
+  { key: 'hr.payrollAdjustmentsPending', params: { count: 3 } },
+  { key: 'hr.deptSalaryAdvances', params: { count: 2 } },
+  { key: 'hr.deptBusinessTrips', params: { count: 1 } },
 ];
 
 function hrKeysReferencedInTodayModule(): string[] {
