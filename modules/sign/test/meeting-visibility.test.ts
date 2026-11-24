@@ -389,4 +389,12 @@ describe('a meeting-minutes envelope is tied to the minutes it was made for (#45
     // A caller who cannot read the minutes has no current revision: nothing is stale, signed first.
     expect(selectLatestEnvelopesBySource([oldSigned, freshDraft], [MEETING_ID], minutes(null)).map((r) => r.id)).toEqual(['old-signed']);
   });
+
+  it('keeps a signed envelope from before the revision (legacy) in view, as a legal record, and replaces an unsigned legacy one', () => {
+    const legacySigned = candidate('legacy-signed', 'completed', 'legacy', '2026-11-19T08:00:00.000Z');
+    const legacyDraft = candidate('legacy-draft', 'draft', 'legacy', '2026-11-19T08:00:00.000Z');
+    const freshDraft = candidate('fresh-draft', 'draft', REV_B, '2026-11-20T08:00:00.000Z');
+    expect(selectLatestEnvelopesBySource([legacySigned, freshDraft], [MEETING_ID], minutes(REV_B)).map((r) => r.id)).toEqual(['legacy-signed']);
+    expect(selectLatestEnvelopesBySource([legacyDraft, freshDraft], [MEETING_ID], minutes(REV_B)).map((r) => r.id)).toEqual(['fresh-draft']);
+  });
 });

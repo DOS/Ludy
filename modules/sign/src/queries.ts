@@ -203,11 +203,18 @@ export interface MinutesRanking {
   currentRevisions: ReadonlyMap<string, string | null>;
 }
 
+// Stale as shown to the member: made for other minutes than the published ones. A signed envelope from before the server kept a revision ('legacy') is a legal record whose minutes were never
+// compared, so it is not called stale (its download stays on the meeting screen); an unsigned legacy one is, and is made again.
+function envelopeStale(row: Pick<SourceEnvelopeCandidate, 'status' | 'source_revision'>, current: string | null): boolean {
+  if (row.status === 'completed' && row.source_revision === 'legacy') return false;
+  return isMinutesEnvelopeStale(row.source_revision, current);
+}
+
 // Lower is shown first. An envelope for the current minutes comes before one for older minutes; among those, a signed (completed) one before one in flight before a draft, so a
 // newer draft never pushes a signed envelope of the current minutes off the meeting screen. An envelope for older minutes that a newer one replaced does not hide it (otherwise the
 // recorder, shown a stale signed envelope, would start another draft every time the meeting screen offered it).
 function minutesRank(row: SourceEnvelopeCandidate, ranking: MinutesRanking): number {
-  const stale = isMinutesEnvelopeStale(row.source_revision, row.source_id ? (ranking.currentRevisions.get(row.source_id) ?? null) : null);
+  const stale = envelopeStale(row, row.source_id ? (ranking.currentRevisions.get(row.source_id) ?? null) : null);
   const settled = row.status === 'completed' ? 0 : row.status === 'sent' || row.status === 'in_progress' ? 1 : 2;
   return (stale ? 3 : 0) + settled;
 }
@@ -357,7 +364,7 @@ export const envelopeBySource = defineQuery({
           updatedAt: new Date(r.updated_at).toISOString(),
           // Made for other minutes than the published ones: decided here from the revision the database stored, never from the title.
           ...(input.sourceKind === 'meeting_minutes'
-            ? { stale: isMinutesEnvelopeStale(r.source_revision, currentRevisions.get(r.source_id as string) ?? null) }
+            ? { stale: envelopeStale(r, currentRevisions.get(r.source_id as string) ?? null) }
             : {}),
         };
       }),
