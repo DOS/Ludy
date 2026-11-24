@@ -95,6 +95,7 @@ export const envelopeDocumentAdd = defineCommand({
     const file = await requireSignSourceFile(ctx, input.sourceFileId);
     await assertSignSourceFileConfidentiality(ctx, {
       fileId: file.id,
+      storageKey: file.storage_key,
       sourceKind: row.source_kind,
       sourceId: row.source_id,
       envelopeCreatedAt: row.created_at,

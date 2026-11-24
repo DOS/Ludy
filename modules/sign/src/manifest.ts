@@ -94,6 +94,7 @@ export const SIGN_SIGNER_TABLE = columns(
   },
 );
 
+// Document title matches ludy_sign.envelope.title (`internal` document metadata): drafts can edit/remove titles and org purge deletes all rows, while completed packets retain statutory e-transaction records; org export covers rows via sign.envelope_document.
 export const SIGN_ENVELOPE_DOCUMENT_TABLE = columns([
   'org_id',
   'id',

@@ -60,6 +60,7 @@ import {
   SIGNING_TOKEN_WRITE,
   SIGN_MAX_LINK_HOURS,
   WEBHOOK_DELIVERY_ENQUEUE_WRITE,
+  assertSignSourceFileConfidentiality,
   assertValidEnvelopeExpiry,
   requireSignSourceFile,
   sanitizeSharedSummaryForWrite,
@@ -212,60 +213,14 @@ export const envelopeCreate = defineCommand({
     await assertCanUseProjectAcceptanceSource(ctx, input.sourceKind, sourceId);
 
     const file = await requireSignSourceFile(ctx, input.sourceFileId);
-    if (input.sourceKind === 'hr_contract' || input.sourceKind === 'meeting_minutes') {
-      const { rows: attachCheck } = await sql<{ allowed: boolean }>`
-        SELECT ludy_sign.can_attach_confidential_source_file(
-          ${ctx.orgId}::uuid,
-          ${file.id}::uuid,
-          ${input.sourceKind},
-          ${sourceId}::uuid,
-          ${ctx.now}::timestamptz,
-          false
-        ) AS allowed
-      `.execute(ctx.trx);
-      if (!attachCheck[0]?.allowed) {
-        throw new DomainError(
-          'SIGN_FORBIDDEN',
-          403,
-          'Existing template or non-matching envelope source files cannot be reused on confidential envelopes',
-        );
-      }
-    } else {
-      const { rows: confidentialRefs } = await sql<{ restricted: boolean }>`
-        SELECT (
-          (
-            EXISTS (
-              SELECT 1 FROM ludy_sign.envelope e
-              WHERE e.org_id = ${ctx.orgId}::uuid
-                AND e.source_file_id = ${file.id}::uuid
-                AND e.source_kind IN ('hr_contract', 'meeting_minutes')
-            )
-            OR EXISTS (
-              SELECT 1
-              FROM ludy_sign.envelope_document ed
-              JOIN ludy_sign.envelope e
-                ON e.org_id = ed.org_id
-               AND e.id = ed.envelope_id
-              WHERE ed.org_id = ${ctx.orgId}::uuid
-                AND ed.file_id = ${file.id}::uuid
-                AND e.source_kind IN ('hr_contract', 'meeting_minutes')
-            )
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM ludy_sign.template t
-            WHERE t.org_id = ${ctx.orgId}::uuid
-              AND t.source_file_id = ${file.id}::uuid
-          )
-        ) AS restricted
-      `.execute(ctx.trx);
-      if (confidentialRefs[0]?.restricted) {
-        throw new DomainError(
-          'SIGN_FORBIDDEN',
-          403,
-          'Confidential HR contract or meeting minutes source files cannot be reused on non-confidential envelopes',
-        );
-      }
-    }
+    await assertSignSourceFileConfidentiality(ctx, {
+      fileId: file.id,
+      storageKey: file.storage_key,
+      sourceKind: input.sourceKind,
+      sourceId,
+      envelopeCreatedAt: ctx.now,
+      allowTemplate: false,
+    });
 
     if (input.sourceDocxSha256) {
       await verifySourceDocxProvenance(ctx, input.sourceDocxSha256, file.sha256);

@@ -239,6 +239,7 @@ export async function assertSignSourceFileConfidentiality(
   ctx: CommandContext,
   params: {
     fileId: string;
+    storageKey?: string;
     sourceKind: string;
     sourceId: string | null;
     envelopeCreatedAt: Date | string;
@@ -266,27 +267,45 @@ export async function assertSignSourceFileConfidentiality(
     return;
   }
 
+  const storageKey = params.storageKey ?? null;
   const { rows: confidentialRefs } = await sql<{ restricted: boolean }>`
-    SELECT (
-      EXISTS (
-        SELECT 1 FROM ludy_sign.envelope e
-        WHERE e.org_id = ${ctx.orgId}::uuid
-          AND (
-            e.source_file_id = ${params.fileId}::uuid
-            OR EXISTS (
-              SELECT 1 FROM ludy_sign.envelope_document ed
-              WHERE ed.org_id = e.org_id
-                AND ed.envelope_id = e.id
-                AND ed.file_id = ${params.fileId}::uuid
+    SELECT EXISTS (
+      SELECT 1 FROM ludy_sign.envelope e
+      WHERE e.org_id = ${ctx.orgId}::uuid
+        AND e.source_kind IN ('hr_contract', 'meeting_minutes')
+        AND (
+          (
+            (
+              e.source_file_id = ${params.fileId}::uuid
+              OR (${storageKey}::text IS NOT NULL AND e.source_storage_key = ${storageKey}::text)
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM ludy_sign.template t
+              WHERE t.org_id = e.org_id
+                AND t.status <> 'archived'
+                AND t.source_file_id = e.source_file_id
+                AND t.source_storage_key = e.source_storage_key
+                AND t.created_at <= e.created_at
             )
           )
-          AND e.source_kind IN ('hr_contract', 'meeting_minutes')
-      )
-      AND NOT EXISTS (
-        SELECT 1 FROM ludy_sign.template t
-        WHERE t.org_id = ${ctx.orgId}::uuid
-          AND t.source_file_id = ${params.fileId}::uuid
-      )
+          OR EXISTS (
+            SELECT 1 FROM ludy_sign.envelope_document ed
+            WHERE ed.org_id = e.org_id
+              AND ed.envelope_id = e.id
+              AND (
+                ed.file_id = ${params.fileId}::uuid
+                OR (${storageKey}::text IS NOT NULL AND ed.storage_key = ${storageKey}::text)
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM ludy_sign.template t
+                WHERE t.org_id = e.org_id
+                  AND t.status <> 'archived'
+                  AND t.source_file_id = ed.file_id
+                  AND t.source_storage_key = ed.storage_key
+                  AND t.created_at <= e.created_at
+              )
+          )
+        )
     ) AS restricted
   `.execute(ctx.trx);
   if (confidentialRefs[0]?.restricted) {

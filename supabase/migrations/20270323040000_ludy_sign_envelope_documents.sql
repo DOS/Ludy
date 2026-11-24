@@ -159,7 +159,8 @@ END $$;
 CREATE OR REPLACE FUNCTION ludy_sign.can_attach_envelope_document_file(
   p_org_id uuid,
   p_envelope_id uuid,
-  p_file_id uuid
+  p_file_id uuid,
+  p_storage_key text
 ) RETURNS boolean
 LANGUAGE plpgsql
 STABLE
@@ -171,14 +172,19 @@ DECLARE
   v_source_kind text;
   v_source_id uuid;
   v_source_file_id uuid;
+  v_source_storage_key text;
   v_created_at timestamptz;
 BEGIN
-  IF v_org IS NULL OR p_org_id IS DISTINCT FROM v_org OR p_envelope_id IS NULL OR p_file_id IS NULL THEN
+  IF v_org IS NULL
+     OR p_org_id IS DISTINCT FROM v_org
+     OR p_envelope_id IS NULL
+     OR p_file_id IS NULL
+     OR p_storage_key IS NULL THEN
     RETURN false;
   END IF;
 
-  SELECT e.source_kind, e.source_id, e.source_file_id, e.created_at
-  INTO v_source_kind, v_source_id, v_source_file_id, v_created_at
+  SELECT e.source_kind, e.source_id, e.source_file_id, e.source_storage_key, e.created_at
+  INTO v_source_kind, v_source_id, v_source_file_id, v_source_storage_key, v_created_at
   FROM ludy_sign.envelope e
   WHERE e.org_id = v_org
     AND e.id = p_envelope_id;
@@ -187,21 +193,92 @@ BEGIN
     RETURN false;
   END IF;
 
-  IF v_source_kind NOT IN ('hr_contract', 'meeting_minutes') THEN
-    RETURN true;
+  IF v_source_kind IN ('hr_contract', 'meeting_minutes') THEN
+    -- Doc 1 lazy materialization mirrors the parent envelope (which envelope RLS already gates).
+    IF p_file_id = v_source_file_id AND p_storage_key = v_source_storage_key THEN
+      RETURN true;
+    END IF;
+
+    IF NOT ludy_sign.can_attach_confidential_source_file(
+      v_org,
+      p_file_id,
+      v_source_kind,
+      v_source_id,
+      v_created_at,
+      true
+    ) THEN
+      RETURN false;
+    END IF;
+
+    -- Also block mismatched storage_key reuse from an unrelated confidential envelope or document.
+    RETURN NOT EXISTS (
+      SELECT 1 FROM ludy_sign.envelope e
+      WHERE e.org_id = v_org
+        AND e.source_kind IN ('hr_contract', 'meeting_minutes')
+        AND (e.source_kind <> v_source_kind OR e.source_id IS DISTINCT FROM v_source_id)
+        AND (
+          (
+            (e.source_file_id = p_file_id OR e.source_storage_key = p_storage_key)
+            AND NOT EXISTS (
+              SELECT 1 FROM ludy_sign.template t
+              WHERE t.org_id = v_org
+                AND t.status <> 'archived'
+                AND t.source_file_id = e.source_file_id
+                AND t.source_storage_key = e.source_storage_key
+                AND t.created_at <= e.created_at
+            )
+          )
+          OR EXISTS (
+            SELECT 1 FROM ludy_sign.envelope_document ed
+            WHERE ed.org_id = e.org_id
+              AND ed.envelope_id = e.id
+              AND (ed.file_id = p_file_id OR ed.storage_key = p_storage_key)
+              AND NOT EXISTS (
+                SELECT 1 FROM ludy_sign.template t
+                WHERE t.org_id = v_org
+                  AND t.status <> 'archived'
+                  AND t.source_file_id = ed.file_id
+                  AND t.source_storage_key = ed.storage_key
+                  AND t.created_at <= e.created_at
+              )
+          )
+        )
+    );
   END IF;
 
-  IF p_file_id = v_source_file_id THEN
-    RETURN true;
-  END IF;
-
-  RETURN ludy_sign.can_attach_confidential_source_file(
-    v_org,
-    p_file_id,
-    v_source_kind,
-    v_source_id,
-    v_created_at,
-    true
+  -- Non-confidential parent envelope: refuse any file_id or storage_key referencing a confidential
+  -- hr_contract or meeting_minutes envelope/document unless backed by a pre-existing non-archived template.
+  RETURN NOT EXISTS (
+    SELECT 1 FROM ludy_sign.envelope e
+    WHERE e.org_id = v_org
+      AND e.source_kind IN ('hr_contract', 'meeting_minutes')
+      AND (
+        (
+          (e.source_file_id = p_file_id OR e.source_storage_key = p_storage_key)
+          AND NOT EXISTS (
+            SELECT 1 FROM ludy_sign.template t
+            WHERE t.org_id = v_org
+              AND t.status <> 'archived'
+              AND t.source_file_id = e.source_file_id
+              AND t.source_storage_key = e.source_storage_key
+              AND t.created_at <= e.created_at
+          )
+        )
+        OR EXISTS (
+          SELECT 1 FROM ludy_sign.envelope_document ed
+          WHERE ed.org_id = e.org_id
+            AND ed.envelope_id = e.id
+            AND (ed.file_id = p_file_id OR ed.storage_key = p_storage_key)
+            AND NOT EXISTS (
+              SELECT 1 FROM ludy_sign.template t
+              WHERE t.org_id = v_org
+                AND t.status <> 'archived'
+                AND t.source_file_id = ed.file_id
+                AND t.source_storage_key = ed.storage_key
+                AND t.created_at <= e.created_at
+            )
+        )
+      )
   );
 END $$;
 
@@ -280,7 +357,8 @@ CREATE POLICY confidential_source_insert ON ludy_sign.envelope_document AS RESTR
     OR ludy_sign.can_attach_envelope_document_file(
       envelope_document.org_id,
       envelope_document.envelope_id,
-      envelope_document.file_id
+      envelope_document.file_id,
+      envelope_document.storage_key
     )
   );
 
@@ -291,7 +369,8 @@ CREATE POLICY confidential_source_update ON ludy_sign.envelope_document AS RESTR
     OR ludy_sign.can_attach_envelope_document_file(
       envelope_document.org_id,
       envelope_document.envelope_id,
-      envelope_document.file_id
+      envelope_document.file_id,
+      envelope_document.storage_key
     )
   );
 
@@ -320,6 +399,9 @@ BEGIN
       ON DELETE CASCADE;
   END IF;
 END $$;
+
+CREATE INDEX IF NOT EXISTS field_document_fk_idx
+  ON ludy_sign.field (org_id, document_id);
 
 CREATE INDEX IF NOT EXISTS field_envelope_document_idx
   ON ludy_sign.field (org_id, envelope_id, document_id, page_number, id)
@@ -554,29 +636,57 @@ BEGIN
   END IF;
 
   IF TG_OP = 'INSERT' THEN
+    -- Doc 1 lazy materialization mirrors the parent envelope's immutable source columns.
+    IF (
+      NEW.doc_index = 1
+      AND NEW.file_id = v_env_source_file_id
+      AND NEW.storage_key = v_env_source_storage_key
+      AND NEW.generation = v_env_source_generation
+      AND NEW.source_sha256 = v_env_source_sha256
+      AND (
+        (
+          NEW.inspect_status = 'pending'
+          AND NEW.inspect_error IS NULL
+          AND NEW.page_count IS NULL
+          AND NEW.page_dimensions_json IS NULL
+          AND NEW.detected_tags_json IS NULL
+        )
+        OR (
+          NEW.inspect_status IS NOT DISTINCT FROM v_env_inspect_status
+          AND NEW.inspect_error IS NOT DISTINCT FROM v_env_inspect_error
+          AND NEW.page_count IS NOT DISTINCT FROM v_env_page_count
+          AND NEW.page_dimensions_json IS NOT DISTINCT FROM v_env_page_dimensions_json
+          AND NEW.detected_tags_json IS NOT DISTINCT FROM v_env_detected_tags_json
+        )
+      )
+    ) THEN
+      RETURN NEW;
+    END IF;
+
     IF NOT (
-      (
-        NEW.inspect_status = 'pending'
-        AND NEW.inspect_error IS NULL
-        AND NEW.page_count IS NULL
-        AND NEW.page_dimensions_json IS NULL
-        AND NEW.detected_tags_json IS NULL
-      )
-      OR (
-        NEW.doc_index = 1
-        AND NEW.file_id = v_env_source_file_id
-        AND NEW.storage_key = v_env_source_storage_key
-        AND NEW.generation = v_env_source_generation
-        AND NEW.source_sha256 = v_env_source_sha256
-        AND NEW.inspect_status IS NOT DISTINCT FROM v_env_inspect_status
-        AND NEW.inspect_error IS NOT DISTINCT FROM v_env_inspect_error
-        AND NEW.page_count IS NOT DISTINCT FROM v_env_page_count
-        AND NEW.page_dimensions_json IS NOT DISTINCT FROM v_env_page_dimensions_json
-        AND NEW.detected_tags_json IS NOT DISTINCT FROM v_env_detected_tags_json
-      )
+      NEW.inspect_status = 'pending'
+      AND NEW.inspect_error IS NULL
+      AND NEW.page_count IS NULL
+      AND NEW.page_dimensions_json IS NULL
+      AND NEW.detected_tags_json IS NULL
     ) THEN
       RAISE EXCEPTION 'ENVELOPE_DOCUMENT_SYSTEM_ONLY' USING ERRCODE = '42501', DETAIL = 'new packet documents start pending inspection unless lazily materialized from the draft envelope';
     END IF;
+
+    -- Every newly attached packet document must bind storage_key, generation, and sha256 to a real sign_document PDF row.
+    IF NOT EXISTS (
+      SELECT 1 FROM ludy_kernel.file f
+      WHERE f.org_id = NEW.org_id
+        AND f.id = NEW.file_id
+        AND f.source = 'sign_document'
+        AND f.content_type = 'application/pdf'
+        AND f.storage_key = NEW.storage_key
+        AND f.generation = NEW.generation
+        AND f.sha256 = NEW.source_sha256
+    ) THEN
+      RAISE EXCEPTION 'ENVELOPE_DOCUMENT_INVALID_FILE' USING ERRCODE = '42501', DETAIL = 'envelope document must match an uploaded PDF sign_document file row';
+    END IF;
+
     RETURN NEW;
   END IF;
 
@@ -2744,7 +2854,7 @@ END $$;
 REVOKE ALL ON FUNCTION
   ludy_sign.can_attach_confidential_source_file(uuid, uuid, text, uuid, timestamptz, boolean),
   ludy_sign.can_attach_template_source(uuid, uuid, uuid, text),
-  ludy_sign.can_attach_envelope_document_file(uuid, uuid, uuid),
+  ludy_sign.can_attach_envelope_document_file(uuid, uuid, uuid, text),
   ludy_sign.envelope_document_sync(),
   ludy_sign.envelope_document_guard(),
   ludy_sign.envelope_guard(),
@@ -2772,7 +2882,7 @@ BEGIN
       'REVOKE ALL ON FUNCTION '
       || 'ludy_sign.can_attach_confidential_source_file(uuid, uuid, text, uuid, timestamptz, boolean), '
       || 'ludy_sign.can_attach_template_source(uuid, uuid, uuid, text), '
-      || 'ludy_sign.can_attach_envelope_document_file(uuid, uuid, uuid), '
+      || 'ludy_sign.can_attach_envelope_document_file(uuid, uuid, uuid, text), '
       || 'ludy_sign.envelope_document_sync(), '
       || 'ludy_sign.envelope_document_guard(), '
       || 'ludy_sign.envelope_guard(), '
@@ -2793,7 +2903,7 @@ END $$;
 GRANT EXECUTE ON FUNCTION
   ludy_sign.can_attach_confidential_source_file(uuid, uuid, text, uuid, timestamptz, boolean),
   ludy_sign.can_attach_template_source(uuid, uuid, uuid, text),
-  ludy_sign.can_attach_envelope_document_file(uuid, uuid, uuid),
+  ludy_sign.can_attach_envelope_document_file(uuid, uuid, uuid, text),
   ludy_sign.can_read_sign_file(uuid),
   ludy_sign.is_exportable_sign_file(uuid, uuid, text)
 TO ludy_tenant;

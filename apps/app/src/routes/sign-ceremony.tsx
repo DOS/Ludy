@@ -206,6 +206,31 @@ export function isApproverCeremonyMode(view: Pick<ReadySignView, 'signerRole' | 
   );
 }
 
+export function planCachedDocumentSelect(opts: {
+  currentPageNumber: number;
+  nextPage?: number;
+  currentPdfBytes: Uint8Array | null;
+  cachedPdfBytes: Uint8Array | undefined;
+  pdfRendered: boolean;
+}):
+  | { action: 'fetch'; targetPage: number }
+  | { action: 'noop' }
+  | { action: 'apply_cache'; targetPage: number; resetRendered: boolean; cached: Uint8Array } {
+  const targetPage = Math.max(1, opts.nextPage ?? 1);
+  if (!opts.cachedPdfBytes) {
+    return { action: 'fetch', targetPage };
+  }
+  if (opts.cachedPdfBytes === opts.currentPdfBytes && targetPage === opts.currentPageNumber && opts.pdfRendered) {
+    return { action: 'noop' };
+  }
+  return {
+    action: 'apply_cache',
+    targetPage,
+    resetRendered: opts.cachedPdfBytes !== opts.currentPdfBytes || targetPage !== opts.currentPageNumber,
+    cached: opts.cachedPdfBytes,
+  };
+}
+
 export function isFieldFilled(field: PublicSignField, answer: CeremonyFieldAnswer | undefined): boolean {
   if (field.fieldType === 'signature' || field.fieldType === 'initials' || field.fieldType === 'stamp') {
     return Boolean(answer?.signaturePngDataUrl);
@@ -743,15 +768,27 @@ export function SignCeremonyPage() {
   const handleSelectDocument = useCallback(
     async (docKey: string, nextPage = 1) => {
       if (!token || viewState?.state !== 'ready') return;
+      const plan = planCachedDocumentSelect({
+        currentPageNumber: pageNumber,
+        nextPage,
+        currentPdfBytes: pdfBytes,
+        cachedPdfBytes: pdfCacheRef.current.get(docKey),
+        pdfRendered,
+      });
+      if (plan.action === 'noop') {
+        setActiveDocKey(docKey);
+        return;
+      }
       const targetDoc = readyDocs.find((d) => (d.id ?? 'doc-1') === docKey) ?? null;
       setActiveDocKey(docKey);
-      setPageNumber(Math.max(1, nextPage));
+      setPageNumber(plan.targetPage);
       setPdfError(null);
       setViewerRenderError(null);
-      const cached = pdfCacheRef.current.get(docKey);
-      if (cached) {
-        setPdfRendered(false);
-        setPdfBytes(cached);
+      if (plan.action === 'apply_cache') {
+        if (plan.resetRendered) {
+          setPdfRendered(false);
+        }
+        setPdfBytes(plan.cached);
         return;
       }
       const pdfGen = (pdfLoadGenRef.current += 1);
@@ -784,7 +821,7 @@ export function SignCeremonyPage() {
         }
       }
     },
-    [token, viewState, readyDocs, inPersonMode, t],
+    [token, viewState, readyDocs, inPersonMode, t, pageNumber, pdfBytes, pdfRendered],
   );
 
   const handleJumpToNext = () => {

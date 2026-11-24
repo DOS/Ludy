@@ -39,7 +39,7 @@ import type { PublicSignViewState, SignEnvelopeDocumentSummary } from '../src/li
 
 const { SignPacketTabs } = await import('../src/components/sign/sign-packet-tabs.tsx');
 const { SignPacketManager } = await import('../src/components/sign/sign-packet-manager.tsx');
-const { SignCeremonyReadyView } = await import('../src/routes/sign-ceremony.tsx');
+const { planCachedDocumentSelect, SignCeremonyReadyView } = await import('../src/routes/sign-ceremony.tsx');
 const { checkSendReadiness } = await import('../src/lib/sign-fields.ts');
 const { publicSignApi } = await import('../src/lib/sign-api.ts');
 
@@ -410,5 +410,64 @@ describe('Multi-document signing packet frontend (#4722)', () => {
 
     const bytes = await publicSignApi.pdf('tok-123', DOC_2_ID);
     expect(bytes).toEqual(new Uint8Array([0x25, 0x50, 0x44, 0x46]));
+  });
+
+  it('keeps pdfRendered intact when selecting the already-active rendered document tab', () => {
+    const doc1Bytes = new Uint8Array([1, 2, 3]);
+    const doc2Bytes = new Uint8Array([4, 5, 6]);
+
+    // Clicking the already-active tab while already rendered on page 1 must no-op so Submit stays enabled.
+    expect(
+      planCachedDocumentSelect({
+        currentPageNumber: 1,
+        nextPage: 1,
+        currentPdfBytes: doc1Bytes,
+        cachedPdfBytes: doc1Bytes,
+        pdfRendered: true,
+      }),
+    ).toEqual({ action: 'noop' });
+
+    // Switching pages on the same cached document still resets render state while PdfCanvasViewer draws the target page.
+    expect(
+      planCachedDocumentSelect({
+        currentPageNumber: 2,
+        nextPage: 1,
+        currentPdfBytes: doc1Bytes,
+        cachedPdfBytes: doc1Bytes,
+        pdfRendered: true,
+      }),
+    ).toEqual({
+      action: 'apply_cache',
+      targetPage: 1,
+      resetRendered: true,
+      cached: doc1Bytes,
+    });
+
+    // Switching to another cached document resets render state for the new document.
+    expect(
+      planCachedDocumentSelect({
+        currentPageNumber: 1,
+        nextPage: 1,
+        currentPdfBytes: doc1Bytes,
+        cachedPdfBytes: doc2Bytes,
+        pdfRendered: true,
+      }),
+    ).toEqual({
+      action: 'apply_cache',
+      targetPage: 1,
+      resetRendered: true,
+      cached: doc2Bytes,
+    });
+
+    // Uncached documents trigger a fresh fetch.
+    expect(
+      planCachedDocumentSelect({
+        currentPageNumber: 1,
+        nextPage: 2,
+        currentPdfBytes: doc1Bytes,
+        cachedPdfBytes: undefined,
+        pdfRendered: true,
+      }),
+    ).toEqual({ action: 'fetch', targetPage: 2 });
   });
 });

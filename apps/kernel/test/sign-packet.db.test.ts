@@ -14,15 +14,15 @@ import { deflateSync, inflateSync } from 'node:zlib';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { z } from 'zod';
 import { AiBudgetExhaustedError, SignAiReader, type AiCall, type AiMeter } from '@ludy/agent';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
 import { createExtractApp } from '@ludy/extract';
 import { createExtractClient, type ExtractClient } from '@ludy/extract-contract';
 import { buildKernelCommands, kernelQueries } from '@ludy/kernel';
-import type { SignEnvelopeDetail, SignPacketConsistencyCheckResult } from '@ludy/kernel-contract';
+import type { SignPacketConsistencyCheckResult, zSignEnvelopeDetail } from '@ludy/kernel-contract';
 import {
-  DomainError,
   Runtime,
   contentGeneration,
   fileKey,
@@ -42,6 +42,10 @@ import { createSessionStatusSource } from '../src/sessions.ts';
 import { analyzeSignPacketConsistency, signAi } from '../src/sign-ai.ts';
 import { runSignPdfInspectJob, runSignPdfSealJob } from '../src/sign-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
+
+type SignEnvelopeDetail = z.infer<typeof zSignEnvelopeDetail> & {
+  documents: NonNullable<z.infer<typeof zSignEnvelopeDetail>['documents']>;
+};
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
@@ -207,14 +211,6 @@ suite('eSign Slice 6c multi-document signing packet on PostgreSQL 17 (#4722)', (
     userId: who.userId,
     sessionId: who.session,
     aal: 'aal1' as const,
-  });
-
-  const asMfa = (who: Account) => ({
-    type: 'user' as const,
-    userId: who.userId,
-    sessionId: who.session,
-    aal: 'aal2' as const,
-    mfaAt: Math.floor(Date.now() / 1000),
   });
 
   const asSystem = { type: 'system' as const, component: 'sign.test' };
@@ -491,7 +487,7 @@ suite('eSign Slice 6c multi-document signing packet on PostgreSQL 17 (#4722)', (
         { actor: asUser(viewer), orgId: org.orgId },
       ),
     ).rejects.toMatchObject({ status: 403 });
-    const agentActor: AgentActor = { type: 'agent', agentId: '01900000-0000-7000-8000-000000009999', onBehalfOf: member.userId };
+    const agentActor: AgentActor = { type: 'agent', agentId: '01900000-0000-7000-8000-000000009999', runId: randomUUID() };
     await expect(
       runtime.execute(
         'sign.envelope.document.add',
@@ -1200,6 +1196,124 @@ suite('eSign Slice 6c multi-document signing packet on PostgreSQL 17 (#4722)', (
 
     expect((await appAiOff.request(`/api/files/${mmDoc2.fileId}`, { headers: { authorization: `Bearer ${await tokenFor(attendee)}`, 'x-ludy-org': org.slug } })).status).toBe(200);
     expect((await appAiOff.request(`/api/files/${mmDoc2.fileId}`, { headers: { authorization: `Bearer ${await tokenFor(member)}`, 'x-ludy-org': org.slug } })).status).toBe(404);
+
+    // Direct SQL ludy_tenant RLS & guard checks (#4722 BLOCK-1): an unprivileged member must not bypass
+    // confidentiality by inserting an envelope_document on a standalone envelope referencing an hr_contract
+    // or meeting_minutes file_id OR spoofing its storage_key alongside a benign file_id.
+    const safePdf1 = await ingestPdfBytes(member, buildValidMultiPagePdf([['Safe Member Doc 1']]), 'member-safe-1.pdf');
+    const safePdf2 = await ingestPdfBytes(member, buildValidMultiPagePdf([['Safe Member Doc 2']]), 'member-safe-2.pdf');
+    const safeEnv = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      { title: 'Member Standalone Packet', routingMode: 'parallel', sourceFileId: safePdf1.fileId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    await expect(
+      runtime.execute(
+        'sign.envelope.document.add',
+        { envelopeId: safeEnv.envelopeId, sourceFileId: hrDoc2.fileId, title: 'Exfiltrate HR via command (member)' },
+        { actor: asUser(member), orgId: org.orgId },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_FILE_NOT_FOUND' });
+    await expect(
+      runtime.execute(
+        'sign.envelope.document.add',
+        { envelopeId: safeEnv.envelopeId, sourceFileId: hrDoc2.fileId, title: 'Exfiltrate HR via command (admin)' },
+        { actor: asUser(adminUser), orgId: org.orgId },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN' });
+
+    const rlsClient = await pool.connect();
+    try {
+      await rlsClient.query('BEGIN');
+      await rlsClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [member.userId, org.orgId]);
+
+      await rlsClient.query('SAVEPOINT sp_hr_file_id');
+      await expect(
+        rlsClient.query(
+          `INSERT INTO ludy_sign.envelope_document
+            (org_id, envelope_id, doc_index, title, file_id, storage_key, generation, source_sha256, inspect_status)
+           VALUES ($1, $2, 2, 'Leak HR fileId', $3, $4, $5, $6, 'pending')`,
+          [org.orgId, safeEnv.envelopeId, hrDoc2.fileId, hrDoc2.storageKey, hrDoc2.generation, hrDoc2.sha256],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+      await rlsClient.query('ROLLBACK TO SAVEPOINT sp_hr_file_id');
+
+      await rlsClient.query('SAVEPOINT sp_mm_file_id');
+      await expect(
+        rlsClient.query(
+          `INSERT INTO ludy_sign.envelope_document
+            (org_id, envelope_id, doc_index, title, file_id, storage_key, generation, source_sha256, inspect_status)
+           VALUES ($1, $2, 2, 'Leak Minutes fileId', $3, $4, $5, $6, 'pending')`,
+          [org.orgId, safeEnv.envelopeId, mmDoc2.fileId, mmDoc2.storageKey, mmDoc2.generation, mmDoc2.sha256],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+      await rlsClient.query('ROLLBACK TO SAVEPOINT sp_mm_file_id');
+
+      await rlsClient.query('SAVEPOINT sp_spoof_hr_key');
+      await expect(
+        rlsClient.query(
+          `INSERT INTO ludy_sign.envelope_document
+            (org_id, envelope_id, doc_index, title, file_id, storage_key, generation, source_sha256, inspect_status)
+           VALUES ($1, $2, 2, 'Spoof HR key', $3, $4, $5, $6, 'pending')`,
+          [org.orgId, safeEnv.envelopeId, safePdf2.fileId, hrDoc2.storageKey, hrDoc2.generation, hrDoc2.sha256],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+      await rlsClient.query('ROLLBACK TO SAVEPOINT sp_spoof_hr_key');
+
+      await rlsClient.query('SAVEPOINT sp_spoof_arbitrary_key');
+      await expect(
+        rlsClient.query(
+          `INSERT INTO ludy_sign.envelope_document
+            (org_id, envelope_id, doc_index, title, file_id, storage_key, generation, source_sha256, inspect_status)
+           VALUES ($1, $2, 2, 'Spoof arbitrary key', $3, 'org/fake/nonexistent.pdf', '1', $4, 'pending')`,
+          [org.orgId, safeEnv.envelopeId, safePdf2.fileId, safePdf2.sha256],
+        ),
+      ).rejects.toThrow(/ENVELOPE_DOCUMENT_INVALID_FILE/);
+      await rlsClient.query('ROLLBACK TO SAVEPOINT sp_spoof_arbitrary_key');
+
+      // Even if a malicious tenant row wrote a spoofed standalone envelope directly, Doc 1 lazy materialization rejects confidential storage_key.
+      const spoofEnvId = randomUUID();
+      await rlsClient.query(
+        `INSERT INTO ludy_sign.envelope
+          (org_id, id, title, routing_mode, source_kind, source_file_id, source_storage_key, source_generation, source_sha256, created_by)
+         VALUES ($1, $2, 'Spoof parent', 'parallel', 'standalone', $3, $4, $5, $6, $7)`,
+        [org.orgId, spoofEnvId, safePdf2.fileId, hrDoc2.storageKey, hrDoc2.generation, hrDoc2.sha256, member.userId],
+      );
+      await rlsClient.query('SAVEPOINT sp_spoof_doc1_lazy');
+      await expect(
+        rlsClient.query(
+          `INSERT INTO ludy_sign.envelope_document
+            (org_id, envelope_id, doc_index, title, file_id, storage_key, generation, source_sha256, inspect_status)
+           VALUES ($1, $2, 1, 'Spoof lazy Doc 1', $3, $4, $5, $6, 'pending')`,
+          [org.orgId, spoofEnvId, safePdf2.fileId, hrDoc2.storageKey, hrDoc2.generation, hrDoc2.sha256],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+      await rlsClient.query('ROLLBACK TO SAVEPOINT sp_spoof_doc1_lazy');
+
+      await rlsClient.query('ROLLBACK');
+    } finally {
+      rlsClient.release();
+    }
+
+    // Even when an admin CAN read hrDoc2 in ludy_kernel.file, confidential_source_insert RLS still blocks attaching hrDoc2.file_id or storage_key to a standalone envelope.
+    const adminRlsClient = await pool.connect();
+    try {
+      await adminRlsClient.query('BEGIN');
+      await adminRlsClient.query('SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)', [adminUser.userId, org.orgId]);
+      await adminRlsClient.query('SAVEPOINT sp_admin_hr_leak');
+      await expect(
+        adminRlsClient.query(
+          `INSERT INTO ludy_sign.envelope_document
+            (org_id, envelope_id, doc_index, title, file_id, storage_key, generation, source_sha256, inspect_status)
+           VALUES ($1, $2, 2, 'Admin leak HR fileId to standalone', $3, $4, $5, $6, 'pending')`,
+          [org.orgId, safeEnv.envelopeId, hrDoc2.fileId, hrDoc2.storageKey, hrDoc2.generation, hrDoc2.sha256],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+      await adminRlsClient.query('ROLLBACK TO SAVEPOINT sp_admin_hr_leak');
+      await adminRlsClient.query('ROLLBACK');
+    } finally {
+      adminRlsClient.release();
+    }
 
     await runtime.execute('meetings.meeting.delete', { meetingId }, { actor: asUser(owner), orgId: org.orgId });
     const afterMeetingDelete = await admin((c) =>
