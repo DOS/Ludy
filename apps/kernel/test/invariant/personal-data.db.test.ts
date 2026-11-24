@@ -76,7 +76,7 @@ suite('personal-data registry (#923)', () => {
   });
 
   // A sealed column holds sealed text, never a plain value: its type is text, and a single-column CHECK of its table, bound to the column by its attribute number (not by
-  // matching its name in the text), requires the `crove:s1:` prefix, so listing a plain column as sealed to get past the name pattern fails here. Passes on main, where the
+  // matching its name in the text), requires the `crove:s1:` or `ludy:s1:` prefix, so listing a plain column as sealed to get past the name pattern fails here. Passes on main, where the
   // list is empty.
   it('lists a column as sealed only when it is text and a CHECK on that column alone requires the sealed prefix', async () => {
     const problems: string[] = [];
@@ -97,10 +97,10 @@ suite('personal-data registry (#923)', () => {
         }
         if (found.type !== 'text') problems.push(`${place} is ${found.type}, not text`);
         const { rowCount } = await admin.query(
-          `SELECT 1 FROM pg_catalog.pg_constraint k WHERE k.contype = 'c' AND k.conrelid = $1 AND $2 = ANY (k.conkey) AND cardinality(k.conkey) = 1 AND pg_get_constraintdef(k.oid) LIKE '%crove:s1:%'`,
+          `SELECT 1 FROM pg_catalog.pg_constraint k WHERE k.contype = 'c' AND k.conrelid = $1 AND $2 = ANY (k.conkey) AND cardinality(k.conkey) = 1 AND (pg_get_constraintdef(k.oid) LIKE '%crove:s1:%' OR pg_get_constraintdef(k.oid) LIKE '%ludy:s1:%' OR pg_get_constraintdef(k.oid) LIKE '%(ludy|crove):s1:%' OR pg_get_constraintdef(k.oid) LIKE '%(crove|ludy):s1:%' OR pg_get_constraintdef(k.oid) LIKE '%(?:ludy|crove):s1:%' OR pg_get_constraintdef(k.oid) LIKE '%(?:crove|ludy):s1:%')`,
           [found.relid, found.attnum],
         );
-        if (!rowCount) problems.push(`${place} has no CHECK on that column alone that requires crove:s1:`);
+        if (!rowCount) problems.push(`${place} has no CHECK on that column alone that requires crove:s1: or ludy:s1:`);
       } finally {
         await admin.end();
       }

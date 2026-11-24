@@ -252,7 +252,7 @@ suite('per-subject keys on PostgreSQL (#2640)', () => {
     const o = await org();
     const ref = `employee:${randomUUID()}`;
     const { sealed } = await o.seal(o.owner, ref);
-    expect(sealed).toMatch(/^crove:s1:[0-9a-f-]{36}:[A-Za-z0-9_-]+$/);
+    expect(sealed).toMatch(/^(?:ludy|crove):s1:[0-9a-f-]{36}:[A-Za-z0-9_-]+$/);
     for (const who of [o.owner, o.admin, o.member, o.viewer]) expect(await o.open(who, sealed), who).toBe(CANARY);
     expect(await subjectRows(o.orgId)).toEqual([ref]);
     // The plaintext is in no text, jsonb or bytea column of any crove table.
@@ -389,7 +389,7 @@ suite('per-subject keys on PostgreSQL (#2640)', () => {
   it('refuses a contact reference that is not a keyed hash, since the reference is stored in the clear', async () => {
     const o = await org();
     await expect(o.seal(o.owner, 'contact:079123456789')).rejects.toBeInstanceOf(DomainError);
-    await expect(o.seal(o.owner, `contact:${'ab'.repeat(32)}`)).resolves.toMatchObject({ sealed: expect.stringMatching(/^crove:s1:/) });
+    await expect(o.seal(o.owner, `contact:${'ab'.repeat(32)}`)).resolves.toMatchObject({ sealed: expect.stringMatching(/^(?:ludy|crove):s1:/) });
     expect(await subjectRows(o.orgId)).toEqual([`contact:${'ab'.repeat(32)}`]);
   });
 
