@@ -58,3 +58,77 @@ export function createPopupConcurrency(): PopupConcurrency {
     },
   };
 }
+
+export interface ActiveTabPermissionApi {
+  contains: (query: { permissions: string[] }) => Promise<boolean>;
+}
+
+export interface ActiveTabTracker {
+  captureBaseline: (permissions: ActiveTabPermissionApi) => Promise<void>;
+  onMeetingsEnabled: (granted: boolean) => void;
+  onWebClipperToggled: (enable: boolean, granted: boolean) => boolean;
+  onPermissionsRemoved: (removed: readonly string[], permissions: ActiveTabPermissionApi) => Promise<void>;
+  onCaptureSucceeded: () => void;
+  isJustGranted: () => boolean;
+}
+
+/**
+ * Tracks whether `activeTab` was already held when this popup opened (and never revoked since) vs.
+ * granted or re-granted mid-popup by enabling meetings or Web Clipper before a toolbar click activated it.
+ */
+export function createActiveTabTracker(): ActiveTabTracker {
+  let baselinePromise: Promise<void> | null = null;
+  let activatedForPopup: boolean | null = null;
+  let justGranted = false;
+
+  const captureBaseline = async (permissions: ActiveTabPermissionApi): Promise<void> => {
+    if (activatedForPopup !== null) return;
+    if (!baselinePromise) {
+      baselinePromise = permissions
+        .contains({ permissions: ['activeTab'] })
+        .catch(() => false)
+        .then((held) => {
+          if (activatedForPopup === null) activatedForPopup = held;
+        });
+    }
+    await baselinePromise;
+  };
+
+  return {
+    captureBaseline,
+
+    onMeetingsEnabled(granted) {
+      if (!granted) return;
+      if (activatedForPopup === null) activatedForPopup = false;
+      if (!activatedForPopup) justGranted = true;
+    },
+
+    onWebClipperToggled(enable, granted) {
+      if (!enable || !granted) {
+        justGranted = false;
+        return false;
+      }
+      if (activatedForPopup === null) activatedForPopup = false;
+      justGranted = !activatedForPopup;
+      return justGranted;
+    },
+
+    async onPermissionsRemoved(removed, permissions) {
+      if (!removed.includes('activeTab')) return;
+      const stillHeld = await permissions.contains({ permissions: ['activeTab'] }).catch(() => false);
+      if (!stillHeld) {
+        activatedForPopup = false;
+        justGranted = false;
+      }
+    },
+
+    onCaptureSucceeded() {
+      activatedForPopup = true;
+      justGranted = false;
+    },
+
+    isJustGranted() {
+      return justGranted;
+    },
+  };
+}
