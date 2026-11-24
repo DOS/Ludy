@@ -31,10 +31,23 @@ export interface CaptureModule {
 
 export const PROCESS_LOOPBACK_UNSUPPORTED = 'PROCESS_LOOPBACK_UNSUPPORTED';
 
+export interface ProcessLoopbackUnsupportedOptions {
+  messages?: { vi: string; en: string };
+  systemFallbackAvailable?: boolean;
+}
+
 export class ProcessLoopbackUnsupportedError extends Error {
   readonly code = PROCESS_LOOPBACK_UNSUPPORTED;
-  constructor() {
-    super('Windows trên máy này chưa hỗ trợ ghi âm riêng từng ứng dụng (cần Windows 10 build 20348+ hoặc Windows 11).');
+  readonly systemFallbackAvailable: boolean;
+  readonly messages: { vi: string; en: string } | undefined;
+
+  constructor(options?: ProcessLoopbackUnsupportedOptions) {
+    super(
+      options?.messages?.vi ??
+        'Windows trên máy này chưa hỗ trợ ghi âm riêng từng ứng dụng (cần Windows 10 build 20348+ hoặc Windows 11).',
+    );
     this.name = 'ProcessLoopbackUnsupportedError';
+    this.systemFallbackAvailable = options?.systemFallbackAvailable ?? true;
+    this.messages = options?.messages;
   }
 }

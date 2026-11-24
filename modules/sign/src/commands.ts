@@ -36,6 +36,7 @@ import {
   assertCanAccessMeetingMinutesEnvelopeRow,
   assertCanActOnMeetingMinutesEnvelope,
   assertCanCreateMeetingMinutesEnvelope,
+  assertMeetingMinutesCurrent,
 } from './meeting-visibility.ts';
 import { signManifest } from './manifest.ts';
 import { signPublicCommands } from './public-commands.ts';
@@ -1027,6 +1028,8 @@ export const envelopeSend = defineCommand({
     const row = await lockEnvelope(ctx, input.envelopeId);
     assertCanActOnMeetingMinutesEnvelope(ctx, row, userId);
     assertDraft(row.status);
+    // The minutes this envelope was made for must still be the published ones (#4532).
+    await assertMeetingMinutesCurrent(ctx, row);
 
     const signers = await ctx.trx
       .selectFrom('ludy_sign.signer')

@@ -231,7 +231,8 @@ describe('per-extension-token write limit and fail-closed appOn edge (#3742)', (
   function makeApp(opts: {
     rateLimiter?: RateLimiter | null;
     extensionWriteLimit?: RateLimiter | null;
-    appOnImpl?: (org: string, mod: string) => Promise<boolean>;
+    installedImpl?: (mod: string) => boolean;
+    appOnImpl?: (org: string, mod: string, options?: { fresh?: boolean }) => Promise<boolean>;
   }) {
     const usersByHeader: Record<string, AuthUser> = {
       'Bearer tokA': extUser('tok-a', ['meetings', 'agenda', 'notes']),
@@ -239,17 +240,21 @@ describe('per-extension-token write limit and fail-closed appOn edge (#3742)', (
       'Bearer browser': browserUser,
     };
     const executeCalls: string[] = [];
+    const queryCalls: string[] = [];
     const built = createHttpApp({
       config: loadConfig({ ...base, PUBLIC_URL: 'http://localhost:8080', EXTENSION_IDS: 'a'.repeat(32) }),
       runtime: {
-        installed: () => true,
+        installed: opts.installedImpl ?? (() => true),
         modules: () => ['kernel', 'meetings', 'notes'],
         appOn: opts.appOnImpl ?? (async () => true),
         execute: async (cmd: string) => {
           executeCalls.push(cmd);
           return { expiresInSeconds: 300 };
         },
-        query: async () => ({ enabled: false, events: [], keepVideo: false, liveNotes: false, isRecorder: true }),
+        query: async (q: string) => {
+          queryCalls.push(q);
+          return { enabled: false, events: [], keepVideo: false, liveNotes: false, isRecorder: true };
+        },
         forUser: async (_actor: unknown, fn: unknown) => {
           if (typeof fn === 'function') return [{ orgId, slug: 'org-1', name: 'Org 1', role: 'owner' }];
           return [];
@@ -266,7 +271,7 @@ describe('per-extension-token write limit and fail-closed appOn edge (#3742)', (
       ...(opts.rateLimiter !== undefined ? { rateLimiter: opts.rateLimiter } : {}),
       ...(opts.extensionWriteLimit !== undefined ? { extensionWriteLimit: opts.extensionWriteLimit } : {}),
     });
-    return { built, executeCalls };
+    return { built, executeCalls, queryCalls };
   }
 
   it('caps extension bearer write routes per token with 429 and Retry-After while leaving reads and other tokens open', async () => {
@@ -382,5 +387,87 @@ describe('per-extension-token write limit and fail-closed appOn edge (#3742)', (
     });
     expect(uploadRes.status).toBe(503);
     expect(executeCalls).toEqual([]);
+  });
+
+  it('fails closed (503) on transient appOn errors across notes and HR browser routes while keeping 404/DomainError semantics (#4638)', async () => {
+    const noteId = '33333333-3333-4333-8333-333333333333';
+    const attId = '44444444-4444-4444-8444-444444444444';
+    const jobId = '55555555-5555-4555-8555-555555555555';
+    const browserHeaders = { authorization: 'Bearer browser', 'x-ludy-org': 'org-1' };
+
+    const routes: Array<{ method: 'GET' | 'POST'; path: string; mod: 'notes' | 'hr'; offCode: string }> = [
+      { method: 'POST', path: `/api/notes/${noteId}/attachments`, mod: 'notes', offCode: 'NOT_FOUND' },
+      { method: 'GET', path: `/api/notes/attachments/${attId}`, mod: 'notes', offCode: 'NOTE_ATTACHMENT_NOT_FOUND' },
+      { method: 'POST', path: '/api/notes/import/enex', mod: 'notes', offCode: 'NOT_FOUND' },
+      { method: 'POST', path: '/api/notes/import/todoist', mod: 'notes', offCode: 'NOT_FOUND' },
+      { method: 'POST', path: '/api/hr/recruiting/cv-extract', mod: 'hr', offCode: 'NOT_FOUND' },
+      { method: 'GET', path: `/api/hr/recruiting/cv-extract/${jobId}`, mod: 'hr', offCode: 'NOT_FOUND' },
+    ];
+
+    const sendRoute = (target: ReturnType<typeof createHttpApp>, r: (typeof routes)[number]) =>
+      target.request(r.path, {
+        method: r.method,
+        headers: browserHeaders,
+        ...(r.method === 'POST' ? { body: new FormData() } : {}),
+      });
+
+    // 1. Transient appOn errors fail closed with 503 SERVICE_UNAVAILABLE before any query/execute runs.
+    const seenFresh: Array<{ org: string; mod: string; fresh: boolean | undefined }> = [];
+    const transientOutage = makeApp({
+      rateLimiter: null,
+      appOnImpl: async (org, mod, options) => {
+        seenFresh.push({ org, mod, fresh: options?.fresh });
+        throw new Error('transient db outage');
+      },
+    });
+    for (const r of routes) {
+      const res = await sendRoute(transientOutage.built, r);
+      expect(res.status, `${r.method} ${r.path}`).toBe(503);
+      expect(await res.json(), `${r.method} ${r.path}`).toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+    }
+    expect(seenFresh).toEqual(routes.map((r) => ({ org: orgId, mod: r.mod, fresh: true })));
+    expect(transientOutage.executeCalls).toEqual([]);
+    expect(transientOutage.queryCalls).toEqual([]);
+
+    // 2. DomainError from appOn is propagated directly rather than masked as 503.
+    const domainErrorApp = makeApp({
+      rateLimiter: null,
+      appOnImpl: async () => {
+        throw new DomainError('FORBIDDEN', 403, 'denied');
+      },
+    });
+    for (const r of routes) {
+      const res = await sendRoute(domainErrorApp.built, r);
+      expect(res.status, `${r.method} ${r.path}`).toBe(403);
+      expect(await res.json()).toMatchObject({ code: 'FORBIDDEN' });
+    }
+
+    // 3. Disabled app (appOn -> false) keeps route-specific 404 semantics.
+    const appOff = makeApp({
+      rateLimiter: null,
+      appOnImpl: async () => false,
+    });
+    for (const r of routes) {
+      const res = await sendRoute(appOff.built, r);
+      expect(res.status, `${r.method} ${r.path}`).toBe(404);
+      expect(await res.json()).toMatchObject({ code: r.offCode });
+    }
+
+    // 4. Uninstalled deployment module keeps 404 without calling appOn.
+    let appOnCalled = 0;
+    const uninstalled = makeApp({
+      rateLimiter: null,
+      installedImpl: () => false,
+      appOnImpl: async () => {
+        appOnCalled += 1;
+        throw new Error('should not be called');
+      },
+    });
+    for (const r of routes) {
+      const res = await sendRoute(uninstalled.built, r);
+      expect(res.status, `${r.method} ${r.path}`).toBe(404);
+      expect(await res.json()).toMatchObject({ code: r.offCode });
+    }
+    expect(appOnCalled).toBe(0);
   });
 });

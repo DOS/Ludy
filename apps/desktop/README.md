@@ -31,6 +31,10 @@ Electron's `autoUpdater` supports Squirrel.Windows natively: the feed is a folde
 
 No window is created, so `contextIsolation`, `nodeIntegration: false` and `sandbox` do not come into play; any web contents that ever appears is locked down anyway (`will-navigate` and `window.open` denied) and every permission request (microphone, camera, screen, the rest) is refused for the default session. The loopback listener accepts one correct callback (state compared in constant time, exact path and Host), then closes, and gives up after 5 minutes. Only the configured Ludy origin is ever opened. The token is sent only to `<ludyUrl>/api/extension/me`, never followed through a redirect, and secrets are redacted from log lines.
 
+## Windows smoke in CI
+
+The installed build is exercised end to end on a Windows runner (install, tray, single instance, sign-in, DPAPI, update A to B, uninstall): [docs/desktop/windows-smoke.md](../../docs/desktop/windows-smoke.md). The app has a smoke channel for it (`src/smoke.ts`), off unless `LUDY_DESKTOP_SMOKE_DIR` is set and the Ludy address is a loopback one.
+
 ## Develop
 
 ```bash

@@ -25,7 +25,7 @@ import {
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 import { notesManifest } from './manifest.ts';
-import { NOTE_SUMMARY_COLUMNS, noteSummaryRow } from './notes.ts';
+import { NOTE_SUMMARY_COLUMNS, hasWholeOrgScope, noteSummaryRow } from './notes.ts';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -231,11 +231,6 @@ const NOTEBOOK_COLUMNS = [
   'created_at',
   'updated_at',
 ] as const;
-
-async function hasWholeOrgScope(trx: QueryContext['trx']): Promise<boolean> {
-  const { rows } = await sql<{ whole: boolean }>`SELECT ('*' = ANY ((ludy_kernel.ctx_le_scope())::text[])) AS whole`.execute(trx);
-  return rows[0]?.whole === true;
-}
 
 function canManageNotebook(row: Pick<NotebookRow, 'author_user_id' | 'visibility'>, userId: string, role: MemberRole | null, wholeOrg: boolean): boolean {
   if (!role || !WRITERS.includes(role)) return false;
