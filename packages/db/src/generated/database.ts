@@ -4311,6 +4311,8 @@ export interface SignEnvelopeTable {
   share_summary_with_signers: Generated<boolean>;
   shared_summary_json: ColumnType<unknown, string | null | undefined, string | null>;
   allow_delegation: Generated<boolean>;
+  retained_org_visible: boolean | null;
+  retained_reader_ids: string[] | null;
 }
 
 /** ludy_sign.field */

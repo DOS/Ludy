@@ -47,6 +47,8 @@ export const SIGN_ENVELOPE_TABLE = columns([
   'expired_at',
   'share_summary_with_signers',
   'shared_summary_json',
+  'retained_org_visible',
+  'retained_reader_ids',
   'version',
   'created_by',
   'created_at',

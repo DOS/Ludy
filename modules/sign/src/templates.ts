@@ -548,9 +548,12 @@ export const templateCreate = defineCommand({
         .selectFrom('ludy_sign.envelope')
         .select([
           'id',
+          'status',
           'source_kind',
           'source_id',
           'created_by',
+          'retained_org_visible',
+          'retained_reader_ids',
           'routing_mode',
           'allow_delegation',
           'subject',
