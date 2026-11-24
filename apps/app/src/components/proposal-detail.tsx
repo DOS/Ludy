@@ -46,9 +46,70 @@ import { useScrollRoom } from '../lib/scroll-room.ts';
 import { pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 import { AiWrittenBadge } from './ai-written-badge.tsx';
+import { CoworkerAttribution, ProposalSurface } from './proposal-surface.tsx';
 
 const CHECK_TONE = { pass: 'success', warn: 'warning', fail: 'destructive' } as const;
 const CHECK_ICON = { pass: '✓', warn: '!', fail: '✕' } as const;
+
+export interface ProposalCardAttribution {
+  pending?: boolean | undefined;
+  requestedByAgent?: { id: string; name: string } | null | undefined;
+  requestedByMcp?: { client: string; host: string } | null | undefined;
+}
+
+function CardProposalHeader({
+  attribution,
+  variant,
+  matchedBy,
+}: {
+  attribution?: ProposalCardAttribution | undefined;
+  variant: 'reversal' | 'voucher' | 'journal_voucher';
+  matchedBy?: CashVoucherProposal['matchedBy'] | undefined;
+}) {
+  const t = useTranslations('inboxDetail');
+  const tp = useTranslations('proposalSurface');
+  const pending = attribution?.pending ?? true;
+  const agent = attribution?.requestedByAgent ?? null;
+  const mcp = attribution?.requestedByMcp ?? null;
+  const badgeLabel = pending ? t('proposedNotPosted') : undefined;
+
+  if (mcp) {
+    return (
+      <CoworkerAttribution
+        name={mcp.client}
+        role={tp('mcpRole')}
+        badgeLabel={badgeLabel}
+        source={t('mcpProposed', { client: mcp.client, host: mcp.host })}
+      />
+    );
+  }
+  if (agent) {
+    return (
+      <CoworkerAttribution
+        name={agent.name}
+        role={tp('agentRole')}
+        badgeLabel={badgeLabel}
+        source={t('agentProposed', { name: agent.name })}
+      />
+    );
+  }
+  if (variant === 'voucher' && matchedBy?.kind === 'suggested') {
+    const reason = matchedBy.reason;
+    const source = reason
+      ? tp('bankMatchSuggestedWithReason', { reason: tp(`bankMatchReasons.${reason}`) })
+      : tp('bankMatchSuggested');
+    return <CoworkerAttribution coworker="finance" badgeLabel={badgeLabel} source={source} />;
+  }
+  const source =
+    variant === 'reversal'
+      ? pending
+        ? tp('reversalPendingSource')
+        : tp('reversalDecidedSource')
+      : pending
+        ? tp('memberSource')
+        : tp('memberDecidedSource');
+  return <CoworkerAttribution showIcon={false} badgeLabel={badgeLabel} source={source} />;
+}
 
 function FilePreview({ fileId, contentType, filename }: { fileId: string; contentType: string; filename: string }) {
   const t = useTranslations('inboxDetail');
@@ -98,13 +159,23 @@ function FilePreview({ fileId, contentType, filename }: { fileId: string; conten
 
 // A reversal proposal (#138, #165): the entry it reverses, as the approver will post its mirror, and what else the
 // approval does. The entry is read as the caller sees it; the server posts the mirror of every line or refuses.
-function ReversalCard({ reversal, slug }: { reversal: { entryId: string; entryDate: string; reason: string }; slug: string }) {
+export function ReversalCard({
+  reversal,
+  slug,
+  attribution,
+}: {
+  reversal: { entryId: string; entryDate: string; reason: string };
+  slug: string;
+  attribution?: ProposalCardAttribution | undefined;
+}) {
   const t = useTranslations('inboxDetail');
   const f = useFormat();
   const entry = useQuery(orpc.journal.get.queryOptions({ input: { id: reversal.entryId } }));
   const document = entry.data?.document;
+  const pending = attribution?.pending ?? true;
   return (
-    <Card className="block space-y-4 p-4">
+    <ProposalSurface proposed={pending} className="space-y-4" data-testid="reversal-card">
+      <CardProposalHeader attribution={attribution} variant="reversal" />
       <div className="grid gap-4 sm:grid-cols-3">
         <div>
           <p className="text-xs text-subtle-foreground">{t('reversalDate')}</p>
@@ -162,19 +233,37 @@ function ReversalCard({ reversal, slug }: { reversal: { entryId: string; entryDa
           </Link>
         </div>
       ) : null}
-    </Card>
+    </ProposalSurface>
   );
 }
 
 // A cash or bank voucher entered by hand (#327): what it says and the entry its approval posts. The number is given
 // on approval; code is the one it was given, once approved.
-function VoucherCard({ voucher, code, slug, accountName }: { voucher: CashVoucherProposal; code: string | null; slug: string; accountName: (code: string) => string }) {
+export function VoucherCard({
+  voucher,
+  code,
+  slug,
+  accountName,
+  attribution,
+}: {
+  voucher: CashVoucherProposal;
+  code: string | null;
+  slug: string;
+  accountName: (code: string) => string;
+  attribution?: ProposalCardAttribution | undefined;
+}) {
   const t = useTranslations('inboxDetail');
   const root = useTranslations();
   const f = useFormat();
   const journal = previewVoucherJournal(voucher);
+  const pending = attribution?.pending ?? code === null;
   return (
-    <Card className="block space-y-4 p-4">
+    <ProposalSurface proposed={pending} className="space-y-4" data-testid="voucher-card">
+      <CardProposalHeader
+        attribution={attribution ? { ...attribution, pending } : { pending }}
+        variant="voucher"
+        matchedBy={voucher.matchedBy}
+      />
       <div className="grid gap-4 sm:grid-cols-3">
         <div>
           <p className="text-xs text-subtle-foreground">{t('voucherCashAccount')}</p>
@@ -250,17 +339,36 @@ function VoucherCard({ voucher, code, slug, accountName }: { voucher: CashVouche
           {t('viewVouchers')}
         </Link>
       </div>
-    </Card>
+    </ProposalSurface>
   );
 }
 
 // A general journal voucher entered by hand (NVK, #888): its reason and the entry its approval posts, line by line with
 // each line's party. The number is given on approval; code is the one it was given, once approved.
-function JournalVoucherCard({ voucher, code, slug, accountName, proposalId }: { voucher: JournalVoucherProposal; code: string | null; slug: string; accountName: (code: string) => string; proposalId: string }) {
+export function JournalVoucherCard({
+  voucher,
+  code,
+  slug,
+  accountName,
+  proposalId,
+  attribution,
+}: {
+  voucher: JournalVoucherProposal;
+  code: string | null;
+  slug: string;
+  accountName: (code: string) => string;
+  proposalId: string;
+  attribution?: ProposalCardAttribution | undefined;
+}) {
   const t = useTranslations('inboxDetail');
   const f = useFormat();
+  const pending = attribution?.pending ?? code === null;
   return (
-    <Card className="block space-y-4 p-4">
+    <ProposalSurface proposed={pending} className="space-y-4" data-testid="journal-voucher-card">
+      <CardProposalHeader
+        attribution={attribution ? { ...attribution, pending } : { pending }}
+        variant="journal_voucher"
+      />
       <div className="grid gap-4 sm:grid-cols-3">
         <div className="sm:col-span-2">
           <p className="text-xs text-subtle-foreground">{t('voucherReason')}</p>
@@ -307,7 +415,7 @@ function JournalVoucherCard({ voucher, code, slug, accountName, proposalId }: { 
         </Link>
       </div>
       <MarketplaceProposalNote proposalId={proposalId} />
-    </Card>
+    </ProposalSurface>
   );
 }
 
@@ -890,7 +998,11 @@ export function ProposalDetail({ slug, id, split = false, mode = 'page', onDone,
           {pending && !item.canApprove && item.approveReason === 'not_eligible' && (
             <p className="mb-4 text-sm text-subtle-foreground">{t('reversalNotEligible')}</p>
           )}
-          <ReversalCard reversal={reversal} slug={slug} />
+          <ReversalCard
+            reversal={reversal}
+            slug={slug}
+            attribution={{ pending, requestedByAgent: item.requestedByAgent, requestedByMcp: item.requestedByMcp }}
+          />
         </div>
       )}
       {voucher && (
@@ -899,7 +1011,13 @@ export function ProposalDetail({ slug, id, split = false, mode = 'page', onDone,
           {pending && !item.canApprove && item.approveReason === 'not_eligible' && (
             <p className="mb-4 text-sm text-subtle-foreground">{t('voucherNotEligible')}</p>
           )}
-          <VoucherCard voucher={voucher} code={voucherCode} slug={slug} accountName={accountName} />
+          <VoucherCard
+            voucher={voucher}
+            code={voucherCode}
+            slug={slug}
+            accountName={accountName}
+            attribution={{ pending, requestedByAgent: item.requestedByAgent, requestedByMcp: item.requestedByMcp }}
+          />
         </div>
       )}
       {journalVoucher && (
@@ -908,7 +1026,14 @@ export function ProposalDetail({ slug, id, split = false, mode = 'page', onDone,
           {pending && !item.canApprove && item.approveReason === 'not_eligible' && (
             <p className="mb-4 text-sm text-subtle-foreground">{t('voucherNotEligible')}</p>
           )}
-          <JournalVoucherCard voucher={journalVoucher} code={journalVoucherCode} slug={slug} accountName={accountName} proposalId={item.id} />
+          <JournalVoucherCard
+            voucher={journalVoucher}
+            code={journalVoucherCode}
+            slug={slug}
+            accountName={accountName}
+            proposalId={item.id}
+            attribution={{ pending, requestedByAgent: item.requestedByAgent, requestedByMcp: item.requestedByMcp }}
+          />
         </div>
       )}
       {ads && (

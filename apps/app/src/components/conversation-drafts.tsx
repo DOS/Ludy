@@ -16,12 +16,12 @@ import {
   type ConversationDraftView,
   type SavedReplyView,
 } from '@ludy/kernel-contract';
-import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
 import { Checkbox } from '@ludy/ui/components/checkbox';
 import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
 import { Textarea } from '@ludy/ui/components/textarea';
+import { CoworkerAttribution, ProposalSurface } from './proposal-surface.tsx';
 import { ErrorText, Spinner } from './ui.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
@@ -66,13 +66,19 @@ export function DraftPanel({ detail, onUse, onUseSaved }: { detail: Conversation
         </p>
       )}
       {draft?.state === 'live' && draft.body !== null && (
-        <section className="space-y-2 rounded-md border border-border bg-muted/50 p-3" aria-label={t('draft.title')} data-testid="conversation-draft">
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="proposal" data-testid="conversation-draft-tainted">
-              {t('draft.badge')}
-            </Badge>
-            <span className="text-xs text-muted-foreground">{t('draft.hint')}</span>
-          </div>
+        <ProposalSurface
+          as="section"
+          proposed
+          className="space-y-2 rounded-lg p-3"
+          aria-label={t('draft.title')}
+          data-testid="conversation-draft"
+        >
+          <CoworkerAttribution
+            coworker="sales"
+            badgeLabel={t('draft.badge')}
+            badgeTestId="conversation-draft-tainted"
+            source={t('draft.hint')}
+          />
           <p className="whitespace-pre-wrap break-words text-sm text-foreground" data-testid="conversation-draft-text">
             {draft.body}
           </p>
@@ -85,7 +91,7 @@ export function DraftPanel({ detail, onUse, onUseSaved }: { detail: Conversation
             </Button>
           </div>
           {discard.error && <ErrorText>{errorMessage(discard.error)}</ErrorText>}
-        </section>
+        </ProposalSurface>
       )}
       {showAsk && (
         <div className="flex flex-wrap items-center gap-2">
