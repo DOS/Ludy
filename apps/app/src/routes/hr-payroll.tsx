@@ -34,6 +34,7 @@ import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-sel
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@ludy/ui/components/table';
 import { BankSelect } from '../components/bank-select.tsx';
 import { ThirteenthMonthPanel } from '../components/hr-thirteenth-month-panel.tsx';
+import { HrPayrollAdjustmentsPanel } from '../components/hr-stage6b-cards.tsx';
 import { TimekeepingImportPanel } from '../components/hr-timekeeping-panel.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TOTAL_RULE, TableSkeleton } from '../components/ui.tsx';
@@ -59,7 +60,9 @@ interface InputsState {
   workedHours: string;
   pieceCount: string;
   bonus: string;
+  retroPay: string;
   advance: string;
+  offsetDeduction: string;
   nightHours: string;
   contractTermMonths: string;
   overtime: { dayKind: (typeof HR_OVERTIME_DAY_KINDS)[number]; night: boolean; hours: string }[];
@@ -80,7 +83,9 @@ export function stateOf(inputs: Record<string, unknown>): InputsState {
     workedHours: str(inputs.workedHours, ''),
     pieceCount: str(inputs.pieceCount, ''),
     bonus: str(inputs.bonus),
+    retroPay: str(inputs.retroPay),
     advance: str(inputs.advance),
+    offsetDeduction: str(inputs.offsetDeduction),
     nightHours: str(inputs.nightHours),
     contractTermMonths: typeof inputs.contractTermMonths === 'number' ? String(inputs.contractTermMonths) : '',
     overtime: list<InputsState['overtime'][number]>(inputs.overtime),
@@ -99,7 +104,9 @@ export const inputsOf = (s: InputsState): HrPayrollInputs =>
     workedHours: s.workedHours === '' ? null : s.workedHours,
     pieceCount: s.pieceCount === '' ? null : s.pieceCount,
     bonus: s.bonus,
+    retroPay: s.retroPay,
     advance: s.advance,
+    offsetDeduction: s.offsetDeduction,
     nightHours: s.nightHours,
     contractTermMonths: s.contractTermMonths === '' ? null : Number(s.contractTermMonths),
     overtime: s.overtime,
@@ -111,7 +118,7 @@ const bhxhDayOk = (v: string) => /^\d{1,2}(\.\d{1,2})?$/.test(v);
 const hoursOk = (v: string) => /^\d{1,3}(\.\d{1,2})?$/.test(v);
 const workUnitsOk = (v: string) => /^\d{1,7}(\.\d{1,2})?$/.test(v);
 export const formOk = (s: InputsState) =>
-  dayOk(s.unpaidLeaveDays) && bhxhDayOk(s.sicknessBhxhDays) && bhxhDayOk(s.maternityBhxhDays) && dayOk(s.daysNotEmployed) && (s.workedHours === '' || hoursOk(s.workedHours)) && (s.pieceCount === '' || workUnitsOk(s.pieceCount)) && amountOk(s.bonus) && amountOk(s.advance) && hoursOk(s.nightHours) && (s.contractTermMonths === '' || /^\d{1,2}$/.test(s.contractTermMonths)) &&
+  dayOk(s.unpaidLeaveDays) && bhxhDayOk(s.sicknessBhxhDays) && bhxhDayOk(s.maternityBhxhDays) && dayOk(s.daysNotEmployed) && (s.workedHours === '' || hoursOk(s.workedHours)) && (s.pieceCount === '' || workUnitsOk(s.pieceCount)) && amountOk(s.bonus) && amountOk(s.retroPay) && amountOk(s.advance) && amountOk(s.offsetDeduction) && hoursOk(s.nightHours) && (s.contractTermMonths === '' || /^\d{1,2}$/.test(s.contractTermMonths)) &&
   s.overtime.every((o) => hoursOk(o.hours)) && s.allowances.every((a) => a.label.trim() !== '' && amountOk(a.amount)) && s.deductions.every((d) => d.label.trim() !== '' && amountOk(d.amount));
 
 export function Breakdown({ line, money }: { line: HrLineView; money: Money }) {
@@ -210,7 +217,9 @@ export function InputsForm({ line, onDone }: { line: HrLineView; onDone: () => v
       | 'workedHours'
       | 'pieceCount'
       | 'bonus'
+      | 'retroPay'
       | 'advance'
+      | 'offsetDeduction'
       | 'nightHours'
       | 'contractTermMonths',
     label: string,
@@ -230,7 +239,9 @@ export function InputsForm({ line, onDone }: { line: HrLineView; onDone: () => v
         {text('maternityBhxhDays', t('in.maternityBhxhDays'))}
         {text('daysNotEmployed', t('in.daysNotEmployed'))}
         {text('bonus', t('in.bonus'))}
+        {text('retroPay', t('in.retroPay'))}
         {text('advance', t('in.advance'))}
+        {text('offsetDeduction', t('in.offsetDeduction'))}
         {text('nightHours', t('in.nightHours'))}
         {text('contractTermMonths', t('in.contractTermMonths'))}
       </div>
@@ -1128,6 +1139,15 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
       await refresh();
     },
   });
+  const syncStage6b = useMutation({
+    mutationFn: () => client.hr.payroll.runs.syncStage6b({ runId }),
+    onMutate: () => setEditing(null),
+    onSuccess: async () => {
+      setAccept(false);
+      setEditing(null);
+      await refresh();
+    },
+  });
   if (q.isPending) return <TableSkeleton columns={7} />;
   if (q.error) return <ErrorText>{errorMessage(q.error)}</ErrorText>;
   const s = q.data;
@@ -1166,6 +1186,17 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
               >
                 {t('syncOvertime')}
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="max-md:min-h-11"
+                loading={syncStage6b.isPending}
+                disabled={editing !== null || approve.isPending}
+                onClick={() => syncStage6b.mutate()}
+                data-testid="hr-sync-stage6b"
+              >
+                {t('syncStage6b')}
+              </Button>
               <Button variant="outline" size="sm" onClick={() => setThirteenthOpen((v) => !v)} data-testid="hr-13th-month-toggle">
                 {t('thirteenthMonth.toggle')}
               </Button>
@@ -1182,6 +1213,13 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
       {s.blocking.length > 0 && <BlockingRules rules={s.blocking} />}
       {draft && s.lines.length > 0 && <MonthCoworker runId={runId} />}
       <PayrollDiffPanel runId={runId} headingLevel="h3" />
+      <HrPayrollAdjustmentsPanel
+        legalEntityId={s.run.legalEntityId}
+        month={s.run.month}
+        draft={draft}
+        employees={s.lines.filter((l) => l.kind === 'pay').map((l) => ({ id: l.employeeId, name: l.employeeName }))}
+        onChanged={refresh}
+      />
       {draft && hasPayLines && thirteenthOpen && (
         <ThirteenthMonthPanel
           runId={runId}
@@ -1209,6 +1247,7 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
       )}
       {syncLeave.error && <ErrorText>{errorMessage(syncLeave.error)}</ErrorText>}
       {syncOvertime.error && <ErrorText>{errorMessage(syncOvertime.error)}</ErrorText>}
+      {syncStage6b.error && <ErrorText>{errorMessage(syncStage6b.error)}</ErrorText>}
       {draft && s.obstacles.includes('refused_lines') && <ErrorText>{t('refusedLines')}</ErrorText>}
       {payslip && <Payslip key={payslip} lineId={payslip} onClose={() => setPayslip(null)} />}
       {adjusting && <AdjustForm sheet={s} approvedRuns={approvedRuns} onClose={() => setAdjusting(false)} />}
@@ -1285,7 +1324,7 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
                       </Button>
                     )}
                     {draft && l.kind === 'pay' && editing !== l.id && (
-                      <Button variant="outline" size="sm" disabled={syncLeave.isPending || syncOvertime.isPending} onClick={() => setEditing(l.id)} data-testid="hr-inputs-open">
+                      <Button variant="outline" size="sm" disabled={syncLeave.isPending || syncOvertime.isPending || syncStage6b.isPending} onClick={() => setEditing(l.id)} data-testid="hr-inputs-open">
                         {t('editInputs')}
                       </Button>
                     )}
@@ -1323,18 +1362,18 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
                 {t('acceptFlags')}
               </label>
             )}
-            <Button className="mt-3" loading={approve.isPending} disabled={!s.approvable || (flagged && !accept) || syncOvertime.isPending} onClick={() => approve.mutate(s.fingerprint)} data-testid="hr-approve">
+            <Button className="mt-3" loading={approve.isPending} disabled={!s.approvable || (flagged && !accept) || syncOvertime.isPending || syncStage6b.isPending} onClick={() => approve.mutate(s.fingerprint)} data-testid="hr-approve">
               {t('approve')}
             </Button>
             {approve.error &&
               (isStepUpRequired(approve.error) ? (
-                syncOvertime.isPending ? null : (
+                syncOvertime.isPending || syncStage6b.isPending ? null : (
                   // Approving freezes the month, so it asks for a fresh second factor; once verified, the same request is repeated.
                   <div className="mt-3">
                     <StepUpPrompt
                       action={t('approve')}
                       onVerified={() => {
-                        if (!syncOvertime.isPending) approve.mutate(s.fingerprint);
+                        if (!syncOvertime.isPending && !syncStage6b.isPending) approve.mutate(s.fingerprint);
                       }}
                       onCancel={() => approve.reset()}
                     />

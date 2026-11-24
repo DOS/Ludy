@@ -397,6 +397,32 @@ import {
   zHrProbationPreviewResult,
   zHrProbationReviewView,
 } from './hr-probation.ts';
+import {
+  zHrAdjustmentActionResult,
+  zHrAdjustmentCreate,
+  zHrAdjustmentDecide,
+  zHrAdjustmentItemView,
+  zHrAdjustmentList,
+  zHrAdjustmentRef,
+  zHrAdvanceActionResult,
+  zHrAdvanceDecide,
+  zHrAdvanceList,
+  zHrAdvanceRef,
+  zHrAdvanceRequestView,
+  zHrSelfAdvanceList,
+  zHrSelfAdvanceListResult,
+  zHrSelfAdvanceSubmit,
+  zHrSelfAdvanceSubmitResult,
+  zHrSelfTripList,
+  zHrSelfTripListResult,
+  zHrSelfTripSubmit,
+  zHrSelfTripSubmitResult,
+  zHrTripActionResult,
+  zHrTripDecide,
+  zHrTripList,
+  zHrTripRef,
+  zHrTripRequestView,
+} from './hr-stage6b.ts';
 import { zHrLaborCheckAsk, zHrLaborCheckResult } from './hr-declarations.ts';
 import {
   zHrCandidateAdd,
@@ -1430,6 +1456,16 @@ export const contract = {
         submit: oc.input(zHrSelfOvertimeSubmit).output(zHrSelfOvertimeSubmitResult),
         cancel: oc.input(zHrOvertimeRef).output(zHrOvertimeActionResult),
       },
+      salaryAdvance: {
+        list: oc.input(zHrSelfAdvanceList).output(zHrSelfAdvanceListResult),
+        submit: oc.input(zHrSelfAdvanceSubmit).output(zHrSelfAdvanceSubmitResult),
+        cancel: oc.input(zHrAdvanceRef).output(zHrAdvanceActionResult),
+      },
+      businessTrips: {
+        list: oc.input(zHrSelfTripList).output(zHrSelfTripListResult),
+        submit: oc.input(zHrSelfTripSubmit).output(zHrSelfTripSubmitResult),
+        cancel: oc.input(zHrTripRef).output(zHrTripActionResult),
+      },
     },
     attendance: {
       list: oc.input(zHrAttendanceList).output(zHrAttendanceListResult),
@@ -1450,6 +1486,18 @@ export const contract = {
       approveL1: oc.input(zHrOvertimeDecide).output(zHrOvertimeActionResult),
       approveFinal: oc.input(zHrOvertimeDecide).output(zHrOvertimeActionResult),
       reject: oc.input(zHrOvertimeDecide).output(zHrOvertimeActionResult),
+    },
+    salaryAdvances: {
+      list: oc.input(zHrAdvanceList).output(z.array(zHrAdvanceRequestView)),
+      approveL1: oc.input(zHrAdvanceDecide).output(zHrAdvanceActionResult),
+      approveFinal: oc.input(zHrAdvanceDecide).output(zHrAdvanceActionResult),
+      reject: oc.input(zHrAdvanceDecide).output(zHrAdvanceActionResult),
+    },
+    businessTrips: {
+      list: oc.input(zHrTripList).output(z.array(zHrTripRequestView)),
+      approveL1: oc.input(zHrTripDecide).output(zHrTripActionResult),
+      approveFinal: oc.input(zHrTripDecide).output(zHrTripActionResult),
+      reject: oc.input(zHrTripDecide).output(zHrTripActionResult),
     },
     probation: {
       preview: oc.input(zHrProbationPreviewAsk).output(zHrProbationPreviewResult),
@@ -1500,7 +1548,15 @@ export const contract = {
         applyThirteenthMonth: oc.input(zHrRunApplyThirteenthMonth).output(zHrRunWritten),
         syncLeave: oc.input(zHrRunRef).output(zHrRunWritten),
         syncOvertime: oc.input(zHrRunRef).output(zHrRunWritten),
+        syncStage6b: oc.input(zHrRunRef).output(zHrRunWritten),
         approve: oc.input(zHrRunApprove).output(zHrRunWritten),
+      },
+      adjustments: {
+        list: oc.input(zHrAdjustmentList).output(z.array(zHrAdjustmentItemView)),
+        create: oc.input(zHrAdjustmentCreate).output(zHrAdjustmentActionResult),
+        approve: oc.input(zHrAdjustmentDecide).output(zHrAdjustmentActionResult),
+        reject: oc.input(zHrAdjustmentDecide).output(zHrAdjustmentActionResult),
+        cancel: oc.input(zHrAdjustmentRef).output(zHrAdjustmentActionResult),
       },
       // Annual leave ledger and statutory leave balance (#3394, #2540 slice 1c-2): owners and admins only, sensitive query for balance.
       leave: {

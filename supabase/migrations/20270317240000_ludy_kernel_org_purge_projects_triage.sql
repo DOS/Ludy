@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Projects Triage Inbox (issue #4493 Slice 2): restate ludy_kernel.org_purge from 20270317200000_ludy_kernel_org_purge_projects_roadmap_signals with ONE change:
--- delete ludy_projects.project_triage_item ahead of ludy_projects.project_task and ludy_projects.project.
+-- Projects Triage Inbox (issue #4493 Slice 2): restate ludy_kernel.org_purge from 20270317220000_ludy_kernel_org_purge_hr_stage6b
+-- with ONE change: delete ludy_projects.project_triage_item ahead of time_entry, task_dependency, project_task, and project.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION ludy_kernel.org_purge(p_min_days integer)
@@ -118,6 +118,15 @@ BEGIN
   DELETE FROM ludy_finance.einvoice_draft d WHERE d.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('ludy_finance.einvoice_draft', v_n);
+  DELETE FROM ludy_hr.salary_advance_request r WHERE r.org_id = v_org;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_deleted := v_deleted || pg_catalog.jsonb_build_object('ludy_hr.salary_advance_request', v_n);
+  DELETE FROM ludy_hr.payroll_adjustment_item a WHERE a.org_id = v_org;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_deleted := v_deleted || pg_catalog.jsonb_build_object('ludy_hr.payroll_adjustment_item', v_n);
+  DELETE FROM ludy_hr.business_trip_request b WHERE b.org_id = v_org;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_deleted := v_deleted || pg_catalog.jsonb_build_object('ludy_hr.business_trip_request', v_n);
   DELETE FROM ludy_hr.payroll_line l WHERE l.org_id = v_org;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('ludy_hr.payroll_line', v_n);

@@ -360,7 +360,7 @@ export const mcpTriageSummary = defineQuery({
     const nowIso = now.toISOString();
     const nowMs = now.getTime();
     // Resolve org-visible published in-retention meetings strictly through meetings.mcp.visible_ids via ctx.query
-    // (never query ludy_meetings.* directly). Fails closed when Meetings is uninstalled or refuses the caller.
+    // (never query the Meetings module tables directly). Fails closed when Meetings is uninstalled or refuses the caller.
     let visibleMeetingQuery = ctx.trx
       .selectFrom('ludy_projects.project_triage_item as pti')
       .innerJoin('ludy_projects.project as p', (join) =>

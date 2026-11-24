@@ -53,11 +53,16 @@ function stripTrustedPhrases(text: string, trustedTexts: readonly string[]): str
   return out;
 }
 
+const TRAILING_URL_PUNCT = new Set(['.', ',', ';', ':', '!', '?', ')', "'", '"', ']']);
+
 function collectTrustedUrlTokens(trustedTexts: readonly string[]): string[] {
   const urls = new Set<string>();
   for (const t of trustedTexts) {
     for (const match of t.matchAll(/https?:\/\/[^\s<>()]+/gi)) {
-      const cleaned = match[0].replace(/[.,;:!?)'"\]]+$/, '');
+      const raw = match[0];
+      let end = raw.length;
+      while (end > 0 && TRAILING_URL_PUNCT.has(raw[end - 1] as string)) end -= 1;
+      const cleaned = raw.slice(0, end);
       if (cleaned) urls.add(cleaned);
     }
   }

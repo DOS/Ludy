@@ -1334,6 +1334,39 @@ export type HrProbationReviewTable = Refine<
   },
   'legal_entity_id'
 >;
+export const HR_SALARY_ADVANCE_STATUSES = ['pending_l1', 'pending_final', 'approved', 'rejected', 'cancelled'] as const;
+export type HrSalaryAdvanceStatus = (typeof HR_SALARY_ADVANCE_STATUSES)[number];
+export type HrSalaryAdvanceRequestTable = Refine<
+  G.HrSalaryAdvanceRequestTable,
+  {
+    status: Generated<HrSalaryAdvanceStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export const HR_PAYROLL_ADJUSTMENT_KINDS = ['retro_pay', 'offset_deduction'] as const;
+export type HrPayrollAdjustmentKind = (typeof HR_PAYROLL_ADJUSTMENT_KINDS)[number];
+export const HR_PAYROLL_ADJUSTMENT_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'] as const;
+export type HrPayrollAdjustmentStatus = (typeof HR_PAYROLL_ADJUSTMENT_STATUSES)[number];
+export type HrPayrollAdjustmentItemTable = Refine<
+  G.HrPayrollAdjustmentItemTable,
+  {
+    kind: ColumnType<HrPayrollAdjustmentKind, HrPayrollAdjustmentKind, never>;
+    status: Generated<HrPayrollAdjustmentStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export const HR_BUSINESS_TRIP_STATUSES = ['pending_l1', 'pending_final', 'approved', 'rejected', 'cancelled'] as const;
+export type HrBusinessTripStatus = (typeof HR_BUSINESS_TRIP_STATUSES)[number];
+export type HrBusinessTripRequestTable = Refine<
+  G.HrBusinessTripRequestTable,
+  {
+    status: Generated<HrBusinessTripStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
 export type HrPayrollRunTable = Refine<G.HrPayrollRunTable, { status: Generated<(typeof HR_RUN_STATUSES)[number]> }>;
 export type HrPayrollLineTable = Refine<
   G.HrPayrollLineTable,
@@ -1776,12 +1809,14 @@ type Refined = Tables<{
   'ludy_crm.sales_order_line': CrmSalesOrderLineTable;
   'ludy_hr.attendance_log': HrAttendanceLogTable;
   'ludy_hr.attendance_qr_config': HrAttendanceQrConfigTable;
+  'ludy_hr.business_trip_request': HrBusinessTripRequestTable;
   'ludy_hr.candidate': HrCandidateTable;
   'ludy_hr.department': HrDepartmentTable;
   'ludy_hr.job_opening': HrJobOpeningTable;
   'ludy_hr.leave_request': HrLeaveRequestTable;
   'ludy_hr.onboarding_submission': HrOnboardingSubmissionTable;
   'ludy_hr.overtime_request': HrOvertimeRequestTable;
+  'ludy_hr.payroll_adjustment_item': HrPayrollAdjustmentItemTable;
   'ludy_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'ludy_hr.payroll_employee': HrPayrollEmployeeTable;
   'ludy_hr.payroll_employment': HrPayrollEmploymentTable;
@@ -1789,6 +1824,7 @@ type Refined = Tables<{
   'ludy_hr.payroll_line': HrPayrollLineTable;
   'ludy_hr.payroll_run': HrPayrollRunTable;
   'ludy_hr.probation_review': HrProbationReviewTable;
+  'ludy_hr.salary_advance_request': HrSalaryAdvanceRequestTable;
   'ludy_meetings.action_item': MeetingsActionItemTable;
   'ludy_meetings.capture_session': MeetingsCaptureSessionTable;
   'ludy_meetings.chat_channel': MeetingsChatChannelTable;
