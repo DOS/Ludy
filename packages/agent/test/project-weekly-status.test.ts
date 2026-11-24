@@ -508,7 +508,8 @@ describe('projects.weekly_status agent checks (#2597)', () => {
       }).kind,
     ).toBe('none');
 
-    // Short trusted project/column tokens cannot split attack domains or obfuscated links (stripTrustedPhrases boundary checks).
+    // Short trusted project/column tokens cannot split attack domains or obfuscated links (including NFKC connectors).
+    const shopOnlyFacts = sampleFacts({ projectName: 'Shop' });
     for (const badLinkSentence of [
       'Kiểm tra thêm tại evilShop.invalid để biết chi tiết.',
       'Xem tại Shop.invalid để xử lý.',
@@ -518,11 +519,21 @@ describe('projects.weekly_status agent checks (#2597)', () => {
       'Gửi tới Shop [.] com cần kiểm tra.',
       'Gửi tới Shop(dot)vn cần kiểm tra.',
       'Gửi tới Shop dot com cần kiểm tra.',
+      'Cần kiểm tra: Shop\uFF3B\uFF0E\uFF3Dcom.',
+      'Cần kiểm tra: Shop\uFF08dot\uFF09com.',
+      'Cần kiểm tra: Shop\uFF08dot\uFF09invalid.',
+      'Cần kiểm tra: Shop\uFF0Einvalid.',
+      'Mở Shop\uFF0Eru để xem.',
+      'Mở Shop\uFE52invalid để xem.',
+      'Mở Shop\u2024invalid để xem.',
+      'Xem: evil\uFF3B\uFF0E\uFF3DShop.',
+      'Xem: evil\uFF08dot\uFF09Shop.',
+      'Liên hệ evil\uFF20Shop.invalid ngay.',
     ]) {
       expect(
-        checkProjectWeeklyStatus(facts, {
+        checkProjectWeeklyStatus(shopOnlyFacts, {
           sentences: [
-            'Tuần này dự án Shop Q4 đã hoàn thành 2 việc.',
+            'Tuần này dự án Shop đã hoàn thành 2 việc.',
             badLinkSentence,
             'Tuần tới có 2 việc đến hạn.',
           ],
@@ -531,8 +542,29 @@ describe('projects.weekly_status agent checks (#2597)', () => {
       ).toEqual({ kind: 'none', code: 'LINK' });
     }
 
-    // Legitimate hyphenated phrase adjacent to a short trusted name is not broken into a false negative sign.
-    const shopOnlyFacts = sampleFacts({ projectName: 'Shop' });
+    // Trusted phrase ending in a literal period does not strip inside a domain, while still passing trailing-period prose.
+    const trailingDotFacts = sampleFacts({ projectName: 'Shop.' });
+    expect(
+      checkProjectWeeklyStatus(trailingDotFacts, {
+        sentences: [
+          'Tuần này dự án Shop. hoàn thành 2 việc.',
+          'Cần kiểm tra Shop.invalid ngay.',
+          'Tuần tới có 2 việc đến hạn.',
+        ],
+      }),
+    ).toEqual({ kind: 'none', code: 'LINK' });
+    expect(
+      checkProjectWeeklyStatus(trailingDotFacts, {
+        sentences: [
+          'Tuần này hoàn thành 2 việc cho dự án Shop.',
+          'Hiện có 1 việc quá hạn cần xử lý.',
+          'Tuần tới có 2 việc đến hạn.',
+        ],
+      }).kind,
+    ).toBe('summary');
+
+    // Legitimate ASCII hyphenated phrase adjacent to a short trusted name is not broken into a false negative sign,
+    // while fullwidth minus adjacent to a trusted name (Shop\uFF0D1) is still refused by NEGATIVE_SIGN_RE.
     expect(
       checkProjectWeeklyStatus(shopOnlyFacts, {
         sentences: [
@@ -542,6 +574,15 @@ describe('projects.weekly_status agent checks (#2597)', () => {
         ],
       }).kind,
     ).toBe('summary');
+    expect(
+      checkProjectWeeklyStatus(shopOnlyFacts, {
+        sentences: [
+          'Dự án Shop\uFF0D1 có 1 việc đang chờ xử lý.',
+          'Tuần này hoàn thành 2 việc đúng hạn.',
+          'Tuần tới có 2 việc đến hạn.',
+        ],
+      }),
+    ).toMatchObject({ kind: 'none', code: 'AI_OUTPUT_UNSAFE' });
 
     // Fullwidth minus, small minus, en-dash, and Unicode minus flips are refused after NFKC normalization.
     for (const negSentence of [

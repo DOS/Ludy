@@ -261,7 +261,7 @@ function formatColumns(columns?: readonly ProjectWeeklyStatusColumnFact[]): stri
       col.wipLimit === null
         ? 'no WIP limit'
         : `WIP limit ${col.wipLimit}${col.taskCount > col.wipLimit ? ' (over WIP limit)' : ''}`;
-    return `- "${fenced(oneLine(col.name, 80))}" (maps to ${oneLine(col.taskStatus, 32)}, ${col.taskCount} tasks, ${wip})`;
+    return `- "${fenced(oneLine(col.name, PROJECT_WEEKLY_STATUS_COLUMN_CHARS))}" (maps to ${oneLine(col.taskStatus, 32)}, ${col.taskCount} tasks, ${wip})`;
   });
   return `Board columns:\n<<<\n${lines.join('\n')}\n>>>`;
 }

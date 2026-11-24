@@ -35,8 +35,11 @@ export function plainLine(value: string, max: number): string {
 }
 
 const BOUNDARY_WORD_CHAR_RE = /[\p{L}\p{M}\p{N}]/u;
-const PRECEDING_CONNECTOR_RE = /(?:[\p{L}\p{M}\p{N}_.-]|(?:@|\(at\)|\[\.\]|\(dot\)|\sdot)\s*)$/iu;
-const FOLLOWING_CONNECTOR_RE = /^(?:[\p{L}\p{M}\p{N}_-]|\.(?=[\p{L}\p{M}\p{N}])|\s*(?:\[\.\]|\(dot\)|\s+dot(?=\s)|@|\(at\)))/iu;
+const CONNECTOR_CHAR_RE = /^[._@]$/u;
+const PRECEDING_NFKC_CONNECTOR_RE = /(?:[\p{L}\p{M}\p{N}_.]|(?:@|\(at\)|\[\.\]|\(dot\))\s*|\sdot\s+)$/iu;
+const FOLLOWING_NFKC_CONNECTOR_RE = /^(?:[\p{L}\p{M}\p{N}_]|\.(?=[\p{L}\p{M}\p{N}])|\s+dot(?=\s)|\s*(?:\[\.\]|\(dot\)|@|\(at\)))/iu;
+const PRECEDING_ASCII_HYPHEN_RE = /-$/u;
+const FOLLOWING_ASCII_HYPHEN_RE = /^-/u;
 
 /** Strips longest trusted phrases first on token boundaries so short trusted words cannot split adversarial domains, handles, or hyphenated tokens. */
 export function stripTrustedPhrases(text: string, trustedTexts: readonly string[]): string {
@@ -47,16 +50,22 @@ export function stripTrustedPhrases(text: string, trustedTexts: readonly string[
   for (const t of ordered) {
     const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const chars = Array.from(t);
+    const firstNfkc = (chars[0] ?? '').normalize('NFKC');
+    const lastNfkc = (chars[chars.length - 1] ?? '').normalize('NFKC');
+    const checkStart = BOUNDARY_WORD_CHAR_RE.test(firstNfkc) || CONNECTOR_CHAR_RE.test(firstNfkc);
+    const checkEnd = BOUNDARY_WORD_CHAR_RE.test(lastNfkc) || CONNECTOR_CHAR_RE.test(lastNfkc);
     const startsWord = BOUNDARY_WORD_CHAR_RE.test(chars[0] ?? '');
     const endsWord = BOUNDARY_WORD_CHAR_RE.test(chars[chars.length - 1] ?? '');
     out = out.replace(new RegExp(escaped, 'gu'), (match, offset: number, full: string) => {
-      if (startsWord) {
+      if (checkStart) {
         const before = full.slice(Math.max(0, offset - 32), offset);
-        if (PRECEDING_CONNECTOR_RE.test(before)) return match;
+        if (PRECEDING_NFKC_CONNECTOR_RE.test(before.normalize('NFKC'))) return match;
+        if (startsWord && PRECEDING_ASCII_HYPHEN_RE.test(before)) return match;
       }
-      if (endsWord) {
+      if (checkEnd) {
         const after = full.slice(offset + match.length, offset + match.length + 32);
-        if (FOLLOWING_CONNECTOR_RE.test(after)) return match;
+        if (FOLLOWING_NFKC_CONNECTOR_RE.test(after.normalize('NFKC'))) return match;
+        if (endsWord && FOLLOWING_ASCII_HYPHEN_RE.test(after)) return match;
       }
       return ' ';
     });
