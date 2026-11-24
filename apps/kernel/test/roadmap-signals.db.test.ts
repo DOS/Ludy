@@ -1806,7 +1806,7 @@ describe.skipIf(!ADMIN)('Projects #4492: Omnichannel Roadmap Signals (PG17)', ()
 
     const privAcctEmail = 'priv.acct@p4600.test';
     const privQuoteEmail = 'priv.quote@p4600.test';
-    const privQuotePhone = '0901460001';
+    const privQuotePhone = '0900000001';
     const privQuoteText = `SECRET_ATTENDEES_QUOTE Email: ${privQuoteEmail} Phone: ${privQuotePhone}`;
     const privIdemKey = randomUUID();
     const sigPriv = (
@@ -1827,7 +1827,7 @@ describe.skipIf(!ADMIN)('Projects #4492: Omnichannel Roadmap Signals (PG17)', ()
 
     const expOrgAcctEmail = 'exp.org.acct@p4600.test';
     const expOrgQuoteEmail = 'exp.org.quote@p4600.test';
-    const expOrgQuoteTax = '0312460002';
+    const expOrgQuoteTax = '0300000002';
     const expOrgQuoteText = `EXPIRED_ORG_TODAY_QUOTE Email: ${expOrgQuoteEmail} Tax: ${expOrgQuoteTax}`;
     const sigExpOrg = (
       await exec5<RoadmapSignalCreateResult>(recorder.userId, 'projects.roadmap.signal.create', {
