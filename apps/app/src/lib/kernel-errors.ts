@@ -1208,7 +1208,7 @@ export const KERNEL_ERROR_CODES = [
   'TASK_NOT_FOUND',
   'TASK_CHECKED_OUT',
   'OUTSIDE_LEGAL_ENTITY',
-  // Crove Social and connected channels.
+  // Ludy Social and connected channels.
   'POST_NOT_FOUND',
   'POST_ARCHIVED',
   'POST_ARCHIVE_IN_FLIGHT',
@@ -1603,6 +1603,7 @@ export const KERNEL_ERROR_CODES = [
   'SIGN_AI_DISABLED',
   'SIGN_FIELD_NOT_FOUND',
   // eSign Slice 5c scoped org API keys (#4441).
+  'SIGN_API_KEY_DUPLICATE_NAME',
   'SIGN_API_KEY_LIMIT_REACHED',
   'SIGN_API_KEY_NOT_FOUND',
 ] as const;
@@ -1672,6 +1673,7 @@ const LIBRARY_CODES: ReadonlySet<KernelErrorCode> = new Set([
   'SIGN_PLAYBOOK_TEXT_TOO_LARGE',
   'SIGN_AI_DISABLED',
   'SIGN_FIELD_NOT_FOUND',
+  'SIGN_API_KEY_DUPLICATE_NAME',
   'REDACTION_DUPLICATE_SELECTION',
   'REDACTION_PUBLISHED_IMMUTABLE',
   'REDACTION_SPAN_MISMATCH',

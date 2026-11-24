@@ -18,7 +18,7 @@ export interface SyncProgress {
   rows: number;
   unchanged: boolean;
   skipped: number;
-  // Invoices of the list the portal has an XML for; the downloads skip those Crove already has.
+  // Invoices of the list the portal has an XML for; the downloads skip those Ludy already has.
   withXml: number;
   downloaded: number;
   duplicates: number;

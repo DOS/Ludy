@@ -6,9 +6,11 @@
 //  - control characters and the line and paragraph separators (U+2028, U+2029) become a space, runs of space collapse into one, and the ends are trimmed;
 //  - it is cut at `max` characters (code points) and trimmed again, so the cut leaves no trailing space.
 // The text stays data for the client: the tool's description says so; this removes the cheap channels, it does not make a model immune.
+const DROPPED_LINE_CHARS_RE = /[\p{Cf}\p{Co}\p{Cn}\p{Cs}\u115f\u1160\u180b-\u180d\u2800\u3164\uffa0]+|\u034f/gu;
+
 export function plainLine(value: string, max: number): string {
-  const dropped = value.replace(/[\p{Cf}\p{Co}\p{Cn}\p{Cs}]+/gu, '');
-  const spaced = dropped.replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, ' ').replace(/ {2,}/g, ' ').trim();
+  const dropped = value.replace(DROPPED_LINE_CHARS_RE, '');
+  const spaced = dropped.replace(/[\p{Cc}\p{Zl}\p{Zp}\s]+/gu, ' ').trim();
   return [...spaced].slice(0, max).join('').trim();
 }
 

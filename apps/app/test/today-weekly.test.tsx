@@ -84,6 +84,8 @@ describe('TodayWeekly', () => {
   it('asks for the card on any other day, and calls nothing until then', () => {
     const html = render({ now: FRIDAY, data: answer() });
     expect(html).toContain('data-testid="today-weekly-ask"');
+    expect(html).toContain('data-weekly-slot=""');
+    expect(html).toContain(catalog('en').today.weekly.title);
     expect(html).toContain(catalog('en').today.weekly.ask);
     expect(html).not.toContain('data-testid="today-weekly"');
   });

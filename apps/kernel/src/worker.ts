@@ -72,6 +72,7 @@ import {
   runSignPdfSealJob,
   sweepSignCleanup,
   sweepSignExpire,
+  sweepSignPendingKycWork,
   sweepSignPendingWork,
   sweepSignPreExpiryReminders,
   type SignCaReconcileJob,
@@ -1577,6 +1578,18 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
             `[sign-work-recovery] re-queued inspect=${recovered.inspect} seal=${recovered.seal} ca=${recovered.caReconcile}`,
           );
         }
+        const kycRecovered = await sweepSignPendingKycWork({
+          workerDb: deps.workerDb,
+          runtime: deps.runtime,
+          appOn: (orgId) => deps.runtime.appOn(orgId, 'sign', { fresh: true }),
+          enqueueKycInspect: (orgId, envelopeId, fieldId) =>
+            enqueueSignKycAttachmentInspect(boss, orgId, envelopeId, fieldId),
+        });
+        if (kycRecovered.requeued > 0 || kycRecovered.timedOut > 0) {
+          console.log(
+            `[sign-kyc-recovery] requeued=${kycRecovered.requeued} timedOut=${kycRecovered.timedOut}`,
+          );
+        }
       } catch (error) {
         failure ??= error;
       }
@@ -1623,6 +1636,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // One delivery handed to the kernel-mcp-wake queue (a singleton job per delivery), by the sweep and by the wake-up for published minutes (#3803).
   const sendWake = (job: WakeJob) =>
     boss.send(QUEUES.mcpWake, job, { singletonKey: jobKey(job.orgId, QUEUES.mcpWake, job.id), retryLimit: WAKE_RETRY_LIMIT, retryDelay: WAKE_RETRY_DELAY_SECONDS, retryBackoff: true, expireInSeconds: WAKE_JOB_EXPIRE_SECONDS });
+  // One browser push job for a kernel notification (#3736, #4082): used by event-driven notify dispatch and cron-triggered morning notices.
+  const sendKernelPush = async (orgId: string, notificationId: string): Promise<void> => {
+    await boss.send(QUEUES.kernelPush, { orgId, notificationId } satisfies PushJob, {
+      singletonKey: jobKey(orgId, QUEUES.kernelPush, notificationId),
+      singletonSeconds: PUSH_SINGLETON_SECONDS,
+      retryLimit: 0,
+      expireInSeconds: PUSH_JOB_EXPIRE_SECONDS,
+    });
+  };
   if (wakeBroker && wakeBroker.id !== 'none') {
     await boss.work<WakeJob>(QUEUES.mcpWake, { batchSize: 1, includeMetadata: true }, async ([job]) => {
       if (!job) return;
@@ -1659,7 +1681,11 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // nothing (the mail queues send the mail), so it runs whenever the meetings module is installed; a missed tick needs no catching up, the next one finds what is due. Nothing here runs Vy.
   if (deps.runtime.installed('meetings')) {
     await boss.work(QUEUES.meetingsMorning, { batchSize: 1 }, async () => {
-      const done = await runMeetingsMorningSweep({ runtime: deps.runtime, workerDb: deps.workerDb });
+      const done = await runMeetingsMorningSweep({
+        runtime: deps.runtime,
+        workerDb: deps.workerDb,
+        ...(deps.push ? { onNotified: ({ orgId, notificationId }) => sendKernelPush(orgId, notificationId) } : {}),
+      });
       if (done.sent + done.failures > 0) console.log(`[meetings-morning] sent ${done.sent}, failures ${done.failures}`);
     });
     await boss.schedule(QUEUES.meetingsMorning, MEETINGS_MORNING_CRON, null, { tz: MEMBER_VY_SWEEP_TZ });
@@ -2210,12 +2236,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     if (deps.push && PUSH_EVENTS.has(job.data.type)) {
       try {
         for (const notificationId of await deps.runtime.query<string[]>('kernel.push.pending', { eventId: job.data.eventId }, as)) {
-          await boss.send(QUEUES.kernelPush, { orgId: job.data.orgId, notificationId } satisfies PushJob, {
-            singletonKey: jobKey(job.data.orgId, QUEUES.kernelPush, notificationId),
-            singletonSeconds: PUSH_SINGLETON_SECONDS,
-            retryLimit: 0,
-            expireInSeconds: PUSH_JOB_EXPIRE_SECONDS,
-          });
+          await sendKernelPush(job.data.orgId, notificationId);
         }
       } catch (error) {
         console.warn(`[kernel-push] ${job.data.eventId.slice(0, 8)} not queued`, error instanceof Error ? error.name : 'error');
@@ -3255,6 +3276,17 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   enqueueSeal: (orgId, envelopeId) => enqueueSignSeal(boss, orgId, envelopeId),
                   enqueueTemplateInspect: (orgId, templateId) => enqueueSignTemplateInspect(boss, orgId, templateId),
                   enqueueCaReconcile: (orgId, requestId) => enqueueSignCaReconcile(boss, orgId, requestId),
+                });
+                await sweepSignPendingKycWork({
+                  workerDb: deps.workerDb,
+                  runtime: deps.runtime,
+                  appOn: (orgId) => deps.runtime.appOn(orgId, 'sign', { fresh: true }),
+                  orgId: row.org_id,
+                  olderThan: new Date(),
+                  // Re-enabling sign after downtime should re-queue paused checks once instead of immediately timing them out.
+                  timeoutBefore: new Date(0),
+                  enqueueKycInspect: (orgId, envelopeId, fieldId) =>
+                    enqueueSignKycAttachmentInspect(boss, orgId, envelopeId, fieldId),
                 });
               }
               // An app switched on (ADR-0053, C3b): the events parked while it was off go back on the outbox now, not when the held sweep comes round. A failure here is the sweep's to

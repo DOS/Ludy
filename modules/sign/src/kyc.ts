@@ -164,8 +164,9 @@ function cleanLine(value: string, max: number): string {
 
 export function normalizeFoldedVi(value: string): string {
   return stripFormatControl(value)
+    .normalize('NFKC')
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]+/g, '')
+    .replace(/\p{M}+/gu, '')
     .replace(/[đĐ]/g, 'd')
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s-]+/gu, ' ')
@@ -686,7 +687,7 @@ async function loadVerifiedAttachmentContext(
 ) {
   const env = await ctx.trx
     .selectFrom('ludy_sign.envelope')
-    .select(['id', 'title', 'status', 'source_kind', 'source_id', 'created_by'])
+    .select(['id', 'title', 'status', 'source_kind', 'source_id', 'created_by', 'retained_org_visible', 'retained_reader_ids'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', envelopeId)
     .executeTakeFirst();
@@ -791,7 +792,7 @@ export const signKycList = defineQuery({
     const userId = assertUser(ctx);
     const env = await ctx.trx
       .selectFrom('ludy_sign.envelope')
-      .select(['id', 'source_kind', 'source_id', 'created_by'])
+      .select(['id', 'status', 'source_kind', 'source_id', 'created_by', 'retained_org_visible', 'retained_reader_ids'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
       .executeTakeFirst();

@@ -126,6 +126,10 @@ export async function runSignHookDelivery(
     await deps.runtime.execute('sign.hook.record', { id: job.id, outcome: 'dropped' }, ctx);
     return 'dropped';
   }
+  if (!delivery.payload) {
+    await deps.runtime.execute('sign.hook.record', { id: job.id, outcome: 'dropped' }, ctx);
+    return 'dropped';
+  }
 
   const target = await deps.runtime.query<SignHookTargetRow | null>(
     'sign.hook.target',

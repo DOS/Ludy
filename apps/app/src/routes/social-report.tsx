@@ -55,7 +55,7 @@ interface ReportPage {
   // rateBases (#1164): what each channel's engagement rate is made of, in each period; absent from a server without it,
   // which leaves the rate to the plain sums as before.
   channels: { channel: string; provider: string; posts: number; totals: Counts; rateBases?: RateBases; previous?: { posts: number; totals: Counts; rateBases?: RateBases } | null }[] | null;
-  // external (#1054): the post went out outside Crove; includesExternal: the report counts such posts. Both absent from
+  // external (#1054): the post went out outside Ludy; includesExternal: the report counts such posts. Both absent from
   // a server without them.
   top: { channel: string; provider: string; excerpt: string; publishedAt: string; url: string | null; metrics: Counts; external?: boolean }[] | null;
   includesExternal?: boolean;
@@ -181,7 +181,7 @@ export function SocialReportPage() {
   const against = t('against');
   const brand = data ? pageBrand(data.brand) : null;
   useBrandTitle(brand, data?.org ?? '');
-  // Neither mark until the page is known, so a branded report never shows Crove's logo while it loads.
+  // Neither mark until the page is known, so a branded report never shows Ludy's logo while it loads.
   const loading = token !== null && page.isLoading;
   // A printed report is on paper: the light theme while printing, whatever the screen uses.
   usePrintInLight();

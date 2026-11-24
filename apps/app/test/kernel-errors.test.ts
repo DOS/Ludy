@@ -112,6 +112,8 @@ const NOT_SHOWN: Record<string, string> = {
   SIGN_CA_CONNECTION_OWNER_LEFT: 'sign worker',
   SIGN_CA_INVALID_PADES_FILE: 'sign worker',
   SIGN_CA_REQUEST_NOT_FOUND: 'sign worker',
+  // External /api/v1/sign/envelopes/from-template REST API validation (#4441, #4510).
+  SIGN_TEXT_DEFAULT_TOO_LONG: 'sign api',
   // A restore re-recording an export that is not the org's newest one (#1726): only the worker's restore receives it.
   EXPORT_REBIND_MISMATCH: 'bug',
   // An export record racing another of the org (#1867): the worker records again.

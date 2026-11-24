@@ -38,7 +38,7 @@ const ANSWER: SinceYesterday = {
   ],
 };
 
-async function render(opts: { data?: unknown; error?: boolean; locale?: 'en' | 'vi' } = {}): Promise<string> {
+async function render(opts: { data?: unknown; error?: boolean; locale?: 'en' | 'vi'; variant?: 'section' | 'strip' } = {}): Promise<string> {
   const qc = client.current;
   qc.clear();
   const key = ['today', 'sinceYesterday'];
@@ -49,7 +49,7 @@ async function render(opts: { data?: unknown; error?: boolean; locale?: 'en' | '
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
       <IntlProvider locale={locale} messages={catalog(locale) as never}>
-        <SinceYesterday slug="acme" />
+        <SinceYesterday slug="acme" {...(opts.variant ? { variant: opts.variant } : {})} />
       </IntlProvider>
     </QueryClientProvider>,
   );
@@ -86,6 +86,16 @@ describe('SinceYesterday', () => {
     expect(await render({ error: true })).toBe('');
     // The query keeps the last good counts through a failed refetch; the section does not show them.
     expect(await render({ data: ANSWER, error: true })).toBe('');
+  });
+
+  it('renders compact strip pills with 44px phone targets when variant="strip" (#4644)', async () => {
+    const html = await render({ data: ANSWER, locale: 'vi', variant: 'strip' });
+    expect(html).toContain('data-testid="since-yesterday-strip"');
+    expect(html).toContain('data-testid="since-yesterday-pill"');
+    expect(html).toContain('max-md:min-h-11');
+    expect(html).toContain('Ly đã làm 5 việc cho bạn');
+    expect(html).not.toContain('<h2');
+    expect(await render({ data: { items: [] }, variant: 'strip' })).toBe('');
   });
 
   it('never calls a coworker an assistant (DESIGN.md 1.1)', () => {

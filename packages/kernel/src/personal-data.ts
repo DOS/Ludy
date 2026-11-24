@@ -770,6 +770,13 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: 'Sender-side KYC attachment verification findings (extracted tax IDs, CCCD numbers, or signer/entity names under Vietnam PDPL Law 91/2025/QH15): an erasure deletes any kyc_check row whose findings quote the value while leaving sealed agreement files intact, and a member may run the check again',
   },
+  // ludy_sign.kyc_check.file_id stays unclassified as internal in manifest (shared `file_id` column name, see line 428);
+  // deleted kyc_check attachment link counts are still reported in personalDataErase via `ludy_sign.kyc_check.file_id`.
+  'ludy_sign.field.attachment_file_id': {
+    kind: 'other',
+    handling: 'keep_record',
+    reason: 'Uploaded signer KYC attachment link on an e-signature field: cleared on unsealed envelopes when its KYC findings are erased so reads block immediately, while completed/sealed envelope evidence remains intact',
+  },
   'ludy_sign.member_signature.signature_typed_text': {
     kind: 'other',
     handling: 'erase',
@@ -1011,6 +1018,30 @@ async function meetingScan<T>(trx: QueryContext['trx'], run: () => Promise<T>): 
 // The tables of ludy_meetings.personal_row_ids's kind codes.
 const MEETING_ROW_TABLES: Record<number, string> = { 1: 'transcript_segment', 2: 'meeting_result', 3: 'action_item', 4: 'meeting', 5: 'meeting_note', 6: 'meeting_chapter' };
 
+// Caller-RLS meeting visibility and active text retention check for meetings.meeting roadmap signals (#4600, ADR-0047).
+function meetingSignalReadable(alias: 't' | 's'): RawBuilder<boolean> {
+  const orgRef = sql.ref(`${alias}.org_id`);
+  const sourceIdRef = sql.ref(`${alias}.source_id`);
+  return sql<boolean>`EXISTS (
+    SELECT 1
+      FROM ludy_meetings.meeting m
+     WHERE m.org_id = ${orgRef}
+       AND m.id = ${sourceIdRef}
+       AND (m.text_retention_date IS NULL OR m.text_retention_date > (pg_catalog.timezone('Asia/Ho_Chi_Minh', pg_catalog.now()))::date)
+  )`;
+}
+
+// Scrubs roadmap_signal.quote_excerpt to NULL whenever a meetings.meeting row is unreadable, past text retention, or deleted.
+function roadmapSignalRowExpr(alias: 't' | 's'): RawBuilder<Record<string, unknown>> {
+  const rowRef = sql.ref(alias);
+  const sourceTypeRef = sql.ref(`${alias}.source_type`);
+  return sql<Record<string, unknown>>`CASE
+    WHEN ${sourceTypeRef} = 'meetings.meeting' AND NOT ${meetingSignalReadable(alias)}
+      THEN (pg_catalog.to_jsonb(${rowRef}) - 'search') || pg_catalog.jsonb_build_object('quote_excerpt', NULL)
+    ELSE pg_catalog.to_jsonb(${rowRef}) - 'search'
+  END`;
+}
+
 // Every row of the org that holds the value, column by column (the finder's answer), and, when privateCounts, per author
 // how many of their private notes and to-dos mention it (ADR-0037: counted, never shown, whoever runs the finder).
 async function findPersonalData(
@@ -1061,6 +1092,14 @@ async function findPersonalData(
       if (ids.length === 0) continue;
       byId = sql`AND t.id = ANY(${ids}::uuid[])`;
     }
+    const signalVisibility =
+      key === 'ludy_projects.roadmap_signal.quote_excerpt'
+        ? sql`AND (t.source_type <> 'meetings.meeting' OR ${meetingSignalReadable('t')})`
+        : sql``;
+    const rowExpr =
+      schema === 'ludy_projects' && table === 'roadmap_signal'
+        ? roadmapSignalRowExpr('t')
+        : sql`pg_catalog.to_jsonb(t) - 'search'`;
     const isUnsealedExpr =
       schema === 'ludy_sign' && table === 'signer'
         ? sql<boolean>`EXISTS (
@@ -1072,9 +1111,9 @@ async function findPersonalData(
           )`
         : sql<boolean>`false`;
     const { rows } = await sql<{ row: Record<string, unknown>; is_unsealed: boolean }>`
-      SELECT pg_catalog.to_jsonb(t) - 'search' AS row, ${isUnsealedExpr} AS is_unsealed
+      SELECT ${rowExpr} AS row, ${isUnsealedExpr} AS is_unsealed
         FROM ${sql.table(`${schema}.${table}`)} AS t
-       WHERE t.org_id = ${orgId}::uuid AND ${match} ${shared} ${byId}
+       WHERE t.org_id = ${orgId}::uuid AND ${match} ${shared} ${byId} ${signalVisibility}
        LIMIT ${PERSONAL_DATA_ROW_LIMIT + 1}`.execute(trx);
     if (rows.length > PERSONAL_DATA_ROW_LIMIT) truncated = true;
     for (const { row, is_unsealed } of rows.slice(0, PERSONAL_DATA_ROW_LIMIT)) {
@@ -1126,7 +1165,7 @@ async function findPersonalData(
              OR EXISTS (SELECT 1 FROM ludy_finance.cash_voucher v WHERE v.org_id = p.org_id AND v.party_id = p.id)
              OR EXISTS (SELECT 1 FROM ludy_finance.journal_line l WHERE l.org_id = p.org_id AND l.party_id = p.id)
            ) AS documented,
-           pg_catalog.to_jsonb(s) AS row
+           ${roadmapSignalRowExpr('s')} AS row
       FROM ludy_projects.roadmap_signal s
       LEFT JOIN ludy_crm.deal d ON s.source_type = 'crm.deal' AND d.org_id = s.org_id AND d.id = s.source_id
       JOIN ludy_kernel.party p
@@ -1135,7 +1174,7 @@ async function findPersonalData(
      WHERE s.org_id = ${orgId}::uuid
        AND s.account_label IS NOT NULL
        AND ${partySignalFilter}
-     GROUP BY s.org_id, s.id
+     GROUP BY s.org_id, s.id, s.source_type, s.source_id
      ORDER BY s.created_at DESC, s.id
      LIMIT ${PERSONAL_DATA_ROW_LIMIT + 1}`.execute(trx);
   if (partyDealSignals.rows.length > PERSONAL_DATA_ROW_LIMIT) truncated = true;
@@ -1723,12 +1762,18 @@ export const personalDataErase = defineCommand({
       SELECT ludy_finance.personal_data_erase_marketplace_hook_notice(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
     add('ludy_finance.marketplace_hook_notice.body', Number(marketplaceNotices[0]?.rows ?? 0));
 
-    // Sender-side KYC attachment checks (#4443, PDPL Law 91/2025/QH15): delete any kyc_check row in the org whose
-    // findings_json quotes the value (including 8/9-digit legacy CMND numbers and rows on attendees-only meeting_minutes
-    // envelopes via the owner-only definer); sealed agreement files stay untouched and checks can always be re-run.
-    const { rows: kycRows } = await sql<{ rows: number }>`
-      SELECT ludy_sign.personal_data_erase_kyc_check(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
-    add('ludy_sign.kyc_check.findings_json', Number(kycRows[0]?.rows ?? 0));
+    // Sender-side KYC attachment checks (#4443, PDPL Law 91/2025/QH15; summary counts #4510): delete any
+    // kyc_check row in the org whose findings_json quotes the value (including 8/9-digit legacy CMND numbers
+    // and rows on attendees-only meeting_minutes envelopes via the owner-only definer), detach matching unsealed
+    // attachment links, and report both KYC row and attachment counts; sealed agreement files stay untouched.
+    const { rows: kycRows } = await sql<{
+      summary: { rows?: number; attachments?: number; unsealedAttachments?: number };
+    }>`
+      SELECT ludy_sign.personal_data_erase_kyc_check_summary(${probe.kind}, ${probeValue(probe)}) AS summary`.execute(ctx.trx);
+    const kycSummary = kycRows[0]?.summary;
+    add('ludy_sign.kyc_check.findings_json', Number(kycSummary?.rows ?? 0));
+    add('ludy_sign.kyc_check.file_id', Number(kycSummary?.attachments ?? 0));
+    add('ludy_sign.field.attachment_file_id', Number(kycSummary?.unsealedAttachments ?? 0));
 
     // Notes (#1678, ADR-0037 section 5). A shared note stays and has every mention of the value edited out, the one
     // case where someone other than its author edits a note: ERASED_TEXT_MARK in its title and body where the value
@@ -2397,10 +2442,26 @@ export const personalDataErase = defineCommand({
 
     // What stays, with its reason: the finder's answer after the erasure (the cleared values no longer match).
     const after = await findPersonalData(ctx.trx, ctx.orgId, probe, false, documentedPartyIds);
+    // Count all unredacted quote_excerpt rows skipped by shortNumber in one org-scoped aggregate (both readable rows
+    // beyond PERSONAL_DATA_ROW_LIMIT and unreadable, expired, or deleted meeting rows omitted by findPersonalData),
+    // keeping kept[] accurate and count-only without leaking text or meeting IDs (#4600).
+    const shortQuoteExcerptCount = shortNumber
+      ? Number(
+          (
+            await sql<{ rows: string }>`
+              SELECT pg_catalog.count(*)::text AS rows
+                FROM ludy_projects.roadmap_signal s
+               WHERE s.org_id = ${ctx.orgId}::uuid
+                 AND s.quote_excerpt IS NOT NULL
+                 AND ${freeTextMatch(probe, sql.ref('s.quote_excerpt'))}`.execute(ctx.trx)
+          ).rows[0]?.rows ?? 0,
+        )
+      : 0;
     // Grouped by column and reason: rows of one column may be kept for different reasons (the default legal entity and
     // the others).
     const kept = new Map<string, { column: string; rows: number; reason: string }>();
     for (const m of after.matches) {
+      if (shortNumber && m.column === 'ludy_projects.roadmap_signal.quote_excerpt') continue;
       const reason = !shortNumber
         ? m.reason
         : m.column === 'ludy_finance.misa_amis_push.reason'
@@ -2416,6 +2477,14 @@ export const personalDataErase = defineCommand({
       const k = kept.get(group) ?? { column: m.column, rows: 0, reason };
       k.rows += 1;
       kept.set(group, k);
+    }
+    if (shortQuoteExcerptCount > 0) {
+      const column = 'ludy_projects.roadmap_signal.quote_excerpt';
+      kept.set(`${column}\n${ACTIVITY_SHORT_NUMBER_REASON}`, {
+        column,
+        rows: shortQuoteExcerptCount,
+        reason: ACTIVITY_SHORT_NUMBER_REASON,
+      });
     }
     // The original files behind posted entries that name these parties (issue #1009): accounting evidence the erasure
     // never deletes, held in the bucket for the legal period. Reported with the date the hold runs to, when it is set.

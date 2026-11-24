@@ -43,6 +43,7 @@ export interface SignWebhooksViewProps {
   role: string | null | undefined;
   list: SignWebhookListResult | null;
   deliveries: SignWebhookDeliveryRecord[];
+  deliveriesError?: unknown;
   selectedWebhookId: string | null;
   revealedSecret: { webhookUrl: string; secret: string; hint: string } | null;
   busyAction?: string | null;
@@ -64,6 +65,7 @@ export function SignWebhooksView({
   role,
   list,
   deliveries,
+  deliveriesError = null,
   selectedWebhookId,
   revealedSecret,
   busyAction = null,
@@ -214,10 +216,13 @@ export function SignWebhooksView({
                   className="min-h-11"
                   value={newUrl}
                   placeholder={t('urlPlaceholder')}
+                  aria-describedby="sign-webhook-new-url-hint"
                   onChange={(e) => setNewUrl(e.target.value)}
                   data-testid="sign-webhook-new-url-input"
                 />
-                <p className="text-xs text-muted-foreground">{t('urlHint')}</p>
+                <p id="sign-webhook-new-url-hint" className="text-xs text-muted-foreground">
+                  {t('urlHint')}
+                </p>
               </div>
 
               <div className="space-y-1.5">
@@ -401,8 +406,12 @@ export function SignWebhooksView({
                             type="url"
                             className="min-h-11"
                             value={editUrl}
+                            aria-describedby={`sign-webhook-edit-url-hint-${wh.id}`}
                             onChange={(e) => setEditUrl(e.target.value)}
                           />
+                          <p id={`sign-webhook-edit-url-hint-${wh.id}`} className="text-xs text-muted-foreground">
+                            {t('urlHint')}
+                          </p>
                         </div>
                         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                           {SIGN_WEBHOOK_EVENT_TYPES.map((ev) => {
@@ -484,10 +493,15 @@ export function SignWebhooksView({
           </div>
           <CardDescription className="text-xs">{t('deliveriesSubtitle')}</CardDescription>
         </CardHeader>
-        <CardContent>
-          {deliveries.length === 0 ? (
+        <CardContent className="space-y-3">
+          {deliveriesError ? (
+            <Alert variant="destructive" data-testid="sign-webhook-deliveries-error">
+              <AlertDescription>{errorMessage(deliveriesError)}</AlertDescription>
+            </Alert>
+          ) : null}
+          {!deliveriesError && deliveries.length === 0 ? (
             <Empty title={t('deliveriesEmptyTitle')} hint={t('deliveriesEmptyHint')} />
-          ) : (
+          ) : deliveries.length > 0 ? (
             <div className="overflow-x-auto" data-testid="sign-webhook-deliveries-list">
               <table className="w-full text-left text-xs">
                 <thead>
@@ -536,7 +550,7 @@ export function SignWebhooksView({
                 </tbody>
               </table>
             </div>
-          )}
+          ) : null}
         </CardContent>
       </Card>
 
@@ -720,6 +734,7 @@ export function SignWebhooksSection({ role }: { role: string | null | undefined 
       role={role}
       list={webhooksQuery.data}
       deliveries={deliveriesQuery.data?.items ?? []}
+      deliveriesError={deliveriesQuery.error ?? null}
       selectedWebhookId={selectedWebhookId}
       revealedSecret={revealedSecret}
       busyAction={busyAction}

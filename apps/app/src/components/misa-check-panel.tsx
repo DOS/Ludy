@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The check before a MISA SME voucher export (#3848): a person picks a file kind, asks for the check, and sees what MISA's import will refuse or cut, grouped by kind and column with a count and the first
 // examples, before the download. The check is a read (vouchers.misaCheck) over the very rows the file is built from; it only warns, and the export buttons beside it are not held back by it. Nothing here
-// names a supplier, an invoice or an amount: a row is told by Crove's voucher number and the line.
+// names a supplier, an invoice or an amount: a row is told by Ludy's voucher number and the line.
 import { useMutation } from '@tanstack/react-query';
 import { useEffect, useId, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';

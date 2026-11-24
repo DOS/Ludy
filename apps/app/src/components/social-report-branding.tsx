@@ -1,5 +1,5 @@
 // White-label client reports (#1053): the agency's mark on the client report, the review page and the plan print, and
-// the settings card on the Channels page where owners and admins set it. Without a brand the pages show Crove's logo,
+// the settings card on the Channels page where owners and admins set it. Without a brand the pages show Ludy's logo,
 // exactly as before.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
@@ -14,7 +14,7 @@ import { LibraryPicker } from './social-media.tsx';
 import { client, ClientError, errorMessage, fetchFile, orpc, queryClient, uploadFiles } from '../lib/api.ts';
 import { accentStyle, makeLogoDataUrl, type ReportBrand } from '../lib/social-report-branding.ts';
 
-/** The page's mark: the agency's logo and name when the org has a brand, else Crove's logo. */
+/** The page's mark: the agency's logo and name when the org has a brand, else Ludy's logo. */
 export function BrandMark({ brand, org }: { brand: ReportBrand | null; org: string }) {
   if (!brand) return <Logo />;
   const name = brand.name ?? org;
@@ -26,7 +26,7 @@ export function BrandMark({ brand, org }: { brand: ReportBrand | null; org: stri
   );
 }
 
-/** The line under a branded page that it was made with Crove, unless the org hides it; nothing without a brand. */
+/** The line under a branded page that it was made with Ludy, unless the org hides it; nothing without a brand. */
 export function MadeWithLudy({ brand }: { brand: ReportBrand | null }) {
   const t = useTranslations('social.reportBranding');
   if (!brand || brand.hideCrove) return null;
@@ -41,7 +41,7 @@ export function AccentRule({ brand }: { brand: ReportBrand | null }) {
 
 export { accentStyle };
 
-/** The browser tab's title on a branded page: the agency's name instead of Crove's, put back when the page goes. */
+/** The browser tab's title on a branded page: the agency's name instead of Ludy's, put back when the page goes. */
 export function useBrandTitle(brand: ReportBrand | null, org: string) {
   const name = brand ? (brand.name ?? org) : null;
   useEffect(() => {
