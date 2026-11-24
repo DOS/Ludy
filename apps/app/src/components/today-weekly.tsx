@@ -61,17 +61,21 @@ export function TodayWeekly({ slug }: { slug: string }) {
 
   if (!shown) {
     return (
-      <div className="flex justify-end" data-testid="today-weekly-ask">
+      <Card data-weekly-slot="" data-testid="today-weekly-ask" className="flex flex-wrap items-center justify-between gap-3 p-4">
+        <div>
+          <h3 className="text-sm font-semibold">{t('title')}</h3>
+          <p className="text-xs text-subtle-foreground">{t('window')}</p>
+        </div>
         <Button type="button" variant="outline" size="sm" onClick={() => setAsked(true)}>
           {t('ask')}
         </Button>
-      </div>
+      </Card>
     );
   }
   if (weekly.isError) return null;
   if (weekly.isPending) {
     return (
-      <div aria-busy="true" className="h-24 animate-pulse rounded-xl border bg-muted/40 motion-reduce:animate-none">
+      <div data-weekly-slot="" aria-busy="true" className="h-24 animate-pulse rounded-xl border bg-muted/40 motion-reduce:animate-none">
         <span className="sr-only">{t('loading')}</span>
       </div>
     );
@@ -81,14 +85,14 @@ export function TodayWeekly({ slug }: { slug: string }) {
   // Nothing the member can open to count: no card.
   if (tiles.length === 0) return null;
   return (
-    <Card className="block p-4" data-testid="today-weekly">
-      <div className="flex items-center gap-2">
+    <Card data-weekly-slot="" className="block p-4" data-testid="today-weekly">
+      <div className="flex flex-wrap items-center gap-2">
         <h3 className="text-sm font-semibold">{t('title')}</h3>
         <span className="text-xs text-subtle-foreground">{t('window')}</span>
         {writtenBy === 'vy' && <Badge variant="proposal">{t('aiBadge')}</Badge>}
       </div>
       {sentences.length > 0 && <p className="mt-2 text-sm text-foreground">{sentences.join(' ')}</p>}
-      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3">
+      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2.5 text-sm xl:grid-cols-3">
         {tiles.map((tile) => (
           <div key={tile.key} data-testid={`weekly-${tile.key}`}>
             <dt className="text-xs text-subtle-foreground">{t(`tiles.${tile.key}`)}</dt>

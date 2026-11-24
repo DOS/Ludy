@@ -1,38 +1,50 @@
-// The org's overview (issue #1249): what waits for the user in this org today, each with its count and a link to the
-// screen that clears it, then one card per installed app with its key figure (#1528; this screen opens the Home app),
-// then the tax obligations due in the next 30 days or overdue, which a member marks done here as on the multi-client
-// home screen (#921). The org's figures are the ones /clients reads for it (org.overview).
+// The org's overview (issue #1249, compressed action-first layout #4644):
+// Row 1: "Hôm nay cần bạn" hero card (with TodayBrief integrated or Day-1 SME quick-start on empty new orgs),
+// Row 2: compact operational strip merging waiting counts and SinceYesterday coworker recaps (hidden when empty),
+// Row 3: tax deadlines in the next 30 days beside "Tuần này" in a 2-column grid at lg (plus compact sales number gaps),
+// Row 4: quiet clickable app status links replacing tall duplicate cards.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { TaxDueView } from '@ludy/kernel-contract';
 import { Link, useParams } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
 import { Button, buttonVariants } from '@ludy/ui/components/button';
-import { Card } from '@ludy/ui/components/card';
 import { NavIcon, type NavIconName } from '@ludy/ui/components/nav-icon';
 import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { cn } from '@ludy/ui/lib/utils';
+import { Day1QuickStart } from '../components/day1-quickstart.tsx';
 import { OrgNotesPanel } from '../components/notes-panel.tsx';
 import { SalesNumberGaps } from '../components/sales-number-gaps.tsx';
-import { SinceYesterday } from '../components/since-yesterday.tsx';
+import { SinceYesterday, useSinceYesterday } from '../components/since-yesterday.tsx';
 import { TodayList } from '../components/today-list.tsx';
 import { TodayWeekly } from '../components/today-weekly.tsx';
 import { DueWhen, TONE_CLASS, usePeriodLabel } from '../components/tax-due.tsx';
 import { useChosenEntity, useLegalEntity } from '../components/entity-switcher.tsx';
-import { DataTable, Empty, ErrorText, PageHeader, Spinner } from '../components/ui.tsx';
+import { CardSkeleton, DataTable, Empty, ErrorText, PageHeader, Spinner } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { OPEN_TASK_STATUSES } from '../lib/agents.ts';
 import { installedApps, type AppId } from '../lib/apps.ts';
 import { deadlineTone } from '../lib/clients.ts';
-import { WAITING_LINKS, appsLayout, gapsFromYear, tasksNotListed, unreadNotices, waitingItems, type WaitingKey } from '../lib/overview.ts';
+import {
+  WAITING_LINKS,
+  allCounted,
+  gapsFromYear,
+  isDay1Empty,
+  quickStartSteps,
+  tasksNotListed,
+  unreadNotices,
+  waitingItems,
+  type WaitingKey,
+} from '../lib/overview.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 import { PHONE_TARGET } from '../lib/touch-target.ts';
 import { entityToMark, markableEntities } from '../lib/tax-calendar.ts';
+import { queueRows } from '../lib/today.ts';
 import { useWorkNotifications } from './notifications.tsx';
 import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 
-// The icon of each card; where it opens is WAITING_LINKS (lib/overview.ts).
+// The icon of each waiting item; where it opens is WAITING_LINKS (lib/overview.ts).
 const TARGET = {
   failedFiles: { icon: 'documents' },
   notifications: { icon: 'alerts' },
@@ -43,20 +55,20 @@ const TARGET = {
 const APP_CARD = {
   // Tài chính opens on its Tổng quan (#2631).
   finance: { to: '/o/$slug/accounting', icon: 'appAccounting' },
-  // Engage holds the CRM's screens too (#2435), so its card shows the posts' figure and the bookings' one.
+  // Engage holds the CRM's screens too (#2435), so its status link shows posts and bookings figures.
   engage: { to: '/o/$slug/social', icon: 'appSocial' },
-  // The HR app opens on its staff list (#2530); its card has no figure, since a count of employees is a payroll read.
+  // The HR app opens on its staff list (#2530); its status link has no figure, since a count of employees is a payroll read.
   hr: { to: '/o/$slug/hr/employees', icon: 'appHr' },
 } as const satisfies Partial<Record<AppId, { to: string; icon: NavIconName }>>;
-const OTHER_CARD_ICON = { teamwork: 'appTeamwork', sign: 'journal', ai: 'appAi' } as const satisfies Partial<Record<AppId, NavIconName>>;
+const OTHER_CARD_ICON = { teamwork: 'appTeamwork', sign: 'signEnvelopes', ai: 'appAi' } as const satisfies Partial<Record<AppId, NavIconName>>;
 
 const HOUR_MS = 60 * 60 * 1000;
 const WEEK_MS = 7 * 24 * HOUR_MS;
-// The lists the cards count return at most this many rows; a full page reads as "200+", not as an exact figure.
+// The lists counted here return at most this many rows; a full page reads as "200+", not as an exact figure.
 const LIST_CAP = 200;
 const counted = (n: number, page: number) => (page >= LIST_CAP ? `${n}+` : String(n));
 
-// One card per installed app (#1528, #3225): its key figure and a way in.
+// Quiet horizontal status links for installed apps (#1528, #3225, compressed in #4644).
 function AppCards({
   slug,
   vat,
@@ -71,11 +83,12 @@ function AppCards({
   hrMember: boolean;
 }) {
   const t = useTranslations('overview.apps');
+  const tc = useTranslations('overview.apps.compact');
   const tn = useTranslations('nav');
   const periodLabel = usePeriodLabel();
   useModulesVersion(); // the apps of the org can change while this screen is open
   const modules = installedModules();
-  // The Engage app also holds Ads, so it can be installed with neither the social nor the crm module: its card counts posts and
+  // The Engage app also holds Ads, so it can be installed with neither the social nor the crm module: its figures count posts and
   // bookings, which need them, so it shows only where one of the two runs.
   const apps = installedApps(modules).filter((a) => (a.id !== 'engage' || modules.includes('social') || modules.includes('crm')) && (a.id !== 'hr' || hrMember));
   const has = (module: string) => modules.includes(module);
@@ -87,110 +100,95 @@ function AppCards({
   const bookings = useQuery({ ...orpc.crm.bookings.list.queryOptions({ input: { scope: 'mine', period: 'upcoming' } }), enabled: has('crm') });
   if (apps.length === 0) return null;
 
-  // zero: a figure that reads 0 is not shown, so a card is only for an app with something to read (#3591).
-  type Figure = { key: string; value: string | null; label: string; retry?: () => void; zero?: boolean };
-  const failed = (key: string, q: { refetch: () => unknown }): Figure => ({ key, value: '-', label: t('failed'), retry: () => void q.refetch() });
-  const postsFigure = (): Figure => {
-    if (posts.isError) return failed('posts', posts);
-    if (!posts.data) return { key: 'posts', value: null, label: '' };
-    // The range holds every post with a time in it; only the scheduled ones are waiting to go out.
-    const scheduled = posts.data.filter((p) => p.status === 'scheduled').length;
-    return { key: 'posts', value: counted(scheduled, posts.data.length), label: t('social.scheduled', { count: scheduled }), zero: scheduled === 0 };
-  };
-  const bookingsFigure = (): Figure => {
-    if (bookings.isError) return failed('bookings', bookings);
-    if (!bookings.data) return { key: 'bookings', value: null, label: '' };
-    const upcoming = bookings.data.filter((b) => b.status === 'pending' || b.status === 'confirmed').length;
-    return { key: 'bookings', value: counted(upcoming, bookings.data.length), label: t('crm.upcoming', { count: upcoming }), zero: upcoming === 0 };
-  };
-  // The key figures of an app's card: one for the accounting, and for Engage one for each of its modules that runs.
-  const figures = (id: AppId): Figure[] => {
+  type StatusChip = { key: string; label: string; pending?: boolean; retry?: () => void };
+  const statuses = (id: AppId): StatusChip[] => {
     if (id === 'teamwork' || id === 'ai' || id === 'hr' || id === 'sign') return [];
     if (id === 'finance') {
-      if (!vatLoaded) return [{ key: 'vat', value: null, label: '' }];
-      // No filing period chosen: nothing to count yet, and the tax box below offers the choice.
-      if (!vat) return [{ key: 'vat', value: '-', label: '', zero: true }];
+      if (!vatLoaded) return [{ key: 'vat', label: '', pending: true }];
+      if (!vat) return [];
       return [
-        vat.daysLeft >= 0
-          ? { key: 'vat', value: String(vat.daysLeft), label: t('accounting.vatDue', { days: vat.daysLeft, period: periodLabel(vat.period) }) }
-          : { key: 'vat', value: String(-vat.daysLeft), label: t('accounting.vatOverdue', { days: -vat.daysLeft, period: periodLabel(vat.period) }) },
+        {
+          key: 'vat',
+          label:
+            vat.daysLeft >= 0
+              ? tc('vatDue', { days: vat.daysLeft, period: periodLabel(vat.period) })
+              : tc('vatOverdue', { days: -vat.daysLeft, period: periodLabel(vat.period) }),
+        },
       ];
     }
-    return [...(has('social') ? [postsFigure()] : []), ...(has('crm') ? [bookingsFigure()] : [])];
+    const out: StatusChip[] = [];
+    if (has('social')) {
+      if (posts.isError) out.push({ key: 'posts', label: t('failed'), retry: () => void posts.refetch() });
+      else if (!posts.data) out.push({ key: 'posts', label: '', pending: true });
+      else {
+        const scheduled = posts.data.filter((p) => p.status === 'scheduled').length;
+        if (scheduled > 0) out.push({ key: 'posts', label: tc('posts', { count: scheduled }).replace(/\b\d+\b/, counted(scheduled, posts.data.length)) });
+      }
+    }
+    if (has('crm')) {
+      if (bookings.isError) out.push({ key: 'bookings', label: t('failed'), retry: () => void bookings.refetch() });
+      else if (!bookings.data) out.push({ key: 'bookings', label: '', pending: true });
+      else {
+        const upcoming = bookings.data.filter((b) => b.status === 'pending' || b.status === 'confirmed').length;
+        if (upcoming > 0) out.push({ key: 'bookings', label: tc('bookings', { count: upcoming }).replace(/\b\d+\b/, counted(upcoming, bookings.data.length)) });
+      }
+    }
+    return out;
   };
+
   const target = (id: AppId, app: { home: string }) => {
     if (id === 'hr' && !manager) return '/o/$slug/hr/my';
     const card = id in APP_CARD ? APP_CARD[id as keyof typeof APP_CARD] : null;
-    // Engage opens on its posts; with the social module off its card shows the bookings, so that is where it opens.
+    // Engage opens on its posts; with the social module off its status link shows the bookings, so that is where it opens.
     return id === 'engage' && !has('social') ? '/o/$slug/bookings' : (card?.to ?? app.home);
   };
-  const layout = appsLayout(apps.map((app) => ({ id: app.id, figures: figures(app.id).map((f) => ({ zero: f.zero === true, pending: f.value === null, failed: f.retry !== undefined })) })));
-  if (layout.cards.length === 0 && layout.line.length === 0) return null;
 
   return (
-    <section className="mt-8" aria-labelledby="overview-apps">
-      <h2 id="overview-apps" className="text-sm font-semibold">
+    <section className="mt-6" aria-labelledby="overview-apps">
+      <h2 id="overview-apps" className="text-sm font-semibold text-foreground">
         {t('title')}
       </h2>
-      {layout.cards.length > 0 && (
-        <ul className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {apps
-            .filter((app) => layout.cards.includes(app.id))
-            .map((app) => {
-              const id = app.id;
-              const card = id in APP_CARD ? APP_CARD[id as keyof typeof APP_CARD] : null;
-              const icon: NavIconName = card?.icon ?? OTHER_CARD_ICON[id as keyof typeof OTHER_CARD_ICON];
-              return (
-                <li key={id} data-app-card={id}>
-                  <Card className="flex h-full flex-col gap-2 p-4">
-                    <span className="flex items-center gap-2 text-sm font-medium text-foreground">
-                      <NavIcon name={icon} className="text-muted-foreground" />
-                      {tn(`appNames.${id}`)}
-                    </span>
-                    {figures(id)
-                      .filter((fig) => fig.zero !== true)
-                      .map(({ key, value, label, retry }) =>
-                        value === null ? (
-                          <div key={key}>
-                            <Spinner />
-                          </div>
-                        ) : (
-                          <p key={key} className="text-sm text-muted-foreground">
-                            <span className="mr-1.5 font-mono text-2xl font-semibold tabular-nums text-foreground">{value}</span>
-                            {label}
-                            {retry && (
-                              <button type="button" className="ml-2 text-xs text-link hover:underline" onClick={retry}>
-                                {t('retry')}
-                              </button>
-                            )}
-                          </p>
-                        ),
-                      )}
-                    <Link to={target(id, app)} params={{ slug }} className={`mt-auto text-xs text-link hover:underline ${PHONE_TARGET}`}>
-                      {t('open', { app: tn(`appNames.${id}`) })}
-                    </Link>
-                  </Card>
-                </li>
-              );
-            })}
-        </ul>
-      )}
-      {/* The apps with no figure to show: one line of links instead of a card each (#3591). */}
-      {layout.line.length > 0 && (
-        <p className="mt-3 text-sm text-muted-foreground" data-testid="overview-apps-line">
-          {t('others')}:{' '}
-          {apps
-            .filter((app) => layout.line.includes(app.id))
-            .map((app, i) => (
-              <span key={app.id}>
-                {i > 0 && ' · '}
-                <Link to={target(app.id, app)} params={{ slug }} className={`text-link hover:underline ${PHONE_TARGET}`}>
-                  {tn(`appNames.${app.id}`)}
+      <ul className="mt-2 flex flex-wrap items-center gap-2" data-testid="overview-apps-row">
+        {apps.map((app) => {
+          const id = app.id;
+          const card = id in APP_CARD ? APP_CARD[id as keyof typeof APP_CARD] : null;
+          const icon: NavIconName = card?.icon ?? OTHER_CARD_ICON[id as keyof typeof OTHER_CARD_ICON];
+          const appStatuses = statuses(id);
+          const pending = appStatuses.some((s) => s.pending);
+          const retryAction = appStatuses.find((s) => s.retry)?.retry;
+          const readyLabels = appStatuses.filter((s) => !s.pending && !s.retry && s.label).map((s) => s.label);
+          const linkClass = cn(
+            'inline-flex items-center gap-2 rounded-lg border bg-card px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+            PHONE_TARGET,
+          );
+          if (retryAction) {
+            return (
+              <li key={id} data-app-status={id} className="inline-flex items-center gap-1.5 rounded-lg border bg-card px-3 py-1.5 text-xs">
+                <Link to={target(id, app)} params={{ slug }} className={cn('inline-flex items-center gap-2 font-medium text-foreground hover:text-link hover:underline', PHONE_TARGET)}>
+                  <NavIcon name={icon} className="text-muted-foreground" />
+                  <span>{tn(`appNames.${id}`)}</span>
                 </Link>
-              </span>
-            ))}
-        </p>
-      )}
+                <span className="text-subtle-foreground">{t('failed')}</span>
+                <button type="button" className={cn('text-link hover:underline', PHONE_TARGET)} onClick={retryAction}>
+                  {t('retry')}
+                </button>
+              </li>
+            );
+          }
+          return (
+            <li key={id} data-app-status={id}>
+              <Link to={target(id, app)} params={{ slug }} className={linkClass}>
+                <NavIcon name={icon} className="text-muted-foreground" />
+                <span className="font-medium text-foreground">{tn(`appNames.${id}`)}</span>
+                {pending && <Spinner className="size-3.5" />}
+                {!pending && readyLabels.length > 0 && (
+                  <span className="text-subtle-foreground tabular-nums">{readyLabels.join(' · ')}</span>
+                )}
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
     </section>
   );
 }
@@ -257,6 +255,7 @@ export function OverviewPage() {
   const tasks = useQuery({ ...orpc.tasks.list.queryOptions({ input: { mine: true, status: [...OPEN_TASK_STATUSES] } }), refetchInterval: every });
   // The list the "Hôm nay cần bạn" section shows (the same query, so one read): what it already counts is not counted again below.
   const today = useQuery({ ...orpc.today.list.queryOptions(), refetchInterval: every });
+  const since = useSinceYesterday();
   // Each entity marks its own tax dues (#1553); with several, the rows say which are still open.
   const entity = useChosenEntity();
   const books = useLegalEntity(slug);
@@ -269,27 +268,49 @@ export function OverviewPage() {
     tasks: tasksNotListed(tasks.data, today.data?.items),
   };
   const waiting = waitingItems(counts);
+  const sinceItems = !since.isError ? (since.data?.items ?? []) : [];
   const failed = [overview, work, tasks].find((q) => q.isError);
 
   const vat = overview.data?.vatDeadline ?? null;
   const dues = overview.data?.taxDues ?? [];
   // The VAT return in the tax calendar already says when it is due; otherwise the next one is named on its own.
   const vatListed = vat !== null && dues.some((d) => d.obligation === 'vat_return' && d.period === vat.period);
-  const canChooseVat = role === 'owner' || role === 'admin';
-  const noFilingPeriod = overview.data !== undefined && overview.data.vatFilingPeriod === null;
+  const canChooseVat = financeOn && (role === 'owner' || role === 'admin');
+  const noFilingPeriod = financeOn && overview.data !== undefined && overview.data.vatFilingPeriod === null;
+
+  const quickStart = quickStartSteps({ modules, role });
+  const day1Empty =
+    quickStart.length > 0 &&
+    isDay1Empty({
+      todayLoaded: today.isSuccess,
+      todayCount: queueRows(today.data?.items ?? []).length,
+      overviewLoaded: overview.isSuccess,
+      lastActivityAt: overview.data?.lastActivityAt,
+      taxDuesCount: dues.length,
+      pendingProposals: overview.data?.pendingProposals ?? 0,
+      failedFiles: overview.data?.failedFiles ?? 0,
+      waitingLoaded: allCounted(counts, ['failedFiles', 'notifications', 'tasks']),
+      waitingCount: waiting.length,
+      sinceResolved: !since.isPending,
+      sinceCount: sinceItems.length,
+      hasError: Boolean(failed) || today.isError,
+    });
+
   // The choice is a button where the gap is (#3591), not a link in a sentence.
   const chooseVat = canChooseVat ? (
     <Link to="/o/$slug/settings" params={{ slug }} hash="tax-profile" className={buttonVariants({ variant: 'outline', size: 'sm' })}>
       {tcl('chooseFilingPeriod')}
     </Link>
   ) : undefined;
-  const uploadAction = (
-    <Link to="/o/$slug/inbox" params={{ slug }} className={buttonVariants()}>
-      {t('upload')}
-    </Link>
-  );
+  const uploadAction =
+    financeOn && !day1Empty ? (
+      <Link to="/o/$slug/inbox" params={{ slug }} className={buttonVariants()}>
+        {t('upload')}
+      </Link>
+    ) : undefined;
 
-  // The order is what the owner needs: what needs them today, the tax deadlines, the week, then the apps (#3591).
+  const hasOperationalStrip = waiting.length > 0 || Boolean(failed) || sinceItems.length > 0;
+
   return (
     <div>
       <PageHeader
@@ -298,93 +319,117 @@ export function OverviewPage() {
         actions={uploadAction}
       />
 
-      {/* What needs the member today across the apps (#2383), from each line's own read. */}
-      <TodayList slug={slug} />
+      {/* Row 1: Action queue with integrated TodayBrief, or 3-step Day-1 SME quick-start on empty new orgs (#2383, #4644). */}
+      <TodayList
+        slug={slug}
+        emptyContent={day1Empty ? <Day1QuickStart slug={slug} steps={quickStart} financeOn={financeOn} /> : undefined}
+      />
 
-      {(waiting.length > 0 || failed) && (
-        <section className="mt-8" aria-labelledby="overview-waiting">
-          <h2 id="overview-waiting" className="text-sm font-semibold">
-            {t('waiting.title')}
-          </h2>
+      {/* Row 2: Compact operational strip combining Waiting counts + SinceYesterday coworker updates; hidden when empty (#4644). */}
+      {hasOperationalStrip && (
+        <section className="mt-4" aria-label={t('operationalStrip')}>
           {failed && <ErrorText>{errorMessage(failed.error)}</ErrorText>}
-          {waiting.length > 0 && (
-            <Card className="mt-3 block overflow-hidden p-0">
-              <ul className="divide-y">
-                {waiting.map(({ key, count }) => (
-                  <li key={key}>
-                    <Link to={WAITING_LINKS[key].to} params={{ slug }} className="flex items-center gap-3 px-4 py-3 text-sm hover:bg-muted/50 focus-visible:bg-muted/50">
-                      <NavIcon name={TARGET[key].icon} className="text-muted-foreground" />
-                      <span className="w-8 shrink-0 text-right font-mono text-base font-semibold tabular-nums text-foreground">{count}</span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-foreground">{t(`waiting.${key}.label`, { count })}</span>
-                        <span className="block text-xs text-subtle-foreground">{t(`waiting.${key}.hint`)}</span>
-                      </span>
-                      {/* The whole row is the link; on a phone the words would only squeeze what it counts. */}
-                      <span className="hidden shrink-0 text-xs text-link sm:inline">{t(`waiting.${key}.open`)}</span>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </Card>
+          {(waiting.length > 0 || sinceItems.length > 0) && (
+            <div data-testid="overview-operational-strip" className="flex flex-wrap items-center gap-2 rounded-xl border bg-card px-3 py-2">
+              {waiting.length > 0 && (
+                <ul className="flex flex-wrap items-center gap-2" aria-label={t('waiting.title')}>
+                  {waiting.map(({ key, count }) => (
+                    <li key={key}>
+                      <Link
+                        to={WAITING_LINKS[key].to}
+                        params={{ slug }}
+                        title={t(`waiting.${key}.hint`)}
+                        data-testid={`waiting-${key}`}
+                        className={cn(
+                          'inline-flex items-center gap-2 rounded-lg bg-secondary px-2.5 py-1.5 text-sm text-secondary-foreground transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+                          PHONE_TARGET,
+                        )}
+                      >
+                        <NavIcon name={TARGET[key].icon} className={key === 'failedFiles' ? 'text-destructive' : 'text-muted-foreground'} />
+                        <span className="font-mono font-semibold tabular-nums text-foreground">{count}</span>
+                        <span>{t(`waiting.${key}.label`, { count })}</span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {waiting.length > 0 && sinceItems.length > 0 && <span aria-hidden="true" className="hidden h-5 w-px bg-border sm:inline-block" />}
+              {sinceItems.length > 0 && <SinceYesterday slug={slug} variant="strip" />}
+            </div>
           )}
         </section>
       )}
 
-      <section className="mt-8" aria-labelledby="overview-tax">
-        <h2 id="overview-tax" className="text-sm font-semibold">
-          {tt('title')}
-        </h2>
-        <p className="mt-1 mb-3 text-xs text-subtle-foreground">{t('taxSubtitle')}</p>
-        {vat && !vatListed && (
-          <p className="mb-3 text-sm">
-            {t('vatNext', { period: periodLabel(vat.period) })}{' '}
-            <span className={cn('font-medium tabular-nums', TONE_CLASS[deadlineTone(vat.daysLeft)])}>{f.date(vat.dueDate)}</span>{' '}
-            <span className="text-subtle-foreground">({tt('daysLeft', { days: vat.daysLeft })})</span>
-          </p>
+      {/* Row 3: Tax obligations (next 30 days) and "Tuần này" side-by-side at lg (#4644). */}
+      <div
+        data-testid="overview-row-3"
+        className={cn(
+          'mt-6 grid gap-6 lg:items-start',
+          !day1Empty && 'lg:grid-cols-2 [&:not(:has([data-weekly-slot]))]:lg:grid-cols-1',
         )}
-        {noFilingPeriod && dues.length > 0 && (
-          <p className="mb-3 flex flex-wrap items-center gap-3 text-sm text-subtle-foreground">
-            {tcl('noFilingPeriod')}
-            {chooseVat}
-          </p>
-        )}
-        {overview.data &&
-          (dues.length === 0 ? (
-            <Empty title={tt('empty')} hint={noFilingPeriod ? tcl('noFilingPeriod') : tt('emptyHint')} action={noFilingPeriod ? chooseVat : undefined} />
+      >
+        <section className="min-w-0" aria-labelledby="overview-tax">
+          <h2 id="overview-tax" className="text-sm font-semibold">
+            {tt('title')}
+          </h2>
+          <p className="mt-1 mb-3 text-xs text-subtle-foreground">{t('taxSubtitle')}</p>
+          {vat && !vatListed && (
+            <p className="mb-3 text-sm">
+              {t('vatNext', { period: periodLabel(vat.period) })}{' '}
+              <span className={cn('font-medium tabular-nums', TONE_CLASS[deadlineTone(vat.daysLeft)])}>{f.date(vat.dueDate)}</span>{' '}
+              <span className="text-subtle-foreground">({tt('daysLeft', { days: vat.daysLeft })})</span>
+            </p>
+          )}
+          {noFilingPeriod && dues.length > 0 && (
+            <p className="mb-3 flex flex-wrap items-center gap-3 text-sm text-subtle-foreground">
+              {tcl('noFilingPeriod')}
+              {chooseVat}
+            </p>
+          )}
+          {overview.isPending ? (
+            <CardSkeleton />
           ) : (
-            <DataTable stacked head={[tt('columns.due'), tt('columns.obligation'), tt('columns.period'), '']}>
-              {dues.map((d) => (
-                <DueRow key={`${d.obligation}:${d.period}`} due={d} severalEntities={books.entities.length > 1} chosen={books.entityId} />
-              ))}
-            </DataTable>
-          ))}
-        <p className="mt-3 text-xs text-subtle-foreground">{tt('unconfirmed')}</p>
-      </section>
+            overview.data &&
+            (dues.length === 0 ? (
+              <Empty compact title={tt('empty')} hint={noFilingPeriod ? tcl('noFilingPeriod') : tt('emptyHint')} action={noFilingPeriod ? chooseVat : undefined} />
+            ) : (
+              <DataTable stacked fit head={[tt('columns.due'), tt('columns.obligation'), tt('columns.period'), '']}>
+                {dues.map((d) => (
+                  <DueRow key={`${d.obligation}:${d.period}`} due={d} severalEntities={books.entities.length > 1} chosen={books.entityId} />
+                ))}
+              </DataTable>
+            ))
+          )}
+          <p className="mt-2 text-xs text-subtle-foreground">{tt('unconfirmed')}</p>
+        </section>
 
-      {/* "Tuần này" (#3257): the last 7 days in figures computed by code, with Vy's checked sentences; Monday to Wednesday by itself, any day on request. */}
-      <div className="mt-8">
-        <TodayWeekly slug={slug} />
+        {!day1Empty && (
+          <div className="min-w-0">
+            <TodayWeekly slug={slug} />
+          </div>
+        )}
       </div>
 
-      {/* What each AI coworker prepared over the last day (#3256): counts only, nothing when there is none. */}
-      <SinceYesterday slug={slug} />
-
-      {/* Numbers missing in the org's own sales invoice series (#2140): this year's series, and last year's while its returns are filed. */}
+      {/* Compact sales invoice number gaps when present (#2140, #4644). */}
       {financeOn && (
         <SalesNumberGaps
-          className="mt-8"
+          className="mt-6"
           quiet
+          compact
+          detailsLabel={t('showDetails')}
+          hideDetailsLabel={t('hideDetails')}
           fromYear={gapsFromYear(new Date())}
           legalEntityId={entity.legalEntityId}
           enabled={entity.ready}
           action={
-            <Link to="/o/$slug/vat" params={{ slug }} className="text-link underline">
+            <Link to="/o/$slug/vat" params={{ slug }} className={cn('text-xs text-link underline', PHONE_TARGET)}>
               {tg('open')}
             </Link>
           }
         />
       )}
 
+      {/* Row 4: Quiet compact app status links (#4644). */}
       <AppCards
         slug={slug}
         vat={vat}

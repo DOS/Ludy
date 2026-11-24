@@ -1,3 +1,5 @@
+import type { NavIconName } from '@ludy/ui/components/nav-icon';
+
 // What waits for the user in one org (issue #1249), in the order the overview lists it: files that could not be read, then what is addressed to the
 // user. A count of 0 is not listed; a figure not read yet (undefined) is not listed either, so the list never claims "nothing waits" for something it has
 // not counted.
@@ -78,4 +80,102 @@ export function appsLayout<Id extends string>(apps: readonly { id: Id; figures: 
     else line.push(app.id);
   }
   return { cards, line, pending };
+}
+
+export type QuickStartStepId =
+  | 'uploadInvoice'
+  | 'connectChannel'
+  | 'addContact'
+  | 'createEnvelope'
+  | 'configureApps'
+  | 'inviteTeam'
+  | 'createNote'
+  | 'createDeal'
+  | 'createTask';
+
+export type QuickStartTarget =
+  | '/o/$slug/inbox'
+  | '/o/$slug/social/channels'
+  | '/o/$slug/contacts'
+  | '/o/$slug/sign/envelopes'
+  | '/o/$slug/settings/apps'
+  | '/o/$slug/settings/members'
+  | '/o/$slug/notes'
+  | '/o/$slug/deals'
+  | '/o/$slug/tasks';
+
+export interface QuickStartStep {
+  readonly id: QuickStartStepId;
+  readonly to: QuickStartTarget;
+  readonly icon: NavIconName;
+}
+
+// Builds up to 3 Day-1 SME quick-start steps filtered strictly to enabled org modules and the caller's role (#4644).
+export function quickStartSteps({
+  modules,
+  role,
+}: {
+  modules: readonly string[];
+  role: 'owner' | 'admin' | 'member' | 'viewer' | undefined;
+}): QuickStartStep[] {
+  if (!role || role === 'viewer') return [];
+  const has = (m: string) => modules.includes(m);
+  const canManage = role === 'owner' || role === 'admin';
+  const steps: QuickStartStep[] = [];
+  const add = (step: QuickStartStep) => {
+    if (steps.length < 3 && !steps.some((existing) => existing.id === step.id)) {
+      steps.push(step);
+    }
+  };
+
+  // Step 1: First concrete value action from the primary enabled business app.
+  if (has('finance')) add({ id: 'uploadInvoice', to: '/o/$slug/inbox', icon: 'documents' });
+  else if (has('social')) add({ id: 'connectChannel', to: '/o/$slug/social/channels', icon: 'social' });
+  else if (has('crm')) add({ id: 'addContact', to: '/o/$slug/contacts', icon: 'contacts' });
+  else if (has('sign')) add({ id: 'createEnvelope', to: '/o/$slug/sign/envelopes', icon: 'signEnvelopes' });
+  else if (has('notes')) add({ id: 'createNote', to: '/o/$slug/notes', icon: 'notes' });
+  else add({ id: 'createTask', to: '/o/$slug/tasks', icon: 'tasks' });
+
+  // Step 2: Organization & app/team setup for owners and admins.
+  if (canManage) add({ id: 'configureApps', to: '/o/$slug/settings/apps', icon: 'settingsApps' });
+
+  // Step 3 (and fallback fills): First collaboration or secondary enabled app workflow.
+  if (has('notes')) add({ id: 'createNote', to: '/o/$slug/notes', icon: 'notes' });
+  if (has('sign')) add({ id: 'createEnvelope', to: '/o/$slug/sign/envelopes', icon: 'signEnvelopes' });
+  if (has('crm')) add({ id: 'createDeal', to: '/o/$slug/deals', icon: 'deals' });
+  add({ id: 'createTask', to: '/o/$slug/tasks', icon: 'tasks' });
+  if (canManage) add({ id: 'inviteTeam', to: '/o/$slug/settings/members', icon: 'settingsMembers' });
+  if (has('social')) add({ id: 'connectChannel', to: '/o/$slug/social/channels', icon: 'social' });
+
+  return steps;
+}
+
+export interface Day1EmptyInput {
+  todayLoaded: boolean;
+  todayCount: number;
+  overviewLoaded: boolean;
+  lastActivityAt: string | null | undefined;
+  taxDuesCount: number;
+  pendingProposals: number;
+  failedFiles: number;
+  waitingLoaded: boolean;
+  waitingCount: number;
+  sinceResolved: boolean;
+  sinceCount: number;
+  hasError: boolean;
+}
+
+// True only once all overview inputs have settled and the org has zero activity, zero waiting work, and no tax dues clutter (#4644).
+export function isDay1Empty(input: Day1EmptyInput): boolean {
+  if (input.hasError) return false;
+  if (!input.todayLoaded || !input.overviewLoaded || !input.waitingLoaded || !input.sinceResolved) return false;
+  return (
+    input.todayCount === 0 &&
+    input.lastActivityAt === null &&
+    input.taxDuesCount === 0 &&
+    input.pendingProposals === 0 &&
+    input.failedFiles === 0 &&
+    input.waitingCount === 0 &&
+    input.sinceCount === 0
+  );
 }

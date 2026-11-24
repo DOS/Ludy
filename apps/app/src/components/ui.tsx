@@ -38,9 +38,9 @@ export function ScreenTitle({ name }: { name: string }) {
   return null;
 }
 
-export function Empty({ title, hint, action }: { title: string; hint?: string | undefined; action?: ReactNode }) {
+export function Empty({ title, hint, action, compact = false }: { title: string; hint?: string | undefined; action?: ReactNode; compact?: boolean }) {
   return (
-    <EmptyRoot className="border border-dashed px-6 py-12">
+    <EmptyRoot className={cn('border border-dashed', compact ? 'px-4 py-6' : 'px-6 py-12')}>
       <EmptyHeader>
         <EmptyTitle className="text-foreground">{title}</EmptyTitle>
         {hint && <EmptyDescription className="text-subtle-foreground">{hint}</EmptyDescription>}
@@ -374,7 +374,7 @@ const STACKED =
   'max-sm:[&_td[data-label]:not(:empty)]:before:mr-1 max-sm:[&_td[data-label]:not(:empty)]:before:text-xs max-sm:[&_td[data-label]:not(:empty)]:before:text-subtle-foreground max-sm:[&_td[data-label]:not(:empty)]:before:content-[attr(data-label)] ' +
   'max-sm:[&_td:not([colspan])_button]:min-h-11 max-sm:[&_td:not([colspan])_select]:min-h-11 max-sm:[&_td:not([colspan])>a]:inline-flex max-sm:[&_td:not([colspan])>a]:min-h-11 max-sm:[&_td:not([colspan])>a]:items-center';
 
-export function DataTable({ head, numeric = [], foot, stacked = false, stickyFirstCol = false, children }: { head: string[]; numeric?: number[]; foot?: ReactNode; stacked?: boolean; stickyFirstCol?: boolean; children: ReactNode }) {
+export function DataTable({ head, numeric = [], foot, stacked = false, stickyFirstCol = false, fit = false, children }: { head: string[]; numeric?: number[]; foot?: ReactNode; stacked?: boolean; stickyFirstCol?: boolean; fit?: boolean; children: ReactNode }) {
   const scroller = useRef<HTMLDivElement>(null);
   // The header row is pinned inside the scroll box: a row the keyboard focuses stops below it (#1575).
   const header = useRef<HTMLTableSectionElement>(null);
@@ -394,7 +394,7 @@ export function DataTable({ head, numeric = [], foot, stacked = false, stickyFir
     <div className={cn('overflow-hidden rounded-xl border bg-card print:overflow-visible', stacked && 'max-sm:border-0 max-sm:bg-transparent')}>
       <Table
         stickyFirstCol={stickyFirstCol}
-        className={cn('min-w-[640px] [&_td]:whitespace-normal print:min-w-0', stacked && STACKED)}
+        className={cn(fit ? 'min-w-0' : 'min-w-[640px]', '[&_td]:whitespace-normal print:min-w-0', stacked && STACKED)}
         container={{ ref: scroller, className: cn('max-h-[max(24rem,calc(100dvh-10rem))] overflow-y-auto print:max-h-none print:overflow-visible', stacked && 'max-sm:max-h-none max-sm:overflow-visible'), tabIndex: scrolls ? 0 : undefined }}
       >
         {/* The rule under the header is a shadow: a collapsed border does not move with a sticky row. */}
