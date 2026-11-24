@@ -2117,7 +2117,7 @@ export function createHttpApp(deps: HttpDeps) {
     const signApiV1IpLimit = deps.signApiV1Limits?.ip ?? new RateLimiter({ perMinute: SIGN_API_V1_IP_PER_MINUTE });
     const signApiV1KeyReadLimit = deps.signApiV1Limits?.keyRead ?? new RateLimiter({ perMinute: SIGN_API_V1_KEY_READ_PER_MINUTE });
     const signApiV1KeyDraftLimit = deps.signApiV1Limits?.keyDraft ?? new RateLimiter({ perMinute: SIGN_API_V1_KEY_DRAFT_PER_MINUTE });
-    const signApiV1PdfReads = deps.signApiV1Limits?.pdfReads ?? new ConcurrencyLimiter({ total: SIGN_PDF_READS_MAX, perKey: SIGN_PDF_READS_MAX });
+    const signApiV1PdfReads = deps.signApiV1Limits?.pdfReads ?? new ConcurrencyLimiter({ total: SIGN_PDF_READS_MAX });
 
     const signApiV1Guard: MiddlewareHandler = async (c, next) => {
       setSignSecurityHeaders(c);

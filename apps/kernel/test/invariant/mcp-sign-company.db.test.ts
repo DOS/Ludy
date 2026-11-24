@@ -875,8 +875,8 @@ suite('eSign MCP company grant database and projection invariants (#4441)', () =
     );
     expect(unconfirmedDetail.obligation).toBeNull();
 
-    // Redact email-shaped substrings from signer.roleLabel without modifying ordinary labels (#4510).
-    await runtime.execute(
+    // Redact email-shaped substrings from signer.roleLabel (including U+FEFF BOM attempts) without modifying ordinary labels (#4510).
+    const proposedSignerAdded = await runtime.execute<{ signerId: string }>(
       'sign.signer.add',
       {
         envelopeId: ids.proposedEnv,
@@ -897,6 +897,19 @@ suite('eSign MCP company grant database and projection invariants (#4441)', () =
     );
     expect(redactedDetail.signers[0]?.roleLabel).toBe('Ben B <[redacted]>');
     expect(JSON.stringify(redactedDetail)).not.toContain('signer-leak@mcp-company.test');
+
+    await sqlAdmin(
+      `UPDATE ludy_sign.signer SET role_label = $3 WHERE org_id = $1 AND id = $2`,
+      [orgA, proposedSignerAdded.signerId, 'Ben B alice@\uFEFFexample.com'],
+    );
+    const bomRedactedDetail = await runtime.query<McpSignEnvelopeDetail>(
+      'sign.mcp.envelope_get',
+      { envelopeId: ids.proposedEnv },
+      ctx,
+    );
+    expect(bomRedactedDetail.signers[0]?.roleLabel).toBe('Ben B [redacted]');
+    expect(JSON.stringify(bomRedactedDetail)).not.toContain('alice@');
+    expect(JSON.stringify(bomRedactedDetail)).not.toContain('example.com');
 
     const renewals = await runtime.query<McpSignRenewalsResult>(
       'sign.mcp.renewals',
@@ -1098,7 +1111,7 @@ suite('eSign MCP company grant database and projection invariants (#4441)', () =
       expect(renewals.items.some((item) => item.envelopeId === urgentDueId)).toBe(true);
       expect(renewals.total).toBeGreaterThan(200);
       expect(renewals.truncated).toBe(true);
-      expect([datedId, urgentDueId]).toContain(renewals.items[0]!.envelopeId);
+      expect(renewals.items[0]!.envelopeId).toBe(urgentDueId);
     } finally {
       if (createdEnvIds.length > 0) {
         await sqlAdmin(

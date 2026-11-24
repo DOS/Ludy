@@ -1356,6 +1356,88 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
     expect(afterTimeoutRow.rows[0]?.status).toBe('needs_review');
     expect(afterTimeoutRow.rows[0]?.findings_json?.inspectState).toBe('failed');
 
+    // Verify kyc_check_pending_recovery_idx, worker-only role check, cursor/cutoff validation,
+    // and exclusion of disabled-sign and non-active tenants (#4510, B1).
+    const recoveryIdx = await admin((c) =>
+      c.query<{ indexdef: string }>(
+        `SELECT indexdef FROM pg_indexes WHERE schemaname = 'ludy_sign' AND tablename = 'kyc_check' AND indexname = 'kyc_check_pending_recovery_idx'`,
+      ),
+    );
+    expect(recoveryIdx.rows[0]?.indexdef).toContain("status = 'pending'::text");
+
+    await expect(
+      pool.query(`SELECT * FROM ludy_sign.kyc_work_recovery_candidates($1::timestamptz, 10, $2::uuid)`, [
+        new Date(),
+        org.orgId,
+      ]),
+    ).rejects.toMatchObject({ code: '42501' });
+
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query(
+        `GRANT EXECUTE ON FUNCTION ludy_sign.kyc_work_recovery_candidates(timestamptz, integer, uuid, timestamptz, uuid, uuid) TO ludy_app`,
+      );
+      await c.query(`SET SESSION AUTHORIZATION 'ludy_app'`);
+      try {
+        await expect(
+          c.query(`SELECT * FROM ludy_sign.kyc_work_recovery_candidates($1::timestamptz, 10, $2::uuid)`, [
+            new Date(),
+            org.orgId,
+          ]),
+        ).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('SIGN_RECOVERY_WORKER_ONLY') });
+      } finally {
+        await c.query('RESET SESSION AUTHORIZATION');
+        await c.query('ROLLBACK');
+      }
+    });
+
+    await expect(
+      workerPool.query(
+        `SELECT * FROM ludy_sign.kyc_work_recovery_candidates($1::timestamptz, 10, $2::uuid, $1::timestamptz, NULL, NULL)`,
+        [new Date(), org.orgId],
+      ),
+    ).rejects.toMatchObject({ code: '22023', message: expect.stringContaining('SIGN_RECOVERY_INVALID_CURSOR') });
+
+    await expect(
+      workerPool.query(`SELECT * FROM ludy_sign.kyc_work_recovery_candidates(NULL, 10, $1::uuid)`, [org.orgId]),
+    ).rejects.toMatchObject({ code: '22023', message: expect.stringContaining('SIGN_CUTOFF_REQUIRED') });
+
+    await runtime.execute(
+      'kernel.org.set_app',
+      { module: 'sign', enabled: false },
+      { actor: asMfa(owner), orgId: org.orgId },
+    );
+    try {
+      const disabledCandidates = await workerPool.query<{ field_id: string }>(
+        `SELECT field_id FROM ludy_sign.kyc_work_recovery_candidates($1::timestamptz, 10, $2::uuid)`,
+        [new Date(), org.orgId],
+      );
+      expect(disabledCandidates.rows).toEqual([]);
+    } finally {
+      await runtime.execute(
+        'kernel.org.set_app',
+        { module: 'sign', enabled: true },
+        { actor: asMfa(owner), orgId: org.orgId },
+      );
+    }
+
+    await admin((c) => c.query(`UPDATE ludy_kernel.tenant SET status = 'suspended' WHERE org_id = $1`, [org.orgId]));
+    try {
+      const suspendedCandidates = await workerPool.query<{ field_id: string }>(
+        `SELECT field_id FROM ludy_sign.kyc_work_recovery_candidates($1::timestamptz, 10, $2::uuid)`,
+        [new Date(), org.orgId],
+      );
+      expect(suspendedCandidates.rows).toEqual([]);
+    } finally {
+      await admin((c) => c.query(`UPDATE ludy_kernel.tenant SET status = 'active' WHERE org_id = $1`, [org.orgId]));
+    }
+
+    const activeCandidates = await workerPool.query<{ field_id: string }>(
+      `SELECT field_id FROM ludy_sign.kyc_work_recovery_candidates($1::timestamptz, 10, $2::uuid)`,
+      [new Date(), org.orgId],
+    );
+    expect(activeCandidates.rows.map((r) => r.field_id)).toEqual([staleFieldId]);
+
     // Inspect requeued staleFieldId, void sweepSetup (unsealed), then verify PDPL erase reports + unlinks attachment_file_id.
     await runSignPdfInspectJob(
       { workerDb, runtime: workerRuntime, store, extract: realExtract },

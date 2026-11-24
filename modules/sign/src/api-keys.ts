@@ -84,11 +84,12 @@ function normalizeApiKeyRecord(raw: RawApiKeyJson): SignApiKeyRecord {
 
 function mapApiKeySqlError(error: unknown): never {
   const message = error instanceof Error ? error.message : String(error);
-  const sqlCode = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
+  const sqlConstraint =
+    typeof error === 'object' && error !== null ? (error as { constraint?: unknown }).constraint : undefined;
   if (
     message.includes('SIGN_API_KEY_DUPLICATE_NAME') ||
-    message.includes('api_key_org_active_name_uidx') ||
-    sqlCode === '23505'
+    sqlConstraint === 'api_key_org_active_name_uidx' ||
+    message.includes('api_key_org_active_name_uidx')
   ) {
     throw new DomainError(
       'SIGN_API_KEY_DUPLICATE_NAME',

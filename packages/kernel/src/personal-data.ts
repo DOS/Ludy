@@ -770,15 +770,12 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: 'Sender-side KYC attachment verification findings (extracted tax IDs, CCCD numbers, or signer/entity names under Vietnam PDPL Law 91/2025/QH15): an erasure deletes any kyc_check row whose findings quote the value while leaving sealed agreement files intact, and a member may run the check again',
   },
-  'ludy_sign.kyc_check.file_id': {
-    kind: 'other',
-    handling: 'keep_record',
-    reason: 'Supporting attachment file reference on deleted kyc_check rows: deleted kyc_check attachment links are counted in erasure reports while executed/sealed envelope attachments stay preserved',
-  },
+  // ludy_sign.kyc_check.file_id stays unclassified as internal in manifest (shared `file_id` column name, see line 428);
+  // deleted kyc_check attachment link counts are still reported in personalDataErase via `ludy_sign.kyc_check.file_id`.
   'ludy_sign.field.attachment_file_id': {
     kind: 'other',
-    handling: 'erase',
-    reason: 'Uploaded signer KYC attachment link on an unsealed e-signature field: cleared on unsealed envelopes when its KYC findings are erased so reads block immediately, while completed/sealed envelope evidence remains intact',
+    handling: 'keep_record',
+    reason: 'Uploaded signer KYC attachment link on an e-signature field: cleared on unsealed envelopes when its KYC findings are erased so reads block immediately, while completed/sealed envelope evidence remains intact',
   },
   'ludy_sign.member_signature.signature_typed_text': {
     kind: 'other',

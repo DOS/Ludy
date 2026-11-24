@@ -29,9 +29,10 @@ const ROLE_LABEL_MAX = 120;
 const OBLIGATION_TITLE_MAX = 200;
 const EMAIL_IN_LABEL_RE = /[^\s@<>()[\],;:"\\]+@(?:[^\s@.<>()[\],;:"\\]+\.)+[^\s@.<>()[\],;:"\\]{2,}/g;
 
-function sanitizeMcpRoleLabel(raw: string): string {
-  const redacted = raw.replace(EMAIL_IN_LABEL_RE, '[redacted]');
-  return plainLine(redacted, ROLE_LABEL_MAX);
+export function sanitizeMcpRoleLabel(raw: string): string {
+  // Strip format/control characters without truncating first so U+FEFF or trailing segments cannot bypass redaction.
+  const cleaned = plainLine(raw, Math.max(ROLE_LABEL_MAX, raw.length));
+  return plainLine(cleaned.replace(EMAIL_IN_LABEL_RE, '[redacted]'), ROLE_LABEL_MAX);
 }
 
 export interface McpSignSignerCounts {
@@ -376,11 +377,7 @@ export const mcpSignRenewals = defineQuery({
     const withinWindowSql = sql<boolean>`(
       o.next_pending_due_date IS NOT NULL
       OR (o.expiry_date IS NOT NULL AND (o.expiry_date - COALESCE(o.renewal_notice_days, 0)) <= (${todayVn}::date + ${input.withinDays}::integer))
-      OR EXISTS (
-        SELECT 1
-        FROM pg_catalog.jsonb_array_elements(o.obligations_json) AS elem
-        WHERE elem->>'status' = 'pending'
-      )
+      OR o.obligations_json @> '[{"status":"pending"}]'::jsonb
     )`;
 
     const { rows: countRows } = await sql<{ total: number }>`

@@ -60,11 +60,13 @@ const suite = ADMIN ? describe : describe.skip;
 
 class MemoryStore implements BlobStore {
   readonly blobs = new Map<string, Uint8Array>();
+  beforeGet: ((key: string) => Promise<void>) | null = null;
   async put(key: string, bytes: Uint8Array) {
     this.blobs.set(key, bytes);
     return contentGeneration(sha256Hex(bytes));
   }
   async get(key: string) {
+    if (this.beforeGet) await this.beforeGet(key);
     const found = this.blobs.get(key);
     if (!found) throw new Error(`missing blob: ${key}`);
     return found;
@@ -160,6 +162,7 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
   let app!: ReturnType<typeof createHttpApp>;
   let appUnentitled!: ReturnType<typeof createHttpApp>;
   let appTightRate!: ReturnType<typeof createHttpApp>;
+  let appDefaultPdfLimits!: ReturnType<typeof createHttpApp>;
   let tightKeyReadLimit!: RateLimiter;
   let tightPdfReads!: ConcurrencyLimiter;
   const store = new MemoryStore();
@@ -374,7 +377,7 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
     });
 
     tightKeyReadLimit = new RateLimiter({ perMinute: 1 });
-    tightPdfReads = new ConcurrencyLimiter({ total: 1, perKey: 1 });
+    tightPdfReads = new ConcurrencyLimiter({ total: 2, perKey: 1 });
     appTightRate = createHttpApp({
       config,
       runtime,
@@ -389,6 +392,15 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
         keyDraft: new RateLimiter({ perMinute: 1 }),
         pdfReads: tightPdfReads,
       },
+    });
+    appDefaultPdfLimits = createHttpApp({
+      config,
+      runtime,
+      store,
+      authenticate,
+      pool,
+      aiEnabled: false,
+      billing: { entitlements: async () => ['full'] },
     });
 
     for (const acc of [owner, adminUser, member, viewer, foreignOwner]) {
@@ -1266,15 +1278,171 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
       message: 'Too many requests, please retry later',
     });
 
-    // Saturated signApiV1Limits.pdfReads answers 503 SIGN_PDF_BUSY on /sealed and /certificate cleanly.
+    // Seed a sealed envelope + API key in Org B so cross-org concurrency isolation can be verified (#4510, B3).
+    const orgBSealedDoc = await ingestPdf(orgB.orgId, foreignOwner, 'org-b-sealed');
+    const orgBSealedEnv = (
+      await runtime.execute<{ envelopeId: string }>(
+        'sign.envelope.create',
+        { title: 'Hop dong cong ty B da dong dau', sourceFileId: orgBSealedDoc.fileId, routingMode: 'parallel' },
+        { actor: asUser(foreignOwner), orgId: orgB.orgId },
+      )
+    ).envelopeId;
+    await workerRuntime.execute(
+      'sign.envelope.inspect_complete',
+      {
+        envelopeId: orgBSealedEnv,
+        outcome: 'passed',
+        pageCount: 1,
+        pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+      },
+      { actor: asSystem, orgId: orgB.orgId },
+    );
+    const orgBSigner = await runtime.execute<{ signerId: string }>(
+      'sign.signer.add',
+      {
+        envelopeId: orgBSealedEnv,
+        routingOrder: 1,
+        signerRole: 'signer',
+        roleLabel: 'Ben B',
+        name: 'Dai dien Cong ty B',
+        email: 'signer-b@sign-v1.test',
+        deliveryMode: 'link',
+        requireEmailOtp: false,
+      },
+      { actor: asUser(foreignOwner), orgId: orgB.orgId },
+    );
+    await runtime.execute(
+      'sign.field.set',
+      {
+        envelopeId: orgBSealedEnv,
+        fields: [
+          {
+            signerId: orgBSigner.signerId,
+            fieldType: 'signature',
+            pageNumber: 1,
+            xNorm: 0.15,
+            yNorm: 0.7,
+            wNorm: 0.25,
+            hNorm: 0.1,
+            required: true,
+          },
+        ],
+      },
+      { actor: asUser(foreignOwner), orgId: orgB.orgId },
+    );
+    const orgBSent = await runtime.execute<{ links: Array<{ token: string }> }>(
+      'sign.envelope.send',
+      { envelopeId: orgBSealedEnv },
+      { actor: asUser(foreignOwner), orgId: orgB.orgId },
+    );
+    const orgBFieldRow = await admin(async (c) =>
+      (
+        await c.query<{ id: string }>('SELECT id FROM ludy_sign.field WHERE org_id = $1 AND envelope_id = $2', [
+          orgB.orgId,
+          orgBSealedEnv,
+        ])
+      ).rows[0]!,
+    );
+    await admin((c) =>
+      c.query(
+        `SELECT ludy_sign.public_submit($1, true, 'draw', NULL, $2::jsonb, NULL, 'SignApiV1Inv/1.0', NULL)`,
+        [sha256Hex(orgBSent.links[0]!.token), JSON.stringify([{ fieldId: orgBFieldRow.id, signaturePngBase64: VALID_PNG_BASE64 }])],
+      ),
+    );
+    await runSignPdfSealJob(
+      { workerDb, runtime: workerRuntime, store, extract: mockExtract },
+      { orgId: orgB.orgId, envelopeId: orgBSealedEnv },
+    );
+    const orgBKeyRes = await rpc<{ secret: string }>(
+      'sign/api_keys/create',
+      foreignOwner,
+      { name: 'Org B Read Key', scopes: ['sign:read'] },
+      orgB.slug,
+    );
+    expect(orgBKeyRes.status).toBe(200);
+    const orgBReadSecret = orgBKeyRes.body.secret;
+
+    // Saturated signApiV1Limits.pdfReads perKey for Org A returns 503 SIGN_PDF_BUSY while Org B succeeds (200).
     const releaseSlot = tightPdfReads.tryAcquire(orgA.orgId);
     expect(releaseSlot).not.toBeNull();
     try {
       const busySealed = await apiGet(`/api/v1/sign/envelopes/${ids.completedEnv}/sealed`, `Bearer ${readOnlySecret}`, appTightRate);
       expect(busySealed.status).toBe(503);
       await expect(busySealed.json()).resolves.toMatchObject({ code: 'SIGN_PDF_BUSY' });
+
+      const orgBOkOnTight = await apiGet(
+        `/api/v1/sign/envelopes/${orgBSealedEnv}/sealed`,
+        `Bearer ${orgBReadSecret}`,
+        appTightRate,
+        '198.51.100.99',
+      );
+      expect(orgBOkOnTight.status).toBe(200);
+      expect(orgBOkOnTight.headers.get('content-type')).toContain('application/pdf');
     } finally {
       releaseSlot?.();
+    }
+
+    // Production default ConcurrencyLimiter({ total: SIGN_PDF_READS_MAX }) caps perKey below total (4 < 8):
+    // saturating Org A's perKey slots returns 503 SIGN_PDF_BUSY for Org A while Org B still returns 200.
+    const sealedOrgARow = await admin(async (c) =>
+      (
+        await c.query<{ sealed_storage_key: string }>(
+          `SELECT sealed_storage_key FROM ludy_sign.envelope WHERE org_id = $1 AND id = $2`,
+          [orgA.orgId, ids.completedEnv],
+        )
+      ).rows[0]!,
+    );
+    let releaseOrgABlobs!: () => void;
+    const orgABlobsHeld = new Promise<void>((resolve) => {
+      releaseOrgABlobs = resolve;
+    });
+    let orgAReadsEntered = 0;
+    let notifyFourEntered!: () => void;
+    const fourEntered = new Promise<void>((resolve) => {
+      notifyFourEntered = resolve;
+    });
+    store.beforeGet = async (key: string) => {
+      if (key === sealedOrgARow.sealed_storage_key) {
+        orgAReadsEntered += 1;
+        if (orgAReadsEntered === 4) notifyFourEntered();
+        await orgABlobsHeld;
+      }
+    };
+    try {
+      const heldDownloads = Array.from({ length: 4 }, (_, idx) =>
+        apiGet(
+          `/api/v1/sign/envelopes/${ids.completedEnv}/sealed`,
+          `Bearer ${readOnlySecret}`,
+          appDefaultPdfLimits,
+          `198.51.100.${40 + idx}`,
+        ),
+      );
+      await fourEntered;
+
+      const fifthOrgA = await apiGet(
+        `/api/v1/sign/envelopes/${ids.completedEnv}/sealed`,
+        `Bearer ${readOnlySecret}`,
+        appDefaultPdfLimits,
+        '198.51.100.44',
+      );
+      expect(fifthOrgA.status).toBe(503);
+      await expect(fifthOrgA.json()).resolves.toMatchObject({ code: 'SIGN_PDF_BUSY' });
+
+      const orgBConcurrent = await apiGet(
+        `/api/v1/sign/envelopes/${orgBSealedEnv}/sealed`,
+        `Bearer ${orgBReadSecret}`,
+        appDefaultPdfLimits,
+        '198.51.100.99',
+      );
+      expect(orgBConcurrent.status).toBe(200);
+      expect(orgBConcurrent.headers.get('content-type')).toContain('application/pdf');
+
+      releaseOrgABlobs();
+      const finished = await Promise.all(heldDownloads);
+      for (const r of finished) expect(r.status).toBe(200);
+    } finally {
+      store.beforeGet = null;
+      releaseOrgABlobs();
     }
 
     // Revoking fullScopeKeyId via RPC cuts access immediately.

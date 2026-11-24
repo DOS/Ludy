@@ -231,6 +231,7 @@ describe('EnvelopeKycCard i18n, accessibility, and tainted Vy proposal UI (#4443
       ],
     };
     expect(kycRefetchIntervalMs(pendingData)).toBe(SIGN_KYC_POLL_INTERVAL_MS);
+    expect(kycRefetchIntervalMs(pendingData, 'error')).toBe(false);
 
     const qc = new QueryClient();
     qc.setQueryData(['sign', 'kyc', ENV_ID], pendingData);

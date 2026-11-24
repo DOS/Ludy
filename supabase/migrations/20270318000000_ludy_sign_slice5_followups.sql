@@ -202,24 +202,28 @@ STABLE
 SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
 AS $$
+  WITH now_ts AS (
+    SELECT pg_catalog.clock_timestamp() AS ts
+  )
   SELECT d.org_id, d.id,
-         CASE WHEN d.created_at <= pg_catalog.clock_timestamp() - interval '8 hours' THEN 'expire' ELSE 'send' END
-  FROM ludy_sign.webhook_delivery d
+         CASE WHEN d.created_at <= now_ts.ts - interval '8 hours' THEN 'expire' ELSE 'send' END
+  FROM now_ts
+  CROSS JOIN ludy_sign.webhook_delivery d
   LEFT JOIN ludy_sign.envelope e
     ON e.org_id = d.org_id AND e.id = d.envelope_id
   WHERE d.status = 'queued'
     AND (
-      d.created_at <= pg_catalog.clock_timestamp() - interval '8 hours'
+      d.created_at <= now_ts.ts - interval '8 hours'
       OR (
         ludy_kernel.org_app_on(d.org_id, 'sign')
         AND (
           d.handed_at IS NULL
-          OR (d.attempts = 0 AND d.handed_at <= pg_catalog.clock_timestamp() - interval '3 minutes')
+          OR (d.attempts = 0 AND d.handed_at <= now_ts.ts - interval '3 minutes')
         )
       )
     )
     AND (
-      d.created_at <= pg_catalog.clock_timestamp() - interval '8 hours'
+      d.created_at <= now_ts.ts - interval '8 hours'
       OR e.id IS NULL
       OR e.source_kind NOT IN ('hr_contract', 'meeting_minutes')
     )
@@ -329,6 +333,10 @@ CREATE INDEX IF NOT EXISTS kyc_check_checked_by_idx
   ON ludy_sign.kyc_check (checked_by)
   WHERE checked_by IS NOT NULL;
 
+CREATE INDEX IF NOT EXISTS kyc_check_pending_recovery_idx
+  ON ludy_sign.kyc_check (updated_at, org_id, id)
+  WHERE status = 'pending' AND mode = 'deterministic';
+
 CREATE OR REPLACE FUNCTION ludy_sign.kyc_work_recovery_candidates(
   p_older_than timestamptz,
   p_limit integer DEFAULT 100,
@@ -347,11 +355,29 @@ RETURNS TABLE (
   created_at timestamptz,
   updated_at timestamptz
 )
-LANGUAGE sql
+LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
 AS $$
+DECLARE
+  v_limit integer := LEAST(GREATEST(COALESCE(p_limit, 100), 1), 500);
+  v_has_cursor boolean := p_after_updated_at IS NOT NULL
+    AND p_after_org_id IS NOT NULL
+    AND p_after_id IS NOT NULL;
+BEGIN
+  IF NOT pg_catalog.pg_has_role(SESSION_USER, 'ludy_worker', 'MEMBER') THEN
+    RAISE EXCEPTION 'SIGN_RECOVERY_WORKER_ONLY' USING ERRCODE = '42501';
+  END IF;
+  IF (p_after_updated_at IS NULL) <> (p_after_org_id IS NULL)
+     OR (p_after_updated_at IS NULL) <> (p_after_id IS NULL) THEN
+    RAISE EXCEPTION 'SIGN_RECOVERY_INVALID_CURSOR' USING ERRCODE = '22023';
+  END IF;
+  IF p_older_than IS NULL THEN
+    RAISE EXCEPTION 'SIGN_CUTOFF_REQUIRED' USING ERRCODE = '22023';
+  END IF;
+
+  RETURN QUERY
   SELECT
     k.org_id,
     k.id,
@@ -362,17 +388,17 @@ AS $$
     k.created_at,
     k.updated_at
   FROM ludy_sign.kyc_check k
-  WHERE k.status = 'pending'
+  JOIN ludy_kernel.tenant t ON t.org_id = k.org_id
+  WHERE t.status = 'active'
+    AND ludy_kernel.org_app_on(k.org_id, 'sign')
+    AND k.status = 'pending'
     AND k.mode = 'deterministic'
     AND k.updated_at <= p_older_than
     AND (p_org_id IS NULL OR k.org_id = p_org_id)
-    AND (
-      p_after_updated_at IS NULL
-      OR (k.updated_at, k.org_id, k.id) > (p_after_updated_at, p_after_org_id, p_after_id)
-    )
+    AND (NOT v_has_cursor OR (k.updated_at, k.org_id, k.id) > (p_after_updated_at, p_after_org_id, p_after_id))
   ORDER BY k.updated_at ASC, k.org_id ASC, k.id ASC
-  LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 100), 500));
-$$;
+  LIMIT v_limit;
+END $$;
 
 REVOKE ALL ON FUNCTION ludy_sign.kyc_work_recovery_candidates(timestamptz, integer, uuid, timestamptz, uuid, uuid)
   FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
@@ -632,6 +658,51 @@ TO ludy_app;
 -- ---------------------------------------------------------------------------
 -- 3. API keys & MCP (#4469): duplicate active name uniqueness, template inspect alignment, renewal priority index
 -- ---------------------------------------------------------------------------
+DO $$
+DECLARE
+  v_dup record;
+  v_suffix integer;
+  v_candidate text;
+  v_tag text;
+BEGIN
+  FOR v_dup IN
+    SELECT id, org_id, name
+    FROM (
+      SELECT
+        id,
+        org_id,
+        name,
+        pg_catalog.row_number() OVER (
+          PARTITION BY org_id, pg_catalog.lower(name)
+          ORDER BY created_at ASC, id ASC
+        ) AS rn
+      FROM ludy_sign.api_key
+      WHERE revoked_at IS NULL
+    ) ranked
+    WHERE rn > 1
+    ORDER BY org_id, id
+  LOOP
+    v_suffix := 2;
+    LOOP
+      v_tag := ' #' || v_suffix::text;
+      v_candidate := pg_catalog.left(pg_catalog.btrim(v_dup.name), 120 - pg_catalog.length(v_tag)) || v_tag;
+      EXIT WHEN NOT EXISTS (
+        SELECT 1
+        FROM ludy_sign.api_key k
+        WHERE k.org_id = v_dup.org_id
+          AND k.revoked_at IS NULL
+          AND pg_catalog.lower(k.name) = pg_catalog.lower(v_candidate)
+          AND k.id <> v_dup.id
+      );
+      v_suffix := v_suffix + 1;
+    END LOOP;
+    UPDATE ludy_sign.api_key
+       SET name = v_candidate,
+           updated_at = pg_catalog.now()
+     WHERE id = v_dup.id;
+  END LOOP;
+END $$;
+
 CREATE UNIQUE INDEX IF NOT EXISTS api_key_org_active_name_uidx
   ON ludy_sign.api_key (org_id, pg_catalog.lower(name))
   WHERE revoked_at IS NULL;
@@ -1429,7 +1500,7 @@ END $$;
 
 DROP TRIGGER IF EXISTS envelope_obligation_sync_next_pending_due_date ON ludy_sign.envelope_obligation;
 CREATE TRIGGER envelope_obligation_sync_next_pending_due_date
-  BEFORE INSERT OR UPDATE OF obligations_json ON ludy_sign.envelope_obligation
+  BEFORE INSERT OR UPDATE OF obligations_json, next_pending_due_date ON ludy_sign.envelope_obligation
   FOR EACH ROW
   EXECUTE FUNCTION ludy_sign.envelope_obligation_sync_next_pending_due_date();
 
