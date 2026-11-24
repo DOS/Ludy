@@ -16684,7 +16684,7 @@ export const en = {
       TAX_CODE_REQUIRED: 'Your organization has no tax code yet. Set it in Settings, then try again.',
       PERIOD_KIND_MISMATCH: 'Your organization files VAT by a different period kind, so this XML cannot be exported. Pick a period of the filing kind, or change the VAT filing period in Settings.',
       TAXPAYER_NAME_REQUIRED: 'Your organization has no name yet. Set it in Settings, then export again.',
-      // Crove Social and connected channels.
+      // Ludy Social and connected channels.
       POST_NOT_FOUND: 'This post was not found',
       POST_ARCHIVED: 'This post is archived; restore it before editing it, sending it for review or scheduling it',
       POST_ARCHIVE_IN_FLIGHT: 'A channel of the post is going out or waits for a person; settle it, then archive the post',

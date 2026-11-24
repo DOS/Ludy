@@ -16684,7 +16684,7 @@ export const vi = {
       TAX_CODE_REQUIRED: 'Tổ chức chưa có mã số thuế. Nhập mã số thuế trong Cài đặt rồi thử lại.',
       PERIOD_KIND_MISMATCH: 'Tổ chức khai thuế GTGT theo kỳ khác nên không xuất được tờ khai XML này. Chọn kỳ đúng loại đã đăng ký, hoặc đổi kỳ khai thuế GTGT trong Cài đặt.',
       TAXPAYER_NAME_REQUIRED: 'Tổ chức chưa có tên. Nhập tên tổ chức trong Cài đặt rồi xuất lại.',
-      // Crove Social and connected channels.
+      // Ludy Social and connected channels.
       POST_NOT_FOUND: 'Không tìm thấy bài đăng này',
       POST_ARCHIVED: 'Bài này đã được lưu trữ; hãy khôi phục bài trước khi sửa, gửi duyệt hay lên lịch',
       POST_ARCHIVE_IN_FLIGHT: 'Bài có kênh đang đăng hoặc đang chờ người xử lý; hãy xử lý xong rồi lưu trữ',

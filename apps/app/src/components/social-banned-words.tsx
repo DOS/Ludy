@@ -1,6 +1,6 @@
 // Banned and sensitive words (#1055): the org's list on the Channels page, where owners and admins add a word or phrase
 // as a warning or a block, for every channel or some; the composer's marks under a text that holds one; and the words
-// a channel in review holds. The list starts empty: Crove ships no words of its own.
+// a channel in review holds. The list starts empty: Ludy ships no words of its own.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { useTranslations } from 'use-intl';
