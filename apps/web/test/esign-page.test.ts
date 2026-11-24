@@ -73,4 +73,48 @@ describe('Ludy eSign landing page (#4605)', () => {
     expect(visualsSource).not.toMatch(/<h[1-6]\b/);
     expect(visualsSource).not.toMatch(/[\u2013\u2014]/);
   });
+
+  it('keeps every font-mono token strictly ASCII so unpreloaded JetBrains Mono subsets never download', () => {
+    const ASCII_ONLY = /^[\x20-\x7E]*$/;
+    for (const [lang, copy] of [
+      ['vi', esignVi],
+      ['en', esignEn],
+    ] as const) {
+      const monoTokens = [
+        ...copy.fragments.templatesAndDrafting.tagsDetected,
+        ...copy.fragments.ceremony.urls,
+        copy.fragments.sealing.certCode,
+        copy.fragments.sealing.sourceHash,
+        copy.fragments.sealing.sealedHash,
+        copy.fragments.integrations.webhookUrl,
+        copy.fragments.integrations.webhookSecretPrefix,
+        ...copy.fragments.integrations.mcpTools,
+        copy.fragments.integrations.apiKeyPrefix,
+        ...copy.fragments.integrations.apiScopes.flatMap((scope) =>
+          scope.route ? [scope.code, scope.route] : [scope.code],
+        ),
+      ];
+      for (const token of monoTokens) {
+        expect(token, `${lang} mono token "${token}" must be pure ASCII`).toMatch(ASCII_ONLY);
+      }
+    }
+
+    const visualsSource = readFileSync(join(WEB_SRC, 'components', 'apps', 'esign-visuals.tsx'), 'utf8');
+    const monoExprs = [...visualsSource.matchAll(/font-mono[^>]*>\s*\{([^}]+)\}/g)].map((m) => m[1]!.trim());
+    expect(monoExprs.sort()).toEqual(
+      [
+        'f.apiKeyPrefix',
+        'f.certCode',
+        'f.sealedHash',
+        'f.sourceHash',
+        'f.webhookSecretPrefix',
+        'f.webhookUrl',
+        'scope.code',
+        'scope.route',
+        'tag',
+        'tool',
+        'url',
+      ].sort(),
+    );
+  });
 });

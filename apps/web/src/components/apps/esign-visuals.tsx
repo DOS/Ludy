@@ -262,7 +262,14 @@ export function CeremonyVisual({ copy }: Props) {
             {f.otpBadge}
           </Chip>
         </div>
-        <span className="mt-1 block break-all font-mono text-[11px] text-subtle">{f.urlNote}</span>
+        <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-subtle">
+          {f.urls.map((url, i) => (
+            <span key={url} className="inline-flex items-center gap-1.5">
+              {i > 0 ? <span aria-hidden="true">&middot;</span> : null}
+              <code className="break-all font-mono">{url}</code>
+            </span>
+          ))}
+        </div>
         <span className="sr-only">{copy.fragments.sample}</span>
       </figcaption>
       <div className="flex flex-col gap-3 px-4 py-3 text-xs">
@@ -442,7 +449,11 @@ export function IntegrationsVisual({ copy }: Props) {
               {f.webhookPayload}
             </Chip>
           </div>
-          <p className="mt-1.5 break-all font-mono text-[11px] text-muted">{f.webhookMeta}</p>
+          <p className="mt-1.5 text-[11px] text-muted">
+            <code className="break-all font-mono">{f.webhookUrl}</code>
+            {' · '}
+            {f.webhookSecretLabel} <code className="font-mono">{f.webhookSecretPrefix}</code> {f.webhookRotationNote}
+          </p>
         </div>
         <div className="rounded-sm border border-line bg-surface p-3">
           <span className="font-semibold text-subtle">{f.mcpTitle}</span>
@@ -455,14 +466,22 @@ export function IntegrationsVisual({ copy }: Props) {
           </ul>
         </div>
         <div className="rounded-sm border border-line bg-surface p-3">
-          <span className="flex items-center gap-1.5 font-semibold text-fg">
+          <span className="flex flex-wrap items-center gap-1.5 font-semibold text-fg">
             <KeyRound className="size-3.5 shrink-0 text-accent-ink" aria-hidden="true" />
-            {f.apiTitle}
+            <span>
+              {f.apiTitlePrefix} <code className="font-mono font-medium">{f.apiKeyPrefix}</code>
+              {f.apiTitleSuffix ? ` ${f.apiTitleSuffix}` : ''}
+            </span>
           </span>
           <ul className="mt-2 flex flex-col gap-1.5">
             {f.apiScopes.map((scope) => (
-              <li key={scope} className="rounded-sm border border-line bg-bg px-2.5 py-1.5 font-mono text-[11px] text-muted">
-                {scope}
+              <li
+                key={scope.code}
+                className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 rounded-sm border border-line bg-bg px-2.5 py-1.5 text-[11px] text-muted"
+              >
+                <code className="font-mono font-medium text-fg">{scope.code}</code>
+                {scope.route ? <code className="font-mono text-fg">{scope.route}</code> : null}
+                <span>{scope.text}</span>
               </li>
             ))}
           </ul>
