@@ -102,8 +102,12 @@ function PairingCode() {
             <Input autoFocus autoComplete="off" maxLength={120} placeholder={t('labelPlaceholder')} value={label} onChange={(e) => setLabel(e.target.value)} />
           </label>
           <p className="text-xs text-subtle-foreground">{t('scopeNote')}</p>
+          <div className="space-y-1 text-xs text-subtle-foreground" data-testid="org-mcp-pairing-data">
+            <p>{t('dataRead')}</p>
+            <p>{t('dataMeetings')}</p>
+            <p>{t('dataEngage')}</p>
+          </div>
           {issue.error && !isStepUpRequired(issue.error) && <ErrorText>{errorMessage(issue.error)}</ErrorText>}
-          {isStepUpRequired(issue.error) && <StepUpPrompt action={t('stepUp')} onVerified={() => issue.mutate({ label: label.trim() })} onCancel={() => issue.reset()} />}
           <div className="flex flex-wrap gap-2">
             <Button type="submit" size="sm" loading={issue.isPending} disabled={label.trim() === ''}>
               {t('create')}
@@ -113,6 +117,10 @@ function PairingCode() {
             </Button>
           </div>
         </form>
+      )}
+      {open && !issue.data && isStepUpRequired(issue.error) && (
+        // Outside the pairing form: its challenge and enrollment forms are forms of their own, and a nested form submits the outer one too.
+        <StepUpPrompt action={t('stepUp')} onVerified={() => issue.mutate({ label: label.trim() })} onCancel={() => issue.reset()} />
       )}
       {issue.data && (
         <div ref={codeRef} tabIndex={-1} className="space-y-2 rounded-md focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none" role="group" aria-labelledby="org-mcp-pairing-once" data-testid="org-mcp-pairing-code">

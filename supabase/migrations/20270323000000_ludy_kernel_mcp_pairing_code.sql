@@ -30,12 +30,14 @@ BEGIN
     RAISE EXCEPTION 'NO_CONTEXT' USING ERRCODE = '42501';
   END IF;
   -- The same gate as a consent: an owner or admin of an active org, not disabled, with no AI kill switch (the deployment's or the org's).
+  -- The rows are locked FOR SHARE as they are read, so a demotion or a disable waits until this insert commits and its trigger then sees the new code.
   IF NOT EXISTS (
     SELECT 1
     FROM ludy_kernel.tenant_member m
     JOIN ludy_kernel.tenant t ON t.org_id = m.org_id AND t.status = 'active'
     JOIN ludy_kernel.user_account u ON u.id = m.user_id AND u.disabled_at IS NULL
     WHERE m.org_id = v_org AND m.user_id = v_user AND m.role IN ('owner', 'admin')
+    FOR SHARE OF m, t, u
   ) OR ludy_kernel.global_kill_switch_on('ai') OR EXISTS (
     SELECT 1 FROM ludy_kernel.kill_switch k WHERE k.org_id = v_org AND k.scope = 'org' AND k.released_at IS NULL
   ) THEN

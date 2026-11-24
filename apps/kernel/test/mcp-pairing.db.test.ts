@@ -340,7 +340,13 @@ suite('the pairing code of the MCP endpoint (#4591)', () => {
     const parties = (access: string) => mcpCall(app, access, 'tools/call', { name: 'ludy_parties_list', arguments: {} }, 'ludy_parties_list');
     const a = await parties(oauth.access);
     const b = await parties(token.access_token);
-    expect(b.status).toBe(200);
+    // Both reads must have succeeded and carry the payload: two empty answers would otherwise compare equal.
+    for (const r of [a, b]) {
+      expect(r.status).toBe(200);
+      expect(r.body?.result?.isError).not.toBe(true);
+      expect(r.body?.result?.structuredContent).toBeTypeOf('object');
+      expect(r.body?.result?.structuredContent).not.toBeNull();
+    }
     expect(b.body?.result?.structuredContent).toEqual(a.body?.result?.structuredContent);
     const names = (viaOauth as string[]).map((t) => (JSON.parse(t) as [string])[0]);
     for (const write of ['ludy_social_draft_create']) expect(names).not.toContain(write);
