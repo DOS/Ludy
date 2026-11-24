@@ -636,7 +636,7 @@ export const en = {
   notifications: {
     morningNotice: {
       title: "Today's meetings, in the morning",
-      hint: 'Once a day, at the time you choose, a notice in the app and by email with how many meetings you have today and a link to see them. It holds a count and a link only: no title, no name. Nothing is sent on a day with no meeting.',
+      hint: 'Once a day, at the time you choose, a notice in the app and by email with how many meetings you have today and a link to see them, plus a browser push if turned on for this device. No title or name is sent. Nothing is sent on a day with no meeting.',
       label: "Tell me about the day's meetings every morning",
       at: 'At',
       zone: 'In your time zone: {zone}',
@@ -662,7 +662,8 @@ export const en = {
     prefsTitle: 'Notifications',
     // Browser push on this device (#1238, the kernel's since #3736): the one switch of every app's notices, shown here and on Social's notification settings.
     push: 'Push notifications on this device',
-    pushHint: 'When something needs you in any {brand} app (for example a post to review, a failed post, a channel to reconnect, or a minutes draft that is ready), this browser shows a notification even when {brand} is not open. A notification names the kind of item only, never its content.',
+    pushHint:
+      "When something needs you in any {brand} app (for example a post to review, a failed post, a channel to reconnect, a minutes draft that is ready, or today's meetings notice), this browser shows a notification even when {brand} is not open. A notification names the kind of item only, never its content.",
     pushUnsupported: 'This browser cannot receive push notifications. Open {brand} in Chrome, Edge, Firefox or Safari over https.',
     pushDenied: 'Your browser blocks notifications from {brand}. Allow notifications in the browser site settings, then turn this on again.',
     pushDevices: 'Devices receiving push notifications',
@@ -695,7 +696,7 @@ export const en = {
       projects_weekly_status: 'Project weekly status sent by email',
       meetings_series_open_items: 'Open items from the previous meeting of a series',
       meetings_summary_ready: 'The minutes draft of a meeting I recorded is ready (also sent by email and push; turning it off here turns off all three)',
-      meetings_morning: 'The meetings I have today, if I asked for the morning notice (also sent by email; turning it off here turns off both)',
+      meetings_morning: 'The meetings I have today, if I asked for the morning notice (also sent by email and push; turning it off here turns off all three)',
       kernel_channel_expired: 'An ad account connection expired or was refused',
       kernel_ai_budget: 'The AI budget is nearly or fully used',
       kernel_conversation_new: 'A new conversation needs an answer',
