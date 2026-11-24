@@ -26,13 +26,12 @@ import {
   kernelQueries,
   upsertIdentity,
 } from '@ludy/kernel';
-import { SIGN_PUBLIC_HUB_PAGE_PREFIX } from '@ludy/kernel-contract';
-import { DomainError, Runtime, contentGeneration, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
+import { Runtime, contentGeneration, fileKey, sha256Hex, type BlobStore } from '@ludy/kernel-runtime';
 import type { MailProvider, OutboundMail } from '@ludy/mail';
 import { signCommands, signQueries } from '@ludy/mod-sign';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
-import { TURNSTILE_ORIGIN, createHttpApp } from '../src/http.ts';
+import { createHttpApp } from '../src/http.ts';
 import { runMailJob } from '../src/mail-queue.ts';
 import { MAIL_TEMPLATES } from '../src/mail-templates.ts';
 import { RateLimiter } from '../src/rate-limit.ts';
@@ -127,19 +126,15 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
   let runtime!: Runtime;
   let workerRuntime!: Runtime;
   let app!: ReturnType<typeof createHttpApp>;
-  let appUnentitled!: ReturnType<typeof createHttpApp>;
   const store = new MemoryStore();
 
   let orgId = '';
   let orgSlug = '';
-  let emptyOrgSlug = '';
   let ownerUserId = '';
   let memberUserId = '';
-  let viewerUserId = '';
 
   const asOwner = () => ({ type: 'user' as const, userId: ownerUserId, sessionId: randomUUID(), aal: 'aal1' as const });
   const asMember = () => ({ type: 'user' as const, userId: memberUserId, sessionId: randomUUID(), aal: 'aal1' as const });
-  const asViewer = () => ({ type: 'user' as const, userId: viewerUserId, sessionId: randomUUID(), aal: 'aal1' as const });
   const asSystem = { type: 'system' as const, component: 'sign-worker' };
 
   async function admin<T>(fn: (c: pg.Client) => Promise<T>): Promise<T> {
@@ -209,6 +204,7 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
     requireEmailOtp: boolean;
     listedOnPublicHub: boolean;
     maxUses?: number | null;
+    expiresAt?: string;
   }): Promise<{ templateId: string; pdfBytes: Uint8Array; directToken: string }> {
     const { fileId, pdfBytes } = await ingestPdf(orgId, opts.title);
     const created = await runtime.execute<{ templateId: string }>(
@@ -275,6 +271,7 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
         requireEmailOtp: opts.requireEmailOtp,
         listedOnPublicHub: opts.listedOnPublicHub,
         ...(opts.maxUses !== undefined ? { maxUses: opts.maxUses } : {}),
+        ...(opts.expiresAt !== undefined ? { expiresAt: opts.expiresAt } : {}),
       },
       { actor: asOwner(), orgId },
     );
@@ -351,16 +348,6 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
       billing: { entitlements: async () => ['full'] },
     });
 
-    appUnentitled = createHttpApp({
-      config,
-      runtime,
-      store,
-      authenticate,
-      pool,
-      aiEnabled: false,
-      billing: { entitlements: async () => [] },
-    });
-
     ownerUserId = await upsertIdentity(appDb, {
       issuer: ISSUER,
       subject: 'owner-slice4d',
@@ -373,24 +360,15 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
       email: 'member-slice4d@example.com',
       name: 'Member Slice 4d',
     });
-    viewerUserId = await upsertIdentity(appDb, {
-      issuer: ISSUER,
-      subject: 'viewer-slice4d',
-      email: 'viewer-slice4d@example.com',
-      name: 'Viewer Slice 4d',
-    });
 
     const createdOrg = await createOrg(runtime, asOwner(), 'Cong ty Sao Mai');
     orgId = createdOrg.orgId;
     orgSlug = createdOrg.slug;
 
-    const emptyOrg = await createOrg(runtime, asOwner(), 'Cong ty Chua Co Hub');
-    emptyOrgSlug = emptyOrg.slug;
-
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')`,
-        [orgId, memberUserId, viewerUserId],
+        `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`,
+        [orgId, memberUserId],
       );
     });
   }, 120_000);
@@ -459,20 +437,6 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
       },
       { actor: asOwner(), orgId },
     );
-    const cc = await runtime.execute<{ signerId: string }>(
-      'sign.signer.add',
-      {
-        envelopeId,
-        routingOrder: 3,
-        signerRole: 'cc',
-        roleLabel: 'Luu tru CC',
-        name: 'Le Van Luu',
-        email: 'luu-cc@example.com',
-        deliveryMode: 'email',
-        requireEmailOtp: false,
-      },
-      { actor: asOwner(), orgId },
-    );
 
     await runtime.execute(
       'sign.field.set',
@@ -502,41 +466,9 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
     );
     const initialToken = sent.links[0]!.token;
 
-    // 1. Viewer role cannot start an in-person session.
-    await expect(
-      runtime.execute('sign.signer.start_in_person', { envelopeId, signerId: s1.signerId }, { actor: asViewer(), orgId }),
-    ).rejects.toMatchObject({ status: 403 });
-
-    // 2. Waiting sequential signer (#2) and CC recipient are rejected cleanly.
-    await expect(
-      runtime.execute('sign.signer.start_in_person', { envelopeId, signerId: s2.signerId }, { actor: asOwner(), orgId }),
-    ).rejects.toMatchObject({ code: 'SIGN_SIGNER_NOT_DUE', status: 409 } satisfies Partial<DomainError>);
-    await expect(
-      runtime.execute('sign.signer.start_in_person', { envelopeId, signerId: cc.signerId }, { actor: asOwner(), orgId }),
-    ).rejects.toMatchObject({ code: 'SIGN_INVALID_SIGNER', status: 422 } satisfies Partial<DomainError>);
-
-    // 3. Confidential hr_contract envelope created by owner is hidden from a non-creator member.
-    const hrDoc = await ingestPdf(orgId, 'hr-confidential');
-    const hrEnv = await runtime.execute<{ envelopeId: string }>(
-      'sign.envelope.create',
-      {
-        title: 'Hop dong lao dong bao mat',
-        sourceFileId: hrDoc.fileId,
-        routingMode: 'parallel',
-        sourceKind: 'hr_contract',
-        sourceId: randomUUID(),
-      },
-      { actor: asOwner(), orgId },
-    );
-    await expect(
-      runtime.execute(
-        'sign.signer.start_in_person',
-        { envelopeId: hrEnv.envelopeId, signerId: randomUUID() },
-        { actor: asMember(), orgId },
-      ),
-    ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 } satisfies Partial<DomainError>);
-
-    // 4. Member starts an in-person session for due signer #1 (<= 2h TTL), revoking the prior remote link.
+    // Member starts an in-person session for due signer #1 (<= 2h TTL), revoking the prior remote link.
+    // Security gates (viewer/waiting/cc/hr_contract, delegation lock, mail guard, opaque hub 404s) live in
+    // apps/kernel/test/invariant/sign-in-person-public-hub.db.test.ts.
     const started1 = await runtime.execute<{
       tokenId: string;
       token: string;
@@ -569,51 +501,6 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
     };
     expect(view1Json).toMatchObject({ state: 'ready', inPerson: true, allowDelegation: false });
 
-    const started1Hash = sha256Hex(Buffer.from(started1.token, 'utf8'));
-    const resolved1Row = await pool!.query<{ v: { allowDelegation?: boolean; inPerson?: boolean } | null }>(
-      'SELECT ludy_sign.public_token_resolve($1, false) AS v',
-      [started1Hash],
-    );
-    expect(resolved1Row.rows[0]?.v).toMatchObject({ inPerson: true, allowDelegation: false });
-
-    // Regression 1: Active in-person token cannot delegate via POST /api/sign/delegate or SQL public_delegate.
-    const delegateHttpRes = await postJson(
-      app,
-      '/api/sign/delegate',
-      {
-        token: started1.token,
-        delegateName: 'Nguoi Uy Quyen',
-        delegateEmail: 'delegate-s4d@example.com',
-        reason: 'Thu uy quyen tu phien ky tai quay',
-      },
-      '198.51.100.21',
-    );
-    expect(delegateHttpRes.status).toBe(403);
-    await expect(delegateHttpRes.json()).resolves.toMatchObject({ code: 'SIGN_DELEGATION_DISABLED' });
-
-    const delegateSqlRow = await pool!.query<{ result: Record<string, unknown> }>(
-      `SELECT ludy_sign.public_delegate($1, 'Nguoi Uy Quyen', 'delegate-s4d@example.com', 'Thu uy quyen SQL', NULL, 'SignSlice4dTest/1.0', $2) AS result`,
-      [started1Hash, DEFAULT_MESSAGE_ID_DOMAIN],
-    );
-    expect(delegateSqlRow.rows[0]?.result).toMatchObject({
-      status: 'error',
-      code: 'SIGN_DELEGATION_DISABLED',
-      httpStatus: 403,
-    });
-
-    await admin(async (c) => {
-      const tokCheck = await c.query<{ used_at: string | null; revoked_at: string | null }>(
-        'SELECT used_at, revoked_at FROM ludy_sign.signing_token WHERE org_id = $1 AND id = $2',
-        [orgId, started1.tokenId],
-      );
-      expect(tokCheck.rows[0]).toEqual({ used_at: null, revoked_at: null });
-      const signerCheck = await c.query<{ name: string; delegation_count: number }>(
-        'SELECT name, delegation_count FROM ludy_sign.signer WHERE org_id = $1 AND id = $2',
-        [orgId, s1.signerId],
-      );
-      expect(signerCheck.rows[0]).toEqual({ name: 'Nguyen Van Khach', delegation_count: 0 });
-    });
-
     // Submit signer #1 -> records in_person_signed and advances sequential approver #2.
     const submit1Res = await postJson(
       app,
@@ -644,79 +531,12 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
     );
     expect(replayRes.status).toBe(409);
 
-    // 5. Owner starts in-person session for sequential approver #2 and completes envelope.
+    // Owner starts in-person session for sequential approver #2 and completes envelope.
     const started2 = await runtime.execute<{ tokenId: string; token: string }>(
       'sign.signer.start_in_person',
       { envelopeId, signerId: s2.signerId, expiresInMinutes: 45 },
       { actor: asOwner(), orgId },
     );
-
-    // Regression 2: Queued remote invite mail for sequential approver #2 returns NULL from public_mail_token_issue
-    // while an active unexpired in-person host token exists, skipping send and leaving the in-person token unrevoked.
-    const queuedInviteId = await admin(async (c) => {
-      const res = await c.query<{ id: string }>(
-        `SELECT id FROM ludy_kernel.mail_message
-         WHERE org_id = $1 AND source_id = $2 AND template_key = 'sign.invite'
-         ORDER BY created_at DESC LIMIT 1`,
-        [orgId, s2.signerId],
-      );
-      return res.rows[0]?.id ?? null;
-    });
-    expect(queuedInviteId).toBeTruthy();
-
-    const workerClient = await workerPool!.connect();
-    try {
-      await workerClient.query('BEGIN');
-      await workerClient.query('SELECT ludy_kernel.enter_system_context($1::uuid)', [orgId]);
-      const issuedRow = await workerClient.query<{ issued: unknown }>(
-        `SELECT ludy_sign.public_mail_token_issue($1::uuid, $2::uuid, $3::uuid, now() + interval '7 days', now()) AS issued`,
-        [envelopeId, s2.signerId, queuedInviteId],
-      );
-      expect(issuedRow.rows[0]?.issued).toBeNull();
-      await workerClient.query('COMMIT');
-    } finally {
-      workerClient.release();
-    }
-
-    const dispatchedWhileInPerson: OutboundMail[] = [];
-    const spyMailer: MailProvider = {
-      name: 'test_smtp',
-      enabled: true,
-      sendRetrySafety: 'idempotent',
-      async send(mail) {
-        dispatchedWhileInPerson.push(mail);
-        return { status: 'accepted', providerMessageId: randomUUID() };
-      },
-      parseWebhook: () => [],
-    };
-    await runMailJob(
-      {
-        runtime: workerRuntime,
-        mailer: spyMailer,
-        templates: MAIL_TEMPLATES,
-        publicUrl: 'http://localhost:8080',
-        bounceDomain: null,
-        store,
-      },
-      { orgId, messageId: queuedInviteId! },
-    );
-    expect(dispatchedWhileInPerson).toHaveLength(0);
-
-    await admin(async (c) => {
-      const tok2Check = await c.query<{
-        used_at: string | null;
-        revoked_at: string | null;
-        in_person_host_user_id: string | null;
-      }>('SELECT used_at, revoked_at, in_person_host_user_id FROM ludy_sign.signing_token WHERE org_id = $1 AND id = $2', [
-        orgId,
-        started2.tokenId,
-      ]);
-      expect(tok2Check.rows[0]).toEqual({
-        used_at: null,
-        revoked_at: null,
-        in_person_host_user_id: ownerUserId,
-      });
-    });
 
     const submit2Res = await postJson(
       app,
@@ -789,65 +609,7 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
     ).toBe(ownerUserId);
   });
 
-  it('serves /-/sign/p/:orgSlug with strict no-Turnstile CSP (#203) and enforces opaque 404 parity with zero org oracle', async () => {
-    const pageRes = await app.request(`${SIGN_PUBLIC_HUB_PAGE_PREFIX}/${orgSlug}`, { method: 'GET' });
-    expect(pageRes.status).toBe(200);
-    assertNoReferrerNoStore(pageRes);
-    const hubCsp = pageRes.headers.get('content-security-policy') ?? '';
-    expect(hubCsp).not.toContain(TURNSTILE_ORIGIN);
-
-    // Rejects ?token= query parameter on both GET and POST.
-    const qGet = await app.request(`/api/sign/public-hub/${orgSlug}?token=leaked`, {
-      method: 'GET',
-      headers: { 'x-forwarded-for': '198.51.100.30' },
-    });
-    expect(qGet.status).toBe(400);
-    await expect(qGet.json()).resolves.toMatchObject({ code: 'SIGN_QUERY_TOKEN_FORBIDDEN' });
-
-    const qPost = await app.request(`/api/sign/public-hub/${orgSlug}?token=leaked`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-forwarded-for': '198.51.100.30' },
-      body: '{}',
-    });
-    expect(qPost.status).toBe(400);
-
-    // Create a private direct-link template (listedOnPublicHub: false).
-    const privateTpl = await setupTemplate({
-      title: 'Mau Rieng Tu Chua Len Hub',
-      requireEmailOtp: false,
-      listedOnPublicHub: false,
-    });
-
-    // Unknown org, empty org, and org with only unlisted templates all return identical 404 body.
-    const unknownGet = await getHub(app, 'khong-ton-tai-org-999', '198.51.100.31');
-    const emptyGet = await getHub(app, emptyOrgSlug, '198.51.100.31');
-    const unlistedGet = await getHub(app, orgSlug, '198.51.100.31');
-    expect(unknownGet.status).toBe(404);
-    expect(emptyGet.status).toBe(404);
-    expect(unlistedGet.status).toBe(404);
-    const expectedBody = { code: 'NOT_FOUND', message: 'Not found' };
-    await expect(unknownGet.json()).resolves.toEqual(expectedBody);
-    await expect(emptyGet.json()).resolves.toEqual(expectedBody);
-    await expect(unlistedGet.json()).resolves.toEqual(expectedBody);
-
-    // Malformed payload against unlisted template or unknown org still returns 404 (never 422), preventing oracle.
-    const malformedUnknown = await postJson(
-      app,
-      '/api/sign/public-hub/khong-ton-tai-org-999',
-      { action: 'start', templateId: privateTpl.templateId, name: '', email: 'not-an-email' },
-      '198.51.100.32',
-    );
-    const malformedUnlisted = await postJson(
-      app,
-      `/api/sign/public-hub/${orgSlug}`,
-      { action: 'start', templateId: privateTpl.templateId, name: '', email: 'not-an-email' },
-      '198.51.100.32',
-    );
-    expect(malformedUnknown.status).toBe(404);
-    expect(malformedUnlisted.status).toBe(404);
-  });
-
-  it('completes public hub self-service signing (plain + OTP), respects org_app_on/entitlement/maxUses/unlisting, and rate limits cleanly', async () => {
+  it('completes public hub self-service signing (plain + OTP), respects maxUses/unlisting, rate limits, and re-evaluates fresh clock_timestamp() in public_submit', async () => {
     const sentMails: OutboundMail[] = [];
     const mailer: MailProvider = {
       name: 'test_smtp',
@@ -912,32 +674,7 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
     expect(JSON.stringify(listBody)).not.toContain(openTpl.directToken);
     expect(JSON.stringify(listBody)).not.toContain('token_sha256');
 
-    // 2. Unentitled org returns 404 on both GET and POST.
-    expect((await getHub(appUnentitled, orgSlug, '198.51.100.41')).status).toBe(404);
-    expect(
-      (await postJson(appUnentitled, `/api/sign/public-hub/${orgSlug}`, { action: 'view', templateId: openTpl.templateId }, '198.51.100.41')).status,
-    ).toBe(404);
-
-    // 3. Disabling 'sign' app on org (ADR-0053) returns 404 on both GET and POST, then restores when re-enabled.
-    await runtime.execute(
-      'kernel.org.set_app',
-      { module: 'sign', enabled: false },
-      { actor: asOwner(), orgId },
-    );
-    try {
-      expect((await getHub(app, orgSlug, '198.51.100.42')).status).toBe(404);
-      expect(
-        (await postJson(app, `/api/sign/public-hub/${orgSlug}`, { action: 'view', templateId: openTpl.templateId }, '198.51.100.42')).status,
-      ).toBe(404);
-    } finally {
-      await runtime.execute(
-        'kernel.org.set_app',
-        { module: 'sign', enabled: true },
-        { actor: asOwner(), orgId },
-      );
-    }
-
-    // 4. Open template: view -> pdf -> start -> submit -> maxUses=1 exhausted -> disappears from hub!
+    // Open template: view -> pdf -> start -> submit -> maxUses=1 exhausted -> disappears from hub!
     const viewOpen = await postJson(
       app,
       `/api/sign/public-hub/${orgSlug}`,
@@ -1097,5 +834,45 @@ suite('eSign Slice 4d in-person signing and public template hub (#3820)', () => 
     expect(rlRes.status).toBe(429);
     assertNoReferrerNoStore(rlRes);
     expect(Number(rlRes.headers.get('retry-after'))).toBeGreaterThanOrEqual(1);
+
+    // Verify public_submit re-evaluates fresh clock_timestamp() and rejects a token whose deadline passes before commit (#4278).
+    const expTpl = await setupTemplate({
+      title: 'Mau Het Han Khi Ky',
+      requireEmailOtp: false,
+      listedOnPublicHub: true,
+      expiresAt: new Date(Date.now() + 2500).toISOString(),
+    });
+    const startExp = await postJson(
+      app,
+      `/api/sign/public-hub/${orgSlug}`,
+      { action: 'start', templateId: expTpl.templateId, name: 'Khach Het Han', email: 'exp-submit@example.com' },
+      '198.51.100.71',
+    );
+    expect(startExp.status).toBe(200);
+    const expStarted = (await startExp.json()) as { signingToken: string; envelopeId: string };
+    const expView = (await (await postJson(app, '/api/sign/view', { token: expStarted.signingToken }, '198.51.100.71')).json()) as {
+      fields: Array<{ id: string }>;
+    };
+    await new Promise((resolve) => setTimeout(resolve, 2800));
+    const expSubmit = await postJson(
+      app,
+      '/api/sign/submit',
+      {
+        token: expStarted.signingToken,
+        consentAccepted: true,
+        signatureKind: 'draw',
+        fields: [{ fieldId: expView.fields[0]!.id, signaturePngBase64: VALID_PNG_BASE64 }],
+      },
+      '198.51.100.71',
+    );
+    expect(expSubmit.status).toBe(404);
+    const expHash = sha256Hex(Buffer.from(expStarted.signingToken, 'utf8'));
+    await admin(async (c) => {
+      const tokLeft = await c.query<{ used_at: string | null }>(
+        'SELECT used_at FROM ludy_sign.signing_token WHERE org_id = $1 AND token_sha256 = $2',
+        [orgId, expHash],
+      );
+      expect(tokLeft.rows[0]?.used_at).toBeNull();
+    });
   });
 });

@@ -1111,4 +1111,224 @@ suite('eSign Slice 4b: choice fields & verified signer supporting attachments on
     });
     expect(unentitledRes.status).toBe(404);
   });
+
+  it('records host_user_id on in-person attachment_uploaded events and clears pre-submit attachments on public_delegate (#4331)', async () => {
+    // 1. In-person attachment upload records host_user_id on attachment_uploaded and keeps hash chain valid.
+    const ipFileId = await ingestSignPdf(org.orgId, owner, 'in-person-att-host');
+    const ipEnv = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      { title: 'In-Person Attachment Host', routingMode: 'parallel', sourceFileId: ipFileId },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    await workerRuntime.execute(
+      'sign.envelope.inspect_complete',
+      {
+        envelopeId: ipEnv.envelopeId,
+        outcome: 'passed',
+        pageCount: 1,
+        pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+        detectedTags: [],
+      },
+      { actor: SIGN_ACTOR, orgId: org.orgId },
+    );
+    const ipSigner = await runtime.execute<{ signerId: string }>(
+      'sign.signer.add',
+      {
+        envelopeId: ipEnv.envelopeId,
+        signerRole: 'signer',
+        roleLabel: 'Khach tai quay',
+        name: 'Khach Quay',
+        deliveryMode: 'link',
+        requireEmailOtp: false,
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    const ipFields = await runtime.execute<{ fieldIds: string[] }>(
+      'sign.field.set',
+      {
+        envelopeId: ipEnv.envelopeId,
+        fields: [
+          {
+            signerId: ipSigner.signerId,
+            fieldType: 'signature',
+            pageNumber: 1,
+            xNorm: 0.1,
+            yNorm: 0.7,
+            wNorm: 0.25,
+            hNorm: 0.1,
+            required: true,
+          },
+          {
+            signerId: ipSigner.signerId,
+            fieldType: 'attachment',
+            pageNumber: 1,
+            xNorm: 0.5,
+            yNorm: 0.7,
+            wNorm: 0.25,
+            hNorm: 0.08,
+            label: 'Giay to tuy than',
+            required: true,
+          },
+        ],
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    await runtime.execute('sign.envelope.send', { envelopeId: ipEnv.envelopeId }, { actor: asUser(owner), orgId: org.orgId });
+
+    const inPersonSession = await runtime.execute<{ token: string }>(
+      'sign.signer.start_in_person',
+      { envelopeId: ipEnv.envelopeId, signerId: ipSigner.signerId, expiresInMinutes: 30 },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+
+    const ipAttRes = await postMultipartAttachment(app, {
+      token: inPersonSession.token,
+      fieldId: ipFields.fieldIds[1]!,
+      bytes: VALID_PNG_BYTES,
+      filename: 'id-front.png',
+      mime: 'image/png',
+    });
+    expect(ipAttRes.status).toBe(200);
+
+    const ipEvents = await runtime.query<{
+      events: Array<{ eventType: string; hostUserId?: string | null; payload?: Record<string, unknown> }>;
+    }>('sign.envelope.events', { envelopeId: ipEnv.envelopeId }, { actor: asUser(owner), orgId: org.orgId });
+    const attEv = ipEvents.events.find((e) => e.eventType === 'attachment_uploaded');
+    expect(attEv?.hostUserId).toBe(member.userId);
+    expect(attEv?.payload?.hostUserId).toBe(member.userId);
+
+    const ipVerify = await runtime.query<{ valid: boolean; eventChain: { valid: boolean } }>(
+      'sign.envelope.verify',
+      { envelopeId: ipEnv.envelopeId },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    expect(ipVerify.valid).toBe(true);
+    expect(ipVerify.eventChain.valid).toBe(true);
+
+    // 2. Remote attachment uploaded before public_delegate is cleared on delegation so the delegate starts clean
+    //    and the orphaned pre-delegation file becomes unreadable via can_read_sign_file / /api/files.
+    const delFileId = await ingestSignPdf(org.orgId, owner, 'delegate-clears-att');
+    const delEnv = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      {
+        title: 'Delegate Attachment Isolation',
+        routingMode: 'parallel',
+        allowDelegation: true,
+        sourceFileId: delFileId,
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    await workerRuntime.execute(
+      'sign.envelope.inspect_complete',
+      {
+        envelopeId: delEnv.envelopeId,
+        outcome: 'passed',
+        pageCount: 1,
+        pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+        detectedTags: [],
+      },
+      { actor: SIGN_ACTOR, orgId: org.orgId },
+    );
+    const delSigner = await runtime.execute<{ signerId: string }>(
+      'sign.signer.add',
+      {
+        envelopeId: delEnv.envelopeId,
+        signerRole: 'signer',
+        roleLabel: 'Ben B',
+        name: 'Original Signer',
+        email: 'orig-del-att@example.com',
+        deliveryMode: 'link',
+        requireEmailOtp: false,
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    const delFields = await runtime.execute<{ fieldIds: string[] }>(
+      'sign.field.set',
+      {
+        envelopeId: delEnv.envelopeId,
+        fields: [
+          {
+            signerId: delSigner.signerId,
+            fieldType: 'signature',
+            pageNumber: 1,
+            xNorm: 0.1,
+            yNorm: 0.7,
+            wNorm: 0.25,
+            hNorm: 0.1,
+            required: true,
+          },
+          {
+            signerId: delSigner.signerId,
+            fieldType: 'attachment',
+            pageNumber: 1,
+            xNorm: 0.5,
+            yNorm: 0.7,
+            wNorm: 0.25,
+            hNorm: 0.08,
+            label: 'Ho so uy quyen',
+            required: true,
+          },
+        ],
+      },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    const delSent = await runtime.execute<{ links: Array<{ token: string }> }>(
+      'sign.envelope.send',
+      { envelopeId: delEnv.envelopeId },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    const origToken = delSent.links[0]!.token;
+
+    const preDelUpload = await postMultipartAttachment(app, {
+      token: origToken,
+      fieldId: delFields.fieldIds[1]!,
+      bytes: pdfFixture('delegator-private-id'),
+      filename: 'delegator-private.pdf',
+      mime: 'application/pdf',
+    });
+    expect(preDelUpload.status).toBe(200);
+    const preDelFileId = ((await preDelUpload.json()) as { fileId: string }).fileId;
+
+    const delHttp = await app.request('/api/sign/delegate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        token: origToken,
+        delegateName: 'New Delegate',
+        delegateEmail: 'new-del-att@example.com',
+        reason: 'Transfer signing responsibility',
+      }),
+    });
+    expect(delHttp.status).toBe(200);
+
+    // Pre-submit attachment columns are cleared on ludy_sign.field, and orphaned sign_attachment file returns 404.
+    const clearedRow = await withAdmin(async (c) => {
+      const r = await c.query<{
+        attachment_file_id: string | null;
+        attachment_filename: string | null;
+        attachment_content_type: string | null;
+        attachment_size_bytes: number | null;
+        attachment_sha256: string | null;
+        filled_at: string | null;
+      }>(
+        `SELECT attachment_file_id, attachment_filename, attachment_content_type, attachment_size_bytes, attachment_sha256, filled_at
+         FROM ludy_sign.field WHERE org_id = $1 AND id = $2`,
+        [org.orgId, delFields.fieldIds[1]!],
+      );
+      return r.rows[0];
+    });
+    expect(clearedRow).toEqual({
+      attachment_file_id: null,
+      attachment_filename: null,
+      attachment_content_type: null,
+      attachment_size_bytes: null,
+      attachment_sha256: null,
+      filled_at: null,
+    });
+
+    const orphanedDownload = await app.request(`/api/files/${preDelFileId}`, {
+      headers: { authorization: `Bearer ${await tokenFor(owner)}`, 'x-crove-org': org.slug },
+    });
+    expect(orphanedDownload.status).toBe(404);
+  });
 });

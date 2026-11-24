@@ -2066,7 +2066,7 @@ export function createHttpApp(deps: HttpDeps) {
         const orgSlug = c.req.param('orgSlug');
         const rawBody = await c.req.json().catch(() => null);
         if (rawBody && typeof rawBody === 'object' && (rawBody as Record<string, unknown>).action === 'pdf') {
-          const lookup = await resolvePublicHubPdf(runtime, signBilling, orgSlug, rawBody, (bucket) => signPublicHubTemplateLimit.take(bucket));
+          const lookup = await resolvePublicHubPdf(runtime, signBilling, orgSlug, rawBody, (bucket) => signPublicHubTemplateLimit.take(bucket), signMeta(c));
           if (lookup.status === 'not_found') return signOpaqueNotFound(c);
           if (lookup.status === 'rate_limited') return signRateLimited(c, lookup.retryAfterSeconds);
           if (lookup.status === 'otp_required') {

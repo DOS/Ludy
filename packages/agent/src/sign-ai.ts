@@ -2356,7 +2356,38 @@ const CURRENCY_MARKERS_BY_CODE: Readonly<Record<string, readonly string[]>> = {
   THB: ['thb', '฿'],
 };
 
+const KNOWN_FOREIGN_CURRENCY_CODES: readonly string[] = [
+  ...Object.keys(CURRENCY_MARKERS_BY_CODE),
+  'CAD',
+  'CHF',
+  'HKD',
+  'NZD',
+  'TWD',
+  'MYR',
+  'IDR',
+  'PHP',
+  'INR',
+];
+
 const EXPLICIT_VND_RE = /(?<![\p{L}])(?:vnd|vnđ)(?![\p{L}])|đồng|₫/iu;
+const EXPLICIT_VND_UNIT_RE = /(?<![\p{L}])(?:vnd|vnđ|việt nam đồng|viet nam dong|vietnam dong)(?![\p{L}])|₫/iu;
+
+function escapeRegexLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function matchesCurrencyMarker(marker: string, norm: string): boolean {
+  if (/^[a-z\s.]+$/i.test(marker)) {
+    return new RegExp(`(?<![\\p{L}])${escapeRegexLiteral(marker)}(?![\\p{L}])`, 'u').test(norm);
+  }
+  if (marker === '$') {
+    return /(?<![\p{L}$])\$(?![\p{L}])/u.test(norm);
+  }
+  if (marker.endsWith('$')) {
+    return new RegExp(`(?<![\\p{L}])${escapeRegexLiteral(marker)}(?![\\p{L}])`, 'u').test(norm);
+  }
+  return norm.includes(marker);
+}
 
 export function isCurrencyGroundedInText(currencyCode: string, rawText: string): boolean {
   const code = currencyCode.trim().toUpperCase();
@@ -2367,12 +2398,88 @@ export function isCurrencyGroundedInText(currencyCode: string, rawText: string):
     return true;
   }
   const markers = CURRENCY_MARKERS_BY_CODE[code] ?? [];
-  return markers.some((marker) => {
-    if (/^[a-z\s.]+$/i.test(marker)) {
-      return new RegExp(`(?<![\\p{L}])${marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}])`, 'u').test(norm);
+  return markers.some((marker) => matchesCurrencyMarker(marker, norm));
+}
+
+function groundedForeignCurrencies(rawText: string, extraCode?: string): Set<string> {
+  const found = new Set<string>();
+  const codes =
+    extraCode && extraCode !== 'VND' && /^[A-Z]{3}$/.test(extraCode)
+      ? [...KNOWN_FOREIGN_CURRENCY_CODES, extraCode]
+      : KNOWN_FOREIGN_CURRENCY_CODES;
+  for (const code of codes) {
+    if (isCurrencyGroundedInText(code, rawText)) {
+      found.add(code);
     }
-    return norm.includes(marker);
-  });
+  }
+  return found;
+}
+
+function isAmountWithCurrencyInLocalSpan(
+  decStr: string,
+  candidateCurrency: string,
+  rawQuote: string,
+): boolean {
+  let target: DecimalValue;
+  try {
+    target = new Decimal(decStr);
+  } catch {
+    return false;
+  }
+  const clauses = normalizeContractText(rawQuote)
+    .split(/[\n;|/()]+|\s+(?:or|hoặc|tương đương)\s+/iu)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  const candidateClauses = clauses.length > 0 ? clauses : [normalizeContractText(rawQuote)];
+  for (const clause of candidateClauses) {
+    if (!parseQuoteDecimalCandidates(clause).some((c) => c.equals(target))) {
+      continue;
+    }
+    const clauseForeign = groundedForeignCurrencies(clause, candidateCurrency);
+    const clauseVnd = EXPLICIT_VND_UNIT_RE.test(clause);
+    if (candidateCurrency === 'VND') {
+      if (clauseVnd || clauseForeign.size === 0) return true;
+    } else if (clauseForeign.has(candidateCurrency) && clauseForeign.size === 1 && !clauseVnd) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isCurrencyValidForContractValue(
+  candidateCurrency: string,
+  decStr: string,
+  quoteExcerpt: string,
+  combinedSourceRaw: string,
+): boolean {
+  const quoteForeign = groundedForeignCurrencies(quoteExcerpt, candidateCurrency);
+  const quoteExplicitVnd = EXPLICIT_VND_RE.test(quoteExcerpt);
+
+  if (candidateCurrency === 'VND') {
+    if (quoteExplicitVnd || quoteForeign.size === 0) return true;
+    return isAmountWithCurrencyInLocalSpan(decStr, 'VND', quoteExcerpt);
+  }
+
+  if (quoteForeign.has(candidateCurrency)) {
+    const hasCompetingForeign = Array.from(quoteForeign).some((code) => code !== candidateCurrency);
+    if (!hasCompetingForeign && !EXPLICIT_VND_UNIT_RE.test(quoteExcerpt)) {
+      return true;
+    }
+    return isAmountWithCurrencyInLocalSpan(decStr, candidateCurrency, quoteExcerpt);
+  }
+
+  // Cited quote mentions another currency explicitly: never borrow candidateCurrency from elsewhere in the contract.
+  if (quoteForeign.size > 0 || quoteExplicitVnd) {
+    return false;
+  }
+
+  // Unlabelled value quote may inherit document currency only when a single unambiguous foreign currency exists.
+  const docForeign = groundedForeignCurrencies(combinedSourceRaw, candidateCurrency);
+  return (
+    docForeign.has(candidateCurrency) &&
+    docForeign.size === 1 &&
+    !EXPLICIT_VND_UNIT_RE.test(combinedSourceRaw)
+  );
 }
 
 export function isNoticeDaysGroundedInQuote(days: number, rawQuote: string): boolean {
@@ -2544,12 +2651,12 @@ export function checkSignObligationExtract(
   if (typeof raw.contractValue === 'string' && raw.contractValue.trim().length > 0) {
     const decStr = normalizeDecimalAmount(raw.contractValue);
     const cite = verifiedCitations.get('contractValue');
-    const currencyValidForValue =
-      cite !== undefined &&
-      (candidateCurrency === 'VND' ||
-        isCurrencyGroundedInText(candidateCurrency, cite.quoteExcerpt) ||
-        (isCurrencyGroundedInText(candidateCurrency, combinedSourceRaw) && !EXPLICIT_VND_RE.test(cite.quoteExcerpt)));
-    if (decStr !== null && cite && isAmountGroundedInQuote(decStr, cite.quoteExcerpt) && currencyValidForValue) {
+    if (
+      decStr !== null &&
+      cite &&
+      isAmountGroundedInQuote(decStr, cite.quoteExcerpt) &&
+      isCurrencyValidForContractValue(candidateCurrency, decStr, cite.quoteExcerpt, combinedSourceRaw)
+    ) {
       contractValue = decStr;
       currency = candidateCurrency;
       keptCitations.push(cite);
@@ -2557,7 +2664,8 @@ export function checkSignObligationExtract(
       droppedCount += 1;
     }
   } else if (candidateCurrency !== 'VND') {
-    if (isCurrencyGroundedInText(candidateCurrency, combinedSourceRaw)) {
+    const docForeign = groundedForeignCurrencies(combinedSourceRaw, candidateCurrency);
+    if (docForeign.has(candidateCurrency) && docForeign.size === 1 && !EXPLICIT_VND_UNIT_RE.test(combinedSourceRaw)) {
       currency = candidateCurrency;
     } else {
       droppedCount += 1;
