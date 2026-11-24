@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Issue #4431: restate ludy_kernel.org_purge from 20270318200000_ludy_kernel_org_purge_hr_stage6c
+-- Issue #4431: restate ludy_kernel.org_purge from 20270319020000_ludy_kernel_org_purge_hr_stage6d
 -- with ONE change: delete ludy_projects.project_cycle_snapshot and ludy_projects.project_cycle_task_history
 -- ahead of project_task, project_cycle, project, and task.
 SET LOCAL lock_timeout = '2s';
@@ -45,7 +45,7 @@ DECLARE
     'ludy_sign.signing_otp', 'ludy_sign.signing_token', 'ludy_sign.ai_analysis', 'ludy_sign.field', 'ludy_sign.signer', 'ludy_sign.envelope',
     'ludy_kernel.member_vy_memory', 'ludy_kernel.member_vy_result',
     'ludy_hr.candidate', 'ludy_hr.job_opening',
-    'ludy_hr.payroll_bank_template', 'ludy_hr.payroll_dependent', 'ludy_hr.attendance_log', 'ludy_hr.attendance_qr_config', 'ludy_hr.onboarding_submission', 'ludy_hr.overtime_request', 'ludy_hr.probation_review', 'ludy_hr.leave_request', 'ludy_hr.payroll_leave_entry', 'ludy_hr.employee_asset_handover', 'ludy_hr.payroll_employee', 'ludy_hr.department',
+    'ludy_hr.payroll_bank_template', 'ludy_hr.payroll_dependent', 'ludy_hr.attendance_log', 'ludy_hr.attendance_qr_config', 'ludy_hr.onboarding_submission', 'ludy_hr.overtime_request', 'ludy_hr.probation_review', 'ludy_hr.leave_request', 'ludy_hr.payroll_leave_entry', 'ludy_hr.employee_asset_handover', 'ludy_hr.okr_key_result', 'ludy_hr.okr_objective', 'ludy_hr.payroll_employee', 'ludy_hr.department',
     'ludy_meetings.glossary_term', 'ludy_meetings.minutes_template', 'ludy_meetings.chat_post_body', 'ludy_meetings.chat_post', 'ludy_meetings.chat_channel_target', 'ludy_meetings.chat_channel', 'ludy_meetings.morning_notice', 'ludy_meetings.calendar_agenda', 'ludy_meetings.capture_session', 'ludy_meetings.hook_delivery', 'ludy_meetings.member_hook', 'ludy_meetings.translation', 'ludy_meetings.meeting_note', 'ludy_meetings.media_key', 'ludy_meetings.action_item', 'ludy_meetings.meeting_result', 'ludy_meetings.transcript_segment', 'ludy_meetings.live_line', 'ludy_meetings.live_chunk', 'ludy_meetings.audio_segment', 'ludy_meetings.meeting_video', 'ludy_meetings.meeting_reader', 'ludy_meetings.meeting',
     'ludy_kernel.saved_reply', 'ludy_kernel.conversation_setting', 'ludy_kernel.member_availability', 'ludy_kernel.conversation_composing', 'ludy_kernel.conversation_draft', 'ludy_kernel.conversation_note', 'ludy_kernel.conversation_read', 'ludy_kernel.conversation_attachment', 'ludy_kernel.conversation_message', 'ludy_kernel.conversation', 'ludy_kernel.conversation_identity', 'ludy_kernel.channel_access',
     'ludy_ads.ad_flag_setting', 'ludy_ads.ad_campaign_request', 'ludy_ads.ad_campaign_draft', 'ludy_ads.ad_spend_cap', 'ludy_ads.ad_org_setting', 'ludy_ads.ad_sync_run', 'ludy_ads.ad_spend_day', 'ludy_ads.ad_account',
