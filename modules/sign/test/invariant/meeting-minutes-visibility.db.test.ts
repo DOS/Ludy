@@ -135,10 +135,13 @@ suite('eSign meeting_minutes module-boundary security invariants (#3811)', () =>
   it('pins search_path and restricts EXECUTE privileges on all crove_sign meeting-minutes SECURITY DEFINER functions', async () => {
     const fnSignatures = [
       'crove_sign.is_meeting_minutes_reader(uuid,uuid)',
+      'crove_sign.is_meeting_minutes_reader_record(uuid,uuid,boolean,uuid[])',
       'crove_sign.has_shared_meeting_minutes(uuid,uuid)',
       'crove_sign.check_meeting_minutes_source(uuid)',
       'crove_sign.can_create_meeting_minutes_envelope(uuid,uuid)',
       'crove_sign.can_access_meeting_minutes_envelope(uuid,uuid,uuid)',
+      'crove_sign.can_access_meeting_minutes_envelope_row(uuid,uuid,uuid,text,boolean,uuid[])',
+      'crove_sign.cleanup_meeting_minutes_envelopes(uuid,uuid,boolean,uuid[])',
       'crove_sign.is_exportable_envelope(uuid,text,uuid)',
       'crove_sign.is_exportable_envelope_id(uuid,uuid)',
       'crove_sign.is_exportable_sign_file(uuid,uuid,text)',
@@ -167,7 +170,9 @@ suite('eSign meeting_minutes module-boundary security invariants (#3811)', () =>
 
     const internalOnlyFns = new Set([
       'crove_sign.is_meeting_minutes_reader(uuid,uuid)',
+      'crove_sign.is_meeting_minutes_reader_record(uuid,uuid,boolean,uuid[])',
       'crove_sign.has_shared_meeting_minutes(uuid,uuid)',
+      'crove_sign.cleanup_meeting_minutes_envelopes(uuid,uuid,boolean,uuid[])',
     ]);
     const expectedCallers = ['crove_app', 'crove_definer_tenant', 'crove_tenant', 'crove_worker'] as const;
     const checkedCanonicalRoles = [
@@ -178,7 +183,7 @@ suite('eSign meeting_minutes module-boundary security invariants (#3811)', () =>
       'crove_auth_reader',
     ] as const;
 
-    expect(rows).toHaveLength(12);
+    expect(rows).toHaveLength(15);
     for (const row of rows) {
       const canonicalFn = ids.toCanonicalTable(row.fn);
       expect(row.definer, canonicalFn).toBe(true);

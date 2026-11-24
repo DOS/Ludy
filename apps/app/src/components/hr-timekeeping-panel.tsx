@@ -23,7 +23,7 @@ const STATUS_VARIANT: Record<TimekeepingMatchStatus, 'success' | 'secondary' | '
   invalid_values: 'destructive',
 };
 
-const NUM = 'px-4 py-3 text-right tabular-nums';
+const NUM = 'text-right tabular-nums';
 
 function issueText(t: ReturnType<typeof useTranslations<'hrPayroll'>>, issue: TimekeepingIssue): string {
   const row = String(issue.rowNumber ?? 0);
@@ -178,12 +178,12 @@ export function TimekeepingImportPanel({
               {preview.rows.map((entry) => (
                 <TableRow key={`${entry.row.rowNumber}-${entry.row.employeeKey}`} data-testid="hr-timekeeping-preview-row">
                   <TableCell className={NUM}>{entry.row.rowNumber}</TableCell>
-                  <TableCell className="px-4 py-3">
+                  <TableCell>
                     {entry.row.employeeCode && entry.row.displayName
                       ? `${entry.row.employeeCode} (${entry.row.displayName})`
                       : (entry.row.displayName ?? entry.row.employeeCode ?? entry.row.employeeKey)}
                   </TableCell>
-                  <TableCell className="px-4 py-3">{entry.matchedName ?? '-'}</TableCell>
+                  <TableCell>{entry.matchedName ?? '-'}</TableCell>
                   <TableCell className={NUM}>{entry.row.unpaidLeaveDays}</TableCell>
                   <TableCell className={NUM}>{entry.row.daysNotEmployed}</TableCell>
                   <TableCell className={NUM}>
@@ -195,7 +195,7 @@ export function TimekeepingImportPanel({
                     )}
                   </TableCell>
                   <TableCell className={NUM}>{entry.row.nightHours}</TableCell>
-                  <TableCell className="px-4 py-3">
+                  <TableCell>
                     <Badge variant={STATUS_VARIANT[entry.status]}>{t(`timekeeping.status.${entry.status}`)}</Badge>
                   </TableCell>
                 </TableRow>

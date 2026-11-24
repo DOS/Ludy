@@ -20,7 +20,7 @@ export function ExtensionConnectPage() {
   const t = useTranslations('extensionConnect');
   // Read once: the request was moved from the address bar to this tab's storage before sign-in.
   const read = useRef<ConnectRequest | null | undefined>(undefined);
-  if (read.current === undefined) read.current = pendingConnect(getConfig().extensionIds ?? []);
+  if (read.current === undefined) read.current = pendingConnect(getConfig().extensionIds ?? [], Date.now(), { desktopCapture: Boolean(getConfig().meetingsDesktopCapture) });
   const request = read.current;
   const me = useQuery(orpc.me.get.queryOptions());
   const [chosen, setChosen] = useState<string | null>(null);
@@ -51,7 +51,8 @@ export function ExtensionConnectPage() {
 
   const approve = useMutation({
     mutationFn: async () => {
-      if (!request || !org || effectiveScopes.length === 0) throw new Error('no request');
+      // Sign-in-only desktop tokens may hold empty scopes; requests that asked for scopes need at least one effective scope.
+      if (!request || !org || (effectiveScopes.length === 0 && (!desktop || request.scopes.length > 0))) throw new Error('no request');
       const response = await apiFetch('/api/extension/authorize', {
         method: 'POST',
         headers: { 'content-type': 'application/json', [ORG_HEADER]: org.slug },
@@ -79,11 +80,13 @@ export function ExtensionConnectPage() {
     window.location.assign(connectRedirect(request, { error: 'access_denied' }));
   };
 
+  const desktop = request?.client === 'desktop';
+  const noFeature = org && orgApps.isSuccess && effectiveScopes.length === 0 && (!desktop || request.scopes.length > 0);
   return (
     <main className="flex min-h-full items-center justify-center bg-background px-4">
       <Card className="block w-full max-w-md space-y-4 p-6">
-        <ScreenTitle name={t('title')} />
-        <h1 className="text-lg font-semibold text-foreground">{t('title')}</h1>
+        <ScreenTitle name={desktop ? t('desktop.title') : t('title')} />
+        <h1 className="text-lg font-semibold text-foreground">{desktop ? t('desktop.title') : t('title')}</h1>
         {!request && <ErrorText>{t('lost')}</ErrorText>}
         {request && needsModule && <ErrorText>{t('noFeature')}</ErrorText>}
         {request && !needsModule && me.isPending && (
@@ -94,7 +97,9 @@ export function ExtensionConnectPage() {
         {request && !needsModule && me.data && orgs.length === 0 && <ErrorText>{t('noOrg')}</ErrorText>}
         {request && !needsModule && orgs.length > 0 && (
           <>
-            <p className="text-sm text-muted-foreground">{t('intro', { device: request.deviceName || t('defaultDevice') })}</p>
+            <p className="text-sm text-muted-foreground">
+              {desktop ? t('desktop.intro', { device: request.deviceName || t('desktop.defaultDevice') }) : t('intro', { device: request.deviceName || t('defaultDevice') })}
+            </p>
             <fieldset className="space-y-2">
               <legend className="text-sm font-medium text-foreground">{t('chooseOrg')}</legend>
               {orgs.map((o) => (
@@ -104,23 +109,28 @@ export function ExtensionConnectPage() {
                 </label>
               ))}
             </fieldset>
-            {org && <p className="text-sm font-medium text-foreground">{t('allow', { org: org.name })}</p>}
-            <p className="break-all text-xs text-subtle-foreground">{t('extensionId', { id: request.extensionId })}</p>
-            {org && orgApps.isSuccess && effectiveScopes.length === 0 ? (
+            {org && <p className="text-sm font-medium text-foreground">{desktop ? t('desktop.allow', { org: org.name }) : t('allow', { org: org.name })}</p>}
+            {desktop ? (
+              <p className="text-xs text-subtle-foreground">{t('desktop.deviceNote')}</p>
+            ) : (
+              <p className="break-all text-xs text-subtle-foreground">{t('extensionId', { id: request.extensionId })}</p>
+            )}
+            {noFeature ? (
               <ErrorText>{t('noFeature')}</ErrorText>
             ) : (
               <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                {desktop && effectiveScopes.length === 0 && <li>{t('desktop.noFeatures')}</li>}
                 {effectiveScopes.map((scope) => (
                   <li key={scope}>{t(`scope.${scope}`)}</li>
                 ))}
-                <li>{t('limits')}</li>
-                <li>{t('revokeHint')}</li>
+                <li>{desktop ? t('desktop.limits') : t('limits')}</li>
+                <li>{desktop ? t('desktop.revokeHint') : t('revokeHint')}</li>
               </ul>
             )}
             {orgApps.error && <ErrorText>{errorMessage(orgApps.error)}</ErrorText>}
             {approve.error && <ErrorText>{errorMessage(approve.error)}</ErrorText>}
             <div className="flex flex-wrap gap-2">
-              <Button size="lg" loading={approve.isPending || (Boolean(org) && orgApps.isPending)} disabled={!org || orgApps.isPending || orgApps.isError || effectiveScopes.length === 0} onClick={() => approve.mutate()}>
+              <Button size="lg" loading={approve.isPending || (Boolean(org) && orgApps.isPending)} disabled={!org || orgApps.isPending || orgApps.isError || (effectiveScopes.length === 0 && (!desktop || request.scopes.length > 0))} onClick={() => approve.mutate()}>
                 {t('approve')}
               </Button>
               <Button size="lg" variant="outline" disabled={approve.isPending} onClick={deny}>

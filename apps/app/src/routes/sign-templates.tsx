@@ -662,7 +662,7 @@ export function DirectLinkCard({
                     <Label htmlFor="sign-tpl-direct-url">{t('directLinkUrlLabel')}</Label>
                     <div className="flex flex-col gap-2 sm:flex-row">
                       <Input id="sign-tpl-direct-url" readOnly value={freshDirectUrl} className="font-mono text-xs" />
-                      <Button type="button" variant="outline" size="sm" onClick={() => onCopyUrl(freshDirectUrl)}>
+                      <Button type="button" variant="outline" size="sm" className="max-sm:min-h-11" onClick={() => onCopyUrl(freshDirectUrl)}>
                         {t('copyButton')}
                       </Button>
                     </div>

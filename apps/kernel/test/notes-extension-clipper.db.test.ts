@@ -54,6 +54,9 @@ suite('Notes v2 E4 (#3560): extension notes scope, Quick Capture & Web Clipper o
   const dbName = `crove_test_notes_ext_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
+  let db: ReturnType<typeof createDb>;
+  let config: ReturnType<typeof loadConfig>;
+  let broker: CredentialBroker;
   let runtime: Runtime;
   let app: ReturnType<typeof createHttpApp>;
   const store = new MemoryStore();
@@ -147,13 +150,13 @@ suite('Notes v2 E4 (#3560): extension notes scope, Quick Capture & Web Clipper o
     appUrl.username = 'ludy_app';
     appUrl.password = 'test-app-pw';
     pool = createPool({ connectionString: appUrl.toString(), max: 8 });
-    const db = createDb(pool);
-    const config = loadConfig({ DATABASE_URL: appUrl.toString(), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent', EXTENSION_IDS: EXT_ID });
+    db = createDb(pool);
+    config = loadConfig({ DATABASE_URL: appUrl.toString(), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent', EXTENSION_IDS: EXT_ID });
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register({
       commands: [...kernelCommands, ...financeCommands, ...meetingsCommands, ...notesCommands],
       queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries, ...meetingsQueries, ...notesQueries],
     });
-    const broker = {
+    broker = {
       keyId: 'k1-notes-ext',
       keyIds: ['k1-notes-ext'],
       derive: (purpose: string) => createHash('sha256').update(`test-secret:${purpose}`).digest(),
@@ -381,5 +384,73 @@ suite('Notes v2 E4 (#3560): extension notes scope, Quick Capture & Web Clipper o
     } finally {
       await rpc('org/setApp', ownerHeaders, { module: 'notes', enabled: true });
     }
+  });
+
+  it('enforces per-token write cap even with rateLimiter: null and fails closed on transient appOn errors (#3742)', async () => {
+    const first = await connectAndExchange('member', ['notes']);
+    const second = await connectAndExchange('member', ['notes']);
+
+    const cappedApp = createHttpApp({
+      config,
+      runtime,
+      store,
+      broker,
+      authenticate: createAuthenticator(config, db),
+      pool,
+      aiEnabled: false,
+      rateLimiter: null,
+      extensionWriteLimit: new RateLimiter({ perMinute: 2 }),
+      mediaMeasurer: fakeMediaMeasurer(),
+    });
+
+    const postOn = (target: ReturnType<typeof createHttpApp>, path: string, token: string, input: unknown) =>
+      target.request(`/api/rpc/${path}`, {
+        method: 'POST',
+        headers: asToken(token),
+        body: JSON.stringify({ json: input }),
+      });
+
+    expect((await postOn(cappedApp, 'notes/clip', first.token, { title: 'Cap 1', body: 'one' })).status).toBe(200);
+    expect((await postOn(cappedApp, 'notes/todos/quickCapture', first.token, { title: 'Cap 2' })).status).toBe(200);
+
+    const third = await postOn(cappedApp, 'notes/clip', first.token, { title: 'Cap 3', body: 'blocked' });
+    expect(third.status).toBe(429);
+    expect(Number(third.headers.get('retry-after'))).toBeGreaterThanOrEqual(1);
+    expect(await third.json()).toMatchObject({ code: 'RATE_LIMITED' });
+
+    // Reads stay allowed for first token, and second token keeps its own write budget.
+    expect((await cappedApp.request('/api/extension/me', { headers: { authorization: `Bearer ${first.token}` } })).status).toBe(200);
+    expect((await postOn(cappedApp, 'notes/clip', second.token, { title: 'Other token ok', body: 'two' })).status).toBe(200);
+
+    const failingAppOnRuntime = new Proxy(runtime, {
+      get(target, prop, receiver) {
+        if (prop === 'appOn') return async () => { throw new Error('transient db outage'); };
+        const value = Reflect.get(target, prop, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) as Runtime;
+    const failingEdge = createHttpApp({
+      config,
+      runtime: failingAppOnRuntime,
+      store,
+      broker,
+      authenticate: createAuthenticator(config, db),
+      pool,
+      aiEnabled: false,
+      mediaMeasurer: fakeMediaMeasurer(),
+    });
+
+    const codesBefore = await admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.extension_auth_code WHERE org_id = $1', [orgId])).rows[0]?.n));
+    const deniedAuthorize = await failingEdge.request('/api/extension/authorize', {
+      method: 'POST',
+      headers: await asBrowser('member'),
+      body: JSON.stringify({ extensionId: EXT_ID, codeChallenge: challengeOf('k'.repeat(43)), codeChallengeMethod: 'S256', scopes: ['notes'], deviceName: 'Chrome' }),
+    });
+    expect(deniedAuthorize.status).toBe(503);
+    const codesAfter = await admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.extension_auth_code WHERE org_id = $1', [orgId])).rows[0]?.n));
+    expect(codesAfter).toBe(codesBefore);
+
+    const failedMe = await failingEdge.request('/api/extension/me', { headers: { authorization: `Bearer ${first.token}` } });
+    expect(failedMe.status).toBe(503);
   });
 });

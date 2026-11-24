@@ -14,6 +14,16 @@ import { en as enMessages } from '../src/i18n/messages/en.ts';
 
 const cache = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 
+vi.mock('@tanstack/react-router', () => ({
+  useParams: () => ({ slug: 'demo-org' }),
+  Link: ({ children, to, params, search, ...rest }: Record<string, unknown>) => {
+    const p = (params ?? {}) as Record<string, string>;
+    const base = String(to ?? '').replace(/\$(\w+)/g, (_m, k: string) => p[k] ?? '');
+    const s = search && typeof search === 'object' ? new URLSearchParams(search as Record<string, string>).toString() : '';
+    return <a href={s ? `${base}?${s}` : base} {...rest}>{children as never}</a>;
+  },
+}));
+
 vi.mock('../src/lib/api.ts', async () => {
   const { QueryClient: QC } = await import('@tanstack/react-query');
   cache.current = new QC();
@@ -33,6 +43,7 @@ vi.mock('../src/lib/api.ts', async () => {
   return {
     orpc: node([]),
     client: {},
+    getCurrentOrg: () => 'demo-org',
     queryClient: cache.current,
     errorMessage: (e: unknown) => String(e),
   };

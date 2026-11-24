@@ -17,7 +17,14 @@
 // the draft computes them by code from what a person saves. A call that fails or is refused by the AI budget gives no proposal: the screen works as it does with AI off.
 import { money, salesVatRatesOn, writtenVatRate } from '@ludy/l10n-vn';
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
-import { hasAddress } from './reminder.ts';
+import {
+  hasAddress,
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasPromptMarkupLeak,
+  hasStealthControls,
+  hasUngroundedMoneyOrScaleWords,
+} from './injection-guards.ts';
 
 // How much one call reads and proposes: a bound on what one paid call sends and on what one answer may fill in.
 export const EINVOICE_DRAFT_TEXT_MAX = 2000;
@@ -154,12 +161,15 @@ const addressIn = (value: string, source: string) => hasAddress(value) || draftL
 type LineProblem = 'FIGURES' | 'RATE' | 'LINK' | 'LINE';
 
 function checkLine(line: EInvoiceDraftModelLine, source: string, figures: ReadonlySet<string>, rates: ReadonlySet<string>, allowed: readonly string[]): EInvoiceProposedLine | LineProblem {
+  if (hasStealthControls(line.description) || hasPromptMarkupLeak(line.description)) return 'LINK';
+  if (line.unit !== null && (hasStealthControls(line.unit) || hasPromptMarkupLeak(line.unit))) return 'LINK';
   const description = oneLine(line.description, DESCRIPTION_MAX).replace(/<<<|>>>/g, '');
   if (description === '') return 'LINE';
   const unit = line.unit === null ? null : oneLine(line.unit, UNIT_MAX) || null;
+  const sourceHasMoneyScaleWords = hasUngroundedMoneyOrScaleWords(source);
   for (const text of [description, unit ?? '']) {
-    if (addressIn(text, source)) return 'LINK';
-    if (draftFiguresOutside(text, [source]).length > 0) return 'FIGURES';
+    if (addressIn(text, source) || hasObfuscatedContactOrLink(text, [source]) || hasAutonomousActionDirective(text)) return 'LINK';
+    if (draftFiguresOutside(text, [source]).length > 0 || (!sourceHasMoneyScaleWords && hasUngroundedMoneyOrScaleWords(text))) return 'FIGURES';
   }
   const quantity = plainDecimal(line.quantity);
   const unitPrice = plainDecimal(line.unitPrice);

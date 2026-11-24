@@ -926,8 +926,8 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
 
   it('(org export, #2676) streams the payroll tables to the owner with no plain number and no sealed text, and audits each read before it', async () => {
     const o = await exportOrg(true);
-    expect(OWNER_RUN_EXPORT_TABLE_NAMES).toEqual(['hr.department', 'hr.payroll_employee', 'hr.payroll_employment', 'hr.payroll_dependent', 'hr.payroll_run', 'hr.payroll_line', 'hr.payroll_bank_template', 'hr.payroll_leave_entry', 'hr.leave_request', 'hr.attendance_log', 'hr.onboarding_submission', 'hr.overtime_request', 'hr.probation_review', 'hr.job_opening', 'hr.candidate', 'meetings.glossary_term']);
-    // No department, bank template, leave request, Stage 5B/5C data, or recruiting data was saved in this org: those tables are served, and empty.
+    expect(OWNER_RUN_EXPORT_TABLE_NAMES).toEqual(['hr.department', 'hr.payroll_employee', 'hr.payroll_employment', 'hr.payroll_dependent', 'hr.payroll_run', 'hr.payroll_line', 'hr.payroll_bank_template', 'hr.payroll_leave_entry', 'hr.leave_request', 'hr.attendance_log', 'hr.onboarding_submission', 'hr.overtime_request', 'hr.probation_review', 'hr.salary_advance_request', 'hr.payroll_adjustment_item', 'hr.business_trip_request', 'hr.contract_addendum', 'hr.employee_asset_handover', 'hr.job_opening', 'hr.candidate', 'meetings.glossary_term']);
+    // No department, bank template, leave request, Stage 5B/5C/6B/6C data, or recruiting data was saved in this org: those tables are served, and empty.
     const departments = await read(rt, 'hr.department', asUser(o.owner), o.orgId);
     const employees = await read(rt, 'hr.payroll_employee', asUser(o.owner), o.orgId);
     const employments = await read(rt, 'hr.payroll_employment', asUser(o.owner), o.orgId);
@@ -941,10 +941,15 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const onboardingSubmissions = await read(rt, 'hr.onboarding_submission', asUser(o.owner), o.orgId);
     const overtimeRequests = await read(rt, 'hr.overtime_request', asUser(o.owner), o.orgId);
     const probationReviews = await read(rt, 'hr.probation_review', asUser(o.owner), o.orgId);
+    const salaryAdvanceRequests = await read(rt, 'hr.salary_advance_request', asUser(o.owner), o.orgId);
+    const payrollAdjustmentItems = await read(rt, 'hr.payroll_adjustment_item', asUser(o.owner), o.orgId);
+    const businessTripRequests = await read(rt, 'hr.business_trip_request', asUser(o.owner), o.orgId);
+    const contractAddendums = await read(rt, 'hr.contract_addendum', asUser(o.owner), o.orgId);
+    const assetHandovers = await read(rt, 'hr.employee_asset_handover', asUser(o.owner), o.orgId);
     const openings = await read(rt, 'hr.job_opening', asUser(o.owner), o.orgId);
     const candidates = await read(rt, 'hr.candidate', asUser(o.owner), o.orgId);
     const glossary = await read(rt, 'meetings.glossary_term', asUser(o.owner), o.orgId);
-    expect([departments.length, employees.length, employments.length, dependents.length, runs.length, lines.length, templates.length, leaveEntries.length, leaveRequests.length, attendanceLogs.length, onboardingSubmissions.length, overtimeRequests.length, probationReviews.length, openings.length, candidates.length, glossary.length]).toEqual([0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect([departments.length, employees.length, employments.length, dependents.length, runs.length, lines.length, templates.length, leaveEntries.length, leaveRequests.length, attendanceLogs.length, onboardingSubmissions.length, overtimeRequests.length, probationReviews.length, salaryAdvanceRequests.length, payrollAdjustmentItems.length, businessTripRequests.length, contractAddendums.length, assetHandovers.length, openings.length, candidates.length, glossary.length]).toEqual([0, 1, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     expect(runs[0]).toMatchObject({ month: '2026-06', status: 'draft' });
     expect(lines[0]).toMatchObject({ kind: 'pay', employee_id: employees[0]?.id });
     expect(employees[0]).toMatchObject({ display_name: EXPORT_NAME });
@@ -956,7 +961,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     expect(dependents[0]).toMatchObject({ display_name: EXPORT_DEPENDENT });
     expect(leaveEntries[0]).toMatchObject({ employee_id: employees[0]?.id, month: '2026-06', kind: 'annual_leave' });
     const text = JSON.stringify([employees, employments, dependents, runs, lines, leaveEntries]);
-    for (const needle of [EXPORT_IDENTITY, EXPORT_IDENTITY_DIGITS, EXPORT_ACCOUNT, EXPORT_ACCOUNT_DIGITS, EXPORT_TAX, EXPORT_INSURANCE, 'crove:s1:']) expect(text, needle).not.toContain(needle);
+    for (const needle of [EXPORT_IDENTITY, EXPORT_IDENTITY_DIGITS, EXPORT_ACCOUNT, EXPORT_ACCOUNT_DIGITS, EXPORT_TAX, EXPORT_INSURANCE, 'ludy:s1:', 'crove:s1:']) expect(text, needle).not.toContain(needle);
     const audits = await withAdmin(
       async (c) => (await c.query<{ outcome: string; detail: string; row: string }>(`SELECT outcome, detail::text AS detail, audit_event::text AS row FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.org.export.people' ORDER BY id`, [o.orgId])).rows,
     );
@@ -1031,12 +1036,12 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
       const text = await ok.text();
       const all = text.trim().split('\n').map((l) => JSON.parse(l) as { org_id: string; _end?: boolean; rows?: number });
       // The last line says how many rows came before it, so a cut download cannot look whole.
-      const expected = table === 'hr.payroll_bank_template' || table === 'hr.department' || table === 'hr.job_opening' || table === 'hr.candidate' || table === 'hr.leave_request' || table === 'hr.attendance_log' || table === 'hr.onboarding_submission' || table === 'hr.overtime_request' || table === 'hr.probation_review' || table === 'meetings.glossary_term' ? 0 : 1;
+      const expected = table === 'hr.payroll_bank_template' || table === 'hr.department' || table === 'hr.job_opening' || table === 'hr.candidate' || table === 'hr.leave_request' || table === 'hr.attendance_log' || table === 'hr.onboarding_submission' || table === 'hr.overtime_request' || table === 'hr.probation_review' || table === 'hr.salary_advance_request' || table === 'hr.payroll_adjustment_item' || table === 'hr.business_trip_request' || table === 'hr.contract_addendum' || table === 'hr.employee_asset_handover' || table === 'meetings.glossary_term' ? 0 : 1;
       expect(all.at(-1), table).toEqual({ _end: true, rows: expected });
       const rows = all.slice(0, -1);
       expect(rows.length, table).toBe(expected);
       if (expected > 0) expect(rows[0]?.org_id).toBe(closing.orgId);
-      for (const needle of [EXPORT_IDENTITY_DIGITS, EXPORT_ACCOUNT_DIGITS, 'crove:s1:']) expect(text).not.toContain(needle);
+      for (const needle of [EXPORT_IDENTITY_DIGITS, EXPORT_ACCOUNT_DIGITS, 'ludy:s1:', 'crove:s1:']) expect(text).not.toContain(needle);
     }
     // Another org's owner reads their own people, never this org's.
     const own = JSON.parse((await (await get('hr.payroll_dependent', other.owner, other.slug)).text()).trim().split('\n')[0] as string) as { org_id: string };
@@ -1304,12 +1309,16 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
     const EXPECTED_HR_TABLE_GRANTS: Record<string, readonly string[]> = {
       attendance_log: ['INSERT', 'SELECT'],
       attendance_qr_config: ['INSERT', 'SELECT'],
+      business_trip_request: ['INSERT', 'SELECT'],
       candidate: ['INSERT', 'SELECT'],
+      contract_addendum: ['INSERT', 'SELECT'],
       department: ['INSERT', 'SELECT'],
+      employee_asset_handover: ['INSERT', 'SELECT'],
       job_opening: ['INSERT', 'SELECT'],
       leave_request: ['INSERT', 'SELECT'],
       onboarding_submission: ['INSERT', 'SELECT'],
       overtime_request: ['INSERT', 'SELECT'],
+      payroll_adjustment_item: ['INSERT', 'SELECT'],
       payroll_bank_template: ['DELETE', 'INSERT', 'SELECT'],
       payroll_dependent: ['INSERT', 'SELECT'],
       payroll_employee: ['INSERT', 'SELECT'],
@@ -1318,6 +1327,7 @@ suite('HR monthly pay run on PostgreSQL (#2531)', () => {
       payroll_line: ['DELETE', 'INSERT', 'SELECT'],
       payroll_run: ['INSERT', 'SELECT'],
       probation_review: ['INSERT', 'SELECT'],
+      salary_advance_request: ['INSERT', 'SELECT'],
     };
     const TENANT_ROLES = ['ludy_app', 'ludy_definer_tenant', 'ludy_tenant', 'ludy_worker'];
     const ALL_OPS = ['DELETE', 'INSERT', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE'];

@@ -21,8 +21,25 @@ vi.mock('@tanstack/react-router', async (importOriginal) => {
   const { createElement } = await import('react');
   return {
     ...(await importOriginal<object>()),
-    Link: ({ children, to, params }: { children?: ReactNode; to: string; params?: Record<string, string> }) =>
-      createElement('a', { href: to.replace(/\$(\w+)/g, (_m, k: string) => params?.[k] ?? '') }, children),
+    Link: ({
+      children,
+      to,
+      params,
+      className,
+    }: {
+      children?: ReactNode;
+      to: string;
+      params?: Record<string, string>;
+      className?: string;
+    }) =>
+      createElement(
+        'a',
+        {
+          href: to.replace(/\$(\w+)/g, (_m, k: string) => params?.[k] ?? ''),
+          ...(className ? { className } : {}),
+        },
+        children,
+      ),
     useParams: () => ({ slug: routerState.slug, id: routerState.id }),
     useNavigate: () => vi.fn(),
   };
@@ -204,6 +221,17 @@ describe('EnvelopeObligationsCard and Renewals tab (#3821)', () => {
       expect(htmlVi, `for=${id}`).toContain(`for="${id}"`);
       expect(htmlVi, `id=${id}`).toContain(`id="${id}"`);
     }
+
+    // Verify 44px phone touch targets (max-md:min-h-11) on every visible manual obligation control (#4279).
+    const controlTags = [
+      ...htmlVi.matchAll(/<input(?![^>]*aria-hidden="true")[^>]*id="sign-obl-[^"]+"[^>]*>/g),
+      ...htmlVi.matchAll(/<select[^>]*id="sign-obl-currency"[^>]*>/g),
+    ].map((match) => match[0]);
+    expect(controlTags).toHaveLength(6);
+    for (const tag of controlTags) {
+      expect(tag).toContain('max-md:min-h-11');
+    }
+    expect(htmlVi).toMatch(/<label[^>]*for="sign-obl-auto-renew"[^>]*max-md:min-h-11[^>]*>/);
   });
 
   it('renders read-only confirmed terms with formatted decimal money for viewers and exposes the Renewals tab on SignEnvelopesPage', () => {
@@ -242,31 +270,32 @@ describe('EnvelopeObligationsCard and Renewals tab (#3821)', () => {
 
     const qc = new QueryClient();
     qc.setQueryData(['sign', 'obligation', ENV_ID], { obligation: confirmedRecord, canEdit: false });
-    qc.setQueryData(['sign', 'envelopes', 'acme', 'all'], { items: [] });
+    const listEnvelopeItem: SignObligationRenewalListItem['envelope'] = {
+      id: ENV_ID,
+      title: 'Hợp đồng dịch vụ Minh Anh',
+      status: 'completed',
+      routingMode: 'parallel',
+      sourceKind: 'standalone',
+      sourceId: null,
+      sourceFileId: '01900000-0000-7000-8000-000000000020',
+      inspectStatus: 'passed',
+      sealStatus: 'sealed',
+      certificateCode: 'CS-2026-ABCD-1234',
+      pageCount: 2,
+      expiresAt: null,
+      sentAt: '2026-11-20T00:00:00Z',
+      completedAt: '2026-11-21T00:00:00Z',
+      voidedAt: null,
+      expiredAt: null,
+      version: 3,
+      createdBy: ORG_ID,
+      createdAt: '2026-11-20T00:00:00Z',
+      updatedAt: '2026-11-21T00:00:00Z',
+      signerSummary: { total: 1, signed: 1, waitingForMe: false },
+    };
+    qc.setQueryData(['sign', 'envelopes', 'acme', 'all'], { items: [listEnvelopeItem] });
     const renewalEntry: SignObligationRenewalListItem = {
-      envelope: {
-        id: ENV_ID,
-        title: 'Hợp đồng dịch vụ Minh Anh',
-        status: 'completed',
-        routingMode: 'parallel',
-        sourceKind: 'standalone',
-        sourceId: null,
-        sourceFileId: '01900000-0000-7000-8000-000000000020',
-        inspectStatus: 'passed',
-        sealStatus: 'sealed',
-        certificateCode: 'CS-2026-ABCD-1234',
-        pageCount: 2,
-        expiresAt: null,
-        sentAt: '2026-11-20T00:00:00Z',
-        completedAt: '2026-11-21T00:00:00Z',
-        voidedAt: null,
-        expiredAt: null,
-        version: 3,
-        createdBy: ORG_ID,
-        createdAt: '2026-11-20T00:00:00Z',
-        updatedAt: '2026-11-21T00:00:00Z',
-        signerSummary: { total: 1, signed: 1, waitingForMe: false },
-      },
+      envelope: listEnvelopeItem,
       obligation: confirmedRecord,
       renewalNoticeDate: '2027-10-31',
       daysUntilNotice: 12,
@@ -293,5 +322,17 @@ describe('EnvelopeObligationsCard and Renewals tab (#3821)', () => {
     const envelopesHtmlVi = renderVi(<SignEnvelopesPage />, qc);
     expect(envelopesHtmlVi).toContain('Sắp gia hạn / Nghĩa vụ');
     expect(envelopesHtmlVi).toContain('sign-tab-renewals');
+    expect(envelopesHtmlVi).toMatch(/<a[^>]*class="[^"]*max-md:min-h-11[^"]*"[^>]*>Hợp đồng dịch vụ Minh Anh<\/a>/);
+
+    // Also verify every <Input and <NativeSelect in EnvelopeObligationsCard carries max-md:min-h-11 (including obligation item inputs #4279).
+    const cardSource = readFileSync(
+      fileURLToPath(new URL('../src/components/sign/envelope-obligations-card.tsx', import.meta.url)),
+      'utf8',
+    );
+    const jsxControls = [...cardSource.matchAll(/<(?:Input|NativeSelect)\b[\s\S]*?onChange=/g)].map((m) => m[0]);
+    expect(jsxControls).toHaveLength(8);
+    for (const control of jsxControls) {
+      expect(control).toContain('max-md:min-h-11');
+    }
   });
 });

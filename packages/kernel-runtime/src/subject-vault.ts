@@ -9,14 +9,18 @@
 // - the value: AES-256-GCM under the data key with the org, the subject and the value's place (`<schema>.<table>.<column>`) as authenticated data.
 // Every wrap and every seal draws a fresh 96-bit nonce. A wrapped key or a sealed value moved to another org, subject or place does not open.
 //
-// A sealed value is the text `crove:s1:<subject id>:<base64url(nonce | tag | ciphertext)>`; a wrapped key is `nonce | tag | wrapped key` (60 bytes).
+// A sealed value is the text `ludy:s1:<subject id>:<base64url(nonce | tag | ciphertext)>` (with legacy `crove:s1:` still decoded on read);
+// a wrapped key is `nonce | tag | wrapped key` (60 bytes).
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
 const NONCE = 12;
 const TAG = 16;
 const KEY = 32;
+// Immutable cryptographic HKDF/AAD domain tag (ADR-0054): keep constant so existing wrapped keys and legacy crove:s1: rows still open.
 const DOMAIN = 'crove.subject.v1';
-const PREFIX = 'crove:s1:';
+const PREFIX = 'ludy:s1:';
+const LEGACY_PREFIX = 'crove:s1:';
+const ACCEPTED_PREFIXES = [PREFIX, LEGACY_PREFIX] as const;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export const WRAPPED_SUBJECT_KEY_BYTES = NONCE + TAG + KEY;
 // A personal value is short (an identity number, a bank account); the column allows more, a seal does not.
@@ -62,8 +66,9 @@ function decrypt(key: Buffer, packed: Buffer, additional: Buffer): Buffer {
 
 /** A sealed value split into its subject and its packed bytes, or null when the text is not a sealed value. */
 export function parseSealed(text: string): { subjectId: string; packed: Buffer } | null {
-  if (!text.startsWith(PREFIX)) return null;
-  const rest = text.slice(PREFIX.length);
+  const prefix = ACCEPTED_PREFIXES.find((candidate) => text.startsWith(candidate));
+  if (!prefix) return null;
+  const rest = text.slice(prefix.length);
   const at = rest.indexOf(':');
   if (at !== 36) return null;
   const subjectId = rest.slice(0, at);

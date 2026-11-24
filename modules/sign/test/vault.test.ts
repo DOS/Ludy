@@ -214,4 +214,39 @@ describe('scoreSignVaultCandidates deterministic search (#4439)', () => {
     const obligationSql = queries.find((q) => q.sql.includes('from "ludy_sign"."envelope_obligation"'));
     expect(obligationSql?.parameters).toContain('confirmed');
   });
+
+  it('normalizes combining diacritic marks (\\p{M}) and omits stray colons in empty/partial clause labels (#4510)', () => {
+    // NFD decomposed Vietnamese query should fold identically to precomposed NFC input and still match exact phrase.
+    const nfdQuestion = 'Hơ\u0323p đô\u0300ng di\u0323ch vu\u0323 Minh Anh hê\u0301t ha\u0323n khi na\u0300o?';
+    expect(foldVaultSearchText('Ho\u0300a Bi\u0300nh \u0301')).toBe('hoa binh');
+    const nfdMatches = scoreSignVaultCandidates(CANDIDATES, nfdQuestion);
+    expect(nfdMatches.map((m) => m.envelopeId)).toContain(ENV_1);
+
+    // Non-composed combining accents on Latin tokens should strip cleanly instead of splitting tokens with spaces.
+    const strayAccentMatch = scoreSignVaultCandidates(
+      [
+        {
+          ...CANDIDATES[0]!,
+          envelopeId: '01900000-0000-7000-8000-000000000099',
+          title: 'Vendor\u0301 Agreement Alpha',
+          obligation: null,
+          analysis: {
+            summaryText: 'Test combining mark cleanup.',
+            riskClausesJson: [
+              { title: 'Only Title', severity: 'low', pageNumber: 1, quote: '', explanation: '' },
+              { title: '', severity: 'low', pageNumber: 1, quote: '', explanation: 'Only Explanation' },
+              { title: '', severity: 'low', pageNumber: 1, quote: '', explanation: '' },
+            ],
+          },
+        },
+      ],
+      'Vendor Only',
+    );
+    expect(strayAccentMatch).toHaveLength(1);
+    const clauseExcerpts = strayAccentMatch[0]!.snippets
+      .filter((s) => s.kind === 'clause')
+      .map((s) => s.excerpt);
+    expect(clauseExcerpts.sort()).toEqual(['Only Explanation', 'Only Title']);
+    expect(clauseExcerpts.some((e) => e.startsWith(':') || e.endsWith(':'))).toBe(false);
+  });
 });

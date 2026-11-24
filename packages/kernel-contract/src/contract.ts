@@ -93,8 +93,6 @@ import {
   zSocialChannelOptions,
   zSocialNotificationKind,
   zSocialNotifications,
-  zSocialPushStatus,
-  zSocialPushSubscribe,
   zSocialAccountTrend,
   zSocialSnippet,
   zSocialSnippetCreate,
@@ -165,6 +163,8 @@ import {
   zSearchResult,
   zNotificationKind,
   zNotifications,
+  zPushStatus,
+  zPushSubscribe,
   zRaisedInboxItems,
   zOriginalNeededItems,
   zRole,
@@ -397,6 +397,59 @@ import {
   zHrProbationPreviewResult,
   zHrProbationReviewView,
 } from './hr-probation.ts';
+import {
+  zHrAdjustmentActionResult,
+  zHrAdjustmentCreate,
+  zHrAdjustmentDecide,
+  zHrAdjustmentItemView,
+  zHrAdjustmentList,
+  zHrAdjustmentRef,
+  zHrAdvanceActionResult,
+  zHrAdvanceDecide,
+  zHrAdvanceList,
+  zHrAdvanceRef,
+  zHrAdvanceRequestView,
+  zHrSelfAdvanceList,
+  zHrSelfAdvanceListResult,
+  zHrSelfAdvanceSubmit,
+  zHrSelfAdvanceSubmitResult,
+  zHrSelfTripList,
+  zHrSelfTripListResult,
+  zHrSelfTripSubmit,
+  zHrSelfTripSubmitResult,
+  zHrTripActionResult,
+  zHrTripDecide,
+  zHrTripList,
+  zHrTripRef,
+  zHrTripRequestView,
+} from './hr-stage6b.ts';
+import {
+  zHrSelfPolicyQaAsk,
+  zHrSelfPolicyQaResult,
+  zHrSelfRequestDraftAsk,
+  zHrSelfRequestDraftResult,
+} from './hr-self-coworker.ts';
+import {
+  zHrAddendumCheckAsk,
+  zHrAddendumCheckResult,
+  zHrAddendumCreate,
+  zHrAddendumIssue,
+  zHrAddendumList,
+  zHrAddendumPdfAsk,
+  zHrAddendumPdfResult,
+  zHrAddendumUpdate,
+  zHrAddendumView,
+  zHrAddendumVoid,
+  zHrAddendumWriteResult,
+  zHrAssetAssign,
+  zHrAssetList,
+  zHrAssetUpdateStatus,
+  zHrAssetView,
+  zHrAssetWriteResult,
+  zHrSelfAssetView,
+  zHrTimelineAsk,
+  zHrTimelineResult,
+} from './hr-addendum-assets.ts';
 import { zHrLaborCheckAsk, zHrLaborCheckResult } from './hr-declarations.ts';
 import {
   zHrCandidateAdd,
@@ -783,7 +836,33 @@ import {
   zRoadmapItemMergeInput,
   zRoadmapItemModerateInput,
   zRoadmapItemSyncStageInput,
+  zRoadmapSignalCreateInput,
+  zRoadmapSignalCreateResult,
+  zRoadmapSignalDeleteInput,
+  zRoadmapSignalDeleteResult,
+  zRoadmapSignalListInput,
+  zRoadmapSignalListResult,
+  zRoadmapSignalMatchInput,
+  zRoadmapSignalMatchResult,
+  zRoadmapSignalRollupInput,
+  zRoadmapSignalRollupResult,
 } from './projects-roadmap.ts';
+import {
+  PROJECT_TRIAGE_SOURCE_PAIR_ISSUE,
+  validProjectTriageSourcePair,
+  zProjectTriageAcceptInput,
+  zProjectTriageAcceptResult,
+  zProjectTriageAssistInput,
+  zProjectTriageAssistResult,
+  zProjectTriageCreateFields,
+  zProjectTriageDeclineInput,
+  zProjectTriageListInput,
+  zProjectTriageListResult,
+  zProjectTriageMergeInput,
+  zProjectTriageMutateResult,
+  zProjectTriageReopenInput,
+  zProjectTriageSnoozeInput,
+} from './projects-triage.ts';
 import { zFollowupDraft, zFollowupDraftAsk, zFollowupNoteAnswer, zFollowupNoteAsk, zFollowupNoteStatus, zFollowupSendCall, zFollowupSent, zFollowupWording, zFollowupWordingAsk } from './meeting-followup.ts';
 import { zChatChannelList, zChatChannelRemove, zChatChannelRemoved, zChatChannelSaveCall, zChatChannelSaved, zChatEmpty, zChatPostCall, zChatPosted, zChatPreview, zChatStatus, zChatStatusInput } from './meeting-chat.ts';
 import { zExtensionOrgToken, zExtensionToken, zExtensionTokenRevoke, zExtensionTokenRevoked, zExtensionTokenRevokedMember } from './extension.ts';
@@ -1404,6 +1483,21 @@ export const contract = {
         submit: oc.input(zHrSelfOvertimeSubmit).output(zHrSelfOvertimeSubmitResult),
         cancel: oc.input(zHrOvertimeRef).output(zHrOvertimeActionResult),
       },
+      salaryAdvance: {
+        list: oc.input(zHrSelfAdvanceList).output(zHrSelfAdvanceListResult),
+        submit: oc.input(zHrSelfAdvanceSubmit).output(zHrSelfAdvanceSubmitResult),
+        cancel: oc.input(zHrAdvanceRef).output(zHrAdvanceActionResult),
+      },
+      businessTrips: {
+        list: oc.input(zHrSelfTripList).output(zHrSelfTripListResult),
+        submit: oc.input(zHrSelfTripSubmit).output(zHrSelfTripSubmitResult),
+        cancel: oc.input(zHrTripRef).output(zHrTripActionResult),
+      },
+      requestDraft: oc.input(zHrSelfRequestDraftAsk).output(zHrSelfRequestDraftResult),
+      policyQa: oc.input(zHrSelfPolicyQaAsk).output(zHrSelfPolicyQaResult),
+      assets: {
+        list: oc.input(z.strictObject({})).output(z.array(zHrSelfAssetView)),
+      },
     },
     attendance: {
       list: oc.input(zHrAttendanceList).output(zHrAttendanceListResult),
@@ -1425,11 +1519,40 @@ export const contract = {
       approveFinal: oc.input(zHrOvertimeDecide).output(zHrOvertimeActionResult),
       reject: oc.input(zHrOvertimeDecide).output(zHrOvertimeActionResult),
     },
+    salaryAdvances: {
+      list: oc.input(zHrAdvanceList).output(z.array(zHrAdvanceRequestView)),
+      approveL1: oc.input(zHrAdvanceDecide).output(zHrAdvanceActionResult),
+      approveFinal: oc.input(zHrAdvanceDecide).output(zHrAdvanceActionResult),
+      reject: oc.input(zHrAdvanceDecide).output(zHrAdvanceActionResult),
+    },
+    businessTrips: {
+      list: oc.input(zHrTripList).output(z.array(zHrTripRequestView)),
+      approveL1: oc.input(zHrTripDecide).output(zHrTripActionResult),
+      approveFinal: oc.input(zHrTripDecide).output(zHrTripActionResult),
+      reject: oc.input(zHrTripDecide).output(zHrTripActionResult),
+    },
     probation: {
       preview: oc.input(zHrProbationPreviewAsk).output(zHrProbationPreviewResult),
       draftSummary: oc.input(zHrProbationDraftAsk).output(zHrProbationDraftResult),
       decide: oc.input(zHrProbationDecide).output(zHrProbationDecideResult),
       list: oc.input(zHrProbationList).output(z.array(zHrProbationReviewView)),
+    },
+    addendum: {
+      list: oc.input(zHrAddendumList).output(z.array(zHrAddendumView)),
+      create: oc.input(zHrAddendumCreate).output(zHrAddendumWriteResult),
+      update: oc.input(zHrAddendumUpdate).output(zHrAddendumWriteResult),
+      issue: oc.input(zHrAddendumIssue).output(zHrAddendumWriteResult),
+      void: oc.input(zHrAddendumVoid).output(zHrAddendumWriteResult),
+      pdf: oc.input(zHrAddendumPdfAsk).output(zHrAddendumPdfResult),
+      check: oc.input(zHrAddendumCheckAsk).output(zHrAddendumCheckResult),
+    },
+    timeline: {
+      get: oc.input(zHrTimelineAsk).output(zHrTimelineResult),
+    },
+    assets: {
+      list: oc.input(zHrAssetList).output(z.array(zHrAssetView)),
+      assign: oc.input(zHrAssetAssign).output(zHrAssetWriteResult),
+      updateStatus: oc.input(zHrAssetUpdateStatus).output(zHrAssetWriteResult),
     },
     leaveRequests: {
       list: oc.input(zHrLeaveRequestList).output(z.array(zHrLeaveRequestView)),
@@ -1474,7 +1597,15 @@ export const contract = {
         applyThirteenthMonth: oc.input(zHrRunApplyThirteenthMonth).output(zHrRunWritten),
         syncLeave: oc.input(zHrRunRef).output(zHrRunWritten),
         syncOvertime: oc.input(zHrRunRef).output(zHrRunWritten),
+        syncStage6b: oc.input(zHrRunRef).output(zHrRunWritten),
         approve: oc.input(zHrRunApprove).output(zHrRunWritten),
+      },
+      adjustments: {
+        list: oc.input(zHrAdjustmentList).output(z.array(zHrAdjustmentItemView)),
+        create: oc.input(zHrAdjustmentCreate).output(zHrAdjustmentActionResult),
+        approve: oc.input(zHrAdjustmentDecide).output(zHrAdjustmentActionResult),
+        reject: oc.input(zHrAdjustmentDecide).output(zHrAdjustmentActionResult),
+        cancel: oc.input(zHrAdjustmentRef).output(zHrAdjustmentActionResult),
       },
       // Annual leave ledger and statutory leave balance (#3394, #2540 slice 1c-2): owners and admins only, sensitive query for balance.
       leave: {
@@ -2333,14 +2464,6 @@ export const contract = {
       mute: oc.input(z.strictObject({ kind: zSocialNotificationKind, muted: z.boolean() })).output(z.object({ kind: zSocialNotificationKind, muted: z.boolean() })),
       // The viewer's Social emails on or off (#579).
       mail: oc.input(z.strictObject({ enabled: z.boolean() })).output(z.object({ enabled: z.boolean() })),
-      // Browser push (#1238), per device: whether the deployment offers it (VAPID keys set) with the key browsers
-      // subscribe with, the viewer's devices and whether the asking browser (its endpoint) is one; subscribe answers
-      // PUSH_DISABLED without the keys. Each member sees and changes only their own; no endpoint or key comes back.
-      push: {
-        status: oc.input(z.strictObject({ endpoint: z.string().max(2048).nullable() })).output(zSocialPushStatus),
-        subscribe: oc.input(zSocialPushSubscribe).output(z.object({ id: zId })),
-        unsubscribe: oc.input(z.union([z.strictObject({ endpoint: z.string().min(1).max(2048) }), z.strictObject({ id: zId })])).output(z.object({ removed: z.number().int() })),
-      },
     },
     // Account growth (#645): each channel's daily followers and reach over the last days.
     accounts: {
@@ -2711,6 +2834,13 @@ export const contract = {
     list: oc.input(z.object({})).output(zNotifications),
     read: oc.input(z.union([z.strictObject({ ids: z.array(zId).min(1).max(100) }), z.strictObject({ all: z.literal(true) })])).output(z.object({ read: z.number().int() })),
     mute: oc.input(z.strictObject({ kind: zNotificationKind, muted: z.boolean() })).output(z.object({ kind: zNotificationKind, muted: z.boolean() })),
+    // Browser push (#1238, the kernel's since #3736), per device: whether the deployment offers it (VAPID keys set) with the key browsers subscribe with, the viewer's devices and whether the asking browser
+    // (its endpoint) is one; subscribe answers PUSH_DISABLED without the keys. Each member sees and changes only their own; no endpoint or key comes back. One subscription serves every app's notices.
+    push: {
+      status: oc.input(z.strictObject({ endpoint: z.string().max(2048).nullable() })).output(zPushStatus),
+      subscribe: oc.input(zPushSubscribe).output(z.object({ id: zId })),
+      unsubscribe: oc.input(z.union([z.strictObject({ endpoint: z.string().min(1).max(2048) }), z.strictObject({ id: zId })])).output(z.object({ removed: z.number().int() })),
+    },
   },
   // Saved views of a list (CRM plan 4.3, #2227), the kernel's: named filters and a sort, private or shared with the org, at
   // most 30 per member per scope. Members see their own and the shared ones; the owner changes and deletes a view, and
@@ -3781,6 +3911,15 @@ export const contract = {
         .output(zRoadmapAnnouncementSendNotificationsResult),
       dedupeSuggest: oc.input(zRoadmapDedupeInput).output(zRoadmapDedupeResult),
       changelogDraft: oc.input(zRoadmapChangelogDraftInput).output(zRoadmapChangelogDraftResult),
+      signalList: oc.input(zRoadmapSignalListInput).output(zRoadmapSignalListResult),
+      signalRollup: oc.input(zRoadmapSignalRollupInput).output(zRoadmapSignalRollupResult),
+      signalCreate: oc
+        .input(zRoadmapSignalCreateInput.extend({ idempotencyKey: zId }))
+        .output(zRoadmapSignalCreateResult),
+      signalDelete: oc
+        .input(zRoadmapSignalDeleteInput.extend({ idempotencyKey: zId }))
+        .output(zRoadmapSignalDeleteResult),
+      signalMatchSuggest: oc.input(zRoadmapSignalMatchInput).output(zRoadmapSignalMatchResult),
     },
     startTime: oc
       .input(zProjectTimeStartInput.extend({ idempotencyKey: zId }))
@@ -3799,6 +3938,32 @@ export const contract = {
       .output(zProjectTimeDeleteResult),
     timeSummary: oc.input(zProjectTimeSummaryInput).output(zProjectTimeSummaryResult),
     exportTimeCsv: oc.input(zProjectTimeExportCsvInput).output(zProjectTimeExportCsvResult),
+    triage: {
+      create: oc
+        .input(
+          zProjectTriageCreateFields
+            .extend({ idempotencyKey: zId })
+            .refine(validProjectTriageSourcePair, PROJECT_TRIAGE_SOURCE_PAIR_ISSUE),
+        )
+        .output(zProjectTriageMutateResult),
+      list: oc.input(zProjectTriageListInput).output(zProjectTriageListResult),
+      accept: oc
+        .input(zProjectTriageAcceptInput.extend({ idempotencyKey: zId }))
+        .output(zProjectTriageAcceptResult),
+      merge: oc
+        .input(zProjectTriageMergeInput.extend({ idempotencyKey: zId }))
+        .output(zProjectTriageMutateResult),
+      snooze: oc
+        .input(zProjectTriageSnoozeInput.extend({ idempotencyKey: zId }))
+        .output(zProjectTriageMutateResult),
+      decline: oc
+        .input(zProjectTriageDeclineInput.extend({ idempotencyKey: zId }))
+        .output(zProjectTriageMutateResult),
+      reopen: oc
+        .input(zProjectTriageReopenInput.extend({ idempotencyKey: zId }))
+        .output(zProjectTriageMutateResult),
+      assist: oc.input(zProjectTriageAssistInput).output(zProjectTriageAssistResult),
+    },
   },
   // Electronic signatures (docs/plan/esign.md, #3325). Off-switchable via CROVE_MODULES and org_app_on.
   sign: {

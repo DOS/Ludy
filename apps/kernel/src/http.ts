@@ -30,6 +30,7 @@ import {
   SIGN_PUBLIC_HUB_PAGE_PREFIX,
   SOCIAL_IMAGE_TYPES,
   DEFAULT_EXTENSION_IDS,
+  DESKTOP_CLIENT_ID,
   LIVE_CHUNK_MAX_BYTES,
   LIVE_CHUNK_MAX_COUNT,
   LIVE_CHUNK_MAX_SECONDS,
@@ -154,7 +155,7 @@ import {
   type SignupRules,
 } from './auth-signup-policy.ts';
 import { actorOf, bearerIssuedToOAuthClient, oauthClientRefused, type Authenticate, type AuthUser } from './auth.ts';
-import { exchangeExtensionCode, extensionIdOfOrigin, newExtensionCode, refuseOutsideScopes, voidUndeliveredExtensionToken, wellFormedExtensionCode, wellFormedVerifier } from './auth-extension.ts';
+import { authorizeExtensionRoute, exchangeClientId, exchangeExtensionCode, newExtensionCode, voidUndeliveredExtensionToken, wellFormedExtensionCode, wellFormedVerifier } from './auth-extension.ts';
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
 import { onepiece, sealMedia, sizeText, streamPieces } from './media-seal.ts';
 import { assembleLivePieces } from './meetings-live-assemble.ts';
@@ -337,6 +338,9 @@ const EXTENSION_TOKEN_EXCHANGES_PER_MINUTE = 10;
 // Requests with an extension token per minute per client address, taken before the token is looked up: a flood of random
 // well-formed tokens must not cost a database round trip each. One browser makes a few requests while recording.
 const EXTENSION_BEARER_PER_MINUTE = 600;
+// Extension bearer write requests per minute per token (#3742): bounds Quick Capture, Web Clipper, and meeting
+// capture/upload writes per token independently of the general /api per-user budget.
+const EXTENSION_WRITES_PER_MINUTE = 30;
 
 // A uuid in text form, any case.
 const UUID_TEXT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -481,11 +485,12 @@ export interface HttpDeps {
     templateActions: RateLimiter;
     emailOtpRequest: RateLimiter;
   }>;
-  // Per-client and per-key-hash rate limiters for external /api/v1/sign/* API routes (#4441).
+  // Per-client, per-key-hash, and download concurrency limiters for external /api/v1/sign/* API routes (#4441).
   signApiV1Limits?: Partial<{
     ip: RateLimiter;
     keyRead: RateLimiter;
     keyDraft: RateLimiter;
+    pdfReads: ConcurrencyLimiter;
   }>;
   // Per-client and per-email rate limiters for Projects Public Roadmap public routes (#4399).
   roadmapLimits?: Partial<{
@@ -510,6 +515,8 @@ export interface HttpDeps {
   extensionTokenLimit?: RateLimiter;
   // Requests per minute per client address that carry an extension token, counted before the token is looked up.
   extensionBearerLimit?: RateLimiter;
+  // Write requests per minute per extension token (#3742); null turns it off. Default: EXTENSION_WRITES_PER_MINUTE.
+  extensionWriteLimit?: RateLimiter | null;
   // Staged upload completions running at once in this process (issue #223). Default: UPLOAD_COMPLETE_CONCURRENCY.
   uploadCompletes?: ConcurrencyLimiter;
   // Uploads that may be larger than MAX_UPLOAD_BYTES (Social videos, #409) running at once. Default: 2 per process.
@@ -948,6 +955,8 @@ export function createHttpApp(deps: HttpDeps) {
       brandName: config.BRAND_NAME,
       // The Ludy extension ids that may sign in (EXTENSION_IDS, #2740); the connect page refuses any other.
       extensionIds: allowedExtensionIds,
+      // Ludy Desktop recording (ADR-0055 slice 3, #4516): off until #2585 legal answers are recorded.
+      meetingsDesktopCapture: config.MEETINGS_DESKTOP_CAPTURE === 'on',
       // The terms and privacy notice linked at sign-up and invite acceptance (#688); null hides each link.
       termsUrl: config.TERMS_URL ?? null,
       privacyUrl: config.PRIVACY_URL ?? null,
@@ -2110,6 +2119,7 @@ export function createHttpApp(deps: HttpDeps) {
     const signApiV1IpLimit = deps.signApiV1Limits?.ip ?? new RateLimiter({ perMinute: SIGN_API_V1_IP_PER_MINUTE });
     const signApiV1KeyReadLimit = deps.signApiV1Limits?.keyRead ?? new RateLimiter({ perMinute: SIGN_API_V1_KEY_READ_PER_MINUTE });
     const signApiV1KeyDraftLimit = deps.signApiV1Limits?.keyDraft ?? new RateLimiter({ perMinute: SIGN_API_V1_KEY_DRAFT_PER_MINUTE });
+    const signApiV1PdfReads = deps.signApiV1Limits?.pdfReads ?? new ConcurrencyLimiter({ total: SIGN_PDF_READS_MAX });
 
     const signApiV1Guard: MiddlewareHandler = async (c, next) => {
       setSignSecurityHeaders(c);
@@ -2140,7 +2150,11 @@ export function createHttpApp(deps: HttpDeps) {
       if (res.status === 'forbidden') {
         return c.json({ code: 'FORBIDDEN', message: `API key requires scope ${res.requiredScope}` }, 403);
       }
-      return signRateLimited(c, res.retryAfterSeconds);
+      c.header('retry-after', String(res.retryAfterSeconds));
+      return c.json(
+        { code: 'RATE_LIMITED', message: 'Too many requests, please retry later', retryAfterSeconds: res.retryAfterSeconds },
+        429,
+      );
     };
 
     app.get('/api/v1/sign/envelopes', signApiV1Guard, async (c) => {
@@ -2186,7 +2200,7 @@ export function createHttpApp(deps: HttpDeps) {
           (hash) => signApiV1KeyReadLimit.take(hash),
         );
         if (lookup.status !== 'ok') return replySignApiV1NonOk(c, lookup);
-        const release = signPdfReads.tryAcquire('sign-api-v1');
+        const release = signApiV1PdfReads.tryAcquire(lookup.data.orgId);
         if (!release) {
           c.header('retry-after', '2');
           return c.json({ code: 'SIGN_PDF_BUSY', message: 'Server is busy, please retry shortly' }, 503);
@@ -2223,7 +2237,7 @@ export function createHttpApp(deps: HttpDeps) {
           (hash) => signApiV1KeyReadLimit.take(hash),
         );
         if (lookup.status !== 'ok') return replySignApiV1NonOk(c, lookup);
-        const release = signPdfReads.tryAcquire('sign-api-v1');
+        const release = signApiV1PdfReads.tryAcquire(lookup.data.orgId);
         if (!release) {
           c.header('retry-after', '2');
           return c.json({ code: 'SIGN_PDF_BUSY', message: 'Server is busy, please retry shortly' }, 503);
@@ -2869,6 +2883,21 @@ export function createHttpApp(deps: HttpDeps) {
     });
   }
 
+  const rateLimited = (c: Context, retryAfterSeconds: number) => {
+    c.header('retry-after', String(retryAfterSeconds));
+    return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds }, 429);
+  };
+
+  // Fails closed at the HTTP edge when app enablement lookup errors transiently (#3742).
+  const requireAppOn = async (orgId: string, module: string): Promise<boolean> => {
+    try {
+      return await runtime.appOn(orgId, module, { fresh: true });
+    } catch (error) {
+      if (error instanceof DomainError) throw error;
+      throw new DomainError('SERVICE_UNAVAILABLE', 503, 'Không kiểm tra được trạng thái ứng dụng lúc này');
+    }
+  };
+
   // The Ludy extension trades the one-time code the signed-in member approved in the app for its token (issue #2582,
   // ADR-0047 point 10). Public by necessity: the extension holds no session, and the credential is the code, 256 random
   // bits that live five minutes, work once and are bound by PKCE (S256) to the verifier only the extension holds. A
@@ -2881,12 +2910,11 @@ export function createHttpApp(deps: HttpDeps) {
     const decision = extensionTokenLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
     if (!decision.allowed) {
       warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
-      c.header('retry-after', String(decision.retryAfterSeconds));
-      return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+      return rateLimited(c, decision.retryAfterSeconds);
     }
     const refused = () => c.json({ code: 'EXTENSION_CODE_INVALID', message: 'Mã đăng nhập tiện ích không hợp lệ hoặc đã hết hạn, hãy đăng nhập lại' }, 400);
     try {
-      const input = (await c.req.json().catch(() => null)) as { code?: unknown; codeVerifier?: unknown } | null;
+      const input = (await c.req.json().catch(() => null)) as { code?: unknown; codeVerifier?: unknown; client?: unknown } | null;
       if (!input || typeof input !== 'object' || !wellFormedExtensionCode(input.code) || !wellFormedVerifier(input.codeVerifier)) return refused();
       const code = input.code;
       const verifier = input.codeVerifier;
@@ -2894,8 +2922,9 @@ export function createHttpApp(deps: HttpDeps) {
       // states in the Origin header (chrome-extension://<id>). A missing, malformed, unlisted or different origin gets the same
       // answer as a wrong code, and the code is not spent. Defence in depth only: a client outside the browser can set any Origin, so PKCE
       // and the allow-list stay the primary protection.
-      const extensionId = extensionIdOfOrigin(c.req.header('origin'));
-      if (extensionId === null || !allowedExtensionIds.includes(extensionId)) return refused();
+      // Ludy Desktop (#4515) sends no Origin and says client "desktop": the code must then be the one made for the reserved desktop id.
+      const extensionId = exchangeClientId(c.req.header('origin'), input.client);
+      if (extensionId === null || (extensionId !== DESKTOP_CLIENT_ID && !allowedExtensionIds.includes(extensionId))) return refused();
       const done = await runtime.orgless((db) => exchangeExtensionCode(db, code, verifier, extensionId));
       if (!done) return refused();
       // The audit row of the exchange (the definer has no member context to write one): as the member, with the new token.
@@ -2903,13 +2932,16 @@ export function createHttpApp(deps: HttpDeps) {
       // The client gets the token only once this row is written. When it fails, the token row already exists and nobody
       // holds it: void it (its own system audit row follows) before answering, so no usable row is left behind (#2740).
       // Notes-only tokens audit through notes.extension.exchanged because kernel.extension.token.exchanged requires 'meetings' (#3560).
+      // A desktop exchange is audited in the same transaction by the exchange definer (kernel.extension.desktop.exchanged, #4515; even when it holds the meetings capture scope, #4516).
       const exchangeAuditCommand = scopes.includes('meetings') ? 'kernel.extension.token.exchanged' : 'notes.extension.exchanged';
       try {
-        await runtime.execute(
-          exchangeAuditCommand,
-          { codeId: done.exchange.codeId },
-          { actor: { type: 'user', userId: done.exchange.userId, aal: 'aal1', mfaAt: null, extension: { tokenId: done.exchange.tokenId, scopes } }, orgId: done.exchange.orgId },
-        );
+        if (extensionId !== DESKTOP_CLIENT_ID) {
+          await runtime.execute(
+            exchangeAuditCommand,
+            { codeId: done.exchange.codeId },
+            { actor: { type: 'user', userId: done.exchange.userId, aal: 'aal1', mfaAt: null, extension: { tokenId: done.exchange.tokenId, scopes, client: 'extension' } }, orgId: done.exchange.orgId },
+          );
+        }
       } catch (error) {
         const voided = await runtime.orgless((db) => voidUndeliveredExtensionToken(db, done.token)).catch(() => false);
         // The clean-up did not void the row: it was already revoked (a demotion raced the exchange) or the clean-up itself failed, in which
@@ -2917,7 +2949,8 @@ export function createHttpApp(deps: HttpDeps) {
         if (!voided) logEvent('error', 'extension exchange failed and its clean-up did not void the token row', { tokenId: done.exchange.tokenId, orgId: done.exchange.orgId });
         throw error;
       }
-      return c.json({ token: done.token, tokenId: done.exchange.tokenId, orgId: done.exchange.orgId, scopes: done.exchange.scopes, expiresAt: done.exchange.expiresAt });
+      const returnedScopes = extensionId === DESKTOP_CLIENT_ID && config.MEETINGS_DESKTOP_CAPTURE !== 'on' ? [] : done.exchange.scopes;
+      return c.json({ token: done.token, tokenId: done.exchange.tokenId, orgId: done.exchange.orgId, scopes: returnedScopes, expiresAt: done.exchange.expiresAt });
     } catch (error) {
       return problem(c, error);
     }
@@ -2927,6 +2960,7 @@ export function createHttpApp(deps: HttpDeps) {
   // query runs. The token is verified first, so the key is a user the token proves; authenticate() writes to the
   // database only when its identity cache misses (once per user and process every few minutes), never per request.
   const extensionBearerLimit = deps.extensionBearerLimit ?? new RateLimiter({ perMinute: EXTENSION_BEARER_PER_MINUTE });
+  const extensionWriteLimit = deps.extensionWriteLimit !== undefined ? deps.extensionWriteLimit : new RateLimiter({ perMinute: EXTENSION_WRITES_PER_MINUTE });
   app.use('/api/*', async (c, next) => {
     let user: AuthUser;
     try {
@@ -2936,8 +2970,7 @@ export function createHttpApp(deps: HttpDeps) {
         const decision = extensionBearerLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
         if (!decision.allowed) {
           warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
-          c.header('retry-after', String(decision.retryAfterSeconds));
-          return c.json({ code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+          return rateLimited(c, decision.retryAfterSeconds);
         }
       }
       user = await authenticate(authHeader);
@@ -2946,19 +2979,24 @@ export function createHttpApp(deps: HttpDeps) {
     }
     // A Ludy extension token (issue #2582) reaches only the routes its scopes open, listed in auth-extension.ts: refused
     // here, before any handler, body read or database call, on every other route. The raw path is the one checked, so
-    // nothing a router decodes later can name a route the list does not.
+    // nothing a router decodes later can name a route the list does not. When MEETINGS_DESKTOP_CAPTURE is off, desktop tokens stay at [].
     if (user.extension) {
-      const refusal = refuseOutsideScopes(user.extension.scopes, c.req.method, new URL(c.req.url).pathname);
-      if (refusal) return problem(c, refusal);
+      const extension =
+        user.extension.client === 'desktop' && config.MEETINGS_DESKTOP_CAPTURE !== 'on' && user.extension.scopes.length > 0
+          ? { ...user.extension, scopes: [] as const }
+          : user.extension;
+      if (extension !== user.extension) user = { ...user, extension };
+      const checked = authorizeExtensionRoute(extension.scopes, c.req.method, new URL(c.req.url).pathname, extension.client ?? 'extension');
+      if (!checked.ok) return problem(c, checked.error);
+      if (checked.route.write && extensionWriteLimit) {
+        const writeDecision = extensionWriteLimit.take(`extension:${extension.tokenId}`);
+        if (!writeDecision.allowed) return rateLimited(c, writeDecision.retryAfterSeconds);
+      }
     }
     // A token's requests count against its own budget, so a stolen token cannot use up its member's.
     const decision = limiter?.take(user.extension ? `extension:${user.extension.tokenId}` : user.userId);
     if (decision && !decision.allowed) {
-      c.header('retry-after', String(decision.retryAfterSeconds));
-      return c.json(
-        { code: 'RATE_LIMITED', message: 'Bạn gửi quá nhiều yêu cầu, hãy thử lại sau', retryAfterSeconds: decision.retryAfterSeconds },
-        429,
-      );
+      return rateLimited(c, decision.retryAfterSeconds);
     }
     c.set('user', user);
     await next();
@@ -3050,15 +3088,19 @@ export function createHttpApp(deps: HttpDeps) {
       const parsed = zExtensionAuthorize.safeParse(await c.req.json().catch(() => null));
       if (!parsed.success) throw new DomainError('INVALID', 422, 'Yêu cầu kết nối tiện ích không hợp lệ');
       const input = parsed.data;
-      // Only an extension this deployment lists may receive a code (EXTENSION_IDS, #2740); the app checks the same list.
-      if (!allowedExtensionIds.includes(input.extensionId)) throw new DomainError('FORBIDDEN', 403, 'Tiện ích này không được phép kết nối với Ludy', { rule: 'extension_id' });
+      // Only an extension this deployment lists may receive a code (EXTENSION_IDS, #2740); the app checks the same list. Ludy Desktop (#4515/#4516)
+      // is the one client that is not an extension: DESKTOP_CLIENT_ID is always allowed, and non-empty scopes require MEETINGS_DESKTOP_CAPTURE=on.
+      if (input.extensionId !== DESKTOP_CLIENT_ID && !allowedExtensionIds.includes(input.extensionId)) throw new DomainError('FORBIDDEN', 403, 'Tiện ích này không được phép kết nối với Ludy', { rule: 'extension_id' });
+      if (input.extensionId === DESKTOP_CLIENT_ID && input.scopes.length > 0 && config.MEETINGS_DESKTOP_CAPTURE !== 'on') {
+        throw new DomainError('FORBIDDEN', 403, 'Ghi âm cuộc họp từ Ludy Desktop chưa được bật trên máy chủ này', { rule: 'desktop_capture_off' });
+      }
       // Only features this deployment runs: a scope of a module that is left out is not offered.
       if (input.scopes.includes('meetings') && !runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       if (input.scopes.includes('notes') && !runtime.installed('notes')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
       const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
       // An org that switched Meetings or Notes off, or does not hold it, is not offered that scope either (ADR-0053).
-      if (input.scopes.includes('meetings') && !(await runtime.appOn(orgId, 'meetings', { fresh: true }).catch(() => true))) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
-      if (input.scopes.includes('notes') && !(await runtime.appOn(orgId, 'notes', { fresh: true }).catch(() => true))) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
+      if (input.scopes.includes('meetings') && !(await requireAppOn(orgId, 'meetings'))) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
+      if (input.scopes.includes('notes') && !(await requireAppOn(orgId, 'notes'))) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
       const code = newExtensionCode();
       const issued = await runtime.execute<{ expiresInSeconds: number }>(
         'kernel.extension.code.issue',
@@ -3076,21 +3118,29 @@ export function createHttpApp(deps: HttpDeps) {
   // (ADR-0053). A browser session has no use for it.
   app.get('/api/extension/me', async (c) => {
     c.header('cache-control', 'no-store');
-    const { extension } = c.get('user');
-    if (!extension) return problem(c, new DomainError('FORBIDDEN', 403, 'Đường này chỉ dành cho tiện ích Ludy', { rule: 'extension_only' }));
-    const meetingsOn = runtime.installed('meetings') && (await runtime.appOn(extension.orgId, 'meetings', { fresh: true }).catch(() => true));
-    const notesOn = runtime.installed('notes') && (await runtime.appOn(extension.orgId, 'notes', { fresh: true }).catch(() => true));
-    return c.json({
-      tokenId: extension.tokenId,
-      orgId: extension.orgId,
-      scopes: extension.scopes,
-      expiresAt: extension.expiresAt,
-      features: {
-        meetings: extension.scopes.includes('meetings') && meetingsOn,
-        agenda: extension.scopes.includes('agenda') && meetingsOn,
-        notes: extension.scopes.includes('notes') && notesOn,
-      },
-    });
+    try {
+      const { extension } = c.get('user');
+      if (!extension) throw new DomainError('FORBIDDEN', 403, 'Đường này chỉ dành cho tiện ích Ludy', { rule: 'extension_only' });
+      const desktopCaptureOn = extension.client !== 'desktop' || config.MEETINGS_DESKTOP_CAPTURE === 'on';
+      const needsMeetings = desktopCaptureOn && runtime.installed('meetings') && (extension.scopes.includes('meetings') || extension.scopes.includes('agenda'));
+      const needsNotes = extension.client !== 'desktop' && runtime.installed('notes') && extension.scopes.includes('notes');
+      const meetingsOn = needsMeetings ? await requireAppOn(extension.orgId, 'meetings') : false;
+      const notesOn = needsNotes ? await requireAppOn(extension.orgId, 'notes') : false;
+      return c.json({
+        tokenId: extension.tokenId,
+        orgId: extension.orgId,
+        scopes: desktopCaptureOn ? extension.scopes : [],
+        client: extension.client ?? 'extension',
+        expiresAt: extension.expiresAt,
+        features: {
+          meetings: desktopCaptureOn && extension.scopes.includes('meetings') && meetingsOn,
+          agenda: desktopCaptureOn && extension.scopes.includes('agenda') && meetingsOn,
+          notes: extension.client !== 'desktop' && extension.scopes.includes('notes') && notesOn,
+        },
+      });
+    } catch (error) {
+      return problem(c, error);
+    }
   });
 
   app.all('/api/rpc/*', bodyLimit({ maxSize: 1024 * 1024 }), async (c) => {
@@ -3221,10 +3271,10 @@ export function createHttpApp(deps: HttpDeps) {
   // gets the answer of a purpose that is not installed (404, as when the deployment leaves the app out; ADR-0053). The grant an upload needs is a kernel command, which the app gate does not cover.
   async function uploadPurposeFor(value: unknown, orgId: string): Promise<UploadPurpose> {
     const purpose = uploadPurpose(value);
-    if ((purpose === 'meeting_audio' || purpose === 'meeting_video') && !(await runtime.appOn(orgId, 'meetings', { fresh: true }).catch(() => true))) {
+    if ((purpose === 'meeting_audio' || purpose === 'meeting_video') && !(await requireAppOn(orgId, 'meetings'))) {
       throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
     }
-    if (purpose === 'sign_document' && !(await runtime.appOn(orgId, 'sign', { fresh: true }).catch(() => true))) {
+    if (purpose === 'sign_document' && !(await requireAppOn(orgId, 'sign'))) {
       throw new DomainError('NOT_FOUND', 404, 'Mục đích tải lên không hợp lệ');
     }
     return purpose;

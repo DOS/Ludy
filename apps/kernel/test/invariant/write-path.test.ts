@@ -55,91 +55,167 @@ const HANDLE = /\b(createDb|createPool)\s*\(|\bnew\s+(Kysely|(pg\s*\.\s*)?(Pool|
 // The receivers a write may run on: the command's transaction, or a transaction parameter named trx.
 const RECEIVER_OK = new Set(['ctx.trx', 'trx']);
 
+const isWsCode = (c: number) =>
+  c === 32 || c === 9 || c === 10 || c === 13 || c === 11 || c === 12 || (c > 126 && /\s/.test(String.fromCharCode(c)));
+
+// Checks `/\b(return|typeof|case)\s*$/` over the accumulated `out` chunks and pending slice in O(1) without joining `out`.
+function endsWithRegexKeyword(out: readonly string[], text: string, spanStart: number, i: number): boolean {
+  let collected = '';
+  let skippingWs = true;
+
+  const scan = (s: string, from: number, to: number): boolean => {
+    for (let p = to - 1; p >= from; p -= 1) {
+      const codeUnit = s.charCodeAt(p);
+      if (skippingWs) {
+        if (isWsCode(codeUnit)) continue;
+        skippingWs = false;
+      }
+      collected = (s[p] ?? '') + collected;
+      if (collected.length === 7) return true;
+    }
+    return false;
+  };
+
+  if (!scan(text, spanStart, i)) {
+    for (let idx = out.length - 1; idx >= 0; idx -= 1) {
+      const chunk = out[idx] ?? '';
+      if (scan(chunk, 0, chunk.length)) break;
+    }
+  }
+  return /\b(return|typeof|case)$/.test(collected);
+}
+
 // Comments may say anything; code may not. A small scanner blanks // and /* */ comments (keeping line breaks, so
 // offenders report their line) and leaves strings, template literals and regular expressions as they are, so a
 // "/*" inside a string or a line comment never hides the code after it. With blankStrings the contents of strings and
 // template literals are blanked too (for matching brackets); the result always has the input's length.
 function code(text: string, blankStrings = false): string {
-  let out = '';
+  const out: string[] = [];
+  let spanStart = 0;
   let i = 0;
   // Template literal nesting: each entry counts the braces open inside one ${ } of a template.
   const templates: number[] = [];
   let lastSignificant = '';
-  const blank = (s: string) => s.replace(/[^\n]/g, ' ');
+  const blank = (s: string) => (s.includes('\n') ? s.replace(/[^\n]/g, ' ') : ' '.repeat(s.length));
+  const flush = (to: number) => {
+    if (to > spanStart) out.push(text.slice(spanStart, to));
+  };
   while (i < text.length) {
-    const ch = text[i] ?? '';
-    const next = text[i + 1] ?? '';
-    if (ch === '/' && next === '/') {
-      const end = text.indexOf('\n', i);
-      const stop = end < 0 ? text.length : end;
-      out += blank(text.slice(i, stop));
-      i = stop;
-      continue;
-    }
-    if (ch === '/' && next === '*') {
-      const end = text.indexOf('*/', i + 2);
-      const stop = end < 0 ? text.length : end + 2;
-      out += blank(text.slice(i, stop));
-      i = stop;
-      continue;
-    }
-    if (ch === "'" || ch === '"') {
+    const c = text.charCodeAt(i);
+    if (c === 47 /* / */) {
+      const next = text.charCodeAt(i + 1);
+      if (next === 47 /* / */) {
+        flush(i);
+        const end = text.indexOf('\n', i);
+        const stop = end < 0 ? text.length : end;
+        out.push(' '.repeat(stop - i));
+        i = stop;
+        spanStart = i;
+        continue;
+      }
+      if (next === 42 /* * */) {
+        flush(i);
+        const end = text.indexOf('*/', i + 2);
+        const stop = end < 0 ? text.length : end + 2;
+        out.push(blank(text.slice(i, stop)));
+        i = stop;
+        spanStart = i;
+        continue;
+      }
+      if (
+        lastSignificant === '' ||
+        '(,=:[!&|?{};+-*%<>~^'.includes(lastSignificant) ||
+        endsWithRegexKeyword(out, text, spanStart, i)
+      ) {
+        flush(i);
+        // A regular expression literal.
+        let j = i + 1;
+        let inClass = false;
+        while (j < text.length && text[j] !== '\n' && (inClass || text[j] !== '/')) {
+          if (text[j] === '\\') j += 1;
+          else if (text[j] === '[') inClass = true;
+          else if (text[j] === ']') inClass = false;
+          j += 1;
+        }
+        while (/[a-z]/i.test(text[j + 1] ?? '')) j += 1;
+        out.push(text.slice(i, j + 1));
+        i = j + 1;
+        spanStart = i;
+        lastSignificant = '/';
+        continue;
+      }
+    } else if (c === 39 /* ' */ || c === 34 /* " */) {
+      flush(i);
+      const ch = text[i] ?? '';
       let j = i + 1;
       while (j < text.length && text[j] !== ch && text[j] !== '\n') j += text[j] === '\\' ? 2 : 1;
-      out += blankStrings ? `${ch}${blank(text.slice(i + 1, j))}${text[j] ?? ''}` : text.slice(i, j + 1);
+      out.push(blankStrings ? `${ch}${blank(text.slice(i + 1, j))}${text[j] ?? ''}` : text.slice(i, j + 1));
       i = j + 1;
+      spanStart = i;
       lastSignificant = ch;
       continue;
-    }
-    if (ch === '`' || (ch === '}' && templates.length > 0 && templates[templates.length - 1] === 0)) {
+    } else if (c === 96 /* ` */ || (c === 125 /* } */ && templates.length > 0 && templates[templates.length - 1] === 0)) {
+      flush(i);
       // The body of a template literal, up to its end or the next ${.
-      if (ch === '}') templates.pop();
+      if (c === 125) templates.pop();
       let j = i + 1;
       while (j < text.length && text[j] !== '`' && !(text[j] === '$' && text[j + 1] === '{')) j += text[j] === '\\' ? 2 : 1;
       const literal = (from: number, to: number) => (blankStrings ? `${text[from] ?? ''}${blank(text.slice(from + 1, to))}` : text.slice(from, to));
       if (text[j] === '$') {
         templates.push(0);
-        out += `${literal(i, j)}\${`;
+        out.push(`${literal(i, j)}\${`);
         i = j + 2;
       } else {
-        out += `${literal(i, j)}${text[j] ?? ''}`;
+        out.push(`${literal(i, j)}${text[j] ?? ''}`);
         i = j + 1;
       }
+      spanStart = i;
       lastSignificant = '`';
       continue;
+    } else if (templates.length > 0) {
+      if (c === 123 /* { */) templates[templates.length - 1] = (templates[templates.length - 1] ?? 0) + 1;
+      else if (c === 125 /* } */) templates[templates.length - 1] = (templates[templates.length - 1] ?? 0) - 1;
     }
-    if (ch === '/' && (lastSignificant === '' || '(,=:[!&|?{};+-*%<>~^'.includes(lastSignificant) || /\b(return|typeof|case)\s*$/.test(out))) {
-      // A regular expression literal.
-      let j = i + 1;
-      let inClass = false;
-      while (j < text.length && text[j] !== '\n' && (inClass || text[j] !== '/')) {
-        if (text[j] === '\\') j += 1;
-        else if (text[j] === '[') inClass = true;
-        else if (text[j] === ']') inClass = false;
-        j += 1;
-      }
-      while (/[a-z]/i.test(text[j + 1] ?? '')) j += 1;
-      out += text.slice(i, j + 1);
-      i = j + 1;
-      lastSignificant = '/';
-      continue;
-    }
-    if (templates.length > 0 && ch === '{') templates[templates.length - 1] = (templates[templates.length - 1] ?? 0) + 1;
-    if (templates.length > 0 && ch === '}') templates[templates.length - 1] = (templates[templates.length - 1] ?? 0) - 1;
-    if (!/\s/.test(ch)) lastSignificant = ch;
-    out += ch;
+    if (!isWsCode(c)) lastSignificant = text[i] ?? '';
     i += 1;
   }
-  return out;
+  if (spanStart === 0) return text;
+  flush(text.length);
+  return out.join('');
 }
 
 const lineOf = (text: string, index: number) => text.slice(0, index).split('\n').length;
 
+const isIdentPart = (charCode: number) =>
+  (charCode >= 65 && charCode <= 90) || (charCode >= 97 && charCode <= 122) || (charCode >= 48 && charCode <= 57) || charCode === 95 || charCode === 36;
+const isDigit = (charCode: number) => charCode >= 48 && charCode <= 57;
+const isWs = (ch: string) => ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ((ch < ' ' || ch > '~') && /\s/.test(ch));
+
 // The identifier chain right before a method call (`ctx.trx` in `await ctx.trx\n .insertInto(`), or null when the
-// call follows anything else (a call, a bracket), which is then reported.
-function receiver(before: string): string | null {
-  const m = /([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*$/.exec(before);
-  return m?.[1] ? m[1].replace(/\s+/g, '') : null;
+// call follows anything else (a call, a bracket), which is then reported. Scans backwards from `at` in O(1).
+function receiverAt(body: string, at: number): string | null {
+  let pos = at;
+  while (pos > 0 && isWs(body[pos - 1] ?? '')) pos -= 1;
+  const parts: string[] = [];
+  while (pos > 0) {
+    const segEnd = pos;
+    while (pos > 0 && isIdentPart(body.charCodeAt(pos - 1))) pos -= 1;
+    if (pos === segEnd) break;
+    // Matches the leftmost `[A-Za-z_$][\w$]*` within a contiguous `[\w$]+` run; leading digits block dot chaining.
+    let start = pos;
+    while (start < segEnd && isDigit(body.charCodeAt(start))) start += 1;
+    if (start === segEnd) break;
+    parts.push(body.slice(start, segEnd));
+    if (start > pos) break;
+    let dot = pos;
+    while (dot > 0 && isWs(body[dot - 1] ?? '')) dot -= 1;
+    if (dot === 0 || body[dot - 1] !== '.') break;
+    dot -= 1;
+    while (dot > 0 && isWs(body[dot - 1] ?? '')) dot -= 1;
+    if (dot === 0 || !isIdentPart(body.charCodeAt(dot - 1))) break;
+    pos = dot;
+  }
+  return parts.length === 0 ? null : parts.reverse().join('.');
 }
 
 // sql`...` and sql<T>`...` templates (a type argument of up to 300 characters, bounded so the pattern cannot backtrack
@@ -155,11 +231,10 @@ function sqlTemplates(body: string): Array<{ start: number; end: number; execute
   return out;
 }
 
-export function writeOffenders(text: string): string[] {
-  const body = code(text);
+function writeOffendersOf(body: string): string[] {
   const offenders: string[] = [];
   for (const m of body.matchAll(KYSELY_WRITE)) {
-    const on = receiver(body.slice(0, m.index));
+    const on = receiverAt(body, m.index ?? 0);
     if (!on || !RECEIVER_OK.has(on)) offenders.push(`${lineOf(body, m.index ?? 0)}: ${m[1]} on ${on ?? 'an expression'}`);
   }
   const templates = sqlTemplates(body);
@@ -175,10 +250,13 @@ export function writeOffenders(text: string): string[] {
   return offenders;
 }
 
+export function writeOffenders(text: string): string[] {
+  return writeOffendersOf(code(text));
+}
+
 // The extents of every defineQuery({...}) call, found on the code with strings blanked so a bracket in a string does
 // not count.
-function queryDefinitions(text: string): Array<{ start: number; end: number }> {
-  const body = code(text, true);
+function queryDefinitionsOf(body: string): Array<{ start: number; end: number }> {
   const out: Array<{ start: number; end: number }> = [];
   for (const m of body.matchAll(/\bdefineQuery\s*(<[^(]*>)?\s*\(/g)) {
     let depth = 0;
@@ -195,11 +273,13 @@ function queryDefinitions(text: string): Array<{ start: number; end: number }> {
   return out;
 }
 
-// Writes inside a query definition. Runtime.query() runs a query READ ONLY, but ctx.query() from a command runs it in
-// the command's writable transaction, so a query handler must not write at all.
-export function queryWriteOffenders(text: string): string[] {
-  const body = code(text);
-  const queries = queryDefinitions(text);
+function queryDefinitions(text: string): Array<{ start: number; end: number }> {
+  if (!/\bdefineQuery\b/.test(text)) return [];
+  return queryDefinitionsOf(code(text, true));
+}
+
+function queryWriteOffendersOf(body: string, queries: ReadonlyArray<{ start: number; end: number }>): string[] {
+  if (queries.length === 0) return [];
   const inQuery = (at: number) => queries.some((q) => q.start <= at && at < q.end);
   return [...body.matchAll(KYSELY_WRITE), ...body.matchAll(SQL_DML)]
     .filter((m) => inQuery(m.index ?? 0))
@@ -207,9 +287,20 @@ export function queryWriteOffenders(text: string): string[] {
     .map((m) => `${lineOf(body, m.index ?? 0)}: ${m[0].replace(/\s+/g, ' ').replace(/^\.\s*/, '').replace(/\s*\($/, '')} in a query`);
 }
 
-export function handleOffenders(text: string): string[] {
-  const body = code(text);
+// Writes inside a query definition. Runtime.query() runs a query READ ONLY, but ctx.query() from a command runs it in
+// the command's writable transaction, so a query handler must not write at all.
+export function queryWriteOffenders(text: string): string[] {
+  const queries = queryDefinitions(text);
+  if (queries.length === 0) return [];
+  return queryWriteOffendersOf(code(text), queries);
+}
+
+function handleOffendersOf(body: string): string[] {
   return [...body.matchAll(HANDLE)].map((m) => `${lineOf(body, m.index ?? 0)}: ${m[0].replace(/\s+/g, ' ')}`);
+}
+
+export function handleOffenders(text: string): string[] {
+  return handleOffendersOf(code(text));
 }
 
 function sources(dir: string): string[] {
@@ -223,8 +314,40 @@ function sources(dir: string): string[] {
   return out;
 }
 
-const files = () =>
-  SCANNED.flatMap((dir) => sources(join(ROOT, dir))).map((path) => ({ path: relative(ROOT, path).replace(/\\/g, '/'), text: readFileSync(path, 'utf8') }));
+interface SourceFile {
+  path: string;
+  text: string;
+}
+
+let cachedFiles: SourceFile[] | null = null;
+const files = (): SourceFile[] => {
+  if (cachedFiles === null) {
+    cachedFiles = SCANNED.flatMap((dir) => sources(join(ROOT, dir))).map((path) => ({
+      path: relative(ROOT, path).replace(/\\/g, '/'),
+      text: readFileSync(path, 'utf8'),
+    }));
+  }
+  return cachedFiles;
+};
+
+const strippedCache = new WeakMap<SourceFile, string>();
+const queriesCache = new WeakMap<SourceFile, Array<{ start: number; end: number }>>();
+const bodyOf = (file: SourceFile): string => {
+  let body = strippedCache.get(file);
+  if (body === undefined) {
+    body = code(file.text);
+    strippedCache.set(file, body);
+  }
+  return body;
+};
+const queriesOf = (file: SourceFile): Array<{ start: number; end: number }> => {
+  let queries = queriesCache.get(file);
+  if (queries === undefined) {
+    queries = queryDefinitions(file.text);
+    queriesCache.set(file, queries);
+  }
+  return queries;
+};
 
 describe('one write path (#680)', () => {
   it('scans every app, module and package', () => {
@@ -232,41 +355,44 @@ describe('one write path (#680)', () => {
     // The scan sees the write sites it is meant to see: commands in the modules and the kernel.
     const all = files();
     expect(all.filter((f) => /\.\s*insertInto\s*\(/.test(f.text)).length).toBeGreaterThan(10);
-    expect(all.reduce((n, f) => n + queryDefinitions(f.text).length, 0)).toBeGreaterThan(20);
-  });
+    expect(all.reduce((n, f) => n + queriesOf(f).length, 0)).toBeGreaterThan(20);
+  }, 15_000);
 
   it('writes only on the command transaction (ctx.trx) or a transaction passed in as trx', () => {
     const offenders = files()
       .filter((f) => !(f.path in DML_ALLOWED))
-      .flatMap((f) => writeOffenders(f.text).map((o) => `${f.path}:${o}`));
+      .flatMap((f) => writeOffendersOf(bodyOf(f)).map((o) => `${f.path}:${o}`));
     expect(offenders, 'a write outside a command transaction: run it in a command (ctx.trx) or a definer function').toEqual([]);
-  });
+  }, 15_000);
 
   it('never writes inside a query definition', () => {
-    const offenders = files().flatMap((f) => queryWriteOffenders(f.text).map((o) => `${f.path}:${o}`));
+    const offenders = files().flatMap((f) => {
+      const queries = queriesOf(f);
+      return queries.length === 0 ? [] : queryWriteOffendersOf(bodyOf(f), queries).map((o) => `${f.path}:${o}`);
+    });
     expect(offenders, 'a query that writes: make it a command').toEqual([]);
-  });
+  }, 15_000);
 
   it('opens database handles, connections and transactions only in the listed kernel files', () => {
     const offenders = files()
       .filter((f) => !(f.path in HANDLE_ALLOWED))
-      .flatMap((f) => handleOffenders(f.text).map((o) => `${f.path}:${o}`));
+      .flatMap((f) => handleOffendersOf(bodyOf(f)).map((o) => `${f.path}:${o}`));
     expect(offenders, 'a module or package opened its own database handle or transaction: take ctx.trx from the runtime').toEqual([]);
-  });
+  }, 15_000);
 
   it('lists only files that exist and still need the exception', () => {
-    const byPath = new Map(files().map((f) => [f.path, f.text]));
+    const byPath = new Map(files().map((f) => [f.path, f]));
     for (const path of Object.keys(DML_ALLOWED)) {
-      const text = byPath.get(path);
-      expect(text, `${path} is listed in DML_ALLOWED but does not exist`).toBeDefined();
-      expect(writeOffenders(text ?? ''), `${path} no longer needs DML_ALLOWED: remove it`).not.toEqual([]);
+      const file = byPath.get(path);
+      expect(file, `${path} is listed in DML_ALLOWED but does not exist`).toBeDefined();
+      expect(file ? writeOffendersOf(bodyOf(file)) : [], `${path} no longer needs DML_ALLOWED: remove it`).not.toEqual([]);
     }
     for (const path of Object.keys(HANDLE_ALLOWED)) {
-      const text = byPath.get(path);
-      expect(text, `${path} is listed in HANDLE_ALLOWED but does not exist`).toBeDefined();
-      expect(handleOffenders(text ?? ''), `${path} no longer needs HANDLE_ALLOWED: remove it`).not.toEqual([]);
+      const file = byPath.get(path);
+      expect(file, `${path} is listed in HANDLE_ALLOWED but does not exist`).toBeDefined();
+      expect(file ? handleOffendersOf(bodyOf(file)) : [], `${path} no longer needs HANDLE_ALLOWED: remove it`).not.toEqual([]);
     }
-  });
+  }, 15_000);
 });
 
 describe('the write-path scanner', () => {

@@ -13,6 +13,7 @@ export const BUILTIN_ROLE_KEYS = [
   'finance.chief_accountant',
   'finance.accountant',
   'finance.viewer',
+  'social.marketer',
   'crm.sales',
   'desk.agent',
   'hr.manager',

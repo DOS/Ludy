@@ -1,0 +1,123 @@
+name: desktop-build
+
+# Ludy Desktop (ADR-0055 slice 2, #4515): builds the UNSIGNED Windows installer on a Windows runner, runs the shell's tests and keeps the result as a
+# workflow artifact for 7 days. The first build also measures size and idle memory (ADR-0055 section 4 asks for numbers, not blog figures); they
+# are printed in the job summary.
+#
+# NOTHING is signed or published from here, and no secret or certificate is used anywhere: the output is a development build, and Windows will warn
+# about it (docs/desktop/install.md). Signed installers and an update server are the owner's steps (docs/desktop/signing-runbook.md).
+# The job has read access to the repository only. No pull_request_target.
+
+on:
+  pull_request:
+    paths:
+      - 'apps/desktop/**'
+      - '.github/workflows/desktop-build.yml'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/desktop/**'
+      - '.github/workflows/desktop-build.yml'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  windows:
+    name: Windows build (unsigned), tests, size and memory
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.34.7 --no-fund --no-audit
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter "@ludy/desktop" --filter "ludy-monorepo"
+
+      - name: Typecheck
+        run: pnpm --filter "@ludy/desktop" typecheck
+
+      - name: Unit tests
+        run: pnpm exec vitest run --project unit apps/desktop
+
+      # electron-winstaller's own install script is not run (pnpm-workspace.yaml, allowBuilds): its whole job is this copy of the x64 7-Zip files.
+      - name: Prepare the Squirrel tools
+        shell: pwsh
+        run: |
+          $vendor = Join-Path (node -p "require('path').dirname(require.resolve('electron-winstaller/package.json'))") 'vendor'
+          Copy-Item (Join-Path $vendor '7z-x64.exe') (Join-Path $vendor '7z.exe')
+          Copy-Item (Join-Path $vendor '7z-x64.dll') (Join-Path $vendor '7z.dll')
+        working-directory: apps/desktop
+
+      - name: Compile Win32 WASAPI loopback helper
+        run: node apps/desktop/scripts/build-native.mjs --require-win32
+
+      - name: Build the unsigned Squirrel.Windows installer
+        run: pnpm --filter "@ludy/desktop" run package
+
+      - name: Size of the build
+        shell: pwsh
+        run: |
+          $out = 'apps/desktop/out'
+          $mb = { param($bytes) '{0:N1} MB' -f ($bytes / 1MB) }
+          $rows = @()
+          foreach ($file in Get-ChildItem "$out/installer" -File) { $rows += "| $($file.Name) | $(& $mb $file.Length) |" }
+          $unpacked = (Get-ChildItem "$out/pkg" -Recurse -File | Measure-Object Length -Sum).Sum
+          $rows += "| unpacked app folder | $(& $mb $unpacked) |"
+          $lines = @('### Ludy Desktop build size (unsigned, win32-x64)', '', '| file | size |', '|---|---|') + $rows
+          $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          $lines
+          if (-not (Test-Path "$out/installer/RELEASES")) { throw 'no RELEASES file' }
+          if (-not (Get-ChildItem "$out/installer" -Filter '*-full.nupkg')) { throw 'no full nupkg' }
+          if (-not (Test-Path "$out/installer/LudyDesktop-Setup.exe")) { throw 'no Setup.exe' }
+
+      # Runs the packaged app (not the installer) with a throwaway profile and a Ludy address that answers nothing, for 20 seconds, and sums the working
+      # set and private memory of its processes. It is a measurement, so a failure here does not fail the build.
+      - name: Idle memory of the packaged app
+        continue-on-error: true
+        shell: pwsh
+        env:
+          LUDY_URL: http://127.0.0.1:9
+          LUDY_DESKTOP_USER_DATA: ${{ runner.temp }}\ludy-desktop-profile
+        run: |
+          $exe = (Resolve-Path 'apps/desktop/out/pkg/ludy-desktop-win32-x64/ludy-desktop.exe').Path
+          $started = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 20
+          $procs = @(Get-Process -Name 'ludy-desktop' -ErrorAction SilentlyContinue)
+          $lines = @('### Ludy Desktop idle memory (20 s after start, tray only, no window)', '')
+          if ($procs.Count -eq 0) {
+            $lines += "The app was not running after 20 s (it exited with code $($started.ExitCode))."
+          } else {
+            $ws = ($procs | Measure-Object WorkingSet64 -Sum).Sum
+            $priv = ($procs | Measure-Object PrivateMemorySize64 -Sum).Sum
+            $lines += "| processes | working set | private memory |", "|---|---|---|", ("| {0} | {1:N0} MB | {2:N0} MB |" -f $procs.Count, ($ws / 1MB), ($priv / 1MB))
+          }
+          $lines | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          $lines
+          $procs | Stop-Process -Force -ErrorAction SilentlyContinue
+          if ($procs.Count -eq 0) { throw 'the packaged app did not stay running' }
+
+      - name: Keep the unsigned installer for 7 days
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ludy-desktop-unsigned-win32-x64
+          path: apps/desktop/out/installer/
+          retention-days: 7
+          if-no-files-found: error

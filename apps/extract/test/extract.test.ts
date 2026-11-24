@@ -82,12 +82,12 @@ describe('crove-extract HTTP service', () => {
     expect(response.status).toBe(200);
     const result = await answer(response);
     expect(result).toMatchObject({ ok: true, kind: 'einvoice_xml', invoice: { number: '1234', total: '1980000', source: 'einvoice_xml' } });
-  });
+  }, 15_000);
 
   it('extracts the text layer of a PDF', async () => {
     const result = await answer(await post(createExtractApp(), 'pdf_text', pdf('Hoa don GTGT so 1234')));
     expect(result).toEqual({ ok: true, kind: 'pdf_text', text: 'Hoa don GTGT so 1234', pages: 1 });
-  });
+  }, 15_000);
 
   it('parses a MIME message: addresses, subject and attachments as base64', async () => {
     const result = await answer(await post(createExtractApp(), 'mime', email(FIXTURE)));
@@ -101,7 +101,7 @@ describe('crove-extract HTTP service', () => {
     });
     expect(result.email.attachments).toHaveLength(1);
     expect(Buffer.from(result.email.attachments[0]?.content ?? '', 'base64')).toEqual(FIXTURE);
-  });
+  }, 15_000);
 
   // #2439: the receiving server's verdict on the sender is copied out, topmost first and cut; the sandbox decides nothing about it.
   it('copies the Authentication-Results headers of a mail, in order, unfolded and at most five', async () => {
@@ -111,7 +111,7 @@ describe('crove-extract HTTP service', () => {
     const result = await answer(await post(createExtractApp(), 'mime', encode(lines.join('\r\n'))));
     if (!result.ok || result.kind !== 'mime') throw new Error(`unexpected ${JSON.stringify(result)}`);
     expect(result.email.authResults).toEqual([0, 1, 2, 3, 4].map((i) => `mx${i}.in.test; dmarc=pass header.from=mau.test${i}`));
-  });
+  }, 15_000);
 
   it('reads every Auto-Submitted and Precedence header, and keeps every In-Reply-To id among the references', async () => {
     const lines = ['From: Khach <khach@mau.test>', 'To: x@in.test', 'Subject: Hoi gia', 'Message-ID: <a3@mau.test>', 'Auto-Submitted: no', 'Auto-Submitted: auto-replied', 'In-Reply-To: <p1@mau.test> <p2@mau.test>', 'References: <r1@mau.test>', 'MIME-Version: 1.0', 'Content-Type: text/plain; charset=utf-8', '', 'Xin chao'];
@@ -119,7 +119,7 @@ describe('crove-extract HTTP service', () => {
     if (!result.ok || result.kind !== 'mime') throw new Error(`unexpected ${JSON.stringify(result)}`);
     expect(result.email.automated).toBe(true);
     expect(result.email.references).toEqual(['<r1@mau.test>', '<p1@mau.test>', '<p2@mau.test>']);
-  });
+  }, 15_000);
 
   // One case per mail: each read starts a parser process of its own (about half a second), so six reads in one case came to
   // about three seconds on an idle machine and passed the 5 s limit under CI load (#4151). The assertions are the same.
@@ -134,7 +134,7 @@ describe('crove-extract HTTP service', () => {
     { precedence: 'first-class', automated: false },
   ])('reads a commented Precedence value: $precedence', async ({ precedence, automated }) => {
     expect((await readMail(['From: a@mau.test', `Precedence: ${precedence}`])).automated).toBe(automated);
-  });
+  }, 15_000);
 
   it.each([
     { name: 'two mailboxes in one From', from: ['From: a@x.test, b@y.test'], multiple: true },
@@ -143,14 +143,14 @@ describe('crove-extract HTTP service', () => {
     { name: 'a comma inside a comment', from: ['From: Hoa Chi <a@x.test> (a, comment)'], multiple: false },
   ])('sees a From that names more than one mailbox: $name', async ({ from, multiple }) => {
     expect((await readMail(from)).multipleFrom).toBe(multiple);
-  });
+  }, 15_000);
 
   it('never cuts a long Authentication-Results header: it is kept as its authserv-id and none', async () => {
     const lines = ['From: Khach <khach@mau.test>', 'To: x@in.test', 'Subject: Hoi gia', 'Message-ID: <a2@mau.test>', `Authentication-Results: mx.in.test; spf=pass (${'x'.repeat(1200)}); dkim=pass header.d=victim.test.evil.test`, 'MIME-Version: 1.0', 'Content-Type: text/plain; charset=utf-8', '', 'Xin chao'];
     const result = await answer(await post(createExtractApp(), 'mime', encode(lines.join('\r\n'))));
     if (!result.ok || result.kind !== 'mime') throw new Error(`unexpected ${JSON.stringify(result)}`);
     expect(result.email.authResults).toEqual(['mx.in.test; none']);
-  });
+  }, 15_000);
 
   // #779: a forwarded mail's text, for an AI draft of a Social post.
   describe("a mail's text", () => {
@@ -164,7 +164,7 @@ describe('crove-extract HTTP service', () => {
 
     it('keeps the text/plain part, with control characters dropped and blank lines collapsed', async () => {
       expect(await textOf(mail('text/plain', 'Giảm 20%\u0007 cho đơn đầu.\r\n\r\n\r\n\r\nHẹn gặp   bạn!   '))).toBe('Giảm 20% cho đơn đầu.\n\nHẹn gặp bạn!');
-    });
+    }, 15_000);
 
     it('reduces an HTML-only mail to text, without its scripts and styles', async () => {
       const text = await textOf(mail('text/html', '<html><head><style>p{color:red}</style></head><body><p>Mở bán <b>bánh trung thu</b></p><script>alert(1)</script><p>Từ 1/9</p></body></html>'));
@@ -172,13 +172,13 @@ describe('crove-extract HTTP service', () => {
       expect(text).toContain('Từ 1/9');
       expect(text).not.toContain('alert');
       expect(text).not.toContain('color:red');
-    });
+    }, 15_000);
 
     it('caps a long text at maxMailTextChars and gives none for an empty mail', async () => {
       const long = await textOf(mail('text/plain', 'a'.repeat(EXTRACT_LIMITS.maxMailTextChars + 500)));
       expect(long?.length).toBe(EXTRACT_LIMITS.maxMailTextChars);
       expect(await textOf(mail('text/plain', '   \r\n  '))).toBeNull();
-    });
+    }, 15_000);
   });
 
   it('refuses a declared body over the limit before reading it', async () => {
@@ -312,7 +312,7 @@ describe('crove-extract parser process', () => {
     ].join('\n');
     const result = await runSandboxed('einvoice_xml', encode(laughs));
     expect(result).toMatchObject({ ok: false, code: 'invalid', message: expect.stringMatching(/DOCTYPE/) });
-  });
+  }, 15_000);
 
   it('bounds deeply nested input with a typed error', async () => {
     const depth = 200_000;
@@ -324,7 +324,7 @@ describe('crove-extract parser process', () => {
     );
     // 100 nested multiparts, over the parser's nesting limit of 32.
     expect(await runSandboxed('mime', mime)).toEqual({ ok: false, code: 'invalid', message: 'Không đọc được thư điện tử' });
-  });
+  }, 15_000);
 
   it('verifies an e-invoice signature inside the parser process (#674)', async () => {
     // Signed by the TEST ONLY PKI, which the shipped national roots do not trust. untrusted_certificate is decided only
@@ -337,13 +337,13 @@ describe('crove-extract parser process', () => {
     expect(result).toMatchObject({ ok: true, invoice: { total: '1980000', signature: { status: 'unverified', reason: 'untrusted_certificate', signer: 'TEST ONLY CÔNG TY TNHH DỊCH VỤ MẪU' } } });
     const tampered = await runSandboxed('einvoice_xml', encode(signed.replace('<TgTTTBSo>1980000</TgTTTBSo>', '<TgTTTBSo>1980001</TgTTTBSo>')));
     expect(tampered).toMatchObject({ ok: true, invoice: { signature: { status: 'unverified', reason: 'digest_mismatch' } } });
-  });
+  }, 15_000);
 
   it('gives a typed error for malformed input and leaks no parser internals', async () => {
     expect(await runSandboxed('pdf_text', encode('%PDF-1.4 not really a pdf'))).toEqual({ ok: false, code: 'invalid', message: 'Không đọc được tệp PDF' });
     expect(await runSandboxed('einvoice_xml', encode('<root><a>1</a></root>'))).toMatchObject({ ok: false, code: 'invalid', message: expect.stringMatching(/HDon/) });
     expect(await runSandboxed('einvoice_xml', encode('<HDon><DLHDon>'))).toMatchObject({ ok: false, code: 'invalid' });
-  });
+  }, 15_000);
 
   it('kills a parse at the time limit', async () => {
     const started = Date.now();
@@ -378,7 +378,7 @@ describe('crove-extract parser process', () => {
   it('refuses an answer larger than the output limit', async () => {
     const result = await runSandboxed('mime', email(FIXTURE), { ...DEFAULT_SANDBOX, maxOutputBytes: 64 });
     expect(result).toMatchObject({ ok: false, code: 'invalid' });
-  });
+  }, 15_000);
 });
 
 // Runs a script under exactly the parser process's flags and environment.

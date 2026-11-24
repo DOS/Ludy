@@ -5,11 +5,15 @@
 // and task lists even when Vy's summary is off, paused, budget-exhausted, refused or failed. Nothing is stored or sent.
 import {
   AiBudgetExhaustedError,
+  PROJECT_WEEKLY_STATUS_COLUMN_CHARS,
+  PROJECT_WEEKLY_STATUS_COMMENT_CHARS,
+  PROJECT_WEEKLY_STATUS_TITLE_CHARS,
   type InboxReader,
   type ProjectWeeklyStatusFacts,
   type ProjectWeeklyStatusTaskFact,
 } from '@ludy/agent';
 import {
+  plainLine,
   vietnamToday,
   type ProjectWeeklyStatus,
   type ProjectWeeklyStatusState,
@@ -30,13 +34,14 @@ export function projectWeeklyStatusAi(
   return { reader, budget };
 }
 
-function toTaskFacts(tasks: readonly ProjectWeeklyStatusTask[]): ProjectWeeklyStatusTaskFact[] {
+export function toProjectTaskFacts(tasks: readonly ProjectWeeklyStatusTask[]): ProjectWeeklyStatusTaskFact[] {
   return tasks.map((task) => ({
-    title: task.title,
+    title: plainLine(task.title, PROJECT_WEEKLY_STATUS_TITLE_CHARS),
+    tainted: task.tainted !== false,
     status: task.status,
     dueDay: task.due ? vietnamToday(new Date(task.due)) : null,
     commentCount: task.commentCount,
-    latestComment: task.latestComment,
+    latestComment: task.latestComment ? plainLine(task.latestComment, PROJECT_WEEKLY_STATUS_COMMENT_CHARS) || null : null,
   }));
 }
 
@@ -60,7 +65,7 @@ async function generateSummary(
   const bottlenecks = source.bottlenecks ?? [];
   const facts: ProjectWeeklyStatusFacts = {
     language,
-    projectName: source.project.name,
+    projectName: plainLine(source.project.name, PROJECT_WEEKLY_STATUS_TITLE_CHARS),
     projectStatus: source.project.status,
     window: {
       from: source.window.from,
@@ -69,18 +74,26 @@ async function generateSummary(
       nextTo: source.window.nextTo,
     },
     counts: source.counts,
-    ...(source.columns && source.columns.length > 0 ? { columns: source.columns } : {}),
+    ...(source.columns && source.columns.length > 0
+      ? {
+          columns: source.columns.map((col) => ({
+            ...col,
+            name: plainLine(col.name, PROJECT_WEEKLY_STATUS_COLUMN_CHARS),
+          })),
+        }
+      : {}),
     ...(source.timeThisWeek ? { timeThisWeek: source.timeThisWeek } : {}),
     tasks: {
-      doneThisWeek: toTaskFacts(source.tasks.doneThisWeek),
-      overdue: toTaskFacts(source.tasks.overdue),
-      waiting: toTaskFacts(source.tasks.waiting),
-      dueNextWeek: toTaskFacts(source.tasks.dueNextWeek),
+      doneThisWeek: toProjectTaskFacts(source.tasks.doneThisWeek),
+      overdue: toProjectTaskFacts(source.tasks.overdue),
+      waiting: toProjectTaskFacts(source.tasks.waiting),
+      dueNextWeek: toProjectTaskFacts(source.tasks.dueNextWeek),
     },
     ...(bottlenecks.length > 0
       ? {
           bottlenecks: bottlenecks.map((item) => ({
-            title: item.title,
+            title: plainLine(item.title, PROJECT_WEEKLY_STATUS_TITLE_CHARS),
+            tainted: item.tainted !== false,
             status: item.status,
             dueDay: item.due ? vietnamToday(new Date(item.due)) : null,
             blockedCount: item.blockedCount,

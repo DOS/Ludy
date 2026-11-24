@@ -67,7 +67,7 @@ export function parseTick(raw: unknown): Tick | null {
 // 'captureRunning': the server already has a capture of this call (ADR-0055 slice 1, #4123); the reply says which kind of client holds it and since when.
 export type StartFailure = 'invalid' | 'title' | 'consentMethod' | 'consentAgreed' | 'consentPolicy' | 'permission' | 'busy' | 'signedOut' | 'device' | 'store' | 'setup' | 'captureRunning';
 export interface CaptureHeld {
-  kind: 'extension' | 'app';
+  kind: 'extension' | 'app' | 'desktop';
   // An ISO time.
   since: string;
 }

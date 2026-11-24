@@ -5,11 +5,13 @@ import { hashKey, useMutation, useQuery } from '@tanstack/react-query';
 import type {
   FilterAst,
   ProjectBoard,
+  ProjectBoardInput,
   ProjectColumn,
   ProjectCycleFilter,
   ProjectStatus,
   ProjectSummary,
   ProjectTaskCard,
+  ProjectTimelineInput,
   SavedViewSort,
   TaskChecklistStep,
 } from '@ludy/kernel-contract';
@@ -34,6 +36,7 @@ import { ProjectAcceptanceSignHandoff } from '../components/project-acceptance-s
 import { ProjectColumnsDialog } from '../components/project-columns-dialog.tsx';
 import { ProjectCyclesPanel } from '../components/project-cycles.tsx';
 import { ProjectRoadmapPanel } from '../components/project-roadmap-panel.tsx';
+import { ProjectTriagePanel } from '../components/project-triage-panel.tsx';
 import { ProjectTasksFromSourceDialog } from '../components/project-tasks-from-source-dialog.tsx';
 import { ProjectTemplateDialog } from '../components/project-template-dialog.tsx';
 import { ProjectTimeTab } from '../components/project-time-panel.tsx';
@@ -72,6 +75,7 @@ import {
   type ProjectViewMode,
   type TaskPlacement,
 } from '../lib/projects.ts';
+import { EMPTY_PROJECT_TIME_FILTER, type ProjectTimeFilterState } from '../lib/projects-time.ts';
 import { EMPTY_TASK_FILTER, astToTaskFilter, taskFilterToAst, type TaskFilterState } from '../lib/task-filter.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 
@@ -174,11 +178,20 @@ export function ProjectsPage() {
   const { slug } = useParams({ strict: false }) as { slug: string };
   const navigate = useNavigate();
   const t = useTranslations('projects');
-  const [workspaceTab, setWorkspaceTab] = useState<'projects' | 'roadmap'>('projects');
+  const [workspaceTab, setWorkspaceTab] = useState<'projects' | 'triage' | 'roadmap'>(() => {
+    if (typeof window === 'undefined') return 'projects';
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    return tab === 'triage' || tab === 'roadmap' ? tab : 'projects';
+  });
   const [statusFilter, setStatusFilter] = useState<ProjectStatusFilter>('open');
   const [search, setSearch] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
   const [templateOpen, setTemplateOpen] = useState(false);
+
+  const triageBadgeQuery = useQuery(
+    orpc.projects.triage.list.queryOptions({ input: { statuses: ['pending'], limit: 1 } }),
+  );
+  const triagePendingCount = triageBadgeQuery.data?.counts.pending ?? 0;
 
   const statuses = statusFilterParam(statusFilter);
   const query = useQuery(orpc.projects.list.queryOptions({ input: statuses ? { status: statuses } : {} }));
@@ -210,12 +223,20 @@ export function ProjectsPage() {
 
       <Tabs
         value={workspaceTab}
-        onValueChange={(next) => setWorkspaceTab(next as 'projects' | 'roadmap')}
+        onValueChange={(next) => setWorkspaceTab(next as 'projects' | 'triage' | 'roadmap')}
         data-testid="projects-workspace-tabs"
       >
         <TabsList aria-label={t('workspaceTabs.label')}>
           <TabsTrigger value="projects" className="min-h-11">
             {t('workspaceTabs.projects')}
+          </TabsTrigger>
+          <TabsTrigger value="triage" className="min-h-11 gap-1.5" data-testid="projects-triage-tab">
+            <span>{t('workspaceTabs.triage')}</span>
+            {triagePendingCount > 0 && (
+              <Badge variant="secondary" data-testid="projects-triage-tab-badge">
+                {triagePendingCount}
+              </Badge>
+            )}
           </TabsTrigger>
           <TabsTrigger value="roadmap" className="min-h-11" data-testid="projects-roadmap-tab">
             {t('workspaceTabs.roadmap')}
@@ -223,7 +244,9 @@ export function ProjectsPage() {
         </TabsList>
       </Tabs>
 
-      {workspaceTab === 'roadmap' ? (
+      {workspaceTab === 'triage' ? (
+        <ProjectTriagePanel orgSlug={slug} />
+      ) : workspaceTab === 'roadmap' ? (
         <ProjectRoadmapPanel orgSlug={slug} />
       ) : (
         <>
@@ -312,17 +335,84 @@ export function countOtherProjectMembers(
   return currentUserId ? members.filter((m) => m.onProject && m.userId !== currentUserId).length : undefined;
 }
 
+export function buildProjectBoardInput({
+  projectId,
+  positionId,
+  includeCancelled,
+  cycleFilter,
+  filters,
+  sort,
+}: {
+  projectId: string;
+  positionId: string;
+  includeCancelled: boolean;
+  cycleFilter: ProjectCycleFilter;
+  filters: FilterAst;
+  sort: SavedViewSort | null;
+}): ProjectBoardInput {
+  return {
+    projectId,
+    ...(positionId ? { positionId } : {}),
+    ...(includeCancelled ? { includeCancelled: true } : {}),
+    ...(cycleFilter.mode !== 'all' ? { cycleFilter } : {}),
+    ...(filters.all.length > 0 ? { filters } : {}),
+    ...(sort ? { sort } : {}),
+  };
+}
+
+export function buildProjectTimelineInput({
+  projectId,
+  positionId,
+  includeCancelled,
+}: {
+  projectId: string;
+  positionId: string;
+  includeCancelled: boolean;
+}): ProjectTimelineInput {
+  return {
+    projectId,
+    ...(positionId ? { positionId } : {}),
+    ...(includeCancelled ? { includeCancelled: true } : {}),
+  };
+}
+
+export function resolveTimeTabTasks({
+  boardFiltered,
+  boardTasks,
+  unfilteredTasks,
+}: {
+  boardFiltered: boolean;
+  boardTasks: readonly ProjectTaskCard[];
+  unfilteredTasks?: readonly ProjectTaskCard[] | undefined;
+}): readonly ProjectTaskCard[] {
+  if (unfilteredTasks !== undefined) return unfilteredTasks;
+  return boardFiltered ? [] : boardTasks;
+}
+
 export function ProjectDetailPage() {
+  return <ProjectDetailView />;
+}
+
+export function ProjectDetailView({ initialView }: { initialView?: ProjectViewMode } = {}) {
   const { slug, id } = useParams({ strict: false }) as { slug: string; id: string };
   const t = useTranslations('projects');
   const tn = useTranslations('notes');
 
-  const userPickedView = useRef(false);
-  const [view, setView] = useState<ProjectViewMode>(() =>
-    typeof window === 'undefined' ? 'board' : defaultProjectView(window.innerWidth),
-  );
+  const initialTriageView =
+    initialView === undefined &&
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('view') === 'triage';
+  const userPickedView = useRef(Boolean(initialView) || initialTriageView);
+  const [view, setView] = useState<ProjectViewMode>(() => {
+    if (initialView) return initialView;
+    if (initialTriageView) return 'triage';
+    return typeof window === 'undefined' ? 'board' : defaultProjectView(window.innerWidth);
+  });
   const [positionId, setPositionId] = useState<string>('');
   const [includeCancelled, setIncludeCancelled] = useState(false);
+  const [timelinePositionId, setTimelinePositionId] = useState<string>('');
+  const [timelineIncludeCancelled, setTimelineIncludeCancelled] = useState(false);
+  const [timeFilters, setTimeFilters] = useState<ProjectTimeFilterState>(EMPTY_PROJECT_TIME_FILTER);
   const [attachOpen, setAttachOpen] = useState(false);
   const [proposeSourceOpen, setProposeSourceOpen] = useState(false);
   const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
@@ -346,6 +436,13 @@ export function ProjectDetailPage() {
   activeContextRef.current = { slug, id };
 
   useEffect(() => {
+    setPositionId('');
+    setIncludeCancelled(false);
+    setTimelinePositionId('');
+    setTimelineIncludeCancelled(false);
+    setTimeFilters(EMPTY_PROJECT_TIME_FILTER);
+    setBar(EMPTY_TASK_FILTER);
+    setSort(null);
     setMoveError(null);
     setEditingTask(null);
     setCycleFilter({ mode: 'all' });
@@ -363,14 +460,14 @@ export function ProjectDetailPage() {
   }, []);
 
   const effectiveIncludeCancelled = includeCancelled || statusFilterIncludesCancelled(applied);
-  const boardInput = {
+  const boardInput = buildProjectBoardInput({
     projectId: id,
-    ...(positionId ? { positionId } : {}),
-    ...(includeCancelled ? { includeCancelled: true } : {}),
-    ...(cycleFilter.mode !== 'all' ? { cycleFilter } : {}),
-    ...(applied.all.length > 0 ? { filters: applied } : {}),
-    ...(sort ? { sort } : {}),
-  };
+    positionId,
+    includeCancelled,
+    cycleFilter,
+    filters: applied,
+    sort,
+  });
   const boardQueryOptions = orpc.projects.board.queryOptions({ input: boardInput });
   const boardQuery = useQuery({
     ...boardQueryOptions,
@@ -378,17 +475,26 @@ export function ProjectDetailPage() {
     // Task checkout releases are not pushed over SSE yet; poll only while an agent holds a lease.
     refetchInterval: (query) => (query.state.data?.tasks.some((item) => item.checkedOut) ? 5_000 : false),
   });
-  const timelineInput = {
+  const timelineInput = buildProjectTimelineInput({
     projectId: id,
-    ...(positionId ? { positionId } : {}),
-    ...(effectiveIncludeCancelled ? { includeCancelled: true } : {}),
-  };
+    positionId: timelinePositionId,
+    includeCancelled: timelineIncludeCancelled,
+  });
   const timelineQuery = useQuery({
     ...orpc.projects.timeline.queryOptions({ input: timelineInput }),
     enabled: view === 'timeline',
     refetchInterval: (query) =>
       view === 'timeline' && query.state.data?.tasks.some((item) => item.checkedOut) ? 5_000 : false,
   });
+  const timeTasksQuery = useQuery({
+    ...orpc.projects.board.queryOptions({ input: { projectId: id } }),
+    enabled: view === 'time',
+    retry: false,
+  });
+  const projectTriageBadgeQuery = useQuery(
+    orpc.projects.triage.list.queryOptions({ input: { projectId: id, statuses: ['pending'], limit: 1 } }),
+  );
+  const projectTriagePendingCount = projectTriageBadgeQuery.data?.counts.pending ?? 0;
   const cyclesEnabled = boardQuery.data?.project.cyclesEnabled === true;
   const pointsEnabled = boardQuery.data?.project.pointsEnabled === true;
   useEffect(() => {
@@ -691,21 +797,36 @@ export function ProjectDetailPage() {
               <ProjectIcon name="clock" className="size-3.5" />
               <span>{t('detail.viewTime')}</span>
             </TabsTrigger>
+            <TabsTrigger value="triage" data-testid="view-toggle-triage" className="h-auto min-h-11 flex-none gap-1.5 px-2.5 sm:min-h-9">
+              <ProjectIcon name="filters" className="size-3.5" />
+              <span>{t('detail.viewTriage')}</span>
+              {projectTriagePendingCount > 0 && (
+                <Badge variant="secondary" data-testid="project-triage-tab-badge">
+                  {projectTriagePendingCount}
+                </Badge>
+              )}
+            </TabsTrigger>
           </TabsList>
         </Tabs>
 
-        {view !== 'time' && view !== 'timeline' && (
+        {(view === 'board' || view === 'list' || view === 'timeline') && (
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex min-w-44 items-center gap-2">
-              <Label htmlFor="project-seat-filter" className="sr-only">
+              <Label
+                htmlFor={view === 'timeline' ? 'project-timeline-seat-filter' : 'project-seat-filter'}
+                className="sr-only"
+              >
                 {t('detail.positionFilter')}
               </Label>
               <NativeSelect
-                id="project-seat-filter"
+                id={view === 'timeline' ? 'project-timeline-seat-filter' : 'project-seat-filter'}
+                data-testid={view === 'timeline' ? 'timeline-seat-filter' : 'project-seat-filter'}
                 aria-label={t('detail.positionFilter')}
-                value={positionId}
-                onChange={(e) => setPositionId(e.target.value)}
-                className="h-9 w-full text-xs sm:h-8"
+                value={view === 'timeline' ? timelinePositionId : positionId}
+                onChange={(e) =>
+                  view === 'timeline' ? setTimelinePositionId(e.target.value) : setPositionId(e.target.value)
+                }
+                className="w-full text-xs [&>select]:min-h-11 sm:[&>select]:min-h-8"
               >
                 <NativeSelectOption value="">{t('detail.allPositions')}</NativeSelectOption>
                 <NativeSelectOption value="root">{t('detail.rootPosition')}</NativeSelectOption>
@@ -717,10 +838,15 @@ export function ProjectDetailPage() {
               </NativeSelect>
             </div>
 
-            <label className="inline-flex min-h-9 cursor-pointer items-center gap-2 text-xs text-foreground sm:min-h-8">
+            <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 text-xs text-foreground sm:min-h-8">
               <Checkbox
-                checked={includeCancelled}
-                onCheckedChange={(checked) => setIncludeCancelled(checked === true)}
+                data-testid={view === 'timeline' ? 'timeline-include-cancelled' : 'project-include-cancelled'}
+                checked={view === 'timeline' ? timelineIncludeCancelled : includeCancelled}
+                onCheckedChange={(checked) =>
+                  view === 'timeline'
+                    ? setTimelineIncludeCancelled(checked === true)
+                    : setIncludeCancelled(checked === true)
+                }
               />
               <span>{t('detail.includeCancelled')}</span>
             </label>
@@ -728,13 +854,23 @@ export function ProjectDetailPage() {
         )}
       </div>
 
-      {view === 'time' ? (
+      {view === 'triage' ? (
+        <ProjectTriagePanel key={project.id} orgSlug={slug} projectId={project.id} />
+      ) : view === 'time' ? (
         <ProjectTimeTab
           slug={slug}
           projectId={project.id}
           canWrite={project.canWrite}
-          tasks={board.tasks}
+          tasks={resolveTimeTabTasks({
+            boardFiltered,
+            boardTasks: board.tasks,
+            unfilteredTasks: timeTasksQuery.data?.tasks,
+          })}
+          tasksError={boardFiltered && timeTasksQuery.error ? timeTasksQuery.error : undefined}
+          onRetryTasks={() => void timeTasksQuery.refetch()}
           members={members}
+          filters={timeFilters}
+          onFiltersChange={setTimeFilters}
         />
       ) : view === 'timeline' ? (
         <>

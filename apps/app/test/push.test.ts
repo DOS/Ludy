@@ -154,6 +154,25 @@ describe('the service worker', () => {
     expect(w.opened).toEqual(['https://crove.example/o/acme/social?assignee=me']);
   });
 
+  it('opens a meeting and the meetings list (#3736)', async () => {
+    const w = loadWorker();
+    const MEETING = '/o/acme/meetings/0193b3a0-1c2d-7e4f-8a9b-0c1d2e3f4a5b';
+    for (const url of [MEETING, '/o/acme/meetings']) {
+      await w.fire('push', { data: { json: () => ({ title: 'Ludy', body: 'Bản nháp biên bản đã sẵn sàng để bạn xem', url, tag: 'meetings.summary_ready:x' }) } });
+    }
+    for (const shown of w.shown) await w.fire('notificationclick', { notification: { data: shown.options.data, close: () => undefined } });
+    expect(w.opened).toEqual([`https://crove.example${MEETING}`, 'https://crove.example/o/acme/meetings']);
+  });
+
+  it('opens nothing for a meetings link that is not a notification path (#3736)', async () => {
+    const w = loadWorker();
+    for (const url of ['/meetings/x', '/o/acme/meetings?x=1', '/o/acme/meetings/x', '/o/acme/meetings/0193b3a0-1c2d-7e4f-8a9b-0c1d2e3f4a5b#x', '/o/acme/meetings/0193b3a0-1c2d-7e4f-8a9b-0c1d2e3f4a5b/edit', 'https://evil.example/o/acme/meetings']) {
+      await w.fire('push', { data: { json: () => ({ title: 'Ludy', body: 'x', url }) } });
+    }
+    for (const shown of w.shown) await w.fire('notificationclick', { notification: { data: shown.options.data, close: () => undefined } });
+    expect(w.opened).toEqual([]);
+  });
+
   it('opens nothing for a link that is not a Crove notification path', async () => {
     const w = loadWorker();
     for (const url of ['https://evil.example/o/acme/social/channels', '//evil.example/o/acme/social/channels', 'javascript:alert(1)', '/o/acme/settings', '/o/acme/social/channels?x=1', `${POST}#x`, '/o/acme/social/new?channel=x', '/o/acme/social?assignee=other', '/o/acme/social?assignee=me&x=1', '/o/acme/social']) {

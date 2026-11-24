@@ -221,11 +221,19 @@ export function foldVaultSearchText(value: string): string {
 }
 
 function normalizeExactText(value: string): string {
-  return stripFormatControl(value.normalize('NFKC'))
+  return stripFormatControl(value)
+    .normalize('NFKC')
+    .normalize('NFC')
+    .replace(/\p{M}+/gu, '')
     .toLowerCase()
     .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function joinColonParts(left: string, right: string): string {
+  if (left && right) return `${left}: ${right}`;
+  return left || right;
 }
 
 export interface ParsedVaultQuery {
@@ -445,7 +453,7 @@ function buildSearchableSegments(cand: SignVaultCandidateInput): SearchableSegme
       const quote = kt.quoteExcerpt ? cleanExcerpt(kt.quoteExcerpt, 300) : '';
       if (!label && !val && !quote) continue;
       const pageNumber = validPage(kt.pageNumber, cand.pageCount);
-      const combined = cleanExcerpt(label && val ? `${label}: ${val}` : label || val || quote, SNIPPET_EXCERPT_MAX);
+      const combined = cleanExcerpt(joinColonParts(label, val) || quote, SNIPPET_EXCERPT_MAX);
       const excerpt = quote ? cleanExcerpt(`${combined} - ${quote}`, SNIPPET_EXCERPT_MAX) : combined;
       segments.push({
         kind: 'shared_summary',
@@ -467,7 +475,7 @@ function buildSearchableSegments(cand: SignVaultCandidateInput): SearchableSegme
         const quote = typeof c.quote === 'string' ? cleanExcerpt(c.quote, SNIPPET_EXCERPT_MAX) : '';
         const title = typeof c.title === 'string' ? cleanExcerpt(c.title, 200) : '';
         const explanation = typeof c.explanation === 'string' ? cleanExcerpt(c.explanation, 300) : '';
-        const excerpt = quote || cleanExcerpt(`${title}: ${explanation}`, SNIPPET_EXCERPT_MAX);
+        const excerpt = quote || cleanExcerpt(joinColonParts(title, explanation), SNIPPET_EXCERPT_MAX);
         if (!excerpt) continue;
         const pageNumber = validPage(c.pageNumber, cand.pageCount);
         segments.push({
@@ -687,7 +695,7 @@ export const vaultSearch = defineQuery({
     const currentUserId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
     const accessibleEnvRows = envRows.filter((row) => {
       if (!canAccessEnvelopeRow(ctx, row)) return false;
-      if (row.source_kind === 'meeting_minutes' && !row.source_id && currentUserId !== row.created_by) {
+      if (row.source_kind === 'meeting_minutes' && !row.source_id && (row.status !== 'completed' || currentUserId !== row.created_by)) {
         return false;
       }
       return true;

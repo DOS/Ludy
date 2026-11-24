@@ -20,7 +20,11 @@ import { PHONE_TARGET } from '../src/lib/touch-target.ts';
 const state = vi.hoisted(() => ({ client: null as unknown as QueryClient, pathname: '/o/acme/overview', links: [] as Array<{ to: string; onClick?: unknown }> }));
 
 vi.mock('../src/lib/auth.ts', () => ({
-  getConfig: () => ({ modules: Object.keys(MODULE_SCREENS), mcpEnabled: true }),
+  getConfig: () => ({ modules: Object.keys(MODULE_SCREENS), mcpEnabled: true, supportUrl: 'mailto:support@example.com', statusPage: true }),
+}));
+
+vi.mock('../src/lib/api-base.ts', () => ({
+  serverOrigin: () => 'https://app.ludy.vn',
 }));
 
 vi.mock('@tanstack/react-router', () => ({
@@ -57,7 +61,7 @@ vi.mock('../src/lib/api.ts', async () => {
   return { orpc: node([]), client: node([]), clientForOrg: () => node([]), queryClient: state.client, errorMessage: String };
 });
 
-const { ShellNav } = await import('../src/components/app-nav.tsx');
+const { AccountPanel, ShellNav } = await import('../src/components/app-nav.tsx');
 const { PhoneHeader } = await import('../src/components/phone-header.tsx');
 
 function render(locale: 'vi' | 'en', node: React.ReactNode): string {
@@ -76,7 +80,18 @@ function render(locale: 'vi' | 'en', node: React.ReactNode): string {
 
 const apps = installedApps(Object.keys(MODULE_SCREENS));
 const LONG_NAME = 'Công ty TNHH Thương mại và Dịch vụ Vận tải Quốc tế Sao Mai';
-const shell = (pathname: string, locale: 'vi' | 'en' = 'vi', modules?: readonly string[], onNavigate?: () => void) => {
+const shell = (
+  pathname: string,
+  locale: 'vi' | 'en' = 'vi',
+  modules?: readonly string[],
+  onNavigate?: () => void,
+  extra?: {
+    mode?: 'sidebar' | 'drawer';
+    secondaryCollapsed?: boolean;
+    onToggleSecondary?: () => void;
+    onOpenQuickCapture?: () => void;
+  },
+) => {
   state.pathname = pathname;
   state.links = [];
   return render(
@@ -92,6 +107,7 @@ const shell = (pathname: string, locale: 'vi' | 'en' = 'vi', modules?: readonly 
       onOpenPalette={() => undefined}
       paletteKeys="Ctrl K"
       {...(onNavigate ? { onNavigate } : {})}
+      {...extra}
     />,
   );
 };
@@ -265,23 +281,60 @@ describe('SH-4: 44px targets under the phone breakpoint', () => {
   });
 });
 
-describe('SH-5: the cut-off names have a tooltip and the selects are named', () => {
-  it('puts the full org name and e-mail address in a title', () => {
-    const html = shell('/o/acme/overview');
-    expect(html).toContain(`title="${LONG_NAME}"`);
-    expect(html).toContain('title="chu.cong.ty@example.com"');
+describe('SH-5: bottom AccountPopover keeps active org context and uses segmented chrome toggles (#4502)', () => {
+  it('puts the full org name and e-mail address in titles on the bottom account trigger in expanded sidebars, and in compact rail aria-label/title on Overview (#4519)', () => {
+    const expanded = shell('/o/acme/journal');
+    expect(expanded).toContain('data-testid="account-menu-trigger"');
+    expect(expanded).toContain(`title="${LONG_NAME}"`);
+    expect(expanded).toContain('title="chu.cong.ty@example.com"');
+    expect(expanded).not.toContain('data-testid="org-menu"');
+    expect(expanded).not.toContain('<details');
+    expect(expanded).not.toContain('<select');
+
+    const railOverview = shell('/o/acme/overview');
+    expect(railOverview).toContain('data-testid="account-menu-trigger"');
+    expect(railOverview).toContain(`title="chu.cong.ty@example.com · ${LONG_NAME}"`);
+    expect(railOverview).toContain(`aria-label="Tài khoản: chu.cong.ty@example.com · ${LONG_NAME}"`);
+    expect(railOverview).not.toContain('data-testid="org-menu"');
+    expect(railOverview).not.toContain('<details');
+    expect(railOverview).not.toContain('<select');
   });
 
-  it('shows the name of the language and theme selects above them, in both languages', () => {
-    const vi = shell('/o/acme/overview');
-    expect(vi).toContain('>Ngôn ngữ</span>');
-    expect(vi).toContain('>Giao diện</span>');
-    const en = shell('/o/acme/overview', 'en');
-    expect(en).toContain('>Language</span>');
-    expect(en).toContain('>Theme</span>');
-    // The select keeps its own accessible name, so the visible label is not read twice.
-    expect(vi).toContain('aria-label="Ngôn ngữ"');
-    expect(vi).toContain('aria-label="Giao diện"');
+  it('houses org switcher, icon theme toggle, VI/EN locale toggle, support/status links, and sign-out inside AccountPanel', () => {
+    const orgs = [
+      { orgId: '1', slug: 'acme', name: LONG_NAME },
+      { orgId: '2', slug: 'beta', name: 'Beta Co' },
+    ];
+    for (const [locale, langLabel, themeLabel, allClients, signOutLabel] of [
+      ['vi', 'Ngôn ngữ', 'Giao diện', 'Tất cả doanh nghiệp', 'Đăng xuất'],
+      ['en', 'Language', 'Theme', 'All companies', 'Sign out'],
+    ] as const) {
+      const panel = render(
+        locale,
+        <AccountPanel slug="acme" orgs={orgs} email="chu.cong.ty@example.com" onSignOut={() => undefined} />,
+      );
+      expect(panel).toContain('data-testid="org-menu"');
+      expect(panel).toContain(allClients);
+      expect(panel).toContain(`>${langLabel}</span>`);
+      expect(panel).toContain(`>${themeLabel}</span>`);
+      expect(panel).toContain(`aria-label="${langLabel}"`);
+      expect(panel).toContain(`aria-label="${themeLabel}"`);
+      expect(panel).toContain('role="radiogroup"');
+      expect(panel).toContain('role="radio"');
+      expect(panel).toContain('max-md:min-h-11');
+      expect(panel).toContain('max-md:min-w-11');
+      expect(panel).toContain(signOutLabel);
+      expect(panel).toContain('mailto:support@example.com');
+      expect(panel).toContain('/status');
+      expect(panel).not.toContain('<select');
+      expect(panel).not.toContain('<details');
+    }
+
+    const singleOrgPanel = render(
+      'vi',
+      <AccountPanel slug="acme" orgs={orgs.slice(0, 1)} email="chu.cong.ty@example.com" onSignOut={() => undefined} />,
+    );
+    expect(singleOrgPanel).not.toContain('Tất cả doanh nghiệp');
   });
 });
 
@@ -308,5 +361,88 @@ describe('SH-7: "hoa don" finds Chứng từ in Ctrl K', () => {
   it('leaves the rest as it was: a word no keyword holds finds nothing extra', () => {
     expect(filterPalette(vi, 'chung tu').map((e) => e.label)).toContain('Chứng từ');
     expect(Object.keys(NAV_KEYWORDS).sort()).toEqual(['documents', 'tax']);
+  });
+});
+
+describe('SH-8: smart 64px no-app rail and user-toggleable secondary sidebar (#4519)', () => {
+  it.each(['/o/acme/overview', '/o/acme/notifications', '/o/acme/audit', '/o/acme/personal-data'])(
+    'collapses %s to the 64px rail with Cmd+K, optional +, and compact account trigger in the rail',
+    (path) => {
+      const withQuickAdd = shell(path, 'vi', undefined, undefined, {
+        mode: 'sidebar',
+        onToggleSecondary: () => undefined,
+        onOpenQuickCapture: () => undefined,
+      });
+      // No secondary 224px column or collapse button on no-app org routes.
+      expect(withQuickAdd).not.toContain(`>${viMessages.palette.open}</span>`);
+      expect(withQuickAdd).not.toContain('overflow-y-auto max-md:overflow-y-visible');
+      expect(withQuickAdd).not.toContain('data-testid="sidebar-toggle-btn"');
+      // Rail search, quick-capture, and compact account trigger carry accessible labels, titles, and focus-visible rings.
+      expect(withQuickAdd).toContain('data-testid="rail-search-btn"');
+      expect(withQuickAdd).toContain(`aria-label="${viMessages.palette.open} (Ctrl K)"`);
+      expect(withQuickAdd).toContain(`title="${viMessages.palette.open} (Ctrl K)"`);
+      expect(withQuickAdd).toContain('data-testid="shell-quick-capture-btn"');
+      expect(withQuickAdd).toContain(`aria-label="${viMessages.myWork.quickCaptureTrigger}"`);
+      expect(withQuickAdd).toContain('data-testid="account-menu-trigger"');
+      expect(withQuickAdd).toContain('focus-visible:ring-3');
+
+      const withoutQuickAdd = shell(path, 'en', undefined, undefined, { mode: 'sidebar' });
+      expect(withoutQuickAdd).not.toContain('data-testid="shell-quick-capture-btn"');
+      expect(withoutQuickAdd).toContain(`aria-label="${enMessages.palette.open} (Ctrl K)"`);
+      expect(withoutQuickAdd).toContain(`aria-label="Account: chu.cong.ty@example.com · ${LONG_NAME}"`);
+    },
+  );
+
+  it('renders the collapse/expand toggle on App and Settings routes and hides the secondary column when collapsed', () => {
+    for (const path of ['/o/acme/journal', '/o/acme/settings']) {
+      const expanded = shell(path, 'vi', undefined, undefined, {
+        mode: 'sidebar',
+        secondaryCollapsed: false,
+        onToggleSecondary: () => undefined,
+      });
+      expect(expanded).toContain('data-testid="sidebar-toggle-btn"');
+      expect(expanded).toContain('aria-expanded="true"');
+      expect(expanded).toContain(`aria-label="${viMessages.nav.collapseSidebar}"`);
+      expect(expanded).toContain(`>${viMessages.palette.open}</span>`);
+      expect(expanded).not.toContain('data-testid="rail-search-btn"');
+
+      const collapsed = shell(path, 'vi', undefined, undefined, {
+        mode: 'sidebar',
+        secondaryCollapsed: true,
+        onToggleSecondary: () => undefined,
+        onOpenQuickCapture: () => undefined,
+      });
+      expect(collapsed).toContain('data-testid="sidebar-toggle-btn"');
+      expect(collapsed).toContain('aria-expanded="false"');
+      expect(collapsed).toContain(`aria-label="${viMessages.nav.expandSidebar}"`);
+      expect(collapsed).not.toContain(`>${viMessages.palette.open}</span>`);
+      expect(collapsed).not.toContain('overflow-y-auto max-md:overflow-y-visible');
+      expect(collapsed).toContain('data-testid="rail-search-btn"');
+      expect(collapsed).toContain('data-testid="shell-quick-capture-btn"');
+      expect(collapsed).toContain(`title="chu.cong.ty@example.com · ${LONG_NAME}"`);
+    }
+
+    const enCollapsed = shell('/o/acme/settings', 'en', undefined, undefined, {
+      mode: 'sidebar',
+      secondaryCollapsed: true,
+      onToggleSecondary: () => undefined,
+    });
+    expect(enCollapsed).toContain(`aria-label="${enMessages.nav.expandSidebar}"`);
+  });
+
+  it('keeps mobile NavDrawer expanded on Overview and even when desktop secondaryCollapsed is true', () => {
+    for (const path of ['/o/acme/overview', '/o/acme/journal', '/o/acme/settings']) {
+      const drawer = shell(path, 'vi', undefined, undefined, {
+        mode: 'drawer',
+        secondaryCollapsed: true,
+        onToggleSecondary: () => undefined,
+      });
+      expect(drawer).toContain(viMessages.palette.open);
+      expect(drawer).toContain(`title="${LONG_NAME}"`);
+      expect(drawer).toContain('title="chu.cong.ty@example.com"');
+      expect(drawer).not.toContain('data-testid="sidebar-toggle-btn"');
+      expect(drawer).not.toContain('data-testid="rail-search-btn"');
+      expect(drawer).toContain('min-h-11');
+    }
   });
 });

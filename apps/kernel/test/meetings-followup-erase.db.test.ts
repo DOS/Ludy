@@ -173,6 +173,58 @@ suite('follow-up mails and the erasure of a meeting (#3016)', () => {
     expect(kept.rows[0]?.payload).toEqual({ keep: true });
   });
 
+  // The org export (#4533): the mail log is exported, but not the follow-up mails of a meeting (their payload holds the meeting's text, which an attendees-only meeting keeps out of the export).
+  it('leaves the follow-up mails out of the org export and keeps the mail of every other source', async () => {
+    const SECRET = `Bi-mat-cuoc-hop-${randomUUID()}`;
+    const m = await seedSent({ summary: SECRET, subject: `Cam on ${SECRET}` });
+    const OTHER_SUBJECT = `Nhac-thanh-toan-${randomUUID()}`;
+    const other = (await sqlAdmin<{ id: string }>(
+      "INSERT INTO ludy_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'finance.payment_reminder.notice1', $2, 'x.y', 'a@b.test', repeat('a', 64), $3, '{\"keep\":true}', '<export@y.test>', 'queued') RETURNING id",
+      [orgId, m, OTHER_SUBJECT],
+    )).rows[0]!.id;
+    // The follow-up mail of the meeting is there to be left out.
+    expect((await sqlAdmin<{ n: string }>("SELECT count(*)::text AS n FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.followup'", [orgId])).rows[0]?.n).not.toBe('0');
+    const lines: string[] = [];
+    await worker.stream('kernel.org.export.snapshot', { table: 'kernel.mail_message' }, { actor: SYSTEM, orgId }, async (raw) => {
+      lines.push(...(raw as { lines: string[] }).lines);
+    });
+    const rows = lines.map((l) => JSON.parse(l) as { id: string; source: string });
+    expect(rows.map((r) => r.id)).toContain(other);
+    expect(rows.filter((r) => r.source === 'meetings.followup')).toEqual([]);
+    expect(lines.join('\n')).not.toContain(SECRET);
+  });
+
+  // The delivery events of the mail log (#4577) follow their mail: an event of a left-out follow-up mail is left out too, so no exported event points at a message the snapshot does not hold.
+  it('leaves the delivery events of the follow-up mails out of the org export and keeps those of every other mail', async () => {
+    const m = await seedSent({});
+    const other = (await sqlAdmin<{ id: string }>(
+      "INSERT INTO ludy_kernel.mail_message (org_id, stream, source, source_id, template_key, to_address, to_hash, subject, payload, message_id_header, status) VALUES ($1, 'transactional', 'finance.payment_reminder.notice1', $2, 'x.y', 'a@b.test', repeat('c', 64), 's', '{\"keep\":true}', '<export-event@y.test>', 'queued') RETURNING id",
+      [orgId, m],
+    )).rows[0]!.id;
+    const followups = (await sqlAdmin<{ id: string }>("SELECT id FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'meetings.followup' AND source_id = $2", [orgId, m])).rows.map((r) => r.id);
+    expect(followups.length).toBeGreaterThan(0);
+    const event = async (messageId: string, kind: string) =>
+      (await sqlAdmin<{ id: string }>(
+        "INSERT INTO ludy_kernel.mail_event (org_id, message_id, provider, provider_event_id, kind, occurred_at) VALUES ($1, $2, 'test', $3, $4, now()) RETURNING id",
+        [orgId, messageId, randomUUID(), kind],
+      )).rows[0]!.id;
+    const leftOut = await Promise.all(followups.map((f) => event(f, 'delivered')));
+    const kept = await event(other, 'delivered');
+    const lines: string[] = [];
+    await worker.stream('kernel.org.export.snapshot', { table: 'kernel.mail_event' }, { actor: SYSTEM, orgId }, async (raw) => {
+      lines.push(...(raw as { lines: string[] }).lines);
+    });
+    const ids = lines.map((l) => (JSON.parse(l) as { id: string }).id);
+    expect(ids).toContain(kept);
+    for (const id of leftOut) expect(ids).not.toContain(id);
+    // Every exported event has its message in the exported message table.
+    const messages: string[] = [];
+    await worker.stream('kernel.org.export.snapshot', { table: 'kernel.mail_message' }, { actor: SYSTEM, orgId }, async (raw) => {
+      messages.push(...(raw as { lines: string[] }).lines.map((l) => (JSON.parse(l) as { id: string }).id));
+    });
+    for (const l of lines) expect(messages).toContain((JSON.parse(l) as { message_id: string }).message_id);
+  });
+
   // The erasure of a mention (#3020, ADR-0047 point 7): kernel.personal_data.erase redacts the meeting's rows, and the copy in its follow-up mails goes with them.
   describe('kernel.personal_data.erase', () => {
     const MENTION = 'khach.hang@erase.test';

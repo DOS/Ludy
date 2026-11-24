@@ -1334,6 +1334,59 @@ export type HrProbationReviewTable = Refine<
   },
   'legal_entity_id'
 >;
+export const HR_SALARY_ADVANCE_STATUSES = ['pending_l1', 'pending_final', 'approved', 'rejected', 'cancelled'] as const;
+export type HrSalaryAdvanceStatus = (typeof HR_SALARY_ADVANCE_STATUSES)[number];
+export type HrSalaryAdvanceRequestTable = Refine<
+  G.HrSalaryAdvanceRequestTable,
+  {
+    status: Generated<HrSalaryAdvanceStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export const HR_PAYROLL_ADJUSTMENT_KINDS = ['retro_pay', 'offset_deduction'] as const;
+export type HrPayrollAdjustmentKind = (typeof HR_PAYROLL_ADJUSTMENT_KINDS)[number];
+export const HR_PAYROLL_ADJUSTMENT_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'] as const;
+export type HrPayrollAdjustmentStatus = (typeof HR_PAYROLL_ADJUSTMENT_STATUSES)[number];
+export type HrPayrollAdjustmentItemTable = Refine<
+  G.HrPayrollAdjustmentItemTable,
+  {
+    kind: ColumnType<HrPayrollAdjustmentKind, HrPayrollAdjustmentKind, never>;
+    status: Generated<HrPayrollAdjustmentStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export const HR_BUSINESS_TRIP_STATUSES = ['pending_l1', 'pending_final', 'approved', 'rejected', 'cancelled'] as const;
+export type HrBusinessTripStatus = (typeof HR_BUSINESS_TRIP_STATUSES)[number];
+export type HrBusinessTripRequestTable = Refine<
+  G.HrBusinessTripRequestTable,
+  {
+    status: Generated<HrBusinessTripStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export const HR_ADDENDUM_STATUSES = ['draft', 'issued', 'voided'] as const;
+export type HrAddendumStatus = (typeof HR_ADDENDUM_STATUSES)[number];
+export type HrContractAddendumTable = Refine<
+  G.HrContractAddendumTable,
+  {
+    status: Generated<HrAddendumStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export const HR_ASSET_STATUSES = ['assigned', 'returned', 'lost_waived'] as const;
+export type HrAssetStatus = (typeof HR_ASSET_STATUSES)[number];
+export type HrEmployeeAssetHandoverTable = Refine<
+  G.HrEmployeeAssetHandoverTable,
+  {
+    status: Generated<HrAssetStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
 export type HrPayrollRunTable = Refine<G.HrPayrollRunTable, { status: Generated<(typeof HR_RUN_STATUSES)[number]> }>;
 export type HrPayrollLineTable = Refine<
   G.HrPayrollLineTable,
@@ -1440,8 +1493,8 @@ export type MeetingChatPostState = (typeof MEETING_CHAT_POST_STATES)[number];
 export type MeetingsChatChannelTable = Refine<G.MeetingsChatChannelTable, { kind: MeetingChatKind }>;
 export type MeetingsChatPostTable = Refine<G.MeetingsChatPostTable, { state: Generated<MeetingChatPostState> }>;
 
-// The capture session of a call (ADR-0055 slice 1, #4123): which kind of client holds a capture, and why a finished one ended.
-export const MEETING_CAPTURE_KINDS = ['extension', 'app'] as const;
+// The capture session of a call (ADR-0055 slice 1, #4123; desktop kind added in slice 3, #4516): which kind of client holds a capture, and why a finished one ended.
+export const MEETING_CAPTURE_KINDS = ['extension', 'app', 'desktop'] as const;
 export type MeetingCaptureKind = (typeof MEETING_CAPTURE_KINDS)[number];
 export const MEETING_CAPTURE_ENDED_REASONS = ['media', 'stopped', 'lost'] as const;
 export type MeetingCaptureEndedReason = (typeof MEETING_CAPTURE_ENDED_REASONS)[number];
@@ -1511,6 +1564,34 @@ export type ProjectsRoadmapItemTable = Refine<
     source: RoadmapItemSource;
     moderation_status: Generated<RoadmapItemModerationStatus>;
     stage: Generated<RoadmapItemStage>;
+  }
+>;
+
+export const ROADMAP_SIGNAL_SOURCE_TYPES = ['crm.deal', 'kernel.conversation', 'meetings.meeting'] as const;
+export type RoadmapSignalSourceType = (typeof ROADMAP_SIGNAL_SOURCE_TYPES)[number];
+
+export type ProjectsRoadmapSignalTable = Refine<
+  G.ProjectsRoadmapSignalTable,
+  {
+    source_type: RoadmapSignalSourceType;
+  }
+>;
+
+export const PROJECT_TRIAGE_SOURCE_TYPES = ['roadmap.item', 'kernel.conversation', 'meetings.meeting', 'manual'] as const;
+export type ProjectTriageSourceType = (typeof PROJECT_TRIAGE_SOURCE_TYPES)[number];
+
+export const PROJECT_TRIAGE_STATUSES = ['pending', 'snoozed', 'accepted', 'merged', 'declined'] as const;
+export type ProjectTriageStatus = (typeof PROJECT_TRIAGE_STATUSES)[number];
+
+export const PROJECT_TRIAGE_PRIORITIES = ['urgent', 'high', 'medium', 'low', 'none'] as const;
+export type ProjectTriagePriority = (typeof PROJECT_TRIAGE_PRIORITIES)[number];
+
+export type ProjectsProjectTriageItemTable = Refine<
+  G.ProjectsProjectTriageItemTable,
+  {
+    source_type: ProjectTriageSourceType;
+    status: Generated<ProjectTriageStatus>;
+    priority: Generated<ProjectTriagePriority>;
   }
 >;
 
@@ -1748,12 +1829,16 @@ type Refined = Tables<{
   'ludy_crm.sales_order_line': CrmSalesOrderLineTable;
   'ludy_hr.attendance_log': HrAttendanceLogTable;
   'ludy_hr.attendance_qr_config': HrAttendanceQrConfigTable;
+  'ludy_hr.business_trip_request': HrBusinessTripRequestTable;
   'ludy_hr.candidate': HrCandidateTable;
+  'ludy_hr.contract_addendum': HrContractAddendumTable;
   'ludy_hr.department': HrDepartmentTable;
+  'ludy_hr.employee_asset_handover': HrEmployeeAssetHandoverTable;
   'ludy_hr.job_opening': HrJobOpeningTable;
   'ludy_hr.leave_request': HrLeaveRequestTable;
   'ludy_hr.onboarding_submission': HrOnboardingSubmissionTable;
   'ludy_hr.overtime_request': HrOvertimeRequestTable;
+  'ludy_hr.payroll_adjustment_item': HrPayrollAdjustmentItemTable;
   'ludy_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'ludy_hr.payroll_employee': HrPayrollEmployeeTable;
   'ludy_hr.payroll_employment': HrPayrollEmploymentTable;
@@ -1761,6 +1846,7 @@ type Refined = Tables<{
   'ludy_hr.payroll_line': HrPayrollLineTable;
   'ludy_hr.payroll_run': HrPayrollRunTable;
   'ludy_hr.probation_review': HrProbationReviewTable;
+  'ludy_hr.salary_advance_request': HrSalaryAdvanceRequestTable;
   'ludy_meetings.action_item': MeetingsActionItemTable;
   'ludy_meetings.capture_session': MeetingsCaptureSessionTable;
   'ludy_meetings.chat_channel': MeetingsChatChannelTable;
@@ -1779,8 +1865,10 @@ type Refined = Tables<{
   'ludy_projects.project': ProjectsProjectTable;
   'ludy_projects.project_column': ProjectsProjectColumnTable;
   'ludy_projects.project_cycle': ProjectsProjectCycleTable;
+  'ludy_projects.project_triage_item': ProjectsProjectTriageItemTable;
   'ludy_projects.roadmap_announcement': ProjectsRoadmapAnnouncementTable;
   'ludy_projects.roadmap_item': ProjectsRoadmapItemTable;
+  'ludy_projects.roadmap_signal': ProjectsRoadmapSignalTable;
   'ludy_sign.ai_analysis': SignAiAnalysisTable;
   'ludy_sign.ca_signing_request': SignCaSigningRequestTable;
   'ludy_sign.envelope': SignEnvelopeTable;

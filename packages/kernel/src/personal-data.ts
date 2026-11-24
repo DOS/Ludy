@@ -38,6 +38,8 @@ import {
   ROADMAP_ITEM_SUMMARY_MAX,
   ROADMAP_ITEM_TITLE_MAX,
   ROADMAP_SHIPPED_MAIL_SOURCE,
+  ROADMAP_SIGNAL_ACCOUNT_LABEL_MAX,
+  ROADMAP_SIGNAL_QUOTE_EXCERPT_MAX,
   ROADMAP_TITLE_MAX,
   zPersonalDataQuery,
   type PersonalDataErasure,
@@ -562,6 +564,19 @@ export const PERSONAL_DATA_COLUMNS = {
   'ludy_hr.probation_review.attendance_snapshot': { kind: 'other', handling: 'erase', reason: "Attendance evidence snapshot recorded during an employee's probation review; hr.payroll.employee.erase resets it once the retention after the last day of work has passed" },
   'ludy_hr.probation_review.review_note': { kind: 'other', handling: 'erase', reason: "Human reviewer note on an employee's probation evaluation; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'ludy_hr.probation_review.ai_draft_note': { kind: 'other', handling: 'erase', reason: "Optional AI summary draft saved on an employee's probation evaluation; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.salary_advance_request.reason': { kind: 'other', handling: 'erase', reason: "An employee's free-text salary advance reason; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.salary_advance_request.decision_note': { kind: 'other', handling: 'erase', reason: "An approver's note on an employee's salary advance request; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.payroll_adjustment_item.reason': { kind: 'other', handling: 'erase', reason: "A manager's free-text note on an employee's retro pay or offset deduction item; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.payroll_adjustment_item.decision_note': { kind: 'other', handling: 'erase', reason: "An approver's note on an employee's payroll adjustment item; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.business_trip_request.destination': { kind: 'other', handling: 'erase', reason: "An employee's business trip destination text; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.business_trip_request.purpose': { kind: 'other', handling: 'erase', reason: "An employee's free-text business trip purpose; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.business_trip_request.decision_note': { kind: 'other', handling: 'erase', reason: "An approver's note on an employee's business trip request; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.contract_addendum.change_summary': { kind: 'other', handling: 'erase', reason: "Free-text contract amendment summary on an employee's addendum; hr.payroll.employee.erase redacts it once the retention after the last day of work has passed" },
+  'ludy_hr.contract_addendum.previous_title': { kind: 'other', handling: 'erase', reason: "Previous role title recorded on an employee's contract addendum; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.contract_addendum.new_title': { kind: 'other', handling: 'erase', reason: "New role title recorded on an employee's contract addendum; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.contract_addendum.void_reason': { kind: 'other', handling: 'erase', reason: "Optional void reason recorded on an employee's contract addendum; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.employee_asset_handover.serial_number': { kind: 'other', handling: 'erase', reason: "Assigned equipment serial number linked to an employee handover row; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.employee_asset_handover.notes': { kind: 'other', handling: 'erase', reason: "Free-text handover/return note on an employee asset checklist row; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
   'ludy_hr.candidate.display_name': { kind: 'name', handling: 'erase', reason: 'A job applicant name; erased by personal-data erasure or hr.recruiting.candidate.erase' },
   'ludy_hr.candidate.email': { kind: 'email', handling: 'erase', reason: 'A job applicant email; erased by personal-data erasure or hr.recruiting.candidate.erase' },
   'ludy_hr.candidate.phone': { kind: 'phone', handling: 'erase', reason: 'A job applicant phone number; erased by personal-data erasure or hr.recruiting.candidate.erase' },
@@ -613,6 +628,16 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: 'Optional public submitter display name on a roadmap item; erased on personal-data match',
   },
+  'ludy_projects.roadmap_signal.account_label': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Internal roadmap signal customer attribution label, which may name a person: mentions are replaced with a redaction marker',
+  },
+  'ludy_projects.roadmap_signal.quote_excerpt': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Internal roadmap signal customer quote excerpt, which may name a person: mentions are replaced with a redaction marker',
+  },
   'ludy_projects.roadmap_announcement.title': {
     kind: 'free_text',
     handling: 'erase',
@@ -662,6 +687,21 @@ export const PERSONAL_DATA_COLUMNS = {
     kind: 'free_text',
     handling: 'erase',
     reason: 'A project time entry note written by a member, which may name a person: mentions are replaced with a redaction marker',
+  },
+  'ludy_projects.project_triage_item.title': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'A project triage item title (internal or external signal), which may name a person: mentions are replaced with a redaction marker',
+  },
+  'ludy_projects.project_triage_item.description': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'A project triage item description, which may name a person: mentions are replaced with a redaction marker',
+  },
+  'ludy_projects.project_triage_item.decline_reason': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'A project triage item decline reason written by a member, which may name a person: mentions are replaced with a redaction marker',
   },
   // eSign (#3323, #3427): unsealed signers (draft, voided, expired, or declined with sealed_file_id IS NULL) are removed on erasure; active, completed, and sealed signer records and append-only audit events stay for statutory verification; ephemeral email OTP rows erase via definer.
   'ludy_sign.signer.name': {
@@ -735,6 +775,13 @@ export const PERSONAL_DATA_COLUMNS = {
     kind: 'free_text',
     handling: 'erase',
     reason: 'Sender-side KYC attachment verification findings (extracted tax IDs, CCCD numbers, or signer/entity names under Vietnam PDPL Law 91/2025/QH15): an erasure deletes any kyc_check row whose findings quote the value while leaving sealed agreement files intact, and a member may run the check again',
+  },
+  // ludy_sign.kyc_check.file_id stays unclassified as internal in manifest (shared `file_id` column name, see line 428);
+  // deleted kyc_check attachment link counts are still reported in personalDataErase via `ludy_sign.kyc_check.file_id`.
+  'ludy_sign.field.attachment_file_id': {
+    kind: 'other',
+    handling: 'keep_record',
+    reason: 'Uploaded signer KYC attachment link on an e-signature field: cleared on unsealed envelopes when its KYC findings are erased so reads block immediately, while completed/sealed envelope evidence remains intact',
   },
   'ludy_sign.member_signature.signature_typed_text': {
     kind: 'other',
@@ -977,9 +1024,39 @@ async function meetingScan<T>(trx: QueryContext['trx'], run: () => Promise<T>): 
 // The tables of ludy_meetings.personal_row_ids's kind codes.
 const MEETING_ROW_TABLES: Record<number, string> = { 1: 'transcript_segment', 2: 'meeting_result', 3: 'action_item', 4: 'meeting', 5: 'meeting_note', 6: 'meeting_chapter' };
 
+// Caller-RLS meeting visibility and active text retention check for meetings.meeting roadmap signals (#4600, ADR-0047).
+function meetingSignalReadable(alias: 't' | 's'): RawBuilder<boolean> {
+  const orgRef = sql.ref(`${alias}.org_id`);
+  const sourceIdRef = sql.ref(`${alias}.source_id`);
+  return sql<boolean>`EXISTS (
+    SELECT 1
+      FROM ludy_meetings.meeting m
+     WHERE m.org_id = ${orgRef}
+       AND m.id = ${sourceIdRef}
+       AND (m.text_retention_date IS NULL OR m.text_retention_date > (pg_catalog.timezone('Asia/Ho_Chi_Minh', pg_catalog.now()))::date)
+  )`;
+}
+
+// Scrubs roadmap_signal.quote_excerpt to NULL whenever a meetings.meeting row is unreadable, past text retention, or deleted.
+function roadmapSignalRowExpr(alias: 't' | 's'): RawBuilder<Record<string, unknown>> {
+  const rowRef = sql.ref(alias);
+  const sourceTypeRef = sql.ref(`${alias}.source_type`);
+  return sql<Record<string, unknown>>`CASE
+    WHEN ${sourceTypeRef} = 'meetings.meeting' AND NOT ${meetingSignalReadable(alias)}
+      THEN (pg_catalog.to_jsonb(${rowRef}) - 'search') || pg_catalog.jsonb_build_object('quote_excerpt', NULL)
+    ELSE pg_catalog.to_jsonb(${rowRef}) - 'search'
+  END`;
+}
+
 // Every row of the org that holds the value, column by column (the finder's answer), and, when privateCounts, per author
 // how many of their private notes and to-dos mention it (ADR-0037: counted, never shown, whoever runs the finder).
-async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: Probe, privateCounts: boolean): Promise<PersonalDataResult> {
+async function findPersonalData(
+  trx: QueryContext['trx'],
+  orgId: string,
+  probe: Probe,
+  privateCounts: boolean,
+  documentedPartyIds: readonly string[] = [],
+): Promise<PersonalDataResult> {
   const matches: PersonalDataResult['matches'] = [];
   let truncated = false;
   // Meeting text: the ids of the rows that hold the value and that the actor reads, found by the text first (row security would check every row's meeting before testing
@@ -1021,6 +1098,14 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
       if (ids.length === 0) continue;
       byId = sql`AND t.id = ANY(${ids}::uuid[])`;
     }
+    const signalVisibility =
+      key === 'ludy_projects.roadmap_signal.quote_excerpt'
+        ? sql`AND (t.source_type <> 'meetings.meeting' OR ${meetingSignalReadable('t')})`
+        : sql``;
+    const rowExpr =
+      schema === 'ludy_projects' && table === 'roadmap_signal'
+        ? roadmapSignalRowExpr('t')
+        : sql`pg_catalog.to_jsonb(t) - 'search'`;
     const isUnsealedExpr =
       schema === 'ludy_sign' && table === 'signer'
         ? sql<boolean>`EXISTS (
@@ -1032,9 +1117,9 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
           )`
         : sql<boolean>`false`;
     const { rows } = await sql<{ row: Record<string, unknown>; is_unsealed: boolean }>`
-      SELECT pg_catalog.to_jsonb(t) - 'search' AS row, ${isUnsealedExpr} AS is_unsealed
+      SELECT ${rowExpr} AS row, ${isUnsealedExpr} AS is_unsealed
         FROM ${sql.table(`${schema}.${table}`)} AS t
-       WHERE t.org_id = ${orgId}::uuid AND ${match} ${shared} ${byId}
+       WHERE t.org_id = ${orgId}::uuid AND ${match} ${shared} ${byId} ${signalVisibility}
        LIMIT ${PERSONAL_DATA_ROW_LIMIT + 1}`.execute(trx);
     if (rows.length > PERSONAL_DATA_ROW_LIMIT) truncated = true;
     for (const { row, is_unsealed } of rows.slice(0, PERSONAL_DATA_ROW_LIMIT)) {
@@ -1068,6 +1153,47 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
       reason: PROJECT_WEEKLY_MAIL_REASON,
       rowId: row.id,
       row,
+    });
+  }
+  const seenDealSignalIds = new Set(
+    matches.filter((m) => m.column === 'ludy_projects.roadmap_signal.account_label' && m.rowId !== null).map((m) => m.rowId!),
+  );
+  const partySignalNever = sql<boolean>`false`;
+  const partySignalMatch = sql<boolean>`(${columnMatch('email', probe, sql.ref('p.email')) ?? partySignalNever} OR ${columnMatch('phone', probe, sql.ref('p.phone')) ?? partySignalNever} OR ${columnMatch('tax_code', probe, sql.ref('p.tax_code')) ?? partySignalNever})`;
+  const partySignalFilter =
+    documentedPartyIds.length > 0
+      ? sql<boolean>`(${partySignalMatch} OR p.id = ANY(${documentedPartyIds}::uuid[]))`
+      : partySignalMatch;
+  const partyDealSignals = await sql<{ id: string; documented: boolean; row: Record<string, unknown> }>`
+    SELECT s.id,
+           pg_catalog.bool_or(
+             EXISTS (SELECT 1 FROM ludy_finance.purchase_document pd WHERE pd.org_id = p.org_id AND pd.party_id = p.id)
+             OR EXISTS (SELECT 1 FROM ludy_finance.cash_voucher v WHERE v.org_id = p.org_id AND v.party_id = p.id)
+             OR EXISTS (SELECT 1 FROM ludy_finance.journal_line l WHERE l.org_id = p.org_id AND l.party_id = p.id)
+           ) AS documented,
+           ${roadmapSignalRowExpr('s')} AS row
+      FROM ludy_projects.roadmap_signal s
+      LEFT JOIN ludy_crm.deal d ON s.source_type = 'crm.deal' AND d.org_id = s.org_id AND d.id = s.source_id
+      JOIN ludy_kernel.party p
+        ON p.org_id = s.org_id
+       AND (p.id = s.source_party_id OR (s.source_type = 'crm.deal' AND p.id = d.party_id))
+     WHERE s.org_id = ${orgId}::uuid
+       AND s.account_label IS NOT NULL
+       AND ${partySignalFilter}
+     GROUP BY s.org_id, s.id, s.source_type, s.source_id
+     ORDER BY s.created_at DESC, s.id
+     LIMIT ${PERSONAL_DATA_ROW_LIMIT + 1}`.execute(trx);
+  if (partyDealSignals.rows.length > PERSONAL_DATA_ROW_LIMIT) truncated = true;
+  for (const r of partyDealSignals.rows.slice(0, PERSONAL_DATA_ROW_LIMIT)) {
+    if (seenDealSignalIds.has(r.id)) continue;
+    matches.push({
+      column: 'ludy_projects.roadmap_signal.account_label',
+      handling: r.documented ? 'keep_org' : 'erase',
+      reason: r.documented
+        ? 'CRM deal roadmap signal customer label for a party named on accounting records'
+        : 'CRM deal roadmap signal customer label copied from a matched party',
+      rowId: r.id,
+      row: r.row,
     });
   }
   const privateItems = privateCounts
@@ -1202,9 +1328,14 @@ const SHORT_NUMBER_COLUMNS = new Set([
   'ludy_projects.roadmap_item.public_title',
   'ludy_projects.roadmap_item.public_summary',
   'ludy_projects.roadmap_item.submitter_display_name',
+  'ludy_projects.roadmap_signal.account_label',
+  'ludy_projects.roadmap_signal.quote_excerpt',
   'ludy_projects.roadmap_announcement.title',
   'ludy_projects.roadmap_announcement.body_md',
   'ludy_projects.time_entry.note',
+  'ludy_projects.project_triage_item.title',
+  'ludy_projects.project_triage_item.description',
+  'ludy_projects.project_triage_item.decline_reason',
   'ludy_hr.candidate.notes',
 ]);
 // The meeting text columns the redaction of ludy_meetings.personal_erase would change, left as they are for a short number (#3064).
@@ -1370,8 +1501,12 @@ export const personalDataErase = defineCommand({
        WHERE p.org_id = ${ctx.orgId}::uuid AND ${partyMatch}
        FOR UPDATE OF p`.execute(ctx.trx);
     let keptParties = 0;
+    const forgottenPartyIds: string[] = [];
+    const documentedPartyIds: string[] = [];
     for (const party of parties) {
       const forget = !party.documented;
+      if (forget) forgottenPartyIds.push(party.id);
+      else documentedPartyIds.push(party.id);
       await ctx.trx
         .updateTable('ludy_kernel.party')
         .set((eb) => ({
@@ -1431,6 +1566,43 @@ export const personalDataErase = defineCommand({
       add('ludy_finance.misa_amis_match.candidate_name', nameMatches.filter((r) => r.proposal).length);
       // Always, not only when a row went: a job may have read the party's name and not yet recorded a proposal for it, and that proposal is exactly what must not land after this erasure.
       await sql`UPDATE ludy_finance.misa_amis_match_check SET requested_at = pg_catalog.clock_timestamp() WHERE org_id = ${ctx.orgId}::uuid AND state = 'requested'`.execute(ctx.trx);
+    }
+    if (forgottenPartyIds.length > 0) {
+      const { rows: clearedDealSignals } = await sql<{ id: string; had_label: boolean }>`
+        UPDATE ludy_projects.roadmap_signal s
+           SET account_label = NULL,
+               source_party_id = CASE WHEN s.source_party_id = ANY(${forgottenPartyIds}::uuid[]) THEN NULL ELSE s.source_party_id END,
+               updated_at = ${ctx.now}
+          FROM ludy_projects.roadmap_signal o
+         WHERE o.org_id = s.org_id
+           AND o.id = s.id
+           AND s.org_id = ${ctx.orgId}::uuid
+           AND (s.account_label IS NOT NULL OR s.source_party_id = ANY(${forgottenPartyIds}::uuid[]))
+           AND (
+             s.source_party_id = ANY(${forgottenPartyIds}::uuid[])
+             OR (
+               s.source_type = 'crm.deal'
+               AND EXISTS (
+                 SELECT 1
+                   FROM ludy_crm.deal d
+                  WHERE d.org_id = s.org_id
+                    AND d.id = s.source_id
+                    AND d.party_id = ANY(${forgottenPartyIds}::uuid[])
+               )
+             )
+           )
+         RETURNING s.id, (o.account_label IS NOT NULL) AS had_label`.execute(ctx.trx);
+      add('ludy_projects.roadmap_signal.account_label', clearedDealSignals.filter((r) => r.had_label).length);
+      if (clearedDealSignals.length > 0) {
+        const clearedIds = clearedDealSignals.map((r) => r.id);
+        await sql`
+          UPDATE ludy_kernel.idempotency_key
+             SET response = pg_catalog.jsonb_set(response, '{value,signal,accountLabel}', 'null'::jsonb, false)
+           WHERE org_id = ${ctx.orgId}::uuid
+             AND command = 'projects.roadmap.signal.create'
+             AND response IS NOT NULL
+             AND response -> 'value' -> 'signal' ->> 'id' = ANY(${clearedIds}::text[])`.execute(ctx.trx);
+      }
     }
 
     // Bookings the visitor made on a public booking page (#1318), matched by their email or phone: the visitor's name,
@@ -1596,12 +1768,18 @@ export const personalDataErase = defineCommand({
       SELECT ludy_finance.personal_data_erase_marketplace_hook_notice(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
     add('ludy_finance.marketplace_hook_notice.body', Number(marketplaceNotices[0]?.rows ?? 0));
 
-    // Sender-side KYC attachment checks (#4443, PDPL Law 91/2025/QH15): delete any kyc_check row in the org whose
-    // findings_json quotes the value (including 8/9-digit legacy CMND numbers and rows on attendees-only meeting_minutes
-    // envelopes via the owner-only definer); sealed agreement files stay untouched and checks can always be re-run.
-    const { rows: kycRows } = await sql<{ rows: number }>`
-      SELECT ludy_sign.personal_data_erase_kyc_check(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
-    add('ludy_sign.kyc_check.findings_json', Number(kycRows[0]?.rows ?? 0));
+    // Sender-side KYC attachment checks (#4443, PDPL Law 91/2025/QH15; summary counts #4510): delete any
+    // kyc_check row in the org whose findings_json quotes the value (including 8/9-digit legacy CMND numbers
+    // and rows on attendees-only meeting_minutes envelopes via the owner-only definer), detach matching unsealed
+    // attachment links, and report both KYC row and attachment counts; sealed agreement files stay untouched.
+    const { rows: kycRows } = await sql<{
+      summary: { rows?: number; attachments?: number; unsealedAttachments?: number };
+    }>`
+      SELECT ludy_sign.personal_data_erase_kyc_check_summary(${probe.kind}, ${probeValue(probe)}) AS summary`.execute(ctx.trx);
+    const kycSummary = kycRows[0]?.summary;
+    add('ludy_sign.kyc_check.findings_json', Number(kycSummary?.rows ?? 0));
+    add('ludy_sign.kyc_check.file_id', Number(kycSummary?.attachments ?? 0));
+    add('ludy_sign.field.attachment_file_id', Number(kycSummary?.unsealedAttachments ?? 0));
 
     // Notes (#1678, ADR-0037 section 5). A shared note stays and has every mention of the value edited out, the one
     // case where someone other than its author edits a note: ERASED_TEXT_MARK in its title and body where the value
@@ -1866,6 +2044,95 @@ export const personalDataErase = defineCommand({
          RETURNING c.id`.execute(ctx.trx);
       add('ludy_finance.marketplace_column_check.preview', previewRows.length);
 
+      // Project triage items BEFORE tasks (#4493): preserves canonical lock order
+      // ludy_projects.project_triage_item -> ludy_kernel.task -> ludy_projects.project -> ludy_projects.roadmap_item
+      // matching projectTriageAccept (zero deadlock) and closing both READ COMMITTED races:
+      // if projectTriageAccept locks pti first, erase waits for commit and then redacts the new task;
+      // if erase updates pti first, projectTriageAccept waits on FOR UPDATE and reads the already-redacted text.
+      const triageTitle = freeTextMatch(probe, sql.ref('pti.title'));
+      const triageDesc = freeTextMatch(probe, sql.ref('pti.description'));
+      const triageDecline = freeTextMatch(probe, sql.ref('pti.decline_reason'));
+      const { rows: triageRows } = await sql<{
+        triage_id: string;
+        next_title: string;
+        next_description: string | null;
+        next_decline_reason: string | null;
+        title: boolean;
+        description: boolean;
+        decline_reason: boolean;
+      }>`
+        UPDATE ludy_projects.project_triage_item pti
+           SET title = CASE
+                         WHEN ${triageTitle} THEN COALESCE(
+                           NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('pti.title'), REDACTED_MARK)}, 300)), ''),
+                           ${REDACTED_MARK}
+                         )
+                         ELSE pti.title
+                       END,
+               description = CASE
+                               WHEN ${triageDesc} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('pti.description'), REDACTED_MARK)}, 10000)
+                               ELSE pti.description
+                             END,
+               decline_reason = CASE
+                                  WHEN ${triageDecline} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('pti.decline_reason'), REDACTED_MARK)}, 1000)
+                                  ELSE pti.decline_reason
+                                END,
+               updated_at = ${ctx.now}
+          FROM ludy_projects.project_triage_item o
+         WHERE o.org_id = pti.org_id AND o.id = pti.id AND pti.org_id = ${ctx.orgId}::uuid
+           AND (${triageTitle} OR coalesce(${triageDesc}, false) OR coalesce(${triageDecline}, false))
+         RETURNING pti.id AS triage_id,
+                   pti.title AS next_title,
+                   pti.description AS next_description,
+                   pti.decline_reason AS next_decline_reason,
+                   ${freeTextMatch(probe, sql.ref('o.title'))} AS title,
+                   coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description,
+                   coalesce(${freeTextMatch(probe, sql.ref('o.decline_reason'))}, false) AS decline_reason`.execute(ctx.trx);
+      add('ludy_projects.project_triage_item.title', triageRows.filter((r) => r.title).length);
+      add('ludy_projects.project_triage_item.description', triageRows.filter((r) => r.description).length);
+      add('ludy_projects.project_triage_item.decline_reason', triageRows.filter((r) => r.decline_reason).length);
+      if (triageRows.length > 0) {
+        const ids = triageRows.map((r) => r.triage_id);
+        const nextTitles = triageRows.map((r) => r.next_title);
+        const nextDescriptions = triageRows.map((r) => r.next_description);
+        const nextDeclines = triageRows.map((r) => r.next_decline_reason);
+        await sql`
+          UPDATE ludy_kernel.idempotency_key k
+             SET response = pg_catalog.jsonb_set(
+                   pg_catalog.jsonb_set(
+                     pg_catalog.jsonb_set(
+                       k.response,
+                       '{value,item,title}',
+                       pg_catalog.to_jsonb(u.next_title),
+                       false
+                     ),
+                     '{value,item,description}',
+                     coalesce(pg_catalog.to_jsonb(u.next_description), 'null'::jsonb),
+                     false
+                   ),
+                   '{value,item,declineReason}',
+                   coalesce(pg_catalog.to_jsonb(u.next_decline_reason), 'null'::jsonb),
+                   false
+                 )
+            FROM ROWS FROM (
+                   pg_catalog.unnest(${ids}::text[]),
+                   pg_catalog.unnest(${nextTitles}::text[]),
+                   pg_catalog.unnest(${nextDescriptions}::text[]),
+                   pg_catalog.unnest(${nextDeclines}::text[])
+                 ) AS u(triage_id, next_title, next_description, next_decline_reason)
+           WHERE k.org_id = ${ctx.orgId}::uuid
+             AND k.command IN (
+               'projects.triage.create',
+               'projects.triage.accept',
+               'projects.triage.merge',
+               'projects.triage.snooze',
+               'projects.triage.decline',
+               'projects.triage.reopen'
+             )
+             AND k.response IS NOT NULL
+             AND k.response -> 'value' -> 'item' ->> 'id' = u.triage_id`.execute(ctx.trx);
+      }
+
       // Tasks that quote the person (#1961): the value is replaced in the title and the description, as the owner (an
       // owner's update passes the task guards, which hold agents; taint, lease, status and entity stay as they are, and
       // updated_at moves to now). Through the command's own transaction: the tenant role may update tasks, so no definer
@@ -2056,6 +2323,74 @@ export const personalDataErase = defineCommand({
       add('ludy_projects.roadmap_item.public_summary', roadmapItems.filter((r) => r.public_summary).length);
       add('ludy_projects.roadmap_item.submitter_display_name', roadmapItems.filter((r) => r.submitter_display_name).length);
 
+      const signalAccountMatch = freeTextMatch(probe, sql.ref('s.account_label'));
+      const signalQuoteMatch = freeTextMatch(probe, sql.ref('s.quote_excerpt'));
+      const { rows: roadmapSignals } = await sql<{
+        signal_id: string;
+        source_type: string;
+        next_account_label: string | null;
+        next_quote_excerpt: string | null;
+        account_label: boolean;
+        quote_excerpt: boolean;
+      }>`
+        UPDATE ludy_projects.roadmap_signal s
+           SET account_label = CASE
+                                 WHEN s.account_label IS NOT NULL AND ${signalAccountMatch}
+                                   THEN NULLIF(
+                                     NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('s.account_label'), REDACTED_MARK)}, ${ROADMAP_SIGNAL_ACCOUNT_LABEL_MAX}::int)), ''),
+                                     ${REDACTED_MARK}
+                                   )
+                                 ELSE s.account_label
+                               END,
+               quote_excerpt = CASE
+                                 WHEN s.quote_excerpt IS NOT NULL AND ${signalQuoteMatch}
+                                   THEN NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('s.quote_excerpt'), REDACTED_MARK)}, ${ROADMAP_SIGNAL_QUOTE_EXCERPT_MAX}::int)), '')
+                                 ELSE s.quote_excerpt
+                               END,
+               updated_at = ${ctx.now}
+          FROM ludy_projects.roadmap_signal o
+         WHERE o.org_id = s.org_id AND o.id = s.id AND s.org_id = ${ctx.orgId}::uuid
+           AND ((s.account_label IS NOT NULL AND ${signalAccountMatch}) OR coalesce(${signalQuoteMatch}, false))
+         RETURNING s.id AS signal_id,
+                   s.source_type AS source_type,
+                   s.account_label AS next_account_label,
+                   s.quote_excerpt AS next_quote_excerpt,
+                   (o.account_label IS NOT NULL AND coalesce(${freeTextMatch(probe, sql.ref('o.account_label'))}, false)) AS account_label,
+                   coalesce(${freeTextMatch(probe, sql.ref('o.quote_excerpt'))}, false) AS quote_excerpt`.execute(ctx.trx);
+      add('ludy_projects.roadmap_signal.account_label', roadmapSignals.filter((r) => r.account_label).length);
+      add('ludy_projects.roadmap_signal.quote_excerpt', roadmapSignals.filter((r) => r.quote_excerpt).length);
+      if (roadmapSignals.length > 0) {
+        const ids = roadmapSignals.map((r) => r.signal_id);
+        const nextAccounts = roadmapSignals.map((r) => r.next_account_label);
+        const nextQuotes = roadmapSignals.map((r) => (r.source_type === 'meetings.meeting' ? null : r.next_quote_excerpt));
+        await sql`
+          UPDATE ludy_kernel.idempotency_key k
+             SET response = pg_catalog.jsonb_set(
+                   pg_catalog.jsonb_set(
+                     k.response,
+                     '{value,signal,accountLabel}',
+                     coalesce(pg_catalog.to_jsonb(u.next_account_label), 'null'::jsonb),
+                     false
+                   ),
+                   '{value,signal,quoteExcerpt}',
+                   CASE
+                     WHEN k.response -> 'value' -> 'signal' ->> 'sourceType' = 'meetings.meeting'
+                       THEN 'null'::jsonb
+                     ELSE coalesce(pg_catalog.to_jsonb(u.next_quote_excerpt), 'null'::jsonb)
+                   END,
+                   false
+                 )
+            FROM ROWS FROM (
+                   pg_catalog.unnest(${ids}::text[]),
+                   pg_catalog.unnest(${nextAccounts}::text[]),
+                   pg_catalog.unnest(${nextQuotes}::text[])
+                 ) AS u(signal_id, next_account_label, next_quote_excerpt)
+           WHERE k.org_id = ${ctx.orgId}::uuid
+             AND k.command = 'projects.roadmap.signal.create'
+             AND k.response IS NOT NULL
+             AND k.response -> 'value' -> 'signal' ->> 'id' = u.signal_id`.execute(ctx.trx);
+      }
+
       const annTitleMatch = freeTextMatch(probe, sql.ref('a.title'));
       const annBodyMatch = freeTextMatch(probe, sql.ref('a.body_md'));
       const { rows: roadmapAnnouncements } = await sql<{ title: boolean; body_md: boolean }>`
@@ -2112,11 +2447,27 @@ export const personalDataErase = defineCommand({
     }
 
     // What stays, with its reason: the finder's answer after the erasure (the cleared values no longer match).
-    const after = await findPersonalData(ctx.trx, ctx.orgId, probe, false);
+    const after = await findPersonalData(ctx.trx, ctx.orgId, probe, false, documentedPartyIds);
+    // Count all unredacted quote_excerpt rows skipped by shortNumber in one org-scoped aggregate (both readable rows
+    // beyond PERSONAL_DATA_ROW_LIMIT and unreadable, expired, or deleted meeting rows omitted by findPersonalData),
+    // keeping kept[] accurate and count-only without leaking text or meeting IDs (#4600).
+    const shortQuoteExcerptCount = shortNumber
+      ? Number(
+          (
+            await sql<{ rows: string }>`
+              SELECT pg_catalog.count(*)::text AS rows
+                FROM ludy_projects.roadmap_signal s
+               WHERE s.org_id = ${ctx.orgId}::uuid
+                 AND s.quote_excerpt IS NOT NULL
+                 AND ${freeTextMatch(probe, sql.ref('s.quote_excerpt'))}`.execute(ctx.trx)
+          ).rows[0]?.rows ?? 0,
+        )
+      : 0;
     // Grouped by column and reason: rows of one column may be kept for different reasons (the default legal entity and
     // the others).
     const kept = new Map<string, { column: string; rows: number; reason: string }>();
     for (const m of after.matches) {
+      if (shortNumber && m.column === 'ludy_projects.roadmap_signal.quote_excerpt') continue;
       const reason = !shortNumber
         ? m.reason
         : m.column === 'ludy_finance.misa_amis_push.reason'
@@ -2132,6 +2483,14 @@ export const personalDataErase = defineCommand({
       const k = kept.get(group) ?? { column: m.column, rows: 0, reason };
       k.rows += 1;
       kept.set(group, k);
+    }
+    if (shortQuoteExcerptCount > 0) {
+      const column = 'ludy_projects.roadmap_signal.quote_excerpt';
+      kept.set(`${column}\n${ACTIVITY_SHORT_NUMBER_REASON}`, {
+        column,
+        rows: shortQuoteExcerptCount,
+        reason: ACTIVITY_SHORT_NUMBER_REASON,
+      });
     }
     // The original files behind posted entries that name these parties (issue #1009): accounting evidence the erasure
     // never deletes, held in the bucket for the legal period. Reported with the date the hold runs to, when it is set.

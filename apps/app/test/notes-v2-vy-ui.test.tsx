@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // SSR and UI contract checks for Notes v2 Vy planner (T4b) and inbox organizer (E5b) (#3563):
 // triggers, viewer hiding, ARIA regions, 44px mobile tap targets (max-md:min-h-11), "Đề xuất" badges, and blocked hints.
+import { readFileSync } from 'node:fs';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createRef, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -8,6 +9,20 @@ import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
 import type { NotebookSummary, NoteOrganizeResult, TodoPlanResult } from '@ludy/kernel-contract';
 import { catalog } from '../src/i18n/runtime.ts';
+
+vi.mock('@ludy/ui/components/sheet', async () => {
+  const { createElement } = await import('react');
+  return {
+    Sheet: ({ open = true, children }: { open?: boolean; children?: ReactNode }) => (open ? createElement('div', { 'data-slot': 'sheet' }, children) : null),
+    SheetContent: ({ closeLabel, children, ...rest }: { closeLabel: string; children?: ReactNode; [k: string]: unknown }) =>
+      createElement('div', { role: 'dialog', 'data-close-label': closeLabel, ...rest }, children),
+    SheetHeader: ({ children }: { children?: ReactNode }) => createElement('div', { 'data-slot': 'sheet-header' }, children),
+    SheetBody: ({ children }: { children?: ReactNode }) => createElement('div', { 'data-slot': 'sheet-body' }, children),
+    SheetFooter: ({ children }: { children?: ReactNode }) => createElement('div', { 'data-slot': 'sheet-footer' }, children),
+    SheetTitle: ({ children }: { children?: ReactNode }) => createElement('h2', { 'data-slot': 'sheet-title' }, children),
+    SheetDescription: ({ children }: { children?: ReactNode }) => createElement('p', { 'data-slot': 'sheet-description' }, children),
+  };
+});
 
 const queryClientState = vi.hoisted(() => ({ current: null as unknown as QueryClient }));
 
@@ -163,8 +178,11 @@ describe('Notes v2 Vy UI components (#3563)', () => {
     );
     expect(readyHtml).toContain('Nộp tờ khai thuế');
     expect(readyHtml).toContain('Đề xuất');
+    expect(readyHtml).toContain('border-dashed border-proposal/60 bg-proposal/5');
+    expect(readyHtml).toContain('data-testid="coworker-attribution"');
     expect(readyHtml).toContain('my-work-vy-focus-proposal-badge-30000000-0000-4000-8000-000000000011');
     expect(readyHtml).toContain('my-work-vy-reschedule-apply-30000000-0000-4000-8000-000000000011');
+    expect(readyHtml).not.toContain('uppercase');
   });
 
   it('renders NotesVyOrganizerTrigger and NotesVyOrganizerPanel with AI badge, Đề xuất proposals, and paused hint', () => {
@@ -255,6 +273,24 @@ describe('Notes v2 Vy UI components (#3563)', () => {
     expect(readyHtml).toContain('Tài chính cá nhân');
     expect(readyHtml).toContain('#evn');
     expect(readyHtml).toContain('Đề xuất');
+    expect(readyHtml).toContain('border-dashed border-proposal/60 bg-proposal/5');
+    expect(readyHtml).toContain('data-testid="coworker-attribution"');
     expect(readyHtml).toContain('notes-vy-organize-apply-20000000-0000-4000-8000-000000000021');
+  });
+
+  it('mounts both Vy organizer panels inside right-hand Sheet drawers with focus return and no Vietnamese uppercase headings', () => {
+    const plannerSource = readFileSync(new URL('../src/components/my-work-vy-planner.tsx', import.meta.url), 'utf8');
+    const organizerSource = readFileSync(new URL('../src/components/notes-vy-organizer.tsx', import.meta.url), 'utf8');
+    for (const [label, src] of [
+      ['my-work-vy-planner', plannerSource],
+      ['notes-vy-organizer', organizerSource],
+    ] as const) {
+      expect(src, label).toContain("@ludy/ui/components/sheet");
+      expect(src, label).toContain('<SheetContent');
+      expect(src, label).toContain('triggerRef.current');
+      expect(src, label).toContain('<ProposalSurface');
+      expect(src, label).toContain('<CoworkerAttribution');
+      expect(src, label).not.toContain('uppercase');
+    }
   });
 });

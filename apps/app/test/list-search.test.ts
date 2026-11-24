@@ -89,6 +89,9 @@ describe('parseTasksSearch and parseInboxSearch', () => {
     expect(parseTasksSearch({ project: 'none' })).toEqual({ project: 'none' });
     expect(parseTasksSearch({ project: 'not-a-uuid' })).toEqual({});
     expect(parseTasksSearch({ filter: 'done' })).toEqual({});
+    expect(parseTasksSearch({ new: '1' })).toEqual({ new: '1' });
+    expect(parseTasksSearch({ new: 1 })).toEqual({ new: '1' });
+    expect(parseTasksSearch({ new: '2' })).toEqual({});
     expect(parseInboxSearch({ status: 'expired' })).toEqual({ status: 'expired' });
     expect(parseInboxSearch({ status: 'approved', tab: 'executed' })).toEqual({});
   });

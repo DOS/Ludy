@@ -1416,15 +1416,11 @@ export function SignApiKeysView({
   );
 }
 
-function SignApiKeysSection({ slug, role }: { slug: string | null; role: string | null | undefined }) {
+export function SignApiKeysSection({ slug, role }: { slug: string | null; role: string | null | undefined }) {
   const t = useTranslations('sign.apiKeys');
   const canManage = canManageSignCa(role);
   const [createdSecret, setCreatedSecret] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
-
-  useEffect(() => {
-    setCreatedSecret(null);
-  }, [slug]);
 
   const keysQuery = useQuery({
     queryKey: ['sign', 'api-keys', slug],
@@ -1448,6 +1444,12 @@ function SignApiKeysSection({ slug, role }: { slug: string | null; role: string 
       if (!isStepUpRequired(err)) toast(errorMessage(err), 'error');
     },
   });
+
+  const resetCreateMutation = createMutation.reset;
+  useEffect(() => {
+    setCreatedSecret(null);
+    resetCreateMutation();
+  }, [slug, resetCreateMutation]);
 
   const revokeMutation = useMutation({
     mutationFn: async (apiKeyId: string) => {
@@ -1550,9 +1552,12 @@ export function SignSettingsPage() {
     onSettled: () => setBusyProvider(null),
   });
 
+  const canRenderProfilesSection =
+    !orgQuery.isPending && Boolean(orgQuery.data?.role && orgQuery.data.role !== 'viewer');
+
   return (
     <div className="space-y-8">
-      <SignMemberSignaturesAndStampsSection slug={slug} />
+      {canRenderProfilesSection ? <SignMemberSignaturesAndStampsSection slug={slug} /> : null}
       <PlaybookRulesCard slug={slug} role={orgQuery.data?.role} />
       <SignApiKeysSection slug={slug} role={orgQuery.data?.role} />
       {orgQuery.isPending || settingsQuery.isPending ? (

@@ -142,6 +142,7 @@ function calculationOf(person: Person, inputs: HrPayrollInputs, month: string, w
   };
   const deductions: { label: string; kind: 'advance' | 'damage' | 'other'; amount: string }[] = inputs.deductions.map((d) => ({ label: d.label, kind: d.kind, amount: d.amount }));
   if (money(inputs.advance).greaterThan(0)) deductions.push({ label: 'advance', kind: 'advance', amount: inputs.advance });
+  if (money(inputs.offsetDeduction).greaterThan(0)) deductions.push({ label: 'offset_deduction', kind: 'other', amount: inputs.offsetDeduction });
   const month_: PayrollMonthInputs = {
     month,
     standardWorkingDays: workingDays,
@@ -153,7 +154,7 @@ function calculationOf(person: Person, inputs: HrPayrollInputs, month: string, w
     daysNotEmployed: inputs.daysNotEmployed,
     overtime: inputs.overtime,
     nightHours: inputs.nightHours,
-    bonus: inputs.bonus,
+    bonus: toMoney(money(inputs.bonus).plus(inputs.retroPay)),
     dependents: Array.from({ length: person.dependents }, () => ({ ownMonthlyIncome: '0' })),
     voluntaryPension: inputs.voluntaryPension,
     deductions,
@@ -458,11 +459,154 @@ function recurringOf(previous: unknown): HrPayrollInputs {
   return zHrPayrollInputs.parse(kept);
 }
 
+export interface Stage6bApprovedSummary {
+  advance: string;
+  advanceIds: string[];
+  retroPay: string;
+  retroIds: string[];
+  offsetDeduction: string;
+  offsetIds: string[];
+}
+
+const formatStage6bAmount = (d: ReturnType<typeof money>): string => d.toDecimalPlaces(2).toFixed();
+
+function shouldSyncLineFlag(fromRequests: boolean | null | undefined, currentValue: string): boolean {
+  return fromRequests === true || (fromRequests == null && money(currentValue).isZero());
+}
+
+export async function loadApprovedStage6bByEmployee(
+  ctx: Pick<QueryContext, 'trx' | 'orgId'>,
+  employeeIds: readonly string[],
+  month: string,
+): Promise<Map<string, Stage6bApprovedSummary>> {
+  const result = new Map<string, Stage6bApprovedSummary>();
+  if (employeeIds.length === 0) return result;
+  const ensure = (empId: string) => {
+    let entry = result.get(empId);
+    if (!entry) {
+      entry = { advance: '0', advanceIds: [], retroPay: '0', retroIds: [], offsetDeduction: '0', offsetIds: [] };
+      result.set(empId, entry);
+    }
+    return entry;
+  };
+  const advRows = await ctx.trx
+    .selectFrom('ludy_hr.salary_advance_request')
+    .select(['id', 'employee_id', 'amount'])
+    .where('org_id', '=', ctx.orgId)
+    .where('month', '=', month)
+    .where('status', '=', 'approved')
+    .where('employee_id', 'in', [...employeeIds])
+    .execute();
+  for (const row of advRows) {
+    const entry = ensure(row.employee_id);
+    entry.advance = formatStage6bAmount(money(entry.advance).plus(row.amount));
+    entry.advanceIds.push(row.id);
+  }
+  const adjRows = await ctx.trx
+    .selectFrom('ludy_hr.payroll_adjustment_item')
+    .select(['id', 'employee_id', 'kind', 'amount'])
+    .where('org_id', '=', ctx.orgId)
+    .where('month', '=', month)
+    .where('status', '=', 'approved')
+    .where('employee_id', 'in', [...employeeIds])
+    .execute();
+  for (const row of adjRows) {
+    const entry = ensure(row.employee_id);
+    if (row.kind === 'retro_pay') {
+      entry.retroPay = formatStage6bAmount(money(entry.retroPay).plus(row.amount));
+      entry.retroIds.push(row.id);
+    } else {
+      entry.offsetDeduction = formatStage6bAmount(money(entry.offsetDeduction).plus(row.amount));
+      entry.offsetIds.push(row.id);
+    }
+  }
+  return result;
+}
+
+function syncStage6bPatch(
+  parsed: HrPayrollInputs,
+  approved: Stage6bApprovedSummary | undefined,
+): {
+  patch: Partial<HrPayrollInputs>;
+  advanceIds: string[];
+  adjustmentIds: string[];
+  changed: boolean;
+} {
+  const patch: Partial<HrPayrollInputs> = {};
+  const advanceIds: string[] = [];
+  const adjustmentIds: string[] = [];
+  let changed = false;
+
+  const targetAdv = approved?.advance ?? '0';
+  if (shouldSyncLineFlag(parsed.advanceFromRequests, parsed.advance)) {
+    const nextFrom: boolean | null = approved && approved.advanceIds.length > 0 ? true : null;
+    if (!money(parsed.advance).equals(targetAdv) || parsed.advanceFromRequests !== nextFrom) {
+      patch.advance = targetAdv;
+      patch.advanceFromRequests = nextFrom;
+      changed = true;
+    }
+    if (approved) advanceIds.push(...approved.advanceIds);
+  }
+
+  const targetRetro = approved?.retroPay ?? '0';
+  if (shouldSyncLineFlag(parsed.retroPayFromAdjustments, parsed.retroPay)) {
+    const nextFrom: boolean | null = approved && approved.retroIds.length > 0 ? true : null;
+    if (!money(parsed.retroPay).equals(targetRetro) || parsed.retroPayFromAdjustments !== nextFrom) {
+      patch.retroPay = targetRetro;
+      patch.retroPayFromAdjustments = nextFrom;
+      changed = true;
+    }
+    if (approved) adjustmentIds.push(...approved.retroIds);
+  }
+
+  const targetOffset = approved?.offsetDeduction ?? '0';
+  if (shouldSyncLineFlag(parsed.offsetFromAdjustments, parsed.offsetDeduction)) {
+    const nextFrom: boolean | null = approved && approved.offsetIds.length > 0 ? true : null;
+    if (!money(parsed.offsetDeduction).equals(targetOffset) || parsed.offsetFromAdjustments !== nextFrom) {
+      patch.offsetDeduction = targetOffset;
+      patch.offsetFromAdjustments = nextFrom;
+      changed = true;
+    }
+    if (approved) adjustmentIds.push(...approved.offsetIds);
+  }
+
+  return { patch, advanceIds, adjustmentIds, changed };
+}
+
+async function linkSyncedStage6bRun(
+  ctx: Pick<CommandContext, 'trx' | 'orgId' | 'now'>,
+  runId: string,
+  advanceIds: readonly string[],
+  adjustmentIds: readonly string[],
+): Promise<void> {
+  if (advanceIds.length > 0) {
+    await ctx.trx
+      .updateTable('ludy_hr.salary_advance_request')
+      .set({ payroll_run_id: runId, updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', 'in', [...advanceIds])
+      .where('status', '=', 'approved')
+      .where((eb) => eb.or([eb('payroll_run_id', 'is', null), eb('payroll_run_id', '!=', runId)]))
+      .execute();
+  }
+  if (adjustmentIds.length > 0) {
+    await ctx.trx
+      .updateTable('ludy_hr.payroll_adjustment_item')
+      .set({ payroll_run_id: runId, updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', 'in', [...adjustmentIds])
+      .where('status', '=', 'approved')
+      .where((eb) => eb.or([eb('payroll_run_id', 'is', null), eb('payroll_run_id', '!=', runId)]))
+      .execute();
+  }
+}
+
 export function initialInputsFor(
   person: Person,
   previous?: { employment_id: string | null; inputs: unknown },
   bhxh?: BhxhLeaveSummary,
   overtime?: readonly PayrollOvertimeEntry[],
+  stage6b?: Stage6bApprovedSummary,
 ): HrPayrollInputs {
   const base = previous === undefined ? parseInputs({}) : recurringOf(previous.inputs);
   const overtimeList = overtime ? [...overtime] : [];
@@ -475,6 +619,12 @@ export function initialInputsFor(
     maternityBhxhFromLedger: bhxh?.maternityBhxhDays !== undefined ? true : null,
     overtime: overtimeList,
     overtimeFromRequests: overtimeList.length > 0 ? true : null,
+    advance: stage6b?.advance ?? '0',
+    advanceFromRequests: stage6b && stage6b.advanceIds.length > 0 ? true : null,
+    retroPay: stage6b?.retroPay ?? '0',
+    retroPayFromAdjustments: stage6b && stage6b.retroIds.length > 0 ? true : null,
+    offsetDeduction: stage6b?.offsetDeduction ?? '0',
+    offsetFromAdjustments: stage6b && stage6b.offsetIds.length > 0 ? true : null,
   };
   if (
     person.terms.termMonths !== null &&
@@ -483,6 +633,17 @@ export function initialInputsFor(
     return { ...inputs, contractTermMonths: person.terms.termMonths };
   }
   return inputs;
+}
+
+async function loadRunMeta(ctx: Ctx, runId: string) {
+  const run = await ctx.trx
+    .selectFrom('ludy_hr.payroll_run')
+    .select(['id', 'legal_entity_id', 'month'])
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', runId)
+    .executeTakeFirst();
+  if (!run) throw runNotFound();
+  return run;
 }
 
 async function loadRun(ctx: Ctx, runId: string) {
@@ -514,6 +675,8 @@ export const runOpen = defineCommand({
       'legal_entity_id', 'run_id', 'employee_id', 'employment_id', 'kind', 'status', 'inputs', 'gross', 'employee_insurance', 'employer_insurance', 'union_fee', 'taxable_income', 'pit', 'net',
       'employer_cost', 'breakdown', 'checks', 'rules_used', 'refusal', 'created_by', 'created_at', 'updated_at',
     ]),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'salary_advance_request', ['payroll_run_id', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_adjustment_item', ['payroll_run_id', 'updated_at']),
   ],
   handler: async (ctx, input): Promise<HrRunWritten> => {
     const userId = userOf(ctx.actor);
@@ -558,13 +721,26 @@ export const runOpen = defineCommand({
       people.map((p) => p.employeeId),
       input.month,
     );
+    const stage6bByEmployee = await loadApprovedStage6bByEmployee(
+      ctx,
+      people.map((p) => p.employeeId),
+      input.month,
+    );
+    const linkedAdvIds: string[] = [];
+    const linkedAdjIds: string[] = [];
     for (const person of people) {
+      const stage6b = stage6bByEmployee.get(person.employeeId);
       const inputs = initialInputsFor(
         person,
         lastInputs.get(person.employeeId),
         bhxhByEmployee.get(person.employeeId),
         overtimeByEmployee.get(person.employeeId),
+        stage6b,
       );
+      if (stage6b) {
+        linkedAdvIds.push(...stage6b.advanceIds);
+        linkedAdjIds.push(...stage6b.retroIds, ...stage6b.offsetIds);
+      }
       const f = figuresOf(person, inputs, input.month, workingDays);
       await ctx.trx
         .insertInto('ludy_hr.payroll_line')
@@ -583,6 +759,7 @@ export const runOpen = defineCommand({
         })
         .execute();
     }
+    await linkSyncedStage6bRun(ctx, run.id, linkedAdvIds, linkedAdjIds);
     ctx.audit({ runId: run.id, month: input.month, lines: people.length, copiedFromLastMonth: people.filter((p) => lastInputs.has(p.employeeId)).length });
     return { runId: run.id, lines: people.length };
   },
@@ -602,9 +779,13 @@ export const runRecalculate = defineCommand({
       'legal_entity_id', 'run_id', 'employee_id', 'employment_id', 'kind', 'status', 'inputs', 'gross', 'employee_insurance', 'employer_insurance', 'union_fee', 'taxable_income', 'pit', 'net',
       'employer_cost', 'breakdown', 'checks', 'rules_used', 'refusal', 'created_by', 'created_at', 'updated_at',
     ]),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'salary_advance_request', ['payroll_run_id', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_adjustment_item', ['payroll_run_id', 'updated_at']),
   ],
   handler: async (ctx, input): Promise<HrRunWritten> => {
     const userId = userOf(ctx.actor);
+    const meta = await loadRunMeta(ctx, input.runId);
+    await lockOvertimeRun(ctx.trx, ctx.orgId, meta.legal_entity_id, meta.month);
     const run = await loadRun(ctx, input.runId);
     if (run.status !== 'draft') throw notDraft();
     const workingDays = input.workingDays ?? run.working_days;
@@ -627,10 +808,18 @@ export const runRecalculate = defineCommand({
       people.map((p) => p.employeeId),
       run.month,
     );
+    const stage6bByEmployee = await loadApprovedStage6bByEmployee(
+      ctx,
+      people.map((p) => p.employeeId),
+      run.month,
+    );
+    const linkedAdvIds: string[] = [];
+    const linkedAdjIds: string[] = [];
     let added = 0;
     for (const person of people) {
       const existing = byEmployee.get(person.employeeId);
       const approvedOt = overtimeByEmployee.get(person.employeeId) ?? [];
+      const approvedStage6b = stage6bByEmployee.get(person.employeeId);
       if (existing) {
         const parsed = parseInputs(existing.inputs);
         let nextInputs =
@@ -641,6 +830,12 @@ export const runRecalculate = defineCommand({
         if (patch) {
           nextInputs = { ...nextInputs, ...patch };
         }
+        const s6b = syncStage6bPatch(nextInputs, approvedStage6b);
+        if (s6b.changed) {
+          nextInputs = { ...nextInputs, ...s6b.patch };
+        }
+        linkedAdvIds.push(...s6b.advanceIds);
+        linkedAdjIds.push(...s6b.adjustmentIds);
         const f = figuresOf(person, nextInputs, run.month, workingDays);
         await ctx.trx
           .updateTable('ludy_hr.payroll_line')
@@ -655,7 +850,11 @@ export const runRecalculate = defineCommand({
           .execute();
       } else {
         // A person hired (or whose first terms were added) since the month was opened.
-        const freshInputs = initialInputsFor(person, undefined, bhxhByEmployee.get(person.employeeId), approvedOt);
+        const freshInputs = initialInputsFor(person, undefined, bhxhByEmployee.get(person.employeeId), approvedOt, approvedStage6b);
+        if (approvedStage6b) {
+          linkedAdvIds.push(...approvedStage6b.advanceIds);
+          linkedAdjIds.push(...approvedStage6b.retroIds, ...approvedStage6b.offsetIds);
+        }
         const f = figuresOf(person, freshInputs, run.month, workingDays);
         await ctx.trx
           .insertInto('ludy_hr.payroll_line')
@@ -664,6 +863,7 @@ export const runRecalculate = defineCommand({
         added += 1;
       }
     }
+    await linkSyncedStage6bRun(ctx, run.id, linkedAdvIds, linkedAdjIds);
     // A person no longer paid in this month (ended before it, erased, or left with no terms in force since it was opened) leaves the sheet: their pay line is removed from the draft.
     // Only a draft run's lines can be deleted (the frozen_row guard), so an approved month never loses one.
     const paidNow = new Set(people.map((p) => p.employeeId));
@@ -769,6 +969,21 @@ export const lineInputsSet = defineCommand({
       input.inputs.overtime === undefined || sameOvertimeEntries(input.inputs.overtime, existing.overtime)
         ? existing.overtimeFromRequests
         : false;
+    const advance = input.inputs.advance === undefined ? existing.advance : input.inputs.advance;
+    const advanceFromRequests =
+      input.inputs.advance === undefined || money(input.inputs.advance).equals(existing.advance)
+        ? existing.advanceFromRequests
+        : false;
+    const retroPay = input.inputs.retroPay === undefined ? existing.retroPay : input.inputs.retroPay;
+    const retroPayFromAdjustments =
+      input.inputs.retroPay === undefined || money(input.inputs.retroPay).equals(existing.retroPay)
+        ? existing.retroPayFromAdjustments
+        : false;
+    const offsetDeduction = input.inputs.offsetDeduction === undefined ? existing.offsetDeduction : input.inputs.offsetDeduction;
+    const offsetFromAdjustments =
+      input.inputs.offsetDeduction === undefined || money(input.inputs.offsetDeduction).equals(existing.offsetDeduction)
+        ? existing.offsetFromAdjustments
+        : false;
     const nextInputs = zHrPayrollInputs.parse({
       ...input.inputs,
       overtime,
@@ -783,6 +998,12 @@ export const lineInputsSet = defineCommand({
       maternityBhxhDays,
       maternityBhxhFromLedger,
       overtimeFromRequests,
+      advance,
+      advanceFromRequests,
+      retroPay,
+      retroPayFromAdjustments,
+      offsetDeduction,
+      offsetFromAdjustments,
     });
     const f = figuresOf(person, nextInputs, run.month, run.working_days);
     await updatePayLine(ctx, line.id, person.terms.id, nextInputs, f);
@@ -988,6 +1209,8 @@ export const runSyncLeave = defineCommand({
   ],
   handler: async (ctx, input): Promise<HrRunWritten> => {
     userOf(ctx.actor);
+    const meta = await loadRunMeta(ctx, input.runId);
+    await lockOvertimeRun(ctx.trx, ctx.orgId, meta.legal_entity_id, meta.month);
     const { payRun, locked, byLineId, people } = await lockDraftLines(ctx, input.runId);
     // Skip orphaned pay lines whose employee is no longer paid in this month (e.g. terminated before `payRun.month`
     // after the draft run was opened); `runRecalculate` prunes them and `runApprove` guards them via `HR_RUN_STALE`.
@@ -1131,6 +1354,8 @@ export const runSyncOvertime = defineCommand({
   ],
   handler: async (ctx, input): Promise<HrRunWritten> => {
     userOf(ctx.actor);
+    const meta = await loadRunMeta(ctx, input.runId);
+    await lockOvertimeRun(ctx.trx, ctx.orgId, meta.legal_entity_id, meta.month);
     const { payRun, locked, byLineId, people } = await lockDraftLines(ctx, input.runId);
     const paidEmployeeIds = [...new Set(locked.filter((l) => people.has(l.employee_id)).map((l) => l.employee_id))];
     const overtimeByEmployee = await loadApprovedOvertimeByEmployee(ctx, paidEmployeeIds, payRun.month);
@@ -1210,6 +1435,108 @@ export async function syncEmployeeDraftPayrollOvertime(
   return true;
 }
 
+export const runSyncStage6b = defineCommand({
+  name: 'hr.payroll.run.sync_stage6b',
+  input: zHrRunRef,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  permission: 'hr.payroll.run',
+  target: runTarget,
+  writes: [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_line', [...LINE_UPDATE_COLUMNS]),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_run', ['updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'salary_advance_request', ['payroll_run_id', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_adjustment_item', ['payroll_run_id', 'updated_at']),
+  ],
+  handler: async (ctx, input): Promise<HrRunWritten> => {
+    userOf(ctx.actor);
+    const meta = await loadRunMeta(ctx, input.runId);
+    await lockOvertimeRun(ctx.trx, ctx.orgId, meta.legal_entity_id, meta.month);
+    const { payRun, locked, byLineId, people } = await lockDraftLines(ctx, input.runId);
+    const paidEmployeeIds = [...new Set(locked.filter((l) => people.has(l.employee_id)).map((l) => l.employee_id))];
+    const stage6bByEmployee = await loadApprovedStage6bByEmployee(ctx, paidEmployeeIds, payRun.month);
+    const updates: { lineId: string; employmentId: string; inputs: HrPayrollInputs; figures: LineFigures }[] = [];
+    const linkedAdvIds: string[] = [];
+    const linkedAdjIds: string[] = [];
+    for (const row of locked) {
+      if (!people.has(row.employee_id)) continue;
+      const { line, person, existing } = resolveDraftLineTarget(byLineId, people, row.id);
+      const s6b = syncStage6bPatch(existing, stage6bByEmployee.get(line.employee_id));
+      linkedAdvIds.push(...s6b.advanceIds);
+      linkedAdjIds.push(...s6b.adjustmentIds);
+      if (!s6b.changed) continue;
+      const contractTermPatch =
+        person.terms.termMonths !== null && line.employment_id !== person.terms.id
+          ? { contractTermMonths: person.terms.termMonths }
+          : {};
+      const merged = zHrPayrollInputs.parse({
+        ...existing,
+        ...contractTermPatch,
+        ...s6b.patch,
+      });
+      updates.push({
+        lineId: line.id,
+        employmentId: person.terms.id,
+        inputs: merged,
+        figures: figuresOf(person, merged, payRun.month, payRun.working_days),
+      });
+    }
+    await applyBatchLineUpdates(ctx, payRun.id, updates);
+    await linkSyncedStage6bRun(ctx, payRun.id, linkedAdvIds, linkedAdjIds);
+    ctx.audit({ month: payRun.month, updatedLines: updates.length });
+    return { runId: payRun.id, lines: updates.length };
+  },
+});
+
+export async function syncEmployeeDraftPayrollStage6b(
+  ctx: Ctx,
+  legalEntityId: string,
+  month: string,
+  employeeId: string,
+): Promise<boolean> {
+  const payRun = await ctx.trx
+    .selectFrom('ludy_hr.payroll_run')
+    .select(['id', 'month', 'working_days'])
+    .where('org_id', '=', ctx.orgId)
+    .where('legal_entity_id', '=', legalEntityId)
+    .where('month', '=', month)
+    .where('status', '=', 'draft')
+    .forUpdate()
+    .executeTakeFirst();
+  if (!payRun) return false;
+  const line = await ctx.trx
+    .selectFrom('ludy_hr.payroll_line')
+    .select(['id', 'employment_id', 'inputs'])
+    .where('org_id', '=', ctx.orgId)
+    .where('run_id', '=', payRun.id)
+    .where('employee_id', '=', employeeId)
+    .where('kind', '=', 'pay')
+    .forUpdate()
+    .executeTakeFirst();
+  if (!line) return false;
+  const parsed = parseInputs(line.inputs);
+  const stage6bByEmployee = await loadApprovedStage6bByEmployee(ctx, [employeeId], month);
+  const s6b = syncStage6bPatch(parsed, stage6bByEmployee.get(employeeId));
+  await linkSyncedStage6bRun(ctx, payRun.id, s6b.advanceIds, s6b.adjustmentIds);
+  if (!s6b.changed) return false;
+  const people = await peopleOf(ctx, legalEntityId, month);
+  const person = people.find((p) => p.employeeId === employeeId);
+  if (!person) return false;
+  const contractTermPatch =
+    person.terms.termMonths !== null && line.employment_id !== person.terms.id
+      ? { contractTermMonths: person.terms.termMonths }
+      : {};
+  const merged = zHrPayrollInputs.parse({
+    ...parsed,
+    ...contractTermPatch,
+    ...s6b.patch,
+  });
+  const f = figuresOf(person, merged, payRun.month, payRun.working_days);
+  await applyBatchLineUpdates(ctx, payRun.id, [{ lineId: line.id, employmentId: person.terms.id, inputs: merged, figures: f }]);
+  return true;
+}
+
 // A signed correction of an approved month, carried in a draft run of a later month. The differences are typed; net and the employer's cost follow from them. A correction is never
 // an edit of the approved line.
 export const lineAdjust = defineCommand({
@@ -1228,6 +1555,8 @@ export const lineAdjust = defineCommand({
   ],
   handler: async (ctx, input): Promise<HrRunWritten> => {
     const userId = userOf(ctx.actor);
+    const meta = await loadRunMeta(ctx, input.runId);
+    await lockOvertimeRun(ctx.trx, ctx.orgId, meta.legal_entity_id, meta.month);
     const run = await loadRun(ctx, input.runId);
     if (run.status !== 'draft') throw notDraft();
     const target = await ctx.trx
@@ -1421,6 +1750,8 @@ export const runApprove = defineCommand({
   writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_run', ['status', 'approved_by', 'approved_at', 'approval', 'updated_at'])],
   handler: async (ctx, input): Promise<HrRunWritten> => {
     const userId = userOf(ctx.actor);
+    const meta = await loadRunMeta(ctx, input.runId);
+    await lockOvertimeRun(ctx.trx, ctx.orgId, meta.legal_entity_id, meta.month);
     const run = await loadRun(ctx, input.runId);
     if (run.status !== 'draft') throw new DomainError('HR_RUN_NOT_DRAFT', 409, 'Bảng lương này đã được duyệt');
     const lines = (await ctx.trx.selectFrom('ludy_hr.payroll_line').select(LINE_COLUMNS).where('org_id', '=', ctx.orgId).where('run_id', '=', run.id).execute()) as StoredLine[];
@@ -1851,5 +2182,5 @@ export const coworkerAccess = defineQuery({
   },
 });
 
-export const hrPayrollCommands = [runOpen, runRecalculate, lineInputsSet, runImportTimekeeping, runApplyThirteenthMonth, runSyncLeave, runSyncOvertime, lineAdjust, runApprove];
+export const hrPayrollCommands = [runOpen, runRecalculate, lineInputsSet, runImportTimekeeping, runApplyThirteenthMonth, runSyncLeave, runSyncOvertime, runSyncStage6b, lineAdjust, runApprove];
 export const hrPayrollQueries = [runList, runSheet, linePayslip, runThirteenthMonthPreview, coworkerAccess];

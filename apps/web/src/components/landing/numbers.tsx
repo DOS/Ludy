@@ -19,8 +19,8 @@ export function Numbers({ dict }: { dict: Dictionary }) {
         {numbers.items.map((item, i) => {
           const value = STATS[item.key as keyof typeof STATS];
           return (
-            <div key={item.key} className="flex min-w-0 flex-col rounded-xl border border-line bg-surface p-4">
-              <dd className={`num font-display text-2xl leading-none font-semibold tracking-[-0.02em] sm:text-3xl ${i % 2 === 0 ? 'text-accent-ink' : 'text-ok'}`}>
+            <div key={item.key} className="flex min-w-0 flex-col rounded-xl border border-line bg-surface p-4 md:p-3.5 lg:p-4">
+              <dd className={`num font-display text-xl leading-none font-semibold tracking-[-0.02em] sm:text-3xl md:text-base lg:text-2xl xl:text-[1.75rem] ${i % 2 === 0 ? 'text-accent-ink' : 'text-ok'}`}>
                 {format.format(value)}
                 {ROUNDED.has(item.key) ? '+' : ''}
               </dd>

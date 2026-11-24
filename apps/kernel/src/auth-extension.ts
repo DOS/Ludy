@@ -16,7 +16,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { sql } from 'kysely';
 import type { Db } from '@ludy/db';
-import { EXTENSION_ID_FORMAT } from '@ludy/kernel-contract';
+import { DESKTOP_CLIENT_ID, EXTENSION_ID_FORMAT, extensionClientAllowsScopes, type ExtensionClient } from '@ludy/kernel-contract';
 import { DomainError, EXTENSION_SCOPES, toDomainError, type ExtensionScope } from '@ludy/kernel-runtime';
 import { logEvent } from './log.ts';
 
@@ -25,6 +25,19 @@ import { logEvent } from './log.ts';
 const EXTENSION_ORIGIN = /^chrome-extension:\/\/([a-p]{32})$/;
 export function extensionIdOfOrigin(origin: string | null | undefined): string | null {
   return EXTENSION_ORIGIN.exec(origin ?? '')?.[1] ?? null;
+}
+
+// The id a sign-in code exchange is bound to (#2850, #4515). The browser extension's exchange carries its `Origin` header and the id is that
+// origin's. Ludy Desktop sends no `Origin` at all (the main process uses a plain HTTP client, not a page), so it says `client: "desktop"` in
+// the body and the id is the reserved DESKTOP_CLIENT_ID; a request that says "desktop" and also carries an Origin is a browser page
+// pretending, and one that names the reserved id as its extension origin is refused too. null: refused alike (the caller answers as for a
+// wrong code). Only a code the member approved for that id can be exchanged by it, so a code made for the extension is no use as a desktop
+// one and the other way round (the definer compares the bound id).
+export function exchangeClientId(origin: string | null | undefined, client: unknown): string | null {
+  if (client === 'desktop') return origin === undefined || origin === null ? DESKTOP_CLIENT_ID : null;
+  if (client !== undefined) return null;
+  const id = extensionIdOfOrigin(origin);
+  return id === null || id === DESKTOP_CLIENT_ID ? null : id;
 }
 
 export const EXTENSION_TOKEN_PREFIX = 'crx_';
@@ -70,25 +83,30 @@ export interface ExtensionIdentity {
   scopes: readonly ExtensionScope[];
   // ISO time the token ends.
   expiresAt: string;
+  // Who the token was made for: the browser extension or Ludy Desktop (#4515), as the row the server wrote says.
+  // Absent on an identity built by hand (a test): the extension, as before.
+  client?: ExtensionClient;
 }
 
 // Turns a bearer token into its identity, or refuses it with 401 EXTENSION_TOKEN_INVALID for every reason alike
 // (malformed, unknown, revoked, expired, member gone, org not active): the answer never says which.
 export async function verifyExtensionBearer(db: Db, token: string): Promise<ExtensionIdentity> {
   if (!TOKEN_FORMAT.test(token)) throw invalidToken();
-  let rows: Array<{ token_id: string; org_id: string; user_id: string; scopes: string[]; expires_at: Date }>;
+  let rows: Array<{ token_id: string; org_id: string; user_id: string; scopes: string[]; expires_at: Date; client: string }>;
   try {
-    ({ rows } = await sql<{ token_id: string; org_id: string; user_id: string; scopes: string[]; expires_at: Date }>`
-      SELECT token_id, org_id, user_id, scopes, expires_at FROM ludy_kernel.verify_extension_token(${hashExtensionSecret(token)}::bytea, ${null}::text)`.execute(db));
+    ({ rows } = await sql<{ token_id: string; org_id: string; user_id: string; scopes: string[]; expires_at: Date; client: string }>`
+      SELECT token_id, org_id, user_id, scopes, expires_at, client FROM ludy_kernel.verify_extension_token(${hashExtensionSecret(token)}::bytea, ${null}::text)`.execute(db));
   } catch (error) {
     throw toDomainError(error);
   }
   const row = rows[0];
   if (!row) throw invalidToken();
   const scopes = row.scopes.filter((s): s is ExtensionScope => (EXTENSION_SCOPES as readonly string[]).includes(s));
-  // A token holding a scope this build does not know is not trusted with the ones it does: it is refused outright.
-  if (scopes.length === 0 || scopes.length !== row.scopes.length) throw invalidToken();
-  return { tokenId: row.token_id, orgId: row.org_id, userId: row.user_id, scopes, expiresAt: new Date(row.expires_at).toISOString() };
+  // A token holding a scope this build does not know is not trusted with the ones it does: it is refused outright. Only a desktop
+  // token may hold none (#4515), or meetings/agenda when desktop capture is on (#4516); desktop never holds notes. Any other marker is refused.
+  if (row.client !== 'extension' && row.client !== 'desktop') throw invalidToken();
+  if (!extensionClientAllowsScopes(row.client, scopes) || scopes.length !== row.scopes.length) throw invalidToken();
+  return { tokenId: row.token_id, orgId: row.org_id, userId: row.user_id, scopes, expiresAt: new Date(row.expires_at).toISOString(), client: row.client };
 }
 
 // The email of the account that owns a token, for AUTH_ALLOWED_EMAILS (issue #3223): null when no token has this value. Read-only (a STABLE
@@ -160,6 +178,8 @@ export interface ExtensionRoute {
   // Exact path; `:id` stands for one UUID segment.
   path: string;
   scope: ExtensionScope | null;
+  // Mutating or resource-allocating routes are additionally bounded by the per-extension-token write limiter (#3742).
+  write: boolean;
   why: string;
 }
 
@@ -167,17 +187,17 @@ export interface ExtensionRoute {
 // meetings scope creates a meeting with its consent record, gets an upload grant, finishes the upload of a meeting
 // the same token created and reads its status. The agenda scope reads the member's next few calendar events, title, times and join host.
 export const EXTENSION_ROUTES: readonly ExtensionRoute[] = Object.freeze([
-  { method: 'GET', path: '/api/extension/me', scope: null, why: 'who the token is for: org, scopes, end date and the features this deployment runs; no tenant data' },
-  { method: 'POST', path: '/api/rpc/meetings/create', scope: 'meetings', why: 'create a meeting with its consent record (meetings.meeting.create)' },
-  { method: 'POST', path: '/api/rpc/meetings/extensionStatus', scope: 'meetings', why: "a meeting this token created: its status and whether its audio and video arrived, never its content (meetings.meeting.extension_status)" },
-  { method: 'POST', path: '/api/rpc/meetings/recordingStopped', scope: 'meetings', why: 'a recording of this token ended with no media reaching the server: its end time and a stop code on a meeting this token created, once, so the recording chip lets go (meetings.meeting.recording_stopped)' },
-  { method: 'POST', path: '/api/rpc/meetings/captureHeartbeat', scope: 'meetings', why: "keep alive, or end, the capture of a recording this token created (ADR-0055 slice 1, #4123): a meeting id and whether to end it, and the answer is one boolean (meetings.capture.heartbeat)" },
-  { method: 'POST', path: '/api/rpc/meetings/agenda/next', scope: 'agenda', why: "the member's next calendar events for the popup's \"Sắp họp\" card: at most 5 within 30 minutes, title, times and join host only, from their own cache (meetings.agenda.next, B2)" },
-  { method: 'POST', path: '/api/files/uploads', scope: 'meetings', why: 'an upload grant, for the meeting_audio and meeting_video purposes only (the handler refuses any other purpose for a token)' },
-  { method: 'POST', path: '/api/meetings/:id/media', scope: 'meetings', why: 'finish the upload of the media of a meeting this token created (meetings.media.record)' },
-  { method: 'POST', path: '/api/meetings/:id/live-chunk', scope: 'meetings', why: 'a piece of the recording of a live-notes meeting this token created, sealed and stored by the route (meetings.live.chunk, ADR-0052 L4a)' },
-  { method: 'POST', path: '/api/rpc/notes/clip', scope: 'notes', why: 'save a quick note or clipped web page, always private and tainted (notes.note.clip, E4)' },
-  { method: 'POST', path: '/api/rpc/notes/todos/quickCapture', scope: 'notes', why: 'save a quick-captured personal to-do, always private and tainted (notes.todo.quick_capture, E4)' },
+  { method: 'GET', path: '/api/extension/me', scope: null, write: false, why: 'who the token is for: org, scopes, end date and the features this deployment runs; no tenant data' },
+  { method: 'POST', path: '/api/rpc/meetings/create', scope: 'meetings', write: true, why: 'create a meeting with its consent record (meetings.meeting.create)' },
+  { method: 'POST', path: '/api/rpc/meetings/extensionStatus', scope: 'meetings', write: false, why: "a meeting this token created: its status and whether its audio and video arrived, never its content (meetings.meeting.extension_status)" },
+  { method: 'POST', path: '/api/rpc/meetings/recordingStopped', scope: 'meetings', write: true, why: 'a recording of this token ended with no media reaching the server: its end time and a stop code on a meeting this token created, once, so the recording chip lets go (meetings.meeting.recording_stopped)' },
+  { method: 'POST', path: '/api/rpc/meetings/captureHeartbeat', scope: 'meetings', write: true, why: "keep alive, or end, the capture of a recording this token created (ADR-0055 slice 1, #4123): a meeting id and whether to end it, and the answer is one boolean (meetings.capture.heartbeat)" },
+  { method: 'POST', path: '/api/rpc/meetings/agenda/next', scope: 'agenda', write: false, why: "the member's next calendar events for the popup's \"Sắp họp\" card: at most 5 within 30 minutes, title, times and join host only, from their own cache (meetings.agenda.next, B2)" },
+  { method: 'POST', path: '/api/files/uploads', scope: 'meetings', write: true, why: 'an upload grant, for the meeting_audio and meeting_video purposes only (the handler refuses any other purpose for a token)' },
+  { method: 'POST', path: '/api/meetings/:id/media', scope: 'meetings', write: true, why: 'finish the upload of the media of a meeting this token created (meetings.media.record)' },
+  { method: 'POST', path: '/api/meetings/:id/live-chunk', scope: 'meetings', write: true, why: 'a piece of the recording of a live-notes meeting this token created, sealed and stored by the route (meetings.live.chunk, ADR-0052 L4a)' },
+  { method: 'POST', path: '/api/rpc/notes/clip', scope: 'notes', write: true, why: 'save a quick note or clipped web page, always private and tainted (notes.note.clip, E4)' },
+  { method: 'POST', path: '/api/rpc/notes/todos/quickCapture', scope: 'notes', write: true, why: 'save a quick-captured personal to-do, always private and tainted (notes.todo.quick_capture, E4)' },
 ]);
 
 const ROUTE_PATTERNS = EXTENSION_ROUTES.map((route) => ({
@@ -195,10 +215,30 @@ export function matchExtensionRoute(method: string, rawPath: string): ExtensionR
   return null;
 }
 
-// The edge's check for a request made with an extension token: refused unless it names a listed route whose scope the
-// token holds. 403 EXTENSION_SCOPE, said before any handler, body read or database call.
-export function refuseOutsideScopes(scopes: readonly string[], method: string, rawPath: string): DomainError | null {
+const EXTENSION_SCOPE_ERROR = () => new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
+
+// Checks the request against EXTENSION_ROUTES and the token's scopes (and desktop tokens never reach notes routes, #4516), returning the matched route when allowed.
+export function authorizeExtensionRoute(
+  scopes: readonly string[],
+  method: string,
+  rawPath: string,
+  client: ExtensionClient = 'extension',
+): { ok: true; route: ExtensionRoute } | { ok: false; error: DomainError } {
   const route = matchExtensionRoute(method, rawPath);
-  if (route && (route.scope === null || scopes.includes(route.scope))) return null;
-  return new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
+  if (route && (route.scope === null || (scopes.includes(route.scope) && (client !== 'desktop' || route.scope !== 'notes')))) {
+    return { ok: true, route };
+  }
+  return { ok: false, error: EXTENSION_SCOPE_ERROR() };
+}
+
+// The edge's check for a request made with an extension token: refused unless it names a listed route whose scope the
+// token holds (and desktop tokens never reach notes routes, #4516). 403 EXTENSION_SCOPE, said before any handler, body read or database call.
+export function refuseOutsideScopes(
+  scopes: readonly string[],
+  method: string,
+  rawPath: string,
+  client: ExtensionClient = 'extension',
+): DomainError | null {
+  const checked = authorizeExtensionRoute(scopes, method, rawPath, client);
+  return checked.ok ? null : checked.error;
 }

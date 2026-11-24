@@ -34,6 +34,7 @@ import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-sel
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from '@ludy/ui/components/table';
 import { BankSelect } from '../components/bank-select.tsx';
 import { ThirteenthMonthPanel } from '../components/hr-thirteenth-month-panel.tsx';
+import { HrPayrollAdjustmentsPanel } from '../components/hr-stage6b-cards.tsx';
 import { TimekeepingImportPanel } from '../components/hr-timekeeping-panel.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TOTAL_RULE, TableSkeleton } from '../components/ui.tsx';
@@ -44,7 +45,7 @@ import { cashAccountChoices } from '../lib/vouchers.ts';
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.hr.key() });
 // A sensitive read leaves an audit row each time: the screen reads once and again only after its own change.
 const ONCE = { staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
-const NUM = 'px-4 py-3 text-right tabular-nums';
+const NUM = 'text-right tabular-nums';
 const amountOk = (v: string) => /^\d{1,16}(\.\d{1,2})?$/.test(v);
 const signedOk = (v: string) => /^-?\d{1,16}(\.\d{1,2})?$/.test(v);
 
@@ -59,7 +60,9 @@ interface InputsState {
   workedHours: string;
   pieceCount: string;
   bonus: string;
+  retroPay: string;
   advance: string;
+  offsetDeduction: string;
   nightHours: string;
   contractTermMonths: string;
   overtime: { dayKind: (typeof HR_OVERTIME_DAY_KINDS)[number]; night: boolean; hours: string }[];
@@ -80,7 +83,9 @@ export function stateOf(inputs: Record<string, unknown>): InputsState {
     workedHours: str(inputs.workedHours, ''),
     pieceCount: str(inputs.pieceCount, ''),
     bonus: str(inputs.bonus),
+    retroPay: str(inputs.retroPay),
     advance: str(inputs.advance),
+    offsetDeduction: str(inputs.offsetDeduction),
     nightHours: str(inputs.nightHours),
     contractTermMonths: typeof inputs.contractTermMonths === 'number' ? String(inputs.contractTermMonths) : '',
     overtime: list<InputsState['overtime'][number]>(inputs.overtime),
@@ -99,7 +104,9 @@ export const inputsOf = (s: InputsState): HrPayrollInputs =>
     workedHours: s.workedHours === '' ? null : s.workedHours,
     pieceCount: s.pieceCount === '' ? null : s.pieceCount,
     bonus: s.bonus,
+    retroPay: s.retroPay,
     advance: s.advance,
+    offsetDeduction: s.offsetDeduction,
     nightHours: s.nightHours,
     contractTermMonths: s.contractTermMonths === '' ? null : Number(s.contractTermMonths),
     overtime: s.overtime,
@@ -111,7 +118,7 @@ const bhxhDayOk = (v: string) => /^\d{1,2}(\.\d{1,2})?$/.test(v);
 const hoursOk = (v: string) => /^\d{1,3}(\.\d{1,2})?$/.test(v);
 const workUnitsOk = (v: string) => /^\d{1,7}(\.\d{1,2})?$/.test(v);
 export const formOk = (s: InputsState) =>
-  dayOk(s.unpaidLeaveDays) && bhxhDayOk(s.sicknessBhxhDays) && bhxhDayOk(s.maternityBhxhDays) && dayOk(s.daysNotEmployed) && (s.workedHours === '' || hoursOk(s.workedHours)) && (s.pieceCount === '' || workUnitsOk(s.pieceCount)) && amountOk(s.bonus) && amountOk(s.advance) && hoursOk(s.nightHours) && (s.contractTermMonths === '' || /^\d{1,2}$/.test(s.contractTermMonths)) &&
+  dayOk(s.unpaidLeaveDays) && bhxhDayOk(s.sicknessBhxhDays) && bhxhDayOk(s.maternityBhxhDays) && dayOk(s.daysNotEmployed) && (s.workedHours === '' || hoursOk(s.workedHours)) && (s.pieceCount === '' || workUnitsOk(s.pieceCount)) && amountOk(s.bonus) && amountOk(s.retroPay) && amountOk(s.advance) && amountOk(s.offsetDeduction) && hoursOk(s.nightHours) && (s.contractTermMonths === '' || /^\d{1,2}$/.test(s.contractTermMonths)) &&
   s.overtime.every((o) => hoursOk(o.hours)) && s.allowances.every((a) => a.label.trim() !== '' && amountOk(a.amount)) && s.deductions.every((d) => d.label.trim() !== '' && amountOk(d.amount));
 
 export function Breakdown({ line, money }: { line: HrLineView; money: Money }) {
@@ -210,7 +217,9 @@ export function InputsForm({ line, onDone }: { line: HrLineView; onDone: () => v
       | 'workedHours'
       | 'pieceCount'
       | 'bonus'
+      | 'retroPay'
       | 'advance'
+      | 'offsetDeduction'
       | 'nightHours'
       | 'contractTermMonths',
     label: string,
@@ -230,7 +239,9 @@ export function InputsForm({ line, onDone }: { line: HrLineView; onDone: () => v
         {text('maternityBhxhDays', t('in.maternityBhxhDays'))}
         {text('daysNotEmployed', t('in.daysNotEmployed'))}
         {text('bonus', t('in.bonus'))}
+        {text('retroPay', t('in.retroPay'))}
         {text('advance', t('in.advance'))}
+        {text('offsetDeduction', t('in.offsetDeduction'))}
         {text('nightHours', t('in.nightHours'))}
         {text('contractTermMonths', t('in.contractTermMonths'))}
       </div>
@@ -1032,30 +1043,30 @@ export function PayrollDiffPanel({
       {visibleRows.length === 0 ? (
         <Empty title={t('diff.emptyChanged')} hint={t('diff.emptyHint')} />
       ) : (
-        <Table className="[&_td]:whitespace-normal" data-testid="hr-diff-table">
-          <TableHeader>
+        <Table stickyFirstCol className="[&_td]:whitespace-normal" data-testid="hr-diff-table">
+          <TableHeader className="bg-muted [&_th]:bg-muted [&_th]:shadow-[inset_0_-1px_0_var(--color-border)] [&_tr]:border-b-0">
             <TableRow>
-              <TableHead scope="col" className="px-4 py-3">{t('diff.colEmployee')}</TableHead>
-              <TableHead scope="col" className="px-4 py-3">{t('diff.colReasons')}</TableHead>
-              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colPriorNet')}</TableHead>
-              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colCurrentNet')}</TableHead>
-              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colNetDelta')}</TableHead>
-              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colGrossDelta')}</TableHead>
-              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colDeductionDelta')}</TableHead>
-              <TableHead scope="col" className="px-4 py-3 text-right">{t('diff.colEmployerCostDelta')}</TableHead>
+              <TableHead scope="col">{t('diff.colEmployee')}</TableHead>
+              <TableHead scope="col">{t('diff.colReasons')}</TableHead>
+              <TableHead scope="col" className="text-right">{t('diff.colPriorNet')}</TableHead>
+              <TableHead scope="col" className="text-right">{t('diff.colCurrentNet')}</TableHead>
+              <TableHead scope="col" className="text-right">{t('diff.colNetDelta')}</TableHead>
+              <TableHead scope="col" className="text-right">{t('diff.colGrossDelta')}</TableHead>
+              <TableHead scope="col" className="text-right">{t('diff.colDeductionDelta')}</TableHead>
+              <TableHead scope="col" className="text-right">{t('diff.colEmployerCostDelta')}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {visibleRows.map((row) => (
               <TableRow key={row.employeeId} data-testid="hr-diff-row">
-                <TableCell className="px-4 py-3 font-medium">
+                <TableCell className="font-medium">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span>{row.employeeName}</span>
                     {row.hasRefused && <Badge variant="destructive">{t('diff.refusedTag')}</Badge>}
                     {!row.hasRefused && row.hasFlags && <Badge variant="warning">{t('diff.flaggedTag')}</Badge>}
                   </div>
                 </TableCell>
-                <TableCell className="px-4 py-3">
+                <TableCell>
                   <div className="flex flex-wrap gap-1">
                     {row.reasons.map((reason) => (
                       <Badge key={reason} variant={REASON_BADGE_VARIANT[reason]}>
@@ -1075,7 +1086,7 @@ export function PayrollDiffPanel({
           </TableBody>
           <TableFooter className={`${TOTAL_RULE} [&_tr]:hover:bg-transparent`}>
             <TableRow>
-              <TableCell className="px-4 py-3" colSpan={2}>{t('diff.totalRow', { count: diff.totals.headcount })}</TableCell>
+              <TableCell colSpan={2}>{t('diff.totalRow', { count: diff.totals.headcount })}</TableCell>
               <TableCell className={`${NUM} whitespace-nowrap`}>{diff.priorTotals ? f.money(diff.priorTotals.net, 'VND') : f.money('0', 'VND')}</TableCell>
               <TableCell className={`${NUM} whitespace-nowrap`}>{f.money(diff.totals.net, 'VND')}</TableCell>
               <TableCell className={`${NUM} whitespace-nowrap font-semibold`}>{formatSignedMoney(f, diff.deltas.netDelta)}</TableCell>
@@ -1128,6 +1139,15 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
       await refresh();
     },
   });
+  const syncStage6b = useMutation({
+    mutationFn: () => client.hr.payroll.runs.syncStage6b({ runId }),
+    onMutate: () => setEditing(null),
+    onSuccess: async () => {
+      setAccept(false);
+      setEditing(null);
+      await refresh();
+    },
+  });
   if (q.isPending) return <TableSkeleton columns={7} />;
   if (q.error) return <ErrorText>{errorMessage(q.error)}</ErrorText>;
   const s = q.data;
@@ -1166,6 +1186,17 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
               >
                 {t('syncOvertime')}
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="max-md:min-h-11"
+                loading={syncStage6b.isPending}
+                disabled={editing !== null || approve.isPending}
+                onClick={() => syncStage6b.mutate()}
+                data-testid="hr-sync-stage6b"
+              >
+                {t('syncStage6b')}
+              </Button>
               <Button variant="outline" size="sm" onClick={() => setThirteenthOpen((v) => !v)} data-testid="hr-13th-month-toggle">
                 {t('thirteenthMonth.toggle')}
               </Button>
@@ -1182,6 +1213,13 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
       {s.blocking.length > 0 && <BlockingRules rules={s.blocking} />}
       {draft && s.lines.length > 0 && <MonthCoworker runId={runId} />}
       <PayrollDiffPanel runId={runId} headingLevel="h3" />
+      <HrPayrollAdjustmentsPanel
+        legalEntityId={s.run.legalEntityId}
+        month={s.run.month}
+        draft={draft}
+        employees={s.lines.filter((l) => l.kind === 'pay').map((l) => ({ id: l.employeeId, name: l.employeeName }))}
+        onChanged={refresh}
+      />
       {draft && hasPayLines && thirteenthOpen && (
         <ThirteenthMonthPanel
           runId={runId}
@@ -1209,15 +1247,17 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
       )}
       {syncLeave.error && <ErrorText>{errorMessage(syncLeave.error)}</ErrorText>}
       {syncOvertime.error && <ErrorText>{errorMessage(syncOvertime.error)}</ErrorText>}
+      {syncStage6b.error && <ErrorText>{errorMessage(syncStage6b.error)}</ErrorText>}
       {draft && s.obstacles.includes('refused_lines') && <ErrorText>{t('refusedLines')}</ErrorText>}
       {payslip && <Payslip key={payslip} lineId={payslip} onClose={() => setPayslip(null)} />}
       {adjusting && <AdjustForm sheet={s} approvedRuns={approvedRuns} onClose={() => setAdjusting(false)} />}
       <DataTable
+        stickyFirstCol
         head={[t('employee'), t('gross'), t('employeeInsurance'), t('pit'), t('net'), t('employerCost'), '']}
         numeric={[1, 2, 3, 4, 5]}
         foot={
           <TableRow>
-            <TableCell className="px-4 py-3 font-medium">{t('totals')}</TableCell>
+            <TableCell className="font-medium">{t('totals')}</TableCell>
             <TableCell className={NUM}>{f.money(s.totals.gross, 'VND')}</TableCell>
             <TableCell className={NUM}>{f.money(s.totals.employeeInsurance, 'VND')}</TableCell>
             <TableCell className={NUM}>{f.money(s.totals.pit, 'VND')}</TableCell>
@@ -1233,7 +1273,7 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
           const open = shown === l.id;
           const rows = [
             <TableRow key={l.id} data-testid="hr-line-row">
-              <TableCell className="px-4 py-3">
+              <TableCell>
                 {l.employeeName}
                 {l.kind === 'adjustment' && (
                   <Badge className="ml-2" variant="secondary">
@@ -1254,8 +1294,8 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
               <TableCell className={NUM}>{l.figures ? f.money(l.figures.pit, 'VND') : '-'}</TableCell>
               <TableCell className={NUM}>{l.figures ? f.money(l.figures.net, 'VND') : '-'}</TableCell>
               <TableCell className={NUM}>{l.figures ? f.money(l.figures.employerCost, 'VND') : '-'}</TableCell>
-              <TableCell className="px-4 py-3 text-right">
-                <Button variant="ghost" size="sm" onClick={() => setShown(open ? null : l.id)} data-testid="hr-line-open">
+              <TableCell className="text-right">
+                <Button variant="ghost" size="sm" aria-expanded={open} onClick={() => setShown(open ? null : l.id)} data-testid="hr-line-open">
                   {open ? t('close') : t('detail')}
                 </Button>
               </TableCell>
@@ -1264,7 +1304,7 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
           if (open) {
             rows.push(
               <TableRow key={`${l.id}-detail`}>
-                <TableCell colSpan={7} className="px-4 py-3">
+                <TableCell colSpan={7} className="py-3">
                   {l.kind === 'adjustment' ? <p className="text-sm">{l.note}</p> : <Breakdown line={l} money={f.money} />}
                   {l.checks.filter((c) => !c.ok).map((c) => (
                     <p key={c.id} className="mt-2 text-xs text-destructive">
@@ -1284,7 +1324,7 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
                       </Button>
                     )}
                     {draft && l.kind === 'pay' && editing !== l.id && (
-                      <Button variant="outline" size="sm" disabled={syncLeave.isPending || syncOvertime.isPending} onClick={() => setEditing(l.id)} data-testid="hr-inputs-open">
+                      <Button variant="outline" size="sm" disabled={syncLeave.isPending || syncOvertime.isPending || syncStage6b.isPending} onClick={() => setEditing(l.id)} data-testid="hr-inputs-open">
                         {t('editInputs')}
                       </Button>
                     )}
@@ -1322,18 +1362,18 @@ export function Sheet({ runId, approvedRuns, onBack }: { runId: string; approved
                 {t('acceptFlags')}
               </label>
             )}
-            <Button className="mt-3" loading={approve.isPending} disabled={!s.approvable || (flagged && !accept) || syncOvertime.isPending} onClick={() => approve.mutate(s.fingerprint)} data-testid="hr-approve">
+            <Button className="mt-3" loading={approve.isPending} disabled={!s.approvable || (flagged && !accept) || syncOvertime.isPending || syncStage6b.isPending} onClick={() => approve.mutate(s.fingerprint)} data-testid="hr-approve">
               {t('approve')}
             </Button>
             {approve.error &&
               (isStepUpRequired(approve.error) ? (
-                syncOvertime.isPending ? null : (
+                syncOvertime.isPending || syncStage6b.isPending ? null : (
                   // Approving freezes the month, so it asks for a fresh second factor; once verified, the same request is repeated.
                   <div className="mt-3">
                     <StepUpPrompt
                       action={t('approve')}
                       onVerified={() => {
-                        if (!syncOvertime.isPending) approve.mutate(s.fingerprint);
+                        if (!syncOvertime.isPending && !syncStage6b.isPending) approve.mutate(s.fingerprint);
                       }}
                       onCancel={() => approve.reset()}
                     />
@@ -1415,13 +1455,13 @@ export function HrPayrollPage() {
             <DataTable head={[t('month'), t('statusLabel'), t('people'), t('net'), '']} numeric={[2, 3]}>
               {rows.map((r) => (
                 <TableRow key={r.id} data-testid="hr-run-row">
-                  <TableCell className="px-4 py-3">{r.month}</TableCell>
-                  <TableCell className="px-4 py-3">
+                  <TableCell>{r.month}</TableCell>
+                  <TableCell>
                     <Badge variant={r.status === 'draft' ? 'secondary' : 'brand'}>{t(`status.${r.status}`)}</Badge>
                   </TableCell>
                   <TableCell className={NUM}>{r.lines}</TableCell>
                   <TableCell className={NUM}>{f.money(r.totals.net, 'VND')}</TableCell>
-                  <TableCell className="px-4 py-3 text-right">
+                  <TableCell className="text-right">
                     <Button variant="ghost" size="sm" onClick={() => setOpen(r.id)} data-testid="hr-run-view">
                       {t('open')}
                     </Button>

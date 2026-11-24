@@ -18,13 +18,28 @@ export const hrManifest = defineModule({
       ),
       // Office attendance QR secret hashes per legal entity (#4447 Stage 5C): SHA-256 secret hashes, owner/admin only.
       attendance_qr_config: columns(['org_id', 'id', 'legal_entity_id', 'active', 'created_by', 'created_at', 'updated_at'], { qr_secret_hash: 'sensitive' }),
+      // Employee business trip requests with 2-level approval (#4527 Stage 6B).
+      business_trip_request: columns(
+        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'department_id', 'start_on', 'end_on', 'status', 'l1_approver_user_id', 'l1_acted_at', 'final_acted_by', 'final_acted_at', 'created_by', 'created_at', 'updated_at'],
+        { estimated_allowance: 'sensitive', destination: 'pii', purpose: 'pii', decision_note: 'pii' },
+      ),
       // Lightweight recruiting candidates (#3425): readable by owners and admins only, with applicant PII and wage notes classified.
       candidate: columns(
         ['org_id', 'id', 'legal_entity_id', 'opening_id', 'stage', 'source', 'years_experience', 'matched_skills', 'planned_start_on', 'interview_event_id', 'interview_starts_at', 'interview_ends_at', 'hired_employee_id', 'hired_at', 'erased_at', 'created_by', 'created_at', 'updated_at'],
         { display_name: 'pii', email: 'contact', phone: 'contact', notes: 'pii', expected_wage: 'sensitive', agreed_wage: 'sensitive' },
       ),
+      // Labor contract addendums (#4528 Stage 6C): owners/admins only; wage deltas are sensitive, free-text summaries/titles are PII.
+      contract_addendum: columns(
+        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'employment_id', 'addendum_number', 'effective_on', 'status', 'issued_at', 'voided_at', 'created_by', 'created_at', 'updated_at'],
+        { change_summary: 'pii', previous_pay_rate: 'sensitive', new_pay_rate: 'sensitive', previous_title: 'pii', new_title: 'pii', void_reason: 'pii' },
+      ),
       // Departments per legal entity (#3412, #4300): optional team structure with default pay_function and optional L1 leave manager. Org master data: internal.
       department: columns(['org_id', 'id', 'legal_entity_id', 'name', 'code', 'pay_function', 'manager_user_id', 'archived_at', 'created_by', 'created_at', 'updated_at']),
+      // Employee hardware/asset handover checklist (#4528 Stage 6C): owners/admins manage, linked employee reads non-sensitive own items.
+      employee_asset_handover: columns(
+        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'asset_code', 'asset_name', 'handed_over_on', 'returned_on', 'status', 'cleared_by', 'created_by', 'created_at', 'updated_at'],
+        { serial_number: 'pii', notes: 'pii' },
+      ),
       // Lightweight recruiting job openings (#3425): role requirements and pay bands per legal entity, readable by owners and admins only.
       job_opening: columns(['org_id', 'id', 'legal_entity_id', 'department_id', 'title', 'department_name', 'contract_type', 'region', 'pay_function', 'budget_min_wage', 'budget_max_wage', 'required_skills', 'status', 'closed_at', 'created_by', 'created_at', 'updated_at']),
       // Employee leave requests with L1 -> final approval state machine (#4300): reason and decision_note hold user-written PII/text.
@@ -50,6 +65,12 @@ export const hrManifest = defineModule({
       // 2-level overtime requests feeding draft payroll runs (#4448 Stage 5B).
       overtime_request: columns(
         ['org_id', 'id', 'legal_entity_id', 'employee_id', 'department_id', 'month', 'work_date', 'hours', 'day_type', 'is_night', 'status', 'l1_approver_user_id', 'l1_acted_at', 'final_acted_by', 'final_acted_at', 'created_by', 'created_at', 'updated_at'],
+        { reason: 'pii', decision_note: 'pii' },
+      ),
+      // Retro pay and offset deduction items reviewed by owner/admin before rolling into draft payroll (#4527 Stage 6B).
+      // `amount` stays `internal` in the global bare-column map (`audit-facts.test.ts`): HR Stage 6B commands omit raw `amount` from `ctx.audit` so employee monetary figures never enter WORM `audit_event`, while DB RLS (`owner_admin`, `le_scope`), `sensitive: true` read queries, and `OWNER_RUN_EXPORT_TABLES` restrict access.
+      payroll_adjustment_item: columns(
+        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'month', 'kind', 'amount', 'status', 'reviewed_by', 'reviewed_at', 'payroll_run_id', 'created_by', 'created_at', 'updated_at'],
         { reason: 'pii', decision_note: 'pii' },
       ),
       // The layout of one bank's bulk-salary file (#2532): the columns, their headers and the content text. Configuration, no person's data: internal.
@@ -102,6 +123,12 @@ export const hrManifest = defineModule({
         ['org_id', 'id', 'legal_entity_id', 'employee_id', 'reviewer_user_id', 'probation_end_on', 'period_start', 'period_end', 'completed_tasks_count', 'projects_available', 'decision', 'extended_until', 'decided_at', 'created_by', 'created_at', 'updated_at'],
         { completed_tasks_snapshot: 'pii', attendance_snapshot: 'pii', review_note: 'pii', ai_draft_note: 'pii' },
       ),
+      // Employee salary advance requests with 2-level approval feeding monthly draft payroll deduction Cr 141 (#4527 Stage 6B).
+      // `amount` stays `internal` in the global bare-column map (`audit-facts.test.ts`): HR Stage 6B commands omit raw `amount` from `ctx.audit` so employee monetary figures never enter WORM `audit_event`, while DB RLS, `sensitive: true` read queries, and `OWNER_RUN_EXPORT_TABLES` restrict access.
+      salary_advance_request: columns(
+        ['org_id', 'id', 'legal_entity_id', 'employee_id', 'department_id', 'month', 'amount', 'status', 'l1_approver_user_id', 'l1_acted_at', 'final_acted_by', 'final_acted_at', 'payroll_run_id', 'created_by', 'created_at', 'updated_at'],
+        { reason: 'pii', decision_note: 'pii' },
+      ),
     },
   },
   // The one permission a command can name. Its risk is that of the highest command that names it: approving a month is R3. Declared with no default role: owners and admins pass by their base role, and the database's owner_admin policy enforces the same, so
@@ -114,14 +141,20 @@ export const hrManifest = defineModule({
     // Daily attendance logs and office QR config (#4447 Stage 5C).
     { type: 'hr.attendance_log', table: 'attendance_log', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.attendance_qr_config', table: 'attendance_qr_config', legalEntityScoped: true, audit: 'command' },
+    // Employee business trip requests (#4527 Stage 6B).
+    { type: 'hr.business_trip_request', table: 'business_trip_request', legalEntityScoped: true, audit: 'command' },
     // Lightweight recruiting candidates and job openings (#3425): edited by owners and admins, audited as commands.
     { type: 'hr.candidate', table: 'candidate', legalEntityScoped: true, audit: 'command' },
+    { type: 'hr.contract_addendum', table: 'contract_addendum', legalEntityScoped: true, audit: 'command' },
     // Departments per legal entity (#3412): edited and archived by commands, so it is their audit target.
     { type: 'hr.department', table: 'department', legalEntityScoped: true, audit: 'command' },
+    { type: 'hr.employee_asset_handover', table: 'employee_asset_handover', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.job_opening', table: 'job_opening', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.leave_request', table: 'leave_request', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.onboarding_submission', table: 'onboarding_submission', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.overtime_request', table: 'overtime_request', legalEntityScoped: true, audit: 'command' },
+    // Retro pay and offset deduction payroll adjustment items (#4527 Stage 6B).
+    { type: 'hr.payroll_adjustment_item', table: 'payroll_adjustment_item', legalEntityScoped: true, audit: 'command' },
     // The saved layout of a bank's bulk-salary file (#2893): edited and deleted by commands, so it is their audit target.
     { type: 'hr.payroll_bank_template', table: 'payroll_bank_template', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.payroll_dependent', table: 'payroll_dependent', legalEntityScoped: true, audit: 'command' },
@@ -130,6 +163,8 @@ export const hrManifest = defineModule({
     { type: 'hr.payroll_line', table: 'payroll_line', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.payroll_run', table: 'payroll_run', legalEntityScoped: true, audit: 'command' },
     { type: 'hr.probation_review', table: 'probation_review', legalEntityScoped: true, audit: 'command' },
+    // Employee salary advance requests (#4527 Stage 6B).
+    { type: 'hr.salary_advance_request', table: 'salary_advance_request', legalEntityScoped: true, audit: 'command' },
   ],
   // Its screens in the app and its menu items (#1652), kept with the other modules' in @ludy/kernel-contract.
   ...MODULE_SCREENS.hr,

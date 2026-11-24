@@ -170,11 +170,19 @@ describe('13th-month salary and statutory severance contracts & domain guards (#
         );
         return q;
       };
+      const noopExecutor = {
+        transformQuery: (node: unknown) => node,
+        compileQuery: (node: unknown) => node,
+        executeQuery: async () => ({ rows: [] }),
+        withPlugins: function () {
+          return this;
+        },
+      };
       const ctx = {
         actor: { type: 'user', userId: 'owner', aal: 'aal2', sessionId: 's1', mfaAt: Math.floor(Date.now() / 1000) },
         orgId: 'org',
         now: new Date(),
-        trx: { selectFrom: query, updateTable: query },
+        trx: { selectFrom: query, updateTable: query, getExecutor: () => noopExecutor },
         audit: () => {},
       } as unknown as Parameters<typeof runApprove.handler>[0];
 

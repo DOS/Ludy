@@ -119,12 +119,16 @@ export interface LudyFinanceSchema {
 export interface LudyHrSchema {
   'ludy_hr.attendance_log': HrAttendanceLogTable;
   'ludy_hr.attendance_qr_config': HrAttendanceQrConfigTable;
+  'ludy_hr.business_trip_request': HrBusinessTripRequestTable;
   'ludy_hr.candidate': HrCandidateTable;
+  'ludy_hr.contract_addendum': HrContractAddendumTable;
   'ludy_hr.department': HrDepartmentTable;
+  'ludy_hr.employee_asset_handover': HrEmployeeAssetHandoverTable;
   'ludy_hr.job_opening': HrJobOpeningTable;
   'ludy_hr.leave_request': HrLeaveRequestTable;
   'ludy_hr.onboarding_submission': HrOnboardingSubmissionTable;
   'ludy_hr.overtime_request': HrOvertimeRequestTable;
+  'ludy_hr.payroll_adjustment_item': HrPayrollAdjustmentItemTable;
   'ludy_hr.payroll_bank_template': HrPayrollBankTemplateTable;
   'ludy_hr.payroll_dependent': HrPayrollDependentTable;
   'ludy_hr.payroll_employee': HrPayrollEmployeeTable;
@@ -133,6 +137,7 @@ export interface LudyHrSchema {
   'ludy_hr.payroll_line': HrPayrollLineTable;
   'ludy_hr.payroll_run': HrPayrollRunTable;
   'ludy_hr.probation_review': HrProbationReviewTable;
+  'ludy_hr.salary_advance_request': HrSalaryAdvanceRequestTable;
 }
 
 export interface LudyKernelSchema {
@@ -197,6 +202,7 @@ export interface LudyKernelSchema {
   'ludy_kernel.position': KernelPositionTable;
   'ludy_kernel.proposal': KernelProposalTable;
   'ludy_kernel.proposal_policy': KernelProposalPolicyTable;
+  'ludy_kernel.push_subscription': KernelPushSubscriptionTable;
   'ludy_kernel.record_le': KernelRecordLeTable;
   'ludy_kernel.role': KernelRoleTable;
   'ludy_kernel.role_assignment': KernelRoleAssignmentTable;
@@ -253,9 +259,11 @@ export interface LudyProjectsSchema {
   'ludy_projects.project_cycle': ProjectsProjectCycleTable;
   'ludy_projects.project_member': ProjectsProjectMemberTable;
   'ludy_projects.project_task': ProjectsProjectTaskTable;
+  'ludy_projects.project_triage_item': ProjectsProjectTriageItemTable;
   'ludy_projects.roadmap_announcement': ProjectsRoadmapAnnouncementTable;
   'ludy_projects.roadmap_board': ProjectsRoadmapBoardTable;
   'ludy_projects.roadmap_item': ProjectsRoadmapItemTable;
+  'ludy_projects.roadmap_signal': ProjectsRoadmapSignalTable;
   'ludy_projects.roadmap_vote': ProjectsRoadmapVoteTable;
   'ludy_projects.task_dependency': ProjectsTaskDependencyTable;
   'ludy_projects.time_entry': ProjectsTimeEntryTable;
@@ -2014,6 +2022,29 @@ export interface HrAttendanceQrConfigTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/** ludy_hr.business_trip_request */
+export interface HrBusinessTripRequestTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  department_id: ColumnType<string | null, string | null, NotGranted>;
+  destination: string | null;
+  purpose: string | null;
+  start_on: ColumnType<string, string, NotGranted>;
+  end_on: ColumnType<string, string, NotGranted>;
+  estimated_allowance: ColumnType<string, string | undefined, NotGranted>;
+  status: Generated<string>;
+  l1_approver_user_id: string | null;
+  l1_acted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  final_acted_by: string | null;
+  final_acted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  decision_note: string | null;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** ludy_hr.candidate */
 export interface HrCandidateTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -2042,6 +2073,29 @@ export interface HrCandidateTable {
   hired_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
+/** ludy_hr.contract_addendum */
+export interface HrContractAddendumTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  employment_id: ColumnType<string | null, string | null, NotGranted>;
+  addendum_number: ColumnType<string, string, NotGranted>;
+  effective_on: string;
+  change_summary: string;
+  previous_pay_rate: string | null;
+  new_pay_rate: string | null;
+  previous_title: string | null;
+  new_title: string | null;
+  status: Generated<string>;
+  issued_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  voided_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  void_reason: string | null;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** ludy_hr.department */
 export interface HrDepartmentTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -2055,6 +2109,25 @@ export interface HrDepartmentTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   manager_user_id: string | null;
+}
+
+/** ludy_hr.employee_asset_handover */
+export interface HrEmployeeAssetHandoverTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  asset_code: ColumnType<string, string, NotGranted>;
+  asset_name: string;
+  serial_number: string | null;
+  handed_over_on: ColumnType<string, string, NotGranted>;
+  returned_on: string | null;
+  status: Generated<string>;
+  notes: string | null;
+  cleared_by: string | null;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** ludy_hr.job_opening */
@@ -2149,6 +2222,26 @@ export interface HrOvertimeRequestTable {
   final_acted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   reason: string | null;
   decision_note: string | null;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_hr.payroll_adjustment_item */
+export interface HrPayrollAdjustmentItemTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  month: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  amount: ColumnType<string, string, NotGranted>;
+  reason: string | null;
+  status: Generated<string>;
+  reviewed_by: string | null;
+  reviewed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  decision_note: string | null;
+  payroll_run_id: string | null;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
@@ -2315,6 +2408,28 @@ export interface HrProbationReviewTable {
   review_note: string | null;
   ai_draft_note: string | null;
   decided_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_hr.salary_advance_request */
+export interface HrSalaryAdvanceRequestTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  employee_id: ColumnType<string, string, NotGranted>;
+  department_id: ColumnType<string | null, string | null, NotGranted>;
+  month: ColumnType<string, string, NotGranted>;
+  amount: ColumnType<string, string, NotGranted>;
+  reason: string | null;
+  status: Generated<string>;
+  l1_approver_user_id: string | null;
+  l1_acted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  final_acted_by: string | null;
+  final_acted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  decision_note: string | null;
+  payroll_run_id: string | null;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
@@ -3261,6 +3376,20 @@ export interface KernelProposalTable {
   approvers_told_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
+/** ludy_kernel.push_subscription */
+export interface KernelPushSubscriptionTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
+  endpoint: ColumnType<string, string, NotGranted>;
+  p256dh: string;
+  auth: string;
+  user_agent: string | null;
+  failure_count: Generated<number>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  last_used_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+}
+
 /** ludy_kernel.record_le */
 export interface KernelRecordLeTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -3973,6 +4102,29 @@ export interface ProjectsProjectTaskTable {
   story_points: number | null;
 }
 
+/** ludy_projects.project_triage_item */
+export interface ProjectsProjectTriageItemTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  source_type: string;
+  source_id: string | null;
+  status: Generated<string>;
+  priority: Generated<string>;
+  title: string;
+  description: string | null;
+  tainted: Generated<boolean>;
+  snoozed_until: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  accepted_task_id: string | null;
+  merged_into_task_id: string | null;
+  decline_reason: string | null;
+  triaged_by: string | null;
+  triaged_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** ludy_projects.roadmap_announcement */
 export interface ProjectsRoadmapAnnouncementTable {
   org_id: string;
@@ -4023,6 +4175,25 @@ export interface ProjectsRoadmapItemTable {
   vote_count: Generated<number>;
   tainted: Generated<boolean>;
   submitter_display_name: string | null;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_projects.roadmap_signal */
+export interface ProjectsRoadmapSignalTable {
+  org_id: string;
+  id: Generated<string>;
+  board_id: string;
+  roadmap_item_id: string;
+  source_type: string;
+  source_id: string;
+  source_party_id: string | null;
+  account_label: string | null;
+  quote_excerpt: string | null;
+  deal_value: string | null;
+  deal_currency: string | null;
+  tainted: Generated<boolean>;
   created_by: string | null;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
@@ -4133,6 +4304,7 @@ export interface SignEnvelopeObligationTable {
   created_by: string | null;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  next_pending_due_date: string | null;
 }
 
 /** ludy_sign.envelope */
@@ -4184,6 +4356,8 @@ export interface SignEnvelopeTable {
   share_summary_with_signers: Generated<boolean>;
   shared_summary_json: ColumnType<unknown, string | null | undefined, string | null>;
   allow_delegation: Generated<boolean>;
+  retained_org_visible: boolean | null;
+  retained_reader_ids: string[] | null;
 }
 
 /** ludy_sign.field */

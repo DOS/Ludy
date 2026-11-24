@@ -74,13 +74,27 @@ test('eSign workflow: upload, manual field placement, mobile 375px sequential si
     await nav.getByRole('link', { name: 'Hồ sơ ký', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/sign/envelopes$`));
 
-    await page.getByTestId('sign-new-envelope-btn').click();
+    const newEnvelopeBtn = page.getByTestId('sign-new-envelope-btn');
+    await newEnvelopeBtn.click();
+    const createDialog = page.getByTestId('sign-create-dialog');
+    await expect(createDialog).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(createDialog).toHaveCount(0);
+    await expect(newEnvelopeBtn).toBeFocused();
+
+    await newEnvelopeBtn.click();
+    await expect(createDialog).toBeVisible();
     await page.getByTestId('sign-upload-pdf-input').setInputFiles({
       name: 'hop-dong-e2e.pdf',
       mimeType: 'application/pdf',
       buffer: pdfBuffer,
     });
     await page.locator('#sign-new-title').fill(docTitle);
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('dialog-discard')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Tiếp tục nhập' })).toBeFocused();
+    await page.getByRole('button', { name: 'Tiếp tục nhập' }).click();
+    await expect(page.locator('#sign-new-title')).toHaveValue(docTitle);
     await page.getByTestId('sign-create-submit-btn').click();
 
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/sign/envelopes/[^/]+$`));
@@ -101,8 +115,14 @@ test('eSign workflow: upload, manual field placement, mobile 375px sequential si
       { message: 'PDF inspect status to become passed', timeout: 60_000, intervals: [1500, 2500, 3500] },
     ).toBe(true);
 
-    // Vy panel renders cleanly with manual parity even before or without AI analysis.
+    // Vy drawer opens cleanly from its trigger with manual parity and closes on Escape.
+    const vyTrigger = page.getByTestId('vy-clause-trigger');
+    await expect(vyTrigger).toBeVisible();
+    await vyTrigger.click();
     await expect(page.getByTestId('vy-clause-panel')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('vy-clause-panel')).toHaveCount(0);
+    await expect(vyTrigger).toBeFocused();
     await expect(page.getByTestId('pdf-canvas-viewer').locator('canvas').first()).toBeVisible();
 
     await page.locator('#sign-routing-mode').selectOption('sequential');

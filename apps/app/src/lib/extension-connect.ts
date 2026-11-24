@@ -4,13 +4,16 @@
 // in as usual, chooses the org and approves; the app asks the kernel for a one-time code and sends the window back to the
 // extension's redirect address with it. The extension then trades the code and its verifier for a token. The member's
 // password and browser session never reach the extension.
-import { EXTENSION_SCOPE_IDS, type ExtensionScopeId } from '@ludy/kernel-contract';
+import { DESKTOP_CLIENT_ID, EXTENSION_SCOPE_IDS, extensionClientAllowsScopes, type ExtensionClient, type ExtensionScopeId } from '@ludy/kernel-contract';
 import { promoteMigratedItem, readLegacyAwareItem, removeMigratedItem, writeMigratedItem } from './storage-migrate.ts';
 
 export const CONNECT_PATH = '/-/extension/connect';
 // Chrome and Edge give an extension this redirect address: https://<32 letters a to p>.chromiumapp.org/<path>. Nothing
 // else may receive the code.
 const REDIRECT = /^https:\/\/[a-p]{32}\.chromiumapp\.org\/[A-Za-z0-9_./-]{0,100}$/;
+// Ludy Desktop (ADR-0055 slice 2, #4515) is not a browser extension: it gets the code on a loopback address of the same machine (RFC 8252
+// section 7.3), 127.0.0.1 and an unprivileged port, one fixed path. A code sent there is useless without the PKCE verifier only the app holds.
+const DESKTOP_REDIRECT = /^http:\/\/127\.0\.0\.1:([0-9]{4,5})\/ludy-desktop\/callback$/;
 const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
 const STATE = /^[A-Za-z0-9_-]{1,200}$/;
 const KEY = 'ludy-pending-extension-connect';
@@ -19,7 +22,9 @@ const LEGACY_KEY = 'crove-pending-extension-connect';
 export const PENDING_CONNECT_TTL_MS = 10 * 60 * 1000;
 
 export interface ConnectRequest {
-  // The extension signing in: the host of its redirect address, one of the ids the deployment allows.
+  // Who is signing in: the browser extension, or Ludy Desktop (client=desktop in the address, #4515).
+  client: ExtensionClient;
+  // The extension signing in: the host of its redirect address, one of the ids the deployment allows. For Ludy Desktop, DESKTOP_CLIENT_ID.
   extensionId: string;
   codeChallenge: string;
   redirect: string;
@@ -46,11 +51,14 @@ export function filterScopesForModules(scopes: readonly ExtensionScopeId[], enab
 // The request an address carries, or null when any part is missing or malformed: the extension's address must be a
 // chromiumapp.org one of an extension in `allowedIds` (EXTENSION_IDS, #2740), the challenge a SHA-256 in base64url, the
 // method S256, every scope a known one.
-export function parseConnectRequest(search: string, allowedIds: readonly string[]): ConnectRequest | null {
+export function parseConnectRequest(search: string, allowedIds: readonly string[], options?: { desktopCapture?: boolean }): ConnectRequest | null {
   const params = new URLSearchParams(search);
   const codeChallenge = params.get('code_challenge') ?? '';
   const redirect = params.get('redirect_uri') ?? '';
   const state = params.get('state') ?? '';
+  const client = params.get('client');
+  if (client !== null && client !== 'desktop') return null;
+  if (client === 'desktop') return parseDesktopRequest(params, codeChallenge, redirect, state, Boolean(options?.desktopCapture));
   if (params.get('code_challenge_method') !== 'S256' || !CHALLENGE.test(codeChallenge) || !REDIRECT.test(redirect) || !STATE.test(state)) return null;
   const extensionId = new URL(redirect).hostname.split('.')[0] ?? '';
   if (!allowedIds.includes(extensionId)) return null;
@@ -59,7 +67,22 @@ export function parseConnectRequest(search: string, allowedIds: readonly string[
   // The agenda scope rides with the meetings scope (B2): alone it could not even be exchanged for a token.
   if (asked.includes('agenda') && !asked.includes('meetings')) return null;
   const deviceName = (params.get('device') ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
-  return { extensionId, codeChallenge, redirect, state, scopes: [...new Set(asked)].sort(), deviceName };
+  return { client: 'extension', extensionId, codeChallenge, redirect, state, scopes: [...new Set(asked)].sort(), deviceName };
+}
+
+// Ludy Desktop's request: the loopback redirect, either no scope (sign-in only) or meetings/agenda when desktop capture is on (#4516).
+function parseDesktopRequest(params: URLSearchParams, codeChallenge: string, redirect: string, state: string, desktopCapture: boolean): ConnectRequest | null {
+  const port = Number(DESKTOP_REDIRECT.exec(redirect)?.[1]);
+  if (params.get('code_challenge_method') !== 'S256' || !CHALLENGE.test(codeChallenge) || !STATE.test(state)) return null;
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) return null;
+  const asked = (params.get('scope') ?? '').split(/[ ,]+/).filter(Boolean);
+  // Capture scopes for Ludy Desktop stay refused unless the deployment turned desktop capture on (#4516).
+  if (asked.length > 0 && !desktopCapture) return null;
+  if (asked.length > EXTENSION_SCOPE_IDS.length || !asked.every(isScope)) return null;
+  if (asked.includes('agenda') && !asked.includes('meetings')) return null;
+  if (!extensionClientAllowsScopes('desktop', asked)) return null;
+  const deviceName = (params.get('device') ?? '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  return { client: 'desktop', extensionId: DESKTOP_CLIENT_ID, codeChallenge, redirect, state, scopes: [...new Set(asked)].sort(), deviceName };
 }
 
 // Where the window goes next: the extension's address with the one-time code, or with the refusal. The state is returned
@@ -91,7 +114,7 @@ export function rememberConnect(request: ConnectRequest, now: number = Date.now(
   }
 }
 
-export function pendingConnect(allowedIds: readonly string[], now: number = Date.now()): ConnectRequest | null {
+export function pendingConnect(allowedIds: readonly string[], now: number = Date.now(), options?: { desktopCapture?: boolean }): ConnectRequest | null {
   try {
     const entry = readLegacyAwareItem(sessionStorage, KEY, LEGACY_KEY);
     if (!entry) return null;
@@ -102,6 +125,7 @@ export function pendingConnect(allowedIds: readonly string[], now: number = Date
     const checked = request && fresh
       ? parseConnectRequest(
           new URLSearchParams({
+            ...(request.client === 'desktop' ? { client: 'desktop' } : {}),
             code_challenge: request.codeChallenge,
             code_challenge_method: 'S256',
             redirect_uri: request.redirect,
@@ -110,6 +134,7 @@ export function pendingConnect(allowedIds: readonly string[], now: number = Date
             device: request.deviceName,
           }).toString(),
           allowedIds,
+          options,
         )
       : null;
     if (checked) {

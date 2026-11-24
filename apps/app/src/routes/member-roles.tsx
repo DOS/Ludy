@@ -14,7 +14,8 @@ import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-sel
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { ErrorText } from '../components/ui.tsx';
 import { errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
-import { assignableRoles, roleNeedsEntity } from '../lib/member-roles.ts';
+import { assignableRoles, roleHintKey, roleNeedsEntity } from '../lib/member-roles.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 
 const refresh = () => queryClient.invalidateQueries();
 
@@ -72,6 +73,7 @@ function AssignRole({ userId, name, baseRole, catalog, held, entities }: {
 }) {
   const t = useTranslations('memberRoles');
   const tc = useTranslations('common');
+  useModulesVersion(); // the apps of the org can change while this form is open (the Marketing hint names ads only when ads runs)
   const choices = assignableRoles(catalog, held, baseRole);
   const [open, setOpen] = useState(false);
   const [roleKey, setRoleKey] = useState('');
@@ -126,7 +128,7 @@ function AssignRole({ userId, name, baseRole, catalog, held, entities }: {
           </NativeSelectOption>
         ))}
       </NativeSelect>
-      {role && <p className="text-xs text-subtle-foreground">{t(`hints.${role.key}`)}</p>}
+      {role && <p className="text-xs text-subtle-foreground">{t(`hints.${roleHintKey(role.key, installedModules())}`)}</p>}
       {needsEntity && (
         <NativeSelect
           size="sm"

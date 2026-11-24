@@ -9,7 +9,12 @@ export function StatusLink({ className }: { className?: string }) {
   const t = useTranslations('nav');
   if (!getConfig().statusPage) return null;
   return (
-    <a href={`${serverOrigin()}/status`} target="_blank" rel="noopener" className={cn('hover:text-muted-foreground', className)}>
+    <a
+      href={`${serverOrigin()}/status`}
+      target="_blank"
+      rel="noopener"
+      className={cn('rounded-sm hover:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none', className)}
+    >
       {t('status')}
     </a>
   );

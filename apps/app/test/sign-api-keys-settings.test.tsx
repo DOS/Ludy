@@ -6,7 +6,100 @@ import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
 import { catalog } from '../src/i18n/runtime.ts';
 import type { SignApiKeyRecord } from '../src/lib/sign-api.ts';
-import { SignApiKeysView, computeApiKeyExpiresAt } from '../src/routes/sign-settings.tsx';
+
+interface HookState {
+  inTarget: boolean;
+  stateIdx: number;
+  states: unknown[];
+  effectIdx: number;
+  effects: Array<{ deps?: unknown[]; cleanup?: () => void }>;
+  mutationIdx: number;
+  mutationResets: Array<() => void>;
+  resetCalls: number;
+  secretClearedCalls: number;
+}
+
+const hookDriver = vi.hoisted(
+  (): HookState => ({
+    inTarget: false,
+    stateIdx: 0,
+    states: [],
+    effectIdx: 0,
+    effects: [],
+    mutationIdx: 0,
+    mutationResets: [],
+    resetCalls: 0,
+    secretClearedCalls: 0,
+  }),
+);
+
+vi.mock('react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react')>();
+  return {
+    ...actual,
+    useState: (<S,>(initial?: S | (() => S)) => {
+      if (!hookDriver.inTarget) return actual.useState(initial as S);
+      const idx = hookDriver.stateIdx++;
+      if (idx >= hookDriver.states.length) {
+        hookDriver.states.push(typeof initial === 'function' ? (initial as () => S)() : initial);
+      }
+      const setState = (val: S | ((prev: S) => S)) => {
+        const next = typeof val === 'function' ? (val as (p: S) => S)(hookDriver.states[idx] as S) : val;
+        if (idx === 0 && next === null) hookDriver.secretClearedCalls += 1;
+        hookDriver.states[idx] = next;
+      };
+      return [hookDriver.states[idx] as S, setState];
+    }) as typeof actual.useState,
+    useEffect: ((effect: () => void | (() => void), deps?: unknown[]) => {
+      if (!hookDriver.inTarget) return actual.useEffect(effect, deps);
+      const idx = hookDriver.effectIdx++;
+      const prev = hookDriver.effects[idx];
+      const changed =
+        !prev ||
+        !deps ||
+        !prev.deps ||
+        deps.length !== prev.deps.length ||
+        deps.some((d, i) => !Object.is(d, prev.deps![i]));
+      if (changed) {
+        prev?.cleanup?.();
+        const cleanup = effect();
+        hookDriver.effects[idx] = {
+          ...(deps !== undefined ? { deps } : {}),
+          ...(typeof cleanup === 'function' ? { cleanup } : {}),
+        };
+      }
+    }) as typeof actual.useEffect,
+  };
+});
+
+vi.mock('@tanstack/react-query', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@tanstack/react-query')>();
+  return {
+    ...actual,
+    useQuery: ((opts: Parameters<typeof actual.useQuery>[0]) => {
+      if (!hookDriver.inTarget) return actual.useQuery(opts);
+      return { data: { items: [] }, isLoading: false, error: null };
+    }) as typeof actual.useQuery,
+    useMutation: ((opts: Parameters<typeof actual.useMutation>[0]) => {
+      if (!hookDriver.inTarget) return actual.useMutation(opts);
+      const idx = hookDriver.mutationIdx++;
+      const reset = (hookDriver.mutationResets[idx] ??= () => {
+        if (idx === 0) hookDriver.resetCalls += 1;
+      });
+      return {
+        isPending: false,
+        error: null,
+        variables: undefined,
+        mutate: vi.fn(),
+        reset,
+      };
+    }) as typeof actual.useMutation,
+  };
+});
+
+const { SignApiKeysSection, SignApiKeysView, computeApiKeyExpiresAt } = await import(
+  '../src/routes/sign-settings.tsx'
+);
 
 vi.mock('../src/lib/auth.ts', () => ({
   auth: () => ({ mfa: { listFactors: () => Promise.reject(new Error('not fetched')) } }),
@@ -161,5 +254,44 @@ describe('SignApiKeysView (/o/$slug/sign/settings, #4441)', () => {
       expect(formCloseIdx).toBeGreaterThan(-1);
       expect(stepUpIdx).toBeGreaterThan(formCloseIdx);
     }
+  });
+
+  it('calls createMutation.reset() alongside clearing createdSecret when workspace slug changes (#4510)', () => {
+    hookDriver.states = [];
+    hookDriver.effects = [];
+    hookDriver.mutationResets = [];
+    hookDriver.resetCalls = 0;
+    hookDriver.secretClearedCalls = 0;
+
+    const renderSection = (slug: string) => {
+      hookDriver.inTarget = true;
+      hookDriver.stateIdx = 0;
+      hookDriver.effectIdx = 0;
+      hookDriver.mutationIdx = 0;
+      try {
+        return renderToStaticMarkup(
+          <QueryClientProvider client={new QueryClient()}>
+            <IntlProvider locale="en" messages={catalog('en')} timeZone="Asia/Ho_Chi_Minh">
+              <SignApiKeysSection slug={slug} role="owner" />
+            </IntlProvider>
+          </QueryClientProvider>,
+        );
+      } finally {
+        hookDriver.inTarget = false;
+      }
+    };
+
+    renderSection('org-one');
+    expect(hookDriver.resetCalls).toBe(1);
+    expect(hookDriver.secretClearedCalls).toBe(1);
+
+    // Same slug re-render should not re-trigger reset.
+    renderSection('org-one');
+    expect(hookDriver.resetCalls).toBe(1);
+
+    // Switching workspace slug resets both createdSecret and createMutation state.
+    renderSection('org-two');
+    expect(hookDriver.resetCalls).toBe(2);
+    expect(hookDriver.secretClearedCalls).toBe(2);
   });
 });

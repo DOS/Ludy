@@ -80,7 +80,7 @@ export const morningNotice = defineCommand({
   risk: 'R2',
   sideEffect: 'external',
   access: 'system',
-  handler: async (ctx, input): Promise<{ notified: boolean; mailed: boolean }> => {
+  handler: async (ctx, input): Promise<{ notified: boolean; mailed: boolean; notificationId?: string | null }> => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới báo cuộc họp trong ngày');
     const { rows: found } = await sql<{ events: number; english: boolean }>`
       SELECT events, english FROM ludy_meetings.morning_notices_due(1::int, ${ctx.orgId}::uuid, ${input.userId}::uuid, ${input.day}::date)`.execute(ctx.trx);
@@ -99,6 +99,15 @@ export const morningNotice = defineCommand({
     });
     // Turned off, left the org, or told already for this day: no in-app line, so no mail either.
     if (sent === 0) return { notified: false, mailed: false };
+    // Read back the newly inserted notification id in the same transaction so the worker can queue browser push (#4082).
+    const notice = await ctx.trx
+      .selectFrom('ludy_kernel.notification')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('user_id', '=', input.userId)
+      .where('kind', '=', MORNING_KIND)
+      .where('dedupe_key', '=', `morning:${input.day}`)
+      .executeTakeFirst();
     const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     // The member's address while they are a member with an account that is not disabled (the worker's member_emails: no name, no other account column).
     const { rows } = await sql<{ email: string | null }>`SELECT email FROM ludy_kernel.member_emails(${[input.userId]}::uuid[])`.execute(ctx.trx);
@@ -119,7 +128,7 @@ export const morningNotice = defineCommand({
     const mailed = mail?.status === 'queued';
     // A day and a count and a flag: no address in the audit row.
     ctx.audit({ day: input.day, count: events, mailed });
-    return { notified: true, mailed };
+    return { notified: true, mailed, notificationId: notice?.id ?? null };
   },
 });
 

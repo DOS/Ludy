@@ -12,6 +12,7 @@ import { Button } from '@ludy/ui/components/button';
 import { Input } from '@ludy/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { DateInput } from './date-input.tsx';
+import { SendToTriageDialog } from './send-to-triage-dialog.tsx';
 import { ErrorText } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { taskDueFromDay } from '../lib/agents.ts';
@@ -130,9 +131,19 @@ export function ConversationTasks({ conversationId, channelName, canWrite }: { c
         (adding ? (
           <NewTask conversationId={conversationId} channelName={channelName} onDone={() => setAdding(false)} />
         ) : (
-          <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" onClick={() => setAdding(true)}>
-            {t('add')}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" size="sm" className={TOUCH_BUTTON} variant="outline" onClick={() => setAdding(true)}>
+              {t('add')}
+            </Button>
+            <SendToTriageDialog
+              slug={slug}
+              sourceType="kernel.conversation"
+              sourceId={conversationId}
+              defaultTitle={channelName}
+              canWrite={canWrite}
+              buttonTestId="conversation-send-to-triage-btn"
+            />
+          </div>
         ))}
     </div>
   );

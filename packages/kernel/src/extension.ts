@@ -10,7 +10,7 @@
 // token, list devices or revoke one.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { EXTENSION_SCOPE_IDS, zExtensionAuthorize, zExtensionTokenRevoke, zId, type ExtensionOrgTokenView, type ExtensionTokenView } from '@ludy/kernel-contract';
+import { DESKTOP_CLIENT_ID, EXTENSION_SCOPE_IDS, extensionClientAllowsScopes, zExtensionAuthorize, zExtensionTokenRevoke, zId, type ExtensionOrgTokenView, type ExtensionTokenView } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, hasFreshMfa, type CommandContext } from '@ludy/kernel-runtime';
 
@@ -22,15 +22,20 @@ const DEVICE_ADMINS: readonly MemberRole[] = ['owner', 'admin'];
 
 const zCodeHash = z.string().regex(/^[0-9a-f]{64}$/);
 
-export const zExtensionCodeIssue = z.strictObject({
-  codeHash: zCodeHash,
-  codeChallenge: zExtensionAuthorize.shape.codeChallenge,
-  scopes: zExtensionAuthorize.shape.scopes,
-  deviceName: zExtensionAuthorize.shape.deviceName,
-  // The extension the member approved (#2850): the code is bound to it and only that extension can exchange it. Required: no code is made
-  // without it (the unbound 5-argument definer is gone, step 2 #2855).
-  extensionId: zExtensionAuthorize.shape.extensionId,
-});
+export const zExtensionCodeIssue = z
+  .strictObject({
+    codeHash: zCodeHash,
+    codeChallenge: zExtensionAuthorize.shape.codeChallenge,
+    scopes: zExtensionAuthorize.shape.scopes,
+    deviceName: zExtensionAuthorize.shape.deviceName,
+    // The extension the member approved (#2850): the code is bound to it and only that extension can exchange it. Required: no code is made
+    // without it (the unbound 5-argument definer is gone, step 2 #2855). DESKTOP_CLIENT_ID is Ludy Desktop (#4515/#4516): none or meetings/agenda, never notes.
+    extensionId: zExtensionAuthorize.shape.extensionId,
+  })
+  .refine((input) => extensionClientAllowsScopes(input.extensionId === DESKTOP_CLIENT_ID ? 'desktop' : 'extension', input.scopes), {
+    path: ['scopes'],
+    message: 'the extension needs a scope, Ludy Desktop holds only meetings or agenda',
+  });
 
 // The errors the extension definers raise, as domain errors; anything else goes through the runtime's mapping.
 function extensionError(error: unknown): never {
@@ -144,11 +149,12 @@ export const extensionTokenListOrg = defineQuery({
       user_id: string;
       device_name: string;
       scopes: string[];
+      client: string;
       created_at: Date;
       expires_at: Date;
       last_used_at: Date | null;
       revoked_at: Date | null;
-    }>`SELECT id, user_id, device_name, scopes, created_at, expires_at, last_used_at, revoked_at FROM ludy_kernel.list_extension_tokens_for_org()`
+    }>`SELECT id, user_id, device_name, scopes, client, created_at, expires_at, last_used_at, revoked_at FROM ludy_kernel.list_extension_tokens_for_org()`
       .execute(ctx.trx)
       .catch(extensionError);
     return rows.map((r) => ({
@@ -156,6 +162,7 @@ export const extensionTokenListOrg = defineQuery({
       userId: r.user_id,
       deviceName: r.device_name,
       scopes: r.scopes.filter((s): s is (typeof EXTENSION_SCOPE_IDS)[number] => (EXTENSION_SCOPE_IDS as readonly string[]).includes(s)),
+      client: r.client === 'desktop' ? ('desktop' as const) : ('extension' as const),
       createdAt: r.created_at.toISOString(),
       expiresAt: r.expires_at.toISOString(),
       lastUsedAt: r.last_used_at ? r.last_used_at.toISOString() : null,
@@ -174,15 +181,17 @@ export const extensionTokenList = defineQuery({
       id: string;
       device_name: string;
       scopes: string[];
+      client: string;
       created_at: Date;
       expires_at: Date;
       last_used_at: Date | null;
       revoked_at: Date | null;
-    }>`SELECT id, device_name, scopes, created_at, expires_at, last_used_at, revoked_at FROM ludy_kernel.list_extension_tokens()`.execute(ctx.trx);
+    }>`SELECT id, device_name, scopes, client, created_at, expires_at, last_used_at, revoked_at FROM ludy_kernel.list_extension_tokens()`.execute(ctx.trx);
     return rows.map((r) => ({
       id: r.id,
       deviceName: r.device_name,
       scopes: r.scopes.filter((s): s is (typeof EXTENSION_SCOPE_IDS)[number] => (EXTENSION_SCOPE_IDS as readonly string[]).includes(s)),
+      client: r.client === 'desktop' ? ('desktop' as const) : ('extension' as const),
       createdAt: r.created_at.toISOString(),
       expiresAt: r.expires_at.toISOString(),
       lastUsedAt: r.last_used_at ? r.last_used_at.toISOString() : null,

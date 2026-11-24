@@ -276,15 +276,15 @@ export function LeaveBalancePanel({ employeeId }: { employeeId: string }) {
               <DataTable head={[t('leave.colMonth'), t('leave.colKind'), t('leave.colDays'), t('leave.colApproved'), '']} numeric={[2]}>
                 {data.entries.map((entry) => (
                   <TableRow key={entry.id} data-testid="hr-leave-entry-row">
-                    <TableCell className="px-4 py-2">{entry.month}</TableCell>
-                    <TableCell className="px-4 py-2">{t(`leave.kinds.${entry.kind}`)}</TableCell>
-                    <TableCell className="px-4 py-2 text-right tabular-nums">{entry.days}</TableCell>
-                    <TableCell className="px-4 py-2">
+                    <TableCell className="tabular-nums">{entry.month}</TableCell>
+                    <TableCell>{t(`leave.kinds.${entry.kind}`)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{entry.days}</TableCell>
+                    <TableCell>
                       <Badge variant={entry.approved ? 'secondary' : 'outline'}>
                         {entry.approved ? t('leave.approvedYes') : t('leave.approvedNo')}
                       </Badge>
                     </TableCell>
-                    <TableCell className="px-4 py-2 text-right">
+                    <TableCell className="text-right">
                       <Button
                         variant="ghost"
                         size="sm"

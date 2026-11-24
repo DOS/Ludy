@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// End-to-end PostgreSQL 17 security invariants for eSign Slice 3a (#3811, ADR-0047, ADR-0049, ADR-0053):
+// End-to-end PostgreSQL 17 security invariants for eSign Slice 3a (#3811, #4531, ADR-0047, ADR-0049, ADR-0053):
 //   - Meeting minutes envelopes (source_kind = 'meeting_minutes') may be created ONLY when minutes are explicitly shared
 //     (409 SIGN_MINUTES_NOT_SHARED for meeting readers on private drafts; 404 SIGN_SOURCE_NOT_FOUND for non-readers)
 //   - On an attendees-only meeting, EVEN workspace owners and admins who are not meeting readers receive identical 404
 //     across list, by_source, get, events, verify, ai_analysis, mutations, template.create, and kernel.file.get
-//   - Identical enforcement whether AI is enabled or stopped, zero visibility to agent contexts, full public signing
-//     ceremony + worker sealing compatibility, dynamic reader revocation, creator retention, and org-visible / le_scope rules
+//   - Signed vs unsigned lifecycle (Owner Decision A2, #4531): unsigned/in-flight envelopes strictly follow active meeting
+//     reader scope even for created_by (404 on reader removal, viewer demotion, or retention expiry) and are voided/erased
+//     on meeting deletion/purge; completed envelopes remain retained legal records for creator + active readers.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
@@ -29,6 +30,8 @@ import {
   signAiQueries,
   signCommands,
   signQueries,
+  verifyEventChain,
+  type SigningEventChainRow,
 } from '@ludy/mod-sign';
 import { contextToken } from './fixtures/context-token.ts';
 import { createDbPool, resolveDbIdentifiers, setActiveRolePasswords } from './fixtures/db-identifiers.ts';
@@ -1504,40 +1507,72 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
       workerClient.release();
     }
 
-    // 7. Dynamic reader revocation, retention expiry, creator retention, and tenant_member removal!
+    // 7. Dynamic reader revocation, creator role demotion, retention expiry, completed legal-record retention, and tenant_member removal (#3811, #4531 Step 2 of 2).
     await runtime.execute(
       'meetings.reader.remove',
       { meetingId: attendeesMeetingId, userId: attendeeId },
       { actor: asUser(recorderId), orgId },
     );
-    // Attendee removed from meeting_reader immediately loses access to recEnv (created by recorderId),
-    // while retaining access to attTplEnv (where attendeeId IS created_by)!
+    // Attendee removed from meeting_reader immediately loses access to BOTH completed recEnv AND unsigned attTplEnv (even as created_by!).
     await expect(
       runtime.query('sign.envelope.get', { envelopeId: recEnv.envelopeId }, { actor: asUser(attendeeId), orgId }),
     ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
-    const ownAttEnv = await runtime.query<{ envelope: { id: string } }>(
+    const recStillReadableByCreator = await runtime.query<{ envelope: { id: string; status: string } }>(
       'sign.envelope.get',
-      { envelopeId: attTplEnv.envelopeId },
-      { actor: asUser(attendeeId), orgId },
+      { envelopeId: recEnv.envelopeId },
+      { actor: asUser(recorderId), orgId },
     );
-    expect(ownAttEnv.envelope.id).toBe(attTplEnv.envelopeId);
+    expect(recStillReadableByCreator.envelope.id).toBe(recEnv.envelopeId);
+    await expect(
+      runtime.query('sign.envelope.get', { envelopeId: attTplEnv.envelopeId }, { actor: asUser(attendeeId), orgId }),
+    ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
 
-    // Re-add attendee, then expire text_retention_date: attendee loses access via meeting reader check and no new envelope can be created,
-    // while recorder (created_by) STILL retains access to recEnv until removed from tenant_member!
+    // Re-add attendee, then demote created_by to 'viewer':
+    //   - attendeeId loses access to recEnv (404, non-creator viewer cannot read meetings)
+    //   - unsigned attTplEnv returns 404 SIGN_ENVELOPE_NOT_FOUND even for its created_by
+    //   - completed recEnv stays readable by recorderId
     await runtime.execute(
       'meetings.reader.add',
       { meetingId: attendeesMeetingId, userId: attendeeId },
       { actor: asUser(recorderId), orgId },
     );
     await adminPool!.query(
+      `UPDATE crove_kernel.tenant_member
+          SET role = 'viewer'
+        WHERE org_id = $1::uuid AND user_id = $2::uuid`,
+      [orgId, attendeeId],
+    );
+    await expect(
+      runtime.query('sign.envelope.get', { envelopeId: recEnv.envelopeId }, { actor: asUser(attendeeId), orgId }),
+    ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+    await expect(
+      runtime.query('sign.envelope.get', { envelopeId: attTplEnv.envelopeId }, { actor: asUser(attendeeId), orgId }),
+    ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+    expect(
+      (
+        await runtime.query<{ envelope: { id: string } }>(
+          'sign.envelope.get',
+          { envelopeId: recEnv.envelopeId },
+          { actor: asUser(recorderId), orgId },
+        )
+      ).envelope.id,
+    ).toBe(recEnv.envelopeId);
+    await adminPool!.query(
+      `UPDATE crove_kernel.tenant_member
+          SET role = 'member'
+        WHERE org_id = $1::uuid AND user_id = $2::uuid`,
+      [orgId, attendeeId],
+    );
+
+    // Expire text_retention_date: no new meeting_minutes envelope can be created (404 SIGN_SOURCE_NOT_FOUND).
+    // Unsigned attTplEnv returns 404 for ALL users including created_by attendeeId and recorderId,
+    // while completed legal record recEnv stays readable by BOTH creator recorderId AND active reader attendeeId!
+    await adminPool!.query(
       `UPDATE crove_meetings.meeting
           SET text_retention_date = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1)
         WHERE org_id = $1::uuid AND id = $2::uuid`,
       [orgId, attendeesMeetingId],
     );
-    await expect(
-      runtime.query('sign.envelope.get', { envelopeId: recEnv.envelopeId }, { actor: asUser(attendeeId), orgId }),
-    ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
     await expect(
       runtime.execute(
         'sign.envelope.create',
@@ -1551,18 +1586,61 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
       ),
     ).rejects.toMatchObject({ code: 'SIGN_SOURCE_NOT_FOUND', status: 404 });
 
-    const creatorStillReads = await runtime.query<{ envelope: { id: string } }>(
-      'sign.envelope.get',
-      { envelopeId: recEnv.envelopeId },
-      { actor: asUser(recorderId), orgId },
-    );
-    expect(creatorStillReads.envelope.id).toBe(recEnv.envelopeId);
+    for (const nonReaderId of [ownerId, adminId, outsiderMemberId, viewerId]) {
+      await expect(
+        runtime.query('sign.envelope.get', { envelopeId: recEnv.envelopeId }, { actor: asUser(nonReaderId), orgId }),
+      ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+      await expect(
+        runtime.query('sign.envelope.get', { envelopeId: attTplEnv.envelopeId }, { actor: asUser(nonReaderId), orgId }),
+      ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+    }
 
-    // Removing creator from tenant_member revokes SQL RLS & file access immediately.
+    await expect(
+      runtime.query('sign.envelope.get', { envelopeId: attTplEnv.envelopeId }, { actor: asUser(recorderId), orgId }),
+    ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+    await expect(
+      runtime.query('sign.envelope.get', { envelopeId: attTplEnv.envelopeId }, { actor: asUser(attendeeId), orgId }),
+    ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+
+    for (const readerId of [recorderId, attendeeId]) {
+      const stillReads = await runtime.query<{ envelope: { id: string; status: string } }>(
+        'sign.envelope.get',
+        { envelopeId: recEnv.envelopeId },
+        { actor: asUser(readerId), orgId },
+      );
+      expect(stillReads.envelope.id).toBe(recEnv.envelopeId);
+      expect(stillReads.envelope.status).toBe('completed');
+
+      const sealedMetaAfterRetention = await runtime.query<{ id: string }>(
+        'kernel.file.get',
+        { id: sealedFileId },
+        { actor: asUser(readerId), orgId },
+      );
+      expect(sealedMetaAfterRetention.id).toBe(sealedFileId);
+
+      const oblAfterRetention = await runtime.query<{ obligation: { envelopeId: string } | null }>(
+        'sign.obligation.get',
+        { envelopeId: recEnv.envelopeId },
+        { actor: asUser(readerId), orgId },
+      );
+      expect(oblAfterRetention.obligation?.envelopeId).toBe(recEnv.envelopeId);
+
+      const playbookAfterRetention = await runtime.query<{ check: { envelopeId: string } | null }>(
+        'sign.playbook.get',
+        { envelopeId: recEnv.envelopeId },
+        { actor: asUser(readerId), orgId },
+      );
+      expect(playbookAfterRetention.check?.envelopeId).toBe(recEnv.envelopeId);
+    }
+
+    // Removing reader/creator from tenant_member revokes SQL RLS & file access immediately (even for completed records).
     await adminPool!.query(
       'DELETE FROM crove_kernel.tenant_member WHERE org_id = $1::uuid AND user_id = $2::uuid',
       [orgId, attendeeId],
     );
+    await expect(
+      runtime.query('sign.envelope.get', { envelopeId: recEnv.envelopeId }, { actor: asUser(attendeeId), orgId }),
+    ).rejects.toMatchObject({ status: 403 });
     await expect(
       runtime.query('sign.envelope.get', { envelopeId: attTplEnv.envelopeId }, { actor: asUser(attendeeId), orgId }),
     ).rejects.toMatchObject({ status: 403 });
@@ -1663,4 +1741,307 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
       { actor: asMfa(ownerId), orgId },
     );
   });
+
+  it('voids and erases unsigned meeting_minutes envelopes on meeting deletion/purge while preserving completed legal records across all 4 delete paths (#4531)', async () => {
+    const setupMeetingWithPair = async (opts: { visibility: 'attendees' | 'org'; extraReaders?: string[]; titleTag: string }) => {
+      const { meetingId } = await runtime.execute<{ meetingId: string }>(
+        'meetings.meeting.create',
+        {
+          title: `Lifecycle ${opts.titleTag}`,
+          language: 'vi',
+          visibility: opts.visibility,
+          keepVideo: false,
+          liveNotes: false,
+          summaryTemplate: 'general',
+          consentMethod: 'told_at_start',
+        },
+        { actor: asUser(recorderId), orgId },
+      );
+      for (const extraReaderId of opts.extraReaders ?? []) {
+        await runtime.execute(
+          'meetings.reader.add',
+          { meetingId, userId: extraReaderId },
+          { actor: asUser(recorderId), orgId },
+        );
+      }
+      await runtime.execute(
+        'meetings.summary.save',
+        { meetingId, summary: `Noi dung hop ${opts.titleTag}.`, decisions: [`Quyet dinh ${opts.titleTag}`] },
+        { actor: asUser(recorderId), orgId },
+      );
+      await runtime.execute(
+        'meetings.result.publish',
+        { meetingId, confirmed: true },
+        { actor: asUser(recorderId), orgId },
+      );
+
+      // 1. Create, sign, and seal completed legal-record envelope.
+      const { fileId: compPdf, sha256: compPdfSha } = await ingestSignFile(asUser(recorderId), orgId, `comp-${opts.titleTag}-${randomUUID()}`);
+      const compEnv = await runtime.execute<{ envelopeId: string }>(
+        'sign.envelope.create',
+        {
+          title: `Completed ${opts.titleTag}`,
+          subject: `Subject Comp ${opts.titleTag}`,
+          sourceKind: 'meeting_minutes',
+          sourceId: meetingId,
+          sourceFileId: compPdf,
+        },
+        { actor: asUser(recorderId), orgId },
+      );
+      await workerRuntime.execute(
+        'sign.envelope.inspect_complete',
+        {
+          envelopeId: compEnv.envelopeId,
+          outcome: 'passed',
+          pageCount: 1,
+          pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+        },
+        { actor: asSystem('sign-pdf-inspect'), orgId },
+      );
+      const compSigner = await runtime.execute<{ signerId: string }>(
+        'sign.signer.add',
+        {
+          envelopeId: compEnv.envelopeId,
+          signerRole: 'signer',
+          roleLabel: 'Nguoi ky',
+          name: 'Completed Signer',
+          email: 'comp-signer@example.com',
+          deliveryMode: 'link',
+        },
+        { actor: asUser(recorderId), orgId },
+      );
+      const compFieldRes = await runtime.execute<{ fieldIds: string[] }>(
+        'sign.field.set',
+        {
+          envelopeId: compEnv.envelopeId,
+          fields: [{ signerId: compSigner.signerId, fieldType: 'signature', pageNumber: 1, xNorm: 0.1, yNorm: 0.7, wNorm: 0.25, hNorm: 0.08, required: true }],
+        },
+        { actor: asUser(recorderId), orgId },
+      );
+      const sentComp = await runtime.execute<{ links: Array<{ signerId: string; token: string }> }>(
+        'sign.envelope.send',
+        { envelopeId: compEnv.envelopeId },
+        { actor: asUser(recorderId), orgId },
+      );
+      const compTokenSha = hashSigningToken(sentComp.links[0]!.token);
+      await appPool!.query(
+        `SELECT crove_sign.public_submit($1, true, 'draw', NULL, $2::jsonb, $3, 'LifecycleTest/1.0', $4)`,
+        [
+          compTokenSha,
+          JSON.stringify([{ fieldId: compFieldRes.fieldIds[0]!, signaturePngBase64: VALID_PNG_BASE64 }]),
+          ipHash,
+          DEFAULT_MESSAGE_ID_DOMAIN,
+        ],
+      );
+      const sealJob = await workerRuntime.query<{
+        envelope: { completedAtIso: string | null };
+        events: Array<{ event_hash: string }>;
+      } | null>('sign.envelope.seal_job_data', { envelopeId: compEnv.envelopeId }, { actor: asSystem('sign-pdf-seal'), orgId });
+      const { fileId: sealedFileId } = await ingestSignFile(asSystem('sign-pdf-seal'), orgId, `sealed-${opts.titleTag}-${randomUUID()}`, 'sign_sealed');
+      const { fileId: certFileId } = await ingestSignFile(asSystem('sign-pdf-seal'), orgId, `cert-${opts.titleTag}-${randomUUID()}`, 'sign_certificate', 'application/json');
+      await workerRuntime.execute(
+        'sign.envelope.seal_complete',
+        {
+          envelopeId: compEnv.envelopeId,
+          outcome: 'sealed',
+          certificateCode: generateCertificateCode(
+            compEnv.envelopeId,
+            sealJob!.envelope.completedAtIso ?? new Date().toISOString(),
+            sealJob!.events[sealJob!.events.length - 1]!.event_hash,
+          ),
+          sealedFileId,
+          certificateFileId: certFileId,
+        },
+        { actor: asSystem('sign-pdf-seal'), orgId },
+      );
+
+      // 2. Create in-flight ('sent') unsigned envelope with signer, field, token, and summary.
+      const { fileId: unsignedPdf } = await ingestSignFile(asUser(recorderId), orgId, `uns-${opts.titleTag}-${randomUUID()}`);
+      const unsignedEnv = await runtime.execute<{ envelopeId: string }>(
+        'sign.envelope.create',
+        {
+          title: `Unsigned Confidential Secret ${opts.titleTag}`,
+          subject: `Unsigned Subject ${opts.titleTag}`,
+          message: `Unsigned Message ${opts.titleTag}`,
+          sourceKind: 'meeting_minutes',
+          sourceId: meetingId,
+          sourceFileId: unsignedPdf,
+        },
+        { actor: asUser(recorderId), orgId },
+      );
+      await workerRuntime.execute(
+        'sign.envelope.inspect_complete',
+        {
+          envelopeId: unsignedEnv.envelopeId,
+          outcome: 'passed',
+          pageCount: 1,
+          pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+        },
+        { actor: asSystem('sign-pdf-inspect'), orgId },
+      );
+      const unsignedSigner = await runtime.execute<{ signerId: string }>(
+        'sign.signer.add',
+        {
+          envelopeId: unsignedEnv.envelopeId,
+          signerRole: 'signer',
+          roleLabel: 'Nguoi ky nhap',
+          name: `Secret Signer ${opts.titleTag}`,
+          email: `uns-${opts.titleTag}@example.com`,
+          deliveryMode: 'link',
+          requireEmailOtp: false,
+        },
+        { actor: asUser(recorderId), orgId },
+      );
+      await runtime.execute(
+        'sign.field.set',
+        {
+          envelopeId: unsignedEnv.envelopeId,
+          fields: [{ signerId: unsignedSigner.signerId, fieldType: 'signature', pageNumber: 1, xNorm: 0.1, yNorm: 0.7, wNorm: 0.25, hNorm: 0.08, required: true }],
+        },
+        { actor: asUser(recorderId), orgId },
+      );
+      const sentUnsigned = await runtime.execute<{ links: Array<{ signerId: string; token: string }> }>(
+        'sign.envelope.send',
+        { envelopeId: unsignedEnv.envelopeId },
+        { actor: asUser(recorderId), orgId },
+      );
+      const unsignedTokenSha = hashSigningToken(sentUnsigned.links[0]!.token);
+
+      return {
+        meetingId,
+        compEnvId: compEnv.envelopeId,
+        compPdf,
+        compPdfSha,
+        sealedFileId,
+        certFileId,
+        unsignedEnvId: unsignedEnv.envelopeId,
+        unsignedPdf,
+        unsignedTokenSha,
+      };
+    };
+
+    const assertUnsignedErasedAndCompletedPreserved = async (
+      fx: Awaited<ReturnType<typeof setupMeetingWithPair>>,
+      allowedReaders: string[],
+      deniedUsers: string[],
+    ) => {
+      // Unsigned envelope must be voided & scrubbed in DB, with zero signers/fields/tokens/otps and valid event chain.
+      const envRow = await adminPool!.query<{
+        status: string;
+        void_reason: string | null;
+        title: string;
+        subject: string | null;
+        message: string | null;
+        shared_summary_json: unknown;
+      }>(
+        'SELECT status, void_reason, title, subject, message, shared_summary_json FROM crove_sign.envelope WHERE org_id = $1::uuid AND id = $2::uuid',
+        [orgId, fx.unsignedEnvId],
+      );
+      expect(envRow.rows[0]).toEqual({
+        status: 'voided',
+        void_reason: 'meeting_deleted',
+        title: '[Erased meeting minutes]',
+        subject: null,
+        message: null,
+        shared_summary_json: null,
+      });
+
+      const signerCnt = await adminPool!.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_sign.signer WHERE org_id = $1::uuid AND envelope_id = $2::uuid', [orgId, fx.unsignedEnvId]);
+      const fieldCnt = await adminPool!.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_sign.field WHERE org_id = $1::uuid AND envelope_id = $2::uuid', [orgId, fx.unsignedEnvId]);
+      const tokenCnt = await adminPool!.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_sign.signing_token WHERE org_id = $1::uuid AND envelope_id = $2::uuid', [orgId, fx.unsignedEnvId]);
+      expect(signerCnt.rows[0]?.n).toBe(0);
+      expect(fieldCnt.rows[0]?.n).toBe(0);
+      expect(tokenCnt.rows[0]?.n).toBe(0);
+
+      const unsignedEvents = await adminPool!.query<SigningEventChainRow>(
+        'SELECT * FROM crove_sign.signing_event WHERE org_id = $1::uuid AND envelope_id = $2::uuid ORDER BY seq ASC',
+        [orgId, fx.unsignedEnvId],
+      );
+      expect(verifyEventChain(unsignedEvents.rows)).toMatchObject({ valid: true });
+      expect(unsignedEvents.rows.at(-1)?.event_type).toBe('envelope_voided');
+
+      const pubRes = await appPool!.query<{ v: { state: string } | null }>(
+        'SELECT crove_sign.public_record_view($1, $2, $3) AS v',
+        [fx.unsignedTokenSha, ipHash, 'LifecycleTest/1.0'],
+      );
+      expect(pubRes.rows[0]?.v).toBeNull();
+
+      // Unsigned envelope and its dedicated PDF are unreachable (404) for EVERYONE including creator & owner.
+      for (const userId of [...allowedReaders, ...deniedUsers]) {
+        await expect(
+          runtime.query('sign.envelope.get', { envelopeId: fx.unsignedEnvId }, { actor: asUser(userId), orgId }),
+        ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+        await expect(
+          runtime.query('kernel.file.get', { id: fx.unsignedPdf }, { actor: asUser(userId), orgId }),
+        ).rejects.toMatchObject({ code: 'NOT_FOUND', status: 404 });
+      }
+
+      // Completed legal-record envelope stays intact ('completed', 'sealed') and readable by allowed readers only!
+      const compRow = await adminPool!.query<{ status: string; seal_status: string }>(
+        'SELECT status, seal_status FROM crove_sign.envelope WHERE org_id = $1::uuid AND id = $2::uuid',
+        [orgId, fx.compEnvId],
+      );
+      expect(compRow.rows[0]).toEqual({ status: 'completed', seal_status: 'sealed' });
+
+      for (const readerId of allowedReaders) {
+        const got = await runtime.query<{ envelope: { id: string; status: string } }>(
+          'sign.envelope.get',
+          { envelopeId: fx.compEnvId },
+          { actor: asUser(readerId), orgId },
+        );
+        expect(got.envelope).toMatchObject({ id: fx.compEnvId, status: 'completed' });
+        const gotSealed = await runtime.query<{ id: string }>(
+          'kernel.file.get',
+          { id: fx.sealedFileId },
+          { actor: asUser(readerId), orgId },
+        );
+        expect(gotSealed.id).toBe(fx.sealedFileId);
+      }
+
+      for (const blockedId of deniedUsers) {
+        await expect(
+          runtime.query('sign.envelope.get', { envelopeId: fx.compEnvId }, { actor: asUser(blockedId), orgId }),
+        ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+        await expect(
+          runtime.query('kernel.file.get', { id: fx.sealedFileId }, { actor: asUser(blockedId), orgId }),
+        ).rejects.toMatchObject({ code: 'NOT_FOUND', status: 404 });
+      }
+    };
+
+    // Path 1: meetings.meeting.delete (attendees-only, outsiderMemberId shared as reader, owner/admin NOT shared).
+    const fxDelete = await setupMeetingWithPair({ visibility: 'attendees', extraReaders: [outsiderMemberId], titleTag: 'del-path' });
+    await runtime.execute('meetings.meeting.delete', { meetingId: fxDelete.meetingId }, { actor: asUser(recorderId), orgId });
+    await assertUnsignedErasedAndCompletedPreserved(fxDelete, [recorderId, outsiderMemberId], [ownerId, adminId, entityLimitedMemberId, viewerId]);
+
+    // Path 2: meetings.meeting.owner_delete (attendees-only where deleting owner is NOT a meeting reader!).
+    const fxOwnerDel = await setupMeetingWithPair({ visibility: 'attendees', extraReaders: [outsiderMemberId], titleTag: 'owner-del-path' });
+    await runtime.execute('meetings.meeting.owner_delete', { meetingId: fxOwnerDel.meetingId }, { actor: asMfa(ownerId), orgId });
+    await assertUnsignedErasedAndCompletedPreserved(fxOwnerDel, [recorderId, outsiderMemberId], [ownerId, adminId, entityLimitedMemberId, viewerId]);
+
+    // Path 3: meeting_text_purge (via meetings.retention.shred kind = 'text' on due org-visible meeting).
+    const fxPurge = await setupMeetingWithPair({ visibility: 'org', titleTag: 'text-purge-path' });
+    await adminPool!.query(
+      `UPDATE crove_meetings.meeting
+          SET text_retention_date = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1)
+        WHERE org_id = $1::uuid AND id = $2::uuid`,
+      [orgId, fxPurge.meetingId],
+    );
+    const purgeOut = await workerRuntime.execute<{ applied: boolean }>(
+      'meetings.retention.shred',
+      { meetingId: fxPurge.meetingId, kind: 'text' },
+      { actor: asSystem('meetings.retention'), orgId },
+    );
+    expect(purgeOut.applied).toBe(true);
+    await assertUnsignedErasedAndCompletedPreserved(fxPurge, [recorderId, ownerId, adminId, outsiderMemberId], [entityLimitedMemberId, viewerId]);
+
+    // Path 4: meeting_replay_shred (via meetings.shred.replay on attendees-only meeting).
+    const fxReplay = await setupMeetingWithPair({ visibility: 'attendees', extraReaders: [outsiderMemberId], titleTag: 'replay-shred-path' });
+    const replayOut = await workerRuntime.execute<{ deleted: boolean }>(
+      'meetings.shred.replay',
+      { meetingId: fxReplay.meetingId },
+      { actor: asSystem('meetings.retention'), orgId },
+    );
+    expect(replayOut.deleted).toBe(true);
+    await assertUnsignedErasedAndCompletedPreserved(fxReplay, [recorderId, outsiderMemberId], [ownerId, adminId, entityLimitedMemberId, viewerId]);
+  }, 120_000);
 });

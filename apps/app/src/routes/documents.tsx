@@ -28,15 +28,15 @@ function DocumentRow({ d, slug, notes }: { d: PurchaseDocument; slug: string; no
   return (
     <>
       <TableRow className={d.voided ? 'opacity-60' : undefined}>
-        <TableCell className="px-4 py-3 text-muted-foreground">{f.date(d.issueDate)}</TableCell>
-        <TableCell className="px-4 py-3 font-mono text-xs text-foreground">{name}</TableCell>
-        <TableCell className="px-4 py-3">
+        <TableCell data-label={t('columns.issueDate')} className="text-muted-foreground tabular-nums">{f.date(d.issueDate)}</TableCell>
+        <TableCell data-label={t('columns.number')} className="font-mono text-xs text-foreground">{name}</TableCell>
+        <TableCell data-label={t('columns.direction')}>
           <Badge variant={d.direction === 'sale' ? 'secondary' : 'outline'}>{t(d.direction === 'sale' ? 'direction.sale' : 'direction.purchase')}</Badge>
         </TableCell>
-        <TableCell className="px-4 py-3 text-foreground">{d.partyName}</TableCell>
-        <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{f.money(d.subtotal)}</TableCell>
-        <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{f.money(d.vatAmount)}</TableCell>
-        <TableCell className="px-4 py-3 text-right font-medium text-foreground tabular-nums">
+        <TableCell data-label={t('columns.party')} className="text-foreground">{d.partyName}</TableCell>
+        <TableCell data-label={t('columns.subtotal')} className="text-right text-muted-foreground tabular-nums">{f.money(d.subtotal)}</TableCell>
+        <TableCell data-label={t('columns.vat')} className="text-right text-muted-foreground tabular-nums">{f.money(d.vatAmount)}</TableCell>
+        <TableCell data-label={t('columns.total')} className="text-right font-medium text-foreground tabular-nums">
           {f.money(d.total)}
           {d.foreign && (
             <span className="block text-xs font-normal text-subtle-foreground">
@@ -44,8 +44,8 @@ function DocumentRow({ d, slug, notes }: { d: PurchaseDocument; slug: string; no
             </span>
           )}
         </TableCell>
-        <TableCell className="px-4 py-3">
-          {/* Voided by reversing its entry (#165): Crove no longer counts it; the supplier's invoice is unchanged. */}
+        <TableCell data-label={t('columns.status')}>
+          {/* Voided by reversing its entry (#165): Ludy no longer counts it; the supplier's invoice is unchanged. */}
           {d.voided ? (
             <Badge variant="destructive" title={t('voidReason', { reason: d.voided.reason })}>
               {t('status.voided')}
@@ -58,7 +58,7 @@ function DocumentRow({ d, slug, notes }: { d: PurchaseDocument; slug: string; no
           <InvoiceCorrections corrects={d.corrects} correctedBy={d.correctedBy} />
         </TableCell>
         {notes && (
-          <TableCell className="px-4 py-3 text-right">
+          <TableCell className="text-right">
             <Button variant="ghost" size="sm" onClick={() => setNotesOpen((o) => !o)} aria-expanded={notesOpen} aria-label={tn('panel.toggleOf', { name })}>
               {tn('panel.title')}
             </Button>
@@ -67,7 +67,7 @@ function DocumentRow({ d, slug, notes }: { d: PurchaseDocument; slug: string; no
       </TableRow>
       {notesOpen && (
         <TableRow>
-          <TableCell colSpan={9} className="px-4 py-3">
+          <TableCell colSpan={9} className="py-3">
             <RecordNotesPanel
               slug={slug}
               target={{ targetType: 'finance.purchase_document', targetId: d.id }}
@@ -115,6 +115,7 @@ export function DocumentsPage() {
         <Empty title={t('noMatch')} />
       ) : (
         <DataTable
+          stacked
           numeric={[4, 5, 6]}
           head={[
             t('columns.issueDate'),

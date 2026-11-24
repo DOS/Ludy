@@ -1,4 +1,4 @@
-// Browser push for Social notifications on PostgreSQL 17 (#1238): a member's subscriptions are theirs alone, the
+// Browser push for Social notifications on PostgreSQL 17 (#1238; the subscriptions are the kernel's since #3736): a member's subscriptions are theirs alone, the
 // dispatch names the notifications to push, the push job sends to the member's devices and records the answers (404
 // and 410 delete, other failures count up to the limit), and a disabled account, a member who left, a read notice or a
 // kind that is not pushed get nothing. The push carries no post text. The sender is a fake that
@@ -10,9 +10,9 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { PUSH_DEVICE_LIMIT, PUSH_FAILURE_LIMIT, createOrg, kernelCommands, kernelQueries, upsertIdentity, type PushDevice } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
-import { PUSH_DEVICE_LIMIT, PUSH_FAILURE_LIMIT, socialCommands, socialQueries, type PushDevice } from '@ludy/mod-social';
+import { socialCommands, socialQueries } from '@ludy/mod-social';
 import { createPushSender, generateVapidKeys, loadVapidKeys, runPushJob, type PushSender } from '../src/web-push.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 import { contextToken } from './context-token.ts';
@@ -78,10 +78,10 @@ suite('social browser push on PostgreSQL (#1238)', () => {
     return id;
   }
   const exec = <O>(o: Org, user: string, name: string, input: unknown) => rt.execute<O>(name, input, { actor: asUser(user), orgId: o.orgId });
-  const devices = (o: Org, user: string, ep: string | null = null) => rt.query<{ devices: PushDevice[]; subscribed: boolean }>('social.push.devices', { endpoint: ep }, { actor: asUser(user), orgId: o.orgId });
-  const subscribe = (o: Org, user: string, ep = endpoint(), label = 'Chrome trên Windows') => exec<{ id: string }>(o, user, 'social.push.subscribe', { endpoint: ep, ...browserKeys(), label });
+  const devices = (o: Org, user: string, ep: string | null = null) => rt.query<{ devices: PushDevice[]; subscribed: boolean }>('kernel.push.devices', { endpoint: ep }, { actor: asUser(user), orgId: o.orgId });
+  const subscribe = (o: Org, user: string, ep = endpoint(), label = 'Chrome trên Windows') => exec<{ id: string }>(o, user, 'kernel.push.subscribe', { endpoint: ep, ...browserKeys(), label });
   const rows = (o: Org) =>
-    one<{ id: string; user_id: string; failure_count: number; last_used_at: Date | null }>('SELECT id, user_id, failure_count, last_used_at FROM ludy_social.push_subscription WHERE org_id = $1 ORDER BY id', [o.orgId]);
+    one<{ id: string; user_id: string; failure_count: number; last_used_at: Date | null }>('SELECT id, user_id, failure_count, last_used_at FROM ludy_kernel.push_subscription WHERE org_id = $1 ORDER BY id', [o.orgId]);
 
   // What the worker does for each new event: the dispatch; returns the notifications it names for push.
   async function deliver(o: Org): Promise<string[]> {
@@ -165,8 +165,8 @@ suite('social browser push on PostgreSQL (#1238)', () => {
     expect(JSON.stringify(await devices(o, o.member, ep))).not.toContain('push.example.com');
     // Another member of the org, even an owner, sees none of it and cannot remove it.
     expect(await devices(o, o.owner, ep)).toEqual({ subscribed: false, devices: [] });
-    expect(await exec(o, o.owner, 'social.push.unsubscribe', { id })).toEqual({ removed: 0 });
-    expect(await exec(o, o.owner, 'social.push.unsubscribe', { endpoint: ep })).toEqual({ removed: 0 });
+    expect(await exec(o, o.owner, 'kernel.push.unsubscribe', { id })).toEqual({ removed: 0 });
+    expect(await exec(o, o.owner, 'kernel.push.unsubscribe', { endpoint: ep })).toEqual({ removed: 0 });
     // The table's own policy, below the commands: in a member's context (ludy_app, as the API) a member reads and
     // deletes only their own rows; the owner's context sees none of the member's, endpoints and keys included.
     const asApp = async <T>(user: string, fn: (c: pg.Client) => Promise<T>) => {
@@ -181,22 +181,22 @@ suite('social browser push on PostgreSQL (#1238)', () => {
         await client.end();
       }
     };
-    expect(await asApp(o.member, async (c) => (await c.query('SELECT endpoint, p256dh, auth FROM ludy_social.push_subscription')).rowCount)).toBe(1);
-    expect(await asApp(o.owner, async (c) => (await c.query('SELECT endpoint, p256dh, auth FROM ludy_social.push_subscription')).rowCount)).toBe(0);
-    expect(await asApp(o.owner, async (c) => (await c.query('DELETE FROM ludy_social.push_subscription')).rowCount)).toBe(0);
+    expect(await asApp(o.member, async (c) => (await c.query('SELECT endpoint, p256dh, auth FROM ludy_kernel.push_subscription')).rowCount)).toBe(1);
+    expect(await asApp(o.owner, async (c) => (await c.query('SELECT endpoint, p256dh, auth FROM ludy_kernel.push_subscription')).rowCount)).toBe(0);
+    expect(await asApp(o.owner, async (c) => (await c.query('DELETE FROM ludy_kernel.push_subscription')).rowCount)).toBe(0);
     await expect(
-      asApp(o.owner, (c) => c.query('INSERT INTO ludy_social.push_subscription (org_id, user_id, endpoint, p256dh, auth) VALUES ($1, $2, $3, $4, $5)', [o.orgId, o.member, endpoint(), browserKeys().p256dh, browserKeys().auth])),
+      asApp(o.owner, (c) => c.query('INSERT INTO ludy_kernel.push_subscription (org_id, user_id, endpoint, p256dh, auth) VALUES ($1, $2, $3, $4, $5)', [o.orgId, o.member, endpoint(), browserKeys().p256dh, browserKeys().auth])),
     ).rejects.toThrow(/row-level security/);
-    const policy = await one<{ permissive: string }>("SELECT permissive FROM pg_policies WHERE schemaname = 'ludy_social' AND tablename = 'push_subscription' AND policyname = 'own_push_subscription'", []);
+    const policy = await one<{ permissive: string }>("SELECT permissive FROM pg_policies WHERE schemaname = 'ludy_kernel' AND tablename = 'push_subscription' AND policyname = 'own_push_subscription'", []);
     expect(policy).toEqual([{ permissive: 'RESTRICTIVE' }]);
 
     // The same endpoint again refreshes its keys and label and clears its failures: still one row.
-    await admin((c) => c.query('UPDATE ludy_social.push_subscription SET failure_count = 3 WHERE id = $1', [id]));
+    await admin((c) => c.query('UPDATE ludy_kernel.push_subscription SET failure_count = 3 WHERE id = $1', [id]));
     expect((await subscribe(o, o.member, ep, 'Firefox trên Linux')).id).toBe(id);
     expect((await rows(o)).map((r) => r.failure_count)).toEqual([0]);
     expect((await devices(o, o.member, ep)).devices.map((d) => d.label)).toEqual(['Firefox trên Linux']);
     // The browser's spelling of the URL and the stored one always match.
-    expect(await exec(o, o.member, 'social.push.unsubscribe', { endpoint: ep })).toEqual({ removed: 1 });
+    expect(await exec(o, o.member, 'kernel.push.unsubscribe', { endpoint: ep })).toEqual({ removed: 1 });
     expect(await rows(o)).toEqual([]);
   });
 
@@ -211,12 +211,12 @@ suite('social browser push on PostgreSQL (#1238)', () => {
       { endpoint: endpoint(), p256dh: Buffer.concat([Buffer.from([4]), Buffer.alloc(64, 1)]).toString('base64url'), auth: keys.auth },
       { endpoint: endpoint(), p256dh: keys.p256dh, auth: randomBytes(8).toString('base64url') },
     ]) {
-      await expect(exec(o, o.member, 'social.push.subscribe', bad)).rejects.toMatchObject({ code: 'VALIDATION' });
+      await expect(exec(o, o.member, 'kernel.push.subscribe', bad)).rejects.toMatchObject({ code: 'VALIDATION' });
     }
     // Padded standard base64, as some browsers give it, is stored as base64url.
     const padded = { endpoint: endpoint(), p256dh: Buffer.from(keys.p256dh, 'base64url').toString('base64'), auth: Buffer.from(keys.auth, 'base64url').toString('base64') };
-    await exec(o, o.member, 'social.push.subscribe', padded);
-    expect(await one('SELECT p256dh, auth FROM ludy_social.push_subscription WHERE org_id = $1', [o.orgId])).toEqual([{ p256dh: keys.p256dh, auth: keys.auth }]);
+    await exec(o, o.member, 'kernel.push.subscribe', padded);
+    expect(await one('SELECT p256dh, auth FROM ludy_kernel.push_subscription WHERE org_id = $1', [o.orgId])).toEqual([{ p256dh: keys.p256dh, auth: keys.auth }]);
     for (let i = 0; i < PUSH_DEVICE_LIMIT + 2; i++) await subscribe(o, o.member);
     expect(await rows(o)).toHaveLength(PUSH_DEVICE_LIMIT);
   });
@@ -242,16 +242,16 @@ suite('social browser push on PostgreSQL (#1238)', () => {
     expect(JSON.parse(service.payloads[0] ?? '{}')).toEqual({ title: 'Crove', body: 'Có bài đang chờ bạn duyệt', url: `/o/${slug}/social/${postId}`, tag: `review_requested:${postId}` });
     for (const p of service.payloads) expect(p).not.toContain('Khai trương');
     // 404 and 410 deleted; the failed one counts; the delivered one is marked used.
-    const after = await one<{ endpoint: string; failure_count: number; used: boolean }>('SELECT endpoint, failure_count, last_used_at IS NOT NULL AS used FROM ludy_social.push_subscription WHERE org_id = $1 AND user_id = $2 ORDER BY endpoint', [o.orgId, o.admin]);
+    const after = await one<{ endpoint: string; failure_count: number; used: boolean }>('SELECT endpoint, failure_count, last_used_at IS NOT NULL AS used FROM ludy_kernel.push_subscription WHERE org_id = $1 AND user_id = $2 ORDER BY endpoint', [o.orgId, o.admin]);
     expect(after).toEqual([{ endpoint: busy, failure_count: 1, used: false }, { endpoint: ok, failure_count: 0, used: true }].sort((a, b) => a.endpoint.localeCompare(b.endpoint)));
     // The owner's own notice reaches only the owner's device.
     const owners = fakeService();
     expect(await push(owners.sender, o, await notificationOf(o, ids, o.owner))).toEqual({ sent: 1, gone: 0, failed: 0 });
 
     // A subscription that keeps failing goes at the limit.
-    await admin((c) => c.query('UPDATE ludy_social.push_subscription SET failure_count = $3 WHERE org_id = $1 AND endpoint = $2', [o.orgId, busy, PUSH_FAILURE_LIMIT - 1]));
+    await admin((c) => c.query('UPDATE ludy_kernel.push_subscription SET failure_count = $3 WHERE org_id = $1 AND endpoint = $2', [o.orgId, busy, PUSH_FAILURE_LIMIT - 1]));
     expect(await push(fakeService(() => 500).sender, o, notice)).toEqual({ sent: 0, gone: 0, failed: 2 });
-    expect((await one<{ endpoint: string }>('SELECT endpoint FROM ludy_social.push_subscription WHERE org_id = $1 AND user_id = $2', [o.orgId, o.admin])).map((r) => r.endpoint)).toEqual([ok]);
+    expect((await one<{ endpoint: string }>('SELECT endpoint FROM ludy_kernel.push_subscription WHERE org_id = $1 AND user_id = $2', [o.orgId, o.admin])).map((r) => r.endpoint)).toEqual([ok]);
   });
 
   it('pushes nothing for a kind that is not pushed, a read notice, a disabled account or a member who left', async () => {
@@ -286,9 +286,9 @@ suite('social browser push on PostgreSQL (#1238)', () => {
   it('keeps the bookkeeping commands to the system and the member commands to users', async () => {
     const o = await org();
     const { id } = await subscribe(o, o.member);
-    await expect(rt.execute('social.push.record', { results: [{ id, outcome: 'gone' }] }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
+    await expect(rt.execute('kernel.push.record', { results: [{ id, outcome: 'gone' }] }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
     await expect(rt.query('social.push.targets', { notificationId: randomUUID() }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
-    await expect(worker.execute('social.push.subscribe', { endpoint: endpoint(), ...browserKeys() }, { actor: system, orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
+    await expect(worker.execute('kernel.push.subscribe', { endpoint: endpoint(), ...browserKeys() }, { actor: system, orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
     expect(await rows(o)).toHaveLength(1);
   });
 });

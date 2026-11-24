@@ -952,6 +952,53 @@ export const createTaskFromRoadmap = defineCommand({
   },
 });
 
+// Tasks accepted from the Projects Triage Inbox (#4493, ADR-0058): projects.triage.accept invokes this via ctx.run
+// before locking crove_projects.project FOR SHARE (`position -> project` canonical lock order). Re-checks conversation
+// RLS when sourceType is `kernel.conversation`. No RPC route exposes this directly.
+export const createTaskFromTriage = defineCommand({
+  name: 'kernel.task.create_from_triage',
+  input: z.strictObject({
+    sourceType: z.enum(['projects.roadmap_item', 'kernel.conversation', 'meetings.meeting', 'projects.project_triage_item']),
+    sourceId: zId,
+    title: zTaskTitle,
+    description: z.string().max(10000).nullable(),
+    positionId: zId.nullable(),
+    due: z.iso.datetime({ offset: true }).nullable(),
+    tainted: z.boolean(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MEMBERS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    if (input.sourceType === 'kernel.conversation') {
+      const thread = await ctx.trx
+        .selectFrom('ludy_kernel.conversation')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.sourceId)
+        .executeTakeFirst();
+      if (!thread) throw new DomainError('CONVERSATION_NOT_FOUND', 404, 'Không tìm thấy hội thoại này');
+    }
+    const created = await insertHumanTask(ctx, {
+      title: input.title,
+      description: input.description,
+      assigneePositionId: input.positionId,
+      due: input.due,
+      sourceRef: { type: input.sourceType, id: input.sourceId },
+      tainted: input.tainted,
+    });
+    ctx.audit({
+      taskId: created.taskId,
+      sourceType: input.sourceType,
+      sourceId: input.sourceId,
+      positionId: input.positionId,
+      tainted: input.tainted,
+    });
+    return created;
+  },
+});
+
 // Nightly keeping duty (#4399, ADR-0053, ADR-0057): prunes expired/invalidated public roadmap OTP challenges via definer even if Projects is switched off.
 export const roadmapOtpCleanup = defineCommand({
   name: 'kernel.projects_roadmap.otp_cleanup',
@@ -2374,6 +2421,7 @@ export const agentCommands = [
   createTaskFromSource,
   createTaskFromTemplate,
   createTaskFromRoadmap,
+  createTaskFromTriage,
   roadmapOtpCleanup,
   updateTask,
   checkoutTask,

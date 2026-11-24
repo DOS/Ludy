@@ -21,7 +21,7 @@ import { EnvelopePlaybookCard } from '../components/sign/envelope-playbook-card.
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
 import { SenderSharedSummaryEditor } from '../components/sign/shared-summary-card.tsx';
 import { SignerPanel, type AddSignerFormInput } from '../components/sign/signer-panel.tsx';
-import { VyClausePanel } from '../components/sign/vy-clause-panel.tsx';
+import { VyClauseSheet, VyClauseTrigger } from '../components/sign/vy-clause-panel.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { ErrorText, isEmailAddress, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -109,7 +109,7 @@ export function fromDatetimeLocalValue(raw: string): string | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
-export function canManageEnvelopeLinksAndVoid(input: {
+export function canManageEnvelopeLinks(input: {
   role: string | null | undefined;
   userId: string | null | undefined;
   createdBy: string | null | undefined;
@@ -120,6 +120,19 @@ export function canManageEnvelopeLinksAndVoid(input: {
   if (input.role === 'member') {
     if (input.sourceKind === 'meeting_minutes') return true;
     if (input.userId && input.createdBy === input.userId) return true;
+  }
+  return false;
+}
+
+export function canVoidEnvelope(input: {
+  role: string | null | undefined;
+  userId: string | null | undefined;
+  createdBy: string | null | undefined;
+}): boolean {
+  if (!input.role) return false;
+  if (input.role === 'owner' || input.role === 'admin') return true;
+  if (input.role === 'member') {
+    return Boolean(input.userId && input.createdBy === input.userId);
   }
   return false;
 }
@@ -165,6 +178,8 @@ export function SignEnvelopeDetailPage() {
   const [expiresAtInput, setExpiresAtInput] = useState('');
   const [autoRemindInput, setAutoRemindInput] = useState(true);
   const [sendDialogOpen, setSendDialogOpen] = useState(false);
+  const [vyOpen, setVyOpen] = useState(false);
+  const vyTriggerRef = useRef<HTMLButtonElement>(null);
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
   const [voidReason, setVoidReason] = useState('');
   const [mintedLinks, setMintedLinks] = useState<Array<{ signerId: string; url: string }>>([]);
@@ -237,12 +252,21 @@ export function SignEnvelopeDetailPage() {
   const isDraft = envelope?.status === 'draft';
   const roleHere = meQuery.data?.orgs.find((o) => o.slug === slug)?.role ?? orgQuery.data?.role;
   const currentUserId = meQuery.data?.userId ?? null;
-  const canManageLinksAndVoid = meQuery.data
-    ? canManageEnvelopeLinksAndVoid({
+  const canManageLinks = meQuery.data
+    ? canManageEnvelopeLinks({
         role: roleHere,
         userId: currentUserId,
         createdBy: envelope?.createdBy,
         sourceKind: envelope?.sourceKind,
+      })
+    : orgQuery.data
+      ? orgQuery.data.role === 'owner' || orgQuery.data.role === 'admin'
+      : false;
+  const canVoid = meQuery.data
+    ? canVoidEnvelope({
+        role: roleHere,
+        userId: currentUserId,
+        createdBy: envelope?.createdBy,
       })
     : orgQuery.data
       ? orgQuery.data.role === 'owner' || orgQuery.data.role === 'admin'
@@ -999,6 +1023,12 @@ export function SignEnvelopeDetailPage() {
         subtitle={`${t(`routing.${envelope.routingMode}`)} - ${t('fieldsCount', { count: String(draftFields.length) })}`}
         actions={
           <div className="flex flex-wrap gap-2">
+            <VyClauseTrigger
+              open={vyOpen}
+              onToggle={() => setVyOpen((v) => !v)}
+              buttonRef={vyTriggerRef}
+              proposalCount={pendingProposals.length}
+            />
             {isDraft ? (
               <>
                 <Button
@@ -1021,7 +1051,7 @@ export function SignEnvelopeDetailPage() {
                 </Button>
               </>
             ) : null}
-            {canManageLinksAndVoid && (envelope.status === 'sent' || envelope.status === 'in_progress') ? (
+            {canVoid && (envelope.status === 'sent' || envelope.status === 'in_progress') ? (
               <Button type="button" variant="destructive" onClick={() => setVoidDialogOpen(true)}>
                 {t('actions.void')}
               </Button>
@@ -1045,6 +1075,22 @@ export function SignEnvelopeDetailPage() {
             ) : null}
           </div>
         }
+      />
+
+      <VyClauseSheet
+        open={vyOpen}
+        onClose={() => setVyOpen(false)}
+        triggerRef={vyTriggerRef}
+        aiAnalysis={effectiveAi}
+        pendingProposals={pendingProposals}
+        editable={isDraft}
+        analyzing={analyzeMutation.isPending}
+        onAnalyze={() => analyzeMutation.mutate()}
+        onJumpToPage={(targetPage) => {
+          setPageNumber(Math.min(effectivePageCount, Math.max(1, targetPage)));
+          setVyOpen(false);
+        }}
+        onApplyAllProposals={handleApplyAllProposals}
       />
 
       {envelope.sourceKind === 'hr_contract' ? (
@@ -1117,11 +1163,11 @@ export function SignEnvelopeDetailPage() {
             onAddSigner={handleAddSigner}
             onRemoveSigner={handleRemoveSigner}
             onMoveSigner={handleMoveSigner}
-            {...(canManageLinksAndVoid ? { onCopyZaloLink: handleCopyZaloLink } : {})}
+            {...(canManageLinks ? { onCopyZaloLink: handleCopyZaloLink } : {})}
             {...(canRemind ? { onRemindSigner: handleRemindSigner } : {})}
             {...(canCorrectRecipients ? { onCorrectSigner: openCorrectRecipientDialog } : {})}
             onStartInPerson={
-              canWriteSign && (!meQuery.data || Boolean(roleHere && roleHere !== 'viewer'))
+              canRemind
                 ? (signerId) => {
                     selectInPersonDialogSigner(signerId);
                   }
@@ -1399,16 +1445,6 @@ export function SignEnvelopeDetailPage() {
               onDownloadAttachment={(fileId, filename) => handleDownload(fileId, filename)}
             />
           ) : null}
-
-          <VyClausePanel
-            aiAnalysis={effectiveAi}
-            pendingProposals={pendingProposals}
-            editable={isDraft}
-            analyzing={analyzeMutation.isPending}
-            onAnalyze={() => analyzeMutation.mutate()}
-            onJumpToPage={(targetPage) => setPageNumber(Math.min(effectivePageCount, Math.max(1, targetPage)))}
-            onApplyAllProposals={handleApplyAllProposals}
-          />
 
           <EnvelopePlaybookCard
             envelopeId={envelope.id}

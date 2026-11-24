@@ -36,10 +36,11 @@ suite('one meeting, one live capture (ADR-0055 slice 1, #4123)', () => {
   let orgA = '';
   let orgB = '';
   const users = { ownerA: '', m1: '', m2: '', ownerB: '', mB: '' };
-  const tokens = { m1: randomUUID(), m1Two: randomUUID(), m2: randomUUID() };
+  const tokens = { m1: randomUUID(), m1Two: randomUUID(), m1Desktop: randomUUID(), m2: randomUUID(), m2Desktop: randomUUID() };
 
   const app = (userId: string): UserActor => ({ type: 'user', userId, aal: 'aal1' });
-  const ext = (userId: string, tokenId: string): UserActor => ({ type: 'user', userId, aal: 'aal1', mfaAt: null, extension: { tokenId, scopes: ['meetings'] } });
+  const ext = (userId: string, tokenId: string): UserActor => ({ type: 'user', userId, aal: 'aal1', mfaAt: null, extension: { tokenId, scopes: ['meetings'], client: 'extension' } });
+  const desk = (userId: string, tokenId: string): UserActor => ({ type: 'user', userId, aal: 'aal1', mfaAt: null, extension: { tokenId, scopes: ['meetings'], client: 'desktop' } });
   // Each test has its own calls, so what an earlier test left open never decides a later one.
   let call = 0;
   const meet = () => `abc-${String(1000 + call++).replace(/\d/g, (d) => 'abcdefghij'[Number(d)] as string).slice(0, 4)}-xyz`;
@@ -75,11 +76,11 @@ suite('one meeting, one live capture (ADR-0055 slice 1, #4123)', () => {
   }
   const silence = (meetingId: string, seconds = 120) => rows("UPDATE ludy_meetings.capture_session SET last_seen_at = now() - ($2 || ' seconds')::interval WHERE meeting_id = $1", [meetingId, String(seconds)]);
 
-  async function insertToken(orgId: string, userId: string, id: string) {
+  async function insertToken(orgId: string, userId: string, id: string, client: 'extension' | 'desktop' = 'extension') {
     await rows(
-      `INSERT INTO ludy_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
-       VALUES ($1, $2, $3, $4, 'Test device', ARRAY['meetings']::text[], now(), now() + interval '30 days', $3)`,
-      [orgId, id, userId, createHash('sha256').update(randomBytes(32)).digest()],
+      `INSERT INTO ludy_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by, client)
+       VALUES ($1, $2, $3, $4, 'Test device', ARRAY['meetings']::text[], now(), now() + interval '30 days', $3, $5)`,
+      [orgId, id, userId, createHash('sha256').update(randomBytes(32)).digest(), client],
     );
   }
   // An event of the member's own calendar, with the join address the sweep would have read.
@@ -127,7 +128,9 @@ suite('one meeting, one live capture (ADR-0055 slice 1, #4123)', () => {
     await rows(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($4, $5, 'member')`, [orgA, users.m1, users.m2, orgB, users.mB]);
     await insertToken(orgA, users.m1, tokens.m1);
     await insertToken(orgA, users.m1, tokens.m1Two);
+    await insertToken(orgA, users.m1, tokens.m1Desktop, 'desktop');
     await insertToken(orgA, users.m2, tokens.m2);
+    await insertToken(orgA, users.m2, tokens.m2Desktop, 'desktop');
   }, 300_000);
 
   afterAll(async () => {
@@ -165,7 +168,7 @@ suite('one meeting, one live capture (ADR-0055 slice 1, #4123)', () => {
     expect(audit).not.toContain(code);
   });
 
-  it('a second capture of the same call is refused, in any spelling of its address, by anyone in the org: the kind and the time, no person, and no meeting left behind', async () => {
+  it('a second capture of the same call is refused, in any spelling of its address, by anyone in the org: the kind and the time only to an attendee, no person, and no meeting left behind', async () => {
     const code = meet();
     const first = await create(app(users.m1), orgA, { joinUrl: meetUrl(code) });
     const [row] = await sessionsOf(first);
@@ -176,11 +179,24 @@ suite('one meeting, one live capture (ADR-0055 slice 1, #4123)', () => {
       const error = await refusal(attempt());
       expect(error.code).toBe('CAPTURE_ALREADY_RUNNING');
       expect(error.status).toBe(409);
-      expect(error.details).toEqual({ kind: 'app', since: new Date(since).toISOString() });
-      // The refusal names no person, no meeting and no address, in its message, its details or anywhere it may be shown.
+      // A member who only knows the join address is refused the same way but is not told who holds the call or since when (#4538).
+      expect(error.details).toBeUndefined();
       const said = JSON.stringify({ message: error.message, details: error.details });
-      for (const secret of [users.m1, users.m2, first, code, 'meet.google.com', row!.meeting_key as string]) expect(said).not.toContain(secret);
+      for (const secret of [users.m1, users.m2, first, code, 'meet.google.com', row!.meeting_key as string, 'app', since]) expect(said).not.toContain(secret);
     }
+    // An attendee (the member's own calendar event for this call) is told the kind and the time, and nothing else: no person, no meeting and no address.
+    const invite = await agendaEvent(orgA, users.m2, meetUrl(code, '?authuser=5'));
+    const attendee = await refusal(create(app(users.m2), orgA, { agendaId: invite }));
+    expect(attendee.code).toBe('CAPTURE_ALREADY_RUNNING');
+    expect(attendee.status).toBe(409);
+    expect(attendee.details).toEqual({ kind: 'app', since: new Date(since).toISOString() });
+    const told = JSON.stringify({ message: attendee.message, details: attendee.details });
+    for (const secret of [users.m1, users.m2, first, code, 'meet.google.com', row!.meeting_key as string]) expect(told).not.toContain(secret);
+    // An event that is the member's but is another call proves nothing about this one: the address the client sends decides the call, and the refusal stays plain.
+    const elsewhere = await agendaEvent(orgA, users.m2, meetUrl(meet()));
+    const unrelated = await refusal(create(app(users.m2), orgA, { agendaId: elsewhere, joinUrl: meetUrl(code) }));
+    expect(unrelated.code).toBe('CAPTURE_ALREADY_RUNNING');
+    expect(unrelated.details).toBeUndefined();
     // The refused starts rolled back with their meetings.
     expect(await meetingCount(users.m2)).toBe(before);
     // The holder is untouched.
@@ -289,5 +305,35 @@ suite('one meeting, one live capture (ADR-0055 slice 1, #4123)', () => {
     const a = await create(m1, orgA, { joinUrl: 'https://calendar.google.com/calendar/event?eid=abc' });
     const b = await create(m1, orgA, { agendaId: randomUUID() });
     for (const meetingId of [a, b]) expect((await sessionsOf(meetingId))[0]).toMatchObject({ agenda_id: null, meeting_key: null, ended_at: null });
+  });
+
+  it('marks a desktop token capture as kind desktop and reports desktop on 409 CAPTURE_ALREADY_RUNNING (#4516)', async () => {
+    const bare = await create(desk(users.m1, tokens.m1Desktop), orgA);
+    expect((await sessionsOf(bare))[0]).toMatchObject({ kind: 'desktop', ended_at: null });
+    expect(await beat(desk(users.m1, tokens.m1Desktop), orgA, bare)).toEqual({ open: true });
+    await beat(desk(users.m1, tokens.m1Desktop), orgA, bare, true);
+    expect((await sessionsOf(bare))[0]).toMatchObject({ kind: 'desktop', ended_reason: 'stopped' });
+
+    const code = meet();
+    const first = await create(desk(users.m1, tokens.m1Desktop), orgA, { joinUrl: meetUrl(code) });
+    const since = (await rows<{ s: string }>('SELECT started_at AS s FROM ludy_meetings.capture_session WHERE meeting_id = $1', [first]))[0]!.s;
+    const before = await meetingCount(users.m2);
+    const invite = await agendaEvent(orgA, users.m2, meetUrl(code, '?authuser=7'));
+    for (const contender of [app(users.m2), ext(users.m2, tokens.m2)]) {
+      const denied = await refusal(create(contender, orgA, { agendaId: invite }));
+      expect(denied.code).toBe('CAPTURE_ALREADY_RUNNING');
+      expect(denied.status).toBe(409);
+      expect(denied.details).toEqual({ kind: 'desktop', since: new Date(since).toISOString() });
+    }
+    expect(await meetingCount(users.m2)).toBe(before);
+
+    // And a desktop contender conflicts cleanly with an open app capture and names 'app'.
+    await beat(desk(users.m1, tokens.m1Desktop), orgA, first, true);
+    const appHold = await create(app(users.m1), orgA, { joinUrl: meetUrl(code) });
+    const appSince = (await rows<{ s: string }>('SELECT started_at AS s FROM ludy_meetings.capture_session WHERE meeting_id = $1', [appHold]))[0]!.s;
+    const deniedDesk = await refusal(create(desk(users.m2, tokens.m2Desktop), orgA, { agendaId: invite }));
+    expect(deniedDesk.code).toBe('CAPTURE_ALREADY_RUNNING');
+    expect(deniedDesk.details).toEqual({ kind: 'app', since: new Date(appSince).toISOString() });
+    expect(await meetingCount(users.m2)).toBe(before);
   });
 });

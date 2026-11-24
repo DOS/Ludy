@@ -55,7 +55,9 @@ import {
 import type { z } from 'zod';
 import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zSignEnvelopeDetail, zSignTemplateDetail, zTask } from '@ludy/kernel-contract';
 import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@ludy/mod-crm';
-import type { ProjectCycleSummarySource, ProjectWeeklyStatusSource, RoadmapAiChangelogSource, RoadmapAiDedupeSource } from '@ludy/mod-projects';
+import type { MeetingResults, Notes, Transcript } from '@ludy/kernel-contract';
+import type { ProjectCycleSummarySource, ProjectTriageAssistSource, ProjectWeeklyStatusSource, RoadmapAiChangelogSource, RoadmapAiDedupeSource, RoadmapAiSignalMatchSource } from '@ludy/mod-projects';
+import { enrichMeetingSignalMatchSource } from '@ludy/mod-projects';
 import { sql } from 'kysely';
 import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult, type WeeklyFacts, type WeeklyResult } from '@ludy/agent';
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
@@ -73,12 +75,17 @@ import {
   type AttendanceAnomaliesPorts,
 } from './attendance-coworker-ai.ts';
 import { draftProbationSummary, hrProbationAi, type HrProbationPorts } from './hr-probation-ai.ts';
+import { askSelfHrPolicy, draftSelfHrRequest, hrSelfAi, type HrSelfAiPorts } from './hr-self-ai.ts';
+import { checkAddendumDraft, hrAddendumAi, type HrAddendumPorts } from './hr-addendum-ai.ts';
 import type { HrAttendanceAnomaliesSnapshot } from '@ludy/kernel-contract';
 import type {
+  HrAddendumCheckSource,
   HrInviteDraftContext,
   HrLaborCheckSnapshot,
   HrProbationBriefSource,
   HrRecruitingBriefSnapshot,
+  HrSelfAiStatusContext,
+  HrSelfPolicySearchContext,
 } from '@ludy/mod-hr';
 import { buildEngageInviteDraftResult } from '@ludy/mod-hr';
 import { einvoiceAi, suggestEInvoiceDraft } from './einvoice-ai.ts';
@@ -89,7 +96,8 @@ import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { prepareProjectCycleSummary, projectCycleSummaryAi } from './project-cycle-summary-ai.ts';
-import { prepareRoadmapChangelogDraft, prepareRoadmapDedupe, projectRoadmapAi } from './project-roadmap-ai.ts';
+import { prepareRoadmapChangelogDraft, prepareRoadmapDedupe, prepareRoadmapSignalMatch, projectRoadmapAi } from './project-roadmap-ai.ts';
+import { prepareProjectTriageAssist, projectTriageAi } from './project-triage-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import {
   askSignVault,
@@ -573,6 +581,22 @@ export function createRpcHandler(
       : null,
     suggestionBudget(),
   );
+  const selfHrAi = hrSelfAi(
+    conversationReader && (conversationReader.hrRequestDraft || conversationReader.hrPolicyQa)
+      ? {
+          ...(conversationReader.hrRequestDraft ? { hrRequestDraft: conversationReader.hrRequestDraft.bind(conversationReader) } : {}),
+          ...(conversationReader.hrPolicyQa ? { hrPolicyQa: conversationReader.hrPolicyQa.bind(conversationReader) } : {}),
+        }
+      : null,
+    suggestionBudget(),
+    suggestionBudget(),
+  );
+  const addendumAi = hrAddendumAi(
+    conversationReader?.hrAddendumCheck
+      ? { hrAddendumCheck: conversationReader.hrAddendumCheck.bind(conversationReader) }
+      : null,
+    suggestionBudget(),
+  );
   // The finance coworker's wording of a payment reminder (#2488): the same reader and model, a budget of its own. It reads no customer text (the model is told the
   // notice level, the language and the sender's name), so the org's switch for AI on its customers' messages does not apply.
   const reminderAi: ReminderAi = { reader: conversationReader?.reminderWords ? { reminderWords: conversationReader.reminderWords.bind(conversationReader) } : null, budget: suggestionBudget() };
@@ -632,8 +656,13 @@ export function createRpcHandler(
       ? {
           ...(conversationReader.roadmapDedupe ? { roadmapDedupe: conversationReader.roadmapDedupe.bind(conversationReader) } : {}),
           ...(conversationReader.roadmapChangelogDraft ? { roadmapChangelogDraft: conversationReader.roadmapChangelogDraft.bind(conversationReader) } : {}),
+          ...(conversationReader.roadmapSignalMatch ? { roadmapSignalMatch: conversationReader.roadmapSignalMatch.bind(conversationReader) } : {}),
         }
       : null,
+    suggestionBudget(),
+  );
+  const projectTriageCoworker = projectTriageAi(
+    conversationReader?.projectTriageAssist ? { projectTriageAssist: conversationReader.projectTriageAssist.bind(conversationReader) } : null,
     suggestionBudget(),
   );
   const signCoworker = signAi(
@@ -824,6 +853,17 @@ export function createRpcHandler(
     read: (input) => runtime.query<HrProbationBriefSource>('hr.probation.brief.read', input, { actor, orgId }),
     isAiStopped: async () => (await runtime.query<{ aiStopped: boolean }>('hr.probation.ai_status', {}, { actor, orgId })).aiStopped,
     record: (input) => runtime.execute('hr.probation.brief.audit', input, { actor, orgId }),
+  });
+  const hrSelfAiPorts = (orgId: string, actor: UserActor): HrSelfAiPorts => ({
+    readDraftContext: () => runtime.query<HrSelfAiStatusContext>('hr.self.request_draft.context', {}, { actor, orgId }),
+    searchPolicyNotes: (input) => runtime.query<HrSelfPolicySearchContext>('hr.self.policy_qa.search', input, { actor, orgId }),
+    isAiStopped: async (includeNotes = false) =>
+      (await runtime.query<{ aiStopped: boolean }>('hr.self.ai_status', { includeNotes }, { actor, orgId })).aiStopped,
+  });
+  const hrAddendumPorts = (orgId: string, actor: UserActor): HrAddendumPorts => ({
+    read: (input) => runtime.query<HrAddendumCheckSource>('hr.addendum.check.read', input, { actor, orgId }),
+    isAiStopped: async () => (await runtime.query<{ aiStopped: boolean }>('hr.addendum.ai_status', {}, { actor, orgId })).aiStopped,
+    record: (input) => runtime.execute('hr.addendum.check.audit', input, { actor, orgId }),
   });
   const hrQuery =
     (name: string) =>
@@ -1241,6 +1281,47 @@ export function createRpcHandler(
           submit: os.hr.self.overtime.submit.handler(hrCommand('hr.self.overtime.submit')),
           cancel: os.hr.self.overtime.cancel.handler(hrCommand('hr.self.overtime.cancel')),
         },
+        salaryAdvance: {
+          list: os.hr.self.salaryAdvance.list.handler(hrQuery('hr.self.salary_advance.list')),
+          submit: os.hr.self.salaryAdvance.submit.handler(hrCommand('hr.self.salary_advance.submit')),
+          cancel: os.hr.self.salaryAdvance.cancel.handler(hrCommand('hr.self.salary_advance.cancel')),
+        },
+        businessTrips: {
+          list: os.hr.self.businessTrips.list.handler(hrQuery('hr.self.business_trip.list')),
+          submit: os.hr.self.businessTrips.submit.handler(hrCommand('hr.self.business_trip.submit')),
+          cancel: os.hr.self.businessTrips.cancel.handler(hrCommand('hr.self.business_trip.cancel')),
+        },
+        requestDraft: os.hr.self.requestDraft.handler(({ context, input }) =>
+          inHr(context, (orgId, actor) =>
+            draftSelfHrRequest(
+              selfHrAi,
+              hrSelfAiPorts(orgId, actor),
+              runtime,
+              orgId,
+              actor,
+              input,
+              aiMeter ? aiMeter(actor) : 'runtime',
+              aiPrice ? { price: aiPrice } : undefined,
+            ),
+          ),
+        ),
+        policyQa: os.hr.self.policyQa.handler(({ context, input }) =>
+          inHr(context, (orgId, actor) =>
+            askSelfHrPolicy(
+              selfHrAi,
+              hrSelfAiPorts(orgId, actor),
+              runtime,
+              orgId,
+              actor,
+              input,
+              aiMeter ? aiMeter(actor) : 'runtime',
+              aiPrice ? { price: aiPrice } : undefined,
+            ),
+          ),
+        ),
+        assets: {
+          list: os.hr.self.assets.list.handler(hrQuery('hr.self.assets.list')),
+        },
       },
       attendance: {
         list: os.hr.attendance.list.handler(hrQuery('hr.attendance.list')),
@@ -1266,6 +1347,18 @@ export function createRpcHandler(
         approveFinal: os.hr.overtimeRequests.approveFinal.handler(hrCommand('hr.overtime.approve_final')),
         reject: os.hr.overtimeRequests.reject.handler(hrCommand('hr.overtime.reject')),
       },
+      salaryAdvances: {
+        list: os.hr.salaryAdvances.list.handler(hrQuery('hr.salary_advance.list')),
+        approveL1: os.hr.salaryAdvances.approveL1.handler(hrCommand('hr.salary_advance.approve_l1')),
+        approveFinal: os.hr.salaryAdvances.approveFinal.handler(hrCommand('hr.salary_advance.approve_final')),
+        reject: os.hr.salaryAdvances.reject.handler(hrCommand('hr.salary_advance.reject')),
+      },
+      businessTrips: {
+        list: os.hr.businessTrips.list.handler(hrQuery('hr.business_trip.list')),
+        approveL1: os.hr.businessTrips.approveL1.handler(hrCommand('hr.business_trip.approve_l1')),
+        approveFinal: os.hr.businessTrips.approveFinal.handler(hrCommand('hr.business_trip.approve_final')),
+        reject: os.hr.businessTrips.reject.handler(hrCommand('hr.business_trip.reject')),
+      },
       probation: {
         preview: os.hr.probation.preview.handler(hrQuery('hr.probation.preview')),
         draftSummary: os.hr.probation.draftSummary.handler(({ context, input }) =>
@@ -1284,6 +1377,36 @@ export function createRpcHandler(
         ),
         decide: os.hr.probation.decide.handler(hrCommand('hr.probation.decide')),
         list: os.hr.probation.list.handler(hrQuery('hr.probation.list')),
+      },
+      addendum: {
+        list: os.hr.addendum.list.handler(hrQuery('hr.addendum.list')),
+        create: os.hr.addendum.create.handler(hrCommand('hr.addendum.create')),
+        update: os.hr.addendum.update.handler(hrCommand('hr.addendum.update')),
+        issue: os.hr.addendum.issue.handler(hrCommand('hr.addendum.issue')),
+        void: os.hr.addendum.void.handler(hrCommand('hr.addendum.void')),
+        pdf: os.hr.addendum.pdf.handler(hrQuery('hr.addendum.pdf')),
+        check: os.hr.addendum.check.handler(({ context, input }) =>
+          inHr(context, (orgId, actor) =>
+            checkAddendumDraft(
+              addendumAi,
+              hrAddendumPorts(orgId, actor),
+              runtime,
+              orgId,
+              actor,
+              input,
+              aiMeter ? aiMeter(actor) : 'runtime',
+              aiPrice ? { price: aiPrice } : undefined,
+            ),
+          ),
+        ),
+      },
+      timeline: {
+        get: os.hr.timeline.get.handler(hrQuery('hr.timeline.get')),
+      },
+      assets: {
+        list: os.hr.assets.list.handler(hrQuery('hr.assets.list')),
+        assign: os.hr.assets.assign.handler(hrCommand('hr.assets.assign')),
+        updateStatus: os.hr.assets.updateStatus.handler(hrCommand('hr.assets.update_status')),
       },
       leaveRequests: {
         list: os.hr.leaveRequests.list.handler(hrQuery('hr.leave_request.list')),
@@ -1328,7 +1451,15 @@ export function createRpcHandler(
           applyThirteenthMonth: os.hr.payroll.runs.applyThirteenthMonth.handler(hrCommand('hr.payroll.run.apply_thirteenth_month')),
           syncLeave: os.hr.payroll.runs.syncLeave.handler(hrCommand('hr.payroll.run.sync_leave')),
           syncOvertime: os.hr.payroll.runs.syncOvertime.handler(hrCommand('hr.payroll.run.sync_overtime')),
+          syncStage6b: os.hr.payroll.runs.syncStage6b.handler(hrCommand('hr.payroll.run.sync_stage6b')),
           approve: os.hr.payroll.runs.approve.handler(hrCommand('hr.payroll.run.approve')),
+        },
+        adjustments: {
+          list: os.hr.payroll.adjustments.list.handler(hrQuery('hr.payroll.adjustment.list')),
+          create: os.hr.payroll.adjustments.create.handler(hrCommand('hr.payroll.adjustment.create')),
+          approve: os.hr.payroll.adjustments.approve.handler(hrCommand('hr.payroll.adjustment.approve')),
+          reject: os.hr.payroll.adjustments.reject.handler(hrCommand('hr.payroll.adjustment.reject')),
+          cancel: os.hr.payroll.adjustments.cancel.handler(hrCommand('hr.payroll.adjustment.cancel')),
         },
         leave: {
           balance: os.hr.payroll.leave.balance.handler(hrQuery('hr.payroll.leave.balance')),
@@ -2440,24 +2571,6 @@ export function createRpcHandler(
         read: os.social.notifications.read.handler(socialCommand('social.notification.read')),
         mute: os.social.notifications.mute.handler(socialCommand('social.notification.mute')),
         mail: os.social.notifications.mail.handler(socialCommand('social.notification.mail')),
-        push: {
-          status: os.social.notifications.push.status.handler(({ context, input }) =>
-            inSocial(context, async (orgId, actor) => {
-              const push = channels?.push;
-              const own = await runtime.query<{ devices: { id: string; label: string | null; createdAt: string; lastUsedAt: string | null; current: boolean }[]; subscribed: boolean }>('social.push.devices', input, { actor, orgId });
-              return { enabled: Boolean(push), publicKey: push?.publicKey ?? null, ...own };
-            }),
-          ),
-          // Without VAPID keys nothing could ever be sent: refused before a row is written.
-          subscribe: os.social.notifications.push.subscribe.handler(({ context, input }) =>
-            inSocial(context, (orgId, actor) => {
-              if (!channels?.push) throw new DomainError('PUSH_DISABLED', 404, 'Máy chủ này chưa bật thông báo đẩy');
-              return runtime.execute<{ id: string }>('social.push.subscribe', input, { actor, orgId });
-            }),
-          ),
-          // Turning a device off works whatever the keys, so a member can always clean up.
-          unsubscribe: os.social.notifications.push.unsubscribe.handler(socialCommand('social.push.unsubscribe')),
-        },
       },
       accounts: {
         trends: os.social.accounts.trends.handler(socialQuery('social.account.trends')),
@@ -3267,6 +3380,25 @@ export function createRpcHandler(
       list: os.notifications.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.notification.list', {}, { actor, orgId }))),
       read: os.notifications.read.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.notification.read', input, { actor, orgId }))),
       mute: os.notifications.mute.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.notification.mute', input, { actor, orgId }))),
+      // Browser push (#1238, #3736): one subscription per browser serves every app's notices; each member reaches only their own devices.
+      push: {
+        status: os.notifications.push.status.handler(({ context, input }) =>
+          inOrg(context, async (orgId, actor) => {
+            const push = channels?.push;
+            const own = await runtime.query<{ devices: { id: string; label: string | null; createdAt: string; lastUsedAt: string | null; current: boolean }[]; subscribed: boolean }>('kernel.push.devices', input, { actor, orgId });
+            return { enabled: Boolean(push), publicKey: push?.publicKey ?? null, ...own };
+          }),
+        ),
+        // Without VAPID keys nothing could ever be sent: refused before a row is written.
+        subscribe: os.notifications.push.subscribe.handler(({ context, input }) =>
+          inOrg(context, (orgId, actor) => {
+            if (!channels?.push) throw new DomainError('PUSH_DISABLED', 404, 'Máy chủ này chưa bật thông báo đẩy');
+            return runtime.execute<{ id: string }>('kernel.push.subscribe', input, { actor, orgId });
+          }),
+        ),
+        // Turning a device off works whatever the keys, so a member can always clean up.
+        unsubscribe: os.notifications.push.unsubscribe.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.push.unsubscribe', input, { actor, orgId }))),
+      },
     },
     conversations: {
       list: os.conversations.list.handler(({ context, input }) => inOrg(context, async (orgId, actor) => markableListed((await runtime.query('kernel.conversation.list', input, { actor, orgId })) as ConversationListed, channels?.emailSenderCheck === true))),
@@ -4872,6 +5004,106 @@ export function createRpcHandler(
             return prepareRoadmapChangelogDraft(projectRoadmapCoworker, orgId, actor.userId, source, input.language ?? 'vi');
           }),
         ),
+        signalList: os.projects.roadmap.signalList.handler(({ context, input }) =>
+          inProjects(context, (orgId, actor) =>
+            runtime.query('projects.roadmap.signal.list', input, { actor, orgId }),
+          ),
+        ),
+        signalRollup: os.projects.roadmap.signalRollup.handler(({ context, input }) =>
+          inProjects(context, (orgId, actor) =>
+            runtime.query('projects.roadmap.signal.rollup', input, { actor, orgId }),
+          ),
+        ),
+        signalCreate: os.projects.roadmap.signalCreate.handler(({ context, input }) =>
+          inProjects(context, (orgId, actor) => {
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute('projects.roadmap.signal.create', rest, { actor, orgId, idempotencyKey });
+          }),
+        ),
+        signalDelete: os.projects.roadmap.signalDelete.handler(({ context, input }) =>
+          inProjects(context, (orgId, actor) => {
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute('projects.roadmap.signal.delete', rest, { actor, orgId, idempotencyKey });
+          }),
+        ),
+        signalMatchSuggest: os.projects.roadmap.signalMatchSuggest.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            const aiReaderEnabled = Boolean(projectRoadmapCoworker.reader?.roadmapSignalMatch);
+            let source = await runtime.query<RoadmapAiSignalMatchSource>(
+              'projects.roadmap.ai_signal_match_source',
+              { ...input, aiReaderEnabled },
+              { actor, orgId },
+            );
+            if (!aiReaderEnabled || source.conversationAutoDraftOff) {
+              return { ai: 'off' as const, suggestions: [], newIdeaDraft: null, inspectedCount: 0, truncated: false };
+            }
+            if (
+              source.sourceType === 'meetings.meeting' &&
+              Boolean(projectRoadmapCoworker.reader?.roadmapSignalMatch) &&
+              !source.aiStopped &&
+              !source.aiBudgetSpent
+            ) {
+              const optionalQuery = async <T>(fn: () => Promise<T>): Promise<T | null> => {
+                try {
+                  return await fn();
+                } catch (err) {
+                  if (err instanceof DomainError && (err.status === 403 || err.status === 404)) {
+                    return null;
+                  }
+                  throw err;
+                }
+              };
+              const [resultsSettled, notesSettled] = await Promise.allSettled([
+                optionalQuery(() =>
+                  runtime.query<MeetingResults>('meetings.result.get', { meetingId: input.sourceId }, { actor, orgId }),
+                ),
+                source.sourceIsRecorder
+                  ? optionalQuery(() =>
+                      runtime.query<Notes>('meetings.notes.get', { meetingId: input.sourceId }, { actor, orgId }),
+                    )
+                  : Promise.resolve(null),
+              ]);
+              if (resultsSettled.status === 'rejected') {
+                throw resultsSettled.reason;
+              }
+              const results = resultsSettled.value;
+              const notes = notesSettled.status === 'fulfilled' ? notesSettled.value : null;
+              const primaryResult =
+                results?.draft !== null &&
+                results?.draft !== undefined &&
+                (results.draft.summary.trim().length > 0 || results.draft.decisions.some((d) => d.trim().length > 0))
+                  ? results.draft
+                  : results?.published;
+              const hasUsableResult =
+                Boolean(
+                  primaryResult &&
+                    (primaryResult.summary.trim().length > 0 ||
+                      primaryResult.decisions.some((d) => d.trim().length > 0)),
+                ) || Boolean(results?.items.some((i) => i.title.trim().length > 0));
+              if (notesSettled.status === 'rejected') {
+                const notesErr = notesSettled.reason;
+                const isAuthError =
+                  notesErr instanceof DomainError &&
+                  (notesErr.status === 401 || notesErr.code === 'AUTH_UNAVAILABLE');
+                if (isAuthError || !hasUsableResult) {
+                  throw notesErr;
+                }
+                console.error(
+                  '[project-roadmap-ai] optional notes.get failed, falling back to result',
+                  notesErr instanceof Error ? notesErr.name : typeof notesErr,
+                );
+              }
+              const hasUsableContent = hasUsableResult || Boolean(notes?.body.trim());
+              const transcript = hasUsableContent
+                ? null
+                : await optionalQuery(() =>
+                    runtime.query<Transcript>('meetings.transcript.get', { meetingId: input.sourceId }, { actor, orgId }),
+                  );
+              source = enrichMeetingSignalMatchSource(source, { results, transcript, notes });
+            }
+            return prepareRoadmapSignalMatch(projectRoadmapCoworker, orgId, actor.userId, source, input.language ?? 'vi');
+          }),
+        ),
       },
       startTime: os.projects.startTime.handler(projectsCommand('projects.time.start')),
       stopTime: os.projects.stopTime.handler(projectsCommand('projects.time.stop')),
@@ -4880,6 +5112,42 @@ export function createRpcHandler(
       deleteTimeEntry: os.projects.deleteTimeEntry.handler(projectsCommand('projects.time.delete')),
       timeSummary: os.projects.timeSummary.handler(projectsQuery('projects.time.summary')),
       exportTimeCsv: os.projects.exportTimeCsv.handler(projectsQuery('projects.time.export_csv')),
+      triage: {
+        create: os.projects.triage.create.handler(projectsCommand('projects.triage.create')),
+        list: os.projects.triage.list.handler(projectsQuery('projects.triage.list')),
+        accept: os.projects.triage.accept.handler(projectsCommand('projects.triage.accept')),
+        merge: os.projects.triage.merge.handler(projectsCommand('projects.triage.merge')),
+        snooze: os.projects.triage.snooze.handler(projectsCommand('projects.triage.snooze')),
+        decline: os.projects.triage.decline.handler(projectsCommand('projects.triage.decline')),
+        reopen: os.projects.triage.reopen.handler(projectsCommand('projects.triage.reopen')),
+        assist: os.projects.triage.assist.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            const source = await runtime.query<ProjectTriageAssistSource>(
+              'projects.triage_assist_source',
+              { itemId: input.itemId },
+              { actor, orgId },
+            );
+            let conversationAutoDraft = true;
+            if (source.item.sourceType === 'kernel.conversation') {
+              const { autoDraft } = await runtime.query<ConversationAutoDraft>(
+                'kernel.conversation.auto_draft',
+                {},
+                { actor, orgId },
+              );
+              if (!autoDraft) return { ai: 'off' as const, proposal: null };
+              conversationAutoDraft = autoDraft;
+            }
+            return prepareProjectTriageAssist(
+              projectTriageCoworker,
+              orgId,
+              actor.userId,
+              source,
+              input.language ?? 'vi',
+              { conversationAutoDraft },
+            );
+          }),
+        ),
+      },
     },
     sign: {
       envelope: {
@@ -5291,8 +5559,9 @@ export function createRpcHandler(
         list: os.sign.kyc.list.handler(signQuery('sign.kyc.list')),
         run_deterministic: os.sign.kyc.run_deterministic.handler(signCommand('sign.kyc.run_deterministic')),
         analyze: os.sign.kyc.analyze.handler(({ context, input }) =>
-          inSign(context, (orgId, actor) =>
-            proposeEnvelopeKycCheck({
+          inSign(context, (orgId, actor) => {
+            const nonEmptyPages = input.attachmentPages?.filter((p) => p.text.trim().length > 0);
+            return proposeEnvelopeKycCheck({
               ai: signCoworker,
               runtime,
               orgId,
@@ -5302,11 +5571,15 @@ export function createRpcHandler(
               ...(input.expectedEntityName !== undefined ? { expectedEntityName: input.expectedEntityName } : {}),
               ...(input.expectedTaxCode !== undefined ? { expectedTaxCode: input.expectedTaxCode } : {}),
               ...(input.expectedSignerName !== undefined ? { expectedSignerName: input.expectedSignerName } : {}),
-              ...(input.attachmentPages ? { attachmentPages: input.attachmentPages } : {}),
+              ...(nonEmptyPages && nonEmptyPages.length > 0 ? { attachmentPages: nonEmptyPages } : {}),
+              inspectAttachmentPages: async (source) =>
+                source.storedTextPreview && source.storedTextPreview.trim().length > 0
+                  ? [{ page: 1, text: source.storedTextPreview }]
+                  : [],
               meter: aiMeter ? aiMeter(actor) : 'runtime',
               ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),
-            }),
-          ),
+            });
+          }),
         ),
         confirm: os.sign.kyc.confirm.handler(signCommand('sign.kyc.confirm')),
       },

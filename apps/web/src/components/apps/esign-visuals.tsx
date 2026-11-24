@@ -4,16 +4,22 @@
 // strictly section titles and feature groups.
 import {
   ArrowRight,
+  Bell,
   Check,
   FileCheck2,
+  FileDiff,
   FilePenLine,
+  FileText,
+  KeyRound,
   Lock,
   Mail,
   PenLine,
+  Search,
   ShieldCheck,
   Smartphone,
   Sparkles,
-  TriangleAlert,
+  Stamp,
+  Webhook,
 } from 'lucide-react';
 import type { EsignCopy } from '../../content/esign-vi';
 import type { Dictionary } from '../../content/vi';
@@ -24,7 +30,7 @@ type Props = { dict: Dictionary; copy: EsignCopy };
 function PanelTitle({ title, sub }: { title: string; sub?: string }) {
   return (
     <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-      <span className="min-w-0 text-sm font-semibold">{title}</span>
+      <span className="min-w-0 text-sm font-semibold text-fg">{title}</span>
       {sub ? <span className="min-w-0 text-xs text-subtle">{sub}</span> : null}
     </div>
   );
@@ -43,8 +49,7 @@ function FauxButton({ children, primary = false }: { children: string; primary?:
   );
 }
 
-// Hero: an envelope with two sequential signers, a PDF page showing both a human-placed field and a dashed AI
-// proposal overlay, plus the clause risk card and human-gated Send button.
+// Hero: sequential envelope with Signer/CC roles, red stamp + initials, dashed AI proposal, SME playbook check and human Send gate.
 export function EsignHero({ dict, copy }: Props) {
   const f = copy.fragments.hero;
   return (
@@ -56,7 +61,7 @@ export function EsignHero({ dict, copy }: Props) {
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,0.95fr)]">
         {/* Left: Envelope summary & signers */}
         <div className="flex min-w-0 flex-col rounded-md border border-line bg-bg p-4">
-          <span className="text-sm font-semibold">{f.docTitle}</span>
+          <span className="text-sm font-semibold text-fg">{f.docTitle}</span>
           <div className="mt-2 flex flex-wrap gap-1.5">
             <Chip tone="accent" wrap>
               {f.sourceChip}
@@ -71,7 +76,7 @@ export function EsignHero({ dict, copy }: Props) {
             <span className="text-xs font-semibold text-subtle">{f.signersTitle}</span>
             <ul className="mt-2 flex flex-col gap-2.5 text-xs">
               {f.signers.map((signer) => (
-                <li key={signer.order} className="rounded-sm border border-line bg-surface p-2.5">
+                <li key={`${signer.order}-${signer.name}`} className="rounded-sm border border-line bg-surface p-2.5">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-semibold text-fg">
                       <span className="num text-subtle">{signer.order}</span> {signer.name}
@@ -85,7 +90,7 @@ export function EsignHero({ dict, copy }: Props) {
           </div>
         </div>
 
-        {/* Center: Contract page preview with placed field and dashed AI proposal */}
+        {/* Center: Contract page preview with placed field/stamp and dashed AI proposal */}
         <div className="flex min-w-0 flex-col rounded-md border border-line bg-bg p-4">
           <PanelTitle title={f.pageLabel} sub={f.docTitle} />
           <div className="mt-3 flex flex-1 flex-col justify-between gap-4 rounded-sm border border-line bg-surface p-3.5 text-xs">
@@ -122,12 +127,12 @@ export function EsignHero({ dict, copy }: Props) {
           </div>
         </div>
 
-        {/* Right: Clause risk flag + human Send gate */}
+        {/* Right: Playbook & clause check + human Send gate */}
         <div className="flex min-w-0 flex-col rounded-md border border-dashed border-accent/60 bg-bg p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-sm font-semibold">{f.vyTitle}</span>
-            <Chip tone="warn" wrap>
-              <TriangleAlert className="size-3" aria-hidden="true" />
+            <span className="text-sm font-semibold text-fg">{f.vyTitle}</span>
+            <Chip tone="ok" wrap>
+              <ShieldCheck className="size-3" aria-hidden="true" />
               {f.vyRisk}
             </Chip>
           </div>
@@ -150,58 +155,105 @@ export function EsignHero({ dict, copy }: Props) {
   );
 }
 
-// Group 1: Sandbox PDF check, Engage quote handoff, and 5-field manual palette.
-export function IntakeAndPlaceVisual({ copy }: Props) {
-  const f = copy.fragments.intake;
+// Group 1: Starter A4 drafter, reusable template tags, 9 field types + 1-click initials, and revision diff.
+export function IntakeAndTemplatesVisual({ copy }: Props) {
+  const f = copy.fragments.templatesAndDrafting;
   return (
     <figure className="rounded-md border border-line bg-bg">
       <figcaption className="border-b border-line px-4 py-3">
         <PanelTitle title={f.title} sub={f.sub} />
         <span className="sr-only">{copy.fragments.sample}</span>
       </figcaption>
-      <ul className="flex flex-col gap-2 px-4 py-3 text-xs text-muted">
-        {f.checks.map((item) => (
-          <li key={item} className="flex items-start gap-2">
-            <Check className="mt-0.5 size-3.5 shrink-0 text-ok" strokeWidth={3} aria-hidden="true" />
-            <span className="min-w-0">{item}</span>
-          </li>
-        ))}
-      </ul>
-      <div className="border-t border-line px-4 py-3">
-        <div className="text-xs font-semibold text-subtle">{f.handoffTitle}</div>
-        <div className="mt-2 flex flex-col gap-2 text-xs sm:flex-row sm:items-center sm:gap-2.5">
-          <div className="min-w-0 flex-1 rounded-sm border border-line bg-surface px-3 py-2 font-medium text-fg">
-            {f.handoffFrom}
-          </div>
-          <ArrowRight className="hidden size-4 shrink-0 text-subtle sm:block" aria-hidden="true" />
-          <div className="min-w-0 flex-1 rounded-sm border border-line bg-surface px-3 py-2 text-muted">
-            {f.handoffTo}
-          </div>
-        </div>
-      </div>
-      <div className="border-t border-line px-4 py-3">
-        <div className="text-xs font-semibold text-subtle">{f.paletteTitle}</div>
-        <ul className="mt-2 flex flex-wrap gap-1.5 text-xs">
-          {f.fieldTypes.map((type) => (
-            <li key={type} className="inline-flex items-center gap-1 rounded-sm border border-line bg-surface px-2.5 py-1 text-fg">
-              <FilePenLine className="size-3 shrink-0 text-subtle" aria-hidden="true" />
-              {type}
+      <div className="px-4 py-3 text-xs">
+        <span className="font-semibold text-subtle">{f.starterTitle}</span>
+        <ul className="mt-2 flex flex-wrap gap-1.5">
+          {f.starterKinds.map((kind) => (
+            <li key={kind} className="inline-flex items-center gap-1 rounded-sm border border-line bg-surface px-2.5 py-1 text-fg">
+              <FileText className="size-3 shrink-0 text-subtle" aria-hidden="true" />
+              <span>{kind}</span>
             </li>
           ))}
         </ul>
+      </div>
+      <div className="border-t border-line px-4 py-3 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="font-semibold text-subtle">{f.tagsTitle}</span>
+          <Chip tone="accent" wrap>
+            {f.initialAllBadge}
+          </Chip>
+        </div>
+        <ul className="mt-2 flex flex-wrap gap-1.5">
+          {f.tagsDetected.map((tag) => (
+            <li key={tag} className="rounded-sm border border-line bg-surface px-2 py-1 font-mono text-[11px] text-fg">
+              {tag}
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="border-t border-line px-4 py-3 text-xs">
+        <span className="font-semibold text-subtle">{f.paletteTitle}</span>
+        <ul className="mt-2 flex flex-wrap gap-1.5">
+          {f.fieldTypes.map((type) => (
+            <li key={type} className="inline-flex items-center gap-1 rounded-sm border border-line bg-surface px-2 py-1 text-fg">
+              <FilePenLine className="size-3 shrink-0 text-subtle" aria-hidden="true" />
+              <span>{type}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="border-t border-line px-4 py-3 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="flex items-center gap-1.5 font-semibold text-fg">
+            <FileDiff className="size-3.5 shrink-0 text-subtle" aria-hidden="true" />
+            {f.diffTitle}
+          </span>
+          <Chip tone="warn" wrap>
+            {f.diffBadge}
+          </Chip>
+        </div>
+        <p className="mt-1.5 text-muted">{f.diffNote}</p>
       </div>
     </figure>
   );
 }
 
-// Group 2: Mobile-first signing ceremony card (no-referrer fragment URL, email OTP chip, draw/type signature, consent).
+// Group 2: Connected suite handoffs from Engage, Meeting minutes, Projects -> Finance invoice, and HR (Decree 337/2025).
+export function HandoffsVisual({ copy }: Props) {
+  const f = copy.fragments.handoffs;
+  return (
+    <figure className="rounded-md border border-line bg-bg">
+      <figcaption className="border-b border-line px-4 py-3">
+        <PanelTitle title={f.title} sub={f.sub} />
+        <span className="sr-only">{copy.fragments.sample}</span>
+      </figcaption>
+      <ul className="flex flex-col gap-2.5 p-4 text-xs">
+        {f.cards.map((card) => (
+          <li key={card.from} className="rounded-sm border border-line bg-surface p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-semibold text-fg">{card.from}</span>
+              <Chip tone={card.tone} wrap>
+                {card.badge}
+              </Chip>
+            </div>
+            <div className="mt-1.5 flex items-start gap-1.5 text-muted">
+              <ArrowRight className="mt-0.5 size-3.5 shrink-0 text-subtle" aria-hidden="true" />
+              <span className="min-w-0">{card.to}</span>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </figure>
+  );
+}
+
+// Group 3: Mobile-first signing ceremony across Zalo fragment, direct links, public hub, stamps, attachments and delegation.
 export function CeremonyVisual({ copy }: Props) {
   const f = copy.fragments.ceremony;
   return (
     <figure className="rounded-md border border-line bg-bg">
       <figcaption className="border-b border-line px-4 py-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="flex items-center gap-1.5 text-sm font-semibold">
+          <span className="flex items-center gap-1.5 text-sm font-semibold text-fg">
             <Smartphone className="size-4 shrink-0 text-subtle" aria-hidden="true" />
             {f.title}
           </span>
@@ -210,16 +262,30 @@ export function CeremonyVisual({ copy }: Props) {
             {f.otpBadge}
           </Chip>
         </div>
-        <span className="mt-1 block break-all font-mono text-[11px] text-subtle">{f.urlNote}</span>
+        <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-subtle">
+          {f.urls.map((url, i) => (
+            <span key={url} className="inline-flex items-center gap-1.5">
+              {i > 0 ? <span aria-hidden="true">&middot;</span> : null}
+              <code className="break-all font-mono">{url}</code>
+            </span>
+          ))}
+        </div>
         <span className="sr-only">{copy.fragments.sample}</span>
       </figcaption>
       <div className="flex flex-col gap-3 px-4 py-3 text-xs">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="min-w-0 text-sm font-medium">{f.docTitle}</span>
-          <Chip tone="accent">{f.remainingBadge}</Chip>
+          <span className="min-w-0 text-sm font-medium text-fg">{f.docTitle}</span>
+          <Chip tone="accent" wrap>
+            {f.remainingBadge}
+          </Chip>
+        </div>
+        <div>
+          <Chip tone="neutral" wrap>
+            {f.sharedSummaryBadge}
+          </Chip>
         </div>
         <div className="rounded-sm border border-line bg-surface p-3">
-          <div className="flex gap-3 border-b border-line pb-2" aria-hidden="true">
+          <div className="flex flex-wrap gap-3 border-b border-line pb-2" aria-hidden="true">
             {f.tabs.map((tab, i) => (
               <span
                 key={tab}
@@ -232,6 +298,10 @@ export function CeremonyVisual({ copy }: Props) {
           <div className="mt-3 rounded-sm border border-line bg-bg px-3 py-3 text-center font-display text-base font-semibold italic text-fg">
             {f.typedName}
           </div>
+          <div className="mt-2.5 flex items-center gap-1.5 rounded-sm border border-line bg-bg px-2.5 py-1.5 text-muted">
+            <Stamp className="size-3.5 shrink-0 text-subtle" aria-hidden="true" />
+            <span className="min-w-0">{f.attachmentChip}</span>
+          </div>
         </div>
         <div className="flex items-start gap-2 text-muted">
           <span className="mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-[4px] border border-ok bg-ok text-bg" aria-hidden="true">
@@ -239,23 +309,26 @@ export function CeremonyVisual({ copy }: Props) {
           </span>
           <span>{f.consent}</span>
         </div>
-        <div className="flex flex-wrap justify-end gap-2 pt-1">
-          <FauxButton>{f.declineBtn}</FauxButton>
-          <FauxButton primary>{f.submitBtn}</FauxButton>
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+          <span className="min-w-0 flex-1 text-[11px] text-subtle">{f.delegateNote}</span>
+          <div className="flex flex-wrap gap-2">
+            <FauxButton>{f.declineBtn}</FauxButton>
+            <FauxButton primary>{f.submitBtn}</FauxButton>
+          </div>
         </div>
       </div>
     </figure>
   );
 }
 
-// Group 3: Sealed PDF evidence, certificate code, SHA-256 digests, offline Web Crypto check, and CA readiness badge.
+// Group 4: SHA-256 sealing, hash-chained ledger, sender-side KYC check, CA boundary, and offline Web Crypto verify.
 export function SealingAndVerifyVisual({ copy }: Props) {
   const f = copy.fragments.sealing;
   return (
     <figure className="rounded-md border border-line bg-bg">
       <figcaption className="border-b border-line px-4 py-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-sm font-semibold">{f.title}</span>
+          <span className="text-sm font-semibold text-fg">{f.title}</span>
           <Chip tone="ok" wrap>
             <ShieldCheck className="size-3" aria-hidden="true" />
             {f.chainBadge}
@@ -278,6 +351,16 @@ export function SealingAndVerifyVisual({ copy }: Props) {
         </div>
       </dl>
       <div className="border-t border-line px-4 py-3 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="font-semibold text-fg">{f.kycTitle}</span>
+          <Chip tone="ok" wrap>
+            <Check className="size-3" strokeWidth={3} aria-hidden="true" />
+            {f.kycStatus}
+          </Chip>
+        </div>
+        <p className="mt-1 text-muted">{f.kycNote}</p>
+      </div>
+      <div className="border-t border-line px-4 py-3 text-xs">
         <div className="flex items-center gap-2 font-semibold text-fg">
           <FileCheck2 className="size-4 shrink-0 text-ok" aria-hidden="true" />
           <span>{f.verifyTitle}</span>
@@ -297,40 +380,111 @@ export function SealingAndVerifyVisual({ copy }: Props) {
   );
 }
 
-// Group 4: Vy's clause risk summary alongside the graceful AI-off fallback state.
-export function VyReviewVisual({ copy }: Props) {
-  const f = copy.fragments.vyReview;
+// Group 5: SME playbook checklist with copyable redline, renewal & Today alerts, and scoped Contract Vault Q&A.
+export function ObligationsAndPlaybookVisual({ copy }: Props) {
+  const f = copy.fragments.obligationsAndPlaybook;
   return (
     <figure className="rounded-md border border-line bg-bg">
       <figcaption className="border-b border-line px-4 py-3">
-        <div className="flex items-center gap-2">
-          <Sparkles className="size-4 shrink-0 text-accent-ink" aria-hidden="true" />
-          <span className="text-sm font-semibold">{f.title}</span>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-sm font-semibold text-fg">{f.title}</span>
+          <Chip tone="ok" wrap>
+            {f.playbookVerdict}
+          </Chip>
         </div>
         <span className="sr-only">{copy.fragments.sample}</span>
       </figcaption>
       <div className="flex flex-col gap-3 px-4 py-3 text-xs">
-        <div className="rounded-sm border border-dashed border-accent/60 bg-surface p-3">
-          <span className="font-semibold text-fg">{f.summaryLabel}</span>
-          <p className="mt-1 text-muted">{f.summaryBody}</p>
+        <div className="rounded-sm border border-line bg-surface p-3">
+          <span className="font-semibold text-subtle">{f.playbookTitle}</span>
+          <p className="mt-1 font-medium text-fg">{f.playbookRule}</p>
+          <div className="mt-2 rounded-sm border border-dashed border-accent/60 bg-bg p-2.5">
+            <span className="block text-[11px] font-medium text-accent-ink">{f.redlineLabel}</span>
+            <p className="mt-0.5 text-muted">{f.redlineText}</p>
+          </div>
         </div>
-        <div>
-          <div className="font-semibold text-subtle">{f.riskLabel}</div>
-          <ul className="mt-2 flex flex-col gap-2">
-            {f.risks.map((risk) => (
-              <li key={risk.title} className="flex flex-wrap items-center justify-between gap-2 rounded-sm border border-line bg-surface p-2.5">
-                <span className="min-w-0 font-medium text-fg">{risk.title}</span>
-                <div className="flex items-center gap-1.5">
-                  <Chip tone={risk.tone}>{risk.level}</Chip>
-                  <Chip tone="neutral">{risk.page}</Chip>
-                </div>
+        <div className="rounded-sm border border-line bg-surface p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5 font-semibold text-fg">
+              <Bell className="size-3.5 shrink-0 text-warn" aria-hidden="true" />
+              {f.renewalTitle}
+            </span>
+            <Chip tone="warn" wrap>
+              {f.renewalBadge}
+            </Chip>
+          </div>
+          <p className="num mt-1.5 text-muted">{f.renewalMeta}</p>
+        </div>
+        <div className="rounded-sm border border-dashed border-accent/60 bg-surface p-3">
+          <span className="flex items-center gap-1.5 font-semibold text-fg">
+            <Search className="size-3.5 shrink-0 text-accent-ink" aria-hidden="true" />
+            {f.vaultTitle}
+          </span>
+          <p className="mt-1.5 font-medium text-fg">{f.vaultQuery}</p>
+          <p className="mt-1 text-muted">{f.vaultAnswer}</p>
+        </div>
+        <div className="rounded-sm border border-line bg-surface-2 px-3 py-2 text-muted">{f.aiOffNote}</div>
+      </div>
+    </figure>
+  );
+}
+
+// Group 6: Signed HMAC webhooks, 4 read-only MCP tools, and scoped /api/v1/sign/* external REST API.
+export function IntegrationsVisual({ copy }: Props) {
+  const f = copy.fragments.integrations;
+  return (
+    <figure className="rounded-md border border-line bg-bg">
+      <figcaption className="border-b border-line px-4 py-3">
+        <PanelTitle title={f.title} sub={f.sub} />
+        <span className="sr-only">{copy.fragments.sample}</span>
+      </figcaption>
+      <div className="flex flex-col gap-3 px-4 py-3 text-xs">
+        <div className="rounded-sm border border-line bg-surface p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5 font-semibold text-fg">
+              <Webhook className="size-3.5 shrink-0 text-ok" aria-hidden="true" />
+              {f.webhookTitle}
+            </span>
+            <Chip tone="ok" wrap>
+              {f.webhookPayload}
+            </Chip>
+          </div>
+          <p className="mt-1.5 text-[11px] text-muted">
+            <code className="break-all font-mono">{f.webhookUrl}</code>
+            {' · '}
+            {f.webhookSecretLabel} <code className="font-mono">{f.webhookSecretPrefix}</code> {f.webhookRotationNote}
+          </p>
+        </div>
+        <div className="rounded-sm border border-line bg-surface p-3">
+          <span className="font-semibold text-subtle">{f.mcpTitle}</span>
+          <ul className="mt-2 grid gap-1.5 sm:grid-cols-2">
+            {f.mcpTools.map((tool) => (
+              <li key={tool} className="break-all rounded-sm border border-line bg-bg px-2.5 py-1.5 font-mono text-[11px] text-fg">
+                {tool}
               </li>
             ))}
           </ul>
         </div>
-        <div className="rounded-sm border border-line bg-surface-2 p-3">
-          <span className="block font-semibold text-fg">{f.aiOffTitle}</span>
-          <span className="mt-1 block text-muted">{f.aiOffBody}</span>
+        <div className="rounded-sm border border-line bg-surface p-3">
+          <span className="flex flex-wrap items-center gap-1.5 font-semibold text-fg">
+            <KeyRound className="size-3.5 shrink-0 text-accent-ink" aria-hidden="true" />
+            <span>
+              {f.apiTitlePrefix} <code className="font-mono font-medium">{f.apiKeyPrefix}</code>
+              {f.apiTitleSuffix ? ` ${f.apiTitleSuffix}` : ''}
+            </span>
+          </span>
+          <ul className="mt-2 flex flex-col gap-1.5">
+            {f.apiScopes.map((scope) => (
+              <li
+                key={scope.code}
+                className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5 rounded-sm border border-line bg-bg px-2.5 py-1.5 text-[11px] text-muted"
+              >
+                <code className="font-mono font-medium text-fg">{scope.code}</code>
+                {scope.route ? <code className="font-mono text-fg">{scope.route}</code> : null}
+                <span>{scope.text}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       </div>
     </figure>

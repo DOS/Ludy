@@ -18,7 +18,14 @@
 import { money, normalizeVatRate } from '@ludy/l10n-vn';
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
 import { figuresOfText } from './einvoice-draft.ts';
-import { hasAddress } from './reminder.ts';
+import {
+  hasAddress,
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasPromptMarkupLeak,
+  hasStealthControls,
+  hasUngroundedMoneyOrScaleWords,
+} from './injection-guards.ts';
 
 // How much one call reads and proposes: a bound on what one paid call sends and on what one answer may fill in.
 export const QUOTE_SUGGEST_MESSAGES_MAX = 8;
@@ -136,15 +143,25 @@ export function checkQuoteLines(request: QuoteSuggestRequest, output: QuoteModel
   for (const l of earlier) if (!byDescription.has(key(l.description))) byDescription.set(key(l.description), l);
   const trusted = [...sourceText, ...earlier.map((l) => l.description), ...earlier.map((l) => l.unit ?? ''), dealAmount ?? ''];
   const lines: QuoteProposedLine[] = [];
+  const trustedHasMoneyScaleWords = hasUngroundedMoneyOrScaleWords(trusted.join('\n'));
   const check = (line: QuoteModelLine): QuoteProposedLine | LineProblem => {
+    if (hasStealthControls(line.description) || hasPromptMarkupLeak(line.description)) return 'LINK';
+    if (line.unit !== null && (hasStealthControls(line.unit) || hasPromptMarkupLeak(line.unit))) return 'LINK';
     const description = oneLine(line.description, DESCRIPTION_MAX).replace(/<<<|>>>/g, '');
     if (description === '') return 'LINE';
     const unitText = line.unit === null ? null : oneLine(line.unit, UNIT_MAX) || null;
     // A description is words: a run of seven digits or more (a phone number, a tax code) is refused even when the customer wrote it.
     if (/\d{7,}/u.test(description.normalize('NFKC').replace(/[\s.,-]/gu, ''))) return 'FIGURES';
     for (const text of [description, unitText ?? '']) {
-      if (hasAddress(text) || draftLinksOutside(text, trusted).length > 0) return 'LINK';
-      if (draftFiguresOutside(text, trusted).length > 0) return 'FIGURES';
+      if (
+        hasAddress(text) ||
+        draftLinksOutside(text, trusted).length > 0 ||
+        hasObfuscatedContactOrLink(text, trusted) ||
+        hasAutonomousActionDirective(text)
+      ) {
+        return 'LINK';
+      }
+      if (draftFiguresOutside(text, trusted).length > 0 || (!trustedHasMoneyScaleWords && hasUngroundedMoneyOrScaleWords(text))) return 'FIGURES';
     }
     let vatRate: string | null = null;
     if (line.vatRate !== null && line.vatRate.trim() !== '') {

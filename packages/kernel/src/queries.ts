@@ -43,6 +43,7 @@ import { mailQueries } from './mail.ts';
 import { timelineQueries } from './timeline.ts';
 import { auditLogQueries } from './audit-log.ts';
 import { notificationQueries } from './notifications.ts';
+import { pushQueries } from './push.ts';
 import { inboxItemQueries } from './inbox-items.ts';
 import { savedViewQueries } from './saved-views.ts';
 import { todayMailQueries } from './today-mail.ts';
@@ -676,5 +677,5 @@ export const streamCheck = defineQuery({
 
 // overview: the home screen's figures of the modules this deployment enables (#1261), from the composition root.
 export function kernelQueries(options: OrgDetailOptions & { overview?: readonly OverviewContribution[]; apps?: OrgAppsOptions }) {
-  return [orgDetailQuery(options), orgAppsQuery(options.apps ?? { shipped: [], deployment: [], entitlements: async () => ['full'] }), orgOverviewQuery({ contributions: options.overview ?? [] }), todayQuery(), todayWeeklyQuery(), sinceYesterdayQuery(), dealWithoutInvoiceQuery(), receivableWithOpenDealQuery(), supplierBankChangedQuery(), conversationUnansweredQuery(), ...conversationSignalsQueries, streamCheck, inboxList, inboxGet, filesRecent, filesStaged, inboundRecent, inboundText, fileGet, ...archiveQueries, sessionsList, ...inviteQueries, ...offboardingQueries, ...agentQueries, ...channelQueries, ...extensionQueries, ...mcpQueries, ...conversationQueries, ...engageWakeQueries, ...mailQueries, ...proposalReminderQueries, ...taxCalendarQueries, ...legalEntityQueries, ...numberingQueries, ...roleQueries, ...calendarQueries, ...meetingPlatformQueries, ...timelineQueries, ...auditLogQueries, ...partyQueries, ...notificationQueries, ...inboxItemQueries, ...savedViewQueries, ...todayMailQueries, ...usageQueries, ...aiBudgetQueries, ...memberVyQueries];
+  return [orgDetailQuery(options), orgAppsQuery(options.apps ?? { shipped: [], deployment: [], entitlements: async () => ['full'] }), orgOverviewQuery({ contributions: options.overview ?? [] }), todayQuery(), todayWeeklyQuery(), sinceYesterdayQuery(), dealWithoutInvoiceQuery(), receivableWithOpenDealQuery(), supplierBankChangedQuery(), conversationUnansweredQuery(), ...conversationSignalsQueries, streamCheck, inboxList, inboxGet, filesRecent, filesStaged, inboundRecent, inboundText, fileGet, ...archiveQueries, sessionsList, ...inviteQueries, ...offboardingQueries, ...agentQueries, ...channelQueries, ...extensionQueries, ...mcpQueries, ...conversationQueries, ...engageWakeQueries, ...mailQueries, ...proposalReminderQueries, ...taxCalendarQueries, ...legalEntityQueries, ...numberingQueries, ...roleQueries, ...calendarQueries, ...meetingPlatformQueries, ...timelineQueries, ...auditLogQueries, ...partyQueries, ...notificationQueries, ...pushQueries, ...inboxItemQueries, ...savedViewQueries, ...todayMailQueries, ...usageQueries, ...aiBudgetQueries, ...memberVyQueries];
 }

@@ -325,12 +325,12 @@ export function HrAttendanceCheckinCard({ enabled = true }: { enabled?: boolean 
               const statusKey = effectiveStatusKey(row, today);
               return (
                 <TableRow key={row.id} data-testid={`hr-my-attendance-row-${row.workDate}`}>
-                  <TableCell className="px-4 py-2 font-medium tabular-nums">{row.workDate}</TableCell>
-                  <TableCell className="px-4 py-2 tabular-nums">{formatVietnamTime(row.checkedInAt)}</TableCell>
-                  <TableCell className="px-4 py-2 tabular-nums">{formatVietnamTime(row.checkedOutAt)}</TableCell>
-                  <TableCell className="px-4 py-2 tabular-nums">{formatMinutesLabel(row.workedMinutes)}</TableCell>
-                  <TableCell className="px-4 py-2">{t(`methods.${row.checkInMethod}`)}</TableCell>
-                  <TableCell className="px-4 py-2">
+                  <TableCell className="font-medium tabular-nums">{row.workDate}</TableCell>
+                  <TableCell className="tabular-nums">{formatVietnamTime(row.checkedInAt)}</TableCell>
+                  <TableCell className="tabular-nums">{formatVietnamTime(row.checkedOutAt)}</TableCell>
+                  <TableCell className="tabular-nums">{formatMinutesLabel(row.workedMinutes)}</TableCell>
+                  <TableCell>{t(`methods.${row.checkInMethod}`)}</TableCell>
+                  <TableCell>
                     <div className="flex flex-wrap gap-1">
                       <Badge variant={statusKey === 'missing_checkout' ? 'destructive' : statusKey === 'present' ? 'brand' : 'secondary'}>
                         {t(`statuses.${statusKey}`)}
@@ -342,7 +342,7 @@ export function HrAttendanceCheckinCard({ enabled = true }: { enabled?: boolean 
                       ))}
                     </div>
                   </TableCell>
-                  <TableCell className="px-4 py-2 text-sm text-muted-foreground">{row.note ?? ''}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">{row.note ?? ''}</TableCell>
                 </TableRow>
               );
             })}

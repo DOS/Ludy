@@ -122,9 +122,11 @@ describe('TodayList', () => {
     expect(html).toContain('Phú Thịnh: đề xuất chờ duyệt');
   });
 
-  it('shows the general manager’s brief above the list, marked as written by it', () => {
+  it('shows the general manager’s brief inside the unified hero card above the list, marked as written by it', () => {
     const brief = { writtenBy: 'vy', sentences: ['Hôm nay có 4 việc cần bạn.', 'Hạn gần nhất là 20/11/2026.'], budgetSpent: false, final: true };
     const html = render({ data: { items: ITEMS, coworkers: NAMES, dropped: 0 }, brief });
+    expect(html).toContain('data-testid="today-hero-card"');
+    expect(html).toContain('data-testid="today-brief-host"');
     expect(html).toContain('data-testid="today-brief"');
     expect(html).toContain('Hôm nay có 4 việc cần bạn. Hạn gần nhất là 20/11/2026.');
     expect(html).toContain(catalog('en').today.brief.aiBadge);

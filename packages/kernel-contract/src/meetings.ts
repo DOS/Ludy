@@ -48,6 +48,11 @@ export const zMeetingRef = z.strictObject({
   meetingId: zId,
 });
 
+export const zMeetingVisibleIdsInput = z.strictObject({
+  meetingIds: z.array(zId).max(200),
+});
+export type MeetingVisibleIdsInput = z.infer<typeof zMeetingVisibleIdsInput>;
+
 // What the Ludy extension may read of a meeting its own token created (issue #2582): where it is in its life and whether
 // its audio and video arrived, never a title, a reader, a transcript or any media.
 export const zMeetingExtensionStatus = z.strictObject({

@@ -347,6 +347,11 @@ describe('Slice 4f public counterparty summary & sender editor UI (#3822)', () =
     expect(envelopesHtml).toContain('Soạn hợp đồng mẫu');
     expect(envelopesHtml).toContain('sign-open-version-diff-btn');
     expect(envelopesHtml).toContain('sign-open-drafter-btn');
+    for (const testId of ['sign-open-version-diff-btn', 'sign-open-drafter-btn', 'sign-new-envelope-btn']) {
+      const btnTag = new RegExp(`<button[^>]*data-testid="${testId}"[^>]*>`).exec(envelopesHtml)?.[0] ?? '';
+      expect(btnTag).toContain('max-md:min-h-11');
+      expect(btnTag).not.toMatch(/(?:^|[\s"])min-h-11/);
+    }
 
     const templatesHtml = renderLocale(<SignTemplatesPage />, 'vi', qc);
     expect(templatesHtml).toContain('Soạn hợp đồng mẫu');

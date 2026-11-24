@@ -28,7 +28,7 @@ import { ClientError, client, errorMessage, getCurrentOrg, isStepUpRequired, orp
 import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 import { formatSalesInvoicePrefillDescription, type SalesInvoiceHandoffSearch } from '../lib/project-acceptance-pdf.ts';
 
-const NUM = 'px-4 py-3 text-right tabular-nums';
+const NUM = 'text-right tabular-nums';
 const VAT_RATES = ['0%', '5%', '8%', '10%', 'KCT', 'KKKNT'] as const;
 const STATE_KEY = { draft: 'states.draft', submitting: 'states.submitting', pending: 'states.pending', issued: 'states.issued', rejected: 'states.rejected', failed: 'states.failed' } as const;
 
@@ -1125,13 +1125,13 @@ export function SalesInvoicesPage({ prefill }: { prefill?: SalesInvoiceHandoffSe
       ) : drafts.data.length === 0 ? (
         <Empty title={t('empty')} hint={t('emptyHint')} />
       ) : (
-        <DataTable head={[t('date'), t('buyer'), t('total'), t('status'), '']} numeric={[2]}>
+        <DataTable stacked head={[t('date'), t('buyer'), t('total'), t('status'), '']} numeric={[2]}>
           {drafts.data.map((d) => (
             <TableRow key={d.id} data-testid="invoice-draft">
-              <TableCell className="px-4 py-3">{f.date(d.date)}</TableCell>
-              <TableCell className="px-4 py-3">{d.buyerName ?? t('consumerName')}</TableCell>
-              <TableCell className={NUM}>{f.money(d.total, 'VND')}</TableCell>
-              <TableCell className="px-4 py-3">
+              <TableCell data-label={t('date')} className="tabular-nums">{f.date(d.date)}</TableCell>
+              <TableCell data-label={t('buyer')}>{d.buyerName ?? t('consumerName')}</TableCell>
+              <TableCell data-label={t('total')} className={NUM}>{f.money(d.total, 'VND')}</TableCell>
+              <TableCell data-label={t('status')}>
                 <Badge variant="secondary">{t(STATE_KEY[d.state as keyof typeof STATE_KEY] ?? 'states.failed')}</Badge>
                 {d.issuedNumber !== null && <span className="ml-2 text-xs text-subtle-foreground">{t('issuedNumber', { number: d.issuedNumber })}</span>}
                 {d.state === 'issued' && !d.evidenceStored && <span className="ml-2 text-xs text-subtle-foreground">{t('evidencePending')}</span>}
@@ -1148,7 +1148,7 @@ export function SalesInvoicesPage({ prefill }: { prefill?: SalesInvoiceHandoffSe
                 {/* Issuing needs a provider this deployment has switched on: with none, the request would be approved and nothing would send it. */}
                 {canWrite && d.state === 'draft' && d.issueCount === 0 && status.data?.sandbox && <IssueAction key={`${d.id}:${d.updatedAt}`} draft={d} canApprove={canApprove} />}
               </TableCell>
-              <TableCell className="px-4 py-3 text-right">
+              <TableCell className="text-right">
                 {canWrite && d.state === 'draft' && (
                   <span className="flex justify-end gap-1">
                     <Button variant="ghost" size="sm" disabled={activeForm !== null} onClick={() => void open(d.id)} data-testid="invoice-edit">

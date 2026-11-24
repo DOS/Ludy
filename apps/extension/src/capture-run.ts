@@ -69,7 +69,7 @@ export type Failure = 'title' | 'consentMethod' | 'consentAgreed' | 'consentPoli
 export function heldOf(details: unknown): CaptureHeld | null {
   if (typeof details !== 'object' || details === null) return null;
   const { kind, since } = details as { kind?: unknown; since?: unknown };
-  return (kind === 'extension' || kind === 'app') && typeof since === 'string' && !Number.isNaN(new Date(since).getTime()) ? { kind, since } : null;
+  return (kind === 'extension' || kind === 'app' || kind === 'desktop') && typeof since === 'string' && !Number.isNaN(new Date(since).getTime()) ? { kind, since } : null;
 }
 
 export interface Running {

@@ -232,24 +232,24 @@ export function UpcomingAgenda({ slug, showUnconfiguredHint = false }: { slug: s
             const safeUrl = safeJoinUrl(event.joinUrl);
             return (
               <TableRow key={event.id} data-testid="meeting-upcoming-event">
-                <TableCell data-label={t('upcoming.colWhen')} className="px-4 py-3 text-xs text-muted-foreground">
+                <TableCell data-label={t('upcoming.colWhen')} className="text-xs text-muted-foreground tabular-nums">
                   <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-0.5">
                     <span className="font-medium text-foreground">{`${f.weekdayShort(event.startsAt)}, ${f.date(localDayOf(event.startsAt))}`}</span>
                     <span className="font-mono">{`${f.time(event.startsAt)} - ${f.time(event.endsAt)}`}</span>
                   </span>
                 </TableCell>
-                <TableCell data-label={t('upcoming.colMeeting')} className="px-4 py-3 font-medium text-foreground">
+                <TableCell data-label={t('upcoming.colMeeting')} className="font-medium text-foreground">
                   <span id={titleId} className="min-w-0 break-words">
                     {event.title === '' ? t('untitled') : event.title}
                   </span>
                 </TableCell>
-                <TableCell data-label={t('upcoming.colPlatform')} className="px-4 py-3">
+                <TableCell data-label={t('upcoming.colPlatform')}>
                   {service ? <Badge variant="outline">{t(`service.${service}`)}</Badge> : <span className="text-xs text-muted-foreground">-</span>}
                 </TableCell>
-                <TableCell data-label={t('upcoming.colInvitees')} className="px-4 py-3 text-xs text-muted-foreground tabular-nums">
+                <TableCell data-label={t('upcoming.colInvitees')} className="text-xs text-muted-foreground tabular-nums">
                   {event.invitees > 0 ? t('invitees', { count: String(event.invitees) }) : '-'}
                 </TableCell>
-                <TableCell data-label={t('upcoming.colActions')} className="px-4 py-3">
+                <TableCell data-label={t('upcoming.colActions')}>
                   <div className="inline-flex flex-wrap items-center gap-2">
                     {safeUrl && (
                       <a

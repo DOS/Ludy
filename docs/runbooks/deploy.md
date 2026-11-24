@@ -91,7 +91,7 @@ Opt-in. A pilot that signs in at a remote identity provider (Supabase Auth, [pil
 
 ## Module settings in the deploy (#3531)
 
-Opt-in. Because no agent has an SSH shell on the pilot host, the deploy workflow can also update `CROVE_MODULES` in the host's env file (used for enabling modules such as `sign` via [pilot-enable-sign.md](pilot-enable-sign.md), `hr` via [pilot-enable-hr.md](pilot-enable-hr.md), and `projects` + `notes` via [pilot-enable-projects-notes.md](pilot-enable-projects-notes.md)). Without the opt-in the host env file's `CROVE_MODULES` line is never edited.
+Opt-in. Because no agent has an SSH shell on the pilot host, the deploy workflow can also update `CROVE_MODULES` in the host's env file (used for enabling modules such as `sign` via [pilot-enable-sign.md](pilot-enable-sign.md), `hr` via [pilot-enable-hr.md](pilot-enable-hr.md), `projects` + `notes` via [pilot-enable-projects-notes.md](pilot-enable-projects-notes.md), and `meetings` via [pilot-enable-meetings.md](pilot-enable-meetings.md)). Without the opt-in the host env file's `CROVE_MODULES` line is never edited.
 
 **Define both variables in the environment itself (`pilot`), never at repository or organization level**, so one environment's modules do not reach another environment:
 
@@ -227,6 +227,7 @@ Create the environment (`pilot`, later `beta`) under Settings, Environments. A r
 | `DEPLOY_DIR` | variable | no | stack directory on the host, default `/opt/crove` |
 | `DEPLOY_ENV_FILE` | variable | no | env file on the host, default `<DEPLOY_DIR>/.env` |
 | `DEPLOY_PUBLIC_URL` | variable | no | the public origin, for example `https://crove.example.com`, for the smoke test through the proxy |
+| `DEPLOY_APP_URL` | variable | no | optional split web app origin, for example `https://app.example.com`; when set, a `pilot` tag deploy verifies its bundle `VITE_BUILD` matches `/version` after `release` moves |
 | `DEPLOY_REQUIRED_CHECKS` | variable | no | check runs that must be green on the commit, one per line |
 | `DEPLOY_IDP_ENVIRONMENT`, `DEPLOY_IDP_AUTH_*` and `DEPLOY_IDP_PUBLIC_AUTH_*` (variables), `DEPLOY_IDP_AUTH_ALLOWED_EMAILS` (secret) | variable and one secret | no | the pilot's remote identity provider (section "Identity provider settings in the deploy"); in the environment only, never at repository or organization level |
 | `DEPLOY_MODULES_ENVIRONMENT`, `DEPLOY_CROVE_MODULES` | variable | no | opt-in module list `CROVE_MODULES` for the host env file (section "Module settings in the deploy"); in the environment only, never at repository or organization level |
@@ -336,7 +337,7 @@ New in the first release after v0.1.1: the prober reads the newest verification 
 
 1. Merge to `main` and wait for CI. Run the [pre-deploy checks](#pre-deploy-checks) of every migration the release adds that has one. Read the [upgrade notes](#upgrade-notes) for settings the release changes.
 2. Tag the commit and push the tag: `git tag v0.3.0 <commit>` then `git push origin v0.3.0`. (Or create a release with that tag in the GitHub interface.)
-3. The `deploy` workflow runs. Its summary shows the image digests, the result on the host and the public smoke test.
+3. The `deploy` workflow runs. Its summary shows the image digests, the result on the host and the public smoke test; for a `pilot` `v*` tag deploy, its `Sync release branch` job then dispatches `.github/workflows/release-branch.yml` on `main`, verifies `release` points at the deployed commit, and (when `DEPLOY_APP_URL` is set) checks the served bundle `VITE_BUILD` against `/version`.
 
 To deploy an existing tag again, run the workflow by hand from that tag (Actions, deploy, Run workflow, "Use workflow from" the tag, action `deploy`).
 

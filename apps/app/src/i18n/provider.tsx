@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, useSyncExternalStore, type ReactNode } from 'react';
-import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { SegmentedControl, SegmentedControlItem } from '@ludy/ui/components/segmented-control';
 import { IntlProvider, useTranslations } from 'use-intl';
 import { formatDate, formatDateTime, formatTime, formatDecimal, formatMoney, formatMonthYear, formatNumber, formatWeekdayShort } from '../lib/format.ts';
 import { LOCALES, LOCALE_NAMES, type Locale } from './locale.ts';
@@ -60,18 +60,16 @@ export function LocaleSwitcher({ className }: { className?: string }) {
   const { locale, setLocale } = useLocaleSetting();
   const t = useTranslations('common');
   return (
-    <NativeSelect
-      size="sm"
-      className={className ?? 'text-muted-foreground'}
-      value={locale}
-      aria-label={t('language')}
-      onChange={(e) => setLocale(e.target.value as Locale)}
-    >
-      {LOCALES.map((l) => (
-        <NativeSelectOption key={l} value={l}>
-          {LOCALE_NAMES[l]}
-        </NativeSelectOption>
-      ))}
-    </NativeSelect>
+    <SegmentedControl size="sm" value={locale} onValueChange={setLocale} aria-label={t('language')} className={className}>
+      {LOCALES.map((l) => {
+        const short = l.toUpperCase();
+        const full = LOCALE_NAMES[l];
+        return (
+          <SegmentedControlItem key={l} value={l} aria-label={`${full} (${short})`} title={full}>
+            {short}
+          </SegmentedControlItem>
+        );
+      })}
+    </SegmentedControl>
   );
 }

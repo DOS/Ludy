@@ -139,6 +139,10 @@ export const AI_FEATURES = {
   'projects.roadmap_dedupe': 'projects',
   // Vy's release-note draft for shipped roadmap items (#4400): reads shipped item titles/summaries only, checked by summaryNumbersOutside, human edits & publishes.
   'projects.roadmap_changelog_draft': 'projects',
+  // Vy's omnichannel roadmap signal match suggestions (#4492): suggests up to 3 existing items or 1 tainted new-idea draft, never writes signals.
+  'projects.roadmap_signal_match': 'projects',
+  // Vy's triage proposal for one triage inbox item (#4493, ADR-0058): proposes priority, seat, cycle, or duplicate from allowlisted candidate IDs only; human accepts/merges/declines.
+  'projects.triage_assist': 'projects',
   // Member-scoped Vy proposing project tasks from one note (projects P7, #2598, ADR-0049): one call over the note text and project members' active seats; nothing is created until explicit human confirmation.
   'projects.tasks_from_note': 'projects',
   // Member-scoped Vy proposing project tasks from a note, meeting, or conversation (#2608, ADR-0049): one call over caller-readable source text and project members' active seats; nothing is created until explicit human confirmation.
@@ -151,6 +155,12 @@ export const AI_FEATURES = {
   'hr.cv_extract': 'hr',
   // Ly's pseudonymized end-of-probation evidence summary draft (#4448 Stage 5B): reads alias P1, factual project task titles and leave/OT counts only; never scores or decides pass/extend/terminate.
   'hr.probation_summary': 'hr',
+  // Ly's natural-language self-service HR request draft parser on /hr/my (#4526 Stage 6A): returns tainted leave/OT form pre-fill data only; never writes to leave or OT tables.
+  'hr.request_draft': 'hr',
+  // Ly's cited HR policy Q&A on /hr/my (#4526 Stage 6A): answers strictly from caller-accessible shared org notes retrieved via notes.* queries with verified note citations.
+  'hr.policy_qa': 'hr',
+  // Ly's pseudonymized contract addendum statutory completeness review (#4528 Stage 6C): reads alias P1, contract type, effective date, wage/title delta and scrubbed summary only; deterministic checks decide readiness, human HR issues/voids.
+  'hr.addendum_check': 'hr',
   // Vy (the general manager) proposing signing field placements on a draft eSign PDF (#3351): one call over page sizes, declared signer role keys and bounded page text per ask, the member waiting for it. A key of its own, so field proposals never cut off risky clause summaries or other AI features.
   'sign.field_propose': 'sign',
   // Vy (the general manager) summarizing risky clauses with exact verbatim quotes from a draft eSign PDF (#3351): one call over bounded page text per ask, the member waiting for it.

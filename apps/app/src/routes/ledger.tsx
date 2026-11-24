@@ -53,7 +53,7 @@ interface PartyLedger {
   totals: { opening: string; increase: string; decrease: string; closing: string };
 }
 
-const NUM = 'px-4 py-3 text-right tabular-nums';
+const NUM = 'text-right tabular-nums';
 
 function Balance({ value }: { value: string }) {
   const t = useTranslations('ledger');
@@ -88,12 +88,13 @@ function PartyTable({ ledger, partyLabel, customers = false }: { ledger: PartyLe
   if (ledger.rows.length === 0) return <Empty title={t('partiesEmpty')} hint={t('partiesEmptyHint')} />;
   return (
     <DataTable
+      stickyFirstCol
       numeric={[2, 3, 4, 5]}
       head={[t('columns.taxCode'), partyLabel, t('columns.opening'), t('columns.increase'), t('columns.decrease'), t('columns.closing')]}
       foot={
         <TableRow>
-          <TableCell className="px-4 py-3" />
-          <TableCell className="px-4 py-3 text-foreground">{t('total')}</TableCell>
+          <TableCell />
+          <TableCell className="text-foreground">{t('total')}</TableCell>
           <TableCell className={NUM}>{f.money(ledger.totals.opening)}</TableCell>
           <TableCell className={NUM}>{f.money(ledger.totals.increase)}</TableCell>
           <TableCell className={NUM}>{f.money(ledger.totals.decrease)}</TableCell>
@@ -102,8 +103,8 @@ function PartyTable({ ledger, partyLabel, customers = false }: { ledger: PartyLe
       }>
       {ledger.rows.map((row) => (
         <TableRow key={row.partyId ?? 'none'}>
-          <TableCell className="px-4 py-3 font-mono text-xs text-muted-foreground">{row.partyTaxCode ?? ''}</TableCell>
-          <TableCell className="px-4 py-3 text-foreground">
+          <TableCell className="font-mono text-xs text-muted-foreground">{row.partyTaxCode ?? ''}</TableCell>
+          <TableCell className="text-foreground">
             {row.partyId === null ? (
               t('noParty')
             ) : customers ? (
@@ -135,6 +136,7 @@ function AccountLedger({ period, accountCode }: { period: string; accountCode: s
   if (!ledger) return null;
   return (
     <DataTable
+      stickyFirstCol
       numeric={[6, 7, 8]}
       head={[
         t('columns.date'),
@@ -150,15 +152,15 @@ function AccountLedger({ period, accountCode }: { period: string; accountCode: s
       foot={
         <>
           <TableRow>
-            <TableCell className="px-4 py-3 text-foreground" colSpan={6}>
+            <TableCell className="text-foreground" colSpan={6}>
               {t('turnoverRow')}
             </TableCell>
             <TableCell className={NUM}>{f.money(ledger.debit)}</TableCell>
             <TableCell className={NUM}>{f.money(ledger.credit)}</TableCell>
-            <TableCell className="px-4 py-3" />
+            <TableCell />
           </TableRow>
           <TableRow>
-            <TableCell className="px-4 py-3 text-foreground" colSpan={8}>
+            <TableCell className="text-foreground" colSpan={8}>
               {t('closingRow')}
             </TableCell>
             <TableCell className={NUM}>
@@ -168,7 +170,7 @@ function AccountLedger({ period, accountCode }: { period: string; accountCode: s
         </>
       }>
       <TableRow>
-        <TableCell className="px-4 py-3" colSpan={8}>
+        <TableCell colSpan={8}>
           <span className="text-muted-foreground">{t('openingRow')}</span>
         </TableCell>
         <TableCell className={NUM}>
@@ -177,9 +179,9 @@ function AccountLedger({ period, accountCode }: { period: string; accountCode: s
       </TableRow>
       {ledger.lines.map((line, i) => (
         <TableRow key={`${line.entryId}-${i}`}>
-          <TableCell className="px-4 py-3 text-muted-foreground">{f.date(line.entryDate)}</TableCell>
-          <TableCell className="px-4 py-3 font-mono text-xs text-foreground">{line.reference ?? ''}</TableCell>
-          <TableCell className="px-4 py-3 text-foreground">
+          <TableCell className="text-muted-foreground tabular-nums">{f.date(line.entryDate)}</TableCell>
+          <TableCell className="font-mono text-xs text-foreground">{line.reference ?? ''}</TableCell>
+          <TableCell className="text-foreground">
             {line.description}
             {line.reversal && (
               <Badge variant="warning" className="ml-2">
@@ -187,9 +189,9 @@ function AccountLedger({ period, accountCode }: { period: string; accountCode: s
               </Badge>
             )}
           </TableCell>
-          <TableCell className="px-4 py-3 font-mono text-xs">{line.accountCode}</TableCell>
-          <TableCell className="px-4 py-3 font-mono text-xs text-muted-foreground">{line.counterAccounts.join(', ')}</TableCell>
-          <TableCell className="px-4 py-3 text-muted-foreground">{line.partyName ?? ''}</TableCell>
+          <TableCell className="font-mono text-xs">{line.accountCode}</TableCell>
+          <TableCell className="font-mono text-xs text-muted-foreground">{line.counterAccounts.join(', ')}</TableCell>
+          <TableCell className="text-muted-foreground">{line.partyName ?? ''}</TableCell>
           <TableCell className={NUM}>{line.debit === '0' ? '' : f.money(line.debit)}</TableCell>
           <TableCell className={NUM}>{line.credit === '0' ? '' : f.money(line.credit)}</TableCell>
           <TableCell className={NUM}>
@@ -199,7 +201,7 @@ function AccountLedger({ period, accountCode }: { period: string; accountCode: s
       ))}
       {ledger.lines.length === 0 && (
         <TableRow>
-          <TableCell className="px-4 py-3 text-subtle-foreground" colSpan={9}>
+          <TableCell className="text-subtle-foreground" colSpan={9}>
             {t('ledgerEmpty')}
           </TableCell>
         </TableRow>
@@ -284,12 +286,12 @@ function StatementTable({
           </ul>
         </Alert>
       )}
-      <DataTable numeric={[2, ...extra.map((_, i) => 3 + i)]} head={[t('columns.item'), t('columns.lineCode'), amountHead, ...extra.map((c) => c.head)]}>
+      <DataTable stickyFirstCol numeric={[2, ...extra.map((_, i) => 3 + i)]} head={[t('columns.item'), t('columns.lineCode'), amountHead, ...extra.map((c) => c.head)]}>
         {lines.map((line) => (
           // A total adds up the lines above it and stays in place, with the totals' rule over it (#2002).
           <TableRow key={line.code} className={line.total ? `font-medium ${TOTAL_RULE}` : ''}>
-            <TableCell className="px-4 py-3 text-foreground">{line.label}</TableCell>
-            <TableCell className="px-4 py-3 font-mono text-xs text-muted-foreground">{line.code}</TableCell>
+            <TableCell className="text-foreground">{line.label}</TableCell>
+            <TableCell className="font-mono text-xs text-muted-foreground">{line.code}</TableCell>
             <TableCell className={NUM}>{f.money(line.amount)}</TableCell>
             {extra.map((column) => (
               <TableCell key={column.head} className={NUM}>
@@ -557,6 +559,7 @@ export function LedgerPage() {
                 <LedgerEmpty />
               ) : (
                 <DataTable
+                  stickyFirstCol
                   numeric={[2, 3, 4, 5, 6, 7]}
                   head={[
                     t('columns.code'),
@@ -570,8 +573,8 @@ export function LedgerPage() {
                   ]}
                   foot={
                     <TableRow className="font-semibold">
-                      <TableCell className="px-4 py-3" />
-                      <TableCell className="px-4 py-3 text-foreground">{t('total')}</TableCell>
+                      <TableCell />
+                      <TableCell className="text-foreground">{t('total')}</TableCell>
                       <TableCell className={NUM}>{f.money(data.trialBalance.totals.openingDebit)}</TableCell>
                       <TableCell className={NUM}>{f.money(data.trialBalance.totals.openingCredit)}</TableCell>
                       <TableCell className={NUM}>{f.money(data.trialBalance.totals.debit)}</TableCell>
@@ -582,8 +585,8 @@ export function LedgerPage() {
                   }>
                   {rows.map((row) => (
                     <TableRow key={row.accountCode} className={row.level === 0 ? 'font-medium' : ''}>
-                      <TableCell className="px-4 py-3 font-mono text-xs text-foreground">{row.accountCode}</TableCell>
-                      <TableCell className="px-4 py-3 text-foreground" style={{ paddingLeft: `${1 + row.level * 1.25}rem` }}>
+                      <TableCell className="font-mono text-xs text-foreground">{row.accountCode}</TableCell>
+                      <TableCell className="text-foreground" style={{ paddingLeft: `${0.75 + row.level * 1.25}rem` }}>
                         {row.accountName}
                       </TableCell>
                       <TableCell className={NUM}>{f.money(row.openingDebit)}</TableCell>

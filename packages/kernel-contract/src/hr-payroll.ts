@@ -80,7 +80,12 @@ const zHrPayrollInputsObject = z.strictObject({
   overtimeFromRequests: z.boolean().nullable().default(null),
   nightHours: zHrHours.default('0'),
   bonus: zHrWage.default('0'),
+  retroPay: zHrWage.default('0'),
+  retroPayFromAdjustments: z.boolean().nullable().default(null),
   advance: zHrWage.default('0'),
+  advanceFromRequests: z.boolean().nullable().default(null),
+  offsetDeduction: zHrWage.default('0'),
+  offsetFromAdjustments: z.boolean().nullable().default(null),
   deductions: z.array(z.strictObject({ label: zLabel, kind: z.enum(HR_DEDUCTION_KINDS), amount: zHrWage })).max(20).default([]),
 });
 
@@ -105,6 +110,12 @@ const zHrLineInputsEdit = zHrPayrollInputsObject
     maternityBhxhFromLedger: z.boolean().nullable().optional(),
     overtime: z.array(zHrOvertimeEntry).max(30).optional(),
     overtimeFromRequests: z.boolean().nullable().optional(),
+    retroPay: zHrWage.optional(),
+    retroPayFromAdjustments: z.boolean().nullable().optional(),
+    advance: zHrWage.optional(),
+    advanceFromRequests: z.boolean().nullable().optional(),
+    offsetDeduction: zHrWage.optional(),
+    offsetFromAdjustments: z.boolean().nullable().optional(),
   })
   .refine(
     (v) =>
