@@ -751,6 +751,20 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
     );
     expect(tplFileRead.id).toBe(tplPdf);
 
+    // #4530: a permitted attendee READS the recorder's draft but does not change or send it: 403 SIGN_FORBIDDEN (not 404, the attendee reads the envelope), before the draft is checked at all.
+    // Only the envelope's creator, an owner or an admin acts on a meeting-minutes envelope, like a standalone one.
+    const attendeeDraftAttempts: Array<[string, Record<string, unknown>]> = [
+      ['sign.envelope.update', { envelopeId: recEnv.envelopeId, title: 'Tamper by attendee' }],
+      ['sign.signer.add', { envelopeId: recEnv.envelopeId, roleLabel: 'Spy', name: 'Spy', deliveryMode: 'link' }],
+      ['sign.signer.remove', { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId }],
+      ['sign.signer.reorder', { envelopeId: recEnv.envelopeId, orders: [{ signerId: addedSigner.signerId, routingOrder: 1 }] }],
+      ['sign.field.set', { envelopeId: recEnv.envelopeId, fields: [] }],
+      ['sign.envelope.send', { envelopeId: recEnv.envelopeId }],
+    ];
+    for (const [command, input] of attendeeDraftAttempts) {
+      await expect(runtime.execute(command, input, { actor: asUser(attendeeId), orgId }), `attendee ${command}`).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
+    }
+
     // 5. Send envelope, verify active-envelope mutations (create_link, remind, void) return 404 to non-reader owner/admin,
     // complete public signing ceremony + worker sealing, and verify sealed/certificate file downloads!
     const sent = await runtime.execute<{
@@ -861,41 +875,36 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
       activeProbeClient.release();
     }
 
-    // A permitted attendee who is not the creator, owner or admin may start an in-person session and rotate a link on an active meeting_minutes envelope (#3811, ADR-0047), OR is refused with
-    // SIGN_FORBIDDEN (403), the later rule of #4530 (reading is wider than acting). Both outcomes are accepted here so the two-step change can land (this test first, then the code); a refusal must be
-    // that one error and nothing else, and whatever succeeds must still be the attendee's own. The public ceremony below runs on the link that exists afterwards.
-    const outcomeOf = async <T,>(run: () => Promise<T>): Promise<T | 'refused'> => {
-      try {
-        return await run();
-      } catch (error) {
-        if ((error as { code?: unknown }).code === 'SIGN_FORBIDDEN' && (error as { status?: unknown }).status === 403) return 'refused';
-        throw error;
-      }
-    };
-    const inPersonStarted = await outcomeOf(() =>
-      runtime.execute<{
-        hostUserId: string;
-        token: string;
-        ceremonyPath: string;
-      }>(
-        'sign.signer.start_in_person',
-        { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId },
-        { actor: asUser(attendeeId), orgId },
-      ),
+    // #4530: a permitted attendee who is not the creator, an owner or an admin can NOT start an in-person session (it mints a one-time signing token, the same power as create_link), remind the signers
+    // (it mails them) or issue or rotate a signing link: 403 SIGN_FORBIDDEN (the attendee reads the envelope, so not 404). The recorder, who created the envelope, can start the session.
+    // (This replaces the earlier "permitted attendee CAN start an in-person session" case.)
+    await expect(
+      runtime.execute('sign.signer.start_in_person', { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId }, { actor: asUser(attendeeId), orgId }),
+    ).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
+    await expect(
+      runtime.execute('sign.envelope.remind', { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId }, { actor: asUser(attendeeId), orgId }),
+    ).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
+    const inPersonStarted = await runtime.execute<{
+      hostUserId: string;
+      token: string;
+      ceremonyPath: string;
+    }>(
+      'sign.signer.start_in_person',
+      { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId },
+      { actor: asUser(recorderId), orgId },
     );
-    if (inPersonStarted !== 'refused') {
-      expect(inPersonStarted.hostUserId).toBe(attendeeId);
-      expect(inPersonStarted.ceremonyPath).toContain('?in_person=1#');
-    }
+    expect(inPersonStarted.hostUserId).toBe(recorderId);
+    expect(inPersonStarted.ceremonyPath).toContain('?in_person=1#');
 
-    const rotated = await outcomeOf(() =>
-      runtime.execute<{ token: string }>(
-        'sign.signer.create_link',
-        { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId },
-        { actor: asUser(attendeeId), orgId },
-      ),
+    await expect(
+      runtime.execute('sign.signer.create_link', { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId }, { actor: asUser(attendeeId), orgId }),
+    ).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
+    const rotated = await runtime.execute<{ token: string }>(
+      'sign.signer.create_link',
+      { envelopeId: recEnv.envelopeId, signerId: addedSigner.signerId },
+      { actor: asUser(recorderId), orgId },
     );
-    const activeToken = rotated === 'refused' ? rawSigningToken : rotated.token || rawSigningToken;
+    const activeToken = rotated.token || rawSigningToken;
 
     // Public single-use token ceremony succeeds cleanly via crove_app orgless definers.
     const tokenSha = hashSigningToken(activeToken);

@@ -48,6 +48,8 @@ export interface SignerPanelProps {
   onRemindSigner?: ((signerId: string) => Promise<void>) | undefined;
   onCorrectSigner?: ((signer: SignSignerRecord) => void) | undefined;
   onStartInPerson?: ((signerId: string) => void) | undefined;
+  // False when the caller reads the draft but may not change it (a meeting-minutes envelope of another member, #4530): the add form and the order and remove controls are not offered. Default true.
+  canEditDraft?: boolean | undefined;
 }
 
 const SIGNER_STATUS_VARIANT = {
@@ -75,9 +77,11 @@ export function SignerPanel({
   onRemindSigner,
   onCorrectSigner,
   onStartInPerson,
+  canEditDraft = true,
 }: SignerPanelProps) {
   const t = useTranslations('sign');
   const isDraft = envelopeStatus === 'draft';
+  const canEdit = isDraft && canEditDraft;
   const isActiveEnvelope = envelopeStatus === 'sent' || envelopeStatus === 'in_progress';
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -138,7 +142,7 @@ export function SignerPanel({
           <NativeSelect
             id="sign-routing-mode"
             value={routingMode}
-            disabled={!isDraft || busy}
+            disabled={!canEdit || busy}
             className="w-full"
             onChange={(e) => onChangeRoutingMode(e.target.value as SignRoutingMode)}
           >
@@ -245,7 +249,7 @@ export function SignerPanel({
                     </p>
                   ) : null}
 
-                  {isDraft ? (
+                  {canEdit ? (
                     <div className="mt-2 flex flex-wrap items-center gap-1">
                       {routingMode === 'sequential' ? (
                         <>
@@ -342,7 +346,7 @@ export function SignerPanel({
           </ul>
         )}
 
-        {isDraft ? (
+        {canEdit ? (
           <form onSubmit={(e) => void handleSubmit(e)} className="space-y-3 border-t pt-3" data-testid="add-signer-form">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('signer.addTitle')}</h3>
             {formError ? <ErrorText>{formError}</ErrorText> : null}

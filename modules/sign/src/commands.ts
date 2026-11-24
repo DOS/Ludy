@@ -34,6 +34,7 @@ import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './
 import { signInPersonCommands } from './in-person.ts';
 import {
   assertCanAccessMeetingMinutesEnvelopeRow,
+  assertCanActOnMeetingMinutesEnvelope,
   assertCanCreateMeetingMinutesEnvelope,
 } from './meeting-visibility.ts';
 import { signManifest } from './manifest.ts';
@@ -469,6 +470,7 @@ export const envelopeUpdate = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
+    assertCanActOnMeetingMinutesEnvelope(ctx, row, userId);
     assertDraft(row.status);
     if (input.expectedVersion !== undefined && row.version !== input.expectedVersion) {
       throw new DomainError('SIGN_VERSION_CONFLICT', 409, 'Envelope was modified concurrently', { version: row.version });
@@ -575,6 +577,7 @@ export const signerAdd = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
+    assertCanActOnMeetingMinutesEnvelope(ctx, row, userId);
     assertDraft(row.status);
     const normalizedEmail = input.email ? input.email.trim().toLowerCase() : null;
     if ((input.deliveryMode === 'email' || input.requireEmailOtp) && !normalizedEmail) {
@@ -672,6 +675,7 @@ export const signerRemove = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
+    assertCanActOnMeetingMinutesEnvelope(ctx, row, userId);
     assertDraft(row.status);
     const existing = await ctx.trx
       .selectFrom('ludy_sign.signer')
@@ -744,6 +748,7 @@ export const signerReorder = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
+    assertCanActOnMeetingMinutesEnvelope(ctx, row, userId);
     assertDraft(row.status);
 
     const seenIds = new Set<string>();
@@ -883,6 +888,7 @@ export const fieldSet = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
+    assertCanActOnMeetingMinutesEnvelope(ctx, row, userId);
     assertDraft(row.status);
     if (row.inspect_status === 'failed') {
       throw new DomainError('SIGN_INSPECT_FAILED', 409, 'Cannot place fields on a document whose PDF inspection failed');
@@ -1019,6 +1025,7 @@ export const envelopeSend = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
+    assertCanActOnMeetingMinutesEnvelope(ctx, row, userId);
     assertDraft(row.status);
 
     const signers = await ctx.trx
@@ -1058,12 +1065,7 @@ export const signerCreateLink = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
-    if (
-      row.source_kind !== 'meeting_minutes' &&
-      row.created_by !== userId &&
-      ctx.role !== 'owner' &&
-      ctx.role !== 'admin'
-    ) {
+    if (row.created_by !== userId && ctx.role !== 'owner' && ctx.role !== 'admin') {
       throw new DomainError(
         'SIGN_FORBIDDEN',
         403,
@@ -1344,6 +1346,7 @@ export const envelopeRemind = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
+    assertCanActOnMeetingMinutesEnvelope(ctx, row, userId);
     if (row.status !== 'sent' && row.status !== 'in_progress') {
       throw new DomainError('SIGN_ENVELOPE_NOT_ACTIVE', 409, 'Reminders apply only to active envelopes');
     }
