@@ -194,4 +194,29 @@ describe('the command line', () => {
     const bad = await fake(['no-pkce']);
     expect(await quiet(['--url', bad.url, '--json'])).toBe(1);
   });
+
+  it('--strict fails a run that did not show a rule (no proposal tool listed, no account for the consent page); without it the run says incomplete', async () => {
+    const lines: string[] = [];
+    const run = async (argv: string[], env: Record<string, string>) => {
+      const log = console.log;
+      console.log = (line: string) => void lines.push(String(line));
+      try {
+        return await main(argv, env);
+      } finally {
+        console.log = log;
+      }
+    };
+    const noProposals = await fake(['no-proposal-tool']);
+    const env = { MCP_CONFORMANCE_TOKEN: FAKE_OWNER_TOKEN };
+    expect(await run(['--url', noProposals.url], env)).toBe(0);
+    expect(lines.join('\n')).toContain('incomplete: proposals.no-execution');
+    expect(await run(['--url', noProposals.url, '--strict'], env)).toBe(1);
+    const noAccount = await fake();
+    lines.length = 0;
+    expect(await run(['--url', noAccount.url], {})).toBe(0);
+    expect(lines.join('\n')).toContain('incomplete: oauth.flow');
+    expect(await run(['--url', noAccount.url, '--strict'], {})).toBe(1);
+    const complete = await fake();
+    expect(await run(['--url', complete.url, '--strict'], env)).toBe(0);
+  });
 });

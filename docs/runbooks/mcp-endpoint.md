@@ -70,7 +70,7 @@ Issue #4592, [ADR-0051](../adr/0051-vys-brain-is-a-dos-claw-agent-ludy-is-the-ga
 pnpm mcp:conformance --url https://ludy.example.com
 ```
 
-`--url` is the instance's `PUBLIC_URL`, exactly. Plain Node (26 or newer) with no dependency; from a checkout, `node tools/mcp-conformance/cli.mjs --url ...` does the same. The output is one `PASS`, `FAIL` or `SKIP` line per check, then the count; the exit code is 0 when nothing failed, 1 when a check failed (its name and the rule it broke are on the line), 2 for a mistake in the command. `--json` prints the same as JSON; `--only wake.` runs the checks whose name starts with it.
+`--url` is the instance's `PUBLIC_URL`, exactly. Plain Node (26 or newer) with no dependency; from a checkout, `node tools/mcp-conformance/cli.mjs --url ...` does the same. The output is one `PASS`, `FAIL` or `SKIP` line per check, then the count; the exit code is 0 when nothing failed, 1 when a check failed (its name and the rule it broke are on the line), 2 for a mistake in the command. `--json` prints the same as JSON; `--only wake.` runs the checks whose name starts with it. A run where a check was skipped (other than `pairing.code`) prints `incomplete`, because a rule was not shown; `--strict` makes that a failure (CI uses it).
 
 | Check | What it proves |
 | --- | --- |
@@ -82,7 +82,7 @@ pnpm mcp:conformance --url https://ludy.example.com
 | `oauth.flow` | A client registers itself, is sent through the consent page, trades its code with the PKCE verifier and the `resource` for tokens: a Bearer token, a refresh token, an ES256 JWT for the audience `PUBLIC_URL/mcp`, whose signature verifies with the keys at `jwks_uri`; the redirect carries `state` and `iss` (RFC 9207) |
 | `mcp.tools` | The token opens `/mcp` and `tools/list` answers |
 | `tools.hints-present` | Every listed tool carries `readOnlyHint` and `destructiveHint` as booleans, and none is both read only and destructive |
-| `tools.hints-match-tier` | A tool that answers a proposal (an R2 or R3 command, ADR-0051 decision 10) declares `readOnlyHint: false` and `destructiveHint: false`: it changes nothing by itself |
+| `tools.hints-match-tier` | A tool that answers a proposal (an R2 or R3 command, ADR-0051 decision 10) declares `readOnlyHint: false` and `destructiveHint: false`: it changes nothing by itself. No tier travels on the wire, so a proposal tool is recognized by its answer shape (`proposalId` and `status: "pending"`), and a read tool by its own `readOnlyHint`: the check proves the hints are coherent and that proposal tools never claim to be reads, not that each tool's tier is the right one (the kernel's tests pin that) |
 | `proposals.no-execution` | One proposal tool, called with arguments made from its schema, answers `{ proposalId, status: "pending" }` and never the effect (a send, a payment, a change). It leaves that one proposal waiting in Inbox: reject it. |
 | `pairing.code` | The pairing-code path. **Skipped** with a message until the pairing code of #4591 lands; then it runs here |
 | `wake.*` | A sample wake-up receiver follows [the webhook's rules](mcp-wake-webhook.md#check-your-receiver-with-the-conformance-tool): the runbook's test vectors verify; a valid event, an event 4 minutes old and a two-signature event are accepted; a changed body, a wrong secret and a timestamp 6 minutes old or ahead are refused; a repeated event id is handled once |

@@ -14,14 +14,15 @@
 //   --wake-url <address>   your own wake-up receiver, to be sent the signed samples (with MCP_CONFORMANCE_WAKE_SECRET); default: a sample receiver
 //   --proposal-tool <name> --proposal-args <json>   the proposal tool to call and its arguments, when the sample arguments are not enough
 //   --only <prefix>        run only the checks whose name starts with it (for example `wake.`)
+//   --strict               a skipped check (other than pairing.code, which waits for #4591) counts as a failure: CI uses it
 //   --json                 print the results as JSON
 // Environment: MCP_CONFORMANCE_TOKEN (an owner's or admin's access token for the consent page, instead of --sign-up), MCP_CONFORMANCE_WAKE_SECRET.
-// Exit code: 0 when no check failed (a skipped one says why), 1 when one failed, 2 for a usage error.
+// Exit code: 0 when no check failed (a skipped one says why; the run says "incomplete" if one was), 1 when one failed or, with --strict, was skipped, 2 for a usage error.
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { runConformance } from './checks.mjs';
 
-const USAGE = 'usage: mcp-conformance --url <instance> [--sign-up] [--org <slug|id>] [--wake-url <address>] [--proposal-tool <name> --proposal-args <json>] [--only <prefix>] [--json]';
+const USAGE = 'usage: mcp-conformance --url <instance> [--sign-up] [--org <slug|id>] [--wake-url <address>] [--proposal-tool <name> --proposal-args <json>] [--only <prefix>] [--strict] [--json]';
 
 /** @param {string[]} argv @param {Record<string, string | undefined>} env */
 export function parseOptions(argv, env) {
@@ -35,6 +36,7 @@ export function parseOptions(argv, env) {
       'proposal-tool': { type: 'string' },
       'proposal-args': { type: 'string' },
       only: { type: 'string' },
+      strict: { type: 'boolean' },
       json: { type: 'boolean' },
     },
     strict: true,
@@ -54,6 +56,7 @@ export function parseOptions(argv, env) {
     url: values.url,
     signUp: values['sign-up'] === true,
     json: values.json === true,
+    strict: values.strict === true,
     ...(values.org ? { org: values.org } : {}),
     ...(values['wake-url'] ? { wakeUrl: values['wake-url'] } : {}),
     ...(values['proposal-tool'] ? { proposalTool: values['proposal-tool'] } : {}),
@@ -79,9 +82,17 @@ export async function main(argv, env) {
     ...(options.json ? {} : { progress: (r) => console.log(`${mark[r.status]}  ${r.name}: ${r.message}`) }),
   });
   const failed = results.filter((r) => r.status === 'fail');
-  if (options.json) console.log(JSON.stringify({ url: options.url, passed: failed.length === 0, results }, null, 2));
-  else console.log(`\n${results.filter((r) => r.status === 'pass').length} passed, ${failed.length} failed, ${results.filter((r) => r.status === 'skip').length} skipped${failed.length > 0 ? `\nfailed: ${failed.map((r) => r.name).join(', ')}` : ''}`);
-  return failed.length > 0 ? 1 : 0;
+  // The pairing code is the one skip that is expected (it waits for #4591). Any other skipped check means a rule was not shown.
+  const unshown = results.filter((r) => r.status === 'skip' && r.name !== 'pairing.code');
+  const broken = options.strict ? [...failed, ...unshown] : failed;
+  const complete = unshown.length === 0 || options.only !== undefined;
+  if (options.json) console.log(JSON.stringify({ url: options.url, passed: broken.length === 0, complete, results }, null, 2));
+  else {
+    console.log(`\n${results.filter((r) => r.status === 'pass').length} passed, ${failed.length} failed, ${results.filter((r) => r.status === 'skip').length} skipped`);
+    if (failed.length > 0) console.log(`failed: ${failed.map((r) => r.name).join(', ')}`);
+    if (!complete) console.log(`incomplete: ${unshown.map((r) => r.name).join(', ')} not run, so those rules were not shown${options.strict ? ' (--strict: counted as a failure)' : '; pass --strict to fail on that'}`);
+  }
+  return broken.length > 0 ? 1 : 0;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

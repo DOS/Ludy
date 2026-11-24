@@ -812,7 +812,7 @@ jobs:
           exit 1
 
       - name: Run the conformance check (the same command a connector vendor runs)
-        run: node tools/mcp-conformance/cli.mjs --url http://localhost:8080 --sign-up
+        run: node tools/mcp-conformance/cli.mjs --url http://localhost:8080 --sign-up --strict
 
       - name: Stack logs
         if: failure()

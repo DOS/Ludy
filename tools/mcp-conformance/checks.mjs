@@ -399,7 +399,7 @@ export async function runConformance(options) {
     if (tier.length > 0) throw fail(tier.slice(0, 5).join('; '));
     const proposals = state.tools.filter((/** @type {any} */ t) => isProposalShaped(t.outputSchema)).length;
     const reads = state.tools.filter((/** @type {any} */ t) => t.annotations?.readOnlyHint === true).length;
-    return `${reads} read only, ${proposals} proposal tools (neither read only nor destructive), ${state.tools.length - reads - proposals} direct writes`;
+    return `${reads} read only, ${proposals} proposal tools (neither read only nor destructive), ${state.tools.length - reads - proposals} direct writes; a proposal tool is read from its answer shape, since no tier travels on the wire`;
   });
 
   await check('proposals.no-execution', ['mcp.tools'], async () => {

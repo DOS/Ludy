@@ -6,10 +6,10 @@ import { createHash, createPublicKey, randomBytes, verify } from 'node:crypto';
 const REQUEST_MS = 15_000;
 
 export class CookieJar {
-  /** @type {Map<string, { value: string, path: string }>} */
+  /** @type {Map<string, { value: string, path: string, origin: string }>} */
   #cookies = new Map();
 
-  /** @param {Response} response */
+  /** A cookie goes back only to the origin that set it (a redirect to another host never gets it). @param {Response} response */
   store(response) {
     for (const line of response.headers.getSetCookie()) {
       const [pair = '', ...attributes] = line.split(';').map((part) => part.trim());
@@ -19,14 +19,15 @@ export class CookieJar {
       const path = attributes.find((a) => a.toLowerCase().startsWith('path='))?.slice(5) ?? '/';
       const expired = attributes.some((a) => /^max-age=0$/i.test(a)) || pair.slice(eq + 1) === '';
       if (expired) this.#cookies.delete(name);
-      else this.#cookies.set(name, { value: pair.slice(eq + 1), path });
+      else this.#cookies.set(name, { value: pair.slice(eq + 1), path, origin: new URL(response.url).origin });
     }
   }
 
-  /** @param {string} pathname */
-  headerFor(pathname) {
+  /** @param {string} url */
+  headerFor(url) {
+    const { origin, pathname } = new URL(url);
     return [...this.#cookies.entries()]
-      .filter(([, cookie]) => pathname.startsWith(cookie.path))
+      .filter(([, cookie]) => cookie.origin === origin && pathname.startsWith(cookie.path))
       .map(([name, cookie]) => `${name}=${cookie.value}`)
       .join('; ');
   }
@@ -40,7 +41,7 @@ export class CookieJar {
 export async function request(url, options = {}) {
   const headers = { ...(options.headers ?? {}) };
   if (options.jar) {
-    const cookie = options.jar.headerFor(new URL(url).pathname);
+    const cookie = options.jar.headerFor(url);
     if (cookie) headers['cookie'] = cookie;
   }
   const response = await fetch(url, {
