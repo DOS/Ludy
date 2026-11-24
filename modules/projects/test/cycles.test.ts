@@ -213,4 +213,133 @@ describe('@ludy/mod-projects cycles (#4361)', () => {
     ).not.toThrow();
     expect(() => assertTaskLeaseFree(null, null, now)).not.toThrow();
   });
+
+  it('attributes completion strictly by doneAt rather than later updatedAt edits, and clears on reopen', () => {
+    const series = computeCycleBurndown(
+      [
+        // Done on day 2, edited on day 4 (updatedAt shifted forward, doneAt stayed day 2)
+        {
+          status: 'done',
+          storyPoints: 5,
+          createdAt: '2027-02-01T02:00:00Z',
+          updatedAt: '2027-02-04T09:00:00Z',
+          doneAt: '2027-02-02T03:00:00Z',
+        },
+        // Reopened task (doneAt cleared, updatedAt recent) stays remaining
+        {
+          status: 'todo',
+          storyPoints: 3,
+          createdAt: '2027-02-01T02:00:00Z',
+          updatedAt: '2027-02-03T08:00:00Z',
+          doneAt: null,
+        },
+      ],
+      '2027-02-01',
+      '2027-02-04',
+      'active',
+      null,
+      '2027-02-04T10:00:00Z',
+    );
+    expect(series.map((d) => [d.remainingTasks, d.remainingPoints])).toEqual([
+      [2, 8],
+      [1, 3],
+      [1, 3],
+      [1, 3],
+    ]);
+  });
+
+  it('preserves historical cycle membership, mid-sprint removals, re-entries, and carryover on close day', () => {
+    const series = computeCycleBurndown(
+      [
+        // Finished Day 2, remained in cycle snapshot
+        {
+          status: 'done',
+          storyPoints: 5,
+          createdAt: '2027-02-01T02:00:00Z',
+          updatedAt: '2027-02-03T10:00:00Z',
+          doneAt: '2027-02-02T03:00:00Z',
+          inCommittedScope: true,
+          intervals: [{ joinedAt: '2027-02-01T02:00:00Z', leftAt: null, leftReason: null, storyPoints: 5 }],
+        },
+        // Carried over on close Day 3: still counts on Day 3 (closedOn)
+        {
+          status: 'in_progress',
+          storyPoints: 8,
+          createdAt: '2027-02-01T02:00:00Z',
+          updatedAt: '2027-02-03T10:00:00Z',
+          doneAt: null,
+          inCommittedScope: true,
+          intervals: [
+            {
+              joinedAt: '2027-02-01T02:00:00Z',
+              leftAt: '2027-02-03T09:00:00Z',
+              leftReason: 'carryover',
+              storyPoints: 8,
+            },
+          ],
+        },
+        // Reassigned out on Day 3: active on Day 1..2, excluded from Day 3 and ideal baseline
+        {
+          status: 'todo',
+          storyPoints: 3,
+          createdAt: '2027-02-01T02:00:00Z',
+          updatedAt: '2027-02-03T02:00:00Z',
+          doneAt: null,
+          inCommittedScope: false,
+          intervals: [
+            {
+              joinedAt: '2027-02-01T02:00:00Z',
+              leftAt: '2027-02-03T02:00:00Z',
+              leftReason: 'reassigned',
+              storyPoints: 3,
+            },
+          ],
+        },
+        // Backlog task created Jan 15, added Day 2, removed Day 3, re-added Day 3
+        {
+          status: 'todo',
+          storyPoints: 4,
+          createdAt: '2027-01-15T02:00:00Z',
+          updatedAt: '2027-02-03T05:00:00Z',
+          doneAt: null,
+          inCommittedScope: true,
+          intervals: [
+            {
+              joinedAt: '2027-02-02T02:00:00Z',
+              leftAt: '2027-02-03T01:00:00Z',
+              leftReason: 'removed_from_project',
+              storyPoints: 4,
+            },
+            {
+              joinedAt: '2027-02-03T05:00:00Z',
+              leftAt: null,
+              leftReason: null,
+              storyPoints: 4,
+            },
+          ],
+        },
+      ],
+      '2027-02-01',
+      '2027-02-05',
+      'completed',
+      '2027-02-03T09:00:00Z',
+      '2027-02-05T10:00:00Z',
+    );
+
+    // Ideal baseline uses committed scope: 5 + 8 + 4 = 17 points (3 tasks)
+    expect(series[0]?.idealRemainingPoints).toBe(17);
+    expect(series[0]?.idealRemainingTasks).toBe(3);
+    // Day 1: 5 + 8 + 3 = 16 (Day 2 backlog joiner not yet in cycle)
+    expect(series[0]?.remainingTasks).toBe(3);
+    expect(series[0]?.remainingPoints).toBe(16);
+    // Day 2: 5 burned down; 8 + 3 + 4 = 15
+    expect(series[1]?.remainingTasks).toBe(3);
+    expect(series[1]?.remainingPoints).toBe(15);
+    // Day 3 (closedOn): reassigned 3 pts dropped; carryover 8 pts + re-added 4 pts = 12
+    expect(series[2]?.remainingTasks).toBe(2);
+    expect(series[2]?.remainingPoints).toBe(12);
+    // Days 4..5 after closedOn stay null
+    expect(series[3]?.remainingPoints).toBeNull();
+    expect(series[4]?.remainingPoints).toBeNull();
+  });
 });

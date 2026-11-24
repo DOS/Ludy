@@ -259,6 +259,8 @@ export interface LudyProjectsSchema {
   'ludy_projects.project': ProjectsProjectTable;
   'ludy_projects.project_column': ProjectsProjectColumnTable;
   'ludy_projects.project_cycle': ProjectsProjectCycleTable;
+  'ludy_projects.project_cycle_snapshot': ProjectsProjectCycleSnapshotTable;
+  'ludy_projects.project_cycle_task_history': ProjectsProjectCycleTaskHistoryTable;
   'ludy_projects.project_member': ProjectsProjectMemberTable;
   'ludy_projects.project_task': ProjectsProjectTaskTable;
   'ludy_projects.project_triage_item': ProjectsProjectTriageItemTable;
@@ -3534,6 +3536,7 @@ export interface KernelTaskTable {
   legal_entity_id: string | null;
   pending_draft: ColumnType<unknown, string | null | undefined, string | null>;
   checklist: ColumnType<unknown, string | undefined, string>;
+  done_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** ludy_kernel.tax_obligation_done */
@@ -4077,6 +4080,21 @@ export interface ProjectsProjectColumnTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
+/** ludy_projects.project_cycle_snapshot */
+export interface ProjectsProjectCycleSnapshotTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  cycle_id: string;
+  task_id: string;
+  task_status: string;
+  story_points: number | null;
+  task_created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  task_done_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  carried_over: Generated<boolean>;
+  captured_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** ludy_projects.project_cycle */
 export interface ProjectsProjectCycleTable {
   org_id: string;
@@ -4093,6 +4111,19 @@ export interface ProjectsProjectCycleTable {
   created_by: string | null;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** ludy_projects.project_cycle_task_history */
+export interface ProjectsProjectCycleTaskHistoryTable {
+  org_id: string;
+  id: Generated<string>;
+  project_id: string;
+  cycle_id: string;
+  task_id: string;
+  story_points: number | null;
+  joined_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  left_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  left_reason: string | null;
 }
 
 /** ludy_projects.project_member */

@@ -42,6 +42,7 @@ import { createHttpApp } from '../src/http.ts';
 import { runOrgExport } from '../src/org-export.ts';
 import { orgPurgeCommand, purgeOrg } from '../src/org-purge.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
+import { contextToken } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -408,6 +409,11 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
     expect(doneRes.cycle.status).toBe('completed');
     expect(doneRes.carriedOverCount).toBe(1);
     expect(doneRes.targetCycleId).toBe(s2.id);
+    expect(doneRes.cycle.totalTasks).toBe(2);
+    expect(doneRes.cycle.openTasks).toBe(1);
+    expect(doneRes.cycle.doneTasks).toBe(1);
+    expect(doneRes.cycle.totalPoints).toBe(13);
+    expect(doneRes.cycle.donePoints).toBe(5);
 
     await expect(
       exec(owner.userId, orgId, 'projects.task.set_cycle', { projectId, taskId: tOpen, cycleId: s1.id }),
@@ -416,7 +422,9 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
     const postMetrics = await query<ProjectCycleMetrics>(owner.userId, orgId, 'projects.cycle.metrics', { projectId });
     expect(postMetrics.velocity).toHaveLength(1);
     expect(postMetrics.velocity[0]?.completedTasks).toBe(1);
+    expect(postMetrics.velocity[0]?.totalTasks).toBe(2);
     expect(postMetrics.velocity[0]?.completedPoints).toBe(5);
+    expect(postMetrics.velocity[0]?.committedPoints).toBe(13);
 
     // Delete upcoming cycle clears task assignment back to backlog, and test update / filter / points 0 / toggle-off preservation.
     const { cycle: s3 } = await exec<ProjectCycleMutateResult>(owner.userId, orgId, 'projects.cycle.create', {
@@ -474,7 +482,13 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
     ).rejects.toMatchObject({ code: 'PROJECT_NOT_FOUND' });
 
     // Export coverage & PDPL personal-data find/erase on cycle name & goal.
-    expect(EXPORT_TABLE_NAMES).toContain('projects.project_cycle');
+    expect(EXPORT_TABLE_NAMES).toEqual(
+      expect.arrayContaining([
+        'projects.project_cycle',
+        'projects.project_cycle_snapshot',
+        'projects.project_cycle_task_history',
+      ]),
+    );
     const found = await rt.execute<PersonalDataResult>(
       'kernel.personal_data.find',
       { value: piiEmail },
@@ -547,15 +561,28 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
       { id: tBot, status: 'done', fence: checkedOut.fence },
       { actor: agentActor, orgId, idempotencyKey: randomUUID() },
     );
+    const botDoneCheck = await new pg.Client({ connectionString: adminUrl });
+    await botDoneCheck.connect();
+    try {
+      const { rows: botDoneRows } = await botDoneCheck.query<{ done_at: Date | null }>(
+        'SELECT done_at FROM ludy_kernel.task WHERE org_id = $1 AND id = $2',
+        [orgId, tBot],
+      );
+      expect(botDoneRows[0]?.done_at).not.toBeNull();
+    } finally {
+      await botDoneCheck.end();
+    }
     await exec(member.userId, orgId, 'projects.task.set_cycle', { projectId, taskId: tBot, cycleId: s2.id });
     await exec(member.userId, orgId, 'projects.task.set_points', { projectId, taskId: tBot, storyPoints: 3 });
 
-    // Export, offboard, and backdate audit events so ludy_kernel.org_purge deletes ludy_projects.project_cycle rows cleanly.
+    // Export, offboard, and backdate audit events so ludy_kernel.org_purge deletes ludy_projects cycle/history/snapshot rows cleanly.
     const sealer = new ExportSealer(randomBytes(32));
     const generatedAt = new Date(Date.now() - 35 * DAY);
     const exported = await runOrgExport({ runtime: workerRt, store, sealer, retentionDays: 40 }, orgId, {
       now: () => generatedAt,
     });
+    expect(exported.parts.some((p) => p.table === 'projects.project_cycle_snapshot')).toBe(true);
+    expect(exported.parts.some((p) => p.table === 'projects.project_cycle_task_history')).toBe(true);
     const cyclePart = exported.parts.find((p) => p.table === 'projects.project_cycle');
     expect(cyclePart).toBeDefined();
     if (!cyclePart) throw new Error('missing projects.project_cycle export part');
@@ -588,11 +615,18 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
     const verifyAdmin = new pg.Client({ connectionString: adminUrl });
     await verifyAdmin.connect();
     try {
-      const { rows } = await verifyAdmin.query<{ n: string }>(
-        'SELECT count(*)::text AS n FROM ludy_projects.project_cycle WHERE org_id = $1',
+      const { rows } = await verifyAdmin.query<{
+        cycles: string;
+        snapshots: string;
+        histories: string;
+      }>(
+        `SELECT
+           (SELECT count(*)::text FROM ludy_projects.project_cycle WHERE org_id = $1) AS cycles,
+           (SELECT count(*)::text FROM ludy_projects.project_cycle_snapshot WHERE org_id = $1) AS snapshots,
+           (SELECT count(*)::text FROM ludy_projects.project_cycle_task_history WHERE org_id = $1) AS histories`,
         [orgId],
       );
-      expect(rows[0]?.n).toBe('0');
+      expect(rows[0]).toEqual({ cycles: '0', snapshots: '0', histories: '0' });
     } finally {
       await verifyAdmin.end();
     }
@@ -721,6 +755,26 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
     );
     expect(completedHiddenRes.cycle.status).toBe('completed');
     expect(completedHiddenRes.carriedOverCount).toBe(1);
+
+    // Restricted le_scope caller cannot see hidden-entity snapshot points/counts in completed cycles.
+    const restrictedCompletedMetrics = await query<ProjectCycleMetrics>(
+      branchManager.userId,
+      guardOrg.orgId,
+      'projects.cycle.metrics',
+      { projectId, cycleId: activeLe.id },
+    );
+    expect(restrictedCompletedMetrics.hiddenByEntityCount).toBe(1);
+    expect(restrictedCompletedMetrics.selectedCycle?.totalTasks).toBe(0);
+    expect(restrictedCompletedMetrics.selectedCycle?.totalPoints).toBe(0);
+    expect(restrictedCompletedMetrics.velocity).toEqual([
+      expect.objectContaining({
+        cycleId: activeLe.id,
+        totalTasks: 0,
+        committedPoints: 0,
+        completedTasks: 0,
+        completedPoints: 0,
+      }),
+    ]);
 
     // Checked-out lease tests for cycle.delete (all tasks) and cycle.complete (open tasks).
     const { cycle: leaseUpcoming } = await exec<ProjectCycleMutateResult>(
@@ -873,5 +927,354 @@ suite('Projects v2 Cycles & Story Points on PostgreSQL (#4361)', () => {
     );
     expect(noneCompleteRes.cycle.status).toBe('completed');
     expect(noneCompleteRes.carriedOverCount).toBe(0);
+  });
+
+  it('tracks done_at immutability, multi-day cycle history burndown, immutable close snapshots, and private-project isolation (#4431)', async () => {
+    const pOwner = await newPerson('snap-owner');
+    const pMember = await newPerson('snap-member');
+    const pNonMember = await newPerson('snap-nonmember');
+    const snapOrg = await createOrg(rt, asUser(pOwner.userId), 'Snapshot Burndown Org');
+
+    for (const person of [pMember, pNonMember]) {
+      const inv = await rt.execute<{ acceptPath: string }>(
+        'kernel.member.invite.create',
+        { email: person.email, role: 'member' },
+        { actor: asMfa(pOwner.userId), orgId: snapOrg.orgId, idempotencyKey: randomUUID() },
+      );
+      await rt.executeOrgless(
+        'kernel.member.invite.accept',
+        { token: inv.acceptPath.split('#')[1] },
+        { actor: asUser(person.userId) },
+      );
+    }
+
+    const { projectId } = await exec<{ projectId: string }>(pOwner.userId, snapOrg.orgId, 'projects.project.create', {
+      name: 'Dự án snapshot & lịch sử chu kỳ',
+      visibility: 'private',
+      memberUserIds: [pMember.userId],
+    });
+    await exec(pOwner.userId, snapOrg.orgId, 'projects.project.update', {
+      projectId,
+      cyclesEnabled: true,
+      pointsEnabled: true,
+    });
+
+    const vnDate = (offsetDays: number): string =>
+      new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Ho_Chi_Minh',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date(Date.now() + offsetDays * DAY));
+
+    const d0 = vnDate(-3);
+    const d1 = vnDate(-2);
+    const d2 = vnDate(-1);
+    const d3 = vnDate(0);
+    const d4 = vnDate(1);
+    const vnMorning = (day: string) => new Date(`${day}T02:00:00.000Z`);
+
+    const { cycle: sprint1 } = await exec<ProjectCycleMutateResult>(
+      pOwner.userId,
+      snapOrg.orgId,
+      'projects.cycle.create',
+      {
+        projectId,
+        name: 'Sprint Lịch sử 1',
+        startsOn: d0,
+        endsOn: d4,
+      },
+    );
+    const { cycle: sprint2 } = await exec<ProjectCycleMutateResult>(
+      pOwner.userId,
+      snapOrg.orgId,
+      'projects.cycle.create',
+      {
+        projectId,
+        name: 'Sprint Lịch sử 2',
+      },
+    );
+    await exec(pOwner.userId, snapOrg.orgId, 'projects.cycle.start', { projectId, cycleId: sprint1.id });
+
+    const { taskId: tDone } = await exec<{ taskId: string }>(pOwner.userId, snapOrg.orgId, 'projects.task.create', {
+      projectId,
+      title: 'Tác vụ hoàn thành sớm',
+      assigneePositionId: null,
+      status: 'todo',
+      cycleId: sprint1.id,
+      storyPoints: 5,
+    });
+    const { taskId: tReassigned } = await exec<{ taskId: string }>(pOwner.userId, snapOrg.orgId, 'projects.task.create', {
+      projectId,
+      title: 'Tác vụ chuyển ra giữa kỳ',
+      assigneePositionId: null,
+      status: 'todo',
+      cycleId: sprint1.id,
+      storyPoints: 3,
+    });
+    const { taskId: tRemoved } = await exec<{ taskId: string }>(pOwner.userId, snapOrg.orgId, 'projects.task.create', {
+      projectId,
+      title: 'Tác vụ gỡ khỏi dự án giữa kỳ',
+      assigneePositionId: null,
+      status: 'todo',
+      cycleId: sprint1.id,
+      storyPoints: 2,
+    });
+    const { taskId: tCarry } = await exec<{ taskId: string }>(pOwner.userId, snapOrg.orgId, 'projects.task.create', {
+      projectId,
+      title: 'Tác vụ chưa xong carry over',
+      assigneePositionId: null,
+      status: 'in_progress',
+      cycleId: sprint1.id,
+      storyPoints: 8,
+    });
+
+    // Complete tDone, then verify non-status edits keep done_at unchanged and reopen clears done_at.
+    await exec(pMember.userId, snapOrg.orgId, 'kernel.task.set_status', { id: tDone, status: 'done' });
+    const admin = new pg.Client({ connectionString: adminUrl });
+    await admin.connect();
+    try {
+      const { rows: doneRows1 } = await admin.query<{ done_at: Date | null }>(
+        'SELECT done_at FROM ludy_kernel.task WHERE org_id = $1 AND id = $2',
+        [snapOrg.orgId, tDone],
+      );
+      expect(doneRows1[0]?.done_at).not.toBeNull();
+      const stampedDoneAt = doneRows1[0]?.done_at as Date;
+
+      await exec(pMember.userId, snapOrg.orgId, 'kernel.task.update', {
+        id: tDone,
+        title: 'Tác vụ hoàn thành sớm (đã sửa tiêu đề)',
+        description: 'Mô tả cập nhật sau khi xong',
+      });
+      const { rows: doneRows2 } = await admin.query<{ done_at: Date | null; updated_at: Date }>(
+        'SELECT done_at, updated_at FROM ludy_kernel.task WHERE org_id = $1 AND id = $2',
+        [snapOrg.orgId, tDone],
+      );
+      expect(doneRows2[0]?.done_at?.getTime()).toBe(stampedDoneAt.getTime());
+      expect(doneRows2[0]?.updated_at.getTime()).toBeGreaterThanOrEqual(stampedDoneAt.getTime());
+
+      // Reopen clears done_at, re-complete stamps new done_at, then backdate to d1 before editing title on d3.
+      await exec(pMember.userId, snapOrg.orgId, 'kernel.task.set_status', { id: tDone, status: 'in_progress' });
+      const { rows: reopenedRows } = await admin.query<{ done_at: Date | null }>(
+        'SELECT done_at FROM ludy_kernel.task WHERE org_id = $1 AND id = $2',
+        [snapOrg.orgId, tDone],
+      );
+      expect(reopenedRows[0]?.done_at).toBeNull();
+
+      await exec(pMember.userId, snapOrg.orgId, 'kernel.task.set_status', { id: tDone, status: 'done' });
+      await admin.query(
+        'UPDATE ludy_kernel.task SET created_at = $1, done_at = $2 WHERE org_id = $3 AND id = $4',
+        [vnMorning(d0), vnMorning(d1), snapOrg.orgId, tDone],
+      );
+      // Unrelated edit right now (d3) must keep done_at on d1 and keep burndown on d1!
+      await exec(pMember.userId, snapOrg.orgId, 'kernel.task.update', {
+        id: tDone,
+        title: 'Tác vụ giữ nguyên ngày done d1',
+      });
+      const { rows: afterEditRows } = await admin.query<{ done_at: Date }>(
+        'SELECT done_at FROM ludy_kernel.task WHERE org_id = $1 AND id = $2',
+        [snapOrg.orgId, tDone],
+      );
+      expect(afterEditRows[0]?.done_at.toISOString()).toBe(vnMorning(d1).toISOString());
+
+      // Mid-sprint reassignment (d2) and project removal (d1).
+      await exec(pMember.userId, snapOrg.orgId, 'projects.task.set_cycle', {
+        projectId,
+        taskId: tReassigned,
+        cycleId: null,
+      });
+      await exec(pMember.userId, snapOrg.orgId, 'projects.task.remove', {
+        projectId,
+        taskId: tRemoved,
+      });
+
+      await admin.query(
+        'UPDATE ludy_kernel.task SET created_at = $1 WHERE org_id = $2 AND id = ANY($3::uuid[])',
+        [vnMorning(d0), snapOrg.orgId, [tReassigned, tRemoved, tCarry]],
+      );
+      await admin.query(
+        'UPDATE ludy_projects.project_cycle_task_history SET joined_at = $1 WHERE org_id = $2 AND cycle_id = $3',
+        [vnMorning(d0), snapOrg.orgId, sprint1.id],
+      );
+      await admin.query(
+        `UPDATE ludy_projects.project_cycle_task_history
+            SET left_at = $1
+          WHERE org_id = $2 AND cycle_id = $3 AND task_id = $4 AND left_reason = 'reassigned'`,
+        [vnMorning(d2), snapOrg.orgId, sprint1.id, tReassigned],
+      );
+      const { rows: removedHistory } = await admin.query<{ left_reason: string | null }>(
+        `UPDATE ludy_projects.project_cycle_task_history
+            SET left_at = $1
+          WHERE org_id = $2 AND cycle_id = $3 AND task_id = $4
+          RETURNING left_reason`,
+        [vnMorning(d1), snapOrg.orgId, sprint1.id, tRemoved],
+      );
+      expect(removedHistory[0]?.left_reason).toBe('removed_from_project');
+
+      // Agent cannot forge done_at via raw update under agent context (and cannot complete without run).
+      const installed = await rt.execute<{ agentId: string; positionId: string }>(
+        'kernel.agent.template.install',
+        { templateKey: 'finance.chief_accountant', displayName: 'Done Guard Bot' },
+        { actor: asMfa(pOwner.userId), orgId: snapOrg.orgId, idempotencyKey: randomUUID() },
+      );
+      const { taskId: tBotGuard } = await exec<{ taskId: string }>(pOwner.userId, snapOrg.orgId, 'projects.task.create', {
+        projectId,
+        title: 'Tác vụ kiểm tra agent guard done_at',
+        assigneePositionId: installed.positionId,
+      });
+      const started = await workerRt.execute<{ runId: string | null }>(
+        'kernel.agent.run.start',
+        { agentId: installed.agentId },
+        { actor: { type: 'system', component: 'test' }, orgId: snapOrg.orgId },
+      );
+      expect(started.runId).toBeTruthy();
+      const agentClient = await workerPool.connect();
+      try {
+        await agentClient.query('BEGIN');
+        await agentClient.query('SELECT ludy_kernel.enter_agent_context($1::uuid, $2::uuid, $3::uuid)', [
+          snapOrg.orgId,
+          installed.agentId,
+          started.runId,
+        ]);
+        await expect(
+          agentClient.query('UPDATE ludy_kernel.task SET done_at = $1 WHERE org_id = $2 AND id = $3', [
+            vnMorning(d0),
+            snapOrg.orgId,
+            tBotGuard,
+          ]),
+        ).rejects.toMatchObject({ code: '42501', message: 'AGENT_TASK_FIELD' });
+      } finally {
+        await agentClient.query('ROLLBACK').catch(() => undefined);
+        agentClient.release();
+      }
+      await workerRt.execute(
+        'kernel.agent.run.finish',
+        { runId: started.runId as string, outcome: 'succeeded' },
+        { actor: { type: 'system', component: 'test' }, orgId: snapOrg.orgId },
+      );
+
+      // Complete sprint1 with carryover to sprint2.
+      const closed = await exec<ProjectCycleCompleteResult>(pOwner.userId, snapOrg.orgId, 'projects.cycle.complete', {
+        projectId,
+        cycleId: sprint1.id,
+        carryover: { mode: 'cycle', targetCycleId: sprint2.id },
+      });
+      expect(closed.cycle.totalTasks).toBe(2);
+      expect(closed.cycle.doneTasks).toBe(1);
+      expect(closed.cycle.openTasks).toBe(1);
+      expect(closed.cycle.totalPoints).toBe(13);
+      expect(closed.cycle.donePoints).toBe(5);
+
+      const { rows: snapRows } = await admin.query<{
+        task_id: string;
+        task_status: string;
+        story_points: number | null;
+        carried_over: boolean;
+      }>(
+        'SELECT task_id, task_status, story_points, carried_over FROM ludy_projects.project_cycle_snapshot WHERE org_id = $1 AND cycle_id = $2 ORDER BY task_id',
+        [snapOrg.orgId, sprint1.id],
+      );
+      expect(snapRows).toHaveLength(2);
+      expect(snapRows.find((r) => r.task_id === tCarry)).toMatchObject({
+        task_status: 'in_progress',
+        story_points: 8,
+        carried_over: true,
+      });
+      expect(snapRows.find((r) => r.task_id === tDone)).toMatchObject({
+        task_status: 'done',
+        story_points: 5,
+        carried_over: false,
+      });
+
+      const { rows: carryHistory } = await admin.query<{ left_reason: string | null }>(
+        'SELECT left_reason FROM ludy_projects.project_cycle_task_history WHERE org_id = $1 AND cycle_id = $2 AND task_id = $3',
+        [snapOrg.orgId, sprint1.id, tCarry],
+      );
+      expect(carryHistory[0]?.left_reason).toBe('carryover');
+
+      // Now mutate tCarry points and complete it in sprint2, and reopen tDone.
+      // Sprint 1 snapshot metrics, velocity, burndown, and cycle_summary_source must stay 100% immutable!
+      await exec(pMember.userId, snapOrg.orgId, 'projects.task.set_points', {
+        projectId,
+        taskId: tCarry,
+        storyPoints: 21,
+      });
+      await exec(pMember.userId, snapOrg.orgId, 'kernel.task.set_status', { id: tCarry, status: 'done' });
+      await exec(pMember.userId, snapOrg.orgId, 'kernel.task.set_status', { id: tDone, status: 'in_progress' });
+
+      const afterMutationsMetrics = await query<ProjectCycleMetrics>(
+        pMember.userId,
+        snapOrg.orgId,
+        'projects.cycle.metrics',
+        { projectId, cycleId: sprint1.id },
+      );
+      expect(afterMutationsMetrics.selectedCycle?.totalTasks).toBe(2);
+      expect(afterMutationsMetrics.selectedCycle?.doneTasks).toBe(1);
+      expect(afterMutationsMetrics.selectedCycle?.totalPoints).toBe(13);
+      expect(afterMutationsMetrics.selectedCycle?.donePoints).toBe(5);
+      expect(afterMutationsMetrics.velocity).toEqual([
+        expect.objectContaining({
+          cycleId: sprint1.id,
+          totalTasks: 2,
+          completedTasks: 1,
+          committedPoints: 13,
+          completedPoints: 5,
+        }),
+      ]);
+
+      // d0: tDone(5) + tCarry(8) + tReassigned(3) + tRemoved(2) = 18 pts, 4 tasks
+      // d1: tDone burned down, tRemoved removed = 8 + 3 = 11 pts, 2 tasks
+      // d2: tReassigned left = 8 pts, 1 task (tCarry)
+      // d3 (closedOn): tCarry carryover stays remaining = 8 pts, 1 task
+      // d4 (future after closedOn): null
+      expect(afterMutationsMetrics.burndown.map((p) => [p.date, p.remainingTasks, p.remainingPoints])).toEqual([
+        [d0, 4, 18],
+        [d1, 2, 11],
+        [d2, 1, 8],
+        [d3, 1, 8],
+        [d4, null, null],
+      ]);
+
+      const sourceAfterReopen = await query<ProjectCycleSummarySource>(
+        pMember.userId,
+        snapOrg.orgId,
+        'projects.cycle_summary_source',
+        { projectId, cycleId: sprint1.id },
+      );
+      expect(sourceAfterReopen.tasks.find((t) => t.id === tDone)?.status).toBe('done');
+      expect(sourceAfterReopen.tasks.find((t) => t.id === tCarry)?.status).toBe('in_progress');
+
+      // Private-project isolation: non-member sees 0 rows directly in both tables and gets PROJECT_NOT_FOUND in queries.
+      await expect(
+        query<ProjectCycleMetrics>(pNonMember.userId, snapOrg.orgId, 'projects.cycle.metrics', {
+          projectId,
+          cycleId: sprint1.id,
+        }),
+      ).rejects.toMatchObject({ code: 'PROJECT_NOT_FOUND' });
+
+      const tenantClient = await pool.connect();
+      try {
+        await tenantClient.query('BEGIN');
+        await tenantClient.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [
+          snapOrg.orgId,
+          contextToken(pNonMember.userId, snapOrg.orgId),
+        ]);
+        const { rows: hiddenHist } = await tenantClient.query(
+          'SELECT id FROM ludy_projects.project_cycle_task_history WHERE org_id = $1 AND cycle_id = $2',
+          [snapOrg.orgId, sprint1.id],
+        );
+        const { rows: hiddenSnap } = await tenantClient.query(
+          'SELECT id FROM ludy_projects.project_cycle_snapshot WHERE org_id = $1 AND cycle_id = $2',
+          [snapOrg.orgId, sprint1.id],
+        );
+        expect(hiddenHist).toHaveLength(0);
+        expect(hiddenSnap).toHaveLength(0);
+      } finally {
+        await tenantClient.query('ROLLBACK').catch(() => undefined);
+        tenantClient.release();
+      }
+    } finally {
+      await admin.end();
+    }
   });
 });

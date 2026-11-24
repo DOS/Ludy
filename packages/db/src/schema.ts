@@ -1571,6 +1571,23 @@ export type ProjectsProjectCycleTable = Refine<
   }
 >;
 
+export const PROJECT_CYCLE_HISTORY_LEFT_REASONS = ['reassigned', 'removed_from_project', 'carryover'] as const;
+export type ProjectCycleHistoryLeftReason = (typeof PROJECT_CYCLE_HISTORY_LEFT_REASONS)[number];
+
+export type ProjectsProjectCycleSnapshotTable = Refine<
+  G.ProjectsProjectCycleSnapshotTable,
+  {
+    task_status: TaskStatus;
+  }
+>;
+
+export type ProjectsProjectCycleTaskHistoryTable = Refine<
+  G.ProjectsProjectCycleTaskHistoryTable,
+  {
+    left_reason: ProjectCycleHistoryLeftReason | null;
+  }
+>;
+
 export const ROADMAP_ANNOUNCEMENT_STATUSES = ['draft', 'published'] as const;
 export type RoadmapAnnouncementStatus = (typeof ROADMAP_ANNOUNCEMENT_STATUSES)[number];
 
@@ -1890,6 +1907,8 @@ type Refined = Tables<{
   'ludy_projects.project': ProjectsProjectTable;
   'ludy_projects.project_column': ProjectsProjectColumnTable;
   'ludy_projects.project_cycle': ProjectsProjectCycleTable;
+  'ludy_projects.project_cycle_snapshot': ProjectsProjectCycleSnapshotTable;
+  'ludy_projects.project_cycle_task_history': ProjectsProjectCycleTaskHistoryTable;
   'ludy_projects.project_triage_item': ProjectsProjectTriageItemTable;
   'ludy_projects.roadmap_announcement': ProjectsRoadmapAnnouncementTable;
   'ludy_projects.roadmap_item': ProjectsRoadmapItemTable;
