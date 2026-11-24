@@ -94,11 +94,31 @@ export const SIGN_SIGNER_TABLE = columns(
   },
 );
 
+export const SIGN_ENVELOPE_DOCUMENT_TABLE = columns([
+  'org_id',
+  'id',
+  'envelope_id',
+  'doc_index',
+  'title',
+  'file_id',
+  'storage_key',
+  'generation',
+  'source_sha256',
+  'inspect_status',
+  'inspect_error',
+  'page_count',
+  'page_dimensions_json',
+  'detected_tags_json',
+  'created_at',
+  'updated_at',
+]);
+
 export const SIGN_FIELD_TABLE = columns(
   [
     'org_id',
     'id',
     'envelope_id',
+    'document_id',
     'signer_id',
     'field_type',
     'page_number',
@@ -265,6 +285,7 @@ export const signManifest = defineModule({
         'updated_at',
       ]),
       envelope: SIGN_ENVELOPE_TABLE,
+      envelope_document: SIGN_ENVELOPE_DOCUMENT_TABLE,
       envelope_obligation: columns(
         [
           'org_id',

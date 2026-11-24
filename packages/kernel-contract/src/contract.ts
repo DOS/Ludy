@@ -1041,6 +1041,14 @@ import {
   zSignApiKeyListResult,
   zSignApiKeyRecord,
   zSignApiKeyRevokeInput,
+  zSignEnvelopeDocumentAddInput,
+  zSignEnvelopeDocumentAddResult,
+  zSignEnvelopeDocumentRemoveInput,
+  zSignEnvelopeDocumentRemoveResult,
+  zSignEnvelopeDocumentReorderInput,
+  zSignEnvelopeDocumentReorderResult,
+  zSignPacketConsistencyCheckInput,
+  zSignPacketConsistencyCheckResult,
 } from './sign.ts';
 
 // Proposal reminders (issue #676): days before the approvers are reminded and before the owners are told; and expiry
@@ -4030,6 +4038,14 @@ export const contract = {
       remind: oc.input(zSignEnvelopeRemindInput).output(zSignEnvelopeRemindResult),
       void: oc.input(zSignEnvelopeVoidInput).output(zSignEnvelopeVoidResult),
       acknowledge_decline: oc.input(zSignEnvelopeAcknowledgeDeclineInput).output(zSignEnvelopeAcknowledgeDeclineResult),
+      document: {
+        add: oc.input(zSignEnvelopeDocumentAddInput).output(zSignEnvelopeDocumentAddResult),
+        remove: oc.input(zSignEnvelopeDocumentRemoveInput).output(zSignEnvelopeDocumentRemoveResult),
+        reorder: oc.input(zSignEnvelopeDocumentReorderInput).output(zSignEnvelopeDocumentReorderResult),
+      },
+    },
+    packet: {
+      consistency_check: oc.input(zSignPacketConsistencyCheckInput).output(zSignPacketConsistencyCheckResult),
     },
     signer: {
       add: oc.input(zSignSignerAddInput).output(zSignSignerAddResult),

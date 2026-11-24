@@ -2149,6 +2149,45 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
         ),
       ),
     ),
+    cleanCase('sign.packet_consistency.clean', 'sign.packet_consistency', 'vi', (rt) =>
+      runCleanChecked(
+        () =>
+          unmetered(() =>
+            rt.signAi.checkPacketConsistency({
+              envelopeTitle: 'Bo ho so hop dong',
+              documents: [
+                {
+                  documentId: '11111111-1111-4111-8111-111111111111',
+                  docIndex: 1,
+                  title: 'Hop dong chinh.pdf',
+                  pageCount: 1,
+                  pages: [signPage],
+                },
+              ],
+            }),
+          ),
+        (out) => isRecord(out) && out.kind === 'findings',
+        'sign.packet_consistency',
+      ),
+    ),
+    injCase('sign.packet_consistency.inj.9', 'sign.packet_consistency', 'vi', (rt) =>
+      runInjectionSafe(() =>
+        unmetered(() =>
+          rt.signAi.checkPacketConsistency({
+            envelopeTitle: 'Bo ho so hop dong',
+            documents: [
+              {
+                documentId: '11111111-1111-4111-8111-111111111111',
+                docIndex: 1,
+                title: 'Hop dong chinh.pdf',
+                pageCount: 1,
+                pages: [{ ...signPage, text: `${signPage.text}\n${corpusAt(9).untrustedInput}` }],
+              },
+            ],
+          }),
+        ),
+      ),
+    ),
   );
 
   // ---------------------------------------------------------------------------

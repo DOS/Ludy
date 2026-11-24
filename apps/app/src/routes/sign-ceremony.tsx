@@ -12,6 +12,7 @@ import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { cn } from '@ludy/ui/lib/utils';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
+import { SignPacketTabs } from '../components/sign/sign-packet-tabs.tsx';
 import { CounterpartySummaryBanner } from '../components/sign/shared-summary-card.tsx';
 import { SignQrModal } from '../components/sign/sign-qr-modal.tsx';
 import { SignaturePadModal } from '../components/sign/signature-pad-modal.tsx';
@@ -370,6 +371,9 @@ export function SignCeremonyPage() {
   const [viewState, setViewState] = useState<PublicSignViewState | null>(null);
   const [loadingView, setLoadingView] = useState(false);
   const [viewError, setViewError] = useState<string | null>(null);
+  const [activeDocKey, setActiveDocKey] = useState('doc-1');
+  const pdfCacheRef = useRef<Map<string, Uint8Array>>(new Map());
+  const pdfLoadGenRef = useRef(0);
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
   const [loadingPdf, setLoadingPdf] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
@@ -503,6 +507,12 @@ export function SignCeremonyPage() {
         forgetSignToken();
       }
       if (view.state === 'ready') {
+        const firstDoc = view.documents?.[0] ?? null;
+        const firstDocKey = firstDoc?.id ?? 'doc-1';
+        setActiveDocKey(firstDocKey);
+        setPageNumber(1);
+        pdfCacheRef.current.clear();
+        const pdfGen = (pdfLoadGenRef.current += 1);
         const todayStr = new Intl.DateTimeFormat('en-CA', {
           timeZone: 'Asia/Ho_Chi_Minh',
           year: 'numeric',
@@ -524,8 +534,9 @@ export function SignCeremonyPage() {
         });
         setLoadingPdf(true);
         try {
-          const bytes = await publicSignApi.pdf(activeToken);
-          if (requestGenRef.current !== requestId) return;
+          const bytes = await publicSignApi.pdf(activeToken, firstDoc?.id ?? undefined);
+          if (requestGenRef.current !== requestId || pdfLoadGenRef.current !== pdfGen) return;
+          pdfCacheRef.current.set(firstDocKey, bytes);
           setPdfBytes(bytes);
         } catch (pdfErr) {
           if (requestGenRef.current !== requestId) return;
@@ -723,10 +734,70 @@ export function SignCeremonyPage() {
     }
   };
 
+  const readyDocs = useMemo(
+    () => (viewState?.state === 'ready' ? (viewState.documents ?? []) : []),
+    [viewState],
+  );
+  const readyDoc1Id = readyDocs[0]?.id ?? null;
+
+  const handleSelectDocument = useCallback(
+    async (docKey: string, nextPage = 1) => {
+      if (!token || viewState?.state !== 'ready') return;
+      const targetDoc = readyDocs.find((d) => (d.id ?? 'doc-1') === docKey) ?? null;
+      setActiveDocKey(docKey);
+      setPageNumber(Math.max(1, nextPage));
+      setPdfError(null);
+      setViewerRenderError(null);
+      const cached = pdfCacheRef.current.get(docKey);
+      if (cached) {
+        setPdfRendered(false);
+        setPdfBytes(cached);
+        return;
+      }
+      const pdfGen = (pdfLoadGenRef.current += 1);
+      setLoadingPdf(true);
+      setPdfRendered(false);
+      setPdfBytes(null);
+      try {
+        const bytes = await publicSignApi.pdf(token, targetDoc?.id ?? undefined);
+        if (pdfLoadGenRef.current !== pdfGen) return;
+        pdfCacheRef.current.set(docKey, bytes);
+        setPdfBytes(bytes);
+      } catch (pdfErr) {
+        if (pdfLoadGenRef.current !== pdfGen) return;
+        if (isOtpRequiredError(pdfErr)) {
+          setOtpSent(false);
+          setOtpCode('');
+          setViewState(
+            buildOtpRequiredViewState({
+              orgName: viewState.orgName,
+              title: viewState.title,
+              inPerson: Boolean(inPersonMode || viewState.inPerson),
+            }),
+          );
+        } else {
+          setPdfError(t('invalidHint'));
+        }
+      } finally {
+        if (pdfLoadGenRef.current === pdfGen) {
+          setLoadingPdf(false);
+        }
+      }
+    },
+    [token, viewState, readyDocs, inPersonMode, t],
+  );
+
   const handleJumpToNext = () => {
     const nextField = incompleteRequired[0];
     if (!nextField) return;
-    setPageNumber(nextField.pageNumber);
+    const targetDoc =
+      readyDocs.find((d) => d.id === (nextField.documentId ?? readyDoc1Id ?? null)) ?? readyDocs[0] ?? null;
+    const targetDocKey = targetDoc?.id ?? 'doc-1';
+    if (targetDocKey !== activeDocKey) {
+      void handleSelectDocument(targetDocKey, nextField.pageNumber);
+    } else {
+      setPageNumber(nextField.pageNumber);
+    }
     const el = fieldCardRefs.current[nextField.id];
     el?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
     if (nextField.fieldType === 'signature' || nextField.fieldType === 'initials' || nextField.fieldType === 'stamp') {
@@ -1090,6 +1161,8 @@ export function SignCeremonyPage() {
             viewState={viewState}
             inPerson={isInPerson}
             answers={answers}
+            activeDocumentKey={activeDocKey}
+            onSelectDocument={(docKey, nextPage) => void handleSelectDocument(docKey, nextPage)}
             pdfBytes={pdfBytes}
             loadingPdf={loadingPdf}
             pdfError={pdfError}
@@ -1190,6 +1263,8 @@ export interface SignCeremonyReadyViewProps {
   viewState: ReadySignView;
   inPerson?: boolean;
   answers: Readonly<Record<string, CeremonyFieldAnswer>>;
+  activeDocumentKey?: string;
+  onSelectDocument?: (docKey: string, nextPage?: number) => void;
   pdfBytes: Uint8Array | null;
   loadingPdf: boolean;
   pdfError: string | null;
@@ -1247,9 +1322,40 @@ export interface SignCeremonyReadyViewProps {
 export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
   const { viewState, answers } = props;
   const t = useTranslations('sign.ceremony');
+  const tPacket = useTranslations('sign.packet');
   const tQr = useTranslations('sign.qrHandoff');
   const tField = useTranslations('sign.fields');
   const common = useTranslations('common');
+
+  const packetDocuments = useMemo(
+    () =>
+      viewState.documents && viewState.documents.length > 0
+        ? viewState.documents
+        : [
+            {
+              id: null,
+              docIndex: 1,
+              title: viewState.title,
+              pageCount: viewState.pageCount,
+              pageDimensions: viewState.pageDimensions ?? [],
+              sourceSha256: '',
+            },
+          ],
+    [viewState.documents, viewState.title, viewState.pageCount, viewState.pageDimensions],
+  );
+  const [uncontrolledDocKey, setUncontrolledDocKey] = useState('doc-1');
+  const resolvedDocKey = props.activeDocumentKey ?? uncontrolledDocKey;
+  const activeDoc =
+    packetDocuments.find((d) => (d.id ?? 'doc-1') === resolvedDocKey) ?? packetDocuments[0]!;
+  const doc1Id = packetDocuments[0]?.id ?? null;
+  const selectDoc = (docKey: string, nextPage = 1) => {
+    if (props.onSelectDocument) {
+      props.onSelectDocument(docKey, nextPage);
+    } else {
+      setUncontrolledDocKey(docKey);
+      props.onPageChange(nextPage);
+    }
+  };
 
   const isApproverCeremony = isApproverCeremonyMode(viewState);
   const isInPerson = Boolean(props.inPerson || viewState.inPerson);
@@ -1343,10 +1449,31 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
       {props.loadingPdf ? <ListSkeleton rows={3} /> : null}
       {props.pdfError ? <ErrorText>{props.pdfError}</ErrorText> : null}
 
+      {packetDocuments.length > 1 ? (
+        <SignPacketTabs
+          items={packetDocuments.map((doc) => {
+            const docFields = viewState.fields.filter((f) => (f.documentId ?? doc1Id ?? null) === (doc.id ?? null));
+            const requiredDocsFields = docFields.filter((f) => f.required);
+            const missingCount = docFields.filter((f) => !isFieldComplete(f, answers[f.id])).length;
+            return {
+              key: doc.id ?? 'doc-1',
+              documentId: doc.id,
+              docIndex: doc.docIndex,
+              title: doc.title,
+              pageCount: doc.pageCount,
+              remainingRequiredCount: missingCount,
+              totalRequiredCount: requiredDocsFields.length,
+            };
+          })}
+          activeKey={activeDoc.id ?? 'doc-1'}
+          onSelect={(key) => selectDoc(key, 1)}
+        />
+      ) : null}
+
       <PdfCanvasViewer
         pdfBytes={props.pdfBytes}
         pageNumber={props.pageNumber}
-        pageCount={viewState.pageCount}
+        pageCount={Math.max(1, activeDoc.pageCount)}
         scale={props.scale}
         onPageChange={props.onPageChange}
         onScaleChange={props.onScaleChange}
@@ -1354,7 +1481,10 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
         renderOverlay={(page) => (
           <div className="pointer-events-none relative h-full w-full">
             {viewState.fields
-              .filter((field) => field.pageNumber === page)
+              .filter(
+                (field) =>
+                  (field.documentId ?? doc1Id ?? null) === (activeDoc.id ?? null) && field.pageNumber === page,
+              )
               .map((field) => {
                 const answer = answers[field.id];
                 const filled = isFieldFilled(field, answer);
@@ -1468,7 +1598,30 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
                       </Badge>
                     </div>
                     <span className="text-xs text-muted-foreground">
-                      {tField('pageNav', { current: String(field.pageNumber), total: String(viewState.pageCount) })}
+                      {(() => {
+                        const fieldDoc =
+                          packetDocuments.find((d) => (d.id ?? null) === (field.documentId ?? doc1Id ?? null)) ??
+                          activeDoc;
+                        const pageLabel = tField('pageNav', {
+                          current: String(field.pageNumber),
+                          total: String(Math.max(1, fieldDoc.pageCount)),
+                        });
+                        return packetDocuments.length > 1 ? (
+                          <button
+                            type="button"
+                            className="inline-flex min-h-11 items-center underline decoration-dotted underline-offset-2 hover:text-foreground"
+                            onClick={() => selectDoc(fieldDoc.id ?? 'doc-1', field.pageNumber)}
+                          >
+                            {tPacket('docTabLabel', {
+                              index: String(fieldDoc.docIndex),
+                              title: fieldDoc.title,
+                            })}{' '}
+                            · {pageLabel}
+                          </button>
+                        ) : (
+                          pageLabel
+                        );
+                      })()}
                     </span>
                   </div>
 
@@ -1692,6 +1845,11 @@ export function SignCeremonyReadyView(props: SignCeremonyReadyViewProps) {
 
       <Card>
         <CardContent className="space-y-4 p-4">
+          {packetDocuments.length > 1 ? (
+            <p className="text-xs text-muted-foreground" data-testid="ceremony-multi-doc-consent-note">
+              {tPacket('singleConsentAllDocsNotice', { count: String(packetDocuments.length) })}
+            </p>
+          ) : null}
           <label
             htmlFor="ceremony-consent-input"
             className="flex min-h-11 cursor-pointer items-start gap-3 text-sm"

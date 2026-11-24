@@ -3,9 +3,11 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@ludy/db';
+import { EXTRACT_LIMITS } from '@ludy/extract-contract';
 import { kernelManifest } from '@ludy/kernel';
 import {
   SIGN_MAX_DETECTED_TAGS,
+  SIGN_MAX_PACKET_DOCS,
   SIGN_MAX_PAGES,
   SIGN_NORM_SCALE,
   SIGN_SHARED_KEY_TERMS_MAX,
@@ -178,12 +180,14 @@ export interface SignSourceFileRow {
   storage_key: string;
   generation: string;
   sha256: string;
+  sizeBytes: number;
+  filename: string;
 }
 
 export async function requireSignSourceFile(ctx: CommandContext, sourceFileId: string): Promise<SignSourceFileRow> {
   const file = await ctx.trx
     .selectFrom('ludy_kernel.file')
-    .select(['id', 'source', 'content_type', 'storage_key', 'generation', 'sha256'])
+    .select(['id', 'source', 'content_type', 'storage_key', 'generation', 'sha256', 'size_bytes', 'filename'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', sourceFileId)
     .executeTakeFirst();
@@ -211,12 +215,87 @@ export async function requireSignSourceFile(ctx: CommandContext, sourceFileId: s
   if (!file.generation) {
     throw new DomainError('SIGN_INVALID_SOURCE_FILE', 422, 'Source file is missing storage generation');
   }
+  const sizeBytes = Number(file.size_bytes);
+  if (!Number.isFinite(sizeBytes) || sizeBytes < 1 || sizeBytes > EXTRACT_LIMITS.maxFileBytes) {
+    throw new DomainError('SIGN_PACKET_SIZE_LIMIT', 422, 'Source file exceeds 25 MiB limit');
+  }
   return {
     id: file.id,
     storage_key: file.storage_key,
     generation: file.generation,
     sha256: file.sha256,
+    sizeBytes,
+    filename: file.filename,
   };
+}
+
+export function assertDraftEnvelopeStatus(status: string): void {
+  if (status !== 'draft') {
+    throw new DomainError('SIGN_ENVELOPE_NOT_DRAFT', 409, 'Envelope can no longer be edited once sent');
+  }
+}
+
+export async function assertSignSourceFileConfidentiality(
+  ctx: CommandContext,
+  params: {
+    fileId: string;
+    sourceKind: string;
+    sourceId: string | null;
+    envelopeCreatedAt: Date | string;
+    allowTemplate: boolean;
+  },
+): Promise<void> {
+  if (params.sourceKind === 'hr_contract' || params.sourceKind === 'meeting_minutes') {
+    const { rows: attachCheck } = await sql<{ allowed: boolean }>`
+      SELECT ludy_sign.can_attach_confidential_source_file(
+        ${ctx.orgId}::uuid,
+        ${params.fileId}::uuid,
+        ${params.sourceKind},
+        ${params.sourceId}::uuid,
+        ${params.envelopeCreatedAt}::timestamptz,
+        ${params.allowTemplate}::boolean
+      ) AS allowed
+    `.execute(ctx.trx);
+    if (!attachCheck[0]?.allowed) {
+      throw new DomainError(
+        'SIGN_FORBIDDEN',
+        403,
+        'Existing template or non-matching envelope source files cannot be reused on confidential envelopes',
+      );
+    }
+    return;
+  }
+
+  const { rows: confidentialRefs } = await sql<{ restricted: boolean }>`
+    SELECT (
+      EXISTS (
+        SELECT 1 FROM ludy_sign.envelope e
+        WHERE e.org_id = ${ctx.orgId}::uuid
+          AND (
+            e.source_file_id = ${params.fileId}::uuid
+            OR EXISTS (
+              SELECT 1 FROM ludy_sign.envelope_document ed
+              WHERE ed.org_id = e.org_id
+                AND ed.envelope_id = e.id
+                AND ed.file_id = ${params.fileId}::uuid
+            )
+          )
+          AND e.source_kind IN ('hr_contract', 'meeting_minutes')
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM ludy_sign.template t
+        WHERE t.org_id = ${ctx.orgId}::uuid
+          AND t.source_file_id = ${params.fileId}::uuid
+      )
+    ) AS restricted
+  `.execute(ctx.trx);
+  if (confidentialRefs[0]?.restricted) {
+    throw new DomainError(
+      'SIGN_FORBIDDEN',
+      403,
+      'Confidential HR contract or meeting minutes source files cannot be reused on non-confidential envelopes',
+    );
+  }
 }
 
 export const zSignInspectPageDimensions = z
@@ -423,6 +502,7 @@ export async function sendDraftEnvelope(
     }>;
     fields: ReadonlyArray<{
       id: string;
+      document_id?: string | null;
       signer_id: string;
       field_type: string;
       page_number: number;
@@ -443,6 +523,49 @@ export async function sendDraftEnvelope(
     throw new DomainError('SIGN_ENVELOPE_EXPIRED', 409, 'Envelope expiry timestamp is already in the past');
   }
 
+  const docRows = await ctx.trx
+    .selectFrom('ludy_sign.envelope_document as ed')
+    .innerJoin('ludy_kernel.file as f', (join) =>
+      join.onRef('f.org_id', '=', 'ed.org_id').onRef('f.id', '=', 'ed.file_id'),
+    )
+    .select([
+      'ed.id',
+      'ed.doc_index',
+      'ed.inspect_status',
+      'ed.page_count',
+      'f.size_bytes',
+    ])
+    .where('ed.org_id', '=', ctx.orgId)
+    .where('ed.envelope_id', '=', row.id)
+    .orderBy('ed.doc_index', 'asc')
+    .orderBy('ed.id', 'asc')
+    .forShare('ed')
+    .execute();
+
+  if (docRows.length > SIGN_MAX_PACKET_DOCS) {
+    throw new DomainError('SIGN_PACKET_DOC_LIMIT', 422, 'A signing packet can contain at most 5 documents');
+  }
+
+  const docsById = new Map(docRows.map((d) => [d.id, d]));
+  const doc1 = docRows[0] ?? null;
+  if (docRows.length > 0) {
+    let totalPacketPages = 0;
+    let totalPacketBytes = 0;
+    for (const doc of docRows) {
+      if (doc.inspect_status !== 'passed' || doc.page_count === null) {
+        throw new DomainError('SIGN_DOCUMENT_NOT_INSPECTED', 409, 'All packet documents must pass PDF inspection before sending');
+      }
+      totalPacketPages += doc.page_count;
+      totalPacketBytes += Number(doc.size_bytes);
+    }
+    if (totalPacketPages > EXTRACT_LIMITS.maxPdfSignPages) {
+      throw new DomainError('SIGN_PACKET_PAGE_LIMIT', 422, 'Total pages across packet documents exceed 200');
+    }
+    if (totalPacketBytes > EXTRACT_LIMITS.maxFileBytes) {
+      throw new DomainError('SIGN_PACKET_SIZE_LIMIT', 422, 'Total PDF size across packet documents exceeds 25 MiB');
+    }
+  }
+
   const activeRoleSigners = signers.filter((s) => s.signer_role !== 'cc');
   if (activeRoleSigners.length === 0) {
     throw new DomainError('SIGN_NO_SIGNERS', 409, 'Envelope requires at least one signer or approver before sending');
@@ -450,12 +573,30 @@ export async function sendDraftEnvelope(
 
   const sigCountBySigner = new Map<string, number>();
   for (const f of fields) {
-    if (f.page_number > row.page_count) {
-      throw new DomainError(
-        'SIGN_FIELD_OUT_OF_BOUNDS',
-        409,
-        `Field ${f.id} references page ${f.page_number}, exceeding document page count ${row.page_count}`,
-      );
+    const targetDocId = f.document_id ?? null;
+    if (docRows.length > 0) {
+      const targetDoc = targetDocId ? docsById.get(targetDocId) : doc1;
+      if (!targetDoc) {
+        throw new DomainError('SIGN_DOCUMENT_NOT_FOUND', 404, `Field ${f.id} references unknown packet document`);
+      }
+      if (targetDoc.page_count !== null && f.page_number > targetDoc.page_count) {
+        throw new DomainError(
+          'SIGN_FIELD_OUT_OF_BOUNDS',
+          409,
+          `Field ${f.id} references page ${f.page_number}, exceeding document page count ${targetDoc.page_count}`,
+        );
+      }
+    } else {
+      if (targetDocId !== null) {
+        throw new DomainError('SIGN_DOCUMENT_NOT_FOUND', 404, `Field ${f.id} references unknown packet document`);
+      }
+      if (f.page_number > row.page_count) {
+        throw new DomainError(
+          'SIGN_FIELD_OUT_OF_BOUNDS',
+          409,
+          `Field ${f.id} references page ${f.page_number}, exceeding document page count ${row.page_count}`,
+        );
+      }
     }
     if (f.field_type === 'signature' || f.field_type === 'stamp') {
       sigCountBySigner.set(f.signer_id, (sigCountBySigner.get(f.signer_id) ?? 0) + 1);

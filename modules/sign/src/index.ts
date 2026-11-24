@@ -54,7 +54,19 @@ export {
   type SignAcceptanceSourceTask,
 } from './acceptance.ts';
 export { parseSharedSummary, sanitizeSharedSummaryForWrite } from './shared.ts';
-export { signQueries, type SignDiffSourceResult, type SignInspectJobData, type SignSealJobData } from './queries.ts';
+export {
+  signEnvelopeDocumentCommands,
+  signEnvelopeDocumentQueries,
+  type SignPacketConsistencySource,
+} from './envelope-documents.ts';
+export {
+  signQueries,
+  type SignDiffSourceResult,
+  type SignInspectJobData,
+  type SignInspectJobDocumentData,
+  type SignSealJobData,
+  type SignSealJobDocument,
+} from './queries.ts';
 export {
   computeSignVersionDiff,
   splitPageIntoClauses,

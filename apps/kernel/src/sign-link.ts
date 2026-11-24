@@ -240,7 +240,7 @@ export async function resolvePublicPdf(
         sha256?: string;
       } | null;
     }>`
-      SELECT ludy_sign.public_pdf_source(${tokenHash}) AS source
+      SELECT ludy_sign.public_pdf_source(${tokenHash}, ${parsed.data.documentId ?? null}::uuid) AS source
     `.execute(db);
     return rows[0]?.source ?? null;
   });
@@ -304,12 +304,19 @@ export async function runSignView(
   const inPerson = Boolean(view.inPerson || resolved.inPerson);
   if (view.state === 'ready') {
     const sharedSummary = parseSharedSummary(view.sharedSummary ?? null, view.pageCount);
+    const normalizedDocs = Array.isArray(view.documents)
+      ? view.documents.map((doc) => ({
+          ...doc,
+          pageDimensions: normalizeSignPageDimensions(doc.pageDimensions),
+        }))
+      : undefined;
     return {
       status: 'ok',
       view: {
         ...view,
         signerRole: view.signerRole === 'approver' || resolved.signerRole === 'approver' ? 'approver' : 'signer',
         pageDimensions: normalizeSignPageDimensions(view.pageDimensions),
+        ...(normalizedDocs ? { documents: normalizedDocs } : {}),
         sharedSummary,
         ...(inPerson ? { inPerson: true } : {}),
       },

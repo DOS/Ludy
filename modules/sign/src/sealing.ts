@@ -7,6 +7,7 @@ import {
   EXTRACT_LIMITS,
   encodePdfSealInput,
   type PdfSealCertificate,
+  type PdfSealCertificateDocument,
   type PdfSealCertificateSigner,
   type PdfSealField,
   type PdfSealOtpStatus,
@@ -15,6 +16,7 @@ import { canonicalJson, sha256Hex } from './events.ts';
 
 export interface SignFieldForSeal {
   id: string;
+  document_id?: string | null;
   signer_id?: string;
   field_type: SignFieldType;
   page_number: number;
@@ -75,6 +77,7 @@ export interface CanonicalCertificateArtifactInput {
   sealedSha256: string;
   completedAtIso: string;
   eventChainTipHash: string;
+  documents?: readonly PdfSealCertificateDocument[];
   signers: readonly PdfSealCertificateSigner[];
   events: readonly CanonicalCertificateEvent[];
 }
@@ -354,6 +357,7 @@ export function buildPdfSealCertificate(input: {
   sourceSha256: string;
   completedAtIso: string;
   eventChainTipHash: string;
+  documents?: readonly PdfSealCertificateDocument[];
   signers: readonly SignSignerForSeal[];
   events?: ReadonlyArray<{ signer_id: string | null; event_type: string }>;
   fields?: readonly SignFieldForSeal[];
@@ -370,6 +374,7 @@ export function buildPdfSealCertificate(input: {
     sourceSha256: input.sourceSha256,
     completedAtIso: input.completedAtIso,
     eventChainTipHash: input.eventChainTipHash,
+    ...(input.documents && input.documents.length > 0 ? { documents: [...input.documents] } : {}),
     signers: buildPdfSealSigners(input.signers, {
       correctedSignerIds,
       ...(input.fields ? { fields: input.fields } : {}),
@@ -377,15 +382,36 @@ export function buildPdfSealCertificate(input: {
   };
 }
 
-export function buildPdfSealInputBytes(input: {
-  sourcePdfBytes: Uint8Array;
-  pageCount: number;
-  fields: readonly SignFieldForSeal[];
-  certificate: PdfSealCertificate;
-}): Uint8Array {
+export function buildPdfSealInputBytes(
+  input:
+    | {
+        sourcePdfBytes: Uint8Array;
+        pageCount: number;
+        fields: readonly SignFieldForSeal[];
+        certificate: PdfSealCertificate;
+      }
+    | {
+        documents: ReadonlyArray<{ title: string; pdfBytes: Uint8Array; sourceSha256: string }>;
+        pageCount: number;
+        fields: readonly SignFieldForSeal[];
+        certificate: PdfSealCertificate;
+      },
+): Uint8Array {
+  const fields = buildPdfSealFields(input.pageCount, input.fields);
+  if ('documents' in input) {
+    return encodePdfSealInput({
+      documents: input.documents.map((d) => ({
+        title: d.title.trim().slice(0, 300) || 'Document',
+        pdfBase64: Buffer.from(d.pdfBytes).toString('base64'),
+        sourceSha256: d.sourceSha256,
+      })),
+      fields,
+      certificate: input.certificate,
+    });
+  }
   return encodePdfSealInput({
     pdfBase64: Buffer.from(input.sourcePdfBytes).toString('base64'),
-    fields: buildPdfSealFields(input.pageCount, input.fields),
+    fields,
     certificate: input.certificate,
   });
 }
@@ -405,6 +431,7 @@ export function buildCanonicalCertificateArtifact(input: CanonicalCertificateArt
     sealedSha256: input.sealedSha256,
     completedAtIso: input.completedAtIso,
     eventChainTipHash: input.eventChainTipHash,
+    ...(input.documents && input.documents.length > 0 ? { documents: input.documents } : {}),
     signers: input.signers,
     events: input.events,
   };

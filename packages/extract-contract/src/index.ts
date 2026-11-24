@@ -523,6 +523,12 @@ const MAX_TIMESTAMP_BASE64_CHARS = Math.ceil(EXTRACT_LIMITS.maxPdfCmsTimestampBy
 const MAX_OCSP_BASE64_CHARS = Math.ceil(EXTRACT_LIMITS.maxPdfCmsOcspBytes / 3) * 4;
 const zSha256Hex = z.string().regex(/^[0-9a-f]{64}$/, 'lowercase 64-char sha256 hex');
 const utf8ByteLength = (text: string): number => new TextEncoder().encode(text).byteLength;
+const base64ByteLength = (b64: string): number => {
+  const len = b64.length;
+  if (len === 0) return 0;
+  const padding = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((len * 3) / 4) - padding);
+};
 
 export const PDF_DETECTED_TAG_FIELD_TYPES = [
   'signature',
@@ -750,6 +756,30 @@ export const zPdfSealCertificateSigner = z.strictObject({
 });
 export type PdfSealCertificateSigner = z.infer<typeof zPdfSealCertificateSigner>;
 
+export const zPdfSealCertificateDocument = z
+  .strictObject({
+    index: z.number().int().min(1).max(5),
+    title: z.string().min(1).max(300),
+    startPage: z.number().int().min(1).max(EXTRACT_LIMITS.maxPdfSignPages),
+    endPage: z.number().int().min(1).max(EXTRACT_LIMITS.maxPdfSignPages),
+    pageCount: z.number().int().min(1).max(EXTRACT_LIMITS.maxPdfSignPages),
+    sourceSha256: zSha256Hex,
+  })
+  .superRefine((doc, ctx) => {
+    if (doc.endPage < doc.startPage) {
+      ctx.addIssue({ code: 'custom', path: ['endPage'], message: 'endPage must be >= startPage' });
+      return;
+    }
+    if (doc.pageCount !== doc.endPage - doc.startPage + 1) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['pageCount'],
+        message: 'pageCount must equal endPage - startPage + 1',
+      });
+    }
+  });
+export type PdfSealCertificateDocument = z.infer<typeof zPdfSealCertificateDocument>;
+
 export const zPdfSealCertificate = z.strictObject({
   certificateCode: z.string().min(1).max(64),
   envelopeTitle: z.string().min(1).max(300),
@@ -757,14 +787,54 @@ export const zPdfSealCertificate = z.strictObject({
   completedAtIso: z.iso.datetime({ offset: true }),
   eventChainTipHash: zSha256Hex,
   signers: z.array(zPdfSealCertificateSigner).min(1).max(EXTRACT_LIMITS.maxPdfSealSigners),
+  documents: z.array(zPdfSealCertificateDocument).min(1).max(5).optional(),
 });
 export type PdfSealCertificate = z.infer<typeof zPdfSealCertificate>;
 
-export const zPdfSealInput = z.strictObject({
+export const zPdfSealInputDocument = z.strictObject({
+  title: z.string().min(1).max(300),
   pdfBase64: z.base64().min(1).max(MAX_PDF_BASE64_CHARS),
-  fields: z.array(zPdfSealField).max(EXTRACT_LIMITS.maxPdfSealFields),
-  certificate: zPdfSealCertificate,
+  sourceSha256: zSha256Hex,
 });
+export type PdfSealInputDocument = z.infer<typeof zPdfSealInputDocument>;
+
+export const zPdfSealInput = z
+  .strictObject({
+    pdfBase64: z.base64().min(1).max(MAX_PDF_BASE64_CHARS).optional(),
+    documents: z.array(zPdfSealInputDocument).min(1).max(5).optional(),
+    fields: z.array(zPdfSealField).max(EXTRACT_LIMITS.maxPdfSealFields),
+    certificate: zPdfSealCertificate,
+  })
+  .superRefine((value, ctx) => {
+    const hasSingle = value.pdfBase64 !== undefined;
+    const hasDocs = value.documents !== undefined;
+    if (hasSingle === hasDocs) {
+      ctx.addIssue({
+        code: 'custom',
+        path: hasSingle ? ['documents'] : ['pdfBase64'],
+        message: 'Provide exactly one of pdfBase64 or documents',
+      });
+      return;
+    }
+    if (value.documents) {
+      const totalBytes = value.documents.reduce((acc, doc) => acc + base64ByteLength(doc.pdfBase64), 0);
+      if (totalBytes > EXTRACT_LIMITS.maxFileBytes) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['documents'],
+          message: 'Total decoded PDF bytes across packet documents exceed 25 MiB limit',
+        });
+      }
+      return;
+    }
+    if (value.pdfBase64 && base64ByteLength(value.pdfBase64) > EXTRACT_LIMITS.maxFileBytes) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['pdfBase64'],
+        message: 'Decoded PDF bytes exceed 25 MiB limit',
+      });
+    }
+  });
 export type PdfSealInput = z.infer<typeof zPdfSealInput>;
 
 export const zPdfSealResult = z.strictObject({

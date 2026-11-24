@@ -582,27 +582,40 @@ export const templateCreate = defineCommand({
           'Confidential HR contract or meeting minutes envelopes cannot be converted into organization-wide templates',
         );
       }
-      if (env.inspect_status === 'failed') {
+      const doc1 = await ctx.trx
+        .selectFrom('ludy_sign.envelope_document')
+        .select(['id', 'file_id', 'storage_key', 'generation', 'source_sha256', 'inspect_status', 'page_count', 'page_dimensions_json', 'detected_tags_json'])
+        .where('org_id', '=', ctx.orgId)
+        .where('envelope_id', '=', env.id)
+        .orderBy('doc_index', 'asc')
+        .orderBy('id', 'asc')
+        .executeTakeFirst();
+      const baseInspectStatus = doc1 ? doc1.inspect_status : env.inspect_status;
+      const basePageCount = doc1 ? doc1.page_count : env.page_count;
+      const baseDimensionsJson = doc1 ? doc1.page_dimensions_json : env.page_dimensions_json;
+      const baseTagsJson = doc1 ? doc1.detected_tags_json : env.detected_tags_json;
+      const baseFile = {
+        id: doc1 ? doc1.file_id : env.source_file_id,
+        storage_key: doc1 ? doc1.storage_key : env.source_storage_key,
+        generation: doc1 ? doc1.generation : env.source_generation,
+        sha256: doc1 ? doc1.source_sha256 : env.source_sha256,
+      };
+      if (baseInspectStatus === 'failed') {
         throw new DomainError('SIGN_INSPECT_FAILED', 409, 'Source envelope PDF inspection failed');
       }
-      const passed = env.inspect_status === 'passed' && env.page_count !== null;
+      const passed = baseInspectStatus === 'passed' && basePageCount !== null;
       const reused = passed
         ? {
-            pageCount: env.page_count!,
-            pageDimensionsJson: env.page_dimensions_json,
-            detectedTagsJson: env.detected_tags_json,
+            pageCount: basePageCount!,
+            pageDimensionsJson: baseDimensionsJson,
+            detectedTagsJson: baseTagsJson,
           }
-        : await findPassedInspectForFile(ctx, {
-            id: env.source_file_id,
-            storage_key: env.source_storage_key,
-            generation: env.source_generation,
-            sha256: env.source_sha256,
-          });
+        : await findPassedInspectForFile(ctx, baseFile);
       sourceMeta = {
-        sourceFileId: env.source_file_id,
-        sourceStorageKey: env.source_storage_key,
-        sourceGeneration: env.source_generation,
-        sourceSha256: env.source_sha256,
+        sourceFileId: baseFile.id,
+        sourceStorageKey: baseFile.storage_key,
+        sourceGeneration: baseFile.generation,
+        sourceSha256: baseFile.sha256,
         routingMode: input.routingMode ?? env.routing_mode,
         allowDelegation: input.allowDelegation ?? env.allow_delegation,
         subject: input.subject !== undefined ? input.subject : env.subject,
@@ -615,15 +628,27 @@ export const templateCreate = defineCommand({
       };
     } else {
       const file = await requireSignSourceFile(ctx, input.sourceFileId!);
-      const existingConfidentialEnv = await ctx.trx
-        .selectFrom('ludy_sign.envelope')
-        .select('id')
-        .where('org_id', '=', ctx.orgId)
-        .where('source_kind', 'in', ['hr_contract', 'meeting_minutes'])
-        .where('source_file_id', '=', file.id)
-        .limit(1)
-        .executeTakeFirst();
-      if (existingConfidentialEnv) {
+      const { rows: confidentialRefs } = await sql<{ restricted: boolean }>`
+        SELECT (
+          EXISTS (
+            SELECT 1 FROM ludy_sign.envelope e
+            WHERE e.org_id = ${ctx.orgId}::uuid
+              AND e.source_kind IN ('hr_contract', 'meeting_minutes')
+              AND e.source_file_id = ${file.id}::uuid
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM ludy_sign.envelope_document ed
+            JOIN ludy_sign.envelope e
+              ON e.org_id = ed.org_id
+             AND e.id = ed.envelope_id
+            WHERE ed.org_id = ${ctx.orgId}::uuid
+              AND ed.file_id = ${file.id}::uuid
+              AND e.source_kind IN ('hr_contract', 'meeting_minutes')
+          )
+        ) AS restricted
+      `.execute(ctx.trx);
+      if (confidentialRefs[0]?.restricted) {
         throw new DomainError(
           'SIGN_FORBIDDEN',
           403,
@@ -757,9 +782,19 @@ export const templateCreate = defineCommand({
           if (inserted) signerToTemplateRoleId.set(s.id, inserted.id);
         });
 
+        const doc1ForFields = await ctx.trx
+          .selectFrom('ludy_sign.envelope_document')
+          .select(['id'])
+          .where('org_id', '=', ctx.orgId)
+          .where('envelope_id', '=', sourceMeta.sourceEnvelopeId)
+          .orderBy('doc_index', 'asc')
+          .orderBy('id', 'asc')
+          .executeTakeFirst();
+
         const envFields = await ctx.trx
           .selectFrom('ludy_sign.field')
           .select([
+            'document_id',
             'signer_id',
             'field_type',
             'page_number',
@@ -780,6 +815,9 @@ export const templateCreate = defineCommand({
           .execute();
 
         const clonedFields = envFields.flatMap((f) => {
+          if (doc1ForFields && f.document_id !== null && f.document_id !== doc1ForFields.id) {
+            return [];
+          }
           const roleId = signerToTemplateRoleId.get(f.signer_id);
           if (!roleId) return [];
           const clonedOptions = parseFieldOptions(f.options_json);

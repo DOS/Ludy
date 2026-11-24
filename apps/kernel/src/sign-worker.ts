@@ -10,6 +10,7 @@ import {
   INPUT_ERROR_CODES,
   encodePdfEmbedCmsInput,
   type ExtractClient,
+  type PdfSealCertificateDocument,
 } from '@ludy/extract-contract';
 import {
   BlobIntegrityError,
@@ -36,6 +37,7 @@ import {
   type SealedCaConnectionSecret,
   type SignCaJobBeginResult,
   type SignCaJobRecordResult,
+  type SignFieldForSeal,
   type SignInspectJobData,
   type SignKycInspectJobData,
   type SignPreExpirySweepResult,
@@ -79,7 +81,18 @@ export interface SignKycAttachmentInspectJob {
   fieldId: string;
 }
 
-export type SignPdfInspectJob = SignEnvelopeJob | SignTemplateInspectJob | SignKycAttachmentInspectJob;
+export interface SignEnvelopeDocumentInspectJob {
+  orgId: string;
+  targetKind: 'envelope_document';
+  envelopeId: string;
+  documentId: string;
+}
+
+export type SignPdfInspectJob =
+  | SignEnvelopeJob
+  | SignTemplateInspectJob
+  | SignKycAttachmentInspectJob
+  | SignEnvelopeDocumentInspectJob;
 
 export function isSignTemplateInspectJob(job: SignPdfInspectJob): job is SignTemplateInspectJob {
   return 'targetKind' in job && job.targetKind === 'template';
@@ -87,6 +100,10 @@ export function isSignTemplateInspectJob(job: SignPdfInspectJob): job is SignTem
 
 export function isSignKycAttachmentInspectJob(job: SignPdfInspectJob): job is SignKycAttachmentInspectJob {
   return 'targetKind' in job && job.targetKind === 'kyc_attachment';
+}
+
+export function isSignEnvelopeDocumentInspectJob(job: SignPdfInspectJob): job is SignEnvelopeDocumentInspectJob {
+  return 'targetKind' in job && job.targetKind === 'envelope_document';
 }
 
 export interface SignWorkerDeps {
@@ -114,6 +131,60 @@ function safeArtifactBase(title: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 120);
   return cleaned || 'document';
+}
+
+async function inspectPdfTarget(
+  deps: Pick<SignWorkerDeps, 'runtime' | 'store' | 'extract'>,
+  options: { actor: typeof SIGN_ACTOR; orgId: string },
+  completeCommand: 'sign.template.inspect_complete' | 'sign.envelope.inspect_complete',
+  targetField: { templateId: string } | { envelopeId: string; documentId?: string },
+  source: { key: string; generation: string; sha256: string },
+): Promise<{ status: 'passed' | 'failed'; pageCount?: number }> {
+  let pdfBytes: Uint8Array;
+  try {
+    pdfBytes = await readVerified(deps.store, source, EXTRACT_LIMITS.maxFileBytes);
+  } catch (error) {
+    if (error instanceof BlobIntegrityError || error instanceof BlobTooLargeError) {
+      await deps.runtime.execute(
+        completeCommand,
+        { ...targetField, outcome: 'failed', error: error.message.slice(0, 500) },
+        options,
+      );
+      return { status: 'failed' };
+    }
+    throw error;
+  }
+
+  const res = await deps.extract.extract('pdf_inspect', pdfBytes);
+  if (!res.ok) {
+    if (INPUT_ERROR_CODES.includes(res.code)) {
+      await deps.runtime.execute(
+        completeCommand,
+        { ...targetField, outcome: 'failed', error: res.message.slice(0, 500) },
+        options,
+      );
+      return { status: 'failed' };
+    }
+    throw new Error(`crove-extract pdf_inspect ${res.code}: ${res.message}`);
+  }
+
+  await deps.runtime.execute(
+    completeCommand,
+    {
+      ...targetField,
+      outcome: 'passed',
+      pageCount: res.pageCount,
+      pageDimensions: res.pages.map((p) => ({
+        page: p.page,
+        widthPt: p.widthPt,
+        heightPt: p.heightPt,
+        rotation: p.rotation,
+      })),
+      detectedTags: res.detectedTags ?? [],
+    },
+    options,
+  );
+  return { status: 'passed', pageCount: res.pageCount };
 }
 
 export async function runSignPdfInspectJob(
@@ -197,65 +268,66 @@ export async function runSignPdfInspectJob(
     return { status: 'passed', pageCount: res.pageCount };
   }
 
+  if (isSignEnvelopeDocumentInspectJob(job)) {
+    const docData = await deps.runtime.query<SignInspectJobData | null>(
+      'sign.envelope.inspect_job_data',
+      { envelopeId: job.envelopeId, documentId: job.documentId },
+      options,
+    );
+    if (!docData || docData.status !== 'draft' || docData.inspectStatus !== 'pending') {
+      return { status: 'skipped_not_pending' };
+    }
+    return inspectPdfTarget(
+      deps,
+      options,
+      'sign.envelope.inspect_complete',
+      { envelopeId: job.envelopeId, documentId: job.documentId },
+      { key: docData.sourceStorageKey, generation: docData.sourceGeneration, sha256: docData.sourceSha256 },
+    );
+  }
+
   const isTemplate = isSignTemplateInspectJob(job);
   const targetField = isSignTemplateInspectJob(job) ? { templateId: job.templateId } : { envelopeId: job.envelopeId };
   const queryName = isTemplate ? 'sign.template.inspect_job_data' : 'sign.envelope.inspect_job_data';
   const completeCommand = isTemplate ? 'sign.template.inspect_complete' : 'sign.envelope.inspect_complete';
   const data = await deps.runtime.query<SignInspectJobData | null>(queryName, targetField, options);
   const validStatus = isTemplate ? data?.status === 'draft' || data?.status === 'active' : data?.status === 'draft';
-  if (!data || !validStatus || data.inspectStatus !== 'pending') {
+  if (!data || !validStatus) {
     return { status: 'skipped_not_pending' };
   }
 
-  let pdfBytes: Uint8Array;
-  try {
-    pdfBytes = await readVerified(
-      deps.store,
-      { key: data.sourceStorageKey, generation: data.sourceGeneration, sha256: data.sourceSha256 },
-      EXTRACT_LIMITS.maxFileBytes,
-    );
-  } catch (error) {
-    if (error instanceof BlobIntegrityError || error instanceof BlobTooLargeError) {
-      await deps.runtime.execute(
-        completeCommand,
-        { ...targetField, outcome: 'failed', error: error.message.slice(0, 500) },
+  if (!isTemplate && data.pendingDocuments && data.pendingDocuments.length > 0) {
+    let totalPageCount = 0;
+    let anyFailed = false;
+    for (const doc of data.pendingDocuments) {
+      if (doc.inspectStatus !== 'pending') continue;
+      const docRes = await inspectPdfTarget(
+        deps,
         options,
+        'sign.envelope.inspect_complete',
+        { envelopeId: job.envelopeId, documentId: doc.id },
+        { key: doc.sourceStorageKey, generation: doc.sourceGeneration, sha256: doc.sourceSha256 },
       );
-      return { status: 'failed' };
+      if (docRes.status === 'failed') {
+        anyFailed = true;
+      } else if (docRes.pageCount !== undefined) {
+        totalPageCount += docRes.pageCount;
+      }
     }
-    throw error;
+    return anyFailed ? { status: 'failed' } : { status: 'passed', pageCount: totalPageCount };
   }
 
-  const res = await deps.extract.extract('pdf_inspect', pdfBytes);
-  if (!res.ok) {
-    if (INPUT_ERROR_CODES.includes(res.code)) {
-      await deps.runtime.execute(
-        completeCommand,
-        { ...targetField, outcome: 'failed', error: res.message.slice(0, 500) },
-        options,
-      );
-      return { status: 'failed' };
-    }
-    throw new Error(`crove-extract pdf_inspect ${res.code}: ${res.message}`);
+  if (data.inspectStatus !== 'pending') {
+    return { status: 'skipped_not_pending' };
   }
 
-  await deps.runtime.execute(
-    completeCommand,
-    {
-      ...targetField,
-      outcome: 'passed',
-      pageCount: res.pageCount,
-      pageDimensions: res.pages.map((p) => ({
-        page: p.page,
-        widthPt: p.widthPt,
-        heightPt: p.heightPt,
-        rotation: p.rotation,
-      })),
-      detectedTags: res.detectedTags ?? [],
-    },
+  return inspectPdfTarget(
+    deps,
     options,
+    completeCommand,
+    targetField,
+    { key: data.sourceStorageKey, generation: data.sourceGeneration, sha256: data.sourceSha256 },
   );
-  return { status: 'passed', pageCount: res.pageCount };
 }
 
 export async function runSignPdfSealJob(
@@ -275,6 +347,7 @@ export async function runSignPdfSealJob(
   if (!data) return { status: 'skipped' };
 
   const { envelope, signers, fields, events } = data;
+  const documents = data.documents ?? [];
   if (envelope.status !== 'completed' || envelope.sealStatus === 'sealed' || envelope.pageCount === null) {
     return { status: 'skipped' };
   }
@@ -293,34 +366,148 @@ export async function runSignPdfSealJob(
     return { status: 'failed' };
   }
 
-  let sourcePdfBytes: Uint8Array;
-  try {
-    sourcePdfBytes = await readVerified(
-      deps.store,
-      {
-        key: envelope.sourceStorageKey,
-        generation: envelope.sourceGeneration,
-        sha256: envelope.sourceSha256,
-      },
-      EXTRACT_LIMITS.maxFileBytes,
-    );
-  } catch (error) {
-    if (error instanceof BlobIntegrityError || error instanceof BlobTooLargeError) {
-      await deps.runtime.execute(
-        'sign.envelope.seal_complete',
-        { envelopeId: job.envelopeId, outcome: 'failed', error: error.message.slice(0, 500) },
-        options,
-      );
-      return { status: 'failed' };
-    }
-    throw error;
-  }
-
   if (!envelope.completedAtIso) {
     throw new Error(`Completed envelope ${envelope.id} is missing completed_at timestamp`);
   }
   const completedAtIso = envelope.completedAtIso;
   const certificateCode = generateCertificateCode(envelope.id, completedAtIso, chain.tipHash);
+
+  let certDocuments: PdfSealCertificateDocument[] | undefined;
+  let sealDocumentsInput: Array<{ title: string; pdfBytes: Uint8Array; sourceSha256: string }> | undefined;
+  let singleSourcePdfBytes: Uint8Array | undefined;
+  let fieldsForSeal: readonly SignFieldForSeal[] = fields;
+
+  if (documents.length > 0) {
+    let cursor = 1;
+    const docMap = new Map<string, { startPage: number; pageCount: number }>();
+    const certDocs: PdfSealCertificateDocument[] = [];
+    for (const doc of documents) {
+      if (doc.pageCount === null || doc.pageCount < 1) {
+        await deps.runtime.execute(
+          'sign.envelope.seal_complete',
+          {
+            envelopeId: job.envelopeId,
+            outcome: 'failed',
+            error: `Packet document ${doc.docIndex} is missing inspected page count`,
+          },
+          options,
+        );
+        return { status: 'failed' };
+      }
+      const startPage = cursor;
+      const endPage = cursor + doc.pageCount - 1;
+      docMap.set(doc.id, { startPage, pageCount: doc.pageCount });
+      certDocs.push({
+        index: doc.docIndex,
+        title: doc.title.trim().slice(0, 300) || `Document ${doc.docIndex}`,
+        startPage,
+        endPage,
+        pageCount: doc.pageCount,
+        sourceSha256: doc.sourceSha256,
+      });
+      cursor = endPage + 1;
+    }
+    if (cursor - 1 !== envelope.pageCount) {
+      await deps.runtime.execute(
+        'sign.envelope.seal_complete',
+        {
+          envelopeId: job.envelopeId,
+          outcome: 'failed',
+          error: `Packet page count ${cursor - 1} does not match envelope page count ${envelope.pageCount}`,
+        },
+        options,
+      );
+      return { status: 'failed' };
+    }
+
+    const loadedDocs: Array<{ title: string; pdfBytes: Uint8Array; sourceSha256: string }> = [];
+    let totalByteLength = 0;
+    try {
+      for (const doc of documents) {
+        const docBytes = await readVerified(
+          deps.store,
+          { key: doc.storageKey, generation: doc.generation, sha256: doc.sourceSha256 },
+          EXTRACT_LIMITS.maxFileBytes,
+        );
+        totalByteLength += docBytes.byteLength;
+        if (totalByteLength > EXTRACT_LIMITS.maxFileBytes) {
+          await deps.runtime.execute(
+            'sign.envelope.seal_complete',
+            {
+              envelopeId: job.envelopeId,
+              outcome: 'failed',
+              error: `Combined packet PDF bytes exceed limit (${EXTRACT_LIMITS.maxFileBytes})`,
+            },
+            options,
+          );
+          return { status: 'failed' };
+        }
+        loadedDocs.push({ title: doc.title, pdfBytes: docBytes, sourceSha256: doc.sourceSha256 });
+      }
+    } catch (error) {
+      if (error instanceof BlobIntegrityError || error instanceof BlobTooLargeError) {
+        await deps.runtime.execute(
+          'sign.envelope.seal_complete',
+          { envelopeId: job.envelopeId, outcome: 'failed', error: error.message.slice(0, 500) },
+          options,
+        );
+        return { status: 'failed' };
+      }
+      throw error;
+    }
+
+    const doc1 = documents[0]!;
+    try {
+      fieldsForSeal = fields.map((f) => {
+        const docId = f.document_id ?? doc1.id;
+        const layout = docMap.get(docId);
+        if (!layout) {
+          throw new Error(`Field ${f.id} references unknown packet document ${docId}`);
+        }
+        if (f.page_number < 1 || f.page_number > layout.pageCount) {
+          throw new Error(
+            `Field ${f.id} references page ${f.page_number}, outside document page count ${layout.pageCount}`,
+          );
+        }
+        return {
+          ...f,
+          page_number: layout.startPage + f.page_number - 1,
+        };
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Invalid packet field layout';
+      await deps.runtime.execute(
+        'sign.envelope.seal_complete',
+        { envelopeId: job.envelopeId, outcome: 'failed', error: message.slice(0, 500) },
+        options,
+      );
+      return { status: 'failed' };
+    }
+    certDocuments = certDocs;
+    sealDocumentsInput = loadedDocs;
+  } else {
+    try {
+      singleSourcePdfBytes = await readVerified(
+        deps.store,
+        {
+          key: envelope.sourceStorageKey,
+          generation: envelope.sourceGeneration,
+          sha256: envelope.sourceSha256,
+        },
+        EXTRACT_LIMITS.maxFileBytes,
+      );
+    } catch (error) {
+      if (error instanceof BlobIntegrityError || error instanceof BlobTooLargeError) {
+        await deps.runtime.execute(
+          'sign.envelope.seal_complete',
+          { envelopeId: job.envelopeId, outcome: 'failed', error: error.message.slice(0, 500) },
+          options,
+        );
+        return { status: 'failed' };
+      }
+      throw error;
+    }
+  }
 
   let certificate;
   let sealInputBytes: Uint8Array;
@@ -331,16 +518,24 @@ export async function runSignPdfSealJob(
       sourceSha256: envelope.sourceSha256,
       completedAtIso,
       eventChainTipHash: chain.tipHash,
+      ...(certDocuments ? { documents: certDocuments } : {}),
       signers,
       events,
-      fields,
+      fields: fieldsForSeal,
     });
-    sealInputBytes = buildPdfSealInputBytes({
-      sourcePdfBytes,
-      pageCount: envelope.pageCount,
-      fields,
-      certificate,
-    });
+    sealInputBytes = sealDocumentsInput
+      ? buildPdfSealInputBytes({
+          documents: sealDocumentsInput,
+          pageCount: envelope.pageCount,
+          fields: fieldsForSeal,
+          certificate,
+        })
+      : buildPdfSealInputBytes({
+          sourcePdfBytes: singleSourcePdfBytes!,
+          pageCount: envelope.pageCount,
+          fields: fieldsForSeal,
+          certificate,
+        });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Invalid seal payload';
     await deps.runtime.execute(
@@ -387,6 +582,7 @@ export async function runSignPdfSealJob(
     sealedSha256,
     completedAtIso,
     eventChainTipHash: chain.tipHash,
+    ...(certDocuments ? { documents: certDocuments } : {}),
     signers: certificate.signers,
     events: events.map((ev) => ({
       seq: ev.seq,

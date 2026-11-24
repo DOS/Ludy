@@ -44,6 +44,7 @@ export const zSignPublicViewInput = z.strictObject({
 
 export const zSignPublicPdfInput = z.strictObject({
   token: zSignToken,
+  documentId: zId.optional(),
 });
 
 export const zSignPublicOtpRequestInput = z.strictObject({
@@ -108,6 +109,7 @@ export interface SignPublicAttachmentUploadResult {
 
 export interface SignPublicField {
   id: string;
+  documentId?: string | null;
   fieldType: (typeof SIGN_FIELD_TYPES)[number];
   pageNumber: number;
   xNorm: string;
@@ -143,6 +145,15 @@ export interface SignSharedSummary {
   keyTerms: SignSharedKeyTerm[];
 }
 
+export interface SignPublicDocument {
+  id: string | null;
+  docIndex: number;
+  title: string;
+  pageCount: number;
+  pageDimensions: SignPageDimension[];
+  sourceSha256: string;
+}
+
 export type SignPublicView =
   | {
       state: 'otp_required';
@@ -162,6 +173,7 @@ export type SignPublicView =
       expiresAt: string;
       pageCount: number;
       pageDimensions: SignPageDimension[];
+      documents?: SignPublicDocument[];
       requireEmailOtp: boolean;
       otpVerified: boolean;
       allowDelegation?: boolean;
@@ -375,6 +387,9 @@ export type SignPublicHubActionInput = z.infer<typeof zSignPublicHubActionInput>
 // Authenticated eSign RPC contracts (Slice 1a/1c: docs/plan/esign.md, #3325).
 export const SIGN_EVENT_TYPES = [
   'envelope_created',
+  'document_added',
+  'document_removed',
+  'documents_reordered',
   'document_inspected',
   'document_inspect_failed',
   'envelope_updated',
@@ -408,6 +423,7 @@ export const SIGN_EVENT_TYPES = [
 ] as const;
 export type SignEventType = (typeof SIGN_EVENT_TYPES)[number];
 export const SIGN_MAX_PAGES = 200;
+export const SIGN_MAX_PACKET_DOCS = 5;
 export const SIGN_MAX_SIGNERS = 50;
 export const SIGN_MAX_FIELDS = 500;
 export const SIGN_MAX_DETECTED_TAGS = 200;
@@ -658,6 +674,23 @@ export const zSignSharedSummary = z
     }
   });
 
+export const zSignEnvelopeDocumentSummary = z.strictObject({
+  id: zId.nullable(),
+  docIndex: z.number().int().min(1).max(SIGN_MAX_PACKET_DOCS),
+  title: z.string(),
+  fileId: zId,
+  sourceSha256: z.string(),
+  inspectStatus: zSignInspectStatus,
+  inspectError: z.string().nullable(),
+  pageCount: z.number().int().nullable(),
+  pageDimensions: z.array(zSignEnvelopePageDimension).nullable(),
+  detectedTags: z.array(zSignDetectedTag),
+  sizeBytes: z.number().int().nonnegative().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignEnvelopeDocumentSummary = z.infer<typeof zSignEnvelopeDocumentSummary>;
+
 export const zSignEnvelopeDetail = z.strictObject({
   envelope: z.strictObject({
     id: zId,
@@ -736,6 +769,7 @@ export const zSignEnvelopeDetail = z.strictObject({
   fields: z.array(
     z.strictObject({
       id: zId,
+      documentId: zId.nullable().optional(),
       signerId: zId,
       fieldType: zSignFieldType,
       pageNumber: z.number().int(),
@@ -760,6 +794,7 @@ export const zSignEnvelopeDetail = z.strictObject({
       updatedAt: z.string(),
     }),
   ),
+  documents: z.array(zSignEnvelopeDocumentSummary).optional(),
 });
 
 export const zSignEnvelopeEventsResult = z.strictObject({
@@ -980,6 +1015,7 @@ export const zSignSignerStartInPersonResult = z.strictObject({
 
 export const zSignFieldItemInput = z
   .strictObject({
+    documentId: zId.nullable().optional(),
     signerId: zId,
     fieldType: zSignFieldType,
     pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES),
@@ -2918,3 +2954,105 @@ export const zSignApiV1FromTemplateInput = z
       .optional(),
   });
 export type SignApiV1FromTemplateInput = z.infer<typeof zSignApiV1FromTemplateInput>;
+
+// Slice 6c (#4722): Multi-document packet manipulation and Vy cross-document consistency checks.
+export const zSignEnvelopeDocumentAddInput = z.strictObject({
+  envelopeId: zId,
+  sourceFileId: zId,
+  title: z
+    .string()
+    .trim()
+    .min(1)
+    .max(300)
+    .refine(hasNoNul, 'NUL characters are not permitted')
+    .optional(),
+  sourceDocxSha256: z.string().regex(SIGN_SHA256_HEX_PATTERN).optional(),
+  idempotencyKey: zId.optional(),
+});
+export type SignEnvelopeDocumentAddInput = z.infer<typeof zSignEnvelopeDocumentAddInput>;
+
+export const zSignEnvelopeDocumentAddResult = z.strictObject({
+  envelopeId: zId,
+  documentId: zId,
+  docIndex: z.number().int().min(1).max(SIGN_MAX_PACKET_DOCS),
+  version: z.number().int(),
+});
+export type SignEnvelopeDocumentAddResult = z.infer<typeof zSignEnvelopeDocumentAddResult>;
+
+export const zSignEnvelopeDocumentRemoveInput = z.strictObject({
+  envelopeId: zId,
+  documentId: zId,
+  idempotencyKey: zId.optional(),
+});
+export type SignEnvelopeDocumentRemoveInput = z.infer<typeof zSignEnvelopeDocumentRemoveInput>;
+
+export const zSignEnvelopeDocumentRemoveResult = z.strictObject({
+  envelopeId: zId,
+  removedDocumentId: zId,
+  version: z.number().int(),
+});
+export type SignEnvelopeDocumentRemoveResult = z.infer<typeof zSignEnvelopeDocumentRemoveResult>;
+
+export const zSignEnvelopeDocumentReorderInput = z.strictObject({
+  envelopeId: zId,
+  documentIds: z.array(zId).min(1).max(SIGN_MAX_PACKET_DOCS),
+  idempotencyKey: zId.optional(),
+});
+export type SignEnvelopeDocumentReorderInput = z.infer<typeof zSignEnvelopeDocumentReorderInput>;
+
+export const zSignEnvelopeDocumentReorderResult = z.strictObject({
+  envelopeId: zId,
+  documentIds: z.array(zId).min(1).max(SIGN_MAX_PACKET_DOCS),
+  version: z.number().int(),
+});
+export type SignEnvelopeDocumentReorderResult = z.infer<typeof zSignEnvelopeDocumentReorderResult>;
+
+export const SIGN_PACKET_CONSISTENCY_SEVERITIES = ['info', 'warn', 'critical'] as const;
+export const zSignPacketConsistencySeverity = z.enum(SIGN_PACKET_CONSISTENCY_SEVERITIES);
+export type SignPacketConsistencySeverity = z.infer<typeof zSignPacketConsistencySeverity>;
+
+export const SIGN_PACKET_CONSISTENCY_KINDS = [
+  'mismatched_total',
+  'mismatched_date',
+  'mismatched_party',
+  'missing_signature_field',
+  'annex_gap',
+  'other',
+] as const;
+export const zSignPacketConsistencyKind = z.enum(SIGN_PACKET_CONSISTENCY_KINDS);
+export type SignPacketConsistencyKind = z.infer<typeof zSignPacketConsistencyKind>;
+
+export const zSignPacketConsistencyFinding = z.strictObject({
+  kind: zSignPacketConsistencyKind,
+  severity: zSignPacketConsistencySeverity,
+  title: z.string().min(1).max(200),
+  explanation: z.string().min(1).max(800),
+  documentId: zId.nullable(),
+  documentTitle: z.string().min(1).max(300),
+  pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES).nullable(),
+  quoteExcerpt: z.string().max(1000).nullable(),
+  source: z.enum(['deterministic', 'ai']),
+  tainted: z.boolean(),
+});
+export type SignPacketConsistencyFinding = z.infer<typeof zSignPacketConsistencyFinding>;
+
+export const zSignPacketConsistencyDocumentPagesInput = z.strictObject({
+  documentId: zId.nullable().optional(),
+  pages: z
+    .array(z.strictObject({ page: z.number().int().min(1).max(SIGN_MAX_PAGES), text: z.string().max(250_000) }))
+    .max(SIGN_MAX_PAGES),
+});
+
+export const zSignPacketConsistencyCheckInput = z.strictObject({
+  envelopeId: zId,
+  documents: z.array(zSignPacketConsistencyDocumentPagesInput).min(1).max(SIGN_MAX_PACKET_DOCS).optional(),
+});
+export type SignPacketConsistencyCheckInput = z.infer<typeof zSignPacketConsistencyCheckInput>;
+
+export const zSignPacketConsistencyCheckResult = z.strictObject({
+  envelopeId: zId,
+  ai: z.enum(['used', 'off', 'budget', 'busy', 'not_ready', 'no_text', 'failed']),
+  findings: z.array(zSignPacketConsistencyFinding),
+  summaryText: z.string().nullable(),
+});
+export type SignPacketConsistencyCheckResult = z.infer<typeof zSignPacketConsistencyCheckResult>;

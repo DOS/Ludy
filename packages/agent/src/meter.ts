@@ -181,6 +181,8 @@ export const AI_FEATURES = {
   'sign.playbook_check': 'sign',
   // Vy (the general manager) checking extracted signer KYC attachment text (CCCD, enterprise registration MST, power of attorney) against expected contract party details for a workspace member (#4443): zero tools, every finding pinned to a verbatim quote and marked tainted for human confirmation, never auto-rejecting.
   'sign.kyc_check': 'sign',
+  // Vy (the general manager) checking cross-document consistency across 1-5 PDFs in a multi-document eSign packet (#4722): zero tools, 64 KiB text cap, every finding grounded to an exact document + page + verbatim quote and marked tainted ('De xuat').
+  'sign.packet_consistency': 'sign',
   // Member-scoped Vy summarizing one readable note (notes N8, #1677, ADR-0049): stores a private member_vy_result until the author explicitly accepts it.
   'notes.summary': 'notes',
   // Member-scoped Vy suggesting personal to-dos from one readable note (notes N8, #1677, ADR-0049): stores private suggestions until the reader explicitly confirms them.

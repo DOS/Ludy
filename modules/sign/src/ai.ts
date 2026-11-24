@@ -1524,12 +1524,22 @@ export const aiAnalysisSource = defineQuery({
         };
       });
 
+    const doc1 = await ctx.trx
+      .selectFrom('ludy_sign.envelope_document')
+      .select(['source_sha256', 'inspect_status', 'page_count', 'page_dimensions_json'])
+      .where('org_id', '=', ctx.orgId)
+      .where('envelope_id', '=', env.id)
+      .orderBy('doc_index', 'asc')
+      .orderBy('id', 'asc')
+      .executeTakeFirst();
+
+    const effectiveDimensionsJson = doc1 ? doc1.page_dimensions_json : env.page_dimensions_json;
     let pageDimensions: SignAiSource['pageDimensions'] = null;
-    if (Array.isArray(env.page_dimensions_json)) {
-      pageDimensions = env.page_dimensions_json as SignAiSource['pageDimensions'];
-    } else if (typeof env.page_dimensions_json === 'string') {
+    if (Array.isArray(effectiveDimensionsJson)) {
+      pageDimensions = effectiveDimensionsJson as SignAiSource['pageDimensions'];
+    } else if (typeof effectiveDimensionsJson === 'string') {
       try {
-        const parsed = JSON.parse(env.page_dimensions_json) as unknown;
+        const parsed = JSON.parse(effectiveDimensionsJson) as unknown;
         if (Array.isArray(parsed)) pageDimensions = parsed as SignAiSource['pageDimensions'];
       } catch {
         pageDimensions = null;
@@ -1540,10 +1550,10 @@ export const aiAnalysisSource = defineQuery({
       envelopeId: env.id,
       version: env.version,
       status: env.status,
-      inspectStatus: env.inspect_status,
-      sourceSha256: env.source_sha256,
+      inspectStatus: doc1 ? doc1.inspect_status : env.inspect_status,
+      sourceSha256: doc1 ? doc1.source_sha256 : env.source_sha256,
       title: cleanLine(env.title, 300),
-      pageCount: env.page_count,
+      pageCount: doc1 ? doc1.page_count : env.page_count,
       pageDimensions,
       signers: assignable,
       aiStopped: await isSignAiStoppedOnTrx(ctx.trx, ctx.orgId),

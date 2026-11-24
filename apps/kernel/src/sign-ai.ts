@@ -19,6 +19,7 @@ import {
   type SignAiReader,
   type SignClauseSummaryResult,
   type SignFieldProposeResult,
+  type SignPacketConsistencyDocumentInput,
 } from '@ludy/agent';
 import {
   SIGN_PLAYBOOK_MAX_TOTAL_CHARS,
@@ -33,6 +34,9 @@ import {
   type SignKycCheckRecordContract,
   type SignKycListResultContract,
   type SignObligationAiOutcome,
+  type SignPacketConsistencyCheckInput,
+  type SignPacketConsistencyCheckResult,
+  type SignPacketConsistencyFinding,
   type SignPlaybookAiOutcome,
   type SignPlaybookEvaluateResult,
   type SignVaultAskInput,
@@ -57,6 +61,7 @@ import {
   type SignDiffSourceResult,
   type SignKycSource,
   type SignObligationSource,
+  type SignPacketConsistencySource,
   type SignPlaybookSource,
 } from '@ludy/mod-sign';
 import type { DraftBudget } from './ai-draft-limit.ts';
@@ -72,6 +77,7 @@ export type SignAiReaderPort = Pick<SignAiReader, 'proposeFields' | 'summarizeRi
       | 'answerVaultQuestion'
       | 'checkPlaybook'
       | 'checkKycAttachment'
+      | 'checkPacketConsistency'
     >
   >;
 
@@ -1359,6 +1365,196 @@ export async function proposeEnvelopeKycCheck(
     }
     console.error('[sign-ai] kyc check failed', error instanceof Error ? error.name : typeof error);
     return kycOutcome('failed', await safeExisting());
+  } finally {
+    ticket.release();
+  }
+}
+
+export interface AnalyzeSignPacketConsistencyParams {
+  ai: SignAi;
+  runtime: Pick<Runtime, 'query'>;
+  orgId: string;
+  actor: UserActor | SystemActor;
+  envelopeId: string;
+  documents?: SignPacketConsistencyCheckInput['documents'];
+  meter: AiMeter | 'runtime';
+  meterOptions?: MeterOptions;
+}
+
+export async function analyzeSignPacketConsistency(
+  params: AnalyzeSignPacketConsistencyParams,
+): Promise<SignPacketConsistencyCheckResult> {
+  const { ai, runtime, orgId, actor, envelopeId } = params;
+  if (actor.type !== 'user' && actor.type !== 'system') {
+    throw new DomainError('FORBIDDEN', 403, 'Only workspace members or system workers can check packet consistency');
+  }
+
+  const source = await runtime.query<SignPacketConsistencySource>(
+    'sign.packet.consistency_source',
+    { envelopeId },
+    { actor, orgId },
+  );
+
+  // Deterministic check runs unconditionally regardless of AI toggle, budget, or inspect state:
+  // in a multi-doc packet with signing/approval parties, flag any annex (docIndex >= 2) missing signature/initial fields.
+  const hasSigningParty = source.signers.some((s) => s.signerRole === 'signer' || s.signerRole === 'approver');
+  const signatureBearingDocIds = new Set<string>();
+  const doc1 = source.documents[0];
+  for (const field of source.fields) {
+    if (field.fieldType !== 'signature' && field.fieldType !== 'initials' && field.fieldType !== 'stamp') continue;
+    const targetDocId = field.documentId ?? doc1?.id ?? '__doc1__';
+    signatureBearingDocIds.add(targetDocId);
+  }
+
+  const deterministicFindings: SignPacketConsistencyFinding[] = [];
+  const missingDocIds = new Set<string>();
+  if (hasSigningParty && source.documents.length >= 2) {
+    for (const doc of source.documents) {
+      if (doc.docIndex < 2) continue;
+      const key = doc.id ?? '__doc1__';
+      if (!signatureBearingDocIds.has(key)) {
+        if (doc.id) missingDocIds.add(doc.id);
+        deterministicFindings.push({
+          kind: 'missing_signature_field',
+          severity: 'warn',
+          title: `Tài liệu #${doc.docIndex} chưa có ô chữ ký`,
+          explanation: `Tài liệu "${doc.title}" chưa có ô chữ ký hoặc chữ ký nháy nào. Nếu các bên cần ký trực tiếp lên phụ lục này, hãy thêm ô ký trước khi gửi.`,
+          documentId: doc.id,
+          documentTitle: doc.title,
+          pageNumber: doc.pageCount && doc.pageCount >= 1 ? 1 : null,
+          quoteExcerpt: null,
+          source: 'deterministic',
+          tainted: false,
+        });
+      }
+    }
+  }
+
+  const outcome = (
+    aiState: SignPacketConsistencyCheckResult['ai'],
+    findings: SignPacketConsistencyFinding[] = deterministicFindings,
+    summaryText: string | null = null,
+  ): SignPacketConsistencyCheckResult => ({
+    envelopeId: source.envelopeId,
+    ai: aiState,
+    findings,
+    summaryText,
+  });
+
+  if (!ai.reader?.checkPacketConsistency || source.aiStopped) {
+    return outcome('off');
+  }
+  if (
+    source.inspectStatus !== 'passed' ||
+    source.documents.some((doc) => doc.inspectStatus !== 'passed' || !doc.pageCount || doc.pageCount < 1)
+  ) {
+    return outcome('not_ready');
+  }
+
+  const providedDocs = params.documents ?? [];
+  const aiDocInputs: SignPacketConsistencyDocumentInput[] = [];
+  let totalNonEmptyPages = 0;
+
+  for (const doc of source.documents) {
+    const pageCount = doc.pageCount!;
+    const matchedInput =
+      providedDocs.find((entry) => {
+        if (entry.documentId && doc.id) return entry.documentId === doc.id;
+        if (!entry.documentId && doc.docIndex === 1) return true;
+        return false;
+      }) ?? (source.documents.length === 1 ? providedDocs[0] : undefined);
+
+    const boundedPages: SignAiPageInput[] = (matchedInput?.pages ?? [])
+      .filter((p) => Number.isInteger(p.page) && p.page >= 1 && p.page <= pageCount && p.text.trim().length > 0)
+      .map((p) => ({ page: p.page, text: p.text }));
+
+    totalNonEmptyPages += boundedPages.length;
+    const key = doc.id ?? '__doc1__';
+    aiDocInputs.push({
+      documentId: doc.id,
+      docIndex: doc.docIndex,
+      title: doc.title,
+      pageCount,
+      pages: boundedPages,
+      missingSignatureField: hasSigningParty && !signatureBearingDocIds.has(key),
+    });
+  }
+
+  if (totalNonEmptyPages === 0) {
+    return outcome('no_text');
+  }
+
+  const ticket = ai.budget.take(orgId, actorRateKey(actor));
+  if (!ticket.allowed) {
+    return outcome('busy');
+  }
+
+  const checkPacketConsistency = ai.reader.checkPacketConsistency.bind(ai.reader);
+  const isAiStopped = async (): Promise<boolean> => {
+    const latest = await runtime.query<SignPacketConsistencySource>(
+      'sign.packet.consistency_source',
+      { envelopeId },
+      { actor, orgId },
+    );
+    return latest.aiStopped;
+  };
+
+  const runScoped = async <T>(fn: () => Promise<T>): Promise<T> => {
+    const baseMeter =
+      params.meter === 'runtime'
+        ? actor.type === 'user'
+          ? memberMeter(runtime as Runtime, actor, params.meterOptions ?? {})
+          : systemMeter(runtime as Runtime, params.meterOptions ?? {})
+        : params.meter;
+    const guardedMeter: AiMeter = {
+      admit: async (call) => {
+        if (await isAiStopped()) {
+          throw new SignAiStoppedError();
+        }
+        return baseMeter.admit(call);
+      },
+      record: (call, usage) => baseMeter.record(call, usage),
+    };
+    return withAiScope({ orgId, meter: guardedMeter }, fn);
+  };
+
+  try {
+    const aiResult = await runScoped(() =>
+      checkPacketConsistency({
+        envelopeTitle: source.title,
+        documents: aiDocInputs,
+      }),
+    );
+
+    if (await isAiStopped()) {
+      return outcome('off');
+    }
+    if (aiResult.code === 'REFUSED') {
+      return outcome('failed');
+    }
+    if (aiResult.code === 'NO_TEXT') {
+      return outcome('no_text');
+    }
+
+    const dedupedAiFindings = aiResult.findings.filter(
+      (f) => !(f.kind === 'missing_signature_field' && f.documentId && missingDocIds.has(f.documentId)),
+    );
+    return outcome('used', [...deterministicFindings, ...dedupedAiFindings], aiResult.summaryText);
+  } catch (error: unknown) {
+    if (error instanceof SignAiStoppedError || (error instanceof DomainError && error.code === 'SIGN_AI_DISABLED')) {
+      return outcome('off');
+    }
+    if (error instanceof AiBudgetExhaustedError) {
+      return outcome('budget');
+    }
+    if (error instanceof AiMeterMissingError) {
+      throw error;
+    }
+    if (error instanceof DomainError && (error.status === 403 || error.status === 404)) {
+      throw error;
+    }
+    console.error('[sign-ai] packet consistency failed', error instanceof Error ? error.name : typeof error);
+    return outcome('failed');
   } finally {
     ticket.release();
   }

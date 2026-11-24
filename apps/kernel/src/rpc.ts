@@ -103,6 +103,7 @@ import { prepareRoadmapChangelogDraft, prepareRoadmapDedupe, prepareRoadmapSigna
 import { prepareProjectTriageAssist, projectTriageAi } from './project-triage-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import {
+  analyzeSignPacketConsistency,
   askSignVault,
   compareSignPdfVersions,
   evaluateEnvelopePlaybook,
@@ -5234,6 +5235,27 @@ export function createRpcHandler(
         remind: os.sign.envelope.remind.handler(signCommand('sign.envelope.remind')),
         void: os.sign.envelope.void.handler(signCommand('sign.envelope.void')),
         acknowledge_decline: os.sign.envelope.acknowledge_decline.handler(signCommand('sign.envelope.acknowledge_decline')),
+        document: {
+          add: os.sign.envelope.document.add.handler(signCommand('sign.envelope.document.add')),
+          remove: os.sign.envelope.document.remove.handler(signCommand('sign.envelope.document.remove')),
+          reorder: os.sign.envelope.document.reorder.handler(signCommand('sign.envelope.document.reorder')),
+        },
+      },
+      packet: {
+        consistency_check: os.sign.packet.consistency_check.handler(({ context, input }) =>
+          inSign(context, (orgId, actor) =>
+            analyzeSignPacketConsistency({
+              ai: signCoworker,
+              runtime,
+              orgId,
+              actor,
+              envelopeId: input.envelopeId,
+              ...(input.documents ? { documents: input.documents } : {}),
+              meter: aiMeter ? aiMeter(actor) : 'runtime',
+              ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),
+            }),
+          ),
+        ),
       },
       signer: {
         add: os.sign.signer.add.handler(signCommand('sign.signer.add')),
