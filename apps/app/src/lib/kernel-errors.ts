@@ -1630,6 +1630,8 @@ export const KERNEL_ERROR_RULES = {
   extension_org: 'FORBIDDEN',
   extension_only: 'FORBIDDEN',
   extension_id: 'FORBIDDEN',
+  // Ludy Desktop asked for capture scopes while MEETINGS_DESKTOP_CAPTURE is off (#4516).
+  desktop_capture_off: 'FORBIDDEN',
   // A connected AI app (an MCP grant) asked for something its scopes do not open (#3861, ADR-0051); it is the app's call, so a person rarely sees it.
   mcp_scope: 'FORBIDDEN',
 } as const satisfies Record<string, KernelErrorCode>;

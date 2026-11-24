@@ -17102,6 +17102,7 @@ export const en = {
       extension_org: 'The extension can only work in the organization it was authorized for.',
       extension_only: 'This route is for the browser extension only.',
       extension_id: 'This browser extension is not allowed to connect to this server.',
+      desktop_capture_off: 'Desktop meeting recording is not turned on for this server yet.',
       mcp_scope: 'This AI app\'s connection does not allow this.',
     },
   },

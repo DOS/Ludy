@@ -17102,6 +17102,7 @@ export const vi = {
       extension_org: 'Mã của tiện ích chỉ dùng được trong tổ chức đã cấp',
       extension_only: 'Đường này chỉ dành cho tiện ích trình duyệt',
       extension_id: 'Tiện ích trình duyệt này không được phép kết nối với máy chủ này',
+      desktop_capture_off: 'Ghi âm cuộc họp từ Ludy Desktop chưa được bật trên máy chủ này',
       mcp_scope: 'Quyền kết nối của ứng dụng AI này không bao gồm việc này',
     },
   },
