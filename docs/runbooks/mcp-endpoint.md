@@ -62,6 +62,42 @@ Give the app the address `PUBLIC_URL/mcp`. It discovers the rest (protected reso
 - A connection does not depend on the person's browser session: changing a password or signing out everywhere does not cut it. After an account takeover, disconnect the apps in Settings (the grant's owner or admin can), and the org's Stop AI switch cuts all of them at once. A grant also ends for good when its person stops being an owner or admin, leaves the org or is disabled (restoring the role later does not bring it back; a new consent is needed).
 - Every call writes an audit row (`kernel.mcp.call`) that names the grant, the client and the tool and says `mcpCall: true`; it never reads as the person's own click. Rate limit per grant (`MCP_GRANT_PER_MINUTE`, default 60) a cap of concurrent calls (`MCP_GRANT_CONCURRENCY`, default 4) and a daily row budget per grant (`MCP_GRANT_DAILY_ROWS`, default 2000 rows, counted over the UTC day; a call that starts under it may end over it by one answer, and once it is spent every tool call is refused, audited as `rate_limited`, until midnight UTC); registrations are limited per address and in total (`OAUTH_REGISTER_PER_MINUTE`, `OAUTH_REGISTER_GLOBAL_PER_MINUTE`). A registration that never obtained a grant expires after a day. The provider's routes answer CORS only for the origins in `MCP_ALLOWED_ORIGINS`, and refuse a body over 64 KB.
 
+## Check a connector against an instance (the conformance check)
+
+Issue #4592, [ADR-0051](../adr/0051-vys-brain-is-a-dos-claw-agent-ludy-is-the-gate.md) decision 7 (one standard server, no code per vendor), `tools/mcp-conformance/`. A connector vendor, or an operator who just turned the endpoint on, runs one command against an instance and gets a named verdict for each rule. It makes **no model call**: it proves the door of the coworker behaves as the decision says.
+
+```bash
+pnpm mcp:conformance --url https://ludy.example.com
+```
+
+`--url` is the instance's `PUBLIC_URL`, exactly. Plain Node (26 or newer) with no dependency; from a checkout, `node tools/mcp-conformance/cli.mjs --url ...` does the same. The output is one `PASS`, `FAIL` or `SKIP` line per check, then the count; the exit code is 0 when nothing failed, 1 when a check failed (its name and the rule it broke are on the line), 2 for a mistake in the command. `--json` prints the same as JSON; `--only wake.` runs the checks whose name starts with it.
+
+| Check | What it proves |
+| --- | --- |
+| `metadata.protected-resource` | `/.well-known/oauth-protected-resource/mcp` (RFC 9728) names the resource `PUBLIC_URL/mcp`, an authorization server, the scope `ludy.read` and header bearer tokens |
+| `metadata.authorization-server` | The issuer's `/.well-known/oauth-authorization-server` (RFC 8414) names the same issuer the instance was given, the three endpoints and DCR, `S256` as the only PKCE method, response type `code` only |
+| `mcp.challenge` | A call with no token is a 401 whose `WWW-Authenticate` points at the resource metadata |
+| `oauth.pkce-required` | An authorization request with no `code_challenge` is refused |
+| `oauth.resource-indicator` | An authorization request for another `resource` is refused (RFC 8707, `invalid_target`) |
+| `oauth.flow` | A client registers itself, is sent through the consent page, trades its code with the PKCE verifier and the `resource` for tokens: a Bearer token, a refresh token, an ES256 JWT for the audience `PUBLIC_URL/mcp`, whose signature verifies with the keys at `jwks_uri`; the redirect carries `state` and `iss` (RFC 9207) |
+| `mcp.tools` | The token opens `/mcp` and `tools/list` answers |
+| `tools.hints-present` | Every listed tool carries `readOnlyHint` and `destructiveHint` as booleans, and none is both read only and destructive |
+| `tools.hints-match-tier` | A tool that answers a proposal (an R2 or R3 command, ADR-0051 decision 10) declares `readOnlyHint: false` and `destructiveHint: false`: it changes nothing by itself |
+| `proposals.no-execution` | One proposal tool, called with arguments made from its schema, answers `{ proposalId, status: "pending" }` and never the effect (a send, a payment, a change). It leaves that one proposal waiting in Inbox: reject it. |
+| `pairing.code` | The pairing-code path. **Skipped** with a message until the pairing code of #4591 lands; then it runs here |
+| `wake.*` | A sample wake-up receiver follows [the webhook's rules](mcp-wake-webhook.md#check-your-receiver-with-the-conformance-tool): the runbook's test vectors verify; a valid event, an event 4 minutes old and a two-signature event are accepted; a changed body, a wrong secret and a timestamp 6 minutes old or ahead are refused; a repeated event id is handled once |
+
+**The consent page needs a person.** The OAuth flow ends on the consent page, which an owner or admin signs in to, so the tool needs a bearer token of one. Two ways:
+
+- On a **throwaway instance** (a fresh `docker compose up`, the one CI uses), `--sign-up` signs up a new account on the instance and makes an org for it. Never against an instance with real data: it creates an account and an org there.
+- On any other instance, give the access token of an owner or admin in `MCP_CONFORMANCE_TOKEN` (a token goes in the environment, never in an argument; `--org <slug or id>` picks the org when the person has several). The tool connects as a company grant, so a connection named "Ludy MCP conformance check" shows in Settings, "Connected AI apps": disconnect it when you are done.
+
+With neither, the metadata, the challenge and the two refusals still run; `oauth.flow` and everything that needs its token are `SKIP`, with the reason.
+
+Rules for the instance it runs against: `OAUTH_SERVER=on` (the keys are in "Turn it on" above), `PUBLIC_URL` the address you pass, and the org's Stop AI switch off (a stopped org gets no proposal). The call for `proposals.no-execution` uses invented ids, so nothing real is touched, and an approval would fail its checks; it still counts against the grant's 20 waiting proposals until someone rejects it. If no proposal tool takes the sample arguments, name one: `--proposal-tool ludy_conversation_reply --proposal-args '{"conversationId":"...","body":"..."}'`.
+
+CI runs the same command against a fresh compose stack (the `MCP conformance against the compose stack` job in `ci.yml`), and `tools/test/mcp-conformance.test.ts` feeds it a deliberately broken fake server (`tools/mcp-conformance/fake-server.mjs`) and expects the failing check by name. A new tool of Ludy that breaks a hint or proposal rule fails there before a vendor sees it.
+
 ## When something does not work
 
 | Symptom | Check |

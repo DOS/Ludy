@@ -408,7 +408,7 @@ jobs:
     name: Lint, typecheck, test
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [static, knip, web, db, shared-mode-invariants, supabase-stack, kernel-image, extract-image, media-image, split-stack, backup-drill, extension]
+    needs: [static, knip, web, db, shared-mode-invariants, supabase-stack, kernel-image, extract-image, media-image, split-stack, backup-drill, extension, mcp-conformance]
     if: always()
     steps:
       - name: Every part passed
@@ -425,10 +425,11 @@ jobs:
           EXTRACT: ${{ needs.extract-image.result }}
           SPLIT: ${{ needs.split-stack.result }}
           BACKUP: ${{ needs.backup-drill.result }}
+          MCP: ${{ needs.mcp-conformance.result }}
         run: |
           echo "static: $STATIC, knip: $KNIP, marketing site: $WEB, database tests: $DB, media: $MEDIA, extension: $EXTENSION"
-          echo "shared-mode invariants: $SHARED, Supabase image: $SUPABASE, kernel image: $KERNEL, extract image: $EXTRACT, split stack: $SPLIT, backup drill: $BACKUP"
-          for result in "$STATIC" "$KNIP" "$WEB" "$DB" "$MEDIA" "$EXTENSION" "$SHARED" "$SUPABASE" "$KERNEL" "$EXTRACT" "$SPLIT" "$BACKUP"; do
+          echo "shared-mode invariants: $SHARED, Supabase image: $SUPABASE, kernel image: $KERNEL, extract image: $EXTRACT, split stack: $SPLIT, backup drill: $BACKUP, MCP conformance: $MCP"
+          for result in "$STATIC" "$KNIP" "$WEB" "$DB" "$MEDIA" "$EXTENSION" "$SHARED" "$SUPABASE" "$KERNEL" "$EXTRACT" "$SPLIT" "$BACKUP" "$MCP"; do
             test "$result" = success
           done
 
@@ -756,6 +757,66 @@ jobs:
       - name: Stack logs
         if: failure()
         run: $COMPOSE logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: $COMPOSE down -v
+
+  # The MCP conformance check (#4592, ADR-0051 decision 7): `docker compose up` with the MCP endpoint and its authorization server on, then
+  # tools/mcp-conformance/cli.mjs (what `pnpm mcp:conformance` runs) as a connector would run it. It checks the metadata documents, OAuth with PKCE
+  # and the `resource` parameter, the readOnlyHint / destructiveHint of every tool, that an R2 or R3 tool answers a pending proposal and never
+  # executes, and a sample wake-up receiver. No secret and no model call: the signing key and cookie keys are made here, live for this job only and
+  # are masked in the log; the account and org it signs up are in this job's throwaway database.
+  mcp-conformance:
+    name: MCP conformance against the compose stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      COMPOSE: docker compose -p crove-mcp
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - name: Make the throwaway OAuth keys for this job
+        run: |
+          JWKS=$(node -e "const {generateKeyPairSync,randomBytes}=require('node:crypto');const k=generateKeyPairSync('ec',{namedCurve:'P-256'}).privateKey.export({format:'jwk'});console.log(JSON.stringify({keys:[{...k,alg:'ES256',use:'sig',kid:'k-'+randomBytes(4).toString('hex')}]}))")
+          COOKIES=$(node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))")
+          echo "::add-mask::$JWKS"
+          echo "::add-mask::$COOKIES"
+          {
+            echo "OAUTH_SERVER=on"
+            echo "OAUTH_JWKS=$JWKS"
+            echo "OAUTH_COOKIE_KEYS=$COOKIES"
+          } >> "$GITHUB_ENV"
+
+      - name: Build and start the compose stack
+        run: $COMPOSE up -d --build
+
+      - name: Wait until the API is ready
+        run: |
+          for i in $(seq 1 120); do
+            if curl -fsS http://localhost:8080/readyz | grep -q '"ready":true' && curl -fsS http://localhost:8080/auth/v1/health > /dev/null; then
+              echo "ready after $((i * 3)) s"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "the API was not ready in 6 minutes"
+          exit 1
+
+      - name: Run the conformance check (the same command a connector vendor runs)
+        run: node tools/mcp-conformance/cli.mjs --url http://localhost:8080 --sign-up
+
+      - name: Stack logs
+        if: failure()
+        run: $COMPOSE logs --no-color --tail 200
 
       - name: Tear down
         if: always()

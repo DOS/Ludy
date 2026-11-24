@@ -131,6 +131,27 @@ During a rotation, with the ping body and the old secret `whsec_other_secret_012
 
 A receiver must accept all three, and must refuse the ping body with the first signature changed in one digit, or with a body that has one space added.
 
+## Check your receiver with the conformance tool
+
+Issue #4592, `tools/mcp-conformance/`. The same command that checks an instance's MCP door ([the MCP endpoint](mcp-endpoint.md#check-a-connector-against-an-instance-the-conformance-check)) sends signed sample events, signed exactly as Ludy signs them, to a receiver and names each rule it gets wrong. Your own receiver, with the `whsec_` secret you keep for it (a test secret, not a production one) in the environment:
+
+```bash
+MCP_CONFORMANCE_WAKE_SECRET=whsec_your_test_secret pnpm mcp:conformance --url https://ludy.example.com --only wake. --wake-url http://127.0.0.1:8099/ludy-wake
+```
+
+(`--url` is only read to name the instance; with `--only wake.` nothing is asked of it.) The samples and what they must get:
+
+| Check | Sent | Your receiver must |
+| --- | --- | --- |
+| `wake.valid-accepted` | a correctly signed `ping` | answer `2xx` |
+| `wake.window-accepted` | an event signed 4 minutes ago | answer `2xx` |
+| `wake.bad-signature-refused` | the body changed after signing, and a signature made with another secret | answer anything but `2xx` |
+| `wake.stale-timestamp-refused` | a valid signature over a timestamp 6 minutes old, and one 6 minutes ahead | answer anything but `2xx` |
+| `wake.rotation-accepted` | two `v1=` values, one of them current | answer `2xx` |
+| `wake.repeated-event-id` | the same event id twice | answer `2xx` or `409` both times (over HTTP alone a handled repeat cannot be told from a dropped one: handle the id once) |
+
+Without `--wake-url` the tool starts its own sample receiver on a loopback address, which follows these rules and counts what it handled, and checks that; that is what CI runs, with the runbook's test vectors (the tool pins that they are the ones in "Test vectors" above). Compare its code (`tools/mcp-conformance/wake.mjs`, `verifyWake` and `createReceiver`) with yours.
+
 ## The secret
 
 - Ludy makes it (`whsec_` and 32 random bytes) when you save an address, shows it **once**, and keeps it only sealed. Store it in your secret manager at once.
