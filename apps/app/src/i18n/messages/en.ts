@@ -15983,6 +15983,7 @@ export const en = {
       MCP_WAKE_NOT_FOUND: 'This connection has no wake-up receiver yet.',
       MCP_GRANT_TOO_MANY: 'You already have 5 connections of your own. Disconnect one and try again.',
       MCP_WAKE_TOO_SOON: 'A test can be sent once a minute per connection. Try again in a few seconds.',
+      MCP_PAIRING_TOO_MANY: 'Five pairing codes are already waiting to be used. Use or wait out one (they last 10 minutes), then try again.',
       MEETING_HOOKS_OFF: 'The owner of this organization has not allowed members to send minutes to their own address.',
       MEETING_HOOK_NOT_FOUND: 'You have no address for minutes yet, or it is turned off.',
       MEETING_HOOK_TOO_SOON: 'A test can be sent once a minute, and ten times an hour. Try again later.',
@@ -18945,6 +18946,9 @@ export const en = {
         member_grants: {
           get: 'See whether members may connect their own AI app',
           set: 'Turn member-owned AI app connections on or off',
+        },
+        pairing: {
+          issue: 'Make a one-time pairing code to connect an AI app that cannot sign in with OAuth',
         },
         parties: 'Show an AI app the list of customers, suppliers and contacts',
         proposal_notify: 'Tell the people who may approve when an AI app sends a proposal',

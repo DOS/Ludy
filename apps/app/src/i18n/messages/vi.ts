@@ -15982,6 +15982,7 @@ export const vi = {
       MCP_WAKE_NOT_FOUND: 'Quyền kết nối này chưa có địa chỉ nhận',
       MCP_GRANT_TOO_MANY: 'Bạn đã có đủ 5 quyền kết nối của riêng mình, hãy ngắt bớt một quyền rồi thử lại',
       MCP_WAKE_TOO_SOON: 'Mỗi kết nối chỉ gửi thử được một lần mỗi phút, hãy thử lại sau ít giây',
+      MCP_PAIRING_TOO_MANY: 'Đã có 5 mã ghép nối đang chờ dùng. Hãy dùng hoặc đợi hết hạn một mã (mỗi mã sống 10 phút) rồi thử lại',
       MEETING_HOOKS_OFF: 'Chủ sở hữu tổ chức chưa cho phép thành viên gửi biên bản tới địa chỉ riêng',
       MEETING_HOOK_NOT_FOUND: 'Bạn chưa có địa chỉ nhận biên bản, hoặc địa chỉ này đang tắt',
       MEETING_HOOK_TOO_SOON: 'Gửi thử được một lần mỗi phút và tối đa mười lần mỗi giờ, hãy thử lại sau',
@@ -18944,6 +18945,9 @@ export const vi = {
         member_grants: {
           get: 'Xem cài đặt cho thành viên tự kết nối ứng dụng AI',
           set: 'Bật hoặc tắt việc cho thành viên tự kết nối ứng dụng AI',
+        },
+        pairing: {
+          issue: 'Tạo mã ghép nối dùng một lần để kết nối ứng dụng AI không đăng nhập được bằng OAuth',
         },
         parties: 'Cho ứng dụng AI xem danh sách khách hàng, nhà cung cấp và liên hệ',
         proposal_notify: 'Báo cho người có quyền duyệt khi một ứng dụng AI gửi đề xuất',
