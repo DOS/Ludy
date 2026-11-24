@@ -11,14 +11,23 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const source = join(root, 'native', 'ludy-wasapi-loopback.cpp');
 const outDir = join(root, 'out', 'native');
 const output = join(outDir, 'ludy-wasapi-loopback.exe');
-const UNSAFE_CMD_CHARS = /["%\r\n\0^&|<>!]/;
+const UNSAFE_CMD_CHARS = /["%^&|<>!]/;
 
 export function assertSafeCmdPath(label, value) {
   if (typeof value !== 'string' || value.length === 0) {
     throw new Error(`Invalid ${label}: expected non-empty path`);
   }
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) {
+      throw new Error(`Refused ${label}: contains unsafe cmd.exe metacharacters or control characters`);
+    }
+  }
   if (UNSAFE_CMD_CHARS.test(value)) {
     throw new Error(`Refused ${label}: contains unsafe cmd.exe metacharacters`);
+  }
+  if (value.endsWith('\\')) {
+    throw new Error(`Refused ${label}: trailing backslash would escape closing quote`);
   }
   return value;
 }
@@ -44,7 +53,7 @@ export function formatClArgs(srcPath = source, outExe = output, objDir = outDir)
   assertSafeCmdPath('MSVC object directory', objDir);
   const objFile = join(objDir, 'ludy-wasapi-loopback.obj');
   assertSafeCmdPath('MSVC object path', objFile);
-  return `/nologo /EHsc /O2 /MT /GS /std:c++17 /W3 /DUNICODE /D_UNICODE "${srcPath}" /Fe:"${outExe}" /Fo:"${objFile}" /link /DYNAMICBASE /HIGHENTROPYVA /NXCOMPAT ole32.lib mmdevapi.lib user32.lib`;
+  return `/nologo /EHsc /O2 /MT /GS /sdl /guard:cf /std:c++17 /W3 /DUNICODE /D_UNICODE "${srcPath}" /Fe:"${outExe}" /Fo:"${objFile}" /link /DYNAMICBASE /HIGHENTROPYVA /NXCOMPAT /GUARD:CF ole32.lib mmdevapi.lib user32.lib`;
 }
 
 export function buildCmdLine(clArgs, vcvars = null) {
@@ -97,12 +106,23 @@ export async function buildNative({
   return { compiled: true, skipped: false, output: outExe };
 }
 
+export function parseBuildNativeArgs(argv = process.argv.slice(2)) {
+  let requireWin32 = false;
+  let printClArgs = false;
+  for (const arg of argv) {
+    if (arg === '--require-win32') requireWin32 = true;
+    else if (arg === '--print-cl-args') printClArgs = true;
+    else throw new Error(`Unknown argument for build-native.mjs: ${arg}`);
+  }
+  return { requireWin32, printClArgs };
+}
+
 if (isMainEntry(process.argv[1])) {
-  if (process.argv.includes('--print-cl-args')) {
+  const { requireWin32, printClArgs } = parseBuildNativeArgs();
+  if (printClArgs) {
     console.log(formatClArgs());
     process.exit(0);
   }
-  const requireWin32 = process.argv.includes('--require-win32');
   const result = await buildNative({ requireWin32 });
   if (result.skipped) {
     console.log(`skipped native helper build on ${process.platform} (win32 only)`);
