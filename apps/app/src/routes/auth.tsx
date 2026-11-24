@@ -11,6 +11,7 @@ import { auth, callbackNoticeText, clearCallbackNotice, getConfig, peekCallbackN
 import { screenFailure, screenFailureText, thrownFailure, type ScreenFailure } from '../lib/screen-failure.ts';
 import { offeredProviders, providerLabel } from '../lib/auth-providers.ts';
 import { startHostedLogin } from '../lib/hosted-login.ts';
+import { startOauthLogin } from '../lib/oauth-login.ts';
 import { LegalConsent } from '../components/legal-consent.tsx';
 import { SupportLink } from '../components/support-link.tsx';
 
@@ -105,6 +106,24 @@ export function AuthPage({ initialMode = 'login' }: { initialMode?: Mode } = {})
     }
   }
 
+  // The identity provider's OAuth App as the only way in (AUTH_SIGN_IN=oauth, #4704): no form, no sign-up, no reset.
+  const oauthOnly = getConfig().signIn === 'oauth' ? (getConfig().oauthSignIn ?? null) : null;
+
+  // Leaves for the provider's authorize endpoint with a PKCE challenge; it returns a one-time code that settleCallback redeems.
+  async function continueOauth() {
+    if (!oauthOnly) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    setCallback(null);
+    try {
+      window.location.assign(await startOauthLogin(oauthOnly, { origin: window.location.origin, returnPath: '/', storage: window.sessionStorage }));
+    } catch {
+      setCallback({ error: true, code: 'oauth_login_failed' });
+      setBusy(false);
+    }
+  }
+
   // Leaves for the provider and comes back with the same one-time code an email link brings (settleCallback exchanges it).
   async function continueWith(provider: string) {
     setBusy(true);
@@ -121,6 +140,31 @@ export function AuthPage({ initialMode = 'login' }: { initialMode?: Mode } = {})
       setError(thrownFailure(thrown));
       setBusy(false);
     }
+  }
+
+  if (oauthOnly) {
+    return (
+      <main className="flex min-h-full flex-col items-center justify-center bg-background px-4 py-16">
+        <Card className="relative block w-full max-w-sm p-6">
+          <div className="flex items-center justify-between gap-2">
+            <Logo />
+            <LocaleSwitcher />
+          </div>
+          <ScreenTitle name={titles.login} />
+          <h1 className="mt-6 text-lg font-semibold text-foreground">{titles.login}</h1>
+          <p className="mt-1 text-sm text-muted-foreground">{t('tagline')}</p>
+          <div className="mt-6 space-y-3">
+            {callback?.error && <ErrorText>{callbackNoticeText(callback, root)}</ErrorText>}
+            {callback && !callback.error && <Notice>{callbackNoticeText(callback, root)}</Notice>}
+            <Button type="button" size="lg" className="min-h-11 w-full" disabled={busy} onClick={() => void continueOauth()}>
+              {busy ? root('common.processing') : oauthOnly.name ? t('continueWith', { provider: oauthOnly.name }) : t('continueHosted')}
+            </Button>
+          </div>
+        </Card>
+        {/* Help in the same place as on every screen of the app (DESIGN.md §7, 3.2.6; #1516). */}
+        <SupportLink className="mt-4 text-sm text-link" />
+      </main>
+    );
   }
 
   return (

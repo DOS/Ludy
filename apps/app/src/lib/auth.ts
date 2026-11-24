@@ -4,6 +4,7 @@ import { apiUrl, serverOrigin } from './api-base.ts';
 import { ClientError } from './errors.ts';
 import { withInviteToken } from './invite.ts';
 import { HOSTED_STORAGE_KEY, completeHostedLogin, readHostedCallback, type HostedCallback, type HostedFailure, type HostedLoginConfig } from './hosted-login.ts';
+import { OAUTH_STORAGE_KEY, completeOauthLogin, oauthRefreshFetch, readOauthCallback, type OauthCallback, type OauthSignInConfig } from './oauth-login.ts';
 import { isInPersonCeremonyIsolated, subscribeToCeremonyIsolation } from './sign-hash.ts';
 import { readMigratedItem, type StorageLike } from './storage-migrate.ts';
 
@@ -14,6 +15,10 @@ export interface PublicConfig {
   authProviders?: string[];
   // The identity provider's hosted login page and token endpoint (AUTH_HOSTED_LOGIN_*, #2704); null or absent: none.
   hostedLogin?: HostedLoginConfig | null;
+  // How people sign in (AUTH_SIGN_IN, #4704): `form` (default; absent from an older kernel) or `oauth`, the identity provider's
+  // OAuth App alone, with its endpoints in `oauthSignIn`.
+  signIn?: 'form' | 'oauth';
+  oauthSignIn?: OauthSignInConfig | null;
   aiEnabled: boolean;
   inboundEnabled: boolean;
   // The server mails invites (SMTP configured).
@@ -151,9 +156,11 @@ export function auth(): Client {
   disposeAuthClient(client);
   client = null;
   clientIsolated = isolated;
-  const { authUrl, authAnonKey } = getConfig();
+  const { authUrl, authAnonKey, oauthSignIn } = getConfig();
   if (!isolated) migrateAuthStorage();
-  const baseFetch: typeof fetch = (input, init) => fetch(input, init);
+  const plainFetch: typeof fetch = (input, init) => fetch(input, init);
+  // The identity provider's OAuth App (#4704): its sessions are refreshed at the OAuth token endpoint with the client id.
+  const baseFetch: typeof fetch = oauthSignIn ? oauthRefreshFetch(plainFetch, { authUrl: new URL(authUrl, serverOrigin()).toString(), config: oauthSignIn }) : plainFetch;
   client = new AuthClient({
     url: authUrl,
     headers: authAnonKey ? { apikey: authAnonKey, Authorization: `Bearer ${authAnonKey}` } : {},
@@ -169,6 +176,13 @@ export function auth(): Client {
     detectSessionInUrl: !isolated,
   });
   return client;
+}
+
+// With the identity provider's OAuth App as the only way in (AUTH_SIGN_IN=oauth, #4704) the password is the provider's: this
+// app has no sign-up, reset or password change, so /reset-password (reached from a recovery link, or typed by a signed-in
+// person) goes back to the app instead of calling updateUser.
+export function passwordResetBlocked(): boolean {
+  return getConfig().signIn === 'oauth';
 }
 
 export async function accessToken(): Promise<string | null> {
@@ -208,7 +222,14 @@ export async function needsSecondFactorNow(clientArg?: Pick<Client, 'mfa'>): Pro
 let verifying: Promise<void> = Promise.resolve();
 
 export function verifySecondFactor(params: { factorId: string; code: string }, client: Pick<Client, 'mfa'> = auth()) {
-  const result = client.mfa.challengeAndVerify(params);
+  const verified = client.mfa.challengeAndVerify(params);
+  // With the identity provider's OAuth App (#4704) Supabase Auth issues the token of a verification without the client's id,
+  // and the kernel refuses such a token: the session is refreshed at the OAuth token endpoint at once, which gives a token
+  // with the client id again (and the second factor). A refresh that fails leaves the verified session as it is.
+  const result: typeof verified = verified.then(async (answer) => {
+    if (!answer.error && !isCeremonyIsolated() && config?.oauthSignIn) await auth().refreshSession().catch(() => undefined);
+    return answer;
+  });
   verifying = result.then(
     () => undefined,
     () => undefined,
@@ -286,8 +307,9 @@ const AUTH_ERRORS = [
   'oauth_provider_not_supported',
   'bad_oauth_callback',
   'bad_oauth_state',
-  // The hosted login page's return did not complete (hosted-login.ts); one message for every reason.
+  // The hosted login page's or the OAuth App's return did not complete (hosted-login.ts, oauth-login.ts); one message for every reason.
   'hosted_login_failed',
+  'oauth_login_failed',
 ] as const;
 type AuthErrorCode = (typeof AUTH_ERRORS)[number];
 
@@ -319,21 +341,27 @@ let callbackNotice: CallbackNotice | null = null;
 // fetched and before auth-js is created: auth-js reads `code` from the address on creation and would try to redeem it as its
 // own PKCE code, and the one-time code must not stay in the address bar or the history whatever happens next. main.tsx calls
 // this first; settleCallback calls it again, which finds nothing more.
+// The identity provider's OAuth App (#4704) returns the same way, to its own path, and is held the same way.
 let capturedHosted: HostedCallback | null = null;
+let capturedOauth: OauthCallback | null = null;
 
 export function captureHostedCallback(): void {
   if (isCeremonyIsolated()) return;
   const callback = readHostedCallback(window.location);
-  if (!callback) return;
+  const oauth = callback ? null : readOauthCallback(window.location);
+  if (!callback && !oauth) return;
   capturedHosted = callback;
+  capturedOauth = oauth;
   window.history.replaceState(null, '', '/');
 }
 
 // The attempt is over without a redeem (the app could not start, or the deployment has no hosted login): nothing is kept.
 export function discardHostedLogin(): void {
   capturedHosted = null;
+  capturedOauth = null;
   try {
     window.sessionStorage.removeItem(HOSTED_STORAGE_KEY);
+    window.sessionStorage.removeItem(OAUTH_STORAGE_KEY);
   } catch {
     // A storage that refuses a removal kept nothing.
   }
@@ -343,7 +371,9 @@ export async function settleCallback(): Promise<void> {
   if (isCeremonyIsolated()) return;
   captureHostedCallback();
   const hosted = capturedHosted;
+  const oauth = capturedOauth;
   capturedHosted = null;
+  capturedOauth = null;
   let recovery = false;
   const { data: listener } = auth().onAuthStateChange((event: string) => {
     if (event === 'PASSWORD_RECOVERY') recovery = true;
@@ -353,7 +383,7 @@ export async function settleCallback(): Promise<void> {
     ({ error } = await auth().initialize());
   } catch (thrown) {
     // The start-up stops here: a hosted login's stored attempt is not left behind.
-    if (hosted) discardHostedLogin();
+    if (hosted || oauth) discardHostedLogin();
     throw thrown;
   } finally {
     listener.subscription.unsubscribe();
@@ -363,11 +393,16 @@ export async function settleCallback(): Promise<void> {
   // The one-time code and any error leave the address bar and history; a leaked code could still be exchanged.
   for (const key of ['code', 'error', 'error_code', 'error_description']) url.searchParams.delete(key);
   if (/(^#|&)(error|error_code|error_description)=/.test(url.hash)) url.hash = '';
-  const target = recovery ? '/reset-password' : `${url.pathname}${url.search}${url.hash}`;
+  const target = recovery && !passwordResetBlocked() ? '/reset-password' : `${url.pathname}${url.search}${url.hash}`;
   if (target !== `${window.location.pathname}${window.location.search}${window.location.hash}`) window.history.replaceState(null, '', target);
   if (hosted) {
     const failure = await redeemHosted(hosted);
     if (failure) callbackNotice = { error: true, code: 'hosted_login_failed' };
+    return;
+  }
+  if (oauth) {
+    const failure = await redeemOauth(oauth);
+    if (failure) callbackNotice = { error: true, code: 'oauth_login_failed' };
     return;
   }
   if (error) {
@@ -394,6 +429,26 @@ export async function redeemHosted(callback: HostedCallback): Promise<HostedFail
     if (error) return 'session';
   } catch {
     // A token that is not a JWT makes auth-js throw rather than answer an error; either way no session was made.
+    return 'session';
+  }
+  window.history.replaceState(null, '', result.returnPath);
+  return null;
+}
+
+// The same for the identity provider's OAuth App (#4704): redeems the code at its token endpoint, signs this browser in with the
+// tokens it returns and leaves the tab on the path the sign-in started from; the failure, or null.
+export async function redeemOauth(callback: OauthCallback): Promise<HostedFailure | 'session' | null> {
+  const oauthConfig = getConfig().oauthSignIn;
+  if (!oauthConfig) {
+    discardHostedLogin();
+    return 'missing';
+  }
+  const result = await completeOauthLogin(callback, { config: oauthConfig, origin: window.location.origin, storage: window.sessionStorage, fetchFn: (input, init) => fetch(input, init) });
+  if (!result.ok) return result.reason;
+  try {
+    const { error } = await auth().setSession({ access_token: result.accessToken, refresh_token: result.refreshToken });
+    if (error) return 'session';
+  } catch {
     return 'session';
   }
   window.history.replaceState(null, '', result.returnPath);

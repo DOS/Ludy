@@ -7,6 +7,7 @@ import { MODULE_IDS, TRANSLATION_FLAGGED_TARGETS, zExtensionId, type ModuleId, t
 import type { UsageLimits } from '@ludy/kernel';
 import { parseAllowedEmails } from './auth-access.ts';
 import { checkHostedLoginUrl, hostedLoginName } from './auth-hosted-login.ts';
+import { oauthSignInProblems, parseOauthClientId } from './auth-oauth.ts';
 import { MAX_OAUTH_PROVIDERS, parseOauthProviders } from './auth-oauth-providers.ts';
 import { SIGNUP_POLICIES, parseAllowedDomains } from './auth-signup-policy.ts';
 import { WEBHOOK_ENV } from './alert.ts';
@@ -261,6 +262,25 @@ const schema = z.object({
   AUTH_HOSTED_LOGIN_URL: optional,
   AUTH_HOSTED_LOGIN_TOKEN_URL: optional,
   AUTH_HOSTED_LOGIN_NAME: optional,
+  // The one OAuth client whose Supabase Auth access tokens this deployment accepts (issue #4704, ADR-0028 amendment
+  // 2026-11-24, auth-oauth.ts): the client id of the OAuth App the identity provider registered for this deployment, a UUID.
+  // Unset: every token issued to an OAuth client stays refused, as before. Set: a token whose `client_id` equals it is
+  // accepted, every other client's is still refused, in every session check mode and at the /auth/v1 proxy.
+  AUTH_OAUTH_CLIENT_ID: optional.transform((value, ctx): string | undefined => {
+    if (value === undefined) return undefined;
+    const id = parseOauthClientId(value);
+    if (id === null) {
+      ctx.addIssue({ code: 'custom', message: 'is the UUID the identity provider gave the OAuth App' });
+      return z.NEVER;
+    }
+    return id;
+  }),
+  // How people sign in (issue #4704): `form` (default) is the sign-in screen with email and password; `oauth` shows only
+  // "Continue with <AUTH_OAUTH_NAME>" and sends people to the identity provider's OAuth App. Boot refuses `oauth` unless its
+  // settings are complete (auth-oauth.ts).
+  AUTH_SIGN_IN: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.enum(['form', 'oauth']).default('form')),
+  // The words on the OAuth button ("Continue with ..."): a plain label, at most 40 characters.
+  AUTH_OAUTH_NAME: optional,
   // Policy P11: R3 needs MFA in the last 5 minutes. off is accepted on local URLs only.
   AUTH_STEP_UP: z.enum(['required', 'off']).default('required'),
   // Mirrors GOTRUE_MAILER_AUTOCONFIRM so the kernel can refuse unsafe public deployments.
@@ -906,6 +926,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (config.AUTH_HOSTED_LOGIN_NAME !== undefined && hostedLoginName(config.AUTH_HOSTED_LOGIN_NAME) === null) {
     throw new Error('AUTH_HOSTED_LOGIN_NAME is at most 40 characters, with no control characters, < or >');
   }
+  // Hosted-only sign-in fails closed: a deployment that asks for it and cannot offer it does not start (issue #4704).
+  const oauthProblem = oauthSignInProblems(config);
+  if (oauthProblem) throw new Error(oauthProblem);
   if (config.AUTH_JWT_SECRET && config.AUTH_JWT_SECRET.length < 32) {
     throw new Error('AUTH_JWT_SECRET must be at least 32 characters');
   }
@@ -1156,6 +1179,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // A hosted login on this machine would send every visitor to their own localhost.
     for (const [name, value] of [['AUTH_HOSTED_LOGIN_URL', config.AUTH_HOSTED_LOGIN_URL], ['AUTH_HOSTED_LOGIN_TOKEN_URL', config.AUTH_HOSTED_LOGIN_TOKEN_URL]] as const) {
       if (value !== undefined && isLocalUrl(value)) throw new Error(`${name} is a localhost address on a public PUBLIC_URL; use the provider's https address`);
+    }
+    // The same for the OAuth sign-in: its authorize and token endpoints are under PUBLIC_AUTH_URL (issue #4704).
+    if (config.AUTH_SIGN_IN === 'oauth' && config.PUBLIC_AUTH_URL !== undefined && isLocalUrl(config.PUBLIC_AUTH_URL)) {
+      throw new Error('AUTH_SIGN_IN=oauth: PUBLIC_AUTH_URL is a localhost address on a public PUBLIC_URL; use the identity provider\'s https address');
     }
     if (config.LUDY_CONTEXT_TOKEN_KEY !== undefined) {
       // Compared as bytes, so the unpadded or base64url spelling of the test key is the test key too.

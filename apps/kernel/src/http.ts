@@ -134,6 +134,7 @@ import { readLogoImage, renderQuotePdf, type QuoteDocumentData } from '@ludy/mod
 import { buildBankFileWorkbook, buildDeclarationWorkbook } from '@ludy/mod-hr';
 import { readYearArchiveManifest, verifyYearArchive } from './year-archive.ts';
 import { hostedLoginTokenOrigin, hostedLoginView } from './auth-hosted-login.ts';
+import { oauthSignInView } from './auth-oauth.ts';
 import { clientBucket, createDbEmailLimiter, emailSendRequest, type EmailLimiter } from './auth-email-limit.ts';
 import {
   createDbInviteChecks,
@@ -938,6 +939,9 @@ export function createHttpApp(deps: HttpDeps) {
       authProviders: config.AUTH_OAUTH_PROVIDERS,
       // The identity provider's hosted login page and its token endpoint (AUTH_HOSTED_LOGIN_*, #2704); null: none.
       hostedLogin: hostedLoginView(config),
+      // How people sign in (AUTH_SIGN_IN, #4704) and, in `oauth` mode, the identity provider's OAuth App; null otherwise.
+      signIn: config.AUTH_SIGN_IN,
+      oauthSignIn: oauthSignInView(config),
       aiEnabled: deps.aiEnabled,
       // The MCP endpoint and its authorization server are on (OAUTH_SERVER=on, #2975): Settings then lists the connected AI apps.
       mcpEnabled: deps.oauth !== undefined,
@@ -1025,7 +1029,7 @@ export function createHttpApp(deps: HttpDeps) {
       // user's email or password, enroll or remove factors, or sign every session out. A browser never holds such a
       // token, so it is refused on every forwarded path, before the email budget and without reaching Supabase Auth.
       // The header checked is the one forwarded; the token is decoded, never verified (Supabase Auth does that).
-      if (bearerIssuedToOAuthClient(headers.get('authorization'))) return oauthClientTokenRefused();
+      if (bearerIssuedToOAuthClient(headers.get('authorization'), config.AUTH_OAUTH_CLIENT_ID)) return oauthClientTokenRefused();
       const ip = clientIp(c, config.TRUSTED_PROXY_HOPS);
       if (ip) headers.set('x-real-ip', ip);
       const method = c.req.method;

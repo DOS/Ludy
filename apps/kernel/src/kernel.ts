@@ -1112,7 +1112,7 @@ export function defaultAdapters(config: Config): KernelAdapters {
       : null;
   return {
     identity: {
-      sessions: createSessionStatusSource(config.AUTH_SESSION_CHECK),
+      sessions: createSessionStatusSource(config.AUTH_SESSION_CHECK, config.AUTH_OAUTH_CLIENT_ID ?? null),
       authenticator: (db) => createAuthenticator(config, db),
       revoker: createSessionRevoker(config),
     },

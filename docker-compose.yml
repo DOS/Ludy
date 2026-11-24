@@ -141,6 +141,10 @@ services:
       AUTH_HOSTED_LOGIN_URL: ${AUTH_HOSTED_LOGIN_URL:-}
       AUTH_HOSTED_LOGIN_TOKEN_URL: ${AUTH_HOSTED_LOGIN_TOKEN_URL:-}
       AUTH_HOSTED_LOGIN_NAME: ${AUTH_HOSTED_LOGIN_NAME:-}
+      # The identity provider's OAuth App (ADR-0028, amended 2026-11-24): the one client whose tokens are accepted, and the sign-in screen that shows only its button.
+      AUTH_OAUTH_CLIENT_ID: ${AUTH_OAUTH_CLIENT_ID:-}
+      AUTH_SIGN_IN: ${AUTH_SIGN_IN:-}
+      AUTH_OAUTH_NAME: ${AUTH_OAUTH_NAME:-}
       # R3 (approve, membership changes) needs MFA in the last 5 minutes; the app asks for a code, or to enable
       # two-factor first. off is accepted on localhost only.
       AUTH_STEP_UP: ${AUTH_STEP_UP:-required}

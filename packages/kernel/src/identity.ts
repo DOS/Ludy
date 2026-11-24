@@ -21,10 +21,15 @@ export async function upsertIdentity(db: Db, identity: VerifiedIdentity): Promis
 
 // Maps a verified token to its user only after the session checks pass (ludy_kernel.identity_resolve), so a
 // revoked or disabled session never creates or updates the account. upstream: the self-host db adapter.
-export async function resolveIdentity(db: Db, identity: VerifiedIdentity & { sessionId: string; upstream: boolean }): Promise<string> {
+// acceptedOauthClient (AUTH_OAUTH_CLIENT_ID, issue #4704): the one OAuth client whose bound sessions the db check lets
+// through; null or absent: every bound session is refused, as before.
+export async function resolveIdentity(
+  db: Db,
+  identity: VerifiedIdentity & { sessionId: string; upstream: boolean; acceptedOauthClient?: string | null },
+): Promise<string> {
   const { rows } = await sql<{ id: string }>`
     SELECT ludy_kernel.identity_resolve(${identity.issuer}, ${identity.subject}, ${identity.email}, ${identity.name},
-      ${identity.sessionId}::uuid, ${identity.upstream}) AS id`.execute(db);
+      ${identity.sessionId}::uuid, ${identity.upstream}, ${identity.acceptedOauthClient ?? null}::text) AS id`.execute(db);
   const id = rows[0]?.id;
   if (!id) throw new DomainError('INTERNAL', 500, 'Không tạo được tài khoản');
   return id;
