@@ -4430,6 +4430,7 @@ export interface SignEnvelopeTable {
   allow_delegation: Generated<boolean>;
   retained_org_visible: boolean | null;
   retained_reader_ids: string[] | null;
+  source_revision: string | null;
 }
 
 /** ludy_sign.field */
