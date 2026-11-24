@@ -2,16 +2,18 @@
 // The opt-in morning notice of the day's meetings (#3955, part B) on a real database: a member turns it on (a time of day in their own zone) and off, and sees only their own setting; the worker's sweep sends,
 // once a day at the chosen time, one in-app notice and one mail that hold only the count of the day's meetings and a link (canary strings pin it: no title, no name); a day with no meeting, a time not come yet,
 // a muted kind, a member who turned it off and a zone the database does not know send nothing; and a second sweep or a second dispatch for the same day sends nothing more.
+import { createECDH, randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { PUSH_KINDS, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
 import { MORNING_KIND, type MorningState } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { meetingsCommands, meetingsQueries } from '@ludy/mod-meetings';
 import { runMeetingsMorningSweep } from '../src/meetings-morning.ts';
+import { createPushSender, generateVapidKeys, loadVapidKeys, runPushJob, type PushSender } from '../src/web-push.ts';
 import { TEST_MANIFESTS } from './invariant/fixtures/manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -89,10 +91,10 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
     const registry = { commands: [...kernelCommands, ...meetingsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...meetingsQueries] };
     runtime = new Runtime(createDb(appPool), { manifests: TEST_MANIFESTS }).register(registry);
     worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register(registry);
-    for (const key of ['owner', 'lan', 'nam', 'quiet', 'muted', 'odd', 'gone', 'busy', 'twin', 'pa', 'pb', 'pc', 'pd', 'racer']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'morning', subject: key, email: `${key}@morning.test`, name: key });
+    for (const key of ['owner', 'lan', 'nam', 'quiet', 'muted', 'odd', 'gone', 'busy', 'twin', 'pa', 'pb', 'pc', 'pd', 'racer', 'push_ok', 'push_muted', 'push_gone', 'push_off', 'push_fail']) users[key] = await upsertIdentity(createDb(appPool), { issuer: 'morning', subject: key, email: `${key}@morning.test`, name: key });
     orgId = (await createOrg(runtime, asUser('owner'), 'Công ty Buổi Sáng')).orgId;
     await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'member'), ($1, $4, 'member'), ($1, $5, 'member'), ($1, $6, 'member'), ($1, $7, 'member'), ($1, $8, 'member')`, [orgId, users.lan, users.nam, users.quiet, users.muted, users.odd, users.gone, users.busy]);
-    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) SELECT $1, u, 'member' FROM unnest($2::uuid[]) u`, [orgId, [users.twin, users.pa, users.pb, users.pc, users.pd, users.racer]]);
+    await sqlAdmin(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) SELECT $1, u, 'member' FROM unnest($2::uuid[]) u`, [orgId, [users.twin, users.pa, users.pb, users.pc, users.pd, users.racer, users.push_ok, users.push_muted, users.push_gone, users.push_off, users.push_fail]]);
   }, 300_000);
 
   afterAll(async () => {
@@ -280,5 +282,135 @@ suite('the opt-in morning notice of the day\'s meetings (#3955)', () => {
       await holder.end();
     }
     expect((await sqlAdmin(`SELECT 1 FROM ludy_meetings.morning_notice WHERE org_id = $1 AND user_id = $2`, [orgId, users.racer])).rowCount).toBe(0);
+  });
+
+  function browserKeys() {
+    const ecdh = createECDH('prime256v1');
+    ecdh.generateKeys();
+    return { p256dh: ecdh.getPublicKey().toString('base64url'), auth: randomBytes(16).toString('base64url') };
+  }
+  async function subscribe(who: string) {
+    return runtime.execute<{ id: string }>(
+      'kernel.push.subscribe',
+      { endpoint: `https://push.example.com/send/${crypto.randomUUID()}`, ...browserKeys(), label: 'Chrome trên Linux' },
+      { actor: asUser(who), orgId },
+    );
+  }
+  function fakePushService() {
+    const pair = generateVapidKeys();
+    const keys = loadVapidKeys({ VAPID_PUBLIC_KEY: pair.publicKey, VAPID_PRIVATE_KEY: pair.privateKey, VAPID_SUBJECT: 'mailto:ops@morning.test' });
+    if (!keys) throw new Error('no keys');
+    const payloads: string[] = [];
+    const base = createPushSender(keys, {
+      request: async (url) => ({ url, status: 201, contentType: null, body: Buffer.alloc(0), truncated: false }),
+    });
+    const sender: PushSender = {
+      publicKey: base.publicKey,
+      send: async (s, payload) => {
+        payloads.push(payload);
+        return base.send(s, payload);
+      },
+    };
+    return { sender, payloads };
+  }
+
+  it('queues browser push for subscribed members opening /o/<slug>/meetings with zero title/event leak (#4082)', async () => {
+    // Earlier tests (twin, pa-pd) queried morning_notices_due directly without running sweep().
+    await sweep();
+    await connect('push_ok');
+    await eventNow('push_ok', SECRET_TITLE);
+    await subscribe('push_ok');
+    const now = await localNow(ZONE);
+    await set('push_ok', { enabled: true, minute: Math.max(0, now.minute - 10), timeZone: ZONE, language: 'vi' });
+    const queued: Array<{ orgId: string; notificationId: string }> = [];
+    expect(await runMeetingsMorningSweep({ runtime: worker, workerDb, onNotified: async (row) => void queued.push(row) })).toMatchObject({ found: 1, sent: 1, failures: 0 });
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.orgId).toBe(orgId);
+    const slug = (await sqlAdmin<{ slug: string }>('SELECT slug FROM ludy_kernel.tenant WHERE org_id = $1', [orgId])).rows[0]?.slug as string;
+    const svc = fakePushService();
+    expect(await runPushJob({ runtime: worker, sender: svc.sender, brand: 'Ludy', source: 'kernel' }, queued[0]!)).toEqual({ sent: 1, gone: 0, failed: 0 });
+    expect(svc.payloads).toHaveLength(1);
+    const payload = JSON.parse(svc.payloads[0] as string) as { title: string; body: string; url: string; tag: string };
+    expect(payload).toEqual({
+      title: 'Ludy',
+      body: PUSH_KINDS.get(MORNING_KIND)?.line,
+      url: `/o/${slug}/meetings`,
+      tag: `${MORNING_KIND}:${queued[0]!.notificationId}`,
+    });
+    expect(payload.body).toBe('Hôm nay bạn có cuộc họp');
+    expect(JSON.stringify(payload)).not.toMatch(/Họp kín|Á Châu|hợp đồng/u);
+    // A second sweep or duplicate notice dispatch notifies nothing and queues no second push.
+    const secondQueued: Array<{ orgId: string; notificationId: string }> = [];
+    expect(await runMeetingsMorningSweep({ runtime: worker, workerDb, onNotified: async (row) => void secondQueued.push(row) })).toMatchObject({ found: 0, sent: 0, failures: 0 });
+    expect(secondQueued).toEqual([]);
+    expect(await worker.execute('meetings.morning.notice', { userId: users.push_ok, day: now.day }, { actor: SYSTEM, orgId })).toEqual({ notified: false, mailed: false });
+  });
+
+  it('skips browser push when meetings.morning is muted, the notice is already read, or the member left (#4082)', async () => {
+    const now = await localNow(ZONE);
+    // Muted kind: sweep skips when muted beforehand, and runPushJob skips if muted or read after notice creation.
+    await connect('push_muted');
+    await eventNow('push_muted', SECRET_TITLE);
+    await subscribe('push_muted');
+    await set('push_muted', { enabled: true, minute: Math.max(0, now.minute - 10), timeZone: ZONE, language: 'vi' });
+    await runtime.execute('kernel.notification.mute', { kind: MORNING_KIND, muted: true }, { actor: asUser('push_muted'), orgId });
+    const mutedSweep: Array<{ orgId: string; notificationId: string }> = [];
+    expect(await runMeetingsMorningSweep({ runtime: worker, workerDb, onNotified: async (row) => void mutedSweep.push(row) })).toMatchObject({ found: 0, sent: 0, failures: 0 });
+    expect(mutedSweep).toEqual([]);
+    await runtime.execute('kernel.notification.mute', { kind: MORNING_KIND, muted: false }, { actor: asUser('push_muted'), orgId });
+    expect(await runMeetingsMorningSweep({ runtime: worker, workerDb, onNotified: async (row) => void mutedSweep.push(row) })).toMatchObject({ found: 1, sent: 1, failures: 0 });
+    expect(mutedSweep).toHaveLength(1);
+    await runtime.execute('kernel.notification.mute', { kind: MORNING_KIND, muted: true }, { actor: asUser('push_muted'), orgId });
+    expect(await runPushJob({ runtime: worker, sender: fakePushService().sender, brand: 'Ludy', source: 'kernel' }, mutedSweep[0]!)).toEqual({ sent: 0, gone: 0, failed: 0 });
+    await runtime.execute('kernel.notification.mute', { kind: MORNING_KIND, muted: false }, { actor: asUser('push_muted'), orgId });
+    await runtime.execute('kernel.notification.read', { ids: [mutedSweep[0]!.notificationId] }, { actor: asUser('push_muted'), orgId });
+    expect(await runPushJob({ runtime: worker, sender: fakePushService().sender, brand: 'Ludy', source: 'kernel' }, mutedSweep[0]!)).toEqual({ sent: 0, gone: 0, failed: 0 });
+
+    // Departed member: notice queued before removal, member removed before runPushJob runs.
+    await connect('push_gone');
+    await eventNow('push_gone', SECRET_TITLE);
+    await subscribe('push_gone');
+    await set('push_gone', { enabled: true, minute: Math.max(0, now.minute - 10), timeZone: ZONE, language: 'vi' });
+    const goneSweep: Array<{ orgId: string; notificationId: string }> = [];
+    expect(await runMeetingsMorningSweep({ runtime: worker, workerDb, onNotified: async (row) => void goneSweep.push(row) })).toMatchObject({ found: 1, sent: 1, failures: 0 });
+    expect(goneSweep).toHaveLength(1);
+    await runtime.execute('kernel.member.remove', { userId: users.push_gone }, { actor: asMfa('owner'), orgId });
+    expect(await runPushJob({ runtime: worker, sender: fakePushService().sender, brand: 'Ludy', source: 'kernel' }, goneSweep[0]!)).toEqual({ sent: 0, gone: 0, failed: 0 });
+  });
+
+  it('leaves the morning sweep and mail untouched when push is off or onNotified throws (#4082)', async () => {
+    const now = await localNow(ZONE);
+    // Push off (VAPID unset -> no onNotified callback): in-app notice and mail still succeed.
+    await connect('push_off');
+    await eventNow('push_off', SECRET_TITLE);
+    await set('push_off', { enabled: true, minute: Math.max(0, now.minute - 10), timeZone: ZONE, language: 'vi' });
+    expect(await sweep()).toMatchObject({ found: 1, sent: 1, failures: 0 });
+    expect(await notices('push_off')).toHaveLength(1);
+    expect((await mails()).some((m) => m.to_address === 'push_off@morning.test')).toBe(true);
+
+    // Queueing push throws: sweep neither fails nor blocks the notice/mail, and logs error class only.
+    await connect('push_fail');
+    await eventNow('push_fail', SECRET_TITLE);
+    await set('push_fail', { enabled: true, minute: Math.max(0, now.minute - 10), timeZone: ZONE, language: 'vi' });
+    const warnings: string[] = [];
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => void warnings.push(args.map(String).join(' ')));
+    try {
+      const done = await runMeetingsMorningSweep({
+        runtime: worker,
+        workerDb,
+        onNotified: async () => {
+          throw new TypeError(`secret-endpoint-leak ${SECRET_TITLE}`);
+        },
+      });
+      expect(done).toMatchObject({ found: 1, sent: 1, failures: 0 });
+    } finally {
+      warnSpy.mockRestore();
+    }
+    expect(await notices('push_fail')).toHaveLength(1);
+    expect((await mails()).some((m) => m.to_address === 'push_fail@morning.test')).toBe(true);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('TypeError');
+    expect(warnings[0]).not.toContain('secret-endpoint-leak');
+    expect(warnings[0]).not.toContain(SECRET_TITLE);
   });
 });

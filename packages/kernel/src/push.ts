@@ -5,7 +5,7 @@
 // own rows (a restrictive policy), and a member's rows go with the membership.
 //
 // Sending is the worker's. A notice written with notifyMembers() of a pushed kind (PUSH_KINDS below) is pushed as follows: after the job that wrote it ran (the notify
-// queue), the worker asks kernel.push.pending for the notifications that job wrote (by the outbox event they name), queues one kernel-push job for each, reads it with
+// queue for event-driven notices, or the sweep itself for cron-triggered kinds such as meetings.morning), the worker queues one kernel-push job per new notification, reads it with
 // kernel.push.targets (system), encrypts and posts it to each of the member's devices itself, and records the answers with kernel.push.record (system): a 404 or 410 deletes the
 // subscription, other failures count up and a subscription that failed PUSH_FAILURE_LIMIT times in a row is deleted too.
 //
@@ -15,7 +15,7 @@
 import { createPublicKey } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { SUMMARY_READY_EVENT, SUMMARY_READY_KIND, zId } from '@ludy/kernel-contract';
+import { MORNING_KIND, SUMMARY_READY_EVENT, SUMMARY_READY_KIND, zId } from '@ludy/kernel-contract';
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@ludy/kernel-runtime';
 
@@ -78,21 +78,23 @@ function requireUser(ctx: Pick<QueryContext, 'actor'>): string {
   return ctx.actor.userId;
 }
 
-// The kernel's notification kinds that also go out as browser push, each with its one fixed line and the app path it opens (never text of the subject). A kind is added here
-// with its line and path; its notice must be written by a job of the notify queue (the dispatch of an outbox event), which is where the worker looks for what to push.
+// The kernel's notification kinds that also go out as browser push, each with its one fixed line and the app path it opens (never text of the subject). Event-driven kinds
+// name the outbox event whose dispatch writes them; cron-triggered kinds (such as meetings.morning) omit `event` and queue kernel-push directly when their sweep notifies.
 export interface PushKind {
-  // The outbox event whose dispatch writes this kind (the worker asks for pushes only after such an event).
-  event: string;
+  // The outbox event whose dispatch writes this kind, when event-triggered (the worker asks for pushes only after such an event).
+  event?: string;
   line: string;
   path(slug: string, subject: { type: string | null; id: string | null }): string;
 }
 export const PUSH_KINDS: ReadonlyMap<string, PushKind> = new Map<string, PushKind>([
   // The minutes draft of a meeting the recorder ran is ready (#3730): opens the meeting.
   [SUMMARY_READY_KIND, { event: SUMMARY_READY_EVENT, line: 'Bản nháp biên bản đã sẵn sàng để bạn xem', path: (slug, s) => (s.type === 'meetings.meeting' && s.id ? `/o/${slug}/meetings/${s.id}` : `/o/${slug}/meetings`) }],
+  // The opt-in morning notice of the day's meetings (#3955, #4082): fixed line only (no title, name, time or count), opening the meetings page.
+  [MORNING_KIND, { line: 'Hôm nay bạn có cuộc họp', path: (slug) => `/o/${slug}/meetings` }],
 ]);
 
 // The outbox event types whose dispatch can write a pushed kind: the worker runs kernel.push.pending after these only, so no other notify job pays for it.
-export const PUSH_EVENTS: ReadonlySet<string> = new Set([...PUSH_KINDS.values()].map((k) => k.event));
+export const PUSH_EVENTS: ReadonlySet<string> = new Set([...PUSH_KINDS.values()].flatMap((k) => (k.event ? [k.event] : [])));
 
 export interface PushDevice {
   id: string;
