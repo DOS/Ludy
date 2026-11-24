@@ -93,6 +93,9 @@ const CLASSES: Record<string, { app: string; gate: Gate; why: string }> = {
   '/api/v1/sign/envelopes/:id/certificate': { app: 'sign', gate: 'sql', why: 'crove_sign.api_key_authenticate + crove_sign.api_key_envelope_file_source gate org_app_on + entitlement -> 404' },
   '/api/v1/sign/templates': { app: 'sign', gate: 'sql', why: 'crove_sign.api_key_authenticate + crove_sign.api_key_templates_list gate org_app_on + entitlement -> 404' },
   '/api/v1/sign/envelopes/from-template': { app: 'sign', gate: 'sql', why: 'crove_sign.api_key_authenticate + crove_sign.api_key_create_draft_from_template gate org_app_on + entitlement -> 404' },
+  // #4723 (eSign Slice 6d): Step 0 pre-registration; #4723 moves both routes from 'pending' to 'sql' (ludy_sign.public_deposit_* definers gate org_app_on + entitlement -> opaque 404).
+  '/api/sign/deposit-qr': { app: 'sign', gate: 'pending', why: '#4723 (eSign Slice 6d post-sign VietQR image pre-registration; gated in SQL via crove_sign.public_deposit_qr_source + org_app_on + entitlement -> 404)' },
+  '/api/sign/deposit-notice': { app: 'sign', gate: 'pending', why: '#4723 (eSign Slice 6d post-sign deposit transfer notice pre-registration; gated in SQL via crove_sign.public_record_deposit_notice + org_app_on + entitlement -> 404)' },
 };
 
 // The paths of the two lists of route-coverage.test.ts: a key at the start of a line inside `const PUBLIC` or `const PENDING`. A line at the key indent that

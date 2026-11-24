@@ -113,6 +113,8 @@ const PUBLIC: Record<string, string> = {
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
 const PENDING: Record<string, string> = {
+  '/api/sign/deposit-qr': 'post-sign non-custodial VietQR PNG image (#4723, Slice 6d): requires signed unexpired token in POST JSON body, enforces org_app_on + entitlement opaque 404, excludes hr_contract and meeting_minutes envelopes, rate-limited, returns verified PNG <= 256 KB with nosniff and no-store',
+  '/api/sign/deposit-notice': 'post-sign non-blocking deposit transfer notice (#4723, Slice 6d): requires signed unexpired token, enforces org_app_on + entitlement opaque 404, excludes hr_contract and meeting_minutes envelopes, rate-limited, idempotent one-time notice/proof without altering signature validity',
 };
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 
