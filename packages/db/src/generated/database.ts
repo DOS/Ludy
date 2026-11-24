@@ -3597,6 +3597,7 @@ export interface KernelTenantTable {
   meeting_hooks: Generated<boolean>;
   apps_off: Generated<string[]>;
   apps_version: Generated<number>;
+  meeting_minutes_esign: Generated<boolean>;
 }
 
 /** ludy_kernel.today_mail */

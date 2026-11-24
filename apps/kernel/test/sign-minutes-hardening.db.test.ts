@@ -10,6 +10,7 @@
 //      unsigned cleanup state/reason mutations.
 //   4. Zero runtime role EXECUTE grants on ludy_meetings.cleanup_sign_minutes_on_meeting_delete() and
 //      ludy_sign.cleanup_meeting_minutes_envelopes / envelope_guard, pinned search_path, and clean hardeningViolations.
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import pg from 'pg';
@@ -452,6 +453,8 @@ suite('eSign meeting_minutes hardening & offboarding export follow-ups (#4641)',
     });
 
     orgId = (await createOrg(runtime, asUser(ownerId), 'Cong ty Bien ban Hardening')).orgId;
+    // The org setting "Ký biên bản họp" is off by default (#4703); these cases make minutes envelopes, so the org turns it on.
+    await adminPool.query('UPDATE ludy_kernel.tenant SET meeting_minutes_esign = true WHERE org_id = $1::uuid', [orgId]);
 
     await adminPool.query(
       `INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES
@@ -469,6 +472,38 @@ suite('eSign meeting_minutes hardening & offboarding export follow-ups (#4641)',
     const rootPool = createPool({ connectionString: ADMIN, max: 1 });
     await rootPool.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
     await rootPool.end();
+  });
+
+  it('refuses to create a minutes envelope while the org setting "Ký biên bản họp" is off, and turning it off leaves the envelopes already made as they are (#4703)', async () => {
+    const setSetting = (on: boolean) => adminPool!.query('UPDATE ludy_kernel.tenant SET meeting_minutes_esign = $2 WHERE org_id = $1::uuid', [orgId, on]);
+    const meetingId = await createSharedMeeting({ visibility: 'org', tag: 'esign-setting' });
+    // A file belongs to one envelope, so each call brings its own.
+    const create = async (title: string, kind: 'meeting_minutes' | 'standalone' = 'meeting_minutes') => {
+      const { fileId: sourceFileId } = await ingestSignFile(asUser(recorderId), `esign-setting-${randomUUID()}`);
+      return runtime.execute<{ envelopeId: string }>(
+        'sign.envelope.create',
+        { title, sourceFileId, ...(kind === 'meeting_minutes' ? { sourceKind: kind, sourceId: meetingId } : {}) },
+        { actor: asUser(recorderId), orgId },
+      );
+    };
+
+    // Off (the default of an org that never turned it on): refused with its own code, even for the recorder of a shared meeting.
+    await setSetting(false);
+    await expect(create('Refused while off')).rejects.toMatchObject({ code: 'SIGN_MINUTES_SIGNING_OFF', status: 409 });
+    // A standalone envelope is not affected by the setting.
+    const standalone = await create('Standalone while off', 'standalone');
+    expect(standalone.envelopeId).toMatch(/^[0-9a-f-]{36}$/);
+
+    // On: the same call goes through.
+    await setSetting(true);
+    const made = await create('Made while on');
+
+    // Off again: no new envelope, and the one already made is still read by its recorder.
+    await setSetting(false);
+    await expect(create('Refused again')).rejects.toMatchObject({ code: 'SIGN_MINUTES_SIGNING_OFF', status: 409 });
+    const read = await runtime.query<{ envelope: { id: string } }>('sign.envelope.get', { envelopeId: made.envelopeId }, { actor: asUser(recorderId), orgId });
+    expect(JSON.stringify(read)).toContain(made.envelopeId);
+    await setSetting(true);
   });
 
   it('pins search_path, passes hardeningViolations, enforces zero runtime EXECUTE on cleanup triggers/definers, and locks signing_token before field', async () => {

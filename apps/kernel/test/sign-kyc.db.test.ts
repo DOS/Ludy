@@ -1040,6 +1040,8 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
       { meetingId: mtgCreated.meetingId, confirmed: true },
       { actor: asUser(member), orgId: org.orgId },
     );
+    // The org setting "Ký biên bản họp" is off by default (#4703); this case makes a minutes envelope, so the org turns it on.
+    await admin((c) => c.query('UPDATE ludy_kernel.tenant SET meeting_minutes_esign = true WHERE org_id = $1::uuid', [org.orgId]));
     const mtgPdfId = await uploadSignSourcePdf(member, 'board-minutes-kyc');
     const mtgEnv = await runtime.execute<{ envelopeId: string }>(
       'sign.envelope.create',

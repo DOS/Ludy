@@ -39,6 +39,7 @@ import { ImportAutoClaim } from '../components/meeting-import-claim.tsx';
 import { meetingsInstalled } from '../components/linked-meetings.tsx';
 import { PlatformRecordings } from '../components/meeting-recordings.tsx';
 import { ConsentPolicyCard, useConsentPolicy } from '../components/consent-policy.tsx';
+import { MinutesEsignCard } from '../components/minutes-esign.tsx';
 import { MeetingHookCard } from '../components/meeting-hook.tsx';
 import { MinutesChannelsCard } from '../components/meeting-chat.tsx';
 import { RecordingNotice } from '../components/recording-notice.tsx';
@@ -921,6 +922,7 @@ export function MeetingsPage() {
               <>
                 <RetentionSettingsCard />
                 <ConsentPolicyCard />
+                <MinutesEsignCard />
                 <MeetingHookCard />
                 <MinutesChannelsCard />
               </>

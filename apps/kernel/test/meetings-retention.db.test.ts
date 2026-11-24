@@ -235,10 +235,11 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
       ['video retention', 'meeting_video_retention_days = 30', 'meeting_video_retention_days', /MEETING_SETTINGS_FORBIDDEN/],
       ['text retention', 'meeting_text_retention_days = 730', 'meeting_text_retention_days', /MEETING_SETTINGS_FORBIDDEN/],
       ['consent policy', "meeting_consent_policy = 'strict'", 'meeting_consent_policy', /MEETING_CONSENT_POLICY_FORBIDDEN/],
+      ['minutes e-sign', 'meeting_minutes_esign = true', 'meeting_minutes_esign', /MEETING_MINUTES_ESIGN_FORBIDDEN/],
     ];
-    const state = "SELECT meeting_audio_retention_days a, meeting_video_retention_days v, meeting_text_retention_days t, meeting_consent_policy c FROM ludy_kernel.tenant WHERE org_id = $1";
-    const before = (await rows<{ a: number; v: number; t: number; c: string }>(state, [orgId]))[0];
-    expect(before, 'this test runs first, on the defaults its values are chosen against').toEqual({ a: 30, v: 7, t: 365, c: 'standard' });
+    const state = "SELECT meeting_audio_retention_days a, meeting_video_retention_days v, meeting_text_retention_days t, meeting_consent_policy c, meeting_minutes_esign e FROM ludy_kernel.tenant WHERE org_id = $1";
+    const before = (await rows<{ a: number; v: number; t: number; c: string; e: boolean }>(state, [orgId]))[0];
+    expect(before, 'this test runs first, on the defaults its values are chosen against').toEqual({ a: 30, v: 7, t: 365, c: 'standard', e: false });
     for (const [label, set, column, refusal] of guarded) {
       const statement = `UPDATE ludy_kernel.tenant SET ${set} WHERE org_id = '${orgId}' RETURNING ${column} AS changed`;
       for (const member of ['recorder', 'otherMember']) {
@@ -336,6 +337,41 @@ suite('meeting retention and shredding on PostgreSQL (#2579)', () => {
     });
     expect(policyRefused).toMatch(/MEETING_CONSENT_POLICY_FORBIDDEN/);
     expect((await rpc('meetings/consentPolicy/get', 'owner', {})).body.policy).toBe('standard');
+    // "Ký biên bản họp" (#4703) has the same guard: the system context cannot turn it on either, and it is off by default.
+    const esignRefused = await withWorker(async (c) => {
+      await c.query('BEGIN');
+      try {
+        await c.query('SELECT ludy_kernel.enter_system_context($1)', [orgId]);
+        await c.query('UPDATE ludy_kernel.tenant SET meeting_minutes_esign = true WHERE org_id = $1', [orgId]);
+        return 'changed';
+      } catch (error) {
+        return (error as Error).message;
+      } finally {
+        await c.query('ROLLBACK');
+      }
+    });
+    expect(esignRefused).toMatch(/MEETING_MINUTES_ESIGN_FORBIDDEN/);
+    expect((await rpc('meetings/minutesEsign/get', 'owner', {})).body.enabled).toBe(false);
+  });
+
+  it('"Ký biên bản họp" (#4703): off by default, every member reads it, only an owner or admin turns it on or off', async () => {
+    // Every member reads it, and it starts off.
+    for (const who of ['owner', 'recorder', 'otherMember']) expect((await rpc('meetings/minutesEsign/get', who, {})).body.enabled, who).toBe(false);
+    // A member cannot turn it on; the row stays as it was.
+    const forbidden = await rpc('meetings/minutesEsign/set', 'recorder', { enabled: true });
+    expect(forbidden.status).toBe(403);
+    expect((await rpc('meetings/minutesEsign/get', 'owner', {})).body.enabled).toBe(false);
+    // A strict input: nothing but the one flag.
+    expect((await rpc('meetings/minutesEsign/set', 'owner', { enabled: 'yes' })).status).toBeGreaterThanOrEqual(400);
+
+    // An owner turns it on; the audit row holds the two values.
+    const on = await rpc('meetings/minutesEsign/set', 'owner', { enabled: true });
+    expect(on.body.enabled).toBe(true);
+    expect((await rpc('meetings/minutesEsign/get', 'recorder', {})).body.enabled).toBe(true);
+    const audit = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.minutes_esign.set' ORDER BY id DESC LIMIT 1", [orgId]);
+    expect(audit[0]?.detail).toMatchObject({ enabled: true, previous: false });
+    // Turning it off again is just the same flag.
+    expect((await rpc('meetings/minutesEsign/set', 'owner', { enabled: false })).body.enabled).toBe(false);
   });
 
   it('shreds the audio key at its date: the audio does not decrypt, its rows go, the sweep removes the object and the file row, the video and the text stay', async () => {

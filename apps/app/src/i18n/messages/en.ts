@@ -4604,6 +4604,17 @@ export const en = {
       adminOnly: 'Only an owner or an admin can change this.',
       strictNote: 'Your organization accepts only a written notice, so "said at the start" is not offered.',
     },
+    // "Ký biên bản họp" (#4703): whether published minutes may be sent for eSign; off by default, an owner or admin changes it.
+    minutesEsign: {
+      title: 'Sign meeting minutes',
+      hint: 'When this is on, a recorder can send published minutes for signing with the "Send for signing" button on the minutes page; a person still presses it for every envelope. While it is off, no new signing envelope can be made from minutes. Envelopes already made stay readable, and signed ones can still be downloaded.',
+      stateOn: 'On',
+      stateOff: 'Off',
+      turnOn: 'Turn on',
+      turnOff: 'Turn off',
+      saved: 'Setting saved.',
+      adminOnly: 'Only an owner or an admin can change this.',
+    },
     // "Send minutes to my address" (A6, #3164): a member's own webhook for the minutes they publish.
     hook: {
       title: 'Send minutes to my own address',
@@ -17393,6 +17404,7 @@ export const en = {
       SIGN_ATTACHMENT_REQUIRED: 'Please upload every required supporting attachment before submitting.',
       SIGN_INVALID_FIELD_OPTION: 'The selected option or choice option list is invalid.',
       SIGN_MINUTES_NOT_SHARED: 'Share the meeting minutes before creating a signing envelope.',
+      SIGN_MINUTES_SIGNING_OFF: 'Signing meeting minutes is turned off for your organization. An owner or admin can turn it on in the meetings settings.',
       SIGN_MINUTES_CHANGED: 'The meeting minutes changed after this envelope was created. Start the signature again from the current minutes.',
       SIGN_PRIVATE_PROJECT_ACCEPTANCE_FORBIDDEN: 'Private projects cannot create shared eSign acceptance envelopes.',
       SIGN_SOURCE_NOT_FOUND: 'The linked source record was not found or you do not have access to it.',
@@ -19126,6 +19138,10 @@ export const en = {
       consent_policy: {
         get: 'Read the consent policy of meetings',
         set: 'Change the consent policy of meetings',
+      },
+      minutes_esign: {
+        get: 'Read whether meeting minutes can be sent for signing',
+        set: 'Turn signing of meeting minutes on or off',
       },
       retention: {
         shred: 'Shred meeting audio or video, or delete a meeting, at its retention date',

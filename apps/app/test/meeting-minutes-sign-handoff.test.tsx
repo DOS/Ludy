@@ -400,6 +400,33 @@ describe('Ludy Notes -> Ludy eSign shared meeting minutes handoff (#3811)', () =
     expect(state.signQueryAsked).toEqual([]);
   });
 
+  it('shows the eSign handoff on the minutes page only while the org setting "Ký biên bản họp" is on (#4703)', () => {
+    seedSignEnabled(true);
+    state.client.setQueryData(['meetings', 'results', 'get', { meetingId: MEETING_ID }], SHARED_RESULTS);
+    state.client.setQueryData(['meetings', 'results', 'summaryStatus', { meetingId: MEETING_ID }], { meetingId: MEETING_ID, enabled: false });
+    state.client.setQueryData(['meetings', 'template', 'list', {}], { templates: [] });
+    state.client.setQueryData(['sign', 'envelope', 'by_source', { sourceKind: 'meeting_minutes', sourceIds: [MEETING_ID] }], { items: [] });
+    const page = () =>
+      renderWithProviders(
+        <MeetingResults
+          meetingId={MEETING_ID}
+          readers={[RECORDER_ID, ATTENDEE_ID]}
+          title="Họp chốt biên bản"
+          signInfo={{ startedAt: '2026-11-19T07:00:00.000Z', createdAt: '2026-11-19T07:00:00.000Z', endedAt: null, recorderUserId: RECORDER_ID, companyName: 'Ludy', orgMembers: ORG_MEMBERS }}
+        />,
+      );
+
+    // Not read yet (loading, or unreadable), then read as off: no handoff and no sign.* query at all.
+    expect(page()).not.toContain('meeting-minutes-send-esign');
+    state.client.setQueryData(['meetings', 'minutesEsign', 'get', {}], { enabled: false });
+    expect(page()).not.toContain('meeting-minutes-send-esign');
+    expect(state.signQueryAsked).toEqual([]);
+
+    // On: the handoff shows as it did before the setting existed.
+    state.client.setQueryData(['meetings', 'minutesEsign', 'get', {}], { enabled: true });
+    expect(page()).toContain('data-testid="meeting-minutes-send-esign"');
+  });
+
   it('renders live Vietnamese status badges (Nháp, Đang chờ ký, Đã ký xác nhận, Từ chối / Đã hủy, Hết hạn) and Tải bản đã ký', () => {
     seedSignEnabled(true);
     state.client.setQueryData(['meetings', 'results', 'get', { meetingId: MEETING_ID }], SHARED_RESULTS);

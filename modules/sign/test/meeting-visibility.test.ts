@@ -116,8 +116,12 @@ describe('meeting-visibility helpers and @ludy/mod-sign meeting minutes guards (
   it('enforces check_meeting_minutes_source states (0 -> 404, 1 -> 409, 2 -> ok) and can_access_meeting_minutes_envelope', async () => {
     let sourceState = 0;
     let accessAllowed = false;
+    let signingOn = true;
     let recorderAllowed = true;
     const { trx } = createFakeTrx((compiled) => {
+      if (compiled.sql.includes('meeting_minutes_esign')) {
+        return { rows: [{ meeting_minutes_esign: signingOn }] };
+      }
       if (compiled.sql.includes('check_meeting_minutes_source')) {
         return { rows: [{ state: sourceState }] };
       }
@@ -131,6 +135,16 @@ describe('meeting-visibility helpers and @ludy/mod-sign meeting minutes guards (
     });
 
     const ownerCtx = makeUserCommandCtx(trx, OWNER_ID, 'owner');
+    // The org setting "Ký biên bản họp" (#4703) is off by default: no new minutes envelope while it is off, even for a meeting that is shared and readable; standalone envelopes are not affected.
+    signingOn = false;
+    sourceState = 2;
+    await expect(
+      assertCanCreateMeetingMinutesEnvelope(ownerCtx, 'meeting_minutes', MEETING_ID),
+    ).rejects.toMatchObject({ code: 'SIGN_MINUTES_SIGNING_OFF', status: 409 });
+    await expect(assertCanCreateMeetingMinutesEnvelope(ownerCtx, 'standalone', null)).resolves.toBeUndefined();
+    signingOn = true;
+    sourceState = 0;
+
     await expect(
       assertCanCreateMeetingMinutesEnvelope(ownerCtx, 'meeting_minutes', MEETING_ID),
     ).rejects.toMatchObject({ code: 'SIGN_SOURCE_NOT_FOUND', status: 404 });
@@ -219,6 +233,9 @@ describe('meeting-visibility helpers and @ludy/mod-sign meeting minutes guards (
     let sourceState = 1;
     let accessAllowed = false;
     const { trx } = createFakeTrx((compiled) => {
+      if (compiled.sql.includes('meeting_minutes_esign')) {
+        return { rows: [{ meeting_minutes_esign: true }] };
+      }
       if (compiled.sql.includes('check_meeting_minutes_source')) {
         return { rows: [{ state: sourceState }] };
       }
