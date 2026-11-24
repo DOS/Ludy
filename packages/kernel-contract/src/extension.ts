@@ -15,13 +15,23 @@ export const zExtensionScope = z.enum(EXTENSION_SCOPE_IDS);
 export const EXTENSION_ID_FORMAT = /^[a-p]{32}$/;
 export const zExtensionId = z.string().regex(EXTENSION_ID_FORMAT);
 
-// Who a token was made for (ADR-0055 slice 2, #4515): the browser extension, or Ludy Desktop. The server sets the marker, never a client:
-// a desktop sign-in code is bound to DESKTOP_CLIENT_ID, a reserved id that is a valid extension id in form only (the HTTP edge gives
-// it to an exchange that carries no browser Origin and says client "desktop"; Chrome and Edge never issue it), and the exchange copies
+// Who a token was made for (ADR-0055 slice 2, #4515; desktop capture scope added in slice 3, #4516): the browser extension, or Ludy Desktop.
+// The server sets the marker, never a client: a desktop sign-in code is bound to DESKTOP_CLIENT_ID, a reserved id that is a valid extension id in form only
+// (the HTTP edge gives it to an exchange that carries no browser Origin and says client "desktop"; Chrome and Edge never issue it), and the exchange copies
 // the marker to the token. ludy_kernel.extension_token.client's CHECK lists the same two values and the migration the same id.
 export const EXTENSION_CLIENTS = ['extension', 'desktop'] as const;
 export type ExtensionClient = (typeof EXTENSION_CLIENTS)[number];
 export const DESKTOP_CLIENT_ID = 'abababababababababababababababab';
+const DESKTOP_SCOPE_IDS: readonly ExtensionScopeId[] = ['meetings', 'agenda'];
+
+// Scopes a client may hold on a token or auth code: the browser extension must hold at least one scope;
+// Ludy Desktop may hold none (sign-in only) or meetings/agenda (when desktop capture is on), never notes (#4516).
+export function extensionClientAllowsScopes(client: ExtensionClient, scopes: readonly ExtensionScopeId[]): boolean {
+  if (client === 'desktop') {
+    return scopes.every((scope) => DESKTOP_SCOPE_IDS.includes(scope));
+  }
+  return scopes.length >= 1;
+}
 
 // The ids that may receive a sign-in code when the deployment sets none (EXTENSION_IDS): the Ludy extension's id in the
 // Chrome Web Store (#3010, first upload 2026-11-13; an item keeps its id for life, and the id is public, not a secret). The Edge Add-ons
@@ -37,12 +47,12 @@ export const zExtensionAuthorize = z.strictObject({
   codeChallenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
   codeChallengeMethod: z.literal('S256'),
   // The agenda scope rides with the meetings scope (B2): the token's own exchange is a meetings command, and the card exists to start a recording.
-  // At least one scope for the extension; Ludy Desktop (DESKTOP_CLIENT_ID) asks for none and may not ask for any, since its features are not built yet (#4515).
+  // The browser extension requires at least one scope; Ludy Desktop holds none (sign-in only) or meetings/agenda when capture is enabled (#4516), never notes.
   scopes: z.array(zExtensionScope).max(EXTENSION_SCOPE_IDS.length).refine((scopes) => !scopes.includes('agenda') || scopes.includes('meetings'), 'agenda needs meetings'),
   deviceName: z.string().trim().min(1).max(80),
-}).refine((input) => (input.extensionId === DESKTOP_CLIENT_ID ? input.scopes.length === 0 : input.scopes.length >= 1), {
+}).refine((input) => extensionClientAllowsScopes(input.extensionId === DESKTOP_CLIENT_ID ? 'desktop' : 'extension', input.scopes), {
   path: ['scopes'],
-  message: 'the extension needs a scope, Ludy Desktop holds none',
+  message: 'the extension needs a scope, Ludy Desktop holds only meetings or agenda',
 });
 
 // One connected device of the member in the org of the request. Never a hash.

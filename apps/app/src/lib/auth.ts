@@ -30,6 +30,8 @@ export interface PublicConfig {
   supportUrl?: string | null;
   // The Ludy extension ids that may sign in (EXTENSION_IDS, #2740); absent from an older kernel: none.
   extensionIds?: string[];
+  // Ludy Desktop recording (ADR-0055 slice 3, #4516): off until #2585 legal answers are recorded.
+  meetingsDesktopCapture?: boolean;
   // The deployment runs the MCP endpoint (#2975): Settings lists the AI apps connected to the org.
   mcpEnabled?: boolean;
   // Cloudflare Turnstile's site key for the booking form (TURNSTILE_SITE_KEY, #1353); null when the deployment sets none.

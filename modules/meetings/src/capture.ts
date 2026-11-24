@@ -25,9 +25,12 @@ import type { MemberRole } from '@ludy/db';
 
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 
-// The kind of client that is calling, from who is calling: an extension token is the extension, everything else is the app. A client never says it.
+// The kind of client that is calling, from who is calling: an extension token carries client 'extension' or 'desktop', everything else is the app. A client never says it.
 export function captureKindOf(ctx: CommandContext): CaptureKind {
-  return ctx.actor.type === 'user' && ctx.actor.extension ? 'extension' : 'app';
+  if (ctx.actor.type === 'user' && ctx.actor.extension) {
+    return ctx.actor.extension.client === 'desktop' ? 'desktop' : 'extension';
+  }
+  return 'app';
 }
 
 // What identifies a call in this org: the hash of the org, the platform and the platform's meeting id. The org is part of it so one call in two orgs has two unrelated keys.

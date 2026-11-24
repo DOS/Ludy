@@ -10,8 +10,8 @@ import { zId } from './schemas.ts';
 export const CAPTURE_HEARTBEAT_SECONDS = 30;
 export const CAPTURE_LOST_SECONDS = 90;
 
-// Which client is capturing: decided by the server from who is calling (an extension token, or the member's session in the app), never sent by a client.
-export const zCaptureKind = z.enum(['extension', 'app']);
+// Which client is capturing: decided by the server from who is calling (an extension token, a Ludy Desktop token, or the member's session in the app), never sent by a client.
+export const zCaptureKind = z.enum(['extension', 'app', 'desktop']);
 export type CaptureKind = z.infer<typeof zCaptureKind>;
 
 // How a capture ended: its media reached the server, the recording was reported stopped, or no heartbeat came for CAPTURE_LOST_SECONDS.

@@ -141,8 +141,27 @@ describe('Ludy Desktop sign-in (ADR-0055 slice 2, #4515)', () => {
       scopes: [],
       deviceName: 'Ludy Desktop, Windows',
     });
-    // Least privilege: it holds no scope until slice 3 needs one, so a request that asks for any is refused.
+    // Least privilege: when desktop capture is off, any requested scope stays refused.
     for (const scope of ['meetings', 'agenda', 'notes', 'meetings agenda', 'crm']) expect(parseConnectRequest(desktop({ scope }), []), scope).toBeNull();
+  });
+
+  it('allows meetings and agenda for Ludy Desktop only when desktop capture is enabled, and still refuses notes', () => {
+    expect(parseConnectRequest(desktop(), [], { desktopCapture: true })?.scopes).toEqual([]);
+    expect(parseConnectRequest(desktop({ scope: 'meetings' }), [], { desktopCapture: true })?.scopes).toEqual(['meetings']);
+    expect(parseConnectRequest(desktop({ scope: 'meetings agenda' }), [], { desktopCapture: true })?.scopes).toEqual(['agenda', 'meetings']);
+    for (const scope of ['agenda', 'notes', 'meetings notes', 'meetings agenda notes', 'crm']) {
+      expect(parseConnectRequest(desktop({ scope }), [], { desktopCapture: true }), scope).toBeNull();
+    }
+    const scoped = parseConnectRequest(desktop({ scope: 'meetings' }), [], { desktopCapture: true })!;
+    const store = new Map<string, string>();
+    Object.defineProperty(globalThis, 'sessionStorage', {
+      configurable: true,
+      value: { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) },
+    });
+    rememberConnect(scoped, 1_700_000_000_000);
+    expect(pendingConnect([], 1_700_000_000_500, { desktopCapture: true })).toEqual(scoped);
+    rememberConnect(scoped, 1_700_000_000_000);
+    expect(pendingConnect([], 1_700_000_000_500)).toBeNull();
   });
 
   it('refuses a redirect that is not exactly the loopback callback, and any other client', () => {

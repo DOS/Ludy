@@ -16,7 +16,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { sql } from 'kysely';
 import type { Db } from '@ludy/db';
-import { DESKTOP_CLIENT_ID, EXTENSION_ID_FORMAT, type ExtensionClient } from '@ludy/kernel-contract';
+import { DESKTOP_CLIENT_ID, EXTENSION_ID_FORMAT, extensionClientAllowsScopes, type ExtensionClient } from '@ludy/kernel-contract';
 import { DomainError, EXTENSION_SCOPES, toDomainError, type ExtensionScope } from '@ludy/kernel-runtime';
 import { logEvent } from './log.ts';
 
@@ -103,9 +103,9 @@ export async function verifyExtensionBearer(db: Db, token: string): Promise<Exte
   if (!row) throw invalidToken();
   const scopes = row.scopes.filter((s): s is ExtensionScope => (EXTENSION_SCOPES as readonly string[]).includes(s));
   // A token holding a scope this build does not know is not trusted with the ones it does: it is refused outright. Only a desktop
-  // token may hold none (its features are not built yet, #4515): it then reaches /api/extension/me alone. Any other marker is refused.
+  // token may hold none (#4515), or meetings/agenda when desktop capture is on (#4516); desktop never holds notes. Any other marker is refused.
   if (row.client !== 'extension' && row.client !== 'desktop') throw invalidToken();
-  if ((scopes.length === 0 && row.client !== 'desktop') || scopes.length !== row.scopes.length) throw invalidToken();
+  if (!extensionClientAllowsScopes(row.client, scopes) || scopes.length !== row.scopes.length) throw invalidToken();
   return { tokenId: row.token_id, orgId: row.org_id, userId: row.user_id, scopes, expiresAt: new Date(row.expires_at).toISOString(), client: row.client };
 }
 
@@ -217,20 +217,28 @@ export function matchExtensionRoute(method: string, rawPath: string): ExtensionR
 
 const EXTENSION_SCOPE_ERROR = () => new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
 
-// Checks the request against EXTENSION_ROUTES and the token's scopes, returning the matched route when allowed.
+// Checks the request against EXTENSION_ROUTES and the token's scopes (and desktop tokens never reach notes routes, #4516), returning the matched route when allowed.
 export function authorizeExtensionRoute(
   scopes: readonly string[],
   method: string,
   rawPath: string,
+  client: ExtensionClient = 'extension',
 ): { ok: true; route: ExtensionRoute } | { ok: false; error: DomainError } {
   const route = matchExtensionRoute(method, rawPath);
-  if (route && (route.scope === null || scopes.includes(route.scope))) return { ok: true, route };
+  if (route && (route.scope === null || (scopes.includes(route.scope) && (client !== 'desktop' || route.scope !== 'notes')))) {
+    return { ok: true, route };
+  }
   return { ok: false, error: EXTENSION_SCOPE_ERROR() };
 }
 
 // The edge's check for a request made with an extension token: refused unless it names a listed route whose scope the
-// token holds. 403 EXTENSION_SCOPE, said before any handler, body read or database call.
-export function refuseOutsideScopes(scopes: readonly string[], method: string, rawPath: string): DomainError | null {
-  const checked = authorizeExtensionRoute(scopes, method, rawPath);
+// token holds (and desktop tokens never reach notes routes, #4516). 403 EXTENSION_SCOPE, said before any handler, body read or database call.
+export function refuseOutsideScopes(
+  scopes: readonly string[],
+  method: string,
+  rawPath: string,
+  client: ExtensionClient = 'extension',
+): DomainError | null {
+  const checked = authorizeExtensionRoute(scopes, method, rawPath, client);
   return checked.ok ? null : checked.error;
 }

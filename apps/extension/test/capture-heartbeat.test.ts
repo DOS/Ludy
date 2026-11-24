@@ -52,6 +52,7 @@ describe('heldOf', () => {
   it('reads the kind and the time of the capture that holds the call, and nothing else', () => {
     expect(heldOf({ kind: 'extension', since: '2027-01-20T07:02:00.000Z' })).toEqual({ kind: 'extension', since: '2027-01-20T07:02:00.000Z' });
     expect(heldOf({ kind: 'app', since: '2027-01-20T07:02:00.000Z', userId: 'u1' })).toEqual({ kind: 'app', since: '2027-01-20T07:02:00.000Z' });
+    expect(heldOf({ kind: 'desktop', since: '2027-01-20T07:02:00.000Z', userId: 'u1' })).toEqual({ kind: 'desktop', since: '2027-01-20T07:02:00.000Z' });
     for (const odd of [null, undefined, 'x', {}, { kind: 'bot', since: 'x' }, { kind: 'app' }, { kind: 'app', since: '' }, { kind: 'app', since: 5 }, { kind: 'app', since: 'not a time' }]) expect(heldOf(odd), JSON.stringify(odd)).toBeNull();
   });
 });
@@ -85,9 +86,11 @@ describe('the refusal in words', () => {
       expect(strings.blockers.captureRunning).toContain('{time}');
       // The refusal whose details could not be read says it without a placeholder in sight.
       expect(strings.blockers.captureRunningUnknown).not.toMatch(/[{}]/);
-      expect(Object.keys(strings.captureKinds).sort()).toEqual(['app', 'extension']);
+      expect(Object.keys(strings.captureKinds).sort()).toEqual(['app', 'desktop', 'extension']);
     }
     expect(VIETNAMESE.blockers.captureRunning.replace('{kind}', VIETNAMESE.captureKinds.app).replace('{time}', '14:02')).toBe('Ứng dụng Ludy đang ghi cuộc họp này từ 14:02. Hãy dùng bản ghi đó, hoặc dừng nó trước khi ghi lại.');
+    expect(VIETNAMESE.blockers.captureRunning.replace('{kind}', VIETNAMESE.captureKinds.desktop).replace('{time}', '14:02')).toBe('Ứng dụng Ludy Desktop đang ghi cuộc họp này từ 14:02. Hãy dùng bản ghi đó, hoặc dừng nó trước khi ghi lại.');
+    expect(ENGLISH.blockers.captureRunning.replace('{kind}', ENGLISH.captureKinds.desktop).replace('{time}', '14:02')).toBe('Ludy Desktop has been recording this meeting since 14:02. Use that recording, or stop it before recording again.');
   });
 });
 

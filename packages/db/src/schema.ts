@@ -1493,8 +1493,8 @@ export type MeetingChatPostState = (typeof MEETING_CHAT_POST_STATES)[number];
 export type MeetingsChatChannelTable = Refine<G.MeetingsChatChannelTable, { kind: MeetingChatKind }>;
 export type MeetingsChatPostTable = Refine<G.MeetingsChatPostTable, { state: Generated<MeetingChatPostState> }>;
 
-// The capture session of a call (ADR-0055 slice 1, #4123): which kind of client holds a capture, and why a finished one ended.
-export const MEETING_CAPTURE_KINDS = ['extension', 'app'] as const;
+// The capture session of a call (ADR-0055 slice 1, #4123; desktop kind added in slice 3, #4516): which kind of client holds a capture, and why a finished one ended.
+export const MEETING_CAPTURE_KINDS = ['extension', 'app', 'desktop'] as const;
 export type MeetingCaptureKind = (typeof MEETING_CAPTURE_KINDS)[number];
 export const MEETING_CAPTURE_ENDED_REASONS = ['media', 'stopped', 'lost'] as const;
 export type MeetingCaptureEndedReason = (typeof MEETING_CAPTURE_ENDED_REASONS)[number];
