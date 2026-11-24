@@ -2,6 +2,7 @@
 // kind or late is refused with ExtractServiceError (retried by the job); file-caused failures come back typed.
 import { describe, expect, it } from 'vitest';
 import {
+  DOCX_TO_PDF_WARNINGS,
   EXTRACT_LIMITS,
   ExtractServiceError,
   PdfEmbedCmsInputError,
@@ -12,6 +13,9 @@ import {
   encodePdfEmbedCmsInput,
   encodePdfSealInput,
   maxRequestBytes,
+  zDocxToPdfResult,
+  zDocxToPdfWarning,
+  zExtractResponse,
   zPdfEmbedCmsInput,
   zPdfEmbedCmsResult,
   zPdfInspectResult,
@@ -452,5 +456,51 @@ describe('crove-extract client concurrency (#2119)', () => {
         byteRange: [0, 1200, 1200, 300],
       }).success,
     ).toBe(false);
+  });
+
+  it('validates docx_to_pdf request cap, result schema, warnings, and client dispatch', async () => {
+    expect(maxRequestBytes('docx_to_pdf')).toBe(EXTRACT_LIMITS.maxSignDocxBytes);
+    expect(EXTRACT_LIMITS.maxSignDocxBytes).toBe(10 * 1024 * 1024);
+    expect(EXTRACT_LIMITS.maxFileBytes).toBe(25 * 1024 * 1024);
+    expect(DOCX_TO_PDF_WARNINGS).toEqual([
+      'floating_shapes_skipped',
+      'ole_objects_skipped',
+      'complex_columns_simplified',
+      'images_skipped',
+      'headers_footers_simplified',
+      'footnotes_skipped',
+    ]);
+
+    const pdfBase64 = Buffer.from('%PDF-1.7\n').toString('base64');
+    const valid = {
+      ok: true,
+      kind: 'docx_to_pdf',
+      pdfBase64,
+      pageCount: 3,
+      warnings: ['images_skipped', 'headers_footers_simplified'],
+    };
+    expect(zDocxToPdfResult.safeParse(valid).success).toBe(true);
+    expect(zExtractResponse.safeParse(valid).success).toBe(true);
+    expect(zDocxToPdfWarning.safeParse('unknown_warning').success).toBe(false);
+    expect(zDocxToPdfResult.safeParse({ ...valid, pageCount: 0 }).success).toBe(false);
+    expect(zDocxToPdfResult.safeParse({ ...valid, pageCount: 201 }).success).toBe(false);
+    expect(zDocxToPdfResult.safeParse({ ...valid, pdfBase64: '' }).success).toBe(false);
+    expect(zDocxToPdfResult.safeParse({ ...valid, warnings: Array(7).fill('images_skipped') }).success).toBe(false);
+    expect(zDocxToPdfResult.safeParse({ ...valid, extra: 1 }).success).toBe(false);
+
+    const client = createExtractClient({
+      url: 'http://extract.internal',
+      fetch: async () =>
+        new Response(JSON.stringify(valid), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    });
+    const tooLarge = await client.extract('docx_to_pdf', new Uint8Array(EXTRACT_LIMITS.maxSignDocxBytes + 1));
+    expect(tooLarge.ok).toBe(false);
+    if (!tooLarge.ok) expect(tooLarge.code).toBe('too_large');
+
+    const res = await client.extract('docx_to_pdf', new Uint8Array([0x50, 0x4b, 0x03, 0x04]));
+    expect(res).toEqual(valid);
   });
 });

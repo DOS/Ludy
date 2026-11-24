@@ -26,6 +26,7 @@ import {
   assertCanUseProjectAcceptanceSource,
   insertEnvelopeGuardingProjectAcceptance,
 } from './acceptance.ts';
+import { verifySourceDocxProvenance } from './docx-convert.ts';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
 import {
@@ -647,6 +648,10 @@ export const templateCreate = defineCommand({
       };
     }
 
+    if (input.sourceDocxSha256) {
+      await verifySourceDocxProvenance(ctx, input.sourceDocxSha256, sourceMeta.sourceSha256);
+    }
+
     const desiredStatus = input.status ?? 'draft';
     if (desiredStatus === 'active' && sourceMeta.inspectStatus !== 'passed') {
       throw new DomainError('SIGN_TEMPLATE_NOT_INSPECTED', 409, 'Source PDF must pass inspection before template becomes active');
@@ -807,7 +812,12 @@ export const templateCreate = defineCommand({
     if (tpl.inspect_status === 'pending') {
       await ctx.emit('sign.template.inspect_queued', { templateId: tpl.id });
     }
-    ctx.audit({ templateId: tpl.id, inspectStatus: tpl.inspect_status, status: tpl.status });
+    ctx.audit({
+      templateId: tpl.id,
+      inspectStatus: tpl.inspect_status,
+      status: tpl.status,
+      ...(input.sourceDocxSha256 ? { sourceDocxSha256: input.sourceDocxSha256 } : {}),
+    });
     return {
       templateId: tpl.id,
       status: tpl.status,

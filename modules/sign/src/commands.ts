@@ -16,6 +16,7 @@ import {
 } from '@ludy/db';
 import { EXTRACT_LIMITS } from '@ludy/extract-contract';
 import {
+  SIGN_SHA256_HEX_PATTERN,
   tableWrite,
   zId,
   zSignFieldOptions,
@@ -29,6 +30,7 @@ import {
 } from './acceptance.ts';
 import { signApiKeyCommands } from './api-keys.ts';
 import { signDirectPublicCommands } from './direct-public.ts';
+import { signDocxConvertCommands, verifySourceDocxProvenance } from './docx-convert.ts';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
 import { signInPersonCommands } from './in-person.ts';
@@ -158,6 +160,7 @@ const zEnvelopeCreate = z.strictObject({
   sourceKind: z.enum(SIGN_SOURCE_KINDS).default('standalone'),
   sourceId: zId.nullable().optional(),
   sourceFileId: zId,
+  sourceDocxSha256: z.string().regex(SIGN_SHA256_HEX_PATTERN).optional(),
   expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
   autoRemindBeforeExpiry: z.boolean().optional(),
 });
@@ -251,6 +254,10 @@ export const envelopeCreate = defineCommand({
       }
     }
 
+    if (input.sourceDocxSha256) {
+      await verifySourceDocxProvenance(ctx, input.sourceDocxSha256, file.sha256);
+    }
+
     const row = await insertEnvelopeGuardingProjectAcceptance(input.sourceKind, () =>
       ctx.trx
         .insertInto('ludy_sign.envelope')
@@ -287,7 +294,9 @@ export const envelopeCreate = defineCommand({
       actorId: userId,
       actorLabel: actorLabelOf(ctx),
       documentSha256: file.sha256,
-      payloadJson: { routingMode: input.routingMode, sourceKind: input.sourceKind },
+      payloadJson: input.sourceDocxSha256
+        ? { routingMode: input.routingMode, sourceKind: input.sourceKind, sourceDocxSha256: input.sourceDocxSha256 }
+        : { routingMode: input.routingMode, sourceKind: input.sourceKind },
       occurredAt: ctx.now,
     });
 
@@ -297,6 +306,7 @@ export const envelopeCreate = defineCommand({
       sourceFileId: file.id,
       routingMode: input.routingMode,
       sourceKind: input.sourceKind,
+      ...(input.sourceDocxSha256 ? { sourceDocxSha256: input.sourceDocxSha256 } : {}),
     });
     return {
       envelopeId: row.id,
@@ -2058,4 +2068,5 @@ export const signCommands = [
   ...signWebhookCommands,
   ...signPlaybookCommands,
   ...signApiKeyCommands,
+  ...signDocxConvertCommands,
 ];

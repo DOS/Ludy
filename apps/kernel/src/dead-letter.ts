@@ -100,26 +100,40 @@ export async function takeDeadLetter(runtime: Runtime, job: DeadLetter): Promise
     return 'refused';
   }
   console.log(`[dead-letter] ${queue} job ${ref} of org ${owner.orgId.slice(0, 8)}: ${done.raised ? 'Inbox item raised' : `counted on the open item (${done.failures} today)`}`);
-  // Mark permanently failed HR CV extraction jobs so GET /api/hr/recruiting/cv-extract/:jobId returns 422 instead of staying pending.
-  if (
-    queue === 'hr-cv-extract' &&
-    job.data !== null &&
-    typeof job.data === 'object' &&
-    typeof (job.data as { jobId?: unknown }).jobId === 'string' &&
-    UUID.test((job.data as { jobId: string }).jobId)
-  ) {
+  // Mark permanently failed extract jobs so HTTP poll routes return 422 instead of staying pending forever.
+  const deadJobData = job.data !== null && typeof job.data === 'object' ? (job.data as Record<string, unknown>) : null;
+  const deadJobId = deadJobData && typeof deadJobData.jobId === 'string' && UUID.test(deadJobData.jobId) ? deadJobData.jobId : null;
+  const deadExtractCommand =
+    queue === 'hr-cv-extract' && deadJobId
+      ? {
+          command: 'hr.recruiting.cv_extract.complete',
+          input: { jobId: deadJobId, ok: false, resultSha256: null, errorCode: 'HR_CV_EXTRACT_FAILED' },
+          component: 'hr.cv_extract',
+          label: 'CV',
+        }
+      : queue === 'sign-pdf-inspect' && deadJobData?.targetKind === 'docx_convert' && deadJobId
+        ? {
+            command: 'sign.docx_convert.complete',
+            input: { jobId: deadJobId, ok: false, pdfSha256: null, errorCode: 'SIGN_DOCX_CONVERT_FAILED' },
+            component: 'sign.docx_convert',
+            label: 'Sign DOCX',
+          }
+        : null;
+  if (deadExtractCommand) {
     try {
-      await runtime.execute(
-        'hr.recruiting.cv_extract.complete',
-        { jobId: (job.data as { jobId: string }).jobId, ok: false, resultSha256: null, errorCode: 'HR_CV_EXTRACT_FAILED' },
-        { actor: { type: 'system', component: 'hr.cv_extract' }, orgId: owner.orgId },
-      );
+      await runtime.execute(deadExtractCommand.command, deadExtractCommand.input, {
+        actor: { type: 'system', component: deadExtractCommand.component },
+        orgId: owner.orgId,
+        idempotencyKey: `dead-letter-extract:${queue}:${deadJobId}`,
+      });
     } catch (error) {
       if (error instanceof DomainError && (error.code === 'MODULE_OFF' || error.code === 'FORBIDDEN' || error.status === 404)) {
-        console.warn(`[dead-letter] ${queue} job ${ref} of org ${owner.orgId.slice(0, 8)}: CV failed completion skipped (${error.code})`);
+        console.warn(
+          `[dead-letter] ${queue} job ${ref} of org ${owner.orgId.slice(0, 8)}: ${deadExtractCommand.label} failed completion skipped (${error.code})`,
+        );
       } else {
         console.error(
-          `[dead-letter] ${queue} job ${ref} of org ${owner.orgId.slice(0, 8)}: CV failed completion error`,
+          `[dead-letter] ${queue} job ${ref} of org ${owner.orgId.slice(0, 8)}: ${deadExtractCommand.label} failed completion error`,
           error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'error',
         );
         throw error;

@@ -103,3 +103,32 @@ describe('takeDeadLetter for hr-cv-extract (#4446)', () => {
     }
   });
 });
+
+describe('takeDeadLetter for sign docx_convert (#4721)', () => {
+  const docxJobId = randomUUID();
+  const docxLetter = (): DeadLetter =>
+    letter({
+      sourceName: QUEUES.signPdfInspect,
+      singletonKey: jobKey(orgA, QUEUES.signPdfInspect, `docx-${docxJobId}`),
+      data: { orgId: orgA, targetKind: 'docx_convert', jobId: docxJobId },
+    });
+
+  it('records failed sign.docx_convert.complete on dead-lettered docx_convert job and rethrows transient DB errors', async () => {
+    const execute = vi.fn(async (command: string, input?: unknown) => {
+      if (command === 'kernel.job.dead_letter') return { raised: true, failures: 1 };
+      expect(command).toBe('sign.docx_convert.complete');
+      expect(input).toMatchObject({ jobId: docxJobId, ok: false, pdfSha256: null, errorCode: 'SIGN_DOCX_CONVERT_FAILED' });
+      return { ok: true };
+    });
+    const fakeRuntime = { execute } as unknown as Runtime;
+    await expect(takeDeadLetter(fakeRuntime, docxLetter())).resolves.toBe('raised');
+
+    const failRuntime = {
+      execute: vi.fn(async (command: string) => {
+        if (command === 'kernel.job.dead_letter') return { raised: true, failures: 1 };
+        throw new Error('transient db outage');
+      }),
+    } as unknown as Runtime;
+    await expect(takeDeadLetter(failRuntime, docxLetter())).rejects.toThrow('transient db outage');
+  });
+});

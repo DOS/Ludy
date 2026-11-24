@@ -6,10 +6,15 @@
 import { EXTRACT_LIMITS } from '@ludy/extract-contract';
 import { readZipParts, type ZipLimits } from './zip.ts';
 
+export type DocxErrorReason = 'invalid' | 'too_large' | 'output_too_large';
+
 export class DocxError extends Error {
-  constructor(message: string) {
+  readonly reason: DocxErrorReason;
+
+  constructor(message: string, reason: DocxErrorReason = 'invalid') {
     super(message);
     this.name = 'DocxError';
+    this.reason = reason;
   }
 }
 

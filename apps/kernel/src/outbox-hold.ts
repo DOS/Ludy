@@ -39,6 +39,7 @@ export const SELF_RECOVERING_EVENTS: ReadonlySet<string> = new Set([
   'sign.template.inspect_queued',
   'sign.envelope.seal_queued',
   'sign.ca.sign_queued',
+  'sign.docx_convert_queued',
 ]);
 
 // The kernel events whose consumer is an app's job: the extraction of an uploaded file is Finance's, so a file stored while Finance is off is read when it is back.
@@ -57,7 +58,7 @@ const HOLDING_PREFIXES: Readonly<Record<string, string>> = {
   'hr.': 'hr',
   // Only the attachment extraction requests of Notes (#3561); its other events keep flowing as before.
   'notes.attachment.': 'notes',
-  // Signer KYC attachment PDF inspection (#4443); Sign's other events recover via sweepSignPendingWork in SELF_RECOVERING_EVENTS.
+  // Signer KYC attachment PDF inspection (#4443); Sign's other events recover via sweepSignPendingWork and sign.docx_convert.pending in SELF_RECOVERING_EVENTS.
   'sign.kyc.': 'sign',
 };
 

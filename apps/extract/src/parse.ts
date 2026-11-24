@@ -7,6 +7,7 @@ import { EXTRACT_LIMITS, MarketplaceColumnsInputError, PdfEmbedCmsInputError, Pd
 import { embedPdfCms } from './cms.ts';
 import { DsnError, readDsn } from './dsn.ts';
 import { DocxError, readDocxText } from './docx-text.ts';
+import { convertDocxToPdf } from './docx-to-pdf.ts';
 import { EInvoiceParseError, parseEInvoiceXml } from './einvoice-xml.ts';
 import { HtmlMetaError, htmlText, readHtmlMeta } from './html-meta.ts';
 import { FeedError, readFeed } from './feed.ts';
@@ -184,6 +185,8 @@ async function parseKind(kind: ExtractKind, bytes: Uint8Array): Promise<ExtractS
       return pdfText(bytes);
     case 'docx_text':
       return { ok: true, kind, text: readDocxText(bytes) };
+    case 'docx_to_pdf':
+      return convertDocxToPdf(bytes);
     case 'pdf_inspect':
       return inspectPdf(bytes);
     case 'pdf_seal':
@@ -225,6 +228,7 @@ const UNREADABLE: Record<ExtractKind, string> = {
   einvoice_xml: 'Không đọc được XML hóa đơn điện tử',
   pdf_text: 'Không đọc được tệp PDF',
   docx_text: 'Không đọc được tệp Word (.docx)',
+  docx_to_pdf: 'Không chuyển được tệp Word (.docx) sang PDF',
   pdf_inspect: 'Không kiểm tra được tệp PDF',
   pdf_seal: 'Không đóng dấu được tệp PDF',
   pdf_embed_cms: 'Không nhúng được chữ ký số CMS vào tệp PDF',
@@ -246,9 +250,11 @@ export async function parse(kind: ExtractKind, bytes: Uint8Array): Promise<Extra
     result = await parseKind(kind, bytes);
   } catch (error) {
     // The e-invoice parser, eSign PDF handlers and ZIP reader explain what is wrong; other parser errors are not passed on.
+    if (error instanceof DocxError) {
+      return failure(error.reason === 'too_large' || error.reason === 'output_too_large' ? 'too_large' : 'invalid', error.message);
+    }
     if (
       error instanceof EInvoiceParseError ||
-      error instanceof DocxError ||
       error instanceof ArchiveError ||
       error instanceof PortalListError ||
       error instanceof DsnError ||
