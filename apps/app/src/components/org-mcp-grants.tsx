@@ -4,7 +4,7 @@
 // switch for member-bound connections (off by default). The kernel lists and revokes with kernel.mcp.grant.list and revoke and never returns a token; a disconnected client is refused on its next
 // request (its tokens stop at once) and the revoke writes an audit row. The name a client shows is the one it gave itself. No AI takes part on this screen.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
@@ -46,17 +46,24 @@ function PairingCode() {
   const [open, setOpen] = useState(false);
   const [label, setLabel] = useState('');
   const [copied, setCopied] = useState(false);
+  // The form disappears when the code appears, so focus moves to the code's block (a keyboard or screen reader user is not left on a button that is gone) and back to the opener when it closes.
+  const codeRef = useRef<HTMLDivElement>(null);
+  const openerRef = useRef<HTMLButtonElement>(null);
   const issue = useMutation(
     orpc.mcp.pairing.issue.mutationOptions({
       onError: () => void queryClient.invalidateQueries({ queryKey: orpc.mcp.key() }),
     }),
   );
+  useEffect(() => {
+    if (issue.data) codeRef.current?.focus();
+  }, [issue.data]);
   const done = () => {
     issue.reset();
     setOpen(false);
     setLabel('');
     setCopied(false);
     void queryClient.invalidateQueries({ queryKey: orpc.mcp.key() });
+    queueMicrotask(() => openerRef.current?.focus());
   };
   const copy = (code: string) => {
     void navigator.clipboard?.writeText(code).then(
@@ -73,7 +80,7 @@ function PairingCode() {
           <p className="text-xs text-subtle-foreground">{t('hint')}</p>
         </div>
         {!open && (
-          <Button size="sm" variant="outline" aria-expanded={false} onClick={() => setOpen(true)}>
+          <Button ref={openerRef} size="sm" variant="outline" aria-expanded={false} onClick={() => setOpen(true)}>
             {t('open')}
           </Button>
         )}
@@ -88,7 +95,7 @@ function PairingCode() {
         >
           <label className="block space-y-1">
             <span className="text-foreground">{t('label')}</span>
-            <Input autoComplete="off" maxLength={120} placeholder={t('labelPlaceholder')} value={label} onChange={(e) => setLabel(e.target.value)} />
+            <Input autoFocus autoComplete="off" maxLength={120} placeholder={t('labelPlaceholder')} value={label} onChange={(e) => setLabel(e.target.value)} />
           </label>
           <p className="text-xs text-subtle-foreground">{t('scopeNote')}</p>
           {issue.error && <ErrorText>{errorMessage(issue.error)}</ErrorText>}
@@ -103,7 +110,7 @@ function PairingCode() {
         </form>
       )}
       {issue.data && (
-        <div className="space-y-2" role="status" data-testid="org-mcp-pairing-code">
+        <div ref={codeRef} tabIndex={-1} className="space-y-2 outline-none" role="status" data-testid="org-mcp-pairing-code">
           <p className="font-medium text-foreground">{t('codeOnce')}</p>
           <code className="block break-all rounded bg-muted px-2 py-2 text-center text-lg font-semibold tracking-widest text-foreground">{issue.data.code}</code>
           <p className="text-xs text-subtle-foreground">{t('expires', { at: f.dateTime(issue.data.expiresAt) })}</p>
@@ -112,6 +119,9 @@ function PairingCode() {
             <Button size="sm" variant="outline" onClick={() => copy(issue.data.code)}>
               {copied ? t('copied') : t('copy')}
             </Button>
+            <span role="status" className="sr-only">
+              {copied ? t('copied') : ''}
+            </span>
             <Button size="sm" onClick={done}>
               {t('done')}
             </Button>
