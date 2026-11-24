@@ -377,6 +377,9 @@ describe('OverviewPage layout compression and Day-1 SME quick-start (#4644)', ()
     expect(memberSocialOnly).not.toContain('data-testid="quickstart-step-connectChannel"');
     expect(memberSocialOnly).toContain('Quick start');
     expect(memberSocialOnly).not.toContain('Quick start in 1 steps');
+    const memberSocialVi = renderOverview({ locale: 'vi', role: 'member', overview: EMPTY_OVERVIEW, todayItems: [] });
+    expect(memberSocialVi).toContain('Bắt đầu nhanh');
+    expect(memberSocialVi).not.toContain('trong 1 bước');
   });
 
   it('does not mount TodayWeekly or PageHeader uploadAction before initial queries settle', () => {
