@@ -17405,6 +17405,7 @@ export const en = {
       SIGN_INVALID_FIELD_OPTION: 'The selected option or choice option list is invalid.',
       SIGN_MINUTES_NOT_SHARED: 'Share the meeting minutes before creating a signing envelope.',
       SIGN_MINUTES_SIGNING_OFF: 'Signing meeting minutes is turned off for your organization. An owner or admin can turn it on in the meetings settings.',
+      SIGN_MINUTES_CHANGED: 'The meeting minutes changed after this envelope was created. Start the signature again from the current minutes.',
       SIGN_PRIVATE_PROJECT_ACCEPTANCE_FORBIDDEN: 'Private projects cannot create shared eSign acceptance envelopes.',
       SIGN_SOURCE_NOT_FOUND: 'The linked source record was not found or you do not have access to it.',
       SIGN_OBLIGATION_DATE_ORDER: 'Expiry date must be on or after the effective date.',

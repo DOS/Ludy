@@ -154,10 +154,12 @@ vi.mock('../src/lib/api.ts', async () => {
 
 const {
   MeetingMinutesSignHandoff,
+  canCreateMeetingMinutesEnvelope,
   canDownloadSealedMeetingMinutes,
   canStartMeetingMinutesSignHandoff,
   createMeetingMinutesSignHandoffAttempt,
   hasSharedMeetingMinutes,
+  isMeetingMinutesEnvelopeStale,
   performMeetingMinutesSignHandoff,
 } = await import('../src/components/meeting-minutes-sign-handoff.tsx');
 const { MeetingResults } = await import('../src/components/meeting-results.tsx');
@@ -519,6 +521,24 @@ describe('Ludy Notes -> Ludy eSign shared meeting minutes handoff (#3811)', () =
     );
     expect(expiredHtml).toContain('>Hết hạn<');
     expect(expiredHtml).toContain('data-testid="meeting-minutes-send-esign"');
+
+    // Stale is the server's word (#4532), not a hash read from the title: an envelope for older minutes (even a signed one) can be started again, a title that looks like a revision means nothing.
+    expect(isMeetingMinutesEnvelopeStale(SHARED_RESULTS, makeEnvelope('draft', { stale: true }))).toBe(true);
+    expect(isMeetingMinutesEnvelopeStale(SHARED_RESULTS, makeEnvelope('draft', { stale: false }))).toBe(false);
+    expect(isMeetingMinutesEnvelopeStale(SHARED_RESULTS, makeEnvelope('draft', { title: 'Biên bản [#deadbeef]' }))).toBe(false);
+    expect(isMeetingMinutesEnvelopeStale(UNSHARED_DRAFT_RESULTS, makeEnvelope('draft', { stale: true }))).toBe(false);
+    expect(isMeetingMinutesEnvelopeStale(SHARED_RESULTS, null)).toBe(false);
+    expect(canStartMeetingMinutesSignHandoff(SHARED_RESULTS, makeEnvelope('completed'))).toBe(false);
+    expect(canStartMeetingMinutesSignHandoff(SHARED_RESULTS, makeEnvelope('completed', { stale: true }))).toBe(true);
+
+    // The recorder, an org owner or an admin is offered the signature, a plain reader and a viewer are not (the server refuses a reader with 403, #4532).
+    expect(canCreateMeetingMinutesEnvelope('member', true)).toBe(true);
+    expect(canCreateMeetingMinutesEnvelope('member', undefined)).toBe(true);
+    expect(canCreateMeetingMinutesEnvelope('owner', false)).toBe(true);
+    expect(canCreateMeetingMinutesEnvelope('admin', false)).toBe(true);
+    expect(canCreateMeetingMinutesEnvelope('member', false)).toBe(false);
+    expect(canCreateMeetingMinutesEnvelope('viewer', true)).toBe(false);
+    expect(canCreateMeetingMinutesEnvelope('viewer', false)).toBe(false);
   });
 
   it('prefills attendees + linked external party contacts, resumes mid-handoff retries idempotently, and guards org switch', async () => {
