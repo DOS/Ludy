@@ -162,6 +162,24 @@ function copyDiagnostics(tag) {
   if (existsSync(installRoot)) writeFileSync(join(dir, `${tag}-install-root.txt`), readdirSync(installRoot).join('\n'));
 }
 
+// Files under --out (what the artifact would carry) that hold a token the fake issued, or the `crx_` token marker.
+function filesWithTokens() {
+  const tokens = fake.issuedTokens().map((t) => Buffer.from(t));
+  const bad = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (statSync(path).size < 32 * 1024 * 1024) {
+        const data = readFileSync(path);
+        if (tokens.some((t) => data.includes(t)) || data.includes(Buffer.from('crx_'))) bad.push(path);
+      }
+    }
+  };
+  walk(out);
+  return bad;
+}
+
 // ---- the steps ----
 
 const results = [];
@@ -316,6 +334,8 @@ try {
       if (name.endsWith('.nupkg')) for (let i = 0; i < Math.min(2048, data.length); i += 1) data[data.length - 1 - i] ^= 0xff;
       writeFileSync(join(bad, name), data);
     }
+    // A check that is still running (the one at start) would swallow the command: wait until the app is idle first.
+    await waitState('update state "idle" before the feed is swapped', (s) => s.update.kind === 'idle', { timeoutMs: 60_000 });
     feedDir = bad;
     const before = readState();
     sendCommand('check-update');
@@ -335,7 +355,11 @@ try {
     const before = readState();
     sendCommand('check-update');
     const ready = await waitState('update state "ready" (downloaded by Squirrel from the local feed)', (s) => s.update.kind === 'ready', { timeoutMs: 180_000 });
-    assert(fake.feedRequests.some((r) => r.status === 200 && r.file.endsWith('-full.nupkg') && r.file.includes(versionB)), 'Squirrel did not download the full package of the new version');
+    // Squirrel keeps the downloaded package: it must be B's own, byte for byte in size (the corrupt copy kept the same size, so the unpacked app-B below proves the content).
+    const packageName = readdirSync(installerB).find((n) => n.endsWith('-full.nupkg'));
+    const downloaded = join(installRoot, 'packages', packageName);
+    assert(existsSync(downloaded) && statSync(downloaded).size === statSync(join(installerB, packageName)).size, `the downloaded ${packageName} is missing or not B's package`);
+    assert(readFileSync(downloaded).equals(readFileSync(join(installerB, packageName))), 'the downloaded package differs from the one in the feed');
     assert(existsSync(join(installRoot, `app-${versionB}`, EXE)), `app-${versionB} was not unpacked next to the running version`);
     assert(ready.version === versionA, 'the running version changed before the restart was chosen');
     sendCommand('restart');
@@ -368,19 +392,7 @@ try {
   });
 
   await step('no-token-in-logs-or-artifacts', async () => {
-    const tokens = fake.issuedTokens().map((t) => Buffer.from(t));
-    const bad = [];
-    const walk = (dir) => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const path = join(dir, entry.name);
-        if (entry.isDirectory()) walk(path);
-        else if (statSync(path).size < 32 * 1024 * 1024) {
-          const data = readFileSync(path);
-          if (tokens.some((t) => data.includes(t)) || data.includes(Buffer.from('crx_'))) bad.push(path);
-        }
-      }
-    };
-    walk(out);
+    const bad = filesWithTokens();
     assert(bad.length === 0, `a token or token marker is in: ${bad.join(', ')}`);
   });
 } catch {
@@ -391,6 +403,13 @@ try {
   writeFileSync(join(out, 'fake-ludy-requests.log'), `${fake.requestLog.join('\n')}\n`);
   writeFileSync(join(out, 'processes-at-end.txt'), JSON.stringify(await ludyProcesses().catch(() => []), null, 2));
   rmSync(join(smokeDir, 'command.json'), { force: true });
+  // The files written just above were not there for the step: scan again so the artifact is clean as uploaded.
+  const leaked = filesWithTokens();
+  if (leaked.length > 0) {
+    failed = true;
+    results.push({ name: 'final-scan-no-token-in-artifacts', ok: false, seconds: 0, note: `a token or token marker is in: ${leaked.join(', ')}` });
+    for (const file of leaked) rmSync(file, { force: true });
+  }
   await fake.close();
   const rows = results.map((r) => `| ${r.ok ? 'pass' : '**FAIL**'} | ${r.name} | ${r.seconds.toFixed(1)} s | ${r.note.replace(/\|/g, '/').replace(/\r?\n/g, ' ')} |`);
   const lines = [`### Ludy Desktop Windows install smoke (unsigned, ${versionA} then ${versionB})`, '', '| result | step | time | note |', '|---|---|---|---|', ...rows];

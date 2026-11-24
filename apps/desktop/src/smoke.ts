@@ -7,7 +7,9 @@
 //     same functions as the tray menu items, then deleted.
 // No Electron import here, so it runs in unit tests.
 import { isAbsolute } from 'node:path';
-import { isLoopbackHost } from './config.ts';
+// Only the literal loopback forms: a name such as x.localhost depends on the resolver and is not accepted here.
+const LOOPBACK_LITERALS = new Set(['localhost', '127.0.0.1', '[::1]']);
+export const MAX_COMMAND_BYTES = 1024;
 
 export const SMOKE_DIR_ENV = 'LUDY_DESKTOP_SMOKE_DIR';
 export const SMOKE_POLL_MS = 500;
@@ -19,13 +21,14 @@ export function smokeDirFor(env: Readonly<Record<string, string | undefined>>, l
   const dir = env[SMOKE_DIR_ENV]?.trim();
   if (!dir || !isAbsolute(dir) || ludyUrl === null) return null;
   try {
-    return isLoopbackHost(new URL(ludyUrl).hostname) ? dir : null;
+    return LOOPBACK_LITERALS.has(new URL(ludyUrl).hostname.toLowerCase()) ? dir : null;
   } catch {
     return null;
   }
 }
 
 export function parseSmokeCommand(text: string): SmokeCommand | null {
+  if (text.length > MAX_COMMAND_BYTES) return null;
   try {
     const parsed = JSON.parse(text) as { command?: unknown };
     return SMOKE_COMMANDS.find((c) => c === parsed.command) ?? null;

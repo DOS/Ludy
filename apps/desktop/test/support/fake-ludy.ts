@@ -176,7 +176,9 @@ export async function startFakeLudy(options: FakeLudyOptions = {}): Promise<Fake
       if (status !== 200 || dir === null) return json(res, 404, { code: 'NOT_FOUND' });
       res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': size, 'cache-control': 'no-store' });
       if (method === 'HEAD') return void res.end();
-      createReadStream(join(dir, file)).pipe(res);
+      createReadStream(join(dir, file))
+        .once('error', () => res.destroy())
+        .pipe(res);
       return;
     }
 

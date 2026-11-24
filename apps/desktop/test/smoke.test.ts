@@ -12,6 +12,7 @@ describe('smokeDirFor', () => {
   it('stays off for a real deployment, no address, no folder or a relative folder', () => {
     expect(smokeDirFor({ [SMOKE_DIR_ENV]: DIR }, 'https://ludy.example.vn')).toBeNull();
     expect(smokeDirFor({ [SMOKE_DIR_ENV]: DIR }, null)).toBeNull();
+    expect(smokeDirFor({ [SMOKE_DIR_ENV]: DIR }, 'http://ludy.localhost:8080')).toBeNull();
     expect(smokeDirFor({}, 'http://127.0.0.1:5000')).toBeNull();
     expect(smokeDirFor({ [SMOKE_DIR_ENV]: '  ' }, 'http://127.0.0.1:5000')).toBeNull();
     expect(smokeDirFor({ [SMOKE_DIR_ENV]: 'relative/dir' }, 'http://127.0.0.1:5000')).toBeNull();
@@ -25,6 +26,7 @@ describe('parseSmokeCommand', () => {
     expect(parseSmokeCommand('{"command":"toString"}')).toBeNull();
     expect(parseSmokeCommand('not json')).toBeNull();
     expect(parseSmokeCommand('{}')).toBeNull();
+    expect(parseSmokeCommand(`{"command":"quit","pad":"${'x'.repeat(2000)}"}`)).toBeNull();
   });
 });
 
