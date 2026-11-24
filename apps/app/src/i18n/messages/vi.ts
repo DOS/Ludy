@@ -700,7 +700,7 @@ export const vi = {
       label: 'Báo cho tôi các cuộc họp trong ngày vào mỗi buổi sáng',
       at: 'Lúc',
       zone: 'Theo múi giờ của bạn: {zone}',
-      noMail: 'Máy chủ này chưa gửi được email, nên chỉ có thông báo trong ứng dụng cho đến khi người cài đặt thiết lập thư.',
+      noMail: 'Máy chủ này chưa gửi được email, nên chưa có thư nào được gửi cho đến khi người cài đặt thiết lập thư. Thông báo trong ứng dụng vẫn hoạt động, và thông báo đẩy trên trình duyệt cũng vẫn gửi nếu đã bật trên thiết bị.',
       saved: 'Đã lưu',
     },
     todayMail: {

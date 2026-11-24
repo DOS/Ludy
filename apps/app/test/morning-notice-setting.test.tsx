@@ -94,9 +94,16 @@ describe('MorningNoticeSetting', () => {
 
   it('says so when the server cannot send mail, and speaks Vietnamese', () => {
     state.mail = false;
-    expect(render({ enabled: false })).toContain(catalog('en').notifications.morningNotice.noMail);
+    const enNoMail = catalog('en').notifications.morningNotice.noMail;
+    const viNoMail = catalog('vi').notifications.morningNotice.noMail;
+    expect(enNoMail).toContain('In-app notices');
+    expect(enNoMail).toContain('browser push');
+    expect(viNoMail).toContain('Thông báo trong ứng dụng');
+    expect(viNoMail).toContain('thông báo đẩy');
+    expect(render({ enabled: false })).toContain(enNoMail);
+    expect(render({ enabled: false, locale: 'vi' })).toContain(viNoMail);
     state.mail = true;
-    expect(render({ enabled: false })).not.toContain(catalog('en').notifications.morningNotice.noMail);
+    expect(render({ enabled: false })).not.toContain(enNoMail);
     expect(render({ enabled: false, locale: 'vi' })).toContain(catalog('vi').notifications.morningNotice.title);
   });
 });
