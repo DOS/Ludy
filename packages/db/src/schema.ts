@@ -1367,6 +1367,26 @@ export type HrBusinessTripRequestTable = Refine<
   },
   'legal_entity_id'
 >;
+export const HR_ADDENDUM_STATUSES = ['draft', 'issued', 'voided'] as const;
+export type HrAddendumStatus = (typeof HR_ADDENDUM_STATUSES)[number];
+export type HrContractAddendumTable = Refine<
+  G.HrContractAddendumTable,
+  {
+    status: Generated<HrAddendumStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
+export const HR_ASSET_STATUSES = ['assigned', 'returned', 'lost_waived'] as const;
+export type HrAssetStatus = (typeof HR_ASSET_STATUSES)[number];
+export type HrEmployeeAssetHandoverTable = Refine<
+  G.HrEmployeeAssetHandoverTable,
+  {
+    status: Generated<HrAssetStatus>;
+    legal_entity_id: LegalEntityColumn;
+  },
+  'legal_entity_id'
+>;
 export type HrPayrollRunTable = Refine<G.HrPayrollRunTable, { status: Generated<(typeof HR_RUN_STATUSES)[number]> }>;
 export type HrPayrollLineTable = Refine<
   G.HrPayrollLineTable,
@@ -1811,7 +1831,9 @@ type Refined = Tables<{
   'ludy_hr.attendance_qr_config': HrAttendanceQrConfigTable;
   'ludy_hr.business_trip_request': HrBusinessTripRequestTable;
   'ludy_hr.candidate': HrCandidateTable;
+  'ludy_hr.contract_addendum': HrContractAddendumTable;
   'ludy_hr.department': HrDepartmentTable;
+  'ludy_hr.employee_asset_handover': HrEmployeeAssetHandoverTable;
   'ludy_hr.job_opening': HrJobOpeningTable;
   'ludy_hr.leave_request': HrLeaveRequestTable;
   'ludy_hr.onboarding_submission': HrOnboardingSubmissionTable;

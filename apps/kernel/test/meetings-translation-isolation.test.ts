@@ -109,6 +109,8 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'ludy_kernel_org_purge_hr_stage6b.sql',
       // #4493 (Slice 2): projects triage adds project_triage_item to org_purge.
       'ludy_kernel_org_purge_projects_triage.sql',
+      // #4528 (HR Stage 6C): the purge restatement that adds ludy_hr.contract_addendum and ludy_hr.employee_asset_handover restates the whole list, the translation table included; its body is the previous one.
+      'ludy_kernel_org_purge_hr_stage6c.sql',
     ]);
   });
 });

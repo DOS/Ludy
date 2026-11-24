@@ -52,6 +52,12 @@ export interface HrContractSignSource {
     taxCode?: string | null;
     address?: string | null;
   } | null;
+  addendum?: {
+    id: string;
+    addendumNumber: string;
+    effectiveOn: string;
+    status: 'draft' | 'issued' | 'voided';
+  } | null;
 }
 
 export interface HrContractSignHandoffProps {
@@ -68,8 +74,13 @@ export function canStartHrContractSignHandoff(
   employment: Pick<HrEmploymentView, 'contractType'>,
   envelope: Pick<SignEnvelopeBySourceItem, 'envelopeId' | 'status'> | null | undefined,
   unfinishedEnvelopeId: string | null = null,
+  addendum: HrContractSignSource['addendum'] = null,
 ): boolean {
-  if (employment.contractType === 'none') return false;
+  if (addendum) {
+    if (addendum.status !== 'issued') return false;
+  } else if (employment.contractType === 'none') {
+    return false;
+  }
   if (!envelope) return true;
   if (unfinishedEnvelopeId !== null && envelope.envelopeId === unfinishedEnvelopeId && envelope.status === 'draft') {
     return true;
@@ -112,6 +123,30 @@ async function tryFetchServerContractPdf(
 ): Promise<ServerContractPdfPayload | null> {
   const hrNamespace = (rpc as { hr?: Record<string, unknown> } | null)?.hr;
   if (!hrNamespace) return null;
+  if (source.addendum) {
+    const addendumNs = hrNamespace.addendum as
+      | { pdf?: (input: { addendumId: string; includeSignTags?: boolean }) => Promise<unknown> }
+      | undefined;
+    const addendumFn = addendumNs?.pdf;
+    if (typeof addendumFn !== 'function') {
+      throw new Error('Contract addendum PDF endpoint is unavailable');
+    }
+    const rawAddendum = await addendumFn({
+      addendumId: source.addendum.id,
+      includeSignTags: true,
+    });
+    if (!rawAddendum || typeof rawAddendum !== 'object') {
+      throw new Error('Failed to load contract addendum PDF');
+    }
+    const obj = rawAddendum as Record<string, unknown>;
+    if (typeof obj.pdfBase64 !== 'string' || obj.pdfBase64.length === 0) {
+      throw new Error('Contract addendum PDF payload was empty');
+    }
+    return {
+      ...(typeof obj.filename === 'string' ? { filename: obj.filename } : {}),
+      pdfBase64: obj.pdfBase64,
+    };
+  }
   const employeeNs = hrNamespace.employee as { contractPdf?: (input: { employeeId: string; termsId: string }) => Promise<unknown> } | undefined;
   const fn = employeeNs?.contractPdf;
   if (typeof fn !== 'function') return null;
@@ -297,7 +332,7 @@ export async function performHrContractSignHandoff({
       const created = await orgClient.sign.envelope.create({
         title: attempt.envelopeTitle,
         sourceKind: 'hr_contract',
-        sourceId: source.employment.id,
+        sourceId: source.addendum?.id ?? source.employment.id,
         sourceFileId: attempt.sourceFileId,
         idempotencyKey: attempt.envelopeCreateKey,
       });
@@ -383,7 +418,7 @@ function HrContractSignHandoffView({
   const t = useTranslations('hrEmployees');
   const { slug = '' } = useParams({ strict: false }) as { slug?: string };
   const navigate = useNavigate();
-  const attemptKey = source.employment.id;
+  const attemptKey = source.addendum?.id ?? source.employment.id;
   const attemptRef = useRef<{ key: string; attempt: HrContractSignHandoffAttempt } | null>(null);
   const [unfinished, setUnfinished] = useState<{
     key: string;
@@ -408,10 +443,15 @@ function HrContractSignHandoffView({
       return performHrContractSignHandoff({
         source,
         slug,
-        envelopeTitle: t('sign.envelopeTitle', {
-          name: source.employee.displayName,
-          date: source.employment.effectiveFrom,
-        }),
+        envelopeTitle: source.addendum
+          ? t('sign.addendumEnvelopeTitle', {
+              name: source.employee.displayName,
+              number: source.addendum.addendumNumber,
+            })
+          : t('sign.envelopeTitle', {
+              name: source.employee.displayName,
+              date: source.employment.effectiveFrom,
+            }),
         signerRoleLabel: t('sign.signerRoleLabel'),
         navigate: (opts) => navigate(opts),
         attempt: attemptRef.current.attempt,
@@ -439,15 +479,18 @@ function HrContractSignHandoffView({
     mutationFn: async () => {
       if (!canDownloadSealedHrContract(envelope)) return;
       const blob = await downloadSignFile(envelope.sealedFileId);
-      const safeDate = source.employment.effectiveFrom.replace(/[^0-9-]/g, '') || 'signed';
-      triggerBrowserBlobDownload(blob, `hop-dong-lao-dong-da-ky-${safeDate}.pdf`);
+      const safeDate = (source.addendum?.effectiveOn ?? source.employment.effectiveFrom).replace(/[^0-9-]/g, '') || 'signed';
+      const prefix = source.addendum ? 'phu-luc-hdld-da-ky' : 'hop-dong-lao-dong-da-ky';
+      triggerBrowserBlobDownload(blob, `${prefix}-${safeDate}.pdf`);
     },
   });
 
   const unfinishedEnvelopeId =
     externalUnfinishedId ?? resolveUnfinishedEnvelopeId(unfinished, attemptKey, envelope);
   const showSendButton =
-    canEdit && !envelopeLoading && canStartHrContractSignHandoff(source.employment, envelope, unfinishedEnvelopeId);
+    canEdit &&
+    !envelopeLoading &&
+    canStartHrContractSignHandoff(source.employment, envelope, unfinishedEnvelopeId, source.addendum);
   const showSealedDownload = canDownloadSealedHrContract(envelope);
   const statusText = envelope ? t(`sign.status.${envelope.status}`) : null;
   const activeError = handoff.error ?? downloadSealed.error;
@@ -459,7 +502,7 @@ function HrContractSignHandoffView({
           to="/o/$slug/sign/envelopes/$id"
           params={{ slug, id: envelope.envelopeId }}
           aria-label={t('sign.openLabel', { title: envelope.title, status: statusText })}
-          className="inline-flex items-center rounded-4xl focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+          className="inline-flex min-h-7 items-center rounded-4xl max-md:min-h-11 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
           data-testid="hr-contract-sign-status"
           data-status={envelope.status}
         >
@@ -537,14 +580,15 @@ function HrContractSignHandoffOwn({
   unfinishedEnvelopeId?: string | null;
   onCreated?: (envelopeId: string) => void;
 }) {
+  const handoffSourceId = source.addendum?.id ?? source.employment.id;
   const ownQuery = useQuery({
     ...orpc.sign.envelope.by_source.queryOptions({
-      input: { sourceKind: 'hr_contract', sourceIds: [source.employment.id] },
+      input: { sourceKind: 'hr_contract', sourceIds: [handoffSourceId] },
     }),
     retry: false,
     refetchInterval: (query) => signEnvelopePollMs(query.state.data?.items),
   });
-  const envelope = ownQuery.data?.items.find((item) => item.sourceId === source.employment.id) ?? null;
+  const envelope = ownQuery.data?.items.find((item) => item.sourceId === handoffSourceId) ?? null;
   return (
     <HrContractSignHandoffView
       source={source}

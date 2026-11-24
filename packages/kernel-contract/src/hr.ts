@@ -260,7 +260,11 @@ export type HrEmploymentAdd = z.infer<typeof zHrEmploymentAdd>;
 export const zHrFinalizationSet = z.strictObject({ employeeId: zId, year: z.number().int().min(2026).max(2100), authorized: z.boolean() });
 export type HrFinalizationSet = z.infer<typeof zHrFinalizationSet>;
 
-export const zHrEmployeeEnd = z.strictObject({ employeeId: zId, endedOn: zLocalDate });
+export const zHrEmployeeEnd = z.strictObject({
+  employeeId: zId,
+  endedOn: zLocalDate,
+  assetOverrideNote: z.string().trim().min(3).max(500).optional(),
+});
 export type HrEmployeeEnd = z.infer<typeof zHrEmployeeEnd>;
 
 export const zHrDependentAdd = z.strictObject({ employeeId: zId, displayName: zName, relation: z.enum(HR_RELATIONS), registeredOn: zLocalDate });

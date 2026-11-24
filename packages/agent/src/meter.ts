@@ -159,6 +159,8 @@ export const AI_FEATURES = {
   'hr.request_draft': 'hr',
   // Ly's cited HR policy Q&A on /hr/my (#4526 Stage 6A): answers strictly from caller-accessible shared org notes retrieved via notes.* queries with verified note citations.
   'hr.policy_qa': 'hr',
+  // Ly's pseudonymized contract addendum statutory completeness review (#4528 Stage 6C): reads alias P1, contract type, effective date, wage/title delta and scrubbed summary only; deterministic checks decide readiness, human HR issues/voids.
+  'hr.addendum_check': 'hr',
   // Vy (the general manager) proposing signing field placements on a draft eSign PDF (#3351): one call over page sizes, declared signer role keys and bounded page text per ask, the member waiting for it. A key of its own, so field proposals never cut off risky clause summaries or other AI features.
   'sign.field_propose': 'sign',
   // Vy (the general manager) summarizing risky clauses with exact verbatim quotes from a draft eSign PDF (#3351): one call over bounded page text per ask, the member waiting for it.
