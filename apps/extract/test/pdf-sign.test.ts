@@ -30,7 +30,7 @@ import {
 } from 'pdf-lib';
 import { parse } from '../src/parse.ts';
 import { runSandboxed } from '../src/sandbox.ts';
-import { inspectPdf } from '../src/seal.ts';
+import { inspectPdf, loadValidatedPdfForIncrementalUpdate } from '../src/seal.ts';
 import { createExtractApp } from '../src/server.ts';
 
 const stops: Array<() => Promise<void>> = [];
@@ -3302,7 +3302,7 @@ describe('pdf_seal', () => {
     );
     expect(await parse('pdf_inspect', recoverRootPdf)).toMatchObject({ ok: false, code: 'invalid' });
 
-    // 8. Hybrid /XRefStm must fail closed.
+    // 8. Malformed or dangling /XRefStm pointer must fail closed.
     const hybridPdf = makeRawPdf(
       [
         '<< /Type /Catalog /Pages 2 0 R >>',
@@ -7012,6 +7012,556 @@ describe('pdf_seal', () => {
     if (!bombInspectRes.ok) {
       expect(bombInspectRes.message).toContain('quá phức tạp');
     }
+  });
+
+  it('supports safe hybrid /XRefStm office-style PDFs while enforcing free precedence and failing closed on shadowing or corruption', async () => {
+    const encodePngUp = (rawRows: Uint8Array, columns: number): Buffer => {
+      const rowCount = rawRows.byteLength / columns;
+      const out = Buffer.alloc(rowCount * (columns + 1));
+      for (let r = 0; r < rowCount; r += 1) {
+        out[r * (columns + 1)] = 2;
+        for (let c = 0; c < columns; c += 1) {
+          const cur = rawRows[r * columns + c] ?? 0;
+          const up = r > 0 ? (rawRows[(r - 1) * columns + c] ?? 0) : 0;
+          out[r * (columns + 1) + 1 + c] = (cur - up) & 0xff;
+        }
+      }
+      return out;
+    };
+
+    const encodeXrefRows = (
+      rows: ReadonlyArray<
+        | { readonly kind: 0; readonly nextFree: number; readonly gen: number }
+        | { readonly kind: 1; readonly offset: number; readonly gen: number }
+        | { readonly kind: 2; readonly objStmNum: number; readonly index: number }
+      >,
+    ): Uint8Array => {
+      const buf = Buffer.alloc(rows.length * 7);
+      for (let i = 0; i < rows.length; i += 1) {
+        const row = rows[i]!;
+        const base = i * 7;
+        buf[base] = row.kind;
+        if (row.kind === 0) {
+          buf.writeUInt32BE(row.nextFree, base + 1);
+          buf.writeUInt16BE(row.gen, base + 5);
+        } else if (row.kind === 1) {
+          buf.writeUInt32BE(row.offset, base + 1);
+          buf.writeUInt16BE(row.gen, base + 5);
+        } else {
+          buf.writeUInt32BE(row.objStmNum, base + 1);
+          buf.writeUInt16BE(row.index, base + 5);
+        }
+      }
+      return buf;
+    };
+
+    const makeObjStm = (items: ReadonlyArray<{ readonly num: number; readonly body: string }>, compress = true): string => {
+      let header = '';
+      let bodies = '';
+      for (const item of items) {
+        header += `${item.num} ${bodies.length} `;
+        bodies += `${item.body}\n`;
+      }
+      const rawData = Buffer.from(`${header}${bodies}`, 'latin1');
+      if (!compress) {
+        return `<< /Type /ObjStm /N ${items.length} /First ${header.length} /Length ${rawData.byteLength} >>\nstream\n${rawData.toString('latin1')}\nendstream`;
+      }
+      const compressed = deflateSync(rawData);
+      return `<< /Type /ObjStm /N ${items.length} /First ${header.length} /Filter /FlateDecode /Length ${compressed.byteLength} >>\nstream\n${compressed.toString('latin1')}\nendstream`;
+    };
+
+    const fmtEntry = (offset: number, gen = 0, flag: 'n' | 'f' = 'n'): string =>
+      `${String(offset).padStart(10, '0')} ${String(gen).padStart(5, '0')} ${flag} \n`;
+
+    const buildWordStyleHybridPdf = (opts: {
+      readonly includeXrefRoot?: boolean;
+      readonly omitIndexAndRepeatClassic?: boolean;
+      readonly compressFontInObjStm?: boolean;
+      readonly text?: string;
+      readonly extraClassicSubsections?: string;
+      readonly overrideClassicFreeNums?: ReadonlySet<number>;
+      readonly overrideXrefStmEntries?: ReadonlyMap<
+        number,
+        | { readonly kind: 0; readonly nextFree: number; readonly gen: number }
+        | { readonly kind: 1; readonly offset: number; readonly gen: number }
+        | { readonly kind: 2; readonly objStmNum: number; readonly index: number }
+      >;
+      readonly extraBodyAfterObjects?: string;
+      readonly xrefStmDictExtra?: string;
+      readonly trailerExtra?: string;
+    } = {}): {
+      readonly bytes: Uint8Array;
+      readonly classicXrefOffset: number;
+      readonly xrefStmOffset: number;
+      readonly offsets: ReadonlyMap<number, number>;
+    } => {
+      const pageText = opts.text ?? 'HYBRID_OFFICE_CONTRACT {{sig, r1}}';
+      const contentRaw = deflateSync(
+        Buffer.from(`BT\n/F1 12 Tf\n40 750 Td\n(${pageText}) Tj\nET\n`, 'latin1'),
+      );
+      const offsets = new Map<number, number>();
+      let out = '%PDF-1.7\n%\xe2\xe3\xcf\xd3\n';
+      const pushObj = (num: number, body: string): number => {
+        const off = out.length;
+        offsets.set(num, off);
+        out += `${num} 0 obj\n${body}\nendobj\n`;
+        return off;
+      };
+
+      pushObj(1, '<< /Type /Catalog /Pages 2 0 R /MarkInfo << /Marked true >> /StructTreeRoot 7 0 R >>');
+      pushObj(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+      pushObj(
+        3,
+        '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+      );
+      pushObj(
+        4,
+        `<< /Filter /FlateDecode /Length ${contentRaw.byteLength} >>\nstream\n${contentRaw.toString('latin1')}\nendstream`,
+      );
+      if (!opts.compressFontInObjStm) {
+        pushObj(5, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+      }
+
+      const compressedItems: Array<{ readonly num: number; readonly body: string }> = [];
+      if (opts.compressFontInObjStm) {
+        compressedItems.push({ num: 5, body: '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>' });
+      }
+      compressedItems.push(
+        { num: 7, body: '<< /Type /StructTreeRoot /ParentTree 8 0 R >>' },
+        { num: 8, body: '<< /Nums [] >>' },
+        { num: 9, body: '<< /Producer (Microsoft Word for Microsoft 365) /Title (Hybrid Office PDF) >>' },
+      );
+      const off6 = pushObj(6, makeObjStm(compressedItems, true));
+
+      if (opts.extraBodyAfterObjects) {
+        out += opts.extraBodyAfterObjects;
+      }
+
+      const xrefStmOffset = out.length;
+      offsets.set(10, xrefStmOffset);
+
+      const defaultRowFor = (
+        objNum: number,
+      ):
+        | { readonly kind: 0; readonly nextFree: number; readonly gen: number }
+        | { readonly kind: 1; readonly offset: number; readonly gen: number }
+        | { readonly kind: 2; readonly objStmNum: number; readonly index: number } => {
+        const overridden = opts.overrideXrefStmEntries?.get(objNum);
+        if (overridden) return overridden;
+        if (objNum === 0) return { kind: 0, nextFree: 0, gen: 65535 };
+        if (objNum >= 1 && objNum <= 4) return { kind: 1, offset: offsets.get(objNum)!, gen: 0 };
+        if (objNum === 5) {
+          return opts.compressFontInObjStm
+            ? { kind: 2, objStmNum: 6, index: 0 }
+            : { kind: 1, offset: offsets.get(5)!, gen: 0 };
+        }
+        if (objNum === 6) return { kind: 1, offset: off6, gen: 0 };
+        if (objNum >= 7 && objNum <= 9) {
+          const idx = compressedItems.findIndex((item) => item.num === objNum);
+          return { kind: 2, objStmNum: 6, index: idx };
+        }
+        return { kind: 1, offset: xrefStmOffset, gen: 0 };
+      };
+
+      const startIndex = opts.omitIndexAndRepeatClassic ? 0 : opts.compressFontInObjStm ? 5 : 6;
+      const rows: Array<ReturnType<typeof defaultRowFor>> = [];
+      for (let n = startIndex; n <= 10; n += 1) {
+        rows.push(defaultRowFor(n));
+      }
+      const rawRows = encodeXrefRows(rows);
+      const predictedRows = encodePngUp(rawRows, 7);
+      const compressedXref = deflateSync(predictedRows);
+      const indexClause = opts.omitIndexAndRepeatClassic ? '' : `/Index [${startIndex} ${11 - startIndex}] `;
+      const rootClause = opts.includeXrefRoot === false ? '' : '/Root 1 0 R /Info 9 0 R ';
+      const xrefDictExtra = opts.xrefStmDictExtra ?? '';
+      out +=
+        `10 0 obj\n<< /Type /XRef /Size 11 ${indexClause}/W [1 4 2] ${rootClause}/Filter /FlateDecode /DecodeParms << /Predictor 12 /Columns 7 >> ${xrefDictExtra}/Length ${compressedXref.byteLength} >>\n` +
+        `stream\n${compressedXref.toString('latin1')}\nendstream\nendobj\n`;
+
+      const classicXrefOffset = out.length;
+      const classicLimit = opts.compressFontInObjStm ? 4 : 5;
+      let classicTable = `xref\n0 ${classicLimit + 1}\n${fmtEntry(0, 65535, 'f')}`;
+      for (let n = 1; n <= classicLimit; n += 1) {
+        classicTable += opts.overrideClassicFreeNums?.has(n)
+          ? fmtEntry(0, 65535, 'f')
+          : fmtEntry(offsets.get(n)!, 0, 'n');
+      }
+      if (opts.extraClassicSubsections) {
+        classicTable += opts.extraClassicSubsections;
+      }
+      const trailerExtra = opts.trailerExtra ?? '';
+      out += `${classicTable}trailer\n<< /Size 11 /Root 1 0 R /Info 9 0 R /XRefStm ${xrefStmOffset} ${trailerExtra}>>\nstartxref\n${classicXrefOffset}\n%%EOF\n`;
+
+      return {
+        bytes: new Uint8Array(Buffer.from(out, 'latin1')),
+        classicXrefOffset,
+        xrefStmOffset,
+        offsets,
+      };
+    };
+
+    const assertRejectedBoth = async (pdfBytes: Uint8Array) => {
+      expect(await parse('pdf_inspect', pdfBytes)).toMatchObject({ ok: false, code: 'invalid' });
+      expect(
+        await parse(
+          'pdf_seal',
+          encodePdfSealInput({
+            pdfBase64: Buffer.from(pdfBytes).toString('base64'),
+            fields: [],
+            certificate: makeCertificate(),
+          }),
+        ),
+      ).toMatchObject({ ok: false, code: 'invalid' });
+    };
+
+    // 1. Realistic Word/Excel-style hybrid /XRefStm PDF (compressed Font + StructTreeRoot + Info in /ObjStm, Predictor 12 /XRefStm).
+    const validWordHybrid = buildWordStyleHybridPdf({
+      compressFontInObjStm: true,
+      includeXrefRoot: true,
+    });
+    const inspectWordRes = await parse('pdf_inspect', validWordHybrid.bytes);
+    expect(inspectWordRes).toMatchObject({
+      ok: true,
+      kind: 'pdf_inspect',
+      pageCount: 1,
+    });
+    if (inspectWordRes.ok && inspectWordRes.kind === 'pdf_inspect') {
+      expect(inspectWordRes.pages[0]?.text).toContain('HYBRID_OFFICE_CONTRACT');
+      expect(inspectWordRes.detectedTags).toHaveLength(1);
+      expect(inspectWordRes.detectedTags[0]?.roleKey).toBe('r1');
+    }
+    const sealWordRes = await parse(
+      'pdf_seal',
+      encodePdfSealInput({
+        pdfBase64: Buffer.from(validWordHybrid.bytes).toString('base64'),
+        fields: [],
+        certificate: makeCertificate(),
+      }),
+    );
+    expect(sealWordRes).toMatchObject({ ok: true, kind: 'pdf_seal', pageCount: 2 });
+    if (sealWordRes.ok && sealWordRes.kind === 'pdf_seal') {
+      const sealedBack = await readPdfBack(new Uint8Array(Buffer.from(sealWordRes.sealedPdfBase64, 'base64')));
+      expect(sealedBack.pageCount).toBe(2);
+      expect(sealedBack.pageTexts[0]).toContain('HYBRID_OFFICE_CONTRACT');
+    }
+    const incMeta = await loadValidatedPdfForIncrementalUpdate(validWordHybrid.bytes);
+    expect(incMeta.isXrefStream).toBe(false);
+    expect(incMeta.prevStartXrefOffset).toBe(validWordHybrid.classicXrefOffset);
+    expect(incMeta.maxObjNum).toBeGreaterThanOrEqual(10);
+
+    // 2. Hybrid /XRefStm omitting /Root and /Index (default [0 Size], repeating identical classic offsets + free obj 0).
+    const validNoIndexHybrid = buildWordStyleHybridPdf({
+      includeXrefRoot: false,
+      omitIndexAndRepeatClassic: true,
+      compressFontInObjStm: false,
+    });
+    expect(await parse('pdf_inspect', validNoIndexHybrid.bytes)).toMatchObject({
+      ok: true,
+      kind: 'pdf_inspect',
+      pageCount: 1,
+    });
+    expect(
+      await parse(
+        'pdf_seal',
+        encodePdfSealInput({
+          pdfBase64: Buffer.from(validNoIndexHybrid.bytes).toString('base64'),
+          fields: [],
+          certificate: makeCertificate(),
+        }),
+      ),
+    ).toMatchObject({ ok: true, kind: 'pdf_seal', pageCount: 2 });
+
+    // 3. Incremental classic update on top of a hybrid /XRefStm PDF (valid /Prev -> hybrid section).
+    const baseStr = Buffer.from(validWordHybrid.bytes).toString('latin1');
+    const updatedContentStream = deflateSync(
+      Buffer.from('BT\n/F1 12 Tf\n40 750 Td\n(AMENDED_HYBRID_200) Tj\nET\n', 'latin1'),
+    );
+    const rev2Obj4Offset = baseStr.length;
+    const rev2Obj4 = `4 0 obj\n<< /Filter /FlateDecode /Length ${updatedContentStream.byteLength} >>\nstream\n${updatedContentStream.toString('latin1')}\nendstream\nendobj\n`;
+    const rev2XrefOffset = rev2Obj4Offset + rev2Obj4.length;
+    const incrementalOnHybridBytes = new Uint8Array(
+      Buffer.from(
+        `${baseStr}${rev2Obj4}xref\n4 1\n${fmtEntry(rev2Obj4Offset, 0, 'n')}trailer\n<< /Size 11 /Root 1 0 R /Info 9 0 R /Prev ${validWordHybrid.classicXrefOffset} >>\nstartxref\n${rev2XrefOffset}\n%%EOF\n`,
+        'latin1',
+      ),
+    );
+    const incHybridInspect = await parse('pdf_inspect', incrementalOnHybridBytes);
+    expect(incHybridInspect).toMatchObject({ ok: true, kind: 'pdf_inspect', pageCount: 1 });
+    if (incHybridInspect.ok && incHybridInspect.kind === 'pdf_inspect') {
+      expect(incHybridInspect.pages[0]?.text).toContain('AMENDED_HYBRID_200');
+      expect(incHybridInspect.pages[0]?.text).not.toContain('HYBRID_OFFICE_CONTRACT');
+    }
+
+    // 4. Multi-revision hybrid /Prev chain where newer hybrid /XRefStm carries /Prev pointing to older /XRefStm.
+    const rev2ObjStm = makeObjStm([
+      { num: 9, body: '<< /Producer (Microsoft Excel) /Title (Rev2 Hybrid) >>' },
+    ]);
+    const rev2ObjStmOffset = baseStr.length + rev2Obj4.length;
+    const rev2Obj11 = `11 0 obj\n${rev2ObjStm}\nendobj\n`;
+    const rev2XrefStmOffset = rev2ObjStmOffset + rev2Obj11.length;
+    const rev2XrefRows = encodeXrefRows([
+      { kind: 2, objStmNum: 11, index: 0 },
+      { kind: 1, offset: rev2ObjStmOffset, gen: 0 },
+      { kind: 1, offset: rev2XrefStmOffset, gen: 0 },
+    ]);
+    const rev2XrefPayload = deflateSync(encodePngUp(rev2XrefRows, 7));
+    const rev2XrefStmObj =
+      `12 0 obj\n<< /Type /XRef /Size 13 /Index [9 1 11 2] /W [1 4 2] /Root 1 0 R /Prev ${validWordHybrid.xrefStmOffset} /Filter /FlateDecode /DecodeParms << /Predictor 12 /Columns 7 >> /Length ${rev2XrefPayload.byteLength} >>\n` +
+      `stream\n${rev2XrefPayload.toString('latin1')}\nendstream\nendobj\n`;
+    const rev2HybridClassicOffset = rev2XrefStmOffset + rev2XrefStmObj.length;
+    const dualHybridBytes = new Uint8Array(
+      Buffer.from(
+        `${baseStr}${rev2Obj4}${rev2Obj11}${rev2XrefStmObj}xref\n4 1\n${fmtEntry(rev2Obj4Offset, 0, 'n')}trailer\n<< /Size 13 /Root 1 0 R /Info 9 0 R /Prev ${validWordHybrid.classicXrefOffset} /XRefStm ${rev2XrefStmOffset} >>\nstartxref\n${rev2HybridClassicOffset}\n%%EOF\n`,
+        'latin1',
+      ),
+    );
+    expect(await parse('pdf_inspect', dualHybridBytes)).toMatchObject({ ok: true, kind: 'pdf_inspect', pageCount: 1 });
+    expect(
+      await parse(
+        'pdf_seal',
+        encodePdfSealInput({
+          pdfBase64: Buffer.from(dualHybridBytes).toString('base64'),
+          fields: [],
+          certificate: makeCertificate(),
+        }),
+      ),
+    ).toMatchObject({ ok: true, kind: 'pdf_seal', pageCount: 2 });
+
+    // 5a. Free-entry precedence: newer classic revision marks compressed obj 9 as free (f); older /XRefStm cannot resurrect it.
+    const freeNewerClassicBytes = new Uint8Array(
+      Buffer.from(
+        `${baseStr}xref\n9 1\n${fmtEntry(0, 1, 'f')}trailer\n<< /Size 11 /Root 1 0 R /Prev ${validWordHybrid.classicXrefOffset} >>\nstartxref\n${baseStr.length}\n%%EOF\n`,
+        'latin1',
+      ),
+    );
+    await assertRejectedBoth(freeNewerClassicBytes);
+
+    // 5b. Free-entry precedence (vice versa): newer hybrid /XRefStm marks active obj 4 as type-0 free; older classic xref cannot resurrect it.
+    const classicBaseBytes = makeRawPdf([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+      '<< /Length 26 >>\nstream\nBT /F1 12 Tf (BASE) Tj ET\nendstream',
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ]);
+    const classicBaseStr = Buffer.from(classicBaseBytes).toString('latin1');
+    const classicBaseStart = Number(/startxref\n(\d+)\n%%EOF\n$/.exec(classicBaseStr)?.[1]);
+    const rev2FreeXrefStmOff = classicBaseStr.length;
+    const rev2FreeXrefData = encodeXrefRows([
+      { kind: 0, nextFree: 0, gen: 1 },
+      { kind: 1, offset: rev2FreeXrefStmOff, gen: 0 },
+    ]);
+    const rev2FreeXrefObj = `6 0 obj\n<< /Type /XRef /Size 7 /Index [4 1 6 1] /W [1 4 2] /Root 1 0 R /Length ${rev2FreeXrefData.byteLength} >>\nstream\n${Buffer.from(rev2FreeXrefData).toString('latin1')}\nendstream\nendobj\n`;
+    const rev2FreeClassicOff = rev2FreeXrefStmOff + rev2FreeXrefObj.length;
+    const freeInNewerXrefStmBytes = new Uint8Array(
+      Buffer.from(
+        `${classicBaseStr}${rev2FreeXrefObj}xref\n0 1\n${fmtEntry(0, 65535, 'f')}trailer\n<< /Size 7 /Root 1 0 R /Prev ${classicBaseStart} /XRefStm ${rev2FreeXrefStmOff} >>\nstartxref\n${rev2FreeClassicOff}\n%%EOF\n`,
+        'latin1',
+      ),
+    );
+    await assertRejectedBoth(freeInNewerXrefStmBytes);
+
+    // 5c. Intra-section free conflict: classic xref marks compressed obj 5 as free (f) while /XRefStm marks obj 5 active in /ObjStm.
+    const sameSectionFreeConflict = buildWordStyleHybridPdf({
+      compressFontInObjStm: true,
+      extraClassicSubsections: `5 1\n${fmtEntry(0, 65535, 'f')}`,
+    });
+    await assertRejectedBoth(sameSectionFreeConflict.bytes);
+
+    // 5d. Classic xref marks /XRefStm stream object 10 itself as free (f) while /XRefStm indexes 10 at its offset.
+    const classicFreesXrefStm = buildWordStyleHybridPdf({
+      compressFontInObjStm: true,
+      extraClassicSubsections: `10 1\n${fmtEntry(0, 65535, 'f')}`,
+    });
+    await assertRejectedBoth(classicFreesXrefStm.bytes);
+
+    // 6. Dual-parser object-shadowing & conflict attacks must fail closed:
+    // 6a. Conflicting offset in classic xref vs /XRefStm for obj 4.
+    const conflictingOffset = buildWordStyleHybridPdf({
+      omitIndexAndRepeatClassic: true,
+      overrideXrefStmEntries: new Map([[4, { kind: 1, offset: validWordHybrid.offsets.get(3)!, gen: 0 }]]),
+    });
+    await assertRejectedBoth(conflictingOffset.bytes);
+
+    // 6b. Conflicting in-use classic obj 4 vs type-2 objStm in /XRefStm.
+    const conflictingObjStm = buildWordStyleHybridPdf({
+      omitIndexAndRepeatClassic: true,
+      overrideXrefStmEntries: new Map([[4, { kind: 2, objStmNum: 6, index: 0 }]]),
+    });
+    await assertRejectedBoth(conflictingObjStm.bytes);
+
+    // 6c. Conflicting in-use classic obj 4 vs type-0 free in /XRefStm.
+    const conflictingFreeInStm = buildWordStyleHybridPdf({
+      omitIndexAndRepeatClassic: true,
+      overrideXrefStmEntries: new Map([[4, { kind: 0, nextFree: 0, gen: 0 }]]),
+    });
+    await assertRejectedBoth(conflictingFreeInStm.bytes);
+
+    // 6d. Rogue top-level 5 0 obj overriding compressed Font 5 inside /ObjStm.
+    const rogueTopLevelShadow = buildWordStyleHybridPdf({
+      compressFontInObjStm: true,
+      extraBodyAfterObjects: '5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>\nendobj\n',
+    });
+    await assertRejectedBoth(rogueTopLevelShadow.bytes);
+
+    // 6e. Rogue unindexed decoy /Type /XRef stream object 11 injecting /Root or /Info into pdf-lib.
+    const decoyXrefData = encodeXrefRows([{ kind: 1, offset: 0, gen: 0 }]);
+    const decoyXrefObjStr = `11 0 obj\n<< /Type /XRef /Size 1 /W [1 4 2] /Root 2 0 R /Length ${decoyXrefData.byteLength} >>\nstream\n${Buffer.from(decoyXrefData).toString('latin1')}\nendstream\nendobj\n`;
+    const decoyXrefHybrid = buildWordStyleHybridPdf({
+      compressFontInObjStm: true,
+      extraBodyAfterObjects: decoyXrefObjStr,
+    });
+    await assertRejectedBoth(decoyXrefHybrid.bytes);
+
+    // 6f. Indexed decoy /Type /XRef stream object 11 not referenced by startxref, /Prev, or /XRefStm.
+    const indexedDecoyOffset = baseStr.indexOf('10 0 obj');
+    const indexedDecoyBeforeXrefStm = `${baseStr.slice(0, indexedDecoyOffset)}${decoyXrefObjStr}`;
+    const indexedDecoyXrefStmOff = indexedDecoyBeforeXrefStm.length;
+    const indexedDecoyStreamRows = encodeXrefRows([
+      { kind: 2, objStmNum: 6, index: 0 },
+      { kind: 1, offset: validWordHybrid.offsets.get(6)!, gen: 0 },
+      { kind: 2, objStmNum: 6, index: 1 },
+      { kind: 2, objStmNum: 6, index: 2 },
+      { kind: 2, objStmNum: 6, index: 3 },
+      { kind: 1, offset: indexedDecoyXrefStmOff, gen: 0 },
+    ]);
+    const indexedDecoyStreamCompressed = deflateSync(encodePngUp(indexedDecoyStreamRows, 7));
+    const indexedDecoyXrefStmObj =
+      `10 0 obj\n<< /Type /XRef /Size 12 /Index [5 6] /W [1 4 2] /Root 1 0 R /Info 9 0 R /Filter /FlateDecode /DecodeParms << /Predictor 12 /Columns 7 >> /Length ${indexedDecoyStreamCompressed.byteLength} >>\n` +
+      `stream\n${indexedDecoyStreamCompressed.toString('latin1')}\nendstream\nendobj\n`;
+    const indexedDecoyClassicOff = indexedDecoyXrefStmOff + indexedDecoyXrefStmObj.length;
+    const indexedDecoyBytes = new Uint8Array(
+      Buffer.from(
+        `${indexedDecoyBeforeXrefStm}${indexedDecoyXrefStmObj}xref\n0 5\n${fmtEntry(0, 65535, 'f')}${fmtEntry(validWordHybrid.offsets.get(1)!, 0, 'n')}${fmtEntry(validWordHybrid.offsets.get(2)!, 0, 'n')}${fmtEntry(validWordHybrid.offsets.get(3)!, 0, 'n')}${fmtEntry(validWordHybrid.offsets.get(4)!, 0, 'n')}11 1\n${fmtEntry(indexedDecoyOffset, 0, 'n')}trailer\n<< /Size 12 /Root 1 0 R /Info 9 0 R /XRefStm ${indexedDecoyXrefStmOff} >>\nstartxref\n${indexedDecoyClassicOff}\n%%EOF\n`,
+        'latin1',
+      ),
+    );
+    await assertRejectedBoth(indexedDecoyBytes);
+
+    // 7. Corrupted /XRefStm offset, bounds, cycles, duplicate /Index, nested /XRefStm, /Encrypt, mismatched /Root, /Prev:
+    // 7a. /XRefStm pointing to /ObjStm (wrong /Type) fails closed.
+    const badTypeXrefStm = new Uint8Array(
+      Buffer.from(
+        baseStr.replace(`/XRefStm ${validWordHybrid.xrefStmOffset}`, `/XRefStm ${validWordHybrid.offsets.get(6)!}`),
+        'latin1',
+      ),
+    );
+    await assertRejectedBoth(badTypeXrefStm);
+
+    // 7b. /XRefStm out of bounds (>= eofOffset), negative, or PDFRef fails closed.
+    await assertRejectedBoth(
+      new Uint8Array(
+        Buffer.from(
+          baseStr.replace(`/XRefStm ${validWordHybrid.xrefStmOffset}`, `/XRefStm ${baseStr.length}`),
+          'latin1',
+        ),
+      ),
+    );
+    await assertRejectedBoth(
+      new Uint8Array(
+        Buffer.from(
+          baseStr.replace(`/XRefStm ${validWordHybrid.xrefStmOffset}`, '/XRefStm -1'),
+          'latin1',
+        ),
+      ),
+    );
+    await assertRejectedBoth(
+      new Uint8Array(
+        Buffer.from(
+          baseStr.replace(`/XRefStm ${validWordHybrid.xrefStmOffset}`, '/XRefStm 10 0 R'),
+          'latin1',
+        ),
+      ),
+    );
+
+    // 7c. /XRefStm cycle (pointing to startxrefOffset, or /Prev pointing to /XRefStm, or /XRefStm /Prev cycle).
+    await assertRejectedBoth(
+      new Uint8Array(
+        Buffer.from(
+          baseStr.replace(
+            `/XRefStm ${validWordHybrid.xrefStmOffset}`,
+            `/XRefStm ${validWordHybrid.classicXrefOffset}`,
+          ),
+          'latin1',
+        ),
+      ),
+    );
+    await assertRejectedBoth(
+      new Uint8Array(
+        Buffer.from(
+          baseStr.replace(
+            `/XRefStm ${validWordHybrid.xrefStmOffset}`,
+            `/Prev ${validWordHybrid.xrefStmOffset} /XRefStm ${validWordHybrid.xrefStmOffset}`,
+          ),
+          'latin1',
+        ),
+      ),
+    );
+
+    // 7d. Duplicate object numbers inside /XRefStm /Index [9 1 9 1].
+    const dupIdxRows = encodeXrefRows([
+      { kind: 2, objStmNum: 6, index: 2 },
+      { kind: 2, objStmNum: 6, index: 2 },
+    ]);
+    const dupIdxStreamOff = baseStr.length;
+    const dupIdxStream = `11 0 obj\n<< /Type /XRef /Size 12 /Index [9 1 9 1] /W [1 4 2] /Root 1 0 R /Length ${dupIdxRows.byteLength} >>\nstream\n${Buffer.from(dupIdxRows).toString('latin1')}\nendstream\nendobj\n`;
+    const dupIdxBytes = new Uint8Array(
+      Buffer.from(
+        `${baseStr}${dupIdxStream}xref\n11 1\n${fmtEntry(dupIdxStreamOff, 0, 'n')}trailer\n<< /Size 12 /Root 1 0 R /Prev ${validWordHybrid.classicXrefOffset} /XRefStm ${dupIdxStreamOff} >>\nstartxref\n${dupIdxStreamOff + dupIdxStream.length}\n%%EOF\n`,
+        'latin1',
+      ),
+    );
+    await assertRejectedBoth(dupIdxBytes);
+
+    // 7e. Nested /XRefStm inside /XRefStm dict, /XRefStm inside pure /XRef stream, mismatched /Root, and /Encrypt in /XRefStm.
+    await assertRejectedBoth(
+      buildWordStyleHybridPdf({
+        compressFontInObjStm: true,
+        xrefStmDictExtra: '/XRefStm 10 ',
+      }).bytes,
+    );
+    await assertRejectedBoth(
+      buildWordStyleHybridPdf({
+        compressFontInObjStm: true,
+        includeXrefRoot: false,
+        xrefStmDictExtra: '/Root 2 0 R ',
+      }).bytes,
+    );
+    await assertRejectedBoth(
+      buildWordStyleHybridPdf({
+        compressFontInObjStm: true,
+        xrefStmDictExtra: '/Encrypt 99 0 R ',
+      }).bytes,
+    );
+    await assertRejectedBoth(
+      buildWordStyleHybridPdf({
+        compressFontInObjStm: true,
+        xrefStmDictExtra: '/Prev 10 ',
+      }).bytes,
+    );
+    const pureXrefStr = Buffer.from(
+      makeRawXrefStreamPdf(
+        [
+          { num: 1, body: '<< /Type /Catalog /Pages 2 0 R >>' },
+          { num: 2, body: '<< /Type /Pages /Kids [3 0 R] /Count 1 >>' },
+          { num: 3, body: '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] >>' },
+        ],
+        [{ num: 5, body: '<< /Title (PURE) >>' }],
+        4,
+        6,
+      ),
+    ).toString('latin1');
+    await assertRejectedBoth(
+      new Uint8Array(Buffer.from(pureXrefStr.replace('/Root 1 0 R', '/Root 1 0 R /XRefStm 10'), 'latin1')),
+    );
+
+    // 7f. Lowercase #xx hex-escaped /XRefSt#6d or /Type /XRe#66 on a realistic hybrid PDF fails closed.
+    await assertRejectedBoth(
+      new Uint8Array(Buffer.from(baseStr.replace('/XRefStm ', '/XRefSt#6d '), 'latin1')),
+    );
+    await assertRejectedBoth(
+      new Uint8Array(Buffer.from(baseStr.replace('/Type /XRef', '/Type /XRe#66'), 'latin1')),
+    );
   });
 });
 
