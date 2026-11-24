@@ -3,9 +3,11 @@
 // per-app process loopback (detecting Win10 < build 20348 via exit code 42 -> ProcessLoopbackUnsupportedError with zero silent
 // fallback), routes PCM frames into a hidden sandboxed capture worker BrowserWindow for AudioWorklet mixing + mic capture + MediaRecorder.
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { release as osRelease } from 'node:os';
 import type { CaptureModule, CapturePiece, CaptureSource, CaptureStartOptions } from './interface.ts';
 import { ProcessLoopbackUnsupportedError } from './interface.ts';
 import { createSilenceMonitor } from './levels.ts';
+import { isMacOsCoreAudioSupported } from './macos.ts';
 import { resolveHelperExePath } from './windows.ts';
 import { PCM_WORKLET_NAME } from './ui/pcm-worklet.ts';
 import { AUDIO_MIME_CANDIDATES } from './ui/worker.ts';
@@ -79,6 +81,8 @@ export interface DesktopCaptureDeps {
   spawnHelper?: (exePath: string, args: readonly string[]) => ChildProcessWithoutNullStreams;
   resolveHelperPath?: (options: { isPackaged: boolean; resourcesPath: string }) => string | null;
   startupTimeoutMs?: number;
+  platform?: NodeJS.Platform;
+  darwinRelease?: string;
 }
 
 export function createPcmFrameChunker(onFrame: (buf: ArrayBuffer) => void) {
@@ -110,6 +114,8 @@ export function createPcmFrameChunker(onFrame: (buf: ArrayBuffer) => void) {
 
 export function createDesktopCaptureModule(deps: DesktopCaptureDeps): CaptureModule {
   const log = deps.log ?? (() => undefined);
+  const platform = deps.platform ?? process.platform;
+  const getDarwinRelease = () => deps.darwinRelease ?? osRelease();
   const spawnHelper = deps.spawnHelper ?? ((exePath, args) => spawn(exePath, args, { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] }));
   const findHelper = deps.resolveHelperPath ?? resolveHelperExePath;
   const startupTimeoutMs = deps.startupTimeoutMs ?? 10_000;
@@ -141,10 +147,41 @@ export function createDesktopCaptureModule(deps: DesktopCaptureDeps): CaptureMod
   return {
     async start(source: CaptureSource, _meetingKey: string, options?: CaptureStartOptions): Promise<void> {
       if (stopFn) throw new Error('capture already running');
-      const useWasapi = source !== 'microphone' && options?.targetPid !== undefined && !options.allowSystemFallback;
+      const isDarwin = platform === 'darwin';
+      const useWasapi = !isDarwin && source !== 'microphone' && options?.targetPid !== undefined && !options.allowSystemFallback;
       const mode: 'wasapi' | 'system-fallback' | 'mic-only' = source === 'microphone' ? 'mic-only' : useWasapi ? 'wasapi' : 'system-fallback';
 
-      if (useWasapi) {
+      if (isDarwin && source !== 'microphone') {
+        if (!isMacOsCoreAudioSupported(getDarwinRelease())) {
+          throw new ProcessLoopbackUnsupportedError({
+            systemFallbackAvailable: false,
+            messages: {
+              vi: 'Máy Mac này cần macOS 14.2 trở lên để ghi âm thanh hệ thống qua Core Audio. Bạn vẫn có thể chọn Ghi âm trực tiếp (Micro).',
+              en: 'This Mac requires macOS 14.2 or newer for Core Audio system loopback. You can still select Microphone-only capture.',
+            },
+          });
+        }
+        // ADR-0055: refuse per-app or unconfirmed whole-system loopback on macOS without explicit user consent.
+        if (options?.targetPid !== undefined && !options.allowSystemFallback) {
+          throw new ProcessLoopbackUnsupportedError({
+            systemFallbackAvailable: true,
+            messages: {
+              vi: 'Trên macOS, Ludy chưa tách riêng âm thanh từng ứng dụng. Chỉ đánh dấu xác nhận bên dưới nếu bạn đồng ý ghi toàn bộ âm thanh hệ thống qua Core Audio.',
+              en: 'Per-app audio capture is not supported on macOS yet. Tick confirmation below only if you agree to capture whole-system audio via Core Audio instead.',
+            },
+          });
+        }
+        if (!options?.allowSystemFallback) {
+          throw new ProcessLoopbackUnsupportedError({
+            systemFallbackAvailable: true,
+            messages: {
+              vi: 'Ghi âm thanh hệ thống trên macOS sẽ thu toàn bộ âm thanh máy qua Core Audio (không tách riêng từng ứng dụng). Chỉ đánh dấu xác nhận bên dưới nếu bạn đồng ý.',
+              en: 'System audio capture on macOS records whole-machine audio via Core Audio. Tick confirmation below only if you agree to continue.',
+            },
+          });
+        }
+        deps.bridge.armSystemFallback();
+      } else if (useWasapi) {
         const exePath = findHelper({ isPackaged: deps.isPackaged, resourcesPath: deps.resourcesPath });
         if (!exePath) {
           throw new ProcessLoopbackUnsupportedError();
