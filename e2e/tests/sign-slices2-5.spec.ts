@@ -233,8 +233,10 @@ test.describe('eSign Slices 2-5 E2E', () => {
     }
 
     // Verify completed envelope appears in org envelopes list and becomes SHA-256 sealed with certificate.
+    // Force a fresh page load so TanStack Query does not serve the empty list cached within 10s staleTime.
     await page.getByRole('navigation').getByRole('link', { name: 'Hồ sơ ký', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/sign/envelopes`));
+    await page.reload();
 
     const envelopeRowLink = page.getByRole('link', { name: new RegExp(templateTitle) }).first();
     await expect(envelopeRowLink).toBeVisible({ timeout: 30_000 });
