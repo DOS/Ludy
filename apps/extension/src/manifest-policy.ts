@@ -15,11 +15,31 @@ export const DEFAULT_HOST_PERMISSIONS = ['https://app.ludy.vn/*'] as const;
 // (plain http) serves the `docker compose up` stack on the member's own machine; 127.0.0.1 and [::1] are not accepted.
 export const OPTIONAL_HOST_PERMISSIONS = ['http://localhost/*', 'https://*/*'] as const;
 
+// The one page a website may navigate to (#4662): the landing page of the sign-in tab, which the app sends the member to with the one-time code. It is listed for the
+// cloud address and `localhost` (the docker stack) only, never `https://*/*`, so no page of any other site can reach it; the page does nothing without a pending sign-in
+// of this browser session and a matching state. It is not a permission and adds no install or update warning. A self-hosted https address keeps the browser window.
+// The manifest may declare no `web_accessible_resources` at all, or exactly this one entry: any other entry, key or match fails.
+export const WEB_ACCESSIBLE_PAGE = 'connected.html';
+export const WEB_ACCESSIBLE_MATCHES = ['https://app.ludy.vn/*', 'http://localhost/*'] as const;
+
 // Manifest keys that would reach sites or run code outside the package.
-const FORBIDDEN_KEYS = ['content_scripts', 'externally_connectable', 'web_accessible_resources', 'update_url', 'declarative_net_request', 'sandbox'] as const;
+const FORBIDDEN_KEYS = ['content_scripts', 'externally_connectable', 'update_url', 'declarative_net_request', 'sandbox'] as const;
 
 const sameSet = (actual: unknown, expected: readonly string[]): boolean =>
   Array.isArray(actual) && actual.length === expected.length && [...actual].map(String).sort().join('\n') === [...expected].sort().join('\n');
+
+// `web_accessible_resources` is absent, or exactly one entry: the sign-in landing page, for the cloud address and localhost, with nothing added (no `extension_ids`, no `use_dynamic_url`).
+function webAccessibleViolations(value: unknown): string[] {
+  if (value === undefined) return [];
+  const expected = `[{ resources: [${WEB_ACCESSIBLE_PAGE}], matches: [${WEB_ACCESSIBLE_MATCHES.join(', ')}] }]`;
+  if (!Array.isArray(value) || value.length !== 1) return [`web_accessible_resources must be absent or exactly ${expected}, found ${JSON.stringify(value)}`];
+  const entry = value[0] as Record<string, unknown> | null;
+  const keys = entry && typeof entry === 'object' ? Object.keys(entry).sort().join(',') : '';
+  if (keys !== 'matches,resources' || !sameSet(entry?.resources, [WEB_ACCESSIBLE_PAGE]) || !sameSet(entry?.matches, WEB_ACCESSIBLE_MATCHES)) {
+    return [`web_accessible_resources must be absent or exactly ${expected}, found ${JSON.stringify(value)}`];
+  }
+  return [];
+}
 
 // The reasons the manifest breaks the list, empty when it keeps it.
 export function manifestViolations(manifest: Record<string, unknown>): string[] {
@@ -34,6 +54,7 @@ export function manifestViolations(manifest: Record<string, unknown>): string[] 
     problems.push(`optional_host_permissions must be exactly [${OPTIONAL_HOST_PERMISSIONS.join(', ')}], found ${JSON.stringify(manifest.optional_host_permissions)}`);
   }
   for (const key of FORBIDDEN_KEYS) if (key in manifest) problems.push(`the manifest must not declare ${key}`);
+  problems.push(...webAccessibleViolations(manifest.web_accessible_resources));
   const csp = (manifest.content_security_policy as { extension_pages?: unknown } | undefined)?.extension_pages;
   if (typeof csp !== 'string' || /unsafe-eval|unsafe-inline|https?:|\*/.test(csp)) problems.push('content_security_policy.extension_pages must allow scripts from the package only');
   return problems;
