@@ -785,6 +785,9 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
       ['sign.signer.reorder', { envelopeId: recEnv.envelopeId, orders: [{ signerId: addedSigner.signerId, routingOrder: 1 }] }],
       ['sign.field.set', { envelopeId: recEnv.envelopeId, fields: [] }],
       ['sign.envelope.send', { envelopeId: recEnv.envelopeId }],
+      // #4558: acknowledging a decline and saving AI field proposals (the org's AI spend) are the creator's, an owner's or an admin's too, checked before the status or the document hash.
+      ['sign.envelope.acknowledge_decline', { envelopeId: recEnv.envelopeId }],
+      ['sign.envelope.propose_fields', { envelopeId: recEnv.envelopeId, sourceSha256: recPdfSha }],
     ];
     for (const [command, input] of attendeeDraftAttempts) {
       await expect(runtime.execute(command, input, { actor: asUser(attendeeId), orgId }), `attendee ${command}`).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });

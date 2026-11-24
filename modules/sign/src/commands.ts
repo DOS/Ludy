@@ -1533,6 +1533,7 @@ export const envelopeAcknowledgeDecline = defineCommand({
   handler: async (ctx, input) => {
     const userId = userOf(ctx);
     const row = await lockEnvelope(ctx, input.envelopeId);
+    assertCanActOnMeetingMinutesEnvelope(ctx, row, userId);
     if (row.status !== 'declined') {
       throw new DomainError('SIGN_ENVELOPE_NOT_DECLINED', 409, 'Only declined envelopes can be acknowledged');
     }
