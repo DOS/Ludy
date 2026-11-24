@@ -1998,11 +1998,11 @@ describe.skipIf(!ADMIN)('Projects #4492: Omnichannel Roadmap Signals (PG17)', ()
     const adminAuditRows = await sqlAdmin<{ matches: string }>(
       `SELECT detail->>'matches' AS matches
          FROM ludy_kernel.audit_event
-        WHERE org_id = $1 AND actor_id = $2 AND command = 'kernel.personal_data.find'
-        ORDER BY id DESC LIMIT 6`,
+        WHERE org_id = $1 AND actor_id = $2 AND command = 'kernel.personal_data.find'`,
       [org5.orgId, adminNonReader.userId],
     );
-    expect(adminAuditRows.rows.map((r) => r.matches)).toEqual(['0', '0', '0', '0', '0', '0']);
+    expect(adminAuditRows.rows).toHaveLength(8);
+    expect(adminAuditRows.rows.every((r) => r.matches === '0')).toBe(true);
 
     // Even an invited reader of an expired meeting (or owner on an org meeting whose retention date == today) sees zero quote_excerpt matches
     const readerExpiredRes = await find5(adminReader.userId, expPrivQuoteEmail);
@@ -2075,6 +2075,25 @@ describe.skipIf(!ADMIN)('Projects #4492: Omnichannel Roadmap Signals (PG17)', ()
     expect(shortSharedQuoteErase.kept.find((k) => k.column === 'ludy_projects.roadmap_signal.quote_excerpt')?.rows).toBe(2);
     expect(JSON.stringify(shortSharedQuoteErase)).not.toContain(shortHiddenQuote);
     expect(JSON.stringify(shortSharedQuoteErase)).not.toContain(privActiveMeetingId);
+
+    // Beyond PERSONAL_DATA_ROW_LIMIT (200): shortNumber kept[] counts 201 readable + 1 hidden = 202 without row cap
+    const shortOverCapNum = '091246005';
+    const shortOverCapHiddenQuote = `SHORT_OVERCAP_HIDDEN_${shortOverCapNum}`;
+    await sqlAdmin(
+      `INSERT INTO ludy_projects.roadmap_signal (org_id, board_id, roadmap_item_id, source_type, source_id, quote_excerpt, created_by)
+       SELECT $1, $2, $3, 'crm.deal', pg_catalog.gen_random_uuid(), $4, $5
+         FROM pg_catalog.generate_series(1, 201) AS g`,
+      [org5.orgId, board5.id, itemShort.id, `Readable overcap quote ${shortOverCapNum}`, recorder.userId],
+    );
+    await sqlAdmin(
+      `INSERT INTO ludy_projects.roadmap_signal (org_id, board_id, roadmap_item_id, source_type, source_id, quote_excerpt, created_by)
+       VALUES ($1, $2, $3, 'meetings.meeting', $4, $5, $6)`,
+      [org5.orgId, board5.id, itemPartyHidden.id, expPrivMeetingId, shortOverCapHiddenQuote, recorder.userId],
+    );
+    const shortOverCapErase = await erase5(owner5.userId, shortOverCapNum);
+    expect(shortOverCapErase.kept.find((k) => k.column === 'ludy_projects.roadmap_signal.quote_excerpt')?.rows).toBe(202);
+    expect(JSON.stringify(shortOverCapErase)).not.toContain(shortOverCapHiddenQuote);
+    expect(JSON.stringify(shortOverCapErase)).not.toContain(expPrivMeetingId);
 
     for (const { probe, signalId, meetingId } of [
       { probe: privQuoteEmail, signalId: sigPriv.id, meetingId: privActiveMeetingId },

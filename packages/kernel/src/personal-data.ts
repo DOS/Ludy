@@ -2429,9 +2429,10 @@ export const personalDataErase = defineCommand({
 
     // What stays, with its reason: the finder's answer after the erasure (the cleared values no longer match).
     const after = await findPersonalData(ctx.trx, ctx.orgId, probe, false, documentedPartyIds);
-    // Unredacted quote_excerpt rows on unreadable, expired, or deleted meetings skipped by shortNumber: counted here
-    // (owner-only, never leaking text or meeting IDs) so kept[] accounts for every row left in DB (#4600).
-    const hiddenShortMeetingSignals = shortNumber
+    // Count all unredacted quote_excerpt rows skipped by shortNumber in one org-scoped aggregate (both readable rows
+    // beyond PERSONAL_DATA_ROW_LIMIT and unreadable, expired, or deleted meeting rows omitted by findPersonalData),
+    // keeping kept[] accurate and count-only without leaking text or meeting IDs (#4600).
+    const shortQuoteExcerptCount = shortNumber
       ? Number(
           (
             await sql<{ rows: string }>`
@@ -2439,9 +2440,7 @@ export const personalDataErase = defineCommand({
                 FROM ludy_projects.roadmap_signal s
                WHERE s.org_id = ${ctx.orgId}::uuid
                  AND s.quote_excerpt IS NOT NULL
-                 AND s.source_type = 'meetings.meeting'
-                 AND ${freeTextMatch(probe, sql.ref('s.quote_excerpt'))}
-                 AND NOT ${meetingSignalReadable('s')}`.execute(ctx.trx)
+                 AND ${freeTextMatch(probe, sql.ref('s.quote_excerpt'))}`.execute(ctx.trx)
           ).rows[0]?.rows ?? 0,
         )
       : 0;
@@ -2449,6 +2448,7 @@ export const personalDataErase = defineCommand({
     // the others).
     const kept = new Map<string, { column: string; rows: number; reason: string }>();
     for (const m of after.matches) {
+      if (shortNumber && m.column === 'ludy_projects.roadmap_signal.quote_excerpt') continue;
       const reason = !shortNumber
         ? m.reason
         : m.column === 'ludy_finance.misa_amis_push.reason'
@@ -2465,12 +2465,13 @@ export const personalDataErase = defineCommand({
       k.rows += 1;
       kept.set(group, k);
     }
-    if (hiddenShortMeetingSignals > 0) {
+    if (shortQuoteExcerptCount > 0) {
       const column = 'ludy_projects.roadmap_signal.quote_excerpt';
-      const group = `${column}\n${ACTIVITY_SHORT_NUMBER_REASON}`;
-      const k = kept.get(group) ?? { column, rows: 0, reason: ACTIVITY_SHORT_NUMBER_REASON };
-      k.rows += hiddenShortMeetingSignals;
-      kept.set(group, k);
+      kept.set(`${column}\n${ACTIVITY_SHORT_NUMBER_REASON}`, {
+        column,
+        rows: shortQuoteExcerptCount,
+        reason: ACTIVITY_SHORT_NUMBER_REASON,
+      });
     }
     // The original files behind posted entries that name these parties (issue #1009): accounting evidence the erasure
     // never deletes, held in the bucket for the legal period. Reported with the date the hold runs to, when it is set.
