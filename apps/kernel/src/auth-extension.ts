@@ -222,7 +222,7 @@ export function authorizeExtensionRoute(
   scopes: readonly string[],
   method: string,
   rawPath: string,
-  client: ExtensionClient = 'extension',
+  client: ExtensionClient,
 ): { ok: true; route: ExtensionRoute } | { ok: false; error: DomainError } {
   const route = matchExtensionRoute(method, rawPath);
   if (route && (route.scope === null || (scopes.includes(route.scope) && (client !== 'desktop' || route.scope !== 'notes')))) {
@@ -237,7 +237,7 @@ export function refuseOutsideScopes(
   scopes: readonly string[],
   method: string,
   rawPath: string,
-  client: ExtensionClient = 'extension',
+  client: ExtensionClient,
 ): DomainError | null {
   const checked = authorizeExtensionRoute(scopes, method, rawPath, client);
   return checked.ok ? null : checked.error;
