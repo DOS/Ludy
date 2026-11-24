@@ -133,6 +133,9 @@ const PENDING_TABLES = new Set<string>([
   'crove_meetings.meeting_link',
   'crove_notes.link',
   'crove_notes.note',
+  'crove_sign.deposit_profile',
+  'crove_sign.envelope_deposit',
+  'crove_sign.envelope_document',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a
@@ -248,6 +251,8 @@ const MEMBER_VY_READS = new Map<string, (member: string) => string>([
   ['crove_notes.notebook', () => 'false'], // Not in member_vy_table; keyed to ctx_user_id() per ADR-0037.
   ['crove_notes.todo', () => 'false'], // A to-do is its owner's alone.
   ['crove_notes.todo_list', () => 'false'], // A personal to-do list is its owner's alone (ADR-0037).
+  ['crove_sign.deposit_profile', () => 'false'], // Org deposit VietQR bank settings (#4723); user or system context only, agent reads none.
+  ['crove_sign.envelope_deposit', () => 'false'], // Envelope deposit bank snapshot (#4723); user or system context only, agent reads none.
   ['crove_sign.member_signature', () => 'false'], // A member's own saved signature and initials (#3817); read in a user context only.
   ['crove_sign.org_stamp', () => 'false'], // Org stamps require a user context of an org member (#3817); an agent context reads none.
   ['crove_social.notification', () => 'false'], // Per member.
@@ -4091,8 +4096,65 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // eSign Slice 6d (#4723, step 0): org-level default/backup VietQR bank profile managed by owners/admins; readable by org members and system, agent reads none. is_default='false' avoids partial unique default index collisions across matrix rows.
+  'crove_sign.deposit_profile': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        bank_code: 'vcb',
+        bank_name: 'Vietcombank',
+        account_number: '0123456789',
+        account_holder: 'CONG TY TNHH MAU',
+        is_default: 'false',
+        created_by: o.owner,
+      },
+    }),
+  },
   // eSign Slice 1 (#3330 / #3323): a signing packet whose source_file_id is a logical ref to crove_kernel.file (no cross-module FK).
   'crove_sign.envelope': { make: (o) => ({ row: signEnvelopeRow(o) }) },
+  // eSign Slice 6d (#4723, step 0): optional non-custodial post-sign deposit instruction bound to a non-confidential envelope; agent reads none.
+  'crove_sign.envelope_deposit': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      return {
+        setup: [{ table: 'crove_sign.envelope', values: envelope }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          envelope_id: envelope.id,
+          amount: '5000000.0000',
+          currency: 'VND',
+          memo_token: `CK-${randomUUID().replace(/-/g, '').slice(0, 8).toUpperCase()}`,
+          created_by: o.owner,
+        },
+      };
+    },
+  },
+  // eSign Slice 6c (#4722, step 0): ordered child PDF parts (1..5) bound to one eSign envelope.
+  'crove_sign.envelope_document': {
+    update: { set: 'updated_at = updated_at' },
+    make: (o) => {
+      const envelope = signEnvelopeRow(o);
+      return {
+        setup: [{ table: 'crove_sign.envelope', values: envelope }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          envelope_id: envelope.id,
+          doc_index: 1,
+          title: 'RLS matrix document',
+          file_id: o.file,
+          storage_key: envelope.source_storage_key,
+          generation: '1',
+          source_sha256: envelope.source_sha256,
+          inspect_status: 'pending',
+        },
+      };
+    },
+  },
   // eSign Slice 4e (#3821): post-signature agreement terms, renewal notice windows, and milestone obligations bound to an envelope.
   'crove_sign.envelope_obligation': {
     make: (o) => {
