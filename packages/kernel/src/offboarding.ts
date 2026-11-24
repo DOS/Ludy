@@ -505,9 +505,9 @@ export const exportSnapshot = defineQuery({
           ? sql`|| pg_catalog.jsonb_build_object('detail', CASE WHEN pg_catalog.jsonb_typeof(t.detail) = 'object' THEN t.detail - 'workerInstance' ELSE t.detail END)`
           : table === 'kernel.mail_suppression'
             ? sql`|| CASE WHEN t.source_message_id IS NOT NULL AND EXISTS (SELECT 1 FROM ludy_kernel.mail_message m WHERE m.org_id = t.org_id AND m.id = t.source_message_id AND m.source = ${FOLLOWUP_MAIL_SOURCE}) THEN pg_catalog.jsonb_build_object('source_message_id', NULL) ELSE '{}'::jsonb END`
-          : table === 'projects.roadmap_signal'
-            ? sql`|| CASE WHEN t.source_type = 'meetings.meeting' AND NOT EXISTS (SELECT 1 FROM ludy_kernel.meeting_export_rows() m WHERE m.org_id = t.org_id AND m.id = t.source_id) THEN pg_catalog.jsonb_build_object('quote_excerpt', NULL) ELSE '{}'::jsonb END`
-            : sql``;
+            : table === 'projects.roadmap_signal'
+              ? sql`|| CASE WHEN t.source_type = 'meetings.meeting' AND NOT EXISTS (SELECT 1 FROM ludy_kernel.meeting_export_rows() m WHERE m.org_id = t.org_id AND m.id = t.source_id) THEN pg_catalog.jsonb_build_object('quote_excerpt', NULL) ELSE '{}'::jsonb END`
+              : sql``;
       // spec.from is one of the constant names above, never input.
       await sql`
         DECLARE crove_org_export NO SCROLL CURSOR FOR
