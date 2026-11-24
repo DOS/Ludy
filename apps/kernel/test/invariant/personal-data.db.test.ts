@@ -97,7 +97,7 @@ suite('personal-data registry (#923)', () => {
         }
         if (found.type !== 'text') problems.push(`${place} is ${found.type}, not text`);
         const { rowCount } = await admin.query(
-          `SELECT 1 FROM pg_catalog.pg_constraint k WHERE k.contype = 'c' AND k.conrelid = $1 AND $2 = ANY (k.conkey) AND cardinality(k.conkey) = 1 AND (pg_get_constraintdef(k.oid) LIKE '%crove:s1:%' OR pg_get_constraintdef(k.oid) LIKE '%ludy:s1:%' OR pg_get_constraintdef(k.oid) LIKE '%(ludy|crove):s1:%' OR pg_get_constraintdef(k.oid) LIKE '%(crove|ludy):s1:%')`,
+          `SELECT 1 FROM pg_catalog.pg_constraint k WHERE k.contype = 'c' AND k.conrelid = $1 AND $2 = ANY (k.conkey) AND cardinality(k.conkey) = 1 AND (pg_get_constraintdef(k.oid) LIKE '%crove:s1:%' OR pg_get_constraintdef(k.oid) LIKE '%ludy:s1:%' OR pg_get_constraintdef(k.oid) LIKE '%(ludy|crove):s1:%' OR pg_get_constraintdef(k.oid) LIKE '%(crove|ludy):s1:%' OR pg_get_constraintdef(k.oid) LIKE '%(?:ludy|crove):s1:%' OR pg_get_constraintdef(k.oid) LIKE '%(?:crove|ludy):s1:%')`,
           [found.relid, found.attnum],
         );
         if (!rowCount) problems.push(`${place} has no CHECK on that column alone that requires crove:s1: or ludy:s1:`);
