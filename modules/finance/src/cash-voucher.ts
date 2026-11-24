@@ -117,10 +117,10 @@ async function verifiedMatch(ctx: CommandContext, line: StoredBankLine, partyId:
 async function paymentHistory(ctx: QueryContext, partyId: string, legalEntityId: string): Promise<string[]> {
   const { rows } = await sql<{ amount: string }>`
     SELECT v.amount::text AS amount
-    FROM crove_finance.cash_voucher v
-    JOIN crove_finance.journal_entry j ON j.org_id = v.org_id AND j.source_id = v.id AND j.source_type = ${VOUCHER_SOURCE} AND j.reverses_entry_id IS NULL AND ${latestRevision('j')}
+    FROM ludy_finance.cash_voucher v
+    JOIN ludy_finance.journal_entry j ON j.org_id = v.org_id AND j.source_id = v.id AND j.source_type = ${VOUCHER_SOURCE} AND j.reverses_entry_id IS NULL AND ${latestRevision('j')}
     WHERE v.org_id = ${ctx.orgId} AND v.legal_entity_id = ${legalEntityId} AND v.party_id = ${partyId} AND v.voucher_type IN ('cash_payment', 'bank_debit')
-      AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry r WHERE r.org_id = j.org_id AND r.reverses_entry_id = j.id)
+      AND NOT EXISTS (SELECT 1 FROM ludy_finance.journal_entry r WHERE r.org_id = j.org_id AND r.reverses_entry_id = j.id)
     ORDER BY v.voucher_date DESC, v.id DESC
     LIMIT ${HISTORY_WINDOW}`.execute(ctx.trx);
   return rows.map((r) => r.amount);
@@ -170,7 +170,7 @@ async function payrollPayableVoucherCheck(
       AND coalesce(p.payload #>> '{payroll,kind}', p.request_input ->> 'kind') = ANY(${kinds}::text[])
     UNION
     SELECT DISTINCT v.payroll_payment_kind AS kind
-    FROM crove_finance.cash_voucher v
+    FROM ludy_finance.cash_voucher v
     WHERE v.org_id = ${ctx.orgId}
       AND v.legal_entity_id = ${legalEntityId}
       AND v.payroll_run_id IS NOT NULL
@@ -321,7 +321,7 @@ export async function recordVoucherPayload(
   if (!journalIsBalanced(journal)) throw new DomainError('UNBALANCED', 422, 'Bút toán không cân');
 
   const voucher = await ctx.trx
-    .insertInto('crove_finance.cash_voucher')
+    .insertInto('ludy_finance.cash_voucher')
     .values({
       org_id: ctx.orgId,
       legal_entity_id: legalEntityId,
@@ -346,7 +346,7 @@ export async function recordVoucherPayload(
       if (error?.code === '23505' && /is already settled by another cash voucher/.test(error.message ?? '')) {
         throw new DomainError('BANK_LINE_MATCHED', 409, 'Dòng sao kê này vừa được ghi chứng từ khác; hãy tải lại trang ngân hàng');
       }
-      // A payment of the same run and kind committed between the command's check and this insert (crove_finance.cash_voucher_payroll_slot waited for it).
+      // A payment of the same run and kind committed between the command's check and this insert (ludy_finance.cash_voucher_payroll_slot waited for it).
       if (payroll && error?.code === '23505' && error?.constraint === 'cash_voucher_payroll_payment_uq') {
         throw new DomainError('HR_PAYMENT_DONE', 409, 'Khoản này của bảng lương đã được chi');
       }
@@ -404,12 +404,12 @@ export const vouchersList = defineQuery({
     // The vouchers of one legal entity (#1280).
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     let query = ctx.trx
-      .selectFrom('crove_finance.cash_voucher as v')
+      .selectFrom('ludy_finance.cash_voucher as v')
       .leftJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.party_id'))
-      .leftJoin('crove_finance.journal_entry as j', (join) =>
+      .leftJoin('ludy_finance.journal_entry as j', (join) =>
         join.onRef('j.org_id', '=', 'v.org_id').onRef('j.source_id', '=', 'v.id').on('j.source_type', '=', VOUCHER_SOURCE).on('j.reverses_entry_id', 'is', null).on(latestRevision('j')),
       )
-      .leftJoin('crove_finance.journal_entry as r', (join) => join.onRef('r.org_id', '=', 'j.org_id').onRef('r.reverses_entry_id', '=', 'j.id'))
+      .leftJoin('ludy_finance.journal_entry as r', (join) => join.onRef('r.org_id', '=', 'j.org_id').onRef('r.reverses_entry_id', '=', 'j.id'))
       .select([
         'v.id',
         'v.voucher_type',
@@ -474,11 +474,11 @@ export const cashVouchers = defineQuery({
   handler: async (ctx, input): Promise<CashVoucher[]> => {
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     let query = ctx.trx
-      .selectFrom('crove_finance.cash_voucher as v')
-      .innerJoin('crove_finance.journal_entry as j', (join) =>
+      .selectFrom('ludy_finance.cash_voucher as v')
+      .innerJoin('ludy_finance.journal_entry as j', (join) =>
         join.onRef('j.org_id', '=', 'v.org_id').onRef('j.source_id', '=', 'v.id').on('j.source_type', '=', VOUCHER_SOURCE).on('j.reverses_entry_id', 'is', null).on(latestRevision('j')),
       )
-      .leftJoin('crove_finance.journal_entry as r', (join) => join.onRef('r.org_id', '=', 'j.org_id').onRef('r.reverses_entry_id', '=', 'j.id'))
+      .leftJoin('ludy_finance.journal_entry as r', (join) => join.onRef('r.org_id', '=', 'j.org_id').onRef('r.reverses_entry_id', '=', 'j.id'))
       .leftJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.party_id'))
       .select([
         'v.id as source_id',
@@ -509,7 +509,7 @@ export const cashVouchers = defineQuery({
     const vouchers = await query.execute();
     if (vouchers.length === 0) return [];
     const lines = await ctx.trx
-      .selectFrom('crove_finance.journal_line')
+      .selectFrom('ludy_finance.journal_line')
       .select(['entry_id', 'line_no', 'account_code', 'debit', 'credit', 'memo'])
       .where('org_id', '=', ctx.orgId)
       .where(

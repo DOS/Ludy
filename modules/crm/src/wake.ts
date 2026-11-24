@@ -30,8 +30,8 @@ export const crmWakeFacts = defineQuery({
 
     const steps = await sql<{ step_id: string; deal_id: string; since_on: string; amount: string; currency: string }>`
       SELECT n.id AS step_id, n.deal_id, n.since_on::text AS since_on, d.amount::text AS amount, d.currency
-      FROM crove_crm.deal_next_step n
-      JOIN crove_crm.deal d ON d.org_id = n.org_id AND d.id = n.deal_id
+      FROM ludy_crm.deal_next_step n
+      JOIN ludy_crm.deal d ON d.org_id = n.org_id AND d.id = n.deal_id
       WHERE n.org_id = ${ctx.orgId}::uuid AND n.status = 'open' AND n.reason = 'quote_unanswered'
         AND (n.snoozed_until IS NULL OR n.snoozed_until <= ${now}::timestamptz)
         AND n.raised_at >= ${raisedSince}::timestamptz AND d.closed_at IS NULL
@@ -40,7 +40,7 @@ export const crmWakeFacts = defineQuery({
 
     const bookings = await sql<{ booking_id: string; on: string }>`
       SELECT b.id AS booking_id, (b.starts_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::text AS on
-      FROM crove_crm.booking b
+      FROM ludy_crm.booking b
       WHERE b.org_id = ${ctx.orgId}::uuid AND b.status = 'confirmed' AND b.starts_at >= ${from}::timestamptz AND b.starts_at < ${to}::timestamptz
       ORDER BY b.starts_at, b.id
       LIMIT ${ENGAGE_WAKE_ROWS_MAX} OFFSET ${input.offset}`.execute(ctx.trx);

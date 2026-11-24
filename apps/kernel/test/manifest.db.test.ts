@@ -40,7 +40,7 @@ const CONTROL_PLANE: ModuleManifest = {
       conversation_inbound_pending: columns(['seq', 'provider', 'received_at', 'claimed_until', 'attempts'], { body: 'pii' }),
       // The Ludy extension's one-time codes and tokens (#2582): only SHA-256 hashes of secrets, a PKCE challenge, scopes and a device label.
       extension_auth_code: columns(['org_id', 'id', 'user_id', 'code_challenge_method', 'scopes', 'device_name', 'extension_id', 'created_at', 'expires_at', 'consumed_at', 'failed_attempts'], { code_hash: 'sensitive', code_challenge: 'sensitive' }),
-      extension_token: columns(['org_id', 'id', 'user_id', 'device_name', 'scopes', 'created_at', 'expires_at', 'revoked_at', 'last_used_at', 'created_by'], { token_hash: 'sensitive' }),
+      extension_token: columns(['org_id', 'id', 'user_id', 'device_name', 'scopes', 'created_at', 'expires_at', 'revoked_at', 'last_used_at', 'created_by', 'client'], { token_hash: 'sensitive' }),
       global_kill_switch: columns(['id', 'key', 'engaged', 'reason', 'changed_by', 'changed_at']),
       inbound_address: columns(['org_id', 'id', 'created_at', 'retired_at', 'kind'], { token: 'sensitive' }),
       inbound_pending: columns(['seq', 'blob_id', 'raw_sha256', 'size_bytes', 'received_at'], { recipient: 'sensitive' }),
@@ -272,11 +272,11 @@ suite('module manifests against the catalog (#1588, #1599)', () => {
     // The voucher triggers number on main (#1401); a series numbered through ctx.numbering.allocate has no trigger, and
     // its first command extends this check.
     expect(numbering.map((n) => `${n.table} ${n.docType} ${n.targetType}`)).toEqual([
-      'crove_finance.cash_voucher finance.cash_voucher.<voucher_type> finance.cash_voucher',
-      'crove_finance.journal_voucher finance.journal_voucher finance.journal_voucher',
+      'ludy_finance.cash_voucher finance.cash_voucher.<voucher_type> finance.cash_voucher',
+      'ludy_finance.journal_voucher finance.journal_voucher finance.journal_voucher',
     ]);
     expect(allocators).toEqual(['ludy_kernel.allocate_number']);
-    expect(appendOnly.has('crove_finance.journal_entry')).toBe(true);
+    expect(appendOnly.has('ludy_finance.journal_entry')).toBe(true);
     const cols = new Map<string, Set<string>>();
     for (const r of columnRows) cols.set(`${r.schema}.${r.table}`, (cols.get(`${r.schema}.${r.table}`) ?? new Set()).add(r.column));
     const targets = commandTargetTypes();
@@ -293,7 +293,7 @@ suite('module manifests against the catalog (#1588, #1599)', () => {
       const types = manifest.entities.map((e) => e.type);
       expect(types, file).toEqual([...types].sort());
     }
-    for (const id of ['finance', 'social', 'crm', 'notes']) expect(Object.keys(MANIFESTS[id]!.manifest.tables), id).toEqual([`crove_${id}`]);
+    for (const id of ['finance', 'social', 'crm', 'notes']) expect(Object.keys(MANIFESTS[id]!.manifest.tables), id).toEqual([`ludy_${id}`]);
   });
 });
 

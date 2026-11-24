@@ -73,11 +73,11 @@ suite('speaker names suggested by the recorder\'s Vy (#3502)', () => {
   async function seedMeeting(attendees: string[] = ['lan']): Promise<string> {
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp báo giá', 'vi', '2026-11-10T03:00:00Z', '2026-11-10T03:30:00Z', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, meetingId, users.recorder],
     );
-    for (const who of attendees) await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users[who]]);
+    for (const who of attendees) await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users[who]]);
     await exec('recorder', 'meetings.transcript.draft_store', {
       meetingId,
       segments: [
@@ -90,7 +90,7 @@ suite('speaker names suggested by the recorder\'s Vy (#3502)', () => {
   }
   const labels = async (meetingId: string) =>
     (await sqlAdmin<{ speaker_label: string; stage: string; corrected: boolean; start_seconds: string }>(
-      'SELECT speaker_label, stage, corrected, start_seconds::text FROM crove_meetings.transcript_segment WHERE meeting_id = $1 ORDER BY start_seconds, id',
+      'SELECT speaker_label, stage, corrected, start_seconds::text FROM ludy_meetings.transcript_segment WHERE meeting_id = $1 ORDER BY start_seconds, id',
       [meetingId],
     )).rows.map((r) => `${r.start_seconds}|${r.stage}|${r.speaker_label}|${r.corrected ? 'corrected' : 'as stored'}`);
   const summarize = async (meetingId: string, speakers: unknown) => {
@@ -188,7 +188,7 @@ suite('speaker names suggested by the recorder\'s Vy (#3502)', () => {
     expect(await refuses(name('recorder', meetingId, 'Người nói 2', 'Người Ngoài Cuộc'))).toBe('SPEAKER_NOT_ATTENDEE');
     expect(await refuses(name('recorder', meetingId, 'Người nói 9', 'Trần Thị Lan'))).toBe('SPEAKER_LABEL_GONE');
     // Lan leaves the meeting: the suggestion is not listed, and the click is refused.
-    await sqlAdmin('DELETE FROM crove_meetings.meeting_reader WHERE meeting_id = $1 AND user_id = $2', [meetingId, users.lan]);
+    await sqlAdmin('DELETE FROM ludy_meetings.meeting_reader WHERE meeting_id = $1 AND user_id = $2', [meetingId, users.lan]);
     expect((await suggestions('recorder', meetingId, runId)).suggestions).toEqual([]);
     expect(await refuses(name('recorder', meetingId, 'Người nói 2', 'Trần Thị Lan'))).toBe('SPEAKER_NOT_ATTENDEE');
     expect(await labels(meetingId)).toEqual(['0.000|draft|Người nói 1|as stored', '10.000|draft|Người nói 2|as stored', '20.000|draft|Người nói 1|as stored']);
@@ -200,7 +200,7 @@ suite('speaker names suggested by the recorder\'s Vy (#3502)', () => {
   it('does not merge two speakers: a name another speaker already has is not suggested, and the click is refused', async () => {
     const meetingId = await seedMeeting(['lan']);
     // Label 1 was named Lan earlier; label 2 is still unnamed.
-    await sqlAdmin(`UPDATE crove_meetings.transcript_segment SET speaker_label = 'Trần Thị Lan' WHERE meeting_id = $1 AND start_seconds = 0`, [meetingId]);
+    await sqlAdmin(`UPDATE ludy_meetings.transcript_segment SET speaker_label = 'Trần Thị Lan' WHERE meeting_id = $1 AND start_seconds = 0`, [meetingId]);
     const runId = await summarize(meetingId, [{ label: 'Người nói 2', name: 'Trần Thị Lan', seconds: 15 }]);
     expect((await suggestions('recorder', meetingId, runId)).suggestions).toEqual([]);
     expect(await refuses(name('recorder', meetingId, 'Người nói 2', 'Trần Thị Lan'))).toBe('SPEAKER_NAME_TAKEN');
@@ -211,7 +211,7 @@ suite('speaker names suggested by the recorder\'s Vy (#3502)', () => {
   it('never renames a published line: only the draft lines of the label change', async () => {
     const meetingId = await seedMeeting(['lan']);
     await summarize(meetingId, [{ label: 'Người nói 2', name: 'Trần Thị Lan', seconds: 15 }]);
-    await sqlAdmin(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, 40, 50, 'Người nói 2', 'Dòng đã chia sẻ', 'published')`, [orgId, randomUUID(), meetingId]);
+    await sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, 40, 50, 'Người nói 2', 'Dòng đã chia sẻ', 'published')`, [orgId, randomUUID(), meetingId]);
     expect(await name('recorder', meetingId, 'Người nói 2', 'Trần Thị Lan')).toMatchObject({ lines: 1 });
     expect(await labels(meetingId)).toEqual(['0.000|draft|Người nói 1|as stored', '10.000|draft|Trần Thị Lan|corrected', '20.000|draft|Người nói 1|as stored', '40.000|published|Người nói 2|as stored']);
   });

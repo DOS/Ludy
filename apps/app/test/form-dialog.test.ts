@@ -10,7 +10,7 @@ const source = readFileSync(new URL('../src/components/form-dialog.tsx', import.
 describe('FormDialog', () => {
   it('is the shared Dialog, not a second pattern', () => {
     expect(source).toContain("from '@ludy/ui/components/dialog'");
-    expect(source).toContain('<DialogContent closeLabel={root(\'common.close\')}>');
+    expect(source).toContain('<DialogContent closeLabel={root(\'common.close\')}');
   });
   it('gives focus back to the button that opened it, and closes on Escape or the close button', () => {
     expect(source).toContain('document.activeElement');
@@ -34,6 +34,10 @@ describe('FormDialog', () => {
   });
   it('lets a prompt with a form of its own sit under the form, inside the dialog', () => {
     expect(source).toContain('{outside}');
+  });
+  it('supports optional testId on DialogContent and submitTestId on the submit button', () => {
+    expect(source).toContain("'data-testid': testId");
+    expect(source).toContain("'data-testid': submitTestId");
   });
   it('uses words that exist in both languages', () => {
     for (const locale of ['vi', 'en'] as const) {

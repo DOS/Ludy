@@ -59,12 +59,12 @@ interface SealedChannelCredential {
   envelope: string;
 }
 
-// A page of the active bank feed connections of active orgs after a key (crove_finance.bank_feeds_due, the worker
+// A page of the active bank feed connections of active orgs after a key (ludy_finance.bank_feeds_due, the worker
 // login's alone), for the daily sweep.
 export const BANK_FEEDS_DUE_PAGE = 1000;
 export async function bankFeedsDue(workerDb: Db, after: { orgId: string; connectionId: string } | null): Promise<Array<{ orgId: string; connectionId: string; provider: string }>> {
   const { rows } = await sql<{ org_id: string; connection_id: string; provider: string }>`
-    SELECT org_id, connection_id, provider FROM crove_finance.bank_feeds_due(${after?.orgId ?? null}::uuid, ${after?.connectionId ?? null}::uuid, ${BANK_FEEDS_DUE_PAGE}::int)`.execute(workerDb);
+    SELECT org_id, connection_id, provider FROM ludy_finance.bank_feeds_due(${after?.orgId ?? null}::uuid, ${after?.connectionId ?? null}::uuid, ${BANK_FEEDS_DUE_PAGE}::int)`.execute(workerDb);
   return rows.map((r) => ({ orgId: r.org_id, connectionId: r.connection_id, provider: r.provider }));
 }
 

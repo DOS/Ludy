@@ -31,11 +31,13 @@ import {
 import { MeetingTranscript } from '../components/meeting-transcript.tsx';
 import type { TranscriptRedacted } from '@ludy/kernel-contract';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
+import { RoadmapSignalModal } from '../components/roadmap-signal-modal.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { RecordingStoppedNote } from '../components/recording-stopped.tsx';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { apiFetch, errorMessage, fetchVideoTicket, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
+import { installedModules } from '../lib/org-modules.ts';
 import { toast } from '../lib/toast.ts';
 import type { TranscriptFocus } from '../lib/transcript-focus.ts';
 import { createVideoTicketPlayer, videoStreamUrl, type VideoTicketPlayer } from '../lib/video-ticket.ts';
@@ -81,8 +83,13 @@ export function MeetingDetailPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   // A chapter was clicked (#3844): the transcript goes to its line, and a recording that is already loaded is set to that second (it is never started by the click).
   const [jump, setJump] = useState<TranscriptFocus | undefined>(undefined);
+  const [roadmapSignalOpen, setRoadmapSignalOpen] = useState(false);
+  const tRoadmap = useTranslations('projects.roadmap.admin');
   // The page links to another meeting in place: a jump to a line of one meeting never carries over to the next.
-  useEffect(() => setJump(undefined), [id]);
+  useEffect(() => {
+    setJump(undefined);
+    setRoadmapSignalOpen(false);
+  }, [id]);
   const jumpTo = (second: number, speaker?: string) => {
     setJump((j) => ({ second, speaker, token: (j?.token ?? 0) + 1 }));
     if (audioRef.current) audioRef.current.currentTime = second;
@@ -332,7 +339,18 @@ export function MeetingDetailPage() {
         title={meeting.title}
         subtitle={orgQuery.data ? t('detail.recordedBy', { user: memberLabel(orgMembers, meeting.recorderUserId, t('results.unknownMember')), date: f.date(meeting.createdAt) }) : undefined}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {orgQuery.data?.role && orgQuery.data.role !== 'viewer' && installedModules().includes('projects') && (
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                onClick={() => setRoadmapSignalOpen(true)}
+                data-testid="meeting-link-roadmap"
+              >
+                {tRoadmap('linkToRoadmapBtn')}
+              </Button>
+            )}
             <Badge variant={STATUS_VARIANTS[meeting.status] ?? 'outline'}>{t(`status.${meeting.status}`)}</Badge>
             <Badge variant="outline">
               {meeting.visibility === 'org' ? t('badgeOrg') : t('badgeAttendees')}
@@ -340,6 +358,23 @@ export function MeetingDetailPage() {
           </div>
         }
       />
+      {orgQuery.data?.role && orgQuery.data.role !== 'viewer' && installedModules().includes('projects') && (
+        <RoadmapSignalModal
+          open={roadmapSignalOpen}
+          onOpenChange={setRoadmapSignalOpen}
+          prefillSource={{
+            sourceType: 'meetings.meeting',
+            sourceId: meeting.id,
+            sourceLabel: meeting.title,
+            quoteExcerpt:
+              (
+                resultsQuery.data?.published?.summary ||
+                (meeting.isRecorder ? resultsQuery.data?.draft?.summary : '') ||
+                ''
+              ).slice(0, 1000) || null,
+          }}
+        />
+      )}
       {/* A recording that ended without the recorder's click leaves a visible line (A1, #3159): when it stopped and why, in plain words. */}
       <RecordingStoppedNote meeting={meeting} />
       {/* The recorder's own Vy offers up to three titles on a click (#3947); a pick renames the meeting, nothing changes before it */}

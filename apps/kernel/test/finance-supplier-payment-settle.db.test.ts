@@ -79,9 +79,9 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     const entry = randomUUID();
     await admin(async (c) => {
       await c.query('BEGIN');
-      await c.query("INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total) VALUES ($1, $2, $3, $4, '2026-10-01', $5::numeric - 10, 10, $5)", [o.orgId, doc, o.supplier, `inv-${doc.slice(0, 8)}`, total]);
-      await c.query("INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, '2026-10-01', 'payment test', 'finance.purchase_document', $3)", [o.orgId, entry, doc]);
-      await c.query("INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 100, 0), ($1, $2, 2, '331', 0, 100)", [o.orgId, entry]);
+      await c.query("INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total) VALUES ($1, $2, $3, $4, '2026-10-01', $5::numeric - 10, 10, $5)", [o.orgId, doc, o.supplier, `inv-${doc.slice(0, 8)}`, total]);
+      await c.query("INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, '2026-10-01', 'payment test', 'finance.purchase_document', $3)", [o.orgId, entry, doc]);
+      await c.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 100, 0), ($1, $2, 2, '331', 0, 100)", [o.orgId, entry]);
       await c.query('COMMIT');
     });
     return doc;
@@ -90,7 +90,7 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
   const approve = (o: Org, proposalId: string, who = o.owner) => execute<{ id: string; status: string }>(o, 'kernel.proposal.approve', { id: proposalId, revision: 1 }, who);
   type Payment = { id: string; status: string; payable_after: Date | null; hold_reason: string | null; bank_account_id: string; amount: string; approved_at: Date; stale_at: Date | null; paid_at: Date | null; confirmed_at: Date | null };
   const payments = (o: Org, doc: string | null = null) =>
-    rows<Payment>('SELECT id, status, payable_after, hold_reason, bank_account_id, amount::text, approved_at, stale_at, paid_at, confirmed_at FROM crove_finance.supplier_payment WHERE org_id = $1 AND ($2::uuid IS NULL OR purchase_document_id = $2) ORDER BY created_at, id', [o.orgId, doc]);
+    rows<Payment>('SELECT id, status, payable_after, hold_reason, bank_account_id, amount::text, approved_at, stale_at, paid_at, confirmed_at FROM ludy_finance.supplier_payment WHERE org_id = $1 AND ($2::uuid IS NULL OR purchase_document_id = $2) ORDER BY created_at, id', [o.orgId, doc]);
   // Asks and approves one invoice end to end, as the right pair of people for the org.
   async function pay(o: Org, doc: string): Promise<Payment> {
     const { proposalId } = await request(o, doc);
@@ -136,23 +136,23 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     await released(o, first.id);
     return first;
   };
-  const released = (o: Org, id: string) => unguarded((c) => c.query('UPDATE crove_finance.supplier_payment SET payable_after = NULL, hold_reason = NULL WHERE org_id = $1 AND id = $2', [o.orgId, id]));
+  const released = (o: Org, id: string) => unguarded((c) => c.query('UPDATE ludy_finance.supplier_payment SET payable_after = NULL, hold_reason = NULL WHERE org_id = $1 AND id = $2', [o.orgId, id]));
   const exportFile = (o: Org, ids: string[]) => execute(o, 'finance.supplier_payment.bank_file.export', { paymentIds: ids, rows: ids.length, currency: 'VND' });
   // Vietnam's day, the way the guard judges the file's day.
   const today = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
   const bankLine = async (o: Org, amount: string, date = today(), counterparty: string | null = null): Promise<string> => {
     const [line] = await rows<{ id: string }>(
-      `INSERT INTO crove_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount, bank_ref, counterparty_account) VALUES ($1, '1121', $2, 1, $3, 'Chuyen khoan NCC', $4, $5, $6) RETURNING id`,
+      `INSERT INTO ludy_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount, bank_ref, counterparty_account) VALUES ($1, '1121', $2, 1, $3, 'Chuyen khoan NCC', $4, $5, $6) RETURNING id`,
       [o.orgId, randomUUID(), date, amount, `FT${randomUUID().slice(0, 8)}`, counterparty],
     );
     return line?.id as string;
   };
   // The Vietnam day of the first file, as the database stored it: a line made after the export is dated from it, so a test run across midnight does not depend on the clock.
   const fileDay = async (o: Org, id: string) =>
-    (await rows<{ day: string }>("SELECT (first_exported_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::text AS day FROM crove_finance.supplier_payment WHERE org_id = $1 AND id = $2", [o.orgId, id]))[0]?.day as string;
+    (await rows<{ day: string }>("SELECT (first_exported_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::text AS day FROM ludy_finance.supplier_payment WHERE org_id = $1 AND id = $2", [o.orgId, id]))[0]?.day as string;
   const SETTLE = 'finance.supplier_payment.settle.record';
   const ask = (o: Org, paymentId: string, bankLineId: string, who = o.owner) => execute<{ proposalId: string }>(o, 'kernel.proposal.request', { command: SETTLE, input: { paymentId, bankLineId } }, who);
-  const status = async (o: Org, id: string) => (await rows<{ status: string; paid_at: Date | null }>('SELECT status, paid_at FROM crove_finance.supplier_payment WHERE org_id = $1 AND id = $2', [o.orgId, id]))[0];
+  const status = async (o: Org, id: string) => (await rows<{ status: string; paid_at: Date | null }>('SELECT status, paid_at FROM ludy_finance.supplier_payment WHERE org_id = $1 AND id = $2', [o.orgId, id]))[0];
   const codeOf = (promise: Promise<unknown>) => promise.then(() => 'accepted', (error: { code?: string }) => error.code);
 
   it('records the transfer as a bank voucher that names the payment and pays it, in one approved step', async () => {
@@ -175,11 +175,11 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     const after = await status(o, payment.id);
     expect(after?.status).toBe('paid');
     expect(after?.paid_at).not.toBeNull();
-    const [voucher] = await rows<{ id: string; supplier_payment_id: string; bank_line_id: string; voucher_type: string; amount: string }>('SELECT id, supplier_payment_id, bank_line_id, voucher_type, amount::text FROM crove_finance.cash_voucher WHERE org_id = $1 AND supplier_payment_id = $2', [o.orgId, payment.id]);
+    const [voucher] = await rows<{ id: string; supplier_payment_id: string; bank_line_id: string; voucher_type: string; amount: string }>('SELECT id, supplier_payment_id, bank_line_id, voucher_type, amount::text FROM ludy_finance.cash_voucher WHERE org_id = $1 AND supplier_payment_id = $2', [o.orgId, payment.id]);
     expect(voucher).toMatchObject({ bank_line_id: line, voucher_type: 'bank_debit' });
     expect(Number(voucher?.amount)).toBe(110);
     const entry = await rows<{ account_code: string; debit: string; credit: string; party_id: string | null }>(
-      "SELECT l.account_code, l.debit::text, l.credit::text, l.party_id FROM crove_finance.journal_line l JOIN crove_finance.journal_entry e ON e.org_id = l.org_id AND e.id = l.entry_id WHERE e.org_id = $1 AND e.source_type = 'finance.cash_voucher' AND e.source_id = $2 ORDER BY l.line_no",
+      "SELECT l.account_code, l.debit::text, l.credit::text, l.party_id FROM ludy_finance.journal_line l JOIN ludy_finance.journal_entry e ON e.org_id = l.org_id AND e.id = l.entry_id WHERE e.org_id = $1 AND e.source_type = 'finance.cash_voucher' AND e.source_id = $2 ORDER BY l.line_no",
       [o.orgId, voucher?.id],
     );
     expect(entry.map((l) => [l.account_code, Number(l.debit), Number(l.credit), l.party_id])).toEqual([['331', 110, 0, o.supplier], ['1121', 0, 110, null]]);
@@ -200,7 +200,7 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     expect(await codeOf(ask(o, payment.id, await bankLine(o, '-110', '2026-01-02')))).toBe('SUPPLIER_PAYMENT_LINE_BEFORE_FILE');
     // The file's own day is fine and a line is asked for again after the refusals (none left a proposal or a voucher).
     expect(await codeOf(ask(o, payment.id, await bankLine(o, '-110', day)))).toBe('accepted');
-    expect(await rows('SELECT 1 FROM crove_finance.cash_voucher WHERE org_id = $1 AND supplier_payment_id IS NOT NULL', [o.orgId])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_finance.cash_voucher WHERE org_id = $1 AND supplier_payment_id IS NOT NULL', [o.orgId])).toHaveLength(0);
   });
 
   it('refuses a line whose beneficiary account is not the approved one, and settles one that is, or that carries no whole number', async () => {
@@ -228,7 +228,7 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     const o = await org(true);
     await addAccount(o, NUMBER);
     const payment = await ready(o);
-    const touch = (set: string) => admin((c) => c.query(`UPDATE crove_finance.supplier_payment SET ${set} WHERE org_id = $1 AND id = $2`, [o.orgId, payment.id]));
+    const touch = (set: string) => admin((c) => c.query(`UPDATE ludy_finance.supplier_payment SET ${set} WHERE org_id = $1 AND id = $2`, [o.orgId, payment.id]));
     await expect(touch("status = 'paid'")).rejects.toThrow(/SUPPLIER_PAYMENT_NOT_EXPORTED/);
     await exportFile(o, [payment.id]);
     await expect(touch("status = 'paid'")).rejects.toThrow(/SUPPLIER_PAYMENT_NO_VOUCHER/);
@@ -239,7 +239,7 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     // ties the proposal to the settlement command is exercised by the approved settlement in the first test, which inserts through it.
     const line = await bankLine(o, '-110', await fileDay(o, payment.id));
     await expect(
-      admin((c) => c.query("INSERT INTO crove_finance.cash_voucher (org_id, voucher_type, voucher_date, cash_account, description, amount, bank_line_id, legal_entity_id, supplier_payment_id) SELECT $1, 'bank_debit', '2026-11-18', '1121', 'x', 110, $2, legal_entity_id, $3 FROM crove_finance.supplier_payment WHERE id = $3", [o.orgId, line, payment.id])),
+      admin((c) => c.query("INSERT INTO ludy_finance.cash_voucher (org_id, voucher_type, voucher_date, cash_account, description, amount, bank_line_id, legal_entity_id, supplier_payment_id) SELECT $1, 'bank_debit', '2026-11-18', '1121', 'x', 110, $2, legal_entity_id, $3 FROM ludy_finance.supplier_payment WHERE id = $3", [o.orgId, line, payment.id])),
     ).rejects.toThrow(/cash_voucher_supplier_payment/);
   });
 
@@ -250,7 +250,7 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     await exportFile(o, [payment.id]);
     const { proposalId } = await ask(o, payment.id, await bankLine(o, '-110', await fileDay(o, payment.id)));
     await approve(o, proposalId, o.admin as string);
-    const [entry] = await rows<{ id: string }>("SELECT e.id FROM crove_finance.journal_entry e JOIN crove_finance.cash_voucher v ON v.org_id = e.org_id AND v.id = e.source_id WHERE e.org_id = $1 AND e.source_type = 'finance.cash_voucher' AND v.supplier_payment_id = $2", [o.orgId, payment.id]);
+    const [entry] = await rows<{ id: string }>("SELECT e.id FROM ludy_finance.journal_entry e JOIN ludy_finance.cash_voucher v ON v.org_id = e.org_id AND v.id = e.source_id WHERE e.org_id = $1 AND e.source_type = 'finance.cash_voucher' AND v.supplier_payment_id = $2", [o.orgId, payment.id]);
     const code = await codeOf(execute(o, 'kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: entry?.id, entryDate: today(), reason: 'sai' } }));
     expect(code).toBe('SUPPLIER_PAYMENT_PAID');
   });
@@ -291,14 +291,14 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     await addAccount(o, NUMBER);
     const payment = await ready(o);
     await exportFile(o, [payment.id]);
-    const times = () => rows<{ first: Date; last: Date }>('SELECT first_exported_at AS first, exported_at AS last FROM crove_finance.supplier_payment WHERE org_id = $1 AND id = $2', [o.orgId, payment.id]).then((r) => r[0]);
+    const times = () => rows<{ first: Date; last: Date }>('SELECT first_exported_at AS first, exported_at AS last FROM ludy_finance.supplier_payment WHERE org_id = $1 AND id = $2', [o.orgId, payment.id]).then((r) => r[0]);
     const before = await times();
     await execute(o, 'finance.supplier_payment.bank_file.export', { paymentIds: [payment.id], rows: 1, currency: 'VND', reexport: true });
     const after = await times();
     expect(after?.first.getTime()).toBe(before?.first.getTime());
     expect((after?.last.getTime() ?? 0) > (before?.last.getTime() ?? 0)).toBe(true);
     // The first file was handed over two days ago and a second one now: a line of the first day is still this payment's transfer, and a line of the day before the first file is not.
-    await unguarded((c) => c.query("UPDATE crove_finance.supplier_payment SET first_exported_at = first_exported_at - interval '2 days' WHERE org_id = $1 AND id = $2", [o.orgId, payment.id]));
+    await unguarded((c) => c.query("UPDATE ludy_finance.supplier_payment SET first_exported_at = first_exported_at - interval '2 days' WHERE org_id = $1 AND id = $2", [o.orgId, payment.id]));
     const firstDay = await fileDay(o, payment.id);
     const matchOf = (id: string) => rt.query<{ candidates: Array<{ paymentId: string }> }>('finance.bank.supplier_match', { bankLineId: id }, { actor: user(o.owner), orgId: o.orgId });
     expect((await matchOf(await bankLine(o, '-110', firstDay))).candidates.map((c) => c.paymentId)).toEqual([payment.id]);
@@ -311,12 +311,12 @@ suite('the settlement of a supplier payment by its bank line (#3113 S3c)', () =>
     const payment = await ready(o);
     await exportFile(o, [payment.id]);
     // The legacy state: a file was handed over, the first day was not recorded. The migration's own statement runs with the guard of the table in force (the guard before it rejected the move).
-    const exportedDay = (await rows<{ day: string }>("SELECT (exported_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::text AS day FROM crove_finance.supplier_payment WHERE org_id = $1 AND id = $2", [o.orgId, payment.id]))[0]?.day;
-    await unguarded((c) => c.query('UPDATE crove_finance.supplier_payment SET first_exported_at = NULL WHERE org_id = $1 AND id = $2', [o.orgId, payment.id]));
-    await admin((c) => c.query('UPDATE crove_finance.supplier_payment SET first_exported_at = exported_at WHERE org_id = $1 AND id = $2 AND first_exported_at IS NULL AND exported_at IS NOT NULL', [o.orgId, payment.id]));
+    const exportedDay = (await rows<{ day: string }>("SELECT (exported_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::text AS day FROM ludy_finance.supplier_payment WHERE org_id = $1 AND id = $2", [o.orgId, payment.id]))[0]?.day;
+    await unguarded((c) => c.query('UPDATE ludy_finance.supplier_payment SET first_exported_at = NULL WHERE org_id = $1 AND id = $2', [o.orgId, payment.id]));
+    await admin((c) => c.query('UPDATE ludy_finance.supplier_payment SET first_exported_at = exported_at WHERE org_id = $1 AND id = $2 AND first_exported_at IS NULL AND exported_at IS NOT NULL', [o.orgId, payment.id]));
     expect(await fileDay(o, payment.id)).toBe(exportedDay);
-    await unguarded((c) => c.query("UPDATE crove_finance.supplier_payment SET status = 'cancelled', cancelled_at = now(), first_exported_at = NULL WHERE org_id = $1 AND id = $2", [o.orgId, payment.id]));
-    await admin((c) => c.query('UPDATE crove_finance.supplier_payment SET first_exported_at = exported_at WHERE org_id = $1 AND id = $2 AND first_exported_at IS NULL AND exported_at IS NOT NULL', [o.orgId, payment.id]));
+    await unguarded((c) => c.query("UPDATE ludy_finance.supplier_payment SET status = 'cancelled', cancelled_at = now(), first_exported_at = NULL WHERE org_id = $1 AND id = $2", [o.orgId, payment.id]));
+    await admin((c) => c.query('UPDATE ludy_finance.supplier_payment SET first_exported_at = exported_at WHERE org_id = $1 AND id = $2 AND first_exported_at IS NULL AND exported_at IS NOT NULL', [o.orgId, payment.id]));
     expect(await fileDay(o, payment.id)).toBe(exportedDay);
   });
 });

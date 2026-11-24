@@ -143,7 +143,7 @@ export async function assertCanUseProjectAcceptanceSource(
   }
 
   const { rows } = await sql<{ state: number }>`
-    SELECT crove_sign.check_project_acceptance_source(${ctx.orgId}::uuid, ${sourceId}::uuid) AS state
+    SELECT ludy_sign.check_project_acceptance_source(${ctx.orgId}::uuid, ${sourceId}::uuid) AS state
   `.execute(ctx.trx);
   const state = Number(rows[0]?.state ?? 0);
   if (state === 0) {

@@ -3,7 +3,7 @@
 //
 // The org keeps three settings on its tenant row (meetings.settings.set, an owner or admin): how long audio, a kept video and text live. Each is stamped on
 // a meeting when it is recorded, so the period the participants were told stays true when a setting changes later. The worker's nightly job
-// (apps/kernel/src/meetings-retention.ts) reads the meetings whose period has ended through crove_meetings.meetings_due and runs the system commands below
+// (apps/kernel/src/meetings-retention.ts) reads the meetings whose period has ended through ludy_meetings.meetings_due and runs the system commands below
 // in each meeting's own org; the database checks every date again, so a bug in the job can fail a run but never shred early.
 //
 // Shredding is deleting the kind's media_key row: every copy of the ciphertext (current and old versions, bucket backups) is unreadable from that commit on.
@@ -193,20 +193,20 @@ export const meetingRetentionShred = defineCommand({
     if (input.kind === 'draft') {
       // Drafts the recorder never published, 30 days after they were made (one statement per table tests stage and age, so a row published meanwhile stays).
       const { rows } = await sql<{ n: number }>`
-        SELECT crove_meetings.meeting_draft_purge(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS n`.execute(ctx.trx);
+        SELECT ludy_meetings.meeting_draft_purge(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS n`.execute(ctx.trx);
       const rowCount = rows[0]?.n ?? 0;
       ctx.audit({ meetingId: input.meetingId, kind: input.kind, applied: rowCount > 0, rows: rowCount });
       return { applied: rowCount > 0, kind: input.kind };
     }
     if (input.kind === 'text') {
       const { rows } = await sql<{ done: boolean }>`
-        SELECT crove_meetings.meeting_text_purge(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS done`.execute(ctx.trx);
+        SELECT ludy_meetings.meeting_text_purge(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS done`.execute(ctx.trx);
       applied = rows[0]?.done === true;
       // The follow-up mails hold a copy of the text the purge just deleted: it goes with it (#3016). Only when the purge ran (a meeting not yet due keeps its text).
       if (applied) mailPayloads = await dropFollowupPayloads(ctx, input.meetingId);
     } else {
       const { rows } = await sql<{ n: number }>`
-        SELECT crove_meetings.meeting_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${input.kind}::text) AS n`.execute(ctx.trx);
+        SELECT ludy_meetings.meeting_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${input.kind}::text) AS n`.execute(ctx.trx);
       applied = (rows[0]?.n ?? 0) > 0;
     }
     ctx.audit({ meetingId: input.meetingId, kind: input.kind, applied, mailPayloads });
@@ -226,7 +226,7 @@ export const meetingShredReplay = defineCommand({
   handler: async (ctx, input): Promise<{ deleted: boolean }> => {
     requireSystem(ctx);
     const { rows } = await sql<{ done: boolean }>`
-      SELECT crove_meetings.meeting_replay_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS done`.execute(ctx.trx);
+      SELECT ludy_meetings.meeting_replay_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS done`.execute(ctx.trx);
     const deleted = rows[0]?.done === true;
     // The same for the follow-up mails' copy of the text (#3016).
     const mailPayloads = await dropFollowupPayloads(ctx, input.meetingId);
@@ -235,7 +235,7 @@ export const meetingShredReplay = defineCommand({
   },
 });
 
-// The storage keys of orphan meeting media files (ids from crove_meetings.meetings_orphan_media), for the worker to delete the objects before their rows. A key
+// The storage keys of orphan meeting media files (ids from ludy_meetings.meetings_orphan_media), for the worker to delete the objects before their rows. A key
 // another file row of the org also names is reported as shared and never deleted: the objects are content addressed.
 export const meetingMediaOrphanKeys = defineQuery({
   name: 'meetings.media.orphan_keys',
@@ -264,7 +264,7 @@ export const meetingMediaDiscard = defineCommand({
   handler: async (ctx, input): Promise<{ discarded: boolean }> => {
     requireSystem(ctx);
     const { rows } = await sql<{ done: boolean }>`
-      SELECT crove_meetings.meeting_media_discard(${ctx.orgId}::uuid, ${input.fileId}::uuid) AS done`.execute(ctx.trx);
+      SELECT ludy_meetings.meeting_media_discard(${ctx.orgId}::uuid, ${input.fileId}::uuid) AS done`.execute(ctx.trx);
     const discarded = rows[0]?.done === true;
     ctx.audit({ fileId: input.fileId, discarded });
     return { discarded };

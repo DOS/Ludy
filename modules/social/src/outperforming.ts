@@ -5,7 +5,7 @@
 // counts taken at least OUTPERFORM_AFTER_HOURS after it went out. It sets that capture against the latest counts of the
 // channel's last OUTPERFORM_HISTORY published Crove variants before it (domain/outperform.ts). Left out on both sides:
 // Stories (their counts are of another kind and last a day), the channel's posts published outside Crove
-// (crove_social.external_post, never a variant) and the variant itself.
+// (ludy_social.external_post, never a variant) and the variant itself.
 //
 // Once: a successful check sets outperform_checked_at with a conditional update (only while null), whether the post
 // is usual or not, and only the check whose update went in tells anyone; at OUTPERFORM_RATIO times the usual or more it
@@ -32,7 +32,7 @@ const HOUR = 3_600_000;
 export async function dayCapture(trx: Trx, orgId: string, variantId: string, publishedAt: Date): Promise<{ metrics: Record<string, number>; recent: boolean } | undefined> {
   const { rows } = await sql<{ metrics: Record<string, number>; recent: boolean }>`
     SELECT m.metrics, m.captured_at >= pg_catalog.now() - pg_catalog.make_interval(hours => ${OUTPERFORM_RETRY_HOURS}::int) AS recent
-    FROM crove_social.metric_snapshot m
+    FROM ludy_social.metric_snapshot m
     WHERE m.org_id = ${orgId} AND m.variant_id = ${variantId} AND m.metrics <> '{}'::jsonb
       AND m.captured_at >= ${new Date(publishedAt.getTime() + OUTPERFORM_AFTER_HOURS * HOUR)}::timestamptz
     ORDER BY m.captured_at, m.id
@@ -67,7 +67,7 @@ export const metricsCheckOutperforming = defineCommand({
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
     const skipped = { state: 'skipped' as const, ratio: null };
     const v = await ctx.trx
-      .selectFrom('crove_social.post_variant')
+      .selectFrom('ludy_social.post_variant')
       .select(['id', 'post_id', 'channel_connection_id', 'status', 'settings', 'published_at', 'outperform_checked_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.variantId)
@@ -79,9 +79,9 @@ export const metricsCheckOutperforming = defineCommand({
     if (!day || !day.recent) return skipped;
     // The channel's published Crove posts before it, newest first, with the latest counts of each.
     const { rows: earlier } = await sql<{ metrics: Record<string, number> }>`
-      SELECT s.metrics FROM crove_social.post_variant e
+      SELECT s.metrics FROM ludy_social.post_variant e
       CROSS JOIN LATERAL (
-        SELECT m.metrics FROM crove_social.metric_snapshot m
+        SELECT m.metrics FROM ludy_social.metric_snapshot m
         WHERE m.org_id = e.org_id AND m.variant_id = e.id AND m.metrics <> '{}'::jsonb
         ORDER BY m.captured_at DESC, m.id DESC LIMIT 1
       ) s
@@ -96,7 +96,7 @@ export const metricsCheckOutperforming = defineCommand({
     );
     // Once: only the check that sets the marker counts, and only it tells anyone.
     const marked = await ctx.trx
-      .updateTable('crove_social.post_variant')
+      .updateTable('ludy_social.post_variant')
       .set({ outperform_checked_at: ctx.now, ...(found ? { outperform_notified_at: ctx.now } : {}) })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', v.id)

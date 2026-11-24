@@ -280,7 +280,7 @@ suite('Projects Triage Inbox Slice 2 (#4493)', () => {
     privateRoadmapTestItemId = rmPriv.item.id;
     await admin(async (c) => {
       await c.query(
-        `UPDATE crove_projects.roadmap_item
+        `UPDATE ludy_projects.roadmap_item
             SET source = 'public_submission', tainted = true
           WHERE org_id = $1 AND id IN ($2, $3)`,
         [orgId, publicSubmissionItemId, privateRoadmapTestItemId],
@@ -452,7 +452,7 @@ suite('Projects Triage Inbox Slice 2 (#4493)', () => {
     // Assigning outsider seat (not in project_member) must fail with 422 and roll back atomically!
     const beforeRejectCounts = await admin(async (c) => {
       const pt = (
-        await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_projects.project_task WHERE org_id = $1 AND project_id = $2`, [orgId, orgProjectId])
+        await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_projects.project_task WHERE org_id = $1 AND project_id = $2`, [orgId, orgProjectId])
       ).rows[0]!;
       const lt = (
         await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.task WHERE org_id = $1 AND source_ref = $2::jsonb`, [
@@ -474,14 +474,14 @@ suite('Projects Triage Inbox Slice 2 (#4493)', () => {
     await admin(async (c) => {
       const pti = (
         await c.query<{ status: string; accepted_task_id: string | null }>(
-          `SELECT status, accepted_task_id FROM crove_projects.project_triage_item WHERE org_id = $1 AND id = $2`,
+          `SELECT status, accepted_task_id FROM ludy_projects.project_triage_item WHERE org_id = $1 AND id = $2`,
           [orgId, rmTriage.item.id],
         )
       ).rows[0]!;
       expect(pti).toEqual({ status: 'pending', accepted_task_id: null });
 
       const pt = (
-        await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM crove_projects.project_task WHERE org_id = $1 AND project_id = $2`, [orgId, orgProjectId])
+        await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_projects.project_task WHERE org_id = $1 AND project_id = $2`, [orgId, orgProjectId])
       ).rows[0]!;
       const lt = (
         await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.task WHERE org_id = $1 AND source_ref = $2::jsonb`, [
@@ -507,7 +507,7 @@ suite('Projects Triage Inbox Slice 2 (#4493)', () => {
       expect(taskRow.tainted).toBe(true);
       expect(taskRow.source_ref).toEqual({ type: 'projects.roadmap_item', id: publicSubmissionItemId });
 
-      const rmRow = (await c.query<{ linked_task_id: string | null }>(`SELECT linked_task_id FROM crove_projects.roadmap_item WHERE org_id = $1 AND id = $2`, [orgId, publicSubmissionItemId])).rows[0]!;
+      const rmRow = (await c.query<{ linked_task_id: string | null }>(`SELECT linked_task_id FROM ludy_projects.roadmap_item WHERE org_id = $1 AND id = $2`, [orgId, publicSubmissionItemId])).rows[0]!;
       expect(rmRow.linked_task_id).toBe(accepted.taskId);
     });
 
@@ -532,7 +532,7 @@ suite('Projects Triage Inbox Slice 2 (#4493)', () => {
     );
     expect(privAccepted.item.status).toBe('accepted');
     await admin(async (c) => {
-      const rmRow = (await c.query<{ linked_task_id: string | null }>(`SELECT linked_task_id FROM crove_projects.roadmap_item WHERE org_id = $1 AND id = $2`, [orgId, privateRoadmapTestItemId])).rows[0]!;
+      const rmRow = (await c.query<{ linked_task_id: string | null }>(`SELECT linked_task_id FROM ludy_projects.roadmap_item WHERE org_id = $1 AND id = $2`, [orgId, privateRoadmapTestItemId])).rows[0]!;
       expect(rmRow.linked_task_id).toBeNull();
     });
 
@@ -587,7 +587,7 @@ suite('Projects Triage Inbox Slice 2 (#4493)', () => {
     // Move snoozed_until into the past to verify snoozeElapsed flag & count.
     await admin(async (c) => {
       await c.query(
-        `UPDATE crove_projects.project_triage_item SET snoozed_until = now() - interval '5 minutes' WHERE org_id = $1 AND id = $2`,
+        `UPDATE ludy_projects.project_triage_item SET snoozed_until = now() - interval '5 minutes' WHERE org_id = $1 AND id = $2`,
         [orgId, snoozable.item.id],
       );
     });
@@ -883,18 +883,18 @@ suite('Projects Triage Inbox Slice 2 (#4493)', () => {
       { value: pdplEmail },
       { actor: asOwner(), orgId },
     );
-    expect(found.matches.some((m) => m.column === 'crove_projects.project_triage_item.title' && m.rowId === pdItem.item.id)).toBe(true);
-    expect(found.matches.some((m) => m.column === 'crove_projects.project_triage_item.description' && m.rowId === pdItem.item.id)).toBe(true);
-    expect(found.matches.some((m) => m.column === 'crove_projects.project_triage_item.decline_reason' && m.rowId === pdItem.item.id)).toBe(true);
+    expect(found.matches.some((m) => m.column === 'ludy_projects.project_triage_item.title' && m.rowId === pdItem.item.id)).toBe(true);
+    expect(found.matches.some((m) => m.column === 'ludy_projects.project_triage_item.description' && m.rowId === pdItem.item.id)).toBe(true);
+    expect(found.matches.some((m) => m.column === 'ludy_projects.project_triage_item.decline_reason' && m.rowId === pdItem.item.id)).toBe(true);
 
     const erased = await runtime.execute<{ erased: Array<{ column: string; rows: number }> }>(
       'kernel.personal_data.erase',
       { value: pdplEmail },
       { actor: asOwnerMfa(), orgId, idempotencyKey: randomUUID() },
     );
-    expect(erased.erased.some((e) => e.column === 'crove_projects.project_triage_item.title' && e.rows >= 1)).toBe(true);
-    expect(erased.erased.some((e) => e.column === 'crove_projects.project_triage_item.description' && e.rows >= 1)).toBe(true);
-    expect(erased.erased.some((e) => e.column === 'crove_projects.project_triage_item.decline_reason' && e.rows >= 1)).toBe(true);
+    expect(erased.erased.some((e) => e.column === 'ludy_projects.project_triage_item.title' && e.rows >= 1)).toBe(true);
+    expect(erased.erased.some((e) => e.column === 'ludy_projects.project_triage_item.description' && e.rows >= 1)).toBe(true);
+    expect(erased.erased.some((e) => e.column === 'ludy_projects.project_triage_item.decline_reason' && e.rows >= 1)).toBe(true);
 
     // Erase pdplAcceptEmail before accepting preEraseAcceptItem -> subsequent projects.triage.accept creates a redacted task.
     await runtime.execute(
@@ -971,8 +971,8 @@ suite('Projects Triage Inbox Slice 2 (#4493)', () => {
     await admin(async (c) => {
       const counts = (
         await c.query<{ t: string; p: string }>(
-          `SELECT (SELECT count(*) FROM crove_projects.project_triage_item WHERE org_id = $1)::text AS t,
-                  (SELECT count(*) FROM crove_projects.project WHERE org_id = $1)::text AS p`,
+          `SELECT (SELECT count(*) FROM ludy_projects.project_triage_item WHERE org_id = $1)::text AS t,
+                  (SELECT count(*) FROM ludy_projects.project WHERE org_id = $1)::text AS p`,
           [orgId],
         )
       ).rows[0]!;

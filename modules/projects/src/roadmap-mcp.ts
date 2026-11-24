@@ -17,6 +17,7 @@ import {
 import type { MemberRole } from '@ludy/db';
 import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { loadProject } from './shared.ts';
+import { ctxQueryFn } from './tasks-from-source.ts';
 
 const GRANTORS: readonly MemberRole[] = ['owner', 'admin'];
 export const MCP_ROADMAP_DEFAULT = 25;
@@ -135,11 +136,11 @@ export const mcpRoadmapIdeas = defineQuery({
         i.submitter_display_name,
         i.created_at,
         i.updated_at
-      FROM crove_projects.roadmap_item i
-      JOIN crove_projects.roadmap_board b
+      FROM ludy_projects.roadmap_item i
+      JOIN ludy_projects.roadmap_board b
         ON b.org_id = i.org_id
        AND b.id = i.board_id
-      LEFT JOIN crove_projects.project p
+      LEFT JOIN ludy_projects.project p
         ON p.org_id = b.org_id
        AND p.id = b.project_id
       WHERE i.org_id = ${ctx.orgId}::uuid
@@ -202,8 +203,8 @@ export const mcpRoadmapDemandSummary = defineQuery({
 
     const { rows: boards } = await sql<{ id: string; slug: string; title: string; enabled: boolean }>`
       SELECT b.id, b.slug, b.title, b.enabled
-      FROM crove_projects.roadmap_board b
-      LEFT JOIN crove_projects.project p
+      FROM ludy_projects.roadmap_board b
+      LEFT JOIN ludy_projects.project p
         ON p.org_id = b.org_id
        AND p.id = b.project_id
       WHERE b.org_id = ${ctx.orgId}::uuid
@@ -238,11 +239,11 @@ export const mcpRoadmapDemandSummary = defineQuery({
         pg_catalog.count(*) FILTER (WHERE i.moderation_status = 'published' AND i.stage = 'shipped')::text AS shipped_count,
         COALESCE(pg_catalog.sum(i.vote_count) FILTER (WHERE i.moderation_status = 'published'), 0)::text AS total_published_votes,
         pg_catalog.count(*) FILTER (WHERE i.tainted = true)::text AS tainted_items_count
-      FROM crove_projects.roadmap_item i
-      JOIN crove_projects.roadmap_board b
+      FROM ludy_projects.roadmap_item i
+      JOIN ludy_projects.roadmap_board b
         ON b.org_id = i.org_id
        AND b.id = i.board_id
-      LEFT JOIN crove_projects.project p
+      LEFT JOIN ludy_projects.project p
         ON p.org_id = b.org_id
        AND p.id = b.project_id
       WHERE i.org_id = ${ctx.orgId}::uuid
@@ -260,11 +261,11 @@ export const mcpRoadmapDemandSummary = defineQuery({
       tainted: boolean;
     }>`
       SELECT i.id, i.board_id, b.title AS board_title, i.stage, i.category, i.public_title, i.vote_count, i.tainted
-      FROM crove_projects.roadmap_item i
-      JOIN crove_projects.roadmap_board b
+      FROM ludy_projects.roadmap_item i
+      JOIN ludy_projects.roadmap_board b
         ON b.org_id = i.org_id
        AND b.id = i.board_id
-      LEFT JOIN crove_projects.project p
+      LEFT JOIN ludy_projects.project p
         ON p.org_id = b.org_id
        AND p.id = b.project_id
       WHERE i.org_id = ${ctx.orgId}::uuid
@@ -281,11 +282,11 @@ export const mcpRoadmapDemandSummary = defineQuery({
       published_at: Date;
     }>`
       SELECT a.id, a.board_id, a.title, a.published_at
-      FROM crove_projects.roadmap_announcement a
-      JOIN crove_projects.roadmap_board b
+      FROM ludy_projects.roadmap_announcement a
+      JOIN ludy_projects.roadmap_board b
         ON b.org_id = a.org_id
        AND b.id = a.board_id
-      LEFT JOIN crove_projects.project p
+      LEFT JOIN ludy_projects.project p
         ON p.org_id = b.org_id
        AND p.id = b.project_id
       WHERE a.org_id = ${ctx.orgId}::uuid
@@ -358,29 +359,58 @@ export const mcpTriageSummary = defineQuery({
     const now = new Date();
     const nowIso = now.toISOString();
     const nowMs = now.getTime();
-    // Enforce meetings privacy in SQL too (defense-in-depth alongside mcp_company meeting_read RLS):
-    // never leak attendees-only, draft/unpublished, or text-expired meetings in counts or rows.
-    const meetingVisibilityGuard = sql<boolean>`(
-      pti.source_type <> 'meetings.meeting'
-      OR (
-        pti.source_id IS NOT NULL
-        AND EXISTS (
-          SELECT 1
-            FROM crove_meetings.meeting m
-           WHERE m.org_id = pti.org_id
-             AND m.id = pti.source_id
-             AND m.visibility = 'org'
-             AND (m.text_retention_date IS NULL OR m.text_retention_date > (${nowIso}::timestamptz AT TIME ZONE 'Asia/Ho_Chi_Minh')::date)
-             AND EXISTS (
-               SELECT 1
-                 FROM crove_meetings.meeting_result mr
-                WHERE mr.org_id = m.org_id
-                  AND mr.meeting_id = m.id
-                  AND mr.stage = 'published'
-             )
-        )
+    // Resolve org-visible published in-retention meetings strictly through meetings.mcp.visible_ids via ctx.query
+    // (never query ludy_meetings.* directly). Fails closed when Meetings is uninstalled or refuses the caller.
+    let visibleMeetingQuery = ctx.trx
+      .selectFrom('ludy_projects.project_triage_item as pti')
+      .innerJoin('ludy_projects.project as p', (join) =>
+        join.onRef('p.org_id', '=', 'pti.org_id').onRef('p.id', '=', 'pti.project_id'),
       )
-    )`;
+      .select('pti.source_id')
+      .distinct()
+      .where('pti.org_id', '=', ctx.orgId)
+      .where('p.is_template', '=', false)
+      .where('p.status', '<>', 'archived')
+      .where('p.visibility', '<>', 'private')
+      .where('pti.source_type', '=', 'meetings.meeting')
+      .where('pti.source_id', 'is not', null);
+    if (input.projectId !== undefined) {
+      visibleMeetingQuery = visibleMeetingQuery.where('pti.project_id', '=', input.projectId);
+    }
+    const candidateMeetingRows = await visibleMeetingQuery.execute();
+    const candidateMeetingIds = candidateMeetingRows
+      .map((r) => r.source_id)
+      .filter((id): id is string => typeof id === 'string');
+
+    const visibleMeetingIds = new Set<string>();
+    if (candidateMeetingIds.length > 0 && ctx.installed('meetings')) {
+      const query = ctxQueryFn(ctx);
+      for (let offset = 0; offset < candidateMeetingIds.length; offset += 200) {
+        const batch = candidateMeetingIds.slice(offset, offset + 200);
+        try {
+          const res = await query<{ visibleIds: string[] }>('meetings.mcp.visible_ids', { meetingIds: batch });
+          if (res.status === 'not_installed') {
+            visibleMeetingIds.clear();
+            break;
+          }
+          for (const id of res.value.visibleIds) {
+            visibleMeetingIds.add(id);
+          }
+        } catch (err) {
+          if (!(err instanceof DomainError && (err.status === 403 || err.status === 404))) {
+            throw err;
+          }
+          visibleMeetingIds.clear();
+          break;
+        }
+      }
+    }
+
+    const visibleMeetingIdList = [...visibleMeetingIds];
+    const meetingVisibilityGuard =
+      visibleMeetingIdList.length > 0
+        ? sql<boolean>`(pti.source_type <> 'meetings.meeting' OR (pti.source_id IS NOT NULL AND pti.source_id = ANY(${visibleMeetingIdList}::uuid[])))`
+        : sql<boolean>`pti.source_type <> 'meetings.meeting'`;
 
     const { rows: countRows } = await sql<{
       pending: string;
@@ -399,8 +429,8 @@ export const mcpTriageSummary = defineQuery({
         pg_catalog.count(*) FILTER (WHERE pti.status = 'declined')::text AS declined,
         pg_catalog.count(*) FILTER (WHERE pti.status = 'snoozed' AND pti.snoozed_until <= ${nowIso}::timestamptz)::text AS snooze_elapsed,
         pg_catalog.count(*) FILTER (WHERE pti.tainted)::text AS tainted_count
-      FROM crove_projects.project_triage_item pti
-      JOIN crove_projects.project p
+      FROM ludy_projects.project_triage_item pti
+      JOIN ludy_projects.project p
         ON p.org_id = pti.org_id
        AND p.id = pti.project_id
      WHERE pti.org_id = ${ctx.orgId}::uuid
@@ -411,8 +441,8 @@ export const mcpTriageSummary = defineQuery({
        ${input.projectId !== undefined ? sql`AND p.id = ${input.projectId}::uuid` : sql``}`.execute(ctx.trx);
 
     const rowQuery = ctx.trx
-      .selectFrom('crove_projects.project_triage_item as pti')
-      .innerJoin('crove_projects.project as p', (join) =>
+      .selectFrom('ludy_projects.project_triage_item as pti')
+      .innerJoin('ludy_projects.project as p', (join) =>
         join.onRef('p.org_id', '=', 'pti.org_id').onRef('p.id', '=', 'pti.project_id'),
       )
       .select([

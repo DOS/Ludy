@@ -38,6 +38,8 @@ import {
   ROADMAP_ITEM_SUMMARY_MAX,
   ROADMAP_ITEM_TITLE_MAX,
   ROADMAP_SHIPPED_MAIL_SOURCE,
+  ROADMAP_SIGNAL_ACCOUNT_LABEL_MAX,
+  ROADMAP_SIGNAL_QUOTE_EXCERPT_MAX,
   ROADMAP_TITLE_MAX,
   zPersonalDataQuery,
   type PersonalDataErasure,
@@ -72,12 +74,12 @@ export interface PersonalDataColumn {
   // business itself; the other entities are the businesses and households it keeps books for).
   override?: { when: string; handling: SearchableHandling; reason: string };
   // Private items (ADR-0037): the finder lists a row only when it is shared ('unless_shared': its visibility is 'org'),
-  // or never ('always'); private ones are counted per author through crove_notes.private_matches instead, with no text.
+  // or never ('always'); private ones are counted per author through ludy_notes.private_matches instead, with no text.
   privateRows?: 'unless_shared' | 'always';
-  // A machinery table closed to ludy_tenant (such as crove_sign.signing_otp): findPersonalData skips direct SELECT,
+  // A machinery table closed to ludy_tenant (such as ludy_sign.signing_otp): findPersonalData skips direct SELECT,
   // while erase invokes the table's narrow SECURITY DEFINER helper.
   machinery?: true;
-  // A text[] column searched as its items joined by a space, as crove_notes.private_matches reads a note's tags.
+  // A text[] column searched as its items joined by a space, as ludy_notes.private_matches reads a note's tags.
   list?: true;
   // A jsonb array of { text, done } steps searched by joining each step's text, keeping adjacent numbers separate.
   jsonbSteps?: true;
@@ -99,16 +101,16 @@ export const PERSONAL_DATA_COLUMNS = {
   'ludy_kernel.party.email': { kind: 'email', handling: 'erase', reason: 'Contact detail, not part of the books' },
   'ludy_kernel.party.phone': { kind: 'phone', handling: 'erase', reason: 'Contact detail, not part of the books' },
   // A visitor's booking on a public booking page (#1318).
-  'crove_crm.booking.visitor_name': { kind: 'name', handling: 'erase', reason: 'The name a visitor gave when booking a meeting' },
-  'crove_crm.booking.email': { kind: 'email', handling: 'erase', reason: 'The address a visitor gave when booking a meeting' },
-  'crove_crm.booking.phone': { kind: 'phone', handling: 'erase', reason: 'The number a visitor gave when booking a meeting' },
-  'crove_crm.booking.note': { kind: 'other', handling: 'erase', reason: 'Free text a visitor wrote when booking a meeting, which may name or describe them' },
+  'ludy_crm.booking.visitor_name': { kind: 'name', handling: 'erase', reason: 'The name a visitor gave when booking a meeting' },
+  'ludy_crm.booking.email': { kind: 'email', handling: 'erase', reason: 'The address a visitor gave when booking a meeting' },
+  'ludy_crm.booking.phone': { kind: 'phone', handling: 'erase', reason: 'The number a visitor gave when booking a meeting' },
+  'ludy_crm.booking.note': { kind: 'other', handling: 'erase', reason: 'Free text a visitor wrote when booking a meeting, which may name or describe them' },
   // Rows of a contact import waiting for the member's go-ahead (#2229): the contact as read from the file. They are deleted
   // on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep); the erasure deletes the rows that name the person sooner.
-  'crove_crm.import_row.email': { kind: 'email', handling: 'erase', reason: 'The address as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
-  'crove_crm.import_row.phone': { kind: 'phone', handling: 'erase', reason: 'The number as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
-  'crove_crm.import_row.tax_code': { kind: 'tax_code', handling: 'erase', reason: 'The tax code as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
-  'crove_crm.import_row.address': { kind: 'address', handling: 'erase', reason: 'The address as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
+  'ludy_crm.import_row.email': { kind: 'email', handling: 'erase', reason: 'The address as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
+  'ludy_crm.import_row.phone': { kind: 'phone', handling: 'erase', reason: 'The number as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
+  'ludy_crm.import_row.tax_code': { kind: 'tax_code', handling: 'erase', reason: 'The tax code as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
+  'ludy_crm.import_row.address': { kind: 'address', handling: 'erase', reason: 'The address as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
   'ludy_kernel.party.address': {
     kind: 'address',
     handling: 'erase',
@@ -169,7 +171,7 @@ export const PERSONAL_DATA_COLUMNS = {
   },
   // The household business profile (#2517): the name printed with the signature place of the household's books (Circular 152), usually its owner's. It is part of those books, so it is kept with
   // them; the profile rows go with the org (offboarding) and are never edited, a correction being a later row.
-  'crove_finance.household_profile.representative_name': {
+  'ludy_finance.household_profile.representative_name': {
     kind: 'name',
     handling: 'keep_legal',
     reason: "The name of the household's representative, printed on its books of Circular 152 beside the signature; part of the accounting records, kept with them and removed with the org",
@@ -221,18 +223,18 @@ export const PERSONAL_DATA_COLUMNS = {
     reason: "The title of a recording a meeting platform offers the member, which may name or describe a person: read by that member alone; a suggestion is deleted 14 days after the recording, a failed or imported row keeps it until the member disconnects the platform or the org is purged, and an import copies it into the new meeting's own title",
   },
   // Bank feeds (ADR-0039, #2044): the accounts a connection reaches, as the worker listed them; not the books.
-  'crove_finance.bank_feed_listed_account.display_name': {
+  'ludy_finance.bank_feed_listed_account.display_name': {
     kind: 'name',
     handling: 'erase',
     reason: "The name of a bank account a bank feed reaches, which may be its holder's; the next listing replaces it and disconnecting removes it",
   },
-  'crove_finance.bank_feed_listed_account.external_account_id': {
+  'ludy_finance.bank_feed_listed_account.external_account_id': {
     kind: 'other',
     handling: 'erase',
     reason: "The provider's id of a bank account a bank feed reaches, which may be its number; the next listing replaces it and disconnecting removes it",
   },
   // Finance records.
-  'crove_finance.cash_voucher.person_name': {
+  'ludy_finance.cash_voucher.person_name': {
     kind: 'name',
     handling: 'keep_legal',
     reason: 'The payer or payee named on a phiếu thu or phiếu chi is part of the accounting voucher',
@@ -240,35 +242,35 @@ export const PERSONAL_DATA_COLUMNS = {
   // A sales e-invoice draft (#2500): the buyer as the person typed it or took it from a customer. A draft becomes the record of an invoice, kept like the books.
   // An e-invoice provider connection (#2501): the tax code of the entity it issues for, which is a household's owner's national ID when the entity is a household. The row
   // is deleted when the connection is closed and with the org's working rows, so there is nothing to keep.
-  'crove_finance.einvoice_connection.seller_tax_code': { kind: 'tax_code', handling: 'erase', reason: "The tax code of the legal entity an e-invoice provider connection issues for; a household's is its owner's national ID number. Deleted when the connection is closed" },
-  'crove_finance.einvoice_draft.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
-  'crove_finance.einvoice_draft.buyer_name': { kind: 'name', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
-  'crove_finance.einvoice_draft.buyer_address': { kind: 'address', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
-  'crove_finance.einvoice_draft.buyer_identity': { kind: 'other', handling: 'keep_legal', reason: "The CCCD, passport number or budget-relation unit code an individual buyer gave on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)" },
-  'crove_finance.einvoice_draft.buyer_nationality': { kind: 'other', handling: 'keep_legal', reason: "The nationality a foreign buyer gave with a passport on a sales e-invoice draft (Decree 254 Appendix point 4.b, #3709), which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41); it is classified with the identity it belongs to" },
-  'crove_finance.einvoice_draft.buyer_email': { kind: 'email', handling: 'keep_legal', reason: 'Where the buyer asked for the invoice on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
+  'ludy_finance.einvoice_connection.seller_tax_code': { kind: 'tax_code', handling: 'erase', reason: "The tax code of the legal entity an e-invoice provider connection issues for; a household's is its owner's national ID number. Deleted when the connection is closed" },
+  'ludy_finance.einvoice_draft.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
+  'ludy_finance.einvoice_draft.buyer_name': { kind: 'name', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
+  'ludy_finance.einvoice_draft.buyer_address': { kind: 'address', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
+  'ludy_finance.einvoice_draft.buyer_identity': { kind: 'other', handling: 'keep_legal', reason: "The CCCD, passport number or budget-relation unit code an individual buyer gave on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)" },
+  'ludy_finance.einvoice_draft.buyer_nationality': { kind: 'other', handling: 'keep_legal', reason: "The nationality a foreign buyer gave with a passport on a sales e-invoice draft (Decree 254 Appendix point 4.b, #3709), which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41); it is classified with the identity it belongs to" },
+  'ludy_finance.einvoice_draft.buyer_email': { kind: 'email', handling: 'keep_legal', reason: 'Where the buyer asked for the invoice on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   // A sent quote (#2694): the buyer as the customer's contact was when the quote was sent. The quote is frozen once sent (a guard trigger), so the erase command cannot change it;
   // it goes with the org. The seller's own letterhead on the org's quote settings is the business's, not a person's.
-  'crove_crm.quote.buyer_name': { kind: 'name', handling: 'keep_record', reason: 'The buyer on a sent quote, a frozen document the customer holds; it cannot be changed after it was sent' },
-  'crove_crm.quote.buyer_tax_code': { kind: 'tax_code', handling: 'keep_record', reason: 'The buyer on a sent quote, a frozen document the customer holds; it cannot be changed after it was sent' },
-  'crove_crm.quote.buyer_address': { kind: 'address', handling: 'keep_record', reason: 'The buyer on a sent quote, a frozen document the customer holds; it cannot be changed after it was sent' },
-  'crove_crm.quote.buyer_email': { kind: 'email', handling: 'keep_record', reason: 'Where the buyer was written to on a sent quote, a frozen document the customer holds; it cannot be changed after it was sent' },
-  'crove_crm.quote.seller_name': { kind: 'name', handling: 'keep_org', reason: "The seller on a sent quote, the business's own letterhead frozen when it was sent; it cannot be changed after it was sent" },
-  'crove_crm.quote.seller_tax_code': { kind: 'tax_code', handling: 'keep_org', reason: "The seller on a sent quote, the business's own letterhead frozen when it was sent; it cannot be changed after it was sent" },
-  'crove_crm.quote.seller_address': { kind: 'address', handling: 'keep_org', reason: "The seller on a sent quote, the business's own letterhead frozen when it was sent; it cannot be changed after it was sent" },
-  'crove_crm.quote.seller_phone': { kind: 'phone', handling: 'keep_org', reason: "The seller on a sent quote, the business's own letterhead frozen when it was sent; it cannot be changed after it was sent" },
-  'crove_crm.quote.seller_email': { kind: 'email', handling: 'keep_org', reason: "The seller on a sent quote, the business's own letterhead frozen when it was sent; it cannot be changed after it was sent" },
+  'ludy_crm.quote.buyer_name': { kind: 'name', handling: 'keep_record', reason: 'The buyer on a sent quote, a frozen document the customer holds; it cannot be changed after it was sent' },
+  'ludy_crm.quote.buyer_tax_code': { kind: 'tax_code', handling: 'keep_record', reason: 'The buyer on a sent quote, a frozen document the customer holds; it cannot be changed after it was sent' },
+  'ludy_crm.quote.buyer_address': { kind: 'address', handling: 'keep_record', reason: 'The buyer on a sent quote, a frozen document the customer holds; it cannot be changed after it was sent' },
+  'ludy_crm.quote.buyer_email': { kind: 'email', handling: 'keep_record', reason: 'Where the buyer was written to on a sent quote, a frozen document the customer holds; it cannot be changed after it was sent' },
+  'ludy_crm.quote.seller_name': { kind: 'name', handling: 'keep_org', reason: "The seller on a sent quote, the business's own letterhead frozen when it was sent; it cannot be changed after it was sent" },
+  'ludy_crm.quote.seller_tax_code': { kind: 'tax_code', handling: 'keep_org', reason: "The seller on a sent quote, the business's own letterhead frozen when it was sent; it cannot be changed after it was sent" },
+  'ludy_crm.quote.seller_address': { kind: 'address', handling: 'keep_org', reason: "The seller on a sent quote, the business's own letterhead frozen when it was sent; it cannot be changed after it was sent" },
+  'ludy_crm.quote.seller_phone': { kind: 'phone', handling: 'keep_org', reason: "The seller on a sent quote, the business's own letterhead frozen when it was sent; it cannot be changed after it was sent" },
+  'ludy_crm.quote.seller_email': { kind: 'email', handling: 'keep_org', reason: "The seller on a sent quote, the business's own letterhead frozen when it was sent; it cannot be changed after it was sent" },
   // A sales order (#2696): the frozen copy of the buyer on the quote it was made from.
-  'crove_crm.sales_order.buyer_name': { kind: 'name', handling: 'keep_record', reason: 'The buyer on a sales order, a frozen copy of the sent quote it was made from; the order is not changed after it is made. Whether the copy is redacted or kept on an erasure request stays open under #2820' },
-  'crove_crm.sales_order.buyer_tax_code': { kind: 'tax_code', handling: 'keep_record', reason: 'The buyer on a sales order, a frozen copy of the sent quote it was made from; the order is not changed after it is made. Whether the copy is redacted or kept on an erasure request stays open under #2820' },
-  'crove_crm.sales_order.buyer_address': { kind: 'address', handling: 'keep_record', reason: 'The buyer on a sales order, a frozen copy of the sent quote it was made from; the order is not changed after it is made. Whether the copy is redacted or kept on an erasure request stays open under #2820' },
-  'crove_crm.sales_order.buyer_email': { kind: 'email', handling: 'keep_record', reason: 'The buyer on a sales order, a frozen copy of the sent quote it was made from; the order is not changed after it is made. Whether the copy is redacted or kept on an erasure request stays open under #2820' },
-  'crove_crm.quote_setting.phone': { kind: 'phone', handling: 'keep_org', reason: "The business's own phone number, printed on its quotes" },
-  'crove_crm.quote_setting.email': { kind: 'email', handling: 'keep_org', reason: "The business's own email address, printed on its quotes" },
-  'crove_finance.portal_invoice_list.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
-  'crove_finance.portal_invoice_row.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
-  'crove_finance.portal_invoice_row.seller_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
-  'crove_finance.portal_invoice_row.seller_name': { kind: 'name', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
+  'ludy_crm.sales_order.buyer_name': { kind: 'name', handling: 'keep_record', reason: 'The buyer on a sales order, a frozen copy of the sent quote it was made from; the order is not changed after it is made. Whether the copy is redacted or kept on an erasure request stays open under #2820' },
+  'ludy_crm.sales_order.buyer_tax_code': { kind: 'tax_code', handling: 'keep_record', reason: 'The buyer on a sales order, a frozen copy of the sent quote it was made from; the order is not changed after it is made. Whether the copy is redacted or kept on an erasure request stays open under #2820' },
+  'ludy_crm.sales_order.buyer_address': { kind: 'address', handling: 'keep_record', reason: 'The buyer on a sales order, a frozen copy of the sent quote it was made from; the order is not changed after it is made. Whether the copy is redacted or kept on an erasure request stays open under #2820' },
+  'ludy_crm.sales_order.buyer_email': { kind: 'email', handling: 'keep_record', reason: 'The buyer on a sales order, a frozen copy of the sent quote it was made from; the order is not changed after it is made. Whether the copy is redacted or kept on an erasure request stays open under #2820' },
+  'ludy_crm.quote_setting.phone': { kind: 'phone', handling: 'keep_org', reason: "The business's own phone number, printed on its quotes" },
+  'ludy_crm.quote_setting.email': { kind: 'email', handling: 'keep_org', reason: "The business's own email address, printed on its quotes" },
+  'ludy_finance.portal_invoice_list.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
+  'ludy_finance.portal_invoice_row.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
+  'ludy_finance.portal_invoice_row.seller_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
+  'ludy_finance.portal_invoice_row.seller_name': { kind: 'name', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
   // Free text that can name a person (#1948): searched for the value anywhere inside it. Social's posts and comments
   // are left out while Social is paused (decision D5).
   'ludy_kernel.activity.summary': {
@@ -281,31 +283,31 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'keep_record',
     reason: 'A comment on a task is an append-only record of the work, which the erase command cannot change; it goes with the org',
   },
-  'crove_finance.journal_entry.description': {
+  'ludy_finance.journal_entry.description': {
     kind: 'free_text',
     handling: 'keep_legal',
     reason: 'The description of a posted journal entry is part of the books, append-only and anchored in the WORM archive',
   },
-  'crove_finance.cash_voucher.description': {
+  'ludy_finance.cash_voucher.description': {
     kind: 'free_text',
     handling: 'keep_legal',
     reason: 'The reason written on a phiếu thu or phiếu chi is part of the accounting voucher, append-only and kept by law (Accounting Law 88/2015, Art. 41)',
   },
-  'crove_finance.journal_voucher.description': {
+  'ludy_finance.journal_voucher.description': {
     kind: 'free_text',
     handling: 'keep_legal',
     reason: 'The reason written on a journal voucher is part of the accounting voucher, append-only and kept by law (Accounting Law 88/2015, Art. 41)',
   },
   // MISA AMIS's own text for a voucher it refused (#4015): untrusted, at most 500 characters, and it may quote a party's name, tax code or an invoice number. An erasure clears the whole text of a refused row that
-  // mentions the value and keeps the row and its state (crove_finance.personal_data_clear_misa_amis_push_reason); a short number is left and listed, as in the activity lines.
-  'crove_finance.misa_amis_push.reason': {
+  // mentions the value and keeps the row and its state (ludy_finance.personal_data_clear_misa_amis_push_reason); a short number is left and listed, as in the activity lines.
+  'ludy_finance.misa_amis_push.reason': {
     kind: 'free_text',
     handling: 'erase',
     reason: "MISA AMIS's own words for a voucher it refused, which may quote a party or an invoice; an erasure clears the text of a refused row that mentions the value and keeps the row's state",
   },
   // The tax code a MISA catalogue check looked a party up by (#4112): the key of one stored result (matched, unknown or ambiguous) per party of a connection's batch. An erasure deletes the party's rows
   // whole (the row holds nothing but the key, the state and the matched entry's code and id), and the next check files them anew. Item rows hold an item code and are not matched.
-  'crove_finance.misa_amis_match.match_key': {
+  'ludy_finance.misa_amis_match.match_key': {
     kind: 'tax_code',
     handling: 'erase',
     reason: "The tax code a check of a MISA AMIS connection looked a party up by; an erasure deletes the party's stored results and the next check makes them anew",
@@ -313,7 +315,7 @@ export const PERSONAL_DATA_COLUMNS = {
   // The name of the catalogue entry a MISA catalogue check proposed for a party with no tax code (#4124): it can be a person's name (a household business), so it is kept on the proposal row alone, cleared when a
   // person confirms it (the row is replaced by one that holds the code only) and deleted with the party it was proposed for when an erasure reaches that party (a name is never a probe); the next check proposes the
   // entry anew if the books still carry the party.
-  'crove_finance.misa_amis_match.candidate_name': {
+  'ludy_finance.misa_amis_match.candidate_name': {
     kind: 'name',
     handling: 'erase',
     reason: "The name of the MISA catalogue entry proposed for a party with no tax code; an erasure that reaches the party deletes its name matches and the next check makes them anew",
@@ -321,27 +323,27 @@ export const PERSONAL_DATA_COLUMNS = {
   // The preview of a column check on an unrecognised marketplace order report (#4036): at most 20 parsed lines (order no, line key, SKU, item name, variation, quantity, amount, status) a member looks at before
   // anything is saved. A line can carry a buyer's text when an unflagged column is mapped to a text field (the limit stated in #4178). An erasure deletes the check whose preview quotes the value (the file stays; the
   // person asks again); the preview is also deleted with its file, with the org, and by the nightly retention seven days after the check finished.
-  'crove_finance.marketplace_column_check.preview': {
+  'ludy_finance.marketplace_column_check.preview': {
     kind: 'free_text',
     handling: 'erase',
     reason: "The preview of an order report's parsed lines, which may quote a buyer when a column was mapped by hand; an erasure deletes the check that quotes the value and the member asks again",
   },
   // The raw body of a bank feed provider's signed notice waiting for the worker (#4203, Tingee S3): the transfer content and the payer's name as the provider sent them. A claim deletes it when the worker takes it; any notice
   // older than ten minutes is deleted by the next claim or the nightly sweep (so a worker that is down leaves it until then); it is never logged, is deleted by an erasure that its text mentions, and goes with the hook, the connection and the org.
-  'crove_finance.bank_feed_webhook_notice.body': {
+  'ludy_finance.bank_feed_webhook_notice.body': {
     kind: 'free_text',
     handling: 'erase',
-    // A machinery table closed to the tenant role: the finder does not read it, and the erasure goes through crove_finance.personal_data_erase_bank_feed_notice.
+    // A machinery table closed to the tenant role: the finder does not read it, and the erasure goes through ludy_finance.personal_data_erase_bank_feed_notice.
     machinery: true,
     reason: "The raw body of a bank feed provider's signed notice, which carries the transfer content and the payer's name: deleted when the worker claims it, and any notice older than ten minutes by the next claim or the nightly sweep; also deleted by an erasure whose value its text mentions, and with the connection and the org",
   },
   // The raw body of a marketplace push waiting for the worker (#4316, S1 of #4315): ids, statuses and times in the subscribed order, return and authorization topics, but a seller can subscribe chat or address topics, so
   // it is treated as personal data. A claim deletes it when the worker takes it; any push older than ten minutes is deleted by the next claim or the nightly sweep; it is never logged, is deleted by an erasure that its text
   // mentions, and goes with the hook, the connection and the org.
-  'crove_finance.marketplace_hook_notice.body': {
+  'ludy_finance.marketplace_hook_notice.body': {
     kind: 'free_text',
     handling: 'erase',
-    // A machinery table closed to the tenant role: the finder does not read it, and the erasure goes through crove_finance.personal_data_erase_marketplace_hook_notice.
+    // A machinery table closed to the tenant role: the finder does not read it, and the erasure goes through ludy_finance.personal_data_erase_marketplace_hook_notice.
     machinery: true,
     reason: "The raw body of a marketplace's signed push, which holds ids, statuses and times (and could hold a buyer's message or address if a seller subscribed such a topic): deleted when the worker claims it, and any push older than ten minutes by the next claim or the nightly sweep; also deleted by an erasure whose value its text mentions, and with the hook, the connection and the org",
   },
@@ -363,25 +365,25 @@ export const PERSONAL_DATA_COLUMNS = {
     jsonbSteps: true,
     reason: "A task's checklist steps, which may quote a person's email or phone; each matching step text is redacted in place",
   },
-  'crove_finance.bank_line.description': {
+  'ludy_finance.bank_line.description': {
     kind: 'free_text',
     handling: 'keep_legal',
     reason: "A line of an imported bank statement as the bank wrote it, evidence for the books; append-only and kept by law (Accounting Law 88/2015, Art. 41)",
   },
-  'crove_finance.bank_line.counterparty_account': {
+  'ludy_finance.bank_line.counterparty_account': {
     kind: 'account_number',
     handling: 'keep_legal',
     reason: "The other side's account number (its digits) on an imported bank statement line (#2402); evidence for the books, append-only and kept by law (Accounting Law 88/2015, Art. 41). Found by a code of 8 to 20 digits: an account of 6 or 7 digits cannot be searched, since such a short value would also match amounts in free text. The learned rule that points at a party by it holds only a keyed hash, and goes when the erasure reaches the party",
   },
-  'crove_finance.journal_line.memo': {
+  'ludy_finance.journal_line.memo': {
     kind: 'free_text',
     handling: 'keep_legal',
     reason: 'The memo of a posted journal line is part of the books, append-only and anchored in the WORM archive with its entry',
   },
   // Social.
-  'crove_social.report_branding.display_name': { kind: 'name', handling: 'keep_org', reason: "The agency's name on its white-label client reports (#1053), the business itself" },
-  'crove_social.report_schedule.recipients': { kind: 'email_list', handling: 'erase', reason: 'Addresses a scheduled client report is mailed to' },
-  'crove_social.review_feedback.reviewer_name': {
+  'ludy_social.report_branding.display_name': { kind: 'name', handling: 'keep_org', reason: "The agency's name on its white-label client reports (#1053), the business itself" },
+  'ludy_social.report_schedule.recipients': { kind: 'email_list', handling: 'erase', reason: 'Addresses a scheduled client report is mailed to' },
+  'ludy_social.review_feedback.reviewer_name': {
     kind: 'name',
     handling: 'keep_record',
     reason: 'Review feedback is an append-only record of what a client said about a post; it is removed with the org',
@@ -390,59 +392,59 @@ export const PERSONAL_DATA_COLUMNS = {
   // person. A shared note is listed with its text; a private note and every to-do (always private) are counted per
   // author, never shown, and the erasure deletes them once their author was told. The folded search words are rebuilt
   // from the text, so they are not searched themselves.
-  'crove_notes.note.title': { kind: 'free_text', handling: 'erase', reason: 'A shared note: the erasure edits the value out of its title, body and tags, and the note stays', privateRows: 'unless_shared' },
-  'crove_notes.note.body': { kind: 'free_text', handling: 'erase', reason: 'A shared note: the erasure edits the value out of its title, body and tags, and the note stays', privateRows: 'unless_shared' },
-  'crove_notes.note.tags': { kind: 'free_text', handling: 'erase', reason: 'A shared note: the erasure edits the value out of its title, body and tags, and the note stays', privateRows: 'unless_shared', list: true },
-  'crove_notes.note.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a note's title, tags, body and attachments, rebuilt from them" },
-  'crove_notes.attachment.filename': {
+  'ludy_notes.note.title': { kind: 'free_text', handling: 'erase', reason: 'A shared note: the erasure edits the value out of its title, body and tags, and the note stays', privateRows: 'unless_shared' },
+  'ludy_notes.note.body': { kind: 'free_text', handling: 'erase', reason: 'A shared note: the erasure edits the value out of its title, body and tags, and the note stays', privateRows: 'unless_shared' },
+  'ludy_notes.note.tags': { kind: 'free_text', handling: 'erase', reason: 'A shared note: the erasure edits the value out of its title, body and tags, and the note stays', privateRows: 'unless_shared', list: true },
+  'ludy_notes.note.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a note's title, tags, body and attachments, rebuilt from them" },
+  'ludy_notes.attachment.filename': {
     kind: 'free_text',
     handling: 'erase',
     reason: 'Filename of a note attachment: on a shared note, the erasure deletes the attachment and queues its blob; on a private note, counted per author and deleted once the author was told',
     privateRows: 'unless_shared',
   },
-  'crove_notes.attachment.extracted_text': {
+  'ludy_notes.attachment.extracted_text': {
     kind: 'free_text',
     handling: 'erase',
     reason: 'Extracted text of a note attachment: on a shared note, the erasure deletes the attachment and queues its blob; on a private note, counted per author and deleted once the author was told',
     privateRows: 'unless_shared',
   },
-  'crove_notes.attachment.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a note attachment's filename and extracted text, rebuilt from them" },
-  'crove_notes.notebook.name': { kind: 'free_text', handling: 'erase', reason: 'A shared notebook: the erasure edits the value out of its name and stack name, and the notebook stays; a private notebook is counted per author and deleted once the author was told', privateRows: 'unless_shared' },
-  'crove_notes.notebook.stack_name': { kind: 'free_text', handling: 'erase', reason: 'A shared notebook stack name: the erasure edits the value out of its name and stack name, and the notebook stays; a private notebook is counted per author and deleted once the author was told', privateRows: 'unless_shared' },
-  'crove_notes.todo.title': { kind: 'free_text', handling: 'erase', reason: 'Free text of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
-  'crove_notes.todo.details': { kind: 'free_text', handling: 'erase', reason: 'Free text of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
-  'crove_notes.todo.checklist': { kind: 'free_text', handling: 'erase', reason: 'Steps of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
-  'crove_notes.todo.tags': { kind: 'free_text', handling: 'erase', reason: 'Tags of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always', list: true },
-  'crove_notes.todo.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a to-do's title, details, tags and steps, rebuilt from them" },
-  'crove_notes.todo_list.name': { kind: 'free_text', handling: 'erase', reason: 'Name of a personal to-do list, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
-  'crove_notes.todo_list.sections': { kind: 'free_text', handling: 'erase', reason: 'Section names of a personal to-do list, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
-  'crove_notes.note_template.name': { kind: 'free_text', handling: 'erase', reason: 'A shared note template: the erasure edits the value out of its name, title, body and tags, and the template stays; a private template is counted per author and deleted once the author was told', privateRows: 'unless_shared' },
-  'crove_notes.note_template.title': { kind: 'free_text', handling: 'erase', reason: 'A shared note template: the erasure edits the value out of its name, title, body and tags, and the template stays; a private template is counted per author and deleted once the author was told', privateRows: 'unless_shared' },
-  'crove_notes.note_template.body': { kind: 'free_text', handling: 'erase', reason: 'A shared note template: the erasure edits the value out of its name, title, body and tags, and the template stays; a private template is counted per author and deleted once the author was told', privateRows: 'unless_shared' },
-  'crove_notes.note_template.tags': { kind: 'free_text', handling: 'erase', reason: 'A shared note template: the erasure edits the value out of its name, title, body and tags, and the template stays; a private template is counted per author and deleted once the author was told', privateRows: 'unless_shared', list: true },
-  'crove_notes.note_version.title': { kind: 'free_text', handling: 'erase', reason: 'A version snapshot of a shared note: the erasure deletes matching snapshots; snapshots of a private note are counted with the note and deleted with it once the author was told', privateRows: 'unless_shared' },
-  'crove_notes.note_version.body': { kind: 'free_text', handling: 'erase', reason: 'A version snapshot of a shared note: the erasure deletes matching snapshots; snapshots of a private note are counted with the note and deleted with it once the author was told', privateRows: 'unless_shared' },
-  'crove_notes.note_version.tags': { kind: 'free_text', handling: 'erase', reason: 'A version snapshot of a shared note: the erasure deletes matching snapshots; snapshots of a private note are counted with the note and deleted with it once the author was told', privateRows: 'unless_shared', list: true },
+  'ludy_notes.attachment.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a note attachment's filename and extracted text, rebuilt from them" },
+  'ludy_notes.notebook.name': { kind: 'free_text', handling: 'erase', reason: 'A shared notebook: the erasure edits the value out of its name and stack name, and the notebook stays; a private notebook is counted per author and deleted once the author was told', privateRows: 'unless_shared' },
+  'ludy_notes.notebook.stack_name': { kind: 'free_text', handling: 'erase', reason: 'A shared notebook stack name: the erasure edits the value out of its name and stack name, and the notebook stays; a private notebook is counted per author and deleted once the author was told', privateRows: 'unless_shared' },
+  'ludy_notes.todo.title': { kind: 'free_text', handling: 'erase', reason: 'Free text of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
+  'ludy_notes.todo.details': { kind: 'free_text', handling: 'erase', reason: 'Free text of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
+  'ludy_notes.todo.checklist': { kind: 'free_text', handling: 'erase', reason: 'Steps of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
+  'ludy_notes.todo.tags': { kind: 'free_text', handling: 'erase', reason: 'Tags of a to-do, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always', list: true },
+  'ludy_notes.todo.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a to-do's title, details, tags and steps, rebuilt from them" },
+  'ludy_notes.todo_list.name': { kind: 'free_text', handling: 'erase', reason: 'Name of a personal to-do list, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
+  'ludy_notes.todo_list.sections': { kind: 'free_text', handling: 'erase', reason: 'Section names of a personal to-do list, private to its owner: counted per owner, never shown, and deleted by the erasure once the owner was told', privateRows: 'always' },
+  'ludy_notes.note_template.name': { kind: 'free_text', handling: 'erase', reason: 'A shared note template: the erasure edits the value out of its name, title, body and tags, and the template stays; a private template is counted per author and deleted once the author was told', privateRows: 'unless_shared' },
+  'ludy_notes.note_template.title': { kind: 'free_text', handling: 'erase', reason: 'A shared note template: the erasure edits the value out of its name, title, body and tags, and the template stays; a private template is counted per author and deleted once the author was told', privateRows: 'unless_shared' },
+  'ludy_notes.note_template.body': { kind: 'free_text', handling: 'erase', reason: 'A shared note template: the erasure edits the value out of its name, title, body and tags, and the template stays; a private template is counted per author and deleted once the author was told', privateRows: 'unless_shared' },
+  'ludy_notes.note_template.tags': { kind: 'free_text', handling: 'erase', reason: 'A shared note template: the erasure edits the value out of its name, title, body and tags, and the template stays; a private template is counted per author and deleted once the author was told', privateRows: 'unless_shared', list: true },
+  'ludy_notes.note_version.title': { kind: 'free_text', handling: 'erase', reason: 'A version snapshot of a shared note: the erasure deletes matching snapshots; snapshots of a private note are counted with the note and deleted with it once the author was told', privateRows: 'unless_shared' },
+  'ludy_notes.note_version.body': { kind: 'free_text', handling: 'erase', reason: 'A version snapshot of a shared note: the erasure deletes matching snapshots; snapshots of a private note are counted with the note and deleted with it once the author was told', privateRows: 'unless_shared' },
+  'ludy_notes.note_version.tags': { kind: 'free_text', handling: 'erase', reason: 'A version snapshot of a shared note: the erasure deletes matching snapshots; snapshots of a private note are counted with the note and deleted with it once the author was told', privateRows: 'unless_shared', list: true },
   // Meetings (ADR-0047 points 7 and 11, issues #2579, #2594): a recording holds voices (its file references are not classified: a column named file_id is shared by every table, and a class on that name would force auditValue on every file fact of the books), and
   // what was said, summarized and promised may name or describe a person. The text columns are free text the finder searches (freeTextMatch): the rows an actor reads
   // are listed like any other (row security keeps an attendees-only meeting and every draft to its readers), and what the owner cannot read is counted per recorder through
-  // crove_meetings.personal_matches, never listed. A person's request is also answered by deleting the meeting, which the recorder does (meetings.meeting.delete) and an
+  // ludy_meetings.personal_matches, never listed. A person's request is also answered by deleting the meeting, which the recorder does (meetings.meeting.delete) and an
   // owner may do without reading it (meetings.meeting.owner_delete, R3); the nightly job deletes every meeting at its own text date and shreds audio and video at theirs.
-  'crove_meetings.meeting.title': {
+  'ludy_meetings.meeting.title': {
     kind: 'free_text',
     handling: 'erase',
     reason: "A meeting's title, which may name a person: found where the actor reads the meeting; counted per recorder where the owner cannot; deleted with the meeting (its recorder, an owner for a personal-data request, or the retention job)",
   },
   // The transcript (ADR-0047 point 7, issue #2578): what was said and who it is attributed to. A draft is the recorder's alone and
   // a published line is read by the meeting's readers.
-  'crove_meetings.transcript_segment.text': {
+  'ludy_meetings.transcript_segment.text': {
     kind: 'free_text',
     handling: 'erase',
     reason: "What was said in a meeting, which may name or describe a person: found where the actor reads the meeting; counted per recorder where the owner cannot; deleted with the meeting (its recorder, an owner, or the retention job)",
   },
   // The live preview of a meeting being recorded (ADR-0052 L4a-2, issue #3110): the recorder's own Vy's transcription of the pieces sent so far. Only the recorder reads it (no
   // finder, owner or admin can), the batch transcript replaces it, and it goes with the meeting, so a request is answered the way it is for the transcript: by deleting the meeting.
-  'crove_meetings.live_line.text': {
+  'ludy_meetings.live_line.text': {
     kind: 'free_text',
     handling: 'erase',
     reason: "A draft of what was said in a meeting being recorded, which may name or describe a person: read by its recorder alone, replaced by the transcript after the meeting, deleted with the meeting (its recorder, an owner, or the retention job), 30 days after it was made, and 30 days after its recorder was removed (the former-member purge of their Vy data)",
@@ -450,7 +452,7 @@ export const PERSONAL_DATA_COLUMNS = {
   // The machine translation of a meeting's summary (meetings integrations E1, issue #3184): a member's own Vy's translation of the summary, its decisions and its item titles, private to the
   // member who asked. No finder, owner or admin reads it; it goes with the meeting, with the summary it translated, and an erasure that touches the meeting DROPS it (never redacts it:
   // a name cannot be located reliably in another language), so a request is answered the way it is for the transcript.
-  'crove_meetings.translation.body': {
+  'ludy_meetings.translation.body': {
     kind: 'free_text',
     handling: 'erase',
     reason: "A machine translation of a meeting's summary, which may name or describe a person: read by the member who asked alone, deleted with the meeting (its recorder, an owner, the retention job or the org purge), with the summary it translated, and 30 days after the member who asked was removed (the former-member purge of their Vy data), and dropped, not redacted, by an erasure that touches the meeting",
@@ -459,16 +461,16 @@ export const PERSONAL_DATA_COLUMNS = {
   // only while the event waits. The database wipes it (sets it to NULL) the moment the delivery settles, and drops a waiting event, wiping it, when the meeting's title, its published summary or
   // decisions or an action item change (which is what the erasure's redaction does), when the hook is turned off or its address changes, when the member leaves, the owner turns the feature off, or
   // the meeting is deleted. No finder reads it; a copy already sent leaves Ludy and cannot be recalled (the screen says so).
-  'crove_meetings.hook_delivery.body': {
+  'ludy_meetings.hook_delivery.body': {
     kind: 'free_text',
     handling: 'erase',
     reason: "The text of minutes the recorder chose to send to their own address, which may name or describe a person: kept only while the event waits (minutes, at most 8 hours), wiped when it is sent, fails or is dropped, and dropped, wiped, by an erasure that touches the meeting's text, by the member turning the hook off or changing its address, and with the meeting, the member and the org; a copy already sent cannot be recalled",
   },
   // The recorder's own rough notes of a meeting (meetings integrations A5, issue #3163): typed by the recorder, read, written and deleted by the recorder alone (row security: an owner, an
-  // admin, an attendee, an agent and the system context read none). The finder lists the row for the recorder acting as owner (crove_meetings.personal_row_ids, kind 5) and counts the notes of
-  // other recorders per recorder (crove_meetings.personal_note_counts), never listing them. The org is the data controller: the owner's erasure redacts the value in the notes of every recorder
-  // (crove_meetings.personal_note_erase) and reports the count per recorder, as it deletes every member's translations of a touched meeting.
-  'crove_meetings.meeting_note.body': {
+  // admin, an attendee, an agent and the system context read none). The finder lists the row for the recorder acting as owner (ludy_meetings.personal_row_ids, kind 5) and counts the notes of
+  // other recorders per recorder (ludy_meetings.personal_note_counts), never listing them. The org is the data controller: the owner's erasure redacts the value in the notes of every recorder
+  // (ludy_meetings.personal_note_erase) and reports the count per recorder, as it deletes every member's translations of a touched meeting.
+  'ludy_meetings.meeting_note.body': {
     kind: 'free_text',
     handling: 'erase',
     reason: "The recorder's own rough notes of a meeting, which may name or describe a person: read by the recorder alone; the owner's erasure edits the value out of every recorder's notes and counts them per recorder; deleted with the meeting (its recorder, an owner for a personal-data request, the retention job or the org purge)",
@@ -476,9 +478,9 @@ export const PERSONAL_DATA_COLUMNS = {
   // The chapters (table of contents) of a meeting (#3844): a short title and the second of the transcript line it starts at, typed by the recorder (or copied from a run of their own Vy, tainted until
   // they review it), a draft that only the recorder reads until they publish it with the minutes, then read by the readers of the meeting. A title may name a person, so it is handled as the title of a
   // meeting is, whatever the probes can match (the command refuses an email address and a run of eight or more digits in it, but nothing here rests on that): the finder lists it where the actor reads
-  // the meeting (crove_meetings.personal_row_ids, kind 6), counts it per recorder where the owner cannot (crove_meetings.personal_matches, as a title), and the erasure redacts the value in it by the rule
-  // of the other meeting rows (crove_meetings.personal_erase, counted in the titles). It goes with the meeting, and a draft after 30 days.
-  'crove_meetings.meeting_chapter.title': {
+  // the meeting (ludy_meetings.personal_row_ids, kind 6), counts it per recorder where the owner cannot (ludy_meetings.personal_matches, as a title), and the erasure redacts the value in it by the rule
+  // of the other meeting rows (ludy_meetings.personal_erase, counted in the titles). It goes with the meeting, and a draft after 30 days.
+  'ludy_meetings.meeting_chapter.title': {
     kind: 'free_text',
     handling: 'erase',
     reason: "A chapter title of a meeting, which may name or describe a person: read by the recorder alone until published, then by the meeting's readers; the owner's erasure edits the value out of it as out of a meeting title; deleted with the meeting (its recorder, an owner for a personal-data request, the retention job or the org purge), and a draft 30 days after it was made",
@@ -486,7 +488,7 @@ export const PERSONAL_DATA_COLUMNS = {
   // The title of an event of a member's own Google Calendar (meetings B1, issue #3165): an 8-day cache (1 day back to 7 ahead) kept only while the member's switch "Cho Ludy đọc tên và giờ
   // cuộc họp trong lịch" is on. Read by that member alone (row security: an owner, an admin, another member, an agent and the system context read none), so there is no finder and no
   // erasure of a value inside it: a request is answered the way it is for the live preview, by the member turning the read off, which deletes it at once, or by disconnecting the calendar.
-  'crove_meetings.calendar_agenda.title': {
+  'ludy_meetings.calendar_agenda.title': {
     kind: 'free_text',
     handling: 'erase',
     reason: "The title of an event of a member's own calendar, which may name or describe a person: a cache of the next 7 days and the last day, read by that member alone, deleted at once when they switch the read off or disconnect the calendar, a day after the event ended at the next sync (a row the member linked to a meeting stays until that meeting goes), and with the org",
@@ -495,251 +497,279 @@ export const PERSONAL_DATA_COLUMNS = {
   // the recorder's click and kept only while the post is queued. The database DELETES the row the moment the post settles, and drops a queued post, deleting it, when the meeting's title, its published summary
   // or decisions or an action item change (which is what the erasure's redaction does), when the channel is removed or its saver stops standing (the job drops it), and with the meeting and the org. No finder
   // reads it; a copy already sent leaves Ludy and cannot be recalled (the dialog says so).
-  'crove_meetings.chat_post_body.body': {
+  'ludy_meetings.chat_post_body.body': {
     kind: 'free_text',
     handling: 'erase',
     reason: "The text of minutes the recorder chose to post to a channel of the org, which may name or describe a person: kept only while the post waits (a minute or so, and at most 8 hours while the worker runs), deleted when it is sent, fails, is dropped or expires, dropped by an erasure that touches the meeting's text, and deleted with the channel, the meeting and the org; a copy already sent to the channel cannot be recalled and the dialog says so.",
   },
-  'crove_meetings.transcript_segment.speaker_label': {
+  'ludy_meetings.transcript_segment.speaker_label': {
     kind: 'free_text',
     handling: 'erase',
     reason: "The name a transcript line is attributed to (the recorder may set it to a real name): found where the actor reads the meeting; counted per recorder where the owner cannot; deleted with the meeting",
   },
   // The folded words of a line's text (search across meetings, L2 #2589): a generated column rebuilt from the text by every UPDATE of it, so the erasure of a mention in a line
   // takes it out of the words in the same statement, and it goes with its row. Not searched itself.
-  'crove_meetings.transcript_segment.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a transcript line's text, rebuilt from it by the database (a generated column): an erasure of a mention in the text takes it out of the words in the same statement, and they go with the line" },
+  'ludy_meetings.transcript_segment.search': { kind: 'other', handling: 'erase', reason: "The folded search words of a transcript line's text, rebuilt from it by the database (a generated column): an erasure of a mention in the text takes it out of the words in the same statement, and they go with the line" },
   // The summary, the decisions and the action items (issue #2580): what was said, drafted by the recorder or copied from the result of their own Vy.
-  'crove_meetings.meeting_result.summary': {
+  'ludy_meetings.meeting_result.summary': {
     kind: 'free_text',
     handling: 'erase',
     reason: "A meeting's summary, which may name or describe a person: found where the actor reads the meeting; counted per recorder where the owner cannot; deleted with the meeting (its recorder, an owner, or the retention job)",
   },
-  'crove_meetings.meeting_result.decisions': {
+  'ludy_meetings.meeting_result.decisions': {
     kind: 'free_text',
     handling: 'erase',
     reason: "A meeting's decisions, which may name or describe a person: found where the actor reads the meeting; counted per recorder where the owner cannot; deleted with the meeting",
   },
-  'crove_meetings.action_item.title': {
+  'ludy_meetings.action_item.title': {
     kind: 'free_text',
     handling: 'erase',
     reason: "What somebody said they would do, which may name a person: found where the actor reads the meeting; counted per recorder where the owner cannot; deleted with the meeting (a task made from it keeps the title its confirmer saw, as the org's own work record)",
   },
-  'crove_meetings.action_item.who_drafted': {
+  'ludy_meetings.action_item.who_drafted': {
     kind: 'free_text',
     handling: 'erase',
     reason: "Who, as said in the meeting, an action item was for: found where the actor reads the meeting; counted per recorder where the owner cannot; deleted with the meeting",
   },
-  'crove_meetings.action_item.when_drafted': {
+  'ludy_meetings.action_item.when_drafted': {
     kind: 'free_text',
     handling: 'erase',
     reason: "When, as said in the meeting, an action item was due (free words): found where the actor reads the meeting; counted per recorder where the owner cannot; deleted with the meeting",
   },
-  'crove_meetings.media_key.wrapped_key': {
+  'ludy_meetings.media_key.wrapped_key': {
     kind: 'other',
     handling: 'erase',
     reason: "The wrapped data key of a meeting's audio or video: deleting it is the shredding, and no copy of the ciphertext opens without it",
   },
   // The people payroll is run for (#2530, payroll plan 6.6). Their names and addresses are cleared by the owner's erasure of an ended employee after the retention
   // (hr.payroll.employee.erase), which also deletes the person's key; the finder does not match them by an email, a phone or a number (their numbers are sealed, below).
-  'crove_hr.payroll_employee.display_name': { kind: 'name', handling: 'erase', reason: "An employee's name; hr.payroll.employee.erase replaces it with a placeholder once the retention after the last day of work has passed" },
-  'crove_hr.payroll_employee.address': { kind: 'address', handling: 'erase', reason: "An employee's address; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
-  'crove_hr.payroll_employee.birth_date': { kind: 'other', handling: 'erase', reason: "An employee's birth date; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
-  'crove_hr.payroll_employee.bank_code': { kind: 'other', handling: 'erase', reason: "The code of the bank an employee is paid at (#2897); hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
-  'crove_hr.payroll_employee.work_permit_expires_on': { kind: 'other', handling: 'erase', reason: "A foreign employee's work permit expiry date; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
-  'crove_hr.payroll_dependent.display_name': { kind: 'name', handling: 'erase', reason: "A dependent's name; hr.payroll.employee.erase replaces it with a placeholder together with its employee's record" },
-  'crove_hr.leave_request.reason': { kind: 'other', handling: 'erase', reason: "An employee's free-text leave reason; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
-  'crove_hr.leave_request.decision_note': { kind: 'other', handling: 'erase', reason: "An approver's note on an employee's leave request; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
-  'crove_hr.attendance_log.note': { kind: 'other', handling: 'erase', reason: "An employee's or HR admin's free-text note on a daily attendance log; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
-  'crove_hr.attendance_qr_config.qr_secret_hash': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'Org/entity-scoped SHA-256 hash of the office attendance QR check-in token; identifies an office entity only, never an individual' },
-  'crove_hr.onboarding_submission.address': { kind: 'address', handling: 'erase', reason: "An employee's submitted onboarding address; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
-  'crove_hr.onboarding_submission.birth_date': { kind: 'other', handling: 'erase', reason: "An employee's submitted onboarding birth date; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
-  'crove_hr.onboarding_submission.bank_code': { kind: 'other', handling: 'erase', reason: "An employee's submitted bank code; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
-  'crove_hr.onboarding_submission.note': { kind: 'other', handling: 'erase', reason: "An employee's onboarding checklist note; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
-  'crove_hr.onboarding_submission.decision_note': { kind: 'other', handling: 'erase', reason: "An approver's note on an onboarding submission; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
-  'crove_hr.overtime_request.reason': { kind: 'other', handling: 'erase', reason: "An employee's free-text overtime reason; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
-  'crove_hr.overtime_request.decision_note': { kind: 'other', handling: 'erase', reason: "An approver's note on an employee's overtime request; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
-  'crove_hr.probation_review.completed_tasks_snapshot': { kind: 'other', handling: 'erase', reason: "Task evidence snapshot recorded during an employee's probation review; hr.payroll.employee.erase resets it once the retention after the last day of work has passed" },
-  'crove_hr.probation_review.attendance_snapshot': { kind: 'other', handling: 'erase', reason: "Attendance evidence snapshot recorded during an employee's probation review; hr.payroll.employee.erase resets it once the retention after the last day of work has passed" },
-  'crove_hr.probation_review.review_note': { kind: 'other', handling: 'erase', reason: "Human reviewer note on an employee's probation evaluation; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
-  'crove_hr.probation_review.ai_draft_note': { kind: 'other', handling: 'erase', reason: "Optional AI summary draft saved on an employee's probation evaluation; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
-  'crove_hr.candidate.display_name': { kind: 'name', handling: 'erase', reason: 'A job applicant name; erased by personal-data erasure or hr.recruiting.candidate.erase' },
-  'crove_hr.candidate.email': { kind: 'email', handling: 'erase', reason: 'A job applicant email; erased by personal-data erasure or hr.recruiting.candidate.erase' },
-  'crove_hr.candidate.phone': { kind: 'phone', handling: 'erase', reason: 'A job applicant phone number; erased by personal-data erasure or hr.recruiting.candidate.erase' },
-  'crove_hr.candidate.notes': { kind: 'free_text', handling: 'erase', reason: 'Recruiting notes for a candidate, which may mention personal details: cleared on direct erasure and mentions redacted on text match' },
-  'crove_projects.project.name': { kind: 'free_text', handling: 'erase', reason: "A project's title, which may name a person: mentions are replaced with a redaction marker" },
-  'crove_projects.project.description': { kind: 'free_text', handling: 'erase', reason: "A project's description, which may name a person: mentions are replaced with a redaction marker" },
-  'crove_projects.project.template_tasks': {
+  'ludy_hr.payroll_employee.display_name': { kind: 'name', handling: 'erase', reason: "An employee's name; hr.payroll.employee.erase replaces it with a placeholder once the retention after the last day of work has passed" },
+  'ludy_hr.payroll_employee.address': { kind: 'address', handling: 'erase', reason: "An employee's address; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.payroll_employee.birth_date': { kind: 'other', handling: 'erase', reason: "An employee's birth date; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.payroll_employee.bank_code': { kind: 'other', handling: 'erase', reason: "The code of the bank an employee is paid at (#2897); hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.payroll_employee.work_permit_expires_on': { kind: 'other', handling: 'erase', reason: "A foreign employee's work permit expiry date; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.payroll_dependent.display_name': { kind: 'name', handling: 'erase', reason: "A dependent's name; hr.payroll.employee.erase replaces it with a placeholder together with its employee's record" },
+  'ludy_hr.leave_request.reason': { kind: 'other', handling: 'erase', reason: "An employee's free-text leave reason; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.leave_request.decision_note': { kind: 'other', handling: 'erase', reason: "An approver's note on an employee's leave request; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.attendance_log.note': { kind: 'other', handling: 'erase', reason: "An employee's or HR admin's free-text note on a daily attendance log; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.attendance_qr_config.qr_secret_hash': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'Org/entity-scoped SHA-256 hash of the office attendance QR check-in token; identifies an office entity only, never an individual' },
+  'ludy_hr.onboarding_submission.address': { kind: 'address', handling: 'erase', reason: "An employee's submitted onboarding address; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.onboarding_submission.birth_date': { kind: 'other', handling: 'erase', reason: "An employee's submitted onboarding birth date; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.onboarding_submission.bank_code': { kind: 'other', handling: 'erase', reason: "An employee's submitted bank code; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.onboarding_submission.note': { kind: 'other', handling: 'erase', reason: "An employee's onboarding checklist note; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.onboarding_submission.decision_note': { kind: 'other', handling: 'erase', reason: "An approver's note on an onboarding submission; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.overtime_request.reason': { kind: 'other', handling: 'erase', reason: "An employee's free-text overtime reason; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.overtime_request.decision_note': { kind: 'other', handling: 'erase', reason: "An approver's note on an employee's overtime request; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.probation_review.completed_tasks_snapshot': { kind: 'other', handling: 'erase', reason: "Task evidence snapshot recorded during an employee's probation review; hr.payroll.employee.erase resets it once the retention after the last day of work has passed" },
+  'ludy_hr.probation_review.attendance_snapshot': { kind: 'other', handling: 'erase', reason: "Attendance evidence snapshot recorded during an employee's probation review; hr.payroll.employee.erase resets it once the retention after the last day of work has passed" },
+  'ludy_hr.probation_review.review_note': { kind: 'other', handling: 'erase', reason: "Human reviewer note on an employee's probation evaluation; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.probation_review.ai_draft_note': { kind: 'other', handling: 'erase', reason: "Optional AI summary draft saved on an employee's probation evaluation; hr.payroll.employee.erase clears it once the retention after the last day of work has passed" },
+  'ludy_hr.candidate.display_name': { kind: 'name', handling: 'erase', reason: 'A job applicant name; erased by personal-data erasure or hr.recruiting.candidate.erase' },
+  'ludy_hr.candidate.email': { kind: 'email', handling: 'erase', reason: 'A job applicant email; erased by personal-data erasure or hr.recruiting.candidate.erase' },
+  'ludy_hr.candidate.phone': { kind: 'phone', handling: 'erase', reason: 'A job applicant phone number; erased by personal-data erasure or hr.recruiting.candidate.erase' },
+  'ludy_hr.candidate.notes': { kind: 'free_text', handling: 'erase', reason: 'Recruiting notes for a candidate, which may mention personal details: cleared on direct erasure and mentions redacted on text match' },
+  'ludy_projects.project.name': { kind: 'free_text', handling: 'erase', reason: "A project's title, which may name a person: mentions are replaced with a redaction marker" },
+  'ludy_projects.project.description': { kind: 'free_text', handling: 'erase', reason: "A project's description, which may name a person: mentions are replaced with a redaction marker" },
+  'ludy_projects.project.template_tasks': {
     kind: 'free_text',
     handling: 'erase',
     reason: 'Template task titles and descriptions in a project template, which may mention a person: mentions are replaced with a redaction marker',
   },
-  'crove_projects.project_column.name': {
+  'ludy_projects.project_column.name': {
     kind: 'free_text',
     handling: 'erase',
     reason: "A project board column's name, which may name a person: mentions are replaced with a redaction marker",
   },
-  'crove_projects.project_cycle.name': {
+  'ludy_projects.project_cycle.name': {
     kind: 'free_text',
     handling: 'erase',
     reason: "A project cycle's name, which may mention a person: mentions are replaced with a redaction marker",
   },
-  'crove_projects.project_cycle.goal': {
+  'ludy_projects.project_cycle.goal': {
     kind: 'free_text',
     handling: 'erase',
     reason: "A project cycle's goal, which may mention a person: mentions are replaced with a redaction marker",
   },
-  'crove_projects.roadmap_board.title': {
+  'ludy_projects.roadmap_board.title': {
     kind: 'free_text',
     handling: 'erase',
     reason: 'Public roadmap board title, which may name a person: mentions are replaced with a redaction marker',
   },
-  'crove_projects.roadmap_board.description': {
+  'ludy_projects.roadmap_board.description': {
     kind: 'free_text',
     handling: 'erase',
     reason: 'Public roadmap board description, which may name a person: mentions are replaced with a redaction marker',
   },
-  'crove_projects.roadmap_item.public_title': {
+  'ludy_projects.roadmap_item.public_title': {
     kind: 'free_text',
     handling: 'erase',
     reason: 'Public roadmap item title, which may name a person: mentions are replaced with a redaction marker',
   },
-  'crove_projects.roadmap_item.public_summary': {
+  'ludy_projects.roadmap_item.public_summary': {
     kind: 'free_text',
     handling: 'erase',
     reason: 'Public roadmap item summary, which may name a person: mentions are replaced with a redaction marker',
   },
-  'crove_projects.roadmap_item.submitter_display_name': {
+  'ludy_projects.roadmap_item.submitter_display_name': {
     kind: 'free_text',
     handling: 'erase',
     reason: 'Optional public submitter display name on a roadmap item; erased on personal-data match',
   },
-  'crove_projects.roadmap_announcement.title': {
+  'ludy_projects.roadmap_signal.account_label': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Internal roadmap signal customer attribution label, which may name a person: mentions are replaced with a redaction marker',
+  },
+  'ludy_projects.roadmap_signal.quote_excerpt': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Internal roadmap signal customer quote excerpt, which may name a person: mentions are replaced with a redaction marker',
+  },
+  'ludy_projects.roadmap_announcement.title': {
     kind: 'free_text',
     handling: 'erase',
     reason: 'Public roadmap changelog announcement title, which may name a person: mentions are replaced with a redaction marker',
   },
-  'crove_projects.roadmap_announcement.body_md': {
+  'ludy_projects.roadmap_announcement.body_md': {
     kind: 'free_text',
     handling: 'erase',
     reason: 'Public roadmap changelog announcement Markdown body, which may name a person: mentions are replaced with a redaction marker',
   },
-  'crove_projects.roadmap_vote.voter_email_hash': {
+  'ludy_projects.roadmap_vote.voter_email_hash': {
     kind: 'other',
     handling: 'hashed',
     reason: 'Org-scoped keyed HMAC-SHA256 hash of voter email preserving anonymous vote deduplication without storing an address',
   },
-  'crove_projects.roadmap_otp.email': {
+  'ludy_projects.roadmap_otp.email': {
     kind: 'email',
     handling: 'erase',
     machinery: true,
-    reason: 'Ephemeral public roadmap email OTP challenge address; erased by crove_projects.personal_erase_roadmap_machinery and swept nightly',
+    reason: 'Ephemeral public roadmap email OTP challenge address; erased by ludy_projects.personal_erase_roadmap_machinery and swept nightly',
   },
-  'crove_projects.roadmap_otp.email_hash': {
+  'ludy_projects.roadmap_otp.email_hash': {
     kind: 'other',
     handling: 'hashed',
     machinery: true,
     reason: 'Org-scoped keyed hash on ephemeral OTP row; row is deleted together with roadmap_otp.email on erasure',
   },
-  'crove_projects.roadmap_subscriber.voter_email_hash': {
+  'ludy_projects.roadmap_subscriber.voter_email_hash': {
     kind: 'other',
     handling: 'hashed',
     machinery: true,
     reason: 'Org-scoped keyed hash of subscriber email; row is deleted together with roadmap_subscriber.email_sealed on erasure',
   },
-  'crove_projects.roadmap_subscriber.email_sealed': {
+  'ludy_projects.roadmap_subscriber.email_sealed': {
     kind: 'email',
     handling: 'erase',
     machinery: true,
-    reason: 'Sealed subscriber email for opt-in shipped notifications; erased by crove_projects.personal_erase_roadmap_machinery',
+    reason: 'Sealed subscriber email for opt-in shipped notifications; erased by ludy_projects.personal_erase_roadmap_machinery',
   },
-  'crove_projects.roadmap_subscriber.mail_hash': {
+  'ludy_projects.roadmap_subscriber.mail_hash': {
     kind: 'other',
     handling: 'hashed',
     machinery: true,
     reason: 'Keyed mail hash on roadmap_subscriber used to enforce org mail suppressions; row is deleted on erasure',
   },
-  'crove_projects.time_entry.note': {
+  'ludy_projects.time_entry.note': {
     kind: 'free_text',
     handling: 'erase',
     reason: 'A project time entry note written by a member, which may name a person: mentions are replaced with a redaction marker',
   },
-  'crove_projects.project_triage_item.title': {
+  'ludy_projects.project_triage_item.title': {
     kind: 'free_text',
     handling: 'erase',
     reason: 'A project triage item title (internal or external signal), which may name a person: mentions are replaced with a redaction marker',
   },
-  'crove_projects.project_triage_item.description': {
+  'ludy_projects.project_triage_item.description': {
     kind: 'free_text',
     handling: 'erase',
     reason: 'A project triage item description, which may name a person: mentions are replaced with a redaction marker',
   },
-  'crove_projects.project_triage_item.decline_reason': {
+  'ludy_projects.project_triage_item.decline_reason': {
     kind: 'free_text',
     handling: 'erase',
     reason: 'A project triage item decline reason written by a member, which may name a person: mentions are replaced with a redaction marker',
   },
   // eSign (#3323, #3427): unsealed signers (draft, voided, expired, or declined with sealed_file_id IS NULL) are removed on erasure; active, completed, and sealed signer records and append-only audit events stay for statutory verification; ephemeral email OTP rows erase via definer.
-  'crove_sign.signer.name': {
+  'ludy_sign.signer.name': {
     kind: 'name',
     handling: 'keep_record',
     reason: 'Signer legal name preserved on active, completed, or sealed e-signature envelope and audit certificate under statutory e-transaction evidence retention; a signer on an unsealed envelope is erased',
   },
-  'crove_sign.signer.email': {
+  'ludy_sign.signer.email': {
     kind: 'email',
     handling: 'keep_record',
     reason: 'Signer email address preserved on active, completed, or sealed e-signature envelope and audit certificate under statutory e-transaction evidence retention; a signer on an unsealed envelope is erased',
   },
-  'crove_sign.signer.phone': {
+  'ludy_sign.signer.phone': {
     kind: 'phone',
     handling: 'keep_record',
     reason: 'Signer phone number preserved on active, completed, or sealed e-signature envelope record under statutory e-transaction evidence retention; a signer on an unsealed envelope is erased',
   },
-  'crove_sign.signer.delegated_from_name': {
+  'ludy_sign.signer.delegated_from_name': {
     kind: 'name',
     handling: 'keep_record',
     reason: 'Delegator legal name preserved on active, completed, or sealed e-signature envelope and audit certificate under statutory e-transaction evidence retention; delegation provenance on an unsealed envelope is erased',
   },
-  'crove_sign.signer.delegated_from_email': {
+  'ludy_sign.signer.delegated_from_email': {
     kind: 'email',
     handling: 'keep_record',
     reason: 'Delegator email address preserved on active, completed, or sealed e-signature envelope and audit certificate under statutory e-transaction evidence retention; delegation provenance on an unsealed envelope is erased',
   },
-  'crove_sign.signer.delegation_reason': {
+  'ludy_sign.signer.delegation_reason': {
     kind: 'other',
     handling: 'keep_record',
     reason: 'Audited delegation reason preserved on active, completed, or sealed e-signature envelope record under statutory e-transaction evidence retention; delegation provenance on an unsealed envelope is erased',
   },
-  'crove_sign.signer.signature_typed_text': { kind: 'name', handling: 'keep_record', reason: 'Typed signature representation preserved on executed e-signature signer record' },
-  'crove_sign.signer.signer_user_agent': { kind: 'other', handling: 'keep_record', reason: 'Device user-agent string preserved in execution evidence for e-signature dispute resolution' },
-  'crove_sign.signer.signer_ip_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed SHA-256 hash of signer IP address preserved for execution integrity without storing raw IP' },
-  'crove_sign.signer.require_email_otp': { kind: 'other', handling: 'not_personal', reason: 'Boolean flag configuring whether email OTP is required to view and sign' },
-  'crove_sign.field.signature_png_base64': { kind: 'other', handling: 'keep_record', reason: 'Handwritten signature bitmap embedded inside sealed e-signature document and evidence record' },
-  'crove_sign.signing_otp.email': { kind: 'email', handling: 'erase', machinery: true, reason: 'Ephemeral email OTP target address; erased by crove_sign.personal_erase_otp and swept within 24 hours' },
-  'crove_sign.signing_otp.claim_sha256': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'SHA-256 hash of short-lived pre-envelope direct-link OTP verification claim token' },
-  'crove_sign.signing_event.actor_label': { kind: 'other', handling: 'keep_record', reason: 'Append-only hash-chained signing_event actor label retained for statutory verification' },
-  'crove_sign.signing_event.ip_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed SHA-256 hash of event actor IP address preserved in append-only hash-chained signing_event' },
-  'crove_sign.signing_event.user_agent': { kind: 'other', handling: 'keep_record', reason: 'Event actor user-agent string preserved in append-only hash-chained signing_event for dispute resolution' },
-  'crove_sign.template_role.require_email_otp': { kind: 'other', handling: 'not_personal', reason: 'Boolean flag configuring whether template role signers require email OTP' },
-  'crove_sign.template_direct_link.require_email_otp': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'Boolean flag configuring whether template direct signing links require email OTP' },
-  'crove_sign.template_direct_link.token_sha256': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'SHA-256 hash of reusable template direct signing capability token' },
-  'crove_sign.ca_connection.secret_envelope': {
+  'ludy_sign.signer.signature_typed_text': { kind: 'name', handling: 'keep_record', reason: 'Typed signature representation preserved on executed e-signature signer record' },
+  'ludy_sign.signer.signer_user_agent': { kind: 'other', handling: 'keep_record', reason: 'Device user-agent string preserved in execution evidence for e-signature dispute resolution' },
+  'ludy_sign.signer.signer_ip_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed SHA-256 hash of signer IP address preserved for execution integrity without storing raw IP' },
+  'ludy_sign.signer.require_email_otp': { kind: 'other', handling: 'not_personal', reason: 'Boolean flag configuring whether email OTP is required to view and sign' },
+  'ludy_sign.field.signature_png_base64': { kind: 'other', handling: 'keep_record', reason: 'Handwritten signature bitmap embedded inside sealed e-signature document and evidence record' },
+  'ludy_sign.signing_otp.email': { kind: 'email', handling: 'erase', machinery: true, reason: 'Ephemeral email OTP target address; erased by ludy_sign.personal_erase_otp and swept within 24 hours' },
+  'ludy_sign.signing_otp.claim_sha256': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'SHA-256 hash of short-lived pre-envelope direct-link OTP verification claim token' },
+  'ludy_sign.signing_event.actor_label': { kind: 'other', handling: 'keep_record', reason: 'Append-only hash-chained signing_event actor label retained for statutory verification' },
+  'ludy_sign.signing_event.ip_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed SHA-256 hash of event actor IP address preserved in append-only hash-chained signing_event' },
+  'ludy_sign.signing_event.user_agent': { kind: 'other', handling: 'keep_record', reason: 'Event actor user-agent string preserved in append-only hash-chained signing_event for dispute resolution' },
+  'ludy_sign.template_role.require_email_otp': { kind: 'other', handling: 'not_personal', reason: 'Boolean flag configuring whether template role signers require email OTP' },
+  'ludy_sign.template_direct_link.require_email_otp': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'Boolean flag configuring whether template direct signing links require email OTP' },
+  'ludy_sign.template_direct_link.token_sha256': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'SHA-256 hash of reusable template direct signing capability token' },
+  'ludy_sign.api_key.key_sha256': { kind: 'other', handling: 'not_personal', machinery: true, reason: 'SHA-256 hash of scoped org eSign REST API key' },
+  'ludy_sign.ca_connection.secret_envelope': {
     kind: 'other',
     handling: 'keep_org',
     machinery: true,
     reason: 'The sealed credentials of an org CA provider connection (sealed with CredentialBroker, bound to org, provider, and connection id); never readable by the tenant, wiped on disable, and deleted with the org',
   },
-  'crove_sign.envelope_obligation.counterparty_name': {
+  'ludy_sign.webhook.secret_envelope': {
+    kind: 'other',
+    handling: 'keep_org',
+    machinery: true,
+    reason: 'The sealed HMAC signing secret of an org eSign webhook endpoint (sealed with CredentialBroker, bound to org, provider, and webhook id); never readable by the tenant and deleted with the webhook or org',
+  },
+  'ludy_sign.webhook.previous_secret_envelope': {
+    kind: 'other',
+    handling: 'keep_org',
+    machinery: true,
+    reason: 'The previous sealed HMAC signing secret kept during a 24-hour rotation grace window (sealed with CredentialBroker, bound to org, provider, and webhook id); never readable by the tenant and deleted with the webhook or org',
+  },
+  'ludy_sign.envelope_obligation.counterparty_name': {
     kind: 'name',
     handling: 'keep_record',
     reason: 'Counterparty name on post-signature contract obligation record preserved alongside executed agreement terms; purged on org deletion',
   },
-  'crove_sign.member_signature.signature_typed_text': {
+  'ludy_sign.kyc_check.findings_json': {
+    kind: 'free_text',
+    handling: 'erase',
+    reason: 'Sender-side KYC attachment verification findings (extracted tax IDs, CCCD numbers, or signer/entity names under Vietnam PDPL Law 91/2025/QH15): an erasure deletes any kyc_check row whose findings quote the value while leaving sealed agreement files intact, and a member may run the check again',
+  },
+  'ludy_sign.member_signature.signature_typed_text': {
     kind: 'other',
     handling: 'erase',
     privateRows: 'always',
     reason: "A member's own saved typed signature text, readable and deletable by that member alone and removed when the member leaves the org",
   },
-  'crove_sign.member_signature.signature_png_base64': {
+  'ludy_sign.member_signature.signature_png_base64': {
     kind: 'other',
     handling: 'erase',
     privateRows: 'always',
@@ -751,7 +781,7 @@ export type PersonalDataColumnKey = keyof typeof PERSONAL_DATA_COLUMNS;
 
 // Columns that hold personal data the finder and the erasure cannot handle yet, with the step that registers them
 // (#1874). Empty since notes step N9 registered the notes' text (#1678); a column a module classifies as pii before the
-// finder can reach it waits here. apps/kernel/test/personal-data.test.ts asks every pii column of crove_notes to be in
+// finder can reach it waits here. apps/kernel/test/personal-data.test.ts asks every pii column of ludy_notes to be in
 // one list or the other.
 export const PERSONAL_DATA_PENDING: Readonly<Record<string, string>> = {};
 
@@ -760,59 +790,59 @@ export const PERSONAL_DATA_PENDING: Readonly<Record<string, string>> = {};
 // `shred`, never the clear the finder's erase makes in a mutable row. Empty until the first product use (#2530) seals a column; a column listed
 // here is in no other registry above (apps/kernel/test/personal-data.test.ts).
 export const SEALED_COLUMNS: Readonly<Record<string, { handling: 'shred'; reason: string }>> = {
-  'crove_hr.payroll_employee.national_id_sealed': {
+  'ludy_hr.payroll_employee.national_id_sealed': {
     handling: 'shred',
     reason: "An employee's identity number, sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
   },
-  'crove_hr.payroll_employee.tax_code_sealed': {
+  'ludy_hr.payroll_employee.tax_code_sealed': {
     handling: 'shred',
     reason: "An employee's tax code (in most cases the identity number), sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
   },
-  'crove_hr.payroll_employee.insurance_number_sealed': {
+  'ludy_hr.payroll_employee.insurance_number_sealed': {
     handling: 'shred',
     reason: "An employee's social insurance number, sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
   },
-  'crove_hr.payroll_employee.bank_account_sealed': {
+  'ludy_hr.payroll_employee.bank_account_sealed': {
     handling: 'shred',
     reason: "An employee's bank account number, sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
   },
-  'crove_hr.payroll_employee.work_permit_number_sealed': {
+  'ludy_hr.payroll_employee.work_permit_number_sealed': {
     handling: 'shred',
     reason: "A foreign employee's work permit number, sealed under the subject key employee:<id>; hr.payroll.employee.erase deletes the key, so the text that stays in the row can never be opened again",
   },
-  'crove_hr.onboarding_submission.national_id_sealed': {
+  'ludy_hr.onboarding_submission.national_id_sealed': {
     handling: 'shred',
     reason: "An employee's submitted identity number, sealed under the subject key employee:<id>; hr.payroll.employee.erase clears the column and deletes the key",
   },
-  'crove_hr.onboarding_submission.tax_code_sealed': {
+  'ludy_hr.onboarding_submission.tax_code_sealed': {
     handling: 'shred',
     reason: "An employee's submitted personal tax code, sealed under the subject key employee:<id>; hr.payroll.employee.erase clears the column and deletes the key",
   },
-  'crove_hr.onboarding_submission.insurance_number_sealed': {
+  'ludy_hr.onboarding_submission.insurance_number_sealed': {
     handling: 'shred',
     reason: "An employee's submitted social insurance number, sealed under the subject key employee:<id>; hr.payroll.employee.erase clears the column and deletes the key",
   },
-  'crove_hr.onboarding_submission.bank_account_sealed': {
+  'ludy_hr.onboarding_submission.bank_account_sealed': {
     handling: 'shred',
     reason: "An employee's submitted bank account number, sealed under the subject key employee:<id>; hr.payroll.employee.erase clears the column and deletes the key",
   },
-  'crove_finance.supplier_bank_account.account_holder_sealed': {
+  'ludy_finance.supplier_bank_account.account_holder_sealed': {
     handling: 'shred',
     reason: "A supplier's account holder name, sealed under the subject key supplier:<party_id>; finance.supplier_bank_account.erase deletes the key, so the text that stays in the row can never be opened again",
   },
-  'crove_finance.supplier_bank_account.number_sealed': {
+  'ludy_finance.supplier_bank_account.number_sealed': {
     handling: 'shred',
     reason: "A supplier's bank account number, sealed under the subject key supplier:<party_id>; finance.supplier_bank_account.erase deletes the key, so the text that stays in the row can never be opened again",
   },
 };
 
-// The column names the invariant test treats as personal data. A column of ludy_kernel, crove_finance, crove_social,
-// crove_crm, crove_notes, crove_hr or crove_meetings whose name matches must be in PERSONAL_DATA_COLUMNS. Control-plane tables (the user's own
+// The column names the invariant test treats as personal data. A column of ludy_kernel, ludy_finance, ludy_social,
+// ludy_crm, ludy_notes, ludy_hr or ludy_meetings whose name matches must be in PERSONAL_DATA_COLUMNS. Control-plane tables (the user's own
 // sign-in account and the deployment's own records) are not tenant data and are left out: the identity provider
 // handles a user's own account, and no tenant code reads them (control-plane-reads.test.ts).
 export const PERSONAL_DATA_NAME_PATTERN =
   '(^|_)(email|emails|phone|phones|address|addresses|tax_code|recipient|recipients|person_name|reviewer_name|display_name|from_address|to_address|national_id|id_number|birth_date|full_name)($|_)';
-export const PERSONAL_DATA_SCHEMAS = ['ludy_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_hr', 'crove_meetings', 'crove_projects', 'crove_sign'] as const;
+export const PERSONAL_DATA_SCHEMAS = ['ludy_kernel', 'ludy_finance', 'ludy_social', 'ludy_crm', 'ludy_notes', 'ludy_hr', 'ludy_meetings', 'ludy_projects', 'ludy_sign'] as const;
 
 // The finder (#923): an owner or admin looks up one person by email address, phone number, or tax code or national ID
 // (digits), across the columns above that hold such a value, and gets every matching row as JSON (the search column
@@ -971,24 +1001,30 @@ async function meetingScan<T>(trx: QueryContext['trx'], run: () => Promise<T>): 
   }
 }
 
-// The tables of crove_meetings.personal_row_ids's kind codes.
+// The tables of ludy_meetings.personal_row_ids's kind codes.
 const MEETING_ROW_TABLES: Record<number, string> = { 1: 'transcript_segment', 2: 'meeting_result', 3: 'action_item', 4: 'meeting', 5: 'meeting_note', 6: 'meeting_chapter' };
 
 // Every row of the org that holds the value, column by column (the finder's answer), and, when privateCounts, per author
 // how many of their private notes and to-dos mention it (ADR-0037: counted, never shown, whoever runs the finder).
-async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: Probe, privateCounts: boolean): Promise<PersonalDataResult> {
+async function findPersonalData(
+  trx: QueryContext['trx'],
+  orgId: string,
+  probe: Probe,
+  privateCounts: boolean,
+  documentedPartyIds: readonly string[] = [],
+): Promise<PersonalDataResult> {
   const matches: PersonalDataResult['matches'] = [];
   let truncated = false;
   // Meeting text: the ids of the rows that hold the value and that the actor reads, found by the text first (row security would check every row's meeting before testing
   // the text, which costs seconds on a large transcript); the rows are then read by id, still under row security.
   const meetingRows = new Map<string, string[]>();
   let meetingTextSkipped = false;
-  const rowIds = await meetingScan(trx, async () => (await sql<{ kind: number; id: string }>`SELECT kind, id FROM crove_meetings.personal_row_ids(${probe.kind}, ${probeValue(probe)})`.execute(trx)).rows);
+  const rowIds = await meetingScan(trx, async () => (await sql<{ kind: number; id: string }>`SELECT kind, id FROM ludy_meetings.personal_row_ids(${probe.kind}, ${probeValue(probe)})`.execute(trx)).rows);
   if (rowIds === null) meetingTextSkipped = true;
   for (const { kind, id } of rowIds ?? []) {
     const table = MEETING_ROW_TABLES[kind];
     // A kind code this build does not know is a version mismatch between the database and the code: it fails loudly, never a silent gap in what an erasure covers.
-    if (!table) throw new Error(`crove_meetings.personal_row_ids answered an unknown kind ${kind}`);
+    if (!table) throw new Error(`ludy_meetings.personal_row_ids answered an unknown kind ${kind}`);
     meetingRows.set(table, [...(meetingRows.get(table) ?? []), id]);
   }
   for (const [key, entry] of Object.entries(PERSONAL_DATA_COLUMNS) as Array<[string, PersonalDataColumn]>) {
@@ -1002,26 +1038,26 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
       : entry.jsonbSteps
         ? sql`(SELECT coalesce(pg_catalog.string_agg(s.step ->> 'text', ' | '), '') FROM pg_catalog.jsonb_array_elements(${ref}) AS s(step))`
         : ref;
-    const match = key === 'crove_projects.project.template_tasks' ? templateTasksMatch(probe, ref) : columnMatch(entry.kind, probe, expr);
+    const match = key === 'ludy_projects.project.template_tasks' ? templateTasksMatch(probe, ref) : columnMatch(entry.kind, probe, expr);
     if (!match) continue;
     // Row security already hides other members' private notes; the finder's own private ones are counted below too,
     // not listed, so every author's are reported alike.
     const shared =
       entry.privateRows === 'unless_shared'
-        ? schema === 'crove_notes' && (table === 'attachment' || table === 'note_version')
-          ? sql`AND EXISTS (SELECT 1 FROM crove_notes.note n WHERE n.org_id = t.org_id AND n.id = t.note_id AND n.visibility = 'org')`
+        ? schema === 'ludy_notes' && (table === 'attachment' || table === 'note_version')
+          ? sql`AND EXISTS (SELECT 1 FROM ludy_notes.note n WHERE n.org_id = t.org_id AND n.id = t.note_id AND n.visibility = 'org')`
           : sql`AND t.visibility = 'org'`
         : sql``;
     let byId = sql``;
-    if (schema === 'crove_meetings') {
+    if (schema === 'ludy_meetings') {
       const ids = meetingRows.get(table) ?? [];
       if (ids.length === 0) continue;
       byId = sql`AND t.id = ANY(${ids}::uuid[])`;
     }
     const isUnsealedExpr =
-      schema === 'crove_sign' && table === 'signer'
+      schema === 'ludy_sign' && table === 'signer'
         ? sql<boolean>`EXISTS (
-            SELECT 1 FROM crove_sign.envelope e
+            SELECT 1 FROM ludy_sign.envelope e
              WHERE e.org_id = t.org_id
                AND e.id = t.envelope_id
                AND e.status IN ('draft', 'voided', 'expired', 'declined')
@@ -1037,7 +1073,7 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
     for (const { row, is_unsealed } of rows.slice(0, PERSONAL_DATA_ROW_LIMIT)) {
       const base = rowHandling(entry, row);
       const { handling, reason } =
-        schema === 'crove_sign' && table === 'signer' && is_unsealed
+        schema === 'ludy_sign' && table === 'signer' && is_unsealed
           ? {
               handling: 'erase' as const,
               reason: 'Signer on an unsealed e-signature envelope (draft, voided, expired, or declined) is erased on request',
@@ -1067,10 +1103,51 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
       row,
     });
   }
+  const seenDealSignalIds = new Set(
+    matches.filter((m) => m.column === 'ludy_projects.roadmap_signal.account_label' && m.rowId !== null).map((m) => m.rowId!),
+  );
+  const partySignalNever = sql<boolean>`false`;
+  const partySignalMatch = sql<boolean>`(${columnMatch('email', probe, sql.ref('p.email')) ?? partySignalNever} OR ${columnMatch('phone', probe, sql.ref('p.phone')) ?? partySignalNever} OR ${columnMatch('tax_code', probe, sql.ref('p.tax_code')) ?? partySignalNever})`;
+  const partySignalFilter =
+    documentedPartyIds.length > 0
+      ? sql<boolean>`(${partySignalMatch} OR p.id = ANY(${documentedPartyIds}::uuid[]))`
+      : partySignalMatch;
+  const partyDealSignals = await sql<{ id: string; documented: boolean; row: Record<string, unknown> }>`
+    SELECT s.id,
+           pg_catalog.bool_or(
+             EXISTS (SELECT 1 FROM ludy_finance.purchase_document pd WHERE pd.org_id = p.org_id AND pd.party_id = p.id)
+             OR EXISTS (SELECT 1 FROM ludy_finance.cash_voucher v WHERE v.org_id = p.org_id AND v.party_id = p.id)
+             OR EXISTS (SELECT 1 FROM ludy_finance.journal_line l WHERE l.org_id = p.org_id AND l.party_id = p.id)
+           ) AS documented,
+           pg_catalog.to_jsonb(s) AS row
+      FROM ludy_projects.roadmap_signal s
+      LEFT JOIN ludy_crm.deal d ON s.source_type = 'crm.deal' AND d.org_id = s.org_id AND d.id = s.source_id
+      JOIN ludy_kernel.party p
+        ON p.org_id = s.org_id
+       AND (p.id = s.source_party_id OR (s.source_type = 'crm.deal' AND p.id = d.party_id))
+     WHERE s.org_id = ${orgId}::uuid
+       AND s.account_label IS NOT NULL
+       AND ${partySignalFilter}
+     GROUP BY s.org_id, s.id
+     ORDER BY s.created_at DESC, s.id
+     LIMIT ${PERSONAL_DATA_ROW_LIMIT + 1}`.execute(trx);
+  if (partyDealSignals.rows.length > PERSONAL_DATA_ROW_LIMIT) truncated = true;
+  for (const r of partyDealSignals.rows.slice(0, PERSONAL_DATA_ROW_LIMIT)) {
+    if (seenDealSignalIds.has(r.id)) continue;
+    matches.push({
+      column: 'ludy_projects.roadmap_signal.account_label',
+      handling: r.documented ? 'keep_org' : 'erase',
+      reason: r.documented
+        ? 'CRM deal roadmap signal customer label for a party named on accounting records'
+        : 'CRM deal roadmap signal customer label copied from a matched party',
+      rowId: r.id,
+      row: r.row,
+    });
+  }
   const privateItems = privateCounts
     ? (
         await sql<{ author_user_id: string; notes: string; todos: string }>`
-          SELECT author_user_id, notes, todos FROM crove_notes.private_matches(${probe.kind}, ${probeValue(probe)})`.execute(trx)
+          SELECT author_user_id, notes, todos FROM ludy_notes.private_matches(${probe.kind}, ${probeValue(probe)})`.execute(trx)
       ).rows.map((p) => ({ authorUserId: p.author_user_id, notes: Number(p.notes), todos: Number(p.todos) }))
     : null;
   // Meeting text the owner cannot read (an attendees-only meeting, a draft that is not theirs): counted per recorder, never listed (#2594, ADR-0047 points 2 and 7).
@@ -1081,7 +1158,7 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
       async () =>
         (
           await sql<{ recorder_user_id: string; meetings: string; lines: string; results: string; items: string; titles: string }>`
-            SELECT recorder_user_id, meetings, lines, results, items, titles FROM crove_meetings.personal_matches(${probe.kind}, ${probeValue(probe)})`.execute(trx)
+            SELECT recorder_user_id, meetings, lines, results, items, titles FROM ludy_meetings.personal_matches(${probe.kind}, ${probeValue(probe)})`.execute(trx)
         ).rows,
     );
     if (counts === null) meetingTextSkipped = true;
@@ -1089,7 +1166,7 @@ async function findPersonalData(trx: QueryContext['trx'], orgId: string, probe: 
     // The recorders' own rough notes (A5, #3163) that the owner cannot read: counted per recorder like the rest, in their own field, and only where there are some.
     const noteCounts = await meetingScan(
       trx,
-      async () => (await sql<{ recorder_user_id: string; notes: string }>`SELECT recorder_user_id, notes FROM crove_meetings.personal_note_counts(${probe.kind}, ${probeValue(probe)})`.execute(trx)).rows,
+      async () => (await sql<{ recorder_user_id: string; notes: string }>`SELECT recorder_user_id, notes FROM ludy_meetings.personal_note_counts(${probe.kind}, ${probeValue(probe)})`.execute(trx)).rows,
     );
     if (noteCounts === null) meetingTextSkipped = true;
     for (const n of noteCounts ?? []) {
@@ -1141,7 +1218,7 @@ const DELIVERED_MAIL_STATUSES: readonly string[] = ['sending', 'ambiguous', 'sen
 export const FOLLOWUP_MAIL_HIDDEN_REASON =
   'Follow-up mails whose own text mentions the value, of a meeting the owner cannot read: the copy of a meeting text stays here as the meeting rows do, since dropping a mail that is still queued would destroy another member\'s pending send unannounced. When the recorder or an owner deletes the meeting its mails lose their payload and subject at once; otherwise the payload expires 30 days after the mail\'s final status and the subject after 13 months';
 export const FOLLOWUP_MAIL_SHORT_NUMBER_REASON =
-  'Follow-up mails whose text holds a number of fewer than 10 digits: such a number may as well be an amount, a date or a figure of the meeting, and dropping a mail cannot be undone, so the erasure leaves these mails as they are (the meeting text is left too, see the crove_meetings entries); check them and tell the person, or ask for a longer value';
+  'Follow-up mails whose text holds a number of fewer than 10 digits: such a number may as well be an amount, a date or a figure of the meeting, and dropping a mail cannot be undone, so the erasure leaves these mails as they are (the meeting text is left too, see the ludy_meetings entries); check them and tell the person, or ask for a longer value';
 // A number of fewer than 10 digits may as well be a date or a figure in meeting text (#3064), and a redaction cannot be undone: the meeting text is left as it is, counted, and the finder still lists it.
 export const MEETING_TEXT_SHORT_NUMBER_REASON =
   'A number of fewer than 10 digits may also be a date, an amount or a figure in meeting text (a transcript line, a summary, a decision, an action item or a title), so the erasure does not redact it there; check these rows and tell the person, or ask for a longer value, or have the recorder or an owner delete the meeting';
@@ -1188,37 +1265,39 @@ const SHORT_NUMBER_COLUMNS = new Set([
   'ludy_kernel.task.title',
   'ludy_kernel.task.description',
   'ludy_kernel.task.checklist',
-  'crove_projects.project.name',
-  'crove_projects.project.description',
-  'crove_projects.project.template_tasks',
-  'crove_projects.project_column.name',
-  'crove_projects.project_cycle.name',
-  'crove_projects.project_cycle.goal',
-  'crove_projects.roadmap_board.title',
-  'crove_projects.roadmap_board.description',
-  'crove_projects.roadmap_item.public_title',
-  'crove_projects.roadmap_item.public_summary',
-  'crove_projects.roadmap_item.submitter_display_name',
-  'crove_projects.roadmap_announcement.title',
-  'crove_projects.roadmap_announcement.body_md',
-  'crove_projects.time_entry.note',
-  'crove_projects.project_triage_item.title',
-  'crove_projects.project_triage_item.description',
-  'crove_projects.project_triage_item.decline_reason',
-  'crove_hr.candidate.notes',
+  'ludy_projects.project.name',
+  'ludy_projects.project.description',
+  'ludy_projects.project.template_tasks',
+  'ludy_projects.project_column.name',
+  'ludy_projects.project_cycle.name',
+  'ludy_projects.project_cycle.goal',
+  'ludy_projects.roadmap_board.title',
+  'ludy_projects.roadmap_board.description',
+  'ludy_projects.roadmap_item.public_title',
+  'ludy_projects.roadmap_item.public_summary',
+  'ludy_projects.roadmap_item.submitter_display_name',
+  'ludy_projects.roadmap_signal.account_label',
+  'ludy_projects.roadmap_signal.quote_excerpt',
+  'ludy_projects.roadmap_announcement.title',
+  'ludy_projects.roadmap_announcement.body_md',
+  'ludy_projects.time_entry.note',
+  'ludy_projects.project_triage_item.title',
+  'ludy_projects.project_triage_item.description',
+  'ludy_projects.project_triage_item.decline_reason',
+  'ludy_hr.candidate.notes',
 ]);
-// The meeting text columns the redaction of crove_meetings.personal_erase would change, left as they are for a short number (#3064).
+// The meeting text columns the redaction of ludy_meetings.personal_erase would change, left as they are for a short number (#3064).
 const SHORT_NUMBER_MEETING_COLUMNS = new Set([
-  'crove_meetings.meeting.title',
-  'crove_meetings.transcript_segment.text',
-  'crove_meetings.transcript_segment.speaker_label',
-  'crove_meetings.meeting_result.summary',
-  'crove_meetings.meeting_result.decisions',
-  'crove_meetings.action_item.title',
-  'crove_meetings.action_item.who_drafted',
-  'crove_meetings.action_item.when_drafted',
-  'crove_meetings.meeting_note.body',
-  'crove_meetings.meeting_chapter.title',
+  'ludy_meetings.meeting.title',
+  'ludy_meetings.transcript_segment.text',
+  'ludy_meetings.transcript_segment.speaker_label',
+  'ludy_meetings.meeting_result.summary',
+  'ludy_meetings.meeting_result.decisions',
+  'ludy_meetings.action_item.title',
+  'ludy_meetings.action_item.who_drafted',
+  'ludy_meetings.action_item.when_drafted',
+  'ludy_meetings.meeting_note.body',
+  'ludy_meetings.meeting_chapter.title',
 ]);
 // The same for MISA AMIS's refusal text on a pushed voucher (#4015): a short number there may be an amount or an invoice number MISA quoted.
 export const MISA_PUSH_REASON_SHORT_NUMBER_REASON =
@@ -1235,14 +1314,14 @@ export const ERASED_TEXT_MARK = '[đã xóa]';
 export const PERSONAL_DATA_NOTICE_ITEMS = 1000;
 // Why an erasure keeps a private item that mentions the value: no notice named it as it is now (written or changed since
 // the last one), or the notice's notification has not reached its author yet or did less than 24 hours ago, so the
-// author has not had the time to read it and take their items (crove_notes.private_erase).
+// author has not had the time to read it and take their items (ludy_notes.private_erase).
 export const UNTOLD_PRIVATE_REASON =
   'A private item whose author was not told at least 24 hours ago (written or changed since the last notice, its notification not sent yet, or sent less than 24 hours ago): send the notice if needed, wait 24 hours, then erase again';
 
 // The owner's notice before an erasure (#1678, ADR-0037 section 5): the authors of private notes and to-dos that mention
 // the value are told how many of theirs do, so they know before the erasure deletes them. Nobody but the author reads
-// a private item: crove_notes.private_notice_items answers their ids and authors only, the audit row records the ids
-// with the value's keyed notice key (which the erasure checks, crove_notes.private_erase: it deletes only what a notice
+// a private item: ludy_notes.private_notice_items answers their ids and authors only, the audit row records the ids
+// with the value's keyed notice key (which the erasure checks, ludy_notes.private_erase: it deletes only what a notice
 // for the same value named, at its current revision, and only once its author got the notification), and the event
 // kernel.personal_data.notified carries the authors and counts, which kernel.notification.dispatch turns into one
 // notification each, sent even when the author turned that kind off. The value itself is in neither.
@@ -1256,7 +1335,7 @@ export const personalDataNotify = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới gửi được thông báo này');
     const probe = requireProbe(input.value);
     const { rows } = await sql<{ item_type: string; item_id: string; author_user_id: string; revision: number }>`
-      SELECT item_type, item_id, author_user_id, revision FROM crove_notes.private_notice_items(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx);
+      SELECT item_type, item_id, author_user_id, revision FROM ludy_notes.private_notice_items(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx);
     if (rows.length > PERSONAL_DATA_NOTICE_ITEMS) {
       throw new DomainError('PERSONAL_DATA_NOTICE_TOO_MANY', 422, `Có hơn ${PERSONAL_DATA_NOTICE_ITEMS} ghi chú riêng và việc nhắc đến giá trị này; hãy liên hệ hỗ trợ`);
     }
@@ -1264,7 +1343,7 @@ export const personalDataNotify = defineCommand({
     // timeout stopped does not stop the notice of the notes: it is left out and recorded as skipped in the audit row, and the erasure then reports those meetings as kept, never as erased.
     const scanned = await meetingScan(ctx.trx, async () =>
       (await sql<{ meeting_id: string; recorder_user_id: string; stamp: string; key: Uint8Array }>`
-        SELECT meeting_id, recorder_user_id, stamp::text AS stamp, key FROM crove_meetings.personal_notice_items(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)).rows,
+        SELECT meeting_id, recorder_user_id, stamp::text AS stamp, key FROM ludy_meetings.personal_notice_items(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)).rows,
     );
     const meetingsSkipped = scanned === null;
     const meetingRows = scanned ?? [];
@@ -1284,7 +1363,7 @@ export const personalDataNotify = defineCommand({
       authors.set(row.recorder_user_id, a);
     }
     const named = [...authors.values()];
-    const { rows: keys } = await sql<{ key: string }>`SELECT crove_notes.private_notice_key(${probe.kind}, ${probeValue(probe)}) AS key`.execute(ctx.trx);
+    const { rows: keys } = await sql<{ key: string }>`SELECT ludy_notes.private_notice_key(${probe.kind}, ${probeValue(probe)}) AS key`.execute(ctx.trx);
     // The authors a notification reaches: members now, but the owner sending it (dispatch leaves out the actor).
     const actor = ctx.actor.userId;
     const members = named.length === 0 ? [] : await ctx.trx
@@ -1363,15 +1442,19 @@ export const personalDataErase = defineCommand({
     const { rows: parties } = await sql<{ id: string; email: boolean; phone: boolean; address: boolean; tax_code: boolean; company: boolean; documented: boolean }>`
       SELECT p.id, p.email IS NOT NULL AS email, p.phone IS NOT NULL AS phone, p.address IS NOT NULL AS address,
              p.tax_code IS NOT NULL AS tax_code, p.company_id IS NOT NULL AS company,
-             (EXISTS (SELECT 1 FROM crove_finance.purchase_document d WHERE d.org_id = p.org_id AND d.party_id = p.id)
-              OR EXISTS (SELECT 1 FROM crove_finance.cash_voucher v WHERE v.org_id = p.org_id AND v.party_id = p.id)
-              OR EXISTS (SELECT 1 FROM crove_finance.journal_line l WHERE l.org_id = p.org_id AND l.party_id = p.id)) AS documented
+             (EXISTS (SELECT 1 FROM ludy_finance.purchase_document d WHERE d.org_id = p.org_id AND d.party_id = p.id)
+              OR EXISTS (SELECT 1 FROM ludy_finance.cash_voucher v WHERE v.org_id = p.org_id AND v.party_id = p.id)
+              OR EXISTS (SELECT 1 FROM ludy_finance.journal_line l WHERE l.org_id = p.org_id AND l.party_id = p.id)) AS documented
         FROM ludy_kernel.party p
        WHERE p.org_id = ${ctx.orgId}::uuid AND ${partyMatch}
        FOR UPDATE OF p`.execute(ctx.trx);
     let keptParties = 0;
+    const forgottenPartyIds: string[] = [];
+    const documentedPartyIds: string[] = [];
     for (const party of parties) {
       const forget = !party.documented;
+      if (forget) forgottenPartyIds.push(party.id);
+      else documentedPartyIds.push(party.id);
       await ctx.trx
         .updateTable('ludy_kernel.party')
         .set((eb) => ({
@@ -1416,61 +1499,98 @@ export const personalDataErase = defineCommand({
     // documented or not; the vouchers they were learned from stay as the books keep them.
     if (parties.length > 0) {
       const { rows: rules } = await sql<{ id: string }>`
-        DELETE FROM crove_finance.bank_party_rule
+        DELETE FROM ludy_finance.bank_party_rule
          WHERE org_id = ${ctx.orgId}::uuid AND party_id = ANY(${parties.map((p) => p.id)}::uuid[])
          RETURNING id`.execute(ctx.trx);
-      add('crove_finance.bank_party_rule.key_hash', rules.length);
+      add('ludy_finance.bank_party_rule.key_hash', rules.length);
       // The name matches of those parties (#4124): a proposal holds the name of a catalogue entry that was found because it is the party's name, and a confirmation says the entry is that party. They go whole, documented
       // party or not (the next check proposes again for a party the books still carry). A name is never a probe, so this is where the proposal's name is erased: with the party it belongs to. The checks are locked first and
       // the waiting ones moved on, as for a tax code above, so a job that read the party's name before this erasure cannot put the proposal back.
-      await sql`SELECT 1 FROM crove_finance.misa_amis_match_check WHERE org_id = ${ctx.orgId}::uuid FOR UPDATE`.execute(ctx.trx);
+      await sql`SELECT 1 FROM ludy_finance.misa_amis_match_check WHERE org_id = ${ctx.orgId}::uuid FOR UPDATE`.execute(ctx.trx);
       const { rows: nameMatches } = await sql<{ proposal: boolean }>`
-        DELETE FROM crove_finance.misa_amis_match
+        DELETE FROM ludy_finance.misa_amis_match
          WHERE org_id = ${ctx.orgId}::uuid AND kind = 'party_name' AND match_key = ANY(${parties.map((p) => p.id)}::text[])
          RETURNING candidate_name IS NOT NULL AS proposal`.execute(ctx.trx);
-      add('crove_finance.misa_amis_match.candidate_name', nameMatches.filter((r) => r.proposal).length);
+      add('ludy_finance.misa_amis_match.candidate_name', nameMatches.filter((r) => r.proposal).length);
       // Always, not only when a row went: a job may have read the party's name and not yet recorded a proposal for it, and that proposal is exactly what must not land after this erasure.
-      await sql`UPDATE crove_finance.misa_amis_match_check SET requested_at = pg_catalog.clock_timestamp() WHERE org_id = ${ctx.orgId}::uuid AND state = 'requested'`.execute(ctx.trx);
+      await sql`UPDATE ludy_finance.misa_amis_match_check SET requested_at = pg_catalog.clock_timestamp() WHERE org_id = ${ctx.orgId}::uuid AND state = 'requested'`.execute(ctx.trx);
+    }
+    if (forgottenPartyIds.length > 0) {
+      const { rows: clearedDealSignals } = await sql<{ id: string; had_label: boolean }>`
+        UPDATE ludy_projects.roadmap_signal s
+           SET account_label = NULL,
+               source_party_id = CASE WHEN s.source_party_id = ANY(${forgottenPartyIds}::uuid[]) THEN NULL ELSE s.source_party_id END,
+               updated_at = ${ctx.now}
+          FROM ludy_projects.roadmap_signal o
+         WHERE o.org_id = s.org_id
+           AND o.id = s.id
+           AND s.org_id = ${ctx.orgId}::uuid
+           AND (s.account_label IS NOT NULL OR s.source_party_id = ANY(${forgottenPartyIds}::uuid[]))
+           AND (
+             s.source_party_id = ANY(${forgottenPartyIds}::uuid[])
+             OR (
+               s.source_type = 'crm.deal'
+               AND EXISTS (
+                 SELECT 1
+                   FROM ludy_crm.deal d
+                  WHERE d.org_id = s.org_id
+                    AND d.id = s.source_id
+                    AND d.party_id = ANY(${forgottenPartyIds}::uuid[])
+               )
+             )
+           )
+         RETURNING s.id, (o.account_label IS NOT NULL) AS had_label`.execute(ctx.trx);
+      add('ludy_projects.roadmap_signal.account_label', clearedDealSignals.filter((r) => r.had_label).length);
+      if (clearedDealSignals.length > 0) {
+        const clearedIds = clearedDealSignals.map((r) => r.id);
+        await sql`
+          UPDATE ludy_kernel.idempotency_key
+             SET response = pg_catalog.jsonb_set(response, '{value,signal,accountLabel}', 'null'::jsonb, false)
+           WHERE org_id = ${ctx.orgId}::uuid
+             AND command = 'projects.roadmap.signal.create'
+             AND response IS NOT NULL
+             AND response -> 'value' -> 'signal' ->> 'id' = ANY(${clearedIds}::text[])`.execute(ctx.trx);
+      }
     }
 
     // Bookings the visitor made on a public booking page (#1318), matched by their email or phone: the visitor's name,
     // email, phone and note all go (the booking keeps its time and its link to the calendar event).
     const bookingMatch = sql<boolean>`(${match('email', 'b.email') ?? never} OR ${match('phone', 'b.phone') ?? never})`;
     const { rows: bookings } = await sql<{ visitor_name: boolean; email: boolean; phone: boolean; note: boolean }>`
-      UPDATE crove_crm.booking b SET visitor_name = NULL, email = NULL, phone = NULL, note = NULL
-        FROM crove_crm.booking o
+      UPDATE ludy_crm.booking b SET visitor_name = NULL, email = NULL, phone = NULL, note = NULL
+        FROM ludy_crm.booking o
        WHERE o.org_id = b.org_id AND o.id = b.id AND b.org_id = ${ctx.orgId}::uuid AND ${bookingMatch}
        RETURNING o.visitor_name IS NOT NULL AS visitor_name, o.email IS NOT NULL AS email, o.phone IS NOT NULL AS phone,
                  o.note IS NOT NULL AS note`.execute(ctx.trx);
     for (const b of bookings) {
-      add('crove_crm.booking.visitor_name', Number(b.visitor_name));
-      add('crove_crm.booking.email', Number(b.email));
-      add('crove_crm.booking.phone', Number(b.phone));
-      add('crove_crm.booking.note', Number(b.note));
+      add('ludy_crm.booking.visitor_name', Number(b.visitor_name));
+      add('ludy_crm.booking.email', Number(b.email));
+      add('ludy_crm.booking.phone', Number(b.phone));
+      add('ludy_crm.booking.note', Number(b.note));
     }
 
     // Recruiting candidates matched by their email or phone: their name, email, phone and notes are cleared (their stage and links stay).
     const candidateMatch = sql<boolean>`(${match('email', 'c.email') ?? never} OR ${match('phone', 'c.phone') ?? never})`;
     const { rows: candidates } = await sql<{ display_name: boolean; email: boolean; phone: boolean; notes: boolean }>`
-      UPDATE crove_hr.candidate c
+      UPDATE ludy_hr.candidate c
          SET display_name = ${ERASED_PARTY_NAME}, email = NULL, phone = NULL, notes = NULL,
              erased_at = COALESCE(c.erased_at, ${ctx.now}), updated_at = ${ctx.now}
-        FROM crove_hr.candidate o
+        FROM ludy_hr.candidate o
        WHERE o.org_id = c.org_id AND o.id = c.id AND c.org_id = ${ctx.orgId}::uuid AND ${candidateMatch}
        RETURNING o.display_name <> ${ERASED_PARTY_NAME} AS display_name, o.email IS NOT NULL AS email,
                  o.phone IS NOT NULL AS phone, o.notes IS NOT NULL AS notes`.execute(ctx.trx);
     for (const c of candidates) {
-      add('crove_hr.candidate.display_name', Number(c.display_name));
-      add('crove_hr.candidate.email', Number(c.email));
-      add('crove_hr.candidate.phone', Number(c.phone));
-      add('crove_hr.candidate.notes', Number(c.notes));
+      add('ludy_hr.candidate.display_name', Number(c.display_name));
+      add('ludy_hr.candidate.email', Number(c.email));
+      add('ludy_hr.candidate.phone', Number(c.phone));
+      add('ludy_hr.candidate.notes', Number(c.notes));
     }
 
     // Rows of a contact import not yet committed (#2229), matched by email, phone or tax code: deleted whole, for the row
     // holds the person's name and details as read from the file. The batch keeps its counts.
     const importMatch = sql<boolean>`(${match('email', 'r.email') ?? never} OR ${match('phone', 'r.phone') ?? never} OR ${match('tax_code', 'r.tax_code') ?? never})`;
     const { rows: staged } = await sql<{ batch_id: string; email: boolean; phone: boolean; tax_code: boolean; address: boolean }>`
-      DELETE FROM crove_crm.import_row r
+      DELETE FROM ludy_crm.import_row r
        WHERE r.org_id = ${ctx.orgId}::uuid AND ${importMatch}
        RETURNING r.batch_id, r.email IS NOT NULL AS email, r.phone IS NOT NULL AS phone, r.tax_code IS NOT NULL AS tax_code,
                  r.address IS NOT NULL AS address`.execute(ctx.trx);
@@ -1478,21 +1598,21 @@ export const personalDataErase = defineCommand({
     const touched = [...new Set(staged.map((r) => r.batch_id))];
     if (touched.length > 0) {
       await sql`
-        UPDATE crove_crm.import_batch b SET
-          total_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id),
-          new_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'new'),
-          duplicate_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'duplicate'),
-          conflict_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'conflict'),
-          invalid_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'invalid'),
-          new_companies = (SELECT count(DISTINCT ludy_kernel.search_fold(r.company_name))::int FROM crove_crm.import_row r
+        UPDATE ludy_crm.import_batch b SET
+          total_rows = (SELECT count(*)::int FROM ludy_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id),
+          new_rows = (SELECT count(*)::int FROM ludy_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'new'),
+          duplicate_rows = (SELECT count(*)::int FROM ludy_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'duplicate'),
+          conflict_rows = (SELECT count(*)::int FROM ludy_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'conflict'),
+          invalid_rows = (SELECT count(*)::int FROM ludy_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'invalid'),
+          new_companies = (SELECT count(DISTINCT ludy_kernel.search_fold(r.company_name))::int FROM ludy_crm.import_row r
                            WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'new' AND r.company_state = 'new')
         WHERE b.org_id = ${ctx.orgId}::uuid AND b.status = 'staged' AND b.id = ANY(${touched}::uuid[])`.execute(ctx.trx);
     }
     for (const r of staged) {
-      add('crove_crm.import_row.email', Number(r.email));
-      add('crove_crm.import_row.phone', Number(r.phone));
-      add('crove_crm.import_row.tax_code', Number(r.tax_code));
-      add('crove_crm.import_row.address', Number(r.address));
+      add('ludy_crm.import_row.email', Number(r.email));
+      add('ludy_crm.import_row.phone', Number(r.phone));
+      add('ludy_crm.import_row.tax_code', Number(r.tax_code));
+      add('ludy_crm.import_row.address', Number(r.address));
     }
 
     // The stored results of a MISA catalogue check (#4112), keyed by the party's tax code: the rows of a party matching the probe are deleted whole (an item row's key is an item code, so only party rows are looked at).
@@ -1500,18 +1620,18 @@ export const personalDataErase = defineCommand({
     const matchKey = match('tax_code', 'm.match_key');
     if (matchKey) {
       // The checks are locked first (record_check locks its row too): a record that is writing results finishes before the delete looks, or waits and then finds its request moved on.
-      await sql`SELECT 1 FROM crove_finance.misa_amis_match_check WHERE org_id = ${ctx.orgId}::uuid FOR UPDATE`.execute(ctx.trx);
+      await sql`SELECT 1 FROM ludy_finance.misa_amis_match_check WHERE org_id = ${ctx.orgId}::uuid FOR UPDATE`.execute(ctx.trx);
       const { rows: misaMatches } = await sql<{ n: number }>`
         WITH gone AS (
-          DELETE FROM crove_finance.misa_amis_match m
+          DELETE FROM ludy_finance.misa_amis_match m
            WHERE m.org_id = ${ctx.orgId}::uuid AND m.kind = 'party' AND ${matchKey}
            RETURNING 1)
         SELECT count(*)::int AS n FROM gone`.execute(ctx.trx);
-      add('crove_finance.misa_amis_match.match_key', Number(misaMatches[0]?.n ?? 0));
+      add('ludy_finance.misa_amis_match.match_key', Number(misaMatches[0]?.n ?? 0));
       // A check that waits may have read the tax code before this erasure: its time is moved on, so a job that took the old time has its record ignored (record_check compares it) and cannot put the code back. The
       // check stays waiting until its ten minutes pass or a person asks again. Known limit (decided in #4128, noted for #4124): a job that only starts after this erasure takes the new time and may record a match
       // again for a tax code the books still carry (the vouchers keep their party's tax code under the legal hold); the match is derived data and the next erasure deletes it.
-      await sql`UPDATE crove_finance.misa_amis_match_check SET requested_at = pg_catalog.clock_timestamp() WHERE org_id = ${ctx.orgId}::uuid AND state = 'requested'`.execute(ctx.trx);
+      await sql`UPDATE ludy_finance.misa_amis_match_check SET requested_at = pg_catalog.clock_timestamp() WHERE org_id = ${ctx.orgId}::uuid AND state = 'requested'`.execute(ctx.trx);
     }
 
     if (probe.kind === 'email') {
@@ -1534,18 +1654,18 @@ export const personalDataErase = defineCommand({
       // A schedule keeps its other recipients; one left with nobody is deleted (it mailed only this person).
       // Deleted first, so an address listed twice in different cases never leaves an empty list.
       const dropped = await sql`
-        DELETE FROM crove_social.report_schedule t
+        DELETE FROM ludy_social.report_schedule t
          WHERE t.org_id = ${ctx.orgId}::uuid AND ${match('email_list', 't.recipients') ?? never}
            AND NOT EXISTS (SELECT 1 FROM pg_catalog.unnest(t.recipients) AS r(v) WHERE pg_catalog.lower(r.v) <> ${probe.email})`.execute(ctx.trx);
       const schedules = await sql`
-        UPDATE crove_social.report_schedule t
+        UPDATE ludy_social.report_schedule t
            SET recipients = ARRAY(SELECT r.v FROM pg_catalog.unnest(t.recipients) AS r(v) WHERE pg_catalog.lower(r.v) <> ${probe.email})
          WHERE t.org_id = ${ctx.orgId}::uuid AND ${match('email_list', 't.recipients') ?? never}`.execute(ctx.trx);
-      add('crove_social.report_schedule.recipients', Number(schedules.numAffectedRows ?? 0) + Number(dropped.numAffectedRows ?? 0));
+      add('ludy_social.report_schedule.recipients', Number(schedules.numAffectedRows ?? 0) + Number(dropped.numAffectedRows ?? 0));
     }
 
     // Unsealed eSign recipients (#3323, #3427): erase unsealed signers (locking envelope -> signer -> signing_token ->
-    // field -> signing_otp) BEFORE crove_sign.personal_erase_otp so we never acquire signing_otp prior to parent locks.
+    // field -> signing_otp) BEFORE ludy_sign.personal_erase_otp so we never acquire signing_otp prior to parent locks.
     const { rows: erasedSignRows } = await sql<{
       counts: {
         signers: number;
@@ -1560,47 +1680,54 @@ export const personalDataErase = defineCommand({
         delegationReasons?: number;
       };
     }>`
-      SELECT crove_sign.personal_erase_unsealed_signers(${probe.kind}, ${probeValue(probe)}) AS counts
+      SELECT ludy_sign.personal_erase_unsealed_signers(${probe.kind}, ${probeValue(probe)}) AS counts
     `.execute(ctx.trx);
     const erasedSign = erasedSignRows[0]?.counts;
     if (erasedSign) {
-      add('crove_sign.signing_otp.email', erasedSign.otps);
-      add('crove_sign.signer.name', erasedSign.signers);
-      add('crove_sign.signer.email', erasedSign.emails);
-      add('crove_sign.signer.phone', erasedSign.phones);
-      add('crove_sign.signer.signature_typed_text', erasedSign.typedSignatures);
-      add('crove_sign.signer.signer_user_agent', erasedSign.userAgents);
-      add('crove_sign.field.signature_png_base64', erasedSign.fieldSignatures);
-      add('crove_sign.signer.delegated_from_name', erasedSign.delegatedNames ?? 0);
-      add('crove_sign.signer.delegated_from_email', erasedSign.delegatedEmails ?? 0);
-      add('crove_sign.signer.delegation_reason', erasedSign.delegationReasons ?? 0);
+      add('ludy_sign.signing_otp.email', erasedSign.otps);
+      add('ludy_sign.signer.name', erasedSign.signers);
+      add('ludy_sign.signer.email', erasedSign.emails);
+      add('ludy_sign.signer.phone', erasedSign.phones);
+      add('ludy_sign.signer.signature_typed_text', erasedSign.typedSignatures);
+      add('ludy_sign.signer.signer_user_agent', erasedSign.userAgents);
+      add('ludy_sign.field.signature_png_base64', erasedSign.fieldSignatures);
+      add('ludy_sign.signer.delegated_from_name', erasedSign.delegatedNames ?? 0);
+      add('ludy_sign.signer.delegated_from_email', erasedSign.delegatedEmails ?? 0);
+      add('ludy_sign.signer.delegation_reason', erasedSign.delegationReasons ?? 0);
     }
     if (probe.kind === 'email') {
       const { rows: signOtp } = await sql<{ count: number }>`
-        SELECT crove_sign.personal_erase_otp(${probe.email}) AS count`.execute(ctx.trx);
-      add('crove_sign.signing_otp.email', Number(signOtp[0]?.count ?? 0));
+        SELECT ludy_sign.personal_erase_otp(${probe.email}) AS count`.execute(ctx.trx);
+      add('ludy_sign.signing_otp.email', Number(signOtp[0]?.count ?? 0));
 
       const { rows: roadmapMachinery } = await sql<{ counts: { otps: number; subscribers: number } }>`
-        SELECT crove_projects.personal_erase_roadmap_machinery(${probe.email}) AS counts`.execute(ctx.trx);
-      add('crove_projects.roadmap_otp.email', Number(roadmapMachinery[0]?.counts?.otps ?? 0));
-      add('crove_projects.roadmap_subscriber.email_sealed', Number(roadmapMachinery[0]?.counts?.subscribers ?? 0));
+        SELECT ludy_projects.personal_erase_roadmap_machinery(${probe.email}) AS counts`.execute(ctx.trx);
+      add('ludy_projects.roadmap_otp.email', Number(roadmapMachinery[0]?.counts?.otps ?? 0));
+      add('ludy_projects.roadmap_subscriber.email_sealed', Number(roadmapMachinery[0]?.counts?.subscribers ?? 0));
     }
 
     // The raw body of a bank feed notice that waits for the worker (#4203): a notice whose text mentions the value is deleted (it is only a hint to pull and is deleted, not redacted, so the short-number guard below does not apply to it: a short number can only delete a hint that is rebuilt by the next notice). Through the owner-only definer: the table has no login role grant.
     const { rows: hookNotices } = await sql<{ rows: number }>`
-      SELECT crove_finance.personal_data_erase_bank_feed_notice(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
-    add('crove_finance.bank_feed_webhook_notice.body', Number(hookNotices[0]?.rows ?? 0));
+      SELECT ludy_finance.personal_data_erase_bank_feed_notice(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
+    add('ludy_finance.bank_feed_webhook_notice.body', Number(hookNotices[0]?.rows ?? 0));
 
     // The raw body of a marketplace push that waits for the worker (#4316): the same, deleted when its text mentions the value.
     const { rows: marketplaceNotices } = await sql<{ rows: number }>`
-      SELECT crove_finance.personal_data_erase_marketplace_hook_notice(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
-    add('crove_finance.marketplace_hook_notice.body', Number(marketplaceNotices[0]?.rows ?? 0));
+      SELECT ludy_finance.personal_data_erase_marketplace_hook_notice(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
+    add('ludy_finance.marketplace_hook_notice.body', Number(marketplaceNotices[0]?.rows ?? 0));
+
+    // Sender-side KYC attachment checks (#4443, PDPL Law 91/2025/QH15): delete any kyc_check row in the org whose
+    // findings_json quotes the value (including 8/9-digit legacy CMND numbers and rows on attendees-only meeting_minutes
+    // envelopes via the owner-only definer); sealed agreement files stay untouched and checks can always be re-run.
+    const { rows: kycRows } = await sql<{ rows: number }>`
+      SELECT ludy_sign.personal_data_erase_kyc_check(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
+    add('ludy_sign.kyc_check.findings_json', Number(kycRows[0]?.rows ?? 0));
 
     // Notes (#1678, ADR-0037 section 5). A shared note stays and has every mention of the value edited out, the one
     // case where someone other than its author edits a note: ERASED_TEXT_MARK in its title and body where the value
     // was, cut to the column's limit should the mark be longer than the value, and a tag that mentions it goes (all of
     // them, when the value only shows across tags). Its search words
-    // follow by trigger. A private note or to-do is its author's alone: crove_notes.private_erase deletes it whole,
+    // follow by trigger. A private note or to-do is its author's alone: ludy_notes.private_erase deletes it whole,
     // unread, once an earlier notice told the author (kernel.personal_data.notify); one never named stays, reported
     // below as kept.
     const mentions = (column: string) => freeTextMatch(probe, sql.ref(column));
@@ -1612,31 +1739,31 @@ export const personalDataErase = defineCommand({
     // these statements, whose fresh reads then see and edit out what it wrote back, or waits and finds the snapshot
     // gone: an erased value never comes back from the version history.
     await sql`
-      SELECT n.id FROM crove_notes.note n
+      SELECT n.id FROM ludy_notes.note n
        WHERE n.org_id = ${ctx.orgId}::uuid AND n.visibility = 'org'
          AND (${mentions('n.title')} OR ${mentions('n.body')} OR ${freeTextMatch(probe, tagsOf('n'))}
               OR EXISTS (
-                SELECT 1 FROM crove_notes.note_version v
+                SELECT 1 FROM ludy_notes.note_version v
                  WHERE v.org_id = n.org_id AND v.note_id = n.id
                    AND (${mentions('v.title')} OR ${mentions('v.body')} OR ${freeTextMatch(probe, tagsOf('v'))})))
        ORDER BY n.id
        FOR UPDATE OF n`.execute(ctx.trx);
     const { rows: notes } = await sql<{ title: boolean; body: boolean; tags: boolean }>`
-      UPDATE crove_notes.note t
+      UPDATE ludy_notes.note t
          SET title = pg_catalog.left(${freeTextRedact(probe, sql.ref('t.title'), ERASED_TEXT_MARK)}, ${NOTE_TITLE_MAX}::int),
              body = pg_catalog.left(${freeTextRedact(probe, sql.ref('t.body'), ERASED_TEXT_MARK)}, ${NOTE_BODY_MAX}::int),
              tags = CASE WHEN ${stillAcross} THEN '{}'::text[] ELSE ${keptTags} END,
              revision = t.revision + 1, updated_at = ${ctx.now}
-        FROM crove_notes.note o
+        FROM ludy_notes.note o
        WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid AND t.visibility = 'org'
          AND (${mentions('t.title')} OR ${mentions('t.body')} OR ${freeTextMatch(probe, tagsOf('t'))})
        RETURNING ${mentions('o.title')} AS title, ${mentions('o.body')} AS body, ${freeTextMatch(probe, tagsOf('o'))} AS tags`.execute(ctx.trx);
-    add('crove_notes.note.title', notes.filter((n) => n.title).length);
-    add('crove_notes.note.body', notes.filter((n) => n.body).length);
-    add('crove_notes.note.tags', notes.filter((n) => n.tags).length);
+    add('ludy_notes.note.title', notes.filter((n) => n.title).length);
+    add('ludy_notes.note.body', notes.filter((n) => n.body).length);
+    add('ludy_notes.note.tags', notes.filter((n) => n.tags).length);
     // Shared note templates (#3562): redact mentions in place so the org's template stays usable, matching shared notes.
     const { rows: noteTemplates } = await sql<{ name: boolean; title: boolean; body: boolean; tags: boolean }>`
-      UPDATE crove_notes.note_template t
+      UPDATE ludy_notes.note_template t
          SET name = COALESCE(
                NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('t.name'), ERASED_TEXT_MARK)}, ${NOTE_TEMPLATE_NAME_MAX}::int)), ''),
                ${ERASED_TEXT_MARK}
@@ -1645,46 +1772,46 @@ export const personalDataErase = defineCommand({
              body = pg_catalog.left(${freeTextRedact(probe, sql.ref('t.body'), ERASED_TEXT_MARK)}, ${NOTE_BODY_MAX}::int),
              tags = CASE WHEN ${stillAcross} THEN '{}'::text[] ELSE ${keptTags} END,
              revision = t.revision + 1, updated_at = ${ctx.now}
-        FROM crove_notes.note_template o
+        FROM ludy_notes.note_template o
        WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid AND t.visibility = 'org'
          AND (${mentions('t.name')} OR ${mentions('t.title')} OR ${mentions('t.body')} OR ${freeTextMatch(probe, tagsOf('t'))})
        RETURNING ${mentions('o.name')} AS name, ${mentions('o.title')} AS title, ${mentions('o.body')} AS body, ${freeTextMatch(probe, tagsOf('o'))} AS tags`.execute(ctx.trx);
-    add('crove_notes.note_template.name', noteTemplates.filter((n) => n.name).length);
-    add('crove_notes.note_template.title', noteTemplates.filter((n) => n.title).length);
-    add('crove_notes.note_template.body', noteTemplates.filter((n) => n.body).length);
-    add('crove_notes.note_template.tags', noteTemplates.filter((n) => n.tags).length);
+    add('ludy_notes.note_template.name', noteTemplates.filter((n) => n.name).length);
+    add('ludy_notes.note_template.title', noteTemplates.filter((n) => n.title).length);
+    add('ludy_notes.note_template.body', noteTemplates.filter((n) => n.body).length);
+    add('ludy_notes.note_template.tags', noteTemplates.filter((n) => n.tags).length);
     // Version snapshots of shared notes (#3562): immutable rows, so matching snapshots are deleted rather than edited in place.
     const { rows: noteVersions } = await sql<{ title: boolean; body: boolean; tags: boolean }>`
-      DELETE FROM crove_notes.note_version t
+      DELETE FROM ludy_notes.note_version t
        WHERE t.org_id = ${ctx.orgId}::uuid
-         AND EXISTS (SELECT 1 FROM crove_notes.note n WHERE n.org_id = t.org_id AND n.id = t.note_id AND n.visibility = 'org')
+         AND EXISTS (SELECT 1 FROM ludy_notes.note n WHERE n.org_id = t.org_id AND n.id = t.note_id AND n.visibility = 'org')
          AND (${mentions('t.title')} OR ${mentions('t.body')} OR ${freeTextMatch(probe, tagsOf('t'))})
        RETURNING ${mentions('t.title')} AS title, ${mentions('t.body')} AS body, ${freeTextMatch(probe, tagsOf('t'))} AS tags`.execute(ctx.trx);
-    add('crove_notes.note_version.title', noteVersions.filter((n) => n.title).length);
-    add('crove_notes.note_version.body', noteVersions.filter((n) => n.body).length);
-    add('crove_notes.note_version.tags', noteVersions.filter((n) => n.tags).length);
+    add('ludy_notes.note_version.title', noteVersions.filter((n) => n.title).length);
+    add('ludy_notes.note_version.body', noteVersions.filter((n) => n.body).length);
+    add('ludy_notes.note_version.tags', noteVersions.filter((n) => n.tags).length);
     const { rows: sharedNoteAttachments } = await sql<{ note_id: string; filename: boolean; extracted_text: boolean }>`
-      DELETE FROM crove_notes.attachment a
+      DELETE FROM ludy_notes.attachment a
        WHERE a.org_id = ${ctx.orgId}::uuid
          AND EXISTS (
-           SELECT 1 FROM crove_notes.note n
+           SELECT 1 FROM ludy_notes.note n
             WHERE n.org_id = a.org_id AND n.id = a.note_id AND n.visibility = 'org'
          )
          AND (${mentions('a.filename')} OR ${mentions('a.extracted_text')})
        RETURNING a.note_id, ${mentions('a.filename')} AS filename, ${mentions('a.extracted_text')} AS extracted_text`.execute(ctx.trx);
-    add('crove_notes.attachment.filename', sharedNoteAttachments.filter((a) => a.filename).length);
-    add('crove_notes.attachment.extracted_text', sharedNoteAttachments.filter((a) => a.extracted_text).length);
+    add('ludy_notes.attachment.filename', sharedNoteAttachments.filter((a) => a.filename).length);
+    add('ludy_notes.attachment.extracted_text', sharedNoteAttachments.filter((a) => a.extracted_text).length);
     const touchedSharedNoteIds = [...new Set(sharedNoteAttachments.map((a) => a.note_id))];
     if (touchedSharedNoteIds.length > 0) {
       await ctx.trx
-        .updateTable('crove_notes.note')
+        .updateTable('ludy_notes.note')
         .set({ updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', 'in', touchedSharedNoteIds)
         .execute();
     }
     const { rows: notebooks } = await sql<{ name: boolean; stack_name: boolean }>`
-      UPDATE crove_notes.notebook t
+      UPDATE ludy_notes.notebook t
          SET name = COALESCE(NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('t.name'), ERASED_TEXT_MARK)}, ${NOTEBOOK_NAME_MAX}::int)), ''), ${ERASED_TEXT_MARK}),
              stack_name = CASE
                WHEN t.stack_name IS NOT NULL AND ${mentions('t.stack_name')}
@@ -1692,22 +1819,22 @@ export const personalDataErase = defineCommand({
                ELSE t.stack_name
              END,
              revision = t.revision + 1, updated_at = ${ctx.now}
-        FROM crove_notes.notebook o
+        FROM ludy_notes.notebook o
        WHERE o.org_id = t.org_id AND o.id = t.id AND t.org_id = ${ctx.orgId}::uuid AND t.visibility = 'org'
          AND (${mentions('t.name')} OR (t.stack_name IS NOT NULL AND ${mentions('t.stack_name')}))
        RETURNING ${mentions('o.name')} AS name, (o.stack_name IS NOT NULL AND ${mentions('o.stack_name')}) AS stack_name`.execute(ctx.trx);
-    add('crove_notes.notebook.name', notebooks.filter((b) => b.name).length);
-    add('crove_notes.notebook.stack_name', notebooks.filter((b) => b.stack_name).length);
+    add('ludy_notes.notebook.name', notebooks.filter((b) => b.name).length);
+    add('ludy_notes.notebook.stack_name', notebooks.filter((b) => b.stack_name).length);
     const { rows: privateRows } = await sql<{ notes: string; todos: string; untold_notes: string; untold_todos: string; note_ids: string[]; todo_ids: string[] }>`
-      SELECT notes, todos, untold_notes, untold_todos, note_ids, todo_ids FROM crove_notes.private_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx);
+      SELECT notes, todos, untold_notes, untold_todos, note_ids, todo_ids FROM ludy_notes.private_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx);
     const sum = (key: 'notes' | 'todos' | 'untold_notes' | 'untold_todos') => privateRows.reduce((n, r) => n + Number(r[key]), 0);
     const privateDeleted = { notes: sum('notes'), todos: sum('todos') };
     const untold = { notes: sum('untold_notes'), todos: sum('untold_todos') };
-    add('crove_notes.note', privateDeleted.notes);
-    add('crove_notes.todo', privateDeleted.todos);
+    add('ludy_notes.note', privateDeleted.notes);
+    add('ludy_notes.todo', privateDeleted.todos);
     // Meeting text (#2594, ADR-0047 points 2 and 7, ADR-0037 section 5): every whole mention of the value is redacted in place. In a row the owner reads (their own meeting, a
     // published row of a meeting they are a reader of) at once: the owner's own erasure is the authority, as for a shared note. In a row the owner cannot read, only when an earlier
-    // notice named its meeting at the text it has now and its recorder was told at least 24 hours ago (crove_meetings.personal_erase): the rest stays, counted. Nothing but the text
+    // notice named its meeting at the text it has now and its recorder was told at least 24 hours ago (ludy_meetings.personal_erase): the rest stays, counted. Nothing but the text
     // changes: the taint of a draft, the audio, the video, the files and the Vy results stay as they are. A scan the statement timeout stopped redacts nothing and is said so.
     // A number of fewer than 10 digits may as well be a date or a figure in the text (#3064), and a redaction cannot be undone: the definer is not called, nothing of the meeting text (nor its
     // follow-up mails, nor the retention dates it would have reported) changes, and the rows are counted below, as the activity lines and tasks are (ACTIVITY_REDACT_MIN_DIGITS).
@@ -1718,7 +1845,7 @@ export const personalDataErase = defineCommand({
           (
             await sql<{ meeting_id: string; lines: string; results: string; items: string; titles: string; kept: string; audio_until: string | null; video_until: string | null }>`
               SELECT meeting_id, lines, results, items, titles, kept, audio_until::text AS audio_until, video_until::text AS video_until
-                FROM crove_meetings.personal_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)
+                FROM ludy_meetings.personal_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)
           ).rows,
         );
     // The recorders' rough notes (A5, #3163): the value is redacted in the notes of every recorder of the org (the org is the data controller and the owner's erasure is its authority, as it is for
@@ -1726,28 +1853,28 @@ export const personalDataErase = defineCommand({
     const noteErase = shortNumber
       ? []
       : await meetingScan(ctx.trx, async () =>
-          (await sql<{ recorder_user_id: string; erased: string }>`SELECT recorder_user_id, erased FROM crove_meetings.personal_note_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)).rows.map((r) => ({
+          (await sql<{ recorder_user_id: string; erased: string }>`SELECT recorder_user_id, erased FROM ludy_meetings.personal_note_erase(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)).rows.map((r) => ({
             recorderUserId: r.recorder_user_id,
             notes: Number(r.erased),
           })),
         );
-    add('crove_meetings.meeting_note.body', (noteErase ?? []).reduce((n, r) => n + r.notes, 0));
+    add('ludy_meetings.meeting_note.body', (noteErase ?? []).reduce((n, r) => n + r.notes, 0));
     // The rows the owner cannot read, counted for the answer (the finder below lists the ones they read): read only, by the same matcher, under the same timeout.
     const shortMeetingCounts = shortNumber
       ? await meetingScan(ctx.trx, async () =>
           (
             await sql<{ lines: string; results: string; items: string; titles: string }>`
-              SELECT lines, results, items, titles FROM crove_meetings.personal_matches(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)
+              SELECT lines, results, items, titles FROM ludy_meetings.personal_matches(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)
           ).rows,
         )
       : [];
     const meetingsKept = { rows: 0, meetings: 0 };
     const mediaOf: { id: string; audio: string | null; video: string | null }[] = [];
     for (const r of redaction ?? []) {
-      add('crove_meetings.transcript_segment.text', Number(r.lines));
-      add('crove_meetings.meeting_result.summary', Number(r.results));
-      add('crove_meetings.action_item.title', Number(r.items));
-      add('crove_meetings.meeting.title', Number(r.titles));
+      add('ludy_meetings.transcript_segment.text', Number(r.lines));
+      add('ludy_meetings.meeting_result.summary', Number(r.results));
+      add('ludy_meetings.action_item.title', Number(r.items));
+      add('ludy_meetings.meeting.title', Number(r.titles));
       if (Number(r.kept) > 0) {
         meetingsKept.rows += Number(r.kept);
         meetingsKept.meetings += 1;
@@ -1790,7 +1917,7 @@ export const personalDataErase = defineCommand({
         (
           await sql<{ source_id: string; readable: boolean; text_kept: boolean }>`
             SELECT m.source_id,
-                   EXISTS (SELECT 1 FROM crove_meetings.meeting g WHERE g.org_id = m.org_id AND g.id = m.source_id) AS readable,
+                   EXISTS (SELECT 1 FROM ludy_meetings.meeting g WHERE g.org_id = m.org_id AND g.id = m.source_id) AS readable,
                    m.payload IS NOT NULL AS text_kept
               FROM ludy_kernel.mail_message m
              WHERE m.org_id = ${ctx.orgId}::uuid AND m.source = ${FOLLOWUP_MAIL_SOURCE} AND (m.payload IS NOT NULL OR m.subject IS NOT NULL)
@@ -1826,7 +1953,7 @@ export const personalDataErase = defineCommand({
     const readable = new Set(
       mediaOf.length === 0
         ? []
-        : (await sql<{ id: string }>`SELECT id FROM crove_meetings.meeting WHERE id = ANY(${mediaOf.map((m) => m.id)}::uuid[])`.execute(ctx.trx)).rows.map((r) => r.id),
+        : (await sql<{ id: string }>`SELECT id FROM ludy_meetings.meeting WHERE id = ANY(${mediaOf.map((m) => m.id)}::uuid[])`.execute(ctx.trx)).rows.map((r) => r.id),
     );
     const media = { audio: [] as string[], video: [] as string[], audioHidden: 0, videoHidden: 0 };
     for (const m of mediaOf) {
@@ -1847,28 +1974,36 @@ export const personalDataErase = defineCommand({
       // MISA AMIS's refusal text on a pushed voucher (#4015): cleared on the refused rows that quote the value, through the owner-only definer (the table's guard lets a tenant role move a row only along its graph);
       // the row and its state stay.
       const { rows: misaReasons } = await sql<{ rows: number }>`
-        SELECT crove_finance.personal_data_clear_misa_amis_push_reason(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
-      add('crove_finance.misa_amis_push.reason', Number(misaReasons[0]?.rows ?? 0));
+        SELECT ludy_finance.personal_data_clear_misa_amis_push_reason(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
+      add('ludy_finance.misa_amis_push.reason', Number(misaReasons[0]?.rows ?? 0));
 
       // The preview of a column check (#4036): a check whose preview of parsed lines quotes the value is deleted whole (a preview is personal data kept for seven days at most); the file is not touched, and a member
       // asks for the check again. Through the command's own transaction: the tenant role deletes a check of its own org by the table's policy.
       const previewMatch = freeTextMatch(probe, sql.ref('c.preview'));
       const { rows: previewRows } = await sql<{ id: string }>`
-        DELETE FROM crove_finance.marketplace_column_check c
+        DELETE FROM ludy_finance.marketplace_column_check c
          WHERE c.org_id = ${ctx.orgId}::uuid AND c.preview IS NOT NULL AND coalesce(${previewMatch}, false)
          RETURNING c.id`.execute(ctx.trx);
-      add('crove_finance.marketplace_column_check.preview', previewRows.length);
+      add('ludy_finance.marketplace_column_check.preview', previewRows.length);
 
       // Project triage items BEFORE tasks (#4493): preserves canonical lock order
-      // crove_projects.project_triage_item -> ludy_kernel.task -> crove_projects.project -> crove_projects.roadmap_item
+      // ludy_projects.project_triage_item -> ludy_kernel.task -> ludy_projects.project -> ludy_projects.roadmap_item
       // matching projectTriageAccept (zero deadlock) and closing both READ COMMITTED races:
       // if projectTriageAccept locks pti first, erase waits for commit and then redacts the new task;
       // if erase updates pti first, projectTriageAccept waits on FOR UPDATE and reads the already-redacted text.
       const triageTitle = freeTextMatch(probe, sql.ref('pti.title'));
       const triageDesc = freeTextMatch(probe, sql.ref('pti.description'));
       const triageDecline = freeTextMatch(probe, sql.ref('pti.decline_reason'));
-      const { rows: triageRows } = await sql<{ title: boolean; description: boolean; decline_reason: boolean }>`
-        UPDATE crove_projects.project_triage_item pti
+      const { rows: triageRows } = await sql<{
+        triage_id: string;
+        next_title: string;
+        next_description: string | null;
+        next_decline_reason: string | null;
+        title: boolean;
+        description: boolean;
+        decline_reason: boolean;
+      }>`
+        UPDATE ludy_projects.project_triage_item pti
            SET title = CASE
                          WHEN ${triageTitle} THEN COALESCE(
                            NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('pti.title'), REDACTED_MARK)}, 300)), ''),
@@ -1885,15 +2020,60 @@ export const personalDataErase = defineCommand({
                                   ELSE pti.decline_reason
                                 END,
                updated_at = ${ctx.now}
-          FROM crove_projects.project_triage_item o
+          FROM ludy_projects.project_triage_item o
          WHERE o.org_id = pti.org_id AND o.id = pti.id AND pti.org_id = ${ctx.orgId}::uuid
            AND (${triageTitle} OR coalesce(${triageDesc}, false) OR coalesce(${triageDecline}, false))
-         RETURNING ${freeTextMatch(probe, sql.ref('o.title'))} AS title,
+         RETURNING pti.id AS triage_id,
+                   pti.title AS next_title,
+                   pti.description AS next_description,
+                   pti.decline_reason AS next_decline_reason,
+                   ${freeTextMatch(probe, sql.ref('o.title'))} AS title,
                    coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description,
                    coalesce(${freeTextMatch(probe, sql.ref('o.decline_reason'))}, false) AS decline_reason`.execute(ctx.trx);
-      add('crove_projects.project_triage_item.title', triageRows.filter((r) => r.title).length);
-      add('crove_projects.project_triage_item.description', triageRows.filter((r) => r.description).length);
-      add('crove_projects.project_triage_item.decline_reason', triageRows.filter((r) => r.decline_reason).length);
+      add('ludy_projects.project_triage_item.title', triageRows.filter((r) => r.title).length);
+      add('ludy_projects.project_triage_item.description', triageRows.filter((r) => r.description).length);
+      add('ludy_projects.project_triage_item.decline_reason', triageRows.filter((r) => r.decline_reason).length);
+      if (triageRows.length > 0) {
+        const ids = triageRows.map((r) => r.triage_id);
+        const nextTitles = triageRows.map((r) => r.next_title);
+        const nextDescriptions = triageRows.map((r) => r.next_description);
+        const nextDeclines = triageRows.map((r) => r.next_decline_reason);
+        await sql`
+          UPDATE ludy_kernel.idempotency_key k
+             SET response = pg_catalog.jsonb_set(
+                   pg_catalog.jsonb_set(
+                     pg_catalog.jsonb_set(
+                       k.response,
+                       '{value,item,title}',
+                       pg_catalog.to_jsonb(u.next_title),
+                       false
+                     ),
+                     '{value,item,description}',
+                     coalesce(pg_catalog.to_jsonb(u.next_description), 'null'::jsonb),
+                     false
+                   ),
+                   '{value,item,declineReason}',
+                   coalesce(pg_catalog.to_jsonb(u.next_decline_reason), 'null'::jsonb),
+                   false
+                 )
+            FROM ROWS FROM (
+                   pg_catalog.unnest(${ids}::text[]),
+                   pg_catalog.unnest(${nextTitles}::text[]),
+                   pg_catalog.unnest(${nextDescriptions}::text[]),
+                   pg_catalog.unnest(${nextDeclines}::text[])
+                 ) AS u(triage_id, next_title, next_description, next_decline_reason)
+           WHERE k.org_id = ${ctx.orgId}::uuid
+             AND k.command IN (
+               'projects.triage.create',
+               'projects.triage.accept',
+               'projects.triage.merge',
+               'projects.triage.snooze',
+               'projects.triage.decline',
+               'projects.triage.reopen'
+             )
+             AND k.response IS NOT NULL
+             AND k.response -> 'value' -> 'item' ->> 'id' = u.triage_id`.execute(ctx.trx);
+      }
 
       // Tasks that quote the person (#1961): the value is replaced in the title and the description, as the owner (an
       // owner's update passes the task guards, which hold agents; taint, lease, status and entity stay as they are, and
@@ -1946,7 +2126,7 @@ export const personalDataErase = defineCommand({
         throw new DomainError('PERSONAL_DATA_BUSY', 409, 'Một báo cáo tuần dự án đang được gửi cùng lúc; hãy thử lại sau ít phút');
       }
       // Project weekly status mails that quote the person directly or belong to a project whose name or description quoted them (#2609):
-      // drop payload and subject before redacting crove_projects.project so source_id matches still see unredacted project text.
+      // drop payload and subject before redacting ludy_projects.project so source_id matches still see unredacted project text.
       const { rows: droppedWeekly } = await sql<{ status: string }>`
         UPDATE ludy_kernel.mail_message m
            SET payload = NULL, subject = NULL
@@ -1958,14 +2138,14 @@ export const personalDataErase = defineCommand({
              OR ${freeTextMatch(probe, sql.ref('m.payload'))}
              OR EXISTS (
                SELECT 1
-                 FROM crove_projects.project p
+                 FROM ludy_projects.project p
                 WHERE p.org_id = m.org_id
                   AND p.id = m.source_id
                   AND (${freeTextMatch(probe, sql.ref('p.name'))} OR ${freeTextMatch(probe, sql.ref('p.description'))})
              )
              OR EXISTS (
                SELECT 1
-                 FROM crove_projects.roadmap_announcement a
+                 FROM ludy_projects.roadmap_announcement a
                 WHERE a.org_id = m.org_id
                   AND a.id = m.source_id
                   AND (${freeTextMatch(probe, sql.ref('a.title'))} OR ${freeTextMatch(probe, sql.ref('a.body_md'))})
@@ -1980,7 +2160,7 @@ export const personalDataErase = defineCommand({
       const projectDescription = freeTextMatch(probe, sql.ref('p.description'));
       const projectTemplateTasks = templateTasksMatch(probe, sql.ref('p.template_tasks'));
       const { rows: projects } = await sql<{ name: boolean; description: boolean; template_tasks: boolean }>`
-        UPDATE crove_projects.project p
+        UPDATE ludy_projects.project p
            SET name = CASE
                         WHEN ${projectName}
                           THEN COALESCE(
@@ -1994,32 +2174,32 @@ export const personalDataErase = defineCommand({
                template_tasks = CASE WHEN ${projectTemplateTasks} THEN ${templateTasksRedact(probe, sql.ref('p.template_tasks'), REDACTED_MARK)}
                                      ELSE p.template_tasks END,
                updated_at = ${ctx.now}
-          FROM crove_projects.project o
+          FROM ludy_projects.project o
          WHERE o.org_id = p.org_id AND o.id = p.id AND p.org_id = ${ctx.orgId}::uuid AND (${projectName} OR coalesce(${projectDescription}, false) OR ${projectTemplateTasks})
          RETURNING ${freeTextMatch(probe, sql.ref('o.name'))} AS name, coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description, ${templateTasksMatch(probe, sql.ref('o.template_tasks'))} AS template_tasks`.execute(ctx.trx);
-      add('crove_projects.project.name', projects.filter((p) => p.name).length);
-      add('crove_projects.project.description', projects.filter((p) => p.description).length);
-      add('crove_projects.project.template_tasks', projects.filter((p) => p.template_tasks).length);
+      add('ludy_projects.project.name', projects.filter((p) => p.name).length);
+      add('ludy_projects.project.description', projects.filter((p) => p.description).length);
+      add('ludy_projects.project.template_tasks', projects.filter((p) => p.template_tasks).length);
 
       // Project custom board columns that quote the person (#2605): replace mentions in name, bounded to column limit.
       const projectColumnName = freeTextMatch(probe, sql.ref('pc.name'));
       const { rows: projectColumns } = await sql<{ name: boolean }>`
-        UPDATE crove_projects.project_column pc
+        UPDATE ludy_projects.project_column pc
            SET name = COALESCE(
                  NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('pc.name'), REDACTED_MARK)}, ${PROJECT_COLUMN_NAME_MAX}::int)), ''),
                  ${REDACTED_MARK}
                ),
                updated_at = ${ctx.now}
-          FROM crove_projects.project_column o
+          FROM ludy_projects.project_column o
          WHERE o.org_id = pc.org_id AND o.id = pc.id AND pc.org_id = ${ctx.orgId}::uuid AND ${projectColumnName}
          RETURNING ${freeTextMatch(probe, sql.ref('o.name'))} AS name`.execute(ctx.trx);
-      add('crove_projects.project_column.name', projectColumns.filter((c) => c.name).length);
+      add('ludy_projects.project_column.name', projectColumns.filter((c) => c.name).length);
 
       // Project cycles whose name or goal quotes the person (#4361): replace mentions bounded to column limits.
       const cycleName = freeTextMatch(probe, sql.ref('c.name'));
       const cycleGoal = freeTextMatch(probe, sql.ref('c.goal'));
       const { rows: cycles } = await sql<{ name: boolean; goal: boolean }>`
-        UPDATE crove_projects.project_cycle c
+        UPDATE ludy_projects.project_cycle c
            SET name = CASE
                         WHEN ${cycleName}
                           THEN COALESCE(
@@ -2031,17 +2211,17 @@ export const personalDataErase = defineCommand({
                goal = CASE WHEN ${cycleGoal} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('c.goal'), REDACTED_MARK)}, ${PROJECT_CYCLE_GOAL_MAX}::int)
                            ELSE c.goal END,
                updated_at = ${ctx.now}
-          FROM crove_projects.project_cycle o
+          FROM ludy_projects.project_cycle o
          WHERE o.org_id = c.org_id AND o.id = c.id AND c.org_id = ${ctx.orgId}::uuid AND (${cycleName} OR coalesce(${cycleGoal}, false))
          RETURNING ${freeTextMatch(probe, sql.ref('o.name'))} AS name, coalesce(${freeTextMatch(probe, sql.ref('o.goal'))}, false) AS goal`.execute(ctx.trx);
-      add('crove_projects.project_cycle.name', cycles.filter((c) => c.name).length);
-      add('crove_projects.project_cycle.goal', cycles.filter((c) => c.goal).length);
+      add('ludy_projects.project_cycle.name', cycles.filter((c) => c.name).length);
+      add('ludy_projects.project_cycle.goal', cycles.filter((c) => c.goal).length);
 
       // Public roadmap boards and items (#4399, ADR-0057): redact mentions in titles/summaries and clear matching submitter display names.
       const boardTitleMatch = freeTextMatch(probe, sql.ref('b.title'));
       const boardDescMatch = freeTextMatch(probe, sql.ref('b.description'));
       const { rows: roadmapBoards } = await sql<{ title: boolean; description: boolean }>`
-        UPDATE crove_projects.roadmap_board b
+        UPDATE ludy_projects.roadmap_board b
            SET title = CASE
                          WHEN ${boardTitleMatch}
                            THEN COALESCE(
@@ -2053,18 +2233,18 @@ export const personalDataErase = defineCommand({
                description = CASE WHEN ${boardDescMatch} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('b.description'), REDACTED_MARK)}, ${ROADMAP_DESCRIPTION_MAX}::int)
                                   ELSE b.description END,
                updated_at = ${ctx.now}
-          FROM crove_projects.roadmap_board o
+          FROM ludy_projects.roadmap_board o
          WHERE o.org_id = b.org_id AND o.id = b.id AND b.org_id = ${ctx.orgId}::uuid
            AND (${boardTitleMatch} OR coalesce(${boardDescMatch}, false))
          RETURNING ${freeTextMatch(probe, sql.ref('o.title'))} AS title, coalesce(${freeTextMatch(probe, sql.ref('o.description'))}, false) AS description`.execute(ctx.trx);
-      add('crove_projects.roadmap_board.title', roadmapBoards.filter((r) => r.title).length);
-      add('crove_projects.roadmap_board.description', roadmapBoards.filter((r) => r.description).length);
+      add('ludy_projects.roadmap_board.title', roadmapBoards.filter((r) => r.title).length);
+      add('ludy_projects.roadmap_board.description', roadmapBoards.filter((r) => r.description).length);
 
       const itemTitleMatch = freeTextMatch(probe, sql.ref('i.public_title'));
       const itemSummaryMatch = freeTextMatch(probe, sql.ref('i.public_summary'));
       const itemSubmitterMatch = freeTextMatch(probe, sql.ref('i.submitter_display_name'));
       const { rows: roadmapItems } = await sql<{ public_title: boolean; public_summary: boolean; submitter_display_name: boolean }>`
-        UPDATE crove_projects.roadmap_item i
+        UPDATE ludy_projects.roadmap_item i
            SET public_title = CASE
                                 WHEN ${itemTitleMatch}
                                   THEN COALESCE(
@@ -2077,18 +2257,86 @@ export const personalDataErase = defineCommand({
                                      ELSE i.public_summary END,
                submitter_display_name = CASE WHEN ${itemSubmitterMatch} THEN NULL ELSE i.submitter_display_name END,
                updated_at = ${ctx.now}
-          FROM crove_projects.roadmap_item o
+          FROM ludy_projects.roadmap_item o
          WHERE o.org_id = i.org_id AND o.id = i.id AND i.org_id = ${ctx.orgId}::uuid
            AND (${itemTitleMatch} OR coalesce(${itemSummaryMatch}, false) OR coalesce(${itemSubmitterMatch}, false))
          RETURNING ${freeTextMatch(probe, sql.ref('o.public_title'))} AS public_title, coalesce(${freeTextMatch(probe, sql.ref('o.public_summary'))}, false) AS public_summary, coalesce(${freeTextMatch(probe, sql.ref('o.submitter_display_name'))}, false) AS submitter_display_name`.execute(ctx.trx);
-      add('crove_projects.roadmap_item.public_title', roadmapItems.filter((r) => r.public_title).length);
-      add('crove_projects.roadmap_item.public_summary', roadmapItems.filter((r) => r.public_summary).length);
-      add('crove_projects.roadmap_item.submitter_display_name', roadmapItems.filter((r) => r.submitter_display_name).length);
+      add('ludy_projects.roadmap_item.public_title', roadmapItems.filter((r) => r.public_title).length);
+      add('ludy_projects.roadmap_item.public_summary', roadmapItems.filter((r) => r.public_summary).length);
+      add('ludy_projects.roadmap_item.submitter_display_name', roadmapItems.filter((r) => r.submitter_display_name).length);
+
+      const signalAccountMatch = freeTextMatch(probe, sql.ref('s.account_label'));
+      const signalQuoteMatch = freeTextMatch(probe, sql.ref('s.quote_excerpt'));
+      const { rows: roadmapSignals } = await sql<{
+        signal_id: string;
+        source_type: string;
+        next_account_label: string | null;
+        next_quote_excerpt: string | null;
+        account_label: boolean;
+        quote_excerpt: boolean;
+      }>`
+        UPDATE ludy_projects.roadmap_signal s
+           SET account_label = CASE
+                                 WHEN s.account_label IS NOT NULL AND ${signalAccountMatch}
+                                   THEN NULLIF(
+                                     NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('s.account_label'), REDACTED_MARK)}, ${ROADMAP_SIGNAL_ACCOUNT_LABEL_MAX}::int)), ''),
+                                     ${REDACTED_MARK}
+                                   )
+                                 ELSE s.account_label
+                               END,
+               quote_excerpt = CASE
+                                 WHEN s.quote_excerpt IS NOT NULL AND ${signalQuoteMatch}
+                                   THEN NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('s.quote_excerpt'), REDACTED_MARK)}, ${ROADMAP_SIGNAL_QUOTE_EXCERPT_MAX}::int)), '')
+                                 ELSE s.quote_excerpt
+                               END,
+               updated_at = ${ctx.now}
+          FROM ludy_projects.roadmap_signal o
+         WHERE o.org_id = s.org_id AND o.id = s.id AND s.org_id = ${ctx.orgId}::uuid
+           AND ((s.account_label IS NOT NULL AND ${signalAccountMatch}) OR coalesce(${signalQuoteMatch}, false))
+         RETURNING s.id AS signal_id,
+                   s.source_type AS source_type,
+                   s.account_label AS next_account_label,
+                   s.quote_excerpt AS next_quote_excerpt,
+                   (o.account_label IS NOT NULL AND coalesce(${freeTextMatch(probe, sql.ref('o.account_label'))}, false)) AS account_label,
+                   coalesce(${freeTextMatch(probe, sql.ref('o.quote_excerpt'))}, false) AS quote_excerpt`.execute(ctx.trx);
+      add('ludy_projects.roadmap_signal.account_label', roadmapSignals.filter((r) => r.account_label).length);
+      add('ludy_projects.roadmap_signal.quote_excerpt', roadmapSignals.filter((r) => r.quote_excerpt).length);
+      if (roadmapSignals.length > 0) {
+        const ids = roadmapSignals.map((r) => r.signal_id);
+        const nextAccounts = roadmapSignals.map((r) => r.next_account_label);
+        const nextQuotes = roadmapSignals.map((r) => (r.source_type === 'meetings.meeting' ? null : r.next_quote_excerpt));
+        await sql`
+          UPDATE ludy_kernel.idempotency_key k
+             SET response = pg_catalog.jsonb_set(
+                   pg_catalog.jsonb_set(
+                     k.response,
+                     '{value,signal,accountLabel}',
+                     coalesce(pg_catalog.to_jsonb(u.next_account_label), 'null'::jsonb),
+                     false
+                   ),
+                   '{value,signal,quoteExcerpt}',
+                   CASE
+                     WHEN k.response -> 'value' -> 'signal' ->> 'sourceType' = 'meetings.meeting'
+                       THEN 'null'::jsonb
+                     ELSE coalesce(pg_catalog.to_jsonb(u.next_quote_excerpt), 'null'::jsonb)
+                   END,
+                   false
+                 )
+            FROM ROWS FROM (
+                   pg_catalog.unnest(${ids}::text[]),
+                   pg_catalog.unnest(${nextAccounts}::text[]),
+                   pg_catalog.unnest(${nextQuotes}::text[])
+                 ) AS u(signal_id, next_account_label, next_quote_excerpt)
+           WHERE k.org_id = ${ctx.orgId}::uuid
+             AND k.command = 'projects.roadmap.signal.create'
+             AND k.response IS NOT NULL
+             AND k.response -> 'value' -> 'signal' ->> 'id' = u.signal_id`.execute(ctx.trx);
+      }
 
       const annTitleMatch = freeTextMatch(probe, sql.ref('a.title'));
       const annBodyMatch = freeTextMatch(probe, sql.ref('a.body_md'));
       const { rows: roadmapAnnouncements } = await sql<{ title: boolean; body_md: boolean }>`
-        UPDATE crove_projects.roadmap_announcement a
+        UPDATE ludy_projects.roadmap_announcement a
            SET title = CASE
                          WHEN ${annTitleMatch}
                            THEN COALESCE(
@@ -2106,49 +2354,49 @@ export const personalDataErase = defineCommand({
                            ELSE a.body_md
                          END,
                updated_at = ${ctx.now}
-          FROM crove_projects.roadmap_announcement o
+          FROM ludy_projects.roadmap_announcement o
          WHERE o.org_id = a.org_id AND o.id = a.id AND a.org_id = ${ctx.orgId}::uuid
            AND (${annTitleMatch} OR ${annBodyMatch})
          RETURNING ${freeTextMatch(probe, sql.ref('o.title'))} AS title, ${freeTextMatch(probe, sql.ref('o.body_md'))} AS body_md`.execute(ctx.trx);
-      add('crove_projects.roadmap_announcement.title', roadmapAnnouncements.filter((r) => r.title).length);
-      add('crove_projects.roadmap_announcement.body_md', roadmapAnnouncements.filter((r) => r.body_md).length);
+      add('ludy_projects.roadmap_announcement.title', roadmapAnnouncements.filter((r) => r.title).length);
+      add('ludy_projects.roadmap_announcement.body_md', roadmapAnnouncements.filter((r) => r.body_md).length);
 
       // Project time entry notes that quote the person (#2600): replace mentions in note, bounded to 500 chars.
       const timeEntryNote = freeTextMatch(probe, sql.ref('te.note'));
       const { rows: timeEntries } = await sql<{ note: boolean }>`
-        UPDATE crove_projects.time_entry te
+        UPDATE ludy_projects.time_entry te
            SET note = COALESCE(
                  NULLIF(pg_catalog.btrim(pg_catalog.left(${freeTextRedact(probe, sql.ref('te.note'), REDACTED_MARK)}, ${PROJECT_TIME_NOTE_MAX}::int)), ''),
                  ${REDACTED_MARK}
                ),
                updated_at = ${ctx.now}
-          FROM crove_projects.time_entry o
+          FROM ludy_projects.time_entry o
          WHERE o.org_id = te.org_id AND o.id = te.id AND te.org_id = ${ctx.orgId}::uuid AND ${timeEntryNote}
          RETURNING ${freeTextMatch(probe, sql.ref('o.note'))} AS note`.execute(ctx.trx);
-      add('crove_projects.time_entry.note', timeEntries.filter((e) => e.note).length);
+      add('ludy_projects.time_entry.note', timeEntries.filter((e) => e.note).length);
 
       // Recruiting candidate notes that quote the person (#3425): replace mentions, bounded to 2000 chars.
       const candidateNotes = freeTextMatch(probe, sql.ref('c.notes'));
       const { rows: candidateNoteRows } = await sql<{ notes: boolean }>`
-        UPDATE crove_hr.candidate c
+        UPDATE ludy_hr.candidate c
            SET notes = CASE WHEN ${candidateNotes} THEN pg_catalog.left(${freeTextRedact(probe, sql.ref('c.notes'), REDACTED_MARK)}, 2000)
                             ELSE c.notes END,
                updated_at = ${ctx.now}
-          FROM crove_hr.candidate o
+          FROM ludy_hr.candidate o
          WHERE o.org_id = c.org_id AND o.id = c.id AND c.org_id = ${ctx.orgId}::uuid AND coalesce(${candidateNotes}, false)
          RETURNING coalesce(${freeTextMatch(probe, sql.ref('o.notes'))}, false) AS notes`.execute(ctx.trx);
-      add('crove_hr.candidate.notes', candidateNoteRows.filter((r) => r.notes).length);
+      add('ludy_hr.candidate.notes', candidateNoteRows.filter((r) => r.notes).length);
     }
 
     // What stays, with its reason: the finder's answer after the erasure (the cleared values no longer match).
-    const after = await findPersonalData(ctx.trx, ctx.orgId, probe, false);
+    const after = await findPersonalData(ctx.trx, ctx.orgId, probe, false, documentedPartyIds);
     // Grouped by column and reason: rows of one column may be kept for different reasons (the default legal entity and
     // the others).
     const kept = new Map<string, { column: string; rows: number; reason: string }>();
     for (const m of after.matches) {
       const reason = !shortNumber
         ? m.reason
-        : m.column === 'crove_finance.misa_amis_push.reason'
+        : m.column === 'ludy_finance.misa_amis_push.reason'
           ? MISA_PUSH_REASON_SHORT_NUMBER_REASON
           : SHORT_NUMBER_COLUMNS.has(m.column)
             ? ACTIVITY_SHORT_NUMBER_REASON
@@ -2170,27 +2418,27 @@ export const personalDataErase = defineCommand({
         SELECT count(DISTINCT f.id) AS files,
                -- A date only when every file has a recorded hold, and then the earliest: never a date one file lacks.
                CASE WHEN bool_and(f.held_until IS NOT NULL) THEN min(f.held_until) END AS until
-          FROM crove_finance.purchase_document d
-          JOIN crove_finance.journal_entry e ON e.org_id = d.org_id AND e.source_type = 'finance.purchase_document' AND e.source_id = d.id
+          FROM ludy_finance.purchase_document d
+          JOIN ludy_finance.journal_entry e ON e.org_id = d.org_id AND e.source_type = 'finance.purchase_document' AND e.source_id = d.id
           JOIN ludy_kernel.file f ON f.org_id = d.org_id AND f.id = d.source_file_id
          WHERE d.org_id = ${ctx.orgId}::uuid AND d.party_id = ANY(${partyIds}::uuid[])`.execute(ctx.trx);
       const files = Number(held[0]?.files ?? 0);
       if (files > 0) kept.set('ludy_kernel.file', { column: 'ludy_kernel.file', rows: files, reason: heldFilesReason(held[0]?.until ?? null) });
     }
     // Meeting text the redaction could not reach (#2594): a meeting the owner cannot read that no notice covers at its text now, or the redaction itself stopped by the timeout.
-    if (redaction === null || shortMeetingCounts === null) kept.set('crove_meetings', { column: 'crove_meetings', rows: 0, reason: MEETING_TEXT_SKIPPED_REASON });
+    if (redaction === null || shortMeetingCounts === null) kept.set('ludy_meetings', { column: 'ludy_meetings', rows: 0, reason: MEETING_TEXT_SKIPPED_REASON });
     // A short number: the rows of meetings the owner cannot read are counted under the short-number reason (the ones they read are listed above by column, with the same reason).
     const shortNoteRows = shortNumber
-      ? ((await meetingScan(ctx.trx, async () => (await sql<{ notes: string }>`SELECT notes FROM crove_meetings.personal_note_counts(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)).rows)) ?? []).reduce((n, c) => n + Number(c.notes), 0)
+      ? ((await meetingScan(ctx.trx, async () => (await sql<{ notes: string }>`SELECT notes FROM ludy_meetings.personal_note_counts(${probe.kind}, ${probeValue(probe)})`.execute(ctx.trx)).rows)) ?? []).reduce((n, c) => n + Number(c.notes), 0)
       : 0;
     const shortMeetingRows = (shortMeetingCounts ?? []).reduce((n, c) => n + Number(c.lines) + Number(c.results) + Number(c.items) + Number(c.titles), 0) + shortNoteRows;
-    if (shortMeetingRows > 0) kept.set('crove_meetings.text.short', { column: 'crove_meetings.text', rows: shortMeetingRows, reason: MEETING_TEXT_SHORT_NUMBER_REASON });
-    if (meetingsKept.rows > 0) kept.set('crove_meetings.text', { column: 'crove_meetings.text', rows: meetingsKept.rows, reason: UNTOLD_MEETING_REASON });
-    if (noteErase === null) kept.set('crove_meetings.meeting_note.skipped', { column: 'crove_meetings.meeting_note', rows: 0, reason: MEETING_TEXT_SKIPPED_REASON });
+    if (shortMeetingRows > 0) kept.set('ludy_meetings.text.short', { column: 'ludy_meetings.text', rows: shortMeetingRows, reason: MEETING_TEXT_SHORT_NUMBER_REASON });
+    if (meetingsKept.rows > 0) kept.set('ludy_meetings.text', { column: 'ludy_meetings.text', rows: meetingsKept.rows, reason: UNTOLD_MEETING_REASON });
+    if (noteErase === null) kept.set('ludy_meetings.meeting_note.skipped', { column: 'ludy_meetings.meeting_note', rows: 0, reason: MEETING_TEXT_SKIPPED_REASON });
     // Follow-up mail copies (#3025): the ones of a meeting the owner cannot read stay, counted; and the copies that already reached their recipients cannot be taken back.
-    if (followupSkipped) kept.set('crove_meetings.followup_mail.skipped', { column: 'crove_meetings.followup_mail', rows: 0, reason: FOLLOWUP_MAIL_SKIPPED_REASON });
-    if (followupShort > 0) kept.set('crove_meetings.followup_mail.short', { column: 'crove_meetings.followup_mail', rows: followupShort, reason: FOLLOWUP_MAIL_SHORT_NUMBER_REASON });
-    if (followupHidden > 0) kept.set('crove_meetings.followup_mail', { column: 'crove_meetings.followup_mail', rows: followupHidden, reason: FOLLOWUP_MAIL_HIDDEN_REASON });
+    if (followupSkipped) kept.set('ludy_meetings.followup_mail.skipped', { column: 'ludy_meetings.followup_mail', rows: 0, reason: FOLLOWUP_MAIL_SKIPPED_REASON });
+    if (followupShort > 0) kept.set('ludy_meetings.followup_mail.short', { column: 'ludy_meetings.followup_mail', rows: followupShort, reason: FOLLOWUP_MAIL_SHORT_NUMBER_REASON });
+    if (followupHidden > 0) kept.set('ludy_meetings.followup_mail', { column: 'ludy_meetings.followup_mail', rows: followupHidden, reason: FOLLOWUP_MAIL_HIDDEN_REASON });
     if (followupDelivered > 0) kept.set('ludy_kernel.mail_message.payload', { column: 'ludy_kernel.mail_message.payload', rows: followupDelivered, reason: FOLLOWUP_MAIL_DELIVERED_REASON });
     if (projectWeeklyDelivered > 0) {
       kept.set('ludy_kernel.mail_message.payload.projects', {
@@ -2200,26 +2448,26 @@ export const personalDataErase = defineCommand({
       });
     }
     // The voices of the meetings that held the value stay until their retention dates: a voice cannot be edited out. The owner deletes a meeting at once with meetings.meeting.owner_delete.
-    if (mediaOf.some((m) => m.audio)) kept.set('crove_meetings.audio', { column: 'crove_meetings.audio', rows: media.audio.length + media.audioHidden, reason: meetingMediaReason('audio', media.audio, media.audioHidden) });
-    if (mediaOf.some((m) => m.video)) kept.set('crove_meetings.video', { column: 'crove_meetings.video', rows: media.video.length + media.videoHidden, reason: meetingMediaReason('video', media.video, media.videoHidden) });
+    if (mediaOf.some((m) => m.audio)) kept.set('ludy_meetings.audio', { column: 'ludy_meetings.audio', rows: media.audio.length + media.audioHidden, reason: meetingMediaReason('audio', media.audio, media.audioHidden) });
+    if (mediaOf.some((m) => m.video)) kept.set('ludy_meetings.video', { column: 'ludy_meetings.video', rows: media.video.length + media.videoHidden, reason: meetingMediaReason('video', media.video, media.videoHidden) });
     // What each member's Vy keeps privately (ADR-0049): sealed to its member, so the erasure cannot read it; it expires on its own. Counted per org, never read.
     const vyResults = Number(
       (await sql<{ n: string }>`SELECT COALESCE(pg_catalog.sum(results), 0)::text AS n FROM ludy_kernel.member_vy_private_counts()`.execute(ctx.trx)).rows[0]?.n ?? 0,
     );
     const meetingCounts = (
-      await sql<{ translations: string; live_lines: string }>`SELECT COALESCE(pg_catalog.sum(translations), 0)::text AS translations, COALESCE(pg_catalog.sum(live_lines), 0)::text AS live_lines FROM crove_meetings.member_private_counts()`.execute(ctx.trx)
+      await sql<{ translations: string; live_lines: string }>`SELECT COALESCE(pg_catalog.sum(translations), 0)::text AS translations, COALESCE(pg_catalog.sum(live_lines), 0)::text AS live_lines FROM ludy_meetings.member_private_counts()`.execute(ctx.trx)
     ).rows[0];
     if (vyResults > 0) kept.set('ludy_kernel.member_vy_result.body', { column: 'ludy_kernel.member_vy_result.body', rows: vyResults, reason: MEMBER_VY_RESULT_REASON });
     // A member's translations of meetings and the preview lines of the meetings they recorded (#3584): private to that member, counted per org as the results are, never read.
     const vyTranslations = Number(meetingCounts?.translations ?? 0);
-    if (vyTranslations > 0) kept.set('crove_meetings.translation.body', { column: 'crove_meetings.translation.body', rows: vyTranslations, reason: MEMBER_TRANSLATION_REASON });
+    if (vyTranslations > 0) kept.set('ludy_meetings.translation.body', { column: 'ludy_meetings.translation.body', rows: vyTranslations, reason: MEMBER_TRANSLATION_REASON });
     const vyLiveLines = Number(meetingCounts?.live_lines ?? 0);
-    if (vyLiveLines > 0) kept.set('crove_meetings.live_line.text', { column: 'crove_meetings.live_line.text', rows: vyLiveLines, reason: MEMBER_LIVE_LINE_REASON });
+    if (vyLiveLines > 0) kept.set('ludy_meetings.live_line.text', { column: 'ludy_meetings.live_line.text', rows: vyLiveLines, reason: MEMBER_LIVE_LINE_REASON });
     // Private items no notice named: counted, never listed (the finder's privateItems after the erasure).
-    if (untold.notes > 0) kept.set('crove_notes.note', { column: 'crove_notes.note', rows: untold.notes, reason: UNTOLD_PRIVATE_REASON });
-    if (untold.todos > 0) kept.set('crove_notes.todo', { column: 'crove_notes.todo', rows: untold.todos, reason: UNTOLD_PRIVATE_REASON });
+    if (untold.notes > 0) kept.set('ludy_notes.note', { column: 'ludy_notes.note', rows: untold.notes, reason: UNTOLD_PRIVATE_REASON });
+    if (untold.todos > 0) kept.set('ludy_notes.todo', { column: 'ludy_notes.todo', rows: untold.todos, reason: UNTOLD_PRIVATE_REASON });
     // Meeting text the search could not read in time: said in the answer, never left out silently (#2594).
-    if (after.meetingTextSkipped) kept.set('crove_meetings', { column: 'crove_meetings', rows: 0, reason: MEETING_TEXT_SKIPPED_REASON });
+    if (after.meetingTextSkipped) kept.set('ludy_meetings', { column: 'ludy_meetings', rows: 0, reason: MEETING_TEXT_SKIPPED_REASON });
     const keptRows = new Map<string, number>();
     for (const k of kept.values()) keptRows.set(k.column, (keptRows.get(k.column) ?? 0) + k.rows);
     const result: PersonalDataErasure = {

@@ -66,7 +66,7 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     try {
       await c.query('BEGIN');
       await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: owner, orgId, sessionId: null, aal: 'aal1', mfaAt: null })]);
-      await c.query('UPDATE crove_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1', [orgId]);
+      await c.query('UPDATE ludy_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1', [orgId]);
       await c.query('COMMIT');
     } finally {
       await c.query('ROLLBACK').catch(() => undefined);
@@ -80,7 +80,7 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     const connection = randomUUID();
     await admin(async (c) => {
       await c.query(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', $3, 'Đọc', $4)`, [orgId, connection, external, owner]);
-      await c.query(`INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, granted_by_hash) VALUES ($1, $2, $3, 'sandbox_ads', $4, 'Tài khoản khác', '2025-10-01', $5)`, [
+      await c.query(`INSERT INTO ludy_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, granted_by_hash) VALUES ($1, $2, $3, 'sandbox_ads', $4, 'Tài khoản khác', '2025-10-01', $5)`, [
         orgId,
         account,
         connection,
@@ -110,17 +110,17 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     (
       await rows<{ id: string; state: string; kind: string; reason: string; attempts: number; how_done: string | null; give_up: string | null; last_error_kind: string | null; last_error_code: string | null; seals: string; credentials: string }>(
         `SELECT r.id, r.state, r.kind, r.reason, r.attempts, r.how_done, r.give_up, r.last_error_kind, r.last_error_code,
-                (SELECT count(*)::text FROM crove_ads.ad_token_seal s WHERE s.org_id = r.org_id AND s.revoke_id = r.id) AS seals,
+                (SELECT count(*)::text FROM ludy_ads.ad_token_seal s WHERE s.org_id = r.org_id AND s.revoke_id = r.id) AS seals,
                 (SELECT count(*)::text FROM ludy_kernel.credential k WHERE k.org_id = r.org_id AND k.connection_id = r.connection_id) AS credentials
-         FROM crove_ads.ad_token_revoke r WHERE r.org_id = $1 AND r.connection_id = $2`,
+         FROM ludy_ads.ad_token_revoke r WHERE r.org_id = $1 AND r.connection_id = $2`,
         [orgId, connectionId],
       )
     )[0];
   const status = async (connectionId: string) => (await rows<{ status: string; status_reason: string | null }>('SELECT status, status_reason FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [orgId, connectionId]))[0];
   // Makes every pending obligation due at once (the policy's waits are minutes and hours; the database's clock is not moved).
   const dueNow = async () => {
-    await admin((c) => c.query(`UPDATE crove_ads.ad_token_revoke SET next_attempt_at = now() WHERE state = 'pending'`));
-    await admin((c) => c.query('UPDATE crove_ads.ad_token_seal SET lease_until = NULL, lease_token = NULL'));
+    await admin((c) => c.query(`UPDATE ludy_ads.ad_token_revoke SET next_attempt_at = now() WHERE state = 'pending'`));
+    await admin((c) => c.query('UPDATE ludy_ads.ad_token_seal SET lease_until = NULL, lease_token = NULL'));
   };
 
   const sandboxRevokers = adRevokers({ sandbox: true });
@@ -185,13 +185,13 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
         `INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', $3, 'Đọc', $4)`,
         [orgId, readConnection, ACCOUNT, owner],
       );
-      await c.query(`INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from) VALUES ($1, $2, $3, 'sandbox_ads', $4, 'Tài khoản thử', '2025-10-01')`, [
+      await c.query(`INSERT INTO ludy_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from) VALUES ($1, $2, $3, 'sandbox_ads', $4, 'Tài khoản thử', '2025-10-01')`, [
         orgId,
         adAccountId,
         readConnection,
         ACCOUNT,
       ]);
-      await c.query('INSERT INTO crove_ads.ad_org_setting (org_id) VALUES ($1)', [orgId]);
+      await c.query('INSERT INTO ludy_ads.ad_org_setting (org_id) VALUES ($1)', [orgId]);
     });
     await switchOn();
   }, 300_000);
@@ -248,7 +248,7 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     expect((await sweep(down)).tried).toBeGreaterThanOrEqual(1);
     const first = await obligation(connectionId);
     expect(first).toMatchObject({ state: 'pending', attempts: 1, last_error_kind: 'transient', last_error_code: 'SERVER_BUSY', seals: '1' });
-    const wait = Number((await rows<{ s: number }>(`SELECT extract(epoch FROM (next_attempt_at - now())) AS s FROM crove_ads.ad_token_revoke WHERE id = $1`, [first?.id]))[0]?.s);
+    const wait = Number((await rows<{ s: number }>(`SELECT extract(epoch FROM (next_attempt_at - now())) AS s FROM ludy_ads.ad_token_revoke WHERE id = $1`, [first?.id]))[0]?.s);
     expect(wait).toBeGreaterThan(30);
     expect(wait).toBeLessThanOrEqual(61);
     // The screen says it: an owner sees the obligation as pending, with the count and the next time, and a member sees none of it.
@@ -279,7 +279,7 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     await sweep(failing(() => new AdPlatformError('rate_limited', 'TOO_MANY', retryAt)));
     const rate = await obligation(limited);
     expect(rate).toMatchObject({ state: 'pending', attempts: 1, last_error_kind: 'rate_limited', last_error_code: 'TOO_MANY', seals: '1' });
-    const next = (await rows<{ at: Date }>('SELECT next_attempt_at AS at FROM crove_ads.ad_token_revoke WHERE id = $1', [rate?.id]))[0]?.at as Date;
+    const next = (await rows<{ at: Date }>('SELECT next_attempt_at AS at FROM ludy_ads.ad_token_revoke WHERE id = $1', [rate?.id]))[0]?.at as Date;
     expect(next.getTime()).toBeGreaterThanOrEqual(retryAt.getTime() - 5_000);
     // A refused permission and a bad request are tries too: the screen words them differently, the copy stays until the limits.
     await dueNow();
@@ -361,11 +361,11 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     await sweep({}, undefined);
     expect(await obligation(neverFixed)).toMatchObject({ state: 'pending', attempts: 0, seals: '1' });
     await admin(async (c) => {
-      await c.query('ALTER TABLE crove_ads.ad_token_revoke DISABLE TRIGGER ad_token_revoke_guard');
+      await c.query('ALTER TABLE ludy_ads.ad_token_revoke DISABLE TRIGGER ad_token_revoke_guard');
       try {
-        await c.query(`UPDATE crove_ads.ad_token_revoke SET created_at = now() - interval '8 days' WHERE org_id = $1 AND connection_id = $2`, [orgId, neverFixed]);
+        await c.query(`UPDATE ludy_ads.ad_token_revoke SET created_at = now() - interval '8 days' WHERE org_id = $1 AND connection_id = $2`, [orgId, neverFixed]);
       } finally {
-        await c.query('ALTER TABLE crove_ads.ad_token_revoke ENABLE ALWAYS TRIGGER ad_token_revoke_guard');
+        await c.query('ALTER TABLE ludy_ads.ad_token_revoke ENABLE ALWAYS TRIGGER ad_token_revoke_guard');
       }
     });
     await sweep({}, undefined);
@@ -385,7 +385,7 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     await runAdsRevoke({ runtime: deaf, workerDb, broker: vault, revokers: sandboxRevokers });
     // The open counted the try, the answer was lost, the copy stays, and the next try is ten minutes away (the open's own lease), not claimed at once.
     const [after] = await rows<{ attempts: number; minutes: number }>(
-      `SELECT attempts, extract(epoch FROM (next_attempt_at - now())) / 60 AS minutes FROM crove_ads.ad_token_revoke WHERE org_id = $1 AND connection_id = $2`,
+      `SELECT attempts, extract(epoch FROM (next_attempt_at - now())) / 60 AS minutes FROM ludy_ads.ad_token_revoke WHERE org_id = $1 AND connection_id = $2`,
       [orgId, id],
     );
     expect(after?.attempts).toBe(1);
@@ -414,7 +414,7 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     const write = await connectWrite(owner, ACCOUNT, adAccountId, HASH);
     await app.execute('ads.account.disable_write', { adAccountId }, { actor: asUser(owner), orgId });
     expect(await obligation(write)).toMatchObject({ state: 'pending', seals: '1' });
-    expect((await rows<{ grantor_hash: string | null }>('SELECT grantor_hash FROM crove_ads.ad_token_revoke WHERE org_id = $1 AND connection_id = $2', [orgId, write]))[0]?.grantor_hash).toBe(HASH);
+    expect((await rows<{ grantor_hash: string | null }>('SELECT grantor_hash FROM ludy_ads.ad_token_revoke WHERE org_id = $1 AND connection_id = $2', [orgId, write]))[0]?.grantor_hash).toBe(HASH);
     let calls = 0;
     const counting: Readonly<Record<string, StandIn>> = {
       sandboxwrite_ads: {
@@ -496,13 +496,13 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     );
     await expect(app.execute('ads.account.link_write', { connectionId: made.connectionId }, { actor: asUser(owner), orgId })).rejects.toMatchObject({ code: 'ADS_WRITE_OFF' });
     await app.execute('kernel.channel.disconnect', { connectionId: made.connectionId }, { actor: asUser(owner), orgId });
-    const held = await rows<{ n: string }>('SELECT count(*)::text AS n FROM crove_ads.ad_token_revoke WHERE org_id = $1 AND connection_id = $2', [orgId, made.connectionId]);
+    const held = await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_ads.ad_token_revoke WHERE org_id = $1 AND connection_id = $2', [orgId, made.connectionId]);
     expect(held[0]?.n).toBe('1');
     expect(await obligation(made.connectionId)).toMatchObject({ state: 'pending', kind: 'write', seals: '1', credentials: '0' });
 
     // A run that lost its claim cannot record: the command refuses an answer that carries another claim's token, and accepts the claim's own, once.
     await dueNow();
-    const claimed = (await sql<{ id: string; lease_token: string }>`SELECT id, lease_token FROM crove_ads.token_revoke_due(100)`.execute(workerDb)).rows;
+    const claimed = (await sql<{ id: string; lease_token: string }>`SELECT id, lease_token FROM ludy_ads.token_revoke_due(100)`.execute(workerDb)).rows;
     const row = await obligation(made.connectionId);
     const ours = claimed.find((r) => r.id === row?.id);
     expect(ours).toBeDefined();
@@ -551,7 +551,7 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     try {
       for (let i = 0; i < 51; i++) {
         const [row] = await rows<{ id: string }>(
-          `INSERT INTO crove_ads.ad_token_revoke (org_id, connection_id, provider, external_account_id, kind, reason) VALUES ($1, $2, 'sandboxwrite_ads', $3, 'write', 'other') RETURNING id`,
+          `INSERT INTO ludy_ads.ad_token_revoke (org_id, connection_id, provider, external_account_id, kind, reason) VALUES ($1, $2, 'sandboxwrite_ads', $3, 'write', 'other') RETURNING id`,
           [orgId, randomUUID(), `sbxads-crowd-${i}`],
         );
         made.push(row?.id as string);
@@ -560,7 +560,7 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
       expect(after.filter((r) => r.state === 'pending')).toHaveLength(50);
       expect(after.filter((r) => r.state === 'gave_up').map((r) => r.id).sort()).toEqual([...gaveUp].sort());
     } finally {
-      for (const id of made) await admin((c) => c.query('DELETE FROM crove_ads.ad_token_revoke WHERE org_id = $1 AND id = $2', [orgId, id]));
+      for (const id of made) await admin((c) => c.query('DELETE FROM ludy_ads.ad_token_revoke WHERE org_id = $1 AND id = $2', [orgId, id]));
     }
   });
 
@@ -578,8 +578,8 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     const record = audit.find((a) => a.command === 'ads.token_revoke.record');
     expect(Object.keys((record?.detail ?? {}) as Record<string, unknown>).sort()).toEqual(expect.arrayContaining(['attempts', 'revokeId', 'state']));
     // The sealed copies that are left are the pending ones only, and each is the envelope the broker made, never a token in the clear.
-    const left = await rows<{ envelope: Buffer }>(`SELECT s.envelope FROM crove_ads.ad_token_seal s JOIN crove_ads.ad_token_revoke r ON r.org_id = s.org_id AND r.id = s.revoke_id WHERE r.state <> 'pending'`);
+    const left = await rows<{ envelope: Buffer }>(`SELECT s.envelope FROM ludy_ads.ad_token_seal s JOIN ludy_ads.ad_token_revoke r ON r.org_id = s.org_id AND r.id = s.revoke_id WHERE r.state <> 'pending'`);
     expect(left).toEqual([]);
-    for (const row of await rows<{ envelope: Buffer }>('SELECT envelope FROM crove_ads.ad_token_seal')) for (const secret of secrets) expect(row.envelope.toString('utf8').includes(secret)).toBe(false);
+    for (const row of await rows<{ envelope: Buffer }>('SELECT envelope FROM ludy_ads.ad_token_seal')) for (const secret of secrets) expect(row.envelope.toString('utf8').includes(secret)).toBe(false);
   });
 });

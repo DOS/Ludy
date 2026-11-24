@@ -16,9 +16,11 @@ import {
   type RoadmapDedupeSuggestion,
   type RoadmapItemModerationStatus,
   type RoadmapItemStage,
+  type RoadmapSignalItemRollup,
 } from '@ludy/kernel-contract';
 import { useState, type FormEvent } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
+import { RoadmapSignalModal } from './roadmap-signal-modal.tsx';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
@@ -39,6 +41,90 @@ import { toast } from '../lib/toast.ts';
 function refreshRoadmapQueries() {
   void queryClient.invalidateQueries({ queryKey: orpc.projects.roadmap.boards.key() });
   void queryClient.invalidateQueries({ queryKey: orpc.projects.roadmap.boardDetail.key() });
+  void queryClient.invalidateQueries({ queryKey: orpc.projects.roadmap.signalList.key() });
+  void queryClient.invalidateQueries({ queryKey: orpc.projects.roadmap.signalRollup.key() });
+}
+
+export function ExpandedItemSignals({
+  boardId,
+  roadmapItemId,
+  canWrite,
+  deletePending,
+  onDeleteSignal,
+}: {
+  boardId: string;
+  roadmapItemId: string;
+  canWrite: boolean;
+  deletePending: boolean;
+  onDeleteSignal: (signalId: string) => void;
+}) {
+  const t = useTranslations('projects.roadmap.admin');
+  const f = useFormat();
+  const signalListQuery = useQuery({
+    ...orpc.projects.roadmap.signalList.queryOptions({
+      input: { boardId, roadmapItemId, limit: 200 },
+    }),
+    enabled: Boolean(boardId && roadmapItemId),
+  });
+  const itemSignals = signalListQuery.data?.signals ?? [];
+
+  if (signalListQuery.isPending) {
+    return <ListSkeleton rows={2} />;
+  }
+  if (signalListQuery.error) {
+    return <ErrorText>{errorMessage(signalListQuery.error)}</ErrorText>;
+  }
+  if (itemSignals.length === 0) {
+    return <p className="mt-2 text-xs text-muted-foreground">{t('signalEmptyList')}</p>;
+  }
+
+  return (
+    <ul className="mt-2 space-y-2" data-testid={`roadmap-admin-signals-list-${roadmapItemId}`}>
+      {itemSignals.map((sig) => (
+        <li
+          key={sig.id}
+          className="flex flex-col gap-2 rounded-md border border-border bg-muted/20 p-2.5 text-xs md:flex-row md:items-start md:justify-between"
+        >
+          <div className="min-w-0 space-y-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Badge variant="outline">
+                {sig.sourceType === 'crm.deal'
+                  ? t('signalSourceCrmDeal')
+                  : sig.sourceType === 'kernel.conversation'
+                    ? t('signalSourceConversation')
+                    : t('signalSourceMeeting')}
+              </Badge>
+              {sig.accountLabel && (
+                <span className="font-medium text-foreground">{sig.accountLabel}</span>
+              )}
+              {sig.dealValue && sig.dealCurrency && (
+                <Badge variant="secondary" className="tabular-nums">
+                  {sig.dealCurrency} {f.money(sig.dealValue, sig.dealCurrency)}
+                </Badge>
+              )}
+              <span className="text-muted-foreground">{f.date(sig.createdAt)}</span>
+            </div>
+            {sig.quoteExcerpt && (
+              <p className="text-muted-foreground">{sig.quoteExcerpt}</p>
+            )}
+          </div>
+          {canWrite && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="min-h-11 shrink-0 text-xs text-destructive"
+              disabled={deletePending}
+              onClick={() => onDeleteSignal(sig.id)}
+              data-testid={`roadmap-admin-delete-signal-${sig.id}`}
+            >
+              {t('signalUnlinkBtn')}
+            </Button>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 function publicBoardShareUrl(orgSlug: string, boardSlug: string): string {
@@ -96,6 +182,23 @@ export function ProjectRoadmapPanel({ orgSlug }: { orgSlug: string }) {
     ...orpc.projects.roadmap.boardDetail.queryOptions({ input: { boardId: effectiveBoardId ?? '' } }),
     enabled: Boolean(effectiveBoardId),
   });
+  const signalRollupQuery = useQuery({
+    ...orpc.projects.roadmap.signalRollup.queryOptions({ input: { boardId: effectiveBoardId ?? '' } }),
+    enabled: Boolean(effectiveBoardId),
+  });
+  const [signalItem, setSignalItem] = useState<RoadmapAdminItem | null>(null);
+  const [expandedSignalItemIds, setExpandedSignalItemIds] = useState<string[]>([]);
+  const signalDelete = useMutation(
+    orpc.projects.roadmap.signalDelete.mutationOptions({
+      onSuccess: () => {
+        refreshRoadmapQueries();
+        toast(t('signalRemovedToast'), 'success');
+      },
+      onError: (error) => {
+        toast(errorMessage(error), 'error');
+      },
+    }),
+  );
 
   const [modFilter, setModFilter] = useState<'all' | RoadmapItemModerationStatus>('all');
   const [createBoardOpen, setCreateBoardOpen] = useState(false);
@@ -348,6 +451,13 @@ export function ProjectRoadmapPanel({ orgSlug }: { orgSlug: string }) {
   });
   const filteredItems = modFilter === 'all' ? items : items.filter((it) => it.moderationStatus === modFilter);
   const mergeTargets = items.filter((it) => it.id !== mergeItem?.id && it.moderationStatus !== 'merged' && it.moderationStatus !== 'archived');
+  const rollupByItem = new Map<string, RoadmapSignalItemRollup>(
+    (signalRollupQuery.data?.byItem ?? []).map((r) => [r.roadmapItemId, r]),
+  );
+  const boardSignalRollup = signalRollupQuery.data ?? null;
+  const toggleSignalList = (itemId: string) => {
+    setExpandedSignalItemIds((prev) => (prev.includes(itemId) ? prev.filter((id) => id !== itemId) : [...prev, itemId]));
+  };
 
   const openNewAnnouncementDialog = () => {
     setEditingAnn(null);
@@ -655,13 +765,62 @@ export function ProjectRoadmapPanel({ orgSlug }: { orgSlug: string }) {
                   ))}
                 </div>
 
+                {signalRollupQuery.isError && (
+                  <Alert
+                    variant="destructive"
+                    className="flex flex-col gap-2 border-destructive/30 bg-destructive/10 sm:flex-row sm:items-center sm:justify-between"
+                    data-testid="roadmap-admin-signal-rollup-error"
+                  >
+                    <div className="min-w-0 space-y-0.5">
+                      <p className="text-xs font-medium text-destructive">{t('signalRollupError')}</p>
+                      <AlertDescription className="text-xs">{errorMessage(signalRollupQuery.error)}</AlertDescription>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="min-h-11 shrink-0"
+                      onClick={() => void signalRollupQuery.refetch()}
+                      data-testid="roadmap-admin-signal-rollup-retry"
+                    >
+                      {t('signalRetryBtn')}
+                    </Button>
+                  </Alert>
+                )}
+
                 {detailQuery.isPending ? (
                   <ListSkeleton rows={3} />
                 ) : filteredItems.length === 0 ? (
                   <Empty title={t('emptyQueue')} hint={t('emptyQueueHint')} />
                 ) : (
-                  <ul className="space-y-3" data-testid="roadmap-admin-items-list">
-                    {filteredItems.map((item) => (
+                  <div className="space-y-3">
+                    {boardSignalRollup && boardSignalRollup.totalSignals > 0 && (
+                      <div
+                        className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs"
+                        data-testid="roadmap-admin-board-signal-rollup"
+                      >
+                        <span className="font-medium text-foreground">
+                          {t('signalsHeading', { count: String(boardSignalRollup.totalSignals) })}
+                        </span>
+                        <Badge variant="outline" className="tabular-nums">
+                          {t('signalAccountsBadge', { count: String(boardSignalRollup.distinctAccountCount) })}
+                        </Badge>
+                        {boardSignalRollup.valueByCurrency.map((cur) => (
+                          <Badge key={cur.currency} variant="secondary" className="tabular-nums">
+                            {t('signalCurrencyPill', {
+                              currency: cur.currency,
+                              amount: f.money(cur.totalAmount, cur.currency),
+                              count: String(cur.signalCount),
+                            })}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                    <ul className="space-y-3" data-testid="roadmap-admin-items-list">
+                      {filteredItems.map((item) => {
+                        const itemRollup = rollupByItem.get(item.id);
+                        const isExpanded = expandedSignalItemIds.includes(item.id);
+                        return (
                       <li key={item.id} className="rounded-lg border border-border bg-background p-4" data-testid={`roadmap-admin-item-${item.id}`}>
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                           <div className="min-w-0 space-y-1.5">
@@ -679,6 +838,30 @@ export function ProjectRoadmapPanel({ orgSlug }: { orgSlug: string }) {
                               <Badge variant="secondary" className="tabular-nums">
                                 {t('votesBadge', { count: String(item.voteCount) })}
                               </Badge>
+                              {itemRollup && itemRollup.totalSignals > 0 && (
+                                <>
+                                  <Badge variant="outline" className="tabular-nums">
+                                    {t('signalCountBadge', { count: String(itemRollup.totalSignals) })}
+                                  </Badge>
+                                  <Badge variant="outline" className="tabular-nums">
+                                    {t('signalAccountsBadge', { count: String(itemRollup.distinctAccountCount) })}
+                                  </Badge>
+                                  {itemRollup.valueByCurrency.map((cur) => (
+                                    <Badge
+                                      key={cur.currency}
+                                      variant="secondary"
+                                      className="tabular-nums"
+                                      data-testid={`roadmap-admin-item-currency-${item.id}-${cur.currency}`}
+                                    >
+                                      {t('signalCurrencyPill', {
+                                        currency: cur.currency,
+                                        amount: f.money(cur.totalAmount, cur.currency),
+                                        count: String(cur.signalCount),
+                                      })}
+                                    </Badge>
+                                  ))}
+                                </>
+                              )}
                             </div>
                             {item.publicSummary && (
                               <p className="text-sm text-muted-foreground">{item.publicSummary}</p>
@@ -717,21 +900,33 @@ export function ProjectRoadmapPanel({ orgSlug }: { orgSlug: string }) {
                                 </Button>
                               )}
                               {item.moderationStatus !== 'archived' && (
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  className="min-h-11"
-                                  onClick={() =>
-                                    itemModerate.mutate({
-                                      itemId: item.id,
-                                      moderationStatus: 'archived',
-                                      idempotencyKey: crypto.randomUUID(),
-                                    })
-                                  }
-                                >
-                                  {t('archiveBtn')}
-                                </Button>
+                                <>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="min-h-11"
+                                    onClick={() => setSignalItem(item)}
+                                    data-testid={`roadmap-admin-add-signal-${item.id}`}
+                                  >
+                                    {t('signalsAddBtn')}
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="min-h-11"
+                                    onClick={() =>
+                                      itemModerate.mutate({
+                                        itemId: item.id,
+                                        moderationStatus: 'archived',
+                                        idempotencyKey: crypto.randomUUID(),
+                                      })
+                                    }
+                                  >
+                                    {t('archiveBtn')}
+                                  </Button>
+                                </>
                               )}
                               <NativeSelect
                                 aria-label={t('stageSelectLabel')}
@@ -807,9 +1002,46 @@ export function ProjectRoadmapPanel({ orgSlug }: { orgSlug: string }) {
                             </div>
                           )}
                         </div>
+
+                        {(signalRollupQuery.isError || (itemRollup !== undefined && itemRollup.totalSignals > 0)) && (
+                          <div className="mt-3 border-t border-border pt-3">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="min-h-11 px-2 text-xs"
+                              onClick={() => toggleSignalList(item.id)}
+                              data-testid={`roadmap-admin-toggle-signals-${item.id}`}
+                            >
+                              {itemRollup !== undefined
+                                ? isExpanded
+                                  ? t('signalHideList', { count: String(itemRollup.totalSignals) })
+                                  : t('signalShowList', { count: String(itemRollup.totalSignals) })
+                                : isExpanded
+                                  ? t('signalHideListFallback')
+                                  : t('signalShowListFallback')}
+                            </Button>
+                            {isExpanded && (
+                              <ExpandedItemSignals
+                                boardId={activeBoard.id}
+                                roadmapItemId={item.id}
+                                canWrite={canWrite}
+                                deletePending={signalDelete.isPending}
+                                onDeleteSignal={(signalId) =>
+                                  signalDelete.mutate({
+                                    signalId,
+                                    idempotencyKey: crypto.randomUUID(),
+                                  })
+                                }
+                              />
+                            )}
+                          </div>
+                        )}
                       </li>
-                    ))}
-                  </ul>
+                        );
+                      })}
+                    </ul>
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -1388,6 +1620,18 @@ export function ProjectRoadmapPanel({ orgSlug }: { orgSlug: string }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {effectiveBoardId && signalItem && (
+        <RoadmapSignalModal
+          open={Boolean(signalItem)}
+          onOpenChange={(next) => {
+            if (!next) setSignalItem(null);
+          }}
+          fixedBoardId={effectiveBoardId}
+          fixedItem={{ id: signalItem.id, title: signalItem.publicTitle }}
+          onLinked={() => refreshRoadmapQueries()}
+        />
+      )}
     </div>
   );
 }

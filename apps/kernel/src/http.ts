@@ -30,6 +30,7 @@ import {
   SIGN_PUBLIC_HUB_PAGE_PREFIX,
   SOCIAL_IMAGE_TYPES,
   DEFAULT_EXTENSION_IDS,
+  DESKTOP_CLIENT_ID,
   LIVE_CHUNK_MAX_BYTES,
   LIVE_CHUNK_MAX_COUNT,
   LIVE_CHUNK_MAX_SECONDS,
@@ -154,7 +155,7 @@ import {
   type SignupRules,
 } from './auth-signup-policy.ts';
 import { actorOf, bearerIssuedToOAuthClient, oauthClientRefused, type Authenticate, type AuthUser } from './auth.ts';
-import { exchangeExtensionCode, extensionIdOfOrigin, newExtensionCode, refuseOutsideScopes, voidUndeliveredExtensionToken, wellFormedExtensionCode, wellFormedVerifier } from './auth-extension.ts';
+import { exchangeClientId, exchangeExtensionCode, newExtensionCode, refuseOutsideScopes, voidUndeliveredExtensionToken, wellFormedExtensionCode, wellFormedVerifier } from './auth-extension.ts';
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
 import { onepiece, sealMedia, sizeText, streamPieces } from './media-seal.ts';
 import { assembleLivePieces } from './meetings-live-assemble.ts';
@@ -221,6 +222,18 @@ import {
   runSignPublicHubAction,
   runSignPublicHubList,
 } from './sign-public-hub.ts';
+import {
+  SIGN_API_V1_IP_PER_MINUTE,
+  SIGN_API_V1_KEY_DRAFT_PER_MINUTE,
+  SIGN_API_V1_KEY_READ_PER_MINUTE,
+  readSignApiV1ArtifactBytes,
+  resolveSignApiV1FileSource,
+  runSignApiV1EnvelopeGet,
+  runSignApiV1EnvelopesList,
+  runSignApiV1FromTemplate,
+  runSignApiV1TemplatesList,
+  type SignApiV1Outcome,
+} from './sign-api-v1.ts';
 import {
   ROADMAP_PUBLIC_IDEAS_PER_MINUTE,
   ROADMAP_PUBLIC_OTP_EMAIL_REQUESTS_PER_MINUTE,
@@ -468,6 +481,12 @@ export interface HttpDeps {
     actions: RateLimiter;
     templateActions: RateLimiter;
     emailOtpRequest: RateLimiter;
+  }>;
+  // Per-client and per-key-hash rate limiters for external /api/v1/sign/* API routes (#4441).
+  signApiV1Limits?: Partial<{
+    ip: RateLimiter;
+    keyRead: RateLimiter;
+    keyDraft: RateLimiter;
   }>;
   // Per-client and per-email rate limiters for Projects Public Roadmap public routes (#4399).
   roadmapLimits?: Partial<{
@@ -2084,6 +2103,187 @@ export function createHttpApp(deps: HttpDeps) {
         return problem(c, error);
       }
     });
+
+    // Scoped external REST API (/api/v1/sign/*, #4441, eSign Slice 5c):
+    // Bearer ludy_sk_... API key hashed via SHA-256, org_app_on + entitlement opaque 404,
+    // sign:read vs sign:draft scope checks, per-IP + per-key rate limits, Cache-Control: no-store,
+    // strict exclusion of hr_contract and meeting_minutes envelopes, and draft-only template creation.
+    const signApiV1IpLimit = deps.signApiV1Limits?.ip ?? new RateLimiter({ perMinute: SIGN_API_V1_IP_PER_MINUTE });
+    const signApiV1KeyReadLimit = deps.signApiV1Limits?.keyRead ?? new RateLimiter({ perMinute: SIGN_API_V1_KEY_READ_PER_MINUTE });
+    const signApiV1KeyDraftLimit = deps.signApiV1Limits?.keyDraft ?? new RateLimiter({ perMinute: SIGN_API_V1_KEY_DRAFT_PER_MINUTE });
+
+    const signApiV1Guard: MiddlewareHandler = async (c, next) => {
+      setSignSecurityHeaders(c);
+      if (
+        c.req.query('token') !== undefined ||
+        c.req.query('api_key') !== undefined ||
+        c.req.query('apiKey') !== undefined ||
+        c.req.query('access_token') !== undefined ||
+        c.req.query('key') !== undefined
+      ) {
+        return c.json({ code: 'SIGN_QUERY_TOKEN_FORBIDDEN', message: 'API keys must be sent in the Authorization: Bearer header' }, 400);
+      }
+      const decision = signApiV1IpLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      if (!decision.allowed) {
+        warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+        c.header('retry-after', String(decision.retryAfterSeconds));
+        return c.json({ code: 'RATE_LIMITED', message: 'Too many requests, please retry later', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+      }
+      await next();
+    };
+
+    const replySignApiV1NonOk = (c: Context, res: Exclude<SignApiV1Outcome<unknown>, { status: 'ok' }>) => {
+      if (res.status === 'unauthorized') {
+        c.header('www-authenticate', 'Bearer');
+        return c.json({ code: 'UNAUTHENTICATED', message: 'Invalid or expired API key' }, 401);
+      }
+      if (res.status === 'not_found') return signOpaqueNotFound(c);
+      if (res.status === 'forbidden') {
+        return c.json({ code: 'FORBIDDEN', message: `API key requires scope ${res.requiredScope}` }, 403);
+      }
+      return signRateLimited(c, res.retryAfterSeconds);
+    };
+
+    app.get('/api/v1/sign/envelopes', signApiV1Guard, async (c) => {
+      try {
+        const res = await runSignApiV1EnvelopesList(
+          runtime,
+          signBilling,
+          c.req.header('authorization'),
+          { status: c.req.query('status'), limit: c.req.query('limit') },
+          (hash) => signApiV1KeyReadLimit.take(hash),
+        );
+        if (res.status !== 'ok') return replySignApiV1NonOk(c, res);
+        return c.json(res.data);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.get('/api/v1/sign/envelopes/:id', signApiV1Guard, async (c) => {
+      try {
+        const res = await runSignApiV1EnvelopeGet(
+          runtime,
+          signBilling,
+          c.req.header('authorization'),
+          c.req.param('id'),
+          (hash) => signApiV1KeyReadLimit.take(hash),
+        );
+        if (res.status !== 'ok') return replySignApiV1NonOk(c, res);
+        return c.json(res.data);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.get('/api/v1/sign/envelopes/:id/sealed', signApiV1Guard, async (c) => {
+      try {
+        const lookup = await resolveSignApiV1FileSource(
+          runtime,
+          signBilling,
+          c.req.header('authorization'),
+          c.req.param('id'),
+          'sealed',
+          (hash) => signApiV1KeyReadLimit.take(hash),
+        );
+        if (lookup.status !== 'ok') return replySignApiV1NonOk(c, lookup);
+        const release = signPdfReads.tryAcquire('sign-api-v1');
+        if (!release) {
+          c.header('retry-after', '2');
+          return c.json({ code: 'SIGN_PDF_BUSY', message: 'Server is busy, please retry shortly' }, 503);
+        }
+        try {
+          const bytes = await readSignApiV1ArtifactBytes(store, lookup.data);
+          return new Response(body(bytes), {
+            headers: {
+              'content-type': 'application/pdf',
+              'content-disposition': `attachment; filename="sealed-${lookup.data.envelopeId}.pdf"`,
+              'x-content-sha256': lookup.data.sha256,
+              'cache-control': 'no-store',
+              'referrer-policy': 'no-referrer',
+              'x-content-type-options': 'nosniff',
+              'content-security-policy': "default-src 'none'; sandbox",
+            },
+          });
+        } finally {
+          release();
+        }
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.get('/api/v1/sign/envelopes/:id/certificate', signApiV1Guard, async (c) => {
+      try {
+        const lookup = await resolveSignApiV1FileSource(
+          runtime,
+          signBilling,
+          c.req.header('authorization'),
+          c.req.param('id'),
+          'certificate',
+          (hash) => signApiV1KeyReadLimit.take(hash),
+        );
+        if (lookup.status !== 'ok') return replySignApiV1NonOk(c, lookup);
+        const release = signPdfReads.tryAcquire('sign-api-v1');
+        if (!release) {
+          c.header('retry-after', '2');
+          return c.json({ code: 'SIGN_PDF_BUSY', message: 'Server is busy, please retry shortly' }, 503);
+        }
+        try {
+          const bytes = await readSignApiV1ArtifactBytes(store, lookup.data);
+          return new Response(body(bytes), {
+            headers: {
+              'content-type': 'application/json; charset=utf-8',
+              'content-disposition': `attachment; filename="certificate-${lookup.data.envelopeId}.json"`,
+              'x-content-sha256': lookup.data.sha256,
+              'cache-control': 'no-store',
+              'referrer-policy': 'no-referrer',
+              'x-content-type-options': 'nosniff',
+              'content-security-policy': "default-src 'none'; sandbox",
+            },
+          });
+        } finally {
+          release();
+        }
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.get('/api/v1/sign/templates', signApiV1Guard, async (c) => {
+      try {
+        const res = await runSignApiV1TemplatesList(
+          runtime,
+          signBilling,
+          c.req.header('authorization'),
+          { limit: c.req.query('limit') },
+          (hash) => signApiV1KeyReadLimit.take(hash),
+        );
+        if (res.status !== 'ok') return replySignApiV1NonOk(c, res);
+        return c.json(res.data);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    app.post('/api/v1/sign/envelopes/from-template', signApiV1Guard, signBodyLimit(32 * 1024), async (c) => {
+      try {
+        const rawBody = await c.req.json().catch(() => null);
+        const res = await runSignApiV1FromTemplate(
+          runtime,
+          signBilling,
+          c.req.header('authorization'),
+          rawBody,
+          appUrl(config),
+          signMeta(c),
+          (hash) => signApiV1KeyDraftLimit.take(hash),
+        );
+        if (res.status !== 'ok') return replySignApiV1NonOk(c, res);
+        return c.json(res.data, 201);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
   }
 
   // Orgless public Projects Roadmap routes (#4399, ADR-0057, ADR-0053, #203):
@@ -2687,7 +2887,7 @@ export function createHttpApp(deps: HttpDeps) {
     }
     const refused = () => c.json({ code: 'EXTENSION_CODE_INVALID', message: 'Mã đăng nhập tiện ích không hợp lệ hoặc đã hết hạn, hãy đăng nhập lại' }, 400);
     try {
-      const input = (await c.req.json().catch(() => null)) as { code?: unknown; codeVerifier?: unknown } | null;
+      const input = (await c.req.json().catch(() => null)) as { code?: unknown; codeVerifier?: unknown; client?: unknown } | null;
       if (!input || typeof input !== 'object' || !wellFormedExtensionCode(input.code) || !wellFormedVerifier(input.codeVerifier)) return refused();
       const code = input.code;
       const verifier = input.codeVerifier;
@@ -2695,8 +2895,9 @@ export function createHttpApp(deps: HttpDeps) {
       // states in the Origin header (chrome-extension://<id>). A missing, malformed, unlisted or different origin gets the same
       // answer as a wrong code, and the code is not spent. Defence in depth only: a client outside the browser can set any Origin, so PKCE
       // and the allow-list stay the primary protection.
-      const extensionId = extensionIdOfOrigin(c.req.header('origin'));
-      if (extensionId === null || !allowedExtensionIds.includes(extensionId)) return refused();
+      // Ludy Desktop (#4515) sends no Origin and says client "desktop": the code must then be the one made for the reserved desktop id.
+      const extensionId = exchangeClientId(c.req.header('origin'), input.client);
+      if (extensionId === null || (extensionId !== DESKTOP_CLIENT_ID && !allowedExtensionIds.includes(extensionId))) return refused();
       const done = await runtime.orgless((db) => exchangeExtensionCode(db, code, verifier, extensionId));
       if (!done) return refused();
       // The audit row of the exchange (the definer has no member context to write one): as the member, with the new token.
@@ -2704,13 +2905,16 @@ export function createHttpApp(deps: HttpDeps) {
       // The client gets the token only once this row is written. When it fails, the token row already exists and nobody
       // holds it: void it (its own system audit row follows) before answering, so no usable row is left behind (#2740).
       // Notes-only tokens audit through notes.extension.exchanged because kernel.extension.token.exchanged requires 'meetings' (#3560).
+      // A desktop token holds no scope and no scoped command can audit it: the exchange definer wrote its audit row in the same transaction (#4515).
       const exchangeAuditCommand = scopes.includes('meetings') ? 'kernel.extension.token.exchanged' : 'notes.extension.exchanged';
       try {
-        await runtime.execute(
-          exchangeAuditCommand,
-          { codeId: done.exchange.codeId },
-          { actor: { type: 'user', userId: done.exchange.userId, aal: 'aal1', mfaAt: null, extension: { tokenId: done.exchange.tokenId, scopes } }, orgId: done.exchange.orgId },
-        );
+        if (extensionId !== DESKTOP_CLIENT_ID) {
+          await runtime.execute(
+            exchangeAuditCommand,
+            { codeId: done.exchange.codeId },
+            { actor: { type: 'user', userId: done.exchange.userId, aal: 'aal1', mfaAt: null, extension: { tokenId: done.exchange.tokenId, scopes, client: 'extension' } }, orgId: done.exchange.orgId },
+          );
+        }
       } catch (error) {
         const voided = await runtime.orgless((db) => voidUndeliveredExtensionToken(db, done.token)).catch(() => false);
         // The clean-up did not void the row: it was already revoked (a demotion raced the exchange) or the clean-up itself failed, in which
@@ -2851,8 +3055,9 @@ export function createHttpApp(deps: HttpDeps) {
       const parsed = zExtensionAuthorize.safeParse(await c.req.json().catch(() => null));
       if (!parsed.success) throw new DomainError('INVALID', 422, 'Yêu cầu kết nối tiện ích không hợp lệ');
       const input = parsed.data;
-      // Only an extension this deployment lists may receive a code (EXTENSION_IDS, #2740); the app checks the same list.
-      if (!allowedExtensionIds.includes(input.extensionId)) throw new DomainError('FORBIDDEN', 403, 'Tiện ích này không được phép kết nối với Ludy', { rule: 'extension_id' });
+      // Only an extension this deployment lists may receive a code (EXTENSION_IDS, #2740); the app checks the same list. Ludy Desktop (#4515)
+      // is the one client that is not an extension: DESKTOP_CLIENT_ID is always allowed, and it must ask for no scope (the contract and the database refuse any).
+      if (input.extensionId !== DESKTOP_CLIENT_ID && !allowedExtensionIds.includes(input.extensionId)) throw new DomainError('FORBIDDEN', 403, 'Tiện ích này không được phép kết nối với Ludy', { rule: 'extension_id' });
       // Only features this deployment runs: a scope of a module that is left out is not offered.
       if (input.scopes.includes('meetings') && !runtime.installed('meetings')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Cuộc họp chưa được bật');
       if (input.scopes.includes('notes') && !runtime.installed('notes')) throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ghi chú chưa được bật');
@@ -2885,6 +3090,7 @@ export function createHttpApp(deps: HttpDeps) {
       tokenId: extension.tokenId,
       orgId: extension.orgId,
       scopes: extension.scopes,
+      client: extension.client ?? 'extension',
       expiresAt: extension.expiresAt,
       features: {
         meetings: extension.scopes.includes('meetings') && meetingsOn,

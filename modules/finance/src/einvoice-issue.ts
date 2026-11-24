@@ -5,7 +5,7 @@
 //   its stored amounts must equal what its stored lines compute to, and the payload carries the hash of everything it is issued from (the database computes it) and its total. It
 //   writes nothing; kernel.proposal.request stores the proposal. One open request per draft.
 // - finance.einvoice.issue (R3 legal, a proposal command: runs only through kernel.proposal.approve, as the approver, in the approving transaction; owners and admins approve,
-//   with four-eyes and the one-person path, judged on the members now): moves the draft to `submitting` through crove_finance.einvoice_submit, the one way a person does. The
+//   with four-eyes and the one-person path, judged on the members now): moves the draft to `submitting` through ludy_finance.einvoice_submit, the one way a person does. The
 //   database re-checks that this very approval was for this draft, this content and this total, and that the draft is untouched since (a draft changed after the request is refused).
 // Agents never run either: neither declares an agent surface.
 import { sql } from 'kysely';
@@ -25,7 +25,7 @@ const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 
 const pgMessage = (error: unknown) => String((error as { message?: unknown } | null)?.message ?? '');
 
-const DRAFT = financeManifest.tables.crove_finance.einvoice_draft;
+const DRAFT = financeManifest.tables.ludy_finance.einvoice_draft;
 const changed = () => new DomainError('EINVOICE_DRAFT_CHANGED', 409, 'Bản nháp đã thay đổi từ lúc đề xuất này được tạo; hãy tạo đề xuất mới');
 
 // A request for the draft as it stands now is open (waiting or being approved): a second for the same content is refused. A request made for an earlier state of the draft (it was
@@ -81,7 +81,7 @@ export const einvoicePrepareIssue = defineCommand({
       if (ready.code === EINVOICE_ERROR_CODES.sellerTaxCodeChanged) throw new DomainError('EINVOICE_TAX_CODE_MISMATCH', 422, 'Mã số thuế của công ty đã đổi so với kết nối nhà cung cấp; hãy kết nối lại với mã số thuế mới');
       throw new DomainError('EINVOICE_PROVIDER_NOT_READY', 409, 'Chưa có kết nối nhà cung cấp hóa đơn điện tử dùng được cho pháp nhân này; hãy kiểm tra mục Tích hợp trong Cài đặt');
     }
-    const hash = (await sql<{ hash: string | null }>`SELECT crove_finance.einvoice_content_hash(${ctx.orgId}::uuid, ${draftId}::uuid) AS hash`.execute(ctx.trx)).rows[0]?.hash;
+    const hash = (await sql<{ hash: string | null }>`SELECT ludy_finance.einvoice_content_hash(${ctx.orgId}::uuid, ${draftId}::uuid) AS hash`.execute(ctx.trx)).rows[0]?.hash;
     if (!hash) throw new DomainError('EINVOICE_DRAFT_NOT_FOUND', 404, 'Không tìm thấy bản nháp hóa đơn');
     await refuseOpenRequest(ctx, draftId, hash);
     return {
@@ -110,7 +110,7 @@ export const einvoiceIssue = defineCommand({
     const draftId = payload.draftId.toLowerCase();
     // The draft is locked first; the definer takes the same lock, and a line is written only under a KEY SHARE of it, so what is read below is what is committed.
     const draft = await ctx.trx
-      .selectFrom('crove_finance.einvoice_draft')
+      .selectFrom('ludy_finance.einvoice_draft')
       .select(['legal_entity_id', 'state', 'total', 'currency', 'sale_date', 'late_reason'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', draftId)
@@ -122,7 +122,7 @@ export const einvoiceIssue = defineCommand({
     const proposal = await ctx.trx.selectFrom('ludy_kernel.proposal').select('legal_entity_id').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
     if (proposal?.legal_entity_id !== draft.legal_entity_id || !money(payload.amount).equals(money(draft.total)) || payload.currency !== draft.currency) throw changed();
     try {
-      await sql`SELECT crove_finance.einvoice_submit(${draftId}::uuid, ${payload.contentHash})`.execute(ctx.trx);
+      await sql`SELECT ludy_finance.einvoice_submit(${draftId}::uuid, ${payload.contentHash})`.execute(ctx.trx);
     } catch (error) {
       // The draft was edited after the request: a new request, not a retry.
       if (pgMessage(error).includes('EINVOICE_CONTENT_CHANGED')) throw changed();
@@ -163,11 +163,11 @@ export const einvoiceIssueRequest = defineQuery({
     const draftId = payload.data.draftId.toLowerCase();
     const draft = await loadDraft(ctx, draftId, await databaseToday(ctx.trx));
     const series = draft.seriesId
-      ? await ctx.trx.selectFrom('crove_finance.einvoice_series').select(['template_no', 'symbol']).where('org_id', '=', ctx.orgId).where('id', '=', draft.seriesId).executeTakeFirst()
+      ? await ctx.trx.selectFrom('ludy_finance.einvoice_series').select(['template_no', 'symbol']).where('org_id', '=', ctx.orgId).where('id', '=', draft.seriesId).executeTakeFirst()
       : undefined;
     // The orders this draft's lines came from, each once in the order of the first line that names it (the card asks Engage whether one was cancelled; ADR-0050 point 2, #2849).
     const sourced = await ctx.trx
-      .selectFrom('crove_finance.einvoice_draft_line')
+      .selectFrom('ludy_finance.einvoice_draft_line')
       .select(['source_id', 'line_no'])
       .where('org_id', '=', ctx.orgId)
       .where('draft_id', '=', draftId)
@@ -176,7 +176,7 @@ export const einvoiceIssueRequest = defineQuery({
       .orderBy('line_no')
       .execute();
     const sourceOrderIds = [...new Set(sourced.map((l) => (l.source_id as string).toLowerCase()))];
-    const hash = (await sql<{ hash: string | null }>`SELECT crove_finance.einvoice_content_hash(${ctx.orgId}::uuid, ${draftId}::uuid) AS hash`.execute(ctx.trx)).rows[0]?.hash;
+    const hash = (await sql<{ hash: string | null }>`SELECT ludy_finance.einvoice_content_hash(${ctx.orgId}::uuid, ${draftId}::uuid) AS hash`.execute(ctx.trx)).rows[0]?.hash;
     return {
       draftId,
       state: draft.state,

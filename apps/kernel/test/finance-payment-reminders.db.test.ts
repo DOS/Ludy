@@ -62,17 +62,17 @@ suite('customer payment reminders (#2488)', () => {
       const doc = randomUUID();
       await c.query('BEGIN');
       await c.query(
-        `INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id, correction_kind, corrected_series, corrected_number, corrected_date)
+        `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id, correction_kind, corrected_series, corrected_number, corrected_date)
          VALUES ($1, $2, $3, 'C26TAA', $4, $5, 'VND', $6, 0, $6, 'sale', $7, $8, $9, $10, $11)`,
         [o.orgId, doc, party, number, date, total, entity, adjusts ? 'adjustment' : null, adjusts ? 'C26TAA' : null, adjusts?.number ?? null, adjusts?.date ?? null],
       );
       const entry = randomUUID();
       await c.query(
-        `INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, $4, 'finance.purchase_document', $5, $6)`,
+        `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, $4, 'finance.purchase_document', $5, $6)`,
         [o.orgId, entry, date, `HĐ bán ${number}`, doc, entity],
       );
       await c.query(
-        `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id)
+        `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id)
          VALUES ($1, $2, 1, '131', $3, 0, $4, $5), ($1, $2, 2, '511', 0, $3, NULL, $5)`,
         [o.orgId, entry, total, party, entity],
       );
@@ -86,11 +86,11 @@ suite('customer payment reminders (#2488)', () => {
       const entry = randomUUID();
       await c.query('BEGIN');
       await c.query(
-        `INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'Thu tiền khách hàng', 'finance.journal_voucher', $4, $5)`,
+        `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'Thu tiền khách hàng', 'finance.journal_voucher', $4, $5)`,
         [o.orgId, entry, date, randomUUID(), o.entity],
       );
       await c.query(
-        `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id)
+        `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id)
          VALUES ($1, $2, 1, '112', $3, 0, NULL, $5), ($1, $2, 2, '131', 0, $3, $4, $5)`,
         [o.orgId, entry, amount, party, o.entity],
       );
@@ -203,11 +203,11 @@ suite('customer payment reminders (#2488)', () => {
       const entry = randomUUID();
       await c.query('BEGIN');
       await c.query(
-        `INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, '2026-01-01', 'Số dư đầu kỳ', 'finance.journal_voucher', $3, $4)`,
+        `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, '2026-01-01', 'Số dư đầu kỳ', 'finance.journal_voucher', $3, $4)`,
         [o.orgId, entry, randomUUID(), o.entity],
       );
       await c.query(
-        `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '131', 3000000, 0, $3, $4), ($1, $2, 2, '411', 0, 3000000, NULL, $4)`,
+        `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '131', 3000000, 0, $3, $4), ($1, $2, 2, '411', 0, 3000000, NULL, $4)`,
         [o.orgId, entry, p, o.entity],
       );
       await c.query('COMMIT');
@@ -223,7 +223,7 @@ suite('customer payment reminders (#2488)', () => {
     const o = await org();
     const p = await customer(o, 'Công ty Hòa Bình', 'hb@hoabinh.test');
     await sale(o, p, '7', dated(16), '2500000');
-    await admin((c) => c.query(`INSERT INTO crove_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number) VALUES ($1, $2, '112', '0011223344')`, [o.orgId, o.entity]));
+    await admin((c) => c.query(`INSERT INTO ludy_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number) VALUES ($1, $2, '112', '0011223344')`, [o.orgId, o.entity]));
     const d = await draft(o, p);
     expect(d).toMatchObject({ level: 2, lang: 'vi', email: 'hb@hoabinh.test', currency: 'VND', total: '2500000' });
     expect(d.words.lead).toContain('lần thứ hai');
@@ -238,7 +238,7 @@ suite('customer payment reminders (#2488)', () => {
     const p = await customer(o, 'Công ty Khang Thịnh', 'kt@khangthinh.test');
     await sale(o, p, '11', dated(20), '3000000');
     await sale(o, p, '12', dated(8), '1234567');
-    await admin((c) => c.query(`INSERT INTO crove_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number) VALUES ($1, $2, '112', '9988776655')`, [o.orgId, o.entity]));
+    await admin((c) => c.query(`INSERT INTO ludy_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number) VALUES ($1, $2, '112', '9988776655')`, [o.orgId, o.entity]));
     const d = await draft(o, p);
     // The oldest invoice is 20 days late: the second notice.
     expect(d.level).toBe(2);

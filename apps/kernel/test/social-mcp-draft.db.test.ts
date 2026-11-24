@@ -79,8 +79,8 @@ suite('the MCP draft command (#3227)', () => {
 
   const grantActor = async (org = orgA, owner = users.ownerA, scopes: string[] = ['ludy.read', 'ludy.social.draft']) => ({ actor: mcp(owner, await insertGrant(org, owner, scopes), scopes), orgId: org });
   const draft = async (input: unknown, ctx?: { actor: UserActor; orgId: string }) => runtime.execute<Created>('social.mcp.draft_create', input, ctx ?? (await grantActor()));
-  const row = (postId: string) => admin(async (c) => (await c.query('SELECT * FROM crove_social.post WHERE id = $1', [postId])).rows[0]);
-  const variantRows = (postId: string) => admin(async (c) => (await c.query('SELECT * FROM crove_social.post_variant WHERE post_id = $1 ORDER BY position', [postId])).rows);
+  const row = (postId: string) => admin(async (c) => (await c.query('SELECT * FROM ludy_social.post WHERE id = $1', [postId])).rows[0]);
+  const variantRows = (postId: string) => admin(async (c) => (await c.query('SELECT * FROM ludy_social.post_variant WHERE post_id = $1 ORDER BY position', [postId])).rows);
 
   beforeAll(async () => {
     if (!ADMIN) return;

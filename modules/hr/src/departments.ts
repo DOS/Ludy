@@ -44,13 +44,13 @@ export const departmentAdd = defineCommand({
   sideEffect: 'internal',
   access: MANAGERS,
   permission: 'hr.payroll.run',
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'department', ['org_id', 'id', 'legal_entity_id', 'name', 'code', 'pay_function', 'created_by', 'created_at', 'updated_at'])],
+  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'department', ['org_id', 'id', 'legal_entity_id', 'name', 'code', 'pay_function', 'created_by', 'created_at', 'updated_at'])],
   handler: async (ctx, input): Promise<HrDepartmentWritten> => {
     const userId = userOf(ctx.actor);
     const legalEntityId = await resolveEntity(ctx, input.legalEntityId);
     try {
       const row = await ctx.trx
-        .insertInto('crove_hr.department')
+        .insertInto('ludy_hr.department')
         .values({
           org_id: ctx.orgId,
           legal_entity_id: legalEntityId,
@@ -80,10 +80,10 @@ export const departmentEdit = defineCommand({
   access: MANAGERS,
   permission: 'hr.payroll.run',
   target: targetOf,
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'department', ['name', 'code', 'pay_function', 'updated_at'])],
+  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'department', ['name', 'code', 'pay_function', 'updated_at'])],
   handler: async (ctx, input): Promise<HrDepartmentWritten> => {
     const found = await ctx.trx
-      .selectFrom('crove_hr.department')
+      .selectFrom('ludy_hr.department')
       .select(['id', 'archived_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.departmentId)
@@ -93,7 +93,7 @@ export const departmentEdit = defineCommand({
     if (found.archived_at !== null) throw archivedError();
     try {
       await ctx.trx
-        .updateTable('crove_hr.department')
+        .updateTable('ludy_hr.department')
         .set({
           ...(input.name === undefined ? {} : { name: input.name }),
           ...(input.code === undefined ? {} : { code: input.code }),
@@ -125,10 +125,10 @@ export const departmentArchive = defineCommand({
   access: MANAGERS,
   permission: 'hr.payroll.run',
   target: targetOf,
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'department', ['archived_at', 'updated_at'])],
+  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'department', ['archived_at', 'updated_at'])],
   handler: async (ctx, input): Promise<HrDepartmentWritten> => {
     const found = await ctx.trx
-      .selectFrom('crove_hr.department')
+      .selectFrom('ludy_hr.department')
       .select(['id', 'archived_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.departmentId)
@@ -140,7 +140,7 @@ export const departmentArchive = defineCommand({
       return { departmentId: input.departmentId };
     }
     await ctx.trx
-      .updateTable('crove_hr.department')
+      .updateTable('ludy_hr.department')
       .set({ archived_at: ctx.now, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.departmentId)
@@ -158,11 +158,11 @@ export const departmentSetManager = defineCommand({
   access: MANAGERS,
   permission: 'hr.payroll.run',
   target: targetOf,
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'department', ['manager_user_id', 'updated_at'])],
+  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'department', ['manager_user_id', 'updated_at'])],
   handler: async (ctx, input): Promise<HrDepartmentWritten> => {
     userOf(ctx.actor);
     const existing = await ctx.trx
-      .selectFrom('crove_hr.department')
+      .selectFrom('ludy_hr.department')
       .select(['id', 'archived_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.departmentId)
@@ -184,7 +184,7 @@ export const departmentSetManager = defineCommand({
       }
     }
     await ctx.trx
-      .updateTable('crove_hr.department')
+      .updateTable('ludy_hr.department')
       .set({ manager_user_id: input.managerUserId, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.departmentId)
@@ -202,7 +202,7 @@ export const departmentList = defineQuery({
   sensitive: true,
   handler: async (ctx, input): Promise<HrDepartmentView[]> => {
     let q = ctx.trx
-      .selectFrom('crove_hr.department')
+      .selectFrom('ludy_hr.department')
       .select(['id', 'legal_entity_id', 'name', 'code', 'pay_function', 'manager_user_id', 'archived_at'])
       .where('org_id', '=', ctx.orgId);
     if (input.legalEntityId !== undefined) q = q.where('legal_entity_id', '=', input.legalEntityId);
@@ -215,7 +215,7 @@ export const departmentList = defineQuery({
     if (departments.length === 0) return [];
 
     const activeEmployees = await ctx.trx
-      .selectFrom('crove_hr.payroll_employee')
+      .selectFrom('ludy_hr.payroll_employee')
       .select(['id', 'department_id'])
       .where('org_id', '=', ctx.orgId)
       .where('status', '=', 'active')
@@ -230,7 +230,7 @@ export const departmentList = defineQuery({
     if (activeEmployees.length > 0) {
       const today = vietnamDay(new Date());
       const terms = await ctx.trx
-        .selectFrom('crove_hr.payroll_employment')
+        .selectFrom('ludy_hr.payroll_employment')
         .select(['employee_id', 'effective_from', 'base_wage'])
         .where('org_id', '=', ctx.orgId)
         .where(

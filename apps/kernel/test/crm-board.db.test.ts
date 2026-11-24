@@ -169,7 +169,7 @@ suite('crm stages and board on PostgreSQL (#2226)', () => {
     const old = await o.newDeal(o.member, party, { title: 'Thua cũ', amount: '7000000' });
     const lost = await o.exec<Deal>(o.member, 'crm.deal.move', { dealId: old.id, version: old.version, stageId: thua });
     // A deal closed more than 30 days ago is left off the lost column and its totals.
-    await admin((cl) => cl.query("UPDATE crove_crm.deal SET closed_at = now() - interval '31 days' WHERE org_id = $1 AND id = $2", [o.orgId, lost.id]));
+    await admin((cl) => cl.query("UPDATE ludy_crm.deal SET closed_at = now() - interval '31 days' WHERE org_id = $1 AND id = $2", [o.orgId, lost.id]));
 
     const columns = (await o.query<Board>(o.viewer, 'crm.deal.board', {})).columns;
     expect(columns.map((col) => col.stage.name)).toEqual(['Mới', 'Đã liên hệ', 'Báo giá', 'Thương lượng', 'Thắng', 'Thua']);

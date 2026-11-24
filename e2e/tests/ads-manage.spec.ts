@@ -39,27 +39,27 @@ test('an owner sees a live launch under Manage, reads its changes in words, and 
     // An approved plan of ten days (two days ago to seven days ahead, in the account's zone) at 100,000 a day: at most 1,000,000.
     // The draft guard holds a draft to being born a draft, so it is lifted for this one statement and put back (always on, as the migration sets it), which the stack's superuser may do.
     exec(
-      `ALTER TABLE crove_ads.ad_campaign_draft DISABLE TRIGGER campaign_draft_guard;
-       INSERT INTO crove_ads.ad_campaign_draft (org_id, id, ad_account_id, legal_entity_id, name, objective, status, daily_budget, start_on, end_on, targeting, link_url, variants, max_spend, proposal_id, approved_at, created_by)
+      `ALTER TABLE ludy_ads.ad_campaign_draft DISABLE TRIGGER campaign_draft_guard;
+       INSERT INTO ludy_ads.ad_campaign_draft (org_id, id, ad_account_id, legal_entity_id, name, objective, status, daily_budget, start_on, end_on, targeting, link_url, variants, max_spend, proposal_id, approved_at, created_by)
        SELECT a.org_id, :'draft', a.id, a.legal_entity_id, :'campaign', 'traffic', 'approved', 100000,
               (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 2, (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + 7,
               '{"locations":[{"country":"VN"}],"ageMin":22,"ageMax":45,"gender":"all","interests":[]}'::jsonb, 'https://example.com/quan-ly',
               '[{"headline":"Quản lý","primaryText":"Mời bạn ghé thử.","callToAction":"learn_more"}]'::jsonb, 1000000, gen_random_uuid(), now(),
               (SELECT m.user_id FROM ludy_kernel.tenant_member m WHERE m.org_id = a.org_id LIMIT 1)
-       FROM crove_ads.ad_account a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug';
-       ALTER TABLE crove_ads.ad_campaign_draft ENABLE ALWAYS TRIGGER campaign_draft_guard`,
+       FROM ludy_ads.ad_account a JOIN ludy_kernel.tenant t ON t.org_id = a.org_id WHERE t.slug = :'slug';
+       ALTER TABLE ludy_ads.ad_campaign_draft ENABLE ALWAYS TRIGGER campaign_draft_guard`,
       vars,
     );
     exec(
-      `INSERT INTO crove_ads.ad_launch (org_id, id, ad_account_id, legal_entity_id, draft_id, proposal_id, plan_hash, state, attempt, step, currency, daily_budget, start_on, end_on, amount, commit_until, created_by, started_at)
+      `INSERT INTO ludy_ads.ad_launch (org_id, id, ad_account_id, legal_entity_id, draft_id, proposal_id, plan_hash, state, attempt, step, currency, daily_budget, start_on, end_on, amount, commit_until, created_by, started_at)
        SELECT d.org_id, :'launch', d.ad_account_id, d.legal_entity_id, d.id, d.proposal_id, 'sha256:' || repeat('0', 64), 'live', 1, 'live', 'VND', 100000, d.start_on, d.end_on, 1000000, d.end_on, d.created_by, now()
-       FROM crove_ads.ad_campaign_draft d WHERE d.id = :'draft'`,
+       FROM ludy_ads.ad_campaign_draft d WHERE d.id = :'draft'`,
       vars,
     );
     exec(
-      `INSERT INTO crove_ads.ad_object (org_id, ad_account_id, legal_entity_id, launch_id, slot, level, external_id, name)
+      `INSERT INTO ludy_ads.ad_object (org_id, ad_account_id, legal_entity_id, launch_id, slot, level, external_id, name)
        SELECT l.org_id, l.ad_account_id, l.legal_entity_id, l.id, o.slot, o.level, o.external_id, o.name
-       FROM crove_ads.ad_launch l
+       FROM ludy_ads.ad_launch l
        CROSS JOIN (VALUES ('campaign', 'campaign', 'e2e-manage-campaign', :'campaign'), ('ad_set', 'ad_set', 'e2e-manage-ad-set', :'adSet'),
                           ('creative_1', 'creative', 'e2e-manage-creative-1', 'Mẫu quảng cáo quản lý E2E'), ('ad_1', 'ad', 'e2e-manage-ad-1', 'Quảng cáo quản lý E2E 1')) AS o(slot, level, external_id, name)
        WHERE l.id = :'launch'`,
@@ -67,9 +67,9 @@ test('an owner sees a live launch under Manage, reads its changes in words, and 
     );
     // The history of the ad set's changes: a lower budget the platform confirmed, a raise it could not confirm (its amount stays held), and a shorter schedule that did not go through.
     exec(
-      `INSERT INTO crove_ads.ad_manage_change (org_id, ad_account_id, launch_id, kind, slot, level, object_id, state, from_budget, to_budget, from_end_on, to_end_on, proposal_id, code, settled_on, requested_by, settled_at)
+      `INSERT INTO ludy_ads.ad_manage_change (org_id, ad_account_id, launch_id, kind, slot, level, object_id, state, from_budget, to_budget, from_end_on, to_end_on, proposal_id, code, settled_on, requested_by, settled_at)
        SELECT l.org_id, l.ad_account_id, l.id, c.kind, 'ad_set', 'ad_set', 'e2e-manage-ad-set', c.state, c.from_budget, c.to_budget, c.from_end_on, c.to_end_on, c.proposal_id, c.code, c.settled_on, l.created_by, now()
-       FROM crove_ads.ad_launch l
+       FROM ludy_ads.ad_launch l
        CROSS JOIN LATERAL (VALUES
          ('budget_lower', 'applied', 120000::numeric, 100000::numeric, NULL::date, NULL::date, NULL::uuid, NULL::text, (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1),
          ('budget_raise', 'unclear', 100000::numeric, 150000::numeric, NULL::date, NULL::date, gen_random_uuid(), 'reconcile_unclear', NULL::date),
@@ -79,8 +79,8 @@ test('an owner sees a live launch under Manage, reads its changes in words, and 
       vars,
     );
     const rows = sql<{ state: string; objects: number; changes: number }>(
-      `SELECT l.state, (SELECT count(*)::int FROM crove_ads.ad_object o WHERE o.launch_id = l.id) AS objects, (SELECT count(*)::int FROM crove_ads.ad_manage_change c WHERE c.launch_id = l.id) AS changes
-         FROM crove_ads.ad_launch l WHERE l.id = :'launch'`,
+      `SELECT l.state, (SELECT count(*)::int FROM ludy_ads.ad_object o WHERE o.launch_id = l.id) AS objects, (SELECT count(*)::int FROM ludy_ads.ad_manage_change c WHERE c.launch_id = l.id) AS changes
+         FROM ludy_ads.ad_launch l WHERE l.id = :'launch'`,
       vars,
     );
     expect(rows).toEqual([{ state: 'live', objects: 4, changes: 3 }]);
@@ -140,7 +140,7 @@ test('an owner sees a live launch under Manage, reads its changes in words, and 
     // Whatever the platform answers later, the change is recorded and listed with its own sentence.
     await expect(manage.getByTestId('manage-change').filter({ hasText: `Tạm dừng ${CAMPAIGN}` })).toBeVisible();
     const rows = sql<{ kind: string; slot: string; proposal_id: string | null }>(
-      `SELECT c.kind, c.slot, c.proposal_id::text AS proposal_id FROM crove_ads.ad_manage_change c WHERE c.launch_id = :'launch' AND c.kind = 'pause'`,
+      `SELECT c.kind, c.slot, c.proposal_id::text AS proposal_id FROM ludy_ads.ad_manage_change c WHERE c.launch_id = :'launch' AND c.kind = 'pause'`,
       { launch: launchId },
     );
     // A pause only reduces spend: it carries no approval.

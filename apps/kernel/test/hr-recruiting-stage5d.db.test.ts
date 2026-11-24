@@ -452,7 +452,7 @@ suite('HR Stage 5D: candidate source/hired_at, funnel BI analytics, crove-extrac
     // Adjust timestamps cleanly in DB to verify deterministic 4.0 days time-to-hire average & median
     await withAdmin((c) =>
       c.query(
-        `UPDATE crove_hr.candidate SET created_at = hired_at - interval '4 days' WHERE org_id = $1 AND id = $2`,
+        `UPDATE ludy_hr.candidate SET created_at = hired_at - interval '4 days' WHERE org_id = $1 AND id = $2`,
         [o.orgId, cHired.candidateId],
       ),
     );

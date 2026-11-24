@@ -5,7 +5,11 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateText, Output } from 'ai';
 import { z } from 'zod';
 import { bankAccountRuns, normalizeNumber, normalizeSeries, type ParsedInvoice } from '@ludy/l10n-vn';
+import { stripStealthControls } from './injection-guards.ts';
 import { metered, type AiUsageSink } from './meter.ts';
+
+const cleanInvoiceText = stripStealthControls;
+const cleanOptionalInvoiceText = (value: string | null): string | null => (value === null ? null : cleanInvoiceText(value));
 
 export * from './ads-campaign.ts';
 export * from './conversation.ts';
@@ -240,24 +244,24 @@ export function toParsed(x: z.infer<typeof zExtracted>, sourceText?: string): Pa
     source: 'ai',
     invoiceType: null,
     template: null,
-    series: normalizeSeries(x.series),
-    number: normalizeNumber(x.number),
-    issueDate: x.issueDate.trim().slice(0, 10),
-    currency,
+    series: normalizeSeries(cleanInvoiceText(x.series)),
+    number: normalizeNumber(cleanInvoiceText(x.number)),
+    issueDate: cleanInvoiceText(x.issueDate).trim().slice(0, 10),
+    currency: cleanInvoiceText(currency),
     exchangeRate: null,
     paymentMethod: null,
-    seller: { name: x.seller.name, taxCode: x.seller.taxCode, address: x.seller.address, email: null, phone: null, ...(bankAccount === null ? {} : { bankAccount }) },
-    buyer: { name: x.buyer.name, taxCode: x.buyer.taxCode, address: x.buyer.address, email: null, phone: null },
+    seller: { name: cleanInvoiceText(x.seller.name), taxCode: cleanOptionalInvoiceText(x.seller.taxCode), address: cleanOptionalInvoiceText(x.seller.address), email: null, phone: null, ...(bankAccount === null ? {} : { bankAccount }) },
+    buyer: { name: cleanInvoiceText(x.buyer.name), taxCode: cleanOptionalInvoiceText(x.buyer.taxCode), address: cleanOptionalInvoiceText(x.buyer.address), email: null, phone: null },
     lines: x.lines.map((l, i) => ({
       lineNo: i + 1,
       nature: l.isDiscount ? 'discount' : 'goods',
       code: null,
-      description: l.description,
-      unit: l.unit,
+      description: cleanInvoiceText(l.description),
+      unit: cleanOptionalInvoiceText(l.unit),
       quantity: cleanDecimal(l.quantity),
       unitPrice: cleanDecimal(l.unitPrice),
       amount: requiredAmount(l.amount, `dòng ${i + 1}`, currency),
-      vatRate: l.vatRate,
+      vatRate: cleanOptionalInvoiceText(l.vatRate),
     })),
     taxBreakdown: [],
     subtotal: requiredAmount(x.subtotal, 'tiền trước thuế', currency),

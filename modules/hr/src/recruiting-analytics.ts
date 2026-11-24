@@ -43,7 +43,7 @@ export const recruitingAnalyticsQuery = defineQuery({
     let targetEntityId = input.legalEntityId;
     if (input.openingId !== undefined) {
       const opening = await ctx.trx
-        .selectFrom('crove_hr.job_opening')
+        .selectFrom('ludy_hr.job_opening')
         .select(['id', 'legal_entity_id'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.openingId)
@@ -75,14 +75,14 @@ export const recruitingAnalyticsQuery = defineQuery({
 
     const erasedRes = await sql<{ count: number }>`
       SELECT pg_catalog.count(*)::int AS count
-      FROM crove_hr.candidate c
+      FROM ludy_hr.candidate c
       WHERE ${commonFilters(true)}
     `.execute(ctx.trx);
     const erasedExcludedCount = Number(erasedRes.rows[0]?.count ?? 0);
 
     const stageRowsRes = await sql<{ stage: string; count: number }>`
       SELECT c.stage, pg_catalog.count(*)::int AS count
-      FROM crove_hr.candidate c
+      FROM ludy_hr.candidate c
       WHERE ${commonFilters(false)}
       GROUP BY c.stage
     `.execute(ctx.trx);
@@ -161,7 +161,7 @@ export const recruitingAnalyticsQuery = defineQuery({
           )::numeric,
           1
         )::text AS median_days
-      FROM crove_hr.candidate c
+      FROM ludy_hr.candidate c
       WHERE ${commonFilters(false)}
         AND c.stage = 'hired'
         AND c.hired_at IS NOT NULL
@@ -191,7 +191,7 @@ export const recruitingAnalyticsQuery = defineQuery({
           )::numeric,
           1
         )::text AS avg_time_to_hire_days
-      FROM crove_hr.candidate c
+      FROM ludy_hr.candidate c
       WHERE ${commonFilters(false)}
       GROUP BY c.source
     `.execute(ctx.trx);

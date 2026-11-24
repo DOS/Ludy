@@ -1,5 +1,5 @@
 // A channel's options as a list keeps them (#1120, #1131): at most 500 items, and within the byte cap of the CHECK on
-// crove_social.channel_option.items, so a list of long Vietnamese names is cut short instead of refused when recorded.
+// ludy_social.channel_option.items, so a list of long Vietnamese names is cut short instead of refused when recorded.
 import { describe, expect, it } from 'vitest';
 import { CHANNEL_OPTIONS_BYTES_MAX, CHANNEL_OPTIONS_MAX, OptionList, PinterestPublisher, WordPressPublisher, YouTubePublisher, capOptions, optionBytes, type ChannelOption, type Fetch } from '../src/index.ts';
 

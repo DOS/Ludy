@@ -82,7 +82,7 @@ suite('the S2c-HKD revenue and expense detail of a household business (#2517 sli
     const restore = new pg.Client({ connectionString: adminUrl });
     await restore.connect();
     await restore.query(
-      "UPDATE crove_finance.household_threshold SET amount = 0 WHERE code = 'no_tax_revenue'; UPDATE crove_finance.household_tax_reduction SET cut_percent = 0 WHERE kind = 'pit'; UPDATE crove_finance.household_trade_rate SET status = 'commentary'; UPDATE crove_finance.household_form_version SET status = 'commentary'; UPDATE crove_finance.household_return_form_version SET status = 'commentary'",
+      "UPDATE ludy_finance.household_threshold SET amount = 0 WHERE code = 'no_tax_revenue'; UPDATE ludy_finance.household_tax_reduction SET cut_percent = 0 WHERE kind = 'pit'; UPDATE ludy_finance.household_trade_rate SET status = 'commentary'; UPDATE ludy_finance.household_form_version SET status = 'commentary'; UPDATE ludy_finance.household_return_form_version SET status = 'commentary'",
     );
     await restore.end();
     const app = new URL(adminUrl);
@@ -117,19 +117,19 @@ suite('the S2c-HKD revenue and expense detail of a household business (#2517 sli
           const party = (await a.query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name) VALUES ($1, 'Nhà cung cấp') RETURNING id", [o.orgId])).rows[0]?.id;
           document = (
             await a.query<{ id: string }>(
-              "INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, $3, $4, $5, $6, 0, $6, 'purchase', $7) RETURNING id",
+              "INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, $3, $4, $5, $6, 0, $6, 'purchase', $7) RETURNING id",
               [o.orgId, party, over.invoice.series, over.invoice.number, date, over.invoice.total, entity],
             )
           ).rows[0]?.id as string;
         }
         const id = (
           await a.query<{ id: string }>(
-            'INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
+            'INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
             [o.orgId, date, description, document ? 'finance.purchase_document' : 'finance.journal_voucher', document ?? randomUUID(), entity],
           )
         ).rows[0]?.id as string;
         let no = 1;
-        for (const [account, debit, credit] of lines) await a.query('INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, id, no++, account, debit, credit]);
+        for (const [account, debit, credit] of lines) await a.query('INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, id, no++, account, debit, credit]);
         await a.query('COMMIT');
         return id;
       } catch (error) {
@@ -220,7 +220,7 @@ suite('the S2c-HKD revenue and expense detail of a household business (#2517 sli
     await entry(o, '2026-11-10', 'Chi 642 tháng 11', [['642', 100000, 0], ['111', 0, 100000]]);
     await entry(o, '2026-12-10', 'Chi 642 tháng 12', [['642', 100000, 0], ['111', 0, 100000]]);
     // The accountant's later dated row, in December so the months of the other tests keep the seeds: 642 is wages and insurance from 1 December, confirmed.
-    await admin((a) => a.query("INSERT INTO crove_finance.household_expense_group_map (expense_group, account_prefix, effective_from, source, status) VALUES ('wages_insurance', '642', DATE '2026-12-01', 'test', 'confirmed')"));
+    await admin((a) => a.query("INSERT INTO ludy_finance.household_expense_group_map (expense_group, account_prefix, effective_from, source, status) VALUES ('wages_insurance', '642', DATE '2026-12-01', 'test', 'confirmed')"));
     const november = await s2c(o, '2026-11');
     const december = await s2c(o, '2026-12');
     expect(november.expenseRows[0]?.group).toBe('other');

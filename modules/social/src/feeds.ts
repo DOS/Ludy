@@ -71,11 +71,11 @@ export const feedAdd = defineCommand({
     const userId = requireUser(ctx);
     await checkConnections(ctx, input.connectionIds);
     // One add at a time per org, so the count below holds until the commit.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`crove_social.feed:${ctx.orgId}`}))`.execute(ctx.trx);
-    const count = await ctx.trx.selectFrom('crove_social.feed').select((eb) => eb.fn.countAll<string>().as('n')).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`ludy_social.feed:${ctx.orgId}`}))`.execute(ctx.trx);
+    const count = await ctx.trx.selectFrom('ludy_social.feed').select((eb) => eb.fn.countAll<string>().as('n')).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     if (Number(count.n) >= MAX_FEEDS) throw new DomainError('FEED_LIMIT', 409, `Mỗi tổ chức có tối đa ${MAX_FEEDS} nguồn tin`, { limit: MAX_FEEDS });
     const row = await ctx.trx
-      .insertInto('crove_social.feed')
+      .insertInto('ludy_social.feed')
       .values({ org_id: ctx.orgId, url: input.url, connection_ids: input.connectionIds, created_by: userId, created_at: ctx.now, updated_at: ctx.now })
       .onConflict((oc) => oc.columns(['org_id', 'url']).doNothing())
       .returning('id')
@@ -98,7 +98,7 @@ export const feedUpdate = defineCommand({
     requireUser(ctx);
     if (input.connectionIds) await checkConnections(ctx, input.connectionIds);
     const done = await ctx.trx
-      .updateTable('crove_social.feed')
+      .updateTable('ludy_social.feed')
       .set({
         ...(input.connectionIds ? { connection_ids: input.connectionIds } : {}),
         ...(input.paused === undefined ? {} : input.paused ? { paused: true } : { paused: false, failures: 0, last_error: null, last_checked_at: null }),
@@ -122,7 +122,7 @@ export const feedRemove = defineCommand({
   target: (input) => ({ type: 'social.feed', id: input.feedId }),
   handler: async (ctx, input) => {
     requireUser(ctx);
-    const done = await ctx.trx.deleteFrom('crove_social.feed').where('org_id', '=', ctx.orgId).where('id', '=', input.feedId).executeTakeFirst();
+    const done = await ctx.trx.deleteFrom('ludy_social.feed').where('org_id', '=', ctx.orgId).where('id', '=', input.feedId).executeTakeFirst();
     if (Number(done.numDeletedRows) === 0) throw new DomainError('FEED_NOT_FOUND', 404, 'Không tìm thấy nguồn tin này');
     ctx.audit({ feed_id: input.feedId });
     return { feedId: input.feedId };
@@ -160,8 +160,8 @@ export const feedList = defineQuery({
       created_at: Date;
     }>`
       SELECT f.id, f.url, f.title, f.connection_ids, f.paused, f.failures, f.last_checked_at, f.last_error, f.created_at,
-             (SELECT count(*) FROM crove_social.feed_item i WHERE i.org_id = f.org_id AND i.feed_id = f.id AND i.post_id IS NOT NULL) AS drafts
-      FROM crove_social.feed f WHERE f.org_id = ${ctx.orgId}
+             (SELECT count(*) FROM ludy_social.feed_item i WHERE i.org_id = f.org_id AND i.feed_id = f.id AND i.post_id IS NOT NULL) AS drafts
+      FROM ludy_social.feed f WHERE f.org_id = ${ctx.orgId}
       ORDER BY f.created_at, f.id`.execute(ctx.trx);
     return rows.map((r) => ({
       id: r.id,
@@ -184,7 +184,7 @@ export const feedLoad = defineQuery({
   input: z.object({ feedId: zId }),
   access: 'system',
   handler: async (ctx, input): Promise<{ url: string } | null> => {
-    const row = await ctx.trx.selectFrom('crove_social.feed').select(['url', 'paused']).where('org_id', '=', ctx.orgId).where('id', '=', input.feedId).executeTakeFirst();
+    const row = await ctx.trx.selectFrom('ludy_social.feed').select(['url', 'paused']).where('org_id', '=', ctx.orgId).where('id', '=', input.feedId).executeTakeFirst();
     return row && !row.paused ? { url: row.url } : null;
   },
 });
@@ -205,7 +205,7 @@ async function draftFrom(ctx: CommandContext, feed: FeedRow, item: Item): Promis
   if (channels.length === 0) return null;
   const body = [item.title, item.summary].filter((s): s is string => Boolean(s)).join('\n\n');
   const inserted = await ctx.trx
-    .insertInto('crove_social.post')
+    .insertInto('ludy_social.post')
     .values({
       org_id: ctx.orgId,
       body,
@@ -240,7 +240,7 @@ export const feedRecord = defineCommand({
   target: (input) => ({ type: 'social.feed', id: input.feedId }),
   handler: async (ctx, input): Promise<{ drafted: number; paused: boolean }> => {
     const feed = await ctx.trx
-      .selectFrom('crove_social.feed')
+      .selectFrom('ludy_social.feed')
       .select(['id', 'url', 'connection_ids', 'paused', 'failures', 'last_checked_at', 'created_by', 'created_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.feedId)
@@ -252,7 +252,7 @@ export const feedRecord = defineCommand({
       const failures = Math.min(100, feed.failures + 1);
       const paused = failures >= PAUSE_AFTER_FAILURES;
       await ctx.trx
-        .updateTable('crove_social.feed')
+        .updateTable('ludy_social.feed')
         .set({ failures, last_error: result.error, last_checked_at: ctx.now, paused, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', feed.id)
@@ -260,7 +260,7 @@ export const feedRecord = defineCommand({
       if (paused) await ctx.emit('social.feed.paused', { feed_id: feed.id, error: result.error });
       return { drafted: 0, paused };
     }
-    const seen = await ctx.trx.selectFrom('crove_social.feed_item').select('item_key').where('org_id', '=', ctx.orgId).where('feed_id', '=', feed.id).limit(1).execute();
+    const seen = await ctx.trx.selectFrom('ludy_social.feed_item').select('item_key').where('org_id', '=', ctx.orgId).where('feed_id', '=', feed.id).limit(1).execute();
     // The first good read (none noted yet, whatever failed before it) notes what the feed already holds; only items
     // published since the feed was added are drafted.
     const first = seen.length === 0;
@@ -274,7 +274,7 @@ export const feedRecord = defineCommand({
         ? []
         : (
             await ctx.trx
-              .selectFrom('crove_social.feed_item')
+              .selectFrom('ludy_social.feed_item')
               .select('item_key')
               .where('org_id', '=', ctx.orgId)
               .where('feed_id', '=', feed.id)
@@ -291,13 +291,13 @@ export const feedRecord = defineCommand({
       const postId = fresh ? await draftFrom(ctx, feed as FeedRow, item) : null;
       if (postId) drafted += 1;
       await ctx.trx
-        .insertInto('crove_social.feed_item')
+        .insertInto('ludy_social.feed_item')
         .values({ org_id: ctx.orgId, feed_id: feed.id, item_key: key, title: item.title, post_id: postId, created_at: ctx.now })
         .onConflict((oc) => oc.columns(['org_id', 'feed_id', 'item_key']).doNothing())
         .execute();
     }
     await ctx.trx
-      .updateTable('crove_social.feed')
+      .updateTable('ludy_social.feed')
       .set({ title: result.title, failures: 0, last_error: null, last_checked_at: ctx.now, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', feed.id)

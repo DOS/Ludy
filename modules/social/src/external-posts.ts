@@ -1,7 +1,7 @@
 // Posts a connected account published outside Crove (#1054). Agencies often post part of their content straight on
 // Facebook or Instagram, and the Metrics tab and the client report count only what Crove published. The worker lists
 // each connected account's own posts of the last 30 days through its adapter (listRecentPosts), keeps the ones that are
-// not a variant Crove published on that channel (crove_social.external_post), and reads their counts through the same
+// not a variant Crove published on that channel (ludy_social.external_post), and reads their counts through the same
 // metrics() the published variants use. Every read leaves out a post whose id is (by then) a variant's, so a post is
 // never counted twice. The Metrics tab counts them only when asked ("Tính cả bài đăng ngoài Crove"), and a report link
 // only when it was made with that option; otherwise every total stays as it was.
@@ -102,7 +102,7 @@ const TIKTOK_ON_ITS_WAY = ['publishing', 'processing'] as const;
 // import and at every read; once the asking ends without one, the hold lifts.
 async function tiktokHeldFrom(trx: CommandContext['trx'], orgId: string, connectionId: string, now: Date): Promise<Date | null> {
   const rows = await trx
-    .selectFrom('crove_social.post_variant')
+    .selectFrom('ludy_social.post_variant')
     .select(['provider', 'status', 'settings', 'external_post_id', 'error_code', 'published_at'])
     .where('org_id', '=', orgId)
     .where('channel_connection_id', '=', connectionId)
@@ -146,14 +146,14 @@ export const externalPostImport = defineCommand({
     const listed = [...byId.values()];
     // What Crove published on this channel (a published variant with the platform id, or with the same page address:
     // a Facebook video or Reel Crove stored as <page>_<video> may be listed under another post id) is counted as the
-    // variant, never again as an outside post. The same check every read makes (crove_social.external_post_is_crove).
+    // variant, never again as an outside post. The same check every read makes (ludy_social.external_post_is_crove).
     const crove =
       listed.length === 0
         ? []
         : (
             await sql<{ id: string }>`
               SELECT p.id FROM ROWS FROM (pg_catalog.unnest(${listed.map((p) => p.externalId)}::text[]), pg_catalog.unnest(${listed.map((p) => p.permalink)}::text[])) AS p(id, link)
-              WHERE crove_social.external_post_is_crove(${ctx.orgId}::uuid, ${connection.id}::uuid, p.id, p.link)`.execute(ctx.trx)
+              WHERE ludy_social.external_post_is_crove(${ctx.orgId}::uuid, ${connection.id}::uuid, p.id, p.link)`.execute(ctx.trx)
           ).rows;
     for (const v of crove) byId.delete(v.id);
     // A TikTok video that may be a Crove post still without its public id waits for a later bring-in (#1476).
@@ -169,7 +169,7 @@ export const externalPostImport = defineCommand({
     const fresh = [...byId.values()];
     if (fresh.length > 0) {
       await ctx.trx
-        .insertInto('crove_social.external_post')
+        .insertInto('ludy_social.external_post')
         .values(
           fresh.map((p) => ({
             org_id: ctx.orgId,
@@ -188,7 +188,7 @@ export const externalPostImport = defineCommand({
         .execute();
     }
     await ctx.trx
-      .insertInto('crove_social.external_import')
+      .insertInto('ludy_social.external_import')
       .values({ org_id: ctx.orgId, channel_connection_id: connection.id, ran_at: ctx.now, found: input.posts.length, error: input.error ?? null })
       .onConflict((oc) => oc.columns(['org_id', 'channel_connection_id']).doUpdateSet({ ran_at: ctx.now, found: input.posts.length, error: input.error ?? null }))
       .execute();
@@ -210,7 +210,7 @@ export const externalPostRecord = defineCommand({
     requireSystem(ctx);
     const counted = input.metrics && Object.keys(input.metrics).length > 0 ? input.metrics : null;
     const row = await ctx.trx
-      .updateTable('crove_social.external_post')
+      .updateTable('ludy_social.external_post')
       .set({
         checked_at: ctx.now,
         updated_at: ctx.now,
@@ -233,7 +233,7 @@ export const externalPostTarget = defineQuery({
   access: 'system',
   handler: async (ctx, input) => {
     const row = await ctx.trx
-      .selectFrom('crove_social.external_post')
+      .selectFrom('ludy_social.external_post')
       .select(['channel_connection_id', 'external_post_id', 'gone'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.externalId)
@@ -274,11 +274,11 @@ export const metricsExternal = defineQuery({
       captured_at: Date | null;
     }>`
       SELECT e.id, e.channel_connection_id, c.provider, e.excerpt, e.published_at, e.permalink, e.metrics, e.captured_at
-      FROM crove_social.external_post e
+      FROM ludy_social.external_post e
       JOIN ludy_kernel.channel_connection c ON c.org_id = e.org_id AND c.id = e.channel_connection_id
       WHERE e.org_id = ${ctx.orgId}
         AND e.published_at > pg_catalog.now() - pg_catalog.make_interval(days => ${input.days ?? 30}::int)
-        AND NOT crove_social.external_post_is_crove(e.org_id, e.channel_connection_id, e.external_post_id, e.permalink)
+        AND NOT ludy_social.external_post_is_crove(e.org_id, e.channel_connection_id, e.external_post_id, e.permalink)
         -- A member limited to some channels (#1081) sees those only.
         AND ${connectionInScope(await channelScope(ctx), 'e.channel_connection_id')}
       ORDER BY e.published_at DESC, e.id
@@ -360,7 +360,7 @@ export async function sweepExternalPosts(deps: ExternalPostDeps): Promise<{ impo
   const since = new Date(now.getTime() - RECENT_POSTS_MAX_DAYS * 86_400_000);
 
   const due = await sql<{ org_id: string; connection_id: string; provider: string; version: Date }>`
-    SELECT org_id, connection_id, provider, version FROM crove_social.external_import_due(${IMPORT_LIMIT}::int, ${listing}::text[], ${EXTERNAL_INTERVAL_SECONDS}::int)`.execute(deps.workerDb);
+    SELECT org_id, connection_id, provider, version FROM ludy_social.external_import_due(${IMPORT_LIMIT}::int, ${listing}::text[], ${EXTERNAL_INTERVAL_SECONDS}::int)`.execute(deps.workerDb);
   await eachBounded(due.rows, async (row) => {
     const options = { actor: ACTOR, orgId: row.org_id };
     const publisher = deps.publishers[row.provider];
@@ -393,7 +393,7 @@ export async function sweepExternalPosts(deps: ExternalPostDeps): Promise<{ impo
   const measuring = listing.filter((id) => typeof deps.publishers[id]?.metrics === 'function');
   if (measuring.length === 0) return out;
   const posts = await sql<{ org_id: string; external_id: string; provider: string }>`
-    SELECT org_id, external_id, provider FROM crove_social.external_metrics_due(${MEASURE_LIMIT}::int, ${measuring}::text[], ${EXTERNAL_INTERVAL_SECONDS}::int)`.execute(deps.workerDb);
+    SELECT org_id, external_id, provider FROM ludy_social.external_metrics_due(${MEASURE_LIMIT}::int, ${measuring}::text[], ${EXTERNAL_INTERVAL_SECONDS}::int)`.execute(deps.workerDb);
   await eachBounded(posts.rows, async (row) => {
     const options = { actor: ACTOR, orgId: row.org_id };
     const publisher = deps.publishers[row.provider];

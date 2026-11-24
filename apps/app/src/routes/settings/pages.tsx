@@ -275,9 +275,10 @@ export function SettingsSecurityPage() {
               <MeetingPlatforms canConnect={org.role !== 'viewer'} />
             </Anchor>
           )}
-          {modules.includes('meetings') && <ExtensionDevices />}
-          {/* The other members' extension devices (#2868), with the meetings module; owners and admins. */}
-          {modules.includes('meetings') && canManage && me && (org.role === 'owner' || org.role === 'admin') && (
+          {/* Connected devices (the extension, and Ludy Desktop since ADR-0055 slice 2, #4515): not tied to the meetings module, the desktop app is a general client. */}
+          <ExtensionDevices />
+          {/* The other members' connected devices (#2868); owners and admins. */}
+          {canManage && me && (org.role === 'owner' || org.role === 'admin') && (
             <OrgExtensionDevices key={`org-extension-devices:${org.slug}`} members={org.members} viewerRole={org.role} me={me.userId} />
           )}
         </>

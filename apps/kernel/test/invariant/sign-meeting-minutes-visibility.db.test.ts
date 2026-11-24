@@ -993,6 +993,18 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
       { actor: asUser(recorderId), orgId },
     );
 
+    await runtime.execute(
+      'sign.playbook.record_check',
+      {
+        envelopeId: recEnv.envelopeId,
+        sourceSha256: recPdfSha,
+        mode: 'deterministic',
+        promptVersion: null,
+        extractedPages: [{ page: 1, text: 'Dieu 5: Phat vi pham 12% gia tri hop dong.' }],
+      },
+      { actor: asUser(recorderId), orgId },
+    );
+
     for (const readerId of [recorderId, attendeeId]) {
       const gotObl = await runtime.query<{ obligation: { envelopeId: string; status: string } | null }>(
         'sign.obligation.get',
@@ -1001,6 +1013,14 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
       );
       expect(gotObl.obligation?.envelopeId).toBe(recEnv.envelopeId);
       expect(gotObl.obligation?.status).toBe('confirmed');
+
+      const gotPlaybook = await runtime.query<{ check: { envelopeId: string; mode: string } | null }>(
+        'sign.playbook.get',
+        { envelopeId: recEnv.envelopeId },
+        { actor: asUser(readerId), orgId },
+      );
+      expect(gotPlaybook.check?.envelopeId).toBe(recEnv.envelopeId);
+      expect(gotPlaybook.check?.mode).toBe('deterministic');
 
       const renewals = await runtime.query<{ items: Array<{ envelope: { id: string } }> }>(
         'sign.obligation.renewals_list',
@@ -1027,6 +1047,10 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
     for (const nonReaderId of [ownerId, adminId, outsiderMemberId, viewerId]) {
       await expect(
         runtime.query('sign.obligation.get', { envelopeId: recEnv.envelopeId }, { actor: asUser(nonReaderId), orgId }),
+      ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+
+      await expect(
+        runtime.query('sign.playbook.get', { envelopeId: recEnv.envelopeId }, { actor: asUser(nonReaderId), orgId }),
       ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
 
       const renewals = await runtime.query<{ items: Array<{ envelope: { id: string } }> }>(
@@ -1090,6 +1114,83 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
           { envelopeId: recEnv.envelopeId, itemId: 'mtg-obl-1', completed: true },
           { actor: asUser(nonReaderWriterId), orgId },
         ),
+      ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+      await expect(
+        runtime.query('sign.playbook.source', { envelopeId: recEnv.envelopeId }, { actor: asUser(nonReaderWriterId), orgId }),
+      ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+      await expect(
+        runtime.execute(
+          'sign.playbook.record_check',
+          {
+            envelopeId: recEnv.envelopeId,
+            sourceSha256: recPdfSha,
+            mode: 'deterministic',
+            promptVersion: null,
+            extractedPages: [{ page: 1, text: 'Probe' }],
+          },
+          { actor: asUser(nonReaderWriterId), orgId },
+        ),
+      ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+      await expect(
+        runtime.execute(
+          'sign.playbook.override_finding',
+          {
+            envelopeId: recEnv.envelopeId,
+            ruleId: '01900000-0000-4000-8000-000000000001',
+            checkRevision: '0'.repeat(64),
+            verdict: 'pass',
+          },
+          { actor: asUser(nonReaderWriterId), orgId },
+        ),
+      ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+      await expect(
+        runtime.query(
+          'sign.kyc.source',
+          { envelopeId: recEnv.envelopeId, fieldId: attFieldId },
+          { actor: asUser(nonReaderWriterId), orgId },
+        ),
+      ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+      await expect(
+        runtime.execute(
+          'sign.kyc.run_deterministic',
+          {
+            envelopeId: recEnv.envelopeId,
+            fieldId: attFieldId,
+            attachmentPages: [{ page: 1, text: 'Phu luc bien ban MST: 0312345678' }],
+          },
+          { actor: asUser(nonReaderWriterId), orgId },
+        ),
+      ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+      await expect(
+        runtime.execute(
+          'sign.kyc.confirm',
+          { envelopeId: recEnv.envelopeId, fieldId: attFieldId, status: 'matched' },
+          { actor: asUser(nonReaderWriterId), orgId },
+        ),
+      ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
+    }
+
+    // Permitted meeting_minutes readers can run KYC checks and read KYC list, while non-readers get 404 (#4443 + ADR-0047).
+    await runtime.execute(
+      'sign.kyc.run_deterministic',
+      {
+        envelopeId: recEnv.envelopeId,
+        fieldId: attFieldId,
+        attachmentPages: [{ page: 1, text: 'Phu luc bien ban MST: 0312345678' }],
+      },
+      { actor: asUser(recorderId), orgId },
+    );
+    for (const readerId of [recorderId, attendeeId]) {
+      const kycList = await runtime.query<{ items: Array<{ fieldId: string }> }>(
+        'sign.kyc.list',
+        { envelopeId: recEnv.envelopeId },
+        { actor: asUser(readerId), orgId },
+      );
+      expect(kycList.items.map((x) => x.fieldId)).toContain(attFieldId);
+    }
+    for (const nonReaderId of [ownerId, adminId, outsiderMemberId, viewerId]) {
+      await expect(
+        runtime.query('sign.kyc.list', { envelopeId: recEnv.envelopeId }, { actor: asUser(nonReaderId), orgId }),
       ).rejects.toMatchObject({ code: 'SIGN_ENVELOPE_NOT_FOUND', status: 404 });
     }
 
@@ -1180,6 +1281,62 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
     expect(exportedObligationEnvIds).toContain(standaloneEnv.envelopeId);
     expect(exportedObligationEnvIds).not.toContain(recEnv.envelopeId);
 
+    await adminPool!.query(
+      `INSERT INTO crove_sign.playbook_check (org_id, envelope_id, source_sha256, mode, created_by)
+       VALUES ($1::uuid, $2::uuid, repeat('b', 64), 'deterministic', $3::uuid)`,
+      [orgId, standaloneEnv.envelopeId, ownerId],
+    );
+    const exportedPlaybookCheckEnvIds: string[] = [];
+    await workerRuntime.stream(
+      'kernel.org.export.snapshot',
+      { table: 'sign.playbook_check' },
+      { actor: asSystem('org-export'), orgId },
+      async (batch) => {
+        for (const line of (batch as { lines: string[] }).lines) {
+          exportedPlaybookCheckEnvIds.push((JSON.parse(line) as { envelope_id: string }).envelope_id);
+        }
+      },
+    );
+    expect(exportedPlaybookCheckEnvIds).toContain(standaloneEnv.envelopeId);
+    expect(exportedPlaybookCheckEnvIds).not.toContain(recEnv.envelopeId);
+
+    const standaloneKycSignerRes = await adminPool!.query<{ id: string }>(
+      `INSERT INTO crove_sign.signer (org_id, envelope_id, routing_order, signer_role, role_label, name, delivery_mode)
+       VALUES ($1::uuid, $2::uuid, 99, 'signer', 'KYC Probe', 'Standalone Signer', 'link')
+       RETURNING id`,
+      [orgId, standaloneEnv.envelopeId],
+    );
+    const standaloneKycFieldRes = await adminPool!.query<{ id: string }>(
+      `INSERT INTO crove_sign.field (org_id, envelope_id, signer_id, field_type, page_number, x_norm, y_norm, w_norm, h_norm)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, 'attachment', 1, 0.1, 0.1, 0.3, 0.08)
+       RETURNING id`,
+      [orgId, standaloneEnv.envelopeId, standaloneKycSignerRes.rows[0]!.id],
+    );
+    const recKycFieldRes = await adminPool!.query<{ id: string }>(
+      `INSERT INTO crove_sign.field (org_id, envelope_id, signer_id, field_type, page_number, x_norm, y_norm, w_norm, h_norm)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, 'attachment', 1, 0.1, 0.25, 0.3, 0.08)
+       RETURNING id`,
+      [orgId, recEnv.envelopeId, addedSigner.signerId],
+    );
+    await adminPool!.query(
+      `INSERT INTO crove_sign.kyc_check (org_id, envelope_id, field_id, file_id, file_sha256, status, mode, findings_json)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::text, 'matched', 'manual', '{}'::jsonb)`,
+      [orgId, standaloneEnv.envelopeId, standaloneKycFieldRes.rows[0]!.id, ownerPdf, 'a'.repeat(64)],
+    );
+    const exportedKycEnvIds: string[] = [];
+    await workerRuntime.stream(
+      'kernel.org.export.snapshot',
+      { table: 'sign.kyc_check' },
+      { actor: asSystem('org-export'), orgId },
+      async (batch) => {
+        for (const line of (batch as { lines: string[] }).lines) {
+          exportedKycEnvIds.push((JSON.parse(line) as { envelope_id: string }).envelope_id);
+        }
+      },
+    );
+    expect(exportedKycEnvIds).toContain(standaloneEnv.envelopeId);
+    expect(exportedKycEnvIds).not.toContain(recEnv.envelopeId);
+
     // 6. Direct SQL RLS + SECURITY DEFINER checks under crove_app (non-reader owner & agent context)!
     const appClient = await appPool!.connect();
     try {
@@ -1189,7 +1346,7 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
         contextToken(ownerId, orgId),
       ]);
 
-      for (const table of ['envelope', 'envelope_obligation', 'signer', 'field', 'ai_analysis', 'signing_event'] as const) {
+      for (const table of ['envelope', 'envelope_obligation', 'playbook_check', 'kyc_check', 'signer', 'field', 'ai_analysis', 'signing_event'] as const) {
         const idCol = table === 'envelope' ? 'id' : 'envelope_id';
         const { rowCount } = await appClient.query(
           `SELECT 1 FROM crove_sign.${table} WHERE org_id = $1::uuid AND ${idCol} = $2::uuid`,
@@ -1207,6 +1364,36 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
         ),
       ).rejects.toThrow(/row-level security/);
       await appClient.query('ROLLBACK TO SAVEPOINT sp_obl_ins');
+
+      await appClient.query('SAVEPOINT sp_pbk_ins');
+      await expect(
+        appClient.query(
+          `INSERT INTO crove_sign.playbook_check (org_id, envelope_id, source_sha256, mode, created_by)
+           VALUES ($1::uuid, $2::uuid, repeat('c', 64), 'deterministic', $3::uuid)`,
+          [orgId, attTplEnv.envelopeId, ownerId],
+        ),
+      ).rejects.toThrow(/row-level security/);
+      await appClient.query('ROLLBACK TO SAVEPOINT sp_pbk_ins');
+
+      await appClient.query('SAVEPOINT sp_kyc_direct_ins');
+      await expect(
+        appClient.query(
+          `INSERT INTO crove_sign.kyc_check (org_id, envelope_id, field_id, file_id, file_sha256, status, mode, findings_json)
+           VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::text, 'pending', 'manual', '{}'::jsonb)`,
+          [orgId, recEnv.envelopeId, recKycFieldRes.rows[0]!.id, ownerPdf, 'c'.repeat(64)],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+      await appClient.query('ROLLBACK TO SAVEPOINT sp_kyc_direct_ins');
+
+      await appClient.query('SAVEPOINT sp_kyc_cross_env_ins');
+      await expect(
+        appClient.query(
+          `INSERT INTO crove_sign.kyc_check (org_id, envelope_id, field_id, file_id, file_sha256, status, mode, findings_json)
+           VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::text, 'pending', 'manual', '{}'::jsonb)`,
+          [orgId, standaloneEnv.envelopeId, recKycFieldRes.rows[0]!.id, ownerPdf, 'c'.repeat(64)],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+      await appClient.query('ROLLBACK TO SAVEPOINT sp_kyc_cross_env_ins');
 
       await appClient.query('SAVEPOINT sp_mint');
       await expect(
@@ -1281,6 +1468,16 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
         [orgId, recEnv.envelopeId],
       );
       expect(oblRows.rowCount).toBe(0);
+      const pbkRows = await workerClient.query(
+        'SELECT id FROM crove_sign.playbook_check WHERE org_id = $1::uuid AND envelope_id = $2::uuid',
+        [orgId, recEnv.envelopeId],
+      );
+      expect(pbkRows.rowCount).toBe(0);
+      const kycRows = await workerClient.query(
+        'SELECT id FROM crove_sign.kyc_check WHERE org_id = $1::uuid AND envelope_id = $2::uuid',
+        [orgId, recEnv.envelopeId],
+      );
+      expect(kycRows.rowCount).toBe(0);
       const canRead = await workerClient.query<{ ok: boolean }>(
         'SELECT crove_sign.can_read_sign_file($1::uuid) AS ok',
         [sealedFileId],

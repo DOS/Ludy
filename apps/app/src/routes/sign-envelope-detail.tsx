@@ -15,7 +15,9 @@ import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { FieldOptionsAndAttachmentEditor } from '../components/sign/field-options-editor.tsx';
 import { FieldOverlayLayer } from '../components/sign/field-placer.tsx';
+import { EnvelopeKycCard } from '../components/sign/envelope-kyc-card.tsx';
 import { EnvelopeObligationsCard } from '../components/sign/envelope-obligations-card.tsx';
+import { EnvelopePlaybookCard } from '../components/sign/envelope-playbook-card.tsx';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
 import { SenderSharedSummaryEditor } from '../components/sign/shared-summary-card.tsx';
 import { SignerPanel, type AddSignerFormInput } from '../components/sign/signer-panel.tsx';
@@ -1390,6 +1392,14 @@ export function SignEnvelopeDetailPage() {
             />
           ) : null}
 
+          {!isDraft ? (
+            <EnvelopeKycCard
+              envelopeId={envelope.id}
+              hasUploadedAttachments={Boolean(detailQuery.data?.fields.some((fItem) => Boolean(fItem.attachmentFileId)))}
+              onDownloadAttachment={(fileId, filename) => handleDownload(fileId, filename)}
+            />
+          ) : null}
+
           <VyClausePanel
             aiAnalysis={effectiveAi}
             pendingProposals={pendingProposals}
@@ -1398,6 +1408,18 @@ export function SignEnvelopeDetailPage() {
             onAnalyze={() => analyzeMutation.mutate()}
             onJumpToPage={(targetPage) => setPageNumber(Math.min(effectivePageCount, Math.max(1, targetPage)))}
             onApplyAllProposals={handleApplyAllProposals}
+          />
+
+          <EnvelopePlaybookCard
+            envelopeId={envelope.id}
+            sourceFileId={envelope.sourceFileId}
+            inspectStatus={envelope.inspectStatus}
+            pdfBytes={
+              envelope.sealedFileId && envelope.sealedFileId !== envelope.sourceFileId
+                ? null
+                : (pdfQuery.data ?? null)
+            }
+            onJumpToPage={(targetPage) => setPageNumber(Math.min(effectivePageCount, Math.max(1, targetPage)))}
           />
 
           {canEditSharedSummary || Boolean(envelope.sharedSummary) || Boolean(envelope.shareSummaryWithSigners) ? (

@@ -64,14 +64,14 @@ const target = <T extends { envelopeId: string }>(input: T) => ({
 
 const OBLIGATION_PROPOSE_WRITE = tableWrite(
   signManifest.tables,
-  'crove_sign',
+  'ludy_sign',
   'envelope_obligation',
   ['org_id', 'envelope_id', 'proposal_json', 'prompt_version', 'status', 'created_by', 'updated_at'],
 );
 
 const OBLIGATION_UPSERT_WRITE = tableWrite(
   signManifest.tables,
-  'crove_sign',
+  'ludy_sign',
   'envelope_obligation',
   [
     'org_id',
@@ -95,14 +95,14 @@ const OBLIGATION_UPSERT_WRITE = tableWrite(
 
 const OBLIGATION_DISMISS_WRITE = tableWrite(
   signManifest.tables,
-  'crove_sign',
+  'ludy_sign',
   'envelope_obligation',
   ['proposal_json', 'status', 'updated_at'],
 );
 
 const OBLIGATION_COMPLETE_ITEM_WRITE = tableWrite(
   signManifest.tables,
-  'crove_sign',
+  'ludy_sign',
   'envelope_obligation',
   ['obligations_json', 'updated_at'],
 );
@@ -397,7 +397,7 @@ function parseStoredProposal(raw: unknown): SignObligationProposalContract | nul
   };
 }
 
-interface ObligationDbRow {
+export interface ObligationDbRow {
   org_id: string;
   id: string;
   envelope_id: string;
@@ -419,7 +419,7 @@ interface ObligationDbRow {
   updated_at: Date | string;
 }
 
-function toObligationRecord(row: ObligationDbRow): SignEnvelopeObligationRecordContract {
+export function toObligationRecord(row: ObligationDbRow): SignEnvelopeObligationRecordContract {
   const rawCurrency = typeof row.currency === 'string' ? row.currency.trim().toUpperCase() : '';
   return {
     id: row.id,
@@ -647,7 +647,7 @@ export const obligationPropose = defineCommand({
       throw new DomainError('FORBIDDEN', 403, 'Only workspace members or system workers can store obligation proposals');
     }
     const env = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select(['id', 'status', 'source_kind', 'source_id', 'created_by', 'page_count'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
@@ -667,7 +667,7 @@ export const obligationPropose = defineCommand({
 
     const sanitized = sanitizeIncomingProposal(input.proposal, env.page_count, input.extractedPages);
     const existing = await ctx.trx
-      .selectFrom('crove_sign.envelope_obligation')
+      .selectFrom('ludy_sign.envelope_obligation')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', env.id)
@@ -682,7 +682,7 @@ export const obligationPropose = defineCommand({
       // Preserve human-confirmed status and confirmed terms until a human explicitly saves/confirms the new proposal.
       const nextStatus: SignObligationStatus = existing.status === 'confirmed' ? 'confirmed' : 'proposed';
       saved = await ctx.trx
-        .updateTable('crove_sign.envelope_obligation')
+        .updateTable('ludy_sign.envelope_obligation')
         .set({
           proposal_json: JSON.stringify(sanitized),
           prompt_version: cleanLine(input.promptVersion, 32) || 'v1',
@@ -695,7 +695,7 @@ export const obligationPropose = defineCommand({
         .executeTakeFirst();
     } else {
       saved = await ctx.trx
-        .insertInto('crove_sign.envelope_obligation')
+        .insertInto('ludy_sign.envelope_obligation')
         .values({
           org_id: ctx.orgId,
           envelope_id: env.id,
@@ -733,7 +733,7 @@ export const obligationUpsert = defineCommand({
   handler: async (ctx, input): Promise<SignEnvelopeObligationRecordContract> => {
     const userId = assertUser(ctx);
     const env = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select(['id', 'status', 'source_kind', 'source_id', 'created_by', 'page_count'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
@@ -770,7 +770,7 @@ export const obligationUpsert = defineCommand({
     const currency = input.currency.toUpperCase();
 
     const existing = await ctx.trx
-      .selectFrom('crove_sign.envelope_obligation')
+      .selectFrom('ludy_sign.envelope_obligation')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', env.id)
@@ -824,7 +824,7 @@ export const obligationUpsert = defineCommand({
     let saved: ObligationDbRow | undefined;
     if (existing) {
       saved = await ctx.trx
-        .updateTable('crove_sign.envelope_obligation')
+        .updateTable('ludy_sign.envelope_obligation')
         .set({
           counterparty_name: counterpartyName,
           effective_date: effectiveDate,
@@ -846,7 +846,7 @@ export const obligationUpsert = defineCommand({
         .executeTakeFirst();
     } else {
       saved = await ctx.trx
-        .insertInto('crove_sign.envelope_obligation')
+        .insertInto('ludy_sign.envelope_obligation')
         .values({
           org_id: ctx.orgId,
           envelope_id: env.id,
@@ -897,7 +897,7 @@ export const obligationDismissProposal = defineCommand({
   handler: async (ctx, input) => {
     assertUser(ctx);
     const env = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select(['id', 'source_kind', 'source_id', 'created_by'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
@@ -909,7 +909,7 @@ export const obligationDismissProposal = defineCommand({
     await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env, 'Signing envelope not found');
 
     const existing = await ctx.trx
-      .selectFrom('crove_sign.envelope_obligation')
+      .selectFrom('ludy_sign.envelope_obligation')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', env.id)
@@ -921,7 +921,7 @@ export const obligationDismissProposal = defineCommand({
 
     const nextStatus: SignObligationStatus = existing.status === 'confirmed' ? 'confirmed' : 'dismissed';
     const updated = await ctx.trx
-      .updateTable('crove_sign.envelope_obligation')
+      .updateTable('ludy_sign.envelope_obligation')
       .set({
         proposal_json: null,
         status: nextStatus,
@@ -956,7 +956,7 @@ export const obligationCompleteItem = defineCommand({
   handler: async (ctx, input): Promise<SignEnvelopeObligationRecordContract> => {
     assertUser(ctx);
     const env = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select(['id', 'source_kind', 'source_id', 'created_by'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
@@ -968,7 +968,7 @@ export const obligationCompleteItem = defineCommand({
     await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env, 'Signing envelope not found');
 
     const existing = await ctx.trx
-      .selectFrom('crove_sign.envelope_obligation')
+      .selectFrom('ludy_sign.envelope_obligation')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', env.id)
@@ -997,7 +997,7 @@ export const obligationCompleteItem = defineCommand({
     );
 
     const updated = await ctx.trx
-      .updateTable('crove_sign.envelope_obligation')
+      .updateTable('ludy_sign.envelope_obligation')
       .set({
         obligations_json: JSON.stringify(nextItems),
         updated_at: now,
@@ -1027,7 +1027,7 @@ export const obligationGet = defineQuery({
   handler: async (ctx, input) => {
     assertUser(ctx);
     const env = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select(['id', 'source_kind', 'source_id', 'created_by'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
@@ -1039,7 +1039,7 @@ export const obligationGet = defineQuery({
     await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env, 'Signing envelope not found');
 
     const row = await ctx.trx
-      .selectFrom('crove_sign.envelope_obligation')
+      .selectFrom('ludy_sign.envelope_obligation')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', env.id)
@@ -1058,7 +1058,7 @@ export const obligationSource = defineQuery({
   access: WRITERS,
   handler: async (ctx, input): Promise<SignObligationSource> => {
     const env = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select([
         'id',
         'status',
@@ -1179,8 +1179,8 @@ export const obligationRenewalsList = defineQuery({
     const todayVn = vietnamToday(new Date());
 
     let q = ctx.trx
-      .selectFrom('crove_sign.envelope_obligation as o')
-      .innerJoin('crove_sign.envelope as e', (join) =>
+      .selectFrom('ludy_sign.envelope_obligation as o')
+      .innerJoin('ludy_sign.envelope as e', (join) =>
         join.onRef('e.org_id', '=', 'o.org_id').onRef('e.id', '=', 'o.envelope_id'),
       )
       .selectAll('o')
@@ -1217,7 +1217,7 @@ export const obligationRenewalsList = defineQuery({
     q = q.where((eb) =>
       eb.or([
         eb('e.source_kind', '!=', 'meeting_minutes'),
-        sql<boolean>`crove_sign.can_access_meeting_minutes_envelope(${eb.ref('e.org_id')}, ${eb.ref('e.source_id')}, ${eb.ref('e.created_by')})`,
+        sql<boolean>`ludy_sign.can_access_meeting_minutes_envelope(${eb.ref('e.org_id')}, ${eb.ref('e.source_id')}, ${eb.ref('e.created_by')})`,
       ]),
     );
 
@@ -1244,7 +1244,7 @@ export const obligationRenewalsList = defineQuery({
     }
 
     const signerRows = await ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select(['envelope_id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where(
@@ -1502,8 +1502,8 @@ export const signObligationsToday = defineQuery({
     const noticeHorizonVn = addDaysIso(todayVn, RENEWAL_NOTICE_ALERT_WINDOW_DAYS);
 
     let q = ctx.trx
-      .selectFrom('crove_sign.envelope_obligation as o')
-      .innerJoin('crove_sign.envelope as e', (join) =>
+      .selectFrom('ludy_sign.envelope_obligation as o')
+      .innerJoin('ludy_sign.envelope as e', (join) =>
         join.onRef('e.org_id', '=', 'o.org_id').onRef('e.id', '=', 'o.envelope_id'),
       )
       .select([
@@ -1535,7 +1535,7 @@ export const signObligationsToday = defineQuery({
     q = q.where((eb) =>
       eb.or([
         eb('e.source_kind', '!=', 'meeting_minutes'),
-        sql<boolean>`crove_sign.can_access_meeting_minutes_envelope(${eb.ref('e.org_id')}, ${eb.ref('e.source_id')}, ${eb.ref('e.created_by')})`,
+        sql<boolean>`ludy_sign.can_access_meeting_minutes_envelope(${eb.ref('e.org_id')}, ${eb.ref('e.source_id')}, ${eb.ref('e.created_by')})`,
       ]),
     );
 

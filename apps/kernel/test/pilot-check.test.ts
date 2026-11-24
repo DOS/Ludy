@@ -325,7 +325,7 @@ describe('pilot-check settings', () => {
     });
 
     it('fails transcription turned on with no price per minute of audio, so the hard stop never refuses one (#2578)', () => {
-      const on = { ...READY, MEETINGS_TRANSCRIBE: 'on' };
+      const on = { ...READY, MEETINGS_TRANSCRIBE: 'on', TRANSCRIBE_BASE_URL: 'https://stt.example.com/v1', TRANSCRIBE_MODEL: 'stt-model' };
       expect(failing(on)).toEqual([expect.stringMatching(/^Transcription price: MEETINGS_TRANSCRIBE is on while AI_PRICE_AUDIO_PER_MIN is 0/)]);
       expect(failing({ ...on, AI_PRICE_AUDIO_PER_MIN: '0.0' })).toHaveLength(1);
       expect(failing({ ...on, AI_PRICE_AUDIO_PER_MIN: '0.006' })).toEqual([]);
@@ -335,6 +335,35 @@ describe('pilot-check settings', () => {
       expect(failing({ ...READY, MEETINGS_TRANSCRIBE: 'off' })).toEqual([]);
       // A shipped sample value of the provider's key is wrong too.
       expect(failing({ ...on, AI_PRICE_AUDIO_PER_MIN: '1', TRANSCRIBE_API_KEY: 'change-me' })).toEqual([expect.stringMatching(/TRANSCRIBE_API_KEY still has a sample value/)]);
+    });
+
+    it('fails transcription turned on with no provider URL or model, which leaves it silently off (#4524)', () => {
+      const priced = { ...READY, MEETINGS_TRANSCRIBE: 'on', AI_PRICE_AUDIO_PER_MIN: '0.006' };
+      const url = 'https://stt.example.com/v1';
+      expect(failing({ ...priced, TRANSCRIBE_MODEL: 'stt-model' })).toEqual([expect.stringMatching(/^Transcription provider: MEETINGS_TRANSCRIBE is on while TRANSCRIBE_BASE_URL is unset/)]);
+      expect(failing({ ...priced, TRANSCRIBE_BASE_URL: url })).toEqual([expect.stringMatching(/^Transcription provider: MEETINGS_TRANSCRIBE is on while TRANSCRIBE_MODEL is unset/)]);
+      expect(failing({ ...priced, TRANSCRIBE_BASE_URL: ' ', TRANSCRIBE_MODEL: ' ' })).toHaveLength(2);
+      expect(failing({ ...priced, TRANSCRIBE_BASE_URL: url, TRANSCRIBE_MODEL: 'stt-model' })).toEqual([]);
+      expect(checkEnv({ ...priced, TRANSCRIBE_BASE_URL: url, TRANSCRIBE_MODEL: 'stt-model' }).find((r) => r.item === 'Transcription provider')?.message).toBe(
+        'TRANSCRIBE_BASE_URL (https://stt.example.com) and TRANSCRIBE_MODEL are set, so transcription can start',
+      );
+      // Switch off: nothing is asked, whatever is or is not set.
+      expect(failing({ ...READY, MEETINGS_TRANSCRIBE: 'off' })).toEqual([]);
+      expect(checkEnv({ ...READY }).find((r) => r.item === 'Transcription provider')?.message).toBe('transcription is off');
+      // Not a URL, and plain http: the kernel's own rule (https, or http for loopback, or any host with TRANSCRIBE_ALLOW_INSECURE_HTTP=1).
+      expect(failing({ ...priced, TRANSCRIBE_BASE_URL: 'not a url', TRANSCRIBE_MODEL: 'm' })).toEqual([expect.stringMatching(/^Transcription provider: TRANSCRIBE_BASE_URL is not a URL/)]);
+      expect(failing({ ...priced, TRANSCRIBE_BASE_URL: 'http://stt.example.com:8000/v1', TRANSCRIBE_MODEL: 'm' })).toEqual([expect.stringMatching(/clear text/)]);
+      expect(failing({ ...priced, TRANSCRIBE_BASE_URL: 'http://stt.example.com:8000/v1', TRANSCRIBE_MODEL: 'm', TRANSCRIBE_ALLOW_INSECURE_HTTP: '1' })).toEqual([]);
+      expect(failing({ ...priced, TRANSCRIBE_BASE_URL: 'http://127.0.0.1:8000/v1', TRANSCRIBE_MODEL: 'm' })).toEqual([]);
+      expect(failing({ ...priced, TRANSCRIBE_BASE_URL: 'http://localhost:8000/v1', TRANSCRIBE_MODEL: 'm' })).toEqual([]);
+      expect(failing({ ...priced, TRANSCRIBE_BASE_URL: 'HTTPS://stt.example.com/v1', TRANSCRIBE_MODEL: 'm' })).toEqual([]);
+      // Any other scheme stops the kernel from starting, with or without the insecure opt-in, and is reported as that and not as clear text.
+      for (const allow of [undefined, '1']) {
+        expect(failing({ ...priced, TRANSCRIBE_BASE_URL: 'ftp://stt.lan/v1', TRANSCRIBE_MODEL: 'm', TRANSCRIBE_ALLOW_INSECURE_HTTP: allow })).toEqual([expect.stringMatching(/must start with https:\/\/ \(it starts with ftp:\/\/\)/)]);
+      }
+      // Only the origin is ever shown: a path or credentials in the URL may carry a secret.
+      const shown = checkEnv({ ...priced, TRANSCRIBE_BASE_URL: 'https://user:hunter2@stt.example.com/v1/tok-abc', TRANSCRIBE_MODEL: 'm' }).find((r) => r.item === 'Transcription provider')?.message ?? '';
+      expect(shown).not.toMatch(/hunter2|tok-abc|user/);
     });
 
     it('fails an AI key with every AI_PRICE_* at 0, so the cost cap does nothing', () => {

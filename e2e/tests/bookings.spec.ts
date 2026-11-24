@@ -25,7 +25,7 @@ test('a visitor books on the public page, the host sees it in the app, cancels i
       vars,
     );
     exec(
-      `INSERT INTO crove_crm.event_type (org_id, slug, title, duration_min, min_notice_min, host_user_id, created_by)
+      `INSERT INTO ludy_crm.event_type (org_id, slug, title, duration_min, min_notice_min, host_user_id, created_by)
        SELECT t.org_id, 'tu-van', 'Tư vấn thuế', 30, 0, u.id, u.id
          FROM ludy_kernel.tenant t, ludy_kernel.user_account u
         WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
@@ -54,7 +54,7 @@ test('a visitor books on the public page, the host sees it in the app, cancels i
     await visitor.close();
     const [booking] = sql<{ starts_at: string }>(
       `SELECT to_char(b.starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS starts_at
-         FROM crove_crm.booking b JOIN ludy_kernel.tenant t USING (org_id) WHERE t.slug = :'slug' AND b.status = 'confirmed'`,
+         FROM ludy_crm.booking b JOIN ludy_kernel.tenant t USING (org_id) WHERE t.slug = :'slug' AND b.status = 'confirmed'`,
       { slug },
     );
     startsAt = booking?.starts_at ?? '';

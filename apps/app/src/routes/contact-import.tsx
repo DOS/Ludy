@@ -227,8 +227,8 @@ export function ContactImportPage() {
           <DataTable head={[t('map.column'), t('map.field'), t('map.sample')]}>
             {csv.header.map((h, i) => (
               <TableRow key={`${h}-${i}`}>
-                <TableCell className="px-4 text-sm font-medium">{h || t('map.unnamed', { n: String(i + 1) })}</TableCell>
-                <TableCell className="px-4">
+                <TableCell className="text-sm font-medium">{h || t('map.unnamed', { n: String(i + 1) })}</TableCell>
+                <TableCell>
                   <NativeSelect
                     size="sm"
                     aria-label={t('map.fieldOf', { column: h || String(i + 1) })}
@@ -243,7 +243,7 @@ export function ContactImportPage() {
                     ))}
                   </NativeSelect>
                 </TableCell>
-                <TableCell className="px-4 text-sm text-muted-foreground">{csv.rows.slice(0, 3).map((r) => r[i] ?? '').filter(Boolean).join(' | ')}</TableCell>
+                <TableCell className="text-sm text-muted-foreground">{csv.rows.slice(0, 3).map((r) => r[i] ?? '').filter(Boolean).join(' | ')}</TableCell>
               </TableRow>
             ))}
           </DataTable>
@@ -281,12 +281,12 @@ export function ContactImportPage() {
           <DataTable head={[t('preview.row'), t('field.name'), t('field.company'), t('field.taxCode'), t('field.email'), t('field.phone'), t('preview.result')]}>
             {rows.map((r) => (
               <TableRow key={r.rowNo} data-testid="import-row">
-                <TableCell className="px-4 text-sm tabular-nums">{r.rowNo}</TableCell>
-                <TableCell className="px-4 text-sm">
+                <TableCell className="text-sm tabular-nums">{r.rowNo}</TableCell>
+                <TableCell className="text-sm">
                   {r.name}
                   <p className="text-xs text-muted-foreground">{t(`preview.kindOf.${r.kind}`)}</p>
                 </TableCell>
-                <TableCell className="px-4 text-sm" data-testid="import-company">
+                <TableCell className="text-sm" data-testid="import-company">
                   {r.company && (
                     <>
                       {r.company.name}
@@ -294,10 +294,10 @@ export function ContactImportPage() {
                     </>
                   )}
                 </TableCell>
-                <TableCell className="px-4 text-sm">{r.taxCode}</TableCell>
-                <TableCell className="px-4 text-sm">{r.email}</TableCell>
-                <TableCell className="px-4 text-sm">{r.phone}</TableCell>
-                <TableCell className="px-4 text-sm">
+                <TableCell className="text-sm">{r.taxCode}</TableCell>
+                <TableCell className="text-sm">{r.email}</TableCell>
+                <TableCell className="text-sm">{r.phone}</TableCell>
+                <TableCell className="text-sm">
                   <Badge variant={r.outcome === 'new' ? 'success' : 'outline'}>{t(`outcome.${r.outcome}`)}</Badge>
                   {r.reason && <p className="text-xs text-muted-foreground">{reasonText(r.reason)}</p>}
                   {r.match && <p className="text-xs text-muted-foreground">{t('preview.matches', { name: r.match.name })}</p>}

@@ -99,7 +99,7 @@ suite('team event types on PostgreSQL (#1373)', () => {
     const request = async (type: string, startsAt: string, email = `khach-${randomUUID().slice(0, 6)}@example.test`) => {
       const token = await bookingRequest(app, slug, type, { startsAt, name: 'Khách', email, timeZone: VN });
       if (!token) throw new Error('no request');
-      const { rows } = await admin((cl) => cl.query<{ id: string }>('SELECT id FROM crove_crm.booking WHERE org_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1', [orgId]));
+      const { rows } = await admin((cl) => cl.query<{ id: string }>('SELECT id FROM ludy_crm.booking WHERE org_id = $1 ORDER BY created_at DESC, id DESC LIMIT 1', [orgId]));
       return rows[0]?.id as string;
     };
     // The calendars a booking holds: who, which events, and their status.
@@ -107,7 +107,7 @@ suite('team event types on PostgreSQL (#1373)', () => {
       (
         await admin((cl) =>
           cl.query<{ user_id: string; status: string; starts_at: Date }>(
-            `SELECT ev.user_id, ev.status, ev.starts_at FROM crove_crm.booking b
+            `SELECT ev.user_id, ev.status, ev.starts_at FROM ludy_crm.booking b
              JOIN ludy_kernel.calendar_event ev ON ev.org_id = b.org_id AND ev.id = ANY (ARRAY[b.calendar_event_id] || b.hold_event_ids)
              WHERE b.org_id = $1 AND b.id = $2 ORDER BY array_position(ARRAY[b.calendar_event_id] || b.hold_event_ids, ev.id)`,
             [orgId, bookingId],
@@ -179,7 +179,7 @@ suite('team event types on PostgreSQL (#1373)', () => {
     expect(widened).toMatchObject({ assignment: 'collective', coHostUserIds: [o.b, o.c] });
     // The database holds the same rules against any other writer.
     await expect(
-      admin((cl) => cl.query('UPDATE crove_crm.event_type SET co_host_user_ids = ARRAY[host_user_id] WHERE org_id = $1 AND id = $2', [o.orgId, eventTypeId])),
+      admin((cl) => cl.query('UPDATE ludy_crm.event_type SET co_host_user_ids = ARRAY[host_user_id] WHERE org_id = $1 AND id = $2', [o.orgId, eventTypeId])),
     ).rejects.toMatchObject({ constraint: 'event_type_co_hosts' });
   });
 

@@ -26,7 +26,7 @@ export interface SeedOptions {
 export function seedMeeting(slug: string, email: string, title: string, options: SeedOptions = {}): string {
   const id = randomUUID();
   exec(
-    `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date, series_id)
+    `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date, series_id)
      SELECT t.org_id, :'id'::uuid, :'title', 'vi', now() - (:'days' || ' days')::interval, now() - (:'days' || ' days')::interval + interval '30 minutes', 1800, u.id, 'attendees', 'ready', 'told_at_start', u.id, now(), '1.0', current_date + 30, current_date + 365, nullif(:'series', '')::uuid
        FROM ludy_kernel.tenant t, ludy_kernel.user_account u WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,
     { id, title, days: String(options.daysAgo ?? 0), series: options.seriesId ?? '', slug, email },
@@ -34,9 +34,9 @@ export function seedMeeting(slug: string, email: string, title: string, options:
   const segments = (options.segments ?? TRANSCRIPT).map((s) => ({ from_s: s.from, to_s: s.to, who: s.who, said: s.said }));
   if (segments.length > 0) {
     exec(
-      `INSERT INTO crove_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage)
+      `INSERT INTO ludy_meetings.transcript_segment (org_id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage)
        SELECT m.org_id, m.id, v.from_s, v.to_s, v.who, v.said, 'draft'
-         FROM crove_meetings.meeting m, jsonb_to_recordset(:'segments'::jsonb) AS v(from_s int, to_s int, who text, said text)
+         FROM ludy_meetings.meeting m, jsonb_to_recordset(:'segments'::jsonb) AS v(from_s int, to_s int, who text, said text)
         WHERE m.id = :'id'::uuid`,
       { id, segments: JSON.stringify(segments) },
     );
@@ -47,14 +47,14 @@ export function seedMeeting(slug: string, email: string, title: string, options:
 /** What was decided in a meeting (published) and the action items still open from it (published, not yet given to anyone). */
 export function publishOutcome(meetingId: string, decisions: readonly string[], openItems: readonly string[], who = 'Lan'): void {
   exec(
-    `INSERT INTO crove_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage)
-     SELECT m.org_id, m.id, 'Tóm tắt cuộc họp', :'decisions'::jsonb, 'manual', 'published' FROM crove_meetings.meeting m WHERE m.id = :'id'::uuid`,
+    `INSERT INTO ludy_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage)
+     SELECT m.org_id, m.id, 'Tóm tắt cuộc họp', :'decisions'::jsonb, 'manual', 'published' FROM ludy_meetings.meeting m WHERE m.id = :'id'::uuid`,
     { id: meetingId, decisions: JSON.stringify(decisions) },
   );
   for (const title of openItems) {
     exec(
-      `INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, tainted, transcript_seconds)
-       SELECT m.org_id, gen_random_uuid(), m.id, :'title', :'who', m.recorder_user_id, 'thứ sáu', 'published', 'suggested', false, 10 FROM crove_meetings.meeting m WHERE m.id = :'id'::uuid`,
+      `INSERT INTO ludy_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, tainted, transcript_seconds)
+       SELECT m.org_id, gen_random_uuid(), m.id, :'title', :'who', m.recorder_user_id, 'thứ sáu', 'published', 'suggested', false, 10 FROM ludy_meetings.meeting m WHERE m.id = :'id'::uuid`,
       { id: meetingId, title, who },
     );
   }
@@ -89,7 +89,7 @@ export function seedTodayEvent(slug: string, email: string, title: string, serie
     { slug, email },
   );
   exec(
-    `INSERT INTO crove_meetings.calendar_agenda (org_id, id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone, series_id)
+    `INSERT INTO ludy_meetings.calendar_agenda (org_id, id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone, series_id)
      SELECT c.org_id, :'id'::uuid, c.id, c.user_id, gen_random_uuid()::text, :'title', ${VN_NINE} + (:'hours' || ' hours')::interval, ${VN_NINE} + (:'hours' || ' hours')::interval + interval '60 minutes', 'Asia/Ho_Chi_Minh', :'series'::uuid
        FROM ludy_kernel.calendar_connection c JOIN ludy_kernel.tenant t ON t.org_id = c.org_id JOIN ludy_kernel.user_account u ON u.id = c.user_id
       WHERE t.slug = :'slug' AND lower(u.email) = lower(:'email')`,

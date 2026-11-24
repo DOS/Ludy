@@ -47,9 +47,9 @@ suite('retention purges on PostgreSQL (#38)', () => {
   const untouchable = async () => ({
     audit: await count('ludy_kernel.audit_event'),
     outbox: await count('ludy_kernel.outbox_event'),
-    entries: await count('crove_finance.journal_entry'),
-    lines: await count('crove_finance.journal_line'),
-    documents: await count('crove_finance.purchase_document'),
+    entries: await count('ludy_finance.journal_entry'),
+    lines: await count('ludy_finance.journal_line'),
+    documents: await count('ludy_finance.purchase_document'),
     files: await count('ludy_kernel.file'),
     tenants: await count('ludy_kernel.tenant'),
   });
@@ -138,12 +138,12 @@ suite('retention purges on PostgreSQL (#38)', () => {
       );
       const entry = randomUUID();
       await c.query(
-        `INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, created_at)
+        `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, created_at)
          VALUES ($1, $2, '2023-01-01', 'old', 'retention.test', $3, now() - interval '3 years')`,
         [orgId, entry, randomUUID()],
       );
       await c.query(
-        `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES
+        `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES
            ($1, $2, 1, '6422', '100', '0'), ($1, $2, 2, '331', '0', '100')`,
         [orgId, entry],
       );

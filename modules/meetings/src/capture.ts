@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // One meeting, one live capture (ADR-0055 slice 1, issue #4123). When a client starts to record a call (the browser extension, or the app's recorder), meetings.meeting.create opens a capture here, in the same
-// transaction as the meeting, and a second open capture of the same call is refused: 409 CAPTURE_ALREADY_RUNNING, saying which kind of client holds the call and since when, never a person and never the other
+// transaction as the meeting, and a second open capture of the same call is refused: 409 CAPTURE_ALREADY_RUNNING, saying to an attendee which kind of client holds the call and since when (to anyone else, nothing more than the refusal), never a person and never the other
 // meeting, and the refusal rolls the meeting back, so a refused start leaves nothing. "The same call" is the member's own calendar event or a meeting key (a hash of the org, the platform and the platform's
-// meeting id, read from a join address that is never stored); a capture that names neither is recorded and conflicts with nothing. The rule lives in the database (crove_meetings.capture_open and its unique indexes over open rows): code
+// meeting id, read from a join address that is never stored); a capture that names neither is recorded and conflicts with nothing. The rule lives in the database (ludy_meetings.capture_open and its unique indexes over open rows): code
 // here reads what the client says of its call, asks the definer, and turns its answer into the refusal.
 //
 // A capture is kept alive by the client's heartbeat (meetings.capture.heartbeat, every 30 seconds) and is over when it has not been heard from for 90 seconds, which the next start of the same call reads: no job
@@ -37,30 +37,36 @@ export function captureKeyOf(orgId: string, joinUrl: string): string | null {
 }
 
 /**
- * Opens the capture of a meeting the caller has just made, or refuses with CAPTURE_ALREADY_RUNNING (409, details {kind, since}) when the call is already held; the command's transaction then rolls back,
+ * Opens the capture of a meeting the caller has just made, or refuses with CAPTURE_ALREADY_RUNNING (409, details {kind, since} for an attendee only) when the call is already held; the command's transaction then rolls back,
  * the meeting row included. `start` is what the client said of the call; an extension token is a capture even when it said nothing.
  */
 export async function openCapture(ctx: CommandContext, meetingId: string, start: CaptureStart | undefined): Promise<CaptureKind> {
   const kind = captureKindOf(ctx);
   let joinUrl = start?.joinUrl ?? null;
   let agendaId: string | null = null;
+  // The caller's own calendar event for this call, if they named one: the proof that they are an attendee (#4538).
+  let eventKey: string | null = null;
   if (start?.agendaId !== undefined) {
     // The member's own event only (their row security shows no other); an id that is not theirs, or is gone, is left out rather than refused.
     const { rows } = await sql<{ id: string; join_url: string | null }>`
-      SELECT id, join_url FROM crove_meetings.calendar_agenda WHERE org_id = ${ctx.orgId}::uuid AND id = ${start.agendaId}::uuid`.execute(ctx.trx);
+      SELECT id, join_url FROM ludy_meetings.calendar_agenda WHERE org_id = ${ctx.orgId}::uuid AND id = ${start.agendaId}::uuid`.execute(ctx.trx);
     const event = rows[0];
     if (event) {
       agendaId = event.id;
+      eventKey = event.join_url === null ? null : captureKeyOf(ctx.orgId, event.join_url);
       // The call's address is also read from the event when the client gave none, or one this cannot read.
       if ((joinUrl === null || captureCallOf(joinUrl) === null) && event.join_url !== null) joinUrl = event.join_url;
     }
   }
   const key = joinUrl === null ? null : captureKeyOf(ctx.orgId, joinUrl);
   const { rows: held } = await sql<{ kind: CaptureKind; since: Date | string }>`
-    SELECT kind, since FROM crove_meetings.capture_open(${meetingId}::uuid, ${kind}::text, ${agendaId}::uuid, ${key}::text)`.execute(ctx.trx);
+    SELECT kind, since FROM ludy_meetings.capture_open(${meetingId}::uuid, ${kind}::text, ${agendaId}::uuid, ${key}::text)`.execute(ctx.trx);
   const holder = held[0];
   if (holder) {
-    const details: CaptureRunning = { kind: holder.kind, since: new Date(holder.since).toISOString() };
+    // Who holds the call, and since when, is told to an attendee only: a caller with their own calendar event for this very call (its address gives the same key, or the call is known by the event alone).
+    // A member who merely knows the join address gets the same 409 without the details, so it cannot be used to learn that someone in the org is recording that call (#4538).
+    const attendee = agendaId !== null && (key === null || eventKey === key);
+    const details: CaptureRunning | undefined = attendee ? { kind: holder.kind, since: new Date(holder.since).toISOString() } : undefined;
     throw new DomainError('CAPTURE_ALREADY_RUNNING', 409, 'This meeting is already being recorded', details);
   }
   return kind;
@@ -72,7 +78,7 @@ export async function openCapture(ctx: CommandContext, meetingId: string, start:
  */
 export async function endCapture(ctx: CommandContext, meetingId: string, reason: CaptureEndedReason): Promise<void> {
   await sql`
-    UPDATE crove_meetings.capture_session
+    UPDATE ludy_meetings.capture_session
        SET ended_at = COALESCE(ended_at, ${ctx.now}::timestamptz), ended_reason = ${reason}::text
      WHERE org_id = ${ctx.orgId}::uuid AND meeting_id = ${meetingId}::uuid AND (ended_at IS NULL OR ended_reason = 'lost')`.execute(ctx.trx);
 }
@@ -89,7 +95,7 @@ export const meetingCaptureHeartbeat = defineCommand({
   handler: async (ctx: CommandContext, input): Promise<CaptureHeartbeatDone> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Only authenticated members can perform this action');
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['recorder_user_id', 'extension_token_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -103,7 +109,7 @@ export const meetingCaptureHeartbeat = defineCommand({
       ctx.audit({ meetingId: input.meetingId, ended: true });
       return zCaptureHeartbeatDone.parse({ open: false });
     }
-    const { rows } = await sql<{ open: boolean }>`SELECT crove_meetings.capture_beat(${input.meetingId}::uuid) AS open`.execute(ctx.trx);
+    const { rows } = await sql<{ open: boolean }>`SELECT ludy_meetings.capture_beat(${input.meetingId}::uuid) AS open`.execute(ctx.trx);
     const open = rows[0]?.open === true;
     ctx.audit({ meetingId: input.meetingId, open });
     return zCaptureHeartbeatDone.parse({ open });

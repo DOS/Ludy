@@ -83,20 +83,20 @@ export function translationBytes(segments: ReadonlyArray<{ text: string }>): num
  * recorder, the draft by the recorder alone, so a non-reader, an owner or an admin who is not a reader, finds nothing here and meets the same answer as for no summary.
  */
 export async function readTranslationSource(trx: Trx, orgId: string, userId: string, meetingId: string, stage: Stage, requested?: TranslationTarget): Promise<TranslationSource> {
-  const meeting = await trx.selectFrom('crove_meetings.meeting').select(['id', 'recorder_user_id', 'language']).where('org_id', '=', orgId).where('id', '=', meetingId).executeTakeFirst();
+  const meeting = await trx.selectFrom('ludy_meetings.meeting').select(['id', 'recorder_user_id', 'language']).where('org_id', '=', orgId).where('id', '=', meetingId).executeTakeFirst();
   // The text-retention gate, as for every other read of a meeting's text.
   await openMeeting(trx, orgId, meetingId);
   if (!meeting) throw notFound();
   if (stage === 'draft' && meeting.recorder_user_id !== userId) throw notFound();
   const result = await trx
-    .selectFrom('crove_meetings.meeting_result')
+    .selectFrom('ludy_meetings.meeting_result')
     .select(['summary', 'decisions'])
     .where('org_id', '=', orgId)
     .where('meeting_id', '=', meetingId)
     .where('stage', '=', stage)
     .executeTakeFirst();
   const items = await trx
-    .selectFrom('crove_meetings.action_item')
+    .selectFrom('ludy_meetings.action_item')
     .select(['id', 'title'])
     .where('org_id', '=', orgId)
     .where('meeting_id', '=', meetingId)
@@ -136,7 +136,7 @@ export const translationStatus = defineQuery({
   handler: async (ctx, input) => {
     const userId = userOf(ctx.actor);
     await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
-    const row = await ctx.trx.selectFrom('crove_meetings.meeting').select('language').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirstOrThrow();
+    const row = await ctx.trx.selectFrom('ludy_meetings.meeting').select('language').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirstOrThrow();
     const from = row.language as MeetingLanguage;
     // A target this deployment does not offer is refused here, before anything is read.
     const to = targetFor(from, input.to);
@@ -195,7 +195,7 @@ export const translationGet = defineQuery({
     const userId = userOf(ctx.actor);
     await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     const rows = await ctx.trx
-      .selectFrom('crove_meetings.translation')
+      .selectFrom('ludy_meetings.translation')
       .select(['source_stage', 'target_language', 'source_hash', 'body', sql<string>`created_at::text`.as('created_at')])
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
@@ -203,7 +203,7 @@ export const translationGet = defineQuery({
       .where('kind', '=', 'summary')
       .orderBy('source_stage')
       .execute();
-    const meeting = await ctx.trx.selectFrom('crove_meetings.meeting').select('language').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirstOrThrow();
+    const meeting = await ctx.trx.selectFrom('ludy_meetings.meeting').select('language').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirstOrThrow();
     const from = meeting.language as MeetingLanguage;
     const translations: Translations['translations'] = [];
     for (const row of rows) {
@@ -281,12 +281,12 @@ export interface TranscriptRead {
  * draft to its recorder only, so a non-reader meets the same answer as for no transcript). Null when there is nothing to translate.
  */
 export async function readTranscriptLines(trx: Trx, orgId: string, meetingId: string, requested?: TranslationTarget): Promise<TranscriptRead | null> {
-  const meeting = await trx.selectFrom('crove_meetings.meeting').select('language').where('org_id', '=', orgId).where('id', '=', meetingId).executeTakeFirst();
+  const meeting = await trx.selectFrom('ludy_meetings.meeting').select('language').where('org_id', '=', orgId).where('id', '=', meetingId).executeTakeFirst();
   // The text-retention gate, as for every other read of a meeting's text.
   await openMeeting(trx, orgId, meetingId);
   if (!meeting) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
   const rows = await trx
-    .selectFrom('crove_meetings.transcript_segment')
+    .selectFrom('ludy_meetings.transcript_segment')
     .select(['id', 'text', 'stage'])
     .where('org_id', '=', orgId)
     .where('meeting_id', '=', meetingId)
@@ -303,7 +303,7 @@ export async function readTranscriptLines(trx: Trx, orgId: string, meetingId: st
 // The member's kept parts for this transcript (an empty list when they have none): the row of the stage and language, read in the member's own context.
 export async function keptParts(trx: Trx, orgId: string, userId: string, meetingId: string, stage: Stage, to: TranslationTarget): Promise<{ parts: TranscriptPart[]; runId: string | null }> {
   const row = await trx
-    .selectFrom('crove_meetings.translation')
+    .selectFrom('ludy_meetings.translation')
     .select(['body', 'source_run_id'])
     .where('org_id', '=', orgId)
     .where('meeting_id', '=', meetingId)
@@ -346,7 +346,7 @@ export const transcriptTranslationStatus = defineQuery({
   access: ROLES,
   handler: async (ctx, input): Promise<TranscriptTranslationStatus & { bytes: number }> => {
     const userId = userOf(ctx.actor);
-    const meeting = await ctx.trx.selectFrom('crove_meetings.meeting').select('language').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirst();
+    const meeting = await ctx.trx.selectFrom('ludy_meetings.meeting').select('language').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirst();
     await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (!meeting) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
     const from = meeting.language as MeetingLanguage;
@@ -397,7 +397,7 @@ export const transcriptTranslationGet = defineQuery({
   target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
   handler: async (ctx, input): Promise<TranscriptTranslationView> => {
     const userId = userOf(ctx.actor);
-    const meeting = await ctx.trx.selectFrom('crove_meetings.meeting').select('language').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirst();
+    const meeting = await ctx.trx.selectFrom('ludy_meetings.meeting').select('language').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirst();
     await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     if (!meeting) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
     const from = meeting.language as MeetingLanguage;
@@ -430,7 +430,7 @@ export const transcriptTranslateStart = defineCommand({
     if (!isSummaryEnabled()) throw new DomainError('TRANSLATE_OFF', 422, 'Translation by Vy is not turned on here');
     await openMeeting(ctx.trx, ctx.orgId, input.meetingId);
     // The meeting row is held while the run is made, so a delete that races this start waits for it (and then removes the run through the trigger).
-    await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forShare().execute();
+    await ctx.trx.selectFrom('ludy_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forShare().execute();
     // One start for the member at a time, and the live check and the state read both after the lock: a start that waited for another sees what it kept, not what was left before it.
     await lockTranslation(ctx.trx, ctx.orgId, userId);
     const live = await ctx.query<{ live: boolean }>('kernel.member_vy.run.live', { feature: TRANSLATE_FEATURE });

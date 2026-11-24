@@ -31,7 +31,7 @@ function requireUser(ctx: CommandContext): string {
 
 // A saved set's channels still connected, in the order saved.
 async function setChannels(ctx: CommandContext, setId: string): Promise<string[]> {
-  const set = await ctx.trx.selectFrom('crove_social.channel_set').select('connection_ids').where('org_id', '=', ctx.orgId).where('id', '=', setId).executeTakeFirst();
+  const set = await ctx.trx.selectFrom('ludy_social.channel_set').select('connection_ids').where('org_id', '=', ctx.orgId).where('id', '=', setId).executeTakeFirst();
   if (!set) throw new DomainError('CHANNEL_SET_NOT_FOUND', 404, 'Không tìm thấy bộ kênh này');
   return set.connection_ids;
 }
@@ -124,7 +124,7 @@ export const postCreateFromMedia = defineCommand({
     const caption = input.caption ?? { kind: 'none' as const };
     let snippet = '';
     if (caption.kind === 'snippet') {
-      const row = await ctx.trx.selectFrom('crove_social.snippet').select('body').where('org_id', '=', ctx.orgId).where('id', '=', caption.snippetId).executeTakeFirst();
+      const row = await ctx.trx.selectFrom('ludy_social.snippet').select('body').where('org_id', '=', ctx.orgId).where('id', '=', caption.snippetId).executeTakeFirst();
       if (!row) throw new DomainError('SNIPPET_NOT_FOUND', 404, 'Không tìm thấy đoạn mẫu này');
       snippet = row.body;
     }

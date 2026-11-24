@@ -90,6 +90,6 @@ export async function sweepAdsCampaignRequests(deps: { workerDb: Db; now?: () =>
   const now = (deps.now ?? Date.now)();
   if (!deps.force && now - lastSweep < SWEEP_MS) return 0;
   lastSweep = now;
-  const { rows } = await sql<{ settled: number }>`SELECT crove_ads.campaign_request_sweep() AS settled`.execute(deps.workerDb);
+  const { rows } = await sql<{ settled: number }>`SELECT ludy_ads.campaign_request_sweep() AS settled`.execute(deps.workerDb);
   return rows[0]?.settled ?? 0;
 }

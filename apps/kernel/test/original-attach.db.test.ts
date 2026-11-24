@@ -183,14 +183,14 @@ suite('the original XML after the posting on PostgreSQL (#2320)', () => {
     admin(async (c) => ({
       documents: (
         await c.query<{ id: string; source_file_id: string; proposal_id: string; subtotal: string; vat_amount: string; total: string }>(
-          `SELECT id, source_file_id, proposal_id, subtotal::text, vat_amount::text, total::text FROM crove_finance.purchase_document WHERE org_id = $1 AND invoice_number = $2 ORDER BY id`,
+          `SELECT id, source_file_id, proposal_id, subtotal::text, vat_amount::text, total::text FROM ludy_finance.purchase_document WHERE org_id = $1 AND invoice_number = $2 ORDER BY id`,
           [orgId, number],
         )
       ).rows,
-      entries: (await c.query<{ entries: string; debit: string }>(`SELECT (SELECT count(*) FROM crove_finance.journal_entry WHERE org_id = $1)::text AS entries, (SELECT coalesce(sum(debit), 0) FROM crove_finance.journal_line WHERE org_id = $1)::text AS debit`, [orgId])).rows[0],
+      entries: (await c.query<{ entries: string; debit: string }>(`SELECT (SELECT count(*) FROM ludy_finance.journal_entry WHERE org_id = $1)::text AS entries, (SELECT coalesce(sum(debit), 0) FROM ludy_finance.journal_line WHERE org_id = $1)::text AS debit`, [orgId])).rows[0],
     }));
   const documentCount = (number: string) =>
-    admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM crove_finance.purchase_document WHERE org_id = $1 AND invoice_number = $2`, [orgId, number])).rows[0]?.n));
+    admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM ludy_finance.purchase_document WHERE org_id = $1 AND invoice_number = $2`, [orgId, number])).rows[0]?.n));
 
   // Reads and approves the PDF of an invoice: the posting an original comes after.
   async function postPdf(number: string, by = users.owner, legalEntityId?: string, reading = reader(number), exchangeRate?: string) {

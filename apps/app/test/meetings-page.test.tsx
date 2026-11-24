@@ -148,6 +148,8 @@ describe('MeetingsPage (#4477)', () => {
     expect(html).toContain(en.meetings.agenda.service.meet);
     expect(html).toContain(en.meetings.agenda.service.zoom);
     expect(html).toContain(en.meetings.badgeTranscript);
+    expect(html).toContain('data-slot="badge" data-variant="success"');
+    expect(html).not.toContain('data-slot="badge" data-variant="default"');
     expect(html).toContain('45 min');
     expect(html).toContain('1 h 30 min');
     expect(html).toContain('3 readers');

@@ -332,8 +332,8 @@ suite('HR labor contract tracking, probation compliance, and expiry alerts (#338
     await expect(
       withAdmin((c) =>
         c.query(
-          `INSERT INTO crove_hr.payroll_employment (org_id, legal_entity_id, employee_id, effective_from, contract_type, region, base_wage, contract_end_on)
-           VALUES ($1, (SELECT legal_entity_id FROM crove_hr.payroll_employee WHERE id = $2), $2, '2026-05-01', 'indefinite', 'I', 10000000, '2026-12-31')`,
+          `INSERT INTO ludy_hr.payroll_employment (org_id, legal_entity_id, employee_id, effective_from, contract_type, region, base_wage, contract_end_on)
+           VALUES ($1, (SELECT legal_entity_id FROM ludy_hr.payroll_employee WHERE id = $2), $2, '2026-05-01', 'indefinite', 'I', 10000000, '2026-12-31')`,
           [o.orgId, baseEmp.employeeId],
         ),
       ),
@@ -341,8 +341,8 @@ suite('HR labor contract tracking, probation compliance, and expiry alerts (#338
     await expect(
       withAdmin((c) =>
         c.query(
-          `INSERT INTO crove_hr.payroll_employment (org_id, legal_entity_id, employee_id, effective_from, contract_type, region, base_wage, fixed_term_sequence)
-           VALUES ($1, (SELECT legal_entity_id FROM crove_hr.payroll_employee WHERE id = $2), $2, '2026-05-01', 'none', 'I', 10000000, 1)`,
+          `INSERT INTO ludy_hr.payroll_employment (org_id, legal_entity_id, employee_id, effective_from, contract_type, region, base_wage, fixed_term_sequence)
+           VALUES ($1, (SELECT legal_entity_id FROM ludy_hr.payroll_employee WHERE id = $2), $2, '2026-05-01', 'none', 'I', 10000000, 1)`,
           [o.orgId, baseEmp.employeeId],
         ),
       ),
@@ -350,8 +350,8 @@ suite('HR labor contract tracking, probation compliance, and expiry alerts (#338
     await expect(
       withAdmin((c) =>
         c.query(
-          `INSERT INTO crove_hr.payroll_employment (org_id, legal_entity_id, employee_id, effective_from, contract_type, region, base_wage, probation_end_on)
-           VALUES ($1, (SELECT legal_entity_id FROM crove_hr.payroll_employee WHERE id = $2), $2, '2026-05-01', 'indefinite', 'I', 10000000, '2026-04-01')`,
+          `INSERT INTO ludy_hr.payroll_employment (org_id, legal_entity_id, employee_id, effective_from, contract_type, region, base_wage, probation_end_on)
+           VALUES ($1, (SELECT legal_entity_id FROM ludy_hr.payroll_employee WHERE id = $2), $2, '2026-05-01', 'indefinite', 'I', 10000000, '2026-04-01')`,
           [o.orgId, baseEmp.employeeId],
         ),
       ),

@@ -117,7 +117,7 @@ async function finishPosting(
 export async function buildRunPosting(ctx: CommandContext, runId: string, lock: boolean): Promise<BuiltPosting> {
   if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
   let query = ctx.trx
-    .selectFrom('crove_hr.payroll_run')
+    .selectFrom('ludy_hr.payroll_run')
     .select(['id', 'legal_entity_id', 'month', 'status', 'approval', 'approved_by'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', runId);
@@ -126,7 +126,7 @@ export async function buildRunPosting(ctx: CommandContext, runId: string, lock: 
   if (!run) throw new DomainError('HR_RUN_NOT_FOUND', 404, 'Không tìm thấy bảng lương này');
   if (run.status !== 'approved') throw new DomainError('HR_RUN_NOT_APPROVED', 409, 'Chỉ bảng lương đã được duyệt mới hạch toán được');
   const stored = await ctx.trx
-    .selectFrom('crove_hr.payroll_line')
+    .selectFrom('ludy_hr.payroll_line')
     .select(['employee_id', 'employment_id', 'kind', 'status', 'gross', 'employee_insurance', 'employer_insurance', 'union_fee', 'pit', 'net', 'breakdown'])
     .where('org_id', '=', ctx.orgId)
     .where('run_id', '=', runId)
@@ -142,7 +142,7 @@ export async function buildRunPosting(ctx: CommandContext, runId: string, lock: 
   const employments =
     employmentIds.length === 0
       ? []
-      : await ctx.trx.selectFrom('crove_hr.payroll_employment').select(['id', 'pay_function']).where('org_id', '=', ctx.orgId).where('id', 'in', employmentIds).execute();
+      : await ctx.trx.selectFrom('ludy_hr.payroll_employment').select(['id', 'pay_function']).where('org_id', '=', ctx.orgId).where('id', 'in', employmentIds).execute();
   const functionOf = new Map(employments.map((e) => [e.id, e.pay_function]));
 
   const lines: PostingLine[] = stored.map((l) => {
@@ -171,7 +171,7 @@ export async function buildRunPosting(ctx: CommandContext, runId: string, lock: 
   return { payrollRun: run, date, regime, result, lines: stored.length, adjustments: stored.filter((l) => l.kind !== 'pay').length, nets: netsByPerson(stored) };
 }
 
-// The same entry rebuilt from the run's totals by cost department (crove_hr.payroll_run_totals), never from a person's line: what the verification of a posting or of a payment reads, so
+// The same entry rebuilt from the run's totals by cost department (ludy_hr.payroll_run_totals), never from a person's line: what the verification of a posting or of a payment reads, so
 // whoever may approve it (an owner, an admin, or a member holding finance.proposal.approve) can check it, and nothing per person is read or returned (#2751). The function checks the caller
 // itself; a run it does not show is a run not found. It refuses what cannot be summed (an adjustment line, a line not calculated, one without its cost department or its per-fund split).
 export interface BuiltTotals {
@@ -208,7 +208,7 @@ export function groupProblem(g: StoredGroup): string | null {
 }
 export async function buildRunPostingFromTotals(ctx: CommandContext, runId: string): Promise<BuiltTotals> {
   if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
-  const { rows } = await sql<{ totals: unknown }>`SELECT crove_hr.payroll_run_totals(${runId}::uuid) AS totals`.execute(ctx.trx);
+  const { rows } = await sql<{ totals: unknown }>`SELECT ludy_hr.payroll_run_totals(${runId}::uuid) AS totals`.execute(ctx.trx);
   const t = rows[0]?.totals as
     | { runId: string; legalEntityId: string; month: string; status: string; approvedBy: string | null; approvalTotals: unknown; counts: Record<string, number>; groups: StoredGroup[] }
     | null

@@ -43,6 +43,7 @@ import { mailQueries } from './mail.ts';
 import { timelineQueries } from './timeline.ts';
 import { auditLogQueries } from './audit-log.ts';
 import { notificationQueries } from './notifications.ts';
+import { pushQueries } from './push.ts';
 import { inboxItemQueries } from './inbox-items.ts';
 import { savedViewQueries } from './saved-views.ts';
 import { todayMailQueries } from './today-mail.ts';
@@ -607,9 +608,9 @@ export const fileGet = defineQuery({
       .executeTakeFirst();
     if (!file) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy tệp');
     // Confidential eSign artifacts (such as source_kind = 'hr_contract' PDFs, certificates, and signer attachments, #3553/#3818) are gated by
-    // crove_sign.can_read_sign_file so unauthorized workspace members receive the same 404 as a missing file.
+    // ludy_sign.can_read_sign_file so unauthorized workspace members receive the same 404 as a missing file.
     if (file.source === 'sign_document' || file.source === 'sign_sealed' || file.source === 'sign_certificate' || file.source === 'sign_attachment') {
-      const { rows } = await sql<{ allowed: boolean }>`SELECT crove_sign.can_read_sign_file(${file.id}::uuid) AS allowed`.execute(ctx.trx);
+      const { rows } = await sql<{ allowed: boolean }>`SELECT ludy_sign.can_read_sign_file(${file.id}::uuid) AS allowed`.execute(ctx.trx);
       if (!rows[0]?.allowed) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy tệp');
     }
     // The original of a marketplace report is deleted 90 days after the decision (#2516, ADR-0045 point 8): the row and its hash stay, the bytes do not.
@@ -676,5 +677,5 @@ export const streamCheck = defineQuery({
 
 // overview: the home screen's figures of the modules this deployment enables (#1261), from the composition root.
 export function kernelQueries(options: OrgDetailOptions & { overview?: readonly OverviewContribution[]; apps?: OrgAppsOptions }) {
-  return [orgDetailQuery(options), orgAppsQuery(options.apps ?? { shipped: [], deployment: [], entitlements: async () => ['full'] }), orgOverviewQuery({ contributions: options.overview ?? [] }), todayQuery(), todayWeeklyQuery(), sinceYesterdayQuery(), dealWithoutInvoiceQuery(), receivableWithOpenDealQuery(), supplierBankChangedQuery(), conversationUnansweredQuery(), ...conversationSignalsQueries, streamCheck, inboxList, inboxGet, filesRecent, filesStaged, inboundRecent, inboundText, fileGet, ...archiveQueries, sessionsList, ...inviteQueries, ...offboardingQueries, ...agentQueries, ...channelQueries, ...extensionQueries, ...mcpQueries, ...conversationQueries, ...engageWakeQueries, ...mailQueries, ...proposalReminderQueries, ...taxCalendarQueries, ...legalEntityQueries, ...numberingQueries, ...roleQueries, ...calendarQueries, ...meetingPlatformQueries, ...timelineQueries, ...auditLogQueries, ...partyQueries, ...notificationQueries, ...inboxItemQueries, ...savedViewQueries, ...todayMailQueries, ...usageQueries, ...aiBudgetQueries, ...memberVyQueries];
+  return [orgDetailQuery(options), orgAppsQuery(options.apps ?? { shipped: [], deployment: [], entitlements: async () => ['full'] }), orgOverviewQuery({ contributions: options.overview ?? [] }), todayQuery(), todayWeeklyQuery(), sinceYesterdayQuery(), dealWithoutInvoiceQuery(), receivableWithOpenDealQuery(), supplierBankChangedQuery(), conversationUnansweredQuery(), ...conversationSignalsQueries, streamCheck, inboxList, inboxGet, filesRecent, filesStaged, inboundRecent, inboundText, fileGet, ...archiveQueries, sessionsList, ...inviteQueries, ...offboardingQueries, ...agentQueries, ...channelQueries, ...extensionQueries, ...mcpQueries, ...conversationQueries, ...engageWakeQueries, ...mailQueries, ...proposalReminderQueries, ...taxCalendarQueries, ...legalEntityQueries, ...numberingQueries, ...roleQueries, ...calendarQueries, ...meetingPlatformQueries, ...timelineQueries, ...auditLogQueries, ...partyQueries, ...notificationQueries, ...pushQueries, ...inboxItemQueries, ...savedViewQueries, ...todayMailQueries, ...usageQueries, ...aiBudgetQueries, ...memberVyQueries];
 }

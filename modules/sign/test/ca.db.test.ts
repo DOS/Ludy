@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // PostgreSQL 17 integration & security tests for eSign Slice 2c (#3554):
-//   - crove_sign.ca_connection MACHINERY zero-grant RLS, encrypted secret storage, and wipe-on-disable
+//   - ludy_sign.ca_connection MACHINERY zero-grant RLS, encrypted secret storage, and wipe-on-disable
 //   - #62 Legal Gate (SIGN_LIVE_CA_GATED) refusing VNPT/Viettel/MISA when live CA is disabled while Sandbox works
 //   - Owner/admin vs member/viewer RBAC and cross-tenant isolation
-//   - Worker-only crove_sign.ca_connection_secret_get privilege boundary and CA_CONNECTION_OWNER_LEFT check
+//   - Worker-only ludy_sign.ca_connection_secret_get privilege boundary and CA_CONNECTION_OWNER_LEFT check
 //   - Zero secret/ciphertext leakage in queries, audit_event, idempotency_key, and outbox_event
-//   - crove_sign.ca_signing_request reconcile_only external_call state machine (initiate -> lost_answer -> ask -> poll -> signed)
+//   - ludy_sign.ca_signing_request reconcile_only external_call state machine (initiate -> lost_answer -> ask -> poll -> signed)
 //   - Hash-chained ca_requested, ca_completed, and ca_failed signing_event verification
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -165,7 +165,7 @@ suite('eSign Slice 2c Vietnam CA settings, #62 gate, and reconcile_only state ma
     const valid1x1Png =
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
     const submitRes = await appPool!.query<{ result: { status: string } }>(
-      `SELECT crove_sign.public_submit($1, true, 'type', 'Nguyen Van B', $2::jsonb, $3, 'TestAgent/1.0', 'crove.test') AS result`,
+      `SELECT ludy_sign.public_submit($1, true, 'type', 'Nguyen Van B', $2::jsonb, $3, 'TestAgent/1.0', 'crove.test') AS result`,
       [
         hashSigningToken(sent.links[0]!.token),
         JSON.stringify([
@@ -360,9 +360,9 @@ suite('eSign Slice 2c Vietnam CA settings, #62 gate, and reconcile_only state ma
       ).rejects.toMatchObject({ status: 403 });
     }
 
-    // Direct SQL SELECT on crove_sign.ca_connection by ludy_app or ludy_worker fails with insufficient_privilege (42501).
-    await expect(appPool!.query('SELECT * FROM crove_sign.ca_connection')).rejects.toMatchObject({ code: '42501' });
-    await expect(workerPool!.query('SELECT * FROM crove_sign.ca_connection')).rejects.toMatchObject({ code: '42501' });
+    // Direct SQL SELECT on ludy_sign.ca_connection by ludy_app or ludy_worker fails with insufficient_privilege (42501).
+    await expect(appPool!.query('SELECT * FROM ludy_sign.ca_connection')).rejects.toMatchObject({ code: '42501' });
+    await expect(workerPool!.query('SELECT * FROM ludy_sign.ca_connection')).rejects.toMatchObject({ code: '42501' });
 
     // Enable live CA to test encrypted credential storage, worker-only secret read, owner-left guard, and wipe on disable.
     setSignLiveCaEnabled(true);
@@ -433,7 +433,7 @@ suite('eSign Slice 2c Vietnam CA settings, #62 gate, and reconcile_only state ma
     expect(disabled.status).toBe('disabled');
 
     const rawDbRow = await adminPool!.query<{ key_id: string; secret_envelope: string }>(
-      'SELECT key_id, secret_envelope FROM crove_sign.ca_connection WHERE org_id = $1::uuid AND id = $2::uuid',
+      'SELECT key_id, secret_envelope FROM ludy_sign.ca_connection WHERE org_id = $1::uuid AND id = $2::uuid',
       [orgA, vnptConn.id],
     );
     expect(rawDbRow.rows[0]).toEqual({ key_id: 'disabled', secret_envelope: 'disabled' });
@@ -483,7 +483,7 @@ suite('eSign Slice 2c Vietnam CA settings, #62 gate, and reconcile_only state ma
 
     // Rewind next_poll_at so the retry run is due now: job_begin MUST return 'ask' (reconcile_only), NEVER 'initiate'!
     await adminPool!.query(
-      'UPDATE crove_sign.ca_signing_request SET next_poll_at = now() - interval \'1 second\' WHERE org_id = $1::uuid AND id = $2::uuid',
+      'UPDATE ludy_sign.ca_signing_request SET next_poll_at = now() - interval \'1 second\' WHERE org_id = $1::uuid AND id = $2::uuid',
       [orgA, req.id],
     );
 
@@ -521,19 +521,19 @@ suite('eSign Slice 2c Vietnam CA settings, #62 gate, and reconcile_only state ma
       }
     };
     await expectTenantSqlRejects(
-      'DELETE FROM crove_sign.ca_signing_request WHERE org_id = $1::uuid AND id = $2::uuid',
+      'DELETE FROM ludy_sign.ca_signing_request WHERE org_id = $1::uuid AND id = $2::uuid',
       [orgA, req.id],
       /CA_SIGNING_REQUEST_FROZEN/,
     );
     await expectTenantSqlRejects(
-      "UPDATE crove_sign.ca_signing_request SET status = 'signed' WHERE org_id = $1::uuid AND id = $2::uuid",
+      "UPDATE ludy_sign.ca_signing_request SET status = 'signed' WHERE org_id = $1::uuid AND id = $2::uuid",
       [orgA, req.id],
       /CA_SIGNING_REQUEST_SYSTEM_ONLY/,
     );
 
     // Rewind next_poll_at again: job_begin now returns 'poll' with externalTxId.
     await adminPool!.query(
-      'UPDATE crove_sign.ca_signing_request SET next_poll_at = now() - interval \'1 second\' WHERE org_id = $1::uuid AND id = $2::uuid',
+      'UPDATE ludy_sign.ca_signing_request SET next_poll_at = now() - interval \'1 second\' WHERE org_id = $1::uuid AND id = $2::uuid',
       [orgA, req.id],
     );
     const begin3 = await workerRuntime.execute<SignCaJobBeginResult>(
@@ -566,7 +566,7 @@ suite('eSign Slice 2c Vietnam CA settings, #62 gate, and reconcile_only state ma
     expect(midList.items[0]?.padesFileId).toBeNull();
 
     await adminPool!.query(
-      "UPDATE crove_sign.ca_signing_request SET next_poll_at = now() - interval '1 second' WHERE org_id = $1::uuid AND id = $2::uuid",
+      "UPDATE ludy_sign.ca_signing_request SET next_poll_at = now() - interval '1 second' WHERE org_id = $1::uuid AND id = $2::uuid",
       [orgA, req.id],
     );
     const beginEmbed = await workerRuntime.execute<SignCaJobBeginResult>(

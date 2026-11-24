@@ -172,10 +172,10 @@ suite('the Social MCP reads (#3227)', () => {
     ids.out = await create(orgA, users.ownerA, { body: 'Bài đã đăng', channels: [{ connectionId: conns.a1 }] });
     ids.other = await create(orgB, users.ownerB, { body: 'Bài của tổ chức B', channels: [{ connectionId: conns.b1 }] });
     await admin(async (c) => {
-      await c.query("UPDATE crove_social.post_variant SET status = 'published', published_at = now(), external_post_id = 'platform-id-xyz', external_url = 'https://facebook.example/p/1' WHERE org_id = $1 AND post_id = $2", [orgA, ids.out]);
-      await c.query("UPDATE crove_social.post SET status = 'published' WHERE org_id = $1 AND id = $2", [orgA, ids.out]);
+      await c.query("UPDATE ludy_social.post_variant SET status = 'published', published_at = now(), external_post_id = 'platform-id-xyz', external_url = 'https://facebook.example/p/1' WHERE org_id = $1 AND post_id = $2", [orgA, ids.out]);
+      await c.query("UPDATE ludy_social.post SET status = 'published' WHERE org_id = $1 AND id = $2", [orgA, ids.out]);
       // What must never reach a client: an assignee, and the review-time reminders and search text columns live on the rows too.
-      await c.query('UPDATE crove_social.post SET assignee_user_id = $3 WHERE org_id = $1 AND id = $2', [orgA, ids.human, users.adminA]);
+      await c.query('UPDATE ludy_social.post SET assignee_user_id = $3 WHERE org_id = $1 AND id = $2', [orgA, ids.human, users.adminA]);
     });
   }, 180_000);
 
@@ -280,7 +280,7 @@ suite('the Social MCP reads (#3227)', () => {
     const published = new Date(Date.now() - 5 * HOUR);
     const retry = new Date(Date.now() + 2 * HOUR);
     await admin(async (c) => {
-      const set = (conn: string, sql: string, args: unknown[] = []) => c.query(`UPDATE crove_social.post_variant SET ${sql} WHERE org_id = $1 AND post_id = $2 AND channel_connection_id = $3`, [orgC, mixed, conn, ...args]);
+      const set = (conn: string, sql: string, args: unknown[] = []) => c.query(`UPDATE ludy_social.post_variant SET ${sql} WHERE org_id = $1 AND post_id = $2 AND channel_connection_id = $3`, [orgC, mixed, conn, ...args]);
       await set(c1, 'queue_slot_at = $4, scheduled_at = $5', [slot, own]);
       await set(c2, "status = 'cancelled'");
       await set(c3, "status = 'removed', removed_at = now(), published_at = $4", [published]);
@@ -300,7 +300,7 @@ suite('the Social MCP reads (#3227)', () => {
     expect(first).toMatchObject({ title: null });
     const titled = await create(orgC, users.ownerA, { body: 'Bài có tiêu đề', title: 'Tiêu đề chung', linkUrl: 'https://example.com/chung', channels: [{ connectionId: c1 }, { connectionId: c2 }] });
     // A channel that went out before the post was edited keeps its own copy: its empty title and link mean none, not the post's.
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'published', published_at = now(), content_frozen = true, body = 'Bản đã đăng' WHERE org_id = $1 AND post_id = $2 AND channel_connection_id = $3", [orgC, titled, c1]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'published', published_at = now(), content_frozen = true, body = 'Bản đã đăng' WHERE org_id = $1 AND post_id = $2 AND channel_connection_id = $3", [orgC, titled, c1]));
     const withTitle = (await runtime.query<Posts>('social.mcp.posts', { limit: 50 }, await grantOf(orgC, users.ownerA))).posts.find((p) => p.id === titled) as Post;
     expect(withTitle.channels.map((c) => [c.connectionId, c.text, c.title, c.linkUrl])).toEqual([
       [c1, 'Bản đã đăng', null, null],
@@ -309,7 +309,7 @@ suite('the Social MCP reads (#3227)', () => {
     // An AI draft with every channel approved is no longer waiting to be sent: it is not in aiDrafts, and an unsent one is.
     const approvedAi = await create(orgC, users.ownerA, { origin: 'ai', body: 'AI đã duyệt', channels: [{ connectionId: c3 }] });
     const unsentAi = await create(orgC, users.ownerA, { origin: 'ai', body: 'AI chưa gửi', channels: [{ connectionId: c4 }] });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'approved' WHERE org_id = $1 AND post_id = $2", [orgC, approvedAi]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'approved' WHERE org_id = $1 AND post_id = $2", [orgC, approvedAi]));
     const waiting = await runtime.query<Queue>('social.mcp.review_queue', { limit: 50 }, await grantOf(orgC, users.ownerA));
     expect(waiting.aiDrafts.map((p) => p.id)).toEqual([unsentAi]);
     // A window that holds the queue slot but not the channel's own time finds the post, and the channel shows the time the window matched.
@@ -326,8 +326,8 @@ suite('the Social MCP reads (#3227)', () => {
     const signed = await create(orgS, users.ownerA, { body: 'Nội dung bài', channels: [{ connectionId: conn }] });
     const off = await create(orgS, users.ownerA, { body: 'Bài bỏ chữ ký', channels: [{ connectionId: conn }] });
     await admin(async (c) => {
-      await c.query(`UPDATE crove_social.post_variant SET settings = settings || '{"signature": "Hotline 0900 000 000", "secretSetting": "do-not-return"}'::jsonb WHERE org_id = $1 AND post_id = $2`, [orgS, signed]);
-      await c.query(`UPDATE crove_social.post_variant SET settings = settings || '{"signature": false, "secretSetting": "do-not-return"}'::jsonb WHERE org_id = $1 AND post_id = $2`, [orgS, off]);
+      await c.query(`UPDATE ludy_social.post_variant SET settings = settings || '{"signature": "Hotline 0900 000 000", "secretSetting": "do-not-return"}'::jsonb WHERE org_id = $1 AND post_id = $2`, [orgS, signed]);
+      await c.query(`UPDATE ludy_social.post_variant SET settings = settings || '{"signature": false, "secretSetting": "do-not-return"}'::jsonb WHERE org_id = $1 AND post_id = $2`, [orgS, off]);
     });
     const got = await runtime.query<Posts>('social.mcp.posts', { limit: 50 }, await grantOf(orgS, users.ownerA));
     const byId = new Map(got.posts.map((p) => [p.id, p]));

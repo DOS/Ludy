@@ -2,7 +2,7 @@
 // Integration tests for Vy's weekly status of a project on PostgreSQL 17 (projects P6, #2597):
 // 1) Deterministic counts (doneThisWeek, overdue, waiting, dueNextWeek) & visible task titles/comments via POST /api/rpc/projects/weeklyStatus.
 // 2) le_scope isolation: restricted member never gets hidden-entity counts, titles or comments in output or AI prompt, while hiddenByEntityCount matches.
-// 3) Private & shared crove_notes.note rows are NEVER read and never appear in deterministic output or the AI prompt.
+// 3) Private & shared ludy_notes.note rows are NEVER read and never appear in deterministic output or the AI prompt.
 // 4) Strict summaryNumbersOutside refusal when Vy invents an outside number, while counts remain intact.
 // 5) Kill switches (projects module, org, global ai), hard-stop AI budget, AI off, viewer role, CROVE_MODULES 404, ADR-0053 org app gate, and zero DB writes.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
@@ -253,7 +253,7 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
 
       // Private & shared notes that MUST NEVER be read or leaked by projects.weeklyStatus, even when linked to the project or its task.
       const noteRows = await c.query<{ id: string; visibility: string }>(
-        `INSERT INTO crove_notes.note (org_id, author_user_id, visibility, title, body)
+        `INSERT INTO ludy_notes.note (org_id, author_user_id, visibility, title, body)
          VALUES
            ($1, $2, 'private', 'Secret Private Note 777', 'Nội dung bí mật 777 không được đọc'),
            ($1, $2, 'org', 'Shared Team Note 888', 'Ghi chú chung 888 không liên quan')
@@ -298,7 +298,7 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
         );
         const taskId = res.rows[0]!.id;
         await c.query(
-          `INSERT INTO crove_projects.project_task (org_id, project_id, task_id, added_by)
+          `INSERT INTO ludy_projects.project_task (org_id, project_id, task_id, added_by)
            VALUES ($1, $2, $3, $4)`,
           [org.orgId, projectId, taskId, owner.userId],
         );
@@ -330,9 +330,9 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
         [org.orgId, doneBranch, owner.userId],
       );
 
-      // Link both the private note (to the project) and the shared note (to doneBranch task) via crove_notes.link (#2595).
+      // Link both the private note (to the project) and the shared note (to doneBranch task) via ludy_notes.link (#2595).
       await c.query(
-        `INSERT INTO crove_notes.link (org_id, note_id, target_type, target_id, task_id, created_by)
+        `INSERT INTO ludy_notes.link (org_id, note_id, target_type, target_id, task_id, created_by)
          VALUES
            ($1, $2, 'projects.project', $3, NULL, $5),
            ($1, $4, 'kernel.task', $6, $6, $5)`,
@@ -387,10 +387,10 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
 
     const snapshot = async () =>
       withAdmin(async (c) => ({
-        projects: Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_projects.project WHERE org_id = $1', [org.orgId])).rows[0]!.n),
-        projectTasks: Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_projects.project_task WHERE org_id = $1', [org.orgId])).rows[0]!.n),
+        projects: Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_projects.project WHERE org_id = $1', [org.orgId])).rows[0]!.n),
+        projectTasks: Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_projects.project_task WHERE org_id = $1', [org.orgId])).rows[0]!.n),
         tasks: Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.task WHERE org_id = $1', [org.orgId])).rows[0]!.n),
-        notes: Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_notes.note WHERE org_id = $1', [org.orgId])).rows[0]!.n),
+        notes: Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_notes.note WHERE org_id = $1', [org.orgId])).rows[0]!.n),
         mails: Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.mail_message WHERE org_id = $1', [org.orgId])).rows[0]!.n),
       }));
 

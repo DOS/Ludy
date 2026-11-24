@@ -179,7 +179,7 @@ describe('scoreSignVaultCandidates deterministic search (#4439)', () => {
       if (compiled.sql.includes('org_app_on')) {
         return { rows: [{ enabled: true }] };
       }
-      if (compiled.sql.includes('from "crove_sign"."envelope"')) {
+      if (compiled.sql.includes('from "ludy_sign"."envelope"')) {
         return {
           rows: [
             {
@@ -206,12 +206,12 @@ describe('scoreSignVaultCandidates deterministic search (#4439)', () => {
     const res = await vaultSearch.handler(memberCtx, { question: 'Minh Anh', limit: 10 });
     expect(res.items).toHaveLength(1);
 
-    const envelopeSql = queries.find((q) => q.sql.includes('from "crove_sign"."envelope"'));
+    const envelopeSql = queries.find((q) => q.sql.includes('from "ludy_sign"."envelope"'));
     expect(envelopeSql?.sql).toContain('can_access_meeting_minutes_envelope');
     expect(envelopeSql?.parameters).toContain('hr_contract');
     expect(envelopeSql?.parameters).toContain('meeting_minutes');
 
-    const obligationSql = queries.find((q) => q.sql.includes('from "crove_sign"."envelope_obligation"'));
+    const obligationSql = queries.find((q) => q.sql.includes('from "ludy_sign"."envelope_obligation"'));
     expect(obligationSql?.parameters).toContain('confirmed');
   });
 });

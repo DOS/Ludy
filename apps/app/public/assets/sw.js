@@ -1,12 +1,15 @@
 // The service worker of browser push (#1238). It shows a push and opens its link, nothing else: no fetch handler (it
 // caches and proxies nothing), no importScripts, no other script. Its scope is /assets/, so it controls no page.
-// A push carries the product name, a short line naming the kind of notice and an app path; never the post's text.
+// A push carries the product name, a short line naming the kind of notice and an app path; never the text of what it is about.
 // The path is opened only when it is one of the app's notification paths, on this origin.
 'use strict';
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
-// A post, the channels page, a new post for a channel, or the posts assigned to the reader (#1359).
-const PATH = new RegExp(`^/o/[a-z0-9][a-z0-9-]{0,62}/social(/(channels|${UUID}|new\\?channel=${UUID})|\\?assignee=me)$`);
+// Social: a post, the channels page, a new post for a channel, or the posts assigned to the reader (#1359).
+const SOCIAL = new RegExp(`^/o/[a-z0-9][a-z0-9-]{0,62}/social(/(channels|${UUID}|new\\?channel=${UUID})|\\?assignee=me)$`);
+// Meetings (#3736): a meeting, or the list.
+const MEETINGS = new RegExp(`^/o/[a-z0-9][a-z0-9-]{0,62}/meetings(/${UUID})?$`);
+const PATH = { test: (value) => SOCIAL.test(value) || MEETINGS.test(value) };
 const text = (value, max) => (typeof value === 'string' ? value.replace(/\p{Cc}+/gu, ' ').trim().slice(0, max) : '');
 const safePath = (value) => (typeof value === 'string' && PATH.test(value) ? value : null);
 

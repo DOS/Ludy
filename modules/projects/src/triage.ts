@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Projects Triage Inbox (#4493, ADR-0058): collects internal and external signals into crove_projects.project_triage_item
+// Projects Triage Inbox (#4493, ADR-0058): collects internal and external signals into ludy_projects.project_triage_item
 // with canonical lock ordering (triage item FOR UPDATE -> kernel.task.create_from_triage (position) -> project FOR SHARE),
 // #2604 private-project isolation, cross-module read verification via ctxQueryFn, and Vy AI assist source assembly.
 import { sql } from 'kysely';
@@ -61,7 +61,7 @@ import { assertSeatsAllowed, checkProjectsVyAccess } from './tasks-from-note.ts'
 import { ctxQueryFn, readTasksFromSourceData } from './tasks-from-source.ts';
 
 const TABLES = projectsManifest.tables;
-const TRIAGE_TABLE = TABLES.crove_projects.project_triage_item;
+const TRIAGE_TABLE = TABLES.ludy_projects.project_triage_item;
 const TRIAGE_TASKS_FOR_ASSIST_LIMIT = 40;
 const ASSIST_TITLE_CHARS = 240;
 const ASSIST_DESCRIPTION_CHARS = 1200;
@@ -136,9 +136,9 @@ function triageAlreadyResolved(): DomainError {
 }
 
 async function lockTriageItem(trx: CommandContext['trx'], orgId: string, itemId: string) {
-  // Lock crove_projects.project_triage_item alone first so canonical `triage_item -> position -> project` lock order stays intact.
+  // Lock ludy_projects.project_triage_item alone first so canonical `triage_item -> position -> project` lock order stays intact.
   const locked = await trx
-    .selectFrom('crove_projects.project_triage_item')
+    .selectFrom('ludy_projects.project_triage_item')
     .select([
       'id',
       'project_id',
@@ -167,7 +167,7 @@ async function lockTriageItem(trx: CommandContext['trx'], orgId: string, itemId:
   if (!locked) throw triageNotFound();
 
   const proj = await trx
-    .selectFrom('crove_projects.project')
+    .selectFrom('ludy_projects.project')
     .select(['id'])
     .where('org_id', '=', orgId)
     .where('id', '=', locked.project_id)
@@ -183,8 +183,8 @@ async function loadTriageItemView(trx: QueryContext['trx'], orgId: string, itemI
     trx,
     orgId,
     await trx
-      .selectFrom('crove_projects.project_triage_item as pti')
-      .innerJoin('crove_projects.project as p', (join) =>
+      .selectFrom('ludy_projects.project_triage_item as pti')
+      .innerJoin('ludy_projects.project as p', (join) =>
         join.onRef('p.org_id', '=', 'pti.org_id').onRef('p.id', '=', 'pti.project_id'),
       )
       .select([
@@ -243,7 +243,7 @@ async function hydrateTriageItems(
   const roadmapTitles = new Map<string, string>();
   if (roadmapIds.length > 0) {
     const roadmapRows = await trx
-      .selectFrom('crove_projects.roadmap_item')
+      .selectFrom('ludy_projects.roadmap_item')
       .select(['id', 'public_title'])
       .where('org_id', '=', orgId)
       .where('id', 'in', roadmapIds)
@@ -303,7 +303,7 @@ async function resolveProjectSeatsForProjects(
 ): Promise<ProjectTriageSeatOption[]> {
   if (projectIds.length === 0) return [];
   const members = await trx
-    .selectFrom('crove_projects.project_member')
+    .selectFrom('ludy_projects.project_member')
     .select(['project_id', 'user_id'])
     .where('org_id', '=', orgId)
     .where('project_id', 'in', [...projectIds])
@@ -355,7 +355,7 @@ export const projectTriageCreate = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'project_triage_item', [
+    tableWrite(TABLES, 'ludy_projects', 'project_triage_item', [
       'project_id',
       'source_type',
       'source_id',
@@ -385,8 +385,8 @@ export const projectTriageCreate = defineCommand({
     } else if (input.sourceType === 'roadmap.item') {
       sourceId = input.sourceId!;
       const roadmapItem = await ctx.trx
-        .selectFrom('crove_projects.roadmap_item as i')
-        .innerJoin('crove_projects.roadmap_board as b', (join) =>
+        .selectFrom('ludy_projects.roadmap_item as i')
+        .innerJoin('ludy_projects.roadmap_board as b', (join) =>
           join.onRef('b.org_id', '=', 'i.org_id').onRef('b.id', '=', 'i.board_id'),
         )
         .select(['i.id', 'i.source', 'i.tainted'])
@@ -415,7 +415,7 @@ export const projectTriageCreate = defineCommand({
     const priority: ProjectTriagePriority = input.priority ?? 'none';
 
     const inserted = await ctx.trx
-      .insertInto('crove_projects.project_triage_item')
+      .insertInto('ludy_projects.project_triage_item')
       .values({
         org_id: ctx.orgId,
         project_id: project.id,
@@ -476,7 +476,7 @@ export const projectTriageList = defineQuery({
     }
 
     const projectRows = await ctx.trx
-      .selectFrom('crove_projects.project')
+      .selectFrom('ludy_projects.project')
       .select(['id', 'name', 'visibility', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('is_template', '=', false)
@@ -498,8 +498,8 @@ export const projectTriageList = defineQuery({
     const limit = input.limit ?? PROJECT_TRIAGE_LIST_DEFAULT_LIMIT;
 
     let itemQuery = ctx.trx
-      .selectFrom('crove_projects.project_triage_item as pti')
-      .innerJoin('crove_projects.project as p', (join) =>
+      .selectFrom('ludy_projects.project_triage_item as pti')
+      .innerJoin('ludy_projects.project as p', (join) =>
         join.onRef('p.org_id', '=', 'pti.org_id').onRef('p.id', '=', 'pti.project_id'),
       )
       .select([
@@ -577,8 +577,8 @@ export const projectTriageList = defineQuery({
         pg_catalog.count(*) FILTER (WHERE pti.status = 'merged')::text AS merged,
         pg_catalog.count(*) FILTER (WHERE pti.status = 'declined')::text AS declined,
         pg_catalog.count(*) FILTER (WHERE pti.status = 'snoozed' AND pti.snoozed_until <= ${nowIso}::timestamptz)::text AS snooze_elapsed
-      FROM crove_projects.project_triage_item pti
-      JOIN crove_projects.project p
+      FROM ludy_projects.project_triage_item pti
+      JOIN ludy_projects.project p
         ON p.org_id = pti.org_id
        AND p.id = pti.project_id
      WHERE pti.org_id = ${ctx.orgId}::uuid
@@ -603,7 +603,7 @@ export const projectTriageList = defineQuery({
       projectIds.length === 0
         ? []
         : await ctx.trx
-            .selectFrom('crove_projects.project_cycle')
+            .selectFrom('ludy_projects.project_cycle')
             .select(['id', 'project_id', 'number', 'name', 'status', 'starts_on', 'ends_on'])
             .where('org_id', '=', ctx.orgId)
             .where('project_id', 'in', projectIds)
@@ -625,7 +625,7 @@ export const projectTriageList = defineQuery({
       projectIds.length === 0
         ? []
         : await ctx.trx
-            .selectFrom('crove_projects.project_task as pt')
+            .selectFrom('ludy_projects.project_task as pt')
             .innerJoin('ludy_kernel.task as t', (join) =>
               join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'),
             )
@@ -718,7 +718,7 @@ export const projectTriageAccept = defineCommand({
           : (item.source_type as 'kernel.conversation' | 'meetings.meeting');
     const sourceRefId = item.source_id ?? item.id;
 
-    // Canonical lock order: kernel.task.create_from_triage locks ludy_kernel.position BEFORE we lock crove_projects.project.
+    // Canonical lock order: kernel.task.create_from_triage locks ludy_kernel.position BEFORE we lock ludy_projects.project.
     const created = await ctx.run<{ taskId: string }>('kernel.task.create_from_triage', {
       sourceType: sourceRefType,
       sourceId: sourceRefId,
@@ -759,7 +759,7 @@ export const projectTriageAccept = defineCommand({
     }
 
     await ctx.trx
-      .insertInto('crove_projects.project_task')
+      .insertInto('ludy_projects.project_task')
       .values({
         org_id: ctx.orgId,
         project_id: lockedProject.id,
@@ -772,7 +772,7 @@ export const projectTriageAccept = defineCommand({
       .execute();
 
     await ctx.trx
-      .updateTable('crove_projects.project_triage_item')
+      .updateTable('ludy_projects.project_triage_item')
       .set({
         status: 'accepted',
         priority,
@@ -790,7 +790,7 @@ export const projectTriageAccept = defineCommand({
 
     if (item.source_type === 'roadmap.item' && item.source_id && lockedProject.visibility !== 'private') {
       await ctx.trx
-        .updateTable('crove_projects.roadmap_item')
+        .updateTable('ludy_projects.roadmap_item')
         .set({
           linked_task_id: created.taskId,
           updated_at: ctx.now,
@@ -843,7 +843,7 @@ export const projectTriageMerge = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'project_triage_item', [
+    tableWrite(TABLES, 'ludy_projects', 'project_triage_item', [
       'status',
       'snoozed_until',
       'accepted_task_id',
@@ -866,7 +866,7 @@ export const projectTriageMerge = defineCommand({
     assertNotArchived(project);
 
     const targetTask = await ctx.trx
-      .selectFrom('crove_projects.project_task as pt')
+      .selectFrom('ludy_projects.project_task as pt')
       .innerJoin('ludy_kernel.task as t', (join) =>
         join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'),
       )
@@ -880,7 +880,7 @@ export const projectTriageMerge = defineCommand({
     }
 
     await ctx.trx
-      .updateTable('crove_projects.project_triage_item')
+      .updateTable('ludy_projects.project_triage_item')
       .set({
         status: 'merged',
         snoozed_until: null,
@@ -921,7 +921,7 @@ export const projectTriageSnooze = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'project_triage_item', [
+    tableWrite(TABLES, 'ludy_projects', 'project_triage_item', [
       'status',
       'snoozed_until',
       'triaged_by',
@@ -947,7 +947,7 @@ export const projectTriageSnooze = defineCommand({
     assertNotArchived(project);
 
     await ctx.trx
-      .updateTable('crove_projects.project_triage_item')
+      .updateTable('ludy_projects.project_triage_item')
       .set({
         status: 'snoozed',
         snoozed_until: input.snoozedUntil,
@@ -985,7 +985,7 @@ export const projectTriageDecline = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'project_triage_item', [
+    tableWrite(TABLES, 'ludy_projects', 'project_triage_item', [
       'status',
       'snoozed_until',
       'decline_reason',
@@ -1011,7 +1011,7 @@ export const projectTriageDecline = defineCommand({
     assertNotArchived(project);
 
     await ctx.trx
-      .updateTable('crove_projects.project_triage_item')
+      .updateTable('ludy_projects.project_triage_item')
       .set({
         status: 'declined',
         snoozed_until: null,
@@ -1049,7 +1049,7 @@ export const projectTriageReopen = defineCommand({
   sideEffect: 'internal',
   access: WRITERS,
   writes: [
-    tableWrite(TABLES, 'crove_projects', 'project_triage_item', [
+    tableWrite(TABLES, 'ludy_projects', 'project_triage_item', [
       'status',
       'snoozed_until',
       'decline_reason',
@@ -1070,7 +1070,7 @@ export const projectTriageReopen = defineCommand({
     assertNotArchived(project);
 
     await ctx.trx
-      .updateTable('crove_projects.project_triage_item')
+      .updateTable('ludy_projects.project_triage_item')
       .set({
         status: 'pending',
         snoozed_until: null,
@@ -1108,8 +1108,8 @@ export const projectTriageAssistSource = defineQuery({
     userOf(ctx.actor);
 
     const row = await ctx.trx
-      .selectFrom('crove_projects.project_triage_item as pti')
-      .innerJoin('crove_projects.project as p', (join) =>
+      .selectFrom('ludy_projects.project_triage_item as pti')
+      .innerJoin('ludy_projects.project as p', (join) =>
         join.onRef('p.org_id', '=', 'pti.org_id').onRef('p.id', '=', 'pti.project_id'),
       )
       .select([
@@ -1147,7 +1147,7 @@ export const projectTriageAssistSource = defineQuery({
     });
 
     const cycleRows = await ctx.trx
-      .selectFrom('crove_projects.project_cycle')
+      .selectFrom('ludy_projects.project_cycle')
       .select(['id', 'number', 'name', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('project_id', '=', row.project_id)
@@ -1161,7 +1161,7 @@ export const projectTriageAssistSource = defineQuery({
     }));
 
     const openTasks = await ctx.trx
-      .selectFrom('crove_projects.project_task as pt')
+      .selectFrom('ludy_projects.project_task as pt')
       .innerJoin('ludy_kernel.task as t', (join) =>
         join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'),
       )

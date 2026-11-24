@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The eSign module's manifest (plan docs/plan/esign.md, #3323): every table it owns and the privacy class of every
-// column. Any migration adding or dropping a crove_sign table or column updates this list in the same PR.
+// column. Any migration adding or dropping a ludy_sign table or column updates this list in the same PR.
 import { MODULE_SCREENS, columns, defineModule } from '@ludy/kernel-contract';
 
 export const SIGN_ENVELOPE_TABLE = columns([
@@ -187,7 +187,7 @@ export const signManifest = defineModule({
   id: 'sign',
   dependsOn: ['kernel'],
   tables: {
-    crove_sign: {
+    ludy_sign: {
       ai_analysis: columns([
         'org_id',
         'id',
@@ -202,6 +202,22 @@ export const signManifest = defineModule({
         'completed_at',
         'created_at',
       ]),
+      api_key: columns(
+        [
+          'org_id',
+          'id',
+          'name',
+          'key_prefix',
+          'scopes',
+          'created_by',
+          'expires_at',
+          'revoked_at',
+          'last_used_at',
+          'created_at',
+          'updated_at',
+        ],
+        { key_sha256: 'sensitive' },
+      ),
       ca_connection: columns(
         [
           'org_id',
@@ -271,8 +287,49 @@ export const signManifest = defineModule({
         { counterparty_name: 'pii' },
       ),
       field: SIGN_FIELD_TABLE,
+      kyc_check: columns(
+        [
+          'org_id',
+          'id',
+          'envelope_id',
+          'field_id',
+          'file_id',
+          'file_sha256',
+          'status',
+          'mode',
+          'checked_by',
+          'checked_at',
+          'created_at',
+          'updated_at',
+        ],
+        { findings_json: 'pii' },
+      ),
       member_signature: SIGN_MEMBER_SIGNATURE_TABLE,
       org_stamp: SIGN_ORG_STAMP_TABLE,
+      playbook_check: columns([
+        'org_id',
+        'id',
+        'envelope_id',
+        'source_sha256',
+        'mode',
+        'findings_json',
+        'prompt_version',
+        'created_by',
+        'created_at',
+        'updated_at',
+      ]),
+      playbook_rule: columns([
+        'org_id',
+        'id',
+        'title',
+        'guidance',
+        'severity',
+        'match_keywords',
+        'active',
+        'created_by',
+        'created_at',
+        'updated_at',
+      ]),
       signer: SIGN_SIGNER_TABLE,
       signing_event: SIGN_EVENT_TABLE,
       signing_otp: columns(
@@ -375,18 +432,63 @@ export const signManifest = defineModule({
         'created_at',
         'updated_at',
       ]),
+      webhook: columns(
+        [
+          'org_id',
+          'id',
+          'url',
+          'events',
+          'enabled',
+          'key_id',
+          'secret_hint',
+          'previous_key_id',
+          'previous_expires_at',
+          'consecutive_failures',
+          'failing_since',
+          'paused_reason',
+          'last_delivery_at',
+          'last_status',
+          'created_by',
+          'created_at',
+          'updated_at',
+        ],
+        {
+          secret_envelope: 'sensitive',
+          previous_secret_envelope: 'sensitive',
+        },
+      ),
+      webhook_delivery: columns([
+        'org_id',
+        'id',
+        'webhook_id',
+        'envelope_id',
+        'event_type',
+        'status',
+        'payload_json',
+        'attempts',
+        'last_code',
+        'handed_at',
+        'sent_at',
+        'created_at',
+      ]),
     },
   },
   // Slice 1a uses org roles and human-only actor gates without module-specific permissions.
   permissions: [],
   entities: [
+    { type: 'sign.api_key', table: 'api_key', legalEntityScoped: false, audit: 'command' },
     { type: 'sign.ca_connection', table: 'ca_connection', legalEntityScoped: false, audit: 'command' },
     { type: 'sign.ca_signing_request', table: 'ca_signing_request', legalEntityScoped: false, audit: 'command' },
     { type: 'sign.envelope', table: 'envelope', legalEntityScoped: false, audit: 'command' },
     { type: 'sign.envelope_obligation', table: 'envelope_obligation', legalEntityScoped: false, audit: 'command' },
+    { type: 'sign.kyc_check', table: 'kyc_check', legalEntityScoped: false, audit: 'command' },
     { type: 'sign.member_signature', table: 'member_signature', legalEntityScoped: false, audit: 'command' },
     { type: 'sign.org_stamp', table: 'org_stamp', legalEntityScoped: false, audit: 'command' },
+    { type: 'sign.playbook_check', table: 'playbook_check', legalEntityScoped: false, audit: 'command' },
+    { type: 'sign.playbook_rule', table: 'playbook_rule', legalEntityScoped: false, audit: 'command' },
     { type: 'sign.template', table: 'template', legalEntityScoped: false, audit: 'command' },
+    { type: 'sign.webhook', table: 'webhook', legalEntityScoped: false, audit: 'command' },
+    { type: 'sign.webhook_delivery', table: 'webhook_delivery', legalEntityScoped: false, audit: 'command' },
   ],
   ...MODULE_SCREENS.sign,
 });

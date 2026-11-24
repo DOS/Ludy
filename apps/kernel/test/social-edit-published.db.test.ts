@@ -83,7 +83,7 @@ suite('correcting a published post on PostgreSQL (#1223)', () => {
     const post = await get(o, postId);
     await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
     await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
     const id = post.variants[0]?.id as string;
     expect(await runPublishJob({ runtime: worker, broker: vault, publishers: { sandbox: platform }, callTimeoutMs: 2_000 }, o.orgId, id, 'sandbox')).toMatchObject({ status: 'published' });
     return { postId, id, account, connectionId };
@@ -96,9 +96,9 @@ suite('correcting a published post on PostgreSQL (#1223)', () => {
   const editCalls = (id: string) =>
     admin(async (c) => (await c.query<{ key: string; state: string; retry_safety: string; error_code: string | null }>("SELECT key, state, retry_safety, error_code FROM ludy_kernel.external_call WHERE key LIKE $1 ORDER BY started_at, key", [`social.publish:${id}:%:edit%`])).rows);
   const approvals = (id: string) =>
-    admin(async (c) => (await c.query<{ revision: number; content_hash: string; decided_by: string; snapshot: { body: string }; checklist: unknown }>("SELECT revision, content_hash, decided_by, snapshot, checklist FROM crove_social.post_approval WHERE variant_id = $1 ORDER BY id", [id])).rows);
+    admin(async (c) => (await c.query<{ revision: number; content_hash: string; decided_by: string; snapshot: { body: string }; checklist: unknown }>("SELECT revision, content_hash, decided_by, snapshot, checklist FROM ludy_social.post_approval WHERE variant_id = $1 ORDER BY id", [id])).rows);
   const editColumns = (id: string) =>
-    admin(async (c) => (await c.query<{ edit_state: string | null; edit_body: string | null; revision: number; published_revision: number | null; body: string | null }>('SELECT edit_state, edit_body, revision, published_revision, body FROM crove_social.post_variant WHERE id = $1', [id])).rows[0]);
+    admin(async (c) => (await c.query<{ edit_state: string | null; edit_body: string | null; revision: number; published_revision: number | null; body: string | null }>('SELECT edit_state, edit_body, revision, published_revision, body FROM ludy_social.post_variant WHERE id = $1', [id])).rows[0]);
 
   // Nothing was asked: no event, no approval past the publish's, no pending edit.
   async function nothingQueued(o: Org, id: string) {
@@ -325,13 +325,13 @@ suite('correcting a published post on PostgreSQL (#1223)', () => {
 
     // A published channel on a platform with no edit (as if it were an Instagram account).
     const other = await publishedPost(o, sandbox);
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET provider = 'instagram' WHERE id = $1", [other.id]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET provider = 'instagram' WHERE id = $1", [other.id]));
     await expect(exec(o, 'social.variant.edit_published', { variantId: other.id, revision: 1, body: 'Sửa' })).rejects.toMatchObject({ code: 'EDIT_NOT_SUPPORTED', details: { reason: 'provider' } });
     // And the job never edits what the command did not ask for.
     expect(await runEditJob(deps(sandbox), o.orgId, other.id, 'sandbox', null)).toEqual({ action: 'none', reason: 'provider_mismatch' });
 
     const poll = await publishedPost(o, sandbox);
-    await admin((c) => c.query(`UPDATE crove_social.post_variant SET settings = settings || '{"poll":{"options":["Có","Không"]}}'::jsonb WHERE id = $1`, [poll.id]));
+    await admin((c) => c.query(`UPDATE ludy_social.post_variant SET settings = settings || '{"poll":{"options":["Có","Không"]}}'::jsonb WHERE id = $1`, [poll.id]));
     await expect(exec(o, 'social.variant.edit_published', { variantId: poll.id, revision: 1, body: 'Sửa' })).rejects.toMatchObject({ code: 'EDIT_NOT_SUPPORTED', details: { reason: 'poll' } });
     await nothingQueued(o, poll.id);
   });
@@ -344,10 +344,10 @@ suite('correcting a published post on PostgreSQL (#1223)', () => {
     admin(async (c) => {
       await c.query(
         `INSERT INTO ludy_kernel.external_call (org_id, key, module, target, step, retry_safety, request_hash, started_at)
-         SELECT org_id, $2, 'social', provider, 'edit', 'idempotent', edit_content_hash, now() - interval '2 hours' FROM crove_social.post_variant WHERE id = $1`,
+         SELECT org_id, $2, 'social', provider, 'edit', 'idempotent', edit_content_hash, now() - interval '2 hours' FROM ludy_social.post_variant WHERE id = $1`,
         [id, key],
       );
-      await c.query("UPDATE crove_social.post_variant SET edit_requested_at = now() - interval '3 hours' WHERE id = $1", [id]);
+      await c.query("UPDATE ludy_social.post_variant SET edit_requested_at = now() - interval '3 hours' WHERE id = $1", [id]);
     });
 
   it('applies a late answer to the ask it was made for, never to a newer one (#1223 review)', async () => {
@@ -405,7 +405,7 @@ suite('correcting a published post on PostgreSQL (#1223)', () => {
     // Delayed past EDIT_STALE_MS (a worker outage): the page already said it did not run, and nothing goes out.
     const late = await publishedPost(o, sandbox);
     await exec(o, 'social.variant.edit_published', { variantId: late.id, revision: 1, body: 'Giá 45.000đ' });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET edit_requested_at = now() - interval '2 hours' WHERE id = $1", [late.id]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET edit_requested_at = now() - interval '2 hours' WHERE id = $1", [late.id]));
     expect(await runEditJob(deps(sandbox), o.orgId, late.id, 'sandbox', null)).toEqual({ action: 'none', reason: 'EDIT_NOT_RUN' });
     expect(await variant(o, late.postId)).toMatchObject({ revision: 1, liveEdit: { state: 'failed', code: 'EDIT_NOT_RUN' } });
     expect(await editCalls(late.id)).toEqual([]);

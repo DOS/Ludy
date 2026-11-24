@@ -151,11 +151,11 @@ describe('13th-month salary and statutory severance contracts & domain guards (#
         adjusts_run_id: null,
       };
       const tables: Record<string, unknown[]> = {
-        'crove_hr.payroll_run': [run],
-        'crove_hr.payroll_line': [line],
-        'crove_hr.payroll_employee': [{ id: 'employee', display_name: 'Test Person', ended_on: null, erased_at: null }],
-        'crove_hr.payroll_employment': [{ id: 'employment', employee_id: 'employee', effective_from: '2026-01-01', contract_type: 'indefinite', region: 'I', base_wage: '15000000' }],
-        'crove_hr.payroll_dependent': [],
+        'ludy_hr.payroll_run': [run],
+        'ludy_hr.payroll_line': [line],
+        'ludy_hr.payroll_employee': [{ id: 'employee', display_name: 'Test Person', ended_on: null, erased_at: null }],
+        'ludy_hr.payroll_employment': [{ id: 'employment', employee_id: 'employee', effective_from: '2026-01-01', contract_type: 'indefinite', region: 'I', base_wage: '15000000' }],
+        'ludy_hr.payroll_dependent': [],
       };
       const query = (table: string): unknown => {
         const q: unknown = new Proxy(

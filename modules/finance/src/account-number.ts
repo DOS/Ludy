@@ -25,13 +25,13 @@ export function feedAccountDigits(externalAccountId: string): string {
 // (bank-rules.ts). Read under the caller's own row security.
 export async function mappedAccounts(ctx: QueryContext, digits: string): Promise<Array<{ bank_account: string; legal_entity_id: string }>> {
   const fed = await ctx.trx
-    .selectFrom('crove_finance.bank_feed_account')
+    .selectFrom('ludy_finance.bank_feed_account')
     .select(['bank_account', 'legal_entity_id'])
     .where('org_id', '=', ctx.orgId)
     .where(sql<boolean>`pg_catalog.regexp_replace(external_account_id, '[^0-9]', '', 'g') = ${digits}`)
     .execute();
   const recorded = await ctx.trx
-    .selectFrom('crove_finance.bank_account_number')
+    .selectFrom('ludy_finance.bank_account_number')
     .select(['bank_account', 'legal_entity_id'])
     .where('org_id', '=', ctx.orgId)
     .where('account_number', '=', digits)

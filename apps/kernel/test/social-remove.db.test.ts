@@ -79,7 +79,7 @@ suite('removing a published post on PostgreSQL (#860)', () => {
     const post = await get(o, postId);
     await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
     await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
     const id = post.variants[0]?.id as string;
     expect(await runPublishJob({ runtime: worker, broker: vault, publishers: { sandbox: platform }, callTimeoutMs: 2_000 }, o.orgId, id, 'sandbox')).toMatchObject({ status: 'published' });
     return { postId, id, account };
@@ -92,7 +92,7 @@ suite('removing a published post on PostgreSQL (#860)', () => {
   const removeCalls = (id: string) =>
     admin(async (c) => (await c.query<{ key: string; state: string; retry_safety: string; error_code: string | null }>("SELECT key, state, retry_safety, error_code FROM ludy_kernel.external_call WHERE key LIKE $1 ORDER BY started_at, key", [`social.publish:${id}:%:remove%`])).rows);
   const metricsDue = async (id: string) =>
-    admin(async (c) => (await c.query<{ variant_id: string }>("SELECT variant_id FROM crove_social.metrics_due(1000, ARRAY['sandbox'], 600)")).rows.some((r) => r.variant_id === id));
+    admin(async (c) => (await c.query<{ variant_id: string }>("SELECT variant_id FROM ludy_social.metrics_due(1000, ARRAY['sandbox'], 600)")).rows.some((r) => r.variant_id === id));
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -242,7 +242,7 @@ suite('removing a published post on PostgreSQL (#860)', () => {
 
     // A published channel on a platform whose adapter has no remove (as if it were a Threads account).
     const other = await publishedPost(o, sandbox);
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET provider = 'threads' WHERE id = $1", [other.id]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET provider = 'threads' WHERE id = $1", [other.id]));
     await expect(exec(o, 'social.variant.remove', { variantId: other.id })).rejects.toMatchObject({ code: 'REMOVE_NOT_SUPPORTED' });
     // And the job never removes what the command did not ask for.
     expect(await runRemoveJob(deps(sandbox), o.orgId, other.id, 'sandbox', null)).toEqual({ action: 'none', reason: 'provider_mismatch' });

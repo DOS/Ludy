@@ -42,7 +42,7 @@ suite('the recorder\'s Vy chapters of a meeting (#3844, step 3)', () => {
   const sqlAdmin = <R extends pg.QueryResultRow = pg.QueryResultRow>(text: string, params: unknown[] = []) => admin((c) => c.query<R>(text, params));
   const rowsOf = (meetingId: string, stage?: string) =>
     sqlAdmin<{ position: number; title: string; start_seconds: number; stage: string; tainted: boolean }>(
-      `SELECT position, title, start_seconds, stage, tainted FROM crove_meetings.meeting_chapter WHERE org_id = $1 AND meeting_id = $2 AND ($3::text IS NULL OR stage = $3) ORDER BY stage, position`,
+      `SELECT position, title, start_seconds, stage, tainted FROM ludy_meetings.meeting_chapter WHERE org_id = $1 AND meeting_id = $2 AND ($3::text IS NULL OR stage = $3) ORDER BY stage, position`,
       [orgId, meetingId, stage ?? null],
     ).then((r) => r.rows);
 
@@ -50,11 +50,11 @@ suite('the recorder\'s Vy chapters of a meeting (#3844, step 3)', () => {
   async function seedMeeting(recorder: string, readers: string[] = ['reader']): Promise<string> {
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp tuần', 'vi', '2026-11-10T03:00:00Z', '2026-11-10T04:00:00Z', 3600, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, meetingId, users[recorder]],
     );
-    for (const reader of readers) await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users[reader]]);
+    for (const reader of readers) await sqlAdmin(`INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users[reader]]);
     await exec(recorder, 'meetings.transcript.draft_store', {
       meetingId,
       segments: [
@@ -125,7 +125,7 @@ suite('the recorder\'s Vy chapters of a meeting (#3844, step 3)', () => {
     expect(run.rows[0]).toMatchObject({ feature: 'meetings.chapters', subject_type: 'meeting', subject_id: meetingId });
     // A meeting with no transcript has nothing to write chapters from.
     const empty = await seedMeeting('recorder');
-    await sqlAdmin(`DELETE FROM crove_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2`, [orgId, empty]);
+    await sqlAdmin(`DELETE FROM ludy_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2`, [orgId, empty]);
     expect(await refuses(exec('recorder', 'meetings.chapters.start', { meetingId: empty }))).toBe('TRANSCRIPT_EMPTY');
     setSummaryEnabled(false);
     try {
@@ -144,7 +144,7 @@ suite('the recorder\'s Vy chapters of a meeting (#3844, step 3)', () => {
     expect(await exec('recorder', 'meetings.chapters.copy_result', { meetingId, runId })).toEqual({ meetingId, chapters: 3, dropped: 1 });
     const view = await get('recorder', meetingId);
     expect(view.draft.map((c) => [c.position, c.title, c.startSeconds, c.tainted])).toEqual([[1, 'Mở đầu', 0, true], [2, 'Báo giá', 10, true], [3, 'Giao hàng', 300, true]]);
-    expect((await sqlAdmin<{ source_run_id: string }>(`SELECT source_run_id FROM crove_meetings.meeting_chapter WHERE meeting_id = $1`, [meetingId])).rows.every((r) => r.source_run_id === runId)).toBe(true);
+    expect((await sqlAdmin<{ source_run_id: string }>(`SELECT source_run_id FROM ludy_meetings.meeting_chapter WHERE meeting_id = $1`, [meetingId])).rows.every((r) => r.source_run_id === runId)).toBe(true);
     expect(await get('reader', meetingId)).toEqual({ meetingId, draft: [], published: [] });
     expect(await refuses(exec('recorder', 'meetings.chapters.copy_result', { meetingId, runId }))).toBe('CHAPTERS_ALREADY_COPIED');
     // The audit row of the copy holds counts, no title.
@@ -205,7 +205,7 @@ suite('the recorder\'s Vy chapters of a meeting (#3844, step 3)', () => {
     // The recorder edits one title and adds a chapter of their own: the edited one keeps the mark (the same second), the new one is theirs.
     await save('recorder', meetingId, [{ title: 'Mở đầu, sửa', startSeconds: 0 }, { title: 'Báo giá', startSeconds: 10 }, { title: 'Chiết khấu', startSeconds: 20 }]);
     expect((await rowsOf(meetingId, 'draft')).map((r) => [r.title, r.tainted])).toEqual([['Mở đầu, sửa', true], ['Báo giá', true], ['Chiết khấu', false]]);
-    expect((await sqlAdmin<{ n: number }>(`SELECT count(*)::int AS n FROM crove_meetings.meeting_chapter WHERE meeting_id = $1 AND source_run_id = $2`, [meetingId, runId])).rows[0]?.n).toBe(2);
+    expect((await sqlAdmin<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_meetings.meeting_chapter WHERE meeting_id = $1 AND source_run_id = $2`, [meetingId, runId])).rows[0]?.n).toBe(2);
     expect(await refuses(exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true }))).toBe('DRAFT_NOT_REVIEWED');
     // Another meeting's recorder cannot review these rows, and a stranger neither.
     const draft = (await get('recorder', meetingId)).draft;
@@ -234,7 +234,7 @@ suite('the recorder\'s Vy chapters of a meeting (#3844, step 3)', () => {
     // Both changed, at a line and with a title that are the recorder's own: theirs, clean.
     await save('recorder', meetingId, [{ title: 'Mở đầu', startSeconds: 0 }, { title: 'Giao hàng', startSeconds: 300 }]);
     expect((await rowsOf(meetingId, 'draft')).map((r) => [r.title, r.tainted])).toEqual([['Mở đầu', true], ['Giao hàng', false]]);
-    expect((await sqlAdmin<{ n: number }>(`SELECT count(*)::int AS n FROM crove_meetings.meeting_chapter WHERE meeting_id = $1 AND source_run_id = $2`, [meetingId, runId])).rows[0]?.n).toBe(1);
+    expect((await sqlAdmin<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_meetings.meeting_chapter WHERE meeting_id = $1 AND source_run_id = $2`, [meetingId, runId])).rows[0]?.n).toBe(1);
   });
 
   it('refuses a title with a line or paragraph separator, a zero-width, bidi or control character, by the command and by the database (#3882)', async () => {
@@ -257,9 +257,9 @@ suite('the recorder\'s Vy chapters of a meeting (#3844, step 3)', () => {
     expect(await save('recorder', meetingId, [{ title: 'Tiếng Việt: quyết định', startSeconds: 0 }])).toMatchObject({ chapters: 1 });
     // The same class in the database, past the command: the same characters are refused, and the class matches the minutes templates' CHECK.
     for (const bad of ['a\u2028b', 'a\u2029b', 'a\u200bb', 'a\u202eb', 'a\u2066b', 'a\u0007b', 'a\ufeffb', 'a\u{e0041}b', 'a\u3164b', 'a\u00adb', 'a\u034fb']) {
-      await expect(sqlAdmin(`INSERT INTO crove_meetings.meeting_chapter (org_id, meeting_id, position, title, start_seconds) VALUES ($1, $2, 9, $3, 20)`, [orgId, meetingId, bad]), JSON.stringify(bad)).rejects.toMatchObject({ code: '23514' });
+      await expect(sqlAdmin(`INSERT INTO ludy_meetings.meeting_chapter (org_id, meeting_id, position, title, start_seconds) VALUES ($1, $2, 9, $3, 20)`, [orgId, meetingId, bad]), JSON.stringify(bad)).rejects.toMatchObject({ code: '23514' });
     }
-    await expect(sqlAdmin(`UPDATE crove_meetings.meeting_chapter SET title = $2 WHERE meeting_id = $1`, [meetingId, 'a\u2028b'])).rejects.toMatchObject({ code: '23514' });
+    await expect(sqlAdmin(`UPDATE ludy_meetings.meeting_chapter SET title = $2 WHERE meeting_id = $1`, [meetingId, 'a\u2028b'])).rejects.toMatchObject({ code: '23514' });
     expect(titles(await rowsOf(meetingId))).toEqual(['Tiếng Việt: quyết định']);
   });
 
@@ -272,7 +272,7 @@ suite('the recorder\'s Vy chapters of a meeting (#3844, step 3)', () => {
     const results = (id: string) => sqlAdmin<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_kernel.member_vy_result WHERE org_id = $1 AND subject_id = $2`, [orgId, id]).then((r) => r.rows[0]?.n);
     expect(await results(meetingId)).toBe(1);
     expect(await results(other)).toBe(1);
-    await sqlAdmin(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = ANY($2::uuid[])`, [orgId, [meetingId, other]]);
+    await sqlAdmin(`DELETE FROM ludy_meetings.meeting WHERE org_id = $1 AND id = ANY($2::uuid[])`, [orgId, [meetingId, other]]);
     expect(await results(meetingId)).toBe(0);
     expect(await results(other)).toBe(0);
     const runs = await sqlAdmin<{ id: string; status: string; error: string | null }>(`SELECT id, status, error FROM ludy_kernel.ai_run WHERE org_id = $1 AND id = ANY($2::uuid[])`, [orgId, [runId, done]]);

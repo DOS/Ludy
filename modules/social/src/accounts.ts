@@ -60,7 +60,7 @@ export const accountRecord = defineCommand({
     const connection = await ctx.trx.selectFrom('ludy_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).executeTakeFirst();
     if (!connection) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
     const row = await ctx.trx
-      .insertInto('crove_social.account_snapshot')
+      .insertInto('ludy_social.account_snapshot')
       .values({
         org_id: ctx.orgId,
         channel_connection_id: connection.id,
@@ -111,7 +111,7 @@ export const accountAudienceDue = defineQuery({
   handler: async (ctx, input): Promise<{ due: boolean }> => {
     const { rows } = await sql<{ asked: boolean }>`
       SELECT EXISTS (
-        SELECT 1 FROM crove_social.account_snapshot s
+        SELECT 1 FROM ludy_social.account_snapshot s
         WHERE s.org_id = ${ctx.orgId} AND s.channel_connection_id = ${input.connectionId} AND s.audience IS NOT NULL
           AND s.captured_on > ${input.day}::date - ${AUDIENCE_EVERY_DAYS}::int AND s.captured_on <= ${input.day}::date
       ) AS asked`.execute(ctx.trx);
@@ -130,7 +130,7 @@ export const accountTrends = defineQuery({
     const scope = await channelScope(ctx);
     const { rows } = await sql<{ connection_id: string; provider: string; captured_on: string; followers: string | null; reach: string | null }>`
       SELECT s.channel_connection_id AS connection_id, c.provider, to_char(s.captured_on, 'YYYY-MM-DD') AS captured_on, s.followers, s.reach
-      FROM crove_social.account_snapshot s
+      FROM ludy_social.account_snapshot s
       JOIN ludy_kernel.channel_connection c ON c.org_id = s.org_id AND c.id = s.channel_connection_id
       WHERE s.org_id = ${ctx.orgId}
         AND s.captured_on >= (pg_catalog.now() AT TIME ZONE 'UTC')::date - ${input.days}::int
@@ -141,7 +141,7 @@ export const accountTrends = defineQuery({
     // The latest audience the platform gave in the window, per channel ({} is an ask that got nothing).
     const audiences = await sql<{ connection_id: string; captured_on: string; audience: unknown }>`
       SELECT DISTINCT ON (s.channel_connection_id) s.channel_connection_id AS connection_id, to_char(s.captured_on, 'YYYY-MM-DD') AS captured_on, s.audience
-      FROM crove_social.account_snapshot s
+      FROM ludy_social.account_snapshot s
       WHERE s.org_id = ${ctx.orgId}
         AND s.captured_on >= (pg_catalog.now() AT TIME ZONE 'UTC')::date - ${input.days}::int
         AND s.audience IS NOT NULL AND s.audience <> '{}'::jsonb
@@ -157,7 +157,7 @@ export const accountTrends = defineQuery({
     // a later read corrects an earlier one, so a day counts once.
     const performance = await sql<{ connection_id: string; provider: string; day: string; figures: unknown }>`
       SELECT DISTINCT ON (s.channel_connection_id, d.key) s.channel_connection_id AS connection_id, c.provider, d.key AS day, d.value AS figures
-      FROM crove_social.account_snapshot s
+      FROM ludy_social.account_snapshot s
       JOIN ludy_kernel.channel_connection c ON c.org_id = s.org_id AND c.id = s.channel_connection_id
       CROSS JOIN LATERAL pg_catalog.jsonb_each(s.performance) d
       WHERE s.org_id = ${ctx.orgId}
@@ -207,7 +207,7 @@ export async function sweepAccounts(deps: AccountDeps): Promise<{ recorded: numb
   const out = { recorded: 0, skipped: 0 };
   if (providers.length === 0) return out;
   const { rows } = await sql<{ org_id: string; connection_id: string; provider: string }>`
-    SELECT org_id, connection_id, provider FROM crove_social.account_snapshots_due(${ACCOUNT_LIMIT}::int, ${providers}::text[])`.execute(deps.workerDb);
+    SELECT org_id, connection_id, provider FROM ludy_social.account_snapshots_due(${ACCOUNT_LIMIT}::int, ${providers}::text[])`.execute(deps.workerDb);
   const day = utcDay(deps.now?.() ?? new Date());
   for (const row of rows) {
     const publisher = deps.publishers[row.provider];

@@ -15,7 +15,7 @@ export interface FeeClearingInput {
   platform: string;
   // The invoice's own number, for the description (series and number as the document holds them).
   invoice: string;
-  // The platform's party: the invoice's supplier, linked through crove_finance.marketplace_party.
+  // The platform's party: the invoice's supplier, linked through ludy_finance.marketplace_party.
   partyId: string | null;
   // The invoice's posted credit to 331, what its standing clearings took already, and the platform's balance on 1388.
   invoiceTotal: string;

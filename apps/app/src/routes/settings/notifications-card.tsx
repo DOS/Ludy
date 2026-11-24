@@ -10,6 +10,7 @@ import { ErrorText } from '../../components/ui.tsx';
 import { Anchor } from './frame.tsx';
 import { SETTINGS_CARD } from './tabs.ts';
 import { meetingsInstalled } from '../../components/linked-meetings.tsx';
+import { PushSetting } from '../../components/push-setting.tsx';
 import { MorningNoticeSetting } from '../../components/morning-notice-setting.tsx';
 import { TodayMailSetting } from '../../components/today-mail-setting.tsx';
 import { client, errorMessage, orpc, queryClient } from '../../lib/api.ts';
@@ -55,6 +56,8 @@ export function NotificationPreferences() {
             </div>
           </fieldset>
           {(list.error || mute.error) && <ErrorText>{errorMessage(list.error ?? mute.error)}</ErrorText>}
+          {/* Browser push on this device (#3736): one switch for every app's notices, hidden where the deployment has no VAPID keys. */}
+          <PushSetting />
         </Card>
       </Anchor>
       {/* The daily "Hôm nay cần bạn" brief by email: the member's own opt-in (#2406). The mail's turn-off link lands on this card with ?todayMail=off. */}

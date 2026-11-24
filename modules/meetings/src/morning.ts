@@ -5,7 +5,7 @@
 // meetings.morning.get      the caller's own setting (off until they turn it on). Private: the row policy shows a member their own row only.
 // meetings.morning.set      the caller turns the notice on (a time of day, their time zone, their language) or off (the row is deleted). Their own row only, in a user context.
 // meetings.morning.notice   the worker's dispatch, in the system's context: the ids the sweep found are not trusted, so it derives the row again through the worker-only definer
-//                           crove_meetings.morning_notices_due (the member's opt-in, the count of their events that day on a calendar that reads events, not muted, not told yet) and writes one notice
+//                           ludy_meetings.morning_notices_due (the member's opt-in, the count of their events that day on a calendar that reads events, not muted, not told yet) and writes one notice
 //                           keyed by the day ('morning:<day>'), then one mail. The mail is queued only when the in-app notice was written, so the one switch (the notification settings: the kind's mute)
 //                           covers both, and a second dispatch for the same day writes and sends nothing. On a day with no meeting the definer returns nothing: no notice and no mail.
 import { sql } from 'kysely';
@@ -25,7 +25,7 @@ export const morningGet = defineQuery({
   handler: async (ctx): Promise<MorningState> => {
     const userId = userOf(ctx.actor);
     const row = await ctx.trx
-      .selectFrom('crove_meetings.morning_notice')
+      .selectFrom('ludy_meetings.morning_notice')
       .select(['send_minute', 'time_zone', 'language'])
       .where('org_id', '=', ctx.orgId)
       .where('user_id', '=', userId)
@@ -48,7 +48,7 @@ export const morningSet = defineCommand({
   handler: async (ctx, input): Promise<MorningState> => {
     const userId = userOf(ctx.actor);
     if (!input.enabled) {
-      await ctx.trx.deleteFrom('crove_meetings.morning_notice').where('org_id', '=', ctx.orgId).where('user_id', '=', userId).execute();
+      await ctx.trx.deleteFrom('ludy_meetings.morning_notice').where('org_id', '=', ctx.orgId).where('user_id', '=', userId).execute();
       ctx.audit({ enabled: false });
       return zMorningState.parse({ enabled: false, minute: input.minute, timeZone: input.timeZone, language: input.language });
     }
@@ -63,7 +63,7 @@ export const morningSet = defineCommand({
       .executeTakeFirst();
     if (member === undefined) throw new DomainError('FORBIDDEN', 403, 'Bạn không còn là thành viên của tổ chức này');
     await ctx.trx
-      .insertInto('crove_meetings.morning_notice')
+      .insertInto('ludy_meetings.morning_notice')
       .values({ org_id: ctx.orgId, user_id: userId, send_minute: input.minute, time_zone: input.timeZone, language: input.language })
       .onConflict((oc) => oc.columns(['org_id', 'user_id']).doUpdateSet({ send_minute: input.minute, time_zone: input.timeZone, language: input.language, updated_at: new Date() }))
       .execute();
@@ -83,7 +83,7 @@ export const morningNotice = defineCommand({
   handler: async (ctx, input): Promise<{ notified: boolean; mailed: boolean }> => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới báo cuộc họp trong ngày');
     const { rows: found } = await sql<{ events: number; english: boolean }>`
-      SELECT events, english FROM crove_meetings.morning_notices_due(1::int, ${ctx.orgId}::uuid, ${input.userId}::uuid, ${input.day}::date)`.execute(ctx.trx);
+      SELECT events, english FROM ludy_meetings.morning_notices_due(1::int, ${ctx.orgId}::uuid, ${input.userId}::uuid, ${input.day}::date)`.execute(ctx.trx);
     const due = found[0];
     // Nothing due any more (no meeting that day, turned off, muted, told already): nothing is written, not even an audit row.
     if (!due) return { notified: false, mailed: false };
@@ -103,7 +103,7 @@ export const morningNotice = defineCommand({
     // The member's address while they are a member with an account that is not disabled (the worker's member_emails: no name, no other account column).
     const { rows } = await sql<{ email: string | null }>`SELECT email FROM ludy_kernel.member_emails(${[input.userId]}::uuid[])`.execute(ctx.trx);
     const email = rows[0]?.email ?? null;
-    // The function returns a flag, not the language's text (no text leaves a definer of crove_meetings, meetings-readers.db.test.ts).
+    // The function returns a flag, not the language's text (no text leaves a definer of ludy_meetings, meetings-readers.db.test.ts).
     const lang = due.english ? 'en' : 'vi';
     const mail = email
       ? await createMailMessage(ctx, {

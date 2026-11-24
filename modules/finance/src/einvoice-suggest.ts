@@ -52,7 +52,7 @@ const plain = (value: string): string => money(value).toFixed();
 // that was not issued, another buyer's and another entity's are all the same answer: none.
 async function issuedLines(ctx: Ctx, draftId: string, buyerPartyId: string, entity: string): Promise<SourceLine[] | null> {
   const draft = await ctx.trx
-    .selectFrom('crove_finance.einvoice_draft')
+    .selectFrom('ludy_finance.einvoice_draft')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', draftId)
@@ -62,7 +62,7 @@ async function issuedLines(ctx: Ctx, draftId: string, buyerPartyId: string, enti
     .executeTakeFirst();
   if (!draft) return null;
   const rows = await ctx.trx
-    .selectFrom('crove_finance.einvoice_draft_line')
+    .selectFrom('ludy_finance.einvoice_draft_line')
     .select(['description', 'unit', 'quantity', 'unit_price', 'vat_rate'])
     .where('org_id', '=', ctx.orgId)
     .where('draft_id', '=', draftId)
@@ -83,8 +83,8 @@ async function rateRowsOf(ctx: Ctx, ids: readonly string[]): Promise<Array<{ par
   return (
     await sql<{ party_id: string; vat_rate: string; n: number }>`
       SELECT d.buyer_party_id AS party_id, l.vat_rate, count(*)::int AS n
-      FROM crove_finance.einvoice_draft d
-      JOIN crove_finance.einvoice_draft_line l ON l.org_id = d.org_id AND l.draft_id = d.id
+      FROM ludy_finance.einvoice_draft d
+      JOIN ludy_finance.einvoice_draft_line l ON l.org_id = d.org_id AND l.draft_id = d.id
       WHERE d.org_id = ${ctx.orgId} AND d.buyer_party_id IN (${sql.join(ids)})
       GROUP BY d.buyer_party_id, l.vat_rate`.execute(ctx.trx)
   ).rows;
@@ -114,7 +114,7 @@ export const einvoiceDraftSuggestSource = defineQuery({
     }
     const orgRatesRows = await sql<{ vat_rate: string; n: number }>`
       SELECT l.vat_rate, count(*)::int AS n
-      FROM crove_finance.einvoice_draft_line l
+      FROM ludy_finance.einvoice_draft_line l
       WHERE l.org_id = ${ctx.orgId}
       GROUP BY l.vat_rate`.execute(ctx.trx);
     const orgRates = orgRatesRows.rows.map((r) => ({ vatRate: r.vat_rate, n: r.n }));
@@ -151,7 +151,7 @@ export const einvoicePreviousInvoice = defineQuery({
   handler: async (ctx, input): Promise<EInvoicePrevious> => {
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
     const draft = await ctx.trx
-      .selectFrom('crove_finance.einvoice_draft')
+      .selectFrom('ludy_finance.einvoice_draft')
       .select(['id', 'invoice_date', 'issued_number', 'buyer_kind', 'buyer_party_id', 'buyer_tax_code', 'buyer_name', 'buyer_address', 'buyer_email'])
       .where('org_id', '=', ctx.orgId)
       .where('buyer_party_id', '=', input.buyerPartyId)
@@ -163,7 +163,7 @@ export const einvoicePreviousInvoice = defineQuery({
       .executeTakeFirst();
     if (!draft) return { invoice: null };
     const rows = await ctx.trx
-      .selectFrom('crove_finance.einvoice_draft_line')
+      .selectFrom('ludy_finance.einvoice_draft_line')
       .select(['description', 'unit', 'quantity', 'unit_price', 'vat_rate'])
       .where('org_id', '=', ctx.orgId)
       .where('draft_id', '=', draft.id)

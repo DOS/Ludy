@@ -131,7 +131,7 @@ export const adsManageCancelApproved = defineCommand({
   mcp: { scope: 'ludy.ads.draft', mode: 'proposal' },
   handler: async (ctx, input) => {
     requireApprover(ctx);
-    const change = await ctx.trx.selectFrom('crove_ads.ad_manage_change').select(['kind']).where('org_id', '=', ctx.orgId).where('id', '=', input.payload.changeId.toLowerCase()).executeTakeFirst();
+    const change = await ctx.trx.selectFrom('ludy_ads.ad_manage_change').select(['kind']).where('org_id', '=', ctx.orgId).where('id', '=', input.payload.changeId.toLowerCase()).executeTakeFirst();
     if (change && !OPENING_KINDS.includes(change.kind)) throw new DomainError('ADS_CANCEL_NOT_OPENING', 409, 'Chỉ hủy được thay đổi làm tăng chi tiêu; hủy thay đổi giảm chi tiêu thì làm trên màn hình Chiến dịch');
     const cancelled = await ctx.run<Record<string, unknown>>('ads.manage.cancel', input.payload);
     ctx.audit({ approved_command: 'ads.manage.cancel' });

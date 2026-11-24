@@ -69,7 +69,7 @@ export async function reportView(runtime: Runtime, body: unknown): Promise<Repor
   const input = zView.safeParse(body);
   if (!input.success) return null;
   return runtime.orgless(async (db) => {
-    const { rows } = await sql<{ page: ReportPage | null }>`SELECT crove_social.report_link_view(${input.data.token}) AS page`.execute(db);
+    const { rows } = await sql<{ page: ReportPage | null }>`SELECT ludy_social.report_link_view(${input.data.token}) AS page`.execute(db);
     return rows[0]?.page ?? null;
   });
 }

@@ -118,7 +118,7 @@ suite('learned bank line rules (#2402)', () => {
   const importLines = async (slug: string, who: Account, rows: BankStatementRow[], filename: string) =>
     rpc('bank/import', await tokenFor(who), { bankAccount: '1121', filename, rows, idempotencyKey: randomUUID() }, slug);
   const refresh = async () => {
-    for (const r of await admin(async (c) => (await c.query<{ id: string; bank_ref: string }>('SELECT id, bank_ref FROM crove_finance.bank_line WHERE bank_ref IS NOT NULL')).rows)) lineId[r.bank_ref] = r.id;
+    for (const r of await admin(async (c) => (await c.query<{ id: string; bank_ref: string }>('SELECT id, bank_ref FROM ludy_finance.bank_line WHERE bank_ref IS NOT NULL')).rows)) lineId[r.bank_ref] = r.id;
   };
   const suggestion = async (ref: string, slug = org.slug, who = member) => (await rpc('bank/lineVoucher', await tokenFor(who), { bankLineId: lineId[ref] }, slug)).body;
   // The voucher of a line, asked for by a member and approved by the admin (four-eyes), with the party chosen as given.
@@ -133,7 +133,7 @@ suite('learned bank line rules (#2402)', () => {
     expect(approved.status).toBe(200);
     return approved.body as { voucherId: string; code: string; journalEntryId: string };
   }
-  const rules = async () => admin(async (c) => (await c.query('SELECT * FROM crove_finance.bank_party_rule ORDER BY created_at')).rows);
+  const rules = async () => admin(async (c) => (await c.query('SELECT * FROM ludy_finance.bank_party_rule ORDER BY created_at')).rows);
   const listed = async (who = owner, slug = org.slug) => (await rpc('bankPartyRules/list', await tokenFor(who), undefined, slug)).body as any[];
 
   async function join(who: Account, role: string, slug: string) {
@@ -280,11 +280,11 @@ suite('learned bank line rules (#2402)', () => {
       }
     };
     // The login role has no way to read the hash function's key or call the function outside a sealed context.
-    await expect(asTenant(`SELECT crove_finance.bank_party_rule_hash('text', 'x')`)).rejects.toThrow();
+    await expect(asTenant(`SELECT ludy_finance.bank_party_rule_hash('text', 'x')`)).rejects.toThrow();
     expect(rule.key_hash).toMatch(/^k1:[0-9a-f]{64}$/);
     // The login role may not update a rule (made and removed whole).
-    await expect(asTenant(`UPDATE crove_finance.bank_party_rule SET key_hash = 'nope' WHERE id = $1`, [rule.id])).rejects.toThrow(/permission denied/);
-    await expect(admin((c) => c.query(`INSERT INTO crove_finance.bank_party_rule (org_id, kind, key_hash, party_id, source_voucher_id) VALUES ($1, 'other', $2, $3, $4)`, [org.orgId, rule.key_hash, beta, rule.source_voucher_id]))).rejects.toThrow();
+    await expect(asTenant(`UPDATE ludy_finance.bank_party_rule SET key_hash = 'nope' WHERE id = $1`, [rule.id])).rejects.toThrow(/permission denied/);
+    await expect(admin((c) => c.query(`INSERT INTO ludy_finance.bank_party_rule (org_id, kind, key_hash, party_id, source_voucher_id) VALUES ($1, 'other', $2, $3, $4)`, [org.orgId, rule.key_hash, beta, rule.source_voucher_id]))).rejects.toThrow();
   });
 
   it('removes the rules of a party whose personal data is erased, though the books keep the party', async () => {
@@ -298,10 +298,10 @@ suite('learned bank line rules (#2402)', () => {
     expect((await rules()).some((r) => r.party_id === gamma)).toBe(true);
     const actor = { type: 'user' as const, userId: ownerId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
     const erased = await runtime.execute<{ erased: Array<{ column: string; rows: number }> }>('kernel.personal_data.erase', { value: 'gamma@example.test' }, { actor, orgId: org.orgId, idempotencyKey: randomUUID() });
-    expect(erased.erased).toEqual(expect.arrayContaining([{ column: 'crove_finance.bank_party_rule.key_hash', rows: 1 }]));
+    expect(erased.erased).toEqual(expect.arrayContaining([{ column: 'ludy_finance.bank_party_rule.key_hash', rows: 1 }]));
     expect((await rules()).some((r) => r.party_id === gamma)).toBe(false);
     // The voucher the rule was learned from stays: the books keep it.
-    expect(await admin(async (c) => (await c.query(`SELECT 1 FROM crove_finance.cash_voucher WHERE party_id = $1`, [gamma])).rowCount)).toBe(1);
+    expect(await admin(async (c) => (await c.query(`SELECT 1 FROM ludy_finance.cash_voucher WHERE party_id = $1`, [gamma])).rowCount)).toBe(1);
   });
 
   it('stops suggesting a party once the voucher that taught the rule is reversed', async () => {
@@ -325,7 +325,7 @@ suite('learned bank line rules (#2402)', () => {
 
   it('keeps each rule in its voucher\'s legal entity', async () => {
     const mismatched = await admin(
-      async (c) => (await c.query(`SELECT 1 FROM crove_finance.bank_party_rule r JOIN crove_finance.cash_voucher v ON v.org_id = r.org_id AND v.id = r.source_voucher_id WHERE r.legal_entity_id <> v.legal_entity_id`)).rowCount,
+      async (c) => (await c.query(`SELECT 1 FROM ludy_finance.bank_party_rule r JOIN ludy_finance.cash_voucher v ON v.org_id = r.org_id AND v.id = r.source_voucher_id WHERE r.legal_entity_id <> v.legal_entity_id`)).rowCount,
     );
     expect(mismatched).toBe(0);
   });
@@ -348,7 +348,7 @@ suite('learned bank line rules (#2402)', () => {
     ).toBe(200);
     await refresh();
     // The account is stored as its digits on the line.
-    expect(await admin(async (c) => (await c.query<{ a: string }>(`SELECT counterparty_account AS a FROM crove_finance.bank_line WHERE bank_ref = 'RA1'`)).rows[0]?.a)).toBe('001122334455');
+    expect(await admin(async (c) => (await c.query<{ a: string }>(`SELECT counterparty_account AS a FROM ludy_finance.bank_line WHERE bank_ref = 'RA1'`)).rows[0]?.a)).toBe('001122334455');
     expect((await suggestion('RA1')).suggested).toBeNull();
     await matchByHand('RA1', '2026-11-24', epsilon, '700000', { kind: 'manual' });
     const mine = (await rules()).filter((r) => r.party_id === epsilon);
@@ -379,7 +379,7 @@ suite('learned bank line rules (#2402)', () => {
     await admin(async (c) => {
       await c.query(`INSERT INTO ludy_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Zeta Trade'), ($1, $3, 'Công ty Eta Trade'), ($1, $4, 'Công ty Theta Trade')`, [org.orgId, zeta, eta, theta]);
       // The org's own number, as a bank statement may print it in the counterparty column for fees and interest.
-      await c.query(`INSERT INTO crove_finance.bank_account_number (org_id, bank_account, account_number) VALUES ($1, '1121', '4455667788')`, [org.orgId]);
+      await c.query(`INSERT INTO ludy_finance.bank_account_number (org_id, bank_account, account_number) VALUES ($1, '1121', '4455667788')`, [org.orgId]);
     });
     expect(
       (
@@ -437,7 +437,7 @@ suite('learned bank line rules (#2402)', () => {
     const lambda = randomUUID();
     await admin(async (c) => {
       await c.query(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'bank_sandbox', $3, 'Ngân hàng', $4)`, [org.orgId, connection, `feed-${connection}`, ownerId]);
-      await c.query(`INSERT INTO crove_finance.bank_feed_account (org_id, channel_connection_id, external_account_id, bank_account) VALUES ($1, $2, 'SBX-3344556677', '1121')`, [org.orgId, connection]);
+      await c.query(`INSERT INTO ludy_finance.bank_feed_account (org_id, channel_connection_id, external_account_id, bank_account) VALUES ($1, $2, 'SBX-3344556677', '1121')`, [org.orgId, connection]);
       await c.query(`INSERT INTO ludy_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Lambda Trade')`, [org.orgId, lambda]);
     });
     expect((await importLines(org.slug, member, [row('29/11/2026', '950.000', 'RF9', 'GD 31', '3344 5566 77')], 'sao-ke-lambda.xlsx')).status).toBe(200);
@@ -460,7 +460,7 @@ suite('learned bank line rules (#2402)', () => {
     const actor = { type: 'user' as const, userId: ownerId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
     for (const [value, ref] of [['001122334466', 'RD1'], ['0011 2233 4466', 'RD1'], ['123456789012345678', 'RD2'], ['1234 5678 9012 3456 78', 'RD2']] as const) {
       const found = await runtime.execute<{ matches: Array<{ column: string; handling: string; row: { bank_ref?: string } }> }>('kernel.personal_data.find', { value }, { actor, orgId: org.orgId });
-      const hit = found.matches.find((m) => m.column === 'crove_finance.bank_line.counterparty_account');
+      const hit = found.matches.find((m) => m.column === 'ludy_finance.bank_line.counterparty_account');
       expect(hit, value).toMatchObject({ handling: 'keep_legal', row: { bank_ref: ref } });
     }
   });

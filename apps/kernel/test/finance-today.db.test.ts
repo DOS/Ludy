@@ -443,7 +443,7 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
       const insert = (state: string, extra: string) =>
-        c.query(`INSERT INTO crove_finance.einvoice_draft (org_id, legal_entity_id, state, invoice_date, buyer_kind, subtotal, vat_amount, total, ${extra.split('|')[0]}) VALUES ($1, $2, $3, current_date, 'consumer', 0, 0, 0, ${extra.split('|')[1]})`, [otherOrgId, entity, state]);
+        c.query(`INSERT INTO ludy_finance.einvoice_draft (org_id, legal_entity_id, state, invoice_date, buyer_kind, subtotal, vat_amount, total, ${extra.split('|')[0]}) VALUES ($1, $2, $3, current_date, 'consumer', 0, 0, 0, ${extra.split('|')[1]})`, [otherOrgId, entity, state]);
       await insert('failed', "submitted_at, error_code|now() - interval '2 hours', 'PROVIDER_NOT_READY'");
       await insert('draft', "error_code|'REJECTED_BY_TAX_AUTHORITY'");
       await insert('pending', "submitted_at, provider_ref|now() - interval '2 hours', 'sbx-old'");

@@ -21,7 +21,7 @@ import { channelsOfPosts, INBOX_PAGE_SIZE, inboxListInput, mergeConversationPage
 import { client, errorMessage, fetchConversationImage, orpc, queryClient } from '../lib/api.ts';
 import { appendQuoteMessage, canInsertQuoteLink } from '../lib/quote-reply.ts';
 import { takeReplyHandoff } from '../lib/reply-handoff.ts';
-import { TOUCH_BUTTON, TOUCH_SELECT } from '../lib/conversation-touch.ts';
+import { TOUCH_BUTTON } from '../lib/conversation-touch.ts';
 import { PersonalDataSection } from './conversation-erase.tsx';
 import { DraftPanel, replyTextFor } from './conversation-drafts.tsx';
 import { IntentBadge, IntentBar, useSpamSuggested } from './conversation-intent.tsx';
@@ -364,7 +364,7 @@ function AssignSelect({ conversation, members }: { conversation: ConversationSum
   const assign = useMutation({ mutationFn: (assigneeUserId: string | null) => client.conversations.assign({ conversationId: conversation.id, assigneeUserId }), onSuccess: refresh });
   return (
     <div>
-      <NativeSelect size="sm" className={TOUCH_SELECT} aria-label={t('assignee')} value={conversation.assigneeUserId ?? ''} disabled={assign.isPending} onChange={(e) => assign.mutate(e.target.value || null)}>
+      <NativeSelect size="sm" aria-label={t('assignee')} value={conversation.assigneeUserId ?? ''} disabled={assign.isPending} onChange={(e) => assign.mutate(e.target.value || null)}>
         <option value="">{t('unassigned')}</option>
         {members.map((m) => (
           <option key={m.userId} value={m.userId}>

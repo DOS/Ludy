@@ -130,7 +130,7 @@ suite('crm.signals.open_deals on PostgreSQL (#2969)', () => {
     const p = await o.party('A');
     const stage = await o.stageNamed('Mới');
     await rows(
-      `INSERT INTO crove_crm.deal (org_id, id, party_id, title, amount, stage_id, sort_key, created_by, updated_by)
+      `INSERT INTO ludy_crm.deal (org_id, id, party_id, title, amount, stage_id, sort_key, created_by, updated_by)
        SELECT $1, gen_random_uuid(), $2, 't', 1, $3, 'a' || lpad(g::text, 6, '0'), $4, $4 FROM generate_series(1, 502) g`,
       [o.orgId, p, stage.id, o.owner],
     );

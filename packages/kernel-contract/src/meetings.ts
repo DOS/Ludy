@@ -17,7 +17,7 @@ export type LiveConsentMethod = Exclude<ConsentMethod, 'platform_notice'>;
 export const LIVE_CONSENT_METHODS: readonly LiveConsentMethod[] = CONSENT_METHODS.filter((m): m is LiveConsentMethod => !IMPORT_ONLY_CONSENT_METHODS.includes(m));
 
 // Why a recording stopped without the recorder's own click (Meetings A1, #3159): a code, never text. The screens turn it into
-// plain words ("Tab họp đã đóng", "Micro bị mất"...). Same set as the CHECK on crove_meetings.meeting.recording_stop_reason.
+// plain words ("Tab họp đã đóng", "Micro bị mất"...). Same set as the CHECK on ludy_meetings.meeting.recording_stop_reason.
 export const RECORDING_STOP_REASONS = ['tab_closed', 'mic_lost', 'permission_lost', 'storage_full', 'left_screen', 'unknown'] as const;
 export type RecordingStopReason = (typeof RECORDING_STOP_REASONS)[number];
 export const zRecordingStopReason = z.enum(RECORDING_STOP_REASONS);
@@ -47,6 +47,11 @@ export const zMeetingLanguage = z.enum(MEETING_LANGUAGES);
 export const zMeetingRef = z.strictObject({
   meetingId: zId,
 });
+
+export const zMeetingVisibleIdsInput = z.strictObject({
+  meetingIds: z.array(zId).max(200),
+});
+export type MeetingVisibleIdsInput = z.infer<typeof zMeetingVisibleIdsInput>;
 
 // What the Ludy extension may read of a meeting its own token created (issue #2582): where it is in its life and whether
 // its audio and video arrived, never a title, a reader, a transcript or any media.

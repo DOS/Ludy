@@ -10,7 +10,7 @@
 // - finance.marketplace_connection.record_poll (system; R1): what the worker records after a poll: how it ended, the cursor the next one resumes from (moved only after the page was
 //   ingested) (the orders still waiting are counted by the list from the staged files the connection's polls ingested). The poll NEVER confirms: what it reads is staged like an uploaded file and a member confirms it.
 // - finance.marketplace_connection.ingest_page (system; R2 external, as the ingest it runs): files a page of orders (kernel.file.ingest, source `upload`, the connection's entity) and links the file to
-//   the connection in the SAME transaction (crove_finance.marketplace_connection_file, #4250), so the orders still waiting are counted from the link and a member's upload named after a connection id
+//   the connection in the SAME transaction (ludy_finance.marketplace_connection_file, #4250), so the orders still waiting are counted from the link and a member's upload named after a connection id
 //   inflates nothing. A page read twice is one file and one link.
 // - finance.marketplace_connection.poll_target (system query): what the worker needs to poll one connection, or why it must not.
 // - finance.marketplace_connection.list: every member reads the connections, their last test and their last poll.
@@ -112,7 +112,7 @@ export const marketplaceConnectionConnect = defineCommand({
     const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
     try {
       const row = await ctx.trx
-        .insertInto('crove_finance.marketplace_connection')
+        .insertInto('ludy_finance.marketplace_connection')
         .values({ org_id: ctx.orgId, legal_entity_id: entityId, channel_connection_id: channel.connectionId, provider: channelProvider, platform: input.platform, created_by: userId, app_key: input.appKey ?? null })
         // Two connects of one account at once: the channel connection's own lock serialises them, and the second finds the first's row and answers with it.
         .onConflict((conflict) => conflict.columns(['org_id', 'channel_connection_id']).doNothing())
@@ -120,12 +120,12 @@ export const marketplaceConnectionConnect = defineCommand({
         .executeTakeFirst();
       const id =
         row?.id ??
-        (await ctx.trx.selectFrom('crove_finance.marketplace_connection').select('id').where('org_id', '=', ctx.orgId).where('channel_connection_id', '=', channel.connectionId).executeTakeFirstOrThrow()).id;
+        (await ctx.trx.selectFrom('ludy_finance.marketplace_connection').select('id').where('org_id', '=', ctx.orgId).where('channel_connection_id', '=', channel.connectionId).executeTakeFirstOrThrow()).id;
       // A new credential for an account that was already connected ends what the old one earned: the back-off after its refused polls and its last test no longer describe this credential, so the next
       // poll runs at once. (A poll that began with the old credential and ends after this can still record its own failure; the next good poll clears it.)
       if (!row) {
         await ctx.trx
-          .updateTable('crove_finance.marketplace_connection')
+          .updateTable('ludy_finance.marketplace_connection')
           .set({
             last_poll_state: null,
             last_polled_at: null,
@@ -165,7 +165,7 @@ export const marketplaceConnectionRecordTest = defineCommand({
   target: (input) => ({ type: 'finance.marketplace_connection', id: input.id }),
   handler: async (ctx, input): Promise<MarketplaceConnectionTested> => {
     const row = await ctx.trx
-      .selectFrom('crove_finance.marketplace_connection as c')
+      .selectFrom('ludy_finance.marketplace_connection as c')
       .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.provider', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
@@ -176,7 +176,7 @@ export const marketplaceConnectionRecordTest = defineCommand({
     if (row.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kết nối này không còn hoạt động, hãy kết nối lại');
     if (!marketplaceAdapterOf(row.provider)) throw new DomainError('MARKETPLACE_DISABLED', 404, 'Kết nối này không phải của một bộ kết nối sàn mà phiên bản này hỗ trợ');
     await ctx.trx
-      .updateTable('crove_finance.marketplace_connection')
+      .updateTable('ludy_finance.marketplace_connection')
       .set({ last_test_state: input.state, last_tested_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
@@ -196,7 +196,7 @@ export const marketplaceConnectionUnlink = defineCommand({
   handler: async (ctx, input): Promise<{ removed: boolean }> => {
     // Only a connection that is no longer live: the credential goes first (the API revokes the channel connection before this), so no live credential is left without its row.
     const live = await ctx.trx
-      .selectFrom('crove_finance.marketplace_connection as c')
+      .selectFrom('ludy_finance.marketplace_connection as c')
       .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select('c.id')
       .where('c.org_id', '=', ctx.orgId)
@@ -204,7 +204,7 @@ export const marketplaceConnectionUnlink = defineCommand({
       .where('ch.status', '<>', 'revoked')
       .executeTakeFirst();
     if (live) throw new DomainError('MARKETPLACE_CONNECTION_LIVE', 409, 'Hãy ngắt kết nối với sàn trước khi xóa dòng này');
-    const gone = await ctx.trx.deleteFrom('crove_finance.marketplace_connection').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
+    const gone = await ctx.trx.deleteFrom('ludy_finance.marketplace_connection').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
     const removed = Number(gone.numDeletedRows) > 0;
     ctx.audit({ removed });
     return { removed };
@@ -224,7 +224,7 @@ export const marketplaceConnectionRequestPoll = defineCommand({
   target: (input) => ({ type: 'finance.marketplace_connection', id: input.id }),
   handler: async (ctx, input): Promise<{ queued: boolean }> => {
     const row = await ctx.trx
-      .selectFrom('crove_finance.marketplace_connection as c')
+      .selectFrom('ludy_finance.marketplace_connection as c')
       .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.provider', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
@@ -253,7 +253,7 @@ export const marketplaceConnectionRequestTest = defineCommand({
   target: (input) => ({ type: 'finance.marketplace_connection', id: input.id }),
   handler: async (ctx, input): Promise<{ queued: boolean }> => {
     const row = await ctx.trx
-      .selectFrom('crove_finance.marketplace_connection as c')
+      .selectFrom('ludy_finance.marketplace_connection as c')
       .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.provider', 'c.last_tested_at', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
@@ -281,7 +281,7 @@ export const marketplaceConnectionPollTarget = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<MarketplacePollTarget> => {
     const row = await ctx.trx
-      .selectFrom('crove_finance.marketplace_connection as c')
+      .selectFrom('ludy_finance.marketplace_connection as c')
       .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.id', 'c.channel_connection_id', 'c.provider', 'c.platform', 'c.legal_entity_id', 'c.poll_cursor', 'c.last_poll_state', 'c.last_polled_at', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
@@ -306,7 +306,7 @@ export const marketplaceConnectionIngestPage = defineCommand({
   handler: async (ctx, input): Promise<MarketplacePageIngested> => {
     // The entity is the connection's own, never the caller's; a connection that is gone files nothing.
     const connection = await ctx.trx
-      .selectFrom('crove_finance.marketplace_connection')
+      .selectFrom('ludy_finance.marketplace_connection')
       .select(['id', 'legal_entity_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.marketplaceConnectionId)
@@ -327,14 +327,14 @@ export const marketplaceConnectionIngestPage = defineCommand({
     // so the purge of a gone connection's files (#4284) can never reach a file the poll did not store. A page read twice is the same file: its first link stays (a file belongs to one connection).
     if (!filed.duplicate) {
       await ctx.trx
-        .insertInto('crove_finance.marketplace_connection_file')
+        .insertInto('ludy_finance.marketplace_connection_file')
         .values({ org_id: ctx.orgId, marketplace_connection_id: connection.id, file_id: filed.fileId })
         .onConflict((conflict) => conflict.columns(['org_id', 'file_id']).doNothing())
         .execute();
     } else {
       // The file existed. When it carries an orphan link (an earlier connection of this org brought the same bytes and was removed) this connection takes it over, so the file is the live connection's and the
       // purge leaves it; a link that has a connection is not moved, and a file with no link (a member's upload) stays unlinked.
-      await sql`SELECT crove_finance.marketplace_link_adopt(${ctx.orgId}::uuid, ${connection.id}::uuid, ${filed.fileId}::uuid)`.execute(ctx.trx);
+      await sql`SELECT ludy_finance.marketplace_link_adopt(${ctx.orgId}::uuid, ${connection.id}::uuid, ${filed.fileId}::uuid)`.execute(ctx.trx);
     }
     ctx.audit({ duplicate: filed.duplicate });
     return filed;
@@ -350,10 +350,10 @@ export const marketplaceConnectionRecordPoll = defineCommand({
   access: 'system',
   target: (input) => ({ type: 'finance.marketplace_connection', id: input.id }),
   handler: async (ctx, input): Promise<{ recorded: boolean }> => {
-    const found = await ctx.trx.selectFrom('crove_finance.marketplace_connection').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.id).forUpdate().executeTakeFirst();
+    const found = await ctx.trx.selectFrom('ludy_finance.marketplace_connection').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.id).forUpdate().executeTakeFirst();
     if (!found) return { recorded: false };
     await ctx.trx
-      .updateTable('crove_finance.marketplace_connection')
+      .updateTable('ludy_finance.marketplace_connection')
       .set({
         last_polled_at: ctx.now,
         last_poll_state: input.state,
@@ -398,7 +398,7 @@ export const marketplaceConnectionAuthorizeBegin = defineCommand({
   handler: async (ctx, input): Promise<MarketplaceAuthorizeBegun> => {
     const userId = requireUser(ctx);
     const row = await ctx.trx
-      .selectFrom('crove_finance.marketplace_connection as c')
+      .selectFrom('ludy_finance.marketplace_connection as c')
       .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.provider', 'c.app_key', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
@@ -414,7 +414,7 @@ export const marketplaceConnectionAuthorizeBegin = defineCommand({
     // One pending authorization for a connection: a new start replaces the old one.
     try {
       await ctx.trx
-        .updateTable('crove_finance.marketplace_connection')
+        .updateTable('ludy_finance.marketplace_connection')
         .set({ authorize_state_hash: input.stateHash, authorize_expires_at: expiresAt, authorize_by: userId })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.id)
@@ -437,7 +437,7 @@ export const marketplaceConnectionAuthorizeLookup = defineQuery({
   handler: async (ctx, input): Promise<{ id: string; provider: string; externalAccountId: string }> => {
     const userId = requireUser(ctx);
     const row = await ctx.trx
-      .selectFrom('crove_finance.marketplace_connection')
+      .selectFrom('ludy_finance.marketplace_connection')
       .select(['id', 'provider', 'authorize_expires_at', 'authorize_by'])
       .where('org_id', '=', ctx.orgId)
       .where('authorize_state_hash', '=', input.stateHash)
@@ -459,7 +459,7 @@ export const marketplaceConnectionAuthorizeFinish = defineCommand({
     // One locked statement checks the state (the hash is its own unique key), who started it and its time, and the same transaction consumes it: a state works once, only for the member who made it, only
     // in the org it was made in, and only before it ends. A refusal changes nothing (the transaction ends), so the rightful member can still finish.
     const row = await ctx.trx
-      .selectFrom('crove_finance.marketplace_connection as c')
+      .selectFrom('ludy_finance.marketplace_connection as c')
       .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.id', 'c.authorize_expires_at', 'c.authorize_by', 'ch.status'])
       .where('c.org_id', '=', ctx.orgId)
@@ -469,7 +469,7 @@ export const marketplaceConnectionAuthorizeFinish = defineCommand({
     if (!row || row.authorize_by !== userId || !row.authorize_expires_at || new Date(row.authorize_expires_at).getTime() <= ctx.now.getTime()) throw authorizeInvalid();
     if (row.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kết nối này không còn hoạt động, hãy kết nối lại');
     await ctx.trx
-      .updateTable('crove_finance.marketplace_connection')
+      .updateTable('ludy_finance.marketplace_connection')
       .set({
         authorize_state_hash: null,
         authorize_expires_at: null,
@@ -501,7 +501,7 @@ export const marketplaceConnectionAuthorizeTarget = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<MarketplaceAuthorizeTarget> => {
     const row = await ctx.trx
-      .selectFrom('crove_finance.marketplace_connection as c')
+      .selectFrom('ludy_finance.marketplace_connection as c')
       .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['c.id', 'c.channel_connection_id', 'c.provider', 'c.authorize_state', 'c.authorize_code_key_id', 'c.authorize_code_envelope', 'c.authorize_pending_at', 'ch.status', 'ch.updated_at'])
       .where('c.org_id', '=', ctx.orgId)
@@ -539,7 +539,7 @@ export const marketplaceConnectionAuthorizeRecord = defineCommand({
   target: (input) => ({ type: 'finance.marketplace_connection', id: input.id }),
   handler: async (ctx, input): Promise<{ recorded: boolean }> => {
     const found = await ctx.trx
-      .selectFrom('crove_finance.marketplace_connection')
+      .selectFrom('ludy_finance.marketplace_connection')
       .select(['id', 'authorize_state', 'authorize_code_envelope'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
@@ -549,7 +549,7 @@ export const marketplaceConnectionAuthorizeRecord = defineCommand({
     // and only for the code the worker read: if the seller authorized again meanwhile, the newer code is not cleared by an older outcome.
     if (!found || found.authorize_state !== 'pending' || !found.authorize_code_envelope || digestOf(found.authorize_code_envelope) !== input.codeDigest) return { recorded: false };
     await ctx.trx
-      .updateTable('crove_finance.marketplace_connection')
+      .updateTable('ludy_finance.marketplace_connection')
       .set({
         authorize_state: input.outcome,
         authorize_code_key_id: null,
@@ -574,7 +574,7 @@ export const marketplaceConnectionAuthorizeComplete = defineCommand({
   target: (input) => ({ type: 'finance.marketplace_connection', id: input.id }),
   handler: async (ctx, input): Promise<{ recorded: boolean }> => {
     const found = await ctx.trx
-      .selectFrom('crove_finance.marketplace_connection')
+      .selectFrom('ludy_finance.marketplace_connection')
       .select(['channel_connection_id', 'authorize_state', 'authorize_code_envelope', 'authorize_pending_at', 'seller_ref'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.id)
@@ -586,7 +586,7 @@ export const marketplaceConnectionAuthorizeComplete = defineCommand({
     // cleared in this same transaction, and the seller authorizes again.
     const fail = async (outcome: 'failed' | 'shop_changed' = 'failed'): Promise<{ recorded: boolean }> => {
       await ctx.trx
-        .updateTable('crove_finance.marketplace_connection')
+        .updateTable('ludy_finance.marketplace_connection')
         .set({ authorize_state: outcome, authorize_code_key_id: null, authorize_code_envelope: null, authorize_pending_at: null })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.id)
@@ -614,7 +614,7 @@ export const marketplaceConnectionAuthorizeComplete = defineCommand({
     });
     if (!replaced.refreshed) return fail();
     await ctx.trx
-      .updateTable('crove_finance.marketplace_connection')
+      .updateTable('ludy_finance.marketplace_connection')
       .set({
         authorize_state: 'authorized',
         authorize_code_key_id: null,
@@ -643,7 +643,7 @@ export const marketplaceConnectionList = defineQuery({
   access: ALL,
   handler: async (ctx): Promise<MarketplaceConnection[]> => {
     const rows = await ctx.trx
-      .selectFrom('crove_finance.marketplace_connection as c')
+      .selectFrom('ludy_finance.marketplace_connection as c')
       .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select([
         'c.id',
@@ -666,13 +666,13 @@ export const marketplaceConnectionList = defineQuery({
       .orderBy('c.id')
       .execute();
     // What waits in the Inbox for each connection: the orders of the staged reads (no member has confirmed or rejected them) of the files its polls ingested, found through the link written in the
-    // same transaction as the ingest (crove_finance.marketplace_connection_file, #4250), never through a file's name. It is counted here, so a confirm or a reject lowers it and a second page adds to the first.
+    // same transaction as the ingest (ludy_finance.marketplace_connection_file, #4250), never through a file's name. It is counted here, so a confirm or a reject lowers it and a second page adds to the first.
     const waiting = new Map<string, number>();
     if (rows.length > 0) {
       const { rows: counted } = await sql<{ id: string; n: string }>`
         SELECT c.id::text AS id, COALESCE(SUM((x.result -> 'summary' ->> 'orders')::int), 0)::text AS n
-        FROM crove_finance.marketplace_connection c
-        JOIN crove_finance.marketplace_connection_file l ON l.org_id = c.org_id AND l.marketplace_connection_id = c.id
+        FROM ludy_finance.marketplace_connection c
+        JOIN ludy_finance.marketplace_connection_file l ON l.org_id = c.org_id AND l.marketplace_connection_id = c.id
         JOIN ludy_kernel.file f ON f.org_id = l.org_id AND f.id = l.file_id
         JOIN ludy_kernel.extraction x ON x.org_id = f.org_id AND x.file_id = f.id
         WHERE c.org_id = ${ctx.orgId}::uuid AND x.method = 'unsupported' AND x.status = 'done' AND x.result ->> 'kind' = 'marketplace_orders' AND x.result -> 'summary' ->> 'state' = 'staged'
@@ -702,7 +702,7 @@ export const marketplaceConnectionList = defineQuery({
 });
 
 // The reports of one connection that wait in the Inbox (staged: no member has confirmed or rejected them), by file id, for "disconnect and discard what is waiting" (#4240 S3b). The same condition as
-// `ordersWaiting` in the list: the files its polls ingested, found through the link written in the same transaction as the ingest (crove_finance.marketplace_connection_file, #4250), never through a file's
+// `ordersWaiting` in the list: the files its polls ingested, found through the link written in the same transaction as the ingest (ludy_finance.marketplace_connection_file, #4250), never through a file's
 // name, so a file a member uploaded under a crafted name is not taken. Read only; the rpc runs each through `finance.marketplace.reject`, the
 // member's own decision, so nothing is deleted here and the originals follow the retention that already exists for a decided report. More than the cap is refused whole, so a disconnect never discards part.
 const MARKETPLACE_DISCARD_MAX = 500;
@@ -713,8 +713,8 @@ export const marketplaceConnectionStaged = defineQuery({
   handler: async (ctx, input): Promise<{ fileIds: string[] }> => {
     const { rows } = await sql<{ file_id: string }>`
       SELECT f.id::text AS file_id
-      FROM crove_finance.marketplace_connection c
-      JOIN crove_finance.marketplace_connection_file l ON l.org_id = c.org_id AND l.marketplace_connection_id = c.id
+      FROM ludy_finance.marketplace_connection c
+      JOIN ludy_finance.marketplace_connection_file l ON l.org_id = c.org_id AND l.marketplace_connection_id = c.id
       JOIN ludy_kernel.file f ON f.org_id = l.org_id AND f.id = l.file_id
       JOIN ludy_kernel.extraction x ON x.org_id = f.org_id AND x.file_id = f.id
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ${input.id}::uuid AND x.method = 'unsupported' AND x.status = 'done' AND x.result ->> 'kind' = 'marketplace_orders' AND x.result -> 'summary' ->> 'state' = 'staged'
@@ -726,16 +726,16 @@ export const marketplaceConnectionStaged = defineQuery({
   },
 });
 
-// A page of the active connections of active orgs after a key (crove_finance.marketplace_poll_due, the worker login's alone), for the worker's sweep, which pages through them all.
+// A page of the active connections of active orgs after a key (ludy_finance.marketplace_poll_due, the worker login's alone), for the worker's sweep, which pages through them all.
 export const MARKETPLACE_POLL_DUE_PAGE = 1000;
 export async function marketplacePollDue(workerDb: Db, after: { orgId: string; id: string } | null): Promise<Array<{ orgId: string; id: string; provider: string }>> {
   const { rows } = await sql<{ org_id: string; id: string; provider: string }>`
-    SELECT org_id, id, provider FROM crove_finance.marketplace_poll_due(${after?.orgId ?? null}::uuid, ${after?.id ?? null}::uuid, ${MARKETPLACE_POLL_DUE_PAGE}::int)`.execute(workerDb);
+    SELECT org_id, id, provider FROM ludy_finance.marketplace_poll_due(${after?.orgId ?? null}::uuid, ${after?.id ?? null}::uuid, ${MARKETPLACE_POLL_DUE_PAGE}::int)`.execute(workerDb);
   return rows.map((r) => ({ orgId: r.org_id, id: r.id, provider: r.provider }));
 }
 
 // The push address of a connection (#4348, S3b of #4315): 128 random bits as 22 base64url characters, shown once; the database keeps its SHA-256 only, in a definer-only table, through
-// crove_finance.marketplace_hook_set (owners and admins, checked there too from the sealed context). A second call replaces the key, so the old address stops at once, the pushes waiting for it are dropped and a hook
+// ludy_finance.marketplace_hook_set (owners and admins, checked there too from the sealed context). A second call replaces the key, so the old address stops at once, the pushes waiting for it are dropped and a hook
 // stopped by refused pushes takes pushes again. The address the owner sees is built from the key by the API, which knows the public URL (apps/kernel rpc.ts); the key leaves only in this command's answer.
 const marketplaceHookKey = () => randomBytes(16).toString('base64url');
 const marketplaceHookKeyHash = (key: string) => createHash('sha256').update(key, 'utf8').digest('hex');
@@ -762,7 +762,7 @@ export const marketplaceConnectionPushHookSet = defineCommand({
   handler: async (ctx, input): Promise<{ adapter: (typeof MARKETPLACE_PUSH_ADAPTERS)[number]; key: string; created: boolean }> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tạo được địa chỉ nhận thông báo của sàn');
     const connection = await ctx.trx
-      .selectFrom('crove_finance.marketplace_connection as c')
+      .selectFrom('ludy_finance.marketplace_connection as c')
       .innerJoin('ludy_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
       .select(['ch.provider as provider', 'ch.status as status'])
       .where('c.org_id', '=', ctx.orgId)
@@ -775,7 +775,7 @@ export const marketplaceConnectionPushHookSet = defineCommand({
     if (connection.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kết nối với sàn không còn hoạt động; hãy kết nối lại');
     const key = marketplaceHookKey();
     // A channel connection revoked between the check above and the definer's own check is the same refusal, not a generic error.
-    const { rows } = await sql<{ made: boolean }>`SELECT crove_finance.marketplace_hook_set(${input.id}::uuid, ${marketplaceHookKeyHash(key)}) AS made`.execute(ctx.trx).catch((e: unknown) => {
+    const { rows } = await sql<{ made: boolean }>`SELECT ludy_finance.marketplace_hook_set(${input.id}::uuid, ${marketplaceHookKeyHash(key)}) AS made`.execute(ctx.trx).catch((e: unknown) => {
       throw hookSetFailure(e) ?? e;
     });
     const created = rows[0]?.made === true;
@@ -790,10 +790,10 @@ export const marketplaceConnectionPushHook = defineQuery({
   access: MANAGERS,
   handler: async (ctx, input): Promise<MarketplacePushHookStatus> => {
     // A connection that is not this org's answers as the command does (404), whether it has no hook or does not exist, so an id of another org learns nothing from either.
-    const known = await ctx.trx.selectFrom('crove_finance.marketplace_connection').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
+    const known = await ctx.trx.selectFrom('ludy_finance.marketplace_connection').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
     if (!known) throw notFound();
     const { rows } = await sql<{ created_at: Date | string; rotated_at: Date | string | null; last_seen_at: Date | string | null; rejected_count: number; stopped: boolean }>`
-      SELECT created_at, rotated_at, last_seen_at, rejected_count, stopped FROM crove_finance.marketplace_hook_status(${input.id}::uuid)`.execute(ctx.trx);
+      SELECT created_at, rotated_at, last_seen_at, rejected_count, stopped FROM ludy_finance.marketplace_hook_status(${input.id}::uuid)`.execute(ctx.trx);
     const row = rows[0];
     if (!row) return { exists: false, createdAt: null, rotatedAt: null, lastSeenAt: null, rejectedCount: 0, stopped: false };
     const iso = (v: Date | string | null) => (v === null ? null : new Date(v).toISOString());

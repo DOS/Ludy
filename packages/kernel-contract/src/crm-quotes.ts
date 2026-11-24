@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import { zId } from './schemas.ts';
 
-// The sets are the product's: the CHECK constraints of crove_crm.quote say the same (packages/db/test/check-unions.db.test.ts compares them).
+// The sets are the product's: the CHECK constraints of ludy_crm.quote say the same (packages/db/test/check-unions.db.test.ts compares them).
 export const QUOTE_STATUSES = ['draft', 'sent', 'accepted', 'declined', 'superseded'] as const;
 export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
 export const QUOTE_SENT_VIA = ['link', 'email'] as const;

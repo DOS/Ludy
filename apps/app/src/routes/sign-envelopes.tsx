@@ -7,14 +7,15 @@ import { useTranslations } from 'use-intl';
 import { MAX_UPLOAD_BYTES } from '@ludy/kernel-contract';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button, buttonVariants } from '@ludy/ui/components/button';
-import { Card, CardContent } from '@ludy/ui/components/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@ludy/ui/components/dialog';
 import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
+import { TableCell, TableRow } from '@ludy/ui/components/table';
 import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { ContractDrafterDialog } from '../components/sign/contract-drafter-dialog.tsx';
 import { ContractVaultBar } from '../components/sign/contract-vault-bar.tsx';
 import { VersionDiffDialog } from '../components/sign/version-diff-dialog.tsx';
+import { FormDialog } from '../components/form-dialog.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import {
@@ -28,7 +29,7 @@ import type { SignEnvelopeStatus } from '../lib/sign-fields.ts';
 import { buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
 import { looksLikePdfBytes } from '../lib/sign-pdf.ts';
 import { toast } from '../lib/toast.ts';
-import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 
 export type EnvelopeFilterTab = 'all' | 'actionNeeded' | 'waiting' | 'completed' | 'renewals' | 'closed';
 
@@ -97,44 +98,17 @@ function triggerBlobDownload(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export function SignEnvelopesPage() {
+export function CreateEnvelopeDialog({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (envelopeId: string) => Promise<void> | void;
+}) {
   const t = useTranslations('sign');
-  const common = useTranslations('common');
-  const f = useFormat();
-  const navigate = useNavigate();
-  const { slug = '' } = useParams({ strict: false }) as { slug?: string };
-
-  const [tab, setTab] = useState<EnvelopeFilterTab>('all');
-  const [createOpen, setCreateOpen] = useState(false);
-  const [diffOpen, setDiffOpen] = useState(false);
-  const [drafterOpen, setDrafterOpen] = useState(false);
   const [title, setTitle] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
-  const [sharedLinkDialog, setSharedLinkDialog] = useState<{ title: string; url: string } | null>(null);
-
-  const hasMeQuery = Boolean((orpc as { me?: { get?: { queryOptions?: () => unknown } } }).me?.get?.queryOptions);
-  const meQuery = useQuery(
-    hasMeQuery
-      ? orpc.me.get.queryOptions()
-      : { queryKey: ['me', 'get', 'noop'], queryFn: async () => null, enabled: false },
-  );
-  const currentOrgInfo = meQuery.data?.orgs.find((o) => o.slug === slug);
-  const defaultPartyAName = currentOrgInfo?.name ?? '';
-  const canAskVy = !meQuery.data || Boolean(currentOrgInfo?.role && currentOrgInfo.role !== 'viewer');
-  const isRenewalsTab = tab === 'renewals';
-
-  const envelopesQuery = useQuery({
-    queryKey: ['sign', 'envelopes', slug, tab],
-    queryFn: () => fetchEnvelopesForTab(tab),
-    enabled: !isRenewalsTab,
-  });
-
-  const renewalsQuery = useQuery({
-    queryKey: ['sign', 'renewals', slug],
-    queryFn: () => signApi.listRenewalEnvelopes({ limit: 100 }),
-    enabled: isRenewalsTab,
-  });
 
   const createMutation = useMutation({
     mutationFn: async (input: { title: string; file: File }) => {
@@ -146,15 +120,8 @@ export function SignEnvelopesPage() {
       });
     },
     onSuccess: async (created) => {
-      setCreateOpen(false);
-      setTitle('');
-      setSelectedFile(null);
-      setFormError(null);
       toast(t('createdToast'));
-      await queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] });
-      if (slug) {
-        await navigate({ to: '/o/$slug/sign/envelopes/$id', params: { slug, id: created.envelopeId } });
-      }
+      await onCreated(created.envelopeId);
     },
     onError: (error) => {
       setFormError(errorMessage(error));
@@ -191,14 +158,89 @@ export function SignEnvelopesPage() {
 
   const handleCreateSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (createMutation.isPending) return;
     setFormError(null);
     if (!selectedFile) {
       setFormError(t('pdfRequired'));
       return;
     }
-    const cleanTitle = title.trim() || selectedFile.name.replace(/\.pdf$/i, '');
+    const cleanTitle = title.trim() || selectedFile.name.replace(/\.pdf$/i, '') || selectedFile.name;
     createMutation.mutate({ title: cleanTitle, file: selectedFile });
   };
+
+  return (
+    <FormDialog
+      testId="sign-create-dialog"
+      title={t('createTitle')}
+      description={t('createHint')}
+      busy={createMutation.isPending}
+      dirty={title.trim() !== '' || selectedFile !== null}
+      submitLabel={t('createSubmit')}
+      submitTestId="sign-create-submit-btn"
+      onClose={onClose}
+      onSubmit={handleCreateSubmit}
+    >
+      {formError ? <ErrorText>{formError}</ErrorText> : null}
+      <div className="space-y-1.5">
+        <Label htmlFor="sign-new-pdf">{t('pdfLabel')}</Label>
+        <Input
+          id="sign-new-pdf"
+          type="file"
+          accept="application/pdf,.pdf"
+          autoFocus
+          onChange={(e) => void handleFileChange(e)}
+          data-testid="sign-upload-pdf-input"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="sign-new-title">{t('titleLabel')}</Label>
+        <Input
+          id="sign-new-title"
+          placeholder={t('titlePlaceholder')}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          required
+        />
+      </div>
+    </FormDialog>
+  );
+}
+
+export function SignEnvelopesPage() {
+  const t = useTranslations('sign');
+  const common = useTranslations('common');
+  const f = useFormat();
+  const navigate = useNavigate();
+  const { slug = '' } = useParams({ strict: false }) as { slug?: string };
+
+  const [tab, setTab] = useState<EnvelopeFilterTab>('all');
+  const [createOpen, setCreateOpen] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(false);
+  const [drafterOpen, setDrafterOpen] = useState(false);
+  const [sharedLinkDialog, setSharedLinkDialog] = useState<{ title: string; url: string } | null>(null);
+
+  const hasMeQuery = Boolean((orpc as { me?: { get?: { queryOptions?: () => unknown } } }).me?.get?.queryOptions);
+  const meQuery = useQuery(
+    hasMeQuery
+      ? orpc.me.get.queryOptions()
+      : { queryKey: ['me', 'get', 'noop'], queryFn: async () => null, enabled: false },
+  );
+  const currentOrgInfo = meQuery.data?.orgs.find((o) => o.slug === slug);
+  const defaultPartyAName = currentOrgInfo?.name ?? '';
+  const canAskVy = !meQuery.data || Boolean(currentOrgInfo?.role && currentOrgInfo.role !== 'viewer');
+  const isRenewalsTab = tab === 'renewals';
+
+  const envelopesQuery = useQuery({
+    queryKey: ['sign', 'envelopes', slug, tab],
+    queryFn: () => fetchEnvelopesForTab(tab),
+    enabled: !isRenewalsTab,
+  });
+
+  const renewalsQuery = useQuery({
+    queryKey: ['sign', 'renewals', slug],
+    queryFn: () => signApi.listRenewalEnvelopes({ limit: 100 }),
+    enabled: isRenewalsTab,
+  });
 
   const getDueSigners = (signers: readonly { id: string; signerRole: string; status: string; deliveryMode: string; email: string | null }[]) =>
     signers.filter((s) => s.signerRole !== 'cc' && (s.status === 'pending' || s.status === 'viewed'));
@@ -290,7 +332,6 @@ export function SignEnvelopesPage() {
             <Button
               type="button"
               variant="outline"
-              className="min-h-11"
               onClick={() => setDiffOpen(true)}
               data-testid="sign-open-version-diff-btn"
             >
@@ -299,7 +340,6 @@ export function SignEnvelopesPage() {
             <Button
               type="button"
               variant="outline"
-              className="min-h-11"
               onClick={() => setDrafterOpen(true)}
               data-testid="sign-open-drafter-btn"
             >
@@ -307,7 +347,6 @@ export function SignEnvelopesPage() {
             </Button>
             <Button
               type="button"
-              className="min-h-11"
               onClick={() => setCreateOpen(true)}
               data-testid="sign-new-envelope-btn"
             >
@@ -334,44 +373,55 @@ export function SignEnvelopesPage() {
 
       {isRenewalsTab ? (
         <>
-          {renewalsQuery.isLoading ? <ListSkeleton rows={4} /> : null}
+          {renewalsQuery.isLoading ? <TableSkeleton columns={6} rows={4} /> : null}
           {renewalsQuery.isError ? <ErrorText>{errorMessage(renewalsQuery.error)}</ErrorText> : null}
 
           {!renewalsQuery.isLoading && !renewalsQuery.isError && renewalItems.length === 0 ? (
             <Empty title={t('obligations.renewalsEmptyTitle')} hint={t('obligations.renewalsEmptyHint')} />
           ) : null}
 
-          <ul className="space-y-3" data-testid="sign-renewals-list">
-            {renewalItems.map((entry) => {
-              const { envelope: item, obligation } = entry;
-              const isSealed = item.status === 'completed' && item.sealStatus === 'sealed';
-              const renewalBadge =
-                entry.daysUntilExpiry !== null ? (
-                  entry.daysUntilExpiry < 0 ? (
-                    <Badge variant="outline">{t('obligations.expiredBadge')}</Badge>
-                  ) : entry.daysUntilExpiry === 0 ? (
-                    <Badge variant="destructive">{t('obligations.expiresTodayBadge')}</Badge>
-                  ) : entry.daysUntilNotice !== null && entry.daysUntilNotice <= 0 ? (
-                    <Badge variant="warning">
-                      {t('obligations.noticeWindowOpenBadge', { days: String(entry.daysUntilExpiry) })}
-                    </Badge>
-                  ) : entry.daysUntilNotice !== null && entry.daysUntilNotice <= 30 ? (
-                    <Badge variant="secondary">
-                      {t('obligations.noticeSoonBadge', { days: String(entry.daysUntilNotice) })}
-                    </Badge>
-                  ) : null
-                ) : null;
+          {renewalItems.length > 0 ? (
+            <div data-testid="sign-renewals-list">
+              <DataTable
+                stacked
+                numeric={[2]}
+                head={[
+                  t('columns.title'),
+                  t('columns.counterparty'),
+                  t('columns.contractValue'),
+                  t('columns.expiryDate'),
+                  t('columns.nextObligation'),
+                  '',
+                ]}
+              >
+                {renewalItems.map((entry) => {
+                  const { envelope: item, obligation } = entry;
+                  const isSealed = item.status === 'completed' && item.sealStatus === 'sealed';
+                  const renewalBadge =
+                    entry.daysUntilExpiry !== null ? (
+                      entry.daysUntilExpiry < 0 ? (
+                        <Badge variant="outline">{t('obligations.expiredBadge')}</Badge>
+                      ) : entry.daysUntilExpiry === 0 ? (
+                        <Badge variant="destructive">{t('obligations.expiresTodayBadge')}</Badge>
+                      ) : entry.daysUntilNotice !== null && entry.daysUntilNotice <= 0 ? (
+                        <Badge variant="warning">
+                          {t('obligations.noticeWindowOpenBadge', { days: String(entry.daysUntilExpiry) })}
+                        </Badge>
+                      ) : entry.daysUntilNotice !== null && entry.daysUntilNotice <= 30 ? (
+                        <Badge variant="secondary">
+                          {t('obligations.noticeSoonBadge', { days: String(entry.daysUntilNotice) })}
+                        </Badge>
+                      ) : null
+                    ) : null;
 
-              return (
-                <li key={item.id}>
-                  <Card>
-                    <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="min-w-0 space-y-1.5">
-                        <div className="flex flex-wrap items-center gap-2">
+                  return (
+                    <TableRow key={item.id}>
+                      <TableCell data-label={t('columns.title')}>
+                        <span className="inline-flex flex-wrap items-center gap-1.5">
                           <Link
                             to="/o/$slug/sign/envelopes/$id"
                             params={{ slug, id: item.id }}
-                            className="truncate text-base font-semibold text-foreground hover:underline"
+                            className="inline-flex max-md:min-h-11 items-center font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
                           >
                             {item.title}
                           </Link>
@@ -389,55 +439,46 @@ export function SignEnvelopesPage() {
                               {t('obligations.pendingCountBadge', { count: String(entry.pendingObligationCount) })}
                             </Badge>
                           ) : null}
+                        </span>
+                      </TableCell>
+                      <TableCell data-label={t('columns.counterparty')} className="text-foreground">
+                        {obligation.counterpartyName ?? ''}
+                      </TableCell>
+                      <TableCell data-label={t('columns.contractValue')} className="text-right font-mono tabular-nums text-foreground">
+                        {obligation.contractValue !== null ? f.money(obligation.contractValue, obligation.currency) : ''}
+                      </TableCell>
+                      <TableCell data-label={t('columns.expiryDate')} className="text-muted-foreground tabular-nums">
+                        {obligation.expiryDate ? f.date(obligation.expiryDate) : ''}
+                      </TableCell>
+                      <TableCell data-label={t('columns.nextObligation')} className="text-muted-foreground tabular-nums">
+                        {entry.nextObligationDueDate ? f.date(entry.nextObligationDueDate) : ''}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex flex-wrap justify-end gap-1.5 max-sm:justify-start">
+                          {isSealed ? (
+                            <Button type="button" size="sm" variant="outline" onClick={() => void handleDownloadSealed(item)}>
+                              {t('actions.downloadSealed')}
+                            </Button>
+                          ) : null}
+                          <Link
+                            to="/o/$slug/sign/envelopes/$id"
+                            params={{ slug, id: item.id }}
+                            className={buttonVariants({ size: 'sm', variant: 'secondary' })}
+                          >
+                            {t('actions.open')}
+                          </Link>
                         </div>
-                        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                          {obligation.counterpartyName ? (
-                            <span className="font-medium text-foreground">
-                              {t('obligations.counterpartyChip', { name: obligation.counterpartyName })}
-                            </span>
-                          ) : null}
-                          {obligation.contractValue !== null ? (
-                            <span className="font-mono tabular-nums text-foreground">
-                              {f.money(obligation.contractValue, obligation.currency)}
-                            </span>
-                          ) : null}
-                          {obligation.expiryDate ? (
-                            <span className="tabular-nums">
-                              {t('obligations.expiryOn', { date: f.date(obligation.expiryDate) })}
-                            </span>
-                          ) : null}
-                          {entry.nextObligationDueDate ? (
-                            <span className="tabular-nums">
-                              {t('obligations.nextDueOn', { date: f.date(entry.nextObligationDueDate) })}
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-2">
-                        {isSealed ? (
-                          <Button type="button" size="sm" variant="outline" onClick={() => void handleDownloadSealed(item)}>
-                            {t('actions.downloadSealed')}
-                          </Button>
-                        ) : null}
-                        <Link
-                          to="/o/$slug/sign/envelopes/$id"
-                          params={{ slug, id: item.id }}
-                          className={buttonVariants({ size: 'sm', variant: 'secondary' })}
-                        >
-                          {t('actions.open')}
-                        </Link>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </li>
-              );
-            })}
-          </ul>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </DataTable>
+            </div>
+          ) : null}
         </>
       ) : (
         <>
-          {envelopesQuery.isLoading ? <ListSkeleton rows={4} /> : null}
+          {envelopesQuery.isLoading ? <TableSkeleton columns={5} rows={4} /> : null}
           {envelopesQuery.isError ? <ErrorText>{errorMessage(envelopesQuery.error)}</ErrorText> : null}
 
           {!envelopesQuery.isLoading && !envelopesQuery.isError && filtered.length === 0 ? (
@@ -452,116 +493,107 @@ export function SignEnvelopesPage() {
             />
           ) : null}
 
-          <ul className="space-y-3" data-testid="sign-envelope-list">
-            {filtered.map((item) => {
-              const isActive = item.status === 'sent' || item.status === 'in_progress';
-              const isSealed = item.status === 'completed' && item.sealStatus === 'sealed';
-              return (
-                <li key={item.id}>
-                  <Card>
-                    <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="min-w-0 space-y-1.5">
-                        <div className="flex flex-wrap items-center gap-2">
+          {filtered.length > 0 ? (
+            <div data-testid="sign-envelope-list">
+              <DataTable
+                stacked
+                head={[
+                  t('columns.title'),
+                  t('columns.status'),
+                  t('columns.progress'),
+                  t('columns.createdAt'),
+                  '',
+                ]}
+              >
+                {filtered.map((item) => {
+                  const isActive = item.status === 'sent' || item.status === 'in_progress';
+                  const isSealed = item.status === 'completed' && item.sealStatus === 'sealed';
+                  return (
+                    <TableRow key={item.id}>
+                      <TableCell data-label={t('columns.title')}>
+                        <span className="inline-flex flex-wrap items-center gap-1.5">
                           <Link
                             to="/o/$slug/sign/envelopes/$id"
                             params={{ slug, id: item.id }}
-                            className="truncate text-base font-semibold text-foreground hover:underline"
+                            className="inline-flex max-md:min-h-11 items-center font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
                           >
                             {item.title}
                           </Link>
+                          {item.certificateCode ? <span className="font-mono text-xs text-muted-foreground">{item.certificateCode}</span> : null}
+                          {item.pageCount ? <span className="text-xs text-subtle-foreground">{t('pagesCount', { count: String(item.pageCount) })}</span> : null}
+                        </span>
+                      </TableCell>
+                      <TableCell data-label={t('columns.status')}>
+                        <span className="inline-flex flex-wrap items-center gap-1.5">
                           <Badge variant={ENVELOPE_BADGE_VARIANT[item.status]}>{t(`statuses.${item.status}`)}</Badge>
                           <Badge variant="outline">{t(`routing.${item.routingMode}`)}</Badge>
                           {item.status === 'completed' || item.sealStatus ? (
                             <Badge variant="secondary">{t(`sealStatuses.${item.sealStatus ?? 'pending'}`)}</Badge>
                           ) : null}
-                          {item.signerSummary.total > 0 ? (
-                            <Badge variant="secondary">
-                              {t('progress', {
-                                signed: String(item.signerSummary.signed),
-                                total: String(item.signerSummary.total),
-                              })}
-                            </Badge>
+                        </span>
+                      </TableCell>
+                      <TableCell data-label={t('columns.progress')} className="tabular-nums">
+                        {item.signerSummary.total > 0 ? (
+                          <Badge variant="secondary">
+                            {t('progress', {
+                              signed: String(item.signerSummary.signed),
+                              total: String(item.signerSummary.total),
+                            })}
+                          </Badge>
+                        ) : (
+                          ''
+                        )}
+                      </TableCell>
+                      <TableCell data-label={t('columns.createdAt')} className="text-muted-foreground tabular-nums">
+                        {f.dateTime(item.createdAt)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex flex-wrap justify-end gap-1.5 max-sm:justify-start">
+                          {isActive ? (
+                            <>
+                              <Button type="button" size="sm" variant="outline" onClick={() => void handleCopyZaloLink(item)}>
+                                {t('actions.copyZalo')}
+                              </Button>
+                              <Button type="button" size="sm" variant="ghost" onClick={() => void handleRemind(item)}>
+                                {t('actions.remind')}
+                              </Button>
+                            </>
                           ) : null}
-                        </div>
-                        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                          <span>{f.dateTime(item.createdAt)}</span>
-                          {item.pageCount ? <span>{t('pagesCount', { count: String(item.pageCount) })}</span> : null}
-                          {item.certificateCode ? <span className="font-mono">{item.certificateCode}</span> : null}
-                        </div>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-2">
-                        {isActive ? (
-                          <>
-                            <Button type="button" size="sm" variant="outline" onClick={() => void handleCopyZaloLink(item)}>
-                              {t('actions.copyZalo')}
+                          {isSealed ? (
+                            <Button type="button" size="sm" variant="outline" onClick={() => void handleDownloadSealed(item)}>
+                              {t('actions.downloadSealed')}
                             </Button>
-                            <Button type="button" size="sm" variant="ghost" onClick={() => void handleRemind(item)}>
-                              {t('actions.remind')}
-                            </Button>
-                          </>
-                        ) : null}
-                        {isSealed ? (
-                          <Button type="button" size="sm" variant="outline" onClick={() => void handleDownloadSealed(item)}>
-                            {t('actions.downloadSealed')}
-                          </Button>
-                        ) : null}
-                        <Link
-                          to="/o/$slug/sign/envelopes/$id"
-                          params={{ slug, id: item.id }}
-                          className={buttonVariants({ size: 'sm', variant: 'secondary' })}
-                        >
-                          {t('actions.open')}
-                        </Link>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </li>
-              );
-            })}
-          </ul>
+                          ) : null}
+                          <Link
+                            to="/o/$slug/sign/envelopes/$id"
+                            params={{ slug, id: item.id }}
+                            className={buttonVariants({ size: 'sm', variant: 'secondary' })}
+                          >
+                            {t('actions.open')}
+                          </Link>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </DataTable>
+            </div>
+          ) : null}
         </>
       )}
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="sm:max-w-md" closeLabel={common('close')}>
-          <DialogHeader>
-            <DialogTitle>{t('createTitle')}</DialogTitle>
-            <DialogDescription>{t('createHint')}</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleCreateSubmit} className="space-y-4">
-            {formError ? <ErrorText>{formError}</ErrorText> : null}
-            <div className="space-y-1.5">
-              <Label htmlFor="sign-new-pdf">{t('pdfLabel')}</Label>
-              <Input
-                id="sign-new-pdf"
-                type="file"
-                accept="application/pdf,.pdf"
-                onChange={(e) => void handleFileChange(e)}
-                data-testid="sign-upload-pdf-input"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="sign-new-title">{t('titleLabel')}</Label>
-              <Input
-                id="sign-new-title"
-                placeholder={t('titlePlaceholder')}
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                required
-              />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
-                {common('cancel')}
-              </Button>
-              <Button type="submit" loading={createMutation.isPending} data-testid="sign-create-submit-btn">
-                {t('createSubmit')}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      {createOpen ? (
+        <CreateEnvelopeDialog
+          onClose={() => setCreateOpen(false)}
+          onCreated={async (envelopeId) => {
+            setCreateOpen(false);
+            await queryClient.invalidateQueries({ queryKey: ['sign', 'envelopes'] });
+            if (slug) {
+              await navigate({ to: '/o/$slug/sign/envelopes/$id', params: { slug, id: envelopeId } });
+            }
+          }}
+        />
+      ) : null}
 
       <Dialog open={sharedLinkDialog !== null} onOpenChange={(next) => !next && setSharedLinkDialog(null)}>
         <DialogContent className="sm:max-w-lg" closeLabel={common('close')}>

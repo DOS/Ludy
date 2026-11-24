@@ -168,8 +168,8 @@ suite('social search without marks on PostgreSQL (#1360)', () => {
     const pb = await variantOn(o, onB, o.b);
     const own = (id: string) => JSON.stringify([{ fileId: id, generation: null, altText: null, mime: 'image/jpeg', sizeBytes: 120000 }]);
     await admin(async (c) => {
-      await c.query('UPDATE crove_social.post_variant SET media = $2::jsonb WHERE id = $1', [pa.id, own(mine)]);
-      await c.query('UPDATE crove_social.post_variant SET media = $2::jsonb WHERE id = $1', [pb.id, own(theirs)]);
+      await c.query('UPDATE ludy_social.post_variant SET media = $2::jsonb WHERE id = $1', [pa.id, own(mine)]);
+      await c.query('UPDATE ludy_social.post_variant SET media = $2::jsonb WHERE id = $1', [pb.id, own(theirs)]);
     });
     expect(await media(o, o.owner, { search: 'dien thoai', usable: true })).toEqual(['Điện thoại kênh B.jpg', 'dien-thoai-kenh-a.jpg'].sort());
     expect(await media(o, o.member, { search: 'dien thoai', usable: true })).toEqual(['dien-thoai-kenh-a.jpg']);
@@ -208,20 +208,20 @@ suite('social search without marks on PostgreSQL (#1360)', () => {
         // Posts of a few hundred characters each, one channel each, half with a channel text of their own.
         await c.query(
           `WITH p AS (
-             INSERT INTO crove_social.post (org_id, body, title, author_user_id)
+             INSERT INTO ludy_social.post (org_id, body, title, author_user_id)
              SELECT $1, 'Bài số ' || g || ': ' || repeat('Cửa hàng thời trang Hà Nội giới thiệu bộ sưu tập mới, ưu đãi cho khách quen. ', 4),
                     CASE WHEN g % 3 = 0 THEN 'Tiêu đề ' || g END, $2
              FROM generate_series(1, $4::int) g
              RETURNING id, body
            )
-           INSERT INTO crove_social.post_variant (org_id, post_id, channel_connection_id, provider, body, content_hash)
+           INSERT INTO ludy_social.post_variant (org_id, post_id, channel_connection_id, provider, body, content_hash)
            SELECT $1, p.id, $3, 'sandbox', CASE WHEN row_number() OVER () % 2 = 0 THEN 'Riêng kênh: ' || p.body END,
                   'sha256:' || encode(sha256(convert_to(p.id::text, 'UTF8')), 'hex')
            FROM p`,
           [o.orgId, o.owner, o.a, POSTS],
         );
         await c.query('COMMIT');
-        await c.query('VACUUM ANALYZE crove_social.post, crove_social.post_variant');
+        await c.query('VACUUM ANALYZE ludy_social.post, ludy_social.post_variant');
       });
     }, 300_000);
 

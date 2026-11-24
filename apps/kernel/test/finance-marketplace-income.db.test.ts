@@ -108,7 +108,7 @@ suite('marketplace income reports (#2516)', () => {
   }
   // The orders the income report names, as an order report would have stored them.
   const addOrders = async (o: Org, ...orderNos: string[]) => {
-    for (const orderNo of orderNos) await rows("INSERT INTO crove_finance.channel_order (org_id, platform, order_no) VALUES ($1, 'shopee', $2)", [o.orgId, orderNo]);
+    for (const orderNo of orderNos) await rows("INSERT INTO ludy_finance.channel_order (org_id, platform, order_no) VALUES ($1, 'shopee', $2)", [o.orgId, orderNo]);
   };
   const execute = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.execute<T>(name, input, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
   const query = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.query<T>(name, input, { actor: asUser(user), orgId: o.orgId });
@@ -143,8 +143,8 @@ suite('marketplace income reports (#2516)', () => {
   }
   const preview = (o: Org, fileId: string, user = o.member) => query<Preview>(o, 'finance.marketplace_income.preview', { fileId }, user);
   const confirm = (o: Org, fileId: string, user = o.member) => execute<{ settlementId: string; lines: number; reportNet: string; other: string }>(o, 'finance.marketplace_income.confirm', { fileId }, user);
-  const settlements = (o: Org) => rows<{ id: string; platform: string; period_start: string; period_end: string; report_net: string; source_sha256: string | null }>("SELECT id::text, platform, period_start::text, period_end::text, report_net::text, source_sha256 FROM crove_finance.channel_settlement WHERE org_id = $1 ORDER BY period_start", [o.orgId]);
-  const settlementLines = (o: Org) => rows<{ line_key: string; sales: string; commission: string; tax_withheld: string; other: string; net: string; source_row: number }>('SELECT line_key, sales::text, commission::text, tax_withheld::text, other::text, net::text, source_row FROM crove_finance.channel_settlement_line WHERE org_id = $1 ORDER BY line_key', [o.orgId]);
+  const settlements = (o: Org) => rows<{ id: string; platform: string; period_start: string; period_end: string; report_net: string; source_sha256: string | null }>("SELECT id::text, platform, period_start::text, period_end::text, report_net::text, source_sha256 FROM ludy_finance.channel_settlement WHERE org_id = $1 ORDER BY period_start", [o.orgId]);
+  const settlementLines = (o: Org) => rows<{ line_key: string; sales: string; commission: string; tax_withheld: string; other: string; net: string; source_row: number }>('SELECT line_key, sales::text, commission::text, tax_withheld::text, other::text, net::text, source_row FROM ludy_finance.channel_settlement_line WHERE org_id = $1 ORDER BY line_key', [o.orgId]);
 
   beforeAll(async () => {
     extract = inProcessExtract();
@@ -237,7 +237,7 @@ suite('marketplace income reports (#2516)', () => {
     expect(audit).toContain('shopee');
     for (const secret of [o.a, o.b, '80500', '125750', BUYER.name]) expect(audit).not.toContain(secret);
     // No stored row of the settlement tables holds a buyer value.
-    const everything = JSON.stringify(await rows('SELECT s.*, l.* FROM crove_finance.channel_settlement s JOIN crove_finance.channel_settlement_line l ON l.settlement_id = s.id WHERE s.org_id = $1', [o.orgId]));
+    const everything = JSON.stringify(await rows('SELECT s.*, l.* FROM ludy_finance.channel_settlement s JOIN ludy_finance.channel_settlement_line l ON l.settlement_id = s.id WHERE s.org_id = $1', [o.orgId]));
     for (const value of Object.values(BUYER)) expect(everything).not.toContain(value);
   });
 

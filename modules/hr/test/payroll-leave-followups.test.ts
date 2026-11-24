@@ -14,10 +14,10 @@ const LINE_ID = '00000000-0000-7000-8000-000000000002';
 
 describe('HR annual leave ledger follow-ups (#3411)', () => {
   it('keeps payroll_leave_entry columns internal while payroll_line.inputs stays sensitive', () => {
-    const leaveCols = hrManifest.tables.crove_hr.payroll_leave_entry;
+    const leaveCols = hrManifest.tables.ludy_hr.payroll_leave_entry;
     expect(leaveCols.days).toBe('internal');
     expect(Object.values(leaveCols).every((cls) => cls === 'internal')).toBe(true);
-    expect(hrManifest.tables.crove_hr.payroll_line.inputs).toBe('sensitive');
+    expect(hrManifest.tables.ludy_hr.payroll_line.inputs).toBe('sensitive');
   });
 
   it('rejects 2-decimal unpaid_leave at write time while allowing 2-decimal opening_balance carry-over', () => {

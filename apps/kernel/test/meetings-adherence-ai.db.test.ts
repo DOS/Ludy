@@ -80,15 +80,15 @@ suite('Vy checking whether a meeting covered its agenda (#3959)', () => {
   async function meeting(title: string, startMinutes: number, series: string | null, readers: string[] = []): Promise<string> {
     const id = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date, series_id)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date, series_id)
        VALUES ($1, $2, $6, 'vi', $4, $5, 3600, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 20, current_date + 365, $7)`,
       [orgId, id, users.rec, iso(startMinutes), iso(startMinutes + 60), title, series],
     );
-    for (const who of readers) await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), id, users[who]]);
+    for (const who of readers) await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), id, users[who]]);
     return id;
   }
   const line = (meetingId: string, start: number, text: string, stage = 'draft') =>
-    sqlAdmin(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, $4::numeric, $4::numeric + 5, 'Trần Văn Nam', $5, $6)`, [orgId, randomUUID(), meetingId, start, text, stage]);
+    sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, $4::numeric, $4::numeric + 5, 'Trần Văn Nam', $5, $6)`, [orgId, randomUUID(), meetingId, start, text, stage]);
   async function openItem(meetingId: string, title: string, task?: string): Promise<void> {
     let taskId: string | null = null;
     if (task !== undefined) {
@@ -96,7 +96,7 @@ suite('Vy checking whether a meeting covered its agenda (#3959)', () => {
       await sqlAdmin(`INSERT INTO ludy_kernel.task (org_id, id, title, source, created_by_type, status) VALUES ($1, $2, $3, 'human', 'system', $4)`, [orgId, taskId, title, task]);
     }
     await sqlAdmin(
-      `INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, task_id, tainted, transcript_seconds)
+      `INSERT INTO ludy_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, task_id, tainted, transcript_seconds)
        VALUES ($1, $2, $3, $4, 'Lan', $5, 'thứ sáu', 'published', $6, $7, false, 10)`,
       [orgId, randomUUID(), meetingId, title, users.lan, taskId === null ? 'suggested' : 'accepted', taskId],
     );
@@ -188,7 +188,7 @@ suite('Vy checking whether a meeting covered its agenda (#3959)', () => {
     expect(JSON.stringify(rows)).not.toMatch(/báo giá|bảo trì|giao hàng/iu);
     expect(logged.join('\n')).not.toMatch(/báo giá|bảo trì|giao hàng/iu);
     // Nothing of the check is stored on the meeting.
-    const kept = await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM crove_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2', [orgId, s.current]);
+    const kept = await sqlAdmin<{ n: string }>('SELECT count(*)::text AS n FROM ludy_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2', [orgId, s.current]);
     expect(kept.rows[0]?.n).toBe('4');
   });
 
@@ -211,7 +211,7 @@ suite('Vy checking whether a meeting covered its agenda (#3959)', () => {
     expect(await check('rec', alone)).toMatchObject({ state: 'none', reason: 'no_agenda', items: [] });
     expect(await check('rec', alone, ['Chốt giá'])).toMatchObject({ state: 'none', reason: 'no_transcript' });
     const long = await meeting('Họp rất dài', -30, null);
-    await sqlAdmin(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) SELECT $1::uuid, gen_random_uuid(), $2::uuid, g, g + 1, 'Hà', 'Một dòng ngắn ' || g, 'draft' FROM generate_series(0, 700) g`, [orgId, long]);
+    await sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) SELECT $1::uuid, gen_random_uuid(), $2::uuid, g, g + 1, 'Hà', 'Một dòng ngắn ' || g, 'draft' FROM generate_series(0, 700) g`, [orgId, long]);
     expect(await check('rec', long, ['Chốt giá'])).toMatchObject({ state: 'none', reason: 'too_long' });
     expect(await agendaOf('rec', long)).toMatchObject({ transcriptLines: 701, transcriptFits: false });
     expect(modelCalls).toBe(0);
@@ -258,14 +258,14 @@ suite('Vy checking whether a meeting covered its agenda (#3959)', () => {
   it('reads the whole of one stage: the draft when a draft exists beside a published transcript, the published lines when there is no draft, never a mix cut by the limit', async () => {
     const both = await meeting('Họp có bản nháp và bản đã công bố', -30, null);
     // 400 published lines, then the recorder's re-transcription as 400 draft lines: a limit applied before the stage would read about half of each.
-    await sqlAdmin(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) SELECT $1::uuid, gen_random_uuid(), $2::uuid, g, g + 1, 'Hà', 'Bản đã công bố ' || g, 'published' FROM generate_series(0, 399) g`, [orgId, both]);
-    await sqlAdmin(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) SELECT $1::uuid, gen_random_uuid(), $2::uuid, g, g + 1, 'Hà', 'Bản nháp ' || g, 'draft' FROM generate_series(0, 399) g`, [orgId, both]);
+    await sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) SELECT $1::uuid, gen_random_uuid(), $2::uuid, g, g + 1, 'Hà', 'Bản đã công bố ' || g, 'published' FROM generate_series(0, 399) g`, [orgId, both]);
+    await sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) SELECT $1::uuid, gen_random_uuid(), $2::uuid, g, g + 1, 'Hà', 'Bản nháp ' || g, 'draft' FROM generate_series(0, 399) g`, [orgId, both]);
     expect(await agendaOf('rec', both)).toMatchObject({ transcriptLines: 400, transcriptFits: true });
     await check('rec', both, ['Chốt giá']);
     expect(lastData?.transcript).toHaveLength(400);
     expect(lastData?.transcript.every((l) => l.text.startsWith('Bản nháp'))).toBe(true);
     const published = await meeting('Họp chỉ có bản đã công bố', -30, null);
-    await sqlAdmin(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) SELECT $1::uuid, gen_random_uuid(), $2::uuid, g, g + 1, 'Hà', 'Bản đã công bố ' || g, 'published' FROM generate_series(0, 699) g`, [orgId, published]);
+    await sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) SELECT $1::uuid, gen_random_uuid(), $2::uuid, g, g + 1, 'Hà', 'Bản đã công bố ' || g, 'published' FROM generate_series(0, 699) g`, [orgId, published]);
     expect(await agendaOf('rec', published)).toMatchObject({ transcriptLines: 700, transcriptFits: true });
     await check('rec', published, ['Chốt giá']);
     expect(lastData?.transcript).toHaveLength(700);
@@ -275,7 +275,7 @@ suite('Vy checking whether a meeting covered its agenda (#3959)', () => {
   it('counts what the model would be given: a transcript whose text is under the limit but whose framing is over it is refused before any run, with the reason', async () => {
     const wide = await meeting('Họp nhiều chữ', -30, null);
     // 330 lines of 355 ASCII characters: 117 KB of text, over the limit once each line carries its number and time.
-    await sqlAdmin(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) SELECT $1::uuid, gen_random_uuid(), $2::uuid, g, g + 1, 'Hà', repeat('x', 355), 'draft' FROM generate_series(0, 329) g`, [orgId, wide]);
+    await sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) SELECT $1::uuid, gen_random_uuid(), $2::uuid, g, g + 1, 'Hà', repeat('x', 355), 'draft' FROM generate_series(0, 329) g`, [orgId, wide]);
     const runs = (await resultRows()).length;
     expect(await check('rec', wide, ['Chốt giá'])).toMatchObject({ state: 'none', reason: 'too_long' });
     expect(modelCalls).toBe(0);

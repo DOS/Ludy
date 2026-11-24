@@ -50,10 +50,10 @@ suite('the Sàn line facts on PostgreSQL (#2516 slice E)', () => {
       await a.query('BEGIN');
       const id = randomUUID();
       let order: string = randomUUID();
-      if (reversalOf) order = (await a.query<{ order_id: string }>('SELECT order_id FROM crove_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2', [org, reversalOf])).rows[0]?.order_id as string;
-      else await a.query('INSERT INTO crove_finance.channel_order (org_id, id, legal_entity_id, platform, order_no) VALUES ($1, $2, $3, $4, $5)', [org, order, forEntity, platform, `ST${randomUUID().slice(0, 12)}`]);
-      await a.query('INSERT INTO crove_finance.channel_settlement (org_id, id, legal_entity_id, platform, period_start, period_end, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [org, id, forEntity, platform, start, end, reversalOf ? -9000 : 9000, reversalOf]);
-      await a.query('INSERT INTO crove_finance.channel_settlement_line (org_id, id, legal_entity_id, settlement_id, order_id, line_key, sales, tax_withheld, net, adjustment) VALUES ($1, $2, $3, $4, $5, $6, 10000, 1000, 9000, $7)', [org, randomUUID(), forEntity, id, order, 'L1', reversalOf !== null]);
+      if (reversalOf) order = (await a.query<{ order_id: string }>('SELECT order_id FROM ludy_finance.channel_settlement_line WHERE org_id = $1 AND settlement_id = $2', [org, reversalOf])).rows[0]?.order_id as string;
+      else await a.query('INSERT INTO ludy_finance.channel_order (org_id, id, legal_entity_id, platform, order_no) VALUES ($1, $2, $3, $4, $5)', [org, order, forEntity, platform, `ST${randomUUID().slice(0, 12)}`]);
+      await a.query('INSERT INTO ludy_finance.channel_settlement (org_id, id, legal_entity_id, platform, period_start, period_end, report_net, reversal_of) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [org, id, forEntity, platform, start, end, reversalOf ? -9000 : 9000, reversalOf]);
+      await a.query('INSERT INTO ludy_finance.channel_settlement_line (org_id, id, legal_entity_id, settlement_id, order_id, line_key, sales, tax_withheld, net, adjustment) VALUES ($1, $2, $3, $4, $5, $6, 10000, 1000, 9000, $7)', [org, randomUUID(), forEntity, id, order, 'L1', reversalOf !== null]);
       await a.query('COMMIT');
       return id;
     });
@@ -64,28 +64,28 @@ suite('the Sàn line facts on PostgreSQL (#2516 slice E)', () => {
       await a.query('BEGIN');
       const v = (
         await a.query<{ id: string }>(
-          "INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, proposal_id, settlement_id, legal_entity_id) VALUES ($1, '2026-11-10', 'Ghi sổ kỳ đối soát', $2, $3, $4) RETURNING id",
+          "INSERT INTO ludy_finance.journal_voucher (org_id, voucher_date, description, proposal_id, settlement_id, legal_entity_id) VALUES ($1, '2026-11-10', 'Ghi sổ kỳ đối soát', $2, $3, $4) RETURNING id",
           [org, randomUUID(), settlementId, entity],
         )
       ).rows[0]?.id;
       const e = (
         await a.query<{ id: string }>(
-          "INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, '2026-11-10', 'Ghi sổ kỳ đối soát', 'finance.journal_voucher', $2, $3) RETURNING id",
+          "INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, '2026-11-10', 'Ghi sổ kỳ đối soát', 'finance.journal_voucher', $2, $3) RETURNING id",
           [org, v, entity],
         )
       ).rows[0]?.id;
-      await a.query("INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '131', 10000, 0), ($1, $2, 2, '511', 0, 10000)", [org, e]);
+      await a.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '131', 10000, 0), ($1, $2, 2, '511', 0, 10000)", [org, e]);
       await a.query('COMMIT');
     });
   const post = (lines: Array<[string, number, number, string | null]>) =>
     admin(async (c) => {
       await c.query('BEGIN');
       const { rows } = await c.query<{ id: string }>(
-        "INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-11-05', 'Sàn', 'test', $2) RETURNING id",
+        "INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-11-05', 'Sàn', 'test', $2) RETURNING id",
         [orgA, randomUUID()],
       );
       let lineNo = 1;
-      for (const [account, debit, credit, partyId] of lines) await c.query('INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, $3, $4, $5, $6, $7)', [orgA, rows[0]?.id, lineNo++, account, debit, credit, partyId]);
+      for (const [account, debit, credit, partyId] of lines) await c.query('INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, $3, $4, $5, $6, $7)', [orgA, rows[0]?.id, lineNo++, account, debit, credit, partyId]);
       await c.query('COMMIT');
     });
 
@@ -154,7 +154,7 @@ suite('the Sàn line facts on PostgreSQL (#2516 slice E)', () => {
   });
 
   it('sums what the platforms still owe and the fees awaiting an invoice from the balance rows', async () => {
-    await admin((c) => c.query("INSERT INTO crove_finance.marketplace_party (org_id, platform, party_id) VALUES ($1, 'shopee', $2)", [orgA, shopee]));
+    await admin((c) => c.query("INSERT INTO ludy_finance.marketplace_party (org_id, platform, party_id) VALUES ($1, 'shopee', $2)", [orgA, shopee]));
     await post([['131', 1_000_000, 0, shopee], ['511', 0, 1_000_000, null]]);
     await post([['112', 880_000, 0, null], ['331', 120_000, 0, shopee], ['131', 0, 1_000_000, shopee]]);
     await post([['131', 500_000, 0, shopee], ['511', 0, 500_000, null]]);
@@ -167,7 +167,7 @@ suite('the Sàn line facts on PostgreSQL (#2516 slice E)', () => {
     const tiktok = randomUUID();
     await admin(async (c) => {
       await c.query("INSERT INTO ludy_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', 'TikTok Shop')", [orgA, tiktok]);
-      await c.query("INSERT INTO crove_finance.marketplace_party (org_id, platform, party_id) VALUES ($1, 'tiktok_shop', $2)", [orgA, tiktok]);
+      await c.query("INSERT INTO ludy_finance.marketplace_party (org_id, platform, party_id) VALUES ($1, 'tiktok_shop', $2)", [orgA, tiktok]);
     });
     // TikTok was paid out 300000 more than it was owed, and the platform's 331 holds a credit (an invoice no fee waited for): both negative.
     await post([['131', 100_000, 0, tiktok], ['511', 0, 100_000, null]]);
@@ -185,8 +185,8 @@ suite('the Sàn line facts on PostgreSQL (#2516 slice E)', () => {
   it('is read by every role, never shows another org anything, and writes nothing', async () => {
     for (const who of [owner, member, viewer]) expect((await facts(who)).settlementsToPost).toBe(2);
     expect(await facts(stranger, orgB)).toEqual({ settlementsToPost: 0, payoutsToMatch: 0, settlementsHalfReversed: 0, awaitingPayout: '0', feesAwaitingInvoice: '0' });
-    const before = await admin(async (c) => (await c.query<{ n: string }>('SELECT (SELECT count(*) FROM crove_finance.journal_voucher) + (SELECT count(*) FROM crove_finance.journal_entry) AS n')).rows[0]?.n);
+    const before = await admin(async (c) => (await c.query<{ n: string }>('SELECT (SELECT count(*) FROM ludy_finance.journal_voucher) + (SELECT count(*) FROM ludy_finance.journal_entry) AS n')).rows[0]?.n);
     await facts();
-    expect(await admin(async (c) => (await c.query<{ n: string }>('SELECT (SELECT count(*) FROM crove_finance.journal_voucher) + (SELECT count(*) FROM crove_finance.journal_entry) AS n')).rows[0]?.n)).toBe(before);
+    expect(await admin(async (c) => (await c.query<{ n: string }>('SELECT (SELECT count(*) FROM ludy_finance.journal_voucher) + (SELECT count(*) FROM ludy_finance.journal_entry) AS n')).rows[0]?.n)).toBe(before);
   });
 });

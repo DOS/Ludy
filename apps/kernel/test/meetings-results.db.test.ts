@@ -46,7 +46,7 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     await admin(async (c) => {
       await c.query('BEGIN');
       await c.query(`SET LOCAL session_replication_role = replica`);
-      await c.query(`UPDATE crove_meetings.action_item SET tainted = true WHERE org_id = $1 AND id = $2`, [orgId, itemId]);
+      await c.query(`UPDATE ludy_meetings.action_item SET tainted = true WHERE org_id = $1 AND id = $2`, [orgId, itemId]);
       await c.query('COMMIT');
     });
   }
@@ -54,11 +54,11 @@ suite('the summary and the action items of a meeting (#2580)', () => {
   async function seedMeeting(recorder: string, readers: string[]): Promise<string> {
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp tuần', 'vi', now(), now() + interval '30 minutes', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, meetingId, users[recorder]],
     );
-    for (const reader of readers) await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users[reader]]);
+    for (const reader of readers) await sqlAdmin(`INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users[reader]]);
     return meetingId;
   }
   async function seedPosition(who: string, title: string): Promise<string> {
@@ -277,7 +277,7 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     expect(await refuses(exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true }))).toBe('DRAFT_NOT_REVIEWED');
     await exec('recorder', 'meetings.draft.review', { meetingId, confirmed: true, ids: (await results('recorder', meetingId)).items.map((i) => i.id) });
     await exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true });
-    await sqlAdmin(`UPDATE crove_meetings.meeting SET text_retention_date = current_date - 1 WHERE org_id = $1 AND id = $2`, [orgId, meetingId]);
+    await sqlAdmin(`UPDATE ludy_meetings.meeting SET text_retention_date = current_date - 1 WHERE org_id = $1 AND id = $2`, [orgId, meetingId]);
     expect(await refuses(exec('attendee', 'meetings.action_item.accept', { itemId, confirmed: true, title: 'x', due: null, positionId: seat }))).toBe('MEETING_NOT_FOUND');
     expect(await refuses(query('attendee', 'meetings.action_item.source', { itemId }))).toBe('MEETING_NOT_FOUND');
   });
@@ -300,7 +300,7 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     expect(await refuses(exec('stranger', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'supplier' }))).toBe('MEETING_NOT_FOUND');
     expect(await refuses(exec('recorder', 'meetings.minutes.set_template', { meetingId, summaryTemplate: 'nope' }))).not.toBeNull();
     // The database itself holds the same five codes.
-    expect(await refuses(sqlAdmin(`UPDATE crove_meetings.meeting SET summary_template = 'nope' WHERE id = $1`, [meetingId]))).not.toBeNull();
+    expect(await refuses(sqlAdmin(`UPDATE ludy_meetings.meeting SET summary_template = 'nope' WHERE id = $1`, [meetingId]))).not.toBeNull();
     expect((await query<{ summaryTemplate: string }>('recorder', 'meetings.meeting.get', { meetingId })).summaryTemplate).toBe('briefing');
   });
 
@@ -346,7 +346,7 @@ suite('the summary and the action items of a meeting (#2580)', () => {
     await exec('recorder', 'meetings.action_item.create', item(meetingId));
     await exec('recorder', 'meetings.meeting.delete', { meetingId });
     const left = await sqlAdmin<{ results: string; items: string }>(
-      `SELECT (SELECT count(*) FROM crove_meetings.meeting_result WHERE meeting_id = $1)::text AS results, (SELECT count(*) FROM crove_meetings.action_item WHERE meeting_id = $1)::text AS items`,
+      `SELECT (SELECT count(*) FROM ludy_meetings.meeting_result WHERE meeting_id = $1)::text AS results, (SELECT count(*) FROM ludy_meetings.action_item WHERE meeting_id = $1)::text AS items`,
       [meetingId],
     );
     expect(left.rows[0]).toEqual({ results: '0', items: '0' });

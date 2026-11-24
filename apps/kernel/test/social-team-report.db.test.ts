@@ -87,7 +87,7 @@ suite('social team report on PostgreSQL (#1058)', () => {
   // A post by `author` made at `created`, on the channels given.
   async function post(o: Org, author: string, created: string, channels: string[]): Promise<string> {
     const { postId } = await exec<{ postId: string }>(o, author, 'social.post.create', { body: `Bài ${randomUUID().slice(0, 6)}`, channels: channels.map((connectionId) => ({ connectionId })) });
-    await owner('UPDATE crove_social.post SET created_at = $3 WHERE org_id = $1 AND id = $2', [o.orgId, postId, created]);
+    await owner('UPDATE ludy_social.post SET created_at = $3 WHERE org_id = $1 AND id = $2', [o.orgId, postId, created]);
     return postId;
   }
   // Sent to review by `user` at `when` (the newest submit of the post is the one just made).
@@ -103,13 +103,13 @@ suite('social team report on PostgreSQL (#1058)', () => {
   async function decide(o: Org, user: string, postId: string, decision: 'approved' | 'changes_requested', when: string) {
     await exec(o, user, 'social.variant.decide', { postId, decision, variants: seen(await get(o, postId)) });
     await owner(
-      `UPDATE crove_social.post_approval SET created_at = $3 WHERE org_id = $1 AND post_id = $2
-         AND created_at = (SELECT max(created_at) FROM crove_social.post_approval WHERE org_id = $1 AND post_id = $2)`,
+      `UPDATE ludy_social.post_approval SET created_at = $3 WHERE org_id = $1 AND post_id = $2
+         AND created_at = (SELECT max(created_at) FROM ludy_social.post_approval WHERE org_id = $1 AND post_id = $2)`,
       [o.orgId, postId, when],
     );
   }
   const publish = (o: Org, postId: string, when: string) =>
-    owner("UPDATE crove_social.post_variant SET status = 'published', published_at = $3 WHERE org_id = $1 AND post_id = $2", [o.orgId, postId, when]);
+    owner("UPDATE ludy_social.post_variant SET status = 'published', published_at = $3 WHERE org_id = $1 AND post_id = $2", [o.orgId, postId, when]);
   const assign = (o: Org, postId: string, assignee: string, due: string) => exec(o, o.owner, 'social.post.assign', { postId, assigneeUserId: assignee, dueAt: due });
 
   // A client review link made at `created` for one post (or a plan of several), and a client's answer on it.
@@ -118,7 +118,7 @@ suite('social team report on PostgreSQL (#1058)', () => {
     const expires = new Date(Date.parse(created) + 30 * 86_400_000).toISOString();
     const token = createHash('sha256').update(id).digest('hex');
     await admin(async (c) => {
-      await c.query('INSERT INTO crove_social.review_link (org_id, id, post_id, token_sha256, created_by, created_at, expires_at, kind) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [
+      await c.query('INSERT INTO ludy_social.review_link (org_id, id, post_id, token_sha256, created_by, created_at, expires_at, kind) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [
         o.orgId,
         id,
         plan ? null : posts[0],
@@ -130,7 +130,7 @@ suite('social team report on PostgreSQL (#1058)', () => {
       ]);
       if (plan) {
         for (const [position, postId] of posts.entries()) {
-          await c.query('INSERT INTO crove_social.review_link_post (org_id, link_id, post_id, position) VALUES ($1, $2, $3, $4)', [o.orgId, id, postId, position]);
+          await c.query('INSERT INTO ludy_social.review_link_post (org_id, link_id, post_id, position) VALUES ($1, $2, $3, $4)', [o.orgId, id, postId, position]);
         }
       }
     });
@@ -138,7 +138,7 @@ suite('social team report on PostgreSQL (#1058)', () => {
   }
   const answer = (o: Org, linkId: string, postId: string, verdict: 'approved' | 'changes_requested' | 'comment', when: string) =>
     admin((c) =>
-      c.query('INSERT INTO crove_social.review_feedback (org_id, link_id, post_id, reviewer_name, verdict, body, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)', [
+      c.query('INSERT INTO ludy_social.review_feedback (org_id, link_id, post_id, reviewer_name, verdict, body, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)', [
         o.orgId,
         linkId,
         postId,
@@ -202,7 +202,7 @@ suite('social team report on PostgreSQL (#1058)', () => {
     // An import sent to review as it was made has no submit of its own: its creation stands for it (12 hours).
     const imported = await exec<{ posts: { postId: string }[] }>(a, a.owner, 'social.post.import', { posts: [{ body: 'Bài nhập từ bảng tính', connectionIds: [one] }], submit: true });
     const p7 = imported.posts[0]?.postId as string;
-    await owner('UPDATE crove_social.post SET created_at = $3 WHERE org_id = $1 AND id = $2', [a.orgId, p7, at('09-12', '00:00')]);
+    await owner('UPDATE ludy_social.post SET created_at = $3 WHERE org_id = $1 AND id = $2', [a.orgId, p7, at('09-12', '00:00')]);
     await decide(a, a.reviewer, p7, 'approved', at('09-12', '12:00'));
 
     // Approved three hours after submission, published the day before its due date; assigned to the leaver.

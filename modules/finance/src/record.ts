@@ -128,8 +128,8 @@ async function replaceableDocument(
   number: string,
 ): Promise<string | null> {
   let query = ctx.trx
-    .selectFrom('crove_finance.purchase_document as d')
-    .innerJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
+    .selectFrom('ludy_finance.purchase_document as d')
+    .innerJoin('ludy_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
     .select('d.id')
     .where('d.org_id', '=', ctx.orgId)
     .where('d.legal_entity_id', '=', legalEntityId)
@@ -139,7 +139,7 @@ async function replaceableDocument(
     .where(({ not, exists, selectFrom }) =>
       not(
         exists(
-          selectFrom('crove_finance.purchase_document as n')
+          selectFrom('ludy_finance.purchase_document as n')
             .select('n.id')
             .whereRef('n.org_id', '=', 'd.org_id')
             .whereRef('n.replaces_document_id', '=', 'd.id'),
@@ -160,19 +160,19 @@ async function replaceableDocument(
 // to one in force. The database checks the link again (check_document_corrects). Only a document of the same legal
 // entity (#1280) is corrected.
 async function correctedDocument(ctx: CommandContext, legalEntityId: string, direction: DocumentDirection, partyId: string, related: RelatedInvoiceRef) {
-  const key = `crove_finance.invoice_correction:${ctx.orgId}:${legalEntityId}:${direction}:${direction === 'sale' ? '' : partyId}:${related.series}/${related.number}`;
+  const key = `ludy_finance.invoice_correction:${ctx.orgId}:${legalEntityId}:${direction}:${direction === 'sale' ? '' : partyId}:${related.series}/${related.number}`;
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${key}, 0))`.execute(ctx.trx);
   let query = ctx.trx
-    .selectFrom('crove_finance.purchase_document as d')
+    .selectFrom('ludy_finance.purchase_document as d')
     .select(['d.id', 'd.invoice_date'])
     .select((eb) => [
       eb
-        .exists(eb.selectFrom('crove_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))
+        .exists(eb.selectFrom('ludy_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))
         .as('voided'),
       eb
         .exists(
           eb
-            .selectFrom('crove_finance.purchase_document as r')
+            .selectFrom('ludy_finance.purchase_document as r')
             .select('r.id')
             .whereRef('r.org_id', '=', 'd.org_id')
             .whereRef('r.corrects_document_id', '=', 'd.id')
@@ -196,7 +196,7 @@ async function correctedDocument(ctx: CommandContext, legalEntityId: string, dir
 // The posted entry of a document in force, which a replacement reverses.
 async function documentEntry(ctx: CommandContext, documentId: string) {
   const entry = await ctx.trx
-    .selectFrom('crove_finance.journal_entry as e')
+    .selectFrom('ludy_finance.journal_entry as e')
     .select(['e.id', 'e.entry_date', 'e.description', 'e.source_type', 'e.source_id'])
     .where('e.org_id', '=', ctx.orgId)
     .where('e.source_type', '=', 'finance.purchase_document')
@@ -270,7 +270,7 @@ export function latePostingRefusal(direction: DocumentDirection, issueDate: stri
 // The lock and the opening entry are those of the legal entity the invoice is posted in (#1280).
 async function lateReason(ctx: CommandContext, legalEntityId: string, issueDate: string, postingDate: string): Promise<'locked' | 'opening'> {
   const row = await ctx.trx
-    .selectFrom('crove_finance.period_lock')
+    .selectFrom('ludy_finance.period_lock')
     .select('locked_through')
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', legalEntityId)
@@ -288,7 +288,7 @@ async function lateReason(ctx: CommandContext, legalEntityId: string, issueDate:
 }
 
 // A sale line goes to a revenue account and a purchase line never does (#430, isRevenueAccount); the database holds
-// every writer to the same rule (crove_finance.check_line_direction). Checked here first to name the line.
+// every writer to the same rule (ludy_finance.check_line_direction). Checked here first to name the line.
 function assertDirectionAccounts(direction: DocumentDirection, lines: ReadonlyArray<Pick<ProposedLine, 'lineNo' | 'debitAccount'>>): void {
   for (const line of lines) {
     if (direction === 'sale' && !isRevenueAccount(line.debitAccount)) {
@@ -520,7 +520,7 @@ export const recordPurchase = defineCommand({
       voidedOriginal = corrected.id;
     }
     const document = await ctx.trx
-      .insertInto('crove_finance.purchase_document')
+      .insertInto('ludy_finance.purchase_document')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: legalEntityId,
@@ -574,7 +574,7 @@ export const recordPurchase = defineCommand({
       return source && money(source.amount).equals(money(l.amount)) ? { kind: source.kind, id: source.id, lineNo: source.lineNo } : null;
     };
     await ctx.trx
-      .insertInto('crove_finance.purchase_line')
+      .insertInto('ludy_finance.purchase_line')
       .values(
         lines.map((l) => {
           const from = carried(l);
@@ -603,7 +603,7 @@ export const recordPurchase = defineCommand({
     const taxRates = invoice.taxBreakdown ?? [];
     if (taxRates.length > 0) {
       await ctx.trx
-        .insertInto('crove_finance.purchase_tax_rate')
+        .insertInto('ludy_finance.purchase_tax_rate')
         .values(
           taxRates.map((t, i) => ({
             org_id: ctx.orgId,
@@ -646,7 +646,7 @@ export const recordPurchase = defineCommand({
     const main = sale ? undefined : [...lines].sort((a, b) => money(b.amount).abs().comparedTo(money(a.amount).abs()))[0];
     if (main) {
       await ctx.trx
-        .insertInto('crove_finance.vendor_account_rule')
+        .insertInto('ludy_finance.vendor_account_rule')
         .values({
           org_id: ctx.orgId,
           party_id: partyId,

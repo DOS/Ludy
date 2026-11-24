@@ -65,6 +65,6 @@ Post the summary on #153, which tracks fixing the top errors.
 
 ## 4. In GitHub Actions
 
-The workflow [ai-eval.yml](https://github.com/DOS/Ludy/blob/main/.github/workflows/ai-eval.yml) runs on demand (Actions, "ai-eval", "Run workflow") and on every pull request that changes `packages/agent/src`. It scores only the committed synthetic set: the document eval and the older text eval (`pnpm ai:eval`).
+The workflow [ai-eval.yml](https://github.com/DOS/Ludy/blob/main/.github/workflows/ai-eval.yml) runs on demand (Actions, "ai-eval", "Run workflow") and on every pull request that changes `packages/agent/src`. On pull requests it scores only the committed synthetic extraction set (`pnpm ai:eval`). On manual `workflow_dispatch`, the `coworkers` job also runs `pnpm ai:eval:coworkers` across every coworker feature and the shared Vietnamese/English prompt-injection corpus, reporting per feature.
 
 It needs the repository secrets `AI_BASE_URL` and `AI_MODEL`, plus `AI_API_KEY` if the endpoint asks for one (owner action, #312). Without them, and on pull requests from forks (which never get secrets), the job passes with the notice "AI eval skipped" and runs nothing.

@@ -104,7 +104,7 @@ const OPENING_EDIT_COLUMNS = [
   'updated_at',
 ] as const;
 
-const CANDIDATE = hrManifest.tables.crove_hr.candidate;
+const CANDIDATE = hrManifest.tables.ludy_hr.candidate;
 const CANDIDATE_INSERT_COLUMNS = [
   'org_id',
   'id',
@@ -262,9 +262,9 @@ type LockedInterviewEvent = {
 };
 
 /**
- * Recruiting interviews are org-owned hiring invites linked from a locked `crove_hr.candidate` row and managed by
+ * Recruiting interviews are org-owned hiring invites linked from a locked `ludy_hr.candidate` row and managed by
  * org `owner` and `admin` roles (`MANAGERS`, reinforced by RESTRICTIVE `owner_admin` + `le_scope` RLS on
- * `crove_hr.candidate`, and `OWNERS` for `candidate.erase`). Unlike `kernel.calendar.event.cancel` (which is open
+ * `ludy_hr.candidate`, and `OWNERS` for `candidate.erase`). Unlike `kernel.calendar.event.cancel` (which is open
  * to `member` editors for their own personal calendar blocks and therefore requires `user_id = actor.userId`), any
  * `owner` or `admin` managing the candidate within `ctx.orgId` and the candidate's legal-entity scope may reschedule
  * or cancel that candidate's linked `kind = 'manual'` interview event, even when another `owner` or `admin` booked it.
@@ -310,7 +310,7 @@ async function cancelLinkedInterviewEvent(
 
 async function lockOpening(ctx: CommandContext, openingId: string) {
   const row = await ctx.trx
-    .selectFrom('crove_hr.job_opening')
+    .selectFrom('ludy_hr.job_opening')
     .selectAll()
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', openingId)
@@ -322,7 +322,7 @@ async function lockOpening(ctx: CommandContext, openingId: string) {
 
 async function lockCandidate(ctx: CommandContext, candidateId: string) {
   const row = await ctx.trx
-    .selectFrom('crove_hr.candidate')
+    .selectFrom('ludy_hr.candidate')
     .selectAll()
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', candidateId)
@@ -334,7 +334,7 @@ async function lockCandidate(ctx: CommandContext, candidateId: string) {
 
 async function loadOpeningForCandidate(ctx: CommandContext, openingId: string, expectedLegalEntityId?: string, allowClosed = false) {
   const opening = await ctx.trx
-    .selectFrom('crove_hr.job_opening')
+    .selectFrom('ludy_hr.job_opening')
     .select(['id', 'legal_entity_id', 'department_id', 'department_name', 'title', 'status', 'contract_type', 'region', 'pay_function', 'required_skills', 'budget_min_wage', 'budget_max_wage'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', openingId)
@@ -410,7 +410,7 @@ export const openingList = defineQuery({
   access: MANAGERS,
   handler: async (ctx, input): Promise<HrOpeningView[]> => {
     let q = ctx.trx
-      .selectFrom('crove_hr.job_opening as o')
+      .selectFrom('ludy_hr.job_opening as o')
       .select([
         'o.id',
         'o.legal_entity_id',
@@ -427,7 +427,7 @@ export const openingList = defineQuery({
         'o.closed_at',
         'o.created_at',
         'o.updated_at',
-        sql<number>`(SELECT pg_catalog.count(*)::int FROM crove_hr.candidate c WHERE c.org_id = o.org_id AND c.opening_id = o.id)`.as('candidate_count'),
+        sql<number>`(SELECT pg_catalog.count(*)::int FROM ludy_hr.candidate c WHERE c.org_id = o.org_id AND c.opening_id = o.id)`.as('candidate_count'),
       ])
       .where('o.org_id', '=', ctx.orgId);
     if (input.status !== 'all') q = q.where('o.status', '=', input.status);
@@ -526,8 +526,8 @@ export const candidateList = defineQuery({
   sensitive: true,
   handler: async (ctx, input): Promise<HrCandidateView[]> => {
     let q = ctx.trx
-      .selectFrom('crove_hr.candidate as c')
-      .leftJoin('crove_hr.job_opening as o', (join) => join.onRef('o.org_id', '=', 'c.org_id').onRef('o.id', '=', 'c.opening_id'))
+      .selectFrom('ludy_hr.candidate as c')
+      .leftJoin('ludy_hr.job_opening as o', (join) => join.onRef('o.org_id', '=', 'c.org_id').onRef('o.id', '=', 'c.opening_id'))
       .leftJoin('ludy_kernel.calendar_event as e', (join) =>
         join.onRef('e.org_id', '=', 'c.org_id').onRef('e.id', '=', 'c.interview_event_id').on('e.status', '=', 'active'),
       )
@@ -567,7 +567,7 @@ export const candidateList = defineQuery({
       // Compare against the cursor row's stored microsecond timestamptz in PostgreSQL rather than an ISO millisecond
       // copy so candidates created or updated within the same millisecond paginate deterministically without gaps or duplicates.
       q = q.where(
-        sql<boolean>`EXISTS (SELECT 1 FROM crove_hr.candidate cur WHERE cur.org_id = ${ctx.orgId}::uuid AND cur.id = ${input.cursor}::uuid AND (c.updated_at, c.id) < (cur.updated_at, cur.id))`,
+        sql<boolean>`EXISTS (SELECT 1 FROM ludy_hr.candidate cur WHERE cur.org_id = ${ctx.orgId}::uuid AND cur.id = ${input.cursor}::uuid AND (c.updated_at, c.id) < (cur.updated_at, cur.id))`,
       );
     }
     const rows = await q.orderBy('c.updated_at', 'desc').orderBy('c.id', 'desc').limit(input.limit).execute();
@@ -587,8 +587,8 @@ export const candidateGet = defineQuery({
   target: (input) => ({ type: 'hr.candidate', id: input.candidateId }),
   handler: async (ctx, input): Promise<HrCandidateView> => {
     const row = await ctx.trx
-      .selectFrom('crove_hr.candidate as c')
-      .leftJoin('crove_hr.job_opening as o', (join) => join.onRef('o.org_id', '=', 'c.org_id').onRef('o.id', '=', 'c.opening_id'))
+      .selectFrom('ludy_hr.candidate as c')
+      .leftJoin('ludy_hr.job_opening as o', (join) => join.onRef('o.org_id', '=', 'c.org_id').onRef('o.id', '=', 'c.opening_id'))
       .leftJoin('ludy_kernel.calendar_event as e', (join) =>
         join.onRef('e.org_id', '=', 'c.org_id').onRef('e.id', '=', 'c.interview_event_id').on('e.status', '=', 'active'),
       )
@@ -725,8 +725,8 @@ export const recruitingBriefRead = defineQuery({
   auditDetail: (input) => ({ lang: input.lang, include_notes: input.includeNotes ? 'true' : 'false' }),
   handler: async (ctx, input): Promise<HrRecruitingBriefSnapshot> => {
     const row = await ctx.trx
-      .selectFrom('crove_hr.candidate as c')
-      .leftJoin('crove_hr.job_opening as o', (join) => join.onRef('o.org_id', '=', 'c.org_id').onRef('o.id', '=', 'c.opening_id'))
+      .selectFrom('ludy_hr.candidate as c')
+      .leftJoin('ludy_hr.job_opening as o', (join) => join.onRef('o.org_id', '=', 'c.org_id').onRef('o.id', '=', 'c.opening_id'))
       .leftJoin('ludy_kernel.calendar_event as e', (join) =>
         join.onRef('e.org_id', '=', 'c.org_id').onRef('e.id', '=', 'c.interview_event_id').on('e.status', '=', 'active'),
       )
@@ -815,7 +815,7 @@ export const openingAdd = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'job_opening', OPENING_INSERT_COLUMNS)],
+  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'job_opening', OPENING_INSERT_COLUMNS)],
   handler: async (ctx, input): Promise<HrOpeningWritten> => {
     const userId = userOf(ctx.actor);
     const legalEntityId = await resolveEntity(ctx, input.legalEntityId);
@@ -827,7 +827,7 @@ export const openingAdd = defineCommand({
     const payFunction = input.payFunction ?? dept?.payFunction ?? 'admin';
     const departmentName = input.departmentName !== undefined ? input.departmentName : (dept?.name ?? null);
     const row = await ctx.trx
-      .insertInto('crove_hr.job_opening')
+      .insertInto('ludy_hr.job_opening')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: legalEntityId,
@@ -873,7 +873,7 @@ export const openingEdit = defineCommand({
   sideEffect: 'internal',
   access: MANAGERS,
   target: (input) => ({ type: 'hr.job_opening', id: input.openingId }),
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'job_opening', OPENING_EDIT_COLUMNS)],
+  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'job_opening', OPENING_EDIT_COLUMNS)],
   handler: async (ctx, input): Promise<HrOpeningWritten> => {
     const existing = await lockOpening(ctx, input.openingId);
     const nextMin = input.budgetMinWage !== undefined ? input.budgetMinWage : existing.budget_min_wage;
@@ -942,7 +942,7 @@ export const openingEdit = defineCommand({
 
     if (changed.length > 0) {
       set.updated_at = ctx.now;
-      await ctx.trx.updateTable('crove_hr.job_opening').set(set).where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
+      await ctx.trx.updateTable('ludy_hr.job_opening').set(set).where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
     }
     ctx.audit({ openingId: existing.id, legalEntityId: existing.legal_entity_id, changed });
     return {
@@ -960,13 +960,13 @@ export const openingClose = defineCommand({
   sideEffect: 'internal',
   access: MANAGERS,
   target: (input) => ({ type: 'hr.job_opening', id: input.openingId }),
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'job_opening', ['status', 'closed_at', 'updated_at'])],
+  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'job_opening', ['status', 'closed_at', 'updated_at'])],
   handler: async (ctx, input): Promise<HrOpeningWritten> => {
     const existing = await lockOpening(ctx, input.openingId);
     const nextStatus: HrJobOpeningStatus = input.reopen ? 'open' : 'closed';
     const closedAt = input.reopen ? null : (existing.closed_at ?? ctx.now);
     await ctx.trx
-      .updateTable('crove_hr.job_opening')
+      .updateTable('ludy_hr.job_opening')
       .set({ status: nextStatus, closed_at: closedAt, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', existing.id)
@@ -982,7 +982,7 @@ export const candidateAdd = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'candidate', CANDIDATE_INSERT_COLUMNS)],
+  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'candidate', CANDIDATE_INSERT_COLUMNS)],
   handler: async (ctx, input): Promise<HrCandidateWritten> => {
     const userId = userOf(ctx.actor);
     let legalEntityId: string;
@@ -994,7 +994,7 @@ export const candidateAdd = defineCommand({
     }
     const skills = normalizeSkills(input.matchedSkills);
     const row = await ctx.trx
-      .insertInto('crove_hr.candidate')
+      .insertInto('ludy_hr.candidate')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: legalEntityId,
@@ -1036,7 +1036,7 @@ export const candidateEdit = defineCommand({
   sideEffect: 'internal',
   access: MANAGERS,
   target: (input) => ({ type: 'hr.candidate', id: input.candidateId }),
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'candidate', CANDIDATE_EDIT_COLUMNS)],
+  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'candidate', CANDIDATE_EDIT_COLUMNS)],
   handler: async (ctx, input): Promise<HrCandidateWritten> => {
     const existing = await lockCandidate(ctx, input.candidateId);
     if (existing.erased_at !== null) throw candidateErased();
@@ -1110,7 +1110,7 @@ export const candidateEdit = defineCommand({
 
     if (changed.length > 0) {
       set.updated_at = ctx.now;
-      await ctx.trx.updateTable('crove_hr.candidate').set(set).where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
+      await ctx.trx.updateTable('ludy_hr.candidate').set(set).where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
     }
     ctx.audit({ candidateId: existing.id, legalEntityId: existing.legal_entity_id, changed });
     return { candidateId: existing.id, legalEntityId: existing.legal_entity_id, stage: existing.stage };
@@ -1126,7 +1126,7 @@ export const candidateMoveStage = defineCommand({
   target: (input) => ({ type: 'hr.candidate', id: input.candidateId }),
   writes: [
     tableWrite(kernelManifest.tables, 'ludy_kernel', 'calendar_event', ['status', 'cancelled_by', 'cancelled_at']),
-    tableWrite(hrManifest.tables, 'crove_hr', 'candidate', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'candidate', [
       'stage',
       'agreed_wage',
       'planned_start_on',
@@ -1156,7 +1156,7 @@ export const candidateMoveStage = defineCommand({
     const cancelledInterviewEventId =
       input.toStage === 'rejected' ? await cancelLinkedInterviewEvent(ctx, userId, existing.interview_event_id) : null;
     await ctx.trx
-      .updateTable('crove_hr.candidate')
+      .updateTable('ludy_hr.candidate')
       .set({
         stage: input.toStage,
         ...(input.agreedWage !== undefined ? { agreed_wage: input.agreedWage } : {}),
@@ -1190,7 +1190,7 @@ export const candidateScheduleInterview = defineCommand({
   target: (input) => ({ type: 'hr.candidate', id: input.candidateId }),
   writes: [
     tableWrite(kernelManifest.tables, 'ludy_kernel', 'calendar_event', CALENDAR_EVENT_COLUMNS),
-    tableWrite(hrManifest.tables, 'crove_hr', 'candidate', ['interview_event_id', 'interview_starts_at', 'interview_ends_at', 'stage', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'candidate', ['interview_event_id', 'interview_starts_at', 'interview_ends_at', 'stage', 'updated_at']),
   ],
   handler: async (ctx, input): Promise<HrCandidateInterviewScheduled> => {
     const actorUserId = userOf(ctx.actor);
@@ -1218,7 +1218,7 @@ export const candidateScheduleInterview = defineCommand({
     const interviewerUserId = await resolveInterviewerUserId(ctx, input.interviewerUserId);
 
     // Serialize concurrent HR interview bookings on this interviewer's calendar inside this org (modules stay isolated per ADR-0031).
-    await acquireAdvisoryXactLock(ctx.trx, advisoryLockKey('crove_hr.interview', ctx.orgId, interviewerUserId));
+    await acquireAdvisoryXactLock(ctx.trx, advisoryLockKey('ludy_hr.interview', ctx.orgId, interviewerUserId));
 
     const prevEvent = await lockLinkedInterviewEvent(ctx, existing.interview_event_id);
 
@@ -1236,7 +1236,7 @@ export const candidateScheduleInterview = defineCommand({
     let openingTitle: string | null = null;
     if (existing.opening_id) {
       const opening = await ctx.trx
-        .selectFrom('crove_hr.job_opening')
+        .selectFrom('ludy_hr.job_opening')
         .select('title')
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', existing.opening_id)
@@ -1273,7 +1273,7 @@ export const candidateScheduleInterview = defineCommand({
 
     const nextStage: HrCandidateStage = existing.stage === 'applied' || existing.stage === 'screening' ? 'interview' : existing.stage;
     await ctx.trx
-      .updateTable('crove_hr.candidate')
+      .updateTable('ludy_hr.candidate')
       .set({
         interview_event_id: eventId,
         interview_starts_at: startsAt,
@@ -1316,7 +1316,7 @@ export const candidateCancelInterview = defineCommand({
   target: (input) => ({ type: 'hr.candidate', id: input.candidateId }),
   writes: [
     tableWrite(kernelManifest.tables, 'ludy_kernel', 'calendar_event', ['status', 'cancelled_by', 'cancelled_at']),
-    tableWrite(hrManifest.tables, 'crove_hr', 'candidate', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'candidate', [
       'interview_event_id',
       'interview_starts_at',
       'interview_ends_at',
@@ -1337,7 +1337,7 @@ export const candidateCancelInterview = defineCommand({
       existing.interview_ends_at !== null
     ) {
       await ctx.trx
-        .updateTable('crove_hr.candidate')
+        .updateTable('ludy_hr.candidate')
         .set({
           interview_event_id: null,
           interview_starts_at: null,
@@ -1372,9 +1372,9 @@ export const candidateHire = defineCommand({
   access: MANAGERS,
   target: (input) => ({ type: 'hr.candidate', id: input.candidateId }),
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', CANDIDATE_HIRE_EMPLOYEE_COLUMNS),
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employment', EMPLOYMENT_COLUMNS),
-    tableWrite(hrManifest.tables, 'crove_hr', 'candidate', ['stage', 'agreed_wage', 'planned_start_on', 'hired_employee_id', 'hired_at', 'updated_at']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_employee', CANDIDATE_HIRE_EMPLOYEE_COLUMNS),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_employment', EMPLOYMENT_COLUMNS),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'candidate', ['stage', 'agreed_wage', 'planned_start_on', 'hired_employee_id', 'hired_at', 'updated_at']),
   ],
   handler: async (ctx, input): Promise<HrCandidateHireResult> => {
     const userId = userOf(ctx.actor);
@@ -1386,7 +1386,7 @@ export const candidateHire = defineCommand({
 
     const opening = existing.opening_id
       ? await ctx.trx
-          .selectFrom('crove_hr.job_opening')
+          .selectFrom('ludy_hr.job_opening')
           .select(['id', 'department_id', 'title', 'contract_type', 'region', 'pay_function'])
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', existing.opening_id)
@@ -1447,7 +1447,7 @@ export const candidateHire = defineCommand({
     );
 
     const employee = await ctx.trx
-      .insertInto('crove_hr.payroll_employee')
+      .insertInto('ludy_hr.payroll_employee')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: existing.legal_entity_id,
@@ -1462,7 +1462,7 @@ export const candidateHire = defineCommand({
       .executeTakeFirstOrThrow();
 
     const employment = await ctx.trx
-      .insertInto('crove_hr.payroll_employment')
+      .insertInto('ludy_hr.payroll_employment')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: existing.legal_entity_id,
@@ -1475,7 +1475,7 @@ export const candidateHire = defineCommand({
       .executeTakeFirstOrThrow();
 
     await ctx.trx
-      .updateTable('crove_hr.candidate')
+      .updateTable('ludy_hr.candidate')
       .set({
         stage: 'hired',
         agreed_wage: prepared.base_wage,
@@ -1524,7 +1524,7 @@ export const candidateErase = defineCommand({
   target: (input) => ({ type: 'hr.candidate', id: input.candidateId }),
   writes: [
     tableWrite(kernelManifest.tables, 'ludy_kernel', 'calendar_event', ['status', 'cancelled_by', 'cancelled_at']),
-    tableWrite(hrManifest.tables, 'crove_hr', 'candidate', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'candidate', [
       'display_name',
       'email',
       'phone',
@@ -1545,7 +1545,7 @@ export const candidateErase = defineCommand({
     }
     const cancelledInterviewEventId = await cancelLinkedInterviewEvent(ctx, userId, existing.interview_event_id);
     await ctx.trx
-      .updateTable('crove_hr.candidate')
+      .updateTable('ludy_hr.candidate')
       .set({
         display_name: HR_ERASED_NAME,
         email: null,

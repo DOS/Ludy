@@ -86,7 +86,7 @@ suite('social queue reordering on PostgreSQL (#1020)', () => {
   }
 
   const rows = (connectionId: string) =>
-    admin(async (c) => (await c.query<Row>('SELECT id, post_id, status, queue_slot_at, scheduled_at, error_retry_at FROM crove_social.post_variant WHERE channel_connection_id = $1 ORDER BY id', [connectionId])).rows);
+    admin(async (c) => (await c.query<Row>('SELECT id, post_id, status, queue_slot_at, scheduled_at, error_retry_at FROM ludy_social.post_variant WHERE channel_connection_id = $1 ORDER BY id', [connectionId])).rows);
   const slots = (list: readonly Row[], ids?: ReadonlySet<string>) =>
     list
       .filter((r) => r.queue_slot_at !== null && (!ids || ids.has(r.id)))
@@ -140,14 +140,14 @@ suite('social queue reordering on PostgreSQL (#1020)', () => {
     await exec(o, 'social.post.update', { postId: review.postId, revision: reviewPost.revision, body: 'Đang duyệt lại, đã sửa' }, o.member);
     await exec(o, 'social.post.submit', { postId: review.postId }, o.member);
     const limited = await queued(o, conn, 'Chờ hết giới hạn');
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET error_retry_at = now() + interval '30 days', error_kind = 'rate_limited' WHERE id = $1", [limited.variantId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET error_retry_at = now() + interval '30 days', error_kind = 'rate_limited' WHERE id = $1", [limited.variantId]));
     const fixed = await exec<{ postId: string }>(o, 'social.post.create', { body: 'Giờ cố định', channels: [{ connectionId: conn }] }, o.member);
     await exec(o, 'social.post.submit', { postId: fixed.postId }, o.member);
     const fixedView = await get(o, fixed.postId);
     await exec(o, 'social.variant.decide', { postId: fixed.postId, decision: 'approved', variants: fixedView.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
     await exec(o, 'social.variant.schedule', { postId: fixed.postId, at: new Date(Date.now() + 3 * 86_400_000).toISOString() });
     const held = await queued(o, conn, 'Bị giữ lại');
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET queue_slot_at = date_trunc('minute', now()) - interval '10 minutes' WHERE id = $1", [held.variantId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET queue_slot_at = date_trunc('minute', now()) - interval '10 minutes' WHERE id = $1", [held.variantId]));
     await exec(o, 'social.publishing.hold', { reason: 'Ngày quốc tang' });
 
     const before = await rows(conn);

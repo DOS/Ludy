@@ -77,13 +77,13 @@ suite('the recorder\'s Vy commitments route (#3954)', () => {
   async function seedMeeting(recorder: string, segments: Array<[number, number, string, string?]> = [[0, 10, SECRET_LINE], [10, 20, 'Hà sẽ gửi báo giá trước thứ sáu'], [20, 30, SECRET_LINE_2, 'Nam']], org = orgId): Promise<string> {
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp tuần', 'vi', '2026-11-10T03:00:00Z', '2026-11-10T03:30:00Z', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [org, meetingId, users[recorder]],
     );
     if (segments.length > 0 && recorder === 'viewer') {
       // A viewer cannot store a transcript through the command: a segment is put there directly (the case is a recorder who then lost vy.use).
-      await sqlAdmin(`INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, 0, 10, 'Hà', 'Một dòng', 'draft')`, [org, randomUUID(), meetingId]);
+      await sqlAdmin(`INSERT INTO ludy_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage) VALUES ($1, $2, $3, 0, 10, 'Hà', 'Một dòng', 'draft')`, [org, randomUUID(), meetingId]);
     } else if (segments.length > 0) {
       await exec(recorder, 'meetings.transcript.draft_store', { meetingId, segments: segments.map(([startSeconds, endSeconds, text, speakerLabel]) => ({ startSeconds, endSeconds, speakerLabel: speakerLabel ?? 'Hà', text })) }, org);
     }
@@ -153,7 +153,7 @@ suite('the recorder\'s Vy commitments route (#3954)', () => {
     const meetingId = await seedMeeting('recorder');
     // A member who is not a reader cannot see the meeting at all; once a reader, they may read it but not ask Vy what each speaker committed to.
     expect(await refuses(ask('attendee', meetingId))).toBe('MEETING_NOT_FOUND');
-    await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users.attendee]);
+    await sqlAdmin(`INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users.attendee]);
     expect(await refuses(ask('attendee', meetingId))).toBe('FORBIDDEN');
     expect(await refuses(ask('foreign', meetingId))).not.toBeNull();
     const empty = await seedMeeting('recorder', []);

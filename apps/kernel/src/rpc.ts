@@ -9,12 +9,13 @@ import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@ludy/ad-
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@ludy/einvoice';
 import { assertSignCaProviderAllowed } from '@ludy/mod-sign';
 import { SANDBOX_CA_SECRET, createSandboxCaAdapter } from '@ludy/sign';
-import type { SignCaConnectionRecord, SignCaSettingsResult } from '@ludy/kernel-contract';
+import type { SignApiKeyListResult, SignApiKeyRecord, SignCaConnectionRecord, SignCaSettingsResult, SignWebhookDeleteResult, SignWebhookDeliveriesResult, SignWebhookListResult, SignWebhookPingResult, SignWebhookRecord } from '@ludy/kernel-contract';
 import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@ludy/kernel-contract';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
 import { adLaunchCapable } from './ads-launch-capable.ts';
 import { markableDetail, markableListed } from './conversation-sender-mark.ts';
 import { makeHookSecret } from './meeting-hook-setup.ts';
+import { makeSignWebhookSecret } from './sign-hook.ts';
 import type { BankLineVoucher, MarketplaceColumnsStatus, AdAccountView, AdsChange, AdsChangeRequest, ConversationDetail, ConversationListed, BankPayrollMatch, ConversationEvent, EInvoiceConnection, EInvoiceCorrectionRate, MisaAmisConnection, EInvoiceReasonSource, StockSurplusSource, EInvoiceSeriesTemplate, ChatPreview, CashForecast, FinanceExpenseVariance, FinanceOverview, MonthClose, FollowupDraft, HrPayslip, HrRunSheet, HrRunSummary, MarketplaceBalance, MarketplaceConnection, MarketplaceFacts, SupplierPayableList, PaymentReminderDraft, TodayList, VatLateSource, WeeklyFigures } from '@ludy/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { weeklyAnswer } from './today-weekly.ts';
@@ -54,7 +55,9 @@ import {
 import type { z } from 'zod';
 import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zSignEnvelopeDetail, zSignTemplateDetail, zTask } from '@ludy/kernel-contract';
 import type { FollowupSource, MeetingBriefSource, QuoteSuggestSource, SuggestedSlots } from '@ludy/mod-crm';
-import type { ProjectCycleSummarySource, ProjectTriageAssistSource, ProjectWeeklyStatusSource, RoadmapAiChangelogSource, RoadmapAiDedupeSource } from '@ludy/mod-projects';
+import type { MeetingResults, Notes, Transcript } from '@ludy/kernel-contract';
+import type { ProjectCycleSummarySource, ProjectTriageAssistSource, ProjectWeeklyStatusSource, RoadmapAiChangelogSource, RoadmapAiDedupeSource, RoadmapAiSignalMatchSource } from '@ludy/mod-projects';
+import { enrichMeetingSignalMatchSource } from '@ludy/mod-projects';
 import { sql } from 'kysely';
 import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult, type WeeklyFacts, type WeeklyResult } from '@ludy/agent';
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
@@ -88,13 +91,15 @@ import { crmFollowupAi, draftCrmFollowup } from './crm-followup-ai.ts';
 import { meetingBriefAi, prepareMeetingBrief } from './crm-meeting-brief-ai.ts';
 import { prepareProjectWeeklyStatus, projectWeeklyStatusAi } from './project-weekly-status-ai.ts';
 import { prepareProjectCycleSummary, projectCycleSummaryAi } from './project-cycle-summary-ai.ts';
-import { prepareRoadmapChangelogDraft, prepareRoadmapDedupe, projectRoadmapAi } from './project-roadmap-ai.ts';
+import { prepareRoadmapChangelogDraft, prepareRoadmapDedupe, prepareRoadmapSignalMatch, projectRoadmapAi } from './project-roadmap-ai.ts';
 import { prepareProjectTriageAssist, projectTriageAi } from './project-triage-ai.ts';
 import { quoteAi, suggestQuoteLines } from './quote-ai.ts';
 import {
   askSignVault,
   compareSignPdfVersions,
+  evaluateEnvelopePlaybook,
   proposeEnvelopeAnalysis,
+  proposeEnvelopeKycCheck,
   proposeEnvelopeObligations,
   proposeSignContractDraftClauses,
   signAi,
@@ -120,7 +125,7 @@ import { explainMisaCheckLine, misaCheckLineAi } from './finance-misa-check-line
 import { misaAmisPreview } from './misa-amis-preview.ts';
 import { bankCandidatesLineAi, explainBankCandidatesLine } from './finance-bank-candidates-line-ai.ts';
 import { explainPayrollMatch, payrollMatchAi } from './finance-payroll-match-ai.ts';
-import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@ludy/kernel-runtime';
+import { DomainError, egressFetch, sha256Hex, type CredentialBroker, type Runtime, type UserActor } from '@ludy/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
 import { BlueskyLoginBudget } from './bluesky-login-limit.ts';
 import { ChatAlertSaveBudget, ChatAlertTestBudget, requestChatAlertTest, saveChatAlert } from './chat-alert-save.ts';
@@ -630,6 +635,7 @@ export function createRpcHandler(
       ? {
           ...(conversationReader.roadmapDedupe ? { roadmapDedupe: conversationReader.roadmapDedupe.bind(conversationReader) } : {}),
           ...(conversationReader.roadmapChangelogDraft ? { roadmapChangelogDraft: conversationReader.roadmapChangelogDraft.bind(conversationReader) } : {}),
+          ...(conversationReader.roadmapSignalMatch ? { roadmapSignalMatch: conversationReader.roadmapSignalMatch.bind(conversationReader) } : {}),
         }
       : null,
     suggestionBudget(),
@@ -642,6 +648,7 @@ export function createRpcHandler(
     signAiReader ?? null,
     new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 }),
     new DraftBudget({ perUserPerMinute: 4, perOrgPerMinute: 20 }),
+    new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 }),
   );
   const signAcceptanceCoworker = signAcceptanceAi(
     conversationReader?.signAcceptanceDraft ? { signAcceptanceDraft: conversationReader.signAcceptanceDraft.bind(conversationReader) } : null,
@@ -650,6 +657,7 @@ export function createRpcHandler(
   const signDiffCoworker = signAi(signAiReader ?? null, new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 }));
   const signDrafterCoworker = signAi(signAiReader ?? null, new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 }));
   const signVaultCoworker = signAi(signAiReader ?? null, new DraftBudget({ perUserPerMinute: 10, perOrgPerMinute: 40 }));
+  const signPlaybookCoworker = signAi(signAiReader ?? null, new DraftBudget({ perUserPerMinute: 6, perOrgPerMinute: 30 }));
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -2440,24 +2448,6 @@ export function createRpcHandler(
         read: os.social.notifications.read.handler(socialCommand('social.notification.read')),
         mute: os.social.notifications.mute.handler(socialCommand('social.notification.mute')),
         mail: os.social.notifications.mail.handler(socialCommand('social.notification.mail')),
-        push: {
-          status: os.social.notifications.push.status.handler(({ context, input }) =>
-            inSocial(context, async (orgId, actor) => {
-              const push = channels?.push;
-              const own = await runtime.query<{ devices: { id: string; label: string | null; createdAt: string; lastUsedAt: string | null; current: boolean }[]; subscribed: boolean }>('social.push.devices', input, { actor, orgId });
-              return { enabled: Boolean(push), publicKey: push?.publicKey ?? null, ...own };
-            }),
-          ),
-          // Without VAPID keys nothing could ever be sent: refused before a row is written.
-          subscribe: os.social.notifications.push.subscribe.handler(({ context, input }) =>
-            inSocial(context, (orgId, actor) => {
-              if (!channels?.push) throw new DomainError('PUSH_DISABLED', 404, 'Máy chủ này chưa bật thông báo đẩy');
-              return runtime.execute<{ id: string }>('social.push.subscribe', input, { actor, orgId });
-            }),
-          ),
-          // Turning a device off works whatever the keys, so a member can always clean up.
-          unsubscribe: os.social.notifications.push.unsubscribe.handler(socialCommand('social.push.unsubscribe')),
-        },
       },
       accounts: {
         trends: os.social.accounts.trends.handler(socialQuery('social.account.trends')),
@@ -3267,6 +3257,25 @@ export function createRpcHandler(
       list: os.notifications.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.notification.list', {}, { actor, orgId }))),
       read: os.notifications.read.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.notification.read', input, { actor, orgId }))),
       mute: os.notifications.mute.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.notification.mute', input, { actor, orgId }))),
+      // Browser push (#1238, #3736): one subscription per browser serves every app's notices; each member reaches only their own devices.
+      push: {
+        status: os.notifications.push.status.handler(({ context, input }) =>
+          inOrg(context, async (orgId, actor) => {
+            const push = channels?.push;
+            const own = await runtime.query<{ devices: { id: string; label: string | null; createdAt: string; lastUsedAt: string | null; current: boolean }[]; subscribed: boolean }>('kernel.push.devices', input, { actor, orgId });
+            return { enabled: Boolean(push), publicKey: push?.publicKey ?? null, ...own };
+          }),
+        ),
+        // Without VAPID keys nothing could ever be sent: refused before a row is written.
+        subscribe: os.notifications.push.subscribe.handler(({ context, input }) =>
+          inOrg(context, (orgId, actor) => {
+            if (!channels?.push) throw new DomainError('PUSH_DISABLED', 404, 'Máy chủ này chưa bật thông báo đẩy');
+            return runtime.execute<{ id: string }>('kernel.push.subscribe', input, { actor, orgId });
+          }),
+        ),
+        // Turning a device off works whatever the keys, so a member can always clean up.
+        unsubscribe: os.notifications.push.unsubscribe.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.push.unsubscribe', input, { actor, orgId }))),
+      },
     },
     conversations: {
       list: os.conversations.list.handler(({ context, input }) => inOrg(context, async (orgId, actor) => markableListed((await runtime.query('kernel.conversation.list', input, { actor, orgId })) as ConversationListed, channels?.emailSenderCheck === true))),
@@ -4872,6 +4881,106 @@ export function createRpcHandler(
             return prepareRoadmapChangelogDraft(projectRoadmapCoworker, orgId, actor.userId, source, input.language ?? 'vi');
           }),
         ),
+        signalList: os.projects.roadmap.signalList.handler(({ context, input }) =>
+          inProjects(context, (orgId, actor) =>
+            runtime.query('projects.roadmap.signal.list', input, { actor, orgId }),
+          ),
+        ),
+        signalRollup: os.projects.roadmap.signalRollup.handler(({ context, input }) =>
+          inProjects(context, (orgId, actor) =>
+            runtime.query('projects.roadmap.signal.rollup', input, { actor, orgId }),
+          ),
+        ),
+        signalCreate: os.projects.roadmap.signalCreate.handler(({ context, input }) =>
+          inProjects(context, (orgId, actor) => {
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute('projects.roadmap.signal.create', rest, { actor, orgId, idempotencyKey });
+          }),
+        ),
+        signalDelete: os.projects.roadmap.signalDelete.handler(({ context, input }) =>
+          inProjects(context, (orgId, actor) => {
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute('projects.roadmap.signal.delete', rest, { actor, orgId, idempotencyKey });
+          }),
+        ),
+        signalMatchSuggest: os.projects.roadmap.signalMatchSuggest.handler(({ context, input }) =>
+          inProjects(context, async (orgId, actor) => {
+            const aiReaderEnabled = Boolean(projectRoadmapCoworker.reader?.roadmapSignalMatch);
+            let source = await runtime.query<RoadmapAiSignalMatchSource>(
+              'projects.roadmap.ai_signal_match_source',
+              { ...input, aiReaderEnabled },
+              { actor, orgId },
+            );
+            if (!aiReaderEnabled || source.conversationAutoDraftOff) {
+              return { ai: 'off' as const, suggestions: [], newIdeaDraft: null, inspectedCount: 0, truncated: false };
+            }
+            if (
+              source.sourceType === 'meetings.meeting' &&
+              Boolean(projectRoadmapCoworker.reader?.roadmapSignalMatch) &&
+              !source.aiStopped &&
+              !source.aiBudgetSpent
+            ) {
+              const optionalQuery = async <T>(fn: () => Promise<T>): Promise<T | null> => {
+                try {
+                  return await fn();
+                } catch (err) {
+                  if (err instanceof DomainError && (err.status === 403 || err.status === 404)) {
+                    return null;
+                  }
+                  throw err;
+                }
+              };
+              const [resultsSettled, notesSettled] = await Promise.allSettled([
+                optionalQuery(() =>
+                  runtime.query<MeetingResults>('meetings.result.get', { meetingId: input.sourceId }, { actor, orgId }),
+                ),
+                source.sourceIsRecorder
+                  ? optionalQuery(() =>
+                      runtime.query<Notes>('meetings.notes.get', { meetingId: input.sourceId }, { actor, orgId }),
+                    )
+                  : Promise.resolve(null),
+              ]);
+              if (resultsSettled.status === 'rejected') {
+                throw resultsSettled.reason;
+              }
+              const results = resultsSettled.value;
+              const notes = notesSettled.status === 'fulfilled' ? notesSettled.value : null;
+              const primaryResult =
+                results?.draft !== null &&
+                results?.draft !== undefined &&
+                (results.draft.summary.trim().length > 0 || results.draft.decisions.some((d) => d.trim().length > 0))
+                  ? results.draft
+                  : results?.published;
+              const hasUsableResult =
+                Boolean(
+                  primaryResult &&
+                    (primaryResult.summary.trim().length > 0 ||
+                      primaryResult.decisions.some((d) => d.trim().length > 0)),
+                ) || Boolean(results?.items.some((i) => i.title.trim().length > 0));
+              if (notesSettled.status === 'rejected') {
+                const notesErr = notesSettled.reason;
+                const isAuthError =
+                  notesErr instanceof DomainError &&
+                  (notesErr.status === 401 || notesErr.code === 'AUTH_UNAVAILABLE');
+                if (isAuthError || !hasUsableResult) {
+                  throw notesErr;
+                }
+                console.error(
+                  '[project-roadmap-ai] optional notes.get failed, falling back to result',
+                  notesErr instanceof Error ? notesErr.name : typeof notesErr,
+                );
+              }
+              const hasUsableContent = hasUsableResult || Boolean(notes?.body.trim());
+              const transcript = hasUsableContent
+                ? null
+                : await optionalQuery(() =>
+                    runtime.query<Transcript>('meetings.transcript.get', { meetingId: input.sourceId }, { actor, orgId }),
+                  );
+              source = enrichMeetingSignalMatchSource(source, { results, transcript, notes });
+            }
+            return prepareRoadmapSignalMatch(projectRoadmapCoworker, orgId, actor.userId, source, input.language ?? 'vi');
+          }),
+        ),
       },
       startTime: os.projects.startTime.handler(projectsCommand('projects.time.start')),
       stopTime: os.projects.stopTime.handler(projectsCommand('projects.time.stop')),
@@ -5192,6 +5301,196 @@ export function createRpcHandler(
               ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),
             }),
           ),
+        ),
+      },
+      webhook: {
+        list: os.sign.webhook.list.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xem được webhook ký kết');
+            const listed = await runtime.query<SignWebhookListResult>('sign.webhook.list', input, { actor, orgId });
+            return {
+              ...listed,
+              brokerAvailable: Boolean(channels?.broker) && channels?.broker.id !== 'none',
+            };
+          }),
+        ),
+        deliveries: os.sign.webhook.deliveries.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xem được lịch sử gửi webhook ký kết');
+            return runtime.query<SignWebhookDeliveriesResult>('sign.webhook.deliveries', input, { actor, orgId });
+          }),
+        ),
+        create: os.sign.webhook.create.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới tạo được webhook ký kết');
+            const broker = channels?.broker;
+            if (!broker || broker.id === 'none') {
+              throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+            }
+            await assertWakeHostPublic(input.url, channels?.wakeResolve);
+            const webhookId = randomUUID();
+            const made = makeSignWebhookSecret(broker, orgId, webhookId);
+            const webhook = await runtime.execute<SignWebhookRecord>(
+              'sign.webhook.create',
+              {
+                id: webhookId,
+                url: input.url,
+                events: input.events,
+                enabled: input.enabled,
+                keyId: made.credential.keyId,
+                secretEnvelope: made.credential.secretEnvelope,
+                secretHint: made.credential.secretHint,
+              },
+              { actor, orgId },
+            );
+            return {
+              webhook,
+              secret: webhook.secretHint === made.credential.secretHint ? made.secret : null,
+            };
+          }),
+        ),
+        update: os.sign.webhook.update.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới cập nhật được webhook ký kết');
+            await assertWakeHostPublic(input.url, channels?.wakeResolve);
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute<SignWebhookRecord>(
+              'sign.webhook.update',
+              rest,
+              { actor, orgId, ...(idempotencyKey ? { idempotencyKey } : {}) },
+            );
+          }),
+        ),
+        rotate_secret: os.sign.webhook.rotate_secret.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xoay được khóa bí mật webhook ký kết');
+            const broker = channels?.broker;
+            if (!broker || broker.id === 'none') {
+              throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa thông tin kết nối (CREDENTIAL_KEY)');
+            }
+            const made = makeSignWebhookSecret(broker, orgId, input.webhookId);
+            const webhook = await runtime.execute<SignWebhookRecord>(
+              'sign.webhook.rotate_secret',
+              {
+                webhookId: input.webhookId,
+                keyId: made.credential.keyId,
+                secretEnvelope: made.credential.secretEnvelope,
+                secretHint: made.credential.secretHint,
+              },
+              { actor, orgId },
+            );
+            return {
+              webhook,
+              secret: webhook.secretHint === made.credential.secretHint ? made.secret : null,
+            };
+          }),
+        ),
+        delete: os.sign.webhook.delete.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xóa được webhook ký kết');
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute<SignWebhookDeleteResult>(
+              'sign.webhook.delete',
+              rest,
+              { actor, orgId, ...(idempotencyKey ? { idempotencyKey } : {}) },
+            );
+          }),
+        ),
+        ping: os.sign.webhook.ping.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới gửi thử được webhook ký kết');
+            const { idempotencyKey, ...rest } = input;
+            return runtime.execute<SignWebhookPingResult>(
+              'sign.webhook.ping',
+              rest,
+              { actor, orgId, ...(idempotencyKey ? { idempotencyKey } : {}) },
+            );
+          }),
+        ),
+      },
+      playbook: {
+        rules_list: os.sign.playbook.rules_list.handler(signQuery('sign.playbook.rules_list')),
+        rule_upsert: os.sign.playbook.rule_upsert.handler(signCommand('sign.playbook.rule_upsert')),
+        rule_delete: os.sign.playbook.rule_delete.handler(signCommand('sign.playbook.rule_delete')),
+        seed_defaults: os.sign.playbook.seed_defaults.handler(signCommand('sign.playbook.seed_defaults')),
+        get: os.sign.playbook.get.handler(signQuery('sign.playbook.get')),
+        evaluate: os.sign.playbook.evaluate.handler(({ context, input }) =>
+          inSign(context, (orgId, actor) =>
+            evaluateEnvelopePlaybook({
+              ai: signPlaybookCoworker,
+              runtime,
+              orgId,
+              actor,
+              envelopeId: input.envelopeId,
+              useAi: input.useAi,
+              ...(input.pages ? { pages: input.pages } : {}),
+              ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+              meter: 'runtime',
+              ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),
+            }),
+          ),
+        ),
+        override_finding: os.sign.playbook.override_finding.handler(signCommand('sign.playbook.override_finding')),
+      },
+      kyc: {
+        list: os.sign.kyc.list.handler(signQuery('sign.kyc.list')),
+        run_deterministic: os.sign.kyc.run_deterministic.handler(signCommand('sign.kyc.run_deterministic')),
+        analyze: os.sign.kyc.analyze.handler(({ context, input }) =>
+          inSign(context, (orgId, actor) =>
+            proposeEnvelopeKycCheck({
+              ai: signCoworker,
+              runtime,
+              orgId,
+              actor,
+              envelopeId: input.envelopeId,
+              fieldId: input.fieldId,
+              ...(input.expectedEntityName !== undefined ? { expectedEntityName: input.expectedEntityName } : {}),
+              ...(input.expectedTaxCode !== undefined ? { expectedTaxCode: input.expectedTaxCode } : {}),
+              ...(input.expectedSignerName !== undefined ? { expectedSignerName: input.expectedSignerName } : {}),
+              ...(input.attachmentPages ? { attachmentPages: input.attachmentPages } : {}),
+              meter: aiMeter ? aiMeter(actor) : 'runtime',
+              ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),
+            }),
+          ),
+        ),
+        confirm: os.sign.kyc.confirm.handler(signCommand('sign.kyc.confirm')),
+      },
+      api_keys: {
+        list: os.sign.api_keys.list.handler(({ context }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới xem được khóa API eSign');
+            return runtime.query<SignApiKeyListResult>('sign.api_key.list', {}, { actor, orgId });
+          }),
+        ),
+        create: os.sign.api_keys.create.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới tạo được khóa API eSign');
+            const secret = `ludy_sk_${randomBytes(32).toString('base64url')}`;
+            const keyPrefix = secret.slice(0, 16);
+            const keySha256 = sha256Hex(secret);
+            const apiKey = await runtime.execute<SignApiKeyRecord>(
+              'sign.api_key.create',
+              {
+                name: input.name,
+                keyPrefix,
+                keySha256,
+                scopes: input.scopes,
+                expiresAt: input.expiresAt ?? null,
+              },
+              { actor, orgId },
+            );
+            return { apiKey, secret };
+          }),
+        ),
+        revoke: os.sign.api_keys.revoke.handler(({ context, input }) =>
+          inSign(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới thu hồi được khóa API eSign');
+            return runtime.execute<SignApiKeyRecord>('sign.api_key.revoke', input, {
+              actor,
+              orgId,
+              ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+            });
+          }),
         ),
       },
     },

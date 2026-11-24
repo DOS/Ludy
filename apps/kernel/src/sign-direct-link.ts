@@ -127,7 +127,7 @@ export async function resolvePublicDirectLink(
 ): Promise<SqlDirectResolveRow | null> {
   const resolved = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ resolved: SqlDirectResolveRow | null }>`
-      SELECT crove_sign.public_direct_resolve(${tokenHash}, ${claimHash ?? null}) AS resolved
+      SELECT ludy_sign.public_direct_resolve(${tokenHash}, ${claimHash ?? null}) AS resolved
     `.execute(db);
     return rows[0]?.resolved ?? null;
   });
@@ -160,7 +160,7 @@ export async function resolvePublicDirectPdf(
         sha256?: string;
       } | null;
     }>`
-      SELECT crove_sign.public_direct_pdf_source(${tokenHash}, ${claimHash}) AS source
+      SELECT ludy_sign.public_direct_pdf_source(${tokenHash}, ${claimHash}) AS source
     `.execute(db);
     return rows[0]?.source ?? null;
   });
@@ -282,7 +282,7 @@ export async function runSignDirectOtpRequest(
 
   const res = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ result: SqlOtpRequestRow }>`
-      SELECT crove_sign.public_direct_request_otp(
+      SELECT ludy_sign.public_direct_request_otp(
         ${tokenHash},
         ${parsed.data.email},
         ${DEFAULT_MESSAGE_ID_DOMAIN}
@@ -355,7 +355,7 @@ export async function runSignDirectOtpVerify(
 
   const res = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ result: SqlOtpVerifyRow }>`
-      SELECT crove_sign.public_direct_verify_otp(
+      SELECT ludy_sign.public_direct_verify_otp(
         ${tokenHash},
         ${parsed.data.email},
         ${parsed.data.code},
@@ -449,7 +449,7 @@ export async function runSignDirectStart(
 
   const res = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ result: SqlDirectStartRow }>`
-      SELECT crove_sign.public_direct_start(
+      SELECT ludy_sign.public_direct_start(
         ${tokenHash},
         ${parsed.data.name},
         ${parsed.data.email ?? null},

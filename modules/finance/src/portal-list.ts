@@ -98,7 +98,7 @@ export const portalListImport = defineCommand({
     // Serializes imports of one period, so the count below and the unique index agree.
     await portalPeriodLock(ctx.orgId, legalEntityId, input.period).execute(ctx.trx);
     const active = await ctx.trx
-      .selectFrom('crove_finance.portal_invoice_list')
+      .selectFrom('ludy_finance.portal_invoice_list')
       .select(['id', 'file_id', 'legal_entity_id', 'direction'])
       .where('org_id', '=', ctx.orgId)
       .where('period', '=', input.period)
@@ -112,7 +112,7 @@ export const portalListImport = defineCommand({
       throw new DomainError('PORTAL_LIST_LIMIT', 409, `Mỗi kỳ nhập tối đa ${MAX_PORTAL_LISTS_PER_PERIOD} danh sách; hãy gỡ bớt danh sách cũ`);
     }
     const list = await ctx.trx
-      .insertInto('crove_finance.portal_invoice_list')
+      .insertInto('ludy_finance.portal_invoice_list')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: legalEntityId,
@@ -145,7 +145,7 @@ export const portalListRemove = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới gỡ được danh sách');
     const removed = await ctx.trx
-      .updateTable('crove_finance.portal_invoice_list')
+      .updateTable('ludy_finance.portal_invoice_list')
       .set({ removed_at: sql<Date>`pg_catalog.now()`, removed_by: ctx.actor.userId })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.listId)
@@ -166,7 +166,7 @@ export const portalListSource = defineQuery({
   access: 'system',
   handler: async (ctx, input) => {
     const row = await ctx.trx
-      .selectFrom('crove_finance.portal_invoice_list as l')
+      .selectFrom('ludy_finance.portal_invoice_list as l')
       .innerJoin('ludy_kernel.file as f', (join) => join.onRef('f.org_id', '=', 'l.org_id').onRef('f.id', '=', 'l.file_id'))
       .innerJoin('ludy_kernel.tenant as t', 't.org_id', 'l.org_id')
       .select(['l.id', 'l.status', 'l.period', 'l.direction', 'f.storage_key', 'f.generation', 'f.sha256', 'f.content_type', 't.tax_code'])
@@ -233,7 +233,7 @@ export const portalListRecord = defineCommand({
   access: 'system',
   handler: async (ctx, input) => {
     const list = await ctx.trx
-      .selectFrom('crove_finance.portal_invoice_list')
+      .selectFrom('ludy_finance.portal_invoice_list')
       .select(['id', 'status', 'period', 'legal_entity_id', 'direction'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.listId)
@@ -246,7 +246,7 @@ export const portalListRecord = defineCommand({
     }
     const fail = async (error: string) => {
       await ctx.trx
-        .updateTable('crove_finance.portal_invoice_list')
+        .updateTable('ludy_finance.portal_invoice_list')
         .set({ status: 'failed', error, recorded_at: sql<Date>`pg_catalog.now()` })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', list.id)
@@ -262,7 +262,7 @@ export const portalListRecord = defineCommand({
     // period's imports and other records.
     await portalPeriodLock(ctx.orgId, list.legal_entity_id, list.period).execute(ctx.trx);
     const held = await ctx.trx
-      .selectFrom('crove_finance.portal_invoice_list')
+      .selectFrom('ludy_finance.portal_invoice_list')
       .select(sql<string>`coalesce(sum(row_count), 0)::text`.as('rows'))
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', list.legal_entity_id)
@@ -278,7 +278,7 @@ export const portalListRecord = defineCommand({
     }
     for (let i = 0; i < input.rows.length; i += ROW_INSERT_BATCH) {
       await ctx.trx
-        .insertInto('crove_finance.portal_invoice_row')
+        .insertInto('ludy_finance.portal_invoice_row')
         .values(
           input.rows.slice(i, i + ROW_INSERT_BATCH).map((r) => ({
             org_id: ctx.orgId,
@@ -303,7 +303,7 @@ export const portalListRecord = defineCommand({
         .execute();
     }
     await ctx.trx
-      .updateTable('crove_finance.portal_invoice_list')
+      .updateTable('ludy_finance.portal_invoice_list')
       .set({
         status: 'done',
         row_count: input.rows.length,
@@ -334,7 +334,7 @@ export const portalListRecord = defineCommand({
 
 async function periodLists(ctx: QueryContext, period: string, legalEntityId: string, direction: PortalListDirection): Promise<PortalListView[]> {
   const lists = await ctx.trx
-    .selectFrom('crove_finance.portal_invoice_list')
+    .selectFrom('ludy_finance.portal_invoice_list')
     .select(['id', 'period', 'direction', 'file_id', 'filename', 'status', 'error', 'row_count', 'list_from', 'list_to', 'skipped_count', 'skipped', 'own_sales_count', 'other_buyer_count', 'created_at'])
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', legalEntityId)
@@ -398,10 +398,10 @@ async function ludyInvoices(
 ): Promise<LudyInvoice[]> {
   const sale = direction === 'sale';
   const documents = await ctx.trx
-    .selectFrom('crove_finance.purchase_document as d')
+    .selectFrom('ludy_finance.purchase_document as d')
     .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
     .leftJoin('ludy_kernel.proposal as q', (join) => join.onRef('q.org_id', '=', 'd.org_id').onRef('q.id', '=', 'd.proposal_id'))
-    .leftJoin('crove_finance.journal_entry as j', (join) =>
+    .leftJoin('ludy_finance.journal_entry as j', (join) =>
       join.onRef('j.org_id', '=', 'd.org_id').onRef('j.source_id', '=', 'd.id').on('j.source_type', '=', 'finance.purchase_document').on(latestRevision('j')),
     )
     .select([
@@ -428,7 +428,7 @@ async function ludyInvoices(
       ]),
     )
     .where(({ not, exists, selectFrom }) =>
-      not(exists(selectFrom('crove_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
+      not(exists(selectFrom('ludy_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
     )
     .limit(PORTAL_RECONCILE_LIMIT + 1)
     .execute();
@@ -521,7 +521,7 @@ export async function reconcilePeriod(
       ? []
       : (
           await ctx.trx
-            .selectFrom('crove_finance.portal_invoice_row')
+            .selectFrom('ludy_finance.portal_invoice_row')
             .select(['list_id', 'row_no', 'seller_tax_code', 'seller_name', 'buyer_tax_code', 'template', 'series', 'number', 'issue_date', 'currency', 'subtotal', 'vat_amount', 'total', 'status', 'status_label'])
             .where('org_id', '=', ctx.orgId)
             .where('list_id', 'in', done)

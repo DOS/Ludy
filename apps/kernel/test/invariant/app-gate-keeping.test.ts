@@ -20,6 +20,7 @@ describe('definitions that run while their app is off for an org (ADR-0053)', ()
   // The commands that record the outcome of an external write already made (slice c).
   const RECORDS = [
     'meetings.hook.record',
+    'sign.hook.record',
     'social.auto_reply.record',
     'social.comment.record',
     'social.edit.record',
@@ -34,9 +35,6 @@ describe('definitions that run while their app is off for an org (ADR-0053)', ()
 
   // The eSign keeping commands that run while Sign is off (#3323).
   const SIGN_KEEPING = ['sign.envelope.expire_sweep', 'sign.org.cleanup'];
-
-  // Step 0 pre-registration for eSign outbound webhook delivery outcome recording (#4438 / #4440, Slice 5b): accepted once defined and moved to RECORDS in #4440.
-  const PENDING_SIGN_HOOK = ['sign.hook.record'];
 
   // The Social takedown commands that run while Social is off (C3c): a takedown stops exposure, so it is never refused for an app that is off.
   const TAKEDOWN = ['social.remove.begin', 'social.remove.schedule', 'social.remove.watch'];
@@ -81,7 +79,7 @@ describe('definitions that run while their app is off for an org (ADR-0053)', ()
       'social.report_link.revoke',
       'social.review_link.revoke',
     ].sort();
-    expect(named(commands).filter((n) => !PENDING_SIGN_HOOK.includes(n))).toEqual([...current, ...RECORDS, ...SIGN_KEEPING, ...TAKEDOWN, ...TAKEDOWN_NOTICE].sort());
+    expect(named(commands)).toEqual([...current, ...RECORDS, ...SIGN_KEEPING, ...TAKEDOWN, ...TAKEDOWN_NOTICE].sort());
   });
 
   it('are exactly these queries', () => {

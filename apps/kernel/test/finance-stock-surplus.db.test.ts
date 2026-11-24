@@ -54,7 +54,7 @@ suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
   const makeItem = (o: Org, code: string) =>
     execute<{ id: string }>(o, 'finance.stock_item.save', { itemId: null, legalEntityId: null, code, name: `Hàng ${code}`, unit: 'cái', stockAccount: '156', trade: 'goods' }).then((r) => r.id);
   const move = (o: Org, item: string, date: string, quantity: string) =>
-    rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, $4, 'manual') RETURNING id", [o.orgId, item, date, quantity]).then((r) => r[0]?.id as string);
+    rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, $4, 'manual') RETURNING id", [o.orgId, item, date, quantity]).then((r) => r[0]?.id as string);
   type Line = { itemId: string; countedQuantity: string; unitCost?: string };
   const count = (o: Org, countDate: string, lines: Line[], user = o.member) =>
     execute<{ id: string }>(o, 'finance.stock_count.create', { countDate, lossNormPercent: '10', lines }, user).then((r) => r.id);
@@ -85,7 +85,7 @@ suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
   }
   const entryLines = (o: Org, entryId: string) =>
     rows<{ account_code: string; debit: string; credit: string; party_id: string | null }>(
-      'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit, party_id FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY line_no',
+      'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit, party_id FROM ludy_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY line_no',
       [o.orgId, entryId],
     );
 
@@ -134,7 +134,7 @@ suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
       { account_code: '711', debit: '0', credit: '150', party_id: null },
     ]);
     const [voucher] = await rows<{ surplus_count_id: string; proposal_id: string; stock_count_id: string | null }>(
-      'SELECT surplus_count_id, proposal_id, stock_count_id FROM crove_finance.journal_voucher WHERE org_id = $1 AND id = $2',
+      'SELECT surplus_count_id, proposal_id, stock_count_id FROM ludy_finance.journal_voucher WHERE org_id = $1 AND id = $2',
       [o.orgId, posted.voucherId],
     );
     // The tag is the resolution's own: stock_count_id stays the column of the voucher that confirms a count.
@@ -143,7 +143,7 @@ suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
     expect(after).toMatchObject({ surplus: '150', surplusVoucherId: posted.voucherId, surplusProposalId: null });
     // 3381 is clear for the count: the confirmation credited 150 and the resolution debited it.
     const [balance] = await rows<{ net: string }>(
-      "SELECT (sum(l.credit) - sum(l.debit))::bigint::text AS net FROM crove_finance.journal_line l WHERE l.org_id = $1 AND l.account_code = '3381'",
+      "SELECT (sum(l.credit) - sum(l.debit))::bigint::text AS net FROM ludy_finance.journal_line l WHERE l.org_id = $1 AND l.account_code = '3381'",
       [o.orgId],
     );
     expect(balance?.net).toBe('0');
@@ -199,7 +199,7 @@ suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
     await expect(approve(o, first.proposalId, o.viewer)).rejects.toMatchObject({ status: 403 });
     const posted = await approve(o, first.proposalId);
     await expect(askSurplus(o, { countId, account: '3388' })).rejects.toMatchObject({ code: 'STOCK_SURPLUS_RESOLVED', status: 409, details: { voucherId: posted.voucherId } });
-    const vouchers = await rows<{ n: string }>('SELECT count(*)::text AS n FROM crove_finance.journal_voucher WHERE org_id = $1 AND surplus_count_id = $2', [o.orgId, countId]);
+    const vouchers = await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_finance.journal_voucher WHERE org_id = $1 AND surplus_count_id = $2', [o.orgId, countId]);
     expect(vouchers[0]?.n).toBe('1');
   });
 
@@ -214,7 +214,7 @@ suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
       [o.orgId, proposalId],
     );
     await expect(approve(o, proposalId)).rejects.toMatchObject({ code: 'STOCK_SURPLUS_STALE', status: 409 });
-    const [none] = await rows<{ n: string }>('SELECT count(*)::text AS n FROM crove_finance.journal_voucher WHERE org_id = $1 AND surplus_count_id IS NOT NULL', [o.orgId]);
+    const [none] = await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_finance.journal_voucher WHERE org_id = $1 AND surplus_count_id IS NOT NULL', [o.orgId]);
     expect(none?.n).toBe('0');
   });
 
@@ -224,16 +224,16 @@ suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
     // Written with no proposal behind it: refused by the constraint (it must name its proposal) before any row exists.
     await expect(
       rows(
-        `INSERT INTO crove_finance.journal_voucher (org_id, legal_entity_id, voucher_date, description, surplus_count_id)
-         SELECT $1, c.legal_entity_id, '2026-10-01', 'x', c.id FROM crove_finance.stock_count c WHERE c.org_id = $1 AND c.id = $2`,
+        `INSERT INTO ludy_finance.journal_voucher (org_id, legal_entity_id, voucher_date, description, surplus_count_id)
+         SELECT $1, c.legal_entity_id, '2026-10-01', 'x', c.id FROM ludy_finance.stock_count c WHERE c.org_id = $1 AND c.id = $2`,
         [o.orgId, countId],
       ),
     ).rejects.toThrow(/journal_voucher_surplus|EFFECT_PROPOSAL_MISMATCH/);
     // The tag is exclusive of the other kinds: a voucher that confirms a count is no resolution.
     await expect(
       rows(
-        `INSERT INTO crove_finance.journal_voucher (org_id, legal_entity_id, voucher_date, description, surplus_count_id, stock_count_id, proposal_id)
-         SELECT $1, c.legal_entity_id, '2026-10-01', 'x', c.id, c.id, gen_random_uuid() FROM crove_finance.stock_count c WHERE c.org_id = $1 AND c.id = $2`,
+        `INSERT INTO ludy_finance.journal_voucher (org_id, legal_entity_id, voucher_date, description, surplus_count_id, stock_count_id, proposal_id)
+         SELECT $1, c.legal_entity_id, '2026-10-01', 'x', c.id, c.id, gen_random_uuid() FROM ludy_finance.stock_count c WHERE c.org_id = $1 AND c.id = $2`,
         [o.orgId, countId],
       ),
     ).rejects.toThrow(/journal_voucher_surplus/);
@@ -248,17 +248,17 @@ suite('the resolution of the surplus of a count (#3712 slice 2a)', () => {
       const [entity] = (await c.query<{ id: string }>('SELECT id::text AS id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default ORDER BY created_at LIMIT 1', [o.orgId])).rows;
       const doc = (
         await c.query<{ id: string }>(
-          `INSERT INTO crove_finance.purchase_document (org_id, legal_entity_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction)
+          `INSERT INTO ludy_finance.purchase_document (org_id, legal_entity_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction)
            VALUES ($1, $2, $3, 'AA', $4, $5::date, 100, 0, 100, 'purchase') RETURNING id`,
           [o.orgId, entity?.id, partyId, invoiceNumber, date],
         )
       ).rows[0];
       await c.query(
-        `INSERT INTO crove_finance.purchase_line (org_id, document_id, line_no, description, unit, quantity, amount, debit_account) VALUES ($1, $2, 1, 'Hàng hóa', 'cái', $3, 100, '156')`,
+        `INSERT INTO ludy_finance.purchase_line (org_id, document_id, line_no, description, unit, quantity, amount, debit_account) VALUES ($1, $2, 1, 'Hàng hóa', 'cái', $3, 100, '156')`,
         [o.orgId, doc?.id, quantity],
       );
       await c.query(
-        `INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt)
+        `INSERT INTO ludy_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt)
          VALUES ($1, $2, $3, $4::date, $5, 'document_line', $6, 1, 1)`,
         [o.orgId, entity?.id, item, date, quantity, doc?.id],
       );

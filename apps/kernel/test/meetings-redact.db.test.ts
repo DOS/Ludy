@@ -102,7 +102,7 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     const rec = users[opts.recorder ?? 'recorder'] as string;
     const targetOrg = opts.org ?? orgId;
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (
+      `INSERT INTO ludy_meetings.meeting (
          org_id, id, title, language, started_at, ended_at, length_seconds,
          recorder_user_id, visibility, status, consent_method, consent_confirmed_by,
          consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date
@@ -112,7 +112,7 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     );
     for (const reader of opts.readers ?? []) {
       await sqlAdmin(
-        `INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`,
+        `INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`,
         [targetOrg, randomUUID(), id, users[reader]],
       );
     }
@@ -225,7 +225,7 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     expect(await refuses(query('outsider', 'meetings.transcript.redact_candidates', { meetingId })), 'scan cross-org').toBe('NOT_A_MEMBER');
     expect(await refuses(exec('outsider', 'meetings.transcript.redact', payload)), 'redact cross-org').toBe('NOT_A_MEMBER');
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4), ($1, $5, $3, $6)`,
+      `INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4), ($1, $5, $3, $6)`,
       [orgId, randomUUID(), meetingId, users.owner, randomUUID(), users.admin],
     );
     for (const actorKey of ['owner', 'admin']) {
@@ -331,7 +331,7 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
       // Insert a draft chapter carrying a phone number (e.g. legacy / model-written row).
       const chapterId = randomUUID();
       await sqlAdmin(
-        `INSERT INTO crove_meetings.meeting_chapter (org_id, id, meeting_id, stage, position, title, start_seconds, tainted)
+        `INSERT INTO ludy_meetings.meeting_chapter (org_id, id, meeting_id, stage, position, title, start_seconds, tainted)
          VALUES ($1, $2, $3, 'draft', 1, $4, 0, false)`,
         [orgId, chapterId, meetingId, `Phần 1 gọi ${CHAPTER_PHONE}`],
       );
@@ -363,7 +363,7 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
       // Accepted draft action item cannot be targeted directly either.
       const acceptedVer = (
         await sqlAdmin<{ v: string }>(
-          `SELECT pg_catalog.to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS v FROM crove_meetings.action_item WHERE id = $1`,
+          `SELECT pg_catalog.to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS v FROM ludy_meetings.action_item WHERE id = $1`,
           [acceptedItemId],
         )
       )[0]!.v;
@@ -425,7 +425,7 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
 
       // Publish and publish transcript segments for downstream search & MCP verification.
       await exec('recorder', 'meetings.result.publish', { meetingId, confirmed: true });
-      await sqlAdmin(`UPDATE crove_meetings.transcript_segment SET stage = 'published' WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]);
+      await sqlAdmin(`UPDATE ludy_meetings.transcript_segment SET stage = 'published' WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]);
 
       // Search generated column & meetings.search contain zero hidden values and return no hit for hidden PII.
       for (const q of ['0912', 'khach', '5900000018', '1900123456789012', '079091001234']) {
@@ -504,11 +504,11 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     const dbDump = await sqlAdmin(
       `SELECT row_to_json(t)::text AS row FROM (
          SELECT m.title,
-                (SELECT json_agg(s.text || ' ' || s.speaker_label) FROM crove_meetings.transcript_segment s WHERE s.meeting_id = m.id) AS segs,
-                (SELECT json_agg(r.summary || ' ' || r.decisions::text) FROM crove_meetings.meeting_result r WHERE r.meeting_id = m.id) AS res,
-                (SELECT json_agg(i.title || ' ' || i.who_drafted || ' ' || i.when_drafted) FROM crove_meetings.action_item i WHERE i.meeting_id = m.id AND i.status = 'suggested') AS items,
-                (SELECT json_agg(c.title) FROM crove_meetings.meeting_chapter c WHERE c.meeting_id = m.id) AS chaps
-         FROM crove_meetings.meeting m WHERE m.id = $1
+                (SELECT json_agg(s.text || ' ' || s.speaker_label) FROM ludy_meetings.transcript_segment s WHERE s.meeting_id = m.id) AS segs,
+                (SELECT json_agg(r.summary || ' ' || r.decisions::text) FROM ludy_meetings.meeting_result r WHERE r.meeting_id = m.id) AS res,
+                (SELECT json_agg(i.title || ' ' || i.who_drafted || ' ' || i.when_drafted) FROM ludy_meetings.action_item i WHERE i.meeting_id = m.id AND i.status = 'suggested') AS items,
+                (SELECT json_agg(c.title) FROM ludy_meetings.meeting_chapter c WHERE c.meeting_id = m.id) AS chaps
+         FROM ludy_meetings.meeting m WHERE m.id = $1
        ) t`,
       [meetingId],
     );
@@ -590,10 +590,38 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
 
     // Neither segment changed after all failed attempts.
     const unchanged = await sqlAdmin<{ text: string }>(
-      `SELECT text FROM crove_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2 ORDER BY start_seconds`,
+      `SELECT text FROM ludy_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2 ORDER BY start_seconds`,
       [orgId, meetingId],
     );
     expect(unchanged.map((r) => r.text)).toEqual([`Số một ${PHONE_PII}`, `Email mới ${EMAIL_PII}`]);
+  });
+
+  // #4540: a mark is longer than the value it replaces, so a field close to its cap can grow past it. The command refuses the whole redaction instead of cutting the end of the user's text.
+  it('refuses a redaction whose marks would push a field past its cap, whole, and cuts nothing', async () => {
+    const meetingId = await seedMeeting({ readers: ['attendee'] });
+    // 72 characters (the cap of a speaker label is 80) holding five phone numbers: each mark is 10 characters longer than its number.
+    // Made-up numbers only (the PII scan refuses a plausible one): sequences and repeated digits.
+    const label = [PHONE_PII, TITLE_PHONE, '0911 111 222', '0922 222 111', '0933 333 444'].join(' / ');
+    expect(label.length).toBeLessThanOrEqual(80);
+    await exec('recorder', 'meetings.transcript.draft_store', {
+      meetingId,
+      segments: [{ startSeconds: 0, endSeconds: 5, speakerLabel: label, text: 'Xin chào mọi người.' }],
+    });
+    const scan = await query<TranscriptRedactCandidates>('recorder', 'meetings.transcript.redact_candidates', { meetingId });
+    const onLabel = scan.candidates.filter((c) => c.surface === 'transcript_segment.speaker_label');
+    expect(onLabel.length).toBeGreaterThanOrEqual(2);
+    expect(
+      await refuses(
+        exec('recorder', 'meetings.transcript.redact', {
+          meetingId,
+          confirmed: true,
+          items: onLabel.map((c) => ({ surface: c.surface, targetId: c.targetId, decisionIndex: null, kind: c.kind, startPos: c.startPos, version: c.version })),
+        }),
+      ),
+    ).toBe('REDACTION_TOO_LONG');
+    const after = await sqlAdmin<{ speaker_label: string; text: string }>('SELECT speaker_label, text FROM ludy_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2', [orgId, meetingId]);
+    expect(after.map((r) => r.speaker_label)).toEqual([label]);
+    expect(after.map((r) => r.text)).toEqual(['Xin chào mọi người.']);
   });
 
   it('keeps published rows immutable (D3) and refuses meeting.title redaction once any surface is published', async () => {
@@ -603,7 +631,7 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     });
     const pubSegId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage)
+      `INSERT INTO ludy_meetings.transcript_segment (org_id, id, meeting_id, start_seconds, end_seconds, speaker_label, text, stage)
        VALUES ($1, $2, $3, 0, 5, 'Lan', $4, 'published')`,
       [orgId, pubSegId, meetingId, `Dòng đã công bố ${PHONE_PII}`],
     );
@@ -618,19 +646,19 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
 
     const pubSegVer = (
       await sqlAdmin<{ v: string }>(
-        `SELECT pg_catalog.to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS v FROM crove_meetings.transcript_segment WHERE id = $1`,
+        `SELECT pg_catalog.to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS v FROM ludy_meetings.transcript_segment WHERE id = $1`,
         [pubSegId],
       )
     )[0]!.v;
     const titleVer = (
       await sqlAdmin<{ v: string }>(
-        `SELECT pg_catalog.to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS v FROM crove_meetings.meeting WHERE id = $1`,
+        `SELECT pg_catalog.to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS v FROM ludy_meetings.meeting WHERE id = $1`,
         [meetingId],
       )
     )[0]!.v;
     const pubRes = (
       await sqlAdmin<{ id: string; v: string }>(
-        `SELECT id, pg_catalog.to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS v FROM crove_meetings.meeting_result WHERE meeting_id = $1 AND stage = 'published'`,
+        `SELECT id, pg_catalog.to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS v FROM ludy_meetings.meeting_result WHERE meeting_id = $1 AND stage = 'published'`,
         [meetingId],
       )
     )[0]!;
@@ -674,9 +702,9 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     });
     expect(done.redactedCount).toBe(1);
 
-    const checkPub = await sqlAdmin<{ text: string }>(`SELECT text FROM crove_meetings.transcript_segment WHERE id = $1`, [pubSegId]);
+    const checkPub = await sqlAdmin<{ text: string }>(`SELECT text FROM ludy_meetings.transcript_segment WHERE id = $1`, [pubSegId]);
     expect(checkPub[0]?.text).toBe(`Dòng đã công bố ${PHONE_PII}`);
-    const checkPubSum = await sqlAdmin<{ summary: string }>(`SELECT summary FROM crove_meetings.meeting_result WHERE id = $1`, [pubRes.id]);
+    const checkPubSum = await sqlAdmin<{ summary: string }>(`SELECT summary FROM ludy_meetings.meeting_result WHERE id = $1`, [pubRes.id]);
     expect(checkPubSum[0]?.summary).toBe(`Tóm tắt ${TAX_PII}`);
   });
 
@@ -728,7 +756,7 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
 
     // Seed recorder's draft translations (transcript + summary) and an immutable published translation for attendee on meetingId.
     await sqlAdmin(
-      `INSERT INTO crove_meetings.translation (org_id, meeting_id, member_user_id, kind, target_language, source_stage, source_hash, body)
+      `INSERT INTO ludy_meetings.translation (org_id, meeting_id, member_user_id, kind, target_language, source_stage, source_hash, body)
        VALUES ($1, $2, $3, 'transcript', 'en', 'draft', $5, $6::jsonb),
               ($1, $2, $3, 'summary', 'en', 'draft', $5, '[]'::jsonb),
               ($1, $2, $4, 'summary', 'en', 'published', $5, '[]'::jsonb)`,
@@ -790,7 +818,7 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     expect(Number(vyOtherLeft[0]?.c)).toBe(1);
 
     const transRows = await sqlAdmin<{ member_user_id: string; kind: string; source_stage: string }>(
-      `SELECT member_user_id, kind, source_stage FROM crove_meetings.translation WHERE org_id = $1 AND meeting_id = $2`,
+      `SELECT member_user_id, kind, source_stage FROM ludy_meetings.translation WHERE org_id = $1 AND meeting_id = $2`,
       [orgId, meetingId],
     );
     expect(transRows).toEqual([{ member_user_id: users.attendee, kind: 'summary', source_stage: 'published' }]);
@@ -810,6 +838,53 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
     expect(await refuses(exec('recorder', 'kernel.member_vy.subject_results.drop', { subjectType: 'Meeting free text', subjectId: secondMeetingId }))).toBe(
       'VALIDATION',
     );
+  });
+
+  it('blanks the live transcript preview of the meeting when it redacts, keeping where the preview has read, and leaves the preview of another meeting alone (#4557)', async () => {
+    const meetingId = await seedMeeting({ title: 'Họp 4557 xem trước' });
+    const other = await seedMeeting({ title: 'Họp 4557 khác' });
+    const runId = randomUUID();
+    const line = (m: string, seq: number, text: string, source: string | null = null) =>
+      sqlAdmin(
+        `INSERT INTO ludy_meetings.live_line (org_id, id, meeting_id, seq, start_seconds, end_seconds, text, source_run_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() - interval '2 days')`,
+        [orgId, randomUUID(), m, seq, seq * 10, seq * 10 + 10, text, source],
+      );
+    await line(meetingId, 0, `Gọi ${PHONE_PII} nhé`, runId);
+    await line(meetingId, 1, '');
+    await line(meetingId, 2, `Email ${EMAIL_PII}`);
+    await line(other, 0, `Gọi ${PHONE_PII} nhé`);
+    await exec('recorder', 'meetings.summary.save', { meetingId, summary: `Liên hệ ${PHONE_PII}`, decisions: [] });
+
+    const scan = await query<TranscriptRedactCandidates>('recorder', 'meetings.transcript.redact_candidates', { meetingId });
+    expect(scan.candidates.length).toBeGreaterThanOrEqual(1);
+    // The preview is not a surface of the scan: no candidate names a live line.
+    expect(JSON.stringify(scan)).not.toContain('live_line');
+    const done = await exec<TranscriptRedacted>('recorder', 'meetings.transcript.redact', {
+      meetingId,
+      confirmed: true,
+      items: scan.candidates.map((c) => ({ surface: c.surface, targetId: c.targetId, decisionIndex: c.decisionIndex, kind: c.kind, startPos: c.startPos, version: c.version })),
+    });
+    expect(done.redactedCount).toBe(scan.candidates.length);
+
+    // Every line is a silent piece now, at the same seq and times: nothing of the text is left and the preview still reads on from its last line (seq 2), so the next window does not read the audio again.
+    const lines = await sqlAdmin<{ seq: number; start_seconds: number; end_seconds: number; text: string; source_run_id: string | null; old: boolean }>(
+      `SELECT seq, start_seconds, end_seconds, text, source_run_id, created_at < now() - interval '1 day' AS old FROM ludy_meetings.live_line WHERE org_id = $1 AND meeting_id = $2 ORDER BY seq`,
+      [orgId, meetingId],
+    );
+    // The run the line came from and the day it was written stay as they were (the taint's source and the expiry clock), only the text is gone.
+    expect(lines).toEqual([
+      { seq: 0, start_seconds: 0, end_seconds: 10, text: '', source_run_id: runId, old: true },
+      { seq: 1, start_seconds: 10, end_seconds: 20, text: '', source_run_id: null, old: true },
+      { seq: 2, start_seconds: 20, end_seconds: 30, text: '', source_run_id: null, old: true },
+    ]);
+    // The other meeting's preview is untouched, and the audit holds the count of lines that held text (never a word of them).
+    expect(await sqlAdmin<{ text: string }>(`SELECT text FROM ludy_meetings.live_line WHERE org_id = $1 AND meeting_id = $2`, [orgId, other])).toEqual([{ text: `Gọi ${PHONE_PII} nhé` }]);
+    const audit = await sqlAdmin<{ detail: Record<string, unknown> }>(
+      `SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'meetings.transcript.redact' AND detail ->> 'meetingId' = $2 ORDER BY occurred_at DESC LIMIT 1`,
+      [orgId, meetingId],
+    );
+    expect(audit[0]?.detail).toMatchObject({ clearedLiveLines: 2 });
+    expect(JSON.stringify(audit)).not.toContain(PHONE_PII);
   });
 
   it('fails closed with VY_RUN_BUSY on out-of-order concurrent Vy run creation and retries ascending new runs cleanly', async () => {
@@ -957,7 +1032,7 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
         });
         const [redactPid] = await waitForBlockedOnPid(holdPid, 1);
 
-        // The copy command must block on crove_meetings.meeting (held by pRedact) BEFORE calling kernel.member_vy.result.get.
+        // The copy command must block on ludy_meetings.meeting (held by pRedact) BEFORE calling kernel.member_vy.result.get.
         const pCopy = refuses(exec('recorder', opts.copyCommand, { meetingId: mRaceCopy, runId: resultRunId }));
         await waitForBlockedOnPid(redactPid!, 1);
 
@@ -1026,12 +1101,12 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
           });
           const draftChapId = (
             await sqlAdmin<{ id: string }>(
-              `SELECT id FROM crove_meetings.meeting_chapter WHERE org_id = $1 AND meeting_id = $2 AND stage = 'draft'`,
+              `SELECT id FROM ludy_meetings.meeting_chapter WHERE org_id = $1 AND meeting_id = $2 AND stage = 'draft'`,
               [orgId, mRaceCopy],
             )
           )[0]!.id;
           await sqlAdmin(
-            `UPDATE crove_meetings.meeting_chapter SET title = $1 WHERE org_id = $2 AND id = $3`,
+            `UPDATE ludy_meetings.meeting_chapter SET title = $1 WHERE org_id = $2 AND id = $3`,
             [`Phần gọi ${CHAPTER_PHONE}`, orgId, draftChapId],
           );
         },
@@ -1043,17 +1118,17 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
 
       // All draft surfaces stay redacted and zero private Vy results remain.
       const segRows = await sqlAdmin<{ text: string }>(
-        `SELECT text FROM crove_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2`,
+        `SELECT text FROM ludy_meetings.transcript_segment WHERE org_id = $1 AND meeting_id = $2`,
         [orgId, mRaceCopy],
       );
       expect(segRows).toEqual([{ text: `Liên hệ ${REDACTION_MARK_BY_KIND.phone}` }]);
       const resRows = await sqlAdmin<{ summary: string }>(
-        `SELECT summary FROM crove_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2`,
+        `SELECT summary FROM ludy_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2`,
         [orgId, mRaceCopy],
       );
       expect(resRows).toEqual([{ summary: `Nháp ${REDACTION_MARK_BY_KIND.phone}` }]);
       const chapRows = await sqlAdmin<{ title: string }>(
-        `SELECT title FROM crove_meetings.meeting_chapter WHERE org_id = $1 AND meeting_id = $2`,
+        `SELECT title FROM ludy_meetings.meeting_chapter WHERE org_id = $1 AND meeting_id = $2`,
         [orgId, mRaceCopy],
       );
       expect(chapRows).toEqual([{ title: `Phần gọi ${REDACTION_MARK_BY_KIND.phone}` }]);
@@ -1063,7 +1138,7 @@ suite('meeting draft redaction commands (#4001 Slice 2)', () => {
       );
       expect(Number(vyLeft[0]?.c)).toBe(0);
 
-      // Concurrent same-command copy_result calls serialize on crove_meetings.meeting with zero lock-upgrade deadlock.
+      // Concurrent same-command copy_result calls serialize on ludy_meetings.meeting with zero lock-upgrade deadlock.
       const mSerial = await seedMeeting({ readers: ['attendee'], title: 'Họp 4415 serialize' });
 
       const rT1 = await startAndStore(

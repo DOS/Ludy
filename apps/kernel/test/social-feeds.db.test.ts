@@ -121,7 +121,7 @@ suite('social blog feeds on PostgreSQL (#708)', () => {
   const feeds = (o: Org, user: string) => rt.query<FeedView[]>('social.feed.list', {}, { actor: asUser(user), orgId: o.orgId });
   const drafts = (o: Org) =>
     admin(async (c) => (await c.query<{ body: string; link_url: string | null; tainted: boolean; actor_origin: string; author: string; status: string; variants: number }>(
-      "SELECT p.body, p.link_url, p.tainted, p.actor_origin, p.author_user_id AS author, p.status, (SELECT count(*)::int FROM crove_social.post_variant v WHERE v.org_id = p.org_id AND v.post_id = p.id) AS variants FROM crove_social.post p WHERE p.org_id = $1 ORDER BY p.body", [o.orgId])).rows);
+      "SELECT p.body, p.link_url, p.tainted, p.actor_origin, p.author_user_id AS author, p.status, (SELECT count(*)::int FROM ludy_social.post_variant v WHERE v.org_id = p.org_id AND v.post_id = p.id) AS variants FROM ludy_social.post p WHERE p.org_id = $1 ORDER BY p.body", [o.orgId])).rows);
 
   it('drafts each new item once, for review, and only items published since the feed was added', async () => {
     const o = await org();
@@ -166,7 +166,7 @@ suite('social blog feeds on PostgreSQL (#708)', () => {
     await deliver(o);
     for (const user of [o.owner, o.admin]) expect((await rt.query<{ items: NotificationItem[] }>('social.notification.list', {}, { actor: asUser(user), orgId: o.orgId })).items.map((n) => [n.kind, n.detail])).toEqual([['feed_paused', { feed: 'https://down.example/rss' }]]);
     expect((await rt.query<{ items: NotificationItem[] }>('social.notification.list', {}, { actor: asUser(o.member), orgId: o.orgId })).items).toEqual([]);
-    const due = async () => (await admin(async (c) => (await c.query<{ feed_id: string }>('SELECT feed_id FROM crove_social.feeds_due(1000)')).rows)).map((r) => r.feed_id);
+    const due = async () => (await admin(async (c) => (await c.query<{ feed_id: string }>('SELECT feed_id FROM ludy_social.feeds_due(1000)')).rows)).map((r) => r.feed_id);
     expect(await due()).not.toContain(feedId);
     await exec(o, o.owner, 'social.feed.update', { feedId, paused: false });
     expect(await feeds(o, o.owner)).toEqual([expect.objectContaining({ paused: false, failures: 0, lastError: null })]);

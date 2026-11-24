@@ -66,6 +66,8 @@ const REACHABLE = [
   // The Meetings read that searches the published minutes (#4030, step 3 of the three-step landing): it matches only the views the minutes tool can return, of the same readable meetings as the reads above,
   // for a company grant only; the typed words never reach SQL. Its projection pins are in test/invariant/meetings-mcp-projection.db.test.ts.
   'meetings.mcp.search:ludy.read',
+  // Internal company-grant batch visibility check called by projects.mcp.triage_summary via ctx.query (#4493, graduated from SIGNALS in PR #4497); returns only { visibleIds } for org-visible published meetings inside text retention, never exposed as a public MCP tool.
+  'meetings.mcp.visible_ids:ludy.read',
   // The Engage reads of epic #3857, E1 (#3860, owner decision 2026-11-19: Dy and Uy work Engage through MCP; step 3 of the three-step landing, #4052 and #4068 before it). A missing name now fails.
   // Results of Social and Ads, for a company grant only (their privacy review is the comment at the top of each query's file; the output is pinned in the DB tests engage-mcp-results.db.test.ts):
   'social.mcp.metrics_summary:ludy.read',
@@ -101,6 +103,13 @@ const REACHABLE = [
   // is refused by both, the CRM read for a plain member too. Pinned in test/invariant/mcp-wake-engage-reach.db.test.ts and mcp-wake-engage.test.ts.
   'kernel.wake.conversations:ludy.read',
   'crm.wake.facts:ludy.read',
+  // The four eSign read-only projections for a company grant (#4438 / #4441, Slice 5c): non-confidential envelopes, single envelope progress with confirmed obligations,
+  // upcoming renewals, and reusable templates. Never returns hr_contract or meeting_minutes envelopes, signing tokens, OTPs, counterparty names, or signer emails/phones;
+  // pinned in test/invariant/mcp-sign-company.db.test.ts.
+  'sign.mcp.envelopes:ludy.read',
+  'sign.mcp.envelope_get:ludy.read',
+  'sign.mcp.renewals:ludy.read',
+  'sign.mcp.templates:ludy.read',
 ];
 // The cross-app signals (Vy V4 and V5, #2967 and #2969) may join the set, each one when its line has reviewed what it returns: the kernel rules and the line reads they
 // call (a query run inside a query keeps the caller's identity, so a rule over MCP needs every read it calls to declare the scope as well). They are optional here so each can land
@@ -129,15 +138,8 @@ const SIGNALS = [
 const FINANCE_READS: readonly string[] = [
 ];
 
-// The eSign read-only projections for a company grant (#4438 / #4441, Slice 5c): non-confidential envelopes, single envelope progress with confirmed obligations,
-// upcoming renewals, and reusable templates. Optional in Step 0 so Slice 5c can land while main's base invariant suite runs; never returns hr_contract or
-// meeting_minutes envelopes, signing tokens, OTPs, or signer emails/phones.
-const SIGN_READS: readonly string[] = [
-  'sign.mcp.envelopes:ludy.read',
-  'sign.mcp.envelope_get:ludy.read',
-  'sign.mcp.renewals:ludy.read',
-  'sign.mcp.templates:ludy.read',
-];
+// Graduated into REACHABLE in #4441 (Slice 5c).
+const SIGN_READS: readonly string[] = [];
 
 // The one command an MCP grant may run (#3227, step 3, owner decision 2026-11-14: one new write scope and exactly one command, "create a draft post for a person to review"). Exactly this one,
 // with exactly this scope: a second command that carries `mcp`, or this one with another scope, fails, and so does its absence.

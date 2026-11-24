@@ -93,7 +93,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
   // The meeting a click made: begin checks that it exists and is the member's to record, so the test makes a real one (as the command does) with the platform-notice consent.
   const meetingFor = async (o: { orgId: string }, user: string): Promise<string> =>
     (await sqlAdmin<{ id: string }>(
-      `INSERT INTO crove_meetings.meeting (org_id, recorder_user_id, title, consent_method, consent_confirmed_by, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, recorder_user_id, title, consent_method, consent_confirmed_by, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp thử', 'platform_notice', $2, '2026-11-imp-v1', current_date + 7, current_date + 30) RETURNING id`,
       [o.orgId, user],
     )).rows[0]?.id as string;
@@ -664,7 +664,30 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect((await due()).sort()).toEqual([a.connectionId, b.connectionId].sort());
   });
 
-  it('matches a suggested recording only to a single overlapping visible meeting within 15 minutes (#4123)', async () => {
+  // An event of the member's own calendar (the sweep's cache), optionally linked to a meeting by the member's own click. One calendar connection a member, made on the first event.
+  const calendarConnections = new Map<string, string>();
+  const agendaEvent = async (orgId: string, userId: string, startsAt: Date, endsAt: Date, meetingId: string | null = null): Promise<string> => {
+    const key = `${orgId}:${userId}`;
+    let connection = calendarConnections.get(key);
+    if (connection === undefined) {
+      connection = randomUUID();
+      await sqlAdmin(
+        `INSERT INTO ludy_kernel.calendar_connection (org_id, id, user_id, provider, external_account, display_name, scopes, read_events)
+         VALUES ($1, $2, $3, 'google', $4, 'test', '{}', true)`,
+        [orgId, connection, userId, `${connection}@calendar.test`],
+      );
+      calendarConnections.set(key, connection);
+    }
+    const id = randomUUID();
+    await sqlAdmin(
+      `INSERT INTO ludy_meetings.calendar_agenda (org_id, id, connection_id, user_id, external_id, title, starts_at, ends_at, time_zone, join_url, meeting_id)
+       VALUES ($1, $2, $3, $4, $5, 'Họp khách', $6, $7, 'Asia/Ho_Chi_Minh', NULL, $8)`,
+      [orgId, id, connection, userId, `ext-${id}`, startsAt, endsAt, meetingId],
+    );
+    return id;
+  };
+
+  it('matches a suggested recording to a visible meeting only through the member\'s own calendar event within 15 minutes (#4123, #4537)', async () => {
     const o = await org();
     const c = await connect(o, o.lan);
     const scheduledMeeting = async (
@@ -673,7 +696,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     ): Promise<string> => {
       const id = (
         await sqlAdmin<{ id: string }>(
-          `INSERT INTO crove_meetings.meeting
+          `INSERT INTO ludy_meetings.meeting
              (org_id, recorder_user_id, visibility, title, started_at, ended_at, length_seconds, consent_method, consent_confirmed_by, consent_notice_version, audio_retention_date, text_retention_date)
            VALUES ($1, $2, $3, 'Họp thử', $4, $5, $6, 'platform_notice', $2, '2026-11-imp-v1', current_date + 7, current_date + 30)
            RETURNING id`,
@@ -681,7 +704,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
         )
       ).rows[0]?.id as string;
       for (const readerId of opts.readers ?? []) {
-        await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, meeting_id, user_id) VALUES ($1, $2, $3)', [o.orgId, id, readerId]);
+        await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, meeting_id, user_id) VALUES ($1, $2, $3)', [o.orgId, id, readerId]);
       }
       return id;
     };
@@ -704,6 +727,19 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     await scheduledMeeting(o.lan, { startedAt: at(766), endedAt: at(796) });
     // 6. Imported recording in an overlapping window -> never matched (matchedMeeting: null).
     const impMeetingId = await scheduledMeeting(o.lan, { startedAt: at(900), endedAt: at(930) });
+    // 7. A meeting that overlaps a recording but the member has no calendar event for it: time alone is not a call Ludy can name -> null (#4537).
+    await scheduledMeeting(o.lan, { startedAt: at(1000), endedAt: at(1030) });
+    // 8. Back-to-back calls: the first is recorded in Ludy (1200..1260), the platform recording is the second (1260..1320). The recording's window reaches both events -> null, so Import stays (#4537).
+    await scheduledMeeting(o.lan, { startedAt: at(1200), endedAt: at(1260) });
+    // 9. A meeting linked to the event by the member: it is the match, even beside another visible meeting that overlaps the recording.
+    const mLinked = await scheduledMeeting(o.lan, { startedAt: at(1500), endedAt: at(1530) });
+    await scheduledMeeting(o.nam, { startedAt: at(1505), endedAt: at(1535), visibility: 'org' });
+
+    // The member's calendar: one event for each recording of the cases that have one, 30 minutes long, never two within 15 minutes of each other.
+    for (const start of [0, 180, 360, 540, 720]) await agendaEvent(o.orgId, o.lan, at(start), at(start + 30));
+    await agendaEvent(o.orgId, o.lan, at(1200), at(1260));
+    await agendaEvent(o.orgId, o.lan, at(1260), at(1320));
+    await agendaEvent(o.orgId, o.lan, at(1500), at(1530), mLinked);
 
     await replace(o, c.connectionId, [
       listed('rec-own', { startedAt: at(0).toISOString(), lengthSeconds: 1800 }),
@@ -712,6 +748,9 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
       listed('rec-ambig', { startedAt: at(540).toISOString(), lengthSeconds: 1800 }),
       listed('rec-zero', { startedAt: at(720).toISOString(), lengthSeconds: 1800 }),
       listed('rec-imported', { startedAt: at(900).toISOString(), lengthSeconds: 1800 }),
+      listed('rec-nocal', { startedAt: at(1000).toISOString(), lengthSeconds: 1800 }),
+      listed('rec-b2b', { startedAt: at(1260).toISOString(), lengthSeconds: 3600 }),
+      listed('rec-linked', { startedAt: at(1500).toISOString(), lengthSeconds: 1800 }),
     ]);
 
     const impRow = await rowOf('rec-imported', c.connectionId);
@@ -724,7 +763,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     const byExt = new Map<string, MeetingPlatformRecordingView>();
     const rows = await mine(o, o.lan);
     const rowById = new Map(rows.map((r) => [r.id, r]));
-    for (const ext of ['rec-own', 'rec-org', 'rec-reader', 'rec-ambig', 'rec-zero', 'rec-imported']) {
+    for (const ext of ['rec-own', 'rec-org', 'rec-reader', 'rec-ambig', 'rec-zero', 'rec-imported', 'rec-nocal', 'rec-b2b', 'rec-linked']) {
       const dbRow = await rowOf(ext, c.connectionId);
       if (dbRow && rowById.has(dbRow.id)) byExt.set(ext, rowById.get(dbRow.id) as MeetingPlatformRecordingView);
     }
@@ -736,6 +775,9 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     expect(byExt.get('rec-zero')?.matchedMeeting).toBeNull();
     expect(byExt.get('rec-imported')?.status).toBe('imported');
     expect(byExt.get('rec-imported')?.matchedMeeting).toBeNull();
+    expect(byExt.get('rec-nocal')?.matchedMeeting).toBeNull();
+    expect(byExt.get('rec-b2b')?.matchedMeeting).toBeNull();
+    expect(byExt.get('rec-linked')?.matchedMeeting).toEqual({ meetingId: mLinked });
 
     // The single-row claim lookup (`{ recordingId }`) skips matching and keeps the claim path untouched.
     const recOwnView = byExt.get('rec-own') as MeetingPlatformRecordingView;
@@ -754,7 +796,7 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
     const insertMeeting = async (targetOrgId: string, recorder: string, startedAt: Date, endedAt: Date, visibility: 'attendees' | 'org', retentionDate: string) =>
       (
         await sqlAdmin<{ id: string }>(
-          `INSERT INTO crove_meetings.meeting
+          `INSERT INTO ludy_meetings.meeting
              (org_id, recorder_user_id, visibility, title, started_at, ended_at, consent_method, consent_confirmed_by, consent_notice_version, audio_retention_date, text_retention_date)
            VALUES ($1, $2, $3, 'Họp mật', $4, $5, 'platform_notice', $2, '2026-11-imp-v1', current_date + 7, $6::date)
            RETURNING id`,
@@ -785,6 +827,9 @@ suite('meeting platforms on PostgreSQL (meetings integrations C1, #3173)', () =>
       listed('rec-shell', { startedAt: at(720).toISOString(), lengthSeconds: 1800 }),
       listed('rec-failed-src', { startedAt: at(720).toISOString(), lengthSeconds: 1800 }),
     ]);
+
+    // The member's calendar has an event for each window, so each case is decided by what it names and not by the lack of an event.
+    for (const start of [0, 180, 360, 540, 720]) await agendaEvent(o.orgId, o.lan, at(start), at(start + 30));
 
     const failedSrcRow = await rowOf('rec-failed-src', c.connectionId);
     const failedKey = stagingKey();

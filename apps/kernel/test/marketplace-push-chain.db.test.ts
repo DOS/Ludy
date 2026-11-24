@@ -99,8 +99,8 @@ suite('Marketplace push chain (#4364)', () => {
     }
   }
   const rows = <T extends pg.QueryResultRow = Record<string, unknown>>(text: string, values: unknown[] = []) => admin(async (c) => (await c.query<T>(text, values)).rows);
-  const stored = () => rows<{ hook_id: string; request_url: string | null }>('SELECT hook_id, request_url FROM crove_finance.marketplace_hook_notice ORDER BY received_at, id');
-  const rejected = async (hookId: string) => Number((await rows<{ n: number }>('SELECT rejected_count AS n FROM crove_finance.marketplace_hook WHERE id = $1', [hookId]))[0]?.n ?? 0);
+  const stored = () => rows<{ hook_id: string; request_url: string | null }>('SELECT hook_id, request_url FROM ludy_finance.marketplace_hook_notice ORDER BY received_at, id');
+  const rejected = async (hookId: string) => Number((await rows<{ n: number }>('SELECT rejected_count AS n FROM ludy_finance.marketplace_hook WHERE id = $1', [hookId]))[0]?.n ?? 0);
   // One round of the relay, the same steps as the loop body in startWorker (apps/kernel/src/worker.ts, "A signed push of a marketplace"): claim, verify, ONE poll per connection with a good push, refusals counted after
   // the commit. It mirrors that body and does not call it (the send must stay inline in startWorker, where the job-egress invariant has reviewed it), so a change to the loop must be made here too.
   const relay = async () => {
@@ -167,8 +167,8 @@ suite('Marketplace push chain (#4364)', () => {
       { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
     );
     const connectionId = randomUUID();
-    await rows('INSERT INTO crove_finance.marketplace_connection (org_id, id, channel_connection_id, provider, platform) VALUES ($1, $2, $3, $4, $5)', [orgId, connectionId, channel.connectionId, provider, adapter]);
-    const hookId = (await rows<{ id: string }>('INSERT INTO crove_finance.marketplace_hook (org_id, marketplace_connection_id, key_sha256) VALUES ($1, $2, $3) RETURNING id', [orgId, connectionId, sha(hookKey)]))[0]?.id ?? '';
+    await rows('INSERT INTO ludy_finance.marketplace_connection (org_id, id, channel_connection_id, provider, platform) VALUES ($1, $2, $3, $4, $5)', [orgId, connectionId, channel.connectionId, provider, adapter]);
+    const hookId = (await rows<{ id: string }>('INSERT INTO ludy_finance.marketplace_hook (org_id, marketplace_connection_id, key_sha256) VALUES ($1, $2, $3) RETURNING id', [orgId, connectionId, sha(hookKey)]))[0]?.id ?? '';
     return { channelId: channel.connectionId, connectionId, hookId };
   }
 
@@ -283,7 +283,7 @@ suite('Marketplace push chain (#4364)', () => {
     }
     expect((await relay()).tally).toEqual({ ok: 0, refused: need, dropped: 0 });
     expect(await rejected(tiktok.hookId)).toBe(10);
-    expect((await rows<{ stopped_at: string | null }>('SELECT stopped_at FROM crove_finance.marketplace_hook WHERE id = $1', [tiktok.hookId]))[0]?.stopped_at).not.toBeNull();
+    expect((await rows<{ stopped_at: string | null }>('SELECT stopped_at FROM ludy_finance.marketplace_hook WHERE id = $1', [tiktok.hookId]))[0]?.stopped_at).not.toBeNull();
     const good = tiktokBody(200);
     const response = await post('tiktok_shop', tiktok.key, good, tiktokSign(good));
     expect(response.status).toBe(200);
@@ -313,7 +313,7 @@ suite('Marketplace push chain (#4364)', () => {
   it('keeps the body of every push in no row of the kernel, jobs or finance schemas once the notices are gone: not as text, not as hex, and not in a job the relay sent', async () => {
     expect(await stored()).toEqual([]);
     await admin(async (client) => {
-      const tables = (await client.query<{ table_schema: string; table_name: string }>("SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema IN ('ludy_kernel', 'ludy_jobs', 'crove_finance') AND table_type = 'BASE TABLE'")).rows;
+      const tables = (await client.query<{ table_schema: string; table_name: string }>("SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema IN ('ludy_kernel', 'ludy_jobs', 'ludy_finance') AND table_type = 'BASE TABLE'")).rows;
       expect(tables.length).toBeGreaterThan(0);
       for (const { table_schema, table_name } of tables) {
         // The row as text shows a bytea column in hex, so the canary is looked for as text and as hex.

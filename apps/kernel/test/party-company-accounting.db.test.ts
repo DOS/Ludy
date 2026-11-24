@@ -239,8 +239,8 @@ suite('the company of a person and the accounting (#2438)', () => {
     // A line of the ledger names the person (a receivable), so the books keep their place and their name.
     await admin(async (c) => {
       await c.query('BEGIN');
-      const entry = (await c.query<{ id: string }>("INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, current_date, 'Bán hàng', 'test.sale', $2) RETURNING id", [o.orgId, randomUUID()])).rows[0]?.id;
-      await c.query("INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, 1, '131', 500000, 0, $3), ($1, $2, 2, '511', 0, 500000, NULL)", [o.orgId, entry, hoa.partyId]);
+      const entry = (await c.query<{ id: string }>("INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, current_date, 'Bán hàng', 'test.sale', $2) RETURNING id", [o.orgId, randomUUID()])).rows[0]?.id;
+      await c.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, 1, '131', 500000, 0, $3), ($1, $2, 2, '511', 0, 500000, NULL)", [o.orgId, entry, hoa.partyId]);
       await c.query('COMMIT');
     });
     const erased = await rt.execute<{ erased: Array<{ column: string; rows: number }>; kept: Array<{ column: string }> }>(
@@ -260,18 +260,20 @@ suite('the company of a person and the accounting (#2438)', () => {
     // A table added later with a foreign key to party fails here until it is put on one side: PARTY_KIND_HOLDERS (the rows that pin a party's kind) or this list.
     // A sales e-invoice draft keeps its own buyer kind and details (#2500): the party it was picked from is only where the details came from, and a removed one leaves them.
     const NOT_READING_THE_KIND = [
-      'crove_notes.link.party_id',
-      'crove_crm.import_row.match_party_id',
-      'crove_crm.import_row.company_party_id',
-      'crove_finance.customer_collection.party_id',
-      'crove_finance.einvoice_draft.buyer_party_id',
+      'ludy_notes.link.party_id',
+      'ludy_crm.import_row.match_party_id',
+      'ludy_crm.import_row.company_party_id',
+      'ludy_finance.customer_collection.party_id',
+      'ludy_finance.einvoice_draft.buyer_party_id',
       // A meeting's link to a contact (L1, #2587) only names the party: a person or a company both link.
-      'crove_meetings.meeting_link.party_id',
+      'ludy_meetings.meeting_link.party_id',
       // A supplier's bank account and its change history (#3113 S1) only name the supplier: no command reads the party's kind, and the sealed number and holder are shredded by the supplier's subject key, not by its kind.
-      'crove_finance.supplier_bank_account.party_id',
-      'crove_finance.supplier_bank_account_change.party_id',
+      'ludy_finance.supplier_bank_account.party_id',
+      'ludy_finance.supplier_bank_account_change.party_id',
       // A supplier payment (#3113 S2) only names the supplier it pays: no command reads the party's kind, and the account it pins carries the sealed number.
-      'crove_finance.supplier_payment.party_id',
+      'ludy_finance.supplier_payment.party_id',
+      // An omnichannel roadmap signal (#4492) stores source_party_id only for PDPL attribution when a deal or conversation changes party; it never reads party.kind.
+      'ludy_projects.roadmap_signal.source_party_id',
     ];
     const { rows } = await admin((c) =>
       c.query<{ ref: string }>(
@@ -290,7 +292,7 @@ suite('the company of a person and the accounting (#2438)', () => {
     expect(holders.filter((h) => NOT_READING_THE_KIND.includes(h))).toEqual([]);
     // Everything listed as pinning the kind exists (a renamed column fails here and in the kind-change test), but the ledger line has no foreign key: it is the one
     // holder the catalog cannot show.
-    expect(holders.filter((h) => !rows.some((r) => r.ref === h))).toEqual(['crove_finance.journal_line.party_id']);
+    expect(holders.filter((h) => !rows.some((r) => r.ref === h))).toEqual(['ludy_finance.journal_line.party_id']);
   });
 
   it('refuses a company the writer cannot see, as the legal-entity policy to come on party will hide one (#1538)', async () => {

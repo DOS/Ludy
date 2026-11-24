@@ -78,8 +78,8 @@ suite('social bulk labels and assignment on PostgreSQL (#1057)', () => {
   // Out on every channel, as the publisher leaves it.
   const publish = (o: Org, postId: string) =>
     admin(async (c) => {
-      await c.query("UPDATE crove_social.post_variant SET status = 'published', published_at = now() WHERE org_id = $1 AND post_id = $2", [o.orgId, postId]);
-      await c.query("UPDATE crove_social.post SET status = 'published' WHERE org_id = $1 AND id = $2", [o.orgId, postId]);
+      await c.query("UPDATE ludy_social.post_variant SET status = 'published', published_at = now() WHERE org_id = $1 AND post_id = $2", [o.orgId, postId]);
+      await c.query("UPDATE ludy_social.post SET status = 'published' WHERE org_id = $1 AND id = $2", [o.orgId, postId]);
     });
   const labelsOf = async (o: Org, postId: string) => [...(await get(o, o.owner, postId)).labelIds].sort();
   const timeline = async (o: Org, postId: string, kind: string) =>
@@ -364,7 +364,7 @@ suite('social bulk labels and assignment on PostgreSQL (#1057)', () => {
     await prober.connect();
     try {
       await holder.query('BEGIN');
-      await holder.query('SELECT id FROM crove_social.post WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, high]);
+      await holder.query('SELECT id FROM ludy_social.post WHERE org_id = $1 AND id = $2 FOR UPDATE', [o.orgId, high]);
       const running = exec<BulkEditResult>(o, o.member, 'social.post.bulk_labels', { postIds: [high, low, mid], add: [spring], remove: [] });
       for (let waiting = 0; waiting < 1; ) {
         await new Promise((resolve) => setTimeout(resolve, 20));
@@ -373,9 +373,9 @@ suite('social bulk labels and assignment on PostgreSQL (#1057)', () => {
       }
       // While it waits, the lower posts are already its own, and none has a label yet.
       for (const id of [low, mid]) {
-        await expect(prober.query('SELECT id FROM crove_social.post WHERE org_id = $1 AND id = $2 FOR UPDATE NOWAIT', [o.orgId, id])).rejects.toMatchObject({ code: '55P03' });
+        await expect(prober.query('SELECT id FROM ludy_social.post WHERE org_id = $1 AND id = $2 FOR UPDATE NOWAIT', [o.orgId, id])).rejects.toMatchObject({ code: '55P03' });
       }
-      const { rows: early } = await prober.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_social.post_label WHERE org_id = $1', [o.orgId]);
+      const { rows: early } = await prober.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_social.post_label WHERE org_id = $1', [o.orgId]);
       expect(early[0]?.n).toBe(0);
       await holder.query('COMMIT');
       const result = await running;

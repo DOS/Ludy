@@ -482,7 +482,7 @@ suite('Notes v2 E1 (#3559): notebooks, 2-level stacks, checkbox updates, [[Note]
       { value: piiEmail },
       { actor: asUser(users.owner), orgId },
     );
-    expect(found.matches.some((m) => m.column === 'crove_notes.notebook.name' && m.rowId === sharedNb.notebookId)).toBe(true);
+    expect(found.matches.some((m) => m.column === 'ludy_notes.notebook.name' && m.rowId === sharedNb.notebookId)).toBe(true);
     expect(found.matches.some((m) => m.rowId === privNb.notebookId)).toBe(false);
     expect(found.privateItems).toEqual([{ authorUserId: users.alice, notes: 1, todos: 0 }]);
 
@@ -517,9 +517,9 @@ suite('Notes v2 E1 (#3559): notebooks, 2-level stacks, checkbox updates, [[Note]
       { value: piiEmail },
       { actor: asMfa(users.owner), orgId },
     );
-    expect(firstErase.erased).toContainEqual({ column: 'crove_notes.notebook.name', rows: 1 });
-    expect(firstErase.erased).toContainEqual({ column: 'crove_notes.notebook.stack_name', rows: 1 });
-    expect(firstErase.kept.some((k) => k.column === 'crove_notes.note' && k.rows === 1)).toBe(true);
+    expect(firstErase.erased).toContainEqual({ column: 'ludy_notes.notebook.name', rows: 1 });
+    expect(firstErase.erased).toContainEqual({ column: 'ludy_notes.notebook.stack_name', rows: 1 });
+    expect(firstErase.kept.some((k) => k.column === 'ludy_notes.note' && k.rows === 1)).toBe(true);
 
     // Shared notebook name & stackName were redacted in place!
     const sharedAfterRedact = await runtime.query<NotebooksResponse>('notes.notebook.list', {}, { actor: asUser(users.bob), orgId });
@@ -549,8 +549,8 @@ suite('Notes v2 E1 (#3559): notebooks, 2-level stacks, checkbox updates, [[Note]
       { value: piiEmail },
       { actor: asMfa(users.owner), orgId },
     );
-    expect(secondErase.erased).toContainEqual({ column: 'crove_notes.note', rows: 1 });
-    expect(secondErase.kept.some((k) => k.column === 'crove_notes.note')).toBe(false);
+    expect(secondErase.erased).toContainEqual({ column: 'ludy_notes.note', rows: 1 });
+    expect(secondErase.kept.some((k) => k.column === 'ludy_notes.note')).toBe(false);
 
     const aliceAfterErase = await runtime.query<NotebooksResponse>('notes.notebook.list', {}, { actor: asUser(users.alice), orgId });
     expect(aliceAfterErase.notebooks.find((b) => b.id === privNb.notebookId)).toBeUndefined();
@@ -571,7 +571,7 @@ suite('Notes v2 E1 (#3559): notebooks, 2-level stacks, checkbox updates, [[Note]
 
     // Notebooks made before that (each author's first got the same key) collide; Bob cannot rewrite the shared ones.
     await admin(async (c) => {
-      await c.query(`UPDATE crove_notes.notebook SET sort_key = 'V' WHERE org_id = $1 AND id = ANY($2::uuid[])`, [
+      await c.query(`UPDATE ludy_notes.notebook SET sort_key = 'V' WHERE org_id = $1 AND id = ANY($2::uuid[])`, [
         orgId,
         [x1.notebookId, x2.notebookId, mine.notebookId],
       ]);

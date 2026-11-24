@@ -24,7 +24,7 @@ import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../compo
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 
-const NUM = 'px-4 py-3 text-right tabular-nums';
+const NUM = 'text-right tabular-nums';
 const LEVEL = { 1: 'levels.first', 2: 'levels.second', 3: 'levels.third' } as const;
 const WORDING = { used: 'wording.used', off: 'wording.off', busy: 'wording.busy', budget: 'wording.budget', failed: 'wording.failed' } as const;
 
@@ -172,10 +172,10 @@ function DraftCard({
             <DataTable head={[t('invoice'), t('invoiceDate'), t('dueDate'), t('overdue'), t('amountDue')]} numeric={[4]} foot={<FactsTotal draft={draft} />}>
               {draft.invoices.map((i) => (
                 <TableRow key={i.id}>
-                  <TableCell className="px-4 py-3">{t('invoiceName', { number: i.number, series: i.series || '-' })}</TableCell>
-                  <TableCell className="px-4 py-3">{f.date(i.date)}</TableCell>
-                  <TableCell className="px-4 py-3">{f.date(i.dueDate)}</TableCell>
-                  <TableCell className="px-4 py-3">{t('days', { count: i.daysOverdue })}</TableCell>
+                  <TableCell>{t('invoiceName', { number: i.number, series: i.series || '-' })}</TableCell>
+                  <TableCell className="tabular-nums">{f.date(i.date)}</TableCell>
+                  <TableCell className="tabular-nums">{f.date(i.dueDate)}</TableCell>
+                  <TableCell className="tabular-nums">{t('days', { count: i.daysOverdue })}</TableCell>
                   <TableCell className={NUM}>{f.money(i.amountDue, draft.currency)}</TableCell>
                 </TableRow>
               ))}
@@ -246,7 +246,7 @@ function FactsTotal({ draft }: { draft: PaymentReminderDraft }) {
   const f = useFormat();
   return (
     <TableRow>
-      <TableCell className="px-4 py-3 font-medium" colSpan={4}>
+      <TableCell className="font-medium" colSpan={4}>
         {t('total')}
       </TableCell>
       <TableCell className={`${NUM} font-medium`}>{f.money(draft.total, draft.currency)}</TableCell>
@@ -369,24 +369,24 @@ function Row({ customer, checked, onCheck, onOpen, currency }: { customer: Payme
   const f = useFormat();
   return (
     <TableRow data-testid="reminder-row">
-      <TableCell className="w-10 px-4 py-3">
+      <TableCell className="w-10">
         <Checkbox checked={checked} onCheckedChange={(value) => onCheck(value === true)} aria-label={t('select', { name: customer.name })} />
       </TableCell>
-      <TableCell className="px-4 py-3">
+      <TableCell>
         <p className="break-words text-foreground">{customer.name}</p>
         {customer.email === null && <p className="mt-1 text-xs text-destructive">{t('noEmail')}</p>}
         {customer.other !== '0' && <p className="mt-1 text-xs text-subtle-foreground">{t('other', { amount: f.money(customer.other, currency) })}</p>}
       </TableCell>
       <TableCell className={NUM}>{customer.invoiceCount}</TableCell>
       <TableCell className={NUM}>{t('days', { count: customer.daysOverdue })}</TableCell>
-      <TableCell className="px-4 py-3">
+      <TableCell>
         <Badge variant={customer.level === 3 ? 'destructive' : 'outline'}>{t(LEVEL[customer.level])}</Badge>
       </TableCell>
       <TableCell className={NUM}>{f.money(customer.total, currency)}</TableCell>
-      <TableCell className="px-4 py-3 text-sm text-muted-foreground">
+      <TableCell className="text-sm text-muted-foreground">
         {customer.lastReminder ? t('lastReminder', { date: f.date(customer.lastReminder.at), level: t(LEVEL[customer.lastReminder.level]) }) : t('never')}
       </TableCell>
-      <TableCell className="px-4 py-3 text-right">
+      <TableCell className="text-right">
         <Button variant="outline" size="sm" onClick={onOpen} aria-label={t('composeFor', { name: customer.name })}>
           {t('compose')}
         </Button>

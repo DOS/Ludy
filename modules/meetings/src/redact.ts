@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Code-assisted draft redaction (#4001, ADR-0047): deterministic detection across all draft publish surfaces;
-// typed non-value marks; no undo store; recorder-only; drops private Vy results and draft translations so redacted text cannot return.
+// typed non-value marks; no undo store; recorder-only; drops private Vy results and draft translations and blanks the live preview so redacted text cannot return.
 import { sql } from 'kysely';
 import {
   REDACTION_CANDIDATES_MAX,
@@ -74,10 +74,10 @@ interface LockedChapter {
 async function meetingHasPublished(trx: Trx, orgId: string, meetingId: string): Promise<boolean> {
   const { rows } = await sql<{ published: boolean }>`
     SELECT (
-      EXISTS (SELECT 1 FROM crove_meetings.transcript_segment s WHERE s.org_id = ${orgId}::uuid AND s.meeting_id = ${meetingId}::uuid AND s.stage = 'published')
-      OR EXISTS (SELECT 1 FROM crove_meetings.meeting_result r WHERE r.org_id = ${orgId}::uuid AND r.meeting_id = ${meetingId}::uuid AND r.stage = 'published')
-      OR EXISTS (SELECT 1 FROM crove_meetings.action_item i WHERE i.org_id = ${orgId}::uuid AND i.meeting_id = ${meetingId}::uuid AND i.stage = 'published')
-      OR EXISTS (SELECT 1 FROM crove_meetings.meeting_chapter c WHERE c.org_id = ${orgId}::uuid AND c.meeting_id = ${meetingId}::uuid AND c.stage = 'published')
+      EXISTS (SELECT 1 FROM ludy_meetings.transcript_segment s WHERE s.org_id = ${orgId}::uuid AND s.meeting_id = ${meetingId}::uuid AND s.stage = 'published')
+      OR EXISTS (SELECT 1 FROM ludy_meetings.meeting_result r WHERE r.org_id = ${orgId}::uuid AND r.meeting_id = ${meetingId}::uuid AND r.stage = 'published')
+      OR EXISTS (SELECT 1 FROM ludy_meetings.action_item i WHERE i.org_id = ${orgId}::uuid AND i.meeting_id = ${meetingId}::uuid AND i.stage = 'published')
+      OR EXISTS (SELECT 1 FROM ludy_meetings.meeting_chapter c WHERE c.org_id = ${orgId}::uuid AND c.meeting_id = ${meetingId}::uuid AND c.stage = 'published')
     ) AS published`.execute(trx);
   return rows[0]?.published ?? false;
 }
@@ -100,22 +100,22 @@ async function findExistingStages(
   const [segs, res, items, chaps] = await Promise.all([
     segIds.length > 0
       ? sql<{ id: string; stage: string }>`
-          SELECT id, stage FROM crove_meetings.transcript_segment
+          SELECT id, stage FROM ludy_meetings.transcript_segment
           WHERE org_id = ${orgId}::uuid AND meeting_id = ${meetingId}::uuid AND id = ANY(${sql.val(segIds)}::uuid[])`.execute(trx)
       : Promise.resolve({ rows: [] }),
     resIds.length > 0
       ? sql<{ id: string; stage: string }>`
-          SELECT id, stage FROM crove_meetings.meeting_result
+          SELECT id, stage FROM ludy_meetings.meeting_result
           WHERE org_id = ${orgId}::uuid AND meeting_id = ${meetingId}::uuid AND id = ANY(${sql.val(resIds)}::uuid[])`.execute(trx)
       : Promise.resolve({ rows: [] }),
     itemIds.length > 0
       ? sql<{ id: string; stage: string; status: string }>`
-          SELECT id, stage, status FROM crove_meetings.action_item
+          SELECT id, stage, status FROM ludy_meetings.action_item
           WHERE org_id = ${orgId}::uuid AND meeting_id = ${meetingId}::uuid AND id = ANY(${sql.val(itemIds)}::uuid[])`.execute(trx)
       : Promise.resolve({ rows: [] }),
     chapIds.length > 0
       ? sql<{ id: string; stage: string }>`
-          SELECT id, stage FROM crove_meetings.meeting_chapter
+          SELECT id, stage FROM ludy_meetings.meeting_chapter
           WHERE org_id = ${orgId}::uuid AND meeting_id = ${meetingId}::uuid AND id = ANY(${sql.val(chapIds)}::uuid[])`.execute(trx)
       : Promise.resolve({ rows: [] }),
   ]);
@@ -132,7 +132,7 @@ async function lockSegments(trx: Trx, orgId: string, meetingId: string, ids: rea
   const { rows } = await sql<LockedSegment>`
     SELECT id, stage, text, speaker_label,
            pg_catalog.to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS version
-    FROM crove_meetings.transcript_segment
+    FROM ludy_meetings.transcript_segment
     WHERE org_id = ${orgId}::uuid AND meeting_id = ${meetingId}::uuid AND id = ANY(${sql.val(ids)}::uuid[])
     ORDER BY id
     FOR NO KEY UPDATE`.execute(trx);
@@ -144,7 +144,7 @@ async function lockResults(trx: Trx, orgId: string, meetingId: string, ids: read
   const { rows } = await sql<LockedResult>`
     SELECT id, stage, summary, decisions,
            pg_catalog.to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS version
-    FROM crove_meetings.meeting_result
+    FROM ludy_meetings.meeting_result
     WHERE org_id = ${orgId}::uuid AND meeting_id = ${meetingId}::uuid AND id = ANY(${sql.val(ids)}::uuid[])
     ORDER BY id
     FOR NO KEY UPDATE`.execute(trx);
@@ -156,7 +156,7 @@ async function lockActionItems(trx: Trx, orgId: string, meetingId: string, ids: 
   const { rows } = await sql<LockedActionItem>`
     SELECT id, stage, status, title, who_drafted, when_drafted, flags,
            pg_catalog.to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS version
-    FROM crove_meetings.action_item
+    FROM ludy_meetings.action_item
     WHERE org_id = ${orgId}::uuid AND meeting_id = ${meetingId}::uuid AND id = ANY(${sql.val(ids)}::uuid[])
     ORDER BY id
     FOR NO KEY UPDATE`.execute(trx);
@@ -168,7 +168,7 @@ async function lockChapters(trx: Trx, orgId: string, meetingId: string, ids: rea
   const { rows } = await sql<LockedChapter>`
     SELECT id, stage, title,
            pg_catalog.to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS version
-    FROM crove_meetings.meeting_chapter
+    FROM ludy_meetings.meeting_chapter
     WHERE org_id = ${orgId}::uuid AND meeting_id = ${meetingId}::uuid AND id = ANY(${sql.val(ids)}::uuid[])
     ORDER BY id
     FOR NO KEY UPDATE`.execute(trx);
@@ -178,6 +178,8 @@ async function lockChapters(trx: Trx, orgId: string, meetingId: string, ids: rea
 const staleError = () => new DomainError('REDACTION_STALE', 409, 'This draft changed since you reviewed it; reload and review again');
 const publishedError = () => new DomainError('REDACTION_PUBLISHED_IMMUTABLE', 409, 'Published meeting text cannot be redacted');
 const mismatchError = () => new DomainError('REDACTION_SPAN_MISMATCH', 422, 'Selected item no longer matches detected personal data');
+// The marks are longer than most of what they replace (#4540): a field close to its cap can grow past it. The command refuses it, whole (nothing is written), instead of cutting the end of the user's text.
+const tooLongError = () => new DomainError('REDACTION_TOO_LONG', 422, 'The text would be longer than this field allows once the marks are in; shorten the text first');
 
 interface FieldRedactionTask {
   key: string;
@@ -196,7 +198,7 @@ async function redactFieldsBatch(trx: Trx, tasks: ReadonlyArray<FieldRedactionTa
     kinds: task.selections.map((s) => s.kind),
     marks: task.selections.map((s) => REDACTION_MARK_BY_KIND[s.kind]),
   }));
-  const { rows } = await sql<{ idx: number; has_mismatch: boolean; redacted: string | null }>`
+  const { rows } = await sql<{ idx: number; has_mismatch: boolean; redacted: string | null; too_long: boolean }>`
     WITH req AS (
       SELECT
         r.idx,
@@ -240,15 +242,24 @@ async function redactFieldsBatch(trx: Trx, tasks: ReadonlyArray<FieldRedactionTa
           )
         ) AS has_mismatch
       FROM req
+    ),
+    done AS (
+      SELECT
+        idx,
+        has_mismatch,
+        max_len,
+        CASE
+          WHEN has_mismatch THEN NULL::text
+          ELSE ludy_kernel.text_redact_spans(text, starts, kinds, marks)
+        END AS redacted
+      FROM checked
     )
     SELECT
       idx,
       has_mismatch,
-      CASE
-        WHEN has_mismatch THEN NULL::text
-        ELSE pg_catalog.left(ludy_kernel.text_redact_spans(text, starts, kinds, marks), max_len)
-      END AS redacted
-    FROM checked
+      redacted,
+      COALESCE(pg_catalog.length(redacted) > max_len, false) AS too_long
+    FROM done
     ORDER BY idx`.execute(trx);
 
   if (rows.length !== tasks.length) throw mismatchError();
@@ -257,7 +268,10 @@ async function redactFieldsBatch(trx: Trx, tasks: ReadonlyArray<FieldRedactionTa
     const task = tasks[i]!;
     const row = rows[i]!;
     const redacted = row.redacted;
-    if (row.idx !== i || row.has_mismatch || redacted === null || redacted === undefined || redacted === task.text || redacted.length === 0) {
+    if (row.idx !== i) throw mismatchError();
+    // A selection the server does not detect any more is a mismatch whatever the length; only a matching one that would not fit is "too long".
+    if (!row.has_mismatch && row.too_long) throw tooLongError();
+    if (row.has_mismatch || redacted === null || redacted === undefined || redacted === task.text || redacted.length === 0) {
       throw mismatchError();
     }
     redactedByKey.set(task.key, redacted);
@@ -323,7 +337,7 @@ export const transcriptRedactCandidates = defineQuery({
           d.match_text,
           pg_catalog.to_char(m.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS version,
           NULL::double precision AS start_seconds
-        FROM crove_meetings.meeting m
+        FROM ludy_meetings.meeting m
         CROSS JOIN LATERAL ludy_kernel.text_detect(m.title) d
         WHERE ${titleEditable}::boolean AND m.org_id = ${ctx.orgId}::uuid AND m.id = ${input.meetingId}::uuid
 
@@ -335,7 +349,7 @@ export const transcriptRedactCandidates = defineQuery({
           d.kind, d.start_pos, d.end_pos, d.match_text,
           pg_catalog.to_char(s.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
           s.start_seconds::double precision
-        FROM crove_meetings.transcript_segment s
+        FROM ludy_meetings.transcript_segment s
         CROSS JOIN LATERAL ludy_kernel.text_detect(s.text) d
         WHERE s.org_id = ${ctx.orgId}::uuid AND s.meeting_id = ${input.meetingId}::uuid AND s.stage = 'draft'
 
@@ -347,7 +361,7 @@ export const transcriptRedactCandidates = defineQuery({
           d.kind, d.start_pos, d.end_pos, d.match_text,
           pg_catalog.to_char(s.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
           s.start_seconds::double precision
-        FROM crove_meetings.transcript_segment s
+        FROM ludy_meetings.transcript_segment s
         CROSS JOIN LATERAL ludy_kernel.text_detect(s.speaker_label) d
         WHERE s.org_id = ${ctx.orgId}::uuid AND s.meeting_id = ${input.meetingId}::uuid AND s.stage = 'draft'
 
@@ -359,7 +373,7 @@ export const transcriptRedactCandidates = defineQuery({
           d.kind, d.start_pos, d.end_pos, d.match_text,
           pg_catalog.to_char(r.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
           NULL::double precision
-        FROM crove_meetings.meeting_result r
+        FROM ludy_meetings.meeting_result r
         CROSS JOIN LATERAL ludy_kernel.text_detect(r.summary) d
         WHERE r.org_id = ${ctx.orgId}::uuid AND r.meeting_id = ${input.meetingId}::uuid AND r.stage = 'draft'
 
@@ -371,7 +385,7 @@ export const transcriptRedactCandidates = defineQuery({
           d.kind, d.start_pos, d.end_pos, d.match_text,
           pg_catalog.to_char(r.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
           NULL::double precision
-        FROM crove_meetings.meeting_result r
+        FROM ludy_meetings.meeting_result r
         CROSS JOIN LATERAL pg_catalog.jsonb_array_elements(r.decisions) WITH ORDINALITY AS dec(v, ord)
         CROSS JOIN LATERAL ludy_kernel.text_detect(dec.v #>> '{}') d
         WHERE r.org_id = ${ctx.orgId}::uuid AND r.meeting_id = ${input.meetingId}::uuid AND r.stage = 'draft'
@@ -385,7 +399,7 @@ export const transcriptRedactCandidates = defineQuery({
           d.kind, d.start_pos, d.end_pos, d.match_text,
           pg_catalog.to_char(i.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
           i.transcript_seconds::double precision
-        FROM crove_meetings.action_item i
+        FROM ludy_meetings.action_item i
         CROSS JOIN LATERAL ludy_kernel.text_detect(i.title) d
         WHERE i.org_id = ${ctx.orgId}::uuid AND i.meeting_id = ${input.meetingId}::uuid AND i.stage = 'draft' AND i.status = 'suggested'
 
@@ -397,7 +411,7 @@ export const transcriptRedactCandidates = defineQuery({
           d.kind, d.start_pos, d.end_pos, d.match_text,
           pg_catalog.to_char(i.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
           i.transcript_seconds::double precision
-        FROM crove_meetings.action_item i
+        FROM ludy_meetings.action_item i
         CROSS JOIN LATERAL ludy_kernel.text_detect(i.who_drafted) d
         WHERE i.org_id = ${ctx.orgId}::uuid AND i.meeting_id = ${input.meetingId}::uuid AND i.stage = 'draft' AND i.status = 'suggested'
 
@@ -409,7 +423,7 @@ export const transcriptRedactCandidates = defineQuery({
           d.kind, d.start_pos, d.end_pos, d.match_text,
           pg_catalog.to_char(i.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
           i.transcript_seconds::double precision
-        FROM crove_meetings.action_item i
+        FROM ludy_meetings.action_item i
         CROSS JOIN LATERAL ludy_kernel.text_detect(i.when_drafted) d
         WHERE i.org_id = ${ctx.orgId}::uuid AND i.meeting_id = ${input.meetingId}::uuid AND i.stage = 'draft' AND i.status = 'suggested'
 
@@ -421,7 +435,7 @@ export const transcriptRedactCandidates = defineQuery({
           d.kind, d.start_pos, d.end_pos, d.match_text,
           pg_catalog.to_char(c.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
           c.start_seconds::double precision
-        FROM crove_meetings.meeting_chapter c
+        FROM ludy_meetings.meeting_chapter c
         CROSS JOIN LATERAL ludy_kernel.text_detect(c.title) d
         WHERE c.org_id = ${ctx.orgId}::uuid AND c.meeting_id = ${input.meetingId}::uuid AND c.stage = 'draft'
       )
@@ -448,6 +462,29 @@ export const transcriptRedactCandidates = defineQuery({
 });
 
 // Builds the redaction commands, taking the delete-only draft-translation helper from translate.ts so this file stays isolated from that table.
+// Blanks the text of the meeting's live preview lines: each line that holds text is deleted and written again with the same seq, start, end, run and creation time and no text (a silent piece), in the
+// caller's transaction, so the taint's source, the 30-day expiry clock and the "already copied" check by run all stay as they were. Returns how many lines held text. Only the recorder reaches it
+// (redaction is recorder-only, and the table's row security lets only the recorder read, write and delete a line).
+async function clearLiveLines(trx: Trx, orgId: string, meetingId: string): Promise<number> {
+  const { rows } = await sql<{ seq: number; start_seconds: number; end_seconds: number; source_run_id: string | null; created_at: Date }>`
+    SELECT seq, start_seconds, end_seconds, source_run_id, created_at FROM ludy_meetings.live_line
+    WHERE org_id = ${orgId}::uuid AND meeting_id = ${meetingId}::uuid AND text <> ''
+    ORDER BY seq`.execute(trx);
+  if (rows.length === 0) return 0;
+  await sql`DELETE FROM ludy_meetings.live_line WHERE org_id = ${orgId}::uuid AND meeting_id = ${meetingId}::uuid AND text <> ''`.execute(trx);
+  await sql`
+    INSERT INTO ludy_meetings.live_line (org_id, meeting_id, seq, start_seconds, end_seconds, text, source_run_id, created_at)
+    SELECT ${orgId}::uuid, ${meetingId}::uuid, u.seq, u.start_seconds, u.end_seconds, '', u.source_run_id, u.created_at
+    FROM ROWS FROM (
+      pg_catalog.unnest(${sql.val(rows.map((r) => r.seq))}::int[]),
+      pg_catalog.unnest(${sql.val(rows.map((r) => r.start_seconds))}::int[]),
+      pg_catalog.unnest(${sql.val(rows.map((r) => r.end_seconds))}::int[]),
+      pg_catalog.unnest(${sql.val(rows.map((r) => r.source_run_id))}::uuid[]),
+      pg_catalog.unnest(${sql.val(rows.map((r) => new Date(r.created_at).toISOString()))}::timestamptz[])
+    ) AS u(seq, start_seconds, end_seconds, source_run_id, created_at)`.execute(trx);
+  return rows.length;
+}
+
 export function createRedactCommands(dropDraftTranslations: DropDraftTranslationsFn) {
   const transcriptRedact = defineCommand({
   name: 'meetings.transcript.redact',
@@ -473,7 +510,7 @@ export function createRedactCommands(dropDraftTranslations: DropDraftTranslation
     // Lock meeting first, then child draft rows in personal_erase's order (meeting -> segments -> results -> action items -> chapters).
     const { rows: lockedMeetings } = await sql<{ id: string; title: string; version: string }>`
       SELECT id, title, pg_catalog.to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS version
-      FROM crove_meetings.meeting
+      FROM ludy_meetings.meeting
       WHERE org_id = ${ctx.orgId}::uuid AND id = ${input.meetingId}::uuid
       FOR NO KEY UPDATE`.execute(ctx.trx);
     const lockedMeeting = lockedMeetings[0];
@@ -723,9 +760,16 @@ export function createRedactCommands(dropDraftTranslations: DropDraftTranslation
       subjectId: input.meetingId,
     });
 
+    // The recorder's live transcript preview (live_line, #4557) is not a surface they review or select from, so no candidate is listed for it, yet it is the model's transcription of the same audio and it
+    // feeds the next live notes run: a number redacted from the draft would come back through it. A redaction therefore clears the text of the preview whole, as it drops the private Vy results. A line
+    // is not deleted but blanked (deleted and written again as a silent piece, '' at the same seq): the preview's progress is the highest seq it holds, so the next window must still start after it
+    // and not read the audio again. A silent piece is never shown and never read as text. The meeting row is held (above); a tick that copies a window of new audio at the same moment adds text of its own,
+    // which is new audio and not redacted text coming back.
+    const clearedLiveLines = await clearLiveLines(ctx.trx, ctx.orgId, input.meetingId);
+
     if (nextMeetingTitle !== null) {
       await ctx.trx
-        .updateTable('crove_meetings.meeting')
+        .updateTable('ludy_meetings.meeting')
         .set({ title: nextMeetingTitle, updated_at: sql<Date>`pg_catalog.now()` })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.meetingId)
@@ -736,7 +780,7 @@ export function createRedactCommands(dropDraftTranslations: DropDraftTranslation
       const texts = ids.map((id) => segmentUpdates.get(id)!.text);
       const speakers = ids.map((id) => segmentUpdates.get(id)!.speakerLabel);
       await sql`
-        UPDATE crove_meetings.transcript_segment AS s
+        UPDATE ludy_meetings.transcript_segment AS s
         SET text = u.text,
             speaker_label = u.speaker_label,
             updated_at = pg_catalog.now()
@@ -754,7 +798,7 @@ export function createRedactCommands(dropDraftTranslations: DropDraftTranslation
       const summaries = ids.map((id) => resultUpdates.get(id)!.summary);
       const decisionsJson = ids.map((id) => JSON.stringify(resultUpdates.get(id)!.decisions));
       await sql`
-        UPDATE crove_meetings.meeting_result AS r
+        UPDATE ludy_meetings.meeting_result AS r
         SET summary = u.summary,
             decisions = u.decisions::jsonb,
             updated_at = pg_catalog.now()
@@ -774,7 +818,7 @@ export function createRedactCommands(dropDraftTranslations: DropDraftTranslation
       const whenList = ids.map((id) => actionUpdates.get(id)!.whenDrafted);
       const flagsJson = ids.map((id) => JSON.stringify(actionUpdates.get(id)!.flags));
       await sql`
-        UPDATE crove_meetings.action_item AS i
+        UPDATE ludy_meetings.action_item AS i
         SET title = u.title,
             who_drafted = u.who_drafted,
             when_drafted = u.when_drafted,
@@ -795,7 +839,7 @@ export function createRedactCommands(dropDraftTranslations: DropDraftTranslation
       const ids = [...chapterUpdates.keys()];
       const titles = ids.map((id) => chapterUpdates.get(id)!);
       await sql`
-        UPDATE crove_meetings.meeting_chapter AS c
+        UPDATE ludy_meetings.meeting_chapter AS c
         SET title = u.title,
             updated_at = pg_catalog.now()
         FROM ROWS FROM (
@@ -835,6 +879,7 @@ export function createRedactCommands(dropDraftTranslations: DropDraftTranslation
       droppedVyResults: droppedVy.removed,
       cancelledVyRuns: droppedVy.cancelled,
       droppedTranslations,
+      clearedLiveLines,
     });
 
     const countsByKind: RedactionCountsByKind = {

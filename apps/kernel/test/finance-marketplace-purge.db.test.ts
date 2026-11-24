@@ -89,7 +89,7 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
     const channelId = randomUUID();
     await rows('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, channelId, provider, `purge-${randomUUID()}`, 'purge test', o.owner]);
     const id = randomUUID();
-    await rows("INSERT INTO crove_finance.marketplace_connection (org_id, id, channel_connection_id, provider, platform, poll_cursor) VALUES ($1, $2, $3, $4, $5, 'cursor-after-page-3')", [o.orgId, id, channelId, provider, platform]);
+    await rows("INSERT INTO ludy_finance.marketplace_connection (org_id, id, channel_connection_id, provider, platform, poll_cursor) VALUES ($1, $2, $3, $4, $5, 'cursor-after-page-3')", [o.orgId, id, channelId, provider, platform]);
     return id;
   }
   // A file the connection's poll ingested: the bytes are in the store, the row is made by the real intake, the link is the one ingest_page writes, and its extraction versions are the given states.
@@ -110,23 +110,23 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
         JSON.stringify({ kind: options.kind ?? 'marketplace_orders', summary: { state, platform: 'shopee', orders: 3 }, ...(state === 'staged' ? { lines: [] } : {}) }),
       ]);
     }
-    await rows('INSERT INTO crove_finance.marketplace_connection_file (org_id, marketplace_connection_id, file_id) VALUES ($1, $2, $3)', [o.orgId, connectionId, fileId]);
+    await rows('INSERT INTO ludy_finance.marketplace_connection_file (org_id, marketplace_connection_id, file_id) VALUES ($1, $2, $3)', [o.orgId, connectionId, fileId]);
     return fileId;
   }
-  const disconnect = (o: Org, connectionId: string) => rows('DELETE FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [o.orgId, connectionId]);
+  const disconnect = (o: Org, connectionId: string) => rows('DELETE FROM ludy_finance.marketplace_connection WHERE org_id = $1 AND id = $2', [o.orgId, connectionId]);
   // Moves the disconnect of a file's link back by `days` (superuser; the test stands in for the passing of time).
-  const age = (o: Org, fileId: string, days: number) => rows('UPDATE crove_finance.marketplace_connection_file SET disconnected_at = now() - make_interval(days => $3) WHERE org_id = $1 AND file_id = $2', [o.orgId, fileId, days]);
+  const age = (o: Org, fileId: string, days: number) => rows('UPDATE ludy_finance.marketplace_connection_file SET disconnected_at = now() - make_interval(days => $3) WHERE org_id = $1 AND file_id = $2', [o.orgId, fileId, days]);
   // The channel of a connection that is still there, as `status` since `days` ago.
   const channel = (o: Org, connectionId: string, status: 'active' | 'expired' | 'revoked', days: number) =>
     rows(
-      'UPDATE ludy_kernel.channel_connection SET status = $3, updated_at = now() - make_interval(days => $4) WHERE org_id = $1 AND id = (SELECT channel_connection_id FROM crove_finance.marketplace_connection WHERE org_id = $1 AND id = $2)',
+      'UPDATE ludy_kernel.channel_connection SET status = $3, updated_at = now() - make_interval(days => $4) WHERE org_id = $1 AND id = (SELECT channel_connection_id FROM ludy_finance.marketplace_connection WHERE org_id = $1 AND id = $2)',
       [o.orgId, connectionId, status, days],
     );
   const fileRow = async (fileId: string) => (await rows<{ original_deleted_at: string | null; storage_key: string; sha256: string }>('SELECT original_deleted_at::text, storage_key, sha256 FROM ludy_kernel.file WHERE id = $1', [fileId]))[0];
   const versions = (fileId: string) => rows<{ version: number; state: string | null }>("SELECT version, result -> 'summary' ->> 'state' AS state FROM ludy_kernel.extraction WHERE file_id = $1 ORDER BY version", [fileId]);
-  const link = (fileId: string) => rows<{ marketplace_connection_id: string | null; disconnected_at: string | null }>('SELECT marketplace_connection_id, disconnected_at::text FROM crove_finance.marketplace_connection_file WHERE file_id = $1', [fileId]);
+  const link = (fileId: string) => rows<{ marketplace_connection_id: string | null; disconnected_at: string | null }>('SELECT marketplace_connection_id, disconnected_at::text FROM ludy_finance.marketplace_connection_file WHERE file_id = $1', [fileId]);
   const cursor = async (connectionId: string) => {
-    const found = await rows<{ poll_cursor: string | null }>('SELECT poll_cursor FROM crove_finance.marketplace_connection WHERE id = $1', [connectionId]);
+    const found = await rows<{ poll_cursor: string | null }>('SELECT poll_cursor FROM ludy_finance.marketplace_connection WHERE id = $1', [connectionId]);
     return found.length === 0 ? 'no row' : (found[0] as { poll_cursor: string | null }).poll_cursor;
   };
   const run = (batch?: number) => runMarketplacePurge({ runtime: worker, workerDb, store, ...(batch === undefined ? {} : { batch }), log: { log: () => undefined, error: () => undefined } });
@@ -182,7 +182,7 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
     expect((await versions(fileGone)).length).toBe(1);
     expect(await link(fileStays)).toEqual([{ marketplace_connection_id: stays, disconnected_at: null }]);
     // A link with no connection must say when it went.
-    await expect(rows('UPDATE crove_finance.marketplace_connection_file SET disconnected_at = NULL WHERE file_id = $1', [fileGone])).rejects.toBeDefined();
+    await expect(rows('UPDATE ludy_finance.marketplace_connection_file SET disconnected_at = NULL WHERE file_id = $1', [fileGone])).rejects.toBeDefined();
   });
 
   it('refuses to write an orphan link: no writer, whatever its role, can make a file of its own a purge candidate', async () => {
@@ -200,8 +200,8 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
       { actor: asUser(o.owner), orgId: o.orgId },
     );
     // A link with no connection, or one that carries a disconnect time, is refused (a superuser too: only the replica role skips a trigger, and a tenant cannot set it).
-    await expect(rows("INSERT INTO crove_finance.marketplace_connection_file (org_id, marketplace_connection_id, file_id, disconnected_at) VALUES ($1, NULL, $2, now() - interval '30 days')", [o.orgId, own])).rejects.toThrow(/MARKETPLACE_LINK_NEEDS_CONNECTION/);
-    await expect(rows("INSERT INTO crove_finance.marketplace_connection_file (org_id, marketplace_connection_id, file_id, disconnected_at) VALUES ($1, $2, $3, now() - interval '30 days')", [o.orgId, id, own])).rejects.toThrow(/MARKETPLACE_LINK_NEEDS_CONNECTION/);
+    await expect(rows("INSERT INTO ludy_finance.marketplace_connection_file (org_id, marketplace_connection_id, file_id, disconnected_at) VALUES ($1, NULL, $2, now() - interval '30 days')", [o.orgId, own])).rejects.toThrow(/MARKETPLACE_LINK_NEEDS_CONNECTION/);
+    await expect(rows("INSERT INTO ludy_finance.marketplace_connection_file (org_id, marketplace_connection_id, file_id, disconnected_at) VALUES ($1, $2, $3, now() - interval '30 days')", [o.orgId, id, own])).rejects.toThrow(/MARKETPLACE_LINK_NEEDS_CONNECTION/);
     await disconnect(o, id);
     await age(o, file, GRACE + 1);
     // Only the file the removed connection brought goes; the member's own upload is nobody's candidate.
@@ -287,7 +287,7 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
     const stillThere = await polled(o, live, ['staged']);
     await asReplica("UPDATE ludy_kernel.file SET held_until = now() + interval '30 days' WHERE org_id = $1 AND id = $2", [o.orgId, held]);
     await asReplica(
-      `INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total, source_file_id) VALUES ($1, $2, 'X1', '2026-11-01', 1, 0, 1, $3)`,
+      `INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total, source_file_id) VALUES ($1, $2, 'X1', '2026-11-01', 1, 0, 1, $3)`,
       [o.orgId, randomUUID(), invoiced],
     );
     await disconnect(o, id);
@@ -511,23 +511,23 @@ suite('purge of the never-booked files of a gone marketplace connection (#4284)'
     await disconnect(o, id);
     await age(o, file, GRACE + 1);
     // The list is the worker login without a context.
-    await expect(pool.query('SELECT * FROM crove_finance.marketplace_purge_due($1, $2, 10)', [GRACE, EXPIRED])).rejects.toBeDefined();
-    expect((await workerPool.query('SELECT * FROM crove_finance.marketplace_purge_due($1, $2, 1000)', [GRACE, EXPIRED])).rows.some((r) => r.file_id === file)).toBe(true);
-    for (const days of [0, 1, 6, 15, -1]) await expect(workerPool.query('SELECT * FROM crove_finance.marketplace_purge_due($1, $2, 10)', [days, EXPIRED])).rejects.toMatchObject({ code: '22023' });
-    for (const expired of [0, 1, 29, 91]) await expect(workerPool.query('SELECT * FROM crove_finance.marketplace_purge_due($1, $2, 10)', [GRACE, expired])).rejects.toMatchObject({ code: '22023' });
+    await expect(pool.query('SELECT * FROM ludy_finance.marketplace_purge_due($1, $2, 10)', [GRACE, EXPIRED])).rejects.toBeDefined();
+    expect((await workerPool.query('SELECT * FROM ludy_finance.marketplace_purge_due($1, $2, 1000)', [GRACE, EXPIRED])).rows.some((r) => r.file_id === file)).toBe(true);
+    for (const days of [0, 1, 6, 15, -1]) await expect(workerPool.query('SELECT * FROM ludy_finance.marketplace_purge_due($1, $2, 10)', [days, EXPIRED])).rejects.toMatchObject({ code: '22023' });
+    for (const expired of [0, 1, 29, 91]) await expect(workerPool.query('SELECT * FROM ludy_finance.marketplace_purge_due($1, $2, 10)', [GRACE, expired])).rejects.toMatchObject({ code: '22023' });
     // key, apply and adopt need the system context of the file's own org: a bare worker login has none, and the application login is not the worker.
-    await expect(workerPool.query('SELECT * FROM crove_finance.marketplace_purge_apply($1::uuid, $2::uuid, $3, $4)', [o.orgId, file, GRACE, EXPIRED])).rejects.toBeDefined();
-    await expect(workerPool.query('SELECT * FROM crove_finance.marketplace_purge_key($1::uuid, $2::uuid, $3, $4)', [o.orgId, file, GRACE, EXPIRED])).rejects.toBeDefined();
-    await expect(pool.query('SELECT * FROM crove_finance.marketplace_purge_apply($1::uuid, $2::uuid, $3, $4)', [o.orgId, file, GRACE, EXPIRED])).rejects.toBeDefined();
+    await expect(workerPool.query('SELECT * FROM ludy_finance.marketplace_purge_apply($1::uuid, $2::uuid, $3, $4)', [o.orgId, file, GRACE, EXPIRED])).rejects.toBeDefined();
+    await expect(workerPool.query('SELECT * FROM ludy_finance.marketplace_purge_key($1::uuid, $2::uuid, $3, $4)', [o.orgId, file, GRACE, EXPIRED])).rejects.toBeDefined();
+    await expect(pool.query('SELECT * FROM ludy_finance.marketplace_purge_apply($1::uuid, $2::uuid, $3, $4)', [o.orgId, file, GRACE, EXPIRED])).rejects.toBeDefined();
     // A real connection of the same org, so only the context guard can be what refuses. The worker login reaches the function and its guard refuses the missing context; the application login has no
     // EXECUTE on it at all, so the database refuses before the function runs.
     const target = await connection(o, 'lazada');
-    await expect(workerPool.query('SELECT crove_finance.marketplace_link_adopt($1::uuid, $2::uuid, $3::uuid)', [o.orgId, target, file])).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('MARKETPLACE_PURGE_WORKER_ONLY') });
-    await expect(pool.query('SELECT crove_finance.marketplace_link_adopt($1::uuid, $2::uuid, $3::uuid)', [o.orgId, target, file])).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
+    await expect(workerPool.query('SELECT ludy_finance.marketplace_link_adopt($1::uuid, $2::uuid, $3::uuid)', [o.orgId, target, file])).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('MARKETPLACE_PURGE_WORKER_ONLY') });
+    await expect(pool.query('SELECT ludy_finance.marketplace_link_adopt($1::uuid, $2::uuid, $3::uuid)', [o.orgId, target, file])).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
     // The rule and the reference check are nobody's to call: no role executes them (the definers do, as their owner).
     for (const target of [workerPool, pool]) {
-      await expect(target.query('SELECT * FROM crove_finance.marketplace_purge_candidates(NULL, NULL, $1, $2)', [GRACE, EXPIRED])).rejects.toBeDefined();
-      await expect(target.query('SELECT crove_finance.marketplace_purge_referenced($1::uuid, $2::uuid)', [o.orgId, file])).rejects.toBeDefined();
+      await expect(target.query('SELECT * FROM ludy_finance.marketplace_purge_candidates(NULL, NULL, $1, $2)', [GRACE, EXPIRED])).rejects.toBeDefined();
+      await expect(target.query('SELECT ludy_finance.marketplace_purge_referenced($1::uuid, $2::uuid)', [o.orgId, file])).rejects.toBeDefined();
     }
     // The command is the system's alone: a person is refused, and nothing is deleted.
     await expect(rt.execute('finance.marketplace_retention.apply', { fileId: file, disconnected: true }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toBeDefined();

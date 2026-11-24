@@ -9,7 +9,7 @@ import { sql } from '../lib/db.ts';
 import { runsOf, seedMeeting } from '../lib/meetings-seed.ts';
 import { createOrg, newEmail, signInNewUser } from '../lib/session.ts';
 
-const titleOf = (id: string): string | undefined => sql<{ title: string }>(`SELECT title FROM crove_meetings.meeting WHERE id = :'id'::uuid`, { id })[0]?.title;
+const titleOf = (id: string): string | undefined => sql<{ title: string }>(`SELECT title FROM ludy_meetings.meeting WHERE id = :'id'::uuid`, { id })[0]?.title;
 // The transcript of the specs and one more line that holds a scenario token.
 const withToken = (token: keyof typeof SCENARIO_TOKENS) => [...TRANSCRIPT, { from: 30, to: 40, who: 'Hà', said: SCENARIO_TOKENS[token] }];
 

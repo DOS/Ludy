@@ -91,13 +91,13 @@ async function deciders(ctx: CommandContext): Promise<string[]> {
 }
 
 async function authorOf(ctx: CommandContext, postId: string): Promise<{ author: string | null } | null> {
-  const p = await ctx.trx.selectFrom('crove_social.post').select('author_user_id').where('org_id', '=', ctx.orgId).where('id', '=', postId).executeTakeFirst();
+  const p = await ctx.trx.selectFrom('ludy_social.post').select('author_user_id').where('org_id', '=', ctx.orgId).where('id', '=', postId).executeTakeFirst();
   return p ? { author: p.author_user_id } : null;
 }
 
 // The author and everyone who commented on the post before.
 async function threadOf(ctx: CommandContext, postId: string, author: string | null): Promise<string[]> {
-  const rows = await ctx.trx.selectFrom('crove_social.post_comment').select('author_user_id').distinct().where('org_id', '=', ctx.orgId).where('post_id', '=', postId).execute();
+  const rows = await ctx.trx.selectFrom('ludy_social.post_comment').select('author_user_id').distinct().where('org_id', '=', ctx.orgId).where('post_id', '=', postId).execute();
   return [...(author ? [author] : []), ...rows.map((r) => r.author_user_id)];
 }
 
@@ -110,7 +110,7 @@ async function planFor(ctx: CommandContext, type: string, payload: unknown): Pro
       if (!e.success) return null;
       // Already decided (a one-step approval, a policy): nothing waits on a reviewer any more.
       const waiting = await ctx.trx
-        .selectFrom('crove_social.post_variant')
+        .selectFrom('ludy_social.post_variant')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('post_id', '=', e.data.post_id)
@@ -133,7 +133,7 @@ async function planFor(ctx: CommandContext, type: string, payload: unknown): Pro
       const p = await authorOf(ctx, e.data.post_id);
       if (!p) return null;
       const v = await ctx.trx
-        .selectFrom('crove_social.post_variant')
+        .selectFrom('ludy_social.post_variant')
         .select(['provider', 'channel_connection_id'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', e.data.variant_id)
@@ -158,7 +158,7 @@ async function planFor(ctx: CommandContext, type: string, payload: unknown): Pro
       const e = z.object({ post_id: zId, variant_id: zId, scheduled: z.literal(true) }).safeParse(payload);
       if (!e.success) return null;
       const v = await ctx.trx
-        .selectFrom('crove_social.post_variant')
+        .selectFrom('ludy_social.post_variant')
         .select(['provider', 'channel_connection_id', 'status'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', e.data.variant_id)
@@ -193,7 +193,7 @@ async function planFor(ctx: CommandContext, type: string, payload: unknown): Pro
       const e = z.object({ post_id: zId, feedback_id: zId }).safeParse(payload);
       if (!e.success) return null;
       const f = await ctx.trx
-        .selectFrom('crove_social.review_feedback')
+        .selectFrom('ludy_social.review_feedback')
         .select(['reviewer_name', 'verdict'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', e.data.feedback_id)
@@ -216,7 +216,7 @@ async function planFor(ctx: CommandContext, type: string, payload: unknown): Pro
     case 'social.post.bulk_assigned': {
       const e = z.object({ post_ids: z.array(zId).min(1).max(100), assignee_user_id: zId }).safeParse(payload);
       if (!e.success) return null;
-      const there = await ctx.trx.selectFrom('crove_social.post').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', e.data.post_ids).execute();
+      const there = await ctx.trx.selectFrom('ludy_social.post').select('id').where('org_id', '=', ctx.orgId).where('id', 'in', e.data.post_ids).execute();
       const ids = new Set(there.map((p) => p.id));
       const shown = await postsVisibleTo(
         ctx.trx,
@@ -233,7 +233,7 @@ async function planFor(ctx: CommandContext, type: string, payload: unknown): Pro
     case 'social.feed.paused': {
       const e = z.object({ feed_id: zId }).safeParse(payload);
       if (!e.success) return null;
-      const feed = await ctx.trx.selectFrom('crove_social.feed').select(['url', 'title']).where('org_id', '=', ctx.orgId).where('id', '=', e.data.feed_id).executeTakeFirst();
+      const feed = await ctx.trx.selectFrom('ludy_social.feed').select(['url', 'title']).where('org_id', '=', ctx.orgId).where('id', '=', e.data.feed_id).executeTakeFirst();
       if (!feed) return null;
       return { ...base, kind: 'feed_paused', users: await deciders(ctx), postId: null, detail: { feed: (feed.title ?? feed.url).slice(0, 300) } };
     }
@@ -241,7 +241,7 @@ async function planFor(ctx: CommandContext, type: string, payload: unknown): Pro
     case 'social.publishing.released': {
       const e = z.object({ hold_id: zId, held_too_long: z.number().int().min(0).optional() }).safeParse(payload);
       if (!e.success) return null;
-      const hold = await ctx.trx.selectFrom('crove_social.publish_hold').select('reason').where('org_id', '=', ctx.orgId).where('id', '=', e.data.hold_id).executeTakeFirst();
+      const hold = await ctx.trx.selectFrom('ludy_social.publish_hold').select('reason').where('org_id', '=', ctx.orgId).where('id', '=', e.data.hold_id).executeTakeFirst();
       if (!hold) return null;
       const team = await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).execute();
       const released = type === 'social.publishing.released';
@@ -259,7 +259,7 @@ async function planFor(ctx: CommandContext, type: string, payload: unknown): Pro
         .safeParse(payload);
       if (!e.success) return null;
       // Filled again since, or the warning turned off: nothing to tell.
-      const q = await ctx.trx.selectFrom('crove_social.queue').select(['channel_connection_id', 'low_days', 'low_alerted_at']).where('org_id', '=', ctx.orgId).where('id', '=', e.data.queue_id).executeTakeFirst();
+      const q = await ctx.trx.selectFrom('ludy_social.queue').select(['channel_connection_id', 'low_days', 'low_alerted_at']).where('org_id', '=', ctx.orgId).where('id', '=', e.data.queue_id).executeTakeFirst();
       if (!q || q.low_days === null || q.low_alerted_at === null) return null;
       const team = await ctx.trx.selectFrom('ludy_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('role', 'in', ['owner', 'admin', 'member']).execute();
       return {
@@ -277,7 +277,7 @@ async function planFor(ctx: CommandContext, type: string, payload: unknown): Pro
         .safeParse(payload);
       if (!e.success) return null;
       const v = await ctx.trx
-        .selectFrom('crove_social.post_variant')
+        .selectFrom('ludy_social.post_variant')
         .select(['provider', 'channel_connection_id', 'status'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', e.data.variant_id)
@@ -285,7 +285,7 @@ async function planFor(ctx: CommandContext, type: string, payload: unknown): Pro
         .executeTakeFirst();
       // Removed since: nothing left to boost.
       if (!v || v.status !== 'published') return null;
-      const p = await ctx.trx.selectFrom('crove_social.post').select(['author_user_id', 'assignee_user_id']).where('org_id', '=', ctx.orgId).where('id', '=', e.data.post_id).executeTakeFirst();
+      const p = await ctx.trx.selectFrom('ludy_social.post').select(['author_user_id', 'assignee_user_id']).where('org_id', '=', ctx.orgId).where('id', '=', e.data.post_id).executeTakeFirst();
       if (!p) return null;
       return {
         kind: 'post_outperforming',
@@ -300,7 +300,7 @@ async function planFor(ctx: CommandContext, type: string, payload: unknown): Pro
       const e = z.object({ post_id: zId, assignee_user_id: zId, stage: z.enum(['soon', 'overdue']), due_at: z.iso.datetime() }).safeParse(payload);
       if (!e.success) return null;
       const p = await ctx.trx
-        .selectFrom('crove_social.post')
+        .selectFrom('ludy_social.post')
         .select(['assignee_user_id', 'due_at', 'status', 'archived_at'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', e.data.post_id)
@@ -314,7 +314,7 @@ async function planFor(ctx: CommandContext, type: string, payload: unknown): Pro
       if (!e.success) return null;
       // Still waiting: decided or edited since, there is nothing to remind of.
       const waiting = await ctx.trx
-        .selectFrom('crove_social.post_variant')
+        .selectFrom('ludy_social.post_variant')
         .select(['id', 'revision', 'content_hash'])
         .where('org_id', '=', ctx.orgId)
         .where('post_id', '=', e.data.post_id)
@@ -419,7 +419,7 @@ export function notificationPath(slug: string, kind: SocialNotificationKind, pos
 async function mailNotifications(ctx: CommandContext, plan: Plan, created: readonly { id: string; user_id: string }[]): Promise<number> {
   if (!MAILED_KINDS.has(plan.kind) || created.length === 0) return 0;
   const off = await ctx.trx
-    .selectFrom('crove_social.notification_mail_off')
+    .selectFrom('ludy_social.notification_mail_off')
     .select('user_id')
     .where('org_id', '=', ctx.orgId)
     .where(
@@ -437,7 +437,7 @@ async function mailNotifications(ctx: CommandContext, plan: Plan, created: reado
   const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirst();
   if (!org) return 0;
   const post = plan.postId
-    ? await ctx.trx.selectFrom('crove_social.post').select(['title', 'body', 'time_zone']).where('org_id', '=', ctx.orgId).where('id', '=', plan.postId).executeTakeFirst()
+    ? await ctx.trx.selectFrom('ludy_social.post').select(['title', 'body', 'time_zone']).where('org_id', '=', ctx.orgId).where('id', '=', plan.postId).executeTakeFirst()
     : undefined;
   const postText = post ? oneLine([...(post.title?.trim() || post.body || '')].slice(0, 400).join(''), 200) || null : null;
   const channel = plan.connectionId
@@ -496,7 +496,7 @@ async function dispatchEvent(ctx: CommandContext, eventId: string, only?: string
   const { rows } = await sql<{ user_id: string }>`
     SELECT m.user_id FROM ludy_kernel.tenant_member m
     WHERE m.org_id = ${ctx.orgId} AND m.user_id = ANY(${wanted}::uuid[])
-      AND NOT EXISTS (SELECT 1 FROM crove_social.notification_mute x WHERE x.org_id = m.org_id AND x.user_id = m.user_id AND x.kind = ${plan.kind})`.execute(ctx.trx);
+      AND NOT EXISTS (SELECT 1 FROM ludy_social.notification_mute x WHERE x.org_id = m.org_id AND x.user_id = m.user_id AND x.kind = ${plan.kind})`.execute(ctx.trx);
   if (rows.length === 0) return { sent: 0, mailed: 0, push: [] };
   // A member limited to some channels (#1081) hears only of those and of the posts on them.
   const users = await usersInScope(
@@ -507,7 +507,7 @@ async function dispatchEvent(ctx: CommandContext, eventId: string, only?: string
   );
   if (users.length === 0) return { sent: 0, mailed: 0, push: [] };
   const inserted = await ctx.trx
-    .insertInto('crove_social.notification')
+    .insertInto('ludy_social.notification')
     .values(
       users.map((userId) => ({
         org_id: ctx.orgId,
@@ -529,12 +529,12 @@ async function dispatchEvent(ctx: CommandContext, eventId: string, only?: string
   // A post's newest reminder replaces the ones before it (of a review, or of its due date, #1359).
   if ((plan.kind === 'review_reminder' || plan.kind === 'assignment_due') && plan.postId) {
     await sql`
-      DELETE FROM crove_social.notification
+      DELETE FROM ludy_social.notification
       WHERE org_id = ${ctx.orgId} AND user_id = ANY(${users}::uuid[]) AND kind = ${plan.kind} AND post_id = ${plan.postId} AND event_id <> ${event.id}`.execute(ctx.trx);
   }
   // The recipients' old ones go.
   await sql`
-    DELETE FROM crove_social.notification
+    DELETE FROM ludy_social.notification
     WHERE org_id = ${ctx.orgId} AND user_id = ANY(${users}::uuid[])
       AND (read_at < ${ctx.now}::timestamptz - make_interval(days => ${NOTIFICATION_READ_KEEP_DAYS}::int)
            OR created_at < ${ctx.now}::timestamptz - make_interval(days => ${NOTIFICATION_KEEP_DAYS}::int))`.execute(ctx.trx);
@@ -592,11 +592,11 @@ const DUE_ISO = String.raw`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$`;
 // low queue (#1079) only while its queue is still in the dip it was about; a due date reminder (#1359) only while the
 // post is still the viewer's, with the due date it was about, and still to be moved along.
 const STILL_WAITING = sql`(n.kind <> 'review_reminder' OR EXISTS (
-  SELECT 1 FROM crove_social.post_variant v WHERE v.org_id = n.org_id AND v.post_id = n.post_id AND v.status = 'in_review'
+  SELECT 1 FROM ludy_social.post_variant v WHERE v.org_id = n.org_id AND v.post_id = n.post_id AND v.status = 'in_review'
     AND v.review_since <= n.created_at)) AND (n.kind <> 'queue_low' OR EXISTS (
-  SELECT 1 FROM crove_social.queue q WHERE q.org_id = n.org_id AND q.channel_connection_id = n.connection_id
+  SELECT 1 FROM ludy_social.queue q WHERE q.org_id = n.org_id AND q.channel_connection_id = n.connection_id
     AND q.low_alerted_at <= n.created_at)) AND (n.kind <> 'assignment_due' OR EXISTS (
-  SELECT 1 FROM crove_social.post d WHERE d.org_id = n.org_id AND d.id = n.post_id AND d.assignee_user_id = n.user_id
+  SELECT 1 FROM ludy_social.post d WHERE d.org_id = n.org_id AND d.id = n.post_id AND d.assignee_user_id = n.user_id
     AND d.archived_at IS NULL AND d.status IN ('draft', 'scheduled', 'failed')
     AND d.due_at = CASE WHEN n.detail->>'due' ~ ${DUE_ISO} THEN (n.detail->>'due')::timestamptz END))`;
 export const notificationList = defineQuery({
@@ -623,18 +623,18 @@ export const notificationList = defineQuery({
     }>`
       SELECT n.id, n.kind, n.post_id, n.connection_id, n.actor_user_id, n.detail, n.created_at, n.read_at,
              left(coalesce(nullif(p.title, ''), p.body), 140) AS post_text, c.display_name AS channel
-      FROM crove_social.notification n
-      LEFT JOIN crove_social.post p ON p.org_id = n.org_id AND p.id = n.post_id
+      FROM ludy_social.notification n
+      LEFT JOIN ludy_social.post p ON p.org_id = n.org_id AND p.id = n.post_id
       LEFT JOIN ludy_kernel.channel_connection c ON c.org_id = n.org_id AND c.id = n.connection_id
       WHERE n.org_id = ${ctx.orgId} AND n.user_id = ${me} AND ${STILL_WAITING} AND ${seen}
       ORDER BY n.created_at DESC, n.id DESC
       LIMIT ${NOTIFICATION_LIST_LIMIT}`.execute(ctx.trx);
     const unread = await sql<{ n: number }>`
       SELECT count(*)::int AS n FROM (
-        SELECT 1 FROM crove_social.notification n WHERE n.org_id = ${ctx.orgId} AND n.user_id = ${me} AND n.read_at IS NULL AND ${STILL_WAITING} AND ${seen} LIMIT ${NOTIFICATION_UNREAD_CAP + 1}
+        SELECT 1 FROM ludy_social.notification n WHERE n.org_id = ${ctx.orgId} AND n.user_id = ${me} AND n.read_at IS NULL AND ${STILL_WAITING} AND ${seen} LIMIT ${NOTIFICATION_UNREAD_CAP + 1}
       ) u`.execute(ctx.trx);
-    const mailOff = await ctx.trx.selectFrom('crove_social.notification_mail_off').select('id').where('org_id', '=', ctx.orgId).where('user_id', '=', me).limit(1).executeTakeFirst();
-    const muted = await ctx.trx.selectFrom('crove_social.notification_mute').select('kind').where('org_id', '=', ctx.orgId).where('user_id', '=', me).orderBy('kind').execute();
+    const mailOff = await ctx.trx.selectFrom('ludy_social.notification_mail_off').select('id').where('org_id', '=', ctx.orgId).where('user_id', '=', me).limit(1).executeTakeFirst();
+    const muted = await ctx.trx.selectFrom('ludy_social.notification_mute').select('kind').where('org_id', '=', ctx.orgId).where('user_id', '=', me).orderBy('kind').execute();
     const ids = [...new Set(rows.map((r) => r.actor_user_id).filter((u): u is string => u !== null))];
     const names = new Map<string, string>();
     if (ids.length > 0) {
@@ -671,7 +671,7 @@ export const notificationRead = defineCommand({
   access: ALL,
   handler: async (ctx, input) => {
     const me = requireUser(ctx);
-    let q = ctx.trx.updateTable('crove_social.notification').set({ read_at: ctx.now }).where('org_id', '=', ctx.orgId).where('user_id', '=', me).where('read_at', 'is', null);
+    let q = ctx.trx.updateTable('ludy_social.notification').set({ read_at: ctx.now }).where('org_id', '=', ctx.orgId).where('user_id', '=', me).where('read_at', 'is', null);
     if ('ids' in input) q = q.where('id', 'in', input.ids);
     const done = await q.executeTakeFirst();
     return { read: Number(done.numUpdatedRows) };
@@ -689,12 +689,12 @@ export const notificationMute = defineCommand({
     const me = requireUser(ctx);
     if (input.muted) {
       await ctx.trx
-        .insertInto('crove_social.notification_mute')
+        .insertInto('ludy_social.notification_mute')
         .values({ org_id: ctx.orgId, user_id: me, kind: input.kind, created_at: ctx.now })
         .onConflict((oc) => oc.columns(['org_id', 'user_id', 'kind']).doNothing())
         .execute();
     } else {
-      await ctx.trx.deleteFrom('crove_social.notification_mute').where('org_id', '=', ctx.orgId).where('user_id', '=', me).where('kind', '=', input.kind).execute();
+      await ctx.trx.deleteFrom('ludy_social.notification_mute').where('org_id', '=', ctx.orgId).where('user_id', '=', me).where('kind', '=', input.kind).execute();
     }
     return { kind: input.kind, muted: input.muted };
   },
@@ -709,8 +709,8 @@ export const notificationMail = defineCommand({
   access: ALL,
   handler: async (ctx, input) => {
     const me = requireUser(ctx);
-    await ctx.trx.deleteFrom('crove_social.notification_mail_off').where('org_id', '=', ctx.orgId).where('user_id', '=', me).execute();
-    if (!input.enabled) await ctx.trx.insertInto('crove_social.notification_mail_off').values({ org_id: ctx.orgId, user_id: me, created_at: ctx.now }).execute();
+    await ctx.trx.deleteFrom('ludy_social.notification_mail_off').where('org_id', '=', ctx.orgId).where('user_id', '=', me).execute();
+    if (!input.enabled) await ctx.trx.insertInto('ludy_social.notification_mail_off').values({ org_id: ctx.orgId, user_id: me, created_at: ctx.now }).execute();
     return { enabled: input.enabled };
   },
 });

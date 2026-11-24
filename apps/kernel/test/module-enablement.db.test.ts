@@ -143,8 +143,8 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
   });
 
   it('applies migrations to every schema, whatever CROVE_MODULES says', async () => {
-    const schemas = await adminQuery<{ nspname: string }>("SELECT nspname FROM pg_namespace WHERE nspname IN ('ludy_kernel', 'crove_finance', 'crove_crm', 'crove_ads')");
-    expect(schemas.map((s) => s.nspname).sort()).toEqual(['crove_ads', 'crove_crm', 'crove_finance', 'ludy_kernel']);
+    const schemas = await adminQuery<{ nspname: string }>("SELECT nspname FROM pg_namespace WHERE nspname IN ('ludy_kernel', 'ludy_finance', 'ludy_crm', 'ludy_ads')");
+    expect(schemas.map((s) => s.nspname).sort()).toEqual(['ludy_ads', 'ludy_crm', 'ludy_finance', 'ludy_kernel']);
   });
 
   it('registers only the enabled modules', () => {

@@ -2,7 +2,7 @@
 // In-person host signing ceremony command (Slice 4d, #3820, docs/plan/esign.md):
 // starts a short-lived (<= 2h) single-use face-to-face signing session on /-/sign?in_person=1#<token>
 // for an active unsigned signer/approver whose routing turn is current, recording host_user_id and
-// appending in_person_session_started onto the hash-chained crove_sign.signing_event ledger.
+// appending in_person_session_started onto the hash-chained ludy_sign.signing_event ledger.
 import { sql } from 'kysely';
 import {
   SIGN_IN_PERSON_DEFAULT_TTL_MINUTES,
@@ -39,7 +39,7 @@ export const signerStartInPerson = defineCommand({
   handler: async (ctx, input) => {
     const userId = userIdOf(ctx);
     const row = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select(['id', 'status', 'source_kind', 'source_id', 'created_by', 'expires_at', 'source_sha256'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
@@ -63,7 +63,7 @@ export const signerStartInPerson = defineCommand({
     }
 
     const signer = await ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select(['id', 'signer_role', 'status', 'routing_order'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', row.id)
@@ -97,7 +97,7 @@ export const signerStartInPerson = defineCommand({
     const rawToken = generateRawSigningToken();
     const tokenHash = hashSigningToken(rawToken);
     const { rows: minted } = await sql<{ id: string }>`
-      SELECT crove_sign.mint_in_person_signing_token(
+      SELECT ludy_sign.mint_in_person_signing_token(
         ${row.id}::uuid,
         ${signer.id}::uuid,
         ${tokenHash},

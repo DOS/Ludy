@@ -46,10 +46,10 @@ suite('HR bank template on PostgreSQL (#2532)', () => {
     risk: 'R1',
     sideEffect: 'internal',
     access: ['owner', 'admin', 'member', 'viewer'],
-    writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_bank_template', ['id', 'legal_entity_id', 'name', 'layout'])],
+    writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_bank_template', ['id', 'legal_entity_id', 'name', 'layout'])],
     handler: async (ctx, input) => {
       const row = await ctx.trx
-        .insertInto('crove_hr.payroll_bank_template')
+        .insertInto('ludy_hr.payroll_bank_template')
         .values({ org_id: ctx.orgId, name: input.name, layout: JSON.stringify(input.layout) })
         .returning(['id', 'legal_entity_id'])
         .executeTakeFirstOrThrow();
@@ -62,12 +62,12 @@ suite('HR bank template on PostgreSQL (#2532)', () => {
     risk: 'R1',
     sideEffect: 'internal',
     access: ['owner', 'admin', 'member', 'viewer'],
-    writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_bank_template', ['name', 'layout', 'updated_at'])],
+    writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_bank_template', ['name', 'layout', 'updated_at'])],
     handler: async (ctx, input) => {
       const set: { name?: string; layout?: string; updated_at: Date } = { updated_at: ctx.now };
       if (input.name !== undefined) set.name = input.name;
       if (input.layout !== undefined) set.layout = JSON.stringify(input.layout);
-      const rows = await ctx.trx.updateTable('crove_hr.payroll_bank_template').set(set).where('org_id', '=', ctx.orgId).where('id', '=', input.id).returning('id').execute();
+      const rows = await ctx.trx.updateTable('ludy_hr.payroll_bank_template').set(set).where('org_id', '=', ctx.orgId).where('id', '=', input.id).returning('id').execute();
       return { changed: rows.length };
     },
   }) as CommandDef<unknown, unknown>;
@@ -77,10 +77,10 @@ suite('HR bank template on PostgreSQL (#2532)', () => {
     risk: 'R1',
     sideEffect: 'internal',
     access: ['owner', 'admin'],
-    writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_bank_template', ['legal_entity_id'])],
+    writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_bank_template', ['legal_entity_id'])],
     handler: async (ctx, input) => {
       await ctx.trx.executeQuery({
-        sql: 'UPDATE crove_hr.payroll_bank_template SET legal_entity_id = $1 WHERE org_id = $2 AND id = $3',
+        sql: 'UPDATE ludy_hr.payroll_bank_template SET legal_entity_id = $1 WHERE org_id = $2 AND id = $3',
         parameters: [input.legalEntityId, ctx.orgId, input.id],
         query: { kind: 'RawNode' },
       } as never);
@@ -93,9 +93,9 @@ suite('HR bank template on PostgreSQL (#2532)', () => {
     risk: 'R1',
     sideEffect: 'internal',
     access: ['owner', 'admin', 'member', 'viewer'],
-    writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_bank_template', ['id'])],
+    writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_bank_template', ['id'])],
     handler: async (ctx, input) => {
-      const rows = await ctx.trx.deleteFrom('crove_hr.payroll_bank_template').where('org_id', '=', ctx.orgId).where('id', '=', input.id).returning('id').execute();
+      const rows = await ctx.trx.deleteFrom('ludy_hr.payroll_bank_template').where('org_id', '=', ctx.orgId).where('id', '=', input.id).returning('id').execute();
       return { removed: rows.length };
     },
   }) as CommandDef<unknown, unknown>;
@@ -104,7 +104,7 @@ suite('HR bank template on PostgreSQL (#2532)', () => {
     input: z.object({}),
     access: ['owner', 'admin', 'member', 'viewer'],
     handler: async (ctx) => {
-      const rows = await ctx.trx.selectFrom('crove_hr.payroll_bank_template').select(['id', 'name']).where('org_id', '=', ctx.orgId).orderBy('name').execute();
+      const rows = await ctx.trx.selectFrom('ludy_hr.payroll_bank_template').select(['id', 'name']).where('org_id', '=', ctx.orgId).orderBy('name').execute();
       return rows;
     },
   }) as QueryDef<unknown, unknown>;
@@ -221,7 +221,7 @@ suite('HR bank template on PostgreSQL (#2532)', () => {
     expect(other).toBeTruthy();
     await expect(o.exec(o.owner, 't2532.move', { id: made.id, legalEntityId: other })).rejects.toThrow();
     // Still in the entity it was made in.
-    expect(await withAdmin(async (c) => (await c.query('SELECT 1 FROM crove_hr.payroll_bank_template WHERE org_id = $1 AND id = $2 AND legal_entity_id = $3', [o.orgId, made.id, made.legalEntityId])).rowCount)).toBe(1);
+    expect(await withAdmin(async (c) => (await c.query('SELECT 1 FROM ludy_hr.payroll_bank_template WHERE org_id = $1 AND id = $2 AND legal_entity_id = $3', [o.orgId, made.id, made.legalEntityId])).rowCount)).toBe(1);
     expect(await o.exec(o.owner, 't2532.remove', { id: made.id })).toEqual({ removed: 1 });
     expect(await o.peek<unknown[]>(o.owner)).toEqual([]);
   });

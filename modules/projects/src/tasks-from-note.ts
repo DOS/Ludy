@@ -36,7 +36,7 @@ export interface ProjectRow {
 
 export async function loadProject(trx: QueryContext['trx'], orgId: string, projectId: string, lock: boolean): Promise<ProjectRow> {
   let query = trx
-    .selectFrom('crove_projects.project')
+    .selectFrom('ludy_projects.project')
     .select(['id', 'name', 'status'])
     .where('org_id', '=', orgId)
     .where('id', '=', projectId)
@@ -55,7 +55,7 @@ export function assertNotArchived(row: ProjectRow): void {
 
 async function activeProjectMemberSeatIds(trx: QueryContext['trx'], orgId: string, projectId: string): Promise<string[]> {
   const members = await trx
-    .selectFrom('crove_projects.project_member')
+    .selectFrom('ludy_projects.project_member')
     .select('user_id')
     .where('org_id', '=', orgId)
     .where('project_id', '=', projectId)
@@ -203,7 +203,7 @@ export async function queryProjectSeats(
   assertNotArchived(project);
 
   const members = await ctx.trx
-    .selectFrom('crove_projects.project_member')
+    .selectFrom('ludy_projects.project_member')
     .select('user_id')
     .where('org_id', '=', ctx.orgId)
     .where('project_id', '=', project.id)
@@ -249,8 +249,8 @@ export async function queryProjectSeats(
 export type ProposedTaskConfirmItem = z.infer<typeof zProjectProposedTask>;
 
 // Runs the shared atomic batch confirmation sequence: locks referenced positions in canonical UUID order,
-// invokes createTask per item, locks crove_projects.project (uniform lock ordering), re-validates seats,
-// attaches tasks to crove_projects.project_task, emits events and records activity.
+// invokes createTask per item, locks ludy_projects.project (uniform lock ordering), re-validates seats,
+// attaches tasks to ludy_projects.project_task, emits events and records activity.
 export async function createAndAttachConfirmedTasks(
   ctx: CommandContext,
   userId: string,
@@ -292,7 +292,7 @@ export async function createAndAttachConfirmedTasks(
     createdIds.push(created.taskId);
   }
 
-  // Lock crove_projects.project after kernel task creation (which locks ludy_kernel.position) for uniform lock ordering,
+  // Lock ludy_projects.project after kernel task creation (which locks ludy_kernel.position) for uniform lock ordering,
   // then re-validate seats under the project lock so concurrent projects.member.remove cannot leave a removed member assigned.
   const project = await loadProject(ctx.trx, ctx.orgId, params.projectId, true);
   assertNotArchived(project);
@@ -300,7 +300,7 @@ export async function createAndAttachConfirmedTasks(
 
   if (createdIds.length > 0) {
     await ctx.trx
-      .insertInto('crove_projects.project_task')
+      .insertInto('ludy_projects.project_task')
       .values(
         createdIds.map((taskId) => ({
           org_id: ctx.orgId,
@@ -330,7 +330,7 @@ export const tasksFromNoteStatus = defineQuery({
   handler: (ctx): Promise<ProjectTasksFromNoteStatus> => checkProjectsVyAccess(ctx, { requireNotes: true }),
 });
 
-// Active seats held exclusively by users who belong to the target project (crove_projects.project_member).
+// Active seats held exclusively by users who belong to the target project (ludy_projects.project_member).
 export const tasksFromNoteSeats = defineQuery({
   name: 'projects.tasks_from_note.seats',
   input: z.strictObject({ projectId: zId }),

@@ -1,5 +1,5 @@
 // The notes module's manifest (plan §5.2, #1588, #1599; notes plan docs/plan/notes.md §3.4): the tables it owns and the
-// class of every column. A migration that adds or drops a table or column of crove_notes changes this list in the same
+// class of every column. A migration that adds or drops a table or column of ludy_notes changes this list in the same
 // PR; apps/kernel/test/manifest.db.test.ts checks it against the catalog. A column is internal unless the second
 // argument of columns() classifies it. The title, body, tags (and a to-do's details and checklist) and their folded search words are a member's free text,
 // which may name people, so pii: audit rows keep a marker for them (auditValue), never the text.
@@ -9,7 +9,7 @@ export const notesManifest = defineModule({
   id: 'notes',
   dependsOn: ['kernel'],
   tables: {
-    crove_notes: {
+    ludy_notes: {
       attachment: columns(
         ['org_id', 'id', 'note_id', 'author_user_id', 'content_type', 'size_bytes', 'sha256', 'storage_key', 'extract_status', 'created_at'],
         { filename: 'pii', extracted_text: 'pii', search: 'pii' },

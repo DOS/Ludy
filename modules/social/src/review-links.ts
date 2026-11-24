@@ -38,14 +38,14 @@ export const reviewLinkCreate = defineCommand({
   target: (input) => ({ type: 'social.post', id: input.postId }),
   handler: async (ctx, input) => {
     const userId = requireUser(ctx);
-    const post = await ctx.trx.selectFrom('crove_social.post').select(['id', 'archived_at']).where('org_id', '=', ctx.orgId).where('id', '=', input.postId).executeTakeFirst();
+    const post = await ctx.trx.selectFrom('ludy_social.post').select(['id', 'archived_at']).where('org_id', '=', ctx.orgId).where('id', '=', input.postId).executeTakeFirst();
     if (!post) throw new DomainError('POST_NOT_FOUND', 404, 'Không tìm thấy bài đăng');
     // Archiving revokes a post's links (#1299); an archived post gets none until it is restored.
     if (post.archived_at !== null) throw new DomainError('POST_ARCHIVED', 409, 'Bài này đã được lưu trữ; hãy khôi phục bài trước khi gửi khách duyệt');
     // Two links made at once count each other (#930), so the cap below holds.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_social.review_link:${ctx.orgId}:${post.id}`}, 0))`.execute(ctx.trx);
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`ludy_social.review_link:${ctx.orgId}:${post.id}`}, 0))`.execute(ctx.trx);
     const live = await ctx.trx
-      .selectFrom('crove_social.review_link')
+      .selectFrom('ludy_social.review_link')
       .select((eb) => eb.fn.countAll<string>().as('n'))
       .where('org_id', '=', ctx.orgId)
       .where('post_id', '=', post.id)
@@ -55,9 +55,9 @@ export const reviewLinkCreate = defineCommand({
     if (Number(live.n) >= 10) throw new DomainError('REVIEW_LINK_LIMIT', 409, 'Bài này đã có 10 liên kết duyệt còn hạn; hãy thu hồi bớt');
     const token = newReviewToken();
     const expiresAt = new Date(ctx.now.getTime() + (input.days ?? 7) * DAY_MS);
-    const { rows } = await sql<{ key: string }>`SELECT crove_social.review_content_key(${ctx.orgId}::uuid, ${post.id}::uuid) AS key`.execute(ctx.trx);
+    const { rows } = await sql<{ key: string }>`SELECT ludy_social.review_content_key(${ctx.orgId}::uuid, ${post.id}::uuid) AS key`.execute(ctx.trx);
     const row = await ctx.trx
-      .insertInto('crove_social.review_link')
+      .insertInto('ludy_social.review_link')
       .values({ org_id: ctx.orgId, post_id: post.id, token_sha256: reviewTokenHash(token), content_key: rows[0]?.key ?? '', created_by: userId, created_at: ctx.now, expires_at: expiresAt })
       .returning('id')
       .executeTakeFirstOrThrow();
@@ -76,7 +76,7 @@ export const reviewLinkRevoke = defineCommand({
   handler: async (ctx, input) => {
     const userId = requireUser(ctx);
     const link = await ctx.trx
-      .selectFrom('crove_social.review_link')
+      .selectFrom('ludy_social.review_link')
       .select(['id', 'post_id', 'revoked_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.linkId)
@@ -84,7 +84,7 @@ export const reviewLinkRevoke = defineCommand({
       .executeTakeFirst();
     if (!link) throw new DomainError('REVIEW_LINK_NOT_FOUND', 404, 'Không tìm thấy liên kết duyệt này');
     if (link.revoked_at === null) {
-      await ctx.trx.updateTable('crove_social.review_link').set({ revoked_at: ctx.now, revoked_by: userId }).where('org_id', '=', ctx.orgId).where('id', '=', link.id).execute();
+      await ctx.trx.updateTable('ludy_social.review_link').set({ revoked_at: ctx.now, revoked_by: userId }).where('org_id', '=', ctx.orgId).where('id', '=', link.id).execute();
     }
     // A plan link (#902) names no single post.
     return { linkId: link.id, postId: link.post_id };
@@ -130,9 +130,9 @@ export const reviewPlanCreate = defineCommand({
     const userId = requireUser(ctx);
     if ((input.postIds === undefined) === (input.range === undefined)) throw new DomainError('REVIEW_PLAN_INVALID', 422, 'Hãy chọn các bài hoặc một khoảng ngày cho kế hoạch');
     // Two plans made at once count each other (#930), so the cap below holds.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_social.review_link.plan:${ctx.orgId}`}, 0))`.execute(ctx.trx);
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`ludy_social.review_link.plan:${ctx.orgId}`}, 0))`.execute(ctx.trx);
     const live = await ctx.trx
-      .selectFrom('crove_social.review_link')
+      .selectFrom('ludy_social.review_link')
       .select((eb) => eb.fn.countAll<string>().as('n'))
       .where('org_id', '=', ctx.orgId)
       .where('kind', '=', 'plan')
@@ -146,9 +146,9 @@ export const reviewPlanCreate = defineCommand({
       const ids = [...new Set(input.postIds)];
       const { rows } = await sql<{ id: string; status: string; archived: boolean; at: Date | null }>`
         SELECT p.id, p.status, p.archived_at IS NOT NULL AS archived,
-          coalesce((SELECT pg_catalog.min(coalesce(v.queue_slot_at, v.scheduled_at, p.scheduled_at)) FROM crove_social.post_variant v
+          coalesce((SELECT pg_catalog.min(coalesce(v.queue_slot_at, v.scheduled_at, p.scheduled_at)) FROM ludy_social.post_variant v
                     WHERE v.org_id = p.org_id AND v.post_id = p.id AND v.status <> 'cancelled'), p.scheduled_at) AS at
-        FROM crove_social.post p
+        FROM ludy_social.post p
         WHERE p.org_id = ${ctx.orgId}::uuid AND p.id = ANY(${ids}::uuid[])`.execute(ctx.trx);
       if (rows.length !== ids.length) throw new DomainError('POST_NOT_FOUND', 404, 'Không tìm thấy bài đăng');
       if (rows.some((r) => r.status === 'cancelled')) throw new DomainError('REVIEW_PLAN_POST_CANCELLED', 409, 'Có bài đã hủy trong các bài đã chọn; bài đã hủy không gửi khách duyệt được');
@@ -169,8 +169,8 @@ export const reviewPlanCreate = defineCommand({
       }
       const at = sql`coalesce(v.queue_slot_at, v.scheduled_at, p.scheduled_at)`;
       const { rows } = await sql<{ id: string }>`
-        SELECT p.id FROM crove_social.post p
-        JOIN crove_social.post_variant v ON v.org_id = p.org_id AND v.post_id = p.id
+        SELECT p.id FROM ludy_social.post p
+        JOIN ludy_social.post_variant v ON v.org_id = p.org_id AND v.post_id = p.id
         WHERE p.org_id = ${ctx.orgId}::uuid AND p.status <> 'cancelled' AND p.archived_at IS NULL
           AND v.status = ANY(${[...PLAN_STATUSES]}::text[])
           ${connections.length > 0 ? sql`AND v.channel_connection_id = ANY(${connections}::uuid[])` : sql``}
@@ -188,7 +188,7 @@ export const reviewPlanCreate = defineCommand({
     const token = newReviewToken();
     const expiresAt = new Date(ctx.now.getTime() + (input.days ?? 7) * DAY_MS);
     const link = await ctx.trx
-      .insertInto('crove_social.review_link')
+      .insertInto('ludy_social.review_link')
       .values({
         org_id: ctx.orgId,
         kind: 'plan',
@@ -204,7 +204,7 @@ export const reviewPlanCreate = defineCommand({
       .executeTakeFirstOrThrow();
     // The tenant role may not add a plan's posts (#930): the definer fills this new link once, in this order, with each
     // post's content key now, and refuses a link that has its posts already.
-    await sql`SELECT crove_social.review_plan_posts_add(${link.id}::uuid, ${postIds}::uuid[])`.execute(ctx.trx);
+    await sql`SELECT ludy_social.review_plan_posts_add(${link.id}::uuid, ${postIds}::uuid[])`.execute(ctx.trx);
     ctx.audit({ link_id: link.id, posts: postIds });
     // The token leaves only in this answer: the audit keeps the input and the posts, never the output.
     return { linkId: link.id, token, expiresAt: expiresAt.toISOString(), posts: postIds.length };
@@ -234,7 +234,7 @@ export const linksRevokeForMember = defineCommand({
     // Who took the right away; the member themself when the event names nobody.
     const by = event.actor_type === 'user' && event.actor_id ? event.actor_id : userId;
     const review = await ctx.trx
-      .updateTable('crove_social.review_link')
+      .updateTable('ludy_social.review_link')
       .set({ revoked_at: ctx.now, revoked_by: by })
       .where('org_id', '=', ctx.orgId)
       .where('created_by', '=', userId)
@@ -243,7 +243,7 @@ export const linksRevokeForMember = defineCommand({
       .returning('id')
       .execute();
     const report = await ctx.trx
-      .updateTable('crove_social.report_link')
+      .updateTable('ludy_social.report_link')
       .set({ revoked_at: ctx.now, revoked_by: by })
       .where('org_id', '=', ctx.orgId)
       .where('created_by', '=', userId)
@@ -252,7 +252,7 @@ export const linksRevokeForMember = defineCommand({
       .returning('id')
       .execute();
     const calendar = await ctx.trx
-      .updateTable('crove_social.calendar_feed')
+      .updateTable('ludy_social.calendar_feed')
       .set({ revoked_at: ctx.now, revoked_by: by })
       .where('org_id', '=', ctx.orgId)
       .where('created_by', '=', userId)
@@ -312,8 +312,8 @@ export const reviewLinkList = defineQuery({
     const [links, feedback, key, counts] = await Promise.all([
       // The post's own links and the plan links it is in (#902), with the content key each was made for.
       ctx.trx
-        .selectFrom('crove_social.review_link as l')
-        .leftJoin('crove_social.review_link_post as lp', (j) => j.onRef('lp.org_id', '=', 'l.org_id').onRef('lp.link_id', '=', 'l.id').on('lp.post_id', '=', input.postId))
+        .selectFrom('ludy_social.review_link as l')
+        .leftJoin('ludy_social.review_link_post as lp', (j) => j.onRef('lp.org_id', '=', 'l.org_id').onRef('lp.link_id', '=', 'l.id').on('lp.post_id', '=', input.postId))
         .select((eb) => [
           'l.id',
           'l.kind',
@@ -324,7 +324,7 @@ export const reviewLinkList = defineQuery({
           'l.content_key',
           'lp.content_key as plan_key',
           eb
-            .selectFrom('crove_social.review_link_post as n')
+            .selectFrom('ludy_social.review_link_post as n')
             .select((e) => e.fn.countAll<string>().as('n'))
             .whereRef('n.org_id', '=', 'l.org_id')
             .whereRef('n.link_id', '=', 'l.id')
@@ -336,17 +336,17 @@ export const reviewLinkList = defineQuery({
         .limit(50)
         .execute(),
       ctx.trx
-        .selectFrom('crove_social.review_feedback')
+        .selectFrom('ludy_social.review_feedback')
         .select(['id', 'link_id', 'reviewer_name', 'verdict', 'body', 'changed', 'created_at', 'reply_body', 'replied_by', 'replied_at'])
         .where('org_id', '=', ctx.orgId)
         .where('post_id', '=', input.postId)
         .orderBy('created_at', 'desc')
         .limit(200)
         .execute(),
-      sql<{ key: string }>`SELECT crove_social.review_content_key(${ctx.orgId}::uuid, ${input.postId}::uuid) AS key`.execute(ctx.trx),
+      sql<{ key: string }>`SELECT ludy_social.review_content_key(${ctx.orgId}::uuid, ${input.postId}::uuid) AS key`.execute(ctx.trx),
       // Every answer counts, not only the 200 listed below.
       ctx.trx
-        .selectFrom('crove_social.review_feedback')
+        .selectFrom('ludy_social.review_feedback')
         .select(['link_id', (eb) => eb.fn.countAll<string>().as('n')])
         .where('org_id', '=', ctx.orgId)
         .where('post_id', '=', input.postId)
@@ -418,13 +418,13 @@ export const reviewPlanList = defineQuery({
       gone: number;
     }>`
       SELECT l.id, l.created_by, l.created_at, l.expires_at, l.revoked_at, l.plan_from, l.plan_to,
-        (SELECT pg_catalog.count(*)::int FROM crove_social.review_link_post lp WHERE lp.org_id = l.org_id AND lp.link_id = l.id) AS posts,
-        (SELECT pg_catalog.count(DISTINCT f.post_id)::int FROM crove_social.review_feedback f
+        (SELECT pg_catalog.count(*)::int FROM ludy_social.review_link_post lp WHERE lp.org_id = l.org_id AND lp.link_id = l.id) AS posts,
+        (SELECT pg_catalog.count(DISTINCT f.post_id)::int FROM ludy_social.review_feedback f
           WHERE f.org_id = l.org_id AND f.link_id = l.id AND f.verdict IN ('approved', 'changes_requested')) AS answered,
-        (SELECT pg_catalog.count(*)::int FROM crove_social.review_link_post lp
-          JOIN crove_social.post p ON p.org_id = lp.org_id AND p.id = lp.post_id
+        (SELECT pg_catalog.count(*)::int FROM ludy_social.review_link_post lp
+          JOIN ludy_social.post p ON p.org_id = lp.org_id AND p.id = lp.post_id
           WHERE lp.org_id = l.org_id AND lp.link_id = l.id AND p.status = 'cancelled') AS gone
-      FROM crove_social.review_link l
+      FROM ludy_social.review_link l
       WHERE l.org_id = ${ctx.orgId}::uuid AND l.kind = 'plan'
       ORDER BY l.created_at DESC, l.id DESC
       LIMIT 100`.execute(ctx.trx);
@@ -466,7 +466,7 @@ export const reviewReply = defineCommand({
   handler: async (ctx, input): Promise<{ feedbackId: string; postId: string; reply: ReviewReplyView | null }> => {
     const userId = requireUser(ctx);
     const answer = await ctx.trx
-      .selectFrom('crove_social.review_feedback')
+      .selectFrom('ludy_social.review_feedback')
       .select(['id', 'post_id', 'link_id', 'reply_body', 'replied_by', 'replied_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.feedbackId)
@@ -479,7 +479,7 @@ export const reviewReply = defineCommand({
     if (body !== answer.reply_body) {
       // The guard trigger stamps replied_at with the database's time; the value set here is only a placeholder.
       row = await ctx.trx
-        .updateTable('crove_social.review_feedback')
+        .updateTable('ludy_social.review_feedback')
         .set({ reply_body: body, replied_by: body === null ? null : userId, replied_at: body === null ? null : ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', answer.id)

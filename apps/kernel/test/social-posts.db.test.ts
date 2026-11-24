@@ -149,13 +149,13 @@ suite('social posts on PostgreSQL (S3)', () => {
     await exec(o, o.member, 'social.post.submit', { postId });
     post = await get(o, o.owner, postId);
     await exec(o, o.owner, 'social.variant.decide', { postId, decision: 'approved', variants: seen(post) });
-    const { rows } = await admin((c) => c.query<{ decision: string; snapshot: { body: string } }>('SELECT decision, snapshot FROM crove_social.post_approval WHERE post_id = $1 ORDER BY created_at', [postId]));
+    const { rows } = await admin((c) => c.query<{ decision: string; snapshot: { body: string } }>('SELECT decision, snapshot FROM ludy_social.post_approval WHERE post_id = $1 ORDER BY created_at', [postId]));
     expect(rows.map((r) => [r.decision, r.snapshot.body])).toEqual([
       ['changes_requested', 'Bài cần duyệt'],
       ['approved', 'Bài cần duyệt, giá 99k'],
     ]);
     // Decisions are history: no role updates or deletes them.
-    await expect(admin((c) => c.query("UPDATE crove_social.post_approval SET decision = 'rejected' WHERE post_id = $1", [postId]))).rejects.toThrow(/append-only/);
+    await expect(admin((c) => c.query("UPDATE ludy_social.post_approval SET decision = 'rejected' WHERE post_id = $1", [postId]))).rejects.toThrow(/append-only/);
   });
 
   it('refuses a variant that does not fit its channel at submit', async () => {
@@ -256,12 +256,12 @@ suite('social posts on PostgreSQL (S3)', () => {
     const post = await approved(o, [a, b], 'Nội dung gốc');
     const [va, vb] = post.variants as [PostView['variants'][number], PostView['variants'][number]];
     // The publish job's work, done by hand: one variant published, the other in flight.
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'published' WHERE id = $1", [va.id]));
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'publishing' WHERE id = $1", [vb.id]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'published' WHERE id = $1", [va.id]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'publishing' WHERE id = $1", [vb.id]));
     await expect(exec(o, o.member, 'social.post.update', { postId: post.id, revision: post.revision, body: 'Đổi' })).rejects.toMatchObject({ code: 'VARIANT_IN_FLIGHT' });
     await expect(exec(o, o.member, 'social.variant.cancel', { variantIds: [vb.id] })).rejects.toMatchObject({ code: 'VARIANT_STATE' });
     // Once the in-flight one is done, a base edit leaves the published variant's text as it went out.
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'failed' WHERE id = $1", [vb.id]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'failed' WHERE id = $1", [vb.id]));
     await exec(o, o.member, 'social.post.update', { postId: post.id, revision: post.revision, body: 'Đổi' });
     const view = await get(o, o.owner, post.id);
     expect(view.variants.find((v) => v.id === va.id)).toMatchObject({ status: 'published', effective: { body: 'Nội dung gốc' }, overrides: { body: 'Nội dung gốc' } });
@@ -277,7 +277,7 @@ suite('social posts on PostgreSQL (S3)', () => {
         try {
           await app.query('BEGIN');
           await app.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [o.orgId, contextToken(o.owner, o.orgId)]);
-          return await app.query('DELETE FROM crove_social.post_variant WHERE id = $1', [va.id]);
+          return await app.query('DELETE FROM ludy_social.post_variant WHERE id = $1', [va.id]);
         } finally {
           await app.query('ROLLBACK').catch(() => undefined);
           await app.end();
@@ -487,7 +487,7 @@ suite('social posts on PostgreSQL (S3)', () => {
     const posts = await Promise.all(['Lỗi', 'Cần xem', 'Tạm dừng', 'Bình thường'].map((body) => approved(o, [conn], body)));
     const statuses = ['failed', 'needs_attention', 'paused'];
     for (const [i, status] of statuses.entries()) {
-      await admin((c) => c.query('UPDATE crove_social.post_variant SET status = $2 WHERE post_id = $1', [posts[i]?.id, status]));
+      await admin((c) => c.query('UPDATE ludy_social.post_variant SET status = $2 WHERE post_id = $1', [posts[i]?.id, status]));
     }
     const listed = await rt.query<PostView[]>('social.post.list', { stage: 'attention' }, { actor: asUser(o.viewer), orgId: o.orgId });
     expect(listed.map((p) => p.id).sort()).toEqual(posts.slice(0, 3).map((p) => p.id).sort());
@@ -517,7 +517,7 @@ suite('social posts on PostgreSQL (S3)', () => {
     const [va, vb] = post.variants as [PostView['variants'][number], PostView['variants'][number]];
     // One cancelled through the command, one published by the publisher (not frozen yet).
     await exec(o, o.owner, 'social.variant.cancel', { variantIds: [va.id] });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'published', published_at = now() WHERE id = $1", [vb.id]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'published', published_at = now() WHERE id = $1", [vb.id]));
     await exec(o, o.member, 'social.post.update', { postId: post.id, revision: post.revision, body: 'Mới', title: 'Tiêu đề mới', linkUrl: 'https://crove.example/moi' });
     const view = await get(o, o.owner, post.id);
     for (const v of view.variants) expect(v.effective).toEqual({ body: 'Gốc', title: null, linkUrl: null });
@@ -581,7 +581,7 @@ suite('social posts on PostgreSQL (S3)', () => {
     const x = await approved(o, [conn], 'X');
     await exec(o, o.owner, 'social.variant.schedule', { postId: x.id, queue: true });
     const xv = (await get(o, o.owner, x.id)).variants[0] as PostView['variants'][number];
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'failed' WHERE id = $1", [xv.id]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'failed' WHERE id = $1", [xv.id]));
     const y = await approved(o, [conn], 'Y');
     await exec(o, o.owner, 'social.variant.schedule', { postId: y.id, queue: true });
     expect((await get(o, o.owner, y.id)).variants[0]?.queueSlotAt).toBe(xv.queueSlotAt);

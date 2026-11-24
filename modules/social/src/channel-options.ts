@@ -113,7 +113,7 @@ export const channelOptionRequest = defineCommand({
     const kind = await listedChannel(ctx, input.connectionId);
     const now = ctx.now.getTime();
     const find = () =>
-      ctx.trx.selectFrom('crove_social.channel_option').select(COLUMNS).where('org_id', '=', ctx.orgId).where('channel_connection_id', '=', input.connectionId).where('kind', '=', kind);
+      ctx.trx.selectFrom('ludy_social.channel_option').select(COLUMNS).where('org_id', '=', ctx.orgId).where('channel_connection_id', '=', input.connectionId).where('kind', '=', kind);
     const row = await find().forUpdate().executeTakeFirst();
     if (row) {
       const fresh = row.status === 'ready' && row.fetched_at !== null && now - row.fetched_at.getTime() < CHANNEL_OPTION_FRESH_MS[kind];
@@ -122,16 +122,16 @@ export const channelOptionRequest = defineCommand({
       if (fresh || asked || resting) return view(input.connectionId, kind, row, ctx.now);
     }
     // One request at a time per org decides the budget, so the count below holds until the commit.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`crove_social.channel_option:${ctx.orgId}`}))`.execute(ctx.trx);
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext(${`ludy_social.channel_option:${ctx.orgId}`}))`.execute(ctx.trx);
     const { rows } = await sql<{ n: number }>`
-      SELECT count(*)::int AS n FROM crove_social.channel_option
+      SELECT count(*)::int AS n FROM ludy_social.channel_option
       WHERE org_id = ${ctx.orgId} AND requested_at > ${ctx.now}::timestamptz - interval '1 minute'`.execute(ctx.trx);
     if ((rows[0]?.n ?? 0) >= CHANNEL_OPTION_PER_MINUTE) throw new DomainError('CHANNEL_OPTION_LIMIT', 429, 'Đang tải quá nhiều danh sách, hãy thử lại sau ít phút');
     // Asking again keeps the last answer's options and time as they were; the database lets a member change nothing
     // else (channel_option_before_update).
     const saved = row
       ? await ctx.trx
-          .updateTable('crove_social.channel_option')
+          .updateTable('ludy_social.channel_option')
           // Never earlier than the last ask: another API instance's clock may run a little ahead of this one's.
           .set({ status: 'pending', error: null, requested_at: ctx.now > row.requested_at ? ctx.now : row.requested_at })
           .where('org_id', '=', ctx.orgId)
@@ -139,7 +139,7 @@ export const channelOptionRequest = defineCommand({
           .returning(COLUMNS)
           .executeTakeFirstOrThrow()
       : await ctx.trx
-          .insertInto('crove_social.channel_option')
+          .insertInto('ludy_social.channel_option')
           .values({ org_id: ctx.orgId, channel_connection_id: input.connectionId, kind, status: 'pending', requested_at: ctx.now, created_at: ctx.now })
           .onConflict((oc) => oc.columns(['org_id', 'channel_connection_id', 'kind']).doNothing())
           .returning(COLUMNS)
@@ -158,7 +158,7 @@ export const channelOptionGet = defineQuery({
   handler: async (ctx, input): Promise<ChannelOptionList | null> => {
     const kind = await listedChannel(ctx, input.connectionId);
     const row = await ctx.trx
-      .selectFrom('crove_social.channel_option')
+      .selectFrom('ludy_social.channel_option')
       .select(COLUMNS)
       .where('org_id', '=', ctx.orgId)
       .where('channel_connection_id', '=', input.connectionId)
@@ -176,7 +176,7 @@ export const channelOptionLoad = defineQuery({
   handler: async (ctx, input): Promise<{ connectionId: string; provider: string; kind: SocialChannelOptionKind } | null> => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình nền mới thực hiện được việc này');
     const row = await ctx.trx
-      .selectFrom('crove_social.channel_option as o')
+      .selectFrom('ludy_social.channel_option as o')
       .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'o.org_id').onRef('c.id', '=', 'o.channel_connection_id'))
       .select(['o.channel_connection_id', 'o.kind', 'o.status', 'c.provider', 'c.status as connection_status'])
       .where('o.org_id', '=', ctx.orgId)
@@ -203,11 +203,11 @@ export const channelOptionRecord = defineCommand({
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình nền mới thực hiện được việc này');
     const r = input.result;
     if (r.ok) {
-      const list = await ctx.trx.selectFrom('crove_social.channel_option').select('kind').where('org_id', '=', ctx.orgId).where('id', '=', input.optionId).executeTakeFirst();
+      const list = await ctx.trx.selectFrom('ludy_social.channel_option').select('kind').where('org_id', '=', ctx.orgId).where('id', '=', input.optionId).executeTakeFirst();
       if (list && !fitsKind(list.kind, r.options)) throw new DomainError('VALIDATION', 422, 'Các mục không đúng dạng của danh sách này');
     }
     const done = await ctx.trx
-      .updateTable('crove_social.channel_option')
+      .updateTable('ludy_social.channel_option')
       .set(r.ok ? { status: 'ready', items: JSON.stringify(r.options), error: null, fetched_at: ctx.now } : { status: 'failed', items: '[]', error: r.error, fetched_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.optionId)

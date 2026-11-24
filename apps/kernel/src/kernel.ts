@@ -88,6 +88,7 @@ import { meetingsBusy, meetingsCommands, meetingsManifest, meetingsQueries, setM
 import {
   setSignCaBrokerAvailable,
   setSignLiveCaEnabled,
+  setSignWebhookBrokerAvailable,
   signAiCommands,
   signAiQueries,
   signCommands,
@@ -198,17 +199,22 @@ export interface KernelAdapters {
   // The Inbox's suggested intent and likely contacts (CV3, #2306) through the same endpoint; null: no suggestion, the inbox as it is.
   // The model behind the recorder's Vy summary of a meeting (#2580); the route is on only with MEETINGS_SUMMARY=on as well.
   summaryModel?: ModelPort | null;
-  // Vy's eSign field placement, risky clause review, and post-signature obligation extraction (#3351, #3821); null runs manual signing without AI.
+  // Vy's eSign field placement, risky clause review, obligation extraction, playbook checks, and signer KYC attachment check (#3351, #3821, #4442, #4443); null runs manual signing without AI.
   signAi?:
     | (Pick<SignAiReader, 'proposeFields' | 'summarizeRiskClauses'> &
         Partial<
           Pick<
             SignAiReader,
-            'summarizeVersionDiff' | 'proposeContractClauses' | 'extractObligations' | 'answerVaultQuestion'
+            'summarizeVersionDiff'
+            | 'proposeContractClauses'
+            | 'extractObligations'
+            | 'answerVaultQuestion'
+            | 'checkPlaybook'
+            | 'checkKycAttachment'
           >
         >)
     | null;
-  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'monthCloseNote' | 'expenseVarianceNotes' | 'cashForecastSentence' | 'vatLateSentence' | 'payrollMatchSentence' | 'marketplaceLineSentence' | 'marketplaceFeeNotes' | 'marketplaceProposalNote' | 'marketplaceColumns' | 'supplierPayableLineSentence' | 'bankCandidatesLineSentence' | 'misaCheckLineSentence' | 'misaAmisBlockerNotes' | 'stockSurplusNote' | 'einvoiceRateExplanation' | 'einvoiceReasonSuggestion' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'projectCycleSummary' | 'roadmapDedupe' | 'roadmapChangelogDraft' | 'projectTriageAssist' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'payrollDiffExplain' | 'laborCheck' | 'recruitingBrief' | 'attendanceAnomalies' | 'cvExtract' | 'hrProbationSummary' | 'signAcceptanceDraft'>>) | null;
+  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'followupWords' | 'overviewSentence' | 'monthCloseNote' | 'expenseVarianceNotes' | 'cashForecastSentence' | 'vatLateSentence' | 'payrollMatchSentence' | 'marketplaceLineSentence' | 'marketplaceFeeNotes' | 'marketplaceProposalNote' | 'marketplaceColumns' | 'supplierPayableLineSentence' | 'bankCandidatesLineSentence' | 'misaCheckLineSentence' | 'misaAmisBlockerNotes' | 'stockSurplusNote' | 'einvoiceRateExplanation' | 'einvoiceReasonSuggestion' | 'stockMatch' | 'reorderText' | 'einvoiceDraft' | 'quoteLines' | 'crmFollowupWords' | 'meetingBrief' | 'projectWeeklyStatus' | 'projectCycleSummary' | 'roadmapDedupe' | 'roadmapChangelogDraft' | 'roadmapSignalMatch' | 'projectTriageAssist' | 'payrollPrepare' | 'payrollFlag' | 'payrollExplain' | 'payrollDiffExplain' | 'laborCheck' | 'recruitingBrief' | 'attendanceAnomalies' | 'cvExtract' | 'hrProbationSummary' | 'signAcceptanceDraft'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;
@@ -293,7 +299,9 @@ export function moduleDefinitions(config: Config, billing: Billing = selfHostBil
   setMeetingVideoImport(Boolean(config.MEDIA_URL));
   setMeetingPlatformVideoImport(config.MEDIA_URL ? Math.min(MEETING_PLATFORM_VIDEO_MAX_BYTES, config.MEDIA_MAX_INPUT_BYTES ?? Number.POSITIVE_INFINITY) : null);
   setSignLiveCaEnabled(config.SIGN_LIVE_CA_ENABLED === 'true');
-  setSignCaBrokerAvailable(Boolean(config.CREDENTIAL_KEY ?? config.CREDENTIAL_KEY_FILE));
+  const hasCredentialKey = Boolean(config.CREDENTIAL_KEY ?? config.CREDENTIAL_KEY_FILE);
+  setSignCaBrokerAvailable(hasCredentialKey);
+  setSignWebhookBrokerAvailable(hasCredentialKey);
   const all: Record<ModuleId, () => ModuleDefinitions> = {
     kernel: () => ({
       commands: buildKernelCommands({

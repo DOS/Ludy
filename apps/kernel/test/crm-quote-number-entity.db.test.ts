@@ -86,14 +86,14 @@ suite('crm quote numbers per legal entity on PostgreSQL (#2832)', () => {
     const ready = await exec<Quote>('crm.quote.save', { quoteId: draft.id, version: draft.version, lines: [item] });
     const sent = (await exec<QuoteSent>('crm.quote.send', { quoteId: ready.id, version: ready.version, via: 'link' })).quote;
     expect(sent.number).toMatch(/^BG-\d{4}-0001$/);
-    const entityA = await admin((c) => c.query<{ issuer_entity_id: string }>('SELECT issuer_entity_id FROM crove_crm.quote WHERE org_id = $1 AND id = $2', [orgId, sent.id]).then((r) => r.rows[0]!.issuer_entity_id));
+    const entityA = await admin((c) => c.query<{ issuer_entity_id: string }>('SELECT issuer_entity_id FROM ludy_crm.quote WHERE org_id = $1 AND id = $2', [orgId, sent.id]).then((r) => r.rows[0]!.issuer_entity_id));
     expect(entityA).not.toBe(entityB);
 
     // Another entity's series gives the same number: allowed. The same number in the same entity (and revision) is refused, by the named constraint.
     const insertSent = (entity: string) =>
       admin((c) =>
         c.query(
-          `INSERT INTO crove_crm.quote (org_id, deal_id, party_id, valid_until, created_by, status, number, sent_at, sent_via, issuer_entity_id, buyer_name)
+          `INSERT INTO ludy_crm.quote (org_id, deal_id, party_id, valid_until, created_by, status, number, sent_at, sent_via, issuer_entity_id, buyer_name)
            VALUES ($1, $2, $3, '2031-01-31', $4, 'sent', $5, now(), 'link', $6, 'Công ty ABC')`,
           [orgId, deal.id, partyId, owner, sent.number, entity],
         ),
@@ -114,11 +114,11 @@ suite('crm quote numbers per legal entity on PostgreSQL (#2832)', () => {
     const ready2 = await exec<Quote>('crm.quote.save', { quoteId: draft2.id, version: draft2.version, lines: [item] });
     const sent2 = (await exec<QuoteSent>('crm.quote.send', { quoteId: ready2.id, version: ready2.version, via: 'link' })).quote;
     expect(sent2.number).toMatch(/^BG-\d{4}-0002$/);
-    await admin((c) => c.query('UPDATE crove_crm.quote SET issuer_entity_id = $3 WHERE org_id = $1 AND id = $2', [orgId, sent2.id, entityC]));
+    await admin((c) => c.query('UPDATE ludy_crm.quote SET issuer_entity_id = $3 WHERE org_id = $1 AND id = $2', [orgId, sent2.id, entityC]));
     const revision = await exec<Quote>('crm.quote.revise', { quoteId: sent2.id });
     const revised = (await exec<QuoteSent>('crm.quote.send', { quoteId: revision.id, version: revision.version, via: 'link' })).quote;
     expect(revised.number).toBe(sent2.number);
-    const revisedIssuer = await admin((c) => c.query<{ issuer_entity_id: string }>('SELECT issuer_entity_id FROM crove_crm.quote WHERE org_id = $1 AND id = $2', [orgId, revised.id]).then((r) => r.rows[0]!.issuer_entity_id));
+    const revisedIssuer = await admin((c) => c.query<{ issuer_entity_id: string }>('SELECT issuer_entity_id FROM ludy_crm.quote WHERE org_id = $1 AND id = $2', [orgId, revised.id]).then((r) => r.rows[0]!.issuer_entity_id));
     expect(revisedIssuer).toBe(entityC);
   });
 });

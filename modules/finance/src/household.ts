@@ -34,7 +34,7 @@ const notHousehold = () => new DomainError('HOUSEHOLD_NOT_HOUSEHOLD', 422, 'Ch�
 // The row in force on `date` for one entity (the latest that starts on or before it).
 async function profileAt(ctx: Ctx, entity: string, date: string): Promise<HouseholdProfile | null> {
   const row = await ctx.trx
-    .selectFrom('crove_finance.household_profile')
+    .selectFrom('ludy_finance.household_profile')
     .select(['effective_from', 'tax_group', 'pit_method', 'trades', 'einvoice_registered', 'representative_name', 'vat_cut_eligible'])
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', entity)
@@ -58,7 +58,7 @@ async function profileAt(ctx: Ctx, entity: string, date: string): Promise<Househ
 // a book from a method (an empty list, or another method) is not hidden behind an earlier one.
 async function booksFor(ctx: Ctx, method: 'none' | 'percentage' | 'income', date: string): Promise<HouseholdBookRule[]> {
   const rows = await ctx.trx
-    .selectFrom('crove_finance.household_form_version')
+    .selectFrom('ludy_finance.household_form_version')
     .select(['book', 'version', 'effective_from', 'name', 'pit_methods', 'status'])
     .where('effective_from', '<=', date)
     .execute();
@@ -110,7 +110,7 @@ export const householdProfileSet = defineCommand({
     // Two writers of one entity wait for each other, so the order check below sees what the first left.
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.household_profile:${ctx.orgId}:${entity}`}, 0))`.execute(ctx.trx);
     const latest = await ctx.trx
-      .selectFrom('crove_finance.household_profile')
+      .selectFrom('ludy_finance.household_profile')
       .select('effective_from')
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', entity)
@@ -124,13 +124,13 @@ export const householdProfileSet = defineCommand({
     // Not inside a locked period: the books of a closed period keep the profile they were made under. The entity's lock row is held
     // FOR SHARE to the end of this transaction (#3188), so a lock of a month racing this write waits for it instead of slipping in
     // between the read and the insert.
-    const lockedThrough = (await sql<{ locked_through: string | null }>`SELECT crove_finance.period_lock_share(${entity}::uuid) AS locked_through`.execute(ctx.trx)).rows[0]?.locked_through ?? null;
+    const lockedThrough = (await sql<{ locked_through: string | null }>`SELECT ludy_finance.period_lock_share(${entity}::uuid) AS locked_through`.execute(ctx.trx)).rows[0]?.locked_through ?? null;
     if (lockedThrough && input.effectiveFrom <= lockedThrough) {
       throw new DomainError('HOUSEHOLD_PROFILE_LOCKED', 409, `Kỳ đến hết ngày ${lockedThrough} đã khóa sổ; hồ sơ mới phải có hiệu lực sau ngày đó`);
     }
     const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
     await ctx.trx
-      .insertInto('crove_finance.household_profile')
+      .insertInto('ludy_finance.household_profile')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: entity,
@@ -159,27 +159,27 @@ export const householdRulesGet = defineQuery({
   handler: async (ctx, input): Promise<HouseholdRules> => {
     const date = input.date ?? vietnamToday();
     const thresholds = pickInForce(
-      await ctx.trx.selectFrom('crove_finance.household_threshold').select(['code', 'effective_from', 'amount', 'source', 'status']).where('effective_from', '<=', date).execute(),
+      await ctx.trx.selectFrom('ludy_finance.household_threshold').select(['code', 'effective_from', 'amount', 'source', 'status']).where('effective_from', '<=', date).execute(),
       (r) => r.code,
       date,
     ).map((r) => ({ code: r.code, amount: r.amount, effectiveFrom: r.effective_from, source: r.source, status: r.status }));
     const tradeRates = pickInForce(
-      await ctx.trx.selectFrom('crove_finance.household_trade_rate').select(['trade', 'effective_from', 'vat_percent', 'pit_percent', 'source', 'status']).where('effective_from', '<=', date).execute(),
+      await ctx.trx.selectFrom('ludy_finance.household_trade_rate').select(['trade', 'effective_from', 'vat_percent', 'pit_percent', 'source', 'status']).where('effective_from', '<=', date).execute(),
       (r) => r.trade,
       date,
     ).map((r) => ({ trade: r.trade, vatPercent: r.vat_percent, pitPercent: r.pit_percent, effectiveFrom: r.effective_from, source: r.source, status: r.status }));
     const reductions = pickInForce(
-      await ctx.trx.selectFrom('crove_finance.household_tax_reduction').select(['kind', 'effective_from', 'cut_percent', 'revenue_ceiling', 'source', 'status']).where('effective_from', '<=', date).execute(),
+      await ctx.trx.selectFrom('ludy_finance.household_tax_reduction').select(['kind', 'effective_from', 'cut_percent', 'revenue_ceiling', 'source', 'status']).where('effective_from', '<=', date).execute(),
       (r) => r.kind,
       date,
     ).map((r) => ({ kind: r.kind, cutPercent: r.cut_percent, revenueCeiling: r.revenue_ceiling, effectiveFrom: r.effective_from, source: r.source, status: r.status }));
     const expenseGroups = pickInForce(
-      await ctx.trx.selectFrom('crove_finance.household_expense_group_map').select(['expense_group', 'account_prefix', 'effective_from', 'source', 'status']).where('effective_from', '<=', date).execute(),
+      await ctx.trx.selectFrom('ludy_finance.household_expense_group_map').select(['expense_group', 'account_prefix', 'effective_from', 'source', 'status']).where('effective_from', '<=', date).execute(),
       (r) => r.account_prefix,
       date,
     ).map((r) => ({ expenseGroup: r.expense_group, accountPrefix: r.account_prefix, effectiveFrom: r.effective_from, source: r.source, status: r.status }));
     const forms = pickInForce(
-      await ctx.trx.selectFrom('crove_finance.household_form_version').select(['book', 'version', 'effective_from', 'name', 'pit_methods', 'source', 'status']).where('effective_from', '<=', date).execute(),
+      await ctx.trx.selectFrom('ludy_finance.household_form_version').select(['book', 'version', 'effective_from', 'name', 'pit_methods', 'source', 'status']).where('effective_from', '<=', date).execute(),
       (r) => r.book,
       date,
     ).map((r) => ({ book: r.book, version: r.version, name: r.name, pitMethods: [...r.pit_methods] as Array<'none' | 'percentage' | 'income'>, effectiveFrom: r.effective_from, source: r.source, status: r.status }));

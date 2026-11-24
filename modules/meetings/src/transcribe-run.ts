@@ -7,7 +7,7 @@
 //   (the worker)                     enters the recorder's member-scoped context for that one run (memberVyRuntime), reads the audio through
 //                                    kernel.member_vy.meeting_audio.open, transcribes it metered by audio length, and writes ONLY kernel.member_vy_result.
 //   meetings.transcript.copy_result  the recorder's own action again, in their user context: copies a finished result into the draft transcript
-//                                    (crove_meetings.transcript_segment). Only the recorder can run it; no member-scoped context writes a meeting table.
+//                                    (ludy_meetings.transcript_segment). Only the recorder can run it; no member-scoped context writes a meeting table.
 //   meetings.transcript.status       what the recorder's screen shows: switched on or not, and the state of the latest run.
 //
 // Transcription is off unless the deployment turns it on (MEETINGS_TRANSCRIBE, with a provider): the module works with it off, and `start` refuses
@@ -46,7 +46,7 @@ async function lockTranscription(trx: QueryContext['trx'], orgId: string, userId
 }
 
 async function meetingHasAudio(trx: QueryContext['trx'], orgId: string, meetingId: string): Promise<boolean> {
-  const row = await trx.selectFrom('crove_meetings.audio_segment').select('id').where('org_id', '=', orgId).where('meeting_id', '=', meetingId).executeTakeFirst();
+  const row = await trx.selectFrom('ludy_meetings.audio_segment').select('id').where('org_id', '=', orgId).where('meeting_id', '=', meetingId).executeTakeFirst();
   return row !== undefined;
 }
 
@@ -70,11 +70,11 @@ export const transcriptStart = defineCommand({
     if (!transcribeBroker) throw new DomainError('TRANSCRIBE_NO_BROKER', 503, 'Transcription needs the deployment credential key (CREDENTIAL_KEY or CREDENTIAL_KEY_FILE); ask the operator');
     // The meeting row is held while the run is made, so a delete that races this start waits for it (and then removes the run through the trigger) instead of
     // leaving an empty failed result row behind.
-    await ctx.trx.selectFrom('crove_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forShare().execute();
+    await ctx.trx.selectFrom('ludy_meetings.meeting').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).forShare().execute();
     if (!(await meetingHasAudio(ctx.trx, ctx.orgId, input.meetingId))) throw new DomainError('MEETING_NO_AUDIO', 422, 'This meeting has no audio to transcribe');
     // The audio's period ends on its date, not at the nightly shred (#2579): from that day a run would only fail, so none starts (the door refuses it too, #2863 item 1).
     const audioDay = (
-      await ctx.trx.selectFrom('crove_meetings.meeting').select('audio_retention_date').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirstOrThrow()
+      await ctx.trx.selectFrom('ludy_meetings.meeting').select('audio_retention_date').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirstOrThrow()
     ).audio_retention_date;
     if (String(audioDay) <= vnDay(ctx.now)) throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting media retention has ended');
     await lockTranscription(ctx.trx, ctx.orgId, userId);

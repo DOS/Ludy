@@ -19,7 +19,9 @@ import {
 } from '@ludy/kernel-contract';
 import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtime';
 import { isSignAiStoppedOnTrx } from './ai.ts';
+import { signApiKeyQueries } from './api-keys.ts';
 import { renderStarterContractPdf } from './contract-drafter.ts';
+import { signMcpQueries } from './mcp.ts';
 import type { SigningEventChainRow } from './events.ts';
 import { parseEventPayload, verifyEventChain } from './events.ts';
 import {
@@ -65,7 +67,7 @@ export const envelopeList = defineQuery({
   handler: async (ctx, input) => {
     assertUser(ctx);
     let q = ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select([
         'id',
         'title',
@@ -110,7 +112,7 @@ export const envelopeList = defineQuery({
     }
 
     const signerRows = await ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select(['envelope_id', 'status', 'email'])
       .where('org_id', '=', ctx.orgId)
       .where(
@@ -241,7 +243,7 @@ export const envelopeBySource = defineQuery({
     }
     const uniqueSourceIds = [...new Set(input.sourceIds)];
     let q = ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select([
         'id',
         'title',
@@ -282,7 +284,7 @@ export const envelopeBySource = defineQuery({
     }
 
     const signerRows = await ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select(['envelope_id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where(
@@ -335,7 +337,7 @@ export const envelopeGet = defineQuery({
   handler: async (ctx, input) => {
     assertUser(ctx);
     const env = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
@@ -345,7 +347,7 @@ export const envelopeGet = defineQuery({
     await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env);
 
     const signers = await ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select([
         'id',
         'envelope_id',
@@ -404,7 +406,7 @@ export const envelopeGet = defineQuery({
     }
 
     const fields = await ctx.trx
-      .selectFrom('crove_sign.field')
+      .selectFrom('ludy_sign.field')
       .select([
         'id',
         'envelope_id',
@@ -555,7 +557,7 @@ export const envelopeEvents = defineQuery({
   handler: async (ctx, input) => {
     assertUser(ctx);
     const env = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select(['id', 'source_kind', 'source_id', 'created_by'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
@@ -565,7 +567,7 @@ export const envelopeEvents = defineQuery({
     await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env);
 
     const rows = await ctx.trx
-      .selectFrom('crove_sign.signing_event')
+      .selectFrom('ludy_sign.signing_event')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', env.id)
@@ -600,7 +602,7 @@ export const envelopeVerify = defineQuery({
   handler: async (ctx, input) => {
     assertUser(ctx);
     const env = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select([
         'id',
         'status',
@@ -630,7 +632,7 @@ export const envelopeVerify = defineQuery({
     await assertCanAccessMeetingMinutesEnvelopeRow(ctx, env);
 
     const events = await ctx.trx
-      .selectFrom('crove_sign.signing_event')
+      .selectFrom('ludy_sign.signing_event')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', env.id)
@@ -643,7 +645,7 @@ export const envelopeVerify = defineQuery({
         : verifyEventChain(events);
 
     const attachmentFields = await ctx.trx
-      .selectFrom('crove_sign.field')
+      .selectFrom('ludy_sign.field')
       .select(['attachment_file_id', 'attachment_content_type', 'attachment_size_bytes', 'attachment_sha256'])
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', env.id)
@@ -763,7 +765,7 @@ export const envelopeInspectJobData = defineQuery({
   handler: async (ctx, input): Promise<SignInspectJobData | null> => {
     assertSystem(ctx);
     const row = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select([
         'id',
         'status',
@@ -794,7 +796,7 @@ export const envelopeSealJobData = defineQuery({
   handler: async (ctx, input): Promise<SignSealJobData | null> => {
     assertSystem(ctx);
     const env = await ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .select([
         'id',
         'title',
@@ -812,7 +814,7 @@ export const envelopeSealJobData = defineQuery({
     if (!env) return null;
 
     const signers = await ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select([
         'id',
         'routing_order',
@@ -840,7 +842,7 @@ export const envelopeSealJobData = defineQuery({
       .execute();
 
     const fields = await ctx.trx
-      .selectFrom('crove_sign.field')
+      .selectFrom('ludy_sign.field')
       .select([
         'id',
         'signer_id',
@@ -869,7 +871,7 @@ export const envelopeSealJobData = defineQuery({
       .execute();
 
     const events = await ctx.trx
-      .selectFrom('crove_sign.signing_event')
+      .selectFrom('ludy_sign.signing_event')
       .selectAll()
       .where('org_id', '=', ctx.orgId)
       .where('envelope_id', '=', env.id)
@@ -897,10 +899,13 @@ export const envelopeSealJobData = defineQuery({
 
 import { signAcceptanceQueries } from './acceptance.ts';
 import { signCaQueries } from './ca.ts';
+import { signKycQueries } from './kyc.ts';
 import { signObligationQueries } from './obligations.ts';
+import { signPlaybookQueries } from './playbook.ts';
 import { signProfileQueries } from './profiles.ts';
 import { signTemplateQueries } from './templates.ts';
 import { signToday } from './today-and-reminders.ts';
+import { signWebhookQueries } from './webhooks.ts';
 
 export interface SignDiffSourceResult {
   aiStopped: boolean;
@@ -917,7 +922,7 @@ async function verifySignReadablePdfFile(ctx: QueryContext, fileId: string): Pro
     throw new DomainError('SIGN_FILE_NOT_FOUND', 404, 'Source file not found');
   }
   const { rows } = await sql<{ allowed: boolean }>`
-    SELECT crove_sign.can_read_sign_file(${file.id}::uuid) AS allowed
+    SELECT ludy_sign.can_read_sign_file(${file.id}::uuid) AS allowed
   `.execute(ctx.trx);
   if (!rows[0]?.allowed) {
     throw new DomainError('SIGN_FILE_NOT_FOUND', 404, 'Source file not found');
@@ -995,7 +1000,12 @@ export const signQueries = [
   ...signTemplateQueries,
   ...signAcceptanceQueries,
   ...signCaQueries,
+  ...signKycQueries,
   ...signObligationQueries,
   ...signProfileQueries,
   ...signVaultQueries,
+  ...signWebhookQueries,
+  ...signPlaybookQueries,
+  ...signApiKeyQueries,
+  ...signMcpQueries,
 ];

@@ -92,11 +92,11 @@ suite('TikTok creator options as channel options on PostgreSQL (#1497)', () => {
   const events = (o: Org) =>
     admin(async (c) => (await c.query<{ payload: { option_id: string; kind: string } }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.channel_option.requested' ORDER BY created_at, id", [o.orgId])).rows);
   const optionId = async (o: Org, connectionId: string) =>
-    admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_social.channel_option WHERE org_id = $1 AND channel_connection_id = $2', [o.orgId, connectionId])).rows[0]?.id as string);
-  const stored = (id: string) => admin(async (c) => (await c.query<{ kind: string; status: string; items: string; error: string | null }>('SELECT kind, status, items::text AS items, error FROM crove_social.channel_option WHERE id = $1', [id])).rows[0]);
+    admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_social.channel_option WHERE org_id = $1 AND channel_connection_id = $2', [o.orgId, connectionId])).rows[0]?.id as string);
+  const stored = (id: string) => admin(async (c) => (await c.query<{ kind: string; status: string; items: string; error: string | null }>('SELECT kind, status, items::text AS items, error FROM ludy_social.channel_option WHERE id = $1', [id])).rows[0]);
   const job = (o: Org, id: string, publishers: Readonly<Record<string, Publisher>>) => runChannelOptionJob({ runtime: worker, broker: vault, publishers }, o.orgId, id);
   // The list's last answer, moved back in time as if it were read that long ago.
-  const age = (id: string, ms: number) => admin((c) => c.query("UPDATE crove_social.channel_option SET fetched_at = fetched_at - ($2 || ' milliseconds')::interval, requested_at = requested_at - ($2 || ' milliseconds')::interval WHERE id = $1", [id, String(ms)]));
+  const age = (id: string, ms: number) => admin((c) => c.query("UPDATE ludy_social.channel_option SET fetched_at = fetched_at - ($2 || ' milliseconds')::interval, requested_at = requested_at - ($2 || ' milliseconds')::interval WHERE id = $1", [id, String(ms)]));
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });

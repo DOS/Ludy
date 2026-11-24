@@ -93,20 +93,20 @@ export function checkPartyFields(input: PartyFieldsInput): PartyFieldsCheck {
 // A party nothing points at may change its kind (#2438: a party made by an invoice is a company by default, and a person fixes it in one click); one that is pointed at
 // keeps it, so no record changes meaning under the books. The other modules' tables are read, never written (as personal-data.ts reads them).
 export const PARTY_KIND_HOLDERS = [
-  ['crove_finance.purchase_document', 'party_id'],
-  ['crove_finance.cash_voucher', 'party_id'],
-  ['crove_finance.journal_line', 'party_id'],
-  ['crove_finance.vendor_account_rule', 'party_id'],
-  ['crove_finance.categorization_rule', 'vendor_party_id'],
-  ['crove_finance.bank_party_rule', 'party_id'],
-  ['crove_crm.deal', 'party_id'],
-  ['crove_crm.booking', 'party_id'],
+  ['ludy_finance.purchase_document', 'party_id'],
+  ['ludy_finance.cash_voucher', 'party_id'],
+  ['ludy_finance.journal_line', 'party_id'],
+  ['ludy_finance.vendor_account_rule', 'party_id'],
+  ['ludy_finance.categorization_rule', 'vendor_party_id'],
+  ['ludy_finance.bank_party_rule', 'party_id'],
+  ['ludy_crm.deal', 'party_id'],
+  ['ludy_crm.booking', 'party_id'],
   // A quote names the buyer it was made for (#2693): a kind flip under it would change what the document means.
-  ['crove_crm.quote', 'party_id'],
+  ['ludy_crm.quote', 'party_id'],
   // A sales order names the buyer of the quote it froze (#2696): the same kind rule as the quote.
-  ['crove_crm.sales_order', 'party_id'],
+  ['ludy_crm.sales_order', 'party_id'],
   // A marketplace platform's party (#2516): the entries that name it as the counterparty of 131 must keep reading an organization.
-  ['crove_finance.marketplace_party', 'party_id'],
+  ['ludy_finance.marketplace_party', 'party_id'],
   ['ludy_kernel.conversation_identity', 'party_id'],
   ['ludy_kernel.conversation', 'party_id'],
   ['ludy_kernel.party', 'company_id'],

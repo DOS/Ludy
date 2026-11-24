@@ -3,7 +3,16 @@
 // proposes recommended priority, optional assignee seat, optional active/upcoming cycle, and optional duplicate task ID.
 // Every candidate UUID is checked strictly against caller-supplied allowlists; untrusted text uses <<< >>> fences and plain-text bounds.
 import { z } from 'zod';
-import { draftLinksOutside } from './conversation.ts';
+import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
+import {
+  hasAddress,
+  hasAutonomousActionDirective,
+  hasObfuscatedContactOrLink,
+  hasPromptMarkupLeak,
+  hasStealthControls,
+  hasUngroundedMoneyOrIdToken,
+  hasUngroundedMoneyOrScaleWords,
+} from './injection-guards.ts';
 import { hasMarkdownNoise } from './project-weekly-status.ts';
 
 export const PROJECT_TRIAGE_ASSIST_PRIORITIES = ['urgent', 'high', 'medium', 'low', 'none'] as const;
@@ -20,6 +29,40 @@ const HTML_TAG = /<[a-z!/]/i;
 
 const oneLine = (value: string, max: number) => Array.from(value.replace(/\s+/g, ' ').trim()).slice(0, max).join('');
 const fenced = (value: string) => value.replace(/<{3,}|>{3,}/g, (run) => run.split('').join(' '));
+
+function hasDisallowedControl(raw: string): boolean {
+  if (INVISIBLE_FORMAT.test(raw)) return true;
+  for (const ch of raw) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code !== 0x09 && code !== 0x0a && code !== 0x0d && (code < 0x20 || code === 0x7f)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function stripTrustedPhrases(text: string, trustedTexts: readonly string[]): string {
+  const ordered = [...trustedTexts].filter(Boolean).sort((a, b) => b.length - a.length);
+  let out = text;
+  for (const t of ordered) {
+    const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const prefix = /^[\p{L}\p{N}]/u.test(t) ? '(?<![\\p{L}\\p{N}])' : '';
+    const suffix = /[\p{L}\p{N}]$/u.test(t) ? '(?![\\p{L}\\p{N}])' : '';
+    out = out.replace(new RegExp(`${prefix}${escaped}${suffix}`, 'gu'), ' ');
+  }
+  return out;
+}
+
+function collectTrustedUrlTokens(trustedTexts: readonly string[]): string[] {
+  const urls = new Set<string>();
+  for (const t of trustedTexts) {
+    for (const match of t.matchAll(/https?:\/\/[^\s<>()]+/gi)) {
+      const cleaned = match[0].replace(/[.,;:!?)'"\]]+$/, '');
+      if (cleaned) urls.add(cleaned);
+    }
+  }
+  return [...urls];
+}
 
 export interface ProjectTriageAssistFacts {
   language: 'vi' | 'en';
@@ -158,23 +201,47 @@ export function checkTriageAssist(
     return { kind: 'none', code: 'UNKNOWN_ID' };
   }
 
-  const allowedTexts = [
+  const trustedTexts = [
+    facts.projectName,
     ...(facts.item.tainted ? [] : [facts.item.title, facts.item.description ?? '']),
-    ...facts.candidates.tasks.filter((t) => !t.tainted).map((t) => t.title),
-  ];
+    ...facts.candidates.tasks
+      .slice(0, PROJECT_TRIAGE_ASSIST_TASKS_MAX)
+      .filter((t) => !t.tainted)
+      .map((t) => t.title),
+    ...facts.candidates.seats.map((s) => s.label),
+    ...facts.candidates.cycles.map((c) => c.label),
+  ].filter((text) => text.trim().length > 0);
+  const trustedWithUrls = [...trustedTexts, ...collectTrustedUrlTokens(trustedTexts)];
 
   let cleanReason: string | null = null;
   if (output.reason !== null && output.reason !== undefined) {
-    const trimmed = output.reason.replace(/\s+/g, ' ').trim();
+    const rawReason = output.reason;
+    const trimmed = rawReason.replace(/\s+/g, ' ').trim();
     if (trimmed.length > 0) {
       const bounded = Array.from(trimmed).slice(0, PROJECT_TRIAGE_REASON_MAX).join('').trim();
+      const untrustedTrimmed = stripTrustedPhrases(trimmed, trustedWithUrls);
+      const untrustedBounded = stripTrustedPhrases(bounded, trustedWithUrls);
       if (
-        INVISIBLE_FORMAT.test(trimmed) ||
+        hasDisallowedControl(rawReason) ||
+        hasStealthControls(rawReason) ||
+        hasPromptMarkupLeak(rawReason) ||
+        HTML_TAG.test(rawReason) ||
         HTML_TAG.test(trimmed) ||
+        hasMarkdownNoise(rawReason) ||
         hasMarkdownNoise(trimmed) ||
-        draftLinksOutside(trimmed, allowedTexts).length > 0 ||
         hasMarkdownNoise(bounded) ||
-        draftLinksOutside(bounded, allowedTexts).length > 0
+        hasAutonomousActionDirective(rawReason) ||
+        draftLinksOutside(trimmed, trustedTexts).length > 0 ||
+        draftLinksOutside(bounded, trustedTexts).length > 0 ||
+        hasAddress(untrustedTrimmed) ||
+        hasAddress(untrustedBounded) ||
+        hasObfuscatedContactOrLink(trimmed, trustedTexts) ||
+        hasObfuscatedContactOrLink(bounded, trustedTexts) ||
+        draftFiguresOutside(trimmed, trustedTexts).length > 0 ||
+        draftFiguresOutside(bounded, trustedTexts).length > 0 ||
+        hasUngroundedMoneyOrScaleWords(untrustedTrimmed) ||
+        hasUngroundedMoneyOrScaleWords(untrustedBounded) ||
+        hasUngroundedMoneyOrIdToken(rawReason, trustedTexts)
       ) {
         return { kind: 'none', code: 'AI_OUTPUT_UNSAFE' };
       }

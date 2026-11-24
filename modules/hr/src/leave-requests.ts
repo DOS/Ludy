@@ -33,7 +33,7 @@ import { isoDate as iso } from './payroll-dates.ts';
 import { employerName, figuresOfLine, LINE_COLUMNS, type StoredLine } from './payroll-run.ts';
 
 export const STAFF_ROLES: readonly MemberRole[] = ['owner', 'admin', 'member'];
-const LEAVE_REQUEST = hrManifest.tables.crove_hr.leave_request;
+const LEAVE_REQUEST = hrManifest.tables.ludy_hr.leave_request;
 
 export const selfNotLinked = () =>
   new DomainError('HR_SELF_NOT_LINKED', 403, 'Tài khoản của bạn chưa được liên kết với hồ sơ nhân viên nào');
@@ -46,9 +46,9 @@ const selfApprovalBlocked = () =>
 
 export async function resolveSelfEmployee(trx: QueryContext['trx'], orgId: string, userId: string) {
   return trx
-    .selectFrom('crove_hr.payroll_employee as e')
+    .selectFrom('ludy_hr.payroll_employee as e')
     .leftJoin('ludy_kernel.legal_entity as le', (j) => j.onRef('le.org_id', '=', 'e.org_id').onRef('le.id', '=', 'e.legal_entity_id'))
-    .leftJoin('crove_hr.department as d', (j) => j.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'))
+    .leftJoin('ludy_hr.department as d', (j) => j.onRef('d.org_id', '=', 'e.org_id').onRef('d.id', '=', 'e.department_id'))
     .select([
       'e.id',
       'e.legal_entity_id',
@@ -70,7 +70,7 @@ export async function resolveSelfEmployee(trx: QueryContext['trx'], orgId: strin
 
 async function resolveSelfHireDate(trx: QueryContext['trx'], orgId: string, employeeId: string): Promise<string | null> {
   const { rows } = await sql<{ hire_date: Date | string | null }>`
-    SELECT crove_hr.self_hire_date(${orgId}::uuid, ${employeeId}::uuid) AS hire_date
+    SELECT ludy_hr.self_hire_date(${orgId}::uuid, ${employeeId}::uuid) AS hire_date
   `.execute(trx);
   const raw = rows[0]?.hire_date ?? null;
   return raw === null ? null : iso(raw);
@@ -148,7 +148,7 @@ export const selfProfileGet = defineQuery({
     const callerUserId = userOf(ctx.actor);
     const emp = await resolveSelfEmployee(ctx.trx, ctx.orgId, callerUserId);
     const managedRows = await ctx.trx
-      .selectFrom('crove_hr.department')
+      .selectFrom('ludy_hr.department')
       .select(['id', 'legal_entity_id', 'name', 'code'])
       .where('org_id', '=', ctx.orgId)
       .where('manager_user_id', '=', callerUserId)
@@ -235,7 +235,7 @@ export const selfLeaveBalance = defineQuery({
     const hireDate = await resolveSelfHireDate(ctx.trx, ctx.orgId, emp.id);
     const endedOn = emp.ended_on === null ? null : iso(emp.ended_on);
     const rows = await ctx.trx
-      .selectFrom('crove_hr.payroll_leave_entry')
+      .selectFrom('ludy_hr.payroll_leave_entry')
       .select(['id', 'employee_id', 'month', 'kind', 'days', 'approved'])
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', emp.id)
@@ -297,7 +297,7 @@ export const selfLeaveRequests = defineQuery({
     const callerUserId = userOf(ctx.actor);
     const emp = await resolveSelfEmployee(ctx.trx, ctx.orgId, callerUserId);
     const managedRows = await ctx.trx
-      .selectFrom('crove_hr.department')
+      .selectFrom('ludy_hr.department')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('manager_user_id', '=', callerUserId)
@@ -311,13 +311,13 @@ export const selfLeaveRequests = defineQuery({
     if (input.scope === 'all' && callerEmpId === null && managedDeptIds.length === 0) return [];
 
     let q = ctx.trx
-      .selectFrom('crove_hr.leave_request as r')
-      .leftJoin('crove_hr.department as d', (j) => j.onRef('d.org_id', '=', 'r.org_id').onRef('d.id', '=', 'r.department_id'))
+      .selectFrom('ludy_hr.leave_request as r')
+      .leftJoin('ludy_hr.department as d', (j) => j.onRef('d.org_id', '=', 'r.org_id').onRef('d.id', '=', 'r.department_id'))
       .select([
         'r.id',
         'r.legal_entity_id',
         'r.employee_id',
-        sql<string | null>`crove_hr.leave_request_employee_name(r.org_id, r.id)`.as('employee_name'),
+        sql<string | null>`ludy_hr.leave_request_employee_name(r.org_id, r.id)`.as('employee_name'),
         'r.department_id',
         'd.name as department_name',
         'r.month',
@@ -374,7 +374,7 @@ export const selfLeaveRequestSubmit = defineCommand({
   sideEffect: 'internal',
   access: STAFF_ROLES,
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'leave_request', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'leave_request', [
       'org_id',
       'legal_entity_id',
       'employee_id',
@@ -430,7 +430,7 @@ export const selfLeaveRequestSubmit = defineCommand({
     let initialStatus: 'pending_l1' | 'pending_final' = 'pending_final';
     if (emp.department_id !== null) {
       const dept = await ctx.trx
-        .selectFrom('crove_hr.department')
+        .selectFrom('ludy_hr.department')
         .select(['manager_user_id', 'archived_at'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', emp.department_id)
@@ -456,7 +456,7 @@ export const selfLeaveRequestSubmit = defineCommand({
     let overlapCount = 0;
     if (emp.department_id !== null) {
       const { rows } = await sql<{ n: number }>`
-        SELECT crove_hr.dept_overlap_leave_count(
+        SELECT ludy_hr.dept_overlap_leave_count(
           ${ctx.orgId}::uuid,
           ${emp.department_id}::uuid,
           ${emp.id}::uuid,
@@ -468,7 +468,7 @@ export const selfLeaveRequestSubmit = defineCommand({
     }
 
     const saved = await ctx.trx
-      .insertInto('crove_hr.leave_request')
+      .insertInto('ludy_hr.leave_request')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: emp.legal_entity_id,
@@ -513,7 +513,7 @@ export const selfLeaveRequestCancel = defineCommand({
   sideEffect: 'internal',
   access: STAFF_ROLES,
   target: (input: { requestId: string }) => ({ type: 'hr.leave_request', id: input.requestId }),
-  writes: [tableWrite(hrManifest.tables, 'crove_hr', 'leave_request', ['status', 'updated_at'])],
+  writes: [tableWrite(hrManifest.tables, 'ludy_hr', 'leave_request', ['status', 'updated_at'])],
   handler: async (ctx, input): Promise<HrLeaveRequestActionResult> => {
     const callerUserId = userOf(ctx.actor);
     const emp = await resolveSelfEmployee(ctx.trx, ctx.orgId, callerUserId);
@@ -521,7 +521,7 @@ export const selfLeaveRequestCancel = defineCommand({
 
     // Plain SELECT first so UPDATE RLS on status/self-ownership does not mask 403/409 errors as 404.
     const existing = await ctx.trx
-      .selectFrom('crove_hr.leave_request')
+      .selectFrom('ludy_hr.leave_request')
       .select(['id', 'employee_id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.requestId)
@@ -532,7 +532,7 @@ export const selfLeaveRequestCancel = defineCommand({
     }
 
     const updated = await ctx.trx
-      .updateTable('crove_hr.leave_request')
+      .updateTable('ludy_hr.leave_request')
       .set({ status: 'cancelled', updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', existing.id)
@@ -567,8 +567,8 @@ export const selfPayslipsList = defineQuery({
     if (!emp) return [];
 
     const rows = await ctx.trx
-      .selectFrom('crove_hr.payroll_line as l')
-      .innerJoin('crove_hr.payroll_run as r', (j) => j.onRef('r.org_id', '=', 'l.org_id').onRef('r.id', '=', 'l.run_id'))
+      .selectFrom('ludy_hr.payroll_line as l')
+      .innerJoin('ludy_hr.payroll_run as r', (j) => j.onRef('r.org_id', '=', 'l.org_id').onRef('r.id', '=', 'l.run_id'))
       .select(['l.id as line_id', 'r.id as run_id', 'r.month', 'r.status', 'l.gross', 'l.net', 'r.approved_at'])
       .where('l.org_id', '=', ctx.orgId)
       .where('l.employee_id', '=', emp.id)
@@ -604,7 +604,7 @@ export const selfPayslipGet = defineQuery({
     if (!emp) throw selfNotLinked();
 
     const line = await ctx.trx
-      .selectFrom('crove_hr.payroll_line')
+      .selectFrom('ludy_hr.payroll_line')
       .select([...LINE_COLUMNS, 'run_id', 'breakdown'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.lineId)
@@ -616,7 +616,7 @@ export const selfPayslipGet = defineQuery({
     }
 
     const run = await ctx.trx
-      .selectFrom('crove_hr.payroll_run')
+      .selectFrom('ludy_hr.payroll_run')
       .select(['id', 'legal_entity_id', 'month', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', line.run_id)
@@ -648,9 +648,9 @@ export const leaveRequestList = defineQuery({
   sensitive: true,
   handler: async (ctx, input): Promise<HrLeaveRequestView[]> => {
     let q = ctx.trx
-      .selectFrom('crove_hr.leave_request as r')
-      .leftJoin('crove_hr.payroll_employee as e', (j) => j.onRef('e.org_id', '=', 'r.org_id').onRef('e.id', '=', 'r.employee_id'))
-      .leftJoin('crove_hr.department as d', (j) => j.onRef('d.org_id', '=', 'r.org_id').onRef('d.id', '=', 'r.department_id'))
+      .selectFrom('ludy_hr.leave_request as r')
+      .leftJoin('ludy_hr.payroll_employee as e', (j) => j.onRef('e.org_id', '=', 'r.org_id').onRef('e.id', '=', 'r.employee_id'))
+      .leftJoin('ludy_hr.department as d', (j) => j.onRef('d.org_id', '=', 'r.org_id').onRef('d.id', '=', 'r.department_id'))
       .select([
         'r.id',
         'r.legal_entity_id',
@@ -743,7 +743,7 @@ export async function assertL1Authority(
     throw new DomainError('FORBIDDEN', 403, 'Chỉ quản lý phòng ban được phân công hoặc quản trị viên mới duyệt được đơn này');
   }
   const dept = await trx
-    .selectFrom('crove_hr.department')
+    .selectFrom('ludy_hr.department')
     .select(['manager_user_id', 'archived_at'])
     .where('org_id', '=', orgId)
     .where('id', '=', req.department_id)
@@ -766,9 +766,9 @@ async function assertEmployeeNotErasedForLeaveRequest(
     return;
   }
   // L1 department managers (role = 'member') cannot SELECT another employee's payroll_employee row under RLS;
-  // crove_hr.leave_request_employee_name verifies manager access and returns NULL iff e.erased_at IS NOT NULL.
+  // ludy_hr.leave_request_employee_name verifies manager access and returns NULL iff e.erased_at IS NOT NULL.
   const { rows } = await sql<{ name: string | null }>`
-    SELECT crove_hr.leave_request_employee_name(${orgId}::uuid, ${requestId}::uuid) AS name
+    SELECT ludy_hr.leave_request_employee_name(${orgId}::uuid, ${requestId}::uuid) AS name
   `.execute(trx);
   if (rows[0]?.name == null) {
     throw erasedError();
@@ -803,12 +803,12 @@ async function transitionLeaveRequestGuarded(
     throw invalidState(opts.invalidStateMessage);
   }
   const updated = await trx
-    .updateTable('crove_hr.leave_request')
+    .updateTable('ludy_hr.leave_request')
     .set(opts.values)
     .where('org_id', '=', opts.orgId)
     .where('id', '=', opts.requestId)
     .where('status', 'in', [...opts.allowedStatuses])
-    .where(sql<boolean>`crove_hr.leave_request_employee_name(org_id, id) IS NOT NULL`)
+    .where(sql<boolean>`ludy_hr.leave_request_employee_name(org_id, id) IS NOT NULL`)
     .returning('id')
     .executeTakeFirst();
   if (!updated) {
@@ -831,7 +831,7 @@ export const leaveRequestApproveL1 = defineCommand({
   access: STAFF_ROLES,
   target: (input: { requestId: string }) => ({ type: 'hr.leave_request', id: input.requestId }),
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'leave_request', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'leave_request', [
       'status',
       'l1_approver_user_id',
       'l1_acted_at',
@@ -843,7 +843,7 @@ export const leaveRequestApproveL1 = defineCommand({
     const callerUserId = userOf(ctx.actor);
     // Plain SELECT first so L1 UPDATE RLS does not mask 403 self-approval or 409 state errors as 404.
     const existing = await ctx.trx
-      .selectFrom('crove_hr.leave_request')
+      .selectFrom('ludy_hr.leave_request')
       .select(['id', 'employee_id', 'department_id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.requestId)
@@ -896,7 +896,7 @@ export const leaveRequestApproveFinal = defineCommand({
   permission: 'hr.payroll.run',
   target: (input: { requestId: string }) => ({ type: 'hr.leave_request', id: input.requestId }),
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_leave_entry', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_leave_entry', [
       'org_id',
       'legal_entity_id',
       'employee_id',
@@ -908,7 +908,7 @@ export const leaveRequestApproveFinal = defineCommand({
       'created_at',
       'updated_at',
     ]),
-    tableWrite(hrManifest.tables, 'crove_hr', 'leave_request', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'leave_request', [
       'status',
       'final_acted_by',
       'final_acted_at',
@@ -930,7 +930,7 @@ export const leaveRequestApproveFinal = defineCommand({
     // Read employee_id unlocked first, then lock payroll_employee before leave_request and payroll_leave_entry
     // so lock acquisition order always matches leaveSet/leaveDelete (zero 40P01 deadlock risk).
     const preRead = await ctx.trx
-      .selectFrom('crove_hr.leave_request')
+      .selectFrom('ludy_hr.leave_request')
       .select(['id', 'employee_id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.requestId)
@@ -942,7 +942,7 @@ export const leaveRequestApproveFinal = defineCommand({
       throw invalidState('Chỉ duyệt chốt được đơn đang chờ duyệt');
     }
     const existing = await ctx.trx
-      .selectFrom('crove_hr.leave_request')
+      .selectFrom('ludy_hr.leave_request')
       .select(['id', 'employee_id', 'month', 'kind', 'days', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.requestId)
@@ -954,7 +954,7 @@ export const leaveRequestApproveFinal = defineCommand({
     }
 
     const firstTerm = await ctx.trx
-      .selectFrom('crove_hr.payroll_employment')
+      .selectFrom('ludy_hr.payroll_employment')
       .select(['effective_from'])
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', employee.id)
@@ -966,7 +966,7 @@ export const leaveRequestApproveFinal = defineCommand({
     }
 
     const priorEntry = await ctx.trx
-      .selectFrom('crove_hr.payroll_leave_entry')
+      .selectFrom('ludy_hr.payroll_leave_entry')
       .select(['id', 'days'])
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', employee.id)
@@ -985,7 +985,7 @@ export const leaveRequestApproveFinal = defineCommand({
     });
 
     const savedEntry = await ctx.trx
-      .insertInto('crove_hr.payroll_leave_entry')
+      .insertInto('ludy_hr.payroll_leave_entry')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: employee.legal_entity_id,
@@ -1009,7 +1009,7 @@ export const leaveRequestApproveFinal = defineCommand({
       .executeTakeFirstOrThrow();
 
     await ctx.trx
-      .updateTable('crove_hr.leave_request')
+      .updateTable('ludy_hr.leave_request')
       .set({
         status: 'approved',
         final_acted_by: callerUserId,
@@ -1051,7 +1051,7 @@ export const leaveRequestReject = defineCommand({
   access: STAFF_ROLES,
   target: (input: { requestId: string }) => ({ type: 'hr.leave_request', id: input.requestId }),
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'leave_request', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'leave_request', [
       'status',
       'l1_approver_user_id',
       'l1_acted_at',
@@ -1065,7 +1065,7 @@ export const leaveRequestReject = defineCommand({
     const callerUserId = userOf(ctx.actor);
     // Plain SELECT first so L1 UPDATE RLS does not mask 403 self-approval or 409 state errors as 404.
     const existing = await ctx.trx
-      .selectFrom('crove_hr.leave_request')
+      .selectFrom('ludy_hr.leave_request')
       .select(['id', 'employee_id', 'department_id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.requestId)

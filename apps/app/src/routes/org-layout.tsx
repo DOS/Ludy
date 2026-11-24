@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Outlet, useLocation, useNavigate, useParams, useRouter } from '@tanstack/react-router';
+import { Outlet, useLocation, useNavigate, useParams, useRouter, useRouterState } from '@tanstack/react-router';
 import { useTranslations } from 'use-intl';
+import { cn } from '@ludy/ui/lib/utils';
 import { NavDrawer, ShellNav } from '../components/app-nav.tsx';
 import { PhoneHeader } from '../components/phone-header.tsx';
 import { CommandPalette, type PaletteEntry } from '../components/command-palette.tsx';
@@ -10,22 +11,31 @@ import { ScreenTabs } from '../components/screen-tabs.tsx';
 import { Toaster } from '../components/toaster.tsx';
 import { QuickCaptureDialog } from '../components/todo-quick-add.tsx';
 import { OrgLeftNotice } from '../components/ui.tsx';
-import { LOCALE_NAMES, LOCALES } from '../i18n/locale.ts';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
-import { aiConnectionsVisible } from '../lib/agents.ts';
+import { agentPermissions, aiConnectionsVisible } from '../lib/agents.ts';
 import { orpc } from '../lib/api.ts';
-import { ALL_NAV, NAV_KEYWORDS, appOfPath, installedApps, isShellItemHidden, visibleApps } from '../lib/apps.ts';
+import { ALL_NAV, NAV_KEYWORDS, SETTINGS_ITEMS, appOfPath, installedApps, isShellItemHidden, visibleApps } from '../lib/apps.ts';
 import { getConfig } from '../lib/auth.ts';
 import { effectiveModules, installedItems } from '../lib/modules.ts';
 import { installedModules, setOrgModules, useModulesVersion } from '../lib/org-modules.ts';
 import { shellBadges, unreadNotices } from '../lib/overview.ts';
 import { isPaletteShortcut, searchTerm } from '../lib/palette.ts';
+import { buildQuickActionEntries, buildRecentPaletteEntries } from '../lib/palette-entries.ts';
+import {
+  detailSectionKeyForPath,
+  isRecentItemVisible,
+  normalizeOrgRelativePath,
+  recordRecentItem,
+  stripSearchAndHash,
+  useRecentItems,
+} from '../lib/palette-recents.ts';
 import { hasOpenModalDialog, isQuickCaptureShortcut } from '../lib/quick-add.ts';
+import { currentScreenName, subscribeScreenName } from '../lib/screen-title.ts';
 import { documentNumber } from '../lib/search.ts';
 import { proposalName } from '../lib/review.ts';
-import { THEMES } from '../lib/theme.ts';
 import { useThemeSetting } from '../lib/theme-runtime.ts';
 import { signOut } from '../lib/session-actions.ts';
+import { hasSecondaryNav, isSidebarToggleShortcut, useSidebarCollapsed } from '../lib/sidebar-rail.ts';
 import { useRouteFocus } from '../lib/route-focus.ts';
 import { useScrollRoom } from '../lib/scroll-room.ts';
 import { SAFETY_POLL_MS, pollEvery, useInvalidationStream, useStreamLive } from '../lib/stream-hook.ts';
@@ -54,10 +64,11 @@ export function OrgLayout() {
   const modulesVersion = useModulesVersion();
   const allNav = useMemo(() => installedItems(installedModules(), ALL_NAV), [modulesVersion]); // oxlint-disable-line react-hooks/exhaustive-deps
   const allApps = useMemo(() => installedApps(installedModules()), [modulesVersion]); // oxlint-disable-line react-hooks/exhaustive-deps
-  // The app of the screen (#1528), from the URL so a deep link opens in its app. The org's own screens (Overview, Notifications,
-  // Settings, the activity log, Personal data) belong to no app: the shell shows the rail and no app menu there (#3588), never the
-  // menu of an app the owner did not open.
+  const settingsItems = useMemo(() => installedItems(installedModules(), SETTINGS_ITEMS), [modulesVersion]); // oxlint-disable-line react-hooks/exhaustive-deps
+  // The app of the screen (#1528), from the URL so a deep link opens in its app. Overview, Notifications, Audit and Personal data
+  // belong to no app: the shell shows the rail and no secondary menu there (#3588). Settings shows its own sub-page menu (#4499).
   const { pathname } = useLocation();
+  const resolvedPathname = useRouterState({ select: (s) => (s.resolvedLocation ?? s.location).pathname });
   const screenApp = appOfPath(pathname);
   const [menuOpen, setMenuOpen] = useState(false);
   // The phone's header sticks to the top: a control the keyboard focuses stops below it, never under it (#1575).
@@ -129,11 +140,55 @@ export function OrgLayout() {
   const [theme, setTheme] = useThemeSetting();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
+  const [userCollapsed, setUserCollapsed] = useSidebarCollapsed();
+  const hasSecondary = hasSecondaryNav(screenApp, apps, pathname);
+  const sidebarCollapsed = !hasSecondary || userCollapsed;
   // The org's search (#673): parties, documents and journal entries for what is typed in the palette, where finance runs;
   // and the notes the member may read, where notes runs (#1675).
   const financeOn = NAV.some((n) => n.module === 'finance');
   const notesOn = installedModules().includes('notes');
   const canQuickCapture = notesOn && me.isSuccess && Boolean(org) && roleHere !== 'viewer';
+  const canCreateTeamTask = me.isSuccess && Boolean(org) && agentPermissions(roleHere).tasks;
+  const orgIdHere = org?.orgId;
+  const userIdHere = me.data?.userId;
+  const recentScope = useMemo(
+    () => ({ orgId: orgIdHere, userId: userIdHere }),
+    [orgIdHere, userIdHere],
+  );
+  const recentItems = useRecentItems(me.isSuccess && orgIdHere ? slug : '', recentScope);
+  const suppressedPathnameRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const suppressed = suppressedPathnameRef.current;
+    suppressedPathnameRef.current = null;
+    if (!me.isSuccess || !orgIdHere) return;
+    const relativePath = normalizeOrgRelativePath(resolvedPathname, slug);
+    if (!relativePath) return;
+    if (!isRecentItemVisible({ path: relativePath }, { modules: installedModules(), visibility: { manager: managerHere, hrMember: hrMemberHere, showAiConnections } })) {
+      return;
+    }
+    if (suppressed === relativePath.toLowerCase()) return;
+    let recordedLabel: string | null = null;
+    const tryRecord = () => {
+      const name = currentScreenName()?.trim();
+      if (!name || name === recordedLabel) return;
+      recordedLabel = name;
+      const isDetailRecord = detailSectionKeyForPath(relativePath) !== null;
+      recordRecentItem(
+        slug,
+        {
+          id: relativePath,
+          path: relativePath,
+          label: name,
+          kind: isDetailRecord ? 'record' : 'screen',
+        },
+        { orgId: orgIdHere, userId: userIdHere },
+      );
+    };
+    tryRecord();
+    return subscribeScreenName(tryRecord);
+  }, [slug, orgIdHere, userIdHere, me.isSuccess, resolvedPathname, modulesVersion, managerHere, hrMemberHere, showAiConnections]);
+
   const [paletteQuery, setPaletteQuery] = useState('');
   const typed = (financeOn || notesOn) && paletteOpen ? searchTerm(paletteQuery) : null;
   const term = useSettled(typed, 250);
@@ -163,6 +218,7 @@ export function OrgLayout() {
 
   // Ctrl K (Cmd K on a Mac) opens or closes the command palette from any screen of the org.
   // Alt+Q opens the quick capture modal when the notes module is active and focus is not in an editable field.
+  // `[` toggles the desktop secondary sidebar menu when the route owns one and focus is not in an editable field.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (isPaletteShortcut(event)) {
@@ -183,14 +239,57 @@ export function OrgLayout() {
         setMenuOpen(false);
         setPaletteOpen(false);
         setQuickCaptureOpen(true);
+        return;
+      }
+      if (
+        isSidebarToggleShortcut(event, {
+          hasSecondary,
+          modalOpen: paletteOpen || quickCaptureOpen || menuOpen || hasOpenModalDialog(typeof document !== 'undefined' ? document : null),
+          isDesktop: typeof window === 'undefined' || !window.matchMedia ? true : window.matchMedia('(min-width: 768px)').matches,
+          activeElement: typeof document !== 'undefined' ? document.activeElement : null,
+        })
+      ) {
+        event.preventDefault();
+        setUserCollapsed((prev) => !prev);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [notesOn, me.isSuccess, org, roleHere]);
+  }, [notesOn, me.isSuccess, org, roleHere, hasSecondary, paletteOpen, quickCaptureOpen, menuOpen, setUserCollapsed]);
+
+  const recentEntries = useMemo<PaletteEntry[]>(
+    () =>
+      buildRecentPaletteEntries({
+        items: recentItems,
+        modules: installedModules(),
+        visibility: { manager: managerHere, hrMember: hrMemberHere, showAiConnections },
+        tNav: t,
+        onVisit: (item) => {
+          const targetPathname = stripSearchAndHash(item.path).toLowerCase();
+          const currentRelative = normalizeOrgRelativePath(resolvedPathname, slug)?.toLowerCase();
+          if (item.path.toLowerCase() !== targetPathname && currentRelative !== targetPathname) {
+            suppressedPathnameRef.current = targetPathname;
+          }
+          recordRecentItem(
+            slug,
+            {
+              id: item.id,
+              path: item.path,
+              label: item.label,
+              ...(item.detail ? { detail: item.detail } : {}),
+              kind: item.kind,
+            },
+            { orgId: orgIdHere, userId: userIdHere },
+          );
+          void navigate({ href: `/o/${encodeURIComponent(slug)}${item.path}` });
+        },
+      }),
+    [recentItems, modulesVersion, managerHere, hrMemberHere, showAiConnections, t, resolvedPathname, slug, orgIdHere, userIdHere, navigate], // oxlint-disable-line react-hooks/exhaustive-deps
+  );
 
   const paletteEntries = useMemo<PaletteEntry[]>(
     () => [
+      ...recentEntries,
       ...NAV.map((item) => ({
         id: `go:${item.to}`,
         group: 'go' as const,
@@ -212,107 +311,157 @@ export function OrgLayout() {
         detail: `${item.title}, ${f.money(item.total)}`,
         run: () => void navigate({ to: '/o/$slug/inbox/$id', params: { slug, id: item.id } }),
       })),
-      ...(me.data?.orgs ?? [])
-        .filter((o) => o.slug !== slug)
-        .map((o) => ({
-          id: `org:${o.slug}`,
-          group: 'orgs' as const,
-          label: tp('switchOrg', { name: o.name }),
-          run: () => void navigate({ to: '/o/$slug/overview', params: { slug: o.slug } }),
-        })),
-      ...LOCALES.filter((l) => l !== locale).map((l) => ({
-        id: `locale:${l}`,
-        group: 'actions' as const,
-        label: tp('switchLocale', { name: LOCALE_NAMES[l] }),
-        keywords: 'language ngon ngu',
-        run: () => setLocale(l),
-      })),
-      ...THEMES.filter((th) => th !== theme).map((th) => ({
-        id: `theme:${th}`,
-        group: 'actions' as const,
-        label: tp('switchTheme', { name: tc(`themes.${th}`) }),
-        keywords: 'theme giao dien sang toi dark light',
-        run: () => setTheme(th),
-      })),
-      ...(canQuickCapture
-        ? [
-            {
-              id: 'quick-capture',
-              group: 'actions' as const,
-              label: tmw('quickCapturePalette'),
-              keywords: 'todo viec nhanh quick capture alt q',
-              run: () => setQuickCaptureOpen(true),
-            },
-          ]
-        : []),
-      { id: 'sign-out', group: 'actions' as const, label: tc('signOut'), run: () => void signOut() },
+      ...buildQuickActionEntries({
+        slug,
+        orgs: me.data?.orgs ?? [],
+        currentOrgName: org?.name,
+        locale,
+        theme,
+        canQuickCapture,
+        canCreateTeamTask,
+        strings: {
+          newTask: tp('newTask'),
+          quickCapturePalette: tmw('quickCapturePalette'),
+          tasksLabel: t('tasks'),
+          switchThemeAction: tp('switchThemeAction'),
+          switchOrgAction: tp('switchOrgAction'),
+          currentChoice: tp('currentChoice'),
+          switchOrg: (name) => tp('switchOrg', { name }),
+          switchLocale: (name) => tp('switchLocale', { name }),
+          allClients: t('allClients'),
+          addOrg: t('addOrg'),
+          themeName: (th) => tc(`themes.${th}`),
+          signOut: tc('signOut'),
+        },
+        onQuickCapture: () => setQuickCaptureOpen(true),
+        onNewTeamTask: () => void navigate({ to: '/o/$slug/tasks', params: { slug }, search: { new: '1' } }),
+        onSwitchOrg: (orgSlug) => void navigate({ to: '/o/$slug/overview', params: { slug: orgSlug } }),
+        onOpenClients: () => void navigate({ to: '/clients' }),
+        onAddOrg: () => void navigate({ to: '/onboarding' }),
+        onSetLocale: setLocale,
+        onSetTheme: setTheme,
+        onSignOut: () => void signOut(),
+      }),
     ],
-    [NAV, pending.data, reviews.data, socialOn, me.data, slug, locale, theme, canQuickCapture, t, tp, tmw, tc, f, navigate, setLocale, setTheme],
+    [recentEntries, NAV, pending.data, reviews.data, socialOn, me.data?.orgs, org?.name, slug, locale, theme, canQuickCapture, canCreateTeamTask, t, tp, tmw, tc, f, navigate, setLocale, setTheme],
   );
   const foundEntries = useMemo<PaletteEntry[]>(() => {
     const settled = typed !== null && term === typed;
     const notes = (settled && notesOn ? notesFound.data : undefined) ?? [];
-    const noteEntries = notes.map((n) => ({
-      id: `note:${n.id}`,
-      group: 'notes' as const,
-      label: n.title,
-      detail: tp(n.visibility === 'private' ? 'notePrivate' : 'noteShared'),
-      run: () => void navigate({ to: '/o/$slug/notes', params: { slug }, search: { note: n.id } }),
-    }));
+    const rememberSearchRecord = (path: string, label: string, detail?: string) => {
+      const targetPathname = stripSearchAndHash(path).toLowerCase();
+      const currentRelative = normalizeOrgRelativePath(resolvedPathname, slug)?.toLowerCase();
+      if (path.toLowerCase() !== targetPathname && currentRelative !== targetPathname) {
+        suppressedPathnameRef.current = targetPathname;
+      }
+      recordRecentItem(
+        slug,
+        { id: path, path, label, ...(detail ? { detail } : {}), kind: 'record' },
+        { orgId: orgIdHere, userId: userIdHere },
+      );
+    };
+    const noteEntries = notes.map((n) => {
+      const detail = tp(n.visibility === 'private' ? 'notePrivate' : 'noteShared');
+      return {
+        id: `note:${n.id}`,
+        group: 'notes' as const,
+        label: n.title,
+        detail,
+        run: () => {
+          rememberSearchRecord(`/notes?note=${encodeURIComponent(n.id)}`, n.title, detail);
+          void navigate({ to: '/o/$slug/notes', params: { slug }, search: { note: n.id } });
+        },
+      };
+    });
     const data = settled && financeOn ? found.data : undefined;
     if (!data) return noteEntries;
     return [
-      ...data.parties.map((p) => ({
-        id: `party:${p.id}`,
-        group: 'parties' as const,
-        label: p.name,
-        ...(p.taxCode ? { detail: tp('taxCode', { code: p.taxCode }) } : {}),
-        // A customer that never sold to the org is not among the vendors: its invoices are with the documents.
-        run: () =>
-          void (p.customerOnly
-            ? navigate({ to: '/o/$slug/documents', params: { slug }, search: { q: p.name } })
-            : navigate({ to: '/o/$slug/vendors', params: { slug }, search: { q: p.taxCode ?? p.name } })),
-      })),
-      ...data.documents.map((d) => ({
-        id: `document:${d.id}`,
-        group: 'documents' as const,
-        label: documentNumber(d),
-        detail: [
+      ...data.parties.map((p) => {
+        const detail = p.taxCode ? tp('taxCode', { code: p.taxCode }) : undefined;
+        return {
+          id: `party:${p.id}`,
+          group: 'parties' as const,
+          label: p.name,
+          ...(detail ? { detail } : {}),
+          // A customer that never sold to the org is not among the vendors: its invoices are with the documents.
+          run: () => {
+            if (p.customerOnly) {
+              rememberSearchRecord(`/documents?q=${encodeURIComponent(p.name)}`, p.name, detail);
+              void navigate({ to: '/o/$slug/documents', params: { slug }, search: { q: p.name } });
+            } else {
+              const queryValue = p.taxCode ?? p.name;
+              rememberSearchRecord(`/vendors?q=${encodeURIComponent(queryValue)}`, p.name, detail);
+              void navigate({ to: '/o/$slug/vendors', params: { slug }, search: { q: queryValue } });
+            }
+          },
+        };
+      }),
+      ...data.documents.map((d) => {
+        const label = documentNumber(d);
+        const detail = [
           d.direction === 'sale' ? tp('saleDocument') : null,
           d.voided ? tp('voidedDocument') : null,
           tp('documentDetail', { party: d.partyName, date: f.date(d.issueDate), total: f.money(d.total) }),
         ]
           .filter(Boolean)
-          .join(', '),
-        // The approved proposal shows the invoice with its file; a document without one opens in the list.
-        run: () =>
-          void (d.proposalId
-            ? navigate({ to: '/o/$slug/inbox/$id', params: { slug, id: d.proposalId } })
-            : navigate({ to: '/o/$slug/documents', params: { slug }, search: { q: d.number } })),
-      })),
-      ...data.entries.map((e) => ({
-        id: `entry:${e.id}`,
-        group: 'entries' as const,
-        label: e.description,
-        detail: tp('entryDetail', { date: f.date(e.entryDate), amount: f.money(e.amount) }),
-        run: () => void navigate({ to: '/o/$slug/journal', params: { slug }, search: { from: e.entryDate, to: e.entryDate }, hash: `entry-${e.id}` }),
-      })),
+          .join(', ');
+        return {
+          id: `document:${d.id}`,
+          group: 'documents' as const,
+          label,
+          detail,
+          // The approved proposal shows the invoice with its file; a document without one opens in the list.
+          run: () => {
+            if (d.proposalId) {
+              void navigate({ to: '/o/$slug/inbox/$id', params: { slug, id: d.proposalId } });
+            } else {
+              rememberSearchRecord(`/documents?q=${encodeURIComponent(d.number)}`, label, detail);
+              void navigate({ to: '/o/$slug/documents', params: { slug }, search: { q: d.number } });
+            }
+          },
+        };
+      }),
+      ...data.entries.map((e) => {
+        const detail = tp('entryDetail', { date: f.date(e.entryDate), amount: f.money(e.amount) });
+        return {
+          id: `entry:${e.id}`,
+          group: 'entries' as const,
+          label: e.description,
+          detail,
+          run: () => {
+            rememberSearchRecord(
+              `/journal?from=${encodeURIComponent(e.entryDate)}&to=${encodeURIComponent(e.entryDate)}#entry-${encodeURIComponent(e.id)}`,
+              e.description,
+              detail,
+            );
+            void navigate({ to: '/o/$slug/journal', params: { slug }, search: { from: e.entryDate, to: e.entryDate }, hash: `entry-${e.id}` });
+          },
+        };
+      }),
       ...noteEntries,
     ];
-  }, [found.data, notesFound.data, financeOn, notesOn, typed, term, slug, tp, f, navigate]);
+  }, [found.data, notesFound.data, financeOn, notesOn, typed, term, slug, resolvedPathname, orgIdHere, userIdHere, tp, f, navigate]);
 
   // The count on a tab: the pending proposals on Chứng từ's first tab.
   const tabBadges = { inbox: menuBadges.inbox };
 
-  const shellNav = (onNavigate?: () => void) => (
+  const shellNav = ({ mode, onNavigate }: { mode: 'sidebar' | 'drawer'; onNavigate?: () => void }) => (
     <ShellNav
       slug={slug}
       apps={apps}
       app={screenApp}
+      settingsItems={settingsItems}
       // The pending count sits on the Documents item, whose first tab is "Chờ duyệt" (#3225).
       badges={{ documents: menuBadges.inbox, social: menuBadges.social, alerts: workUnread, socialNotifications: unread }}
       orgs={me.data?.orgs ?? []}
       email={me.data?.email}
+      mode={mode}
+      {...(mode === 'sidebar'
+        ? {
+            secondaryCollapsed: sidebarCollapsed,
+            onToggleSecondary: hasSecondary ? () => setUserCollapsed((prev) => !prev) : undefined,
+          }
+        : {})}
       onOpenPalette={() => {
         onNavigate?.();
         setPaletteOpen(true);
@@ -347,11 +496,20 @@ export function OrgLayout() {
       <div role="status" aria-live="polite" data-route-announcer className="sr-only">
         <span key={screenName.seq}>{screenName.name}</span>
       </div>
-      <aside className="sticky top-0 hidden h-screen w-72 shrink-0 border-r bg-sidebar md:flex print:hidden">{shellNav()}</aside>
+      <aside
+        data-testid="desktop-sidebar"
+        data-collapsed={sidebarCollapsed ? 'true' : 'false'}
+        className={cn(
+          'sticky top-0 hidden h-screen shrink-0 border-r bg-sidebar md:flex print:hidden',
+          sidebarCollapsed ? 'w-16' : 'w-72',
+        )}
+      >
+        {shellNav({ mode: 'sidebar' })}
+      </aside>
       <div className="min-w-0 flex-1">
         <PhoneHeader headerRef={phoneHeader} orgName={org?.name} attention={menuBadges.inbox !== null} onOpenMenu={() => setMenuOpen(true)} onOpenPalette={() => setPaletteOpen(true)} />
         <NavDrawer open={menuOpen} onOpenChange={setMenuOpen}>
-          {shellNav(() => setMenuOpen(false))}
+          {shellNav({ mode: 'drawer', onNavigate: () => setMenuOpen(false) })}
         </NavDrawer>
         {/* Focusable from code only: where the focus goes when the toast that held it leaves (#2026). */}
         <main ref={main} id="main-content" tabIndex={-1} className="mx-auto w-full max-w-6xl px-4 py-6 outline-none md:px-8 md:py-8 print:max-w-none print:p-0">

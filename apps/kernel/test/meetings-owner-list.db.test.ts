@@ -221,12 +221,12 @@ suite('the owner compliance list of meetings (#2703)', () => {
     meetingIds.push(hiddenId, ...rest);
     await admin(async (c) => {
       for (const [i, id] of meetingIds.entries()) {
-        await c.query(`UPDATE crove_meetings.meeting SET started_at = TIMESTAMPTZ '2026-11-01 09:00:00+07' - make_interval(mins => $2::int) WHERE id = $1`, [id, i]);
+        await c.query(`UPDATE ludy_meetings.meeting SET started_at = TIMESTAMPTZ '2026-11-01 09:00:00+07' - make_interval(mins => $2::int) WHERE id = $1`, [id, i]);
       }
     });
     otherOrgMeetingId = await createMeeting('otherOwner', 'org', otherSlug);
     // The other org's meeting is the newest of all: if any row of another org leaked, it would be the first.
-    await admin((c) => c.query(`UPDATE crove_meetings.meeting SET started_at = TIMESTAMPTZ '2026-11-02 09:00:00+07' WHERE id = $1`, [otherOrgMeetingId]));
+    await admin((c) => c.query(`UPDATE ludy_meetings.meeting SET started_at = TIMESTAMPTZ '2026-11-02 09:00:00+07' WHERE id = $1`, [otherOrgMeetingId]));
   });
 
   afterAll(async () => {
@@ -307,17 +307,17 @@ suite('the owner compliance list of meetings (#2703)', () => {
 
   it('only the meeting\'s recorder can stamp audio_used_at: the one column grant sits under the recorder-only update policy (#3187)', async () => {
     const id = meetingIds[1]!;
-    const stamp = (c: pg.Client) => c.query('UPDATE crove_meetings.meeting SET audio_used_at = now() WHERE id = $1', [id]).then((r) => r.rowCount);
+    const stamp = (c: pg.Client) => c.query('UPDATE ludy_meetings.meeting SET audio_used_at = now() WHERE id = $1', [id]).then((r) => r.rowCount);
     expect(await asUserContext(userIds.get('recorder')!, orgId, stamp)).toBe(1);
     // The meeting is readable by the whole org, yet nobody else changes a row of it, the owner and the admin included.
     for (const name of ['owner', 'admin', 'member', 'viewer']) expect(await asUserContext(userIds.get(name)!, orgId, stamp), name).toBe(0);
     // And no other column came with it: the recorder cannot change who recorded or when the audio is kept to.
-    const other = (c: pg.Client) => c.query('UPDATE crove_meetings.meeting SET recorder_user_id = recorder_user_id WHERE id = $1', [id]);
+    const other = (c: pg.Client) => c.query('UPDATE ludy_meetings.meeting SET recorder_user_id = recorder_user_id WHERE id = $1', [id]);
     expect(await outcome(asUserContext(userIds.get('recorder')!, orgId, other))).toMatchObject({ ok: false, code: '42501' });
   });
 
   it('the definer answers a user-context owner of the context org only, and no text column', async () => {
-    const call = (org: string) => (c: pg.Client) => c.query(`SELECT * FROM crove_meetings.meeting_owner_list_page($1::uuid, 200, NULL, NULL)`, [org]);
+    const call = (org: string) => (c: pg.Client) => c.query(`SELECT * FROM ludy_meetings.meeting_owner_list_page($1::uuid, 200, NULL, NULL)`, [org]);
     for (const name of ['admin', 'member', 'viewer']) {
       expect(await outcome(asUserContext(userIds.get(name)!, orgId, call(orgId))), name).toMatchObject({ ok: false, code: '42501' });
     }
@@ -342,7 +342,7 @@ suite('the owner compliance list of meetings (#2703)', () => {
     for (const field of mine.fields) expect([25, 1043, 114, 3802], field.name).not.toContain(field.dataTypeID);
     // Half a cursor is refused by the definer too.
     expect(
-      await outcome(asUserContext(userIds.get('owner')!, orgId, (c) => c.query(`SELECT * FROM crove_meetings.meeting_owner_list_page($1::uuid, 200, now(), NULL)`, [orgId]))),
+      await outcome(asUserContext(userIds.get('owner')!, orgId, (c) => c.query(`SELECT * FROM ludy_meetings.meeting_owner_list_page($1::uuid, 200, now(), NULL)`, [orgId]))),
     ).toMatchObject({ ok: false, code: '22023' });
     // EXECUTE is granted to ludy_tenant alone (not PUBLIC, not the worker role directly), as for meeting_owner_delete.
     const grantees = await admin(async (c) =>
@@ -350,7 +350,7 @@ suite('the owner compliance list of meetings (#2703)', () => {
         await c.query<{ grantee: string }>(
           `SELECT CASE a.grantee WHEN 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS grantee
              FROM pg_catalog.pg_proc p, pg_catalog.aclexplode(p.proacl) a
-            WHERE p.oid = 'crove_meetings.meeting_owner_list_page(uuid, integer, timestamptz, uuid)'::regprocedure
+            WHERE p.oid = 'ludy_meetings.meeting_owner_list_page(uuid, integer, timestamptz, uuid)'::regprocedure
               AND a.privilege_type = 'EXECUTE' AND a.grantee <> p.proowner`,
         )
       ).rows.map((r) => r.grantee),
@@ -358,7 +358,7 @@ suite('the owner compliance list of meetings (#2703)', () => {
     expect(grantees).toEqual(['ludy_tenant']);
     // The older, narrower list it replaces is gone: one owner-list definer.
     const lists = await admin(async (c) =>
-      (await c.query<{ name: string }>(`SELECT p.proname AS name FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'crove_meetings' AND p.proname LIKE 'meeting\\_owner\\_list%' ORDER BY 1`)).rows.map((r) => r.name),
+      (await c.query<{ name: string }>(`SELECT p.proname AS name FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'ludy_meetings' AND p.proname LIKE 'meeting\\_owner\\_list%' ORDER BY 1`)).rows.map((r) => r.name),
     );
     expect(lists).toEqual(['meeting_owner_list_page']);
   });
@@ -373,10 +373,10 @@ suite('the owner compliance list of meetings (#2703)', () => {
     const deleted = await rpc('meetings/ownerDelete', 'owner', { meetingId: hiddenId }, slug, true);
     expect(deleted.status).toBe(200);
     expect(deleted.body).toEqual({ meetingId: hiddenId, shredded: true });
-    expect(Number(await admin(async (c) => (await c.query('SELECT count(*) FROM crove_meetings.meeting WHERE id = $1', [hiddenId])).rows[0].count))).toBe(0);
+    expect(Number(await admin(async (c) => (await c.query('SELECT count(*) FROM ludy_meetings.meeting WHERE id = $1', [hiddenId])).rows[0].count))).toBe(0);
     const after = (await list('owner')).body as unknown as ListAnswer;
     expect(after.items.map((m) => m.id)).toEqual(meetingIds.filter((id) => id !== hiddenId));
     // The other org's meeting is untouched.
-    expect(Number(await admin(async (c) => (await c.query('SELECT count(*) FROM crove_meetings.meeting WHERE id = $1', [otherOrgMeetingId])).rows[0].count))).toBe(1);
+    expect(Number(await admin(async (c) => (await c.query('SELECT count(*) FROM ludy_meetings.meeting WHERE id = $1', [otherOrgMeetingId])).rows[0].count))).toBe(1);
   });
 });

@@ -20,7 +20,7 @@ describe('the write providers of running ads', () => {
     expect(READ_PROVIDER_OF_WRITE).toEqual({ metawrite_ads: 'meta_ads', sandboxwrite_ads: 'sandbox_ads' });
   });
 
-  // The database guard (crove_ads.write_connection_guard) names the twin of an account's provider by a rule, not a list: the write
+  // The database guard (ludy_ads.write_connection_guard) names the twin of an account's provider by a rule, not a list: the write
   // provider of `<x>_ads` is `<x>write_ads`. A provider that breaks the rule would be refused at every attaching.
   it('follow the rule the database guard uses to name the write twin of a read provider', () => {
     for (const provider of AD_WRITE_PROVIDERS) {

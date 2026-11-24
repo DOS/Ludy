@@ -3,6 +3,7 @@
 // Screens belong in screens.ts (owned separately by #3325); keep only public route paths,
 // token patterns, PNG/input bounds, and request/response schemas here.
 import { z } from 'zod';
+import { zMcpWakeUrl } from './mcp.ts';
 import { zId } from './schemas.ts';
 
 export const SIGN_PAGE_PATH = '/-/sign';
@@ -116,6 +117,7 @@ export interface SignPublicField {
   label: string | null;
   required: boolean;
   fontSizePt: number | null;
+  valueText?: string | null;
   options?: string[] | null;
   attachment?: SignPublicFieldAttachment | null;
 }
@@ -2149,3 +2151,740 @@ export const zSignVaultAskResult = z.strictObject({
   summary: zSignVaultAiSummary.nullable(),
 });
 export type SignVaultAskResult = z.infer<typeof zSignVaultAskResult>;
+
+// ---------------------------------------------------------------------------
+// Slice 5b (#4440): Signed HMAC outbound webhooks, dual-secret rotation, and safe-metadata delivery logs
+// ---------------------------------------------------------------------------
+export const SIGN_MAX_WEBHOOKS = 20;
+
+export const SIGN_WEBHOOK_EVENT_TYPES = [
+  'sign.envelope.sent',
+  'sign.signer.signed',
+  'sign.envelope.completed',
+  'sign.envelope.declined',
+  'sign.envelope.expired',
+] as const;
+export type SignWebhookEventType = (typeof SIGN_WEBHOOK_EVENT_TYPES)[number];
+export const zSignWebhookEventType = z.enum(SIGN_WEBHOOK_EVENT_TYPES);
+
+export const SIGN_WEBHOOK_DELIVERY_EVENT_TYPES = [...SIGN_WEBHOOK_EVENT_TYPES, 'ping'] as const;
+export type SignWebhookDeliveryEventType = (typeof SIGN_WEBHOOK_DELIVERY_EVENT_TYPES)[number];
+export const zSignWebhookDeliveryEventType = z.enum(SIGN_WEBHOOK_DELIVERY_EVENT_TYPES);
+
+export const SIGN_WEBHOOK_DELIVERY_STATUSES = ['queued', 'sent', 'failed', 'dropped'] as const;
+export type SignWebhookDeliveryStatus = (typeof SIGN_WEBHOOK_DELIVERY_STATUSES)[number];
+export const zSignWebhookDeliveryStatus = z.enum(SIGN_WEBHOOK_DELIVERY_STATUSES);
+
+export const SIGN_WEBHOOK_LAST_STATUSES = ['sent', 'failed'] as const;
+export type SignWebhookLastStatus = (typeof SIGN_WEBHOOK_LAST_STATUSES)[number];
+export const zSignWebhookLastStatus = z.enum(SIGN_WEBHOOK_LAST_STATUSES);
+
+export const SIGN_WEBHOOK_PAUSED_REASONS = ['failing'] as const;
+export type SignWebhookPausedReason = (typeof SIGN_WEBHOOK_PAUSED_REASONS)[number];
+export const zSignWebhookPausedReason = z.enum(SIGN_WEBHOOK_PAUSED_REASONS);
+
+export const SIGN_WEBHOOK_PAYLOAD_ENVELOPE_STATUSES = [
+  'sent',
+  'in_progress',
+  'completed',
+  'declined',
+  'expired',
+] as const;
+
+const zWebhookInstant = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/);
+const zWebhookHint = z.string().regex(/^whk_[0-9a-f]{8}$/);
+const zWebhookSignerRole = z.enum(['signer', 'approver']);
+const zWebhookSha256 = z.string().regex(/^[0-9a-f]{64}$/);
+
+export const zSignWebhookPingPayload = z.strictObject({
+  eventId: zId,
+  eventType: z.literal('ping'),
+  occurredAt: zWebhookInstant,
+  orgId: zId,
+  status: z.literal('ok'),
+});
+
+export const zSignWebhookEnvelopePayload = z.strictObject({
+  eventId: zId,
+  eventType: zSignWebhookEventType,
+  occurredAt: zWebhookInstant,
+  orgId: zId,
+  envelopeId: zId,
+  status: z.enum(SIGN_WEBHOOK_PAYLOAD_ENVELOPE_STATUSES),
+  signerId: zId.optional(),
+  signerRole: zWebhookSignerRole.optional(),
+  signedAt: zWebhookInstant.optional(),
+  completedAt: zWebhookInstant.optional(),
+  certificateCode: z.string().min(1).max(64).optional(),
+  sealedSha256: zWebhookSha256.optional(),
+});
+
+export const zSignWebhookPayload = z.union([zSignWebhookPingPayload, zSignWebhookEnvelopePayload]);
+export type SignWebhookPayload = z.infer<typeof zSignWebhookPayload>;
+
+// Rebuilds a validated webhook payload in canonical key order so signed bytes never depend on caller object order
+// and no PDF, signing token, OTP, document title, email, or phone can ever ride in any field (#4440).
+export function signWebhookPayload(input: unknown): SignWebhookPayload {
+  const parsed = zSignWebhookPayload.parse(input);
+  if (parsed.eventType === 'ping') {
+    return {
+      eventId: parsed.eventId,
+      eventType: 'ping',
+      occurredAt: parsed.occurredAt,
+      orgId: parsed.orgId,
+      status: 'ok',
+    };
+  }
+  return {
+    eventId: parsed.eventId,
+    eventType: parsed.eventType,
+    occurredAt: parsed.occurredAt,
+    orgId: parsed.orgId,
+    envelopeId: parsed.envelopeId,
+    status: parsed.status,
+    ...(parsed.signerId !== undefined ? { signerId: parsed.signerId } : {}),
+    ...(parsed.signerRole !== undefined ? { signerRole: parsed.signerRole } : {}),
+    ...(parsed.signedAt !== undefined ? { signedAt: parsed.signedAt } : {}),
+    ...(parsed.completedAt !== undefined ? { completedAt: parsed.completedAt } : {}),
+    ...(parsed.certificateCode !== undefined ? { certificateCode: parsed.certificateCode } : {}),
+    ...(parsed.sealedSha256 !== undefined ? { sealedSha256: parsed.sealedSha256 } : {}),
+  };
+}
+
+export function signWebhookBody(input: unknown): string {
+  return JSON.stringify(signWebhookPayload(input));
+}
+
+export const zSignWebhookSealedCredential = z.strictObject({
+  keyId: z.string().min(1).max(128),
+  secretEnvelope: z.string().min(16).max(16_384),
+  secretHint: zWebhookHint,
+});
+export type SignWebhookSealedCredential = z.infer<typeof zSignWebhookSealedCredential>;
+
+export const zSignWebhookRecord = z.strictObject({
+  id: zId,
+  url: z.string(),
+  events: z.array(zSignWebhookEventType),
+  enabled: z.boolean(),
+  secretHint: z.string(),
+  previousExpiresAt: z.string().nullable(),
+  consecutiveFailures: z.number().int().min(0),
+  failingSince: z.string().nullable(),
+  pausedReason: zSignWebhookPausedReason.nullable(),
+  lastDeliveryAt: z.string().nullable(),
+  lastStatus: zSignWebhookLastStatus.nullable(),
+  createdBy: zId.nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignWebhookRecord = z.infer<typeof zSignWebhookRecord>;
+
+export const zSignWebhookListInput = z.strictObject({});
+export type SignWebhookListInput = z.infer<typeof zSignWebhookListInput>;
+
+export const zSignWebhookListResult = z.strictObject({
+  items: z.array(zSignWebhookRecord),
+  brokerAvailable: z.boolean(),
+});
+export type SignWebhookListResult = z.infer<typeof zSignWebhookListResult>;
+
+export const zSignWebhookCreateInput = z.strictObject({
+  url: zMcpWakeUrl,
+  events: z.array(zSignWebhookEventType).min(1).max(SIGN_WEBHOOK_EVENT_TYPES.length),
+  enabled: z.boolean().default(true),
+});
+export type SignWebhookCreateInput = z.infer<typeof zSignWebhookCreateInput>;
+
+export const zSignWebhookCreateCommandInput = z.strictObject({
+  id: zId,
+  url: zMcpWakeUrl,
+  events: z.array(zSignWebhookEventType).min(1).max(SIGN_WEBHOOK_EVENT_TYPES.length),
+  enabled: z.boolean().default(true),
+  keyId: z.string().min(1).max(128),
+  secretEnvelope: z.string().min(16).max(16_384),
+  secretHint: zWebhookHint,
+});
+export type SignWebhookCreateCommandInput = z.infer<typeof zSignWebhookCreateCommandInput>;
+
+export const zSignWebhookWithSecretResult = z.strictObject({
+  webhook: zSignWebhookRecord,
+  secret: z.string().nullable(),
+});
+export type SignWebhookWithSecretResult = z.infer<typeof zSignWebhookWithSecretResult>;
+
+export const zSignWebhookUpdateInput = z.strictObject({
+  webhookId: zId,
+  url: zMcpWakeUrl,
+  events: z.array(zSignWebhookEventType).min(1).max(SIGN_WEBHOOK_EVENT_TYPES.length),
+  enabled: z.boolean(),
+  idempotencyKey: zId.optional(),
+});
+export type SignWebhookUpdateInput = z.infer<typeof zSignWebhookUpdateInput>;
+
+export const zSignWebhookRotateSecretInput = z.strictObject({
+  webhookId: zId,
+});
+export type SignWebhookRotateSecretInput = z.infer<typeof zSignWebhookRotateSecretInput>;
+
+export const zSignWebhookRotateSecretCommandInput = z.strictObject({
+  webhookId: zId,
+  keyId: z.string().min(1).max(128),
+  secretEnvelope: z.string().min(16).max(16_384),
+  secretHint: zWebhookHint,
+});
+export type SignWebhookRotateSecretCommandInput = z.infer<typeof zSignWebhookRotateSecretCommandInput>;
+
+export const zSignWebhookDeleteInput = z.strictObject({
+  webhookId: zId,
+  idempotencyKey: zId.optional(),
+});
+export type SignWebhookDeleteInput = z.infer<typeof zSignWebhookDeleteInput>;
+
+export const zSignWebhookDeleteResult = z.strictObject({
+  webhookId: zId,
+  deleted: z.boolean(),
+});
+export type SignWebhookDeleteResult = z.infer<typeof zSignWebhookDeleteResult>;
+
+export const zSignWebhookPingInput = z.strictObject({
+  webhookId: zId,
+  idempotencyKey: zId.optional(),
+});
+export type SignWebhookPingInput = z.infer<typeof zSignWebhookPingInput>;
+
+export const zSignWebhookPingResult = z.strictObject({
+  deliveryId: zId,
+  webhookId: zId,
+  eventType: z.literal('ping'),
+  status: z.literal('queued'),
+  createdAt: z.string(),
+});
+export type SignWebhookPingResult = z.infer<typeof zSignWebhookPingResult>;
+
+export const zSignWebhookDeliveriesInput = z.strictObject({
+  webhookId: zId.optional(),
+  limit: z.number().int().min(1).max(100).default(50),
+});
+export type SignWebhookDeliveriesInput = z.infer<typeof zSignWebhookDeliveriesInput>;
+
+export const zSignWebhookDeliveryRecord = z.strictObject({
+  id: zId,
+  webhookId: zId,
+  envelopeId: zId.nullable(),
+  eventType: zSignWebhookDeliveryEventType,
+  status: zSignWebhookDeliveryStatus,
+  attempts: z.number().int().min(0),
+  lastCode: z.number().int().nullable(),
+  handedAt: z.string().nullable(),
+  sentAt: z.string().nullable(),
+  createdAt: z.string(),
+  payload: zSignWebhookPayload.nullable(),
+});
+export type SignWebhookDeliveryRecord = z.infer<typeof zSignWebhookDeliveryRecord>;
+
+export const zSignWebhookDeliveriesResult = z.strictObject({
+  items: z.array(zSignWebhookDeliveryRecord),
+});
+export type SignWebhookDeliveriesResult = z.infer<typeof zSignWebhookDeliveriesResult>;
+
+// System-only worker queries & commands for sign-hook-sweep / sign-hook-deliver
+export const zSignHookEventRef = z.strictObject({
+  id: zId,
+});
+export const zSignHookTargetRef = z.strictObject({
+  webhookId: zId,
+});
+export const zSignHookRecordInput = z.strictObject({
+  id: zId,
+  outcome: z.enum(['sent', 'retry', 'failed', 'dropped', 'expired']),
+  code: z.number().int().min(100).max(599).optional(),
+});
+export interface SignHookDeliveryRow {
+  id: string;
+  webhookId: string;
+  envelopeId: string | null;
+  envelopeSourceKind: string | null;
+  eventType: SignWebhookDeliveryEventType;
+  payload: SignWebhookPayload | null;
+  status: SignWebhookDeliveryStatus;
+  attempts: number;
+}
+export interface SignHookTargetRow {
+  id: string;
+  url: string;
+  sealed: { keyId: string; envelope: string };
+  previous: { keyId: string; envelope: string } | null;
+}
+
+// ---------------------------------------------------------------------------
+// Slice 5d (#4442): SME contract playbook checklist and cited redline suggestions
+// ---------------------------------------------------------------------------
+
+export const SIGN_PLAYBOOK_SEVERITIES = ['info', 'warn', 'critical'] as const;
+export const zSignPlaybookSeverity = z.enum(SIGN_PLAYBOOK_SEVERITIES);
+export type SignPlaybookSeverityContract = z.infer<typeof zSignPlaybookSeverity>;
+
+export const SIGN_PLAYBOOK_MODES = ['ai', 'deterministic', 'manual'] as const;
+export const zSignPlaybookMode = z.enum(SIGN_PLAYBOOK_MODES);
+export type SignPlaybookModeContract = z.infer<typeof zSignPlaybookMode>;
+
+export const SIGN_PLAYBOOK_VERDICTS = ['pass', 'warn', 'fail', 'unknown'] as const;
+export const zSignPlaybookVerdict = z.enum(SIGN_PLAYBOOK_VERDICTS);
+export type SignPlaybookVerdictContract = z.infer<typeof zSignPlaybookVerdict>;
+
+export const SIGN_PLAYBOOK_MAX_TOTAL_CHARS = 750_000;
+
+export const SIGN_PLAYBOOK_AI_OUTCOMES = [
+  'used',
+  'off',
+  'budget',
+  'busy',
+  'not_ready',
+  'no_text',
+  'no_rules',
+  'empty',
+  'failed',
+] as const;
+export const zSignPlaybookAiOutcome = z.enum(SIGN_PLAYBOOK_AI_OUTCOMES);
+export type SignPlaybookAiOutcome = z.infer<typeof zSignPlaybookAiOutcome>;
+
+export const zSignPlaybookRuleRecord = z.strictObject({
+  id: zId,
+  title: z.string(),
+  guidance: z.string(),
+  severity: zSignPlaybookSeverity,
+  matchKeywords: z.array(z.string()),
+  active: z.boolean(),
+  isDefault: z.boolean(),
+  createdBy: zId.nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignPlaybookRuleRecord = z.infer<typeof zSignPlaybookRuleRecord>;
+
+export const zSignPlaybookRulesListInput = z.strictObject({
+  activeOnly: z.boolean().optional(),
+});
+export type SignPlaybookRulesListInput = z.infer<typeof zSignPlaybookRulesListInput>;
+
+export const zSignPlaybookRulesListResult = z.strictObject({
+  items: z.array(zSignPlaybookRuleRecord),
+  canManage: z.boolean(),
+  isSeeded: z.boolean(),
+});
+export type SignPlaybookRulesListResult = z.infer<typeof zSignPlaybookRulesListResult>;
+
+export const zSignPlaybookRuleUpsertInput = z.strictObject({
+  ruleId: zId.optional(),
+  title: z.string().trim().min(1).max(200),
+  guidance: z.string().trim().min(1).max(2000),
+  severity: zSignPlaybookSeverity.default('warn'),
+  matchKeywords: z.array(z.string().trim().min(1).max(120)).max(25).default([]),
+  active: z.boolean().default(true),
+  idempotencyKey: zId.optional(),
+});
+export type SignPlaybookRuleUpsertInput = z.infer<typeof zSignPlaybookRuleUpsertInput>;
+
+export const zSignPlaybookRuleDeleteInput = z.strictObject({
+  ruleId: zId,
+  idempotencyKey: zId.optional(),
+});
+export type SignPlaybookRuleDeleteInput = z.infer<typeof zSignPlaybookRuleDeleteInput>;
+
+export const zSignPlaybookRuleDeleteResult = z.strictObject({
+  deleted: z.boolean(),
+});
+export type SignPlaybookRuleDeleteResult = z.infer<typeof zSignPlaybookRuleDeleteResult>;
+
+export const zSignPlaybookSeedDefaultsInput = z.strictObject({
+  idempotencyKey: zId.optional(),
+});
+export type SignPlaybookSeedDefaultsInput = z.infer<typeof zSignPlaybookSeedDefaultsInput>;
+
+export const zSignPlaybookFinding = z.strictObject({
+  ruleId: zId,
+  ruleTitle: z.string(),
+  severity: zSignPlaybookSeverity,
+  verdict: zSignPlaybookVerdict,
+  rationale: z.string(),
+  pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES).nullable(),
+  quoteExcerpt: z.string().nullable(),
+  suggestedRedline: z.string().nullable(),
+  proposedByAi: z.boolean(),
+  manualNote: z.string().nullable(),
+  overriddenBy: zId.nullable(),
+  overriddenAt: z.string().nullable(),
+});
+export type SignPlaybookFindingContract = z.infer<typeof zSignPlaybookFinding>;
+
+export const zSignEnvelopePlaybookCheckRecord = z.strictObject({
+  id: zId,
+  envelopeId: zId,
+  sourceSha256: z.string(),
+  revision: z.string(),
+  isStale: z.boolean(),
+  mode: zSignPlaybookMode,
+  findings: z.array(zSignPlaybookFinding),
+  promptVersion: z.string().nullable(),
+  createdBy: zId.nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignEnvelopePlaybookCheckRecord = z.infer<typeof zSignEnvelopePlaybookCheckRecord>;
+
+export const zSignPlaybookGetResult = z.strictObject({
+  check: zSignEnvelopePlaybookCheckRecord.nullable(),
+  canEdit: z.boolean(),
+  activeRulesCount: z.number().int().min(0),
+});
+export type SignPlaybookGetResult = z.infer<typeof zSignPlaybookGetResult>;
+
+export const zSignPlaybookEvaluateInput = z.strictObject({
+  envelopeId: zId,
+  useAi: z.boolean().default(true),
+  pages: z
+    .array(z.strictObject({ page: z.number().int().min(1).max(SIGN_MAX_PAGES), text: z.string().max(250_000) }))
+    .max(SIGN_MAX_PAGES)
+    .refine(
+      (pages) => pages.reduce((sum, item) => sum + item.text.length, 0) <= SIGN_PLAYBOOK_MAX_TOTAL_CHARS,
+      `Total extracted text across all pages must not exceed ${SIGN_PLAYBOOK_MAX_TOTAL_CHARS} characters`,
+    )
+    .optional(),
+  idempotencyKey: zId.optional(),
+});
+export type SignPlaybookEvaluateInput = z.infer<typeof zSignPlaybookEvaluateInput>;
+
+export const zSignPlaybookEvaluateResult = z.strictObject({
+  ai: zSignPlaybookAiOutcome,
+  check: zSignEnvelopePlaybookCheckRecord.nullable(),
+});
+export type SignPlaybookEvaluateResult = z.infer<typeof zSignPlaybookEvaluateResult>;
+
+export const zSignPlaybookOverrideFindingInput = z.strictObject({
+  envelopeId: zId,
+  ruleId: zId,
+  checkRevision: z.string().trim().min(1).max(128),
+  verdict: zSignPlaybookVerdict,
+  manualNote: z.string().trim().max(500).nullable().optional(),
+  idempotencyKey: zId.optional(),
+});
+export type SignPlaybookOverrideFindingInput = z.infer<typeof zSignPlaybookOverrideFindingInput>;
+
+// ---------------------------------------------------------------------------
+// Slice 5e (#4443): Sender-side Signer KYC Attachment Verification Check
+// ---------------------------------------------------------------------------
+
+export const SIGN_KYC_CHECK_STATUSES = ['pending', 'matched', 'mismatch', 'needs_review'] as const;
+export type SignKycCheckStatusContract = (typeof SIGN_KYC_CHECK_STATUSES)[number];
+export const zSignKycCheckStatus = z.enum(SIGN_KYC_CHECK_STATUSES);
+
+export const SIGN_KYC_CHECK_MODES = ['deterministic', 'ai', 'manual'] as const;
+export type SignKycCheckModeContract = (typeof SIGN_KYC_CHECK_MODES)[number];
+export const zSignKycCheckMode = z.enum(SIGN_KYC_CHECK_MODES);
+
+export const SIGN_KYC_DOC_KINDS = ['cccd', 'dkkd', 'poa', 'other'] as const;
+export type SignKycDocKindContract = (typeof SIGN_KYC_DOC_KINDS)[number];
+export const zSignKycDocKind = z.enum(SIGN_KYC_DOC_KINDS);
+
+export const SIGN_KYC_ITEM_STATUSES = ['matched', 'mismatch', 'needs_review'] as const;
+export type SignKycItemStatusContract = (typeof SIGN_KYC_ITEM_STATUSES)[number];
+export const zSignKycItemStatus = z.enum(SIGN_KYC_ITEM_STATUSES);
+
+export const SIGN_KYC_FINDING_CATEGORIES = [
+  'file_integrity',
+  'tax_code',
+  'national_id',
+  'entity_name',
+  'authorized_signer',
+  'authority_scope',
+  'validity_date',
+] as const;
+export type SignKycFindingCategoryContract = (typeof SIGN_KYC_FINDING_CATEGORIES)[number];
+export const zSignKycFindingCategory = z.enum(SIGN_KYC_FINDING_CATEGORIES);
+
+export const SIGN_KYC_AI_CATEGORIES = [
+  'entity_name',
+  'tax_code',
+  'national_id',
+  'authorized_signer',
+  'authority_scope',
+  'validity_date',
+] as const;
+export type SignKycAiCategoryContract = (typeof SIGN_KYC_AI_CATEGORIES)[number];
+export const zSignKycAiCategory = z.enum(SIGN_KYC_AI_CATEGORIES);
+
+export const SIGN_KYC_AI_OUTCOMES = [
+  'used',
+  'off',
+  'budget',
+  'busy',
+  'not_ready',
+  'no_text',
+  'empty',
+  'failed',
+] as const;
+export type SignKycAiOutcomeContract = (typeof SIGN_KYC_AI_OUTCOMES)[number];
+export const zSignKycAiOutcome = z.enum(SIGN_KYC_AI_OUTCOMES);
+
+export const zSignKycDeterministicItem = z.strictObject({
+  category: zSignKycFindingCategory,
+  status: zSignKycItemStatus,
+  extractedValue: z.string().nullable(),
+  expectedValue: z.string().nullable(),
+  detail: z.string(),
+});
+export type SignKycDeterministicItemContract = z.infer<typeof zSignKycDeterministicItem>;
+
+export const zSignKycAiDiscrepancy = z.strictObject({
+  category: zSignKycAiCategory,
+  assessment: z.enum(['match', 'mismatch', 'unclear']),
+  extractedValue: z.string().nullable(),
+  expectedValue: z.string().nullable(),
+  pageNumber: z.number().int().min(1).max(SIGN_MAX_PAGES),
+  quoteExcerpt: z.string(),
+  explanation: z.string(),
+  proposedByAi: z.literal(true),
+});
+export type SignKycAiDiscrepancyContract = z.infer<typeof zSignKycAiDiscrepancy>;
+
+export const zSignKycAiProposal = z.strictObject({
+  suggestedStatus: z.enum(['matched', 'mismatch', 'needs_review']),
+  summaryNote: z.string().nullable(),
+  findings: z.array(zSignKycAiDiscrepancy),
+  promptVersion: z.string(),
+  proposedByAi: z.literal(true),
+});
+export type SignKycAiProposalContract = z.infer<typeof zSignKycAiProposal>;
+
+export const zSignKycFindings = z.strictObject({
+  documentKind: zSignKycDocKind,
+  mimeType: z.string(),
+  sizeBytes: z.number().int().min(0),
+  sha256Verified: z.boolean(),
+  pageCount: z.number().int().min(1).max(SIGN_MAX_PAGES).nullable(),
+  inspectState: z.enum(['pending', 'inspected', 'image_metadata_only', 'failed']),
+  inspectError: z.string().nullable(),
+  expectedSignerName: z.string().nullable(),
+  expectedEntityName: z.string().nullable(),
+  expectedTaxCode: z.string().nullable(),
+  extractedTaxCodes: z.array(z.string()),
+  extractedNationalIds: z.array(z.string()),
+  extractedTextPreview: z.string().nullable(),
+  deterministicChecks: z.array(zSignKycDeterministicItem),
+  aiProposal: zSignKycAiProposal.nullable(),
+  manualNote: z.string().nullable(),
+});
+export type SignKycFindingsContract = z.infer<typeof zSignKycFindings>;
+
+export const zSignKycCheckRecord = z.strictObject({
+  id: zId,
+  envelopeId: zId,
+  fieldId: zId,
+  fileId: zId,
+  fileSha256: z.string().regex(SIGN_SHA256_HEX_PATTERN),
+  status: zSignKycCheckStatus,
+  mode: zSignKycCheckMode,
+  findings: zSignKycFindings,
+  checkedBy: zId.nullable(),
+  checkedAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignKycCheckRecordContract = z.infer<typeof zSignKycCheckRecord>;
+
+export const zSignKycAttachmentSlot = z.strictObject({
+  fieldId: zId,
+  signerId: zId,
+  signerName: z.string(),
+  signerEmail: z.string().nullable(),
+  signerRoleLabel: z.string(),
+  fieldLabel: z.string().nullable(),
+  fileId: zId,
+  filename: z.string(),
+  contentType: zSignAttachmentContentType,
+  sizeBytes: z.number().int().min(0),
+  fileSha256: z.string().regex(SIGN_SHA256_HEX_PATTERN),
+  filledAt: z.string().nullable(),
+  obligationCounterpartyName: z.string().nullable(),
+  check: zSignKycCheckRecord.nullable(),
+});
+export type SignKycAttachmentSlotContract = z.infer<typeof zSignKycAttachmentSlot>;
+
+export const zSignKycListResult = z.strictObject({
+  envelopeId: zId,
+  canWrite: z.boolean(),
+  items: z.array(zSignKycAttachmentSlot),
+});
+export type SignKycListResultContract = z.infer<typeof zSignKycListResult>;
+
+export const zSignKycPageTextInput = z.strictObject({
+  page: z.number().int().min(1).max(SIGN_MAX_PAGES),
+  text: z.string().max(250_000),
+});
+
+export const zSignKycRunDeterministicInput = z.strictObject({
+  envelopeId: zId,
+  fieldId: zId,
+  expectedEntityName: z.string().trim().max(300).nullable().optional(),
+  expectedTaxCode: z.string().trim().max(32).nullable().optional(),
+  expectedSignerName: z.string().trim().max(200).nullable().optional(),
+  attachmentPages: z.array(zSignKycPageTextInput).max(SIGN_MAX_PAGES).optional(),
+  idempotencyKey: zId.optional(),
+});
+export type SignKycRunDeterministicInput = z.infer<typeof zSignKycRunDeterministicInput>;
+
+export const zSignKycAnalyzeInput = z.strictObject({
+  envelopeId: zId,
+  fieldId: zId,
+  expectedEntityName: z.string().trim().max(300).nullable().optional(),
+  expectedTaxCode: z.string().trim().max(32).nullable().optional(),
+  expectedSignerName: z.string().trim().max(200).nullable().optional(),
+  attachmentPages: z.array(zSignKycPageTextInput).max(SIGN_MAX_PAGES).optional(),
+});
+export type SignKycAnalyzeInput = z.infer<typeof zSignKycAnalyzeInput>;
+
+export const zSignKycAnalyzeResult = z.strictObject({
+  ai: zSignKycAiOutcome,
+  status: z.enum([
+    'needs_review',
+    'matched',
+    'mismatch',
+    'pending',
+    'off',
+    'budget',
+    'busy',
+    'not_ready',
+    'no_text',
+    'empty',
+    'failed',
+  ]),
+  check: zSignKycCheckRecord.nullable(),
+});
+export type SignKycAnalyzeResult = z.infer<typeof zSignKycAnalyzeResult>;
+
+export const zSignKycConfirmInput = z.strictObject({
+  envelopeId: zId,
+  fieldId: zId,
+  status: z.enum(['matched', 'mismatch', 'needs_review']),
+  manualNote: z.string().trim().max(1000).nullable().optional(),
+  expectedEntityName: z.string().trim().max(300).nullable().optional(),
+  expectedTaxCode: z.string().trim().max(32).nullable().optional(),
+  expectedSignerName: z.string().trim().max(200).nullable().optional(),
+  idempotencyKey: zId.optional(),
+});
+export type SignKycConfirmInput = z.infer<typeof zSignKycConfirmInput>;
+
+// ---------------------------------------------------------------------------
+// Slice 5c (#4441): Read-only MCP inputs, scoped org API keys, and /api/v1/sign/*
+// ---------------------------------------------------------------------------
+
+export const SIGN_API_KEY_SCOPES = ['sign:read', 'sign:draft'] as const;
+export const zSignApiKeyScope = z.enum(SIGN_API_KEY_SCOPES);
+export type SignApiKeyScope = z.infer<typeof zSignApiKeyScope>;
+
+export const zSignApiKeyRecord = z.strictObject({
+  id: zId,
+  name: z.string(),
+  keyPrefix: z.string(),
+  scopes: z.array(zSignApiKeyScope),
+  createdBy: zId.nullable(),
+  expiresAt: z.string().nullable(),
+  revokedAt: z.string().nullable(),
+  lastUsedAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SignApiKeyRecord = z.infer<typeof zSignApiKeyRecord>;
+
+export const zSignApiKeyListInput = z.strictObject({});
+export type SignApiKeyListInput = z.infer<typeof zSignApiKeyListInput>;
+
+export const zSignApiKeyListResult = z.strictObject({
+  items: z.array(zSignApiKeyRecord),
+});
+export type SignApiKeyListResult = z.infer<typeof zSignApiKeyListResult>;
+
+const hasNoNul = (value: string): boolean => !value.includes('\u0000');
+
+export const zSignApiKeyCreateInput = z.strictObject({
+  name: z.string().trim().min(1).max(120).refine(hasNoNul, 'NUL characters are not permitted'),
+  scopes: z.array(zSignApiKeyScope).min(1).max(2),
+  expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
+});
+export type SignApiKeyCreateInput = z.infer<typeof zSignApiKeyCreateInput>;
+
+export const zSignApiKeyCreateResult = z.strictObject({
+  apiKey: zSignApiKeyRecord,
+  secret: z.string(),
+});
+export type SignApiKeyCreateResult = z.infer<typeof zSignApiKeyCreateResult>;
+
+export const zSignApiKeyRevokeInput = z.strictObject({
+  apiKeyId: zId,
+  idempotencyKey: zId.optional(),
+});
+export type SignApiKeyRevokeInput = z.infer<typeof zSignApiKeyRevokeInput>;
+
+export const zMcpSignEnvelopesInput = z.strictObject({
+  status: zSignEnvelopeStatus.optional(),
+  limit: z.number().int().min(1).max(50).default(25),
+});
+export type McpSignEnvelopesInput = z.infer<typeof zMcpSignEnvelopesInput>;
+
+export const zMcpSignEnvelopeGetInput = z.strictObject({
+  envelopeId: zId,
+});
+export type McpSignEnvelopeGetInput = z.infer<typeof zMcpSignEnvelopeGetInput>;
+
+export const zMcpSignRenewalsInput = z.strictObject({
+  withinDays: z.number().int().min(1).max(365).default(90),
+  limit: z.number().int().min(1).max(50).default(25),
+});
+export type McpSignRenewalsInput = z.infer<typeof zMcpSignRenewalsInput>;
+
+export const zMcpSignTemplatesInput = z.strictObject({
+  limit: z.number().int().min(1).max(50).default(25),
+});
+export type McpSignTemplatesInput = z.infer<typeof zMcpSignTemplatesInput>;
+
+export const zSignApiV1FromTemplateInput = z
+  .strictObject({
+    templateId: zId,
+    title: z.string().trim().min(1).max(300).refine(hasNoNul, 'NUL characters are not permitted').optional(),
+    subject: z
+      .string()
+      .trim()
+      .max(300)
+      .refine(hasNoNul, 'NUL characters are not permitted')
+      .nullable()
+      .optional(),
+    message: z
+      .string()
+      .trim()
+      .max(5000)
+      .refine(hasNoNul, 'NUL characters are not permitted')
+      .nullable()
+      .optional(),
+    allowDelegation: z.boolean().optional(),
+    expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
+    recipients: z
+      .array(
+        zSignTemplateRecipientInput.refine(
+          (r) =>
+            hasNoNul(r.roleKey) &&
+            hasNoNul(r.name) &&
+            (r.email === undefined || r.email === null || hasNoNul(r.email)) &&
+            (r.phone === undefined || r.phone === null || hasNoNul(r.phone)),
+          'NUL characters are not permitted',
+        ),
+      )
+      .max(SIGN_MAX_SIGNERS),
+    textDefaults: z
+      .record(
+        z.string().min(1).max(160).refine(hasNoNul, 'NUL characters are not permitted'),
+        z.string().max(2000).refine(hasNoNul, 'NUL characters are not permitted'),
+      )
+      .optional(),
+  });
+export type SignApiV1FromTemplateInput = z.infer<typeof zSignApiV1FromTemplateInput>;

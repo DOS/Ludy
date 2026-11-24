@@ -207,7 +207,7 @@ export const signToday = defineQuery({
     const isExpiringSoonExpr = sql<boolean>`status IN ('sent', 'in_progress') AND expires_at IS NOT NULL AND expires_at > ${now} AND expires_at <= ${expiringUntil}`;
 
     let base = ctx.trx
-      .selectFrom('crove_sign.envelope')
+      .selectFrom('ludy_sign.envelope')
       .where('org_id', '=', ctx.orgId)
       .where(sql<boolean>`((${isDeclinedRecentExpr}) OR (${isExpiringSoonExpr}))`);
     base = applyEnvelopeVisibilityFilter(base, ctx);
@@ -330,7 +330,7 @@ export const envelopePreExpiryRemindSweep = defineCommand({
   sideEffect: 'external',
   access: 'system',
   writes: [
-    tableWrite(signManifest.tables, 'crove_sign', 'signer', ['pre_expiry_reminded_at', 'updated_at']),
+    tableWrite(signManifest.tables, 'ludy_sign', 'signer', ['pre_expiry_reminded_at', 'updated_at']),
     SIGNING_EVENT_WRITE,
     MAIL_MESSAGE_WRITE,
   ],
@@ -342,7 +342,7 @@ export const envelopePreExpiryRemindSweep = defineCommand({
 
     // Filter eligible unreminded signers BEFORE LIMIT so already-reminded envelopes never starve >100 due envelopes.
     const dueEnvelopes = await ctx.trx
-      .selectFrom('crove_sign.envelope as e')
+      .selectFrom('ludy_sign.envelope as e')
       .select(['e.id', 'e.title', 'e.routing_mode', 'e.expires_at', 'e.source_sha256', 'e.direct_link_id'])
       .where('e.org_id', '=', ctx.orgId)
       .where('e.status', 'in', ['sent', 'in_progress'])
@@ -353,7 +353,7 @@ export const envelopePreExpiryRemindSweep = defineCommand({
       .where(
         sql<boolean>`EXISTS (
           SELECT 1
-          FROM crove_sign.signer s
+          FROM ludy_sign.signer s
           WHERE s.org_id = e.org_id
             AND s.envelope_id = e.id
             AND s.signer_role <> 'cc'
@@ -366,7 +366,7 @@ export const envelopePreExpiryRemindSweep = defineCommand({
               e.routing_mode <> 'sequential'
               OR NOT EXISTS (
                 SELECT 1
-                FROM crove_sign.signer earlier
+                FROM ludy_sign.signer earlier
                 WHERE earlier.org_id = e.org_id
                   AND earlier.envelope_id = e.id
                   AND earlier.signer_role <> 'cc'
@@ -380,7 +380,7 @@ export const envelopePreExpiryRemindSweep = defineCommand({
                 e.direct_link_id IS NULL
                 AND NOT EXISTS (
                   SELECT 1
-                  FROM crove_sign.signing_event ge
+                  FROM ludy_sign.signing_event ge
                   WHERE ge.org_id = e.org_id
                     AND ge.envelope_id = e.id
                     AND ge.seq = 1
@@ -415,7 +415,7 @@ export const envelopePreExpiryRemindSweep = defineCommand({
     const directGenesisSet = new Set<string>();
     if (idsWithoutDirectFk.length > 0) {
       const genesisRows = await ctx.trx
-        .selectFrom('crove_sign.signing_event')
+        .selectFrom('ludy_sign.signing_event')
         .select(['envelope_id', 'actor_label'])
         .where('org_id', '=', ctx.orgId)
         .where('envelope_id', 'in', idsWithoutDirectFk)
@@ -429,7 +429,7 @@ export const envelopePreExpiryRemindSweep = defineCommand({
     }
 
     const allSigners = await ctx.trx
-      .selectFrom('crove_sign.signer')
+      .selectFrom('ludy_sign.signer')
       .select([
         'id',
         'envelope_id',
@@ -480,7 +480,7 @@ export const envelopePreExpiryRemindSweep = defineCommand({
       if (eligible.length === 0) continue;
 
       const stampedRows = await ctx.trx
-        .updateTable('crove_sign.signer')
+        .updateTable('ludy_sign.signer')
         .set({ pre_expiry_reminded_at: sweepNow, updated_at: sweepNow })
         .where('org_id', '=', ctx.orgId)
         .where('envelope_id', '=', env.id)

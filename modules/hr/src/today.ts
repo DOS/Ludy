@@ -88,7 +88,7 @@ async function hasLaborIn01PliPeriod(
 ): Promise<boolean> {
   if (hasActiveEmployees) return true;
   const endedInYear = await ctx.trx
-    .selectFrom('crove_hr.payroll_employee')
+    .selectFrom('ludy_hr.payroll_employee')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('erased_at', 'is', null)
@@ -104,7 +104,7 @@ export async function hrTodayItemsForManager(ctx: QueryContext, todayVn: string)
 
   // Select only non-PII status and foreign work-permit metadata; never names, IDs, or wages.
   const activeEmployees = await ctx.trx
-    .selectFrom('crove_hr.payroll_employee')
+    .selectFrom('ludy_hr.payroll_employee')
     .select(['id', 'is_foreign', 'work_permit_exempt', 'work_permit_expires_on'])
     .where('org_id', '=', ctx.orgId)
     .where('erased_at', 'is', null)
@@ -145,8 +145,8 @@ export async function hrTodayItemsForManager(ctx: QueryContext, todayVn: string)
 
   if (activeEmployees.length > 0) {
     const currentEmployments = await ctx.trx
-      .selectFrom('crove_hr.payroll_employment as pe')
-      .innerJoin('crove_hr.payroll_employee as e', (join) =>
+      .selectFrom('ludy_hr.payroll_employment as pe')
+      .innerJoin('ludy_hr.payroll_employee as e', (join) =>
         join.onRef('e.org_id', '=', 'pe.org_id').onRef('e.id', '=', 'pe.employee_id'),
       )
       .distinctOn('pe.employee_id')
@@ -312,8 +312,8 @@ export async function hrTodayItemsForManager(ctx: QueryContext, todayVn: string)
   }
 
   const leaveCountRow = await ctx.trx
-    .selectFrom('crove_hr.leave_request as r')
-    .innerJoin('crove_hr.payroll_employee as e', (join) =>
+    .selectFrom('ludy_hr.leave_request as r')
+    .innerJoin('ludy_hr.payroll_employee as e', (join) =>
       join.onRef('e.org_id', '=', 'r.org_id').onRef('e.id', '=', 'r.employee_id'),
     )
     .select(sql<number>`pg_catalog.count(*)::int`.as('total'))
@@ -346,7 +346,7 @@ export async function hrTodayItemsForL1Manager(ctx: QueryContext): Promise<Today
   if (userId === null) return [];
 
   const managedDepts = await ctx.trx
-    .selectFrom('crove_hr.department')
+    .selectFrom('ludy_hr.department')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('manager_user_id', '=', userId)
@@ -356,13 +356,13 @@ export async function hrTodayItemsForL1Manager(ctx: QueryContext): Promise<Today
 
   const managedDeptIds = managedDepts.map((d) => d.id);
   const countRow = await ctx.trx
-    .selectFrom('crove_hr.leave_request as r')
+    .selectFrom('ludy_hr.leave_request as r')
     .select(sql<number>`pg_catalog.count(*)::int`.as('total'))
     .where('r.org_id', '=', ctx.orgId)
     .where('r.department_id', 'in', managedDeptIds)
     .where('r.status', '=', 'pending_l1')
-    .where(sql<boolean>`NOT crove_hr.is_self_employee(r.org_id, r.employee_id)`)
-    .where(sql<boolean>`crove_hr.leave_request_employee_name(r.org_id, r.id) IS NOT NULL`)
+    .where(sql<boolean>`NOT ludy_hr.is_self_employee(r.org_id, r.employee_id)`)
+    .where(sql<boolean>`ludy_hr.leave_request_employee_name(r.org_id, r.id) IS NOT NULL`)
     .executeTakeFirst();
 
   const pendingL1Count = Number(countRow?.total ?? 0);

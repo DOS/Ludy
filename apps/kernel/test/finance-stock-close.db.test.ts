@@ -64,14 +64,14 @@ suite('the stock month close: tables, guards and reports (#2513)', () => {
   const makeItem = (o: Org, code: string) =>
     execute<{ id: string }>(o, 'finance.stock_item.save', { itemId: null, legalEntityId: null, code, name: `Hàng ${code}`, unit: 'cái', stockAccount: '156', trade: 'goods' }).then((r) => r.id);
   const move = (o: Org, item: string, date: string, quantity: string) =>
-    rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, $4, 'manual')", [o.orgId, item, date, quantity]);
+    rows("INSERT INTO ludy_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, $4, 'manual')", [o.orgId, item, date, quantity]);
   const entityOf = async (o: Org) => (await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]))[0]?.id ?? '';
   // What a close leaves: the period, and a row per item with the figures the cost was posted from.
   async function closePeriod(o: Org, month: string, items: Array<{ item: string; opening: [string, string]; inn: [string, string]; out: [string, string]; closing: [string, string]; cost: string | null }>) {
-    const [period] = await rows<{ id: string }>('INSERT INTO crove_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, $3, 0) RETURNING id', [o.orgId, await entityOf(o), `${month}-01`]);
+    const [period] = await rows<{ id: string }>('INSERT INTO ludy_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, $3, 0) RETURNING id', [o.orgId, await entityOf(o), `${month}-01`]);
     for (const i of items) {
       await rows(
-        `INSERT INTO crove_finance.stock_period_item (org_id, period_id, item_id, opening_quantity, opening_value, in_quantity, in_value, out_quantity, out_value, closing_quantity, closing_value, unit_cost)
+        `INSERT INTO ludy_finance.stock_period_item (org_id, period_id, item_id, opening_quantity, opening_value, in_quantity, in_value, out_quantity, out_value, closing_quantity, closing_value, unit_cost)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
         [o.orgId, period?.id, i.item, ...i.opening, ...i.inn, ...i.out, ...i.closing, i.cost],
       );
@@ -115,9 +115,9 @@ suite('the stock month close: tables, guards and reports (#2513)', () => {
     const item = await makeItem(o, 'A');
     await move(o, item, '2026-07-10', '10');
     const entity = await entityOf(o);
-    const insert = (month: string) => rows('INSERT INTO crove_finance.stock_period (org_id, legal_entity_id, period_month) VALUES ($1, $2, $3)', [o.orgId, entity, `${month}-01`]);
+    const insert = (month: string) => rows('INSERT INTO ludy_finance.stock_period (org_id, legal_entity_id, period_month) VALUES ($1, $2, $3)', [o.orgId, entity, `${month}-01`]);
     // The month has to be the first day, and over.
-    await expect(rows('INSERT INTO crove_finance.stock_period (org_id, legal_entity_id, period_month) VALUES ($1, $2, $3)', [o.orgId, entity, '2026-07-15'])).rejects.toThrow();
+    await expect(rows('INSERT INTO ludy_finance.stock_period (org_id, legal_entity_id, period_month) VALUES ($1, $2, $3)', [o.orgId, entity, '2026-07-15'])).rejects.toThrow();
     const now = new Date();
     const thisMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
     await expect(insert(thisMonth)).rejects.toThrow(/STOCK_PERIOD_NOT_ENDED/);
@@ -127,8 +127,8 @@ suite('the stock month close: tables, guards and reports (#2513)', () => {
     await insert('2026-08');
     await expect(insert('2026-08')).rejects.toThrow(/stock_period_month_uq/);
     // Append-only for the database owner too.
-    await expect(rows('UPDATE crove_finance.stock_period SET total_cost = 1 WHERE org_id = $1', [o.orgId])).rejects.toThrow();
-    await expect(rows('DELETE FROM crove_finance.stock_period WHERE org_id = $1', [o.orgId])).rejects.toThrow();
+    await expect(rows('UPDATE ludy_finance.stock_period SET total_cost = 1 WHERE org_id = $1', [o.orgId])).rejects.toThrow();
+    await expect(rows('DELETE FROM ludy_finance.stock_period WHERE org_id = $1', [o.orgId])).rejects.toThrow();
     // The periods query: newest first, every role reads it.
     const listed = await query<Array<{ month: string; totalCost: string; voucherId: string | null }>>(o, 'finance.stock.periods', {}, o.viewer);
     expect(listed.map((p) => [p.month, p.totalCost, p.voucherId])).toEqual([
@@ -136,7 +136,7 @@ suite('the stock month close: tables, guards and reports (#2513)', () => {
       ['2026-07', '0', null],
     ]);
     // A cost that was posted names its voucher.
-    await expect(rows('INSERT INTO crove_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, $3, 500)', [o.orgId, entity, '2026-09-01'])).rejects.toThrow(/stock_period_voucher_ck/);
+    await expect(rows('INSERT INTO ludy_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, $3, 500)', [o.orgId, entity, '2026-09-01'])).rejects.toThrow(/stock_period_voucher_ck/);
   });
 
   it('refuses a move dated in a closed month or before one, and takes one of the open month', async () => {

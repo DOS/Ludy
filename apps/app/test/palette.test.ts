@@ -1,7 +1,19 @@
 // The command palette's matching, order, shortcut and arrow keys (issue #439), and how the org's search results join
 // the list (#673).
 import { describe, expect, it } from 'vitest';
-import { filterPalette, fold, isPaletteShortcut, moveActive, searchTerm, withFound, type PaletteItem } from '../src/lib/palette.ts';
+import {
+  MAX_PALETTE_RECENTS,
+  filterPalette,
+  findSubmenuEntry,
+  fold,
+  isPaletteShortcut,
+  moveActive,
+  resolvePaletteResults,
+  searchTerm,
+  withFound,
+  type PaletteEntry,
+  type PaletteItem,
+} from '../src/lib/palette.ts';
 
 const items: PaletteItem[] = [
   { id: 'go:inbox', group: 'go', label: 'Chứng từ chờ duyệt' },
@@ -108,5 +120,72 @@ describe('withFound', () => {
     ];
     expect(withFound(local, found).map((i) => i.id)).toEqual(['p2', 'party:1', 'entry:1', 'entry:2']);
     expect(withFound(filterPalette(items, 'xyz'), []).map((i) => i.id)).toEqual([]);
+  });
+});
+
+describe('recent group and inline submenus (#4525)', () => {
+  it('shows recent entries before Go to on empty query, caps recent at 5, and omits recent when searching', () => {
+    const withRecents: PaletteItem[] = [
+      ...Array.from({ length: 7 }, (_, i) => ({
+        id: `recent:${i}`,
+        group: 'recent' as const,
+        label: `Gần đây ${i}`,
+      })),
+      ...items,
+    ];
+    const emptyIds = filterPalette(withRecents, '').map((i) => i.id);
+    expect(emptyIds.slice(0, MAX_PALETTE_RECENTS + 1)).toEqual([
+      'recent:0',
+      'recent:1',
+      'recent:2',
+      'recent:3',
+      'recent:4',
+      'go:inbox',
+    ]);
+    expect(emptyIds).not.toContain('recent:5');
+
+    // Non-empty query drops recent items so screens are not duplicated.
+    const queryIds = filterPalette(withRecents, 'gan day').map((i) => i.id);
+    expect(queryIds).toEqual([]);
+    expect(filterPalette(withRecents, 'so sach').map((i) => i.id)).toEqual(['go:ledger']);
+  });
+
+  it('resolves submenu entries separately from root entries and server search results', () => {
+    const none = () => undefined;
+    const entries: PaletteEntry[] = [
+      { id: 'go:ledger', group: 'go', label: 'Sổ sách', run: none },
+      {
+        id: 'action:switch-theme',
+        group: 'actions',
+        label: 'Đổi giao diện',
+        run: none,
+        children: [
+          { id: 'theme:light', group: 'actions', label: 'Sáng', run: none },
+          { id: 'theme:dark', group: 'actions', label: 'Tối', keywords: 'dark', run: none },
+        ],
+      },
+    ];
+    const found: PaletteEntry[] = [{ id: 'party:1', group: 'parties', label: 'Điện lực', run: none }];
+
+    const submenu = findSubmenuEntry(entries, 'action:switch-theme');
+    expect(submenu?.id).toBe('action:switch-theme');
+    expect(findSubmenuEntry(entries, 'go:ledger')).toBeNull();
+
+    expect(resolvePaletteResults(entries, '', found, submenu).map((e) => e.id)).toEqual(['theme:light', 'theme:dark']);
+    expect(resolvePaletteResults(entries, 'dark', found, submenu).map((e) => e.id)).toEqual(['theme:dark']);
+    expect(resolvePaletteResults(entries, 'so sach', found, null).map((e) => e.id)).toEqual(['go:ledger', 'party:1']);
+
+    // Submenus with > 8 items keep all options visible without truncating trailing actions.
+    const manyOrgsEntry: PaletteEntry = {
+      id: 'action:switch-org',
+      group: 'actions',
+      label: 'Đổi tổ chức',
+      run: none,
+      children: [
+        ...Array.from({ length: 9 }, (_, i) => ({ id: `org:${i}`, group: 'orgs' as const, label: `Org ${i}`, run: none })),
+        { id: 'switch-org:add', group: 'orgs' as const, label: 'Thêm tổ chức', run: none },
+      ],
+    };
+    expect(resolvePaletteResults([manyOrgsEntry], '', found, manyOrgsEntry)).toHaveLength(10);
   });
 });

@@ -3,7 +3,7 @@
 // to the URL set in the app's dashboard when a person removes the app and asks for their data to be deleted. The API checks the
 // signature before anything else: a forged, malformed or unsupported one is refused and stored nowhere. A verified one carries
 // the person's app-scoped Meta user id, which is turned into the keyed hash a connection stores (platformUserHash) and handed,
-// with a fresh confirmation code, to crove_ads.deletion_request_enqueue() without a tenant context. The id and the body are
+// with a fresh confirmation code, to ludy_ads.deletion_request_enqueue() without a tenant context. The id and the body are
 // stored nowhere. The worker relay (apps/kernel/src/worker.ts) claims the requests, closes and erases the ad accounts the hash
 // names in each org, and marks the request completed; the status page Meta shows the person reads it by the code.
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -64,7 +64,7 @@ export async function acceptAdsDeletion(runtime: Runtime, appSecret: string, bod
     // A person with a request still open (a replay of this one, or a second one) gets that request's code, not a new row.
     const code = await runtime.orgless(async (db) => {
       const { rows } = await sql<{ code: string }>`
-        SELECT crove_ads.deletion_request_enqueue(${randomBytes(16).toString('hex')}, ${platformUserHash(appSecret, userId)}) AS code`.execute(db);
+        SELECT ludy_ads.deletion_request_enqueue(${randomBytes(16).toString('hex')}, ${platformUserHash(appSecret, userId)}) AS code`.execute(db);
       return rows[0]?.code ?? null;
     });
     if (!code) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
@@ -88,17 +88,17 @@ export async function adsDeletionStatus(runtime: Runtime, code: string): Promise
   if (!/^[0-9a-f]{32}$/.test(code)) return null;
   return runtime.orgless(async (db) => {
     const { rows } = await sql<{ requested_at: Date; completed_at: Date | null; accounts: number | null }>`
-      SELECT requested_at, completed_at, accounts FROM crove_ads.deletion_request_status(${code})`.execute(db);
+      SELECT requested_at, completed_at, accounts FROM ludy_ads.deletion_request_status(${code})`.execute(db);
     const row = rows[0];
     return row ? { requestedAt: row.requested_at, completedAt: row.completed_at, accounts: row.accounts } : null;
   });
 }
 
-// The relay's claim of open requests (crove_ads.deletion_request_claim, the worker login's alone): one row per ad account a
+// The relay's claim of open requests (ludy_ads.deletion_request_claim, the worker login's alone): one row per ad account a
 // request names, and one row of nulls for a request that names none.
 export async function claimAdsDeletions(workerDb: Db): Promise<Array<{ code: string; orgId: string | null; adAccountId: string | null; connectionId: string | null }>> {
   const { rows } = await sql<{ code: string; org_id: string | null; ad_account_id: string | null; connection_id: string | null }>`
-    SELECT code, org_id, ad_account_id, connection_id FROM crove_ads.deletion_request_claim(${ADS_DELETION_CLAIM}::int)`.execute(workerDb);
+    SELECT code, org_id, ad_account_id, connection_id FROM ludy_ads.deletion_request_claim(${ADS_DELETION_CLAIM}::int)`.execute(workerDb);
   return rows.map((r) => ({ code: r.code, orgId: r.org_id, adAccountId: r.ad_account_id, connectionId: r.connection_id }));
 }
 
@@ -107,7 +107,7 @@ export async function claimAdsDeletions(workerDb: Db): Promise<Array<{ code: str
 async function claimAdsWriteGrants(workerDb: Db, codes: string[]): Promise<Array<{ code: string; orgId: string; adAccountId: string }>> {
   if (codes.length === 0) return [];
   const { rows } = await sql<{ code: string; org_id: string; ad_account_id: string }>`
-    SELECT code, org_id, ad_account_id FROM crove_ads.deletion_request_claim_write(${codes}::text[])`.execute(workerDb);
+    SELECT code, org_id, ad_account_id FROM ludy_ads.deletion_request_claim_write(${codes}::text[])`.execute(workerDb);
   return rows.map((r) => ({ code: r.code, orgId: r.org_id, adAccountId: r.ad_account_id }));
 }
 
@@ -119,7 +119,7 @@ const SYSTEM = { type: 'system' as const, component: 'ads' };
 // reads it) keeps its row and figures: its write connection is closed and forgotten (`ads.account.forget_write`). A request that
 // names no account (none was ever linked with this person's grant, or its accounts were deleted already) is completed with none.
 // Every step is idempotent, so a pass that dies half way is run again whole. A request that fails is put off for five minutes in
-// the database (crove_ads.deletion_request_defer), so it holds nothing behind it and no restart forgets it. Returns how many
+// the database (ludy_ads.deletion_request_defer), so it holds nothing behind it and no restart forgets it. Returns how many
 // requests it completed.
 export async function runAdsDeletions(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {
   const claimed = await claimAdsDeletions(deps.workerDb);
@@ -143,13 +143,13 @@ export async function runAdsDeletions(deps: { runtime: Runtime; workerDb: Db }):
       for (const account of writeOnly) await deps.runtime.execute('ads.account.forget_write', { adAccountId: account.adAccountId }, { actor: SYSTEM, orgId: account.orgId });
       // The sealed copies and the revoke state of the closed connections this person granted are deleted too (#2296): they hold the person's keyed hash and a
       // sealed token of theirs, and the person removed the app, so nothing is left to revoke. Other people's obligations stay.
-      await sql`SELECT crove_ads.deletion_request_forget(${code})`.execute(deps.workerDb);
-      await sql`SELECT crove_ads.deletion_request_complete(${code}, ${accounts.length}::int)`.execute(deps.workerDb);
+      await sql`SELECT ludy_ads.deletion_request_forget(${code})`.execute(deps.workerDb);
+      await sql`SELECT ludy_ads.deletion_request_complete(${code}, ${accounts.length}::int)`.execute(deps.workerDb);
       completed++;
     } catch (error) {
       // By code only: nothing of the request or the accounts goes to the log.
       console.error(`[ads-deletion] request ${code.slice(0, 8)} not completed`, error instanceof Error ? error.name : 'error');
-      await sql`SELECT crove_ads.deletion_request_defer(${code})`.execute(deps.workerDb).catch(() => undefined);
+      await sql`SELECT ludy_ads.deletion_request_defer(${code})`.execute(deps.workerDb).catch(() => undefined);
     }
   }
   return completed;

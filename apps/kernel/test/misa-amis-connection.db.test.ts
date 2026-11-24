@@ -191,7 +191,7 @@ suite('MISA AMIS connections (#3875)', () => {
     expect((await call('status', member, undefined, pushApp)).body).toEqual({ offered: true, pushOffered: true, aspOffered: false, aspPushOffered: false });
     await expect(call('connections/connect', owner, connectInput(), offApp)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
     expect(await rows('SELECT 1 FROM ludy_kernel.channel_connection WHERE org_id = $1', [orgId])).toEqual([]);
-    expect(await rows('SELECT 1 FROM crove_finance.misa_amis_connection WHERE org_id = $1', [orgId])).toEqual([]);
+    expect(await rows('SELECT 1 FROM ludy_finance.misa_amis_connection WHERE org_id = $1', [orgId])).toEqual([]);
   });
 
   it('connects for an owner or admin only, seals the access code, and shows every member the connection with no secret', async () => {
@@ -220,7 +220,7 @@ suite('MISA AMIS connections (#3875)', () => {
     expect(vault.open(envelope, binding)).toBe(PLANTED);
     expect(() => vault.open(envelope, { ...binding, orgId: randomUUID() })).toThrow();
     // Nothing readable anywhere carries the code: the audit rows, the outbox, the connection rows.
-    for (const table of ['ludy_kernel.audit_event', 'ludy_kernel.outbox_event', 'ludy_kernel.channel_connection', 'crove_finance.misa_amis_connection']) {
+    for (const table of ['ludy_kernel.audit_event', 'ludy_kernel.outbox_event', 'ludy_kernel.channel_connection', 'ludy_finance.misa_amis_connection']) {
       const hit = await rows(`SELECT 1 FROM ${table} t WHERE t.org_id = $1 AND t::text LIKE '%' || $2 || '%'`, [orgId, PLANTED]);
       expect(hit, table).toEqual([]);
     }
@@ -228,7 +228,7 @@ suite('MISA AMIS connections (#3875)', () => {
     const audit = await rows<{ command: string }>("SELECT command FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.misa_amis_connection.connect'", [orgId]);
     expect(audit.length).toBeGreaterThan(0);
     // The company code MISA is given is a stable name of the org, not a secret, but it belongs to the connection row alone: no audit or outbox row repeats it.
-    const [stored] = await rows<{ org_company_code: string }>('SELECT org_company_code FROM crove_finance.misa_amis_connection WHERE org_id = $1', [orgId]);
+    const [stored] = await rows<{ org_company_code: string }>('SELECT org_company_code FROM ludy_finance.misa_amis_connection WHERE org_id = $1', [orgId]);
     expect(stored?.org_company_code).toMatch(/^ludy-[0-9a-f]{32}$/);
     for (const table of ['ludy_kernel.audit_event', 'ludy_kernel.outbox_event']) {
       const hit = await rows(`SELECT 1 FROM ${table} t WHERE t.org_id = $1 AND t::text LIKE '%' || $2 || '%'`, [orgId, stored?.org_company_code]);
@@ -241,7 +241,7 @@ suite('MISA AMIS connections (#3875)', () => {
     const again = await call('connections/connect', owner, connectInput({ accessCode: `${PLANTED}-again` }));
     expect(again.status).toBe(200);
     expect(again.body.id).toBe((before.body as Array<{ id: string }>)[0]?.id);
-    expect(await rows('SELECT 1 FROM crove_finance.misa_amis_connection WHERE org_id = $1', [orgId])).toHaveLength(1);
+    expect(await rows('SELECT 1 FROM ludy_finance.misa_amis_connection WHERE org_id = $1', [orgId])).toHaveLength(1);
     const theirs = await call('connections/connect', outsider, connectInput(), app, otherSlug);
     expect(theirs.status).toBe(200);
     // Each org sees only its own.
@@ -250,14 +250,14 @@ suite('MISA AMIS connections (#3875)', () => {
   });
 
   it('tells AMIS an opaque code of its own for each connection: random, in the shape, unique across orgs, and never given to a tenant to change', async () => {
-    const codes = await rows<{ org_id: string; org_company_code: string }>('SELECT org_id, org_company_code FROM crove_finance.misa_amis_connection ORDER BY created_at');
+    const codes = await rows<{ org_id: string; org_company_code: string }>('SELECT org_id, org_company_code FROM ludy_finance.misa_amis_connection ORDER BY created_at');
     expect(codes).toHaveLength(2);
     for (const row of codes) expect(row.org_company_code).toMatch(CODE);
     expect(new Set(codes.map((c) => c.org_company_code)).size).toBe(2);
     expect(codes.map((c) => c.org_id).sort()).toEqual([orgId, otherOrgId].sort());
     // A code outside the shape is refused by the database, and a duplicate too.
-    await expect(rows("UPDATE crove_finance.misa_amis_connection SET org_company_code = 'not-a-code' WHERE org_id = $1", [orgId])).rejects.toThrow();
-    await expect(rows('UPDATE crove_finance.misa_amis_connection SET org_company_code = $1 WHERE org_id = $2', [codes[1]?.org_company_code, orgId])).rejects.toThrow(/misa_amis_connection_code_uq/);
+    await expect(rows("UPDATE ludy_finance.misa_amis_connection SET org_company_code = 'not-a-code' WHERE org_id = $1", [orgId])).rejects.toThrow();
+    await expect(rows('UPDATE ludy_finance.misa_amis_connection SET org_company_code = $1 WHERE org_id = $2', [codes[1]?.org_company_code, orgId])).rejects.toThrow(/misa_amis_connection_code_uq/);
     // A tenant role never types the code or a test result: as the owner of the org (through the sealed context, as the tenant role) an INSERT that names both is stored with a fresh code and no result.
     const typed = 'ludy-' + '0'.repeat(32);
     const stored = await admin(async (c) => {
@@ -271,7 +271,7 @@ suite('MISA AMIS connections (#3875)', () => {
         await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner.userId, orgId)]);
         await c.query('SET LOCAL ROLE ludy_tenant');
         const { rows: inserted } = await c.query<{ org_company_code: string; last_test_state: string | null; last_tested_at: Date | null }>(
-          "INSERT INTO crove_finance.misa_amis_connection (org_id, legal_entity_id, channel_connection_id, org_company_code, last_test_state, last_tested_at) VALUES ($1, $2, $3, $4, 'works', pg_catalog.now()) RETURNING org_company_code, last_test_state, last_tested_at",
+          "INSERT INTO ludy_finance.misa_amis_connection (org_id, legal_entity_id, channel_connection_id, org_company_code, last_test_state, last_tested_at) VALUES ($1, $2, $3, $4, 'works', pg_catalog.now()) RETURNING org_company_code, last_test_state, last_tested_at",
           [orgId, entity, channel, typed],
         );
         return inserted[0] ?? null;
@@ -290,7 +290,7 @@ suite('MISA AMIS connections (#3875)', () => {
     const channel = randomUUID();
     await rows("INSERT INTO ludy_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Chi nhánh thử', 'branch', $3)", [orgId, entity, owner.userId]);
     await rows("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'marketplace_sandbox', $3, 'Sàn thử', $4)", [orgId, channel, `m-${entity}`, owner.userId]);
-    await expect(rows('INSERT INTO crove_finance.misa_amis_connection (org_id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3)', [orgId, entity, channel])).rejects.toThrow(/MISA_AMIS_CONNECTION_PROVIDER/);
+    await expect(rows('INSERT INTO ludy_finance.misa_amis_connection (org_id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3)', [orgId, entity, channel])).rejects.toThrow(/MISA_AMIS_CONNECTION_PROVIDER/);
   });
 
   // A fake AMIS: it knows the integrator's ClientID, the access code the connection was last made with and the connection's company code, and answers the way MISA documents.
@@ -327,7 +327,7 @@ suite('MISA AMIS connections (#3875)', () => {
     const events = await rows<{ payload: Record<string, unknown> }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.misa_amis_connection.test_requested'", [orgId]);
     expect(events).toEqual([{ payload: { connection_id: id } }, { payload: { connection_id: id } }]);
     // The event and the audit row carry ids: not the access code, the company code or the ClientID.
-    const [stored] = await rows<{ org_company_code: string }>('SELECT org_company_code FROM crove_finance.misa_amis_connection WHERE org_id = $1', [orgId]);
+    const [stored] = await rows<{ org_company_code: string }>('SELECT org_company_code FROM ludy_finance.misa_amis_connection WHERE org_id = $1', [orgId]);
     for (const table of ['ludy_kernel.audit_event', 'ludy_kernel.outbox_event']) {
       for (const secret of [PLANTED, stored?.org_company_code, CLIENT_ID]) expect(await rows(`SELECT 1 FROM ${table} t WHERE t.org_id = $1 AND t::text LIKE '%' || $2 || '%'`, [orgId, secret]), `${table} ${secret}`).toEqual([]);
     }
@@ -345,7 +345,7 @@ suite('MISA AMIS connections (#3875)', () => {
     // Switch on: a member or viewer is refused by role, an owner reaches the command (the connection was not tested here, so it says so and queues nothing).
     for (const who of [member, viewer]) expect((await vouchers(who, pushApp)).status).toBe(403);
     await expect(vouchers(owner, pushApp)).resolves.toMatchObject({ status: 409, body: { code: 'MISA_AMIS_NOT_TESTED' } });
-    expect(await rows('SELECT 1 FROM crove_finance.misa_amis_push WHERE org_id = $1', [orgId])).toEqual([]);
+    expect(await rows('SELECT 1 FROM ludy_finance.misa_amis_push WHERE org_id = $1', [orgId])).toEqual([]);
     // Rows already pushed stay readable by every member whatever the switch says (nothing is sent by a read), and another org's user cannot read them.
     for (const on of [app, offApp, pushApp]) for (const who of [owner, adminUser, member, viewer]) await expect(call('pushes/list', who, { connectionId: id }, on)).resolves.toMatchObject({ status: 200, body: [] });
     expect((await call('pushes/list', outsider, { connectionId: id }, app, slug)).status).toBe(403);
@@ -359,7 +359,7 @@ suite('MISA AMIS connections (#3875)', () => {
     const [listed] = (await call('connections/list', owner)).body as Array<{ id: string; lastTestState: string | null; lastTestedAt: string | null }>;
     const id = String(listed?.id);
     expect(listed).toMatchObject({ lastTestState: null, lastTestedAt: null });
-    const [stored] = await rows<{ org_company_code: string }>('SELECT org_company_code FROM crove_finance.misa_amis_connection WHERE org_id = $1', [orgId]);
+    const [stored] = await rows<{ org_company_code: string }>('SELECT org_company_code FROM ludy_finance.misa_amis_connection WHERE org_id = $1', [orgId]);
     const company = String(stored?.org_company_code);
     // The access code is the one the connection was last made with (the second connect of the entity replaced the first).
     const code = `${PLANTED}-again`;
@@ -396,10 +396,10 @@ suite('MISA AMIS connections (#3875)', () => {
     const own = (detail: unknown) => Object.fromEntries(Object.entries(detail as Record<string, unknown>).filter(([key]) => key !== 'component' && key !== 'workerInstance'));
     for (const a of audits) expect(Object.keys(own(a.detail))).toEqual(['state']);
     expect(audits.map((a) => (own(a.detail) as { state: string }).state).sort()).toEqual(['unreachable', 'unreachable', 'works', 'works', 'wrong_credentials']);
-    for (const table of ['ludy_kernel.audit_event', 'ludy_kernel.outbox_event', 'ludy_kernel.channel_connection', 'crove_finance.misa_amis_connection']) {
+    for (const table of ['ludy_kernel.audit_event', 'ludy_kernel.outbox_event', 'ludy_kernel.channel_connection', 'ludy_finance.misa_amis_connection']) {
       for (const secret of [PLANTED, company, CLIENT_ID, 'planted AMIS text', 'planted gateway text']) {
         // The connection row holds its own company code, which is the one thing here that may be in it.
-        if (table === 'crove_finance.misa_amis_connection' && secret === company) continue;
+        if (table === 'ludy_finance.misa_amis_connection' && secret === company) continue;
         expect(await rows(`SELECT 1 FROM ${table} t WHERE t.org_id = $1 AND t::text LIKE '%' || $2 || '%'`, [orgId, secret]), `${table} ${secret}`).toEqual([]);
       }
     }
@@ -435,9 +435,9 @@ suite('MISA AMIS connections (#3875)', () => {
     for (const who of [member, viewer]) expect((await call('connections/disconnect', who, { id: listed?.id })).status).toBe(403);
     // Another org's owner cannot reach it.
     expect((await call('connections/disconnect', outsider, { id: listed?.id }, app, otherSlug)).body).toEqual({ removed: false });
-    expect(await rows('SELECT 1 FROM crove_finance.misa_amis_connection WHERE org_id = $1', [orgId])).toHaveLength(1);
+    expect(await rows('SELECT 1 FROM ludy_finance.misa_amis_connection WHERE org_id = $1', [orgId])).toHaveLength(1);
     expect((await call('connections/disconnect', owner, { id: listed?.id })).body).toEqual({ removed: true });
-    expect(await rows('SELECT 1 FROM crove_finance.misa_amis_connection WHERE org_id = $1', [orgId])).toEqual([]);
+    expect(await rows('SELECT 1 FROM ludy_finance.misa_amis_connection WHERE org_id = $1', [orgId])).toEqual([]);
     expect(await rows('SELECT 1 FROM ludy_kernel.credential WHERE org_id = $1 AND connection_id = $2', [orgId, listed?.connectionId])).toEqual([]);
     expect((await rows<{ status: string }>('SELECT status FROM ludy_kernel.channel_connection WHERE org_id = $1 AND id = $2', [orgId, listed?.connectionId]))[0]?.status).toBe('revoked');
     expect(((await call('connections/list', owner)).body as unknown[]).length).toBe(0);
@@ -467,7 +467,7 @@ suite('MISA AMIS connections (#3875)', () => {
     await expect(call('connections/connect', owner, connectInput({ legalEntityId: entity, product: 'asp', accessCode: ASP_CODE }), app)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
     await expect(call('connections/connect', owner, connectInput({ legalEntityId: entity, accessCode: ASP_CODE }), aspOnlyApp)).resolves.toMatchObject({ status: 404, body: { code: 'MISA_AMIS_DISABLED' } });
     expect(await rows('SELECT 1 FROM ludy_kernel.channel_connection WHERE org_id = $1 AND external_account_id = $2', [orgId, entity])).toEqual([]);
-    expect(await rows('SELECT 1 FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, entity])).toEqual([]);
+    expect(await rows('SELECT 1 FROM ludy_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, entity])).toEqual([]);
   });
 
   it('connects an ASP entity: the code is sealed under accounting_misa_asp and opens for no other provider, the product is in the list, and an entity is on one product only', async () => {
@@ -487,13 +487,13 @@ suite('MISA AMIS connections (#3875)', () => {
     expect(vault.open(envelope, { orgId, provider: 'accounting_misa_asp', externalAccountId: entity })).toBe(ASP_CODE);
     // Bound to its provider: the code of an ASP connection is never opened as an AMIS one.
     expect(() => vault.open(envelope, { orgId, provider: 'accounting_misa_amis', externalAccountId: entity })).toThrow();
-    expect((await rows<{ product: string }>('SELECT product FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND id = $2', [orgId, id]))[0]?.product).toBe('asp');
+    expect((await rows<{ product: string }>('SELECT product FROM ludy_finance.misa_amis_connection WHERE org_id = $1 AND id = $2', [orgId, id]))[0]?.product).toBe('asp');
     // The same product again is the same connection; the other product on this entity is refused, and what it began (a channel connection) is rolled back with it.
     const again = await call('connections/connect', owner, connectInput({ legalEntityId: entity, product: 'asp', accessCode: `${ASP_CODE}-2` }), aspOnlyApp);
     expect(again.body.id).toBe(id);
     await expect(call('connections/connect', owner, connectInput({ legalEntityId: entity, accessCode: PLANTED }), aspApp)).resolves.toMatchObject({ status: 409, body: { code: 'MISA_AMIS_CONNECTION_EXISTS' } });
     expect((await rows<{ provider: string }>('SELECT provider FROM ludy_kernel.channel_connection WHERE org_id = $1 AND external_account_id = $2', [orgId, entity])).map((r) => r.provider)).toEqual(['accounting_misa_asp']);
-    for (const table of ['ludy_kernel.audit_event', 'ludy_kernel.outbox_event', 'ludy_kernel.channel_connection', 'crove_finance.misa_amis_connection']) {
+    for (const table of ['ludy_kernel.audit_event', 'ludy_kernel.outbox_event', 'ludy_kernel.channel_connection', 'ludy_finance.misa_amis_connection']) {
       expect(await rows(`SELECT 1 FROM ${table} t WHERE t.org_id = $1 AND t::text LIKE '%' || $2 || '%'`, [orgId, ASP_CODE]), table).toEqual([]);
     }
   });
@@ -509,8 +509,8 @@ suite('MISA AMIS connections (#3875)', () => {
     await insertChannel(aspChannel, 'accounting_misa_asp', entityB);
     const file = (entity: string, channel: string, product?: string) =>
       product === undefined
-        ? rows('INSERT INTO crove_finance.misa_amis_connection (org_id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3)', [orgId, entity, channel])
-        : rows('INSERT INTO crove_finance.misa_amis_connection (org_id, legal_entity_id, channel_connection_id, product) VALUES ($1, $2, $3, $4)', [orgId, entity, channel, product]);
+        ? rows('INSERT INTO ludy_finance.misa_amis_connection (org_id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3)', [orgId, entity, channel])
+        : rows('INSERT INTO ludy_finance.misa_amis_connection (org_id, legal_entity_id, channel_connection_id, product) VALUES ($1, $2, $3, $4)', [orgId, entity, channel, product]);
     // An AMIS channel under an ASP row, an ASP channel under an AMIS row (the default) and under a row that says so, are all refused; a product outside the two is refused by its constraint.
     await expect(file(entityA, amisChannel, 'asp')).rejects.toThrow(/MISA_AMIS_CONNECTION_PROVIDER/);
     await expect(file(entityB, aspChannel)).rejects.toThrow(/MISA_AMIS_CONNECTION_PROVIDER/);
@@ -519,14 +519,14 @@ suite('MISA AMIS connections (#3875)', () => {
     await expect(file(entityA, amisChannel, 'other')).rejects.toThrow(/misa_amis_connection_product_ck/);
     await file(entityB, aspChannel, 'asp');
     await file(entityA, amisChannel);
-    expect((await rows<{ product: string }>('SELECT product FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, entityA]))[0]?.product).toBe('amis');
+    expect((await rows<{ product: string }>('SELECT product FROM ludy_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, entityA]))[0]?.product).toBe('amis');
     // A tenant role (the owner, through the sealed context) cannot change the product of a row.
     const refused = await admin(async (c) => {
       await c.query('BEGIN');
       try {
         await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner.userId, orgId)]);
         await c.query('SET LOCAL ROLE ludy_tenant');
-        await c.query("UPDATE crove_finance.misa_amis_connection SET product = 'amis' WHERE org_id = $1 AND legal_entity_id = $2", [orgId, entityB]);
+        await c.query("UPDATE ludy_finance.misa_amis_connection SET product = 'amis' WHERE org_id = $1 AND legal_entity_id = $2", [orgId, entityB]);
         return null;
       } catch (error) {
         return String((error as Error).message);
@@ -536,11 +536,11 @@ suite('MISA AMIS connections (#3875)', () => {
     });
     expect(refused).toMatch(/permission denied/);
     // And not by anyone else either (a later grant, a definer function, the admin connection): the trigger refuses a re-bound product or channel connection, while the last test's state is still written.
-    await expect(rows("UPDATE crove_finance.misa_amis_connection SET product = 'amis' WHERE org_id = $1 AND legal_entity_id = $2", [orgId, entityB])).rejects.toThrow(/MISA_AMIS_CONNECTION_FIXED/);
-    await expect(rows('UPDATE crove_finance.misa_amis_connection SET channel_connection_id = $3 WHERE org_id = $1 AND legal_entity_id = $2', [orgId, entityB, amisChannel])).rejects.toThrow(/MISA_AMIS_CONNECTION_FIXED/);
-    await rows("UPDATE crove_finance.misa_amis_connection SET last_test_state = 'works', last_tested_at = pg_catalog.now() WHERE org_id = $1 AND legal_entity_id = $2", [orgId, entityB]);
+    await expect(rows("UPDATE ludy_finance.misa_amis_connection SET product = 'amis' WHERE org_id = $1 AND legal_entity_id = $2", [orgId, entityB])).rejects.toThrow(/MISA_AMIS_CONNECTION_FIXED/);
+    await expect(rows('UPDATE ludy_finance.misa_amis_connection SET channel_connection_id = $3 WHERE org_id = $1 AND legal_entity_id = $2', [orgId, entityB, amisChannel])).rejects.toThrow(/MISA_AMIS_CONNECTION_FIXED/);
+    await rows("UPDATE ludy_finance.misa_amis_connection SET last_test_state = 'works', last_tested_at = pg_catalog.now() WHERE org_id = $1 AND legal_entity_id = $2", [orgId, entityB]);
     // The rows made before the column existed are AMIS ones: the existing connection of the default entity.
-    expect((await rows<{ product: string }>('SELECT product FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, await defaultEntity()]))[0]?.product).toBe('amis');
+    expect((await rows<{ product: string }>('SELECT product FROM ludy_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, await defaultEntity()]))[0]?.product).toBe('amis');
   });
 
   it('tests an ASP connection as the worker with the ASP client (a token, then one row of the organization-unit catalogue), and asks for a test only where the deployment holds that product', async () => {
@@ -552,7 +552,7 @@ suite('MISA AMIS connections (#3875)', () => {
     expect((await call('connections/test', owner, { id }, aspOnlyApp)).body).toEqual({ queued: true });
     // A connection that is not there is not found, on a deployment that holds only ASP's ClientID too (the product cannot be told, so it is not asked).
     expect((await call('connections/test', owner, { id: randomUUID() }, aspOnlyApp)).body).toMatchObject({ code: 'MISA_AMIS_CONNECTION_NOT_FOUND' });
-    const [stored] = await rows<{ org_company_code: string }>('SELECT org_company_code FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND id = $2', [orgId, id]);
+    const [stored] = await rows<{ org_company_code: string }>('SELECT org_company_code FROM ludy_finance.misa_amis_connection WHERE org_id = $1 AND id = $2', [orgId, id]);
     const company = String(stored?.org_company_code);
     const seen: Array<{ path: string; body: Record<string, unknown> }> = [];
     const asp = createAmisClient({
@@ -577,8 +577,8 @@ suite('MISA AMIS connections (#3875)', () => {
   });
 
   it('hands the worker the product of an ASP connection, and no longer refuses the push command for it; each product has its own push switch (#4113)', async () => {
-    const [asp] = await rows<{ id: string; legal_entity_id: string }>("SELECT id, legal_entity_id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND product = 'asp' ORDER BY created_at LIMIT 1", [orgId]);
-    const [amis] = await rows<{ id: string; legal_entity_id: string }>("SELECT id, legal_entity_id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND product = 'amis' ORDER BY created_at LIMIT 1", [orgId]);
+    const [asp] = await rows<{ id: string; legal_entity_id: string }>("SELECT id, legal_entity_id FROM ludy_finance.misa_amis_connection WHERE org_id = $1 AND product = 'asp' ORDER BY created_at LIMIT 1", [orgId]);
+    const [amis] = await rows<{ id: string; legal_entity_id: string }>("SELECT id, legal_entity_id FROM ludy_finance.misa_amis_connection WHERE org_id = $1 AND product = 'amis' ORDER BY created_at LIMIT 1", [orgId]);
     const target = await worker.query('finance.misa_amis.push_target', { connectionId: String(asp?.id) }, { actor: system, orgId });
     expect(target).toMatchObject({ action: 'push', id: String(asp?.id), product: 'asp' });
     // Nothing to send and, for ASP, nothing waits for a poll: no result check is ever asked for an ASP connection.
@@ -612,14 +612,14 @@ suite('MISA AMIS connections (#3875)', () => {
   });
 
   it('keeps the default stock of an ASP connection for its sales lines (#4125): typed, owner or admin only, refused for AMIS, bounded in the table, and handed to the check with the connection', async () => {
-    const [asp] = await rows<{ id: string }>("SELECT id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND product = 'asp' ORDER BY created_at LIMIT 1", [orgId]);
-    const [amis] = await rows<{ id: string }>("SELECT id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND product = 'amis' ORDER BY created_at LIMIT 1", [orgId]);
+    const [asp] = await rows<{ id: string }>("SELECT id FROM ludy_finance.misa_amis_connection WHERE org_id = $1 AND product = 'asp' ORDER BY created_at LIMIT 1", [orgId]);
+    const [amis] = await rows<{ id: string }>("SELECT id FROM ludy_finance.misa_amis_connection WHERE org_id = $1 AND product = 'amis' ORDER BY created_at LIMIT 1", [orgId]);
     const aspId = String(asp?.id);
     const stockOf = async (id: string) => ((await call('connections/list', owner)).body as Array<{ id: string; defaultSalesStockCode?: string | null }>).find((c) => c.id === id)?.defaultSalesStockCode;
     expect(await call('connections/setDefaultItem', owner, { id: aspId, role: 'sales_stock', code: ' KHO1 ' })).toMatchObject({ status: 200, body: { saved: true } });
     expect(await stockOf(aspId)).toBe('KHO1');
     // The worker is handed it with the waiting check, for an ASP connection only.
-    await call('matches/check', owner, { id: aspId, ask: { kind: 'sales', legalEntityId: String((await rows<{ legal_entity_id: string }>('SELECT legal_entity_id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND id = $2', [orgId, aspId]))[0]?.legal_entity_id) } }, aspApp);
+    await call('matches/check', owner, { id: aspId, ask: { kind: 'sales', legalEntityId: String((await rows<{ legal_entity_id: string }>('SELECT legal_entity_id FROM ludy_finance.misa_amis_connection WHERE org_id = $1 AND id = $2', [orgId, aspId]))[0]?.legal_entity_id) } }, aspApp);
     expect(await worker.query('finance.misa_amis_match.check_target', { id: aspId }, { actor: system, orgId })).toMatchObject({ action: 'check', defaultSalesStockCode: 'KHO1' });
     // Owner or admin only; a member and a viewer are refused.
     for (const who of [member, viewer]) expect(await call('connections/setDefaultItem', who, { id: aspId, role: 'sales_stock', code: 'KHO2' })).toMatchObject({ status: 403 });
@@ -629,15 +629,15 @@ suite('MISA AMIS connections (#3875)', () => {
     expect(await call('connections/setDefaultItem', owner, { id: String(amis?.id), role: 'sales_stock', code: 'KHO1' })).toMatchObject({ status: 422, body: { code: 'MISA_AMIS_STOCK_NOT_ASP' } });
     expect(await call('connections/setDefaultItem', owner, { id: String(amis?.id), role: 'sales_stock', code: null })).toMatchObject({ status: 200 });
     // The table holds the bound and the product too.
-    await expect(rows('UPDATE crove_finance.misa_amis_connection SET default_sales_stock_code = $3 WHERE org_id = $1 AND id = $2', [orgId, aspId, 'x'.repeat(51)])).rejects.toThrow(/misa_amis_connection_default_stock_ck/);
-    await expect(rows("UPDATE crove_finance.misa_amis_connection SET default_sales_stock_code = 'KHO1' WHERE org_id = $1 AND id = $2", [orgId, String(amis?.id)])).rejects.toThrow(/misa_amis_connection_default_stock_ck/);
+    await expect(rows('UPDATE ludy_finance.misa_amis_connection SET default_sales_stock_code = $3 WHERE org_id = $1 AND id = $2', [orgId, aspId, 'x'.repeat(51)])).rejects.toThrow(/misa_amis_connection_default_stock_ck/);
+    await expect(rows("UPDATE ludy_finance.misa_amis_connection SET default_sales_stock_code = 'KHO1' WHERE org_id = $1 AND id = $2", [orgId, String(amis?.id)])).rejects.toThrow(/misa_amis_connection_default_stock_ck/);
     expect(await call('connections/setDefaultItem', owner, { id: aspId, role: 'sales_stock', code: null })).toMatchObject({ status: 200 });
     expect(await stockOf(aspId)).toBeNull();
   });
 
   it('keeps the MISA names a person typed for units of an ASP connection (#4125): per unit, folded, owner or admin only, refused for AMIS, bounded in the command and in the table, and handed to the check', async () => {
-    const [asp] = await rows<{ id: string; legal_entity_id: string }>("SELECT id, legal_entity_id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND product = 'asp' ORDER BY created_at LIMIT 1", [orgId]);
-    const [amis] = await rows<{ id: string }>("SELECT id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND product = 'amis' ORDER BY created_at LIMIT 1", [orgId]);
+    const [asp] = await rows<{ id: string; legal_entity_id: string }>("SELECT id, legal_entity_id FROM ludy_finance.misa_amis_connection WHERE org_id = $1 AND product = 'asp' ORDER BY created_at LIMIT 1", [orgId]);
+    const [amis] = await rows<{ id: string }>("SELECT id FROM ludy_finance.misa_amis_connection WHERE org_id = $1 AND product = 'amis' ORDER BY created_at LIMIT 1", [orgId]);
     const aspId = String(asp?.id);
     const aliasesOf = async () => ((await call('connections/list', owner)).body as Array<{ id: string; unitAliases?: Record<string, string> }>).find((c) => c.id === aspId)?.unitAliases;
     // Folded like the check folds a unit (composed, lower case, one space), the typed name trimmed.
@@ -648,7 +648,7 @@ suite('MISA AMIS connections (#3875)', () => {
     expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: '__proto__', misaName: 'P' })).toMatchObject({ status: 200 });
     expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'constructor', misaName: 'C' })).toMatchObject({ status: 200 });
     // (Read from the row: a JSON answer built from a plain record cannot carry an own `__proto__` key, which nothing on the screen reads.)
-    const [stored] = await rows<{ unit_aliases: Record<string, string> }>('SELECT unit_aliases FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND id = $2', [orgId, aspId]);
+    const [stored] = await rows<{ unit_aliases: Record<string, string> }>('SELECT unit_aliases FROM ludy_finance.misa_amis_connection WHERE org_id = $1 AND id = $2', [orgId, aspId]);
     expect(Object.entries(stored?.unit_aliases ?? {}).sort()).toEqual([['__proto__', 'P'], ['chiếc lớn', 'Cái'], ['constructor', 'C'], ['hộp', 'Hộp']]);
     expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: '__proto__', misaName: null })).toMatchObject({ status: 200 });
     expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'constructor', misaName: null })).toMatchObject({ status: 200 });
@@ -671,22 +671,22 @@ suite('MISA AMIS connections (#3875)', () => {
     }
     expect(await call('connections/setUnitAlias', owner, { id: randomUUID(), unit: 'cái', misaName: 'Cái' })).toMatchObject({ status: 404 });
     // 200 units at most: a 201st is refused by the command, the 200 stay.
-    await rows("UPDATE crove_finance.misa_amis_connection SET unit_aliases = (SELECT jsonb_object_agg('u' || g, 'V' || g) FROM generate_series(1, 200) g) WHERE org_id = $1 AND id = $2", [orgId, aspId]);
+    await rows("UPDATE ludy_finance.misa_amis_connection SET unit_aliases = (SELECT jsonb_object_agg('u' || g, 'V' || g) FROM generate_series(1, 200) g) WHERE org_id = $1 AND id = $2", [orgId, aspId]);
     expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'một đơn vị nữa', misaName: 'X' })).toMatchObject({ status: 422, body: { code: 'MISA_AMIS_UNIT_ALIASES_FULL' } });
     expect(await call('connections/setUnitAlias', owner, { id: aspId, unit: 'u1', misaName: 'Mới' })).toMatchObject({ status: 200 });
     // The table holds the bounds too: an object, 200 entries, texts of 1 to 64 characters, ASP only.
-    const bad = (value: string, id = aspId) => rows('UPDATE crove_finance.misa_amis_connection SET unit_aliases = $3::jsonb WHERE org_id = $1 AND id = $2', [orgId, id, value]);
+    const bad = (value: string, id = aspId) => rows('UPDATE ludy_finance.misa_amis_connection SET unit_aliases = $3::jsonb WHERE org_id = $1 AND id = $2', [orgId, id, value]);
     await expect(bad('[]')).rejects.toThrow(/misa_amis_connection_unit_aliases_ck/);
     await expect(bad('{"a": 1}')).rejects.toThrow(/misa_amis_connection_unit_aliases_ck/);
     await expect(bad(`{"a": "${'x'.repeat(65)}"}`)).rejects.toThrow(/misa_amis_connection_unit_aliases_ck/);
     await expect(bad('{"": "x"}')).rejects.toThrow(/misa_amis_connection_unit_aliases_ck/);
-    await expect(rows("UPDATE crove_finance.misa_amis_connection SET unit_aliases = (SELECT jsonb_object_agg('u' || g, 'V') FROM generate_series(1, 201) g) WHERE org_id = $1 AND id = $2", [orgId, aspId])).rejects.toThrow(/misa_amis_connection_unit_aliases_ck/);
+    await expect(rows("UPDATE ludy_finance.misa_amis_connection SET unit_aliases = (SELECT jsonb_object_agg('u' || g, 'V') FROM generate_series(1, 201) g) WHERE org_id = $1 AND id = $2", [orgId, aspId])).rejects.toThrow(/misa_amis_connection_unit_aliases_ck/);
     await expect(bad('{"cái": "Cái"}', String(amis?.id))).rejects.toThrow(/misa_amis_connection_unit_aliases_ck/);
     // The units of the last check a person can give a name: the unmatched ones, and one with a name typed (matched through it), never a matched unit with no name; the list is for owners and admins.
-    await rows("UPDATE crove_finance.misa_amis_connection SET unit_aliases = '{\"chiếc\": \"Cái\", \"mới\": \"Hộp\"}'::jsonb WHERE org_id = $1 AND id = $2", [orgId, aspId]);
-    const [chk] = await rows<{ legal_entity_id: string }>('SELECT legal_entity_id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND id = $2', [orgId, aspId]);
+    await rows("UPDATE ludy_finance.misa_amis_connection SET unit_aliases = '{\"chiếc\": \"Cái\", \"mới\": \"Hộp\"}'::jsonb WHERE org_id = $1 AND id = $2", [orgId, aspId]);
+    const [chk] = await rows<{ legal_entity_id: string }>('SELECT legal_entity_id FROM ludy_finance.misa_amis_connection WHERE org_id = $1 AND id = $2', [orgId, aspId]);
     for (const [key, state, code, id] of [['cái', 'matched', 'Cái', randomUUID()], ['chiếc', 'matched', 'Cái', randomUUID()], ['kg', 'unknown', null, null], ['hộp', 'ambiguous', null, null]] as const) {
-      await rows('INSERT INTO crove_finance.misa_amis_match (org_id, connection_id, legal_entity_id, kind, match_key, state, catalogue_code, catalogue_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [orgId, aspId, chk?.legal_entity_id, 'unit', key, state, code, id]);
+      await rows('INSERT INTO ludy_finance.misa_amis_match (org_id, connection_id, legal_entity_id, kind, match_key, state, catalogue_code, catalogue_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [orgId, aspId, chk?.legal_entity_id, 'unit', key, state, code, id]);
     }
     expect((await call('matches/units', owner, { connectionId: aspId }, aspApp)).body).toEqual([
       // A name typed for a unit no check has asked about comes first, so a long list never hides a name that can no longer be cleared.
@@ -696,8 +696,8 @@ suite('MISA AMIS connections (#3875)', () => {
       { unit: 'kg', state: 'unknown', alias: null },
     ]);
     expect(await call('matches/units', member, { connectionId: aspId }, aspApp)).toMatchObject({ status: 403 });
-    await rows("DELETE FROM crove_finance.misa_amis_match WHERE org_id = $1 AND connection_id = $2 AND kind = 'unit'", [orgId, aspId]);
-    await rows("UPDATE crove_finance.misa_amis_connection SET unit_aliases = '{}'::jsonb WHERE org_id = $1 AND id = $2", [orgId, aspId]);
+    await rows("DELETE FROM ludy_finance.misa_amis_match WHERE org_id = $1 AND connection_id = $2 AND kind = 'unit'", [orgId, aspId]);
+    await rows("UPDATE ludy_finance.misa_amis_connection SET unit_aliases = '{}'::jsonb WHERE org_id = $1 AND id = $2", [orgId, aspId]);
     expect(await aliasesOf()).toEqual({});
   });
 
@@ -714,7 +714,7 @@ suite('MISA AMIS connections (#3875)', () => {
           if (hide) await c.query("CREATE POLICY hide_asp_test ON ludy_kernel.channel_connection AS RESTRICTIVE FOR SELECT TO ludy_tenant USING (provider <> 'accounting_misa_asp')");
           await c.query('SELECT ludy_kernel.enter_user_context($1::uuid, $2::text)', [orgId, contextToken(owner.userId, orgId)]);
           await c.query('SET LOCAL ROLE ludy_tenant');
-          await c.query('INSERT INTO crove_finance.misa_amis_connection (org_id, legal_entity_id, channel_connection_id, product) VALUES ($1, $2, $3, $4)', [orgId, entity, channel, product]);
+          await c.query('INSERT INTO ludy_finance.misa_amis_connection (org_id, legal_entity_id, channel_connection_id, product) VALUES ($1, $2, $3, $4)', [orgId, entity, channel, product]);
           return 'filed';
         } catch (error) {
           return String((error as Error).message);
@@ -735,7 +735,7 @@ suite('MISA AMIS connections (#3875)', () => {
       await c.query('BEGIN');
       try {
         await c.query('SET LOCAL session_replication_role = replica');
-        await c.query("INSERT INTO crove_finance.misa_amis_connection (org_id, legal_entity_id, channel_connection_id, product) VALUES ($1, $2, $3, 'amis')", [orgId, entity, channel]);
+        await c.query("INSERT INTO ludy_finance.misa_amis_connection (org_id, legal_entity_id, channel_connection_id, product) VALUES ($1, $2, $3, 'amis')", [orgId, entity, channel]);
         return 'filed';
       } catch (error) {
         return String((error as Error).message);
@@ -750,8 +750,8 @@ suite('MISA AMIS connections (#3875)', () => {
     const entity = await newEntity('Chi nhánh mã mặc định');
     const channel = randomUUID();
     await rows("INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'accounting_misa_amis', $3, 'Thử', $4)", [orgId, channel, entity, owner.userId]);
-    await rows('INSERT INTO crove_finance.misa_amis_connection (org_id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3)', [orgId, entity, channel]);
-    const id = String((await rows<{ id: string }>('SELECT id FROM crove_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, entity]))[0]?.id);
+    await rows('INSERT INTO ludy_finance.misa_amis_connection (org_id, legal_entity_id, channel_connection_id) VALUES ($1, $2, $3)', [orgId, entity, channel]);
+    const id = String((await rows<{ id: string }>('SELECT id FROM ludy_finance.misa_amis_connection WHERE org_id = $1 AND legal_entity_id = $2', [orgId, entity]))[0]?.id);
     const mine = async (who: Account = owner) => ((await call('connections/list', who)).body as Array<Record<string, unknown>>).find((c) => c.id === id);
     expect(await mine()).toMatchObject({ defaultServiceItemCode: null, defaultSalesItemCode: null });
 
@@ -782,8 +782,8 @@ suite('MISA AMIS connections (#3875)', () => {
     expect(JSON.stringify(audit)).not.toMatch(/DV_CHUNG|BH_CHUNG/);
 
     // The table holds the bound too; a tenant role may write these two columns and no other column of the row (the company code, the entity, the channel stay as they were made).
-    await expect(rows('UPDATE crove_finance.misa_amis_connection SET default_sales_item_code = $3 WHERE org_id = $1 AND id = $2', [orgId, id, 'x'.repeat(51)])).rejects.toThrow(/misa_amis_connection_default_items_ck/);
-    await expect(rows("UPDATE crove_finance.misa_amis_connection SET default_service_item_code = '' WHERE org_id = $1 AND id = $2", [orgId, id])).rejects.toThrow(/misa_amis_connection_default_items_ck/);
+    await expect(rows('UPDATE ludy_finance.misa_amis_connection SET default_sales_item_code = $3 WHERE org_id = $1 AND id = $2', [orgId, id, 'x'.repeat(51)])).rejects.toThrow(/misa_amis_connection_default_items_ck/);
+    await expect(rows("UPDATE ludy_finance.misa_amis_connection SET default_service_item_code = '' WHERE org_id = $1 AND id = $2", [orgId, id])).rejects.toThrow(/misa_amis_connection_default_items_ck/);
     const asTenant = (statement: string, who: Account = owner) =>
       admin(async (c) => {
         await c.query('BEGIN');
@@ -798,12 +798,12 @@ suite('MISA AMIS connections (#3875)', () => {
           await c.query('ROLLBACK');
         }
       });
-    expect(await asTenant("UPDATE crove_finance.misa_amis_connection SET default_sales_item_code = 'KHAC' WHERE org_id = $1 AND id = $2")).toBe('updated 1');
+    expect(await asTenant("UPDATE ludy_finance.misa_amis_connection SET default_sales_item_code = 'KHAC' WHERE org_id = $1 AND id = $2")).toBe('updated 1');
     // A member or a viewer who reached the table with the tenant role (no command, no route) updates no row: the update policy hides the row from them.
-    for (const who of [member, viewer]) expect(await asTenant("UPDATE crove_finance.misa_amis_connection SET default_sales_item_code = 'KHAC' WHERE org_id = $1 AND id = $2", who), who.email).toBe('updated 0');
-    expect(await asTenant("UPDATE crove_finance.misa_amis_connection SET org_company_code = 'ludy-00000000000000000000000000000000' WHERE org_id = $1 AND id = $2")).toMatch(/permission denied/);
-    expect(await asTenant("UPDATE crove_finance.misa_amis_connection SET legal_entity_id = legal_entity_id WHERE org_id = $1 AND id = $2")).toMatch(/permission denied/);
+    for (const who of [member, viewer]) expect(await asTenant("UPDATE ludy_finance.misa_amis_connection SET default_sales_item_code = 'KHAC' WHERE org_id = $1 AND id = $2", who), who.email).toBe('updated 0');
+    expect(await asTenant("UPDATE ludy_finance.misa_amis_connection SET org_company_code = 'ludy-00000000000000000000000000000000' WHERE org_id = $1 AND id = $2")).toMatch(/permission denied/);
+    expect(await asTenant("UPDATE ludy_finance.misa_amis_connection SET legal_entity_id = legal_entity_id WHERE org_id = $1 AND id = $2")).toMatch(/permission denied/);
     // The trigger that fixes the product and the channel connection still does, for anyone.
-    await expect(rows("UPDATE crove_finance.misa_amis_connection SET product = 'asp' WHERE org_id = $1 AND id = $2", [orgId, id])).rejects.toThrow(/MISA_AMIS_CONNECTION_FIXED/);
+    await expect(rows("UPDATE ludy_finance.misa_amis_connection SET product = 'asp' WHERE org_id = $1 AND id = $2", [orgId, id])).rejects.toThrow(/MISA_AMIS_CONNECTION_FIXED/);
   });
 });

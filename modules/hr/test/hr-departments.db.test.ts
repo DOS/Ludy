@@ -320,20 +320,20 @@ suite('HR departments & employee assignment (#3412)', () => {
       await client.query('BEGIN');
       await client.query(`SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)`, [o.member, o.orgId]);
       await client.query('SET LOCAL ROLE ludy_tenant');
-      const memberRows = await client.query(`SELECT id FROM crove_hr.department`);
+      const memberRows = await client.query(`SELECT id FROM ludy_hr.department`);
       expect(memberRows.rowCount).toBe(0);
       await expect(
-        client.query(`INSERT INTO crove_hr.department (org_id, legal_entity_id, name, pay_function) VALUES ($1, $2, 'Bypass', 'admin')`, [o.orgId, o.defaultEntityId]),
+        client.query(`INSERT INTO ludy_hr.department (org_id, legal_entity_id, name, pay_function) VALUES ($1, $2, 'Bypass', 'admin')`, [o.orgId, o.defaultEntityId]),
       ).rejects.toThrow();
       await client.query('ROLLBACK');
 
       await client.query('BEGIN');
       await client.query(`SELECT ludy_kernel.enter_context($1::uuid, $2::uuid)`, [o.admin, o.orgId]);
       await client.query('SET LOCAL ROLE ludy_tenant');
-      const adminRows = await client.query<{ id: string }>(`SELECT id FROM crove_hr.department ORDER BY id`);
+      const adminRows = await client.query<{ id: string }>(`SELECT id FROM ludy_hr.department ORDER BY id`);
       expect(adminRows.rows.map((r) => r.id).sort()).toEqual([hqDept, branchDept].sort());
       await expect(
-        client.query(`UPDATE crove_hr.department SET name = 'CrossOrg' WHERE org_id = $1`, [other.orgId]),
+        client.query(`UPDATE ludy_hr.department SET name = 'CrossOrg' WHERE org_id = $1`, [other.orgId]),
       ).resolves.toMatchObject({ rowCount: 0 });
       await client.query('ROLLBACK');
     } finally {
@@ -483,12 +483,12 @@ suite('HR departments & employee assignment (#3412)', () => {
 
     // Erasure after retention clears department_id and job_title in DB and read models.
     await adminPool.query(
-      `UPDATE crove_hr.payroll_employee SET ended_on = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date WHERE id = $1`,
+      `UPDATE ludy_hr.payroll_employee SET ended_on = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date WHERE id = $1`,
       [e3],
     );
     await o.exec(o.owner, 'hr.payroll.employee.erase', { employeeId: e3 }, asMfa(o.owner));
     const dbErased = await adminPool.query<{ department_id: string | null; job_title: string | null }>(
-      `SELECT department_id, job_title FROM crove_hr.payroll_employee WHERE id = $1`,
+      `SELECT department_id, job_title FROM ludy_hr.payroll_employee WHERE id = $1`,
       [e3],
     );
     expect(dbErased.rows[0]).toEqual({ department_id: null, job_title: null });
@@ -565,8 +565,8 @@ suite('HR departments & employee assignment (#3412)', () => {
       worker.release();
     }
 
-    const leftDept = await adminPool.query(`SELECT 1 FROM crove_hr.department WHERE org_id = $1`, [o.orgId]);
-    const leftEmp = await adminPool.query(`SELECT 1 FROM crove_hr.payroll_employee WHERE org_id = $1`, [o.orgId]);
+    const leftDept = await adminPool.query(`SELECT 1 FROM ludy_hr.department WHERE org_id = $1`, [o.orgId]);
+    const leftEmp = await adminPool.query(`SELECT 1 FROM ludy_hr.payroll_employee WHERE org_id = $1`, [o.orgId]);
     expect(leftDept.rowCount).toBe(0);
     expect(leftEmp.rowCount).toBe(0);
   });

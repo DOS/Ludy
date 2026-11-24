@@ -52,12 +52,12 @@ export interface StockMoveWrite {
 // open month, whatever its source: a correction is a move of the open month, never back-dated, and the two halves of a replacement (the reversal of the old document's moves and the moves of
 // the new one) land on the same day. The entity's lock is taken shared first, so this read cannot miss a close that is running: it waits for it and then sees the month closed.
 async function openMoveDate(ctx: CommandContext, itemId: string, date: string): Promise<string> {
-  const item = await ctx.trx.selectFrom('crove_finance.stock_item').select('legal_entity_id').where('org_id', '=', ctx.orgId).where('id', '=', itemId).executeTakeFirst();
+  const item = await ctx.trx.selectFrom('ludy_finance.stock_item').select('legal_entity_id').where('org_id', '=', ctx.orgId).where('id', '=', itemId).executeTakeFirst();
   // An item that is not there is refused by the insert, with the foreign key's own error.
   if (!item) return date;
   await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${stockMoveLockKey(ctx.orgId, item.legal_entity_id)}, 0))`.execute(ctx.trx);
   const { rows } = await sql<{ first_open: string | null }>`
-    SELECT (pg_catalog.max(p.period_month) + interval '1 month')::date::text AS first_open FROM crove_finance.stock_period p
+    SELECT (pg_catalog.max(p.period_month) + interval '1 month')::date::text AS first_open FROM ludy_finance.stock_period p
     WHERE p.org_id = ${ctx.orgId}::uuid AND p.legal_entity_id = ${item.legal_entity_id}::uuid`.execute(ctx.trx);
   const firstOpen = rows[0]?.first_open ?? null;
   if (firstOpen === null || date >= firstOpen) return date;
@@ -73,7 +73,7 @@ export async function writeStockMove(ctx: CommandContext, move: StockMoveWrite):
       ? Number(
           (
             await ctx.trx
-              .selectFrom('crove_finance.stock_move')
+              .selectFrom('ludy_finance.stock_move')
               .select(sql<string>`coalesce(max(line_attempt), 0) + 1`.as('n'))
               .where('org_id', '=', ctx.orgId)
               .where('document_id', '=', move.source.documentId)
@@ -84,7 +84,7 @@ export async function writeStockMove(ctx: CommandContext, move: StockMoveWrite):
         )
       : null;
   const row = await ctx.trx
-    .insertInto('crove_finance.stock_move')
+    .insertInto('ludy_finance.stock_move')
     .values({
       org_id: ctx.orgId,
       item_id: move.itemId,
@@ -114,7 +114,7 @@ type Ctx = Pick<QueryContext, 'trx' | 'orgId'>;
 
 export async function loadItem(ctx: Ctx, itemId: string) {
   const item = await ctx.trx
-    .selectFrom('crove_finance.stock_item')
+    .selectFrom('ludy_finance.stock_item')
     .select(['id', 'legal_entity_id', 'code', 'name', 'unit', 'stock_account', 'trade', 'active'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', itemId)
@@ -145,7 +145,7 @@ export const stockItemSave = defineCommand({
       const entity = await resolveLegalEntity(ctx, input.legalEntityId);
       try {
         const row = await ctx.trx
-          .insertInto('crove_finance.stock_item')
+          .insertInto('ludy_finance.stock_item')
           .values({ org_id: ctx.orgId, legal_entity_id: entity, code: input.code, name: input.name, unit: input.unit, stock_account: input.stockAccount, trade: input.trade, created_by: userId })
           .returning('id')
           .executeTakeFirstOrThrow();
@@ -158,18 +158,18 @@ export const stockItemSave = defineCommand({
     }
     // The item row is locked before it is read: the unit comparison and the taught-names check below then read committed state, and a name taught meanwhile (its foreign key takes
     // a share of this row) waits for this commit instead of slipping between the check and the update.
-    await ctx.trx.selectFrom('crove_finance.stock_item').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).forUpdate().executeTakeFirst();
+    await ctx.trx.selectFrom('ludy_finance.stock_item').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).forUpdate().executeTakeFirst();
     const item = await loadItem(ctx, input.itemId);
     if (input.code !== item.code) throw new DomainError('STOCK_ITEM_CODE_FIXED', 422, 'Mã hàng không đổi được sau khi đã tạo');
     if (input.legalEntityId !== null && input.legalEntityId !== item.legal_entity_id) throw new DomainError('STOCK_ITEM_ENTITY_FIXED', 422, 'Mặt hàng thuộc về một pháp nhân và không đổi sang pháp nhân khác được');
     // A taught name carries a factor against the item's unit, so the unit stays while names are taught: the factor would otherwise be applied to a unit it was not made for.
     if (!sameUnit(input.unit, item.unit)) {
-      const taught = await ctx.trx.selectFrom('crove_finance.stock_alias').select('id').where('org_id', '=', ctx.orgId).where('item_id', '=', item.id).limit(1).executeTakeFirst();
+      const taught = await ctx.trx.selectFrom('ludy_finance.stock_alias').select('id').where('org_id', '=', ctx.orgId).where('item_id', '=', item.id).limit(1).executeTakeFirst();
       if (taught) throw new DomainError('STOCK_ITEM_IN_USE', 409, 'Mặt hàng đã có tên gán với hệ số quy đổi theo đơn vị hiện tại; hãy bỏ gán các tên trước khi đổi đơn vị tính');
     }
     try {
       await ctx.trx
-        .updateTable('crove_finance.stock_item')
+        .updateTable('ludy_finance.stock_item')
         .set({ name: input.name, unit: input.unit, stock_account: input.stockAccount, trade: input.trade, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', item.id)
@@ -192,7 +192,7 @@ export const stockItemSetActive = defineCommand({
   target: (input) => ({ type: 'finance.stock_item', id: input.itemId }),
   handler: async (ctx, input): Promise<{ active: boolean }> => {
     const item = await loadItem(ctx, input.itemId);
-    await ctx.trx.updateTable('crove_finance.stock_item').set({ active: input.active, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', item.id).execute();
+    await ctx.trx.updateTable('ludy_finance.stock_item').set({ active: input.active, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', item.id).execute();
     ctx.audit({ itemId: item.id, active: input.active });
     return { active: input.active };
   },
@@ -212,7 +212,7 @@ export const stockAliasTeach = defineCommand({
     if (key === '') throw new DomainError('STOCK_ALIAS_EMPTY', 422, 'Tên dùng để nhận ra mặt hàng không được để trống');
     const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
     const inserted = await ctx.trx
-      .insertInto('crove_finance.stock_alias')
+      .insertInto('ludy_finance.stock_alias')
       .values({ org_id: ctx.orgId, item_id: item.id, source: input.source, alias_key: key, factor: input.factor, source_unit: input.unit ?? null, created_by: userId })
       // The same name taught twice is the same alias; a name another item holds is refused below.
       .onConflict((conflict) => conflict.columns(['org_id', 'legal_entity_id', 'source', 'alias_key']).doNothing())
@@ -223,7 +223,7 @@ export const stockAliasTeach = defineCommand({
       return { id: inserted.id, existing: false };
     }
     const held = await ctx.trx
-      .selectFrom('crove_finance.stock_alias')
+      .selectFrom('ludy_finance.stock_alias')
       .select(['id', 'item_id', 'factor', 'source_unit'])
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', item.legal_entity_id)
@@ -246,7 +246,7 @@ export const stockAliasForget = defineCommand({
   sideEffect: 'internal',
   access: EDITORS,
   handler: async (ctx, input): Promise<{ removed: boolean }> => {
-    const gone = await ctx.trx.deleteFrom('crove_finance.stock_alias').where('org_id', '=', ctx.orgId).where('id', '=', input.aliasId).executeTakeFirst();
+    const gone = await ctx.trx.deleteFrom('ludy_finance.stock_alias').where('org_id', '=', ctx.orgId).where('id', '=', input.aliasId).executeTakeFirst();
     const removed = Number(gone.numDeletedRows) > 0;
     ctx.audit({ aliasId: input.aliasId, removed });
     return { removed };
@@ -262,7 +262,7 @@ export const stockMoveReverse = defineCommand({
   target: (input) => ({ type: 'finance.stock_move', id: input.moveId }),
   handler: async (ctx, input): Promise<{ id: string }> => {
     const move = await ctx.trx
-      .selectFrom('crove_finance.stock_move')
+      .selectFrom('ludy_finance.stock_move')
       .select(['id', 'item_id', 'quantity', 'source_type', 'return_of_move_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.moveId)
@@ -274,7 +274,7 @@ export const stockMoveReverse = defineCommand({
     // The stock an order line moved follows the line's own shipment and a person's "goods back" answer (#4355); reversing it alone would leave the line shipped with nothing to move again.
     if (move.source_type === 'count') throw new DomainError('STOCK_MOVE_COUNT', 409, 'Phát sinh này là điều chỉnh của một lần kiểm kê nên không đảo được; hãy kiểm kê lại');
     if (move.source_type === 'order_line') throw new DomainError('STOCK_MOVE_ORDER_LINE', 409, 'Phát sinh này đến từ đơn hàng sàn nên không đảo riêng được; hãy bỏ gán dòng đơn hàng đó, hoặc, nếu hàng đã về, xác nhận "hàng đã về" ở việc cần làm để nhập lại kho');
-    const done = await ctx.trx.selectFrom('crove_finance.stock_move').select('id').where('org_id', '=', ctx.orgId).where('reverses_move_id', '=', move.id).executeTakeFirst();
+    const done = await ctx.trx.selectFrom('ludy_finance.stock_move').select('id').where('org_id', '=', ctx.orgId).where('reverses_move_id', '=', move.id).executeTakeFirst();
     if (done) throw new DomainError('STOCK_MOVE_REVERSED', 409, 'Phát sinh kho này đã được đảo');
     // The returns of a sale come back first (the database holds the same rule): reversing the sale under them would put the returned pieces back twice.
     if ((await liveReturnsOf(ctx, move.id)).length > 0) throw new DomainError('STOCK_MOVE_HAS_RETURN', 409, 'Lần xuất này đã có hàng trả lại; hãy đảo các lần trả lại trước');
@@ -296,17 +296,17 @@ export const stockItemList = defineQuery({
   access: ALL,
   handler: async (ctx, input): Promise<StockItem[]> => {
     let query = ctx.trx
-      .selectFrom('crove_finance.stock_item as i')
+      .selectFrom('ludy_finance.stock_item as i')
       .select(['i.id', 'i.legal_entity_id', 'i.code', 'i.name', 'i.unit', 'i.kind', 'i.stock_account', 'i.trade', 'i.active'])
       .select((eb) => [
         eb
-          .selectFrom('crove_finance.stock_move as m')
+          .selectFrom('ludy_finance.stock_move as m')
           .select(sql<string>`coalesce(sum(m.quantity), 0)::text`.as('s'))
           .whereRef('m.org_id', '=', 'i.org_id')
           .whereRef('m.item_id', '=', 'i.id')
           .as('on_hand'),
         eb
-          .selectFrom('crove_finance.stock_move as m')
+          .selectFrom('ludy_finance.stock_move as m')
           .select(sql<number>`count(*)::int`.as('n'))
           .whereRef('m.org_id', '=', 'i.org_id')
           .whereRef('m.item_id', '=', 'i.id')
@@ -335,12 +335,12 @@ export const stockItemList = defineQuery({
 // The returns of a sale move that are still live (not undone by a reversal): their ids and quantities, oldest first.
 export async function liveReturnsOf(ctx: Ctx, moveId: string): Promise<Array<{ id: string; itemId: string; quantity: string; date: string }>> {
   const rows = await ctx.trx
-    .selectFrom('crove_finance.stock_move as q')
+    .selectFrom('ludy_finance.stock_move as q')
     .select(['q.id', 'q.item_id', 'q.quantity', 'q.move_date'])
     .where('q.org_id', '=', ctx.orgId)
     .where('q.return_of_move_id', '=', moveId)
     .where('q.source_type', '=', 'sale_return')
-    .where((eb) => eb.not(eb.exists(eb.selectFrom('crove_finance.stock_move as r').select('r.id').whereRef('r.org_id', '=', 'q.org_id').whereRef('r.reverses_move_id', '=', 'q.id'))))
+    .where((eb) => eb.not(eb.exists(eb.selectFrom('ludy_finance.stock_move as r').select('r.id').whereRef('r.org_id', '=', 'q.org_id').whereRef('r.reverses_move_id', '=', 'q.id'))))
     .orderBy('q.id')
     .execute();
   return rows.map((r) => ({ id: r.id, itemId: r.item_id, quantity: plainQuantity(r.quantity), date: typeof r.move_date === 'string' ? r.move_date : new Date(r.move_date).toISOString().slice(0, 10) }));
@@ -351,14 +351,14 @@ export async function liveReturnsOf(ctx: Ctx, moveId: string): Promise<Array<{ i
 // Lock order, the same as the trigger's: the entity's shared lock first (what writeStockMove takes), then the sale's.
 export async function lockSaleReturns(ctx: Ctx, saleMoveId: string): Promise<void> {
   const sale = await ctx.trx
-    .selectFrom('crove_finance.stock_move as m')
-    .innerJoin('crove_finance.stock_item as i', (j) => j.onRef('i.org_id', '=', 'm.org_id').onRef('i.id', '=', 'm.item_id'))
+    .selectFrom('ludy_finance.stock_move as m')
+    .innerJoin('ludy_finance.stock_item as i', (j) => j.onRef('i.org_id', '=', 'm.org_id').onRef('i.id', '=', 'm.item_id'))
     .select('i.legal_entity_id')
     .where('m.org_id', '=', ctx.orgId)
     .where('m.id', '=', saleMoveId)
     .executeTakeFirst();
   if (sale) await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${stockMoveLockKey(ctx.orgId, sale.legal_entity_id)}, 0))`.execute(ctx.trx);
-  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_finance.stock_move_return:${ctx.orgId}:${saleMoveId}`}, 0))`.execute(ctx.trx);
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`ludy_finance.stock_move_return:${ctx.orgId}:${saleMoveId}`}, 0))`.execute(ctx.trx);
 }
 
 // Undoes the live returns of a sale move, each by the reversal move of its own item, on `date`. The sale move itself cannot be reversed while a return of it is live (the database holds the rule),
@@ -385,7 +385,7 @@ export const stockMoveReturn = defineCommand({
   target: (input) => ({ type: 'finance.stock_move', id: input.moveId }),
   handler: async (ctx, input): Promise<{ id: string }> => {
     const move = await ctx.trx
-      .selectFrom('crove_finance.stock_move')
+      .selectFrom('ludy_finance.stock_move')
       .select(['id', 'item_id', 'quantity', 'source_type'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.moveId)
@@ -395,7 +395,7 @@ export const stockMoveReturn = defineCommand({
     if (!isSaleOut({ source: move.source_type, quantity: move.quantity })) {
       throw new DomainError('STOCK_RETURN_NOT_SALE', 409, 'Chỉ ghi nhận hàng trả lại cho một lần xuất bán hàng');
     }
-    const reversed = await ctx.trx.selectFrom('crove_finance.stock_move').select('id').where('org_id', '=', ctx.orgId).where('reverses_move_id', '=', move.id).executeTakeFirst();
+    const reversed = await ctx.trx.selectFrom('ludy_finance.stock_move').select('id').where('org_id', '=', ctx.orgId).where('reverses_move_id', '=', move.id).executeTakeFirst();
     if (reversed) throw new DomainError('STOCK_RETURN_REVERSED', 409, 'Lần xuất này đã được đảo nên không ghi nhận hàng trả lại nữa');
     const returned = (await liveReturnsOf(ctx, move.id)).reduce((sum, r) => sum.plus(r.quantity), money('0'));
     const left = money(move.quantity).negated().minus(returned);
@@ -423,13 +423,13 @@ export const stockMoveList = defineQuery({
   handler: async (ctx, input): Promise<StockMove[]> => {
     await loadItem(ctx, input.itemId);
     const rows = await ctx.trx
-      .selectFrom('crove_finance.stock_move as m')
+      .selectFrom('ludy_finance.stock_move as m')
       .select(['m.id', 'm.item_id', 'm.legal_entity_id', 'm.move_date', 'm.quantity', 'm.source_type', 'm.document_id', 'm.line_no', 'm.reverses_move_id', 'm.return_of_move_id'])
-      .select((eb) => eb.exists(eb.selectFrom('crove_finance.stock_move as r').select('r.id').whereRef('r.org_id', '=', 'm.org_id').whereRef('r.reverses_move_id', '=', 'm.id')).as('reversed'))
+      .select((eb) => eb.exists(eb.selectFrom('ludy_finance.stock_move as r').select('r.id').whereRef('r.org_id', '=', 'm.org_id').whereRef('r.reverses_move_id', '=', 'm.id')).as('reversed'))
       // What the live returns (not undone) of this move already took back; only a sale move has any.
       .select(
-        sql<string>`(SELECT COALESCE(SUM(q.quantity), 0) FROM crove_finance.stock_move q WHERE q.org_id = m.org_id AND q.return_of_move_id = m.id AND q.source_type = 'sale_return'
-          AND NOT EXISTS (SELECT 1 FROM crove_finance.stock_move r WHERE r.org_id = q.org_id AND r.reverses_move_id = q.id))`.as('returned'),
+        sql<string>`(SELECT COALESCE(SUM(q.quantity), 0) FROM ludy_finance.stock_move q WHERE q.org_id = m.org_id AND q.return_of_move_id = m.id AND q.source_type = 'sale_return'
+          AND NOT EXISTS (SELECT 1 FROM ludy_finance.stock_move r WHERE r.org_id = q.org_id AND r.reverses_move_id = q.id))`.as('returned'),
       )
       .where('m.org_id', '=', ctx.orgId)
       .where('m.item_id', '=', input.itemId)

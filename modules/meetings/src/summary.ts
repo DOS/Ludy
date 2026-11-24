@@ -141,7 +141,7 @@ export const summaryCopyResult = defineCommand({
     // Lock the meeting row first (the order redact and personal_erase take), before reading the private result, so a concurrent
     // redaction drops the private result before it can be read and a template change serializes (#4415, #3578).
     const row = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['started_at', 'summary_template', 'minutes_template_sections', 'minutes_template_hash'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -166,30 +166,30 @@ export const summaryCopyResult = defineCommand({
         ? body.summary
         : sectionsToText(body.template, body.sections.filter((x) => defs.some((d) => d.key === x.key)), copy);
     if (body.enhanced && (summaryText === '' || summaryText.length > 8000)) throw new DomainError('SUMMARY_RESULT_INVALID', 422, 'The summary result cannot be read');
-    const readers = await ctx.trx.selectFrom('crove_meetings.meeting_reader').select('user_id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).execute();
+    const readers = await ctx.trx.selectFrom('ludy_meetings.meeting_reader').select('user_id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).execute();
     const ids = [userId, ...readers.map((r) => r.user_id)];
     const { rows: profiles } = await sql<{ user_id: string; email: string; display_name: string | null }>`SELECT user_id, email, display_name FROM ludy_kernel.member_profiles(${ids}::uuid[])`.execute(ctx.trx);
     const people = profiles.map((p) => ({ userId: p.user_id, name: p.display_name ?? p.email.split('@')[0] ?? '' }));
 
     // One copy of a run: a run already copied (its rows carry its id, read or not) is not copied again, which would duplicate its items.
     const already = await ctx.trx
-      .selectFrom('crove_meetings.action_item')
+      .selectFrom('ludy_meetings.action_item')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
       .where('source_run_id', '=', input.runId)
-      .unionAll(ctx.trx.selectFrom('crove_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('source_run_id', '=', input.runId))
+      .unionAll(ctx.trx.selectFrom('ludy_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('source_run_id', '=', input.runId))
       .executeTakeFirst();
     if (already) throw new DomainError('SUMMARY_ALREADY_COPIED', 409, 'This summary was already copied into the draft');
     // The earlier model-written drafts go (the recorder asked for a new run); what the recorder typed, or read and kept, stays, and a summary of theirs that is
     // still there is not replaced: they share it or save over it first.
-    await ctx.trx.deleteFrom('crove_meetings.meeting_result').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('tainted', '=', true).execute();
-    const mine = await ctx.trx.selectFrom('crove_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').executeTakeFirst();
+    await ctx.trx.deleteFrom('ludy_meetings.meeting_result').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('tainted', '=', true).execute();
+    const mine = await ctx.trx.selectFrom('ludy_meetings.meeting_result').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').executeTakeFirst();
     if (mine && (summaryText !== '' || body.decisions.length > 0)) throw new DomainError('DRAFT_SUMMARY_EXISTS', 409, 'You already have a summary draft; share it or save over it before copying Vy\'s');
     // The items a summary run suggested are replaced by a new summary run; an expansion of the notes has none and leaves them.
     if (!body.enhanced) {
       await ctx.trx
-        .deleteFrom('crove_meetings.action_item')
+        .deleteFrom('ludy_meetings.action_item')
         .where('org_id', '=', ctx.orgId)
         .where('meeting_id', '=', input.meetingId)
         .where('stage', '=', 'draft')
@@ -200,7 +200,7 @@ export const summaryCopyResult = defineCommand({
     if (summaryText !== '' || body.decisions.length > 0) {
       // A second click at the same moment waits on the first's row and then meets the one draft a meeting may hold: the same answer as a draft that is there.
       await ctx.trx
-        .insertInto('crove_meetings.meeting_result')
+        .insertInto('ludy_meetings.meeting_result')
         .values({
           org_id: ctx.orgId,
           meeting_id: input.meetingId,
@@ -219,7 +219,7 @@ export const summaryCopyResult = defineCommand({
         });
     }
     const kept = await ctx.trx
-      .selectFrom('crove_meetings.action_item')
+      .selectFrom('ludy_meetings.action_item')
       .select(sql<number>`count(*)::int`.as('n'))
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', input.meetingId)
@@ -228,7 +228,7 @@ export const summaryCopyResult = defineCommand({
     const items = body.items.slice(0, room);
     for (const item of items) {
       await ctx.trx
-        .insertInto('crove_meetings.action_item')
+        .insertInto('ludy_meetings.action_item')
         .values({
           org_id: ctx.orgId,
           meeting_id: input.meetingId,
@@ -330,13 +330,13 @@ export const chaptersCopyResult = defineCommand({
     } catch {
       throw new DomainError('SUMMARY_RESULT_INVALID', 422, 'The chapters result cannot be read');
     }
-    const already = await ctx.trx.selectFrom('crove_meetings.meeting_chapter').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('source_run_id', '=', input.runId).executeTakeFirst();
+    const already = await ctx.trx.selectFrom('ludy_meetings.meeting_chapter').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('source_run_id', '=', input.runId).executeTakeFirst();
     if (already) throw new DomainError('CHAPTERS_ALREADY_COPIED', 409, 'These chapters were already copied into the draft');
     // The anchors again, against the transcript as it is at the copy.
     const seconds = body.chapters.map((c) => c.startSeconds);
     const found = await sql<{ second: number }>`
       SELECT DISTINCT pg_catalog.floor(s.start_seconds)::int AS second
-        FROM crove_meetings.transcript_segment s
+        FROM ludy_meetings.transcript_segment s
        WHERE s.org_id = ${ctx.orgId}::uuid AND s.meeting_id = ${input.meetingId}::uuid AND pg_catalog.floor(s.start_seconds)::int = ANY(${sql.val(seconds)}::int[])`.execute(ctx.trx);
     const anchored = new Set(found.rows.map((r) => r.second));
     const seen = new Set<number>();
@@ -346,11 +346,11 @@ export const chaptersCopyResult = defineCommand({
       .slice(0, CHAPTERS_MAX);
     if (kept.length === 0) throw new DomainError('CHAPTERS_STALE', 409, 'No chapter of this run starts at a line of the transcript any more; ask Vy again');
     // The earlier model-written draft goes (the recorder asked for a new run); what the recorder typed, or read and kept, stays and blocks the copy.
-    await ctx.trx.deleteFrom('crove_meetings.meeting_chapter').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('tainted', '=', true).execute();
-    const mine = await ctx.trx.selectFrom('crove_meetings.meeting_chapter').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').executeTakeFirst();
+    await ctx.trx.deleteFrom('ludy_meetings.meeting_chapter').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').where('tainted', '=', true).execute();
+    const mine = await ctx.trx.selectFrom('ludy_meetings.meeting_chapter').select('id').where('org_id', '=', ctx.orgId).where('meeting_id', '=', input.meetingId).where('stage', '=', 'draft').executeTakeFirst();
     if (mine) throw new DomainError('DRAFT_CHAPTERS_EXIST', 409, 'You already have a chapters draft; clear it or share it before copying Vy\'s');
     await ctx.trx
-      .insertInto('crove_meetings.meeting_chapter')
+      .insertInto('ludy_meetings.meeting_chapter')
       .values(kept.map((c, i) => ({ org_id: ctx.orgId, meeting_id: input.meetingId, stage: 'draft' as const, position: i + 1, title: c.title, start_seconds: c.startSeconds, tainted: true, source_run_id: input.runId })))
       .execute();
     ctx.audit({ meetingId: input.meetingId, runId: input.runId, chapterCount: kept.length, dropped: body.dropped + (body.chapters.length - kept.length) });

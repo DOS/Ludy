@@ -15,6 +15,10 @@
       // tools/ui-colors.mjs resolves tailwindcss/theme.css from packages/ui (createRequire), which lists it.
       "ignoreDependencies": ["tailwindcss"]
     },
+    "apps/desktop": {
+      // Electron runs src/main.ts (the build script strips its types into the app folder); the scripts run from package.json and CI.
+      "entry": ["src/main.ts", "scripts/*.mjs"]
+    },
     "apps/extension": {
       // The manifest names these as the extension's pages and worker; the scripts run from package.json and CI. The
       // Playwright specs are run by `playwright test` from the package script.

@@ -80,8 +80,8 @@ import { notesManifest } from './manifest.ts';
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const READERS: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
-const TODO = notesManifest.tables.crove_notes.todo;
-const TODO_LIST = notesManifest.tables.crove_notes.todo_list;
+const TODO = notesManifest.tables.ludy_notes.todo;
+const TODO_LIST = notesManifest.tables.ludy_notes.todo_list;
 
 export const TODO_SUMMARY_COLUMNS = [
   'id',
@@ -149,7 +149,7 @@ export async function loadSourceNotes(
   const map = new Map<string, TodoSourceNote>();
   if (ids.length === 0) return map;
   const readable = await ctx.trx
-    .selectFrom('crove_notes.note')
+    .selectFrom('ludy_notes.note')
     .select(['id', 'title'])
     .where('org_id', '=', ctx.orgId)
     .where('id', 'in', ids)
@@ -254,7 +254,7 @@ async function validateTodoListAndSection(
     return;
   }
   let q = ctx.trx
-    .selectFrom('crove_notes.todo_list')
+    .selectFrom('ludy_notes.todo_list')
     .select(['id', 'sections'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', listId)
@@ -269,7 +269,7 @@ async function validateTodoListAndSection(
 
 // The caller's to-do (row policies: their own only), with its details, locked for a change when `lock` is set.
 async function load(ctx: Pick<QueryContext, 'trx' | 'orgId'>, todoId: string, lock: boolean): Promise<SummaryRow & { details: string | null }> {
-  let q = ctx.trx.selectFrom('crove_notes.todo').select([...SUMMARY, 'details']).where('org_id', '=', ctx.orgId).where('id', '=', todoId);
+  let q = ctx.trx.selectFrom('ludy_notes.todo').select([...SUMMARY, 'details']).where('org_id', '=', ctx.orgId).where('id', '=', todoId);
   if (lock) q = q.forUpdate();
   const row = await q.executeTakeFirst();
   if (!row) throw notFound();
@@ -280,7 +280,7 @@ async function load(ctx: Pick<QueryContext, 'trx' | 'orgId'>, todoId: string, lo
 // acquired before any FOR UPDATE row locks.
 async function seriesLockKey(ctx: Pick<QueryContext, 'trx' | 'orgId'>, todoId: string): Promise<string> {
   const meta = await ctx.trx
-    .selectFrom('crove_notes.todo')
+    .selectFrom('ludy_notes.todo')
     .select(['id', 'series_id'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', todoId)
@@ -291,7 +291,7 @@ async function seriesLockKey(ctx: Pick<QueryContext, 'trx' | 'orgId'>, todoId: s
 
 // Serializes series-wide transitions (spawn, stopSeries, and reopen/undo) on an org-scoped advisory xact lock.
 async function lockTodoSeries(ctx: Pick<QueryContext, 'trx' | 'orgId'>, seriesKey: string): Promise<void> {
-  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_notes.todo_series:${ctx.orgId}:${seriesKey}`}, 0))`.execute(ctx.trx);
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`ludy_notes.todo_series:${ctx.orgId}:${seriesKey}`}, 0))`.execute(ctx.trx);
 }
 
 function assertNotInTrash(row: Pick<SummaryRow, 'deleted_at'>): void {
@@ -339,7 +339,7 @@ const target = (input: { todoId: string }) => ({ type: 'notes.todo', id: input.t
 
 // The caller's keys in order, ties by id; the moved to-do itself left out.
 export async function ownKeys(ctx: CommandContext, except: string | null): Promise<Array<{ id: string; sort_key: string }>> {
-  let q = ctx.trx.selectFrom('crove_notes.todo').select(['id', 'sort_key']).where('org_id', '=', ctx.orgId);
+  let q = ctx.trx.selectFrom('ludy_notes.todo').select(['id', 'sort_key']).where('org_id', '=', ctx.orgId);
   if (except !== null) q = q.where('id', '<>', except);
   return q.orderBy('sort_key').orderBy('id').execute();
 }
@@ -350,7 +350,7 @@ async function rebalance(ctx: CommandContext, rows: ReadonlyArray<{ id: string }
   const ids = rows.map((r) => r.id);
   if (ids.length > 0) {
     // One statement for the whole list; the update policy still limits it to the caller's own rows.
-    await sql`UPDATE crove_notes.todo AS t SET sort_key = v.key
+    await sql`UPDATE ludy_notes.todo AS t SET sort_key = v.key
       FROM unnest(${ids}::uuid[], ${keys}::text[]) AS v(id, key)
       WHERE t.org_id = ${ctx.orgId}::uuid AND t.id = v.id`.execute(ctx.trx);
   }
@@ -386,7 +386,7 @@ export const todoCreate = defineCommand({
       // Checked under caller RLS with deleted_at IS NULL: missing, trashed, or private to another member all answer
       // identically with 404 NOTE_NOT_FOUND (no existence oracle). Inherit server-side taint so AI note content stays tainted.
       const sourceNote = await ctx.trx
-        .selectFrom('crove_notes.note')
+        .selectFrom('ludy_notes.note')
         .select(['id', 'tainted'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.sourceNoteId)
@@ -404,7 +404,7 @@ export const todoCreate = defineCommand({
     const remind = remindAt(input.reminder, when, ctx.now);
     const rule = input.recurrence ? normalizeTodoRecurrence(input.recurrence) : null;
     const row = await ctx.trx
-      .insertInto('crove_notes.todo')
+      .insertInto('ludy_notes.todo')
       .values({
         org_id: ctx.orgId,
         owner_user_id: userId,
@@ -429,7 +429,7 @@ export const todoCreate = defineCommand({
       .executeTakeFirstOrThrow();
     if (rule !== null) {
       await ctx.trx
-        .updateTable('crove_notes.todo')
+        .updateTable('ludy_notes.todo')
         .set({ series_id: row.id })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', row.id)
@@ -477,7 +477,7 @@ export const todoQuickCapture = defineCommand({
     const combinedDetails = formatQuickCaptureDetails(input.details, input.sourceUrl ?? null);
     const storedDetails = detailsOf(combinedDetails);
     const row = await ctx.trx
-      .insertInto('crove_notes.todo')
+      .insertInto('ludy_notes.todo')
       .values({
         org_id: ctx.orgId,
         owner_user_id: userId,
@@ -531,7 +531,7 @@ export const todoUpdate = defineCommand({
       let lockListId: string | null = requestedListId ?? null;
       if (requestedListId === undefined) {
         const peek = await ctx.trx
-          .selectFrom('crove_notes.todo')
+          .selectFrom('ludy_notes.todo')
           .select('list_id')
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', input.todoId)
@@ -598,7 +598,7 @@ export const todoUpdate = defineCommand({
       ...(recurrenceChanged ? ['recurrence'] : []),
     ];
     const row = await ctx.trx
-      .updateTable('crove_notes.todo')
+      .updateTable('ludy_notes.todo')
       // A new reminder time is sent at that time, unless it has already passed.
       .set({
         title: input.title,
@@ -657,14 +657,14 @@ export const todoComplete = defineCommand({
     let lockedList: { id: string; sections: unknown } | undefined;
     if (!stopSeries) {
       const peek = await ctx.trx
-        .selectFrom('crove_notes.todo')
+        .selectFrom('ludy_notes.todo')
         .select(['list_id', 'recurrence'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', todoId)
         .executeTakeFirst();
       if (peek && peek.recurrence !== null && peek.list_id !== null) {
         lockedList = await ctx.trx
-          .selectFrom('crove_notes.todo_list')
+          .selectFrom('ludy_notes.todo_list')
           .select(['id', 'sections'])
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', peek.list_id)
@@ -678,7 +678,7 @@ export const todoComplete = defineCommand({
       // Pre-lock todoId plus all open recurring siblings in canonical id ASC order in one query so
       // concurrent multi-row operations (e.g. todoListDelete, todoListUpdate, todoReschedule) stay deadlock-free.
       const locked = await ctx.trx
-        .selectFrom('crove_notes.todo')
+        .selectFrom('ludy_notes.todo')
         .select(['id', 'series_id', 'status', 'deleted_at', 'recurrence'])
         .where('org_id', '=', ctx.orgId)
         .where((eb) =>
@@ -715,7 +715,7 @@ export const todoComplete = defineCommand({
     const seriesId = rule !== null ? (before.series_id ?? before.id) : before.series_id;
 
     const row = await ctx.trx
-      .updateTable('crove_notes.todo')
+      .updateTable('ludy_notes.todo')
       .set({
         status: 'done',
         done_at: ctx.now,
@@ -738,7 +738,7 @@ export const todoComplete = defineCommand({
       }
       if (lockedOpenSiblings.length > 0) {
         await ctx.trx
-          .updateTable('crove_notes.todo')
+          .updateTable('ludy_notes.todo')
           .set({ recurrence: null, revision: sql<number>`revision + 1`, updated_at: ctx.now })
           .where('org_id', '=', ctx.orgId)
           .where(
@@ -756,7 +756,7 @@ export const todoComplete = defineCommand({
       const anchorDate = before.due_on ?? zonedDate(before.time_zone, ctx.now.getTime());
       const beforeCreatedAt = new Date(before.created_at).getTime();
       const siblings = await ctx.trx
-        .selectFrom('crove_notes.todo')
+        .selectFrom('ludy_notes.todo')
         .select(['id', 'due_on', 'created_at'])
         .where('org_id', '=', ctx.orgId)
         .where('series_id', '=', seriesId)
@@ -810,7 +810,7 @@ export const todoComplete = defineCommand({
           let readableSourceNoteId: string | null = null;
           if (before.source_note_id !== null) {
             const noteRow = await ctx.trx
-              .selectFrom('crove_notes.note')
+              .selectFrom('ludy_notes.note')
               .select('id')
               .where('org_id', '=', ctx.orgId)
               .where('id', '=', before.source_note_id)
@@ -831,7 +831,7 @@ export const todoComplete = defineCommand({
             }
           }
           const nextRow = await ctx.trx
-            .insertInto('crove_notes.todo')
+            .insertInto('ludy_notes.todo')
             .values({
               org_id: ctx.orgId,
               owner_user_id: userId,
@@ -910,7 +910,7 @@ export const todoReopen = defineCommand({
     const prelockedRows =
       restoredRule !== null
         ? await ctx.trx
-            .selectFrom('crove_notes.todo')
+            .selectFrom('ludy_notes.todo')
             .select(['id', 'series_id', 'status', 'deleted_at', 'recurrence', 'updated_at', 'due_on'])
             .where('org_id', '=', ctx.orgId)
             .where((eb) => {
@@ -952,7 +952,7 @@ export const todoReopen = defineCommand({
       if (before.status !== 'done') throw new DomainError('TODO_NOT_CHANGEABLE', 409, 'Việc này đã được mở lại hoặc thay đổi');
       if (!nextRow) throw new DomainError('TODO_UNDO_SERIES_ADVANCED', 409, 'Lượt kế tiếp đã được chỉnh sửa hoặc xử lý rồi');
       const existingLink = await ctx.trx
-        .selectFrom('crove_notes.link')
+        .selectFrom('ludy_notes.link')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('todo_id', '=', undoNextTodoId)
@@ -969,7 +969,7 @@ export const todoReopen = defineCommand({
         throw new DomainError('TODO_UNDO_SERIES_ADVANCED', 409, 'Lượt kế tiếp đã được chỉnh sửa hoặc xử lý rồi');
       }
       await ctx.trx
-        .updateTable('crove_notes.todo')
+        .updateTable('ludy_notes.todo')
         .set({ deleted_at: ctx.now, revision: nextRow.revision + 1, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', undoNextTodoId)
@@ -980,7 +980,7 @@ export const todoReopen = defineCommand({
     }
 
     const row = await ctx.trx
-      .updateTable('crove_notes.todo')
+      .updateTable('ludy_notes.todo')
       .set({
         status: 'open',
         done_at: null,
@@ -1026,7 +1026,7 @@ export const todoReopen = defineCommand({
         }
         if (sibRule === undefined) continue;
         await ctx.trx
-          .updateTable('crove_notes.todo')
+          .updateTable('ludy_notes.todo')
           .set({ recurrence: JSON.stringify(sibRule), revision: sql<number>`revision + 1`, updated_at: ctx.now })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', sib.id)
@@ -1061,7 +1061,7 @@ export const todoReschedule = defineCommand({
     userOf(ctx.actor);
     // Acquire series advisory locks in canonical order before FOR UPDATE so bulk reschedule and stopSeries never deadlock.
     const metaRows = await ctx.trx
-      .selectFrom('crove_notes.todo')
+      .selectFrom('ludy_notes.todo')
       .select(['id', 'series_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', input.todoIds)
@@ -1072,7 +1072,7 @@ export const todoReschedule = defineCommand({
       await lockTodoSeries(ctx, key);
     }
     const rows = await ctx.trx
-      .selectFrom('crove_notes.todo')
+      .selectFrom('ludy_notes.todo')
       .select(['id', 'status', 'due_on', 'due_at', 'time_zone', 'remind_at', 'revision', 'deleted_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', input.todoIds)
@@ -1095,7 +1095,7 @@ export const todoReschedule = defineCommand({
         input.dueOn,
       );
       await ctx.trx
-        .updateTable('crove_notes.todo')
+        .updateTable('ludy_notes.todo')
         .set({
           due_on: shifted.dueOn,
           due_at: shifted.dueAt,
@@ -1131,7 +1131,7 @@ export const todoReorder = defineCommand({
     const at = rows.findIndex((r) => r.id === input.anchorId);
     if (at < 0) throw notFound();
     const key = input.place === 'before' ? await placeBetween(ctx, rows, at - 1, at) : await placeBetween(ctx, rows, at, at + 1);
-    await ctx.trx.updateTable('crove_notes.todo').set({ sort_key: key }).where('org_id', '=', ctx.orgId).where('id', '=', input.todoId).execute();
+    await ctx.trx.updateTable('ludy_notes.todo').set({ sort_key: key }).where('org_id', '=', ctx.orgId).where('id', '=', input.todoId).execute();
     ctx.audit({ todoId: input.todoId, place: input.place, anchorId: input.anchorId });
     return written(moved);
   },
@@ -1151,7 +1151,7 @@ function trashCommand(name: string, toTrash: boolean) {
       const before = await load(ctx, input.todoId, true);
       if ((before.deleted_at !== null) === toTrash) return written(before);
       await ctx.trx
-        .updateTable('crove_notes.todo')
+        .updateTable('ludy_notes.todo')
         .set({ deleted_at: toTrash ? ctx.now : null, ...(toTrash ? {} : { reminded_at: reminderPassed(ctx.now) }), updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.todoId)
@@ -1193,7 +1193,7 @@ export const todoHandOver = defineCommand({
       throw new DomainError('PROJECT_NOT_FOUND', 404, 'Mô-đun Dự án chưa được bật');
     }
     const { tainted } = await ctx.trx
-      .selectFrom('crove_notes.todo')
+      .selectFrom('ludy_notes.todo')
       .select('tainted')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.todoId)
@@ -1211,7 +1211,7 @@ export const todoHandOver = defineCommand({
       await ctx.run('projects.task.add', { projectId: input.projectId, taskId });
     }
     const row = await ctx.trx
-      .updateTable('crove_notes.todo')
+      .updateTable('ludy_notes.todo')
       .set({ status: 'handed_over', task_id: taskId, revision: before.revision + 1, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.todoId)
@@ -1232,7 +1232,7 @@ export const todoHandOver = defineCommand({
 });
 
 async function touchTodo(ctx: CommandContext, todoId: string): Promise<void> {
-  await ctx.trx.updateTable('crove_notes.todo').set({ updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', todoId).execute();
+  await ctx.trx.updateTable('ludy_notes.todo').set({ updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', todoId).execute();
 }
 
 export const todoLinkAdd = defineCommand({
@@ -1263,14 +1263,14 @@ export const todoLinkRemove = defineCommand({
   handler: async (ctx, input): Promise<{ todoId: string; linkId: string }> => {
     userOf(ctx.actor);
     const link = await ctx.trx
-      .selectFrom('crove_notes.link')
+      .selectFrom('ludy_notes.link')
       .select(['todo_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.linkId)
       .executeTakeFirst();
     if (!link || link.todo_id === null) throw new DomainError('NOTE_LINK_NOT_FOUND', 404, 'Không tìm thấy liên kết này');
     await load(ctx, link.todo_id, true);
-    await ctx.trx.deleteFrom('crove_notes.link').where('org_id', '=', ctx.orgId).where('id', '=', input.linkId).execute();
+    await ctx.trx.deleteFrom('ludy_notes.link').where('org_id', '=', ctx.orgId).where('id', '=', input.linkId).execute();
     await touchTodo(ctx, link.todo_id);
     ctx.audit({ todoId: link.todo_id, linkId: input.linkId, target: 'private' as const });
     return { todoId: link.todo_id, linkId: input.linkId };
@@ -1298,7 +1298,7 @@ export const todoList = defineQuery({
   access: READERS,
   handler: async (ctx, input): Promise<TodoSummary[]> => {
     userOf(ctx.actor);
-    let q = applyTodoFilters(ctx.trx.selectFrom('crove_notes.todo').select(SUMMARY).where('org_id', '=', ctx.orgId), input);
+    let q = applyTodoFilters(ctx.trx.selectFrom('ludy_notes.todo').select(SUMMARY).where('org_id', '=', ctx.orgId), input);
     // Words typed without Vietnamese marks find them ("hoa don" finds "hóa đơn"), each as a prefix.
     if (input.q !== undefined) q = q.where(sql<boolean>`search @@ ludy_kernel.search_query(${input.q})`);
     if (input.view === 'trash') q = q.where('deleted_at', 'is not', null).orderBy('deleted_at', 'desc');
@@ -1358,7 +1358,7 @@ export const myWork = defineQuery({
   handler: async (ctx, input): Promise<MyWork> => {
     const userId = userOf(ctx.actor);
     let todoQ = applyTodoFilters(
-      ctx.trx.selectFrom('crove_notes.todo').select(SUMMARY).where('org_id', '=', ctx.orgId).where('deleted_at', 'is', null).where('status', '=', 'open'),
+      ctx.trx.selectFrom('ludy_notes.todo').select(SUMMARY).where('org_id', '=', ctx.orgId).where('deleted_at', 'is', null).where('status', '=', 'open'),
       input,
     );
     if (input.sort === 'priority') todoQ = todoQ.orderBy('priority', 'asc');
@@ -1421,13 +1421,13 @@ export const myWork = defineQuery({
 });
 
 // How many to-dos each member has, for an owner or admin before removing one (ADR-0037 §4): a count from
-// crove_notes.todo_counts(), which checks the caller's role itself, never the text.
+// ludy_notes.todo_counts(), which checks the caller's role itself, never the text.
 export const todoCounts = defineQuery({
   name: 'notes.todo.counts',
   input: z.strictObject({}),
   access: MANAGERS,
   handler: async (ctx): Promise<TodoCount[]> => {
-    const { rows } = await sql<{ owner_user_id: string; todos: string }>`SELECT owner_user_id, todos FROM crove_notes.todo_counts()`.execute(ctx.trx);
+    const { rows } = await sql<{ owner_user_id: string; todos: string }>`SELECT owner_user_id, todos FROM ludy_notes.todo_counts()`.execute(ctx.trx);
     return rows.map((r) => ({ userId: r.owner_user_id, todos: Number(r.todos) }));
   },
 });
@@ -1441,7 +1441,7 @@ export const todoListList = defineQuery({
     userOf(ctx.actor);
     const [listRows, countRows] = await Promise.all([
       ctx.trx
-        .selectFrom('crove_notes.todo_list')
+        .selectFrom('ludy_notes.todo_list')
         .select(['id', 'name', 'color', 'sections', 'sort_key', 'revision', 'created_at', 'updated_at'])
         .where('org_id', '=', ctx.orgId)
         .where('deleted_at', 'is', null)
@@ -1449,7 +1449,7 @@ export const todoListList = defineQuery({
         .orderBy('id')
         .execute(),
       ctx.trx
-        .selectFrom('crove_notes.todo')
+        .selectFrom('ludy_notes.todo')
         .select((eb) => ['list_id', eb.fn.countAll<string>().as('n')])
         .where('org_id', '=', ctx.orgId)
         .where('deleted_at', 'is', null)
@@ -1488,7 +1488,7 @@ export const todoListCreate = defineCommand({
   handler: async (ctx, input): Promise<TodoListWritten> => {
     const userId = userOf(ctx.actor);
     const existing = await ctx.trx
-      .selectFrom('crove_notes.todo_list')
+      .selectFrom('ludy_notes.todo_list')
       .select(['id', 'sort_key'])
       .where('org_id', '=', ctx.orgId)
       .where('deleted_at', 'is', null)
@@ -1501,7 +1501,7 @@ export const todoListCreate = defineCommand({
       const fresh = spreadKeys(existing.length + 1);
       for (let i = 0; i < existing.length; i++) {
         await ctx.trx
-          .updateTable('crove_notes.todo_list')
+          .updateTable('ludy_notes.todo_list')
           .set({ sort_key: fresh[i] as string })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', existing[i]!.id)
@@ -1511,7 +1511,7 @@ export const todoListCreate = defineCommand({
     }
     const sections = normalizeSections(input.sections);
     const row = await ctx.trx
-      .insertInto('crove_notes.todo_list')
+      .insertInto('ludy_notes.todo_list')
       .values({
         org_id: ctx.orgId,
         owner_user_id: userId,
@@ -1545,7 +1545,7 @@ export const todoListUpdate = defineCommand({
   handler: async (ctx, input): Promise<TodoListWritten> => {
     userOf(ctx.actor);
     const before = await ctx.trx
-      .selectFrom('crove_notes.todo_list')
+      .selectFrom('ludy_notes.todo_list')
       .select(['id', 'name', 'color', 'sections', 'revision', 'deleted_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.listId)
@@ -1560,7 +1560,7 @@ export const todoListUpdate = defineCommand({
     if (removedIds.length > 0) {
       // Lock matching rows in canonical id ASC order before updating so multi-row updates never deadlock against series operations.
       const affected = await ctx.trx
-        .selectFrom('crove_notes.todo')
+        .selectFrom('ludy_notes.todo')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('list_id', '=', input.listId)
@@ -1570,7 +1570,7 @@ export const todoListUpdate = defineCommand({
         .execute();
       if (affected.length > 0) {
         await ctx.trx
-          .updateTable('crove_notes.todo')
+          .updateTable('ludy_notes.todo')
           .set({ section_id: null, revision: sql`revision + 1`, updated_at: ctx.now })
           .where('org_id', '=', ctx.orgId)
           .where(
@@ -1588,7 +1588,7 @@ export const todoListUpdate = defineCommand({
       ...(sectionsChanged ? ['sections'] : []),
     ];
     const row = await ctx.trx
-      .updateTable('crove_notes.todo_list')
+      .updateTable('ludy_notes.todo_list')
       .set({
         name: input.name,
         color: input.color,
@@ -1621,7 +1621,7 @@ export const todoListDelete = defineCommand({
   handler: async (ctx, input): Promise<TodoListWritten> => {
     userOf(ctx.actor);
     const before = await ctx.trx
-      .selectFrom('crove_notes.todo_list')
+      .selectFrom('ludy_notes.todo_list')
       .select(['id', 'revision', 'deleted_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.listId)
@@ -1631,7 +1631,7 @@ export const todoListDelete = defineCommand({
     // Move all to-dos of this list back to Inbox before soft-deleting the list, bumping revision so open editors stay in sync.
     // Lock matching to-do rows in canonical id ASC order first so multi-row updates never deadlock against series operations.
     const affected = await ctx.trx
-      .selectFrom('crove_notes.todo')
+      .selectFrom('ludy_notes.todo')
       .select('id')
       .where('org_id', '=', ctx.orgId)
       .where('list_id', '=', input.listId)
@@ -1640,7 +1640,7 @@ export const todoListDelete = defineCommand({
       .execute();
     if (affected.length > 0) {
       await ctx.trx
-        .updateTable('crove_notes.todo')
+        .updateTable('ludy_notes.todo')
         .set({ list_id: null, section_id: null, revision: sql`revision + 1`, updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where(
@@ -1651,7 +1651,7 @@ export const todoListDelete = defineCommand({
         .execute();
     }
     const row = await ctx.trx
-      .updateTable('crove_notes.todo_list')
+      .updateTable('ludy_notes.todo_list')
       .set({
         deleted_at: ctx.now,
         revision: before.revision + 1,

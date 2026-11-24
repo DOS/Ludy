@@ -119,10 +119,10 @@ export function HrBankTemplatesPage() {
         <DataTable head={[t('name'), t('order'), t('content'), '']}>
           {rows.map((r) => (
             <TableRow key={r.id} data-testid="hr-bank-row">
-              <TableCell className="px-4 py-3">{r.name}</TableCell>
-              <TableCell className="px-4 py-3 text-sm text-muted-foreground">{r.layout.columns.map((c) => c.header).join(' / ')}</TableCell>
-              <TableCell className="px-4 py-3 text-sm text-muted-foreground">{r.layout.content}</TableCell>
-              <TableCell className="px-4 py-3 text-right">
+              <TableCell>{r.name}</TableCell>
+              <TableCell className="text-sm text-muted-foreground">{r.layout.columns.map((c) => c.header).join(' / ')}</TableCell>
+              <TableCell className="text-sm text-muted-foreground">{r.layout.content}</TableCell>
+              <TableCell className="text-right">
                 {confirming === r.id ? (
                   <span className="inline-flex items-center gap-2">
                     <span className="text-xs text-foreground">{t('deleteConfirm', { name: r.name })}</span>

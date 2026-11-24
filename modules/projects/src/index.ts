@@ -168,6 +168,7 @@ import {
   projectTriageSnooze,
   type ProjectTriageAssistSource,
 } from './triage.ts';
+import { roadmapSignalCommands, roadmapSignalQueries } from './roadmap-signals.ts';
 export {
   generateEphemeralOtpWrapKey,
   openEphemeralOtpCode,
@@ -190,6 +191,11 @@ export {
   type RoadmapAiChangelogSource,
   type RoadmapAiDedupeSource,
 } from './roadmap.ts';
+export {
+  computeSignalRollup,
+  enrichMeetingSignalMatchSource,
+  type RoadmapAiSignalMatchSource,
+} from './roadmap-signals.ts';
 export {
   MCP_ROADMAP_DEFAULT,
   MCP_ROADMAP_MAX,
@@ -258,6 +264,7 @@ export const projectsCommands = [
   ...projectCycleCommands,
   ...roadmapCommands,
   ...projectTriageCommands,
+  ...roadmapSignalCommands,
   projectTimeStart,
   projectTimeStop,
   projectTimeLog,
@@ -286,6 +293,7 @@ export const projectsQueries = [
   ...roadmapQueries,
   ...roadmapMcpQueries,
   ...projectTriageQueries,
+  ...roadmapSignalQueries,
   projectTimeSummary,
   projectTimeExportCsv,
 ];

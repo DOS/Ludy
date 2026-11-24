@@ -74,12 +74,12 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
       await enterUser(c, user, org);
       const { rows } = await (kind === 'journal'
         ? c.query<{ id: string; number: number; number_period: string; number_allocation_id: string }>(
-            `INSERT INTO crove_finance.journal_voucher AS v (org_id, voucher_date, description) VALUES ($1, $2, 'test')
+            `INSERT INTO ludy_finance.journal_voucher AS v (org_id, voucher_date, description) VALUES ($1, $2, 'test')
              RETURNING ${RETURNED}`,
             [org, date],
           )
         : c.query<{ id: string; number: number; number_period: string; number_allocation_id: string }>(
-            `INSERT INTO crove_finance.cash_voucher AS v (org_id, voucher_type, voucher_date, cash_account, description, amount, number)
+            `INSERT INTO ludy_finance.cash_voucher AS v (org_id, voucher_type, voucher_date, cash_account, description, amount, number)
              VALUES ($1, 'cash_receipt', $2, '1111', 'test', 50000, 999) RETURNING ${RETURNED}`,
             [org, date],
           ));
@@ -91,7 +91,7 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
               { line_no: 1, account_code: '1111', debit: '50000', credit: '0' },
               { line_no: 2, account_code: '131', debit: '0', credit: '50000' },
             ]);
-      await c.query(`SELECT crove_finance.post_journal_entry($1::date, 'test', $2, $3::uuid, $4::jsonb)`, [
+      await c.query(`SELECT ludy_finance.post_journal_entry($1::date, 'test', $2, $3::uuid, $4::jsonb)`, [
         date,
         kind === 'journal' ? 'finance.journal_voucher' : 'finance.cash_voucher',
         v.id,
@@ -170,8 +170,8 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
              FROM ludy_kernel.number_series s
              JOIN ludy_kernel.number_series_policy p ON p.org_id = s.org_id AND p.legal_entity_id = s.legal_entity_id AND p.doc_type = s.doc_type
              JOIN ludy_kernel.number_allocation a ON a.org_id = s.org_id AND a.series_id = s.id
-             JOIN (SELECT org_id, id, number, number_period, number_allocation_id FROM crove_finance.cash_voucher
-                   UNION ALL SELECT org_id, id, number, number_period, number_allocation_id FROM crove_finance.journal_voucher) v
+             JOIN (SELECT org_id, id, number, number_period, number_allocation_id FROM ludy_finance.cash_voucher
+                   UNION ALL SELECT org_id, id, number, number_period, number_allocation_id FROM ludy_finance.journal_voucher) v
                ON v.org_id = a.org_id AND v.number_allocation_id = a.id AND v.id = a.target_id AND v.number_period = s.period_key
              WHERE s.org_id = $1 GROUP BY 1, 2, 3, 4 ORDER BY 1`,
             [legacyOrg],
@@ -291,7 +291,7 @@ suite('gapless numbering on PostgreSQL (#1401)', () => {
     }
     // Another org's allocation is not found.
     const legacyVoucher = await admin(
-      async (c2) => (await c2.query<{ id: string }>('SELECT number_allocation_id AS id FROM crove_finance.journal_voucher WHERE org_id = $1 LIMIT 1', [legacyOrg])).rows[0]!.id,
+      async (c2) => (await c2.query<{ id: string }>('SELECT number_allocation_id AS id FROM ludy_finance.journal_voucher WHERE org_id = $1 LIMIT 1', [legacyOrg])).rows[0]!.id,
     );
     await expect(exec(owner, { allocationId: legacyVoucher, reason: 'khác tổ chức' })).rejects.toMatchObject({ code: 'NOT_FOUND', status: 404 });
 

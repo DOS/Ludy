@@ -72,8 +72,8 @@ suite('social duplicate text on PostgreSQL (#1156)', () => {
   async function published(o: Org, postId: string, connectionId: string, daysAgo: number) {
     await admin((c) =>
       c.query(
-        `UPDATE crove_social.post_variant v SET status = 'published', published_at = now() - make_interval(days => $4), content_frozen = true, body = coalesce(v.body, p.body), external_post_id = 'x-' || v.id
-           FROM crove_social.post p WHERE p.org_id = v.org_id AND p.id = v.post_id AND v.org_id = $1 AND v.post_id = $2 AND v.channel_connection_id = $3`,
+        `UPDATE ludy_social.post_variant v SET status = 'published', published_at = now() - make_interval(days => $4), content_frozen = true, body = coalesce(v.body, p.body), external_post_id = 'x-' || v.id
+           FROM ludy_social.post p WHERE p.org_id = v.org_id AND p.id = v.post_id AND v.org_id = $1 AND v.post_id = $2 AND v.channel_connection_id = $3`,
         [o.orgId, postId, connectionId, daysAgo],
       ),
     );
@@ -81,7 +81,7 @@ suite('social duplicate text on PostgreSQL (#1156)', () => {
   async function scheduled(o: Org, postId: string, connectionId: string, at: Date, queued = false) {
     await admin((c) =>
       c.query(
-        `UPDATE crove_social.post_variant SET status = 'scheduled', ${queued ? 'queue_slot_at' : 'scheduled_at'} = $4 WHERE org_id = $1 AND post_id = $2 AND channel_connection_id = $3`,
+        `UPDATE ludy_social.post_variant SET status = 'scheduled', ${queued ? 'queue_slot_at' : 'scheduled_at'} = $4 WHERE org_id = $1 AND post_id = $2 AND channel_connection_id = $3`,
         [o.orgId, postId, connectionId, at],
       ),
     );

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Browser-carried handoff from an Engage quote to Ludy eSign (#3512, ADR-0050, docs/plan/esign.md Slice 2b).
 // Strictly gated on both deployment installation and per-org enablement/entitlement (ADR-0053): when 'sign' is off,
-// zero sign.* queries run and no eSign UI controls render. Engage never writes crove_sign tables directly.
+// zero sign.* queries run and no eSign UI controls render. Engage never writes ludy_sign tables directly.
 import { useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';

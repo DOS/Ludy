@@ -85,7 +85,7 @@ suite('the S2d-HKD book download (#2517 slice 2d)', () => {
     const restore = new pg.Client({ connectionString: adminUrl });
     await restore.connect();
     await restore.query(
-      "UPDATE crove_finance.household_threshold SET amount = 0 WHERE code = 'no_tax_revenue'; UPDATE crove_finance.household_tax_reduction SET cut_percent = 0 WHERE kind = 'pit'; UPDATE crove_finance.household_trade_rate SET status = 'commentary'; UPDATE crove_finance.household_form_version SET status = 'commentary'; UPDATE crove_finance.household_return_form_version SET status = 'commentary'",
+      "UPDATE ludy_finance.household_threshold SET amount = 0 WHERE code = 'no_tax_revenue'; UPDATE ludy_finance.household_tax_reduction SET cut_percent = 0 WHERE kind = 'pit'; UPDATE ludy_finance.household_trade_rate SET status = 'commentary'; UPDATE ludy_finance.household_form_version SET status = 'commentary'; UPDATE ludy_finance.household_return_form_version SET status = 'commentary'",
     );
     await restore.end();
     const appUrl = new URL(adminUrl);
@@ -121,19 +121,19 @@ suite('the S2d-HKD book download (#2517 slice 2d)', () => {
       const user = (await a.query<{ user_id: string }>("SELECT user_id FROM ludy_kernel.tenant_member WHERE org_id = $1 AND role = 'owner'", [orgId])).rows[0]?.user_id;
       for (const [id, name, group, method] of [[percentage, 'Hộ Theo Thu Nhập', 3, 'income'], [groupOne, 'Hộ Nhóm Một', 1, null]] as const) {
         await a.query("INSERT INTO ludy_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, $3, 'household', $4)", [orgId, id, name, user]);
-        await a.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', $3, $4, ARRAY['goods'])", [orgId, id, group, method]);
+        await a.query("INSERT INTO ludy_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', $3, $4, ARRAY['goods'])", [orgId, id, group, method]);
       }
       // One item with a purchase of 10 (1,000,000) and a stock-out of 4 in September for the household on the income method. The purchase document commits with its journal entry, in one transaction.
       await a.query('BEGIN');
-      const item = (await a.query<{ id: string }>("INSERT INTO crove_finance.stock_item (org_id, legal_entity_id, code, name, unit, stock_account, trade) VALUES ($1, $2, 'GAO', 'Gạo', 'kg', '156', 'goods') RETURNING id", [orgId, percentage])).rows[0]?.id;
+      const item = (await a.query<{ id: string }>("INSERT INTO ludy_finance.stock_item (org_id, legal_entity_id, code, name, unit, stock_account, trade) VALUES ($1, $2, 'GAO', 'Gạo', 'kg', '156', 'goods') RETURNING id", [orgId, percentage])).rows[0]?.id;
       const party = (await a.query<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name) VALUES ($1, 'Nhà cung cấp') RETURNING id", [orgId])).rows[0]?.id;
-      const document = (await a.query<{ id: string }>("INSERT INTO crove_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, 'AA', '0001', DATE '2026-09-12', 1000000, 0, 1000000, 'purchase', $3) RETURNING id", [orgId, party, percentage])).rows[0]?.id;
-      await a.query("INSERT INTO crove_finance.purchase_line (org_id, document_id, line_no, description, amount, debit_account) VALUES ($1, $2, 1, 'Hàng', 1000000, '156')", [orgId, document]);
-      await a.query("INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES ($1, $2, $3, DATE '2026-09-12', 10, 'document_line', $4, 1, 1)", [orgId, percentage, item, document]);
-      const entry = (await a.query<{ id: string }>("INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, DATE '2026-09-12', 'Mua hàng', 'finance.purchase_document', $2, $3) RETURNING id", [orgId, document, percentage])).rows[0]?.id;
-      await a.query("INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '156', 1000000, 0), ($1, $2, 2, '331', 0, 1000000)", [orgId, entry]);
+      const document = (await a.query<{ id: string }>("INSERT INTO ludy_finance.purchase_document (org_id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, legal_entity_id) VALUES ($1, $2, 'AA', '0001', DATE '2026-09-12', 1000000, 0, 1000000, 'purchase', $3) RETURNING id", [orgId, party, percentage])).rows[0]?.id;
+      await a.query("INSERT INTO ludy_finance.purchase_line (org_id, document_id, line_no, description, amount, debit_account) VALUES ($1, $2, 1, 'Hàng', 1000000, '156')", [orgId, document]);
+      await a.query("INSERT INTO ludy_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES ($1, $2, $3, DATE '2026-09-12', 10, 'document_line', $4, 1, 1)", [orgId, percentage, item, document]);
+      const entry = (await a.query<{ id: string }>("INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, DATE '2026-09-12', 'Mua hàng', 'finance.purchase_document', $2, $3) RETURNING id", [orgId, document, percentage])).rows[0]?.id;
+      await a.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '156', 1000000, 0), ($1, $2, 2, '331', 0, 1000000)", [orgId, entry]);
       await a.query('COMMIT');
-      await a.query("INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, DATE '2026-09-13', -4, 'manual')", [orgId, percentage, item]);
+      await a.query("INSERT INTO ludy_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, DATE '2026-09-13', -4, 'manual')", [orgId, percentage, item]);
     });
   }, 120_000);
 

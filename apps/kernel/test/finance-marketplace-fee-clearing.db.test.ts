@@ -76,18 +76,18 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
     await withAdmin((c) => c.query(`INSERT INTO ludy_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin'), ($1, $3, 'member')`, [orgId, admin, member]));
     if (regime === 'tt99') {
       await withAdmin((c) =>
-        c.query(`INSERT INTO crove_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default`, [orgId]),
+        c.query(`INSERT INTO ludy_finance.legal_entity_books (org_id, legal_entity_id, regime, chart_version, effective_from) SELECT $1, id, 'tt99', '2026.1', '2026-01-01' FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default`, [orgId]),
       );
     }
     const entity = (await rows<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [orgId]))[0]?.id as string;
     // Method `none` from the start: these tests are about posting, not about VAT, so a sale posts VAT-inclusive revenue as before (#4303 S3b; the VAT split has its own test).
-    await withAdmin((c) => c.query("INSERT INTO crove_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method) VALUES ($1, $2, '2000-01-01', 'none')", [orgId, entity]));
+    await withAdmin((c) => c.query("INSERT INTO ludy_finance.marketplace_vat_rate (org_id, legal_entity_id, effective_from, method) VALUES ($1, $2, '2000-01-01', 'none')", [orgId, entity]));
     // A household seller of one line of business with its rates confirmed for the test: the withheld tax is split into VAT and PIT at the settlement's posting (slice C2) and the payout debits it.
     if (household) {
       await withAdmin(async (c) => {
         await c.query("UPDATE ludy_kernel.legal_entity SET kind = 'household' WHERE org_id = $1 AND id = $2", [orgId, entity]);
-        await c.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', 2, 'percentage', ARRAY['goods']::text[])", [orgId, entity]);
-        await c.query("UPDATE crove_finance.household_trade_rate SET status = 'confirmed' WHERE trade = 'goods'");
+        await c.query("INSERT INTO ludy_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', 2, 'percentage', ARRAY['goods']::text[])", [orgId, entity]);
+        await c.query("UPDATE ludy_finance.household_trade_rate SET status = 'confirmed' WHERE trade = 'goods'");
       });
     }
     return { orgId, owner, admin, member, entity };
@@ -100,13 +100,13 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
     await withAdmin(async (c) => {
       const net = lines.reduce((n, l) => n + netOf(l), 0);
       await c.query('BEGIN');
-      await c.query('INSERT INTO crove_finance.channel_settlement (org_id, id, platform, period_start, period_end, report_net) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, id, platform, start, end, net]);
+      await c.query('INSERT INTO ludy_finance.channel_settlement (org_id, id, platform, period_start, period_end, report_net) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, id, platform, start, end, net]);
       for (const [i, l] of lines.entries()) {
         const orderId = randomUUID();
-        await c.query('INSERT INTO crove_finance.channel_order (org_id, id, platform, order_no) VALUES ($1, $2, $3, $4)', [o.orgId, orderId, platform, `MK${randomUUID().slice(0, 12)}`]);
-        await c.query("INSERT INTO crove_finance.channel_order_line (org_id, order_id, line_key, quantity, stage, delivered_at) VALUES ($1, $2, 'L1', 1, 'completed', $3)", [o.orgId, orderId, start]);
+        await c.query('INSERT INTO ludy_finance.channel_order (org_id, id, platform, order_no) VALUES ($1, $2, $3, $4)', [o.orgId, orderId, platform, `MK${randomUUID().slice(0, 12)}`]);
+        await c.query("INSERT INTO ludy_finance.channel_order_line (org_id, order_id, line_key, quantity, stage, delivered_at) VALUES ($1, $2, 'L1', 1, 'completed', $3)", [o.orgId, orderId, start]);
         await c.query(
-          'INSERT INTO crove_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, sales, seller_discount, commission, service_fee, payment_fee, shipping, tax_withheld, refund, other, net) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)',
+          'INSERT INTO ludy_finance.channel_settlement_line (org_id, id, settlement_id, order_id, line_key, sales, seller_discount, commission, service_fee, payment_fee, shipping, tax_withheld, refund, other, net) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)',
           [o.orgId, randomUUID(), id, orderId, `K${i}`, l.sales, l.discount ?? '0', l.commission ?? '0', l.service ?? '0', l.payment ?? '0', l.shipping ?? '0', l.tax ?? '0', l.refund ?? '0', l.other ?? '0', netOf(l)],
         );
       }
@@ -117,7 +117,7 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
   // A bank line of the entity's bank account (1121), money in unless the amount is negative.
   async function bankLine(o: Org, date: string, amount: string | number, account = '1121'): Promise<string> {
     const [line] = await rows<{ id: string }>(
-      `INSERT INTO crove_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount, bank_ref) VALUES ($1, $2, $3, 1, $4, 'Shopee thanh toan', $5, $6) RETURNING id`,
+      `INSERT INTO ludy_finance.bank_line (org_id, bank_account, import_id, position, value_date, description, amount, bank_ref) VALUES ($1, $2, $3, 1, $4, 'Shopee thanh toan', $5, $6) RETURNING id`,
       [o.orgId, account, randomUUID(), date, String(amount), `FT${randomUUID().slice(0, 8)}`],
     );
     return line?.id as string;
@@ -137,10 +137,10 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
     (await rows<{ payload: { lines: { account: string; party: { id: string } | null; debit: string; credit: string }[] } & Record<string, unknown> }>('SELECT payload FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, proposalId]))[0]?.payload;
   const entryOf = (o: Org, entryId: string) =>
     rows<{ account_code: string; debit: string; credit: string; party_id: string | null }>(
-      'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit, party_id FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY line_no',
+      'SELECT account_code, debit::bigint::text AS debit, credit::bigint::text AS credit, party_id FROM ludy_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY line_no',
       [o.orgId, entryId],
     );
-  const partyOf = async (o: Org, platform: string) => (await rows<{ party_id: string }>('SELECT party_id FROM crove_finance.marketplace_party WHERE org_id = $1 AND legal_entity_id = $2 AND platform = $3', [o.orgId, o.entity, platform]))[0]?.party_id;
+  const partyOf = async (o: Org, platform: string) => (await rows<{ party_id: string }>('SELECT party_id FROM ludy_finance.marketplace_party WHERE org_id = $1 AND legal_entity_id = $2 AND platform = $3', [o.orgId, o.entity, platform]))[0]?.party_id;
 
   // Two orders: sales 100 000 + 250 000, seller discounts 5 000 + 10 000 (the settlement posts Dr 131 335 000); fees 10 000 + 18 000, withheld tax 3 000: money received 85 000 + 219 000 = 304 000.
   const PAID: SeedLine[] = [
@@ -159,7 +159,7 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
 
   const askFee = (o: Org, purchaseDocumentId: string, user = o.admin, runtime = rt) =>
     runtime.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.marketplace_fee_clearing.record', input: { purchaseDocumentId } }, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
-  const clearingsOf = (o: Org, documentId: string) => rows<{ id: string; proposal_id: string }>('SELECT id, proposal_id FROM crove_finance.journal_voucher WHERE org_id = $1 AND fee_document_id = $2', [o.orgId, documentId]);
+  const clearingsOf = (o: Org, documentId: string) => rows<{ id: string; proposal_id: string }>('SELECT id, proposal_id FROM ludy_finance.journal_voucher WHERE org_id = $1 AND fee_document_id = $2', [o.orgId, documentId]);
   // The platform's fee invoice as the purchase path leaves it: the document and its standing entry, Dr expense and Dr 1331, Cr 331 naming the party (one transaction, the deferred checks run at commit).
   async function invoice(o: Org, partyId: string, over: { total?: number; vat?: number; date?: string; direction?: string; currency?: string; credit?: string } = {}): Promise<string> {
     const total = over.total ?? 30800;
@@ -169,16 +169,16 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
       await c.query('BEGIN');
       const foreign = (over.currency ?? 'VND') !== 'VND';
       await c.query(
-        `INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, currency, exchange_rate, exchange_rate_source, foreign_subtotal, foreign_vat_amount, foreign_total)
+        `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, subtotal, vat_amount, total, direction, currency, exchange_rate, exchange_rate_source, foreign_subtotal, foreign_vat_amount, foreign_total)
          VALUES ($1, $2, $3, '1C26TPF', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
         [o.orgId, docId, partyId, randomUUID().slice(0, 8), over.date ?? '2026-10-25', total - vat, vat, total, over.direction ?? 'purchase', over.currency ?? 'VND', foreign ? 25000 : null, foreign ? 'entered' : null, foreign ? 1 : null, foreign ? 0 : null, foreign ? 1 : null],
       );
       {
         const entryId = randomUUID();
-        await c.query(`INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, $3, 'Phí sàn', 'finance.purchase_document', $4)`, [o.orgId, entryId, over.date ?? '2026-10-25', docId]);
-        await c.query(`INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, 1, '6422', $3, 0, NULL)`, [o.orgId, entryId, total - vat]);
-        if (vat > 0) await c.query(`INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, 2, '1331', $3, 0, NULL)`, [o.orgId, entryId, vat]);
-        await c.query(`INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, 3, $3, 0, $4, $5)`, [o.orgId, entryId, over.credit ?? '331', total, partyId]);
+        await c.query(`INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, $3, 'Phí sàn', 'finance.purchase_document', $4)`, [o.orgId, entryId, over.date ?? '2026-10-25', docId]);
+        await c.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, 1, '6422', $3, 0, NULL)`, [o.orgId, entryId, total - vat]);
+        if (vat > 0) await c.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, 2, '1331', $3, 0, NULL)`, [o.orgId, entryId, vat]);
+        await c.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, 3, $3, 0, $4, $5)`, [o.orgId, entryId, over.credit ?? '331', total, partyId]);
       }
       await c.query('SET CONSTRAINTS ALL IMMEDIATE');
       await c.query('COMMIT');
@@ -193,7 +193,7 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
   }
   // The dormant clearing logic works on 1388 (fees waiting for their invoice before the payout moved them to 331); the Sàn read now looks at 331, so this reads the ledger on 1388 itself.
   const fees1388 = async (o: Org) =>
-    (await rows<{ waiting: string }>("SELECT coalesce(sum(debit) - sum(credit), 0)::bigint::text AS waiting FROM crove_finance.journal_line WHERE org_id = $1 AND account_code = '1388'", [o.orgId]))[0]?.waiting;
+    (await rows<{ waiting: string }>("SELECT coalesce(sum(debit) - sum(credit), 0)::bigint::text AS waiting FROM ludy_finance.journal_line WHERE org_id = $1 AND account_code = '1388'", [o.orgId]))[0]?.waiting;
 
   beforeAll(async () => {
     const rootDb = new pg.Client({ connectionString: ADMIN });
@@ -313,11 +313,11 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
     await refused(await invoice(o, other?.id as string), 'NOT_PLATFORM');
     // A reversed invoice no longer stands.
     const doc = await invoice(o, party);
-    const [entry] = await rows<{ id: string }>(`SELECT id FROM crove_finance.journal_entry WHERE org_id = $1 AND source_type = 'finance.purchase_document' AND source_id = $2`, [o.orgId, doc]);
+    const [entry] = await rows<{ id: string }>(`SELECT id FROM ludy_finance.journal_entry WHERE org_id = $1 AND source_type = 'finance.purchase_document' AND source_id = $2`, [o.orgId, doc]);
     const asked = await rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: entry?.id, entryDate: '2026-10-26', reason: 'Hóa đơn nhập nhầm' } }, { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() });
     await approve(o, asked.proposalId);
     await refused(doc, 'REVERSED');
-    expect(await rows('SELECT 1 FROM crove_finance.journal_voucher WHERE org_id = $1 AND fee_document_id IS NOT NULL', [o.orgId])).toHaveLength(0);
+    expect(await rows('SELECT 1 FROM ludy_finance.journal_voucher WHERE org_id = $1 AND fee_document_id IS NOT NULL', [o.orgId])).toHaveLength(0);
   });
 
   it('refuses a closed period on the date of the entry, at the request and at the approval of a proposal made before the lock', async () => {
@@ -377,7 +377,7 @@ suite("the clearing of a platform's waiting fees on PostgreSQL (#2516)", () => {
     const { o, party } = await paid();
     const doc = await invoice(o, party);
     const { proposalId } = await askFee(o, doc);
-    const insert = (cols: string, vals: unknown[]) => rows(`INSERT INTO crove_finance.journal_voucher (org_id, voucher_date, description, ${cols}) VALUES ($1, '2026-10-26', 'x', ${vals.map((_, i) => `$${i + 2}`).join(', ')})`, [o.orgId, ...vals]);
+    const insert = (cols: string, vals: unknown[]) => rows(`INSERT INTO ludy_finance.journal_voucher (org_id, voucher_date, description, ${cols}) VALUES ($1, '2026-10-26', 'x', ${vals.map((_, i) => `$${i + 2}`).join(', ')})`, [o.orgId, ...vals]);
     await expect(insert('fee_document_id', [doc])).rejects.toBeTruthy();
     await expect(insert('proposal_id, fee_document_id, settlement_id', [proposalId, doc, randomUUID()])).rejects.toMatchObject({ code: '23514' });
     await expect(insert('proposal_id, fee_document_id, payout_settlement_id, payout_bank_line_id', [proposalId, doc, randomUUID(), randomUUID()])).rejects.toMatchObject({ code: '23514' });

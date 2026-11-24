@@ -87,7 +87,7 @@ suite('the 01/CNKD worksheet download (#2518)', () => {
     const restore = new pg.Client({ connectionString: adminUrl });
     await restore.connect();
     await restore.query(
-      "UPDATE crove_finance.household_threshold SET amount = 0 WHERE code = 'no_tax_revenue'; UPDATE crove_finance.household_tax_reduction SET cut_percent = 0 WHERE kind = 'pit'; UPDATE crove_finance.household_trade_rate SET status = 'commentary'; UPDATE crove_finance.household_form_version SET status = 'commentary'; UPDATE crove_finance.household_return_form_version SET status = 'commentary'",
+      "UPDATE ludy_finance.household_threshold SET amount = 0 WHERE code = 'no_tax_revenue'; UPDATE ludy_finance.household_tax_reduction SET cut_percent = 0 WHERE kind = 'pit'; UPDATE ludy_finance.household_trade_rate SET status = 'commentary'; UPDATE ludy_finance.household_form_version SET status = 'commentary'; UPDATE ludy_finance.household_return_form_version SET status = 'commentary'",
     );
     await restore.end();
     const appUrl = new URL(adminUrl);
@@ -124,20 +124,20 @@ suite('the 01/CNKD worksheet download (#2518)', () => {
       const user = (await a.query<{ user_id: string }>("SELECT user_id FROM ludy_kernel.tenant_member WHERE org_id = $1 AND role = 'owner'", [orgId])).rows[0]?.user_id;
       for (const [id, name, trades] of [[single, 'Hộ Một Ngành', ['goods']], [several, 'Hộ Nhiều Ngành', ['goods', 'services']], [unconfirmed, 'Hộ Chưa Xác Nhận', ['goods']]] as const) {
         await a.query("INSERT INTO ludy_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, $3, 'household', $4)", [orgId, id, name, user]);
-        await a.query("INSERT INTO crove_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', 2, 'percentage', $3)", [orgId, id, trades]);
+        await a.query("INSERT INTO ludy_finance.household_profile (org_id, legal_entity_id, effective_from, tax_group, pit_method, trades) VALUES ($1, $2, '2026-01-01', 2, 'percentage', $3)", [orgId, id, trades]);
         // Revenue of Q4 on account 511 (and of Q3 for the household whose rows stay unconfirmed).
         for (const date of id === unconfirmed ? ['2026-08-12'] : ['2026-11-12']) {
           // One transaction: an entry needs its lines at commit.
           await a.query('BEGIN');
-          const entry = (await a.query<{ id: string }>("INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, 'Bán hàng', 'finance.journal_voucher', $3, $4) RETURNING id", [orgId, date, randomUUID(), id])).rows[0]?.id;
-          await a.query("INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '111', 1600000, 0), ($1, $2, 2, '511', 0, 1600000)", [orgId, entry]);
+          const entry = (await a.query<{ id: string }>("INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, 'Bán hàng', 'finance.journal_voucher', $3, $4) RETURNING id", [orgId, date, randomUUID(), id])).rows[0]?.id;
+          await a.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '111', 1600000, 0), ($1, $2, 2, '511', 0, 1600000)", [orgId, entry]);
           await a.query('COMMIT');
         }
       }
       // The accountant's confirmation is a later dated row: from 2026-10-01 the form and the percentages are confirmed, so Q4 is exportable and Q3 is not.
-      await a.query("INSERT INTO crove_finance.household_return_form_version (form, version, effective_from, name, pit_methods, source, status) VALUES ('01/CNKD', '2026.2', DATE '2026-10-01', 'Tờ khai 01/CNKD', ARRAY['percentage'], 'test', 'confirmed') ON CONFLICT DO NOTHING");
+      await a.query("INSERT INTO ludy_finance.household_return_form_version (form, version, effective_from, name, pit_methods, source, status) VALUES ('01/CNKD', '2026.2', DATE '2026-10-01', 'Tờ khai 01/CNKD', ARRAY['percentage'], 'test', 'confirmed') ON CONFLICT DO NOTHING");
       for (const [trade, vat, pit] of [['goods', 1, 0.5], ['services', 5, 2]] as const) {
-        await a.query("INSERT INTO crove_finance.household_trade_rate (trade, effective_from, vat_percent, pit_percent, source, status) VALUES ($1, DATE '2026-10-01', $2, $3, 'test', 'confirmed') ON CONFLICT DO NOTHING", [trade, vat, pit]);
+        await a.query("INSERT INTO ludy_finance.household_trade_rate (trade, effective_from, vat_percent, pit_percent, source, status) VALUES ($1, DATE '2026-10-01', $2, $3, 'test', 'confirmed') ON CONFLICT DO NOTHING", [trade, vat, pit]);
       }
     });
   }, 120_000);

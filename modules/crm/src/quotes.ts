@@ -72,7 +72,7 @@ const day = (value: Date | string): string => (typeof value === 'string' ? value
 // The row lock of a draft. It is taken after the status is read, because a SELECT ... FOR UPDATE applies the UPDATE policy too, which shows a tenant role
 // drafts only: a quote that has left `draft` is read plainly and refused by its status, not reported as missing.
 async function lockDraft(ctx: Pick<CommandContext, 'trx' | 'orgId'>, quoteId: string): Promise<{ version: number } | undefined> {
-  return ctx.trx.selectFrom('crove_crm.quote').select('version').where('org_id', '=', ctx.orgId).where('id', '=', quoteId).forUpdate().executeTakeFirst();
+  return ctx.trx.selectFrom('ludy_crm.quote').select('version').where('org_id', '=', ctx.orgId).where('id', '=', quoteId).forUpdate().executeTakeFirst();
 }
 const notFound = () => new DomainError('QUOTE_NOT_FOUND', 404, 'Không tìm thấy báo giá này');
 const stale = () => new DomainError('STALE_VERSION', 409, 'Báo giá này vừa được người khác sửa; hãy mở lại để xem bản mới');
@@ -87,7 +87,7 @@ const MAX_AMOUNT_DIGITS = 15;
 
 async function loadSetting(ctx: Reader): Promise<QuoteSetting> {
   const row = await ctx.trx
-    .selectFrom('crove_crm.quote_setting')
+    .selectFrom('ludy_crm.quote_setting')
     .select(['valid_days', 'default_vat', 'default_terms', 'phone', 'email', 'bank_note', 'logo_file_id'])
     .where('org_id', '=', ctx.orgId)
     .executeTakeFirst();
@@ -124,7 +124,7 @@ export const quoteSettingSet = defineCommand({
     if (email !== null && !PLAIN_ADDRESS.test(email)) throw new DomainError('QUOTE_EMAIL_INVALID', 422, 'Địa chỉ email không hợp lệ');
     const values = { valid_days: input.validDays, default_vat: vat, default_terms: terms, phone, email, bank_note: bankNote, set_by: userId, updated_at: ctx.now };
     await ctx.trx
-      .insertInto('crove_crm.quote_setting')
+      .insertInto('ludy_crm.quote_setting')
       .values({ org_id: ctx.orgId, created_at: ctx.now, ...values })
       .onConflict((oc) => oc.column('org_id').doUpdateSet(values))
       .execute();
@@ -159,7 +159,7 @@ export const quoteLogoSet = defineCommand({
     }
     const values = { logo_file_id: input.fileId, set_by: userId, updated_at: ctx.now };
     await ctx.trx
-      .insertInto('crove_crm.quote_setting')
+      .insertInto('ludy_crm.quote_setting')
       .values({ org_id: ctx.orgId, created_at: ctx.now, ...values })
       .onConflict((oc) => oc.column('org_id').doUpdateSet(values))
       .execute();
@@ -199,7 +199,7 @@ export const quoteLogoRemove = defineCommand({
   access: MANAGERS,
   handler: async (ctx): Promise<QuoteSetting> => {
     const userId = userOf(ctx.actor);
-    await ctx.trx.updateTable('crove_crm.quote_setting').set({ logo_file_id: null, set_by: userId, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).execute();
+    await ctx.trx.updateTable('ludy_crm.quote_setting').set({ logo_file_id: null, set_by: userId, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).execute();
     ctx.audit({ removed: true });
     return loadSetting(ctx);
   },
@@ -223,8 +223,8 @@ export const quoteDefaults = defineQuery({
     const rows = await sql<{ description: string; unit: string | null; unit_price: string; vat_rate: string; quote_id: string }>`
       SELECT h.description, h.unit, h.unit_price, h.vat_rate, h.quote_id FROM (
         SELECT DISTINCT ON (pg_catalog.lower(l.description)) l.description, l.unit, l.unit_price::text AS unit_price, l.vat_rate, q.id AS quote_id, q.created_at
-        FROM crove_crm.quote_line l
-        JOIN crove_crm.quote q ON q.org_id = l.org_id AND q.id = l.quote_id
+        FROM ludy_crm.quote_line l
+        JOIN ludy_crm.quote q ON q.org_id = l.org_id AND q.id = l.quote_id
         WHERE q.org_id = ${ctx.orgId}::uuid AND q.party_id = ${input.partyId}::uuid AND l.kind = 'item'
         ORDER BY pg_catalog.lower(l.description), q.created_at DESC, l.line_no
       ) h
@@ -278,11 +278,11 @@ interface SummaryRow {
 
 function base(ctx: Reader) {
   return ctx.trx
-    .selectFrom('crove_crm.quote as q')
-    .innerJoin('crove_crm.deal as d', (j) => j.onRef('d.org_id', '=', 'q.org_id').onRef('d.id', '=', 'q.deal_id'))
+    .selectFrom('ludy_crm.quote as q')
+    .innerJoin('ludy_crm.deal as d', (j) => j.onRef('d.org_id', '=', 'q.org_id').onRef('d.id', '=', 'q.deal_id'))
     .innerJoin('ludy_kernel.party as p', (j) => j.onRef('p.org_id', '=', 'q.org_id').onRef('p.id', '=', 'q.party_id'))
     // A revision shows the number of the quote it revises until it has its own.
-    .leftJoin('crove_crm.quote as r', (j) => j.onRef('r.org_id', '=', 'q.org_id').onRef('r.id', '=', 'q.revises_id'))
+    .leftJoin('ludy_crm.quote as r', (j) => j.onRef('r.org_id', '=', 'q.org_id').onRef('r.id', '=', 'q.revises_id'))
     .select([
       'q.id',
       'q.deal_id',
@@ -302,7 +302,7 @@ function base(ctx: Reader) {
       'q.updated_at',
       'q.actor_origin',
       // The quote's text is tainted when the quote is, and when any of its lines is (a line a person saved with a tainted text, #4149).
-      sql<boolean>`(q.tainted OR EXISTS (SELECT 1 FROM crove_crm.quote_line tl WHERE tl.org_id = q.org_id AND tl.quote_id = q.id AND tl.tainted))`.as('tainted'),
+      sql<boolean>`(q.tainted OR EXISTS (SELECT 1 FROM ludy_crm.quote_line tl WHERE tl.org_id = q.org_id AND tl.quote_id = q.id AND tl.tainted))`.as('tainted'),
       'q.sent_at',
       'q.sent_via',
       'q.first_viewed_at',
@@ -313,7 +313,7 @@ function base(ctx: Reader) {
       'd.title as deal_title',
       'p.name as party_name',
       sql<string | null>`coalesce(q.number, r.number)`.as('shown_number'),
-      sql<number>`(SELECT pg_catalog.count(*)::int FROM crove_crm.quote_line l WHERE l.org_id = q.org_id AND l.quote_id = q.id)`.as('line_count'),
+      sql<number>`(SELECT pg_catalog.count(*)::int FROM ludy_crm.quote_line l WHERE l.org_id = q.org_id AND l.quote_id = q.id)`.as('line_count'),
     ])
     .where('q.org_id', '=', ctx.orgId);
 }
@@ -351,7 +351,7 @@ function summary(r: SummaryRow, now: Date): QuoteSummary {
 
 async function loadLines(ctx: Reader, quoteId: string): Promise<QuoteLine[]> {
   const rows = await ctx.trx
-    .selectFrom('crove_crm.quote_line')
+    .selectFrom('ludy_crm.quote_line')
     .select(['line_no', 'kind', 'description', 'unit', 'quantity', 'unit_price', 'discount_percent', 'vat_rate', 'amount', 'vat_amount', 'stock_item_id'])
     .where('org_id', '=', ctx.orgId)
     .where('quote_id', '=', quoteId)
@@ -375,7 +375,7 @@ async function loadLines(ctx: Reader, quoteId: string): Promise<QuoteLine[]> {
 // The links of a quote, newest first, without any token: the database holds only its hash.
 async function loadLinks(ctx: Reader, quoteId: string, now: Date): Promise<QuoteLinkSummary[]> {
   const rows = await ctx.trx
-    .selectFrom('crove_crm.quote_link')
+    .selectFrom('ludy_crm.quote_link')
     .select(['id', 'created_at', 'expires_at', 'revoked_at', 'first_viewed_at', 'views'])
     .where('org_id', '=', ctx.orgId)
     .where('quote_id', '=', quoteId)
@@ -498,7 +498,7 @@ function computeRows(lines: readonly QuoteLineInput[]): { rows: LineRow[]; subto
 async function insertLines(ctx: CommandContext, quoteId: string, rows: readonly LineRow[]): Promise<void> {
   if (rows.length === 0) return;
   await ctx.trx
-    .insertInto('crove_crm.quote_line')
+    .insertInto('ludy_crm.quote_line')
     .values(rows.map((r) => ({ org_id: ctx.orgId, quote_id: quoteId, ...r })))
     .execute();
 }
@@ -521,11 +521,11 @@ export const quoteSave = defineCommand({
     const notes = oneText(input.notes);
     const terms = oneText(input.terms);
     if (input.quoteId === undefined) {
-      const deal = await ctx.trx.selectFrom('crove_crm.deal').select(['id', 'party_id']).where('org_id', '=', ctx.orgId).where('id', '=', input.dealId as string).executeTakeFirst();
+      const deal = await ctx.trx.selectFrom('ludy_crm.deal').select(['id', 'party_id']).where('org_id', '=', ctx.orgId).where('id', '=', input.dealId as string).executeTakeFirst();
       if (!deal) throw new DomainError('DEAL_NOT_FOUND', 404, 'Không tìm thấy cơ hội này');
       const setting = await loadSetting(ctx);
       const row = await ctx.trx
-        .insertInto('crove_crm.quote')
+        .insertInto('ludy_crm.quote')
         .values({
           org_id: ctx.orgId,
           deal_id: deal.id,
@@ -549,7 +549,7 @@ export const quoteSave = defineCommand({
       return loadQuote(ctx, row.id, ctx.now);
     }
     const before = await ctx.trx
-      .selectFrom('crove_crm.quote')
+      .selectFrom('ludy_crm.quote')
       .select(['id', 'deal_id', 'party_id', 'status', 'version', 'valid_until', 'remarks', 'terms'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.quoteId)
@@ -560,10 +560,10 @@ export const quoteSave = defineCommand({
     const locked = await lockDraft(ctx, before.id);
     if (!locked) throw notFound();
     if (locked.version !== input.version) throw stale();
-    await ctx.trx.deleteFrom('crove_crm.quote_line').where('org_id', '=', ctx.orgId).where('quote_id', '=', before.id).execute();
+    await ctx.trx.deleteFrom('ludy_crm.quote_line').where('org_id', '=', ctx.orgId).where('quote_id', '=', before.id).execute();
     await insertLines(ctx, before.id, computed.rows);
     await ctx.trx
-      .updateTable('crove_crm.quote')
+      .updateTable('ludy_crm.quote')
       .set({
         valid_until: input.validUntil ?? day(before.valid_until),
         remarks: notes === undefined ? before.remarks : notes,
@@ -593,7 +593,7 @@ export const quoteDeleteDraft = defineCommand({
   handler: async (ctx, input): Promise<QuoteDeleted> => {
     userOf(ctx.actor);
     const quote = await ctx.trx
-      .selectFrom('crove_crm.quote')
+      .selectFrom('ludy_crm.quote')
       .select(['id', 'deal_id', 'party_id', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.quoteId)
@@ -603,7 +603,7 @@ export const quoteDeleteDraft = defineCommand({
     // A draft that was sent or removed between the read and the lock is refused, and nothing is audited for it.
     if (!(await lockDraft(ctx, quote.id))) throw new DomainError('QUOTE_NOT_DRAFT', 409, 'Chỉ xóa được báo giá nháp');
     // The lines go with the quote (the foreign key cascades).
-    const removed = await ctx.trx.deleteFrom('crove_crm.quote').where('org_id', '=', ctx.orgId).where('id', '=', quote.id).executeTakeFirst();
+    const removed = await ctx.trx.deleteFrom('ludy_crm.quote').where('org_id', '=', ctx.orgId).where('id', '=', quote.id).executeTakeFirst();
     if (removed.numDeletedRows !== 1n) throw new DomainError('QUOTE_NOT_DRAFT', 409, 'Chỉ xóa được báo giá nháp');
     ctx.audit({ quoteId: quote.id, dealId: quote.deal_id, partyId: quote.party_id });
     await ctx.activity('kernel.party', quote.party_id, 'quote.deleted', 'Xóa một báo giá nháp');
@@ -623,7 +623,7 @@ export const quoteRevise = defineCommand({
   handler: async (ctx, input): Promise<Quote> => {
     const userId = userOf(ctx.actor);
     const source = await ctx.trx
-      .selectFrom('crove_crm.quote')
+      .selectFrom('ludy_crm.quote')
       .select(['id', 'deal_id', 'party_id', 'status', 'revision', 'remarks', 'terms'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.quoteId)
@@ -632,11 +632,11 @@ export const quoteRevise = defineCommand({
     if (source.status !== 'sent' && source.status !== 'declined') {
       throw new DomainError('QUOTE_NOT_REVISABLE', 409, source.status === 'draft' ? 'Báo giá nháp được sửa trực tiếp' : 'Báo giá này không tạo được bản sửa đổi');
     }
-    const existing = await ctx.trx.selectFrom('crove_crm.quote').select('id').where('org_id', '=', ctx.orgId).where('revises_id', '=', source.id).executeTakeFirst();
+    const existing = await ctx.trx.selectFrom('ludy_crm.quote').select('id').where('org_id', '=', ctx.orgId).where('revises_id', '=', source.id).executeTakeFirst();
     if (existing) throw new DomainError('QUOTE_ALREADY_REVISED', 409, 'Báo giá này đã có một bản sửa đổi');
     const setting = await loadSetting(ctx);
     const lines = await ctx.trx
-      .selectFrom('crove_crm.quote_line')
+      .selectFrom('ludy_crm.quote_line')
       .select(['line_no', 'kind', 'description', 'unit', 'quantity', 'unit_price', 'discount_percent', 'vat_rate', 'amount', 'vat_amount', 'stock_item_id'])
       .where('org_id', '=', ctx.orgId)
       .where('quote_id', '=', source.id)
@@ -645,7 +645,7 @@ export const quoteRevise = defineCommand({
     const rows: LineRow[] = lines.map((l) => ({ ...l }));
     const totals = sumLineTotals(rows.map((r) => ({ amount: r.amount, vatAmount: r.vat_amount })));
     const copy = await ctx.trx
-      .insertInto('crove_crm.quote')
+      .insertInto('ludy_crm.quote')
       .values({
         org_id: ctx.orgId,
         deal_id: source.deal_id,
@@ -692,7 +692,7 @@ const LINK_MAX_DAYS = 119;
 // answer only. The caller holds the quote and has read that it is sent (or decided).
 async function makeLink(ctx: CommandContext, quote: { id: string; valid_until: Date | string }, userId: string, options: { limit: boolean } = { limit: true }): Promise<QuoteLinkCreated> {
   const live = await ctx.trx
-    .selectFrom('crove_crm.quote_link')
+    .selectFrom('ludy_crm.quote_link')
     .select((eb) => eb.fn.countAll<string>().as('n'))
     .where('org_id', '=', ctx.orgId)
     .where('quote_id', '=', quote.id)
@@ -705,7 +705,7 @@ async function makeLink(ctx: CommandContext, quote: { id: string; valid_until: D
   if (expires <= ctx.now.getTime() + 60_000) throw new DomainError('QUOTE_LINK_EXPIRED', 409, 'Báo giá đã hết hạn từ lâu; hãy tạo bản sửa đổi rồi gửi lại');
   const token = newQuoteToken();
   const row = await ctx.trx
-    .insertInto('crove_crm.quote_link')
+    .insertInto('ludy_crm.quote_link')
     .values({ org_id: ctx.orgId, quote_id: quote.id, token_sha256: quoteTokenHash(token), expires_at: new Date(expires), created_by: userId, created_at: ctx.now })
     .returning('id')
     .executeTakeFirstOrThrow();
@@ -729,7 +729,7 @@ export const quoteSend = defineCommand({
   handler: async (ctx, input): Promise<QuoteSent> => {
     const userId = userOf(ctx.actor);
     const quote = await ctx.trx
-      .selectFrom('crove_crm.quote')
+      .selectFrom('ludy_crm.quote')
       .select(['id', 'deal_id', 'party_id', 'status', 'valid_until', 'total', 'revises_id', 'revision'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.quoteId)
@@ -740,7 +740,7 @@ export const quoteSend = defineCommand({
     if (!locked) throw notFound();
     if (locked.version !== input.version) throw stale();
     const items = await ctx.trx
-      .selectFrom('crove_crm.quote_line')
+      .selectFrom('ludy_crm.quote_line')
       .select((eb) => eb.fn.countAll<string>().as('n'))
       .where('org_id', '=', ctx.orgId)
       .where('quote_id', '=', quote.id)
@@ -761,7 +761,7 @@ export const quoteSend = defineCommand({
     if (!issuer) throw new DomainError('QUOTE_ISSUER_MISSING', 422, 'Tổ chức chưa có pháp nhân để phát hành báo giá');
     let number: string;
     if (quote.revises_id) {
-      const source = await ctx.trx.selectFrom('crove_crm.quote').select(['number', 'status', 'issuer_entity_id']).where('org_id', '=', ctx.orgId).where('id', '=', quote.revises_id).executeTakeFirst();
+      const source = await ctx.trx.selectFrom('ludy_crm.quote').select(['number', 'status', 'issuer_entity_id']).where('org_id', '=', ctx.orgId).where('id', '=', quote.revises_id).executeTakeFirst();
       if (!source?.number || (source.status !== 'sent' && source.status !== 'declined')) throw new DomainError('QUOTE_NOT_REVISABLE', 409, 'Báo giá gốc của bản sửa đổi này không còn gửi lại được');
       number = source.number;
       // The revision keeps the number, so it keeps the entity whose series gave it: with the default entity changed in between, the number would otherwise sit in another
@@ -778,7 +778,7 @@ export const quoteSend = defineCommand({
     }
     // The seller as the document will show it, frozen with the quote (#2826): a change to the letterhead later does not change a quote that was sent.
     const org = await ctx.trx.selectFrom('ludy_kernel.tenant').select(['name', 'address']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
-    const letterhead = await ctx.trx.selectFrom('crove_crm.quote_setting').select(['phone', 'email', 'bank_note', 'logo_file_id']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const letterhead = await ctx.trx.selectFrom('ludy_crm.quote_setting').select(['phone', 'email', 'bank_note', 'logo_file_id']).where('org_id', '=', ctx.orgId).executeTakeFirst();
     const text = (value: string | null | undefined, max: number): string | null => {
       const trimmed = value?.trim() ?? '';
       return trimmed === '' ? null : trimmed.slice(0, max);
@@ -787,7 +787,7 @@ export const quoteSend = defineCommand({
     // sent without a logo stays without one when the org adds one later.
     const logo = await logoFileOf(ctx, letterhead?.logo_file_id ?? null);
     await ctx.trx
-      .updateTable('crove_crm.quote')
+      .updateTable('ludy_crm.quote')
       .set({
         seller_name: text(issuer.name, 400) ?? text(org.name, 400) ?? 'Người bán',
         seller_tax_code: text(issuer.tax_code, 40),
@@ -823,9 +823,9 @@ export const quoteSend = defineCommand({
     let revoked = 0;
     if (quote.revises_id) {
       // The older quote is replaced, and no link of it opens any more.
-      await ctx.trx.updateTable('crove_crm.quote').set({ status: 'superseded', updated_by: userId, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', quote.revises_id).execute();
+      await ctx.trx.updateTable('ludy_crm.quote').set({ status: 'superseded', updated_by: userId, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', quote.revises_id).execute();
       const links = await ctx.trx
-        .updateTable('crove_crm.quote_link')
+        .updateTable('ludy_crm.quote_link')
         .set({ revoked_at: ctx.now, revoked_by: userId })
         .where('org_id', '=', ctx.orgId)
         .where('quote_id', '=', quote.revises_id)
@@ -872,7 +872,7 @@ export const quoteMailData = defineCommand({
   access: 'system',
   handler: async (ctx, input): Promise<{ token: string | null }> => {
     const quote = await ctx.trx
-      .selectFrom('crove_crm.quote')
+      .selectFrom('ludy_crm.quote')
       .select(['id', 'status', 'valid_until', 'updated_by'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.quoteId)
@@ -900,12 +900,12 @@ export const quoteLinkCreate = defineCommand({
   target: (input) => ({ type: 'crm.quote', id: input.quoteId }),
   handler: async (ctx, input): Promise<QuoteLinkCreated> => {
     const userId = userOf(ctx.actor);
-    const quote = await ctx.trx.selectFrom('crove_crm.quote').select(['id', 'deal_id', 'party_id', 'status', 'valid_until']).where('org_id', '=', ctx.orgId).where('id', '=', input.quoteId).executeTakeFirst();
+    const quote = await ctx.trx.selectFrom('ludy_crm.quote').select(['id', 'deal_id', 'party_id', 'status', 'valid_until']).where('org_id', '=', ctx.orgId).where('id', '=', input.quoteId).executeTakeFirst();
     if (!quote) throw notFound();
     if (quote.status !== 'sent') throw new DomainError('QUOTE_NOT_SENT', 409, 'Chỉ tạo được liên kết cho báo giá đã gửi và chưa có bản mới');
     // The quote row is held, so a revision sent in between cannot leave this link open on a replaced quote.
     await lockDraft(ctx, quote.id);
-    const current = await ctx.trx.selectFrom('crove_crm.quote').select('status').where('org_id', '=', ctx.orgId).where('id', '=', quote.id).executeTakeFirst();
+    const current = await ctx.trx.selectFrom('ludy_crm.quote').select('status').where('org_id', '=', ctx.orgId).where('id', '=', quote.id).executeTakeFirst();
     if (current?.status !== 'sent') throw new DomainError('QUOTE_NOT_SENT', 409, 'Chỉ tạo được liên kết cho báo giá đã gửi và chưa có bản mới');
     const link = await makeLink(ctx, quote, userId);
     ctx.audit({ quoteId: quote.id, dealId: quote.deal_id, partyId: quote.party_id, linkId: link.linkId });
@@ -922,11 +922,11 @@ export const quoteLinkRevoke = defineCommand({
   access: EDITORS,
   handler: async (ctx, input): Promise<QuoteLinkRevoked> => {
     const userId = userOf(ctx.actor);
-    const link = await ctx.trx.selectFrom('crove_crm.quote_link').select(['id', 'quote_id', 'revoked_at']).where('org_id', '=', ctx.orgId).where('id', '=', input.linkId).executeTakeFirst();
+    const link = await ctx.trx.selectFrom('ludy_crm.quote_link').select(['id', 'quote_id', 'revoked_at']).where('org_id', '=', ctx.orgId).where('id', '=', input.linkId).executeTakeFirst();
     if (!link) throw new DomainError('QUOTE_LINK_NOT_FOUND', 404, 'Không tìm thấy liên kết này');
     // Revoking twice is the same answer; only the first writes.
     if (link.revoked_at === null) {
-      await ctx.trx.updateTable('crove_crm.quote_link').set({ revoked_at: ctx.now, revoked_by: userId }).where('org_id', '=', ctx.orgId).where('id', '=', link.id).where('revoked_at', 'is', null).execute();
+      await ctx.trx.updateTable('ludy_crm.quote_link').set({ revoked_at: ctx.now, revoked_by: userId }).where('org_id', '=', ctx.orgId).where('id', '=', link.id).where('revoked_at', 'is', null).execute();
       ctx.audit({ quoteId: link.quote_id, linkId: link.id });
     }
     return { linkId: link.id, revoked: true };
@@ -935,7 +935,7 @@ export const quoteLinkRevoke = defineCommand({
 
 // The refusal `crm.deal.delete` makes while the deal has a quote: a quote the customer holds is a document.
 export async function dealHasQuotes(ctx: Pick<CommandContext, 'trx' | 'orgId'>, dealId: string): Promise<boolean> {
-  const row = await ctx.trx.selectFrom('crove_crm.quote').select('id').where('org_id', '=', ctx.orgId).where('deal_id', '=', dealId).limit(1).executeTakeFirst();
+  const row = await ctx.trx.selectFrom('ludy_crm.quote').select('id').where('org_id', '=', ctx.orgId).where('deal_id', '=', dealId).limit(1).executeTakeFirst();
   return row !== undefined;
 }
 

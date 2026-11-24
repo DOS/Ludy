@@ -572,12 +572,12 @@ function MetricRow({ cells, metric, currency, withResults }: { cells: ReactNode;
   const f = useFormat();
   return (
     <>
-      <TableCell className="px-4 py-3 text-foreground">{cells}</TableCell>
-      <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{f.money(metric.spend, currency)}</TableCell>
-      {withResults && <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{metric.results === null ? '-' : f.number(metric.results)}</TableCell>}
-      {withResults && <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{metric.costPerResult === null ? '-' : f.money(metric.costPerResult, currency)}</TableCell>}
-      <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{f.number(metric.impressions)}</TableCell>
-      <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{f.number(metric.clicks)}</TableCell>
+      <TableCell className="text-foreground">{cells}</TableCell>
+      <TableCell className="text-right text-foreground tabular-nums">{f.money(metric.spend, currency)}</TableCell>
+      {withResults && <TableCell className="text-right text-foreground tabular-nums">{metric.results === null ? '-' : f.number(metric.results)}</TableCell>}
+      {withResults && <TableCell className="text-right text-foreground tabular-nums">{metric.costPerResult === null ? '-' : f.money(metric.costPerResult, currency)}</TableCell>}
+      <TableCell className="text-right text-muted-foreground tabular-nums">{f.number(metric.impressions)}</TableCell>
+      <TableCell className="text-right text-muted-foreground tabular-nums">{f.number(metric.clicks)}</TableCell>
     </>
   );
 }
@@ -632,16 +632,16 @@ export function Breakdowns({ summary, currency }: { summary: AdsSummary; currenc
         >
           {[...summary.days].reverse().map((d) => (
             <TableRow key={d.day}>
-              <TableCell className="px-4 py-3 text-foreground">
+              <TableCell className="text-foreground tabular-nums">
                 {f.date(d.day)}
                 {!d.settled && <span className="ml-2 text-xs text-subtle-foreground">{t('notFinal')}</span>}
               </TableCell>
-              <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{f.money(d.spend, currency)}</TableCell>
-              {withResults && <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{d.results === null ? '-' : f.number(d.results)}</TableCell>}
-              {withResults && <TableCell className="px-4 py-3 text-right text-foreground tabular-nums">{d.costPerResult === null ? '-' : f.money(d.costPerResult, currency)}</TableCell>}
-              <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{f.number(d.impressions)}</TableCell>
-              <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{f.number(d.clicks)}</TableCell>
-              <TableCell className="px-4 py-3 text-right text-muted-foreground tabular-nums">{d.reach === null ? '-' : f.number(d.reach)}</TableCell>
+              <TableCell className="text-right text-foreground tabular-nums">{f.money(d.spend, currency)}</TableCell>
+              {withResults && <TableCell className="text-right text-foreground tabular-nums">{d.results === null ? '-' : f.number(d.results)}</TableCell>}
+              {withResults && <TableCell className="text-right text-foreground tabular-nums">{d.costPerResult === null ? '-' : f.money(d.costPerResult, currency)}</TableCell>}
+              <TableCell className="text-right text-muted-foreground tabular-nums">{f.number(d.impressions)}</TableCell>
+              <TableCell className="text-right text-muted-foreground tabular-nums">{f.number(d.clicks)}</TableCell>
+              <TableCell className="text-right text-muted-foreground tabular-nums">{d.reach === null ? '-' : f.number(d.reach)}</TableCell>
             </TableRow>
           ))}
         </DataTable>

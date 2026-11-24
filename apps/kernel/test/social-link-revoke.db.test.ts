@@ -95,8 +95,8 @@ suite('links of a member who loses the right to make them (#625)', () => {
   }
 
   const live = async (orgId: string, table: 'review_link' | 'report_link' | 'calendar_feed', user: string) =>
-    admin(async (c) => (await c.query(`SELECT count(*)::int AS n FROM crove_social.${table} WHERE org_id = $1 AND created_by = $2 AND revoked_at IS NULL`, [orgId, user])).rows[0]?.n as number);
-  const view = async (token: string) => (await appPool.query<{ page: unknown }>('SELECT crove_social.review_link_view($1) AS page', [token])).rows[0]?.page ?? null;
+    admin(async (c) => (await c.query(`SELECT count(*)::int AS n FROM ludy_social.${table} WHERE org_id = $1 AND created_by = $2 AND revoked_at IS NULL`, [orgId, user])).rows[0]?.n as number);
+  const view = async (token: string) => (await appPool.query<{ page: unknown }>('SELECT ludy_social.review_link_view($1) AS page', [token])).rows[0]?.page ?? null;
   const lastEvent = async (orgId: string, type: string) =>
     admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = $2 ORDER BY created_at DESC, id DESC LIMIT 1', [orgId, type])).rows[0]?.id as string);
 
@@ -112,7 +112,7 @@ suite('links of a member who loses the right to make them (#625)', () => {
     // The owner's own link still works, and a second run changes nothing.
     expect(await view(s.theirs.token)).not.toBeNull();
     expect(await worker.execute('social.links.revoke_for_member', { eventId }, { actor: SYSTEM, orgId: s.orgId })).toEqual({ review: 0, report: 0, calendar: 0 });
-    const by = await admin(async (c) => (await c.query('SELECT DISTINCT revoked_by FROM crove_social.review_link WHERE org_id = $1 AND created_by = $2', [s.orgId, s.editor])).rows);
+    const by = await admin(async (c) => (await c.query('SELECT DISTINCT revoked_by FROM ludy_social.review_link WHERE org_id = $1 AND created_by = $2', [s.orgId, s.editor])).rows);
     expect(by).toEqual([{ revoked_by: s.owner }]);
   });
 

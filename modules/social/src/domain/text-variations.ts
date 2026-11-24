@@ -4,7 +4,7 @@
 // keeps the position of the next one (a cursor). Pure: the commands read and write the list under the post's lock.
 
 export const TEXT_VARIATIONS_MAX = 5;
-// A variation is the copy's text, so it takes a post text's limit (crove_social.text_variations_valid).
+// A variation is the copy's text, so it takes a post text's limit (ludy_social.text_variations_valid).
 export const TEXT_VARIATION_CHARS_MAX = 100_000;
 
 export interface TextVariation {

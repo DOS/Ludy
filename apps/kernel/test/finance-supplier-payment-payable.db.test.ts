@@ -62,9 +62,9 @@ suite('the received invoices that can be asked for payment (#3113 S4b)', () => {
     const entry = randomUUID();
     await admin(async (c) => {
       await c.query('BEGIN');
-      await c.query("INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total, direction) VALUES ($1, $2, $3, $4, $6::date, $5::numeric - 10, 10, $5, $7)", [o.orgId, doc, partyId, `inv-${doc.slice(0, 8)}`, total, opts.date ?? '2026-10-01', opts.direction ?? 'purchase']);
-      await c.query("INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, '2026-10-01', 'rule 3 test', 'finance.purchase_document', $3)", [o.orgId, entry, doc]);
-      await c.query("INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 100, 0), ($1, $2, 2, '331', 0, 100)", [o.orgId, entry]);
+      await c.query("INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_number, invoice_date, subtotal, vat_amount, total, direction) VALUES ($1, $2, $3, $4, $6::date, $5::numeric - 10, 10, $5, $7)", [o.orgId, doc, partyId, `inv-${doc.slice(0, 8)}`, total, opts.date ?? '2026-10-01', opts.direction ?? 'purchase']);
+      await c.query("INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id) VALUES ($1, $2, '2026-10-01', 'rule 3 test', 'finance.purchase_document', $3)", [o.orgId, entry, doc]);
+      await c.query("INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, 1, '6422', 100, 0), ($1, $2, 2, '331', 0, 100)", [o.orgId, entry]);
       await c.query('COMMIT');
     });
     return doc;
@@ -118,7 +118,7 @@ suite('the received invoices that can be asked for payment (#3113 S4b)', () => {
     expect(JSON.stringify(answer)).not.toContain(HOLDER);
     expect(JSON.stringify(answer)).not.toContain('0123');
     // A change older than 30 days is not shown.
-    await rows("UPDATE crove_finance.supplier_bank_account_change SET changed_at = now() - interval '31 days' WHERE org_id = $1", [o.orgId]);
+    await rows("UPDATE ludy_finance.supplier_bank_account_change SET changed_at = now() - interval '31 days' WHERE org_id = $1", [o.orgId]);
     expect((await payable(o)).items[0]?.accountChangedOn).toBeNull();
   });
 
@@ -132,7 +132,7 @@ suite('the received invoices that can be asked for payment (#3113 S4b)', () => {
     expect((await payable(o)).items).toEqual([]);
     await approve(o, proposalId);
     expect((await payable(o)).items).toEqual([]);
-    const [payment] = await rows<{ id: string }>('SELECT id FROM crove_finance.supplier_payment WHERE org_id = $1', [o.orgId]);
+    const [payment] = await rows<{ id: string }>('SELECT id FROM ludy_finance.supplier_payment WHERE org_id = $1', [o.orgId]);
     await execute(o, 'finance.supplier_payment.cancel', { paymentId: payment?.id, reason: 'test' });
     expect((await payable(o)).items.map((i) => i.purchaseDocumentId)).toEqual([doc]);
   });

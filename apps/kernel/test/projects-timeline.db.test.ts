@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Projects timeline and Gantt view (#2599) on a real PostgreSQL 17:
-// 1) projects.task.set_dates atomically writes crove_projects.project_task.start_on and ludy_kernel.task.due,
+// 1) projects.task.set_dates atomically writes ludy_projects.project_task.start_on and ludy_kernel.task.due,
 //    supports partial updates and null clearing, and validates startOn <= vietnamDate(due).
 // 2) Enforces 409 TASK_CHECKED_OUT while an AI agent run holds an active lease, and succeeds once released.
 // 3) Enforces viewer, agent, cross-org, and archived-project guards.
@@ -539,7 +539,7 @@ suite('projects timeline & set_dates (#2599) on PostgreSQL 17', () => {
            FROM generate_series(1, 205) AS g
            RETURNING id
          )
-         INSERT INTO crove_projects.project_task (org_id, project_id, task_id, sort_key)
+         INSERT INTO ludy_projects.project_task (org_id, project_id, task_id, sort_key)
          SELECT $1, $2, id, lpad((row_number() OVER ())::text, 6, '0')
          FROM inserted`,
         [org.orgId, bigProjectId],

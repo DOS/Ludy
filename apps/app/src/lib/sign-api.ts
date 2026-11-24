@@ -1,19 +1,35 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Typed eSign API client aligned with #3323 core commands/queries, #3324 public ceremony routes, and #3351 Vy AI (#3325).
-import type {
-  SignContractDraftVariables,
-  SignDiffCompareInput,
-  SignDiffCompareResult,
-  SignDrafterProposeInput,
-  SignDrafterProposeResult,
-  SignDrafterRenderPdfResult,
-  SignEnvelopeObligationRecordContract,
-  SignObligationProposalContract,
-  SignObligationRenewalListItem,
-  SignSharedKeyTerm,
-  SignSharedSummary,
-  SignVaultAskResult,
-  SignVaultMatchItem,
+import {
+  SIGN_WEBHOOK_EVENT_TYPES,
+  type SignApiKeyRecord,
+  type SignApiKeyScope,
+  type SignContractDraftVariables,
+  type SignDiffCompareInput,
+  type SignDiffCompareResult,
+  type SignDrafterProposeInput,
+  type SignDrafterProposeResult,
+  type SignDrafterRenderPdfResult,
+  type SignEnvelopeObligationRecordContract,
+  type SignKycAttachmentSlotContract,
+  type SignKycListResultContract,
+  type SignObligationProposalContract,
+  type SignObligationRenewalListItem,
+  type SignPlaybookAiOutcome,
+  type SignPlaybookFindingContract,
+  type SignPlaybookGetResult,
+  type SignPlaybookRuleRecord,
+  type SignPlaybookRulesListResult,
+  type SignPlaybookSeverityContract,
+  type SignPlaybookVerdictContract,
+  type SignSharedKeyTerm,
+  type SignSharedSummary,
+  type SignVaultAskResult,
+  type SignVaultMatchItem,
+  type SignWebhookDeliveryRecord,
+  type SignWebhookEventType,
+  type SignWebhookListResult,
+  type SignWebhookRecord,
 } from '@ludy/kernel-contract';
 import { client, clientForOrg, fetchFile, getCurrentOrg, orglessClient, uploadFiles } from './api.ts';
 import { apiUrl } from './api-base.ts';
@@ -30,6 +46,7 @@ import type {
   SignSignerStatus,
 } from './sign-fields.ts';
 
+export { SIGN_WEBHOOK_EVENT_TYPES };
 export type {
   SignContractDraftVariables,
   SignDiffCompareInput,
@@ -39,6 +56,10 @@ export type {
   SignDrafterRenderPdfResult,
   SignSharedKeyTerm,
   SignSharedSummary,
+  SignWebhookDeliveryRecord,
+  SignWebhookEventType,
+  SignWebhookListResult,
+  SignWebhookRecord,
 };
 
 export interface SignEnvelopeSummary {
@@ -296,6 +317,7 @@ export interface PublicSignField {
   label: string | null;
   required: boolean;
   fontSizePt?: number | null | undefined;
+  valueText?: string | null | undefined;
   options?: readonly string[] | null | undefined;
   attachment?: PublicSignFieldAttachment | null | undefined;
 }
@@ -645,14 +667,141 @@ export const signApi = {
     client.sign.vault.search(input),
   askVault: (input: { question: string; status?: SignEnvelopeStatus; limit?: number }) =>
     client.sign.vault.ask(input),
+  listWebhooks: () => client.sign.webhook.list({}),
+  listWebhookDeliveries: (input: { webhookId?: string; limit?: number } = {}) =>
+    client.sign.webhook.deliveries(input),
+  createWebhook: (input: {
+    url: string;
+    events: SignWebhookEventType[];
+    enabled?: boolean;
+  }) => client.sign.webhook.create({ enabled: true, ...input }),
+  updateWebhook: (input: {
+    webhookId: string;
+    url: string;
+    events: SignWebhookEventType[];
+    enabled: boolean;
+  }) => client.sign.webhook.update({ ...input, idempotencyKey: crypto.randomUUID() }),
+  rotateWebhookSecret: (webhookId: string) => client.sign.webhook.rotate_secret({ webhookId }),
+  deleteWebhook: (webhookId: string) =>
+    client.sign.webhook.delete({ webhookId, idempotencyKey: crypto.randomUUID() }),
+  pingWebhook: (webhookId: string) =>
+    client.sign.webhook.ping({ webhookId, idempotencyKey: crypto.randomUUID() }),
+  listPlaybookRules: (input: { activeOnly?: boolean } = {}) =>
+    client.sign.playbook.rules_list(input),
+  upsertPlaybookRule: (input: {
+    ruleId?: string;
+    title: string;
+    guidance: string;
+    severity: SignPlaybookSeverityContract;
+    matchKeywords: string[];
+    active: boolean;
+  }) => client.sign.playbook.rule_upsert({ ...input, idempotencyKey: crypto.randomUUID() }),
+  deletePlaybookRule: (ruleId: string) =>
+    client.sign.playbook.rule_delete({ ruleId, idempotencyKey: crypto.randomUUID() }),
+  seedPlaybookDefaults: () =>
+    client.sign.playbook.seed_defaults({ idempotencyKey: crypto.randomUUID() }),
+  getPlaybookCheck: (envelopeId: string) =>
+    client.sign.playbook.get({ envelopeId }),
+  evaluatePlaybook: (input: {
+    envelopeId: string;
+    useAi: boolean;
+    pages?: ReadonlyArray<{ page: number; text: string }>;
+  }) =>
+    client.sign.playbook.evaluate({
+      envelopeId: input.envelopeId,
+      useAi: input.useAi,
+      ...(input.pages && input.pages.length > 0 ? { pages: [...input.pages] } : {}),
+      idempotencyKey: crypto.randomUUID(),
+    }),
+  overridePlaybookFinding: (input: {
+    envelopeId: string;
+    ruleId: string;
+    checkRevision: string;
+    verdict: SignPlaybookVerdictContract;
+    manualNote?: string | null;
+  }) => client.sign.playbook.override_finding({ ...input, idempotencyKey: crypto.randomUUID() }),
+  listKycChecks: (envelopeId: string) => client.sign.kyc.list({ envelopeId }),
+  runKycDeterministic: (input: {
+    envelopeId: string;
+    fieldId: string;
+    expectedEntityName?: string | null;
+    expectedTaxCode?: string | null;
+    expectedSignerName?: string | null;
+    attachmentPages?: ReadonlyArray<{ page: number; text: string }>;
+  }) =>
+    client.sign.kyc.run_deterministic({
+      envelopeId: input.envelopeId,
+      fieldId: input.fieldId,
+      ...(input.expectedEntityName !== undefined ? { expectedEntityName: input.expectedEntityName } : {}),
+      ...(input.expectedTaxCode !== undefined ? { expectedTaxCode: input.expectedTaxCode } : {}),
+      ...(input.expectedSignerName !== undefined ? { expectedSignerName: input.expectedSignerName } : {}),
+      ...(input.attachmentPages ? { attachmentPages: [...input.attachmentPages] } : {}),
+      idempotencyKey: crypto.randomUUID(),
+    }),
+  analyzeKycWithVy: (input: {
+    envelopeId: string;
+    fieldId: string;
+    expectedEntityName?: string | null;
+    expectedTaxCode?: string | null;
+    expectedSignerName?: string | null;
+    attachmentPages?: ReadonlyArray<{ page: number; text: string }>;
+  }) =>
+    client.sign.kyc.analyze({
+      envelopeId: input.envelopeId,
+      fieldId: input.fieldId,
+      ...(input.expectedEntityName !== undefined ? { expectedEntityName: input.expectedEntityName } : {}),
+      ...(input.expectedTaxCode !== undefined ? { expectedTaxCode: input.expectedTaxCode } : {}),
+      ...(input.expectedSignerName !== undefined ? { expectedSignerName: input.expectedSignerName } : {}),
+      ...(input.attachmentPages && input.attachmentPages.length > 0
+        ? { attachmentPages: [...input.attachmentPages] }
+        : {}),
+    }),
+  confirmKycCheck: (input: {
+    envelopeId: string;
+    fieldId: string;
+    status: 'matched' | 'mismatch' | 'needs_review';
+    manualNote?: string | null;
+    expectedEntityName?: string | null;
+    expectedTaxCode?: string | null;
+    expectedSignerName?: string | null;
+  }) =>
+    client.sign.kyc.confirm({
+      envelopeId: input.envelopeId,
+      fieldId: input.fieldId,
+      status: input.status,
+      ...(input.manualNote !== undefined ? { manualNote: input.manualNote } : {}),
+      ...(input.expectedEntityName !== undefined ? { expectedEntityName: input.expectedEntityName } : {}),
+      ...(input.expectedTaxCode !== undefined ? { expectedTaxCode: input.expectedTaxCode } : {}),
+      ...(input.expectedSignerName !== undefined ? { expectedSignerName: input.expectedSignerName } : {}),
+      idempotencyKey: crypto.randomUUID(),
+    }),
+  listApiKeys: () => client.sign.api_keys.list({}),
+  createApiKey: (input: {
+    name: string;
+    scopes: SignApiKeyScope[];
+    expiresAt?: string | null;
+  }) => client.sign.api_keys.create(input),
+  revokeApiKey: (apiKeyId: string) =>
+    client.sign.api_keys.revoke({ apiKeyId, idempotencyKey: crypto.randomUUID() }),
 };
 
 export type {
+  SignApiKeyRecord,
+  SignApiKeyScope,
   SignEnvelopeObligationRecordContract,
+  SignKycAttachmentSlotContract,
+  SignKycListResultContract,
   SignObligationProposalContract,
   SignObligationRenewalListItem,
   SignVaultAskResult,
   SignVaultMatchItem,
+  SignPlaybookAiOutcome,
+  SignPlaybookFindingContract,
+  SignPlaybookGetResult,
+  SignPlaybookRuleRecord,
+  SignPlaybookRulesListResult,
+  SignPlaybookSeverityContract,
+  SignPlaybookVerdictContract,
 };
 
 export type SignCaProvider = 'sandbox' | 'vnpt_smartca' | 'viettel_mysign' | 'misa_wesign';
@@ -974,6 +1123,7 @@ function normalizePublicField(raw: Record<string, unknown>): PublicSignField {
     label: typeof raw.label === 'string' ? raw.label : null,
     required: typeof raw.required === 'boolean' ? raw.required : true,
     fontSizePt: typeof raw.fontSizePt === 'number' ? raw.fontSizePt : null,
+    valueText: typeof raw.valueText === 'string' ? raw.valueText : null,
     options: Array.isArray(raw.options)
       ? raw.options.filter((opt): opt is string => typeof opt === 'string')
       : null,

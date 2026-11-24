@@ -93,8 +93,6 @@ import {
   zSocialChannelOptions,
   zSocialNotificationKind,
   zSocialNotifications,
-  zSocialPushStatus,
-  zSocialPushSubscribe,
   zSocialAccountTrend,
   zSocialSnippet,
   zSocialSnippetCreate,
@@ -165,6 +163,8 @@ import {
   zSearchResult,
   zNotificationKind,
   zNotifications,
+  zPushStatus,
+  zPushSubscribe,
   zRaisedInboxItems,
   zOriginalNeededItems,
   zRole,
@@ -783,6 +783,16 @@ import {
   zRoadmapItemMergeInput,
   zRoadmapItemModerateInput,
   zRoadmapItemSyncStageInput,
+  zRoadmapSignalCreateInput,
+  zRoadmapSignalCreateResult,
+  zRoadmapSignalDeleteInput,
+  zRoadmapSignalDeleteResult,
+  zRoadmapSignalListInput,
+  zRoadmapSignalListResult,
+  zRoadmapSignalMatchInput,
+  zRoadmapSignalMatchResult,
+  zRoadmapSignalRollupInput,
+  zRoadmapSignalRollupResult,
 } from './projects-roadmap.ts';
 import {
   PROJECT_TRIAGE_SOURCE_PAIR_ISSUE,
@@ -872,6 +882,31 @@ import {
   zSignOrgStampCreateResult,
   zSignOrgStampListInput,
   zSignOrgStampListResult,
+  zSignWebhookCreateInput,
+  zSignWebhookDeleteInput,
+  zSignWebhookDeleteResult,
+  zSignWebhookDeliveriesInput,
+  zSignWebhookDeliveriesResult,
+  zSignWebhookListInput,
+  zSignWebhookListResult,
+  zSignWebhookPingInput,
+  zSignWebhookPingResult,
+  zSignWebhookRecord,
+  zSignWebhookRotateSecretInput,
+  zSignWebhookUpdateInput,
+  zSignWebhookWithSecretResult,
+  zSignEnvelopePlaybookCheckRecord,
+  zSignPlaybookEvaluateInput,
+  zSignPlaybookEvaluateResult,
+  zSignPlaybookGetResult,
+  zSignPlaybookOverrideFindingInput,
+  zSignPlaybookRuleDeleteInput,
+  zSignPlaybookRuleDeleteResult,
+  zSignPlaybookRuleRecord,
+  zSignPlaybookRulesListInput,
+  zSignPlaybookRulesListResult,
+  zSignPlaybookRuleUpsertInput,
+  zSignPlaybookSeedDefaultsInput,
   zSignSignerAddInput,
   zSignSignerAddResult,
   zSignSignerCorrectRecipientInput,
@@ -914,10 +949,22 @@ import {
   zSignObligationRenewalsListInput,
   zSignObligationRenewalsListResult,
   zSignObligationUpsertInput,
+  zSignKycAnalyzeInput,
+  zSignKycAnalyzeResult,
+  zSignKycCheckRecord,
+  zSignKycConfirmInput,
+  zSignKycListResult,
+  zSignKycRunDeterministicInput,
   zSignVaultAskInput,
   zSignVaultAskResult,
   zSignVaultSearchInput,
   zSignVaultSearchResult,
+  zSignApiKeyCreateInput,
+  zSignApiKeyCreateResult,
+  zSignApiKeyListInput,
+  zSignApiKeyListResult,
+  zSignApiKeyRecord,
+  zSignApiKeyRevokeInput,
 } from './sign.ts';
 
 // Proposal reminders (issue #676): days before the approvers are reminded and before the owners are told; and expiry
@@ -2312,14 +2359,6 @@ export const contract = {
       mute: oc.input(z.strictObject({ kind: zSocialNotificationKind, muted: z.boolean() })).output(z.object({ kind: zSocialNotificationKind, muted: z.boolean() })),
       // The viewer's Social emails on or off (#579).
       mail: oc.input(z.strictObject({ enabled: z.boolean() })).output(z.object({ enabled: z.boolean() })),
-      // Browser push (#1238), per device: whether the deployment offers it (VAPID keys set) with the key browsers
-      // subscribe with, the viewer's devices and whether the asking browser (its endpoint) is one; subscribe answers
-      // PUSH_DISABLED without the keys. Each member sees and changes only their own; no endpoint or key comes back.
-      push: {
-        status: oc.input(z.strictObject({ endpoint: z.string().max(2048).nullable() })).output(zSocialPushStatus),
-        subscribe: oc.input(zSocialPushSubscribe).output(z.object({ id: zId })),
-        unsubscribe: oc.input(z.union([z.strictObject({ endpoint: z.string().min(1).max(2048) }), z.strictObject({ id: zId })])).output(z.object({ removed: z.number().int() })),
-      },
     },
     // Account growth (#645): each channel's daily followers and reach over the last days.
     accounts: {
@@ -2690,6 +2729,13 @@ export const contract = {
     list: oc.input(z.object({})).output(zNotifications),
     read: oc.input(z.union([z.strictObject({ ids: z.array(zId).min(1).max(100) }), z.strictObject({ all: z.literal(true) })])).output(z.object({ read: z.number().int() })),
     mute: oc.input(z.strictObject({ kind: zNotificationKind, muted: z.boolean() })).output(z.object({ kind: zNotificationKind, muted: z.boolean() })),
+    // Browser push (#1238, the kernel's since #3736), per device: whether the deployment offers it (VAPID keys set) with the key browsers subscribe with, the viewer's devices and whether the asking browser
+    // (its endpoint) is one; subscribe answers PUSH_DISABLED without the keys. Each member sees and changes only their own; no endpoint or key comes back. One subscription serves every app's notices.
+    push: {
+      status: oc.input(z.strictObject({ endpoint: z.string().max(2048).nullable() })).output(zPushStatus),
+      subscribe: oc.input(zPushSubscribe).output(z.object({ id: zId })),
+      unsubscribe: oc.input(z.union([z.strictObject({ endpoint: z.string().min(1).max(2048) }), z.strictObject({ id: zId })])).output(z.object({ removed: z.number().int() })),
+    },
   },
   // Saved views of a list (CRM plan 4.3, #2227), the kernel's: named filters and a sort, private or shared with the org, at
   // most 30 per member per scope. Members see their own and the shared ones; the owner changes and deletes a view, and
@@ -3760,6 +3806,15 @@ export const contract = {
         .output(zRoadmapAnnouncementSendNotificationsResult),
       dedupeSuggest: oc.input(zRoadmapDedupeInput).output(zRoadmapDedupeResult),
       changelogDraft: oc.input(zRoadmapChangelogDraftInput).output(zRoadmapChangelogDraftResult),
+      signalList: oc.input(zRoadmapSignalListInput).output(zRoadmapSignalListResult),
+      signalRollup: oc.input(zRoadmapSignalRollupInput).output(zRoadmapSignalRollupResult),
+      signalCreate: oc
+        .input(zRoadmapSignalCreateInput.extend({ idempotencyKey: zId }))
+        .output(zRoadmapSignalCreateResult),
+      signalDelete: oc
+        .input(zRoadmapSignalDeleteInput.extend({ idempotencyKey: zId }))
+        .output(zRoadmapSignalDeleteResult),
+      signalMatchSuggest: oc.input(zRoadmapSignalMatchInput).output(zRoadmapSignalMatchResult),
     },
     startTime: oc
       .input(zProjectTimeStartInput.extend({ idempotencyKey: zId }))
@@ -3888,6 +3943,35 @@ export const contract = {
     vault: {
       search: oc.input(zSignVaultSearchInput).output(zSignVaultSearchResult),
       ask: oc.input(zSignVaultAskInput).output(zSignVaultAskResult),
+    },
+    webhook: {
+      list: oc.input(zSignWebhookListInput).output(zSignWebhookListResult),
+      deliveries: oc.input(zSignWebhookDeliveriesInput).output(zSignWebhookDeliveriesResult),
+      create: oc.input(zSignWebhookCreateInput).output(zSignWebhookWithSecretResult),
+      update: oc.input(zSignWebhookUpdateInput).output(zSignWebhookRecord),
+      rotate_secret: oc.input(zSignWebhookRotateSecretInput).output(zSignWebhookWithSecretResult),
+      delete: oc.input(zSignWebhookDeleteInput).output(zSignWebhookDeleteResult),
+      ping: oc.input(zSignWebhookPingInput).output(zSignWebhookPingResult),
+    },
+    playbook: {
+      rules_list: oc.input(zSignPlaybookRulesListInput).output(zSignPlaybookRulesListResult),
+      rule_upsert: oc.input(zSignPlaybookRuleUpsertInput).output(zSignPlaybookRuleRecord),
+      rule_delete: oc.input(zSignPlaybookRuleDeleteInput).output(zSignPlaybookRuleDeleteResult),
+      seed_defaults: oc.input(zSignPlaybookSeedDefaultsInput).output(zSignPlaybookRulesListResult),
+      get: oc.input(z.strictObject({ envelopeId: zId })).output(zSignPlaybookGetResult),
+      evaluate: oc.input(zSignPlaybookEvaluateInput).output(zSignPlaybookEvaluateResult),
+      override_finding: oc.input(zSignPlaybookOverrideFindingInput).output(zSignEnvelopePlaybookCheckRecord),
+    },
+    kyc: {
+      list: oc.input(z.strictObject({ envelopeId: zId })).output(zSignKycListResult),
+      run_deterministic: oc.input(zSignKycRunDeterministicInput).output(zSignKycCheckRecord),
+      analyze: oc.input(zSignKycAnalyzeInput).output(zSignKycAnalyzeResult),
+      confirm: oc.input(zSignKycConfirmInput).output(zSignKycCheckRecord),
+    },
+    api_keys: {
+      list: oc.input(zSignApiKeyListInput).output(zSignApiKeyListResult),
+      create: oc.input(zSignApiKeyCreateInput).output(zSignApiKeyCreateResult),
+      revoke: oc.input(zSignApiKeyRevokeInput).output(zSignApiKeyRecord),
     },
   },
 };

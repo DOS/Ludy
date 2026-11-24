@@ -6,7 +6,7 @@
 // meetings.template.archive   takes it off the recorder's list. No restore, no delete. Meetings already on it keep their own copy of its sections (set_template, results.ts).
 // meetings.template.list      every member reads the active templates (layout, not personal data); an owner or admin also sees the archived ones, read only.
 //
-// The database holds the same rules: a restrictive row policy lets only an owner or admin of the org, in a user context, write the table, and crove_meetings.minutes_sections_ok
+// The database holds the same rules: a restrictive row policy lets only an owner or admin of the org, in a user context, write the table, and ludy_meetings.minutes_sections_ok
 // pins the shape of the sections. The audit row of a command carries the template's id and the number of sections, never a name or a hint (the audit scan keeps every column called name out).
 import { sql } from 'kysely';
 import {
@@ -46,7 +46,7 @@ function nameTaken(error: unknown): never {
 
 async function nameInUse(trx: Trx, orgId: string, name: string, exceptId: string | null): Promise<boolean> {
   let q = trx
-    .selectFrom('crove_meetings.minutes_template')
+    .selectFrom('ludy_meetings.minutes_template')
     .select('id')
     .where('org_id', '=', orgId)
     .where('archived_at', 'is', null)
@@ -67,7 +67,7 @@ export const minutesTemplateCreate = defineCommand({
     // A new template has no keys to keep: one sent with a key is a request for a section that does not exist.
     if (sections === null) throw invalidSections();
     const active = await ctx.trx
-      .selectFrom('crove_meetings.minutes_template')
+      .selectFrom('ludy_meetings.minutes_template')
       .select(sql<string>`count(*)::text`.as('n'))
       .where('org_id', '=', ctx.orgId)
       .where('archived_at', 'is', null)
@@ -75,7 +75,7 @@ export const minutesTemplateCreate = defineCommand({
     if (Number(active.n) >= TEMPLATES_ACTIVE_MAX) throw new DomainError('MINUTES_TEMPLATES_MAX', 422, `An organization keeps at most ${TEMPLATES_ACTIVE_MAX} templates; archive one first`);
     if (await nameInUse(ctx.trx, ctx.orgId, input.name, null)) throw nameTakenError();
     const row = await ctx.trx
-      .insertInto('crove_meetings.minutes_template')
+      .insertInto('ludy_meetings.minutes_template')
       .values({ org_id: ctx.orgId, name: input.name, sections: JSON.stringify(sections), created_by: userId, created_at: ctx.now, updated_at: ctx.now })
       .returning('id')
       .executeTakeFirstOrThrow()
@@ -95,7 +95,7 @@ export const minutesTemplateUpdate = defineCommand({
   handler: async (ctx, input) => {
     userOf(ctx.actor);
     const row = await ctx.trx
-      .selectFrom('crove_meetings.minutes_template')
+      .selectFrom('ludy_meetings.minutes_template')
       .select(['sections', 'archived_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.templateId)
@@ -107,7 +107,7 @@ export const minutesTemplateUpdate = defineCommand({
     if (sections === null) throw invalidSections();
     if (await nameInUse(ctx.trx, ctx.orgId, input.name, input.templateId)) throw nameTakenError();
     await ctx.trx
-      .updateTable('crove_meetings.minutes_template')
+      .updateTable('ludy_meetings.minutes_template')
       .set({ name: input.name, sections: JSON.stringify(sections), updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.templateId)
@@ -128,7 +128,7 @@ export const minutesTemplateArchive = defineCommand({
   handler: async (ctx, input) => {
     userOf(ctx.actor);
     const row = await ctx.trx
-      .selectFrom('crove_meetings.minutes_template')
+      .selectFrom('ludy_meetings.minutes_template')
       .select(['archived_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.templateId)
@@ -136,7 +136,7 @@ export const minutesTemplateArchive = defineCommand({
       .executeTakeFirst();
     if (!row) throw notFound();
     if (row.archived_at === null) {
-      await ctx.trx.updateTable('crove_meetings.minutes_template').set({ archived_at: ctx.now, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.templateId).execute();
+      await ctx.trx.updateTable('ludy_meetings.minutes_template').set({ archived_at: ctx.now, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.templateId).execute();
     }
     ctx.audit({ templateId: input.templateId, alreadyArchived: row.archived_at !== null });
     return zMinutesTemplateDone.parse({ templateId: input.templateId, archived: true });
@@ -151,7 +151,7 @@ export const minutesTemplateList = defineQuery({
     const userId = userOf(ctx.actor);
     const admin = await isOwnerOrAdmin(ctx.trx, ctx.orgId, userId);
     let q = ctx.trx
-      .selectFrom('crove_meetings.minutes_template')
+      .selectFrom('ludy_meetings.minutes_template')
       .select(['id', 'name', 'sections', 'archived_at', 'created_at', 'updated_at'])
       .where('org_id', '=', ctx.orgId);
     // A member sees the active templates; an owner or admin also sees the archived ones, which they cannot edit.

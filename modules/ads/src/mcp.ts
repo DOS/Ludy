@@ -97,7 +97,7 @@ export const mcpAdsSpend = defineQuery({
   handler: async (ctx, input): Promise<McpAdsSpend> => {
     requireGrant(ctx);
     const rows = await ctx.trx
-      .selectFrom('crove_ads.ad_account')
+      .selectFrom('ludy_ads.ad_account')
       .select(['id', 'name', 'currency', 'time_zone', 'result_kind', 'synced_through'])
       .where('org_id', '=', ctx.orgId)
       .orderBy('name')
@@ -175,7 +175,7 @@ export const mcpAdsLaunches = defineQuery({
     if (launches.length === 0) return { launches: [], truncated: false };
     const states = await manageStatesOf(ctx, launches);
     const accounts = await ctx.trx
-      .selectFrom('crove_ads.ad_account')
+      .selectFrom('ludy_ads.ad_account')
       .select(['id', 'name'])
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', [...new Set(launches.map((l) => l.ad_account_id))])

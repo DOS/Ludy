@@ -6,7 +6,7 @@ import { SOCIAL_CHANNEL_OPTION_ERRORS, SOCIAL_CHANNEL_OPTION_KINDS, SOCIAL_CHANN
 import { zSocialChannelOptions } from '@ludy/kernel-contract';
 
 describe('zSocialChannelOptions', () => {
-  it("allows every kind, status and error of crove_social.channel_option", () => {
+  it("allows every kind, status and error of ludy_social.channel_option", () => {
     expect([...zSocialChannelOptions.shape.kind.options].sort()).toEqual([...SOCIAL_CHANNEL_OPTION_KINDS].sort());
     expect([...zSocialChannelOptions.shape.status.options].sort()).toEqual([...SOCIAL_CHANNEL_OPTION_STATUSES].sort());
     expect([...zSocialChannelOptions.shape.error.unwrap().options].sort()).toEqual([...SOCIAL_CHANNEL_OPTION_ERRORS].sort());

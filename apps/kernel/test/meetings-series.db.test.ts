@@ -60,22 +60,22 @@ suite('a series of meetings (#3542)', () => {
   const event = (id: string, startMinutes: number, series: string | null) => ({ id, title: `Họp ${id}`, startsAt: iso(startMinutes), endsAt: iso(startMinutes + 60), timeZone: 'Asia/Ho_Chi_Minh', joinUrl: null, invitees: 2, series });
   const sweep = (connectionId: string, events: unknown[]) => worker.execute<{ written: number }>('meetings.agenda.replace', { connectionId, from: iso(-24 * 60), events }, { actor: SYSTEM, orgId });
   const seriesOfEvent = async (connectionId: string, externalId: string) =>
-    (await sqlAdmin<{ series_id: string | null }>('SELECT series_id FROM crove_meetings.calendar_agenda WHERE org_id = $1 AND connection_id = $2 AND external_id = $3', [orgId, connectionId, externalId])).rows[0]?.series_id ?? null;
+    (await sqlAdmin<{ series_id: string | null }>('SELECT series_id FROM ludy_meetings.calendar_agenda WHERE org_id = $1 AND connection_id = $2 AND external_id = $3', [orgId, connectionId, externalId])).rows[0]?.series_id ?? null;
   const agendaId = async (connectionId: string, externalId: string) =>
-    (await sqlAdmin<{ id: string }>('SELECT id FROM crove_meetings.calendar_agenda WHERE org_id = $1 AND connection_id = $2 AND external_id = $3', [orgId, connectionId, externalId])).rows[0]?.id as string;
+    (await sqlAdmin<{ id: string }>('SELECT id FROM ludy_meetings.calendar_agenda WHERE org_id = $1 AND connection_id = $2 AND external_id = $3', [orgId, connectionId, externalId])).rows[0]?.id as string;
 
   // A meeting recorded by `recorder`, started `startMinutes` from now (negative: in the past), read by `readers`.
   async function meeting(recorder: string, startMinutes: number, readers: string[] = [], title = 'Họp giao ban'): Promise<string> {
     const id = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, $6, 'vi', $4, $5, 3600, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 20, current_date + 365)`,
       [orgId, id, users[recorder], iso(startMinutes), iso(startMinutes + 60), title],
     );
-    for (const who of readers) await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), id, users[who]]);
+    for (const who of readers) await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), id, users[who]]);
     return id;
   }
-  const seriesOf = async (meetingId: string) => (await sqlAdmin<{ series_id: string | null }>('SELECT series_id FROM crove_meetings.meeting WHERE id = $1', [meetingId])).rows[0]?.series_id ?? null;
+  const seriesOf = async (meetingId: string) => (await sqlAdmin<{ series_id: string | null }>('SELECT series_id FROM ludy_meetings.meeting WHERE id = $1', [meetingId])).rows[0]?.series_id ?? null;
   const setSeries = (who: string, meetingId: string, previousMeetingId: string | null) => exec<{ inSeries: boolean }>(who, 'meetings.series.set', { meetingId, previousMeetingId });
   const openItems = (who: string, meetingId: string) => query<SeriesOpenItems>(who, 'meetings.series.open_items', { meetingId });
 
@@ -101,7 +101,7 @@ suite('a series of meetings (#3542)', () => {
       ]);
     }
     await sqlAdmin(
-      `INSERT INTO crove_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, task_id, tainted, transcript_seconds)
+      `INSERT INTO ludy_meetings.action_item (org_id, id, meeting_id, title, who_drafted, who_parsed, when_drafted, stage, status, task_id, tainted, transcript_seconds)
        VALUES ($1, $2, $3, $4, $5, $6, 'thứ sáu', $7, $8, $9, false, 10)`,
       [orgId, id, meetingId, title, over.who ?? 'Lan', over.who ? null : users.lan, over.stage ?? 'published', taskId === null ? 'suggested' : 'accepted', taskId],
     );
@@ -137,7 +137,7 @@ suite('a series of meetings (#3542)', () => {
 
   beforeEach(async () => {
     await sqlAdmin('DELETE FROM ludy_kernel.calendar_connection WHERE org_id = $1', [orgId]);
-    await sqlAdmin('DELETE FROM crove_meetings.meeting WHERE org_id = $1', [orgId]);
+    await sqlAdmin('DELETE FROM ludy_meetings.meeting WHERE org_id = $1', [orgId]);
     await sqlAdmin('DELETE FROM ludy_kernel.task WHERE org_id = $1', [orgId]);
     await sqlAdmin(`DELETE FROM ludy_kernel.position WHERE org_id = $1 AND title LIKE 'Ghế thử%'`, [orgId]);
   });
@@ -168,7 +168,7 @@ suite('a series of meetings (#3542)', () => {
     expect(other).not.toBe(first);
     expect(first).toBe((await sqlAdmin<{ h: string }>(`SELECT md5('google:weekly-staff')::uuid::text AS h`)).rows[0]?.h);
     expect(other).toBe((await sqlAdmin<{ h: string }>(`SELECT md5('microsoft:weekly-staff')::uuid::text AS h`)).rows[0]?.h);
-    const everything = JSON.stringify((await sqlAdmin('SELECT * FROM crove_meetings.calendar_agenda WHERE org_id = $1', [orgId])).rows);
+    const everything = JSON.stringify((await sqlAdmin('SELECT * FROM ludy_meetings.calendar_agenda WHERE org_id = $1', [orgId])).rows);
     expect(everything).not.toContain('weekly-staff');
     // A later sweep that finds the event outside a series takes the value away.
     await sweep(mine, [event('e1', 60, null)]);
@@ -193,7 +193,7 @@ suite('a series of meetings (#3542)', () => {
     const chosen = await meeting('rec', -200);
     await setSeries('rec', manual, chosen);
     const mine2 = await seriesOf(manual);
-    await sqlAdmin('UPDATE crove_meetings.calendar_agenda SET meeting_id = NULL WHERE org_id = $1', [orgId]);
+    await sqlAdmin('UPDATE ludy_meetings.calendar_agenda SET meeting_id = NULL WHERE org_id = $1', [orgId]);
     await exec('rec', 'meetings.agenda.link', { agendaId: await agendaId(mine, 'a'), meetingId: manual });
     expect(await seriesOf(manual)).toBe(mine2);
     // Unlinking leaves the meeting's series alone.
@@ -315,7 +315,7 @@ suite('a series of meetings (#3542)', () => {
     const current = await meeting('rec', -10, ['lan']);
     await setSeries('rec', current, earlier);
     await item(earlier, 'Việc cũ', { task: 'todo' });
-    await sqlAdmin('UPDATE crove_meetings.meeting SET text_retention_date = current_date - 1 WHERE id = $1', [earlier]);
+    await sqlAdmin('UPDATE ludy_meetings.meeting SET text_retention_date = current_date - 1 WHERE id = $1', [earlier]);
     expect(await openItems('lan', current)).toEqual({ meetingId: current, inSeries: true, previous: null, items: [] });
   });
 });

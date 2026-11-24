@@ -175,9 +175,9 @@ suite('MISA AMIS catalogue match (#4112)', () => {
   let connectionId = '';
   let entityId = '';
   const events = async () => (await rows<{ payload: { connection_id?: string } }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'finance.misa_amis_match.check_requested' ORDER BY id", [orgId])).map((r) => r.payload);
-  const checkRow = async () => (await rows<{ state: string; failure: string | null; params: Record<string, unknown>; finished_at: Date | null; requested_by: string | null }>('SELECT state, failure, params, finished_at, requested_by FROM crove_finance.misa_amis_match_check WHERE org_id = $1', [orgId]))[0];
+  const checkRow = async () => (await rows<{ state: string; failure: string | null; params: Record<string, unknown>; finished_at: Date | null; requested_by: string | null }>('SELECT state, failure, params, finished_at, requested_by FROM ludy_finance.misa_amis_match_check WHERE org_id = $1', [orgId]))[0];
   const results = (who: Account) => api.query<{ connectionId: string | null; status: { state: string; failure: string | null; requestedAt: string | null; checkedAt: string | null }; partyCodes: Map<string, string> | null; partyAmbiguous: Set<string> | null; itemCodes: Set<string> | null; partyNameCodes: Map<string, string> | null; unitIds: Map<string, { name: string; id: string }> | null; unitAmbiguous: Set<string> | null; stockIds: Map<string, string> | null; itemIds: Map<string, string> | null; product?: string }>('finance.misa_amis_match.results', {}, { actor: asUser(who), orgId });
-  const requestedAt = async () => new Date((await rows<{ requested_at: Date }>('SELECT requested_at FROM crove_finance.misa_amis_match_check WHERE org_id = $1', [orgId]))[0]!.requested_at).toISOString();
+  const requestedAt = async () => new Date((await rows<{ requested_at: Date }>('SELECT requested_at FROM ludy_finance.misa_amis_match_check WHERE org_id = $1', [orgId]))[0]!.requested_at).toISOString();
   const record = async (input: Record<string, unknown>) => worker.execute('finance.misa_amis_match.record_check', { connectionId, requestedAt: await requestedAt(), ...input }, { actor: SYSTEM, orgId });
 
   it('connects the fixture connection', async () => {
@@ -202,7 +202,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
   });
 
   it('asks again once the waiting check is older than ten minutes (a lost job must not block the connection for ever)', async () => {
-    await rows("UPDATE crove_finance.misa_amis_match_check SET requested_at = now() - interval '11 minutes' WHERE org_id = $1", [orgId]);
+    await rows("UPDATE ludy_finance.misa_amis_match_check SET requested_at = now() - interval '11 minutes' WHERE org_id = $1", [orgId]);
     expect(await call('matches/check', owner, { id: connectionId, ask: { ...ASK, kind: 'sales', salesItemCode: 'BH_CHUNG' } })).toMatchObject({ status: 200, body: { queued: true, running: false } });
     expect(await events()).toHaveLength(2);
     expect(await checkRow()).toMatchObject({ state: 'requested', requested_by: owner.userId, params: { kind: 'sales', salesItemCode: 'BH_CHUNG' } });
@@ -251,7 +251,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
     await expect(record({ state: 'done', failure: null, results: [res, res] })).rejects.toMatchObject({ code: 'MISA_AMIS_MATCH_INVALID' });
     await expect(record({ state: 'done', failure: null, results: [{ ...res, state: 'matched' }] })).rejects.toMatchObject({ code: 'MISA_AMIS_MATCH_INVALID' });
     expect((await checkRow())?.state).toBe('requested');
-    expect(await rows('SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1', [orgId])).toEqual([]);
+    expect(await rows('SELECT 1 FROM ludy_finance.misa_amis_match WHERE org_id = $1', [orgId])).toEqual([]);
   });
 
   it('records a done check: the results and the time, read back by every member as the codes the preview and the push write, and nothing but codes and ids stored', async () => {
@@ -278,13 +278,13 @@ suite('MISA AMIS catalogue match (#4112)', () => {
       expect(read.itemCodes).toEqual(new Set(['BH_CHUNG']));
     }
     // The stored rows hold a reference, a state, the matched entry's code and id: no column for a name, an address or a tax code of the catalogue.
-    const columns = (await rows<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_schema = 'crove_finance' AND table_name = 'misa_amis_match' ORDER BY ordinal_position")).map((r) => r.column_name);
+    const columns = (await rows<{ column_name: string }>("SELECT column_name FROM information_schema.columns WHERE table_schema = 'ludy_finance' AND table_name = 'misa_amis_match' ORDER BY ordinal_position")).map((r) => r.column_name);
     // Plus, since S3b (#4124), the name of a proposal (on that row alone) and who confirmed a name and when.
     expect(columns).toEqual(['org_id', 'id', 'legal_entity_id', 'connection_id', 'kind', 'match_key', 'state', 'catalogue_code', 'catalogue_id', 'checked_at', 'candidate_name', 'confirmed_by', 'confirmed_at']);
     // The worker's target now says there is nothing waiting, and a second record of the same check changes nothing.
     expect(await worker.query('finance.misa_amis_match.check_target', { id: connectionId }, { actor: SYSTEM, orgId })).toEqual({ action: 'none', reason: 'not_requested' });
     expect(await record({ state: 'done', failure: null, results: [] })).toEqual({ recorded: false, results: 0 });
-    expect(await rows('SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1', [orgId])).toHaveLength(4);
+    expect(await rows('SELECT 1 FROM ludy_finance.misa_amis_match WHERE org_id = $1', [orgId])).toHaveLength(4);
     // The audit row of the record names counts, no tax code, no code.
     const audit = await rows<{ detail: unknown }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.misa_amis_match.record_check'", [orgId]);
     expect(JSON.stringify(audit)).not.toMatch(/0101234564|NCC_ABC/);
@@ -298,21 +298,21 @@ suite('MISA AMIS catalogue match (#4112)', () => {
     expect(waiting.partyCodes).toEqual(new Map([['0101234564', 'NCC_ABC']]));
     expect(await record({ state: 'done', failure: null, results: [{ kind: 'party', ref: '0312345678', state: 'matched', code: 'KH_B', entryId: null }] })).toEqual({ recorded: true, results: 1 });
     expect((await results(member)).partyCodes).toEqual(new Map([['0312345678', 'KH_B']]));
-    expect(await rows('SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1', [orgId])).toHaveLength(1);
-    await rows("UPDATE crove_finance.misa_amis_match_check SET requested_at = now() - interval '11 minutes' WHERE org_id = $1", [orgId]);
+    expect(await rows('SELECT 1 FROM ludy_finance.misa_amis_match WHERE org_id = $1', [orgId])).toHaveLength(1);
+    await rows("UPDATE ludy_finance.misa_amis_match_check SET requested_at = now() - interval '11 minutes' WHERE org_id = $1", [orgId]);
     expect(await call('matches/check', owner, { id: connectionId, ask: ASK })).toMatchObject({ body: { queued: true } });
     expect(await record({ state: 'failed', failure: 'catalogue_too_large', results: [] })).toEqual({ recorded: true, results: 0 });
     const failed = await results(owner);
     expect(failed.status).toMatchObject({ state: 'failed', failure: 'catalogue_too_large', checkedAt: null });
     // The failed re-check changed none of the stored results.
     expect(failed.partyCodes).toEqual(new Map([['0312345678', 'KH_B']]));
-    expect(await rows('SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1', [orgId])).toHaveLength(1);
+    expect(await rows('SELECT 1 FROM ludy_finance.misa_amis_match WHERE org_id = $1', [orgId])).toHaveLength(1);
   });
 
   it('keeps a connection checked while a re-check waits or fails, even when its check had nothing to look up (no stored result): the sets are empty, never null', async () => {
-    await rows("UPDATE crove_finance.misa_amis_match_check SET state = 'requested', failure = NULL WHERE org_id = $1", [orgId]);
+    await rows("UPDATE ludy_finance.misa_amis_match_check SET state = 'requested', failure = NULL WHERE org_id = $1", [orgId]);
     expect(await record({ state: 'done', failure: null, results: [] })).toEqual({ recorded: true, results: 0 });
-    expect(await rows('SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1', [orgId])).toEqual([]);
+    expect(await rows('SELECT 1 FROM ludy_finance.misa_amis_match WHERE org_id = $1', [orgId])).toEqual([]);
     expect(await call('matches/check', owner, { id: connectionId, ask: ASK })).toMatchObject({ body: { queued: true } });
     const waiting = await results(member);
     expect(waiting.status.state).toBe('requested');
@@ -329,17 +329,17 @@ suite('MISA AMIS catalogue match (#4112)', () => {
     const partyIds: string[] = [];
     const entry = randomUUID();
     const askAgain = async () => {
-      await rows("UPDATE crove_finance.misa_amis_match_check SET requested_at = now() - interval '11 minutes' WHERE org_id = $1", [orgId]);
+      await rows("UPDATE ludy_finance.misa_amis_match_check SET requested_at = now() - interval '11 minutes' WHERE org_id = $1", [orgId]);
       expect(await call('matches/check', owner, { id: connectionId, ask: ASK })).toMatchObject({ body: { queued: true } });
     };
     const nameRows = () =>
       rows<{ match_key: string; state: string; catalogue_code: string | null; candidate_name: string | null; confirmed_by: string | null; confirmed_at: Date | null }>(
-        "SELECT match_key, state, catalogue_code, candidate_name, confirmed_by, confirmed_at FROM crove_finance.misa_amis_match WHERE org_id = $1 AND kind = 'party_name' ORDER BY match_key",
+        "SELECT match_key, state, catalogue_code, candidate_name, confirmed_by, confirmed_at FROM ludy_finance.misa_amis_match WHERE org_id = $1 AND kind = 'party_name' ORDER BY match_key",
         [orgId],
       );
     const proposal = (ref: string, code: string, candidateName: string) => ({ kind: 'party_name', ref, state: 'name_proposal', code, entryId: entry, candidateName });
     // What a person's decision carries: the row on screen and the code of the candidate on it.
-    const rowOf = async (partyId: string) => String((await rows<{ id: string }>("SELECT id FROM crove_finance.misa_amis_match WHERE org_id = $1 AND kind = 'party_name' AND match_key = $2", [orgId, partyId]))[0]?.id);
+    const rowOf = async (partyId: string) => String((await rows<{ id: string }>("SELECT id FROM ludy_finance.misa_amis_match WHERE org_id = $1 AND kind = 'party_name' AND match_key = $2", [orgId, partyId]))[0]?.id);
     const decision = async (partyId: string, candidateCode: string, over: Record<string, unknown> = {}) => ({ connectionId, partyId, proposalId: await rowOf(partyId), candidateCode, ...over });
 
     it('records what a name match found: a proposal with its name on that row alone, several as ambiguous, and nothing for none; a proposal is no match', async () => {
@@ -383,7 +383,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
       for (const result of bad) await expect(record({ state: 'done', failure: null, results: [result] }), JSON.stringify(result)).rejects.toMatchObject({ code: 'MISA_AMIS_MATCH_INVALID' });
       // The table says the same to a caller that bypasses the command.
       const insert = (kind: string, key: string, state: string, code: string | null, name: string | null) =>
-        rows('INSERT INTO crove_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state, catalogue_code, candidate_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [orgId, entityId, connectionId, kind, key, state, code, name]);
+        rows('INSERT INTO ludy_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state, catalogue_code, candidate_name) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [orgId, entityId, connectionId, kind, key, state, code, name]);
       await expect(insert('party_name', randomUUID(), 'name_proposal', 'KH', null)).rejects.toThrow(/misa_amis_match_found_ck/);
       await expect(insert('party_name', randomUUID(), 'confirmed', 'KH', 'a name')).rejects.toThrow(/misa_amis_match_found_ck/);
       // A confirmed row has the time it was confirmed.
@@ -400,7 +400,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
     it('lets only a person make a confirmed row: a tenant insert of one is a user\'s, in their own name and with the time, and the system context (the worker) never inserts one', async () => {
       const [, , , p4] = partyIds as [string, string, string, string];
       const insertConfirmed = (by: string | null, at: string | null, key = p4) =>
-        `INSERT INTO crove_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state, catalogue_code, confirmed_by, confirmed_at) VALUES ('${orgId}', '${entityId}', '${connectionId}', 'party_name', '${key}', 'confirmed', 'KH_X', ${by === null ? 'NULL' : `'${by}'`}, ${at === null ? 'NULL' : `'${at}'::timestamptz`})`;
+        `INSERT INTO ludy_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state, catalogue_code, confirmed_by, confirmed_at) VALUES ('${orgId}', '${entityId}', '${connectionId}', 'party_name', '${key}', 'confirmed', 'KH_X', ${by === null ? 'NULL' : `'${by}'`}, ${at === null ? 'NULL' : `'${at}'::timestamptz`})`;
       const asOwner = (statement: string) =>
         admin(async (c) => {
           await c.query('BEGIN');
@@ -438,7 +438,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
       // The worker's system context never inserts a confirmed row, whoever it names; it still inserts what a check finds.
       expect(await asSystem(insertConfirmed(owner.userId, now))).toMatch(/MISA_AMIS_MATCH_CONFIRMED/);
       expect(await asSystem(insertConfirmed(null, now))).toMatch(/MISA_AMIS_MATCH_CONFIRMED/);
-      expect(await asSystem(`INSERT INTO crove_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state) VALUES ('${orgId}', '${entityId}', '${connectionId}', 'party', '0309999990', 'unknown')`)).toBe('inserted');
+      expect(await asSystem(`INSERT INTO ludy_finance.misa_amis_match (org_id, legal_entity_id, connection_id, kind, match_key, state) VALUES ('${orgId}', '${entityId}', '${connectionId}', 'party', '0309999990', 'unknown')`)).toBe('inserted');
       expect(await nameRows()).toHaveLength(2);
     });
 
@@ -487,7 +487,7 @@ suite('MISA AMIS catalogue match (#4112)', () => {
       expect((await call('matches/proposals', owner, { connectionId })).body).toEqual([]);
       // Deciding twice finds nothing to decide; the name of the candidate is nowhere any more.
       expect(await call('matches/confirmName', owner, { connectionId, partyId: p1, proposalId: randomUUID(), candidateCode: 'KH_HS' })).toMatchObject(gone);
-      expect(await rows("SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1 AND candidate_name IS NOT NULL", [orgId])).toEqual([]);
+      expect(await rows("SELECT 1 FROM ludy_finance.misa_amis_match WHERE org_id = $1 AND candidate_name IS NOT NULL", [orgId])).toEqual([]);
       const audit = await rows<{ detail: unknown }>("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'finance.misa_amis_match.confirm_name'", [orgId]);
       expect(audit.length).toBeGreaterThan(0);
       expect(JSON.stringify(audit)).not.toMatch(/Hoa Sen|KH_HS/);
@@ -539,13 +539,13 @@ suite('MISA AMIS catalogue match (#4112)', () => {
       await record({ state: 'done', failure: null, results: [proposal(p1, 'KH_HS', 'Hoa Sen (HKD)')] });
       await askAgain();
       // Even a request time ahead of the clock moves forward: a record of the run that took it can never match the new one.
-      await rows("UPDATE crove_finance.misa_amis_match_check SET requested_at = now() + interval '1 hour' WHERE org_id = $1", [orgId]);
+      await rows("UPDATE ludy_finance.misa_amis_match_check SET requested_at = now() + interval '1 hour' WHERE org_id = $1", [orgId]);
       const taken = await requestedAt();
       expect(await call('matches/confirmName', owner, await decision(p1, 'KH_HS'))).toMatchObject({ body: { decided: true } });
       expect(new Date(await requestedAt()).getTime()).toBeGreaterThan(new Date(taken).getTime());
       // The run that took the earlier request records late: it read the confirmed names before this one existed, so its record is dropped.
       expect(await worker.execute('finance.misa_amis_match.record_check', { connectionId, requestedAt: taken, state: 'done', failure: null, results: [] }, { actor: SYSTEM, orgId })).toMatchObject({ recorded: false });
-      expect(await rows("SELECT state FROM crove_finance.misa_amis_match_check WHERE org_id = $1", [orgId])).toEqual([{ state: 'requested' }]);
+      expect(await rows("SELECT state FROM ludy_finance.misa_amis_match_check WHERE org_id = $1", [orgId])).toEqual([{ state: 'requested' }]);
       // The next run reads the confirmation and says its code is gone; the fixture is clean for the next test.
       await record({ state: 'done', failure: null, results: [{ kind: 'party_name', ref: p1, state: 'unknown', code: null, entryId: null }] });
       expect(await nameRows()).toEqual([]);
@@ -598,12 +598,12 @@ suite('MISA AMIS catalogue match (#4112)', () => {
   it('is the entity\'s alone: another org reads no check, and a disconnect takes the check and its results with the connection', async () => {
     const none = await api.query<{ connectionId: string | null; status: { state: string } }>('finance.misa_amis_match.results', {}, { actor: asUser(outsider), orgId: otherOrgId });
     expect(none).toMatchObject({ connectionId: null, status: { state: 'none' } });
-    await rows("UPDATE crove_finance.misa_amis_match_check SET state = 'requested', failure = NULL, finished_at = NULL WHERE org_id = $1", [orgId]);
+    await rows("UPDATE ludy_finance.misa_amis_match_check SET state = 'requested', failure = NULL, finished_at = NULL WHERE org_id = $1", [orgId]);
     await record({ state: 'done', failure: null, results: [{ kind: 'item', ref: 'DV_CHUNG', state: 'unknown', code: null, entryId: null }] });
     // The check's own result is the one item row; a name a person confirmed (left by the tests above) stays through a check and goes only with the connection.
-    expect(await rows("SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1 AND kind = 'item'", [orgId])).toHaveLength(1);
+    expect(await rows("SELECT 1 FROM ludy_finance.misa_amis_match WHERE org_id = $1 AND kind = 'item'", [orgId])).toHaveLength(1);
     expect((await call('connections/disconnect', owner, { id: connectionId })).status).toBe(200);
-    expect(await rows('SELECT 1 FROM crove_finance.misa_amis_match_check WHERE org_id = $1', [orgId])).toEqual([]);
-    expect(await rows('SELECT 1 FROM crove_finance.misa_amis_match WHERE org_id = $1', [orgId])).toEqual([]);
+    expect(await rows('SELECT 1 FROM ludy_finance.misa_amis_match_check WHERE org_id = $1', [orgId])).toEqual([]);
+    expect(await rows('SELECT 1 FROM ludy_finance.misa_amis_match WHERE org_id = $1', [orgId])).toEqual([]);
   });
 });

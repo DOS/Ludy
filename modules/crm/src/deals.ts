@@ -2,7 +2,7 @@
 // Deals and the pipeline (issue #2225, plan docs/plan/crm.md §4.1, §4.2 and §5, step K1): the org's one pipeline of
 // ordered stages and the deals that sit in them. Owners, admins and members write; viewers read. Every command is R1
 // and internal: it changes only the org's own records, and no agent runs one (the commands refuse a caller that is not
-// a person, and no agent role writes crove_crm).
+// a person, and no agent role writes ludy_crm).
 //
 // A deal's status is its stage's kind: moving it into a won or lost stage closes it, moving it back opens it again.
 // An edit or a move sends the version the caller read, so a second person's save in between is refused instead of
@@ -62,7 +62,7 @@ const day = (value: Date | string | null): string | null => (value === null ? nu
 // ---------------------------------------------------------------------------------------------------------------
 
 export async function loadStages(ctx: Reader): Promise<PipelineStage[]> {
-  const rows = await ctx.trx.selectFrom('crove_crm.pipeline_stage').select(['id', 'name', 'kind', 'position']).where('org_id', '=', ctx.orgId).orderBy('position').execute();
+  const rows = await ctx.trx.selectFrom('ludy_crm.pipeline_stage').select(['id', 'name', 'kind', 'position']).where('org_id', '=', ctx.orgId).orderBy('position').execute();
   return rows.map((r) => ({ id: r.id, name: r.name, kind: r.kind as DealStageKind, position: r.position }));
 }
 
@@ -80,7 +80,7 @@ export async function ensureStages(ctx: CommandContext): Promise<PipelineStage[]
   const existing = await loadStages(ctx);
   if (existing.length > 0) return existing;
   await ctx.trx
-    .insertInto('crove_crm.pipeline_stage')
+    .insertInto('ludy_crm.pipeline_stage')
     .values(DEFAULT_PIPELINE_STAGES.map((s, i) => ({ org_id: ctx.orgId, name: s.name, kind: s.kind, position: i + 1 })))
     .execute();
   const stages = await loadStages(ctx);
@@ -174,11 +174,11 @@ const DUPLICATE_CHAIN_MAX = 10;
 
 export function base(ctx: Reader) {
   return ctx.trx
-    .selectFrom('crove_crm.deal as d')
+    .selectFrom('ludy_crm.deal as d')
     .innerJoin('ludy_kernel.party as p', (j) => j.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
-    .innerJoin('crove_crm.pipeline_stage as s', (j) => j.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.stage_id'))
+    .innerJoin('ludy_crm.pipeline_stage as s', (j) => j.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.stage_id'))
     // The open next step of the deal (at most one, by index) unless it is snoozed: the badge "Cần theo dõi".
-    .leftJoin('crove_crm.deal_next_step as n', (j) =>
+    .leftJoin('ludy_crm.deal_next_step as n', (j) =>
       j.onRef('n.org_id', '=', 'd.org_id').onRef('n.deal_id', '=', 'd.id').on('n.status', '=', 'open').on(sql<boolean>`(n.snoozed_until IS NULL OR n.snoozed_until <= now())`),
     )
     // The party the deal's party was marked a duplicate of: follow duplicate_of to the end of the chain (one row, none for a party that is not a duplicate), inside the org.
@@ -220,7 +220,7 @@ async function assertOwner(ctx: CommandContext, userId: string | null): Promise<
 
 // The stage's keys in order, for placing a deal between two others.
 async function stageKeys(ctx: CommandContext, stageId: string, except: string | null): Promise<{ id: string; sort_key: string }[]> {
-  let q = ctx.trx.selectFrom('crove_crm.deal').select(['id', 'sort_key']).where('org_id', '=', ctx.orgId).where('stage_id', '=', stageId);
+  let q = ctx.trx.selectFrom('ludy_crm.deal').select(['id', 'sort_key']).where('org_id', '=', ctx.orgId).where('stage_id', '=', stageId);
   if (except) q = q.where('id', '<>', except);
   return q.orderBy('sort_key').orderBy('id').execute();
 }
@@ -228,7 +228,7 @@ async function stageKeys(ctx: CommandContext, stageId: string, except: string | 
 async function rebalance(ctx: CommandContext, rows: { id: string; sort_key: string }[]): Promise<{ id: string; sort_key: string }[]> {
   const keys = spreadKeys(rows.length);
   const next = rows.map((r, i) => ({ id: r.id, sort_key: keys[i] as string }));
-  for (const r of next) await ctx.trx.updateTable('crove_crm.deal').set({ sort_key: r.sort_key }).where('org_id', '=', ctx.orgId).where('id', '=', r.id).execute();
+  for (const r of next) await ctx.trx.updateTable('ludy_crm.deal').set({ sort_key: r.sort_key }).where('org_id', '=', ctx.orgId).where('id', '=', r.id).execute();
   return next;
 }
 
@@ -258,7 +258,7 @@ async function keyFor(ctx: CommandContext, stageId: string, except: string | nul
 }
 
 async function stageOf(ctx: CommandContext, stageId: string): Promise<{ id: string; name: string; kind: DealStageKind }> {
-  const stage = await ctx.trx.selectFrom('crove_crm.pipeline_stage').select(['id', 'name', 'kind']).where('org_id', '=', ctx.orgId).where('id', '=', stageId).executeTakeFirst();
+  const stage = await ctx.trx.selectFrom('ludy_crm.pipeline_stage').select(['id', 'name', 'kind']).where('org_id', '=', ctx.orgId).where('id', '=', stageId).executeTakeFirst();
   if (!stage) throw new DomainError('STAGE_NOT_FOUND', 404, 'Không tìm thấy giai đoạn này');
   return { id: stage.id, name: stage.name, kind: stage.kind as DealStageKind };
 }
@@ -289,7 +289,7 @@ export const dealCreate = defineCommand({
     if (stage.kind !== 'open') throw new DomainError('DEAL_STAGE_CLOSED', 422, 'Cơ hội mới chỉ tạo ở một giai đoạn đang mở');
     const sortKey = await keyFor(ctx, stage.id, null, null, null);
     const row = await ctx.trx
-      .insertInto('crove_crm.deal')
+      .insertInto('ludy_crm.deal')
       .values({
         org_id: ctx.orgId,
         party_id: input.partyId,
@@ -324,7 +324,7 @@ export const dealUpdate = defineCommand({
     const title = oneLine(input.title);
     if (!title) throw new DomainError('INVALID_DEAL_TITLE', 422, 'Tên cơ hội không được để trống');
     const before = await ctx.trx
-      .selectFrom('crove_crm.deal')
+      .selectFrom('ludy_crm.deal')
       .select(['id', 'party_id', 'title', 'amount', 'expected_close', 'owner_user_id', 'version'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.dealId)
@@ -336,7 +336,7 @@ export const dealUpdate = defineCommand({
     if (input.ownerUserId !== before.owner_user_id) await assertOwner(ctx, input.ownerUserId);
     const titleChanged = title !== before.title;
     await ctx.trx
-      .updateTable('crove_crm.deal')
+      .updateTable('ludy_crm.deal')
       .set({ party_id: input.partyId, title, amount: input.amount, expected_close: input.expectedClose, owner_user_id: input.ownerUserId, version: before.version + 1, updated_by: userId, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.dealId)
@@ -366,8 +366,8 @@ export const dealMove = defineCommand({
     const userId = userOf(ctx.actor);
     await lockPipeline(ctx);
     const before = await ctx.trx
-      .selectFrom('crove_crm.deal as d')
-      .innerJoin('crove_crm.pipeline_stage as s', (j) => j.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.stage_id'))
+      .selectFrom('ludy_crm.deal as d')
+      .innerJoin('ludy_crm.pipeline_stage as s', (j) => j.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.stage_id'))
       .select(['d.id', 'd.party_id', 'd.stage_id', 'd.version', 's.kind as stage_kind', 's.name as stage_name'])
       .where('d.org_id', '=', ctx.orgId)
       .where('d.id', '=', input.dealId)
@@ -381,7 +381,7 @@ export const dealMove = defineCommand({
     if (input.lostReason && stage.kind !== 'lost') throw new DomainError('DEAL_LOST_REASON_INVALID', 422, 'Lý do chỉ ghi khi chuyển cơ hội sang giai đoạn thua');
     const sortKey = await keyFor(ctx, stage.id, input.dealId, input.beforeDealId ?? null, input.afterDealId ?? null);
     await ctx.trx
-      .updateTable('crove_crm.deal')
+      .updateTable('ludy_crm.deal')
       .set({
         stage_id: stage.id,
         sort_key: sortKey,
@@ -420,13 +420,13 @@ export const dealDelete = defineCommand({
   target: (input) => ({ type: 'crm.deal', id: input.dealId }),
   handler: async (ctx, input): Promise<{ dealId: string; deleted: true }> => {
     const userId = userOf(ctx.actor);
-    const deal = await ctx.trx.selectFrom('crove_crm.deal').select(['id', 'party_id', 'created_by']).where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).forUpdate().executeTakeFirst();
+    const deal = await ctx.trx.selectFrom('ludy_crm.deal').select(['id', 'party_id', 'created_by']).where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).forUpdate().executeTakeFirst();
     if (!deal) throw notFound();
     // A member deletes the deals they created; owners and admins any.
     if (ctx.role === 'member' && deal.created_by !== userId) throw new DomainError('DEAL_DELETE_FORBIDDEN', 403, 'Bạn chỉ xóa được cơ hội do chính mình tạo');
     // A quote the customer holds is a document: a deal with one is kept (plan docs/plan/crm-quotes.md 4.1).
     if (await dealHasQuotes(ctx, input.dealId)) throw new DomainError('DEAL_HAS_QUOTES', 409, 'Cơ hội này đã có báo giá nên không xóa được');
-    await ctx.trx.deleteFrom('crove_crm.deal').where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).execute();
+    await ctx.trx.deleteFrom('ludy_crm.deal').where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).execute();
     ctx.audit({ dealId: input.dealId, partyId: deal.party_id });
     await ctx.activity('kernel.party', deal.party_id, 'deal.deleted', 'Xóa một cơ hội bán hàng');
     return { dealId: input.dealId, deleted: true };
@@ -542,7 +542,7 @@ export const dealConversations = defineQuery({
   input: zDealRef,
   access: ALL,
   handler: async (ctx, input): Promise<ConversationOther[]> => {
-    const deal = await ctx.trx.selectFrom('crove_crm.deal').select(['id', 'party_id', 'created_at']).where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).executeTakeFirst();
+    const deal = await ctx.trx.selectFrom('ludy_crm.deal').select(['id', 'party_id', 'created_at']).where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).executeTakeFirst();
     if (!deal) throw notFound();
     return conversationsForParty(ctx, deal.party_id, new Date(deal.created_at));
   },

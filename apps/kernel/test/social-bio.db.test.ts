@@ -104,7 +104,7 @@ suite('social link-in-bio page on PostgreSQL (#707)', () => {
   const save = (o: Org, user: string, input: Record<string, unknown>) => exec<{ pageId: string; slug: string }>(o, user, 'social.bio.save', input);
   const page = (o: Org, user: string) => rt.query<BioPage | null>('social.bio.get', {}, { actor: asUser(user), orgId: o.orgId });
   // As the API login role, the one the public routes use.
-  const fileOf = async (slug: string, fileId: string) => (await pool.query<{ storage_key: string }>('SELECT storage_key FROM crove_social.bio_page_file($1, $2::uuid)', [slug, fileId])).rows;
+  const fileOf = async (slug: string, fileId: string) => (await pool.query<{ storage_key: string }>('SELECT storage_key FROM ludy_social.bio_page_file($1, $2::uuid)', [slug, fileId])).rows;
 
   it('saves one page per org, shows it only when published, and nothing of it but what it shows', async () => {
     const o = await org();
@@ -137,7 +137,7 @@ suite('social link-in-bio page on PostgreSQL (#707)', () => {
     const other = await socialFile(o.orgId, o.owner);
     const image = await socialFile(o.orgId, o.owner);
     const { postId } = await exec<{ postId: string }>(o, o.owner, 'social.post.create', { body: 'Bánh mới', linkUrl: 'https://tiembanh.example/moi', media: [{ fileId: image }], channels: [{ connectionId: conn }] });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'published', published_at = now(), external_url = 'https://social.example/p/1' WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'published', published_at = now(), external_url = 'https://social.example/p/1' WHERE post_id = $1", [postId]));
     await save(o, o.owner, { slug: 'bio-tiem', title: 'Tiệm', avatarFileId: avatar, buttons: [{ label: 'Website', url: 'https://tiembanh.example/' }], showPosts: true, published: true });
     const view = await bioView(rt, 'bio-tiem');
     expect(view?.posts).toEqual([{ postId, fileId: image, excerpt: 'Bánh mới', linked: true }]);
@@ -163,7 +163,7 @@ suite('social link-in-bio page on PostgreSQL (#707)', () => {
     await save(o, o.owner, { slug: 'bio-tiem', title: 'Tiệm', avatarFileId: avatar, buttons: [], showPosts: false, published: false });
     expect(await fileOf('bio-tiem', avatar)).toEqual([]);
     // The API role cannot write clicks; only the definer does.
-    await expect(pool.query("INSERT INTO crove_social.bio_click (org_id, page_id, target, day) SELECT org_id, id, 'button:0', current_date FROM crove_social.bio_page")).rejects.toMatchObject({ code: '42501' });
+    await expect(pool.query("INSERT INTO ludy_social.bio_click (org_id, page_id, target, day) SELECT org_id, id, 'button:0', current_date FROM ludy_social.bio_page")).rejects.toMatchObject({ code: '42501' });
   });
 
   it('answers as an unknown page while Social is off for the org, and as before once it is on (ADR-0053, C2)', async () => {
@@ -171,7 +171,7 @@ suite('social link-in-bio page on PostgreSQL (#707)', () => {
     const conn = await connection(o.orgId, o.owner);
     const image = await socialFile(o.orgId, o.owner);
     const { postId } = await exec<{ postId: string }>(o, o.owner, 'social.post.create', { body: 'Bánh mới', linkUrl: 'https://tiembanh.example/moi', media: [{ fileId: image }], channels: [{ connectionId: conn }] });
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'published', published_at = now(), external_url = 'https://social.example/p/1' WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET status = 'published', published_at = now(), external_url = 'https://social.example/p/1' WHERE post_id = $1", [postId]));
     const avatar = await socialFile(o.orgId, o.owner);
     await save(o, o.owner, { slug: 'bio-tat', title: 'Tiệm', avatarFileId: avatar, buttons: [{ label: 'Website', url: 'https://tiembanh.example/' }], showPosts: true, published: true });
     const setApp = (enabled: boolean) => rt.execute('kernel.org.set_app', { module: 'social', enabled }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });

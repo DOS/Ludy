@@ -218,7 +218,7 @@ export async function resolvePublicRoadmapBoard(
   const cleanEmail = voterEmail ? voterEmail.trim().toLowerCase() : null;
   const row = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ resolved: SqlBoardResolveRow | null }>`
-      SELECT crove_projects.public_roadmap_resolve_board(${slugs.orgSlug}, ${slugs.boardSlug}, ${cleanEmail}) AS resolved`.execute(db);
+      SELECT ludy_projects.public_roadmap_resolve_board(${slugs.orgSlug}, ${slugs.boardSlug}, ${cleanEmail}) AS resolved`.execute(db);
     return rows[0]?.resolved ?? null;
   });
   if (!row) return null;
@@ -274,7 +274,7 @@ export async function runPublicRoadmapView(
   type SqlViewRow = RoadmapPublicViewResult & { orgId: string };
   const res = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ view: SqlViewRow | null }>`
-      SELECT crove_projects.public_roadmap_view(
+      SELECT ludy_projects.public_roadmap_view(
         ${slugs.orgSlug},
         ${slugs.boardSlug},
         ${viewer.claimSha256},
@@ -333,7 +333,7 @@ export async function runPublicRoadmapOtpRequest(
 
   const res = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ result: SqlOtpRequestRow }>`
-      SELECT crove_projects.public_roadmap_otp_request(
+      SELECT ludy_projects.public_roadmap_otp_request(
         ${orgSlug.trim().toLowerCase()},
         ${boardSlug.trim().toLowerCase()},
         ${normalizedEmail},
@@ -403,7 +403,7 @@ export async function runPublicRoadmapOtpVerify(
 
   const res = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ result: SqlOtpVerifyRow }>`
-      SELECT crove_projects.public_roadmap_otp_verify(
+      SELECT ludy_projects.public_roadmap_otp_verify(
         ${slugs.orgSlug},
         ${slugs.boardSlug},
         ${parsed.data.email.trim().toLowerCase()},
@@ -467,7 +467,7 @@ export async function runPublicRoadmapSubmitIdea(
   type SqlSubmitRow = ({ orgId: string; status: 'ok' } & RoadmapPublicSubmitIdeaResult) | SqlErrorPayload | null;
   const res = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ result: SqlSubmitRow }>`
-      SELECT crove_projects.public_roadmap_submit_idea(
+      SELECT ludy_projects.public_roadmap_submit_idea(
         ${orgSlug.trim().toLowerCase()},
         ${boardSlug.trim().toLowerCase()},
         ${parsed.data.title},
@@ -519,7 +519,7 @@ export async function runPublicRoadmapVote(
     type SqlUnsubRow = ({ orgId: string; status: 'ok'; unsubscribed: boolean }) | SqlErrorPayload | null;
     const unsub = await runtime.orgless(async (db) => {
       const { rows } = await sql<{ result: SqlUnsubRow }>`
-        SELECT crove_projects.public_roadmap_unsubscribe(
+        SELECT ludy_projects.public_roadmap_unsubscribe(
           ${cleanOrgSlug},
           ${cleanBoardSlug},
           ${tokenHash}
@@ -548,7 +548,7 @@ export async function runPublicRoadmapVote(
         const { rows } = await sql<{
           claim: { orgId: string; boardId: string; valid: boolean; email?: string; voterEmailHash?: string; hasSubscriber?: boolean } | null;
         }>`
-          SELECT crove_projects.public_roadmap_claim_resolve(
+          SELECT ludy_projects.public_roadmap_claim_resolve(
             ${cleanOrgSlug},
             ${cleanBoardSlug},
             ${auth.claimSha256}
@@ -587,7 +587,7 @@ export async function runPublicRoadmapVote(
   if (parsed.data.action === 'subscribe') {
     const subRes = await runtime.orgless(async (db) => {
       const { rows } = await sql<{ result: ({ orgId: string; status: 'ok'; notifyOnShip: boolean }) | SqlErrorPayload | null }>`
-        SELECT crove_projects.public_roadmap_subscribe(
+        SELECT ludy_projects.public_roadmap_subscribe(
           ${cleanOrgSlug},
           ${cleanBoardSlug},
           ${Boolean(parsed.data.notifyOnShip)}::boolean,
@@ -618,7 +618,7 @@ export async function runPublicRoadmapVote(
 
   const res = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ result: SqlVoteRow }>`
-      SELECT crove_projects.public_roadmap_vote(
+      SELECT ludy_projects.public_roadmap_vote(
         ${cleanOrgSlug},
         ${cleanBoardSlug},
         ${parsed.data.itemId as string}::uuid,

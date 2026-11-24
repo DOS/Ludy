@@ -190,7 +190,7 @@ suite('pinned internal comments on PostgreSQL (#1180)', () => {
     await exec(o, o.owner, 'social.channel_access.set', { userId: o.member, channelConnectionIds: [a] });
     await expect(comment(o, o.member, { postId, variantId: vb, body: 'x', pin: { fileId: clip, atSeconds: 1 } })).rejects.toMatchObject({ code: 'CHANNEL_NOT_ALLOWED', status: 403 });
     // Nothing refused was written.
-    const rows = await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM crove_social.post_comment WHERE org_id = $1 AND post_id = $2', [o.orgId, postId]));
+    const rows = await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_social.post_comment WHERE org_id = $1 AND post_id = $2', [o.orgId, postId]));
     expect(rows.rows[0]?.n).toBe('1');
   });
 
@@ -221,7 +221,7 @@ suite('pinned internal comments on PostgreSQL (#1180)', () => {
     const { postId } = await exec<{ postId: string }>(o, o.member, 'social.post.create', { body: 'Bài', media: [{ fileId: photo }], channels: [{ connectionId: conn }] });
     const insert = (pin: { file_id?: string | null; pin_x?: number | string | null; pin_y?: number | string | null; pin_seconds?: number | string | null }) =>
       admin((c) =>
-        c.query('INSERT INTO crove_social.post_comment (org_id, post_id, author_user_id, body, file_id, pin_x, pin_y, pin_seconds) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [
+        c.query('INSERT INTO ludy_social.post_comment (org_id, post_id, author_user_id, body, file_id, pin_x, pin_y, pin_seconds) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [
           o.orgId,
           postId,
           o.member,
@@ -271,7 +271,7 @@ suite('pinned internal comments on PostgreSQL (#1180)', () => {
           await c.query('BEGIN');
           try {
             await c.query('SET LOCAL ROLE ludy_tenant');
-            await c.query(`UPDATE crove_social.post_comment SET ${column} = NULL WHERE false`);
+            await c.query(`UPDATE ludy_social.post_comment SET ${column} = NULL WHERE false`);
           } finally {
             await c.query('ROLLBACK');
           }
@@ -280,7 +280,7 @@ suite('pinned internal comments on PostgreSQL (#1180)', () => {
     }
     const grants = await admin((c) =>
       c.query<{ column_name: string }>(
-        "SELECT column_name FROM information_schema.column_privileges WHERE table_schema = 'crove_social' AND table_name = 'post_comment' AND grantee = 'ludy_tenant' AND privilege_type = 'UPDATE' ORDER BY column_name",
+        "SELECT column_name FROM information_schema.column_privileges WHERE table_schema = 'ludy_social' AND table_name = 'post_comment' AND grantee = 'ludy_tenant' AND privilege_type = 'UPDATE' ORDER BY column_name",
       ),
     );
     expect(grants.rows.map((r) => r.column_name)).toEqual(['body', 'edited_at', 'resolved_at', 'resolved_by', 'suggest_state']);

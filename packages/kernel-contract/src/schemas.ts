@@ -175,7 +175,7 @@ export const zProposedLine = z.object({
   // account of a sale line (direction 'sale', issue #313). The name predates sales.
   debitAccount: zAccountCode,
   reason: z.string().max(500),
-  // What chose debitAccount (#1399): a learned rule (crove_finance.categorization_rule, with its id and whether it is
+  // What chose debitAccount (#1399): a learned rule (ludy_finance.categorization_rule, with its id and whether it is
   // the vendor's own or every vendor's), the vendor's default account, the built-in keyword list, or a user who picked
   // it on a revision. Absent on proposals made before #1399.
   accountRule: zAccountRule.optional(),
@@ -1626,7 +1626,7 @@ export const SOCIAL_POST_STATUSES = ['draft', 'scheduled', 'publishing', 'publis
 export const SOCIAL_DECISIONS = ['approved', 'changes_requested', 'rejected'] as const;
 // The palette a label's colour comes from (#639).
 export const SOCIAL_LABEL_COLORS = ['gray', 'red', 'orange', 'yellow', 'green', 'teal', 'blue', 'purple', 'pink'] as const;
-// The corner of an image the org's logo watermark goes in (#834); the same list as crove_social.watermark's CHECK.
+// The corner of an image the org's logo watermark goes in (#834); the same list as ludy_social.watermark's CHECK.
 export const SOCIAL_WATERMARK_CORNERS = ['top_left', 'top_right', 'bottom_left', 'bottom_right'] as const;
 // An org's white-label branding of its client reports (#1053), as the settings and the public views return it. The
 // command checks the logo (PNG, WebP or JPEG data URL, at most 64 KB, its magic number) and the accent's contrast.
@@ -1643,7 +1643,7 @@ export const zSocialReportBrandingSave = z.strictObject({
   hideCrove: z.boolean(),
 });
 // The org's team chat for Social alerts (#863): where it is, and the kinds of alert it may get; the same lists as
-// crove_social.chat_alert's CHECKs.
+// ludy_social.chat_alert's CHECKs.
 export const SOCIAL_CHAT_ALERT_TARGETS = ['telegram', 'discord'] as const;
 export const SOCIAL_CHAT_ALERT_KINDS = ['needs_approval', 'failed', 'published', 'client_answered'] as const;
 // The stages of an idea on the ideas board (#701).
@@ -1899,14 +1899,14 @@ export const zSocialRecurrence = z.strictObject({
     .max(7)
     .refine((days) => new Set(days).size === days.length, 'each weekday once'),
   time: z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/, 'a time HH:mm'),
-  // The database takes years from 2000 (crove_social.recurrence_valid).
+  // The database takes years from 2000 (ludy_social.recurrence_valid).
   until: zLocalDate.refine((d) => d >= '2000-01-01', 'a date from 2000').nullable(),
   times: z.number().int().min(1).max(SOCIAL_RECURRENCE_TIMES_MAX).nullable(),
 });
 export type SocialRecurrence = z.infer<typeof zSocialRecurrence>;
 
 // Text variations (#1260): up to 5 other texts of an evergreen or series post, in order; each evergreen repost or
-// recurring copy takes the next one in turn as its text. ai marks one AI wrote (#583). crove_social.text_variations_valid
+// recurring copy takes the next one in turn as its text. ai marks one AI wrote (#583). ludy_social.text_variations_valid
 // holds the same shape.
 export const SOCIAL_TEXT_VARIATIONS_MAX = 5;
 export const SOCIAL_TEXT_VARIATION_CHARS_MAX = 100_000;
@@ -2795,16 +2795,16 @@ export const zSocialNotifications = z.object({
   mailOff: z.boolean(),
 });
 
-// Browser push (#1238): the deployment's VAPID public key (null: push is off), the viewer's devices in the org and
+// Browser push (#1238, the kernel's since #3736): the deployment's VAPID public key (null: push is off), the viewer's devices in the org and
 // whether the asking browser is one of them.
-export const zSocialPushStatus = z.object({
+export const zPushStatus = z.object({
   enabled: z.boolean(),
   publicKey: z.string().nullable(),
   subscribed: z.boolean(),
   devices: z.array(z.object({ id: zId, label: z.string().nullable(), createdAt: z.string(), lastUsedAt: z.string().nullable(), current: z.boolean() })),
 });
 // A browser's push subscription as PushSubscription.toJSON() gives it; the command checks the URL and the keys.
-export const zSocialPushSubscribe = z.strictObject({
+export const zPushSubscribe = z.strictObject({
   endpoint: z.string().min(12).max(2048),
   p256dh: z.string().min(1).max(128),
   auth: z.string().min(1).max(128),

@@ -127,11 +127,11 @@ suite('a live agent run and the switches of running ads (ADR-0043, #2294)', () =
         [orgId, connection, owner],
       );
       await c.query(
-        `INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from) VALUES ($1, $2, $3, 'sandbox_ads', 'sandbox-agent-test', 'Agent test', '2025-10-01')`,
+        `INSERT INTO ludy_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from) VALUES ($1, $2, $3, 'sandbox_ads', 'sandbox-agent-test', 'Agent test', '2025-10-01')`,
         [orgId, adAccountId, connection],
       );
       // The org's row of switches exists, both off.
-      await c.query('INSERT INTO crove_ads.ad_org_setting (org_id) VALUES ($1)', [orgId]);
+      await c.query('INSERT INTO ludy_ads.ad_org_setting (org_id) VALUES ($1)', [orgId]);
     });
     // A live agent: installed from the template, holding its own position, with a run started through a task that wakes it.
     const { agentId, positionId } = await app.execute<{ agentId: string; positionId: string }>('kernel.agent.template.install', { templateKey: TEMPLATE, reportsTo: null }, { actor: asMfa(owner), orgId });
@@ -152,9 +152,9 @@ suite('a live agent run and the switches of running ads (ADR-0043, #2294)', () =
 
   const state = () =>
     admin(async (c) => {
-      const setting = (await c.query<{ write_enabled: boolean; launches_blocked: boolean }>('SELECT write_enabled, launches_blocked FROM crove_ads.ad_org_setting WHERE org_id = $1', [orgId])).rows[0];
-      const account = (await c.query<{ write_enabled: boolean }>('SELECT write_enabled FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2', [orgId, adAccountId])).rows[0];
-      const caps = (await c.query<{ n: string }>('SELECT count(*)::text AS n FROM crove_ads.ad_spend_cap WHERE org_id = $1', [orgId])).rows[0]?.n;
+      const setting = (await c.query<{ write_enabled: boolean; launches_blocked: boolean }>('SELECT write_enabled, launches_blocked FROM ludy_ads.ad_org_setting WHERE org_id = $1', [orgId])).rows[0];
+      const account = (await c.query<{ write_enabled: boolean }>('SELECT write_enabled FROM ludy_ads.ad_account WHERE org_id = $1 AND id = $2', [orgId, adAccountId])).rows[0];
+      const caps = (await c.query<{ n: string }>('SELECT count(*)::text AS n FROM ludy_ads.ad_spend_cap WHERE org_id = $1', [orgId])).rows[0]?.n;
       return { setting, account, caps };
     });
 
@@ -164,11 +164,11 @@ suite('a live agent run and the switches of running ads (ADR-0043, #2294)', () =
     // Opening: writing on for the org, writing on for an account. Closing: launches blocked. And a cap. Each in a transaction of
     // its own, since a refused statement aborts the one it ran in.
     const attempts: Array<[string, string, unknown[]]> = [
-      ['write on for the org', 'UPDATE crove_ads.ad_org_setting SET write_enabled = true WHERE org_id = $1', [orgId]],
-      ['launches blocked', 'UPDATE crove_ads.ad_org_setting SET launches_blocked = true WHERE org_id = $1', [orgId]],
-      ['write on for an account', 'UPDATE crove_ads.ad_account SET write_enabled = true WHERE org_id = $1 AND id = $2', [orgId, adAccountId]],
-      ['a cap', `INSERT INTO crove_ads.ad_spend_cap (org_id, scope, period, amount, currency, set_by) VALUES ($1, 'org', 'daily', '1000000', 'VND', $2)`, [orgId, owner]],
-      ['a second row of switches', 'INSERT INTO crove_ads.ad_org_setting (org_id) VALUES ($1)', [orgId]],
+      ['write on for the org', 'UPDATE ludy_ads.ad_org_setting SET write_enabled = true WHERE org_id = $1', [orgId]],
+      ['launches blocked', 'UPDATE ludy_ads.ad_org_setting SET launches_blocked = true WHERE org_id = $1', [orgId]],
+      ['write on for an account', 'UPDATE ludy_ads.ad_account SET write_enabled = true WHERE org_id = $1 AND id = $2', [orgId, adAccountId]],
+      ['a cap', `INSERT INTO ludy_ads.ad_spend_cap (org_id, scope, period, amount, currency, set_by) VALUES ($1, 'org', 'daily', '1000000', 'VND', $2)`, [orgId, owner]],
+      ['a second row of switches', 'INSERT INTO ludy_ads.ad_org_setting (org_id) VALUES ($1)', [orgId]],
     ];
     for (const [what, text, params] of attempts) {
       await inAgentContext(async (c) => {
@@ -177,14 +177,14 @@ suite('a live agent run and the switches of running ads (ADR-0043, #2294)', () =
     }
     // Closing what is open is refused too: the owner opens the switches in their own context (the guard fires for every role, so
     // no other connection could), and the agent then tries to turn them off.
-    await asOwnerSql('UPDATE crove_ads.ad_org_setting SET write_enabled = true WHERE org_id = $1', [orgId]);
-    await asOwnerSql('UPDATE crove_ads.ad_account SET write_enabled = true WHERE org_id = $1 AND id = $2', [orgId, adAccountId]);
+    await asOwnerSql('UPDATE ludy_ads.ad_org_setting SET write_enabled = true WHERE org_id = $1', [orgId]);
+    await asOwnerSql('UPDATE ludy_ads.ad_account SET write_enabled = true WHERE org_id = $1 AND id = $2', [orgId, adAccountId]);
     const opened = await state();
     expect(opened.setting?.write_enabled).toBe(true);
     expect(opened.account?.write_enabled).toBe(true);
     for (const [what, text, params] of [
-      ['write off for the org', 'UPDATE crove_ads.ad_org_setting SET write_enabled = false WHERE org_id = $1', [orgId]],
-      ['write off for an account', 'UPDATE crove_ads.ad_account SET write_enabled = false WHERE org_id = $1 AND id = $2', [orgId, adAccountId]],
+      ['write off for the org', 'UPDATE ludy_ads.ad_org_setting SET write_enabled = false WHERE org_id = $1', [orgId]],
+      ['write off for an account', 'UPDATE ludy_ads.ad_account SET write_enabled = false WHERE org_id = $1 AND id = $2', [orgId, adAccountId]],
     ] as Array<[string, string, unknown[]]>) {
       await inAgentContext(async (c) => {
         await expect(c.query(text, params), what).rejects.toMatchObject({ code: '42501' });
@@ -194,7 +194,7 @@ suite('a live agent run and the switches of running ads (ADR-0043, #2294)', () =
     await app.execute('ads.pause_all', {}, { actor: asUser(owner), orgId });
     expect((await state()).setting?.launches_blocked).toBe(true);
     await inAgentContext(async (c) => {
-      await expect(c.query('UPDATE crove_ads.ad_org_setting SET launches_blocked = false WHERE org_id = $1', [orgId])).rejects.toMatchObject({ code: '42501' });
+      await expect(c.query('UPDATE ludy_ads.ad_org_setting SET launches_blocked = false WHERE org_id = $1', [orgId])).rejects.toMatchObject({ code: '42501' });
     });
     // Nothing the agent tried changed anything.
     expect(await state()).toEqual({ setting: { write_enabled: true, launches_blocked: true }, account: { write_enabled: true }, caps: '0' });

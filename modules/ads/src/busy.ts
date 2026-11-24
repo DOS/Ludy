@@ -13,7 +13,7 @@ export async function adsBusy(trx: Transaction<Database>, orgId: string): Promis
   // The launches that are not wound down, as hasOpenLaunch counts them: started and going, or stopped and not yet paused at the platform (and not given up on).
   const { rows } = await sql<{ running: number; winding: number; activation: number; other: number }>`
     WITH open AS (
-      SELECT l.id, l.state FROM crove_ads.ad_launch l
+      SELECT l.id, l.state FROM ludy_ads.ad_launch l
       WHERE l.org_id = ${orgId}::uuid
         AND (l.state IN ('launching', 'needs_attention', 'live')
              OR (l.state = 'stopped' AND l.started_at IS NOT NULL AND l.wound_down_at IS NULL AND l.wind_down_code IS NULL))

@@ -12,7 +12,7 @@ const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.
 describe('a translation is never a source: the migrations (E1, #3184)', () => {
   it('no migration but the ones that make the table, purge it and give it the transcript kind names it, so no search definer, mail query or export reads it', () => {
     const naming = readdirSync(MIGRATIONS)
-      .filter((name) => name.endsWith('.sql') && /crove_meetings\.translation\b/.test(readFileSync(join(MIGRATIONS, name), 'utf8')))
+      .filter((name) => name.endsWith('.sql') && /(?:crove|ludy)_meetings\.translation\b/.test(readFileSync(join(MIGRATIONS, name), 'utf8')))
       .map((name) => name.replace(/^\d+_/, ''));
     // The org purge's list names every tenant table, so each later restatement of it (A5, #3163: the rough notes table; B1, #3165: the calendar cache; A6, #3164: the member's webhook tables; B4, #3168; C1, #3173: the meeting platform import tables; #2591: projects; #3323: sign; #3394: payroll_leave_entry; #3412: hr departments; #3310 C3b: outbox_held; #3526: sign templates; #3578: minutes templates; #3558: personal to-do lists) names this one too, as the list's entry and nothing else; the purge of a former member's Vy rows, which deletes by org and member and judges the latest exit by created_at (#3194), and the index that serves its reads sit before the last five restatements (the e-invoice notice's, the to-do lists', the supplier bank accounts' and the supplier payments' of #3113, the MISA AMIS connection's of #3875 and the MISA AMIS push table's of #3902).
     // #3844 (chapters): crove_meetings_chapters.sql restates personal_erase to reach chapter titles; the translation branch is unchanged (it deletes translations of touched meetings), never read as a source.
@@ -93,6 +93,18 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'ludy_kernel_org_purge_hr_attendance.sql',
       // #4448 (HR Stage 5B): the purge restatement that adds onboarding_submission, overtime_request and probation_review restates the whole list, the translation table included; its body is the previous one.
       'ludy_kernel_org_purge_hr_stage5b.sql',
+      // #4440 (eSign Slice 5b outbound webhooks): the purge restatement that adds crove_sign.webhook_delivery and crove_sign.webhook restates the whole list, the translation table included; its body is the previous one.
+      'ludy_kernel_org_purge_sign_webhooks.sql',
+      // #4442 (eSign Slice 5d playbook): the purge restatement that adds crove_sign.playbook_check and crove_sign.playbook_rule restates the whole list, the translation table included; its body is the previous one.
+      'ludy_kernel_org_purge_sign_playbook.sql',
+      // #4443 (eSign Slice 5e): the purge restatement that adds crove_sign.kyc_check restates the whole list, the translation table included; its body is the previous one.
+      'ludy_kernel_org_purge_sign_kyc_check.sql',
+      // #4441 (eSign Slice 5c): the purge restatement that adds crove_sign.api_key restates the whole list, the translation table included; its body is the previous one.
+      'ludy_kernel_org_purge_sign_api_keys.sql',
+      // #3736 (generic web push): the purge restatement that adds ludy_kernel.push_subscription restates the whole list, the translation table included; its body is the previous one.
+      'ludy_kernel_push_subscription.sql',
+      // #4492 (Omnichannel Roadmap Signals): the purge restatement that adds crove_projects.roadmap_signal restates the whole list, the translation table included; its body is the previous one.
+      'ludy_kernel_org_purge_projects_roadmap_signals.sql',
       // #4493 (Slice 2): projects triage adds project_triage_item to org_purge.
       'ludy_kernel_org_purge_projects_triage.sql',
     ]);

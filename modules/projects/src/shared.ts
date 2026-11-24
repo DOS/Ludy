@@ -105,7 +105,7 @@ export async function ensurePrivateMembers(
   const unique = [...new Set(userIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
   if (unique.length === 0) return;
   await trx
-    .insertInto('crove_projects.project_member')
+    .insertInto('ludy_projects.project_member')
     .values(
       unique.map((uid) => ({
         org_id: orgId,
@@ -131,7 +131,7 @@ export async function loadProject(
   lock: boolean | 'share' = false,
 ): Promise<ProjectRow> {
   let q = trx
-    .selectFrom('crove_projects.project')
+    .selectFrom('ludy_projects.project')
     .select([
       'id',
       'name',
@@ -214,7 +214,7 @@ export async function countHiddenProjectTasks(trx: Trx, orgId: string, projectId
   // Compare project_task against le_scope-filtered ludy_kernel.task without SECURITY DEFINER.
   const { rows } = await sql<{ count: string }>`
     SELECT pg_catalog.count(*)::text AS count
-      FROM crove_projects.project_task pt
+      FROM ludy_projects.project_task pt
      WHERE pt.org_id = ${orgId}::uuid
        AND pt.project_id = ${projectId}::uuid
        AND NOT EXISTS (
@@ -243,7 +243,7 @@ export async function loadProjectSeatsAndProfiles(
 }> {
   const { rows: usedPositionRows } = await sql<{ id: string }>`
     SELECT DISTINCT t.assignee_position_id AS id
-      FROM crove_projects.project_task pt
+      FROM ludy_projects.project_task pt
       JOIN ludy_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
      WHERE pt.org_id = ${orgId}::uuid
        AND pt.project_id = ${projectId}::uuid
@@ -331,7 +331,7 @@ export async function loadProjectTaskCounts(
        GROUP BY task_id`.execute(trx),
     sql<{ task_id: string; n: string }>`
       SELECT d.blocked_task_id AS task_id, pg_catalog.count(*)::text AS n
-        FROM crove_projects.task_dependency d
+        FROM ludy_projects.task_dependency d
         JOIN ludy_kernel.task bt
           ON bt.org_id = d.org_id AND bt.id = d.blocker_task_id
        WHERE d.org_id = ${orgId}::uuid
@@ -341,7 +341,7 @@ export async function loadProjectTaskCounts(
        GROUP BY d.blocked_task_id`.execute(trx),
     sql<{ task_id: string; n: string }>`
       SELECT d.blocker_task_id AS task_id, pg_catalog.count(*)::text AS n
-        FROM crove_projects.task_dependency d
+        FROM ludy_projects.task_dependency d
         JOIN ludy_kernel.task bt
           ON bt.org_id = d.org_id AND bt.id = d.blocker_task_id
         JOIN ludy_kernel.task dt
@@ -399,7 +399,7 @@ export async function stopRunningProjectTimers(
       AND ${ownerCheck}
       AND NOT EXISTS (
         SELECT 1
-        FROM crove_projects.project_member pm
+        FROM ludy_projects.project_member pm
         WHERE pm.org_id = te.org_id
           AND pm.project_id = te.project_id
           AND pm.user_id = te.user_id
@@ -415,7 +415,7 @@ export async function stopRunningProjectTimers(
 
   const { rows: runningTimers } = await sql<{ id: string; task_id: string | null; started_at: Date | string }>`
     SELECT te.id, te.task_id, te.started_at
-      FROM crove_projects.time_entry te
+      FROM ludy_projects.time_entry te
      WHERE te.org_id = ${ctx.orgId}::uuid
        AND te.project_id = ${projectId}::uuid
        AND te.ended_at IS NULL
@@ -427,7 +427,7 @@ export async function stopRunningProjectTimers(
   for (const timer of runningTimers) {
     const timing = computeStoppedTimeEntry(timer.started_at, ctx.now);
     await ctx.trx
-      .updateTable('crove_projects.time_entry')
+      .updateTable('ludy_projects.time_entry')
       .set({
         ended_at: timing.endedAt,
         duration_minutes: timing.durationMinutes,

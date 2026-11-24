@@ -124,7 +124,7 @@ suite('white-label client reports on PostgreSQL (#1053)', () => {
     await save(o, o.owner, { name: 'Sao Mai Agency', logo: png(), accent: '#1d4ed8', hideCrove: true });
     const shown = await get(o, o.viewer);
     expect(shown).toMatchObject({ name: 'Sao Mai Agency', logo: png(), accent: '#1d4ed8', hideCrove: true });
-    expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_social.report_branding WHERE org_id = $1', [o.orgId])).rowCount)).toBe(1);
+    expect(await admin(async (c) => (await c.query('SELECT 1 FROM ludy_social.report_branding WHERE org_id = $1', [o.orgId])).rowCount)).toBe(1);
     // The audit keeps the logo's size, never its bytes.
     const audit = await admin(async (c) => JSON.stringify((await c.query("SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'social.report_branding.%'", [o.orgId])).rows));
     expect(audit).toContain('"logo_bytes":48');
@@ -160,7 +160,7 @@ suite('white-label client reports on PostgreSQL (#1053)', () => {
 
     // The table's CHECK says the same to anyone who writes around the command.
     const insert = (logo: string | null, accent: string | null = null) =>
-      admin((c) => c.query('INSERT INTO crove_social.report_branding (org_id, logo, accent, updated_by) VALUES ($1, $2, $3, $4)', [o.orgId, logo, accent, o.owner])).then(
+      admin((c) => c.query('INSERT INTO ludy_social.report_branding (org_id, logo, accent, updated_by) VALUES ($1, $2, $3, $4)', [o.orgId, logo, accent, o.owner])).then(
         () => 'inserted',
         (e: unknown) => (e as { code?: string }).code,
       );
@@ -213,11 +213,11 @@ suite('white-label client reports on PostgreSQL (#1053)', () => {
     // Revoked or expired: nothing, brand or not, the same answer as a wrong token.
     await exec(a, a.owner, 'social.report_link.revoke', { linkId: linkA.linkId });
     expect(await reportView(rt, { token: linkA.token })).toBeNull();
-    await admin((cl) => cl.query("UPDATE crove_social.report_link SET created_at = now() - interval '2 days', expires_at = now() - interval '1 second' WHERE id = $1", [linkB.linkId]));
+    await admin((cl) => cl.query("UPDATE ludy_social.report_link SET created_at = now() - interval '2 days', expires_at = now() - interval '1 second' WHERE id = $1", [linkB.linkId]));
     expect(await reportView(rt, { token: linkB.token })).toBeNull();
     await exec(a, a.owner, 'social.review_link.revoke', { linkId: single.linkId });
     expect(await reviewView(rt, { token: single.token })).toBeNull();
-    await admin((cl) => cl.query("UPDATE crove_social.review_link SET created_at = now() - interval '2 days', expires_at = now() - interval '1 second' WHERE id = $1", [plan.linkId]));
+    await admin((cl) => cl.query("UPDATE ludy_social.review_link SET created_at = now() - interval '2 days', expires_at = now() - interval '1 second' WHERE id = $1", [plan.linkId]));
     expect(await reviewView(rt, { token: plan.token })).toBeNull();
     // A closed org's links open nothing either.
     await admin((cl) => cl.query("UPDATE ludy_kernel.tenant SET status = 'closed' WHERE org_id = $1", [c.orgId]));
@@ -229,12 +229,12 @@ suite('white-label client reports on PostgreSQL (#1053)', () => {
     const b = await org();
     await save(a, a.owner, { name: 'Brand A' });
     for (const role of ['ludy_app', 'ludy_worker', 'ludy_tenant']) {
-      expect(await admin(async (c) => (await c.query<{ ok: boolean }>("SELECT has_function_privilege($1, 'crove_social.report_brand(uuid)', 'EXECUTE') AS ok", [role])).rows[0]?.ok)).toBe(false);
+      expect(await admin(async (c) => (await c.query<{ ok: boolean }>("SELECT has_function_privilege($1, 'ludy_social.report_brand(uuid)', 'EXECUTE') AS ok", [role])).rows[0]?.ok)).toBe(false);
     }
-    expect(await admin(async (c) => (await c.query<{ ok: boolean }>("SELECT has_function_privilege('ludy_app', 'crove_social.report_link_view(text)', 'EXECUTE') AS ok")).rows[0]?.ok)).toBe(true);
-    expect(await admin(async (c) => (await c.query<{ ok: boolean }>("SELECT has_function_privilege('ludy_tenant', 'crove_social.report_link_view(text)', 'EXECUTE') AS ok")).rows[0]?.ok)).toBe(false);
+    expect(await admin(async (c) => (await c.query<{ ok: boolean }>("SELECT has_function_privilege('ludy_app', 'ludy_social.report_link_view(text)', 'EXECUTE') AS ok")).rows[0]?.ok)).toBe(true);
+    expect(await admin(async (c) => (await c.query<{ ok: boolean }>("SELECT has_function_privilege('ludy_tenant', 'ludy_social.report_link_view(text)', 'EXECUTE') AS ok")).rows[0]?.ok)).toBe(false);
     // The API role cannot call the helper with another org's id.
-    await expect(pool.query('SELECT crove_social.report_brand($1)', [a.orgId])).rejects.toMatchObject({ code: '42501' });
+    await expect(pool.query('SELECT ludy_social.report_brand($1)', [a.orgId])).rejects.toMatchObject({ code: '42501' });
     expect(await get(b, b.owner)).toBeNull();
   });
 

@@ -152,7 +152,7 @@ suite('the sandbox meeting platform from the HTTP rpc to the staged bytes (meeti
   const recordings = async () => (await rpc('meetingPlatform/recordings', member, {})).body as MeetingPlatformRecordingView[];
   const meetingFor = async () =>
     (await sqlAdmin<{ id: string }>(
-      `INSERT INTO crove_meetings.meeting (org_id, recorder_user_id, title, consent_method, consent_confirmed_by, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, recorder_user_id, title, consent_method, consent_confirmed_by, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp thử', 'platform_notice', $2, '2026-11-imp-v1', current_date + 7, current_date + 30) RETURNING id`,
       [org.orgId, member.userId],
     )).rows[0]?.id as string;

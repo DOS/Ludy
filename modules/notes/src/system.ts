@@ -2,7 +2,7 @@
 // private notes 30 days after they left, and a to-do's reminder (#1675). The system context reads no private note or
 // to-do, so the first two go through definers that delete by rule and answer a count, never text; the definers refuse
 // every login but the worker's and every context but the org's system context. The reminder gets ids and a time from
-// the worker's claim (crove_notes.todo_reminders_claim) and writes a notification that holds none of the to-do's text.
+// the worker's claim (ludy_notes.todo_reminders_claim) and writes a notification that holds none of the to-do's text.
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { notifyMembers, uploaderEntity } from '@ludy/kernel';
@@ -27,7 +27,7 @@ export const trashEmpty = defineCommand({
   handler: async (ctx): Promise<{ removed: number }> => {
     assertSystem(ctx);
     const before = trashCutoff(ctx.now);
-    const { rows } = await sql<{ n: string }>`SELECT crove_notes.trash_empty(${before}::timestamptz) AS n`.execute(ctx.trx);
+    const { rows } = await sql<{ n: string }>`SELECT ludy_notes.trash_empty(${before}::timestamptz) AS n`.execute(ctx.trx);
     const removed = Number(rows[0]?.n ?? 0);
     ctx.audit({ before: before.toISOString(), removed });
     return { removed };
@@ -63,7 +63,7 @@ export const memberItemsPurge = defineCommand({
         return { removed: 0 };
       }
     }
-    const { rows } = await sql<{ n: string }>`SELECT crove_notes.member_items_purge(${input.userId}::uuid) AS n`.execute(ctx.trx);
+    const { rows } = await sql<{ n: string }>`SELECT ludy_notes.member_items_purge(${input.userId}::uuid) AS n`.execute(ctx.trx);
     const removed = Number(rows[0]?.n ?? 0);
     ctx.audit({ userId: input.userId, eventId: input.eventId ?? null, removed });
     return { removed };
@@ -75,7 +75,7 @@ export const TODO_DUE = 'notes.todo_due';
 
 // One reminder the worker claimed: a notification for the to-do's owner, once per to-do and reminder time (a replayed
 // job writes nothing), with the to-do's id as its subject and no text (notes.md §3.6: "Bạn có 1 việc đến hạn"; the app
-// shows the title only when the owner opens it). The owner comes from crove_notes.todo_reminder_owner, never from the
+// shows the title only when the owner opens it). The owner comes from ludy_notes.todo_reminder_owner, never from the
 // input, and only while the to-do still waits for this reminder: one completed, deleted or given another time after the
 // claim sends nothing. The owner gets nothing either once they left the org or turned the kind off.
 export const todoRemind = defineCommand({
@@ -87,7 +87,7 @@ export const todoRemind = defineCommand({
   handler: async (ctx, input): Promise<{ sent: number }> => {
     assertSystem(ctx);
     const remindAt = new Date(input.remindAt).toISOString();
-    const { rows } = await sql<{ owner: string | null }>`SELECT crove_notes.todo_reminder_owner(${input.todoId}::uuid, ${remindAt}::timestamptz) AS owner`.execute(ctx.trx);
+    const { rows } = await sql<{ owner: string | null }>`SELECT ludy_notes.todo_reminder_owner(${input.todoId}::uuid, ${remindAt}::timestamptz) AS owner`.execute(ctx.trx);
     const owner = rows[0]?.owner ?? null;
     if (owner === null) {
       ctx.audit({ todoId: input.todoId, remindAt, sent: 0, current: false });
@@ -121,7 +121,7 @@ export const attachmentExtractSource = defineQuery({
     assertSystem(ctx);
     const { rows } = await sql<{ org_id: string; id: string; storage_key: string; content_type: string }>`
       SELECT org_id, id, storage_key, content_type
-        FROM crove_notes.attachment_for_extract(${input.attachmentId}::uuid)
+        FROM ludy_notes.attachment_for_extract(${input.attachmentId}::uuid)
     `.execute(ctx.trx);
     const row = rows[0];
     if (!row) return null;
@@ -147,7 +147,7 @@ export const attachmentExtractRecord = defineCommand({
   handler: async (ctx, input): Promise<{ updated: boolean }> => {
     assertSystem(ctx);
     const { rows } = await sql<{ updated: boolean }>`
-      SELECT crove_notes.attachment_record_extract(
+      SELECT ludy_notes.attachment_record_extract(
         ${input.attachmentId}::uuid,
         ${input.status}::text,
         ${input.extractedText}::text
@@ -157,7 +157,7 @@ export const attachmentExtractRecord = defineCommand({
     ctx.audit({
       attachmentId: input.attachmentId,
       status: input.status,
-      extractedText: auditValue(notesManifest.tables.crove_notes.attachment, 'extracted_text', input.extractedText),
+      extractedText: auditValue(notesManifest.tables.ludy_notes.attachment, 'extracted_text', input.extractedText),
       updated,
     });
     return { updated };

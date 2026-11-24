@@ -9,6 +9,7 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@ludy/db';
+import { FOLLOWUP_MAIL_SOURCE } from '@ludy/kernel-contract';
 import { DomainError, defineCommand, defineQuery, exportKey, GENERATION_PATTERN, type QueryContext } from '@ludy/kernel-runtime';
 
 const OWNERS: readonly MemberRole[] = ['owner'];
@@ -30,7 +31,7 @@ export const EXPORT_TABLES = {
   // The file rows of meeting audio and video are left out (ADR-0047 point 7, #2579): no export carries a recording, and the rows name the meeting.
   // Files of attendees-only meeting_minutes eSign envelopes and unattached member sign_document uploads stay out too (#3811).
   'kernel.file': {
-    from: "(SELECT f.* FROM ludy_kernel.file f WHERE f.source NOT IN ('meeting_audio', 'meeting_video') AND crove_sign.is_exportable_sign_file(f.org_id, f.id, f.source))",
+    from: "(SELECT f.* FROM ludy_kernel.file f WHERE f.source NOT IN ('meeting_audio', 'meeting_video') AND ludy_sign.is_exportable_sign_file(f.org_id, f.id, f.source))",
     omit: [],
   },
   'kernel.inbound_message': { from: 'ludy_kernel.inbound_message', omit: [] },
@@ -64,8 +65,9 @@ export const EXPORT_TABLES = {
   'kernel.saved_reply': { from: 'ludy_kernel.saved_reply', omit: [] },
   'kernel.conversation_note': { from: 'ludy_kernel.conversation_note', omit: [] },
   // Outbound mail (#538): the mail log, its delivery events (#539) and the org's suppression list. The address hashes
-  // are keyed by the deployment.
-  'kernel.mail_message': { from: 'ludy_kernel.mail_message', omit: [] },
+  // are keyed by the deployment. The follow-up mails of a meeting (#4533, ADR-0047) are left out: each holds the meeting's summary, decisions and action items or a note about it (payload),
+  // the subject the recorder typed and the recipients, and the meeting may be attendees-only, which the export leaves out; the mail log keeps them 30 days after the send.
+  'kernel.mail_message': { from: `(SELECT m.* FROM ludy_kernel.mail_message m WHERE m.source <> '${FOLLOWUP_MAIL_SOURCE}')`, omit: [] },
   'kernel.mail_suppression': { from: 'ludy_kernel.mail_suppression', omit: [] },
   'kernel.mail_event': { from: 'ludy_kernel.mail_event', omit: [] },
   // What the org's people decided and set up in the kernel (#3367): budgets and kill switches, how long a proposal waits, the tax profile and the filings marked done,
@@ -87,133 +89,133 @@ export const EXPORT_TABLES = {
   'kernel.member_availability': { from: 'ludy_kernel.member_availability', omit: [] },
   'kernel.member_permission_override': { from: 'ludy_kernel.member_permission_override', omit: [] },
   'kernel.inbox_item': { from: 'ludy_kernel.inbox_item', omit: [] },
-  'finance.purchase_document': { from: 'crove_finance.purchase_document', omit: ['search'] },
-  'finance.purchase_line': { from: 'crove_finance.purchase_line', omit: [] },
+  'finance.purchase_document': { from: 'ludy_finance.purchase_document', omit: ['search'] },
+  'finance.purchase_line': { from: 'ludy_finance.purchase_line', omit: [] },
   // The invoice's own VAT table by rate (#685).
-  'finance.purchase_tax_rate': { from: 'crove_finance.purchase_tax_rate', omit: [] },
-  'finance.journal_entry': { from: 'crove_finance.journal_entry', omit: ['search'] },
-  'finance.journal_line': { from: 'crove_finance.journal_line', omit: [] },
-  'finance.vendor_account_rule': { from: 'crove_finance.vendor_account_rule', omit: [] },
+  'finance.purchase_tax_rate': { from: 'ludy_finance.purchase_tax_rate', omit: [] },
+  'finance.journal_entry': { from: 'ludy_finance.journal_entry', omit: ['search'] },
+  'finance.journal_line': { from: 'ludy_finance.journal_line', omit: [] },
+  'finance.vendor_account_rule': { from: 'ludy_finance.vendor_account_rule', omit: [] },
   // Learned bank-line rules (#2402): which party a statement line's words point at. The keyed hash is org-bound and of no use outside
   // the deployment, so the export leaves it out.
-  'finance.bank_party_rule': { from: 'crove_finance.bank_party_rule', omit: ['key_hash'] },
+  'finance.bank_party_rule': { from: 'ludy_finance.bank_party_rule', omit: ['key_hash'] },
   // Learned account rules with their provenance (#1399).
-  'finance.categorization_rule': { from: 'crove_finance.categorization_rule', omit: [] },
+  'finance.categorization_rule': { from: 'ludy_finance.categorization_rule', omit: [] },
   // The org's sub-accounts (#319): journal lines name them by code.
-  'finance.org_account': { from: 'crove_finance.org_account', omit: [] },
+  'finance.org_account': { from: 'ludy_finance.org_account', omit: [] },
   // The MISA item and warehouse codes per stock account (#1398), which the goods purchase export writes.
-  'finance.misa_goods_code': { from: 'crove_finance.misa_goods_code', omit: [] },
+  'finance.misa_goods_code': { from: 'ludy_finance.misa_goods_code', omit: [] },
   // Cash and bank vouchers (#327): their journal entries name them.
-  'finance.cash_voucher': { from: 'crove_finance.cash_voucher', omit: [] },
+  'finance.cash_voucher': { from: 'ludy_finance.cash_voucher', omit: [] },
   // General journal vouchers (#888): their journal entries name them.
-  'finance.journal_voucher': { from: 'crove_finance.journal_voucher', omit: [] },
+  'finance.journal_voucher': { from: 'ludy_finance.journal_voucher', omit: [] },
   // The tax portal's purchase lists and their rows (#465), kept like the ledger; the files are in kernel.file.
-  'finance.portal_invoice_list': { from: 'crove_finance.portal_invoice_list', omit: [] },
-  'finance.portal_invoice_row': { from: 'crove_finance.portal_invoice_row', omit: [] },
+  'finance.portal_invoice_list': { from: 'ludy_finance.portal_invoice_list', omit: [] },
+  'finance.portal_invoice_row': { from: 'ludy_finance.portal_invoice_row', omit: [] },
   // The rest of the books and what they are made from (#3201): bank statement lines and the bank feed's accounts, the recorded bank account numbers, the marketplace
   // orders and income reports with the connections and party links they were read through, the stock book, fixed assets and their depreciation, the sales e-invoice
   // drafts and their series, the VAT checks and returns, the period locks and balances, and each entity's regime and, for a household business, its profile (the
   // representative's name is kept_legal and belongs to the owner's copy). Sync cursors and the e-invoice idempotency key are machinery and stay out.
-  'finance.bank_line': { from: 'crove_finance.bank_line', omit: [] },
-  'finance.bank_feed_account': { from: 'crove_finance.bank_feed_account', omit: ['cursor'] },
-  'finance.bank_feed_listed_account': { from: 'crove_finance.bank_feed_listed_account', omit: [] },
-  'finance.bank_account_number': { from: 'crove_finance.bank_account_number', omit: [] },
-  'finance.channel_order': { from: 'crove_finance.channel_order', omit: [] },
-  'finance.channel_order_line': { from: 'crove_finance.channel_order_line', omit: [] },
-  'finance.channel_settlement': { from: 'crove_finance.channel_settlement', omit: [] },
-  'finance.channel_settlement_line': { from: 'crove_finance.channel_settlement_line', omit: [] },
+  'finance.bank_line': { from: 'ludy_finance.bank_line', omit: [] },
+  'finance.bank_feed_account': { from: 'ludy_finance.bank_feed_account', omit: ['cursor'] },
+  'finance.bank_feed_listed_account': { from: 'ludy_finance.bank_feed_listed_account', omit: [] },
+  'finance.bank_account_number': { from: 'ludy_finance.bank_account_number', omit: [] },
+  'finance.channel_order': { from: 'ludy_finance.channel_order', omit: [] },
+  'finance.channel_order_line': { from: 'ludy_finance.channel_order_line', omit: [] },
+  'finance.channel_settlement': { from: 'ludy_finance.channel_settlement', omit: [] },
+  'finance.channel_settlement_line': { from: 'ludy_finance.channel_settlement_line', omit: [] },
   // The mapping of a marketplace report's columns a person confirmed (#4037): the header texts of the mapped columns and their standard fields, never a cell value or a buyer column.
-  'finance.marketplace_column_profile': { from: 'crove_finance.marketplace_column_profile', omit: [] },
-  'finance.marketplace_connection': { from: 'crove_finance.marketplace_connection', omit: ['poll_cursor'] },
+  'finance.marketplace_column_profile': { from: 'ludy_finance.marketplace_column_profile', omit: [] },
+  'finance.marketplace_connection': { from: 'ludy_finance.marketplace_connection', omit: ['poll_cursor'] },
   // The link between a marketplace connection and the staged file its poll ingested (#4250): ids and a time only.
-  'finance.marketplace_connection_file': { from: 'crove_finance.marketplace_connection_file', omit: [] },
+  'finance.marketplace_connection_file': { from: 'ludy_finance.marketplace_connection_file', omit: [] },
   // The code AMIS is told for this connection is a routing id of the deployment, not the org's data; the access code is sealed in ludy_kernel.credential, which is never exported.
-  'finance.misa_amis_connection': { from: 'crove_finance.misa_amis_connection', omit: ['org_company_code'] },
+  'finance.misa_amis_connection': { from: 'ludy_finance.misa_amis_connection', omit: ['org_company_code'] },
   // What was pushed to AMIS and where it stands: ids, codes, dates and states (MISA's own text for a refusal is the reason column). No voucher body is stored.
-  'finance.misa_amis_push': { from: 'crove_finance.misa_amis_push', omit: [] },
+  'finance.misa_amis_push': { from: 'ludy_finance.misa_amis_push', omit: [] },
   // The last check of a connection's vouchers against the firm's MISA catalogue (#4112): the batch asked about, its state and times, and per party (its tax code) or item (its code) whether one entry matched, with that entry's code and id. No catalogue name or address is stored.
-  'finance.misa_amis_match': { from: 'crove_finance.misa_amis_match', omit: [] },
-  'finance.misa_amis_match_check': { from: 'crove_finance.misa_amis_match_check', omit: [] },
+  'finance.misa_amis_match': { from: 'ludy_finance.misa_amis_match', omit: [] },
+  'finance.misa_amis_match_check': { from: 'ludy_finance.misa_amis_match_check', omit: [] },
   // The last column check per unrecognised order report: the preview of parsed lines is personal data kept seven days at most and a cache of the file, so it stays out (#4036).
-  'finance.marketplace_column_check': { from: 'crove_finance.marketplace_column_check', omit: ['preview'] },
-  'finance.marketplace_party': { from: 'crove_finance.marketplace_party', omit: [] },
-  'finance.stock_item': { from: 'crove_finance.stock_item', omit: [] },
-  'finance.stock_alias': { from: 'crove_finance.stock_alias', omit: [] },
-  'finance.stock_move': { from: 'crove_finance.stock_move', omit: [] },
-  'finance.stock_count': { from: 'crove_finance.stock_count', omit: [] },
-  'finance.stock_count_line': { from: 'crove_finance.stock_count_line', omit: [] },
-  'finance.stock_period': { from: 'crove_finance.stock_period', omit: [] },
-  'finance.stock_period_item': { from: 'crove_finance.stock_period_item', omit: [] },
-  'finance.fixed_asset': { from: 'crove_finance.fixed_asset', omit: [] },
-  'finance.depreciation_line': { from: 'crove_finance.depreciation_line', omit: [] },
-  'finance.einvoice_connection': { from: 'crove_finance.einvoice_connection', omit: [] },
-  'finance.einvoice_notice': { from: 'crove_finance.einvoice_notice', omit: [] },
-  'finance.supplier_bank_account': { from: 'crove_finance.supplier_bank_account', omit: ['number_sealed', 'account_holder_sealed', 'number_hash'] },
-  'finance.supplier_bank_account_change': { from: 'crove_finance.supplier_bank_account_change', omit: ['old_number_hash', 'new_number_hash'] },
-  'finance.supplier_payment': { from: 'crove_finance.supplier_payment', omit: ['number_hash'] },
-  'finance.einvoice_series': { from: 'crove_finance.einvoice_series', omit: [] },
-  'finance.einvoice_draft': { from: 'crove_finance.einvoice_draft', omit: ['idempotency_key'] },
-  'finance.einvoice_draft_line': { from: 'crove_finance.einvoice_draft_line', omit: [] },
-  'finance.input_vat_check': { from: 'crove_finance.input_vat_check', omit: [] },
-  'finance.vat_return_filed': { from: 'crove_finance.vat_return_filed', omit: [] },
-  'finance.purchase_document_void': { from: 'crove_finance.purchase_document_void', omit: [] },
-  'finance.period_lock': { from: 'crove_finance.period_lock', omit: [] },
-  'finance.period_balance_delta': { from: 'crove_finance.period_balance_delta', omit: [] },
-  'finance.legal_entity_books': { from: 'crove_finance.legal_entity_books', omit: [] },
-  'finance.household_profile': { from: 'crove_finance.household_profile', omit: [] },
-  'finance.marketplace_vat_rate': { from: 'crove_finance.marketplace_vat_rate', omit: [] },
+  'finance.marketplace_column_check': { from: 'ludy_finance.marketplace_column_check', omit: ['preview'] },
+  'finance.marketplace_party': { from: 'ludy_finance.marketplace_party', omit: [] },
+  'finance.stock_item': { from: 'ludy_finance.stock_item', omit: [] },
+  'finance.stock_alias': { from: 'ludy_finance.stock_alias', omit: [] },
+  'finance.stock_move': { from: 'ludy_finance.stock_move', omit: [] },
+  'finance.stock_count': { from: 'ludy_finance.stock_count', omit: [] },
+  'finance.stock_count_line': { from: 'ludy_finance.stock_count_line', omit: [] },
+  'finance.stock_period': { from: 'ludy_finance.stock_period', omit: [] },
+  'finance.stock_period_item': { from: 'ludy_finance.stock_period_item', omit: [] },
+  'finance.fixed_asset': { from: 'ludy_finance.fixed_asset', omit: [] },
+  'finance.depreciation_line': { from: 'ludy_finance.depreciation_line', omit: [] },
+  'finance.einvoice_connection': { from: 'ludy_finance.einvoice_connection', omit: [] },
+  'finance.einvoice_notice': { from: 'ludy_finance.einvoice_notice', omit: [] },
+  'finance.supplier_bank_account': { from: 'ludy_finance.supplier_bank_account', omit: ['number_sealed', 'account_holder_sealed', 'number_hash'] },
+  'finance.supplier_bank_account_change': { from: 'ludy_finance.supplier_bank_account_change', omit: ['old_number_hash', 'new_number_hash'] },
+  'finance.supplier_payment': { from: 'ludy_finance.supplier_payment', omit: ['number_hash'] },
+  'finance.einvoice_series': { from: 'ludy_finance.einvoice_series', omit: [] },
+  'finance.einvoice_draft': { from: 'ludy_finance.einvoice_draft', omit: ['idempotency_key'] },
+  'finance.einvoice_draft_line': { from: 'ludy_finance.einvoice_draft_line', omit: [] },
+  'finance.input_vat_check': { from: 'ludy_finance.input_vat_check', omit: [] },
+  'finance.vat_return_filed': { from: 'ludy_finance.vat_return_filed', omit: [] },
+  'finance.purchase_document_void': { from: 'ludy_finance.purchase_document_void', omit: [] },
+  'finance.period_lock': { from: 'ludy_finance.period_lock', omit: [] },
+  'finance.period_balance_delta': { from: 'ludy_finance.period_balance_delta', omit: [] },
+  'finance.legal_entity_books': { from: 'ludy_finance.legal_entity_books', omit: [] },
+  'finance.household_profile': { from: 'ludy_finance.household_profile', omit: [] },
+  'finance.marketplace_vat_rate': { from: 'ludy_finance.marketplace_vat_rate', omit: [] },
   // How long a customer has to pay, and the weekly reminder item.
-  'finance.collection_setting': { from: 'crove_finance.collection_setting', omit: [] },
-  'finance.customer_collection': { from: 'crove_finance.customer_collection', omit: [] },
+  'finance.collection_setting': { from: 'ludy_finance.collection_setting', omit: [] },
+  'finance.customer_collection': { from: 'ludy_finance.customer_collection', omit: [] },
   // The crm module's event types (#1314).
-  'crm.event_type': { from: 'crove_crm.event_type', omit: [] },
+  'crm.event_type': { from: 'ludy_crm.event_type', omit: [] },
   // Visitors' bookings (#1318); the request token's hash is the visitor's credential and stays out.
-  'crm.booking': { from: 'crove_crm.booking', omit: ['request_token_sha256'] },
+  'crm.booking': { from: 'ludy_crm.booking', omit: ['request_token_sha256'] },
   // The sales side of the crm module (#3367): the pipeline and its deals with their next steps, the quotes with their lines and settings, the sales orders with their lines and
   // deliveries, and the contact imports with their rows. The hash of a quote's public link token is the visitor's credential and stays out.
-  'crm.pipeline_stage': { from: 'crove_crm.pipeline_stage', omit: [] },
-  'crm.deal': { from: 'crove_crm.deal', omit: [] },
-  'crm.deal_next_step': { from: 'crove_crm.deal_next_step', omit: [] },
-  'crm.deal_setting': { from: 'crove_crm.deal_setting', omit: [] },
-  'crm.quote': { from: 'crove_crm.quote', omit: [] },
-  'crm.quote_line': { from: 'crove_crm.quote_line', omit: [] },
-  'crm.quote_link': { from: 'crove_crm.quote_link', omit: ['token_sha256'] },
-  'crm.quote_setting': { from: 'crove_crm.quote_setting', omit: [] },
-  'crm.sales_order': { from: 'crove_crm.sales_order', omit: [] },
-  'crm.sales_order_line': { from: 'crove_crm.sales_order_line', omit: [] },
-  'crm.sales_order_delivery': { from: 'crove_crm.sales_order_delivery', omit: [] },
-  'crm.import_batch': { from: 'crove_crm.import_batch', omit: [] },
+  'crm.pipeline_stage': { from: 'ludy_crm.pipeline_stage', omit: [] },
+  'crm.deal': { from: 'ludy_crm.deal', omit: [] },
+  'crm.deal_next_step': { from: 'ludy_crm.deal_next_step', omit: [] },
+  'crm.deal_setting': { from: 'ludy_crm.deal_setting', omit: [] },
+  'crm.quote': { from: 'ludy_crm.quote', omit: [] },
+  'crm.quote_line': { from: 'ludy_crm.quote_line', omit: [] },
+  'crm.quote_link': { from: 'ludy_crm.quote_link', omit: ['token_sha256'] },
+  'crm.quote_setting': { from: 'ludy_crm.quote_setting', omit: [] },
+  'crm.sales_order': { from: 'ludy_crm.sales_order', omit: [] },
+  'crm.sales_order_line': { from: 'ludy_crm.sales_order_line', omit: [] },
+  'crm.sales_order_delivery': { from: 'ludy_crm.sales_order_delivery', omit: [] },
+  'crm.import_batch': { from: 'ludy_crm.import_batch', omit: [] },
   // Import rows are temporary staging (a commit, a cancel or the 7-day expiry deletes them): an org that offboards with a staged import carries that file's names and contacts in its copy.
-  'crm.import_row': { from: 'crove_crm.import_row', omit: [] },
+  'crm.import_row': { from: 'ludy_crm.import_row', omit: [] },
   // Ads (#2217, ADR-0040): the org's ad accounts, the daily figures their platforms reported and the sync runs. They hold
   // no credential (that is ludy_kernel.credential, which no export reads) and no personal data; the keyed hashes of the Meta user who granted a connection (granted_by_hash, write_granted_by_hash) are
   // the deployment's, not the org's, and stay out.
-  'ads.ad_account': { from: 'crove_ads.ad_account', omit: ['granted_by_hash', 'write_granted_by_hash'] },
-  'ads.ad_spend_day': { from: 'crove_ads.ad_spend_day', omit: [] },
-  'ads.ad_sync_run': { from: 'crove_ads.ad_sync_run', omit: [] },
+  'ads.ad_account': { from: 'ludy_ads.ad_account', omit: ['granted_by_hash', 'write_granted_by_hash'] },
+  'ads.ad_spend_day': { from: 'ludy_ads.ad_spend_day', omit: [] },
+  'ads.ad_sync_run': { from: 'ludy_ads.ad_sync_run', omit: [] },
   // Notes (#1671, #3559, #3561, #3562, ADR-0037 §6): the shared notes, attachments, shared notebooks, shared templates and links, which the system context's row
   // policies let the snapshot read, without their folded search words; private items stay out,
   // and private_count / private_notebook_count / private_template_count record how many each author had (counts only).
-  'notes.note': { from: 'crove_notes.note', omit: ['search'] },
-  'notes.attachment': { from: 'crove_notes.attachment', omit: ['search'] },
-  'notes.notebook': { from: 'crove_notes.notebook', omit: [] },
-  'notes.link': { from: 'crove_notes.link', omit: [] },
-  'notes.note_template': { from: 'crove_notes.note_template', omit: [] },
-  'notes.private_count': { from: 'crove_notes.private_counts()', omit: [] },
-  'notes.private_notebook_count': { from: 'crove_notes.private_notebook_counts()', omit: [] },
-  'notes.private_template_count': { from: 'crove_notes.private_template_counts()', omit: [] },
+  'notes.note': { from: 'ludy_notes.note', omit: ['search'] },
+  'notes.attachment': { from: 'ludy_notes.attachment', omit: ['search'] },
+  'notes.notebook': { from: 'ludy_notes.notebook', omit: [] },
+  'notes.link': { from: 'ludy_notes.link', omit: [] },
+  'notes.note_template': { from: 'ludy_notes.note_template', omit: [] },
+  'notes.private_count': { from: 'ludy_notes.private_counts()', omit: [] },
+  'notes.private_notebook_count': { from: 'ludy_notes.private_notebook_counts()', omit: [] },
+  'notes.private_template_count': { from: 'ludy_notes.private_template_counts()', omit: [] },
   // Members' own to-dos (#1673) are private by nature, so none is exported; todo_count records how many each member
-  // had (crove_notes.todo_counts(), counts only).
-  'notes.todo_count': { from: 'crove_notes.todo_counts()', omit: [] },
-  'social.post': { from: 'crove_social.post', omit: ['search_text'] },
-  'social.post_variant': { from: 'crove_social.post_variant', omit: ['search_text'] },
-  'social.post_approval': { from: 'crove_social.post_approval', omit: [] },
+  // had (ludy_notes.todo_counts(), counts only).
+  'notes.todo_count': { from: 'ludy_notes.todo_counts()', omit: [] },
+  'social.post': { from: 'ludy_social.post', omit: ['search_text'] },
+  'social.post_variant': { from: 'ludy_social.post_variant', omit: ['search_text'] },
+  'social.post_approval': { from: 'ludy_social.post_approval', omit: [] },
   // A post's images in order, with their descriptions (#372); the files themselves are in kernel.file.
-  'social.post_media': { from: 'crove_social.post_media', omit: [] },
+  'social.post_media': { from: 'ludy_social.post_media', omit: [] },
   // What the platforms reported for published posts (#238).
-  'social.metric_snapshot': { from: 'crove_social.metric_snapshot', omit: [] },
-  'social.queue': { from: 'crove_social.queue', omit: [] },
-  'social.queue_slot': { from: 'crove_social.queue_slot', omit: [] },
+  'social.metric_snapshot': { from: 'ludy_social.metric_snapshot', omit: [] },
+  'social.queue': { from: 'ludy_social.queue', omit: [] },
+  'social.queue_slot': { from: 'ludy_social.queue_slot', omit: [] },
   // Meetings (ADR-0047 point 7, #2579): the meetings shared with the whole org, and per recorder how many attendees-only meetings were left out (ludy_kernel.
   // meeting_private_counts, a definer that answers counts only). Never audio or video.
   'meetings.meeting': { from: 'ludy_kernel.meeting_export_rows()', omit: [] },
@@ -224,110 +226,120 @@ export const EXPORT_TABLES = {
   // and report links with their feedback (the hash of a link's token is the visitor's credential and stays out), the bio pages and short links with their click counts, the
   // external posts the org imported, and the daily snapshots of its accounts. What only one member reads (notifications, mutes, push subscriptions) and what is a cache or a log
   // (fetched link previews and feed items, digest markers, report runs) is in NOT_EXPORTED; so are the sealed chat alert targets and the calendar feed token.
-  'social.account_snapshot': { from: 'crove_social.account_snapshot', omit: [] },
-  'social.banned_word': { from: 'crove_social.banned_word', omit: [] },
-  'social.bio_click': { from: 'crove_social.bio_click', omit: [] },
-  'social.bio_page': { from: 'crove_social.bio_page', omit: [] },
-  'social.brand_voice': { from: 'crove_social.brand_voice', omit: [] },
-  'social.calendar_note': { from: 'crove_social.calendar_note', omit: [] },
-  'social.channel_option': { from: 'crove_social.channel_option', omit: [] },
-  'social.channel_policy': { from: 'crove_social.channel_policy', omit: [] },
-  'social.channel_set': { from: 'crove_social.channel_set', omit: [] },
-  'social.chat_alert': { from: 'crove_social.chat_alert', omit: [] },
-  'social.external_import': { from: 'crove_social.external_import', omit: [] },
-  'social.external_post': { from: 'crove_social.external_post', omit: [] },
-  'social.feed': { from: 'crove_social.feed', omit: [] },
-  'social.goal': { from: 'crove_social.goal', omit: [] },
-  'social.idea': { from: 'crove_social.idea', omit: [] },
-  'social.idea_label': { from: 'crove_social.idea_label', omit: [] },
-  'social.label': { from: 'crove_social.label', omit: [] },
-  'social.media_archive': { from: 'crove_social.media_archive', omit: [] },
-  'social.media_attribution': { from: 'crove_social.media_attribution', omit: [] },
-  'social.media_tag': { from: 'crove_social.media_tag', omit: [] },
-  'social.post_label': { from: 'crove_social.post_label', omit: [] },
-  'social.post_version': { from: 'crove_social.post_version', omit: [] },
-  'social.publish_hold': { from: 'crove_social.publish_hold', omit: [] },
-  'social.report_branding': { from: 'crove_social.report_branding', omit: [] },
-  'social.report_schedule': { from: 'crove_social.report_schedule', omit: [] },
-  'social.review_check': { from: 'crove_social.review_check', omit: [] },
-  'social.review_feedback': { from: 'crove_social.review_feedback', omit: [] },
-  'social.review_link_post': { from: 'crove_social.review_link_post', omit: [] },
-  'social.short_link': { from: 'crove_social.short_link', omit: [] },
-  'social.short_link_click': { from: 'crove_social.short_link_click', omit: [] },
-  'social.snippet': { from: 'crove_social.snippet', omit: [] },
-  'social.watermark': { from: 'crove_social.watermark', omit: [] },
-  'social.post_comment': { from: 'crove_social.post_comment', omit: ['suggest_hash'] },
-  'social.report_link': { from: 'crove_social.report_link', omit: ['token_sha256'] },
-  'social.review_link': { from: 'crove_social.review_link', omit: ['token_sha256'] },
+  'social.account_snapshot': { from: 'ludy_social.account_snapshot', omit: [] },
+  'social.banned_word': { from: 'ludy_social.banned_word', omit: [] },
+  'social.bio_click': { from: 'ludy_social.bio_click', omit: [] },
+  'social.bio_page': { from: 'ludy_social.bio_page', omit: [] },
+  'social.brand_voice': { from: 'ludy_social.brand_voice', omit: [] },
+  'social.calendar_note': { from: 'ludy_social.calendar_note', omit: [] },
+  'social.channel_option': { from: 'ludy_social.channel_option', omit: [] },
+  'social.channel_policy': { from: 'ludy_social.channel_policy', omit: [] },
+  'social.channel_set': { from: 'ludy_social.channel_set', omit: [] },
+  'social.chat_alert': { from: 'ludy_social.chat_alert', omit: [] },
+  'social.external_import': { from: 'ludy_social.external_import', omit: [] },
+  'social.external_post': { from: 'ludy_social.external_post', omit: [] },
+  'social.feed': { from: 'ludy_social.feed', omit: [] },
+  'social.goal': { from: 'ludy_social.goal', omit: [] },
+  'social.idea': { from: 'ludy_social.idea', omit: [] },
+  'social.idea_label': { from: 'ludy_social.idea_label', omit: [] },
+  'social.label': { from: 'ludy_social.label', omit: [] },
+  'social.media_archive': { from: 'ludy_social.media_archive', omit: [] },
+  'social.media_attribution': { from: 'ludy_social.media_attribution', omit: [] },
+  'social.media_tag': { from: 'ludy_social.media_tag', omit: [] },
+  'social.post_label': { from: 'ludy_social.post_label', omit: [] },
+  'social.post_version': { from: 'ludy_social.post_version', omit: [] },
+  'social.publish_hold': { from: 'ludy_social.publish_hold', omit: [] },
+  'social.report_branding': { from: 'ludy_social.report_branding', omit: [] },
+  'social.report_schedule': { from: 'ludy_social.report_schedule', omit: [] },
+  'social.review_check': { from: 'ludy_social.review_check', omit: [] },
+  'social.review_feedback': { from: 'ludy_social.review_feedback', omit: [] },
+  'social.review_link_post': { from: 'ludy_social.review_link_post', omit: [] },
+  'social.short_link': { from: 'ludy_social.short_link', omit: [] },
+  'social.short_link_click': { from: 'ludy_social.short_link_click', omit: [] },
+  'social.snippet': { from: 'ludy_social.snippet', omit: [] },
+  'social.watermark': { from: 'ludy_social.watermark', omit: [] },
+  'social.post_comment': { from: 'ludy_social.post_comment', omit: ['suggest_hash'] },
+  'social.report_link': { from: 'ludy_social.report_link', omit: ['token_sha256'] },
+  'social.review_link': { from: 'ludy_social.review_link', omit: ['token_sha256'] },
   // Only the views a member shared: a private view is readable by its member alone (the snapshot's system context would see it, so the filter is here).
-  'social.saved_view': { from: '(SELECT v.* FROM crove_social.saved_view v WHERE v.shared)', omit: [] },
+  'social.saved_view': { from: '(SELECT v.* FROM ludy_social.saved_view v WHERE v.shared)', omit: [] },
   // Ads (#3367): the campaign drafts and requests, the launches with their state and wind-down, the flags, settings and spend caps, and the platform objects. The sealed tokens and
   // the queue that revokes them stay out.
-  'ads.ad_campaign_draft': { from: 'crove_ads.ad_campaign_draft', omit: [] },
-  'ads.ad_campaign_request': { from: 'crove_ads.ad_campaign_request', omit: [] },
-  'ads.ad_flag_setting': { from: 'crove_ads.ad_flag_setting', omit: [] },
-  'ads.ad_launch': { from: 'crove_ads.ad_launch', omit: [] },
+  'ads.ad_campaign_draft': { from: 'ludy_ads.ad_campaign_draft', omit: [] },
+  'ads.ad_campaign_request': { from: 'ludy_ads.ad_campaign_request', omit: [] },
+  'ads.ad_flag_setting': { from: 'ludy_ads.ad_flag_setting', omit: [] },
+  'ads.ad_launch': { from: 'ludy_ads.ad_launch', omit: [] },
   // The changes of a running ad (#3835, W4): what was asked and where it stands, ids, amounts, dates and codes only.
-  'ads.ad_manage_change': { from: 'crove_ads.ad_manage_change', omit: [] },
-  'ads.ad_object': { from: 'crove_ads.ad_object', omit: [] },
-  'ads.ad_org_setting': { from: 'crove_ads.ad_org_setting', omit: [] },
-  'ads.ad_spend_cap': { from: 'crove_ads.ad_spend_cap', omit: [] },
+  'ads.ad_manage_change': { from: 'ludy_ads.ad_manage_change', omit: [] },
+  'ads.ad_object': { from: 'ludy_ads.ad_object', omit: [] },
+  'ads.ad_org_setting': { from: 'ludy_ads.ad_org_setting', omit: [] },
+  'ads.ad_spend_cap': { from: 'ludy_ads.ad_spend_cap', omit: [] },
   // Meetings (#3367): the chat channels' settings. A meeting's transcript, notes, results and the rest are readable by its attendees only, so only the meetings shared with the org are exported (meetings.meeting).
-  'meetings.chat_channel': { from: 'crove_meetings.chat_channel', omit: [] },
+  'meetings.chat_channel': { from: 'ludy_meetings.chat_channel', omit: [] },
   // Meetings (#3578): the minutes templates the org wrote, its own layout text (a name and sections; no personal data), archived ones included.
-  'meetings.minutes_template': { from: 'crove_meetings.minutes_template', omit: [] },
+  'meetings.minutes_template': { from: 'ludy_meetings.minutes_template', omit: [] },
   // Each member's Vy (ADR-0049, #2822): per member how many private results and memory entries it holds (ludy_kernel.member_vy_private_counts(), a definer that answers counts only, for the
   // worker's system context). Never a body: the results and the memory are sealed to their member, and a person who leaves is purged, so an export carries only that they existed.
   'kernel.member_vy_private_count': { from: 'ludy_kernel.member_vy_private_counts()', omit: [] },
-  'projects.project': { from: 'crove_projects.project', omit: [] },
-  'projects.project_column': { from: 'crove_projects.project_column', omit: [] },
-  'projects.project_cycle': { from: 'crove_projects.project_cycle', omit: [] },
-  'projects.project_member': { from: 'crove_projects.project_member', omit: [] },
-  'projects.project_task': { from: 'crove_projects.project_task', omit: [] },
-  'projects.roadmap_board': { from: 'crove_projects.roadmap_board', omit: [] },
-  'projects.roadmap_item': { from: 'crove_projects.roadmap_item', omit: [] },
-  'projects.roadmap_announcement': { from: 'crove_projects.roadmap_announcement', omit: [] },
-  'projects.roadmap_vote': { from: 'crove_projects.roadmap_vote', omit: ['voter_email_hash'] },
-  'projects.task_dependency': { from: 'crove_projects.task_dependency', omit: [] },
-  'projects.time_entry': { from: 'crove_projects.time_entry', omit: [] },
-  // ADR-0047 §2/§7: exclude attendees-only or expired meeting triage rows because system export bypasses crove_meetings RLS.
+  'projects.project': { from: 'ludy_projects.project', omit: [] },
+  'projects.project_column': { from: 'ludy_projects.project_column', omit: [] },
+  'projects.project_cycle': { from: 'ludy_projects.project_cycle', omit: [] },
+  'projects.project_member': { from: 'ludy_projects.project_member', omit: [] },
+  'projects.project_task': { from: 'ludy_projects.project_task', omit: [] },
+  'projects.roadmap_board': { from: 'ludy_projects.roadmap_board', omit: [] },
+  'projects.roadmap_item': { from: 'ludy_projects.roadmap_item', omit: [] },
+  'projects.roadmap_signal': { from: 'ludy_projects.roadmap_signal', omit: [] },
+  'projects.roadmap_announcement': { from: 'ludy_projects.roadmap_announcement', omit: [] },
+  'projects.roadmap_vote': { from: 'ludy_projects.roadmap_vote', omit: ['voter_email_hash'] },
+  'projects.task_dependency': { from: 'ludy_projects.task_dependency', omit: [] },
+  'projects.time_entry': { from: 'ludy_projects.time_entry', omit: [] },
+  // ADR-0047 points 2 and 7: exclude attendees-only or expired meeting triage rows because system export bypasses ludy_meetings RLS.
   'projects.project_triage_item': {
-    from: "(SELECT t.* FROM crove_projects.project_triage_item t WHERE t.source_type <> 'meetings.meeting' OR EXISTS (SELECT 1 FROM ludy_kernel.meeting_export_rows() m WHERE m.org_id = t.org_id AND m.id = t.source_id))",
+    from: "(SELECT t.* FROM ludy_projects.project_triage_item t WHERE t.source_type <> 'meetings.meeting' OR EXISTS (SELECT 1 FROM ludy_kernel.meeting_export_rows() m WHERE m.org_id = t.org_id AND m.id = t.source_id))",
     omit: [],
   },
   // eSign (#3323, #3526, #3554, #3811, #3821): envelopes, post-signature obligations, signers (omitting deployment-keyed signer_ip_hash), fields, AI analysis summaries, hash-chained signing events, reusable templates, and CA PAdES signing requests (omitting idempotency_key); credential-bearing ca_connection, signing_token, signing_otp, and template_direct_link tables stay out, and attendees-only meeting_minutes envelopes stay out under ADR-0047 point 7.
   'sign.envelope': {
-    from: '(SELECT e.* FROM crove_sign.envelope e WHERE crove_sign.is_exportable_envelope(e.org_id, e.source_kind, e.source_id))',
+    from: '(SELECT e.* FROM ludy_sign.envelope e WHERE ludy_sign.is_exportable_envelope(e.org_id, e.source_kind, e.source_id))',
     omit: [],
   },
   'sign.envelope_obligation': {
-    from: '(SELECT o.* FROM crove_sign.envelope_obligation o WHERE crove_sign.is_exportable_envelope_id(o.org_id, o.envelope_id))',
+    from: '(SELECT o.* FROM ludy_sign.envelope_obligation o WHERE ludy_sign.is_exportable_envelope_id(o.org_id, o.envelope_id))',
     omit: [],
   },
   'sign.signer': {
-    from: '(SELECT s.* FROM crove_sign.signer s WHERE crove_sign.is_exportable_envelope_id(s.org_id, s.envelope_id))',
+    from: '(SELECT s.* FROM ludy_sign.signer s WHERE ludy_sign.is_exportable_envelope_id(s.org_id, s.envelope_id))',
     omit: ['signer_ip_hash'],
   },
   'sign.field': {
-    from: '(SELECT f.* FROM crove_sign.field f WHERE crove_sign.is_exportable_envelope_id(f.org_id, f.envelope_id))',
+    from: '(SELECT f.* FROM ludy_sign.field f WHERE ludy_sign.is_exportable_envelope_id(f.org_id, f.envelope_id))',
+    omit: [],
+  },
+  'sign.kyc_check': {
+    from: '(SELECT k.* FROM ludy_sign.kyc_check k WHERE ludy_sign.is_exportable_envelope_id(k.org_id, k.envelope_id))',
     omit: [],
   },
   'sign.ai_analysis': {
-    from: '(SELECT a.* FROM crove_sign.ai_analysis a WHERE crove_sign.is_exportable_envelope_id(a.org_id, a.envelope_id))',
+    from: '(SELECT a.* FROM ludy_sign.ai_analysis a WHERE ludy_sign.is_exportable_envelope_id(a.org_id, a.envelope_id))',
     omit: [],
   },
   'sign.signing_event': {
-    from: '(SELECT ev.* FROM crove_sign.signing_event ev WHERE crove_sign.is_exportable_envelope_id(ev.org_id, ev.envelope_id))',
+    from: '(SELECT ev.* FROM ludy_sign.signing_event ev WHERE ludy_sign.is_exportable_envelope_id(ev.org_id, ev.envelope_id))',
     omit: [],
   },
-  'sign.template': { from: 'crove_sign.template', omit: [] },
-  'sign.template_role': { from: 'crove_sign.template_role', omit: [] },
-  'sign.template_field': { from: 'crove_sign.template_field', omit: [] },
+  'sign.template': { from: 'ludy_sign.template', omit: [] },
+  'sign.template_role': { from: 'ludy_sign.template_role', omit: [] },
+  'sign.template_field': { from: 'ludy_sign.template_field', omit: [] },
   'sign.ca_signing_request': {
-    from: '(SELECT r.* FROM crove_sign.ca_signing_request r WHERE crove_sign.is_exportable_envelope_id(r.org_id, r.envelope_id))',
+    from: '(SELECT r.* FROM ludy_sign.ca_signing_request r WHERE ludy_sign.is_exportable_envelope_id(r.org_id, r.envelope_id))',
     omit: ['idempotency_key'],
   },
-  'sign.org_stamp': { from: 'crove_sign.org_stamp', omit: [] },
+  'sign.org_stamp': { from: 'ludy_sign.org_stamp', omit: [] },
+  'sign.playbook_rule': { from: 'ludy_sign.playbook_rule', omit: [] },
+  'sign.playbook_check': {
+    from: '(SELECT pc.* FROM ludy_sign.playbook_check pc WHERE ludy_sign.is_exportable_envelope_id(pc.org_id, pc.envelope_id))',
+    omit: [],
+  },
 } as const satisfies Record<string, { from: string; omit: readonly string[] }>;
 
 export type ExportTable = keyof typeof EXPORT_TABLES;
@@ -484,10 +496,13 @@ export const exportSnapshot = defineQuery({
       const omit = spec.omit as readonly string[];
       // The worker process a system audit row names (detail.workerInstance, #1951) is the deployment's, never the org's:
       // a host or pod name, left out of the org's copy as the audit log leaves it out (auditDetailLine).
+      // For projects.roadmap_signal (#4492, ADR-0047), omit quote_excerpt on attendees-only meetings not exported by meeting_export_rows().
       const scrub =
         table === 'kernel.audit_event'
           ? sql`|| pg_catalog.jsonb_build_object('detail', CASE WHEN pg_catalog.jsonb_typeof(t.detail) = 'object' THEN t.detail - 'workerInstance' ELSE t.detail END)`
-          : sql``;
+          : table === 'projects.roadmap_signal'
+            ? sql`|| CASE WHEN t.source_type = 'meetings.meeting' AND NOT EXISTS (SELECT 1 FROM ludy_kernel.meeting_export_rows() m WHERE m.org_id = t.org_id AND m.id = t.source_id) THEN pg_catalog.jsonb_build_object('quote_excerpt', NULL) ELSE '{}'::jsonb END`
+            : sql``;
       // spec.from is one of the constant names above, never input.
       await sql`
         DECLARE crove_org_export NO SCROLL CURSOR FOR
@@ -513,31 +528,31 @@ export const exportSnapshot = defineQuery({
 // or agent actor can run. The sealed identity and bank account numbers are left out (they open only with the org's subject
 // keys, ADR-0017, and an owner reads them in the app). The pay runs and their lines (#2531) carry no identity or account number: figures, input labels and free text.
 export const OWNER_RUN_EXPORT_TABLES = {
-  'hr.department': { from: 'crove_hr.department', omit: [] },
-  'hr.payroll_employee': { from: 'crove_hr.payroll_employee', omit: ['national_id_sealed', 'bank_account_sealed', 'tax_code_sealed', 'insurance_number_sealed', 'work_permit_number_sealed'] },
-  'hr.payroll_employment': { from: 'crove_hr.payroll_employment', omit: [] },
-  'hr.payroll_dependent': { from: 'crove_hr.payroll_dependent', omit: [] },
-  'hr.payroll_run': { from: 'crove_hr.payroll_run', omit: [] },
-  'hr.payroll_line': { from: 'crove_hr.payroll_line', omit: [] },
+  'hr.department': { from: 'ludy_hr.department', omit: [] },
+  'hr.payroll_employee': { from: 'ludy_hr.payroll_employee', omit: ['national_id_sealed', 'bank_account_sealed', 'tax_code_sealed', 'insurance_number_sealed', 'work_permit_number_sealed'] },
+  'hr.payroll_employment': { from: 'ludy_hr.payroll_employment', omit: [] },
+  'hr.payroll_dependent': { from: 'ludy_hr.payroll_dependent', omit: [] },
+  'hr.payroll_run': { from: 'ludy_hr.payroll_run', omit: [] },
+  'hr.payroll_line': { from: 'ludy_hr.payroll_line', omit: [] },
   // The layouts of the bank's bulk-salary file (#2532): configuration (names, column keys and headers, a content text), no person's data.
-  'hr.payroll_bank_template': { from: 'crove_hr.payroll_bank_template', omit: [] },
+  'hr.payroll_bank_template': { from: 'ludy_hr.payroll_bank_template', omit: [] },
   // Monthly employee leave ledger (#3394, #2540): opening balances, annual leave, paid personal leave and unpaid leave days per employee and month.
-  'hr.payroll_leave_entry': { from: 'crove_hr.payroll_leave_entry', omit: [] },
+  'hr.payroll_leave_entry': { from: 'ludy_hr.payroll_leave_entry', omit: [] },
   // Employee leave requests with L1 -> final approval trail (#4300).
-  'hr.leave_request': { from: 'crove_hr.leave_request', omit: [] },
-  'hr.attendance_log': { from: 'crove_hr.attendance_log', omit: [] },
+  'hr.leave_request': { from: 'ludy_hr.leave_request', omit: [] },
+  'hr.attendance_log': { from: 'ludy_hr.attendance_log', omit: [] },
   'hr.onboarding_submission': {
-    from: 'crove_hr.onboarding_submission',
+    from: 'ludy_hr.onboarding_submission',
     omit: ['national_id_sealed', 'bank_account_sealed', 'tax_code_sealed', 'insurance_number_sealed'],
   },
-  'hr.overtime_request': { from: 'crove_hr.overtime_request', omit: [] },
-  'hr.probation_review': { from: 'crove_hr.probation_review', omit: [] },
+  'hr.overtime_request': { from: 'ludy_hr.overtime_request', omit: [] },
+  'hr.probation_review': { from: 'ludy_hr.probation_review', omit: [] },
   // Lightweight recruiting openings and candidates (#3425), readable by owners and admins only.
-  'hr.job_opening': { from: 'crove_hr.job_opening', omit: [] },
-  'hr.candidate': { from: 'crove_hr.candidate', omit: [] },
+  'hr.job_opening': { from: 'ludy_hr.job_opening', omit: [] },
+  'hr.candidate': { from: 'ludy_hr.candidate', omit: [] },
   // The glossary the org keeps for Vy's spelling (#4043): plain text an owner or admin wrote (no personal data by its rules). Its owner_admin policy shows the system actor nothing, so the snapshot would
   // export an empty table: the owner's own session reads it here.
-  'meetings.glossary_term': { from: 'crove_meetings.glossary_term', omit: [] },
+  'meetings.glossary_term': { from: 'ludy_meetings.glossary_term', omit: [] },
 } as const satisfies Record<string, { from: string; omit: readonly string[] }>;
 export type OwnerRunExportTable = keyof typeof OWNER_RUN_EXPORT_TABLES;
 export const OWNER_RUN_EXPORT_TABLE_NAMES = Object.keys(OWNER_RUN_EXPORT_TABLES) as [OwnerRunExportTable, ...OwnerRunExportTable[]];

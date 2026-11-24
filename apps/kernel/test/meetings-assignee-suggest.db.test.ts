@@ -41,11 +41,11 @@ suite('the assignee suggested for an action item (#3921)', () => {
   async function seedMeeting(recorder: string, readers: string[]): Promise<string> {
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp tuần', 'vi', now(), now() + interval '30 minutes', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, meetingId, users[recorder]],
     );
-    for (const reader of readers) await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users[reader]]);
+    for (const reader of readers) await sqlAdmin(`INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users[reader]]);
     return meetingId;
   }
   async function seedPosition(who: string, title: string): Promise<string> {
@@ -123,7 +123,7 @@ suite('the assignee suggested for an action item (#3921)', () => {
     const before = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.task WHERE org_id = $1`, [orgId]);
     const got = await suggestionsFor(meetingId, ['Quân']);
     expect(got.Quân?.positions).toEqual([{ id: seatA, title: 'Kế toán' }]);
-    const stored = await sqlAdmin<{ who_parsed: string | null }>(`SELECT who_parsed FROM crove_meetings.action_item WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]);
+    const stored = await sqlAdmin<{ who_parsed: string | null }>(`SELECT who_parsed FROM ludy_meetings.action_item WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId]);
     expect(stored.rows.every((r) => r.who_parsed === null)).toBe(true);
     const after = await sqlAdmin<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.task WHERE org_id = $1`, [orgId]);
     expect(after.rows[0]?.n).toBe(before.rows[0]?.n);

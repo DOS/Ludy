@@ -67,11 +67,11 @@ suite('the recorder\'s rough notes and Vy\'s expansion of them (A5, #3163)', () 
   async function seedMeeting(recorder: string, readers: string[] = ['attendee']): Promise<string> {
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp tuần', 'vi', '2026-11-10T03:00:00Z', '2026-11-10T03:30:00Z', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, meetingId, users[recorder]],
     );
-    for (const reader of readers) await sqlAdmin(`INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users[reader]]);
+    for (const reader of readers) await sqlAdmin(`INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`, [orgId, randomUUID(), meetingId, users[reader]]);
     await exec(recorder, 'meetings.transcript.draft_store', {
       meetingId,
       segments: [
@@ -81,7 +81,7 @@ suite('the recorder\'s rough notes and Vy\'s expansion of them (A5, #3163)', () 
     });
     return meetingId;
   }
-  const noteRows = async (meetingId: string) => (await sqlAdmin<{ body: string }>(`SELECT body FROM crove_meetings.meeting_note WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId])).rows;
+  const noteRows = async (meetingId: string) => (await sqlAdmin<{ body: string }>(`SELECT body FROM ludy_meetings.meeting_note WHERE org_id = $1 AND meeting_id = $2`, [orgId, meetingId])).rows;
   type Preview = { template: string; dropped: number; enhanced: { sections: Array<{ key: string | null; lines: Array<{ own: boolean; text: string; seconds: number | null }> }> } };
   const answer = (lines: unknown[], key = 'all') => JSON.stringify({ sections: [{ key, lines }] });
 
@@ -168,7 +168,7 @@ suite('the recorder\'s rough notes and Vy\'s expansion of them (A5, #3163)', () 
     await exec('recorder', 'meetings.notes.save', { meetingId: clean, body: 'ghi chú không nhắc ai' });
     const find = () => runtime.execute<PersonalDataResult>('kernel.personal_data.find', { value: email }, { actor: asUser('owner'), orgId, idempotencyKey: randomUUID() });
     const found = await find();
-    expect(found.matches.filter((m) => m.column.startsWith('crove_meetings.')).map((m) => m.column)).toEqual(['crove_meetings.meeting_note.body']);
+    expect(found.matches.filter((m) => m.column.startsWith('ludy_meetings.')).map((m) => m.column)).toEqual(['ludy_meetings.meeting_note.body']);
     // The recorder's notes are counted for their recorder, with no text, no meeting and no title.
     expect(found.meetingText).toEqual([{ recorderUserId: users.recorder, meetings: 0, lines: 0, results: 0, items: 0, titles: 0, notes: 1 }]);
     expect(JSON.stringify(found)).not.toContain('nhắc');
@@ -181,7 +181,7 @@ suite('the recorder\'s rough notes and Vy\'s expansion of them (A5, #3163)', () 
 
     const mfa = { type: 'user' as const, userId: users.owner as string, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
     const erased = await runtime.execute<PersonalDataErasure>('kernel.personal_data.erase', { value: email }, { actor: mfa, orgId, idempotencyKey: randomUUID() });
-    expect(erased.erased.find((e) => e.column === 'crove_meetings.meeting_note.body')?.rows).toBe(2);
+    expect(erased.erased.find((e) => e.column === 'ludy_meetings.meeting_note.body')?.rows).toBe(2);
     // Counted per recorder: the owner's own note and the member's note, no text and no meeting.
     expect(erased.meetingNotes?.slice().sort((a, b) => a.recorderUserId.localeCompare(b.recorderUserId))).toEqual(
       [
@@ -190,7 +190,7 @@ suite('the recorder\'s rough notes and Vy\'s expansion of them (A5, #3163)', () 
       ].sort((a, b) => a.recorderUserId.localeCompare(b.recorderUserId)),
     );
     expect(JSON.stringify(erased)).not.toContain('nhắc');
-    expect(erased.kept.some((k) => k.column.startsWith('crove_meetings.meeting_note'))).toBe(false);
+    expect(erased.kept.some((k) => k.column.startsWith('ludy_meetings.meeting_note'))).toBe(false);
     // Every mention is replaced, in the member's note too; the lines around it and an untouched note stay as written.
     expect((await noteRows(own)).map((r) => r.body)).toEqual(['gửi hợp đồng cho [đã xóa]\nmột dòng khác']);
     expect((await noteRows(theirs)).map((r) => r.body)).toEqual(['nhắc [đã xóa] về báo giá\n[đã xóa] lần hai']);

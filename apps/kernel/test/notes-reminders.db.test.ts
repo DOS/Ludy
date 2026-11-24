@@ -77,7 +77,7 @@ suite('to-do reminders and search on PostgreSQL (#1675)', () => {
           ).rows,
       );
     // Moves a to-do's reminder into the past, as time passing would.
-    const due = (todoId: string) => admin((c) => c.query(`UPDATE crove_notes.todo SET remind_at = now() - interval '1 minute' WHERE id = $1`, [todoId]));
+    const due = (todoId: string) => admin((c) => c.query(`UPDATE ludy_notes.todo SET remind_at = now() - interval '1 minute' WHERE id = $1`, [todoId]));
     return { orgId, owner, mine, other, limited, branch, exec, query, get, reminders, due };
   }
 
@@ -130,7 +130,7 @@ suite('to-do reminders and search on PostgreSQL (#1675)', () => {
     // to a later day, the automatic reminder follows it.
     const late = await o.exec<TodoWritten>(o.mine, 'notes.todo.create', { title: 'Quá hạn', dueOn: dayAhead(-1), timeZone: TZ });
     expect((await o.get(o.mine, late.todoId)).remindAt).toBe(todoDueInstant(dayAhead(-1), '08:00', TZ).toISOString());
-    const sentAt = (id: string) => admin(async (c) => (await c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM crove_notes.todo WHERE id = $1`, [id])).rows[0]?.reminded_at);
+    const sentAt = (id: string) => admin(async (c) => (await c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM ludy_notes.todo WHERE id = $1`, [id])).rows[0]?.reminded_at);
     expect(await sentAt(late.todoId)).not.toBeNull();
     await o.exec(o.mine, 'notes.todo.update', { todoId: late.todoId, revision: 1, title: 'Quá hạn', details: '', checklist: [], dueOn: dayAhead(2), dueTime: null, timeZone: TZ });
     expect((await o.get(o.mine, late.todoId)).remindAt).toBe(todoDueInstant(dayAhead(2), '08:00', TZ).toISOString());
@@ -163,12 +163,12 @@ suite('to-do reminders and search on PostgreSQL (#1675)', () => {
     expect((await o.get(o.mine, todoId)).remindAt).toBeNull();
     // A sent reminder is armed again by a new time, and not by an edit that leaves it.
     await edit(todoId, 6, { dueOn: dayAhead(6), reminder: 'auto' });
-    await admin((c) => c.query(`UPDATE crove_notes.todo SET reminded_at = now() WHERE id = $1`, [todoId]));
+    await admin((c) => c.query(`UPDATE ludy_notes.todo SET reminded_at = now() WHERE id = $1`, [todoId]));
     await edit(todoId, 7, { dueOn: dayAhead(6), details: 'Thêm chi tiết' });
-    const sent = await admin((c) => c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM crove_notes.todo WHERE id = $1`, [todoId]));
+    const sent = await admin((c) => c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM ludy_notes.todo WHERE id = $1`, [todoId]));
     expect(sent.rows[0]?.reminded_at).not.toBeNull();
     await edit(todoId, 8, { dueOn: dayAhead(7) });
-    const armed = await admin((c) => c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM crove_notes.todo WHERE id = $1`, [todoId]));
+    const armed = await admin((c) => c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM ludy_notes.todo WHERE id = $1`, [todoId]));
     expect(armed.rows[0]?.reminded_at).toBeNull();
     const audit = await admin((c) => c.query<{ detail: unknown }>(`SELECT detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command LIKE 'notes.todo.%'`, [o.orgId]));
     const text = JSON.stringify(audit.rows);
@@ -189,7 +189,7 @@ suite('to-do reminders and search on PostgreSQL (#1675)', () => {
     for (const id of [open, done, deleted, cancelled, theirs]) await o.due(id);
     await o.exec(o.mine, 'notes.todo.complete', { todoId: done });
     await o.exec(o.mine, 'notes.todo.delete', { todoId: deleted });
-    await admin((c) => c.query(`UPDATE crove_notes.todo SET status = 'cancelled' WHERE id = $1`, [cancelled]));
+    await admin((c) => c.query(`UPDATE ludy_notes.todo SET status = 'cancelled' WHERE id = $1`, [cancelled]));
 
     await sweepNotesReminders({ runtime: worker, workerDb });
     const first = await o.reminders();
@@ -229,7 +229,7 @@ suite('to-do reminders and search on PostgreSQL (#1675)', () => {
     await o.due(again);
     await sweepNotesReminders({ runtime: worker, workerDb });
     expect((await o.reminders()).some((r) => r.subject_id === again)).toBe(false);
-    const claimed = await admin((c) => c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM crove_notes.todo WHERE id = $1`, [again]));
+    const claimed = await admin((c) => c.query<{ reminded_at: Date | null }>(`SELECT reminded_at FROM ludy_notes.todo WHERE id = $1`, [again]));
     expect(claimed.rows[0]?.reminded_at).not.toBeNull();
     // Done before its time and reopened after it, or restored from the trash: not reminded late.
     await o.exec(o.mine, 'notes.todo.reopen', { todoId: done });

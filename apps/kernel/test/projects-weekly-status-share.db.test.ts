@@ -829,7 +829,7 @@ suite('projects P6 share_note & send_mail (#2609)', () => {
     expect(erasedDelivered.erased).toEqual(
       expect.arrayContaining([
         { column: 'ludy_kernel.mail_message.payload', rows: 1 },
-        { column: 'crove_projects.project.name', rows: 1 },
+        { column: 'ludy_projects.project.name', rows: 1 },
       ]),
     );
     expect(erasedDelivered.kept).toContainEqual({

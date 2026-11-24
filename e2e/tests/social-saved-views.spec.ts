@@ -75,7 +75,7 @@ test('filters the drafts by a writer, keeps it in the link, and shares it as a s
   await lanContext.close();
 
   const rows = sql<{ name: string; shared: boolean }>(
-    `SELECT name, shared FROM crove_social.saved_view WHERE org_id = (SELECT org_id FROM ludy_kernel.tenant WHERE slug = :'slug') ORDER BY name`,
+    `SELECT name, shared FROM ludy_social.saved_view WHERE org_id = (SELECT org_id FROM ludy_kernel.tenant WHERE slug = :'slug') ORDER BY name`,
     { slug },
   );
   expect(rows.map((r) => `${r.name}:${String(r.shared)}`)).toEqual(['Nháp của Lan:true', 'Nháp riêng của chủ:false']);

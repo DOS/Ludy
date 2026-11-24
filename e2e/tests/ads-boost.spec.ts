@@ -16,13 +16,13 @@ const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 function seedRunningAds(slug: string, writeOn: boolean): void {
   const org = `(SELECT org_id FROM ludy_kernel.tenant WHERE slug = :'slug')`;
   exec(
-    `ALTER TABLE crove_ads.ad_org_setting DISABLE TRIGGER switch_guard;
-     INSERT INTO crove_ads.ad_org_setting (org_id) SELECT ${org} WHERE NOT EXISTS (SELECT 1 FROM crove_ads.ad_org_setting WHERE org_id = ${org});
-     UPDATE crove_ads.ad_org_setting SET write_enabled = ${writeOn ? 'true' : 'false'}, launches_blocked = false WHERE org_id = ${org};
-     ALTER TABLE crove_ads.ad_org_setting ENABLE ALWAYS TRIGGER switch_guard;
-     ALTER TABLE crove_ads.ad_account DISABLE TRIGGER switch_guard;
-     UPDATE crove_ads.ad_account SET write_enabled = ${writeOn ? 'true' : 'false'} WHERE org_id = ${org};
-     ALTER TABLE crove_ads.ad_account ENABLE ALWAYS TRIGGER switch_guard`,
+    `ALTER TABLE ludy_ads.ad_org_setting DISABLE TRIGGER switch_guard;
+     INSERT INTO ludy_ads.ad_org_setting (org_id) SELECT ${org} WHERE NOT EXISTS (SELECT 1 FROM ludy_ads.ad_org_setting WHERE org_id = ${org});
+     UPDATE ludy_ads.ad_org_setting SET write_enabled = ${writeOn ? 'true' : 'false'}, launches_blocked = false WHERE org_id = ${org};
+     ALTER TABLE ludy_ads.ad_org_setting ENABLE ALWAYS TRIGGER switch_guard;
+     ALTER TABLE ludy_ads.ad_account DISABLE TRIGGER switch_guard;
+     UPDATE ludy_ads.ad_account SET write_enabled = ${writeOn ? 'true' : 'false'} WHERE org_id = ${org};
+     ALTER TABLE ludy_ads.ad_account ENABLE ALWAYS TRIGGER switch_guard`,
     { slug },
   );
 }
@@ -54,7 +54,7 @@ test('an owner boosts a published post: no action while running ads is off, then
     postUrl = page.url();
     postId = postUrl.split('/').pop() ?? '';
     // Due now, so the worker's sweep publishes it to the sandbox.
-    exec(`UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postId });
+    exec(`UPDATE ludy_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = :'post'`, { post: postId });
     await expect(page.getByTestId('published-summary').getByText(/Đã đăng lúc/)).toBeVisible({ timeout: 60_000 });
   });
 
@@ -82,10 +82,10 @@ test('an owner boosts a published post: no action while running ads is off, then
   await test.step('running ads on as its approvals leave it, with a daily cap and a Page an ad runs as', async () => {
     seedRunningAds(slug, true);
     exec(
-      `ALTER TABLE crove_ads.ad_spend_cap DISABLE TRIGGER cap_guard;
-       INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, period, amount, currency, set_by)
+      `ALTER TABLE ludy_ads.ad_spend_cap DISABLE TRIGGER cap_guard;
+       INSERT INTO ludy_ads.ad_spend_cap (org_id, id, scope, period, amount, currency, set_by)
          SELECT t.org_id, gen_random_uuid(), 'org', 'daily', 200000, 'VND', m.user_id FROM ludy_kernel.tenant t JOIN ludy_kernel.tenant_member m ON m.org_id = t.org_id AND m.role = 'owner' WHERE t.slug = :'slug' LIMIT 1;
-       ALTER TABLE crove_ads.ad_spend_cap ENABLE ALWAYS TRIGGER cap_guard;
+       ALTER TABLE ludy_ads.ad_spend_cap ENABLE ALWAYS TRIGGER cap_guard;
        INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by)
          SELECT t.org_id, gen_random_uuid(), 'facebook_page', '1' || lpad((random() * 999999999)::bigint::text, 9, '0'), 'Trang Facebook E2E', m.user_id FROM ludy_kernel.tenant t JOIN ludy_kernel.tenant_member m ON m.org_id = t.org_id AND m.role = 'owner' WHERE t.slug = :'slug' LIMIT 1`,
       { slug },
@@ -119,7 +119,7 @@ test('an owner boosts a published post: no action while running ads is off, then
     await panel.getByLabel('Số tiền tối đa muốn chi').fill('abc');
     await panel.getByRole('button', { name: 'Tạo bản nháp' }).click();
     await expect(panel.getByText('Hãy nhập một số tiền lớn hơn 0, tối đa hai chữ số thập phân.')).toBeVisible();
-    expect(sql<{ n: number }>(`SELECT count(*)::int AS n FROM crove_ads.ad_campaign_draft d JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`, { slug })).toEqual([{ n: 0 }]);
+    expect(sql<{ n: number }>(`SELECT count(*)::int AS n FROM ludy_ads.ad_campaign_draft d JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`, { slug })).toEqual([{ n: 0 }]);
   });
 
   await test.step('the draft says the most it can spend, and nothing is approved or sent', async () => {
@@ -138,7 +138,7 @@ test('an owner boosts a published post: no action while running ads is off, then
     const rows = sql<{ status: string; origin: string; objective: string; source_post_id: string | null; max_spend: string; proposals: number }>(
       `SELECT d.status, d.origin, d.objective, d.source_post_id::text AS source_post_id, d.max_spend::text AS max_spend,
               (SELECT count(*)::int FROM ludy_kernel.proposal p WHERE p.org_id = d.org_id AND p.command = 'ads.campaign.launch') AS proposals
-         FROM crove_ads.ad_campaign_draft d JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`,
+         FROM ludy_ads.ad_campaign_draft d JOIN ludy_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`,
       { slug },
     );
     // The post is kept as an opaque id, a person wrote the draft, and no request for approval exists yet.

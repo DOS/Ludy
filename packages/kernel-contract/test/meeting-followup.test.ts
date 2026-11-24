@@ -83,6 +83,124 @@ describe('followupNoteProblem', () => {
     expect(followupHasPhoneOrLongDigits('Hạn 2026-11-22 - 2026-12-01, gói 15.000.000 (2026)')).toBe(false);
     expect(followupHasPhoneOrLongDigits('Gọi 84 (028) 3822 1234')).toBe(true);
   });
+
+  it('reads a phone typed with spaced hyphens, keeps dot dates and figure ranges out of CONTACT, and sees a domain behind punctuation (#4479)', () => {
+    for (const phone of [
+      'Số 090 - 123 - 4567',
+      'Gọi 090 - 1234567',
+      'Số +84 90 - 123 - 4567',
+      'Gọi 0901 - 234 - 567',
+      'Số 090.123.4567',
+      'Mã 09.12.4567',
+      // A dot followed by a space, as people type a number: still one run (the first version of this rule let these through).
+      'Số 090. 123. 4567',
+      'Gọi 0901. 234. 567 nhé',
+      'Số 090 . 123 . 4567',
+      'Số 090..123..4567',
+      'Số 090-123-45',
+    ]) {
+      expect(followupHasPhoneOrLongDigits(phone), phone).toBe(true);
+    }
+    expect(followupNoteProblem(followupClean('Số 090 - 123 - 4567', false))).toBe('CONTACT');
+    for (const fine of [
+      'Họp ngày 28.11.2026',
+      'Hạn 28.11.2026 - 30.11.2026',
+      'Ngày 28.11.2026 lúc 09.30',
+      'Năm 2025. 2026 sẽ khác',
+      'Ngân sách 1000 - 2000 USD',
+      'Năm 2025 - 2026 - 2027',
+      'Từ 2026-11 - 2026-12',
+      // Times, days and ranges that open with a 0 or 84 and have spaced hyphens: eight digits or fewer, or a dot, so not a contact.
+      'Họp từ 08.30 - 11.30',
+      'Ca 07.00 - 11.30 - 13.30',
+      'Ca 0700 - 1100',
+      'Họp 0900 - 1700 hằng ngày',
+      'Ngày 05 - 10 - 2026',
+      'Từ 01 - 12 - 2026 đến 05 - 12 - 2026',
+      'Từ 01.12 - 05.12.2026',
+      'Giá 0 - 15.000.000',
+      'Doanh thu 8400 - 9000',
+      'Mã 01 - 02 - 03 - 04',
+      'Số 09.12.2026',
+      'Họp ngày 28.11.2026. 30 người dự',
+    ]) {
+      expect(followupHasPhoneOrLongDigits(fine), fine).toBe(false);
+    }
+    for (const link of ['Vào a,123.com', 'Xem (123.com)', 'Vào 123。com', 'Vào 123｡com', 'Xem x;1.ai nhé', 'Kiểm tra unit.test nhé']) {
+      expect(followupHasBareLink(link), link).toBe(true);
+    }
+    for (const fine of ['Giá 1,5 triệu và 2.5', 'Gửi báo giá, xong thì chốt', 'Họp lúc 9.30, tại phòng 5']) expect(followupHasBareLink(fine), fine).toBe(false);
+  });
+});
+
+describe('the contact and link shapes of #4553', () => {
+  // Gaps of #4479's review that were open before it: other dash characters, a line break between groups, a number typed without its leading 0, other separators, and links behind other
+  // punctuation or spaced dots. Nothing the guard refused before is allowed now (checked against the old guard on random strings).
+  it('refuses a phone typed with other dashes, line breaks, other separators or no leading 0, and keeps dates, times and ranges out of CONTACT', () => {
+    const en = String.fromCharCode(0x2013);
+    const minus = String.fromCharCode(0x2212);
+    for (const phone of [
+      `Số 090 ${en} 123 ${en} 4567`,
+      `Số 090${minus}123${minus}4567`,
+      'Số\n090\n123\n4567',
+      'Số 090 -\n123 -\n4567',
+      'Số 90 - 123 - 4567',
+      'US 415 - 555 - 2671',
+      'Gọi 1 - 415 - 555 - 2671',
+      'Số +1 415 - 555 - 2671',
+      'Số 090/123/4567',
+      'Số 090_123_4567',
+      'Số 090,123,4567',
+      'Số 090-123 - 4567',
+      // A date opens the run, a phone follows it: the date does not hide the phone.
+      'Họp 05/12/2026, 090_123_4567',
+      '05/12/2026 - 090/123/4567',
+      'Ngày 05/12/2026\n090 123\n4567',
+      // A numbered line or item just before the phone does not hide it.
+      'Mục 1\n090_123_4567',
+      'Phòng 5 - 090/123/4567',
+      'Mục 1\n90 - 123 - 4567',
+    ]) {
+      expect(followupHasPhoneOrLongDigits(phone), phone).toBe(true);
+    }
+    for (const fine of [
+      'Hạn 28/11/2026 12 người',
+      'Hạn 05/10/2026 12 người',
+      'Ngày 01-12-2026 12 người',
+      'Từ 05 - 10 - 2026 đến 07 - 10 - 2026',
+      `Ngày 28${en}11${en}2026`,
+      'Ca 07.00 - 11.30',
+      'Năm 2025 - 2026 - 2027',
+      'Doanh thu 10000 - 20000',
+      'Giá 0,5 - 0,75 triệu',
+      'Mục 1, 2, 3, 4',
+      'Họp 0900 - 1700',
+      'Dòng 1\nDòng 2\nDòng 3',
+      // Lists and tiers: a comma and a space, day and month lists, three tiers of figures.
+      'Lô 01, 02, 03, 04, 05',
+      'Điểm: 0, 10, 20, 30, 40',
+      'Doanh số 845, 920, 1050 triệu',
+      'Giao hàng các ngày 05/12, 12/12, 19/12',
+      'Lịch 08/12 - 15/12 - 22/12',
+      'Ngày 15-05-2026 0900',
+      'Kỳ 12/08/2025\n0900 khách',
+      'Phương án 0/1/2/3/4/5/6/7/8',
+      'Gói 100 - 200 - 300 nghìn',
+      '150 - 200 - 250 khách',
+    ]) {
+      expect(followupHasPhoneOrLongDigits(fine), fine).toBe(false);
+    }
+  });
+
+  it('sees a domain behind any ASCII punctuation or with spaces around its dot, and still reads ordinary prose as prose', () => {
+    const ideographic = String.fromCharCode(0x3002);
+    for (const glued of ['a|x.com', 'a/x.com', 'a*x.com', 'a&x.com', 'a=x.com', 'a~x.com', 'a:x.com', 'a#x.com', 'a+x.com', 'a%x.com', 'a_x.com', 'abc . com', `abc ${ideographic} com`]) {
+      expect(followupHasBareLink(`Vào ${glued} nhé`), glued).toBe(true);
+    }
+    for (const fine of ['chốt.Co thể', 'Họp lúc 9.30, tại phòng 5', 'và/hoặc đi', 'Giá 1,5 triệu và 2.5', 'Gửi báo giá, xong thì chốt', 'đi.Me', 'Giá 2.5,vn', 'Xong . Ai làm tiếp?', 'Hàng về 3 . Vn sẽ xác nhận', 'BTC . VN']) {
+      expect(followupHasBareLink(fine), fine).toBe(false);
+    }
+  });
 });
 
 describe('the send and mail shapes', () => {

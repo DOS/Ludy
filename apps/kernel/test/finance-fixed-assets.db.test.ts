@@ -148,12 +148,12 @@ suite('fixed assets and prepaid costs (#919)', () => {
     await expect(approve(proposalId, o.member)).rejects.toMatchObject({ status: 403 });
     const posted = await approve(proposalId);
     expect(posted.code).toBe('NVK00001');
-    const rows = await admin(async (c) => (await c.query('SELECT asset_id, month::text AS month, amount::text AS amount, entry_id FROM crove_finance.depreciation_line WHERE org_id = $1 ORDER BY amount', [o.orgId])).rows);
+    const rows = await admin(async (c) => (await c.query('SELECT asset_id, month::text AS month, amount::text AS amount, entry_id FROM ludy_finance.depreciation_line WHERE org_id = $1 ORDER BY amount', [o.orgId])).rows);
     expect(rows).toEqual([
       { asset_id: printer, month: '2026-09-01', amount: '1000000.0000', entry_id: posted.journalEntryId },
       { asset_id: licence, month: '2026-09-01', amount: '3333333.0000', entry_id: posted.journalEntryId },
     ]);
-    const entry = await admin(async (c) => (await c.query('SELECT entry_date::text AS date FROM crove_finance.journal_entry WHERE id = $1', [posted.journalEntryId])).rows);
+    const entry = await admin(async (c) => (await c.query('SELECT entry_date::text AS date FROM ludy_finance.journal_entry WHERE id = $1', [posted.journalEntryId])).rows);
     expect(entry).toEqual([{ date: '2026-09-30' }]);
     await expect(request('2026-09')).rejects.toMatchObject({ code: 'DEPRECIATION_DONE' });
     // August has the printer only, not yet posted.
@@ -168,7 +168,7 @@ suite('fixed assets and prepaid costs (#919)', () => {
     const { proposalId } = await request('2026-10');
     await create(machine({ name: 'Máy chiếu', cost: '12000000', months: 12, startMonth: '2026-10' }));
     await expect(approve(proposalId)).rejects.toMatchObject({ code: 'DEPRECIATION_STALE' });
-    const { rows } = await admin((c) => c.query(`SELECT count(*)::int AS n FROM crove_finance.depreciation_line WHERE org_id = $1 AND month = '2026-10-01'`, [o.orgId]));
+    const { rows } = await admin((c) => c.query(`SELECT count(*)::int AS n FROM ludy_finance.depreciation_line WHERE org_id = $1 AND month = '2026-10-01'`, [o.orgId]));
     expect(rows).toEqual([{ n: 0 }]);
   });
 
@@ -186,9 +186,9 @@ suite('fixed assets and prepaid costs (#919)', () => {
   });
 
   it('keeps depreciation lines append-only and the register fixed but for its end', async () => {
-    await expect(admin((c) => c.query(`UPDATE crove_finance.depreciation_line SET amount = 1 WHERE org_id = $1`, [o.orgId]))).rejects.toThrow();
-    await expect(admin((c) => c.query(`DELETE FROM crove_finance.depreciation_line WHERE org_id = $1`, [o.orgId]))).rejects.toThrow();
-    await expect(admin((c) => c.query(`UPDATE crove_finance.fixed_asset SET name = 'x' WHERE org_id = $1 AND id = $2`, [o.orgId, licence]))).rejects.toThrow(/only the end/);
-    await expect(admin((c) => c.query(`UPDATE crove_finance.fixed_asset SET end_reason = 'y' WHERE org_id = $1 AND id = $2`, [o.orgId, printer]))).rejects.toThrow(/already ended/);
+    await expect(admin((c) => c.query(`UPDATE ludy_finance.depreciation_line SET amount = 1 WHERE org_id = $1`, [o.orgId]))).rejects.toThrow();
+    await expect(admin((c) => c.query(`DELETE FROM ludy_finance.depreciation_line WHERE org_id = $1`, [o.orgId]))).rejects.toThrow();
+    await expect(admin((c) => c.query(`UPDATE ludy_finance.fixed_asset SET name = 'x' WHERE org_id = $1 AND id = $2`, [o.orgId, licence]))).rejects.toThrow(/only the end/);
+    await expect(admin((c) => c.query(`UPDATE ludy_finance.fixed_asset SET end_reason = 'y' WHERE org_id = $1 AND id = $2`, [o.orgId, printer]))).rejects.toThrow(/already ended/);
   });
 });

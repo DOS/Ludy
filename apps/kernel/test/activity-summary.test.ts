@@ -35,12 +35,12 @@ const ALLOWED: Record<string, Record<string, string>> = {
   'packages/kernel/src/extraction.ts': {
     'file.filename': 'the filename of an accounting source file (ludy_kernel.file.filename, internal)',
   },
-  'modules/crm/src/bookings.ts': { 'type.title': "the title of a booking page's event type (crove_crm.event_type.title, internal)" },
-  'modules/finance/src/accounts.ts': { name: "the name of an account of the org's chart (crove_finance.org_account.name, internal)" },
+  'modules/crm/src/bookings.ts': { 'type.title': "the title of a booking page's event type (ludy_crm.event_type.title, internal)" },
+  'modules/finance/src/accounts.ts': { name: "the name of an account of the org's chart (ludy_finance.org_account.name, internal)" },
   'modules/finance/src/bank.ts': { 'input.bankAccount': 'the chart account code (112x) the statement is for, not a bank account number' },
   'modules/finance/src/fixed-assets.ts': {
-    'input.name': "the asset's name (crove_finance.fixed_asset.name, internal)",
-    'asset.name': "the asset's name (crove_finance.fixed_asset.name, internal)",
+    'input.name': "the asset's name (ludy_finance.fixed_asset.name, internal)",
+    'asset.name': "the asset's name (ludy_finance.fixed_asset.name, internal)",
   },
   'modules/finance/src/year-archive.ts': { detail: 'the count of source documents in the package' },
 };

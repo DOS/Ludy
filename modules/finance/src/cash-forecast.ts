@@ -3,7 +3,7 @@
 // domain/cash-forecast.ts (pure, tested), and nothing is posted, paid or stored. Booked cash (111 + 112), the open sales invoices (the reminders' own loader, loadCustomers), the 331 balance laid over the
 // open purchase invoices, the approved supplier payments and the tax due dates (markers, no amount) are what it reads; payroll, insurance, tax payments and recurring costs are not in it, and the answer says so.
 //
-// Cost (performance is on the review checklist): four aggregate reads on crove_finance.journal_line by (org_id, legal_entity_id, account_code prefix, entry_date <= day 0), the same predicates the overview and the
+// Cost (performance is on the review checklist): four aggregate reads on ludy_finance.journal_line by (org_id, legal_entity_id, account_code prefix, entry_date <= day 0), the same predicates the overview and the
 // customers list already run, then the invoices of the parties found. The reads are bounded: at most CASH_FORECAST_PARTIES_MAX customers and as many suppliers (the largest balances first), CASH_FORECAST_DOCUMENTS_MAX
 // purchase invoices (newest first) and CASH_FORECAST_PAYMENTS_MAX approved payments; the sales invoices are all those of the customers read (loadCustomers has no row limit on them, so they are bounded by the customer bound).
 // Beyond a bound the forecast is partial and says so (`truncated`). An invoice dated after day 0 is not laid under the balance of day 0.
@@ -57,8 +57,8 @@ interface PayableParty {
 async function payableParties(ctx: QueryContext, entity: string, today: string, limit: number): Promise<PayableParty[]> {
   const kept = sql<string>`coalesce(x.duplicate_of, x.id)`;
   const rows = await ctx.trx
-    .selectFrom('crove_finance.journal_line as l')
-    .innerJoin('crove_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
+    .selectFrom('ludy_finance.journal_line as l')
+    .innerJoin('ludy_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
     .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'l.org_id').onRef('x.id', '=', 'l.party_id'))
     .select(kept.as('party_id'))
     .select(sql<string>`sum(l.credit - l.debit)`.as('balance'))
@@ -79,8 +79,8 @@ async function payableParties(ctx: QueryContext, entity: string, today: string, 
 // already made (the cash has left), so it lowers what is owed to the suppliers, the largest first (the books do not say which one it paid).
 async function partylessPayables(ctx: QueryContext, entity: string, today: string): Promise<string> {
   const row = await ctx.trx
-    .selectFrom('crove_finance.journal_line as l')
-    .innerJoin('crove_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
+    .selectFrom('ludy_finance.journal_line as l')
+    .innerJoin('ludy_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
     .select(sql<string | null>`sum(l.credit - l.debit)`.as('balance'))
     .where('l.org_id', '=', ctx.orgId)
     .where('l.legal_entity_id', '=', entity)
@@ -96,9 +96,9 @@ async function purchaseDocuments(ctx: QueryContext, entity: string, asOf: string
   if (partyIds.length === 0) return [];
   const kept = sql<string>`coalesce(x.duplicate_of, x.id)`;
   const rows = await ctx.trx
-    .selectFrom('crove_finance.purchase_document as d')
+    .selectFrom('ludy_finance.purchase_document as d')
     .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'd.org_id').onRef('x.id', '=', 'd.party_id'))
-    .leftJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
+    .leftJoin('ludy_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
     .select(kept.as('party_id'))
     .select(['d.id', 'd.invoice_series', 'd.invoice_number', 'd.invoice_date', 'd.total', 'd.currency'])
     .where('d.org_id', '=', ctx.orgId)
@@ -106,7 +106,7 @@ async function purchaseDocuments(ctx: QueryContext, entity: string, asOf: string
     .where('d.direction', '=', 'purchase')
     .where('d.invoice_date', '<=', asOf)
     // Posted by the as-of day too, the boundary the 331 balance is read at.
-    .where(sql<boolean>`exists (select 1 from crove_finance.journal_entry e where e.org_id = d.org_id and e.source_type = 'finance.purchase_document' and e.source_id = d.id and e.entry_date <= ${asOf})`)
+    .where(sql<boolean>`exists (select 1 from ludy_finance.journal_entry e where e.org_id = d.org_id and e.source_type = 'finance.purchase_document' and e.source_id = d.id and e.entry_date <= ${asOf})`)
     .where('v.document_id', 'is', null)
     .where(sql<boolean>`coalesce(x.duplicate_of, x.id) IN (${sql.join(partyIds)})`)
     .orderBy('d.invoice_date', 'desc')
@@ -121,7 +121,7 @@ async function purchaseDocuments(ctx: QueryContext, entity: string, asOf: string
 async function approvedPayments(ctx: QueryContext, entity: string, today: string, currency: string, limit: number): Promise<Array<ApprovedPayment & { partyId: string }>> {
   const kept = sql<string>`coalesce(x.duplicate_of, x.id)`;
   const rows = await ctx.trx
-    .selectFrom('crove_finance.supplier_payment as p')
+    .selectFrom('ludy_finance.supplier_payment as p')
     .innerJoin('ludy_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'p.org_id').onRef('x.id', '=', 'p.party_id'))
     .select(kept.as('party_id'))
     .select(['p.purchase_document_id', 'p.amount'])
@@ -156,7 +156,7 @@ export async function financeCashForecast(ctx: QueryContext, input: FinanceCashF
   let truncated = false;
 
   const opening = await openingCash(ctx, entity, today);
-  const any = await ctx.trx.selectFrom('crove_finance.journal_entry').select('id').where('org_id', '=', ctx.orgId).where('legal_entity_id', '=', entity).limit(1).executeTakeFirst();
+  const any = await ctx.trx.selectFrom('ludy_finance.journal_entry').select('id').where('org_id', '=', ctx.orgId).where('legal_entity_id', '=', entity).limit(1).executeTakeFirst();
 
   // Receipts: the customers' open invoices, dated by their terms. One read more than the bound tells whether the bound was hit.
   const seen = { documents: 0 };

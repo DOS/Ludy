@@ -250,7 +250,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
     try {
       await appClient.query('BEGIN');
       await enterUser(appClient, o.staffB, o.orgId);
-      const peerRows = await appClient.query(`SELECT id FROM crove_hr.onboarding_submission WHERE org_id = $1`, [o.orgId]);
+      const peerRows = await appClient.query(`SELECT id FROM ludy_hr.onboarding_submission WHERE org_id = $1`, [o.orgId]);
       expect(peerRows.rows).toHaveLength(0);
       await appClient.query('ROLLBACK');
     } finally {
@@ -436,7 +436,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
           await c.query('BEGIN');
           await enterUser(c, o.staffA, o.orgId);
           await c.query(
-            `UPDATE crove_hr.overtime_request SET status = 'pending_final', l1_approver_user_id = $2 WHERE id = $1`,
+            `UPDATE ludy_hr.overtime_request SET status = 'pending_final', l1_approver_user_id = $2 WHERE id = $1`,
             [ot1.requestId, o.staffA],
           );
           await c.query('COMMIT');
@@ -525,7 +525,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
       inputs: { overtime: [{ dayKind: 'normal_day', night: false, hours: '5' }] },
     });
     await adminPool.query(
-      `UPDATE crove_hr.payroll_line
+      `UPDATE ludy_hr.payroll_line
           SET inputs = inputs - 'overtimeFromRequests'
         WHERE org_id = $1 AND id = $2`,
       [o.orgId, legacyLine.id],
@@ -781,7 +781,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
         try {
           await c.query('BEGIN');
           await enterUser(c, o.owner, o.orgId);
-          await c.query(`UPDATE crove_hr.probation_review SET decision = 'extend' WHERE id = $1`, [decided.reviewId]);
+          await c.query(`UPDATE ludy_hr.probation_review SET decision = 'extend' WHERE id = $1`, [decided.reviewId]);
           await c.query('COMMIT');
         } finally {
           await c.query('ROLLBACK').catch(() => {});
@@ -795,7 +795,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
     });
     const afterReviewerRemoved = (
       await adminPool.query<{ reviewer_user_id: string | null; decision: string; review_note: string | null }>(
-        `SELECT reviewer_user_id, decision, review_note FROM crove_hr.probation_review WHERE id = $1`,
+        `SELECT reviewer_user_id, decision, review_note FROM ludy_hr.probation_review WHERE id = $1`,
         [decided.reviewId],
       )
     ).rows[0];
@@ -827,7 +827,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
       await c.query(
-        `UPDATE crove_hr.payroll_employee
+        `UPDATE ludy_hr.payroll_employee
             SET ended_on = ((pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date
           WHERE id = $1`,
         [empA],
@@ -852,7 +852,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
         address: string | null;
         national_id_sealed: Buffer | null;
         note: string | null;
-      }>(`SELECT status, address, national_id_sealed, note FROM crove_hr.onboarding_submission WHERE id = $1`, [
+      }>(`SELECT status, address, national_id_sealed, note FROM ludy_hr.onboarding_submission WHERE id = $1`, [
         obSub.submissionId,
       ])
     ).rows[0];
@@ -860,7 +860,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
 
     const otRow = (
       await adminPool.query<{ status: string; reason: string | null; decision_note: string | null }>(
-        `SELECT status, reason, decision_note FROM crove_hr.overtime_request WHERE id = $1`,
+        `SELECT status, reason, decision_note FROM ludy_hr.overtime_request WHERE id = $1`,
         [otPending.requestId],
       )
     ).rows[0];
@@ -871,7 +871,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
         completed_tasks_snapshot: unknown[];
         review_note: string | null;
         ai_draft_note: string | null;
-      }>(`SELECT completed_tasks_snapshot, review_note, ai_draft_note FROM crove_hr.probation_review WHERE id = $1`, [
+      }>(`SELECT completed_tasks_snapshot, review_note, ai_draft_note FROM ludy_hr.probation_review WHERE id = $1`, [
         decided.reviewId,
       ])
     ).rows[0];
@@ -915,7 +915,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
     }
     const purged = await purgeOrg(workerRt, 30, { ref: o.orgId, reason: 'Stage 5B test cleanup' });
     expect(purged.kind).toBe('purged');
-    for (const table of ['crove_hr.onboarding_submission', 'crove_hr.overtime_request', 'crove_hr.probation_review']) {
+    for (const table of ['ludy_hr.onboarding_submission', 'ludy_hr.overtime_request', 'ludy_hr.probation_review']) {
       const left = await adminPool.query<{ cnt: number }>(
         `SELECT count(*)::int AS cnt FROM ${table} WHERE org_id = $1`,
         [o.orgId],
@@ -1067,7 +1067,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
       await enterUser(cOwner, o.owner, o.orgId);
       await expect(
         cOwner.query(
-          `INSERT INTO crove_hr.onboarding_submission (org_id, employee_id, status, reviewed_by, reviewed_at)
+          `INSERT INTO ludy_hr.onboarding_submission (org_id, employee_id, status, reviewed_by, reviewed_at)
            VALUES ($1, $2, 'approved', $3, now())`,
           [o.orgId, empWithMgr, o.owner],
         ),
@@ -1078,7 +1078,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
       await enterUser(cOwner, o.owner, o.orgId);
       await expect(
         cOwner.query(
-          `INSERT INTO crove_hr.overtime_request (org_id, employee_id, department_id, month, work_date, hours, day_type, status, final_acted_by, final_acted_at)
+          `INSERT INTO ludy_hr.overtime_request (org_id, employee_id, department_id, month, work_date, hours, day_type, status, final_acted_by, final_acted_at)
            VALUES ($1, $2, $3, '2026-10', '2026-10-12', 2, 'weekday', 'approved', $4, now())`,
           [o.orgId, empWithMgr, deptActive, o.owner],
         ),
@@ -1096,7 +1096,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
       await enterUser(cSelf, o.staffA, o.orgId);
       await expect(
         cSelf.query(
-          `INSERT INTO crove_hr.overtime_request (org_id, employee_id, department_id, month, work_date, hours, day_type, status)
+          `INSERT INTO ludy_hr.overtime_request (org_id, employee_id, department_id, month, work_date, hours, day_type, status)
            VALUES ($1, $2, $3, '2026-10', '2026-10-13', 2, 'weekday', 'pending_final')`,
           [o.orgId, empWithMgr, deptActive],
         ),
@@ -1107,7 +1107,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
       await enterUser(cSelf, o.staffA, o.orgId);
       await expect(
         cSelf.query(
-          `INSERT INTO crove_hr.overtime_request (org_id, employee_id, department_id, month, work_date, hours, day_type, status)
+          `INSERT INTO ludy_hr.overtime_request (org_id, employee_id, department_id, month, work_date, hours, day_type, status)
            VALUES ($1, $2, NULL, '2026-10', '2026-10-13', 2, 'weekday', 'pending_final')`,
           [o.orgId, empWithMgr],
         ),
@@ -1117,7 +1117,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
       await cSelf.query('BEGIN');
       await enterUser(cSelf, o.staffA, o.orgId);
       await cSelf.query(
-        `INSERT INTO crove_hr.overtime_request (org_id, employee_id, department_id, month, work_date, hours, day_type, status, created_by)
+        `INSERT INTO ludy_hr.overtime_request (org_id, employee_id, department_id, month, work_date, hours, day_type, status, created_by)
          VALUES ($1, $2, $3, '2026-10', '2026-10-13', 2, 'weekday', 'pending_l1', $4)`,
         [o.orgId, empWithMgr, deptActive, o.staffA],
       );
@@ -1128,7 +1128,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
       await enterUser(cSelf, o.staffB, o.orgId);
       await expect(
         cSelf.query(
-          `INSERT INTO crove_hr.overtime_request (org_id, employee_id, department_id, month, work_date, hours, day_type, status)
+          `INSERT INTO ludy_hr.overtime_request (org_id, employee_id, department_id, month, work_date, hours, day_type, status)
            VALUES ($1, $2, NULL, '2026-10', '2026-10-14', 2, 'weekday', 'pending_l1')`,
           [o.orgId, empNoMgr],
         ),
@@ -1138,7 +1138,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
       await cSelf.query('BEGIN');
       await enterUser(cSelf, o.staffB, o.orgId);
       await cSelf.query(
-        `INSERT INTO crove_hr.overtime_request (org_id, employee_id, department_id, month, work_date, hours, day_type, status, created_by)
+        `INSERT INTO ludy_hr.overtime_request (org_id, employee_id, department_id, month, work_date, hours, day_type, status, created_by)
          VALUES ($1, $2, NULL, '2026-10', '2026-10-14', 2, 'weekday', 'pending_final', $3)`,
         [o.orgId, empNoMgr, o.staffB],
       );
@@ -1231,7 +1231,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
     ).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
 
     const { rows: [badSub] } = await adminPool.query<{ id: string }>(
-      `INSERT INTO crove_hr.onboarding_submission (org_id, employee_id, status, bank_confirmed, bank_code, created_by)
+      `INSERT INTO ludy_hr.onboarding_submission (org_id, employee_id, status, bank_confirmed, bank_code, created_by)
        VALUES ($1, $2, 'pending', true, 'TCB', $3)
        RETURNING id`,
       [o.orgId, empA, o.staffA],
@@ -1285,7 +1285,7 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
       dayType: 'weekday',
     });
     await adminPool.query(
-      `INSERT INTO crove_hr.overtime_request (org_id, employee_id, month, work_date, hours, day_type, status, created_by)
+      `INSERT INTO ludy_hr.overtime_request (org_id, employee_id, month, work_date, hours, day_type, status, created_by)
        SELECT $1::uuid, $2::uuid, '2026-10', '2026-10-01'::date + ((g - 1) % 28), 24, 'weekday', 'approved', $3::uuid
        FROM generate_series(1, 30) AS g
        UNION ALL
@@ -1300,13 +1300,13 @@ suite('HR Stage 5B onboarding, 2-level OT to payroll, and probation review (#444
     // without aborting batch run open, and empA (clean 5h approved) still receives payroll cleanly.
     await o.exec(o.owner, 'hr.overtime.approve_final', { requestId: l1TestOt.requestId });
     await adminPool.query(
-      `UPDATE crove_hr.overtime_request
+      `UPDATE ludy_hr.overtime_request
           SET status = 'cancelled'
         WHERE org_id = $1 AND employee_id = $2 AND month = '2026-10' AND id <> $3`,
       [o.orgId, empA, l1TestOt.requestId],
     );
     await adminPool.query(
-      `INSERT INTO crove_hr.overtime_request (org_id, employee_id, month, work_date, hours, day_type, status, created_by)
+      `INSERT INTO ludy_hr.overtime_request (org_id, employee_id, month, work_date, hours, day_type, status, created_by)
        SELECT $1::uuid, $2::uuid, '2026-10', '2026-10-01'::date + ((g - 1) % 28), 24, 'weekday', 'approved', $3::uuid
        FROM generate_series(1, 14) AS g
        UNION ALL

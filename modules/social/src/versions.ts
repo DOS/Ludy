@@ -23,11 +23,11 @@ export interface SavedState {
 
 // A post's content as its rows hold it now: the base text, link and images, and each channel's own columns.
 export async function readSnapshot(trx: Trx, orgId: string, postId: string): Promise<SavedState> {
-  const post = await trx.selectFrom('crove_social.post').select(['body', 'title', 'link_url', 'revision', 'updated_at']).where('org_id', '=', orgId).where('id', '=', postId).executeTakeFirst();
+  const post = await trx.selectFrom('ludy_social.post').select(['body', 'title', 'link_url', 'revision', 'updated_at']).where('org_id', '=', orgId).where('id', '=', postId).executeTakeFirst();
   if (!post) throw new DomainError('POST_NOT_FOUND', 404, 'Không tìm thấy bài đăng này');
-  const media = await trx.selectFrom('crove_social.post_media').select(['file_id', 'alt_text']).where('org_id', '=', orgId).where('post_id', '=', postId).orderBy('position').execute();
+  const media = await trx.selectFrom('ludy_social.post_media').select(['file_id', 'alt_text']).where('org_id', '=', orgId).where('post_id', '=', postId).orderBy('position').execute();
   const variants = await trx
-    .selectFrom('crove_social.post_variant')
+    .selectFrom('ludy_social.post_variant')
     .select(['id', 'channel_connection_id', 'provider', 'body', 'title', 'link_url', 'settings', 'media', 'content_frozen'])
     .where('org_id', '=', orgId)
     .where('post_id', '=', postId)
@@ -80,7 +80,7 @@ export async function recordVersion(ctx: CommandContext, postId: string, before:
   const after = await readSnapshot(ctx.trx, ctx.orgId, postId);
   if (sameSnapshot(before.snapshot, after.snapshot)) return null;
   const latest = await ctx.trx
-    .selectFrom('crove_social.post_version')
+    .selectFrom('ludy_social.post_version')
     .select((eb) => eb.fn.max('number').as('n'))
     .where('org_id', '=', ctx.orgId)
     .where('post_id', '=', postId)
@@ -88,9 +88,9 @@ export async function recordVersion(ctx: CommandContext, postId: string, before:
   const { baseline, next, pruneUpTo } = versionNumbers(latest?.n ?? null);
   const author = by !== undefined ? by : ctx.actor.type === 'user' ? ctx.actor.userId : null;
   const rows = [...(baseline === null ? [] : [versionRow(ctx.orgId, postId, before, baseline, null, before.updatedAt)]), versionRow(ctx.orgId, postId, after, next, author, ctx.now)];
-  await ctx.trx.insertInto('crove_social.post_version').values(rows).execute();
+  await ctx.trx.insertInto('ludy_social.post_version').values(rows).execute();
   if (pruneUpTo > 0) {
-    await ctx.trx.deleteFrom('crove_social.post_version').where('org_id', '=', ctx.orgId).where('post_id', '=', postId).where('number', '<=', pruneUpTo).execute();
+    await ctx.trx.deleteFrom('ludy_social.post_version').where('org_id', '=', ctx.orgId).where('post_id', '=', postId).where('number', '<=', pruneUpTo).execute();
   }
   return next;
 }
@@ -138,13 +138,13 @@ export const postVersions = defineQuery({
   input: z.strictObject({ postId: zId }),
   access: ALL,
   handler: async (ctx, input): Promise<{ postId: string; versions: VersionView[] }> => {
-    const post = await ctx.trx.selectFrom('crove_social.post').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.postId).executeTakeFirst();
+    const post = await ctx.trx.selectFrom('ludy_social.post').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.postId).executeTakeFirst();
     if (!post) throw new DomainError('POST_NOT_FOUND', 404, 'Không tìm thấy bài đăng này');
     // A member limited to some channels (#1081) reads the versions of a post they may see, with those channels only.
     const scope = await channelScope(ctx);
     if ((await postsInScope(ctx, scope, [post.id])).length === 0) throw new DomainError('POST_NOT_FOUND', 404, 'Không tìm thấy bài đăng này');
     const rows = await ctx.trx
-      .selectFrom('crove_social.post_version')
+      .selectFrom('ludy_social.post_version')
       .select(['id', 'number', 'revision', 'body', 'title', 'link_url', 'media', 'variants', 'created_by', 'created_at'])
       .where('org_id', '=', ctx.orgId)
       .where('post_id', '=', post.id)
@@ -165,7 +165,7 @@ export const postVersions = defineQuery({
     // The approvals of the channels shown (#1105), matched with a version by the content they were given to: the
     // snapshot an approval keeps, compared with the version's content of that channel.
     const approvalRows = await ctx.trx
-      .selectFrom('crove_social.post_approval')
+      .selectFrom('ludy_social.post_approval')
       .select(['id', 'variant_id', 'decided_by', 'created_at', 'snapshot', 'checklist'])
       .where('org_id', '=', ctx.orgId)
       .where('post_id', '=', post.id)

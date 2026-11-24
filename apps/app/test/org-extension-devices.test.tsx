@@ -43,6 +43,7 @@ const device = (id: string, userId: string, deviceName: string, over: Partial<Ex
   userId,
   deviceName,
   scopes: ['meetings'],
+  client: 'extension',
   createdAt: at,
   expiresAt: FUTURE,
   lastUsedAt: null,
@@ -102,6 +103,15 @@ describe('OrgExtensionDevices', () => {
     expect(html).toContain(`>${en.orgExtensionDevices.revoked}<`);
     expect(html).toContain(`>${en.orgExtensionDevices.expired}<`);
     expect(html).not.toContain(`>${en.orgExtensionDevices.disconnect}<`);
+  });
+
+  it('shows a desktop device next to the extension\'s, marked as the desktop app, with its disconnect (#4515)', () => {
+    const html = screen('owner', 'u-owner', [device('d1', 'u-member', 'Ludy Desktop, Windows', { client: 'desktop', scopes: [] }), device('d2', 'u-member', 'Chrome', { client: 'extension' })]);
+    expect(html).toContain('Ludy Desktop, Windows');
+    expect(html).toContain(`>${en.orgExtensionDevices.client.desktop}<`);
+    expect(html).toContain(`>${en.orgExtensionDevices.client.extension}<`);
+    expect(html.match(new RegExp(`>${en.orgExtensionDevices.disconnect}<`, 'g'))).toHaveLength(2);
+    expect(html).toContain('aria-label="Disconnect Ludy Desktop, Windows of Thành Viên"');
   });
 
   it('names a device of a member who is no longer in the org as a former member', () => {

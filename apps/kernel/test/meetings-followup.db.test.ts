@@ -46,11 +46,11 @@ suite('the follow-up email of a meeting (#2590)', () => {
   async function seedPublished(readers: string[], summary = 'Chốt báo giá tuần này.'): Promise<string> {
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp tuần', 'vi', now(), now() + interval '30 minutes', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, meetingId, users.recorder],
     );
-    for (const reader of readers) await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users[reader]]);
+    for (const reader of readers) await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), meetingId, users[reader]]);
     await publish(meetingId, summary);
     return meetingId;
   }
@@ -112,7 +112,7 @@ suite('the follow-up email of a meeting (#2590)', () => {
   it('drafts from the published summary for the recorder only, with the fixed words and the people who took part', async () => {
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp chưa chia sẻ', 'vi', now(), $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, meetingId, users.recorder],
     );
@@ -248,11 +248,11 @@ suite('the follow-up email of a meeting (#2590)', () => {
   it('allows drafting and sending from an unpublished reviewed draft (D1) for the recorder only, requiring confirmation and excluding org attendee suggestions', async () => {
     const m = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, 'Họp nháp', 'vi', now(), now() + interval '30 minutes', 1800, $3, 'attendees', 'ready', 'told_at_start', $3, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, m, users.recorder],
     );
-    await sqlAdmin('INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), m, users.attendee]);
+    await sqlAdmin('INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)', [orgId, randomUUID(), m, users.attendee]);
     const partyId = (await sqlAdmin<{ id: string }>("INSERT INTO ludy_kernel.party (org_id, name, kind, email) VALUES ($1, 'Đối tác Nháp', 'organization', 'doitac@draft.test') RETURNING id", [orgId])).rows[0]!.id;
     await exec('recorder', 'meetings.link.add', { meetingId: m, kind: 'party', targetId: partyId });
 
@@ -287,7 +287,7 @@ suite('the follow-up email of a meeting (#2590)', () => {
     expect(sent).toMatchObject({ meetingId: m, queued: 2, suppressed: 0 });
 
     // Editing a draft action item invalidates the earlier factsKey.
-    const itemRow = await sqlAdmin<{ id: string }>("SELECT id FROM crove_meetings.action_item WHERE org_id = $1 AND meeting_id = $2 AND stage = 'draft' LIMIT 1", [orgId, m]);
+    const itemRow = await sqlAdmin<{ id: string }>("SELECT id FROM ludy_meetings.action_item WHERE org_id = $1 AND meeting_id = $2 AND stage = 'draft' LIMIT 1", [orgId, m]);
     await exec('recorder', 'meetings.action_item.edit', { itemId: itemRow.rows[0]!.id, title: 'Gửi đề xuất bản mới' });
     expect(await refuses(send(m, { factsKey: draft.factsKey, stage: 'draft', confirmUnpublished: true, confirmRepeat: true, recipients: ['doitac@draft.test'] }))).toBe('STALE_FOLLOWUP');
 
@@ -305,9 +305,9 @@ suite('the follow-up email of a meeting (#2590)', () => {
     expect(await refuses(send(m, { factsKey: draft.factsKey, stage: 'draft', confirmUnpublished: true, confirmRepeat: true, recipients: ['doitac@draft.test'] }))).toBe('STALE_FOLLOWUP');
 
     // Tainted draft is refused until reviewed.
-    await sqlAdmin("DELETE FROM crove_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2 AND stage = 'draft'", [orgId, m]);
+    await sqlAdmin("DELETE FROM ludy_meetings.meeting_result WHERE org_id = $1 AND meeting_id = $2 AND stage = 'draft'", [orgId, m]);
     await sqlAdmin(
-      "INSERT INTO crove_meetings.meeting_result (org_id, id, meeting_id, stage, feature, summary, decisions, tainted) VALUES ($1, $2, $3, 'draft', 'meetings.summary', 'Tóm tắt do Vy soạn chưa đọc.', '[]'::jsonb, true)",
+      "INSERT INTO ludy_meetings.meeting_result (org_id, id, meeting_id, stage, feature, summary, decisions, tainted) VALUES ($1, $2, $3, 'draft', 'meetings.summary', 'Tóm tắt do Vy soạn chưa đọc.', '[]'::jsonb, true)",
       [orgId, randomUUID(), m],
     );
     expect(await refuses(query('recorder', 'meetings.followup.draft', { meetingId: m, stage: 'draft' }))).toBe('DRAFT_NOT_REVIEWED');

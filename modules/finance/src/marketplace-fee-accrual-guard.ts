@@ -2,7 +2,7 @@
 // The key of a month-end accrual of platform fees and the rule that there is one at a time (#2516 rework, slice F, option 2 of the Accounting PO; plan docs/plan/stock-and-marketplaces.md section 8.4,
 // rows 15 and 16 of section 5). The accrual (Dr 6421 / Cr 335 for the fees the platform kept at a payout whose invoice has not come) is an ordinary general journal voucher a person approves, so it has
 // no command of its own and nothing in the voucher's tables names it. Its STABLE KEY is a tag in the voucher's description: `[fee-accrual:<platform>:<YYYY-MM>]`, read back from
-// crove_finance.journal_entry.description (a voucher's entry carries the description). The generic voucher commands ask this module before they build and before they post:
+// ludy_finance.journal_entry.description (a voucher's entry carries the description). The generic voucher commands ask this module before they build and before they post:
 // - a platform's accrual that still stands (an original entry with that key and no reversal) refuses a second one, of any month: reverse the standing accrual first (MARKETPLACE_FEE_ACCRUAL_STANDS);
 // - another accrual of the same platform and month waiting for approval refuses a second request (MARKETPLACE_FEE_ACCRUAL_PENDING).
 // A description with no key is none of this module's business. Facts only, no model.
@@ -36,17 +36,17 @@ export interface StandingFeeAccrual {
 export async function feeAccrualsOf(ctx: Ctx, legalEntityId: string, platform: string): Promise<{ standing: StandingFeeAccrual[]; everMonths: Set<string> }> {
   const prefix = `[fee-accrual:${platform}:`;
   const rows = await ctx.trx
-    .selectFrom('crove_finance.journal_entry as e')
+    .selectFrom('ludy_finance.journal_entry as e')
     .select(['e.id', 'e.entry_date', 'e.description'])
-    .select(sql<boolean>`EXISTS (SELECT 1 FROM crove_finance.journal_entry r WHERE r.org_id = e.org_id AND r.reverses_entry_id = e.id)`.as('reversed'))
+    .select(sql<boolean>`EXISTS (SELECT 1 FROM ludy_finance.journal_entry r WHERE r.org_id = e.org_id AND r.reverses_entry_id = e.id)`.as('reversed'))
     .where('e.org_id', '=', ctx.orgId)
     .where('e.legal_entity_id', '=', legalEntityId)
     .where('e.source_type', '=', 'finance.journal_voucher')
     .where('e.reverses_entry_id', 'is', null)
     .where(sql<boolean>`pg_catalog.strpos(e.description, ${prefix}) > 0`)
     // A tag typed on any other voucher is not an accrual: it must credit the accrued expense account (335) and debit an expense account of class 6.
-    .where(sql<boolean>`EXISTS (SELECT 1 FROM crove_finance.journal_line c WHERE c.org_id = e.org_id AND c.entry_id = e.id AND c.account_code LIKE '335%' AND c.credit > 0)`)
-    .where(sql<boolean>`EXISTS (SELECT 1 FROM crove_finance.journal_line d WHERE d.org_id = e.org_id AND d.entry_id = e.id AND d.account_code LIKE '64%' AND d.debit > 0)`)
+    .where(sql<boolean>`EXISTS (SELECT 1 FROM ludy_finance.journal_line c WHERE c.org_id = e.org_id AND c.entry_id = e.id AND c.account_code LIKE '335%' AND c.credit > 0)`)
+    .where(sql<boolean>`EXISTS (SELECT 1 FROM ludy_finance.journal_line d WHERE d.org_id = e.org_id AND d.entry_id = e.id AND d.account_code LIKE '64%' AND d.debit > 0)`)
     .execute();
   const standing: StandingFeeAccrual[] = [];
   const everMonths = new Set<string>();

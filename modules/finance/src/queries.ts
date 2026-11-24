@@ -29,7 +29,7 @@ export const vendorsList = defineQuery({
       .select(['p.id', 'p.name', 'p.tax_code', 'p.address', 'p.email', 'p.phone', 'p.version'])
       .select((eb) =>
         eb
-          .selectFrom('crove_finance.vendor_account_rule as r')
+          .selectFrom('ludy_finance.vendor_account_rule as r')
           .select('r.debit_account')
           .whereRef('r.org_id', '=', 'p.org_id')
           .whereRef('r.party_id', '=', 'p.id')
@@ -37,7 +37,7 @@ export const vendorsList = defineQuery({
       )
       .select((eb) =>
         eb
-          .selectFrom('crove_finance.purchase_document as d')
+          .selectFrom('ludy_finance.purchase_document as d')
           .select(eb.fn.countAll<string>().as('n'))
           .whereRef('d.org_id', '=', 'p.org_id')
           .where(sql<boolean>`d.party_id IN ${group}`)
@@ -61,8 +61,8 @@ export const vendorsList = defineQuery({
     if (!input.all) {
       query = query.where(
         sql<boolean>`NOT (
-          EXISTS (SELECT 1 FROM crove_finance.purchase_document s WHERE s.org_id = p.org_id AND s.party_id IN ${group} AND s.direction = 'sale')
-          AND NOT EXISTS (SELECT 1 FROM crove_finance.purchase_document b WHERE b.org_id = p.org_id AND b.party_id IN ${group} AND b.direction = 'purchase'))`,
+          EXISTS (SELECT 1 FROM ludy_finance.purchase_document s WHERE s.org_id = p.org_id AND s.party_id IN ${group} AND s.direction = 'sale')
+          AND NOT EXISTS (SELECT 1 FROM ludy_finance.purchase_document b WHERE b.org_id = p.org_id AND b.party_id IN ${group} AND b.direction = 'purchase'))`,
       );
     }
     if (input.q) {
@@ -96,7 +96,7 @@ async function correctionsOf(ctx: QueryContext, ids: readonly string[]): Promise
   const byDocument = new Map<string, CorrectedBy[]>();
   if (ids.length === 0) return byDocument;
   const rows = await ctx.trx
-    .selectFrom('crove_finance.purchase_document')
+    .selectFrom('ludy_finance.purchase_document')
     .select(['id', 'corrects_document_id', 'correction_kind', 'invoice_series', 'invoice_number'])
     .where('org_id', '=', ctx.orgId)
     .where('corrects_document_id', 'in', [...ids])
@@ -122,12 +122,12 @@ function correctionOf(r: { correction_kind: CorrectionKind | null; corrected_ser
 // whichever entity the caller's scope reaches (the le_scope row policy decides).
 async function loadDocuments(ctx: QueryContext, filter: { legalEntityId: string; from?: string | undefined; to?: string | undefined } | { id: string }) {
   let query = ctx.trx
-    .selectFrom('crove_finance.purchase_document as d')
+    .selectFrom('ludy_finance.purchase_document as d')
     .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
-    .leftJoin('crove_finance.journal_entry as j', (join) =>
+    .leftJoin('ludy_finance.journal_entry as j', (join) =>
       join.onRef('j.org_id', '=', 'd.org_id').onRef('j.source_id', '=', 'd.id').on('j.source_type', '=', 'finance.purchase_document').on(latestRevision('j')),
     )
-    .leftJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
+    .leftJoin('ludy_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
     .select([
       'd.id',
       'd.direction',
@@ -261,20 +261,20 @@ async function loadEntries(
   filter: { from?: string | undefined; to?: string | undefined; limit?: number | undefined; id?: string; legalEntityId?: string },
 ): Promise<JournalEntryView[]> {
   let entries = ctx.trx
-    .selectFrom('crove_finance.journal_entry as j')
-    .leftJoin('crove_finance.purchase_document as d', (join) =>
+    .selectFrom('ludy_finance.journal_entry as j')
+    .leftJoin('ludy_finance.purchase_document as d', (join) =>
       join.onRef('d.org_id', '=', 'j.org_id').onRef('d.id', '=', 'j.source_id').on('j.source_type', '=', 'finance.purchase_document'),
     )
     .leftJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
-    .leftJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
+    .leftJoin('ludy_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
     // The cash or bank voucher the entry posts (#327), and its party.
-    .leftJoin('crove_finance.cash_voucher as cv', (join) =>
+    .leftJoin('ludy_finance.cash_voucher as cv', (join) =>
       join.onRef('cv.org_id', '=', 'j.org_id').onRef('cv.id', '=', 'j.source_id').on('j.source_type', '=', VOUCHER_SOURCE),
     )
     .leftJoin('ludy_kernel.party as vp', (join) => join.onRef('vp.org_id', '=', 'cv.org_id').onRef('vp.id', '=', 'cv.party_id'))
     // The original this entry reverses, and the reversal of this entry (at most one each, by the unique index).
-    .leftJoin('crove_finance.journal_entry as o', (join) => join.onRef('o.org_id', '=', 'j.org_id').onRef('o.id', '=', 'j.reverses_entry_id'))
-    .leftJoin('crove_finance.journal_entry as r', (join) => join.onRef('r.org_id', '=', 'j.org_id').onRef('r.reverses_entry_id', '=', 'j.id'))
+    .leftJoin('ludy_finance.journal_entry as o', (join) => join.onRef('o.org_id', '=', 'j.org_id').onRef('o.id', '=', 'j.reverses_entry_id'))
+    .leftJoin('ludy_finance.journal_entry as r', (join) => join.onRef('r.org_id', '=', 'j.org_id').onRef('r.reverses_entry_id', '=', 'j.id'))
     .select([
       'j.id',
       'j.entry_date',
@@ -313,10 +313,10 @@ async function loadEntries(
   const rows = await entries.execute();
   if (rows.length === 0) return [];
   const lines = await ctx.trx
-    .selectFrom('crove_finance.journal_line as l')
+    .selectFrom('ludy_finance.journal_line as l')
     // A line names a TT133 account or one of the org's sub-accounts (#319), by code; the name shown is the current one.
-    .leftJoin('crove_finance.account as a', 'a.code', 'l.account_code')
-    .leftJoin('crove_finance.org_account as o', (join) => join.onRef('o.org_id', '=', 'l.org_id').onRef('o.code', '=', 'l.account_code'))
+    .leftJoin('ludy_finance.account as a', 'a.code', 'l.account_code')
+    .leftJoin('ludy_finance.org_account as o', (join) => join.onRef('o.org_id', '=', 'l.org_id').onRef('o.code', '=', 'l.account_code'))
     .select(['l.entry_id', 'l.line_no', 'l.account_code', 'a.name as tt133_name', 'o.name as own_name', 'l.debit', 'l.credit'])
     .where('l.org_id', '=', ctx.orgId)
     .where(
@@ -461,12 +461,12 @@ async function loadVouchers(
 ): Promise<VoucherSource[]> {
   const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
   let documents = ctx.trx
-    .selectFrom('crove_finance.journal_entry as j')
-    .innerJoin('crove_finance.purchase_document as d', (join) =>
+    .selectFrom('ludy_finance.journal_entry as j')
+    .innerJoin('ludy_finance.purchase_document as d', (join) =>
       join.onRef('d.org_id', '=', 'j.org_id').onRef('d.id', '=', 'j.source_id').on('j.source_type', '=', 'finance.purchase_document').on(latestRevision('j')),
     )
     .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
-    .leftJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
+    .leftJoin('ludy_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
     .select([
       'j.id as entry_id',
       'j.entry_date',
@@ -495,7 +495,7 @@ async function loadVouchers(
   const rows = await documents.execute();
   if (rows.length === 0) return [];
   const lines = await ctx.trx
-    .selectFrom('crove_finance.purchase_line')
+    .selectFrom('ludy_finance.purchase_line')
     .select(['document_id', 'line_no', 'description', 'unit', 'quantity', 'unit_price', 'amount', 'vat_rate', 'debit_account', 'credit_account'])
     .where('org_id', '=', ctx.orgId)
     .where(
@@ -587,8 +587,8 @@ export const voidedProposals = defineQuery({
   handler: async (ctx, input): Promise<string[]> => {
     if (input.proposalIds.length === 0) return [];
     const rows = await ctx.trx
-      .selectFrom('crove_finance.purchase_document as d')
-      .innerJoin('crove_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
+      .selectFrom('ludy_finance.purchase_document as d')
+      .innerJoin('ludy_finance.purchase_document_void as v', (join) => join.onRef('v.org_id', '=', 'd.org_id').onRef('v.document_id', '=', 'd.id'))
       .select('d.proposal_id')
       .distinct()
       .where('d.org_id', '=', ctx.orgId)

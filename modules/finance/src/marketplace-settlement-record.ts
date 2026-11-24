@@ -6,9 +6,9 @@
 // - finance.marketplace_settlement.prepare (R1, internal): the preparer of kernel.proposal.request for `finance.marketplace_settlement.record`. The request carries the settlement alone. It checks
 //   the gate, that the settlement stands (it is no reversal and has none), is not posted yet, its period is open, and its accounts are usable, then returns the proposal. It writes nothing.
 // - finance.marketplace_settlement.record (R3): runs only through kernel.proposal.approve. It builds the entry again from the stored lines, in the approver's context, and refuses a stored proposal that
-//   differs from it (a proposal row written some other way cannot post lines the settlement does not hold). Then, in the same transaction, it finds the platform's party (crove_finance.marketplace_party;
+//   differs from it (a proposal row written some other way cannot post lines the settlement does not hold). Then, in the same transaction, it finds the platform's party (ludy_finance.marketplace_party;
 //   created with its link on the platform's first posting, one per entity and platform) and records the voucher with the settlement on it (one voucher per settlement and month: a unique index holds it,
-//   20270103020000), and ALL the months of the settlement in this one transaction: a settlement is either posted in full or not at all, and the payout's check is that its vouchers stand and posts its entry. The database checks at commit that the proposal has such a voucher (crove_finance.ledger_effect_recorded).
+//   20270103020000), and ALL the months of the settlement in this one transaction: a settlement is either posted in full or not at all, and the payout's check is that its vouchers stand and posts its entry. The database checks at commit that the proposal has such a voucher (ludy_finance.ledger_effect_recorded).
 // The commands are made by createMarketplaceSettlementCommands so a test registers a set with a confirmed map; the shipped set uses MARKETPLACE_POSTING_MAPS, whose sales path is confirmed (#4303 S3b) and whose household tax path is not, so it posts a settlement and refuses one that carries a household's withheld tax.
 // No model call is made: everything here is deterministic over stored facts.
 import { sql } from 'kysely';
@@ -63,7 +63,7 @@ interface Built {
 // settlement or the first posting of the platform cannot run beside this one.
 async function buildSettlement(ctx: QueryContext, maps: Maps, settlementId: string, lock: boolean): Promise<Built> {
   const settlement = await ctx.trx
-    .selectFrom('crove_finance.channel_settlement')
+    .selectFrom('ludy_finance.channel_settlement')
     .select(['id', 'legal_entity_id', 'platform', 'period_start', 'period_end', 'reversal_of'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', settlementId)
@@ -79,7 +79,7 @@ async function buildSettlement(ctx: QueryContext, maps: Maps, settlementId: stri
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`channel_settlement:${ctx.orgId}:${settlement.legal_entity_id}:${settlement.platform}`}, 0))`.execute(ctx.trx);
   }
   if (settlement.reversal_of !== null) throw notPostable('Đây là bản đảo của một kỳ đối soát khác nên không hạch toán', { reason: 'REVERSAL' });
-  const reversed = await ctx.trx.selectFrom('crove_finance.channel_settlement').select('id').where('org_id', '=', ctx.orgId).where('reversal_of', '=', settlement.id).executeTakeFirst();
+  const reversed = await ctx.trx.selectFrom('ludy_finance.channel_settlement').select('id').where('org_id', '=', ctx.orgId).where('reversal_of', '=', settlement.id).executeTakeFirst();
   if (reversed) throw notPostable('Kỳ đối soát này đã bị đảo nên không hạch toán', { reason: 'REVERSED' });
   // Any posting voucher, reversed or not (the database holds one per settlement and month for good), or one that posted the whole settlement before the months, counts as posted: all the months of a
   // settlement are posted together by one proposal, so a settlement with a voucher has all of them.
@@ -92,7 +92,7 @@ async function buildSettlement(ctx: QueryContext, maps: Maps, settlementId: stri
   }
   if (months.length === 0) throw notPostable('Kỳ đối soát có doanh thu ròng bằng 0; không có bút toán để lập', { net: '0' });
   const link = await ctx.trx
-    .selectFrom('crove_finance.marketplace_party as m')
+    .selectFrom('ludy_finance.marketplace_party as m')
     .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'm.org_id').onRef('p.id', '=', 'm.party_id'))
     .select(['p.id', 'p.name', 'p.tax_code'])
     .where('m.org_id', '=', ctx.orgId)
@@ -220,12 +220,12 @@ async function platformParty(ctx: CommandContext, built: Built): Promise<{ id: s
   // The id is given and the row inserted without RETURNING: the entity link of a new party (party_link_new) is not visible to the same statement's RETURNING check (#1280).
   await ctx.trx.insertInto('ludy_kernel.party').values({ id: partyId, org_id: ctx.orgId, kind: 'organization', name, source_trust: 'user', created_at: ctx.now, updated_at: ctx.now }).execute();
   await ctx.trx
-    .insertInto('crove_finance.marketplace_party')
+    .insertInto('ludy_finance.marketplace_party')
     .values({ org_id: ctx.orgId, legal_entity_id: built.legalEntityId, platform: built.platform, party_id: partyId, created_by: ctx.actor.type === 'user' ? ctx.actor.userId : null })
     .onConflict((oc) => oc.columns(['org_id', 'legal_entity_id', 'platform']).doNothing())
     .execute();
   const linked = await ctx.trx
-    .selectFrom('crove_finance.marketplace_party as m')
+    .selectFrom('ludy_finance.marketplace_party as m')
     .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'm.org_id').onRef('p.id', '=', 'm.party_id'))
     .select(['p.id', 'p.name', 'p.tax_code'])
     .where('m.org_id', '=', ctx.orgId)

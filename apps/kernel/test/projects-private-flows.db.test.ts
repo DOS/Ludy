@@ -381,7 +381,7 @@ suite('projects v2 private project workflows on PostgreSQL (#2604)', () => {
 
     await expect(
       withAdmin((c) =>
-        c.query(`UPDATE crove_projects.project SET visibility = 'private' WHERE org_id = $1 AND id = $2`, [
+        c.query(`UPDATE ludy_projects.project SET visibility = 'private' WHERE org_id = $1 AND id = $2`, [
           o.orgId,
           projectId,
         ]),
@@ -438,7 +438,7 @@ suite('projects v2 private project workflows on PostgreSQL (#2604)', () => {
       await c1.query('BEGIN');
       await enterUser(c1, o.owner.userId, o.orgId);
       await c1.query('SET LOCAL ROLE ludy_tenant');
-      await c1.query(`UPDATE crove_projects.project SET visibility = 'private' WHERE org_id = $1 AND id = $2`, [
+      await c1.query(`UPDATE ludy_projects.project SET visibility = 'private' WHERE org_id = $1 AND id = $2`, [
         o.orgId,
         proj1,
       ]);
@@ -493,7 +493,7 @@ suite('projects v2 private project workflows on PostgreSQL (#2604)', () => {
     await expect(
       withAdmin((c) =>
         c.query(
-          `INSERT INTO crove_sign.envelope (org_id, title, status, routing_mode, source_kind, source_id, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, created_by)
+          `INSERT INTO ludy_sign.envelope (org_id, title, status, routing_mode, source_kind, source_id, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, created_by)
            VALUES ($1, 'Bypass trigger check', 'draft', 'parallel', 'project_acceptance', $2, $3, $4, $5, $6, 'pending', $7)`,
           [o.orgId, proj1, file1.fileId, fileKey(o.orgId, file1.sha), contentGeneration(file1.sha), file1.sha, o.owner.userId],
         ),
@@ -502,11 +502,11 @@ suite('projects v2 private project workflows on PostgreSQL (#2604)', () => {
 
     const dir1State = await withAdmin(async (c) => {
       const p = await c.query<{ visibility: string }>(
-        `SELECT visibility FROM crove_projects.project WHERE org_id = $1 AND id = $2`,
+        `SELECT visibility FROM ludy_projects.project WHERE org_id = $1 AND id = $2`,
         [o.orgId, proj1],
       );
       const e = await c.query<{ cnt: number }>(
-        `SELECT count(*)::int AS cnt FROM crove_sign.envelope WHERE org_id = $1 AND source_kind = 'project_acceptance' AND source_id = $2`,
+        `SELECT count(*)::int AS cnt FROM ludy_sign.envelope WHERE org_id = $1 AND source_kind = 'project_acceptance' AND source_id = $2`,
         [o.orgId, proj1],
       );
       return { visibility: p.rows[0]?.visibility, envelopes: e.rows[0]?.cnt };
@@ -528,12 +528,12 @@ suite('projects v2 private project workflows on PostgreSQL (#2604)', () => {
       await enterUser(c2, o.owner.userId, o.orgId);
       await c2.query('SET LOCAL ROLE ludy_tenant');
       const chk = await c2.query<{ state: number }>(
-        `SELECT crove_sign.check_project_acceptance_source($1::uuid, $2::uuid) AS state`,
+        `SELECT ludy_sign.check_project_acceptance_source($1::uuid, $2::uuid) AS state`,
         [o.orgId, proj2],
       );
       expect(chk.rows[0]?.state).toBe(2);
       await c2.query(
-        `INSERT INTO crove_sign.envelope (org_id, title, status, routing_mode, source_kind, source_id, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, created_by)
+        `INSERT INTO ludy_sign.envelope (org_id, title, status, routing_mode, source_kind, source_id, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, created_by)
          VALUES ($1, 'Biên bản đua 2', 'draft', 'parallel', 'project_acceptance', $2, $3, $4, $5, $6, 'pending', $7)`,
         [o.orgId, proj2, file2.fileId, fileKey(o.orgId, file2.sha), contentGeneration(file2.sha), file2.sha, o.owner.userId],
       );
@@ -560,11 +560,11 @@ suite('projects v2 private project workflows on PostgreSQL (#2604)', () => {
 
     const dir2State = await withAdmin(async (c) => {
       const p = await c.query<{ visibility: string }>(
-        `SELECT visibility FROM crove_projects.project WHERE org_id = $1 AND id = $2`,
+        `SELECT visibility FROM ludy_projects.project WHERE org_id = $1 AND id = $2`,
         [o.orgId, proj2],
       );
       const e = await c.query<{ cnt: number }>(
-        `SELECT count(*)::int AS cnt FROM crove_sign.envelope WHERE org_id = $1 AND source_kind = 'project_acceptance' AND source_id = $2`,
+        `SELECT count(*)::int AS cnt FROM ludy_sign.envelope WHERE org_id = $1 AND source_kind = 'project_acceptance' AND source_id = $2`,
         [o.orgId, proj2],
       );
       return { visibility: p.rows[0]?.visibility, envelopes: e.rows[0]?.cnt };

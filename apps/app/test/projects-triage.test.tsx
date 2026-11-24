@@ -101,6 +101,12 @@ const TRIAGE_LIST_DATA: ProjectTriageListResult = {
 };
 
 const apiState = vi.hoisted(() => ({ data: null as ProjectTriageListResult | null }));
+const modulesState = vi.hoisted(() => ({ modules: ['projects', 'meetings', 'crm'] as string[] }));
+
+vi.mock('../src/lib/org-modules.ts', () => ({
+  installedModules: () => modulesState.modules,
+  useModulesVersion: () => 0,
+}));
 
 vi.mock('@tanstack/react-router', async (importOriginal) => {
   const { createElement } = await import('react');
@@ -204,6 +210,24 @@ describe('Projects Triage Inbox SSR & accessibility (#4493)', () => {
     expect(html).toContain('data-testid="conversation-send-to-triage-btn"');
     expect(html).toContain(viMessages.projects.triage.sendDialog.trigger);
     expect(html).toContain('min-h-11');
+
+    modulesState.modules = ['meetings', 'crm'];
+    try {
+      const hiddenHtml = renderWithIntl(
+        'vi',
+        TRIAGE_LIST_DATA,
+        <SendToTriageDialog
+          slug="demo-org"
+          sourceType="kernel.conversation"
+          sourceId="00000000-0000-4000-8000-000000000601"
+          defaultTitle="Khách hỏi báo giá"
+          buttonTestId="conversation-send-to-triage-btn"
+        />,
+      );
+      expect(hiddenHtml).toBe('');
+    } finally {
+      modulesState.modules = ['projects', 'meetings', 'crm'];
+    }
   });
 
   it('renders Load more pagination button when nextCursor is present and deduplicates merged pages across scope switches', () => {

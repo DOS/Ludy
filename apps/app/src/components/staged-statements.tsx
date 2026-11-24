@@ -40,10 +40,10 @@ function StatementLines({ fileId, shownConflicts }: { fileId: string; shownConfl
       <DataTable numeric={[4]} head={[t('colRow'), t('colDate'), t('colReference'), t('colDescription'), t('colAmount')]}>
         {rows.map((row) => (
           <TableRow key={row.rowNo}>
-            <TableCell className="px-3 py-2 text-muted-foreground">{row.rowNo}</TableCell>
-            <TableCell className="px-3 py-2">{row.date ? f.date(row.date) : ''}</TableCell>
-            <TableCell className="px-3 py-2 font-mono text-xs">{row.reference ?? ''}</TableCell>
-            <TableCell className="px-3 py-2 text-foreground">
+            <TableCell className="text-muted-foreground tabular-nums">{row.rowNo}</TableCell>
+            <TableCell className="tabular-nums">{row.date ? f.date(row.date) : ''}</TableCell>
+            <TableCell className="font-mono text-xs">{row.reference ?? ''}</TableCell>
+            <TableCell className="text-foreground">
               {row.description}
               {row.status && row.status !== 'new' && (
                 <p className="mt-1">
@@ -52,7 +52,7 @@ function StatementLines({ fileId, shownConflicts }: { fileId: string; shownConfl
               )}
               {row.clash && <p className="mt-1 text-xs text-subtle-foreground">{t('clash', { date: f.date(row.clash.date), amount: f.money(row.clash.amount) })}</p>}
             </TableCell>
-            <TableCell className="px-3 py-2 text-right tabular-nums">{row.amount ? f.money(row.amount) : ''}</TableCell>
+            <TableCell className="text-right tabular-nums">{row.amount ? f.money(row.amount) : ''}</TableCell>
           </TableRow>
         ))}
       </DataTable>

@@ -10,9 +10,9 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@ludy/kernel';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity, type PushTargets } from '@ludy/kernel';
 import { Runtime } from '@ludy/kernel-runtime';
-import { socialCommands, socialQueries, sweepAssignmentReminders, type NotificationItem, type PushTargets } from '@ludy/mod-social';
+import { socialCommands, socialQueries, sweepAssignmentReminders, type NotificationItem } from '@ludy/mod-social';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -98,11 +98,11 @@ suite('social due date reminders on PostgreSQL (#1359)', () => {
   };
   const reminders = async (o: Org, user: string) => (await list(o, user)).items.filter((i) => i.kind === 'assignment_due').map((i) => ({ postId: i.postId, stage: i.detail.stage }));
   const events = (o: Org) => one<{ payload: { post_id: string; stage: string; assignee_user_id: string } }>("SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'social.post.due_reminder' ORDER BY created_at, id", [o.orgId]);
-  const marks = (postId: string) => one<{ soon: boolean; overdue: boolean }>('SELECT due_soon_reminded_at IS NOT NULL AS soon, overdue_reminded_at IS NOT NULL AS overdue FROM crove_social.post WHERE id = $1', [postId]);
+  const marks = (postId: string) => one<{ soon: boolean; overdue: boolean }>('SELECT due_soon_reminded_at IS NOT NULL AS soon, overdue_reminded_at IS NOT NULL AS overdue FROM ludy_social.post WHERE id = $1', [postId]);
   type Mail = { to: string; subject: string; payload: Record<string, unknown> };
   const mails = (o: Org, kind: string) =>
     one<Mail>(
-      `SELECT m.to_address AS to, m.subject, m.payload FROM ludy_kernel.mail_message m JOIN crove_social.notification n ON n.org_id = m.org_id AND n.id = m.source_id
+      `SELECT m.to_address AS to, m.subject, m.payload FROM ludy_kernel.mail_message m JOIN ludy_social.notification n ON n.org_id = m.org_id AND n.id = m.source_id
        WHERE m.org_id = $1 AND m.source = 'social.notification.dispatch' AND n.kind = $2 ORDER BY m.created_at`,
       [o.orgId, kind],
     );
@@ -177,7 +177,7 @@ suite('social due date reminders on PostgreSQL (#1359)', () => {
     await pass(o);
     expect(await reminders(o, o.member)).toEqual([{ postId, stage: 'soon' }]);
     // The same due date and assignee again changes nothing.
-    await assign(o, postId, o.member, (await one<{ due: Date }>('SELECT due_at AS due FROM crove_social.post WHERE id = $1', [postId]))[0]?.due.toISOString() ?? null);
+    await assign(o, postId, o.member, (await one<{ due: Date }>('SELECT due_at AS due FROM ludy_social.post WHERE id = $1', [postId]))[0]?.due.toISOString() ?? null);
     expect(await marks(postId)).toEqual([{ soon: true, overdue: false }]);
     await pass(o);
     expect((await events(o)).map((e) => e.payload.stage)).toEqual(['soon', 'overdue', 'soon']);
@@ -221,7 +221,7 @@ suite('social due date reminders on PostgreSQL (#1359)', () => {
     const archived = await post(o, 'Đã lưu trữ');
     const partly = await post(o, 'Đăng một phần');
     for (const p of [published, cancelled, archived, partly]) await assign(o, p, o.member, dueIn(3));
-    await admin((c) => c.query("UPDATE crove_social.post SET status = CASE id WHEN $1 THEN 'published' WHEN $2 THEN 'cancelled' ELSE 'partially_published' END WHERE id = ANY($3::uuid[])", [published, cancelled, [published, cancelled, partly]]));
+    await admin((c) => c.query("UPDATE ludy_social.post SET status = CASE id WHEN $1 THEN 'published' WHEN $2 THEN 'cancelled' ELSE 'partially_published' END WHERE id = ANY($3::uuid[])", [published, cancelled, [published, cancelled, partly]]));
     await exec(o, o.owner, 'social.post.archive', { postId: archived });
     expect(await pass(o)).toBe(0);
     expect(await reminders(o, o.member)).toEqual([]);
@@ -236,7 +236,7 @@ suite('social due date reminders on PostgreSQL (#1359)', () => {
     await assign(o, later, o.member, dueIn(3));
     await pass(o);
     expect(await reminders(o, o.member)).toEqual([{ postId: later, stage: 'soon' }]);
-    await admin((c) => c.query("UPDATE crove_social.post SET status = 'published' WHERE id = $1", [later]));
+    await admin((c) => c.query("UPDATE ludy_social.post SET status = 'published' WHERE id = $1", [later]));
     expect(await reminders(o, o.member)).toEqual([]);
   });
 
@@ -303,7 +303,7 @@ suite('social due date reminders on PostgreSQL (#1359)', () => {
     expect(await worker.query('social.push.targets', { notificationId: reminderPush[0] }, { actor: system, orgId: o.orgId })).toBeNull();
     const ecdh = createECDH('prime256v1');
     ecdh.generateKeys();
-    await exec(o, o.member, 'social.push.subscribe', { endpoint: `https://push.example/${randomUUID()}`, p256dh: ecdh.getPublicKey().toString('base64url'), auth: randomBytes(16).toString('base64url') });
+    await exec(o, o.member, 'kernel.push.subscribe', { endpoint: `https://push.example/${randomUUID()}`, p256dh: ecdh.getPublicKey().toString('base64url'), auth: randomBytes(16).toString('base64url') });
     const slug = (await one<{ slug: string }>('SELECT slug FROM ludy_kernel.tenant WHERE org_id = $1', [o.orgId]))[0]?.slug;
     const target = await worker.query<PushTargets | null>('social.push.targets', { notificationId: reminderPush[0] }, { actor: system, orgId: o.orgId });
     expect(target).toMatchObject({ line: 'Một bài được giao cho bạn sắp đến hạn', path: `/o/${slug}/social/${postId}`, tag: `assignment_due:${postId}` });
@@ -325,10 +325,10 @@ suite('social due date reminders on PostgreSQL (#1359)', () => {
     })() });
     await app.connect();
     try {
-      await expect(app.query('SELECT * FROM crove_social.assignment_reminders_due(10)')).rejects.toMatchObject({ code: '42501' });
+      await expect(app.query('SELECT * FROM ludy_social.assignment_reminders_due(10)')).rejects.toMatchObject({ code: '42501' });
     } finally {
       await app.end();
     }
-    expect((await one<{ post_id: string }>('SELECT post_id FROM crove_social.assignment_reminders_due(1000)', [])).map((r) => r.post_id)).toContain(postId);
+    expect((await one<{ post_id: string }>('SELECT post_id FROM ludy_social.assignment_reminders_due(1000)', [])).map((r) => r.post_id)).toContain(postId);
   });
 });

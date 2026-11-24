@@ -28,7 +28,7 @@ const OFFERED_MAX = 200;
 const compensatedOn = (orgId: string, orderId: RawBuilder<unknown>): RawBuilder<boolean> => sql<boolean>`EXISTS (
   SELECT 1 FROM ludy_kernel.proposal p
   CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(p.payload -> 'adjustments') = 'array' THEN p.payload -> 'adjustments' ELSE '[]'::jsonb END) AS a
-  JOIN crove_finance.channel_settlement_line sl ON sl.org_id = p.org_id AND sl.id::text = lower(a ->> 'lineId')
+  JOIN ludy_finance.channel_settlement_line sl ON sl.org_id = p.org_id AND sl.id::text = lower(a ->> 'lineId')
   WHERE p.org_id = ${orgId}::uuid AND p.command = 'finance.marketplace_payout.record'
     AND p.status IN ('pending', 'approved', 'executed') AND a ->> 'kind' = 'carrier_compensation'
     AND sl.order_id = ${orderId})`;
@@ -53,15 +53,15 @@ export async function returnsToConfirm(ctx: Pick<QueryContext, 'trx' | 'orgId'>,
   const { rows } = await sql<OfferedRow>`
     SELECT l.id::text AS id, l.legal_entity_id::text AS legal_entity_id, o.platform, o.order_no, l.sku, l.stage, l.shipped_at::text AS shipped_at,
            i.code, i.name, i.unit, (-s.quantity)::text AS quantity
-    FROM crove_finance.channel_order_line l
-    JOIN crove_finance.channel_order o ON o.org_id = l.org_id AND o.id = l.order_id
-    JOIN crove_finance.stock_move s ON s.org_id = l.org_id AND s.order_line_id = l.id AND s.order_move = 'ship' AND s.order_attempt = l.attempt
-    JOIN crove_finance.stock_item i ON i.org_id = s.org_id AND i.id = s.item_id
+    FROM ludy_finance.channel_order_line l
+    JOIN ludy_finance.channel_order o ON o.org_id = l.org_id AND o.id = l.order_id
+    JOIN ludy_finance.stock_move s ON s.org_id = l.org_id AND s.order_line_id = l.id AND s.order_move = 'ship' AND s.order_attempt = l.attempt
+    JOIN ludy_finance.stock_item i ON i.org_id = s.org_id AND i.id = s.item_id
     WHERE l.org_id = ${ctx.orgId}::uuid
       AND l.stage IN ('returned', 'cancelled')
       AND (l.goods_back IS NULL OR l.goods_back_attempt <> l.attempt)
       AND (${legalEntityId ?? null}::uuid IS NULL OR l.legal_entity_id = ${legalEntityId ?? null}::uuid)
-      AND NOT EXISTS (SELECT 1 FROM crove_finance.stock_move r WHERE r.org_id = l.org_id AND r.order_line_id = l.id AND r.order_move = 'return' AND r.order_attempt = l.attempt)
+      AND NOT EXISTS (SELECT 1 FROM ludy_finance.stock_move r WHERE r.org_id = l.org_id AND r.order_line_id = l.id AND r.order_move = 'return' AND r.order_attempt = l.attempt)
       AND NOT ${compensatedOn(ctx.orgId, sql`l.order_id`)}
     ORDER BY o.ordered_at DESC NULLS LAST, o.id, l.line_key
     LIMIT ${OFFERED_MAX}`.execute(ctx.trx);
@@ -86,9 +86,9 @@ export async function returnsToConfirm(ctx: Pick<QueryContext, 'trx' | 'orgId'>,
 export async function goodsBackOnLines(ctx: Pick<QueryContext, 'trx' | 'orgId'>, settlementLineIds: readonly string[]): Promise<string | null> {
   if (settlementLineIds.length === 0) return null;
   const row = await ctx.trx
-    .selectFrom('crove_finance.channel_settlement_line as sl')
-    .innerJoin('crove_finance.channel_order_line as ol', (join) => join.onRef('ol.org_id', '=', 'sl.org_id').onRef('ol.order_id', '=', 'sl.order_id'))
-    .innerJoin('crove_finance.stock_move as m', (join) =>
+    .selectFrom('ludy_finance.channel_settlement_line as sl')
+    .innerJoin('ludy_finance.channel_order_line as ol', (join) => join.onRef('ol.org_id', '=', 'sl.org_id').onRef('ol.order_id', '=', 'sl.order_id'))
+    .innerJoin('ludy_finance.stock_move as m', (join) =>
       join.onRef('m.org_id', '=', 'ol.org_id').onRef('m.order_line_id', '=', 'ol.id').onRef('m.order_attempt', '=', 'ol.attempt').on('m.order_move', '=', 'return'),
     )
     .select('sl.id')
@@ -113,16 +113,16 @@ export const marketplaceReturnDecide = defineCommand({
     const userId = ctx.actor.userId;
     // The lock the assignment of the same line takes, then the row: an answer, an assignment and a report that confirms the line cannot interleave.
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.marketplace.line:${ctx.orgId}:${input.orderLineId}`}, 0))`.execute(ctx.trx);
-    await ctx.trx.selectFrom('crove_finance.channel_order_line').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.orderLineId).forUpdate().executeTakeFirst();
+    await ctx.trx.selectFrom('ludy_finance.channel_order_line').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.orderLineId).forUpdate().executeTakeFirst();
     const line = await ctx.trx
-      .selectFrom('crove_finance.channel_order_line')
+      .selectFrom('ludy_finance.channel_order_line')
       .select(['id', 'order_id', 'stage', 'attempt', 'goods_back', 'goods_back_attempt'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.orderLineId)
       .executeTakeFirst();
     if (!line) throw new DomainError('MARKETPLACE_RETURN_NOT_FOUND', 404, 'Không tìm thấy dòng đơn hàng này');
     const made = await ctx.trx
-      .selectFrom('crove_finance.stock_move')
+      .selectFrom('ludy_finance.stock_move')
       .select(['order_move', 'item_id', 'quantity'])
       .where('org_id', '=', ctx.orgId)
       .where('order_line_id', '=', line.id)
@@ -141,7 +141,7 @@ export const marketplaceReturnDecide = defineCommand({
       throw new DomainError('MARKETPLACE_RETURN_COMPENSATED', 409, 'Đơn này đã được phân loại là hãng vận chuyển bồi thường hàng mất trong khoản sàn trả, nên không xác nhận hàng về được');
     }
     await ctx.trx
-      .updateTable('crove_finance.channel_order_line')
+      .updateTable('ludy_finance.channel_order_line')
       .set({ goods_back: input.decision, goods_back_attempt: line.attempt, goods_back_by: userId, goods_back_at: ctx.now, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', line.id)

@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { createElement } from 'react';
 import { NavIcon } from '@ludy/ui/components/nav-icon';
-import { ADMIN_ITEMS, APPS, BELL_ITEM, TOP_ITEMS, type NavItem } from '../src/lib/apps.ts';
+import { ADMIN_ITEMS, APPS, BELL_ITEM, SETTINGS_ITEMS, TOP_ITEMS, type NavItem } from '../src/lib/apps.ts';
 import { APP_ICON, menuIcon } from '../src/lib/menu-icons.ts';
 
 // What the browser draws: two names that map to one lucide icon are the same picture.
@@ -42,5 +42,15 @@ describe('the icons of the shell menus (SH-6)', () => {
     ] as const) {
       expect(drawn(menuIcon(a)), `${a} vs ${b}`).not.toBe(drawn(menuIcon(b)));
     }
+  });
+
+  it('gives every Settings sub-page its own distinct icon (#4499)', () => {
+    const byPicture = new Map<string, string[]>();
+    for (const item of [...MENU_ITEMS, ...SETTINGS_ITEMS]) {
+      const picture = drawn(menuIcon(item.label));
+      byPicture.set(picture, [...(byPicture.get(picture) ?? []), `${item.label} (${menuIcon(item.label)})`]);
+    }
+    const shared = [...byPicture.values()].filter((names) => names.length > 1);
+    expect(shared, `items that share an icon: ${JSON.stringify(shared)}`).toEqual([]);
   });
 });

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Hash-chained signing audit ledger for crove_sign.signing_event (#3323, ADR-0013). Every mutation on an envelope or
+// Hash-chained signing audit ledger for ludy_sign.signing_event (#3323, ADR-0013). Every mutation on an envelope or
 // signer appends an event whose SHA-256 hash commits deterministically to the canonical event record and prev_event_hash.
 import { createHash } from 'node:crypto';
 import type { Database, SignActorType } from '@ludy/db';
@@ -151,7 +151,7 @@ export function computeSigningEventHash(input: SigningEventHashInput): string {
 // serialize seq numbers deterministically (lock order: envelope -> signing_event).
 export async function appendSigningEvent(trx: Kysely<Database>, input: AppendSigningEventInput): Promise<AppendedSigningEvent> {
   await trx
-    .selectFrom('crove_sign.envelope')
+    .selectFrom('ludy_sign.envelope')
     .select('id')
     .where('org_id', '=', input.orgId)
     .where('id', '=', input.envelopeId)
@@ -159,7 +159,7 @@ export async function appendSigningEvent(trx: Kysely<Database>, input: AppendSig
     .executeTakeFirstOrThrow();
 
   const latest = await trx
-    .selectFrom('crove_sign.signing_event')
+    .selectFrom('ludy_sign.signing_event')
     .select(['seq', 'event_hash'])
     .where('org_id', '=', input.orgId)
     .where('envelope_id', '=', input.envelopeId)
@@ -192,7 +192,7 @@ export async function appendSigningEvent(trx: Kysely<Database>, input: AppendSig
   });
 
   const inserted = await trx
-    .insertInto('crove_sign.signing_event')
+    .insertInto('ludy_sign.signing_event')
     .values({
       org_id: input.orgId,
       envelope_id: input.envelopeId,

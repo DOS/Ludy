@@ -553,7 +553,7 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
 
     await admin(async (c) => {
       const { rows: otpRows } = await c.query<{ otp_sha256: string | null; email: string }>(
-        `SELECT otp_sha256, email FROM crove_projects.roadmap_otp WHERE org_id = $1 AND board_id = $2 ORDER BY created_at DESC LIMIT 1`,
+        `SELECT otp_sha256, email FROM ludy_projects.roadmap_otp WHERE org_id = $1 AND board_id = $2 ORDER BY created_at DESC LIMIT 1`,
         [orgId, boardId],
       );
       expect(otpRows[0]!.otp_sha256).toBeNull();
@@ -567,8 +567,8 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
     // Security check: ludy_app/ludy_tenant has zero direct SQL access to MACHINERY tables roadmap_otp & roadmap_subscriber.
     const appClient = await appPool!.connect();
     try {
-      await expect(appClient.query('SELECT count(*) FROM crove_projects.roadmap_otp')).rejects.toThrow();
-      await expect(appClient.query('SELECT count(*) FROM crove_projects.roadmap_subscriber')).rejects.toThrow();
+      await expect(appClient.query('SELECT count(*) FROM ludy_projects.roadmap_otp')).rejects.toThrow();
+      await expect(appClient.query('SELECT count(*) FROM ludy_projects.roadmap_subscriber')).rejects.toThrow();
     } finally {
       appClient.release();
     }
@@ -698,14 +698,14 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
     const unsubToken = 'unsub-secret-token-0123456789abcdef';
     await admin(async (c) => {
       const { rows } = await c.query<{ id: string; email_sealed: string; notify_on_ship: boolean }>(
-        `SELECT id, email_sealed, notify_on_ship FROM crove_projects.roadmap_subscriber WHERE org_id = $1 AND board_id = $2`,
+        `SELECT id, email_sealed, notify_on_ship FROM ludy_projects.roadmap_subscriber WHERE org_id = $1 AND board_id = $2`,
         [orgId, boardId],
       );
       expect(rows).toHaveLength(1);
       expect(rows[0]!.email_sealed.startsWith('crove:cs1:')).toBe(true);
       expect(rows[0]!.email_sealed).not.toContain(voter1);
       expect(rows[0]!.notify_on_ship).toBe(true);
-      await c.query(`UPDATE crove_projects.roadmap_subscriber SET unsubscribe_token_sha256 = $1 WHERE id = $2`, [
+      await c.query(`UPDATE ludy_projects.roadmap_subscriber SET unsubscribe_token_sha256 = $1 WHERE id = $2`, [
         sha256Hex(unsubToken),
         rows[0]!.id,
       ]);
@@ -721,7 +721,7 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
     expect(unsubRes.status).toBe(200);
     await admin(async (c) => {
       const { rows } = await c.query<{ notify_on_ship: boolean; unsubscribed_at: string | null }>(
-        `SELECT notify_on_ship, unsubscribed_at FROM crove_projects.roadmap_subscriber WHERE org_id = $1 AND board_id = $2`,
+        `SELECT notify_on_ship, unsubscribed_at FROM ludy_projects.roadmap_subscriber WHERE org_id = $1 AND board_id = $2`,
         [orgId, boardId],
       );
       expect(rows[0]!.notify_on_ship).toBe(false);
@@ -861,9 +861,9 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
       ),
     ).rejects.toMatchObject({ status: 422, code: 'ROADMAP_TEMPLATE_PROJECT_FORBIDDEN' });
 
-    // Forward-compatibility with #2604 (visibility column on crove_projects.project):
+    // Forward-compatibility with #2604 (visibility column on ludy_projects.project):
     await admin(async (c) => {
-      await c.query(`ALTER TABLE crove_projects.project ADD COLUMN IF NOT EXISTS visibility text NOT NULL DEFAULT 'public'`);
+      await c.query(`ALTER TABLE ludy_projects.project ADD COLUMN IF NOT EXISTS visibility text NOT NULL DEFAULT 'public'`);
     });
     const privProj = await runtime.execute<{ projectId: string }>(
       'projects.project.create',
@@ -871,7 +871,7 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
       { actor: asOwner(), orgId },
     );
     await admin(async (c) => {
-      await c.query(`UPDATE crove_projects.project SET visibility = 'private' WHERE id = $1`, [privProj.projectId]);
+      await c.query(`UPDATE ludy_projects.project SET visibility = 'private' WHERE id = $1`, [privProj.projectId]);
     });
     await expect(
       runtime.execute(
@@ -894,7 +894,7 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
     );
     await expect(
       admin(async (c) => {
-        await c.query(`UPDATE crove_projects.project SET visibility = 'private' WHERE id = $1`, [linkedPublicProj.projectId]);
+        await c.query(`UPDATE ludy_projects.project SET visibility = 'private' WHERE id = $1`, [linkedPublicProj.projectId]);
       }),
     ).rejects.toThrow(/ROADMAP_PRIVATE_PROJECT_FORBIDDEN/);
 
@@ -971,21 +971,21 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
       { value: pdplEmail },
       { actor: asOwner(), orgId },
     );
-    expect(found.matches.some((m) => m.column === 'crove_projects.roadmap_item.public_title')).toBe(true);
+    expect(found.matches.some((m) => m.column === 'ludy_projects.roadmap_item.public_title')).toBe(true);
 
     const erased = await runtime.execute<{ erased: Array<{ column: string; rows: number }> }>(
       'kernel.personal_data.erase',
       { value: pdplEmail },
       { actor: asOwnerMfa(), orgId, idempotencyKey: randomUUID() },
     );
-    expect(erased.erased.some((e) => e.column === 'crove_projects.roadmap_otp.email' && e.rows >= 1)).toBe(true);
-    expect(erased.erased.some((e) => e.column === 'crove_projects.roadmap_subscriber.email_sealed' && e.rows >= 1)).toBe(true);
-    expect(erased.erased.some((e) => e.column === 'crove_projects.roadmap_item.public_title' && e.rows >= 1)).toBe(true);
+    expect(erased.erased.some((e) => e.column === 'ludy_projects.roadmap_otp.email' && e.rows >= 1)).toBe(true);
+    expect(erased.erased.some((e) => e.column === 'ludy_projects.roadmap_subscriber.email_sealed' && e.rows >= 1)).toBe(true);
+    expect(erased.erased.some((e) => e.column === 'ludy_projects.roadmap_item.public_title' && e.rows >= 1)).toBe(true);
     await admin(async (c) => {
       const { rows } = await c.query<{ o: string; s: string }>(
         `SELECT
-           (SELECT count(*) FROM crove_projects.roadmap_otp WHERE org_id = $1 AND email = $2)::text AS o,
-           (SELECT count(*) FROM crove_projects.roadmap_subscriber WHERE org_id = $1 AND voter_email_hash = crove_projects.roadmap_keyed_email_hash($1, $2))::text AS s`,
+           (SELECT count(*) FROM ludy_projects.roadmap_otp WHERE org_id = $1 AND email = $2)::text AS o,
+           (SELECT count(*) FROM ludy_projects.roadmap_subscriber WHERE org_id = $1 AND voter_email_hash = ludy_projects.roadmap_keyed_email_hash($1, $2))::text AS s`,
         [orgId, pdplEmail],
       );
       expect(rows[0]).toEqual({ o: '0', s: '0' });
@@ -1000,7 +1000,7 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
     );
     await admin(async (c) => {
       await c.query(
-        `UPDATE crove_projects.roadmap_otp SET expires_at = now() - interval '30 hours', invalidated_at = now() - interval '30 hours' WHERE org_id = $1 AND email = 'stale-otp@example.test'`,
+        `UPDATE ludy_projects.roadmap_otp SET expires_at = now() - interval '30 hours', invalidated_at = now() - interval '30 hours' WHERE org_id = $1 AND email = 'stale-otp@example.test'`,
         [orgId],
       );
     });
@@ -1063,11 +1063,11 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
     await admin(async (c) => {
       const { rows } = await c.query<{ b: string; i: string; o: string; v: string; s: string }>(
         `SELECT
-           (SELECT count(*) FROM crove_projects.roadmap_board WHERE org_id = $1)::text AS b,
-           (SELECT count(*) FROM crove_projects.roadmap_item WHERE org_id = $1)::text AS i,
-           (SELECT count(*) FROM crove_projects.roadmap_otp WHERE org_id = $1)::text AS o,
-           (SELECT count(*) FROM crove_projects.roadmap_vote WHERE org_id = $1)::text AS v,
-           (SELECT count(*) FROM crove_projects.roadmap_subscriber WHERE org_id = $1)::text AS s`,
+           (SELECT count(*) FROM ludy_projects.roadmap_board WHERE org_id = $1)::text AS b,
+           (SELECT count(*) FROM ludy_projects.roadmap_item WHERE org_id = $1)::text AS i,
+           (SELECT count(*) FROM ludy_projects.roadmap_otp WHERE org_id = $1)::text AS o,
+           (SELECT count(*) FROM ludy_projects.roadmap_vote WHERE org_id = $1)::text AS v,
+           (SELECT count(*) FROM ludy_projects.roadmap_subscriber WHERE org_id = $1)::text AS s`,
         [otherOrgId],
       );
       expect(rows[0]).toEqual({ b: '0', i: '0', o: '0', v: '0', s: '0' });
@@ -1461,7 +1461,7 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
     ).rejects.toThrow();
     expect(privProj.projectId).toBeTruthy();
 
-    // 5. PDPL find & erase covers crove_projects.roadmap_announcement.title & body_md.
+    // 5. PDPL find & erase covers ludy_projects.roadmap_announcement.title & body_md.
     const pdplTarget = 'pdpl-changelog@example.test';
     const annPdpl = await runtime.execute<{ announcement: { id: string } }>(
       'projects.roadmap.announcement.create',
@@ -1477,16 +1477,16 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
       { value: pdplTarget },
       { actor: asOwner(), orgId },
     );
-    expect(pdplFound.matches.some((m) => m.column === 'crove_projects.roadmap_announcement.title')).toBe(true);
-    expect(pdplFound.matches.some((m) => m.column === 'crove_projects.roadmap_announcement.body_md')).toBe(true);
+    expect(pdplFound.matches.some((m) => m.column === 'ludy_projects.roadmap_announcement.title')).toBe(true);
+    expect(pdplFound.matches.some((m) => m.column === 'ludy_projects.roadmap_announcement.body_md')).toBe(true);
 
     const pdplErased = await runtime.execute<{ erased: Array<{ column: string; rows: number }> }>(
       'kernel.personal_data.erase',
       { value: pdplTarget },
       { actor: asOwnerMfa(), orgId, idempotencyKey: randomUUID() },
     );
-    expect(pdplErased.erased.some((e) => e.column === 'crove_projects.roadmap_announcement.title' && e.rows >= 1)).toBe(true);
-    expect(pdplErased.erased.some((e) => e.column === 'crove_projects.roadmap_announcement.body_md' && e.rows >= 1)).toBe(true);
+    expect(pdplErased.erased.some((e) => e.column === 'ludy_projects.roadmap_announcement.title' && e.rows >= 1)).toBe(true);
+    expect(pdplErased.erased.some((e) => e.column === 'ludy_projects.roadmap_announcement.body_md' && e.rows >= 1)).toBe(true);
     expect(annPdpl.announcement.id).toBeTruthy();
   });
 });

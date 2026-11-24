@@ -38,7 +38,7 @@ async function targetOf(trx: Trx, orgId: string, target: { meetingId: string | n
   if (target.meetingId !== null) {
     await openMeeting(trx, orgId, target.meetingId);
     const row = await trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['series_id', sql<Date>`coalesce(started_at, created_at)`.as('at')])
       .where('org_id', '=', orgId)
       .where('id', '=', target.meetingId)
@@ -47,7 +47,7 @@ async function targetOf(trx: Trx, orgId: string, target: { meetingId: string | n
   }
   // A calendar event is the member's own: row security shows no other member's.
   const event = await trx
-    .selectFrom('crove_meetings.calendar_agenda')
+    .selectFrom('ludy_meetings.calendar_agenda')
     .select(['series_id', 'starts_at', 'meeting_id'])
     .where('org_id', '=', orgId)
     .where('id', '=', target.agendaId as string)
@@ -79,7 +79,7 @@ export async function briefFactsOf(ctx: { trx: Trx; orgId: string; query: QueryC
   if (previous) {
     // Published decisions only, read under the caller's own row security (a published result is read by the readers of its meeting).
     const result = await ctx.trx
-      .selectFrom('crove_meetings.meeting_result')
+      .selectFrom('ludy_meetings.meeting_result')
       .select('decisions')
       .where('org_id', '=', ctx.orgId)
       .where('meeting_id', '=', previous.id)
@@ -105,7 +105,7 @@ async function customerOf(ctx: { trx: Trx; orgId: string; query: QueryContext['q
   const none = { customer: null, deals: [] };
   for (const id of [meetingId, previousId]) {
     if (id === null) continue;
-    const links = await ctx.trx.selectFrom('crove_meetings.meeting_link').select(['party_id', 'deal_id']).where('org_id', '=', ctx.orgId).where('meeting_id', '=', id).orderBy('created_at').orderBy('id').execute();
+    const links = await ctx.trx.selectFrom('ludy_meetings.meeting_link').select(['party_id', 'deal_id']).where('org_id', '=', ctx.orgId).where('meeting_id', '=', id).orderBy('created_at').orderBy('id').execute();
     let partyId = links.find((l) => l.party_id !== null)?.party_id ?? null;
     if (partyId === null) {
       const dealId = links.find((l) => l.deal_id !== null)?.deal_id ?? null;

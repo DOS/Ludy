@@ -59,7 +59,7 @@ describe('todo source notes (#1676)', () => {
     expect(zTodoSourceNote.safeParse({ id: NOTE_1, title: null, available: false }).success).toBe(true);
   });
 
-  it('skips querying crove_notes.note when no row references a source note, and deduplicates distinct ids', async () => {
+  it('skips querying ludy_notes.note when no row references a source note, and deduplicates distinct ids', async () => {
     let noteQueries = 0;
     let capturedWhereValues: unknown[] = [];
 
@@ -68,7 +68,7 @@ describe('todo source notes (#1676)', () => {
         orgId: ORG,
         trx: {
           selectFrom: (table: string) => {
-            if (table === 'crove_notes.note') noteQueries += 1;
+            if (table === 'ludy_notes.note') noteQueries += 1;
             const chain = {
               select: () => chain,
               where: (_col: string, op: string, val: unknown) => {
@@ -117,7 +117,7 @@ describe('todo source notes (#1676)', () => {
               where: () => chain,
               orderBy: () => chain,
               execute: async () => [],
-              executeTakeFirst: async () => (table === 'crove_notes.note' ? foundNote : undefined),
+              executeTakeFirst: async () => (table === 'ludy_notes.note' ? foundNote : undefined),
             };
             return chain;
           },
@@ -208,12 +208,12 @@ describe('todo source notes (#1676)', () => {
             orderBy: () => chain,
             limit: () => chain,
             execute: async () => {
-              if (table === 'crove_notes.todo') return todoRows;
-              if (table === 'crove_notes.note') return noteRows;
+              if (table === 'ludy_notes.todo') return todoRows;
+              if (table === 'ludy_notes.note') return noteRows;
               return [];
             },
             executeTakeFirst: async () => {
-              if (table === 'crove_notes.todo') return todoRows[0];
+              if (table === 'ludy_notes.todo') return todoRows[0];
               if (table === 'ludy_kernel.position') return undefined;
               return undefined;
             },

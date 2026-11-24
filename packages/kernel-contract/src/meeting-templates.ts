@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The minutes templates of a meeting (Meetings A4, #3162, plan docs/plan/meetings-integrations.md section 4.3). Five templates, shipped in code: no editor and no
 // templates made by an org. A template is a list of sections, each with a stable key, the heading Vietnamese offices write over it, and a hint for Vy (the same
-// `meetings.summary` run fills the sections, no new feature key). The meeting stores only the template's code (crove_meetings.meeting.summary_template).
+// `meetings.summary` run fills the sections, no new feature key). The meeting stores only the template's code (ludy_meetings.meeting.summary_template).
 //
 // The text of the sections is stored in the existing `summary` column of the meeting's result, as headings and paragraphs (sectionsToText), and read back by
 // the headings (textToSections). Nothing but code decides the headings, so the summary column stays plain text for everything that reads it (the translation, the
@@ -11,7 +11,7 @@ import { z } from 'zod';
 // The five templates shipped in code: what the pickers list, and the only codes a meeting can be created or imported with.
 export const MEETING_SUMMARY_TEMPLATES = ['general', 'briefing', 'customer', 'supplier', 'one_on_one'] as const;
 export type BuiltInSummaryTemplate = (typeof MEETING_SUMMARY_TEMPLATES)[number];
-// A meeting on a template its organization wrote (#3578): the code says only "custom"; the sections are the meeting's own copy (crove_meetings.meeting.minutes_template_sections),
+// A meeting on a template its organization wrote (#3578): the code says only "custom"; the sections are the meeting's own copy (ludy_meetings.meeting.minutes_template_sections),
 // never read from the org's live template, so an edit or archive later changes no published result. Code that has no copy at hand treats it as the general summary (no sections).
 export const CUSTOM_SUMMARY_TEMPLATE = 'custom' as const;
 export type MeetingSummaryTemplate = BuiltInSummaryTemplate | typeof CUSTOM_SUMMARY_TEMPLATE;

@@ -27,7 +27,7 @@ export interface ReductionRow extends VatCutRow {
 // The reduction of a tax in force on `date`, or null when no row covers it (the books then cut nothing).
 export async function reductionInForce(ctx: Ctx, kind: 'vat' | 'pit', date: string): Promise<ReductionRow | null> {
   const rows = await ctx.trx
-    .selectFrom('crove_finance.household_tax_reduction')
+    .selectFrom('ludy_finance.household_tax_reduction')
     .select(['kind', 'effective_from', 'cut_percent', 'revenue_ceiling', 'status'])
     .where('kind', '=', kind)
     .where('effective_from', '<=', date)

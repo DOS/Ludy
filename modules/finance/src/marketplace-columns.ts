@@ -79,7 +79,7 @@ export const marketplaceColumnsCheck = defineCommand({
     const platform = input.mapping?.platform ?? null;
     const assignments = JSON.stringify(input.mapping?.assignments ?? []);
     const existing = await ctx.trx
-      .selectFrom('crove_finance.marketplace_column_check')
+      .selectFrom('ludy_finance.marketplace_column_check')
       .select(['id', 'state', 'platform', 'assignments', 'requested_at'])
       .where('org_id', '=', ctx.orgId)
       .where('file_id', '=', input.fileId)
@@ -93,7 +93,7 @@ export const marketplaceColumnsCheck = defineCommand({
     if (existing) {
       // A new request clears the earlier verdict and preview (they belong to the earlier mapping) and keeps the sheet (the file's own); the guard allows no other move.
       await ctx.trx
-        .updateTable('crove_finance.marketplace_column_check')
+        .updateTable('ludy_finance.marketplace_column_check')
         .set({ platform, assignments, state: 'requested', failure: null, refusal: null, preview: null, requested_by: ctx.actor.userId, requested_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', existing.id)
@@ -101,7 +101,7 @@ export const marketplaceColumnsCheck = defineCommand({
     } else {
       try {
         await ctx.trx
-          .insertInto('crove_finance.marketplace_column_check')
+          .insertInto('ludy_finance.marketplace_column_check')
           .values({ org_id: ctx.orgId, file_id: input.fileId, platform, assignments, requested_by: ctx.actor.userId, requested_at: ctx.now })
           .execute();
       } catch (error: unknown) {
@@ -129,7 +129,7 @@ export const marketplaceColumnsTarget = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<MarketplaceColumnsTarget> => {
     const check = await ctx.trx
-      .selectFrom('crove_finance.marketplace_column_check')
+      .selectFrom('ludy_finance.marketplace_column_check')
       .select(['state', 'platform', 'assignments', 'requested_at'])
       .where('org_id', '=', ctx.orgId)
       .where('file_id', '=', input.fileId)
@@ -153,7 +153,7 @@ export const marketplaceColumnsRecord = defineCommand({
   access: 'system',
   handler: async (ctx, input): Promise<{ recorded: boolean }> => {
     const check = await ctx.trx
-      .selectFrom('crove_finance.marketplace_column_check')
+      .selectFrom('ludy_finance.marketplace_column_check')
       .select(['id', 'state', 'requested_at', 'sheet'])
       .where('org_id', '=', ctx.orgId)
       .where('file_id', '=', input.fileId)
@@ -166,7 +166,7 @@ export const marketplaceColumnsRecord = defineCommand({
       // A refusal and a preview are the verdict on one mapping: not both, and neither without the other's absence being a refusal.
       if (result.refusal !== null && result.preview !== null) throw new DomainError('MARKETPLACE_COLUMNS_INVALID', 422, 'Một mapping bị từ chối không có bản xem trước');
       await ctx.trx
-        .updateTable('crove_finance.marketplace_column_check')
+        .updateTable('ludy_finance.marketplace_column_check')
         .set({
           state: 'done',
           failure: null,
@@ -181,7 +181,7 @@ export const marketplaceColumnsRecord = defineCommand({
         .execute();
     } else {
       await ctx.trx
-        .updateTable('crove_finance.marketplace_column_check')
+        .updateTable('ludy_finance.marketplace_column_check')
         .set({ state: 'failed', failure: result.failure })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', check.id)
@@ -204,7 +204,7 @@ export const marketplaceColumns = defineQuery({
     const file = await unrecognisedSheet(ctx, input.fileId);
     if (!file) throw notFound();
     const row = await ctx.trx
-      .selectFrom('crove_finance.marketplace_column_check')
+      .selectFrom('ludy_finance.marketplace_column_check')
       .select(['state', 'failure', 'refusal', 'platform', 'assignments', 'requested_at', 'finished_at', 'sheet', 'preview'])
       .where('org_id', '=', ctx.orgId)
       .where('file_id', '=', input.fileId)
@@ -236,7 +236,7 @@ export const marketplaceColumnsFiles = defineQuery({
     const { rows } = await sql<{ id: string; filename: string; created_at: Date | string; state: string | null }>`
       SELECT f.id::text AS id, f.filename, f.created_at, c.state
         FROM ludy_kernel.file f
-        LEFT JOIN crove_finance.marketplace_column_check c ON c.org_id = f.org_id AND c.file_id = f.id
+        LEFT JOIN ludy_finance.marketplace_column_check c ON c.org_id = f.org_id AND c.file_id = f.id
        WHERE f.org_id = ${ctx.orgId}::uuid AND f.original_deleted_at IS NULL
          AND f.content_type = ANY(${SHEET_TYPES}::text[])
          AND EXISTS (

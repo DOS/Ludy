@@ -216,7 +216,7 @@ suite('bank statement lines to bank vouchers (#326)', () => {
     const proposal = await extractAndPropose({ runtime: workerRuntime, store, extractor: null, extract, today: () => '2026-10-13' }, org.orgId, fileId);
     const recorded = await approve(adminUser, String(proposal.proposalId));
     expect(recorded.status).toBe(200);
-    const [doc] = await admin(async (c) => (await c.query('SELECT party_id FROM crove_finance.purchase_document WHERE id = $1', [recorded.body.documentId])).rows);
+    const [doc] = await admin(async (c) => (await c.query('SELECT party_id FROM ludy_finance.purchase_document WHERE id = $1', [recorded.body.documentId])).rows);
     vendor = doc.party_id;
     customer = randomUUID();
     await admin((c) => c.query(`INSERT INTO ludy_kernel.party (org_id, id, name, tax_code) VALUES ($1, $2, 'Công ty TNHH Thương mại Hòa Bình', '0312345670')`, [org.orgId, customer]));
@@ -233,7 +233,7 @@ suite('bank statement lines to bank vouchers (#326)', () => {
       idempotencyKey: randomUUID(),
     });
     expect(imported.status).toBe(200);
-    for (const r of await admin(async (c) => (await c.query<{ id: string; bank_ref: string }>('SELECT id, bank_ref FROM crove_finance.bank_line WHERE org_id = $1', [org.orgId])).rows)) {
+    for (const r of await admin(async (c) => (await c.query<{ id: string; bank_ref: string }>('SELECT id, bank_ref FROM ludy_finance.bank_line WHERE org_id = $1', [org.orgId])).rows)) {
       lineId[r.bank_ref] = r.id;
     }
   });
@@ -328,13 +328,13 @@ suite('bank statement lines to bank vouchers (#326)', () => {
     expect(approved).toMatchObject({ status: 200, body: { voucherId: expect.any(String), journalEntryId: expect.any(String) } });
     expect((await states()).FT101).toEqual({ status: 'matched', voucherId: approved.body.voucherId, code: 'BC00001' });
     const [voucher] = await admin(
-      async (c) => (await c.query('SELECT bank_line_id, amount::text, party_id FROM crove_finance.cash_voucher WHERE id = $1', [approved.body.voucherId])).rows,
+      async (c) => (await c.query('SELECT bank_line_id, amount::text, party_id FROM ludy_finance.cash_voucher WHERE id = $1', [approved.body.voucherId])).rows,
     );
     expect(voucher).toEqual({ bank_line_id: lineId.FT101, amount: expect.stringMatching(/^1500000(\.0+)?$/), party_id: customer });
     const journal = await admin(
       async (c) =>
         (
-          await c.query(`SELECT account_code, debit::numeric::text AS debit, credit::numeric::text AS credit, party_id FROM crove_finance.journal_line WHERE entry_id = $1 ORDER BY line_no`, [
+          await c.query(`SELECT account_code, debit::numeric::text AS debit, credit::numeric::text AS credit, party_id FROM ludy_finance.journal_line WHERE entry_id = $1 ORDER BY line_no`, [
             receiptEntry,
           ])
         ).rows,
@@ -395,7 +395,7 @@ suite('bank statement lines to bank vouchers (#326)', () => {
   it('holds every writer to the link in the database', async () => {
     const insert = (c: pg.Client, values: { type?: string; line?: string | undefined; amount?: string; date?: string; account?: string; org?: string }) =>
       c.query(
-        `INSERT INTO crove_finance.cash_voucher (org_id, voucher_type, number, voucher_date, cash_account, description, amount, bank_line_id)
+        `INSERT INTO ludy_finance.cash_voucher (org_id, voucher_type, number, voucher_date, cash_account, description, amount, bank_line_id)
          VALUES ($1, $2, 1, $3, $4, 'x', $5, $6)`,
         [values.org ?? org.orgId, values.type ?? 'bank_credit', values.date ?? '2026-10-01', values.account ?? '1121', values.amount ?? '1500000', values.line ?? lineId.FT101],
       );

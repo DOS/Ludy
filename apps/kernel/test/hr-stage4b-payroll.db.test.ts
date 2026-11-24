@@ -177,8 +177,8 @@ suite('HR Stage 4B payroll, foreign worker work permit, and BHXH leave (#4301)',
     await expect(
       withAdmin((c) =>
         c.query(
-          `INSERT INTO crove_hr.payroll_employment (org_id, legal_entity_id, employee_id, effective_from, contract_type, region, base_wage, pay_basis, hourly_rate)
-           SELECT org_id, legal_entity_id, employee_id, '2026-09-01', 'indefinite', 'I', 0, 'hourly', 0 FROM crove_hr.payroll_employment WHERE id = $1`,
+          `INSERT INTO ludy_hr.payroll_employment (org_id, legal_entity_id, employee_id, effective_from, contract_type, region, base_wage, pay_basis, hourly_rate)
+           SELECT org_id, legal_entity_id, employee_id, '2026-09-01', 'indefinite', 'I', 0, 'hourly', 0 FROM ludy_hr.payroll_employment WHERE id = $1`,
           [hourlyEmp.employmentId],
         ),
       ),
@@ -359,7 +359,7 @@ suite('HR Stage 4B payroll, foreign worker work permit, and BHXH leave (#4301)',
     // End + erase after 10y retention clears work_permit_expires_on and shreds key so workPermitNumber reads null.
     await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: expSoon.employeeId, endedOn: '2026-08-31' });
     await withAdmin((c) =>
-      c.query(`UPDATE crove_hr.payroll_employee SET ended_on = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date WHERE id = $1`, [expSoon.employeeId]),
+      c.query(`UPDATE ludy_hr.payroll_employee SET ended_on = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date WHERE id = $1`, [expSoon.employeeId]),
     );
     const erased = await o.exec<HrEmployeeErased>(o.owner, 'hr.payroll.employee.erase', { employeeId: expSoon.employeeId }, asMfa(o.owner));
     expect(erased.shreddedKeys).toBe(1);

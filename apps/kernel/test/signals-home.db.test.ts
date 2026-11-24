@@ -60,7 +60,7 @@ suite('the cross-app rules on Home, end to end (#2967, #2969)', () => {
     async function wonDeal(partyId: string, days: number): Promise<string> {
       const deal = await newDeal(partyId);
       await exec<Deal>(owner, 'crm.deal.move', { dealId: deal.id, version: deal.version, stageId: (await stage('Thắng')).id });
-      await rows("UPDATE crove_crm.deal SET closed_at = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh' - make_interval(days => $3) + interval '9 hours' WHERE org_id = $1 AND id = $2", [orgId, deal.id, days]);
+      await rows("UPDATE ludy_crm.deal SET closed_at = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh' - make_interval(days => $3) + interval '9 hours' WHERE org_id = $1 AND id = $2", [orgId, deal.id, days]);
       return deal.id;
     }
     async function sale(partyId: string, number: string, date: string, total: string, legalEntity: string = entity): Promise<void> {
@@ -68,17 +68,17 @@ suite('the cross-app rules on Home, end to end (#2967, #2969)', () => {
         const doc = randomUUID();
         await c.query('BEGIN');
         await c.query(
-          `INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
+          `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
            VALUES ($1, $2, $3, 'C26TAA', $4, $5, 'VND', $6, 0, $6, 'sale', $7)`,
           [orgId, doc, partyId, number, date, total, legalEntity],
         );
         const entry = randomUUID();
         await c.query(
-          `INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, $4, 'finance.purchase_document', $5, $6)`,
+          `INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, $4, 'finance.purchase_document', $5, $6)`,
           [orgId, entry, date, `HĐ bán ${number}`, doc, legalEntity],
         );
         await c.query(
-          `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '131', $3, 0, $4, $5), ($1, $2, 2, '511', 0, $3, NULL, $5)`,
+          `INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '131', $3, 0, $4, $5), ($1, $2, 2, '511', 0, $3, NULL, $5)`,
           [orgId, entry, total, partyId, legalEntity],
         );
         await c.query('COMMIT');

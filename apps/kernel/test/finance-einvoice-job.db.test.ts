@@ -105,7 +105,7 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
       const channel = randomUUID();
       await admin(async (c) => {
         await c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, channel, 'einvoice_sandbox', `acct-${channel.slice(0, 8)}`, 'Hóa đơn thử', owner]);
-        await c.query(`INSERT INTO crove_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', $3)`, [orgId, channel, SELLER_TAX_CODE]);
+        await c.query(`INSERT INTO ludy_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', $3)`, [orgId, channel, SELLER_TAX_CODE]);
       });
     }
     const o = { orgId, owner, admin: adminUser, entityId: entity, seriesId: '' };
@@ -136,13 +136,13 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
   const draftRow = async (o: Org, id: string) =>
     (
       await rows<DraftRow>(
-        'SELECT state, provider_ref, issued_number, authority_code, signed_file_id, pdf_file_id, error_code, idempotency_key, next_check_at, check_attempts, submitted_at FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2',
+        'SELECT state, provider_ref, issued_number, authority_code, signed_file_id, pdf_file_id, error_code, idempotency_key, next_check_at, check_attempts, submitted_at FROM ludy_finance.einvoice_draft WHERE org_id = $1 AND id = $2',
         [o.orgId, id],
       )
     )[0] as DraftRow;
   const calls = (o: Org) => rows<{ key: string; step: string; state: string; calls: number }>("SELECT key, step, state, calls FROM ludy_kernel.external_call WHERE org_id = $1 AND key LIKE 'einvoice:%' ORDER BY started_at, key", [o.orgId]);
   const run = (o: Org, draftId: string, provider: EInvoiceProvider) => runEInvoiceIssue({ runtime: worker, broker, store, providers: { sandbox: provider } }, { orgId: o.orgId, draftId });
-  const due = (o: Org, draftId: string) => fixture('UPDATE crove_finance.einvoice_draft SET next_check_at = pg_catalog.now() - interval \'1 second\' WHERE org_id = $1 AND id = $2', [o.orgId, draftId]);
+  const due = (o: Org, draftId: string) => fixture('UPDATE ludy_finance.einvoice_draft SET next_check_at = pg_catalog.now() - interval \'1 second\' WHERE org_id = $1 AND id = $2', [o.orgId, draftId]);
 
   beforeAll(async () => {
     extract = inProcessExtract();
@@ -206,7 +206,7 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
     const proposal = (await rows<{ command: string; legal_entity_id: string; payload: { invoice?: { number?: string } } }>('SELECT command, legal_entity_id, payload FROM ludy_kernel.proposal WHERE org_id = $1 AND id = $2', [o.orgId, read.proposalId]))[0];
     expect(proposal).toMatchObject({ command: 'finance.purchase.record', legal_entity_id: o.entityId });
     const approved = await rt.execute<{ documentId: string }>('kernel.proposal.approve', { acceptUnverifiedSignature: true, id: String(read.proposalId), revision: 1 }, { actor: asUser(o.admin), orgId: o.orgId, idempotencyKey: randomUUID() });
-    const document = (await rows<{ direction: string; legal_entity_id: string; invoice_number: string }>('SELECT direction, legal_entity_id, invoice_number FROM crove_finance.purchase_document WHERE org_id = $1 AND id = $2', [o.orgId, approved.documentId]))[0];
+    const document = (await rows<{ direction: string; legal_entity_id: string; invoice_number: string }>('SELECT direction, legal_entity_id, invoice_number FROM ludy_finance.purchase_document WHERE org_id = $1 AND id = $2', [o.orgId, approved.documentId]))[0];
     expect(document).toMatchObject({ direction: 'sale', legal_entity_id: o.entityId });
     // The intake keeps the number as the XML writes it, without the zeros the sandbox pads it with.
     expect(Number(document?.invoice_number)).toBe(Number(row.issued_number));
@@ -242,7 +242,7 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
     control.script('pending');
     control.pendingPolls = 10_000;
     await run(o, draftId, provider);
-    await fixture("UPDATE crove_finance.einvoice_draft SET submitted_at = pg_catalog.now() - interval '25 hours', next_check_at = pg_catalog.now() - interval '1 second' WHERE org_id = $1 AND id = $2", [o.orgId, draftId]);
+    await fixture("UPDATE ludy_finance.einvoice_draft SET submitted_at = pg_catalog.now() - interval '25 hours', next_check_at = pg_catalog.now() - interval '1 second' WHERE org_id = $1 AND id = $2", [o.orgId, draftId]);
     expect(await run(o, draftId, provider)).toEqual({ action: 'poll', state: 'failed' });
     expect(await draftRow(o, draftId)).toMatchObject({ state: 'failed', error_code: 'STATUS_UNKNOWN', next_check_at: null });
   });
@@ -264,7 +264,7 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
     await due(o, draftId);
     expect(await run(o, draftId, down)).toEqual({ action: 'poll', state: 'pending' });
     expect(await draftRow(o, draftId)).toMatchObject({ state: 'pending', check_attempts: 2, next_check_at: expect.any(Date) });
-    await fixture("UPDATE crove_finance.einvoice_draft SET submitted_at = pg_catalog.now() - interval '25 hours', next_check_at = pg_catalog.now() - interval '1 second' WHERE org_id = $1 AND id = $2", [o.orgId, draftId]);
+    await fixture("UPDATE ludy_finance.einvoice_draft SET submitted_at = pg_catalog.now() - interval '25 hours', next_check_at = pg_catalog.now() - interval '1 second' WHERE org_id = $1 AND id = $2", [o.orgId, draftId]);
     expect(await run(o, draftId, down)).toEqual({ action: 'poll', state: 'failed' });
     expect(await draftRow(o, draftId)).toMatchObject({ state: 'failed', error_code: 'STATUS_UNKNOWN', next_check_at: null });
   });
@@ -337,7 +337,7 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
 
     const mismatch = await org();
     const mismatchDraft = await submitted(mismatch);
-    await fixture('UPDATE crove_finance.einvoice_draft_line SET amount = amount + 1 WHERE org_id = $1 AND draft_id = $2 AND line_no = 1', [mismatch.orgId, mismatchDraft]);
+    await fixture('UPDATE ludy_finance.einvoice_draft_line SET amount = amount + 1 WHERE org_id = $1 AND draft_id = $2 AND line_no = 1', [mismatch.orgId, mismatchDraft]);
     const b = createSandboxEInvoiceProvider();
     expect(await run(mismatch, mismatchDraft, b.provider)).toEqual({ action: 'none', state: 'DRAFT_MISMATCH' });
     expect(await draftRow(mismatch, mismatchDraft)).toMatchObject({ state: 'draft', error_code: 'DRAFT_MISMATCH' });
@@ -346,7 +346,7 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
     // The connection was removed between the approval and the job (the request itself is refused without one).
     const bare = await org();
     const bareDraft = await submitted(bare);
-    await rows('DELETE FROM crove_finance.einvoice_connection WHERE org_id = $1', [bare.orgId]);
+    await rows('DELETE FROM ludy_finance.einvoice_connection WHERE org_id = $1', [bare.orgId]);
     const c = createSandboxEInvoiceProvider();
     expect(await run(bare, bareDraft, c.provider)).toEqual({ action: 'none', state: 'PROVIDER_NOT_READY' });
     expect(await draftRow(bare, bareDraft)).toMatchObject({ state: 'draft', error_code: 'PROVIDER_NOT_READY' });
@@ -382,12 +382,12 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
     expect(await run(o, draftId, refused)).toEqual({ action: 'poll', state: 'pending' });
     expect(await draftRow(o, draftId)).toMatchObject({ state: 'pending', error_code: 'CREDENTIALS', next_check_at: expect.any(Date), check_attempts: 2 });
     // The connection is gone as well: the same, nothing sent, nothing ended.
-    await rows('DELETE FROM crove_finance.einvoice_connection WHERE org_id = $1', [o.orgId]);
+    await rows('DELETE FROM ludy_finance.einvoice_connection WHERE org_id = $1', [o.orgId]);
     await due(o, draftId);
     expect(await run(o, draftId, provider)).toEqual({ action: 'none', state: 'PROVIDER_NOT_READY' });
     expect(await draftRow(o, draftId)).toMatchObject({ state: 'pending', error_code: 'PROVIDER_NOT_READY' });
     // Past the day it is for a person to look at, never silently lost or sent again.
-    await fixture("UPDATE crove_finance.einvoice_draft SET submitted_at = pg_catalog.now() - interval '25 hours', next_check_at = pg_catalog.now() - interval '1 second' WHERE org_id = $1 AND id = $2", [o.orgId, draftId]);
+    await fixture("UPDATE ludy_finance.einvoice_draft SET submitted_at = pg_catalog.now() - interval '25 hours', next_check_at = pg_catalog.now() - interval '1 second' WHERE org_id = $1 AND id = $2", [o.orgId, draftId]);
     expect(await run(o, draftId, provider)).toEqual({ action: 'none', state: 'PROVIDER_NOT_READY' });
     expect(await draftRow(o, draftId)).toMatchObject({ state: 'failed', error_code: 'STATUS_UNKNOWN' });
     expect(control.calls.filter((c) => c.startsWith('issue'))).toHaveLength(1);
@@ -395,14 +395,14 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
 
   it('asks about an invoice only through the connection it was sent through, whatever the entity\'s tax code is later, and holds it when that connection is gone', async () => {
     const o = await org();
-    const connectionOf = async (draftId: string) => (await rows<{ channel_connection_id: string | null }>('SELECT channel_connection_id FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, draftId]))[0]?.channel_connection_id;
-    const first = (await rows<{ channel_connection_id: string }>('SELECT channel_connection_id FROM crove_finance.einvoice_connection WHERE org_id = $1', [o.orgId]))[0]?.channel_connection_id;
+    const connectionOf = async (draftId: string) => (await rows<{ channel_connection_id: string | null }>('SELECT channel_connection_id FROM ludy_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, draftId]))[0]?.channel_connection_id;
+    const first = (await rows<{ channel_connection_id: string }>('SELECT channel_connection_id FROM ludy_finance.einvoice_connection WHERE org_id = $1', [o.orgId]))[0]?.channel_connection_id;
     // A second connection of the entity under another seller tax code (the database checks a connection's code against the entity's when it is made).
     await execute(o, 'kernel.org.set_tax_code', { taxCode: OTHER_TAX_CODE });
     const second = randomUUID();
     await admin(async (c) => {
       await c.query('INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, second, 'einvoice_sandbox', `acct-${second.slice(0, 8)}`, 'Hóa đơn thử 2', o.owner]);
-      await c.query(`INSERT INTO crove_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', $3)`, [o.orgId, second, OTHER_TAX_CODE]);
+      await c.query(`INSERT INTO ludy_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', $3)`, [o.orgId, second, OTHER_TAX_CODE]);
     });
     await execute(o, 'kernel.org.set_tax_code', { taxCode: SELLER_TAX_CODE });
     const draftId = await submitted(o);
@@ -425,7 +425,7 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
     expect(await connectionOf(draftId)).toBe(first);
     expect(control.calls.filter((c) => c.startsWith('issue'))).toHaveLength(1);
     // Past the day it is for a person to look at, still never released or sent again.
-    await fixture("UPDATE crove_finance.einvoice_draft SET submitted_at = pg_catalog.now() - interval '25 hours', next_check_at = pg_catalog.now() - interval '1 second' WHERE org_id = $1 AND id = $2", [o.orgId, draftId]);
+    await fixture("UPDATE ludy_finance.einvoice_draft SET submitted_at = pg_catalog.now() - interval '25 hours', next_check_at = pg_catalog.now() - interval '1 second' WHERE org_id = $1 AND id = $2", [o.orgId, draftId]);
     expect(await run(o, draftId, provider)).toEqual({ action: 'none', state: 'PROVIDER_NOT_READY' });
     expect(await draftRow(o, draftId)).toMatchObject({ state: 'failed', error_code: 'STATUS_UNKNOWN', idempotency_key: key });
     expect(control.calls.filter((c) => c.startsWith('issue'))).toHaveLength(1);
@@ -437,11 +437,11 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
     const { provider } = createSandboxEInvoiceProvider();
     expect(await run(o, draftId, provider)).toEqual({ action: 'issue', state: 'issued' });
     const key = (await draftRow(o, draftId)).idempotency_key;
-    const sweep = async () => (await rows<{ draft_id: string }>('SELECT draft_id FROM crove_finance.einvoice_due(NULL, NULL, 100) WHERE org_id = $1', [o.orgId])).map((r) => r.draft_id);
+    const sweep = async () => (await rows<{ draft_id: string }>('SELECT draft_id FROM ludy_finance.einvoice_due(NULL, NULL, 100) WHERE org_id = $1', [o.orgId])).map((r) => r.draft_id);
     const files = (step: unknown) => worker.execute<{ ok: boolean; signedFileId: string | null }>('finance.einvoice.job_files', { draftId, step }, { actor: { type: 'system', component: 'finance.einvoice' }, orgId: o.orgId });
     const begin = () => worker.execute<{ action: string; reason?: string }>('finance.einvoice.job_begin', { draftId }, { actor: { type: 'system', component: 'finance.einvoice' }, orgId: o.orgId });
     // The evidence was stored; take it away again, as if the fetch had never succeeded, and age the invoice so the sweep sees it.
-    await fixture("UPDATE crove_finance.einvoice_draft SET signed_file_id = NULL, pdf_file_id = NULL, issued_at = pg_catalog.now() - interval '1 hour' WHERE org_id = $1 AND id = $2", [o.orgId, draftId]);
+    await fixture("UPDATE ludy_finance.einvoice_draft SET signed_file_id = NULL, pdf_file_id = NULL, issued_at = pg_catalog.now() - interval '1 hour' WHERE org_id = $1 AND id = $2", [o.orgId, draftId]);
     await fixture("DELETE FROM ludy_kernel.external_call WHERE org_id = $1 AND key = $2", [o.orgId, `einvoice:files:${key}`]);
     expect(await sweep()).toContain(draftId);
     // A fetch that failed: the next one waits, and the sweep leaves the draft alone until then.

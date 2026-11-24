@@ -36,16 +36,16 @@ export async function rulesForSuggestion(ctx: QueryContext, partyId: string | nu
   const load = async (vendor: boolean) => {
     if (vendor && partyId === null) return [];
     const rows = await ctx.trx
-      .selectFrom('crove_finance.categorization_rule as r')
+      .selectFrom('ludy_finance.categorization_rule as r')
       .select(['r.id', 'r.match_kind', 'r.match_text', 'r.label', 'r.debit_account'])
       .where('r.org_id', '=', ctx.orgId)
       .where('r.legal_entity_id', '=', legalEntityId)
       .where((eb) => (vendor && partyId !== null ? eb('r.vendor_party_id', '=', partyId) : eb('r.vendor_party_id', 'is', null)))
       .where(({ or, exists, selectFrom }) =>
         or([
-          exists(selectFrom('crove_finance.account as a').select('a.code').whereRef('a.code', '=', 'r.debit_account')),
+          exists(selectFrom('ludy_finance.account as a').select('a.code').whereRef('a.code', '=', 'r.debit_account')),
           exists(
-            selectFrom('crove_finance.org_account as o')
+            selectFrom('ludy_finance.org_account as o')
               .select('o.code')
               .whereRef('o.org_id', '=', 'r.org_id')
               .whereRef('o.code', '=', 'r.debit_account')
@@ -94,7 +94,7 @@ export async function learnFromApproval(
       source_document_id: input.documentId,
     };
     const row = await ctx.trx
-      .insertInto('crove_finance.categorization_rule')
+      .insertInto('ludy_finance.categorization_rule')
       .values({ org_id: ctx.orgId, vendor_party_id: input.partyId, match_kind: 'description', match_text: text, ...provenance })
       .onConflict((oc) => oc.constraint('categorization_rule_match_uq').doUpdateSet(provenance))
       .returning(['id', sql<boolean>`(xmax = 0)`.as('created')])
@@ -112,9 +112,9 @@ export const categorizationRulesList = defineQuery({
   handler: async (ctx, input): Promise<CategorizationRule[]> => {
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     const rows = await ctx.trx
-      .selectFrom('crove_finance.categorization_rule as r')
+      .selectFrom('ludy_finance.categorization_rule as r')
       .leftJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'r.org_id').onRef('p.id', '=', 'r.vendor_party_id'))
-      .leftJoin('crove_finance.purchase_document as d', (join) => join.onRef('d.org_id', '=', 'r.org_id').onRef('d.id', '=', 'r.source_document_id'))
+      .leftJoin('ludy_finance.purchase_document as d', (join) => join.onRef('d.org_id', '=', 'r.org_id').onRef('d.id', '=', 'r.source_document_id'))
       .select([
         'r.id',
         'r.vendor_party_id',
@@ -207,7 +207,7 @@ export const createCategorizationRule = defineCommand({
       if (!party) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy nhà cung cấp');
     }
     const row = await ctx.trx
-      .insertInto('crove_finance.categorization_rule')
+      .insertInto('ludy_finance.categorization_rule')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: legalEntityId,
@@ -237,7 +237,7 @@ export const removeCategorizationRule = defineCommand({
   target: (input) => ({ type: 'finance.categorization_rule', id: input.id }),
   handler: async (ctx, { id }) => {
     const removed = await ctx.trx
-      .deleteFrom('crove_finance.categorization_rule')
+      .deleteFrom('ludy_finance.categorization_rule')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', id)
       .returning(['vendor_party_id', 'match_kind', 'match_text', 'debit_account', 'confirmed_by', 'source_document_id'])

@@ -63,15 +63,15 @@ suite('the cash-flow forecast (#4391)', () => {
       if (document) {
         doc = randomUUID();
         await c.query(
-          `INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
+          `INSERT INTO ludy_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
            VALUES ($1, $2, $3, 'C26TAA', $4, $5, 'VND', $6, 0, $6, $7, $8)`,
           [o.orgId, doc, document.party, document.number, document.invoiceDate ?? date, document.total, document.direction, entity],
         );
       }
       const id = randomUUID();
-      await c.query(`INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'forecast test', $4, $5, $6)`, [o.orgId, id, date, doc ? 'finance.purchase_document' : 'finance.journal_voucher', doc ?? randomUUID(), entity]);
+      await c.query(`INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'forecast test', $4, $5, $6)`, [o.orgId, id, date, doc ? 'finance.purchase_document' : 'finance.journal_voucher', doc ?? randomUUID(), entity]);
       let n = 1;
-      for (const l of lines) await c.query(`INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, [o.orgId, id, n++, l.account, l.debit ?? '0', l.credit ?? '0', l.party ?? null, entity]);
+      for (const l of lines) await c.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, [o.orgId, id, n++, l.account, l.debit ?? '0', l.credit ?? '0', l.party ?? null, entity]);
       await c.query('COMMIT');
       return doc;
     });
@@ -87,7 +87,7 @@ suite('the cash-flow forecast (#4391)', () => {
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
       await c.query(
-        `INSERT INTO crove_finance.supplier_payment (org_id, legal_entity_id, party_id, purchase_document_id, amount, currency, bank_account_id, number_hash, hash_key_id, proposal_id, approver_step_up_at, payable_after, hold_reason)
+        `INSERT INTO ludy_finance.supplier_payment (org_id, legal_entity_id, party_id, purchase_document_id, amount, currency, bank_account_id, number_hash, hash_key_id, proposal_id, approver_step_up_at, payable_after, hold_reason)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'k-test', $9, now(), $10, $11)`,
         [o.orgId, o.entity, p, doc, amount, over.currency ?? 'VND', randomUUID(), 'a'.repeat(64), randomUUID(), over.payableAfter ?? null, over.payableAfter ? 'new_account' : null],
       );
@@ -366,9 +366,9 @@ suite('the cash-flow forecast (#4391)', () => {
         const p = randomUUID();
         const e = randomUUID();
         await c.query("INSERT INTO ludy_kernel.party (org_id, id, kind, name) VALUES ($1, $2, 'organization', $3)", [o.orgId, p, `Khách ${i}`]);
-        await c.query("INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'bulk', 'finance.journal_voucher', $4, $5)", [o.orgId, e, day(-5), randomUUID(), o.entity]);
+        await c.query("INSERT INTO ludy_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, 'bulk', 'finance.journal_voucher', $4, $5)", [o.orgId, e, day(-5), randomUUID(), o.entity]);
         await c.query(
-          "INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '131', $3, 0, $4, $5), ($1, $2, 2, '511', 0, $3, NULL, $5)",
+          "INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id) VALUES ($1, $2, 1, '131', $3, 0, $4, $5), ($1, $2, 2, '511', 0, $3, NULL, $5)",
           [o.orgId, e, 1000 + i, p, o.entity],
         );
       }
@@ -389,7 +389,7 @@ suite('the cash-flow forecast (#4391)', () => {
     const count = () =>
       admin(async (c) => {
         const r = await c.query<{ n: string }>(
-          `SELECT (SELECT count(*) FROM crove_finance.journal_entry WHERE org_id = $1) + (SELECT count(*) FROM crove_finance.purchase_document WHERE org_id = $1) + (SELECT count(*) FROM ludy_kernel.audit_event WHERE org_id = $1) AS n`,
+          `SELECT (SELECT count(*) FROM ludy_finance.journal_entry WHERE org_id = $1) + (SELECT count(*) FROM ludy_finance.purchase_document WHERE org_id = $1) + (SELECT count(*) FROM ludy_kernel.audit_event WHERE org_id = $1) AS n`,
           [o.orgId],
         );
         return Number(r.rows[0]?.n);

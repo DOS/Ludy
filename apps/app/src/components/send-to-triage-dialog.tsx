@@ -27,6 +27,7 @@ import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-sel
 import { Textarea } from '@ludy/ui/components/textarea';
 import { ErrorText } from './ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { installedModules, useModulesVersion } from '../lib/org-modules.ts';
 import { toast } from '../lib/toast.ts';
 
 export type SendToTriageSourceType = 'kernel.conversation' | 'meetings.meeting' | 'roadmap.item';
@@ -84,6 +85,8 @@ export function SendToTriageDialog({
   buttonTestId?: string;
 }) {
   const t = useTranslations('projects.triage');
+  useModulesVersion();
+  const projectsEnabled = installedModules().includes('projects');
   const [open, setOpen] = useState(false);
   const [projectId, setProjectId] = useState(defaultProjectId ?? '');
   const [title, setTitle] = useState(defaultTitle);
@@ -91,10 +94,11 @@ export function SendToTriageDialog({
   const [priority, setPriority] = useState<ProjectTriagePriority>('medium');
   const [createdProjectId, setCreatedProjectId] = useState<string | null>(null);
   const initializedOnOpenRef = useRef(false);
+  const idempotencyKeyRef = useRef<string>(crypto.randomUUID());
 
   const projectsQuery = useQuery({
     ...orpc.projects.list.queryOptions({ input: { status: ['active', 'on_hold'] } }),
-    enabled: open,
+    enabled: open && projectsEnabled,
     staleTime: 30_000,
   });
 
@@ -107,6 +111,13 @@ export function SendToTriageDialog({
   );
 
   useEffect(() => {
+    setOpen(false);
+    setCreatedProjectId(null);
+    initializedOnOpenRef.current = false;
+    idempotencyKeyRef.current = crypto.randomUUID();
+  }, [sourceId]);
+
+  useEffect(() => {
     if (!open) {
       initializedOnOpenRef.current = false;
       return;
@@ -115,6 +126,7 @@ export function SendToTriageDialog({
     setDescription(defaultDescription ?? '');
     setPriority('medium');
     setCreatedProjectId(null);
+    idempotencyKeyRef.current = crypto.randomUUID();
   }, [open, defaultTitle, defaultDescription]);
 
   useEffect(() => {
@@ -132,6 +144,7 @@ export function SendToTriageDialog({
     initializedOnOpenRef.current = resolution.initializedOnOpen;
     if (resolution.nextProjectId !== projectId) {
       setProjectId(resolution.nextProjectId);
+      idempotencyKeyRef.current = crypto.randomUUID();
     }
   }, [open, defaultProjectId, writableProjects, projectId]);
 
@@ -139,13 +152,14 @@ export function SendToTriageDialog({
     orpc.projects.triage.create.mutationOptions({
       onSuccess: (res) => {
         setCreatedProjectId(res.item.projectId);
+        idempotencyKeyRef.current = crypto.randomUUID();
         void queryClient.invalidateQueries({ queryKey: orpc.projects.triage.key() });
         toast(t('sendDialog.sentToast'), 'success');
       },
     }),
   );
 
-  if (!canWrite) return null;
+  if (!canWrite || !projectsEnabled) return null;
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -157,7 +171,7 @@ export function SendToTriageDialog({
       priority,
       title: title.trim().slice(0, PROJECT_TRIAGE_TITLE_MAX),
       description: description.trim() ? description.trim().slice(0, PROJECT_TRIAGE_DESCRIPTION_MAX) : null,
-      idempotencyKey: crypto.randomUUID(),
+      idempotencyKey: idempotencyKeyRef.current,
     });
   };
 
@@ -209,7 +223,10 @@ export function SendToTriageDialog({
                   <NativeSelect
                     id={`send-triage-project-${sourceId}`}
                     value={projectId}
-                    onChange={(e) => setProjectId(e.target.value)}
+                    onChange={(e) => {
+                      setProjectId(e.target.value);
+                      idempotencyKeyRef.current = crypto.randomUUID();
+                    }}
                     className="min-h-11 [&_select]:min-h-11"
                   >
                     {writableProjects.map((p) => (
@@ -228,7 +245,10 @@ export function SendToTriageDialog({
                   required
                   maxLength={PROJECT_TRIAGE_TITLE_MAX}
                   value={title}
-                  onChange={(e) => setTitle(e.target.value)}
+                  onChange={(e) => {
+                    setTitle(e.target.value);
+                    idempotencyKeyRef.current = crypto.randomUUID();
+                  }}
                   placeholder={t('fields.titlePlaceholder')}
                   className="min-h-11"
                 />
@@ -239,7 +259,10 @@ export function SendToTriageDialog({
                 <NativeSelect
                   id={`send-triage-priority-${sourceId}`}
                   value={priority}
-                  onChange={(e) => setPriority(e.target.value as ProjectTriagePriority)}
+                  onChange={(e) => {
+                    setPriority(e.target.value as ProjectTriagePriority);
+                    idempotencyKeyRef.current = crypto.randomUUID();
+                  }}
                   className="min-h-11 [&_select]:min-h-11"
                 >
                   {PROJECT_TRIAGE_PRIORITIES.map((p) => (
@@ -257,7 +280,10 @@ export function SendToTriageDialog({
                   rows={3}
                   maxLength={PROJECT_TRIAGE_DESCRIPTION_MAX}
                   value={description}
-                  onChange={(e) => setDescription(e.target.value)}
+                  onChange={(e) => {
+                    setDescription(e.target.value);
+                    idempotencyKeyRef.current = crypto.randomUUID();
+                  }}
                   placeholder={t('fields.descriptionPlaceholder')}
                 />
               </div>

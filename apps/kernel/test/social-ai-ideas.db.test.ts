@@ -113,7 +113,7 @@ suite('AI post ideas through the API (#1181)', () => {
     return id;
   }
 
-  const ideaRows = async () => Number((await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM crove_social.idea WHERE org_id = $1', [org.orgId]))).rows[0]?.n);
+  const ideaRows = async () => Number((await admin((c) => c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_social.idea WHERE org_id = $1', [org.orgId]))).rows[0]?.n);
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -264,14 +264,14 @@ suite('AI post ideas through the API (#1181)', () => {
     expect((await rpc('social/ideas/update', owner_, { ideaId: ai, title: 'Đã sửa' })).status).toBe(200);
     expect((await rpc('social/ideas/get', owner_, { ideaId: ai })).body).toMatchObject({ title: 'Đã sửa', origin: 'ai' });
     // The login role has no UPDATE on the column, whatever the command does.
-    await expect(pool.query("UPDATE crove_social.idea SET origin = 'human' WHERE id = $1", [ai])).rejects.toMatchObject({ code: '42501' });
+    await expect(pool.query("UPDATE ludy_social.idea SET origin = 'human' WHERE id = $1", [ai])).rejects.toMatchObject({ code: '42501' });
     // The database takes only human or ai.
-    await expect(admin((c) => c.query("UPDATE crove_social.idea SET origin = 'robot' WHERE id = $1", [ai]))).rejects.toMatchObject({ code: '23514' });
+    await expect(admin((c) => c.query("UPDATE ludy_social.idea SET origin = 'robot' WHERE id = $1", [ai]))).rejects.toMatchObject({ code: '23514' });
     // A draft of the AI idea is tainted even though the app did not say it was AI-assisted; a person's idea is not.
     const fromAi = await rpc('social/posts/create', owner_, { body: 'Ý tưởng từ AI', channels: [{ connectionId: channels.a }], ideaId: ai, idempotencyKey: randomUUID() });
     const fromHuman = await rpc('social/posts/create', owner_, { body: 'Ý tưởng của quán', channels: [{ connectionId: channels.a }], ideaId: human, idempotencyKey: randomUUID() });
     expect([fromAi.status, fromHuman.status]).toEqual([200, 200]);
-    const tainted = await admin((c) => c.query<{ id: string; tainted: boolean; origin: string }>('SELECT id, tainted, origin FROM crove_social.post WHERE id = ANY($1::uuid[])', [[fromAi.body.postId, fromHuman.body.postId]]));
+    const tainted = await admin((c) => c.query<{ id: string; tainted: boolean; origin: string }>('SELECT id, tainted, origin FROM ludy_social.post WHERE id = ANY($1::uuid[])', [[fromAi.body.postId, fromHuman.body.postId]]));
     const byId = new Map(tainted.rows.map((r) => [r.id, r]));
     expect(byId.get(fromAi.body.postId)).toMatchObject({ tainted: true, origin: 'human' });
     expect(byId.get(fromHuman.body.postId)).toMatchObject({ tainted: false });

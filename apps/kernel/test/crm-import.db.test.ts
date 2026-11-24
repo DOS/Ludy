@@ -67,7 +67,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
           .then((r) => r.rows[0]!.id),
       );
     const parties = () => admin((c) => c.query<{ name: string; kind: string; tax_code: string | null; email: string | null; phone: string | null; source_trust: string }>('SELECT name, kind, tax_code, email, phone, source_trust FROM ludy_kernel.party WHERE org_id = $1 ORDER BY name', [orgId]).then((r) => r.rows));
-    const stagedRows = (batchId: string) => admin((c) => c.query('SELECT 1 FROM crove_crm.import_row WHERE org_id = $1 AND batch_id = $2', [orgId, batchId]).then((r) => r.rowCount ?? 0));
+    const stagedRows = (batchId: string) => admin((c) => c.query('SELECT 1 FROM ludy_crm.import_row WHERE org_id = $1 AND batch_id = $2', [orgId, batchId]).then((r) => r.rowCount ?? 0));
     return { orgId, owner, lan, huy, viewer, exec, query, stage, commit, party, parties, stagedRows, companies };
   }
 
@@ -299,19 +299,19 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     const second = await o.stage(o.lan, [row({ name: 'Lô Hai' })]);
     expect(await o.stagedRows(first.batch.id)).toBe(0);
     await expect(o.commit(o.lan, first.batch.id)).rejects.toMatchObject({ code: 'IMPORT_NOT_STAGED', status: 409 });
-    const status = await admin((c) => c.query<{ id: string; status: string }>('SELECT id, status FROM crove_crm.import_batch WHERE org_id = $1', [o.orgId]));
+    const status = await admin((c) => c.query<{ id: string; status: string }>('SELECT id, status FROM ludy_crm.import_batch WHERE org_id = $1', [o.orgId]));
     expect(new Map(status.rows.map((r) => [r.id, r.status]))).toEqual(new Map([[first.batch.id, 'cancelled'], [other.batch.id, 'staged'], [second.batch.id, 'staged']]));
     expect(await o.stagedRows(other.batch.id)).toBe(1);
     // Two stagings at once by one person leave one open batch.
     await Promise.all([o.stage(o.owner, [row({ name: 'A' })]), o.stage(o.owner, [row({ name: 'B' })])]);
-    const open = await admin((c) => c.query("SELECT 1 FROM crove_crm.import_batch WHERE org_id = $1 AND created_by = $2 AND status = 'staged'", [o.orgId, o.owner]));
+    const open = await admin((c) => c.query("SELECT 1 FROM ludy_crm.import_batch WHERE org_id = $1 AND created_by = $2 AND status = 'staged'", [o.orgId, o.owner]));
     expect(open.rowCount).toBe(1);
   });
 
   it('lets the tenant role update an import batch only in its status, choice, counts and decision time, and a staged row never', async () => {
     const o = await org();
     const grants = await admin((c) =>
-      c.query<{ table_name: string; column_name: string }>("SELECT table_name, column_name FROM information_schema.column_privileges WHERE grantee = 'ludy_tenant' AND privilege_type = 'UPDATE' AND table_schema = 'crove_crm' AND table_name IN ('import_batch', 'import_row') ORDER BY 1, 2"),
+      c.query<{ table_name: string; column_name: string }>("SELECT table_name, column_name FROM information_schema.column_privileges WHERE grantee = 'ludy_tenant' AND privilege_type = 'UPDATE' AND table_schema = 'ludy_crm' AND table_name IN ('import_batch', 'import_row') ORDER BY 1, 2"),
     );
     expect(grants.rows.filter((g) => g.table_name === 'import_row')).toEqual([]);
     expect(grants.rows.map((g) => g.column_name)).toEqual(['conflict_rows', 'created_companies', 'created_rows', 'decided_at', 'duplicate_rows', 'invalid_rows', 'linked_rows', 'new_companies', 'new_rows', 'on_duplicate', 'status', 'total_rows', 'updated_rows']);
@@ -344,7 +344,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
   it('refuses and deletes a batch staged more than 7 days ago', async () => {
     const o = await org();
     const old = await o.stage(o.lan, [row({ name: 'Cũ' })]);
-    await admin((c) => c.query("UPDATE crove_crm.import_batch SET created_at = now() - interval '8 days' WHERE org_id = $1 AND id = $2", [o.orgId, old.batch.id]));
+    await admin((c) => c.query("UPDATE ludy_crm.import_batch SET created_at = now() - interval '8 days' WHERE org_id = $1 AND id = $2", [o.orgId, old.batch.id]));
     // The preview already calls it expired, though no command has run yet.
     expect((await o.query<ImportPreview>(o.lan, 'crm.import.preview', { batchId: old.batch.id })).batch.status).toBe('expired');
     // A commit answers that it expired, makes nothing, and its rows are gone for good.
@@ -353,7 +353,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     expect((await o.query<ImportPreview>(o.lan, 'crm.import.preview', { batchId: old.batch.id })).batch).toMatchObject({ status: 'expired' });
     // Another batch staged long ago loses its rows when any import command runs in the org.
     const forgotten = await o.stage(o.huy, [row({ name: 'Quên' })]);
-    await admin((c) => c.query("UPDATE crove_crm.import_batch SET created_at = now() - interval '9 days' WHERE org_id = $1 AND id = $2", [o.orgId, forgotten.batch.id]));
+    await admin((c) => c.query("UPDATE ludy_crm.import_batch SET created_at = now() - interval '9 days' WHERE org_id = $1 AND id = $2", [o.orgId, forgotten.batch.id]));
     await o.stage(o.owner, [row({ name: 'Mới' })]);
     expect(await o.stagedRows(forgotten.batch.id)).toBe(0);
     expect(await o.parties()).toEqual([]);
@@ -398,7 +398,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     const staged = await o.stage(o.lan, [row({ name: 'Cần Xóa', email: 'xoa@khach.test', phone: '0900 000 222' }), row({ name: 'Giữ Lại', email: 'giu@khach.test' })]);
     const mfa = { type: 'user' as const, userId: o.owner, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
     const erased = await rt.execute<{ erased: { column: string; rows: number }[] }>('kernel.personal_data.erase', { value: 'XOA@khach.test' }, { actor: mfa, orgId: o.orgId, idempotencyKey: randomUUID() });
-    expect(erased.erased.find((e) => e.column === 'crove_crm.import_row.email')).toMatchObject({ rows: 1 });
+    expect(erased.erased.find((e) => e.column === 'ludy_crm.import_row.email')).toMatchObject({ rows: 1 });
     expect(await o.stagedRows(staged.batch.id)).toBe(1);
     const left = await o.query<ImportPreview>(o.lan, 'crm.import.preview', { batchId: staged.batch.id });
     expect(left.rows.map((r) => r.name)).toEqual(['Giữ Lại']);

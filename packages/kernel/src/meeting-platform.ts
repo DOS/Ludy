@@ -13,6 +13,7 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import {
+  AGENDA_OVERLAP_MINUTES,
   meetingOverlapWindow,
   vietnamToday,
   zId,
@@ -549,11 +550,15 @@ export function setMeetingPlatformVideoImport(maxBytes: number | null): void {
   videoImportMaxBytes = maxBytes;
 }
 
-// Finds the single Ludy meeting overlapping each suggested recording within the B1 15-minute window (#4123 Step 3).
-// Runs in the caller's transaction so PostgreSQL RLS (meeting_read) enforces org scope, role and reader visibility;
-// zero or two-plus visible candidates return no match so hidden or ambiguous meetings are never exposed.
+// Finds the Ludy meeting a suggested recording is already recorded as (#4123 Step 3, #4537), by the member's own calendar event (ADR-0055 3.4). A platform recording carries no join address, no meeting key and no
+// calendar event of its own (only the platform's id, a title, a start and a length), so the event is found by time: the member's events overlapping the recording within the B1 15-minute window. Exactly one
+// must, else there is no match (two events, as in back-to-back calls, or none, as for a member who reads no calendar, is not a call Ludy can name). A meeting then matches when it is that event's meeting (the
+// member's own link, `calendar_agenda.meeting_id`), or, when the event has no link yet, when it is the one visible meeting overlapping the recording whose own window overlaps that event and no other. A time
+// overlap alone never matches: a different call right before or after a recorded one used to hide Import.
+// Runs in the caller's transaction so PostgreSQL RLS (meeting_read) enforces org scope, role and reader visibility; zero or two-plus visible candidates return no match so hidden or ambiguous meetings are never exposed.
 async function matchedMeetingsForSuggestions(
   ctx: QueryContext,
+  userId: string,
   rows: ReadonlyArray<{ id: string; status: string; started_at: Date; length_seconds: number | null }>,
 ): Promise<ReadonlyMap<string, string>> {
   const suggested = rows.filter((r) => r.status === 'suggested');
@@ -571,27 +576,61 @@ async function matchedMeetingsForSuggestions(
   }
 
   const today = vietnamToday();
+  const slack = sql`(${AGENDA_OVERLAP_MINUTES}::int * interval '1 minute')`;
+  // The meeting's own span, as the B1 rule reads it: its start to its end (or its start plus its length).
+  const meetingEnd = sql`GREATEST(m.started_at, COALESCE(m.ended_at, m.started_at + (GREATEST(COALESCE(m.length_seconds, 0), 0) * interval '1 second')))`;
   const { rows: candidates } = await sql<{ recording_id: string; meeting_id: string }>`
-    SELECT rec.id AS recording_id, cand.meeting_id
-    FROM ROWS FROM (
-      pg_catalog.unnest(${recIds}::uuid[]),
-      pg_catalog.unnest(${winStarts}::timestamptz[]),
-      pg_catalog.unnest(${winEnds}::timestamptz[])
-    ) AS rec(id, win_start, win_end)
+    WITH rec AS (
+      SELECT * FROM ROWS FROM (
+        pg_catalog.unnest(${recIds}::uuid[]),
+        pg_catalog.unnest(${winStarts}::timestamptz[]),
+        pg_catalog.unnest(${winEnds}::timestamptz[])
+      ) AS r(id, win_start, win_end)
+    ),
+    ev AS (
+      SELECT rec.id AS recording_id, rec.win_start, rec.win_end,
+             (pg_catalog.array_agg(a.id))[1] AS event_id,
+             (pg_catalog.array_agg(a.meeting_id))[1] AS linked_meeting_id
+      FROM rec
+      CROSS JOIN LATERAL (
+        SELECT e.id, e.meeting_id
+        FROM ludy_meetings.calendar_agenda e
+        WHERE e.org_id = ${ctx.orgId}::uuid AND e.user_id = ${userId}::uuid
+          AND e.starts_at < rec.win_end AND e.ends_at > rec.win_start
+        LIMIT 2
+      ) a
+      GROUP BY rec.id, rec.win_start, rec.win_end
+      HAVING pg_catalog.count(*) = 1
+    )
+    SELECT ev.recording_id, cand.meeting_id
+    FROM ev
     CROSS JOIN LATERAL (
       SELECT m.id AS meeting_id
-      FROM crove_meetings.meeting m
+      FROM ludy_meetings.meeting m
       WHERE m.org_id = ${ctx.orgId}::uuid
         AND m.started_at IS NOT NULL
-        AND m.started_at < rec.win_end
-        AND GREATEST(
-          m.started_at,
-          COALESCE(m.ended_at, m.started_at + (GREATEST(COALESCE(m.length_seconds, 0), 0) * interval '1 second'))
-        ) > rec.win_start
         AND (m.text_retention_date IS NULL OR m.text_retention_date > ${today}::date)
         AND NOT EXISTS (
           SELECT 1 FROM ludy_kernel.meeting_platform_recording pr
           WHERE pr.org_id = m.org_id AND pr.meeting_id = m.id AND pr.status IN ('failed', 'dismissed')
+        )
+        AND (
+          m.id = ev.linked_meeting_id
+          OR (
+            ev.linked_meeting_id IS NULL
+            AND m.started_at < ev.win_end
+            AND ${meetingEnd} > ev.win_start
+            AND EXISTS (
+              SELECT 1 FROM ludy_meetings.calendar_agenda x
+              WHERE x.org_id = m.org_id AND x.user_id = ${userId}::uuid AND x.id = ev.event_id
+                AND x.starts_at < ${meetingEnd} + ${slack} AND x.ends_at > m.started_at - ${slack}
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM ludy_meetings.calendar_agenda y
+              WHERE y.org_id = m.org_id AND y.user_id = ${userId}::uuid AND y.id <> ev.event_id
+                AND y.starts_at < ${meetingEnd} + ${slack} AND y.ends_at > m.started_at - ${slack}
+            )
+          )
         )
       ORDER BY m.started_at DESC
       LIMIT 2
@@ -630,7 +669,7 @@ export const meetingPlatformRecordings = defineQuery({
     // One row by its id: the primary key finds it, so there is nothing to order or to cap. The list is newest first and capped.
     query = only === undefined ? query.orderBy('r.started_at', 'desc').orderBy('r.id', 'desc').limit(RECORDINGS_LIMIT) : query.where('r.id', '=', only);
     const rows = await query.execute();
-    const matchedByRecordingId = only === undefined ? await matchedMeetingsForSuggestions(ctx, rows) : new Map<string, string>();
+    const matchedByRecordingId = only === undefined ? await matchedMeetingsForSuggestions(ctx, ctx.actor.userId, rows) : new Map<string, string>();
     return rows.map((r) => {
       const matchedId = matchedByRecordingId.get(r.id);
       return {

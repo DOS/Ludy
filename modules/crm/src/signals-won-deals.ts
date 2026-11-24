@@ -30,8 +30,8 @@ export const crmWonDealsSignals = defineQuery({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const { rows } = await sql<{ deal_id: string; party_id: string; won_on: string; amount: string }>`
       SELECT d.id AS deal_id, d.party_id, to_char((d.closed_at AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, 'YYYY-MM-DD') AS won_on, d.amount::text AS amount
-      FROM crove_crm.deal d
-      JOIN crove_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id
+      FROM ludy_crm.deal d
+      JOIN ludy_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id
       WHERE d.org_id = ${ctx.orgId}::uuid AND s.kind = 'won' AND d.closed_at IS NOT NULL
       ORDER BY d.closed_at DESC, d.id
       LIMIT ${LIMIT}`.execute(ctx.trx);

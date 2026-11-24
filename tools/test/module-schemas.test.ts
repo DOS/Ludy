@@ -79,6 +79,10 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
     modules: ['ads', 'crm', 'social'],
     why: "the Inbox card of an Engage proposal (E4 #3863) says what the proposal is about, read as the approver: a booking and its event type (crm), a quote and its customer (crm), a post and its variants (social) and a live ad launch with its draft and account (ads). The kernel cannot import a module and the card shows the thing to be changed, so it reads those rows by plain SQL, only for the commands of the twin list, in the approver's own context (RLS applies) and only for an owner or an admin",
   },
+  'packages/kernel/src/mcp-wake.ts': {
+    modules: ['meetings'],
+    why: "kernel.mcp.wake.minutes_targets asks the worker-only definer ludy_meetings.minutes_wake_open one boolean (#4536) when the wake job for a published minutes event runs: the meeting still exists, is still org-visible and its text period is open, so a meeting narrowed, deleted or shredded after the publish sends no id to the grants (the job runs only after meetings checked it is installed and on, apps_off)",
+  },
   'packages/kernel/src/meeting-platform.ts': {
     modules: ['meetings'],
     why: 'kernel.meeting_platform.recordings checks crove_meetings.meeting for a single overlapping visible meeting (#4123 Step 3) only when meetings is installed (ctx.installed) and enabled (apps_off), in the caller transaction under meeting_read RLS',
@@ -97,7 +101,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   },
   'packages/kernel/src/personal-data.ts': {
     modules: ['crm', 'finance', 'hr', 'meetings', 'notes', 'projects', 'sign', 'social'],
-    why: 'the personal-data registry, find and erase: an erasure reaches data an earlier install of the module left, whatever is installed now; private notes and to-dos are counted through crove_notes.private_matches (#1678); the payroll people (#2530) are registered here and their sealed columns listed; the meeting columns (#2579) are registered, and erased by deleting the meeting; project names and descriptions (#2591) are redacted in place; unsealed crove_sign.signer rows are deleted on erasure via crove_sign.personal_erase_unsealed_signers (#3427) while eSign OTP emails are erased via crove_sign.personal_erase_otp (#3323)',
+    why: 'the personal-data registry, find and erase: an erasure reaches data an earlier install of the module left, whatever is installed now; private notes and to-dos are counted through crove_notes.private_matches (#1678); the payroll people (#2530) are registered here and their sealed columns listed; the meeting columns (#2579) are registered, and erased by deleting the meeting; project names and descriptions (#2591) are redacted in place; unsealed crove_sign.signer rows are deleted on erasure via crove_sign.personal_erase_unsealed_signers (#3427), eSign OTP emails via crove_sign.personal_erase_otp (#3323), and matching crove_sign.kyc_check findings via crove_sign.personal_data_erase_kyc_check (#4443)',
   },
   'packages/kernel/src/queries.ts': {
     modules: ['sign'],
@@ -133,12 +137,14 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'apps/kernel/src/projects-public-roadmap.ts': { modules: ['projects'], why: 'the orgless public roadmap board view, OTP request/verify, idea submission, vote toggle, and unsubscribe routes (crove_projects.public_roadmap_* definers, #4399), registered only when projects is installed (http.ts)' },
   'apps/kernel/src/projects-recurring-worker.ts': { modules: ['projects'], why: 'the recurring project task sweep (crove_projects.recurring_tasks_due), worked and scheduled only when projects is installed (worker.ts)' },
   'apps/kernel/src/projects-roadmap-worker.ts': { modules: ['projects'], why: 'the nightly public roadmap OTP retention sweep (crove_projects.cleanup_roadmap_otp_due_orgs, #4399), worked and scheduled only when projects is installed (worker.ts)' },
+  'apps/kernel/src/sign-hook.ts': { modules: ['sign'], why: 'the minute sweep of queued eSign outbound webhooks (#4440): the worker-only ludy_sign.webhook_open definer lists queued deliveries, worked and scheduled only when sign is installed (worker.ts)' },
   'apps/kernel/src/sign-worker.ts': { modules: ['sign'], why: 'the eSign PDF inspect/seal workers and sweeps, worked and scheduled only when sign is installed (worker.ts)' },
   'apps/kernel/src/period-balance.ts': { modules: ['finance'], why: 'the period balance reconciliation, worked and scheduled only when finance is installed (worker.ts)' },
   'apps/kernel/src/quote-link.ts': { modules: ['crm'], why: 'the public quote page route (the definer crove_crm.quote_link_view), registered only when crm is installed (http.ts)' },
   'apps/kernel/src/report-link.ts': { modules: ['social'], why: 'public report link routes, registered only when social is installed (http.ts)' },
   'apps/kernel/src/review-link.ts': { modules: ['social'], why: 'public review link routes, registered only when social is installed (http.ts)' },
   'apps/kernel/src/short-link.ts': { modules: ['social'], why: 'the short link route, registered only when social is installed (http.ts)' },
+  'apps/kernel/src/sign-api-v1.ts': { modules: ['sign'], why: 'the orgless scoped /api/v1/sign/* external REST resolvers (crove_sign.api_key_* definers, #4441), registered only when sign is installed (http.ts)' },
   'apps/kernel/src/sign-direct-link.ts': { modules: ['sign'], why: 'the orgless public direct eSign link ceremony resolvers (crove_sign.public_direct_* definers), registered only when sign is installed (http.ts)' },
   'apps/kernel/src/sign-link.ts': { modules: ['sign'], why: 'the orgless public eSign link and verification resolvers (crove_sign.public_* definers), registered only when sign is installed (http.ts)' },
   'apps/kernel/src/sign-public-hub.ts': { modules: ['sign'], why: 'the orgless public self-service eSign template hub resolvers (crove_sign.public_hub_* definers), registered only when sign is installed (http.ts)' },

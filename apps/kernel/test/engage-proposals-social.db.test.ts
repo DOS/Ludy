@@ -39,7 +39,7 @@ suite('the Social proposal twins (#3863)', () => {
     await exec('social.variant.decide', { postId: made.postId, decision: 'approved', variants: seen(await view(made.postId)) });
     return made;
   }
-  const status = async (variantId: string) => (await h.q<{ status: string; scheduled_at: Date | null }>('SELECT status, scheduled_at FROM crove_social.post_variant WHERE org_id = $1 AND id = $2', [h.orgId, variantId])).rows[0];
+  const status = async (variantId: string) => (await h.q<{ status: string; scheduled_at: Date | null }>('SELECT status, scheduled_at FROM ludy_social.post_variant WHERE org_id = $1 AND id = $2', [h.orgId, variantId])).rows[0];
 
   it('submit: waits as a tainted proposal, nothing goes to review until a person approves, then it goes once', async () => {
     const { postId, variantId } = await draft();
@@ -77,7 +77,7 @@ suite('the Social proposal twins (#3863)', () => {
     // The post is emptied while the proposal waits: the platform's own rule (the original's check) refuses at the approval, the proposal stays pending, and nothing goes to review.
     const { postId, variantId } = await draft('Bài sẽ bị xóa nội dung');
     const second = await h.propose(actor, 'social.post.submit_approved', { postId });
-    await h.q("UPDATE crove_social.post SET body = '   ' WHERE org_id = $1 AND id = $2", [h.orgId, postId]);
+    await h.q("UPDATE ludy_social.post SET body = '   ' WHERE org_id = $1 AND id = $2", [h.orgId, postId]);
     await expect(h.approve(second.proposalId)).rejects.toMatchObject({ code: 'VARIANT_INVALID' });
     expect((await h.proposal(second.proposalId)).status).toBe('pending');
     expect(await h.executions('social.post.submit', second.proposalId)).toBe(0);

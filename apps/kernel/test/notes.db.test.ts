@@ -236,9 +236,9 @@ suite('notes on PostgreSQL (#1671)', () => {
     expect(await o.list(o.author, 'trash')).toEqual([]);
     await o.exec(o.author, 'notes.note.delete', { noteId: n.priv });
     expect(await worker.execute('notes.trash.empty', {}, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 0 });
-    await admin((c) => c.query(`UPDATE crove_notes.note SET deleted_at = now() - interval '31 days' WHERE org_id = $1 AND id = $2`, [o.orgId, n.priv]));
+    await admin((c) => c.query(`UPDATE ludy_notes.note SET deleted_at = now() - interval '31 days' WHERE org_id = $1 AND id = $2`, [o.orgId, n.priv]));
     expect(await worker.execute('notes.trash.empty', {}, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 1 });
-    expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_notes.note WHERE id = $1', [n.priv])).rowCount)).toBe(0);
+    expect(await admin(async (c) => (await c.query('SELECT 1 FROM ludy_notes.note WHERE id = $1', [n.priv])).rowCount)).toBe(0);
     // A member runs neither system command.
     await expect(o.exec(o.owner, 'notes.trash.empty')).rejects.toMatchObject({ status: 403 });
   });
@@ -306,7 +306,7 @@ suite('notes on PostgreSQL (#1671)', () => {
     expect(await worker.execute('notes.member_items.purge', { userId: o.author, eventId }, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 0 });
     await ageRemovals(o.orgId, o.author);
     expect(await worker.execute('notes.member_items.purge', { userId: o.author, eventId }, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 1 });
-    const left = await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_notes.note WHERE org_id = $1', [o.orgId]));
+    const left = await admin((c) => c.query<{ id: string }>('SELECT id FROM ludy_notes.note WHERE org_id = $1', [o.orgId]));
     expect(left.rows.map((r) => r.id)).toEqual([n.shared]);
     // Back in the org before the purge: nothing is removed.
     const p = await org();
@@ -330,7 +330,7 @@ suite('notes on PostgreSQL (#1671)', () => {
     const n = await written(o);
     await app.execute('kernel.member.remove', { userId: o.author }, { actor: asMfa(o.owner), orgId: o.orgId });
     const workerDb = createDb(pools[1] as pg.Pool);
-    const notesOf = () => admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_notes.note WHERE org_id = $1 ORDER BY id', [o.orgId])).rows.map((r) => r.id));
+    const notesOf = () => admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM ludy_notes.note WHERE org_id = $1 ORDER BY id', [o.orgId])).rows.map((r) => r.id));
     // Removed today: neither the sweep nor the command without an event purges yet.
     await sweepNotesFormerMembers({ runtime: worker, workerDb });
     expect(await worker.execute('notes.member_items.purge', { userId: o.author }, { actor: SYSTEM, orgId: o.orgId })).toEqual({ removed: 0 });

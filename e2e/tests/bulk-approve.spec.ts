@@ -139,7 +139,7 @@ test('review shortcuts, then approve several proposals under one step-up', async
       { outcome: 'denied', code: 'STEP_UP_REQUIRED', approved: null },
       { outcome: 'ok', code: null, approved: NUMBERS.length },
     ]);
-    const documents = sql<{ invoice_number: string }>(`SELECT invoice_number FROM crove_finance.purchase_document WHERE org_id = :'org' ORDER BY invoice_number`, vars);
+    const documents = sql<{ invoice_number: string }>(`SELECT invoice_number FROM ludy_finance.purchase_document WHERE org_id = :'org' ORDER BY invoice_number`, vars);
     expect(documents.map((d) => d.invoice_number)).toEqual(NUMBERS.map(String));
   });
 });

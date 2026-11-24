@@ -40,6 +40,8 @@ export const QUEUES = {
   socialEdit: 'social-edit',
   // Created by the Social push subscription migration (20261029215000).
   socialPush: 'social-push',
+  // Created by the generic push subscription migration (20270317160000): the push job of a kernel notification (#3736).
+  kernelPush: 'kernel-push',
   // Created by the team chat alert migration (20261023143000).
   socialChatAlert: 'social-chat-alert',
   // Created by the WORM archive migration (20261023230000).
@@ -137,6 +139,9 @@ export const QUEUES = {
   signCleanup: 'sign-cleanup',
   // Worker-side sandboxed PDF/DOCX CV text extraction via crove-extract (#4446 Stage 5D, T12).
   hrCvExtract: 'hr-cv-extract',
+  // Created by the eSign webhooks migration (20270316100000): signed HMAC outbound webhook delivery and its minute sweep (#4440).
+  signHookDeliver: 'sign-hook-deliver',
+  signHookSweep: 'sign-hook-sweep',
   // Created by the dead letter migration (20261103150000): every other queue's dead letters (#1720, dead-letter.ts).
   deadLetter: 'kernel-job.dlq',
 } as const;
@@ -194,6 +199,7 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.socialEdit]: CHANNELS,
   // A browser's push service endpoint, through guardedRequest (web-push.ts).
   [QUEUES.socialPush]: ['tenant_url'],
+  [QUEUES.kernelPush]: ['tenant_url'],
   [QUEUES.socialChatAlert]: ['provider:telegram', 'provider:discord'],
   [QUEUES.archiveWrite]: 'none',
   [QUEUES.archiveVerify]: 'none',
@@ -282,6 +288,9 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.signCleanup]: 'none',
   // HR CV extraction talks only to the internal crove-extract sandbox and shared BlobStore (#4446).
   [QUEUES.hrCvExtract]: 'none',
+  // eSign outbound webhooks (#4440): one signed HTTPS POST per delivery to an owner/admin-configured receiver URL through postSigned (egressFetch), and a sweep that reads and updates the database only.
+  [QUEUES.signHookDeliver]: ['tenant_url'],
+  [QUEUES.signHookSweep]: 'none',
   [QUEUES.deadLetter]: 'none',
 };
 
@@ -311,6 +320,7 @@ const QUEUE_POLICIES: Partial<Record<QueueName, 'stately' | 'exclusive'>> = {
   [QUEUES.signPdfInspect]: 'exclusive',
   [QUEUES.signPdfSeal]: 'exclusive',
   [QUEUES.signCaReconcile]: 'exclusive',
+  [QUEUES.signHookDeliver]: 'stately',
 };
 
 // The dead letter queue's own options, as 20261103150000_crove_jobs_dead_letter.sql created it: a few retries, in case

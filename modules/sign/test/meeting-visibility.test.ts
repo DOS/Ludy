@@ -178,7 +178,7 @@ describe('meeting-visibility helpers and @ludy/mod-sign meeting minutes guards (
     expect(queries[0]!.sql).toContain('can_access_meeting_minutes_envelope');
 
     const agentQuery = applyMeetingMinutesVisibilityFilter(
-      trx.selectFrom('crove_sign.envelope').select('id'),
+      trx.selectFrom('ludy_sign.envelope').select('id'),
       { actor: { type: 'agent', agentId: OWNER_ID } as QueryContext['actor'] },
     ).compile();
     expect(agentQuery.sql).toContain('"source_kind" != $1');
@@ -194,7 +194,7 @@ describe('meeting-visibility helpers and @ludy/mod-sign meeting minutes guards (
       if (compiled.sql.includes('can_access_meeting_minutes_envelope')) {
         return { rows: [{ allowed: false }] };
       }
-      if (compiled.sql.includes('"crove_sign"."envelope"')) {
+      if (compiled.sql.includes('"ludy_sign"."envelope"')) {
         return {
           rows: [
             {

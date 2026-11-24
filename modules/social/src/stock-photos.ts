@@ -1,7 +1,7 @@
 // Stock photos from Pexels in the media library (#1106). The API fetches the chosen photo through the egress guard and
 // stores its bytes like an upload; this command then records the file and its credit in one transaction: the file
 // row through kernel.file.ingest (source 'social', so the library lists it and extraction never reads it), and the
-// photographer, the photo's page and its description in crove_social.media_attribution. Files are deduplicated by
+// photographer, the photo's page and its description in ludy_social.media_attribution. Files are deduplicated by
 // content, so saving the same bytes again finds the same file and keeps its first credit.
 import { z } from 'zod';
 import { SOCIAL_PHOTO_TYPES } from '@ludy/kernel-contract';
@@ -53,7 +53,7 @@ export const mediaSaveStock = defineCommand({
     const photographer = stockText(input.credit.photographer, STOCK_NAME_MAX) ?? 'Pexels';
     const altText = stockText(input.credit.altText, STOCK_ALT_MAX);
     const inserted = await ctx.trx
-      .insertInto('crove_social.media_attribution')
+      .insertInto('ludy_social.media_attribution')
       .values({
         org_id: ctx.orgId,
         file_id: fileId,

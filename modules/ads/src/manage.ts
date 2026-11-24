@@ -10,7 +10,7 @@
 //
 // THE CAPS (3.3). A change that raises what a launch can spend is judged against every cap and every OTHER launch at the request (an early warning), at the approval (under the
 // org's lock) and again by the begin step before the platform is called (under the lock, authoritative). The commitment is written with the change, in the approving transaction,
-// before any platform call (crove_ads.launch_hold: a queued or unclear raise is held; a lower budget or a shorter schedule releases nothing until the platform confirms it), so
+// before any platform call (ludy_ads.launch_hold: a queued or unclear raise is held; a lower budget or a shorter schedule releases nothing until the platform confirms it), so
 // two raises approved together serialise on the lock and the second sees the first.
 //
 // EXACTLY ONCE (3.4). The platform is called by the job (apps/kernel/src/ads-manage.ts) between two system commands: `ads.manage.begin` re-checks the stop conditions and the caps
@@ -18,7 +18,7 @@
 // finds again is never called a second time blind: it is reconciled by reading the object, which says whether the change landed.
 //
 // THE STOPS STILL WIN. Writing off refuses every command but a pause; launches blocked refuses what can start or raise spend; a queued change of a launch that is no longer live
-// is cancelled by begin, never made. The database's guard (crove_ads.manage_change_guard) holds all of this whatever path writes.
+// is cancelled by begin, never made. The database's guard (ludy_ads.manage_change_guard) holds all of this whatever path writes.
 import { z } from 'zod';
 import { Decimal } from 'decimal.js';
 import type { MemberRole } from '@ludy/db';
@@ -91,7 +91,7 @@ async function controlOf(ctx: Db & Pick<CommandContext, 'now'>, launchIdRaw: str
   const objects = await objectsOf(ctx, launch.id);
   const changes = await changesOf(ctx, launch.id);
   const held = heldValues({ dailyBudget: launch.daily_budget, endOn: launch.end_text }, changes);
-  const named = await ctx.trx.selectFrom('crove_ads.ad_account').select('name').where('org_id', '=', ctx.orgId).where('id', '=', launch.ad_account_id).executeTakeFirst();
+  const named = await ctx.trx.selectFrom('ludy_ads.ad_account').select('name').where('org_id', '=', ctx.orgId).where('id', '=', launch.ad_account_id).executeTakeFirst();
   return { setting, launch, account: found.account, connection: found.connection, accountName: named?.name ?? '', objects, changes, held };
 }
 type Control = Awaited<ReturnType<typeof controlOf>>;
@@ -188,7 +188,7 @@ async function insertChange(ctx: Db & Pick<CommandContext, 'actor'>, control: Co
   if (ctx.actor.type !== 'user') throw refuse('FORBIDDEN', 403, 'Chỉ người dùng mới thay đổi được quảng cáo đang chạy');
   const object = objectOf(control, change.slot);
   const row = await ctx.trx
-    .insertInto('crove_ads.ad_manage_change')
+    .insertInto('ludy_ads.ad_manage_change')
     .values({
       org_id: ctx.orgId,
       ad_account_id: control.launch.ad_account_id,
@@ -320,12 +320,12 @@ export const adsManageCancel = defineCommand({
   access: MANAGERS,
   handler: async (ctx, input): Promise<{ changeId: string; cancelled: true }> => {
     await lockedSetting(ctx);
-    const row = await ctx.trx.selectFrom('crove_ads.ad_manage_change').select(['id', 'launch_id', 'kind', 'slot', 'state']).where('org_id', '=', ctx.orgId).where('id', '=', input.changeId.toLowerCase()).forUpdate().executeTakeFirst();
+    const row = await ctx.trx.selectFrom('ludy_ads.ad_manage_change').select(['id', 'launch_id', 'kind', 'slot', 'state']).where('org_id', '=', ctx.orgId).where('id', '=', input.changeId.toLowerCase()).forUpdate().executeTakeFirst();
     if (!row) throw refuse('ADS_CHANGE_NOT_FOUND', 404, 'Không tìm thấy thay đổi này');
     if (row.state !== 'queued') throw refuse('ADS_CHANGE_SETTLED', 409, 'Thay đổi này đã được xử lý xong');
     const begun = await ctx.trx.selectFrom('ludy_kernel.external_call').select('id').where('org_id', '=', ctx.orgId).where('key', '=', manageCallKey(row.id)).executeTakeFirst();
     if (begun) throw refuse('ADS_CHANGE_BEGUN', 409, 'Thay đổi này đã được gửi đến nền tảng nên không hủy được nữa');
-    await ctx.trx.updateTable('crove_ads.ad_manage_change').set({ state: 'cancelled', code: 'cancelled' }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
+    await ctx.trx.updateTable('ludy_ads.ad_manage_change').set({ state: 'cancelled', code: 'cancelled' }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
     ctx.audit({ changeId: row.id, launchId: row.launch_id, kind: row.kind, slot: row.slot, cancelled: true });
     return { changeId: row.id, cancelled: true };
   },
@@ -438,7 +438,7 @@ export const adsSchedulePrepareExtend = defineCommand({
 // What an approval of a resume, a raise or an extension runs (access 'proposal': only through kernel.proposal.approve, as the approver, in the approving transaction). The
 // request may be old, so everything it was made under is read again: the launch is live, the switches are on, the object is paused (resume), what the launch held when the
 // approver was shown is what it holds now, the card's amount is the amount of these values, and the caps hold under the org's lock this transaction holds to its end, which
-// also writes the commitment (the change row, held by crove_ads.launch_hold). The database's guard re-judges all of it against the proposal that was approved.
+// also writes the commitment (the change row, held by ludy_ads.launch_hold). The database's guard re-judges all of it against the proposal that was approved.
 function approvedHandler<K extends 'resume' | 'budget_raise' | 'schedule_extend'>(kind: K) {
   return async (
     ctx: CommandContext,
@@ -642,7 +642,7 @@ export const adsManageBegin = defineCommand({
   handler: async (ctx, input): Promise<ManageBegin> => {
     requireSystem(ctx);
     const changeId = input.changeId.toLowerCase();
-    const seen = await ctx.trx.selectFrom('crove_ads.ad_manage_change').select(['id', 'launch_id', 'state']).where('org_id', '=', ctx.orgId).where('id', '=', changeId).executeTakeFirst();
+    const seen = await ctx.trx.selectFrom('ludy_ads.ad_manage_change').select(['id', 'launch_id', 'state']).where('org_id', '=', ctx.orgId).where('id', '=', changeId).executeTakeFirst();
     if (!seen) return none('not_found');
     if (seen.state !== (input.settle === true ? 'unclear' : 'queued')) return none('settled');
     // The org's lock first (the stops, the approvals and the other changes take it), then the account, the launch, the change.
@@ -682,7 +682,7 @@ export const adsManageBegin = defineCommand({
     const begunRow = await ctx.trx.selectFrom('ludy_kernel.external_call').select('id').where('org_id', '=', ctx.orgId).where('key', '=', callKey).executeTakeFirst();
     const begun = begunRow !== undefined;
     const settle = async (state: 'cancelled' | 'failed', code: string) => {
-      await ctx.trx.updateTable('crove_ads.ad_manage_change').set({ state, code }).where('org_id', '=', ctx.orgId).where('id', '=', change.id).execute();
+      await ctx.trx.updateTable('ludy_ads.ad_manage_change').set({ state, code }).where('org_id', '=', ctx.orgId).where('id', '=', change.id).execute();
       ctx.audit({ changeId: change.id, launchId: launch.id, adAccountId: launch.ad_account_id, kind: change.kind, slot: change.slot, state, code, phase: 'begin' });
       return none(code);
     };
@@ -721,7 +721,7 @@ export const adsManageBegin = defineCommand({
     const row = await ctx.trx.selectFrom('ludy_kernel.external_call').select(['id', 'state', 'calls', 'error_code', 'started_at', 'updated_at']).where('org_id', '=', ctx.orgId).where('key', '=', callKey).forUpdate().executeTakeFirst();
     if (row?.state === 'ambiguous' && row.error_code !== null && (row.calls >= UNCLEAR_MAX_CALLS || (ctx.now.getTime() - row.started_at.getTime()) / 1000 >= UNCLEAR_GIVE_UP_SECONDS)) {
       // Never asked about for ever: the answer stays unclear, the change is shown as such and what it would add stays held against the caps.
-      await ctx.trx.updateTable('crove_ads.ad_manage_change').set({ state: 'unclear', code: 'reconcile_unclear' }).where('org_id', '=', ctx.orgId).where('id', '=', change.id).execute();
+      await ctx.trx.updateTable('ludy_ads.ad_manage_change').set({ state: 'unclear', code: 'reconcile_unclear' }).where('org_id', '=', ctx.orgId).where('id', '=', change.id).execute();
       ctx.audit({ changeId: change.id, launchId: launch.id, adAccountId: launch.ad_account_id, kind: change.kind, slot: change.slot, state: 'unclear', calls: row.calls, phase: 'begin' });
       return none('reconcile_unclear');
     }
@@ -729,7 +729,7 @@ export const adsManageBegin = defineCommand({
     if (action === 'settled') {
       // A call the platform refused ended the change; one that succeeded was recorded with it (the record settles both in one transaction), so a succeeded row means the change landed.
       if (row?.state === 'failed') return settle('failed', 'step_failed');
-      await ctx.trx.updateTable('crove_ads.ad_manage_change').set({ state: 'applied', code: null }).where('org_id', '=', ctx.orgId).where('id', '=', change.id).execute();
+      await ctx.trx.updateTable('ludy_ads.ad_manage_change').set({ state: 'applied', code: null }).where('org_id', '=', ctx.orgId).where('id', '=', change.id).execute();
       return none('settled');
     }
     if (action === 'wait') return none(row?.state === 'started' ? 'in_flight' : 'reconcile_wait');
@@ -754,10 +754,10 @@ export const adsManageRecord = defineCommand({
     requireSystem(ctx);
     const changeId = input.changeId.toLowerCase();
     if (input.callKey !== manageCallKey(changeId)) return { recorded: false, reason: 'stale' };
-    const seen = await ctx.trx.selectFrom('crove_ads.ad_manage_change').select(['id', 'launch_id', 'ad_account_id', 'kind', 'slot', 'state']).where('org_id', '=', ctx.orgId).where('id', '=', changeId).executeTakeFirst();
+    const seen = await ctx.trx.selectFrom('ludy_ads.ad_manage_change').select(['id', 'launch_id', 'ad_account_id', 'kind', 'slot', 'state']).where('org_id', '=', ctx.orgId).where('id', '=', changeId).executeTakeFirst();
     if (!seen) return { recorded: false, reason: 'not_found' };
     const setting = await lockedSetting(ctx);
-    const change = await ctx.trx.selectFrom('crove_ads.ad_manage_change').select(['id', 'state', 'kind', 'launch_id', 'ad_account_id', 'slot']).where('org_id', '=', ctx.orgId).where('id', '=', changeId).forUpdate().executeTakeFirst();
+    const change = await ctx.trx.selectFrom('ludy_ads.ad_manage_change').select(['id', 'state', 'kind', 'launch_id', 'ad_account_id', 'slot']).where('org_id', '=', ctx.orgId).where('id', '=', changeId).forUpdate().executeTakeFirst();
     const row = await ctx.trx.selectFrom('ludy_kernel.external_call').select(['id', 'state', 'calls', 'updated_at']).where('org_id', '=', ctx.orgId).where('key', '=', input.callKey).forUpdate().executeTakeFirst();
     if (!change || !row) return { recorded: false, reason: 'stale' };
     if (input.phase === 'settle' ? change.state !== 'unclear' : change.state !== 'queued') return { recorded: false, reason: 'settled' };
@@ -765,7 +765,7 @@ export const adsManageRecord = defineCommand({
     const result = input.result;
     const settleRow = (values: { state: 'started' | 'succeeded' | 'failed' | 'ambiguous'; calls?: number; error_kind?: 'token_expired' | 'permission' | 'bad_request' | 'rate_limited' | 'transient' | 'unknown'; error_code?: string; finished_at?: Date }) =>
       ctx.trx.updateTable('ludy_kernel.external_call').set({ updated_at: ctx.now, ...values }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
-    const setChange = (state: 'applied' | 'failed', code: string | null) => ctx.trx.updateTable('crove_ads.ad_manage_change').set({ state, code }).where('org_id', '=', ctx.orgId).where('id', '=', change.id).execute();
+    const setChange = (state: 'applied' | 'failed', code: string | null) => ctx.trx.updateTable('ludy_ads.ad_manage_change').set({ state, code }).where('org_id', '=', ctx.orgId).where('id', '=', change.id).execute();
 
     if (input.phase === 'settle') {
       // The sweep's read of an unclear change (#3898): the answer is what the object shows, never a call. Decided again under the locks: the change is still unclear, nothing newer
@@ -875,8 +875,8 @@ export const adsManageSuggestions = defineQuery({
     for (const flag of flags) {
       // The live launch whose campaign this is: the recorded object's platform id is the campaign id of the figures.
       const object = await ctx.trx
-        .selectFrom('crove_ads.ad_object as o')
-        .innerJoin('crove_ads.ad_launch as l', (j) => j.onRef('l.org_id', '=', 'o.org_id').onRef('l.id', '=', 'o.launch_id'))
+        .selectFrom('ludy_ads.ad_object as o')
+        .innerJoin('ludy_ads.ad_launch as l', (j) => j.onRef('l.org_id', '=', 'o.org_id').onRef('l.id', '=', 'o.launch_id'))
         .select(['o.launch_id', 'o.name'])
         .where('o.org_id', '=', ctx.orgId)
         .where('o.level', '=', 'campaign')

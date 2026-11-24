@@ -59,6 +59,7 @@ suite('invariant (#4493): projects.mcp.triage_summary privacy, meeting retention
   let dbIds: DbIdentifiers | undefined;
   const pools: pg.Pool[] = [];
   let runtime!: Runtime;
+  let noMeetingsRuntime!: Runtime;
 
   let orgA = '';
   let orgB = '';
@@ -142,6 +143,18 @@ suite('invariant (#4493): projects.mcp.triage_summary privacy, meeting retention
     runtime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
       commands: [...kernelCommands, ...meetingsCommands, ...projectsCommands],
       queries: [...kernelQueries(deps), ...meetingsQueries, ...projectsQueries],
+    });
+    const noMeetingsDeps = {
+      inboundDomain: null,
+      apps: {
+        shipped: SHIPPED,
+        deployment: SHIPPED.filter((m) => m !== 'meetings'),
+        entitlements: async () => ['full'],
+      },
+    };
+    noMeetingsRuntime = new Runtime(db, { manifests: TEST_MANIFESTS }).register({
+      commands: [...kernelCommands, ...projectsCommands],
+      queries: [...kernelQueries(noMeetingsDeps), ...projectsQueries],
     });
 
     for (const k of ['ownerA', 'adminA', 'memberA', 'ownerB']) {
@@ -272,8 +285,8 @@ suite('invariant (#4493): projects.mcp.triage_summary privacy, meeting retention
 
     // Expire retention after the triage items already exist (real-world post-creation expiry).
     await admin(async (c) => {
-      await c.query(`UPDATE crove_meetings.meeting SET text_retention_date = ${vnToday} - 1 WHERE org_id = $1 AND id = $2`, [orgA, mEnded]);
-      await c.query(`UPDATE crove_meetings.meeting SET text_retention_date = ${vnToday} WHERE org_id = $1 AND id = $2`, [orgA, mEndsToday]);
+      await c.query(`UPDATE ludy_meetings.meeting SET text_retention_date = ${vnToday} - 1 WHERE org_id = $1 AND id = $2`, [orgA, mEnded]);
+      await c.query(`UPDATE ludy_meetings.meeting SET text_retention_date = ${vnToday} WHERE org_id = $1 AND id = $2`, [orgA, mEndsToday]);
     });
 
     // Seed Org B triage row to confirm cross-org isolation.
@@ -374,5 +387,63 @@ suite('invariant (#4493): projects.mcp.triage_summary privacy, meeting retention
       expect('decline_reason' in item).toBe(false);
     }
     expect(JSON.stringify(summary)).not.toContain('BI MAT DECLINE REASON');
+  });
+
+  it('gates meetings.mcp.visible_ids to company ludy.read grants and fails closed when meetings is uninstalled', async () => {
+    const requestedIds = [
+      ids.meeting_orgPub as string,
+      ids.meeting_orgDraft as string,
+      ids.meeting_attendees as string,
+      ids.meeting_ended as string,
+      ids.meeting_endsToday as string,
+    ];
+
+    const visibleRes = await runtime.query<{ visibleIds: string[] }>(
+      'meetings.mcp.visible_ids',
+      { meetingIds: requestedIds },
+      { actor: mcpCompanyActor(), orgId: orgA },
+    );
+    expect(visibleRes.visibleIds).toEqual([ids.meeting_orgPub]);
+
+    // Refuses member MCP grants, browser users, and wrong-scope company grants.
+    await expect(
+      runtime.query('meetings.mcp.visible_ids', { meetingIds: requestedIds }, { actor: mcpMemberActor(), orgId: orgA }),
+    ).rejects.toMatchObject({ status: 401 });
+    await expect(
+      runtime.query('meetings.mcp.visible_ids', { meetingIds: requestedIds }, { actor: asUser('ownerA'), orgId: orgA }),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+    await expect(
+      runtime.query(
+        'meetings.mcp.visible_ids',
+        { meetingIds: requestedIds },
+        {
+          actor: {
+            ...mcpCompanyActor(),
+            mcp: { ...mcpCompanyActor().mcp, scopes: ['ludy.engage.write'] },
+          },
+          orgId: orgA,
+        },
+      ),
+    ).rejects.toMatchObject({ status: 403 });
+
+    // When meetings is not installed in the runtime, projects.mcp.triage_summary fails closed on meeting rows in BOTH counts and items.
+    const noMeetingsSummary = await noMeetingsRuntime.query<TriageSummaryOut>(
+      'projects.mcp.triage_summary',
+      {},
+      { actor: mcpCompanyActor(), orgId: orgA },
+    );
+    const noMeetingsIds = new Set(noMeetingsSummary.items.map((i) => i.id));
+    expect(noMeetingsIds.has(ids.manualPublic as string)).toBe(true);
+    expect(noMeetingsIds.has(ids.declinedPublic as string)).toBe(true);
+    expect(noMeetingsIds.has(ids.triageOrgPub as string)).toBe(false);
+    expect(noMeetingsSummary.counts).toEqual({
+      pending: 1,
+      snoozed: 0,
+      accepted: 0,
+      merged: 0,
+      declined: 1,
+      snoozeElapsed: 0,
+      tainted: 0,
+    });
   });
 });

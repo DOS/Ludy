@@ -139,6 +139,8 @@ export const AI_FEATURES = {
   'projects.roadmap_dedupe': 'projects',
   // Vy's release-note draft for shipped roadmap items (#4400): reads shipped item titles/summaries only, checked by summaryNumbersOutside, human edits & publishes.
   'projects.roadmap_changelog_draft': 'projects',
+  // Vy's omnichannel roadmap signal match suggestions (#4492): suggests up to 3 existing items or 1 tainted new-idea draft, never writes signals.
+  'projects.roadmap_signal_match': 'projects',
   // Vy's triage proposal for one triage inbox item (#4493, ADR-0058): proposes priority, seat, cycle, or duplicate from allowlisted candidate IDs only; human accepts/merges/declines.
   'projects.triage_assist': 'projects',
   // Member-scoped Vy proposing project tasks from one note (projects P7, #2598, ADR-0049): one call over the note text and project members' active seats; nothing is created until explicit human confirmation.
@@ -167,6 +169,10 @@ export const AI_FEATURES = {
   'sign.obligation_extract': 'sign',
   // Vy (the general manager) answering a question across the caller's already-permitted eSign contracts (#4439): one call over at most 20 bounded contract snippets, zero tools, every citation verified verbatim against the caller's candidate set. Nothing is stored.
   'sign.vault_qa': 'sign',
+  // Vy (the general manager) checking extracted eSign PDF contract pages against the org's SME playbook rules and proposing grounded redline suggestions (#4442): one call over bounded page text and active rules per ask, every cited finding verified deterministically against the PDF and marked tainted for human review.
+  'sign.playbook_check': 'sign',
+  // Vy (the general manager) checking extracted signer KYC attachment text (CCCD, enterprise registration MST, power of attorney) against expected contract party details for a workspace member (#4443): zero tools, every finding pinned to a verbatim quote and marked tainted for human confirmation, never auto-rejecting.
+  'sign.kyc_check': 'sign',
   // Member-scoped Vy summarizing one readable note (notes N8, #1677, ADR-0049): stores a private member_vy_result until the author explicitly accepts it.
   'notes.summary': 'notes',
   // Member-scoped Vy suggesting personal to-dos from one readable note (notes N8, #1677, ADR-0049): stores private suggestions until the reader explicitly confirms them.

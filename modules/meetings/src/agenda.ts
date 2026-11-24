@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A member's own Google Calendar meetings, read to suggest "record this meeting" (Meetings B1, #3165, plan docs/plan/meetings-integrations.md section 5.1). The cache is
-// crove_meetings.calendar_agenda: the member's own rows (title, start, end, time zone, a Meet, Zoom or Teams address and the number of invitees; never an invitee address, a description or
+// ludy_meetings.calendar_agenda: the member's own rows (title, start, end, time zone, a Meet, Zoom or Teams address and the number of invitees; never an invitee address, a description or
 // an attachment), read by the member alone (row security refuses an owner, an admin, another member, an agent context and the system context), deleted at once when the member switches the
-// read off or disconnects the calendar, and written by nobody but the worker's sweep through crove_meetings.agenda_replace, a definer that returns a count and never text.
+// read off or disconnects the calendar, and written by nobody but the worker's sweep through ludy_meetings.agenda_replace, a definer that returns a count and never text.
 //
 // Nothing here uses a model and nothing starts a recording or joins a call. Code finds the event a recording overlaps (within 15 minutes, and only when exactly one does) and a person confirms
 // with a click; "Ghi cuộc họp này" only fills the title of the normal new-meeting form, whose consent step always runs.
@@ -64,7 +64,7 @@ const toEvent = (r: AgendaRow): AgendaEvent => ({
 // deleted. Row security shows the member their own rows only.
 function agendaOf(trx: Trx, orgId: string, userId: string) {
   return trx
-    .selectFrom('crove_meetings.calendar_agenda as a')
+    .selectFrom('ludy_meetings.calendar_agenda as a')
     .innerJoin('ludy_kernel.calendar_connection as c', (join) => join.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.connection_id'))
     .select(['a.id', 'a.title', 'a.starts_at', 'a.ends_at', 'a.time_zone', 'a.join_url', 'a.invitee_count', 'a.meeting_id', 'a.series_id'])
     .where('a.org_id', '=', orgId)
@@ -152,7 +152,7 @@ export const agendaNext = defineQuery({
       .where('a.meeting_id', 'is', null)
       // Not one the member already recorded: the extension cannot link an event, so a meeting this member started within the event's time (from 15 minutes before it) hides it from the card.
       .where(
-        sql<boolean>`NOT EXISTS (SELECT 1 FROM crove_meetings.meeting m WHERE m.org_id = a.org_id AND m.recorder_user_id = ${userId}::uuid AND m.started_at >= a.starts_at - interval '15 minutes' AND m.started_at < a.ends_at)`,
+        sql<boolean>`NOT EXISTS (SELECT 1 FROM ludy_meetings.meeting m WHERE m.org_id = a.org_id AND m.recorder_user_id = ${userId}::uuid AND m.started_at >= a.starts_at - interval '15 minutes' AND m.started_at < a.ends_at)`,
       )
       .where('a.ends_at', '>', now)
       .where('a.starts_at', '<=', new Date(now.getTime() + AGENDA_NEXT_MINUTES * 60_000))
@@ -173,7 +173,7 @@ export const agendaSuggest = defineQuery({
   handler: async (ctx, input): Promise<AgendaSuggestion> => {
     const userId = userOf(ctx.actor);
     const meeting = await ctx.trx
-      .selectFrom('crove_meetings.meeting')
+      .selectFrom('ludy_meetings.meeting')
       .select(['recorder_user_id', 'started_at', 'ended_at', 'length_seconds'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.meetingId)
@@ -216,7 +216,7 @@ export const agendaSetReadEvents = defineCommand({
 async function deleteOwn(ctx: CommandContext, connectionId: string): Promise<number> {
   const userId = userOf(ctx.actor);
   const removed = await ctx.trx
-    .deleteFrom('crove_meetings.calendar_agenda')
+    .deleteFrom('ludy_meetings.calendar_agenda')
     .where('org_id', '=', ctx.orgId)
     .where('user_id', '=', userId)
     .where('connection_id', '=', connectionId)
@@ -254,11 +254,11 @@ export const agendaLink = defineCommand({
     // An event linked to another meeting is not taken over silently (a stale address or a second tab): the member removes the old link first.
     if (input.meetingId !== null && row.meeting_id !== null && row.meeting_id !== input.meetingId) throw new DomainError('AGENDA_EVENT_LINKED', 409, 'This calendar event is already linked to another meeting');
     if (input.meetingId !== null) {
-      const meeting = await ctx.trx.selectFrom('crove_meetings.meeting').select('recorder_user_id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirst();
+      const meeting = await ctx.trx.selectFrom('ludy_meetings.meeting').select('recorder_user_id').where('org_id', '=', ctx.orgId).where('id', '=', input.meetingId).executeTakeFirst();
       if (!meeting || meeting.recorder_user_id !== userId) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
     }
     try {
-      await ctx.trx.updateTable('crove_meetings.calendar_agenda').set({ meeting_id: input.meetingId }).where('org_id', '=', ctx.orgId).where('id', '=', input.agendaId).execute();
+      await ctx.trx.updateTable('ludy_meetings.calendar_agenda').set({ meeting_id: input.meetingId }).where('org_id', '=', ctx.orgId).where('id', '=', input.agendaId).execute();
     } catch (error: unknown) {
       if ((error as { code?: string }).code === '23505') throw new DomainError('AGENDA_MEETING_LINKED', 409, 'This meeting is already linked to a calendar event');
       throw error;
@@ -267,7 +267,7 @@ export const agendaLink = defineCommand({
     // leaves the series as it is.
     if (input.meetingId !== null && row.series_id !== null) {
       await ctx.trx
-        .updateTable('crove_meetings.meeting')
+        .updateTable('ludy_meetings.meeting')
         .set({ series_id: row.series_id })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.meetingId)
@@ -290,7 +290,7 @@ export const agendaReplace = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Only a system actor may do this');
     const { rows } = await sql<{ n: number }>`
-      SELECT crove_meetings.agenda_replace(${input.connectionId}::uuid, ${input.from}::timestamptz, ${JSON.stringify(input.events)}::jsonb) AS n`.execute(ctx.trx);
+      SELECT ludy_meetings.agenda_replace(${input.connectionId}::uuid, ${input.from}::timestamptz, ${JSON.stringify(input.events)}::jsonb) AS n`.execute(ctx.trx);
     const written = Number(rows[0]?.n ?? 0);
     ctx.audit({ connectionId: input.connectionId, written });
     return zAgendaReplaced.parse({ connectionId: input.connectionId, written });

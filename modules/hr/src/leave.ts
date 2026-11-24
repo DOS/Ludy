@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Monthly employee leave ledger & statutory leave balance (issue #3394, #2540 slice 1c-2, docs/plan/payroll.md section 5 rows 3 & 6.7, section 7, ADR-0046).
-// Owners and admins only, in the commands/queries and in the database's policies (crove_hr.payroll_leave_entry owner_admin and le_scope).
+// Owners and admins only, in the commands/queries and in the database's policies (ludy_hr.payroll_leave_entry owner_admin and le_scope).
 // Audit facts carry ids, month, kind and approved/cleared flags only, never raw leave day counts.
 import {
   calculateLeaveBalance,
@@ -42,7 +42,7 @@ const entryNotFound = () => new DomainError('HR_LEAVE_ENTRY_NOT_FOUND', 404, 'Kh
 
 export async function loadEmployeeForLeave(trx: QueryContext['trx'], orgId: string, employeeId: string, lock: boolean) {
   let q = trx
-    .selectFrom('crove_hr.payroll_employee')
+    .selectFrom('ludy_hr.payroll_employee')
     .select(['id', 'legal_entity_id', 'status', 'ended_on', 'erased_at'])
     .where('org_id', '=', orgId)
     .where('id', '=', employeeId);
@@ -129,7 +129,7 @@ export const leaveSet = defineCommand({
   permission: 'hr.payroll.run',
   target: (input: { employeeId: string }) => ({ type: 'hr.payroll_employee', id: input.employeeId }),
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_leave_entry', [
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_leave_entry', [
       'org_id',
       'legal_entity_id',
       'employee_id',
@@ -142,13 +142,13 @@ export const leaveSet = defineCommand({
       'updated_at',
     ]),
     // Deleting a leave entry via days = '0' triggers ON DELETE SET NULL on linked leave_request rows.
-    tableWrite(hrManifest.tables, 'crove_hr', 'leave_request', ['payroll_leave_entry_id']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'leave_request', ['payroll_leave_entry_id']),
   ],
   handler: async (ctx, input): Promise<HrLeaveWritten> => {
     const userId = userOf(ctx.actor);
     const employee = await loadEmployeeForLeave(ctx.trx, ctx.orgId, input.employeeId, true);
     const firstTerm = await ctx.trx
-      .selectFrom('crove_hr.payroll_employment')
+      .selectFrom('ludy_hr.payroll_employment')
       .select(['effective_from'])
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', employee.id)
@@ -159,7 +159,7 @@ export const leaveSet = defineCommand({
     // Allow clearing (`days = '0'`) any existing leave slot even if `ended_on` was later moved earlier than `input.month`.
     if (days.isZero()) {
       const deleted = await ctx.trx
-        .deleteFrom('crove_hr.payroll_leave_entry')
+        .deleteFrom('ludy_hr.payroll_leave_entry')
         .where('org_id', '=', ctx.orgId)
         .where('employee_id', '=', employee.id)
         .where('month', '=', input.month)
@@ -186,7 +186,7 @@ export const leaveSet = defineCommand({
       endedOn: employee.ended_on,
     });
     const saved = await ctx.trx
-      .insertInto('crove_hr.payroll_leave_entry')
+      .insertInto('ludy_hr.payroll_leave_entry')
       .values({
         org_id: ctx.orgId,
         legal_entity_id: employee.legal_entity_id,
@@ -228,13 +228,13 @@ export const leaveDelete = defineCommand({
   permission: 'hr.payroll.run',
   target: (input: { entryId: string }) => ({ type: 'hr.payroll_leave_entry', id: input.entryId }),
   writes: [
-    tableWrite(hrManifest.tables, 'crove_hr', 'payroll_leave_entry', ['id']),
-    tableWrite(hrManifest.tables, 'crove_hr', 'leave_request', ['payroll_leave_entry_id']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'payroll_leave_entry', ['id']),
+    tableWrite(hrManifest.tables, 'ludy_hr', 'leave_request', ['payroll_leave_entry_id']),
   ],
   handler: async (ctx, input): Promise<HrLeaveWritten> => {
     userOf(ctx.actor);
     const found = await ctx.trx
-      .selectFrom('crove_hr.payroll_leave_entry')
+      .selectFrom('ludy_hr.payroll_leave_entry')
       .select(['id', 'employee_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.entryId)
@@ -243,7 +243,7 @@ export const leaveDelete = defineCommand({
     // Acquire employee lock before leave_entry mutation to stay consistent with leaveSet lock order.
     await loadEmployeeForLeave(ctx.trx, ctx.orgId, found.employee_id, true);
     const deleted = await ctx.trx
-      .deleteFrom('crove_hr.payroll_leave_entry')
+      .deleteFrom('ludy_hr.payroll_leave_entry')
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', found.id)
       .returning(['id', 'employee_id'])
@@ -298,7 +298,7 @@ export const leaveBalance = defineQuery({
     userOf(ctx.actor);
     const employee = await loadEmployeeForLeave(ctx.trx, ctx.orgId, input.employeeId, false);
     const firstTerm = await ctx.trx
-      .selectFrom('crove_hr.payroll_employment')
+      .selectFrom('ludy_hr.payroll_employment')
       .select(['effective_from'])
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', employee.id)
@@ -307,7 +307,7 @@ export const leaveBalance = defineQuery({
       .executeTakeFirst();
     if (!firstTerm) throw employeeNotFound();
     const rows = await ctx.trx
-      .selectFrom('crove_hr.payroll_leave_entry')
+      .selectFrom('ludy_hr.payroll_leave_entry')
       .select(['id', 'employee_id', 'month', 'kind', 'days', 'approved'])
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', employee.id)

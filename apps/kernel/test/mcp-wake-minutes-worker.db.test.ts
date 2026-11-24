@@ -65,7 +65,7 @@ suite('minutes wake gating in startWorker (#4354)', () => {
   async function publishOrgMinutes(tag: string): Promise<{ meetingId: string; eventId: string }> {
     const meetingId = randomUUID();
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
+      `INSERT INTO ludy_meetings.meeting (org_id, id, title, language, started_at, ended_at, length_seconds, recorder_user_id, visibility, status, consent_method, consent_confirmed_by, consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date)
        VALUES ($1, $2, $3, 'vi', now(), now() + interval '30 minutes', 1800, $4, 'org', 'ready', 'told_at_start', $4, now(), '1.0', current_date + 30, current_date + 365)`,
       [orgId, meetingId, `Họp ${tag}`, recorderId],
     );

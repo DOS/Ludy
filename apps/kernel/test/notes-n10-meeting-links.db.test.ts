@@ -68,7 +68,7 @@ suite('Notes N10: link notes to meetings and taint-until-edited guard (#1679)', 
     const visibility = opts.visibility ?? 'attendees';
     const days = opts.textRetentionDaysOffset ?? 365;
     await sqlAdmin(
-      `INSERT INTO crove_meetings.meeting (
+      `INSERT INTO ludy_meetings.meeting (
          org_id, id, title, language, started_at, ended_at, length_seconds,
          recorder_user_id, visibility, status, consent_method, consent_confirmed_by,
          consent_confirmed_at, consent_notice_version, audio_retention_date, text_retention_date
@@ -82,7 +82,7 @@ suite('Notes N10: link notes to meetings and taint-until-edited guard (#1679)', 
     );
     for (const reader of readers) {
       await sqlAdmin(
-        `INSERT INTO crove_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`,
+        `INSERT INTO ludy_meetings.meeting_reader (org_id, id, meeting_id, user_id) VALUES ($1, $2, $3, $4)`,
         [orgId, randomUUID(), meetingId, users[reader]],
       );
     }
@@ -255,7 +255,7 @@ suite('Notes N10: link notes to meetings and taint-until-edited guard (#1679)', 
       await c.query('BEGIN');
       await c.query('SET LOCAL session_replication_role = replica');
       await c.query(
-        `INSERT INTO crove_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage, tainted)
+        `INSERT INTO ludy_meetings.meeting_result (org_id, meeting_id, summary, decisions, feature, stage, tainted)
          VALUES ($1, $2, $3, $4::jsonb, 'meetings.summary', 'draft', true)`,
         [orgId, meetingId, SECRET_SUMMARY, JSON.stringify([DECISION_1, DECISION_2])],
       );

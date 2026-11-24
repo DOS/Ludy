@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The API's half of a marketplace push (TikTok Shop, Shopee, Lazada; #4346, S2 of the push receiver #4315). The platform signs a push with the seller's OWN app secret, which only the worker can open (ADR-0025), so this
-// side checks no signature: it finds the hook by the SHA-256 of the key in the address, and keeps the RAW push for the worker (crove_finance.marketplace_hook_put_notice, #4324), whose relay verifies it (#4344).
+// side checks no signature: it finds the hook by the SHA-256 of the key in the address, and keeps the RAW push for the worker (ludy_finance.marketplace_hook_put_notice, #4324), whose relay verifies it (#4344).
 //   In order (http.ts runs the first two): the per-address limit, the 16 KB body cap; then here the shape of the key, the lookup of its hash (the org and the connection come from OUR row for that hash, never from
 //   the body; an unknown or retired key is a 404 and nothing is stored), a stopped hook, a budget per hook, and the put of the bytes, the `Authorization` header as sent and the dedupe key.
 // What the platform is answered: an EMPTY 2xx for a push that is stored or deliberately not (a duplicate, a stopped hook, a full backlog, a hook over its budget): Shopee asks for an empty 2xx and disables a subscription
@@ -64,7 +64,7 @@ export async function acceptMarketplacePush(
   }
   const hash = marketplaceHookKeyHash(request.key);
   const hook = await runtime.orgless(async (db) => {
-    const { rows } = await sql<{ hook_id: string; standing: string }>`SELECT hook_id, standing FROM crove_finance.marketplace_hook_lookup(${adapter}, ${hash})`.execute(db);
+    const { rows } = await sql<{ hook_id: string; standing: string }>`SELECT hook_id, standing FROM ludy_finance.marketplace_hook_lookup(${adapter}, ${hash})`.execute(db);
     const row = rows[0];
     return row ? { hookId: row.hook_id, standing: row.standing } : null;
   });
@@ -78,7 +78,7 @@ export async function acceptMarketplacePush(
   const body = Buffer.from(request.body.buffer, request.body.byteOffset, request.body.byteLength);
   const put = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ put: string }>`
-      SELECT crove_finance.marketplace_hook_put_notice(${hook.hookId}::uuid, ${hash}, ${dedupe}, ${authorization}, ${body}, ${requestUrl}::text) AS put`.execute(db);
+      SELECT ludy_finance.marketplace_hook_put_notice(${hook.hookId}::uuid, ${hash}, ${dedupe}, ${authorization}, ${body}, ${requestUrl}::text) AS put`.execute(db);
     return rows[0]?.put ?? 'gone';
   });
   // 'accepted', 'duplicate' and 'busy' (twenty waiting for the hook, or the machine's backlog full) are all an empty success; 'gone' (stopped, its key rotated since the lookup, its connection closed) is a retired key. A hook stopped in the moment between the lookup and the put is answered 404 as well (the put cannot tell a stop from a rotation): the window is a few statements wide and a push is only a hint.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A member's own Google Calendar meetings, read to suggest "record this meeting" (Meetings B1, #3165, plan docs/plan/meetings-integrations.md section 5.1). The shapes of the module's queries and
-// commands; the cache itself is crove_meetings.calendar_agenda (the member's own rows, never an invitee address, a description or an attachment). No model is involved anywhere: code finds the
+// commands; the cache itself is ludy_meetings.calendar_agenda (the member's own rows, never an invitee address, a description or an attachment). No model is involved anywhere: code finds the
 // event a recording overlaps and a person confirms.
 import { z } from 'zod';
 import { zId } from './schemas.ts';

@@ -212,7 +212,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
         FROM pg_catalog.pg_attribute a
         JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = 'crove_hr'
+        WHERE n.nspname = 'ludy_hr'
           AND c.relname IN ('attendance_log', 'attendance_qr_config')
           AND a.attnum > 0 AND NOT a.attisdropped
         ORDER BY 1, 2
@@ -245,9 +245,9 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
       o1.exec(o1.memberA, 'hr.self.attendance.check_in', { method: 'qr', qrToken: 'wrong-secret' }),
     ).rejects.toMatchObject({ code: 'HR_ATTENDANCE_QR_INVALID' });
 
-    // Non-admin member cannot read crove_hr.attendance_qr_config directly at SQL level
+    // Non-admin member cannot read ludy_hr.attendance_qr_config directly at SQL level
     const memberQrCount = await runAsUserInOrg(o1.memberA, o1.orgId, async (c) => {
-      const { rows } = await c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_hr.attendance_qr_config WHERE org_id = $1', [o1.orgId]);
+      const { rows } = await c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_hr.attendance_qr_config WHERE org_id = $1', [o1.orgId]);
       return rows[0]?.n;
     });
     expect(memberQrCount).toBe(0);
@@ -287,13 +287,13 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     expect(listA.logs.map((l) => l.employeeId)).toEqual([o1.empAId]);
 
     const rlsSeenByA = await runAsUserInOrg(o1.memberA, o1.orgId, async (c) => {
-      const { rows } = await c.query<{ id: string }>('SELECT id FROM crove_hr.attendance_log ORDER BY id');
+      const { rows } = await c.query<{ id: string }>('SELECT id FROM ludy_hr.attendance_log ORDER BY id');
       return rows.map((r) => r.id);
     });
     expect(rlsSeenByA).toEqual([checkInA.id]);
 
     const rlsSeenByOrg2Owner = await runAsUserInOrg(o2.owner, o2.orgId, async (c) => {
-      const { rows } = await c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_hr.attendance_log WHERE org_id = $1', [o1.orgId]);
+      const { rows } = await c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_hr.attendance_log WHERE org_id = $1', [o1.orgId]);
       return rows[0]?.n;
     });
     expect(rlsSeenByOrg2Owner).toBe(0);
@@ -303,7 +303,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
       code: 'HR_SELF_NOT_LINKED',
     });
     const rlsUnlinked = await runAsUserInOrg(o1.unlinked, o1.orgId, async (c) => {
-      const { rows } = await c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_hr.attendance_log WHERE org_id = $1', [o1.orgId]);
+      const { rows } = await c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_hr.attendance_log WHERE org_id = $1', [o1.orgId]);
       return rows[0]?.n;
     });
     expect(rlsUnlinked).toBe(0);
@@ -312,17 +312,17 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     const empViewerRes = await o1.hire('Lê Kiểm Tra Viewer');
     const empViewerId = empViewerRes.employeeId as string;
     await withAdmin((c) =>
-      c.query('UPDATE crove_hr.payroll_employee SET user_id = $1 WHERE org_id = $2 AND id = $3', [o1.viewer, o1.orgId, empViewerId]),
+      c.query('UPDATE ludy_hr.payroll_employee SET user_id = $1 WHERE org_id = $2 AND id = $3', [o1.viewer, o1.orgId, empViewerId]),
     );
     await expect(o1.query(o1.viewer, 'hr.self.attendance.list', { month })).rejects.toBeInstanceOf(DomainError);
     await expect(o1.exec(o1.viewer, 'hr.self.attendance.check_in', { method: 'web' })).rejects.toBeInstanceOf(DomainError);
     const rlsViewerRows = await runAsUserInOrg(o1.viewer, o1.orgId, async (c) => {
-      const { rows } = await c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_hr.attendance_log WHERE org_id = $1', [o1.orgId]);
+      const { rows } = await c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_hr.attendance_log WHERE org_id = $1', [o1.orgId]);
       return rows[0]?.n;
     });
     expect(rlsViewerRows).toBe(0);
     const empInfo = await withAdmin(async (c) => {
-      const { rows } = await c.query<{ legal_entity_id: string }>('SELECT legal_entity_id FROM crove_hr.payroll_employee WHERE org_id = $1 AND id = $2', [
+      const { rows } = await c.query<{ legal_entity_id: string }>('SELECT legal_entity_id FROM ludy_hr.payroll_employee WHERE org_id = $1 AND id = $2', [
         o1.orgId,
         empViewerId,
       ]);
@@ -330,7 +330,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     });
     const viewerSqlErr = await runAsUserInOrg(o1.viewer, o1.orgId, (c) =>
       c.query(
-        `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+        `INSERT INTO ludy_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
          VALUES ($1, $2, $3, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, pg_catalog.now(), 'web', 'missing_checkout')`,
         [o1.orgId, empInfo.legal_entity_id, empViewerId],
       ),
@@ -339,11 +339,11 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
 
     // Relink that same employee (with no today log yet) to a regular linked member -> exact same SQL INSERT shape succeeds
     await withAdmin((c) =>
-      c.query('UPDATE crove_hr.payroll_employee SET user_id = $1 WHERE org_id = $2 AND id = $3', [o1.unlinked, o1.orgId, empViewerId]),
+      c.query('UPDATE ludy_hr.payroll_employee SET user_id = $1 WHERE org_id = $2 AND id = $3', [o1.unlinked, o1.orgId, empViewerId]),
     );
     const memberSqlRes = await runAsUserInOrg(o1.unlinked, o1.orgId, (c) =>
       c.query(
-        `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+        `INSERT INTO ludy_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
          VALUES ($1, $2, $3, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, pg_catalog.now(), 'web', 'missing_checkout')`,
         [o1.orgId, empInfo.legal_entity_id, empViewerId],
       ),
@@ -363,7 +363,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     await expect(
       runAsUserInOrg(o1.memberA, o1.orgId, (c) =>
         c.query(
-          `UPDATE crove_hr.attendance_log SET check_in_method = 'manual' WHERE org_id = $1 AND id = $2`,
+          `UPDATE ludy_hr.attendance_log SET check_in_method = 'manual' WHERE org_id = $1 AND id = $2`,
           [o1.orgId, checkInA.id],
         ),
       ),
@@ -373,7 +373,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     await expect(
       runAsUserInOrg(o1.memberA, o1.orgId, (c) =>
         c.query(
-          `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, checked_out_at, check_in_method, worked_minutes, status)
+          `INSERT INTO ludy_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, checked_out_at, check_in_method, worked_minutes, status)
            VALUES ($1, $2, $3, '2026-11-02', now() - interval '8 hours', now(), 'web', 1440, 'present')`,
           [o1.orgId, empInfo.legal_entity_id, o1.empAId],
         ),
@@ -382,9 +382,9 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
 
     await expect(
       runAsUserInOrg(o1.memberA, o1.orgId, async (c) => {
-        await c.query(`SELECT pg_catalog.set_config('crove_hr.qr_verified_hash', $1, true)`, ['f'.repeat(64)]);
+        await c.query(`SELECT pg_catalog.set_config('ludy_hr.qr_verified_hash', $1, true)`, ['f'.repeat(64)]);
         await c.query(
-          `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+          `INSERT INTO ludy_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
            VALUES ($1, $2, $3, (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1, now(), 'qr', 'missing_checkout')`,
           [o1.orgId, empInfo.legal_entity_id, o1.empAId],
         );
@@ -394,7 +394,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     await expect(
       runAsUserInOrg(o1.memberB, o1.orgId, (c) =>
         c.query(
-          `UPDATE crove_hr.attendance_log
+          `UPDATE ludy_hr.attendance_log
            SET checked_out_at = now(), worked_minutes = 999, status = 'present'
            WHERE org_id = $1 AND id = $2`,
           [o1.orgId, checkInB.id],
@@ -406,7 +406,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     await expect(
       withAdmin((c) =>
         c.query(
-          `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+          `INSERT INTO ludy_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
            VALUES ($1, $2, $3, '2026-11-03', now(), 'manual', 'present')`,
           [o1.orgId, empInfo.legal_entity_id, o1.empAId],
         ),
@@ -415,19 +415,19 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
 
     // Overnight openLog: yesterday's missing_checkout surfaces in self.attendance.list when today has no log,
     // while stale (>= 2 days old) open shifts are rejected by attendance_log_update_guard (23514) and ended staff cannot check in/out via SQL
-    await withAdmin((c) => c.query(`DELETE FROM crove_hr.attendance_log WHERE org_id = $1 AND employee_id = $2`, [o1.orgId, o1.empBId]));
+    await withAdmin((c) => c.query(`DELETE FROM ludy_hr.attendance_log WHERE org_id = $1 AND employee_id = $2`, [o1.orgId, o1.empBId]));
     const twoDaysAgoVn = vietnamToday(new Date(Date.now() - 2 * 86_400_000));
     await withAdmin((c) =>
       c.query(
-        `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+        `INSERT INTO ludy_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
          SELECT org_id, legal_entity_id, id, $3::date, now() - interval '9 hours', 'web', 'missing_checkout'
-         FROM crove_hr.payroll_employee WHERE org_id = $1 AND id = $2`,
+         FROM ludy_hr.payroll_employee WHERE org_id = $1 AND id = $2`,
         [o1.orgId, o1.empBId, twoDaysAgoVn],
       ),
     );
     const staleSelfSqlErr = await runAsUserInOrg(o1.memberB, o1.orgId, (c) =>
       c.query(
-        `UPDATE crove_hr.attendance_log
+        `UPDATE ludy_hr.attendance_log
          SET checked_out_at = pg_catalog.now(), worked_minutes = 540, status = 'present'
          WHERE org_id = $1 AND employee_id = $2 AND work_date = $3::date`,
         [o1.orgId, o1.empBId, twoDaysAgoVn],
@@ -436,7 +436,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     expect(staleSelfSqlErr).toMatchObject({ code: '23514' });
     expect(String((staleSelfSqlErr as { message?: string }).message ?? '')).toContain('today or yesterday');
     await withAdmin((c) =>
-      c.query(`DELETE FROM crove_hr.attendance_log WHERE org_id = $1 AND employee_id = $2 AND work_date = $3::date`, [
+      c.query(`DELETE FROM ludy_hr.attendance_log WHERE org_id = $1 AND employee_id = $2 AND work_date = $3::date`, [
         o1.orgId,
         o1.empBId,
         twoDaysAgoVn,
@@ -446,9 +446,9 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     const yesterdayVn = vietnamToday(new Date(Date.now() - 86_400_000));
     await withAdmin((c) =>
       c.query(
-        `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+        `INSERT INTO ludy_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
          SELECT org_id, legal_entity_id, id, $3::date, now() - interval '9 hours', 'web', 'missing_checkout'
-         FROM crove_hr.payroll_employee WHERE org_id = $1 AND id = $2`,
+         FROM ludy_hr.payroll_employee WHERE org_id = $1 AND id = $2`,
         [o1.orgId, o1.empBId, yesterdayVn],
       ),
     );
@@ -459,7 +459,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     await o1.exec(o1.owner, 'hr.payroll.employee.end', { employeeId: o1.empBId, endedOn: today });
     const endedUpdate = await runAsUserInOrg(o1.memberB, o1.orgId, (c) =>
       c.query(
-        `UPDATE crove_hr.attendance_log
+        `UPDATE ludy_hr.attendance_log
          SET checked_out_at = now(), worked_minutes = 540, status = 'present'
          WHERE org_id = $1 AND employee_id = $2 AND work_date = $3::date`,
         [o1.orgId, o1.empBId, yesterdayVn],
@@ -469,7 +469,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     await expect(
       runAsUserInOrg(o1.memberB, o1.orgId, (c) =>
         c.query(
-          `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+          `INSERT INTO ludy_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
            VALUES ($1, $2, $3, (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date, now(), 'web', 'missing_checkout')`,
           [o1.orgId, empInfo.legal_entity_id, o1.empBId],
         ),
@@ -527,9 +527,9 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     // Missing checkout log on empB for 2026-09-14
     await withAdmin((c) =>
       c.query(
-        `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+        `INSERT INTO ludy_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
          SELECT org_id, legal_entity_id, id, '2026-09-14', '2026-09-14T01:30:00Z', 'web', 'missing_checkout'
-         FROM crove_hr.payroll_employee WHERE org_id = $1 AND id = $2`,
+         FROM ludy_hr.payroll_employee WHERE org_id = $1 AND id = $2`,
         [o.orgId, o.empBId],
       ),
     );
@@ -640,9 +640,9 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     // Thread #10: allowIncomplete still refuses when an open row has a secondary weekend/holiday anomaly (Sunday 2026-09-20)
     await withAdmin((c) =>
       c.query(
-        `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+        `INSERT INTO ludy_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
          SELECT org_id, legal_entity_id, id, '2026-09-20', '2026-09-20T01:30:00Z', 'web', 'missing_checkout'
-         FROM crove_hr.payroll_employee WHERE org_id = $1 AND id = $2`,
+         FROM ludy_hr.payroll_employee WHERE org_id = $1 AND id = $2`,
         [o.orgId, o.empBId],
       ),
     );
@@ -650,15 +650,15 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
       o.exec(o.owner, 'hr.attendance.rollup_to_payroll', { runId: run.runId, allowIncomplete: true }),
     ).rejects.toMatchObject({ code: 'HR_ATTENDANCE_MISSING_CHECKOUT' });
     await withAdmin((c) =>
-      c.query(`DELETE FROM crove_hr.attendance_log WHERE org_id = $1 AND employee_id = $2 AND work_date = '2026-09-20'`, [o.orgId, o.empBId]),
+      c.query(`DELETE FROM ludy_hr.attendance_log WHERE org_id = $1 AND employee_id = $2 AND work_date = '2026-09-20'`, [o.orgId, o.empBId]),
     );
 
     // Non-run employee (empC, ended before 2026-09 and excluded from draft pay lines) with a Sunday missing_checkout MUST NOT block rollup!
     await withAdmin((c) =>
       c.query(
-        `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+        `INSERT INTO ludy_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
          SELECT org_id, legal_entity_id, id, '2026-09-20', '2026-09-20T01:30:00Z', 'web', 'missing_checkout'
-         FROM crove_hr.payroll_employee WHERE org_id = $1 AND id = $2`,
+         FROM ludy_hr.payroll_employee WHERE org_id = $1 AND id = $2`,
         [o.orgId, empCId],
       ),
     );
@@ -668,7 +668,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     });
     expect(ignoredOutOfRun.missingCheckoutCount).toBe(1); // Only empB's 2026-09-14 row counts, not empC's Sunday row
     await withAdmin((c) =>
-      c.query(`DELETE FROM crove_hr.attendance_log WHERE org_id = $1 AND employee_id = $2 AND work_date = '2026-09-20'`, [o.orgId, empCId]),
+      c.query(`DELETE FROM ludy_hr.attendance_log WHERE org_id = $1 AND employee_id = $2 AND work_date = '2026-09-20'`, [o.orgId, empCId]),
     );
 
     // Also verify adjust clearing checkedOutAt resets worked_minutes to null, and note-only edit preserves credited minutes
@@ -797,7 +797,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     // End and erase empA after backdating retention (> 10 years ago), matching payroll_employee retention rules.
     await o.exec(o.owner, 'hr.payroll.employee.end', { employeeId: o.empAId, endedOn: '2026-08-20' });
     await withAdmin((c) =>
-      c.query(`UPDATE crove_hr.payroll_employee SET ended_on = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date WHERE org_id = $1 AND id = $2`, [
+      c.query(`UPDATE ludy_hr.payroll_employee SET ended_on = ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - interval '10 years 1 day')::date WHERE org_id = $1 AND id = $2`, [
         o.orgId,
         o.empAId,
       ]),
@@ -806,7 +806,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
 
     const erasedRow = await withAdmin(async (c) => {
       const { rows } = await c.query<{ note: string | null; worked_minutes: number | null }>(
-        'SELECT note, worked_minutes FROM crove_hr.attendance_log WHERE org_id = $1 AND employee_id = $2',
+        'SELECT note, worked_minutes FROM ludy_hr.attendance_log WHERE org_id = $1 AND employee_id = $2',
         [o.orgId, o.empAId],
       );
       return rows[0];
@@ -828,13 +828,13 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     // Triggers and RLS policies also refuse post-erasure mutations and direct SQL inserts (including owner/admin)
     await expect(
       withAdmin((c) =>
-        c.query(`UPDATE crove_hr.attendance_log SET worked_minutes = 120 WHERE org_id = $1 AND employee_id = $2`, [o.orgId, o.empAId]),
+        c.query(`UPDATE ludy_hr.attendance_log SET worked_minutes = 120 WHERE org_id = $1 AND employee_id = $2`, [o.orgId, o.empAId]),
       ),
     ).rejects.toThrow();
     await expect(
       runAsUserInOrg(o.owner, o.orgId, (c) =>
         c.query(
-          `INSERT INTO crove_hr.attendance_log (org_id, employee_id, work_date, checked_in_at, checked_out_at, check_in_method, worked_minutes, status, note)
+          `INSERT INTO ludy_hr.attendance_log (org_id, employee_id, work_date, checked_in_at, checked_out_at, check_in_method, worked_minutes, status, note)
            VALUES ($1, $2, '2014-01-12', '2014-01-12T01:30:00Z', '2014-01-12T10:30:00Z', 'manual', 540, 'present', 'Chèn trái phép sau xóa')`,
           [o.orgId, o.empAId],
         ),
@@ -843,7 +843,7 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     await expect(
       runAsUserInOrg(o.admin, o.orgId, (c) =>
         c.query(
-          `INSERT INTO crove_hr.attendance_log (org_id, employee_id, work_date, checked_in_at, check_in_method, status)
+          `INSERT INTO ludy_hr.attendance_log (org_id, employee_id, work_date, checked_in_at, check_in_method, status)
            VALUES ($1, $2, '2014-01-13', '2014-01-13T01:30:00Z', 'web', 'missing_checkout')`,
           [o.orgId, o.empAId],
         ),
@@ -871,12 +871,12 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
       { minDays: 30, reason: 'Owner closed org' },
       { actor: { type: 'system', component: 'operator' }, orgId: o.orgId },
     );
-    expect(purged.counts.deleted['crove_hr.attendance_log']).toBe(1);
-    expect(purged.counts.deleted['crove_hr.attendance_qr_config']).toBe(1);
+    expect(purged.counts.deleted['ludy_hr.attendance_log']).toBe(1);
+    expect(purged.counts.deleted['ludy_hr.attendance_qr_config']).toBe(1);
 
     const remaining = await withAdmin(async (c) => {
-      const a = await c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_hr.attendance_log WHERE org_id = $1', [o.orgId]);
-      const q = await c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_hr.attendance_qr_config WHERE org_id = $1', [o.orgId]);
+      const a = await c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_hr.attendance_log WHERE org_id = $1', [o.orgId]);
+      const q = await c.query<{ n: number }>('SELECT count(*)::int AS n FROM ludy_hr.attendance_qr_config WHERE org_id = $1', [o.orgId]);
       return { logs: a.rows[0]?.n, qr: q.rows[0]?.n };
     });
     expect(remaining).toEqual({ logs: 0, qr: 0 });
@@ -929,9 +929,9 @@ suite('HR Stage 5C attendance & monthly rollup on PostgreSQL (#4447)', () => {
     });
     await withAdmin((c) =>
       c.query(
-        `INSERT INTO crove_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
+        `INSERT INTO ludy_hr.attendance_log (org_id, legal_entity_id, employee_id, work_date, checked_in_at, check_in_method, status)
          SELECT org_id, legal_entity_id, id, '2026-09-27', '2026-09-27T01:30:00Z', 'web', 'missing_checkout'
-         FROM crove_hr.payroll_employee WHERE org_id = $1 AND id = $2`,
+         FROM ludy_hr.payroll_employee WHERE org_id = $1 AND id = $2`,
         [o.orgId, empMidId],
       ),
     );

@@ -32,7 +32,7 @@ export const monthNotEnded = () => new DomainError('MONTH_NOT_ENDED', 422, 'Thá
 
 async function booksRows(ctx: QueryContext, entity: string): Promise<BooksRow[]> {
   const rows = await ctx.trx
-    .selectFrom('crove_finance.legal_entity_books')
+    .selectFrom('ludy_finance.legal_entity_books')
     .select(['regime', 'chart_version', 'effective_from'])
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', entity)
@@ -95,14 +95,14 @@ async function contributorRows(ctx: QueryContext, entity: string, month: string,
       SELECT
         CASE WHEN ${regime}::text = 'tt133' AND l.account_code ~ '^64[0-9][0-9]' THEN pg_catalog.left(l.account_code, 4) ELSE pg_catalog.left(l.account_code, 3) END AS line_code,
         l.party_id, j.id AS entry_id, j.entry_date, j.source_type, j.description, (l.debit - l.credit) AS net
-      FROM crove_finance.journal_line l
-      JOIN crove_finance.journal_entry j ON j.org_id = l.org_id AND j.id = l.entry_id
+      FROM ludy_finance.journal_line l
+      JOIN ludy_finance.journal_entry j ON j.org_id = l.org_id AND j.id = l.entry_id
       WHERE l.org_id = ${ctx.orgId} AND l.legal_entity_id = ${entity}
         AND j.entry_date >= ${windowFrom}::date AND j.entry_date <= ${mTo}::date
         AND l.account_code ~ ${EXPENSE_PATTERN}
-        AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_line c WHERE c.org_id = j.org_id AND c.entry_id = j.id AND c.account_code LIKE ${`${CLOSING_ACCOUNT}%`})
-        AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry rv WHERE rv.org_id = j.org_id AND rv.reverses_entry_id = j.id AND rv.entry_date >= ${windowFrom}::date AND rv.entry_date <= ${mTo}::date)
-        AND NOT (j.reverses_entry_id IS NOT NULL AND EXISTS (SELECT 1 FROM crove_finance.journal_entry og WHERE og.org_id = j.org_id AND og.id = j.reverses_entry_id AND og.entry_date >= ${windowFrom}::date AND og.entry_date <= ${mTo}::date))
+        AND NOT EXISTS (SELECT 1 FROM ludy_finance.journal_line c WHERE c.org_id = j.org_id AND c.entry_id = j.id AND c.account_code LIKE ${`${CLOSING_ACCOUNT}%`})
+        AND NOT EXISTS (SELECT 1 FROM ludy_finance.journal_entry rv WHERE rv.org_id = j.org_id AND rv.reverses_entry_id = j.id AND rv.entry_date >= ${windowFrom}::date AND rv.entry_date <= ${mTo}::date)
+        AND NOT (j.reverses_entry_id IS NOT NULL AND EXISTS (SELECT 1 FROM ludy_finance.journal_entry og WHERE og.org_id = j.org_id AND og.id = j.reverses_entry_id AND og.entry_date >= ${windowFrom}::date AND og.entry_date <= ${mTo}::date))
     ),
     agg AS (
       SELECT s.line_code, s.party_id, CASE WHEN s.party_id IS NULL THEN s.entry_id END AS entry_id,
@@ -144,8 +144,8 @@ async function accountNames(ctx: QueryContext, regime: string, version: string, 
   if (codes.length === 0) return new Map();
   const rows =
     regime === 'tt99'
-      ? await ctx.trx.selectFrom('crove_finance.chart_account').select(['code', 'name']).where('regime', '=', 'tt99').where('version', '=', version).where('code', 'in', [...codes]).execute()
-      : await ctx.trx.selectFrom('crove_finance.account').select(['code', 'name']).where('code', 'in', [...codes]).execute();
+      ? await ctx.trx.selectFrom('ludy_finance.chart_account').select(['code', 'name']).where('regime', '=', 'tt99').where('version', '=', version).where('code', 'in', [...codes]).execute()
+      : await ctx.trx.selectFrom('ludy_finance.account').select(['code', 'name']).where('code', 'in', [...codes]).execute();
   return new Map(rows.map((r) => [r.code, r.name]));
 }
 
@@ -162,7 +162,7 @@ export async function financeExpenseVariance(ctx: QueryContext, input: { month: 
   const amounts = await monthlyAmounts(ctx, entity, months);
   // The first day the entity's books hold an entry: a basis month before it is not there, it is not 0.
   const first = await ctx.trx
-    .selectFrom('crove_finance.journal_entry')
+    .selectFrom('ludy_finance.journal_entry')
     .select((eb) => eb.fn.min<string | null>('entry_date').as('first'))
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', entity)
@@ -171,7 +171,7 @@ export async function financeExpenseVariance(ctx: QueryContext, input: { month: 
   const result = buildExpenseVariance(input.month, amounts, books, booksStart);
   const window = { from: monthBounds(basis.average[0] ?? basis.previous).from, to: monthBounds(input.month).to };
   const any = await ctx.trx
-    .selectFrom('crove_finance.journal_entry')
+    .selectFrom('ludy_finance.journal_entry')
     .select('id')
     .where('org_id', '=', ctx.orgId)
     .where('legal_entity_id', '=', entity)

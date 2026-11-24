@@ -42,20 +42,20 @@ async function countSurplus(ctx: Ctx, countId: string, lock: boolean): Promise<C
   if (lock) await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.stock_surplus:${ctx.orgId}:${countId}`}, 0))`.execute(ctx.trx);
   const { rows } = await sql<{ id: string; legal_entity_id: string; count_date: string; status: string }>`
     SELECT c.id::text AS id, c.legal_entity_id::text AS legal_entity_id, c.count_date::text AS count_date, c.status
-    FROM crove_finance.stock_count c WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ${countId}::uuid`.execute(ctx.trx);
+    FROM ludy_finance.stock_count c WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ${countId}::uuid`.execute(ctx.trx);
   const head = rows[0];
   if (!head) throw new DomainError('STOCK_COUNT_NOT_FOUND', 404, 'Không tìm thấy lần kiểm kê này');
   const { rows: moves } = await sql<{ amount: string }>`
     SELECT m.amount::text AS amount
-    FROM crove_finance.stock_move m
-    JOIN crove_finance.stock_count_line l ON l.org_id = m.org_id AND l.id = m.count_line_id
+    FROM ludy_finance.stock_move m
+    JOIN ludy_finance.stock_count_line l ON l.org_id = m.org_id AND l.id = m.count_line_id
     WHERE m.org_id = ${ctx.orgId}::uuid AND l.count_id = ${countId}::uuid AND m.source_type = 'count'`.execute(ctx.trx);
   return { countId: head.id, legalEntityId: head.legal_entity_id, countDate: head.count_date, status: head.status, amount: surplusAmount(moves) };
 }
 
 // The voucher that resolved a count's surplus, and the proposal of one that waits (or was approved and has not run), other than `ownProposalId`.
 export async function surplusStanding(ctx: Ctx, countId: string, ownProposalId?: string): Promise<{ voucherId: string | null; proposalId: string | null }> {
-  const voucher = await ctx.trx.selectFrom('crove_finance.journal_voucher').select('id').where('org_id', '=', ctx.orgId).where('surplus_count_id', '=', countId).executeTakeFirst();
+  const voucher = await ctx.trx.selectFrom('ludy_finance.journal_voucher').select('id').where('org_id', '=', ctx.orgId).where('surplus_count_id', '=', countId).executeTakeFirst();
   let query = ctx.trx
     .selectFrom('ludy_kernel.proposal')
     .select('id')
@@ -143,9 +143,9 @@ export const surplusSource = defineQuery({
     refuseUnresolvable(count);
     const { rows: moves } = await sql<{ item_id: string; name: string; unit: string; quantity: string; amount: string }>`
       SELECT m.item_id::text AS item_id, i.name, i.unit, m.quantity::text AS quantity, m.amount::text AS amount
-      FROM crove_finance.stock_move m
-      JOIN crove_finance.stock_count_line l ON l.org_id = m.org_id AND l.id = m.count_line_id
-      JOIN crove_finance.stock_item i ON i.org_id = m.org_id AND i.id = m.item_id
+      FROM ludy_finance.stock_move m
+      JOIN ludy_finance.stock_count_line l ON l.org_id = m.org_id AND l.id = m.count_line_id
+      JOIN ludy_finance.stock_item i ON i.org_id = m.org_id AND i.id = m.item_id
       WHERE m.org_id = ${ctx.orgId}::uuid AND l.count_id = ${countId}::uuid AND m.source_type = 'count' AND m.amount > 0
       ORDER BY m.amount DESC, i.name, m.id`.execute(ctx.trx);
     const shown = moves.slice(0, STOCK_SURPLUS_NOTE_ITEMS).map((m) => ({ name: m.name, quantity: plainQuantity(m.quantity), unit: m.unit, value: money(m.amount).toDecimalPlaces(0).toFixed() }));
@@ -155,12 +155,12 @@ export const surplusSource = defineQuery({
     if (itemIds.length > 0) {
       const { rows } = await sql<{ party_id: string; name: string; received: string }>`
         SELECT d.party_id::text AS party_id, p.name, m.move_date::text AS received
-        FROM crove_finance.stock_move m
-        JOIN crove_finance.purchase_document d ON d.org_id = m.org_id AND d.id = m.document_id
+        FROM ludy_finance.stock_move m
+        JOIN ludy_finance.purchase_document d ON d.org_id = m.org_id AND d.id = m.document_id
         JOIN ludy_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
         WHERE m.org_id = ${ctx.orgId}::uuid AND m.legal_entity_id = ${count.legalEntityId}::uuid AND m.source_type = 'document_line' AND m.quantity > 0 AND d.direction = 'purchase'
           AND m.item_id = ANY (${itemIds}::uuid[]) AND m.move_date <= ${count.countDate}::date
-          AND NOT EXISTS (SELECT 1 FROM crove_finance.purchase_document_void v WHERE v.org_id = d.org_id AND v.document_id = d.id)
+          AND NOT EXISTS (SELECT 1 FROM ludy_finance.purchase_document_void v WHERE v.org_id = d.org_id AND v.document_id = d.id)
         ORDER BY m.move_date DESC, m.created_at DESC, m.id DESC
         LIMIT 1`.execute(ctx.trx);
       const hit = rows[0];
@@ -169,12 +169,12 @@ export const surplusSource = defineQuery({
     // A manual entry on 3381 in this entity since the count: a general voucher of a person's own (no count, no resolution tag), not a reversal.
     const { rows: manual } = await sql<{ one: number }>`
       SELECT 1 AS one
-      FROM crove_finance.journal_line jl
-      JOIN crove_finance.journal_entry e ON e.org_id = jl.org_id AND e.id = jl.entry_id
-      JOIN crove_finance.journal_voucher v ON v.org_id = e.org_id AND v.id::text = e.source_id::text
+      FROM ludy_finance.journal_line jl
+      JOIN ludy_finance.journal_entry e ON e.org_id = jl.org_id AND e.id = jl.entry_id
+      JOIN ludy_finance.journal_voucher v ON v.org_id = e.org_id AND v.id::text = e.source_id::text
       WHERE jl.org_id = ${ctx.orgId}::uuid AND jl.account_code = ${SURPLUS_ACCOUNT} AND jl.legal_entity_id = ${count.legalEntityId}::uuid
         AND e.source_type = 'finance.journal_voucher' AND e.reverses_entry_id IS NULL AND e.entry_date >= ${count.countDate}::date
-        AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry r WHERE r.org_id = e.org_id AND r.reverses_entry_id = e.id)
+        AND NOT EXISTS (SELECT 1 FROM ludy_finance.journal_entry r WHERE r.org_id = e.org_id AND r.reverses_entry_id = e.id)
         AND v.stock_count_id IS NULL AND v.surplus_count_id IS NULL AND v.closing_year IS NULL AND v.stock_closing_month IS NULL
       LIMIT 1`.execute(ctx.trx);
     const standing = await surplusStanding(ctx, countId);

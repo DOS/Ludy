@@ -8,7 +8,7 @@
 //   payout is posted for it, the period of the transfer is open, the bank line follows the settlement and is free, and the accounts are usable, then returns the proposal. It writes nothing.
 // - finance.marketplace_payout.record (R3): runs only through kernel.proposal.approve. It builds the entry again from the stored lines, in the approver's context, and refuses a stored proposal that
 //   differs from it. Then, in the same transaction, it records the voucher with the settlement and the bank line on it (one voucher per settlement and one per line: unique indexes hold it,
-//   20261231150000) and posts its entry. The database checks at commit that the proposal has such a voucher (crove_finance.ledger_effect_recorded, 20261231160000).
+//   20261231150000) and posts its entry. The database checks at commit that the proposal has such a voucher (ludy_finance.ledger_effect_recorded, 20261231160000).
 // The 131 and 331 lines (and the 1388 line of tax withheld by mistake) name the platform's party, the one the settlement's posting created (the Sàn read of #3096 matches lines by it). The commands are made by createMarketplacePayoutCommands so a
 // test registers a set with a confirmed map; the shipped set uses MARKETPLACE_POSTING_MAPS, whose payout rows are still `commentary` (the sales path and the three adjustment rows are `confirmed`, #4303 S3b and S4), so it refuses. No model call is made: everything here is deterministic over stored facts.
 import { sql } from 'kysely';
@@ -79,7 +79,7 @@ async function checkBankLine(ctx: QueryContext, line: StoredBankLine, legalEntit
 // platform's party. `lock` takes the locks (the platform's, which the settlement guards use, 20261126110000, and the bank line's) for the rest of the transaction.
 async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, bankLineId: string, lock: boolean, adjustments: readonly MarketplacePayoutAdjustment[] = []): Promise<Built> {
   const settlement = await ctx.trx
-    .selectFrom('crove_finance.channel_settlement')
+    .selectFrom('ludy_finance.channel_settlement')
     .select(['id', 'legal_entity_id', 'platform', 'period_start', 'period_end', 'reversal_of'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', settlementId)
@@ -98,7 +98,7 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
     await lockBankLine(ctx, line.id);
   }
   if (settlement.reversal_of !== null) throw notPostable('Đây là bản đảo của một kỳ đối soát khác nên không ghi khoản sàn trả', { reason: 'REVERSAL' });
-  const reversed = await ctx.trx.selectFrom('crove_finance.channel_settlement').select('id').where('org_id', '=', ctx.orgId).where('reversal_of', '=', settlement.id).executeTakeFirst();
+  const reversed = await ctx.trx.selectFrom('ludy_finance.channel_settlement').select('id').where('org_id', '=', ctx.orgId).where('reversal_of', '=', settlement.id).executeTakeFirst();
   if (reversed) throw notPostable('Kỳ đối soát này đã bị đảo nên không ghi khoản sàn trả', { reason: 'REVERSED' });
   // A payout before its settlement is posted is refused (Accounting PO decision 2026-11-13): there is no holding state, the settlement's posting comes first and stands. A settlement posts as one voucher
   // per month of delivery (#2516 rework, slice C1), all by one proposal in one transaction, so "posted" means the settlement has its vouchers and none is reversed; a settlement never posted, or with a month
@@ -108,7 +108,7 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
     throw new DomainError('MARKETPLACE_PAYOUT_SETTLEMENT_NOT_POSTED', 409, 'Ghi sổ kỳ đối soát trước, rồi mới ghi khoản sàn trả', { settlementId: settlement.id });
   }
   const paid = await ctx.trx
-    .selectFrom('crove_finance.journal_voucher as j')
+    .selectFrom('ludy_finance.journal_voucher as j')
     .select('j.id')
     .where('j.org_id', '=', ctx.orgId)
     .where('j.payout_settlement_id', '=', settlement.id)
@@ -120,7 +120,7 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
     throw new DomainError('PERIOD_LOCKED', 409, `Sổ đã khóa đến hết ngày ${dateLabel(lockedThrough)}, nên không ghi được bút toán ngày ${dateLabel(line.date)}`, { lockedThrough, entryDate: line.date });
   }
   const lines = await ctx.trx
-    .selectFrom('crove_finance.channel_settlement_line')
+    .selectFrom('ludy_finance.channel_settlement_line')
     .select(['id', 'sales', 'seller_discount', 'commission', 'service_fee', 'payment_fee', 'shipping', 'tax_withheld', 'refund', 'other', 'net'])
     .where('org_id', '=', ctx.orgId)
     .where('settlement_id', '=', settlement.id)
@@ -142,7 +142,7 @@ async function buildPayout(ctx: QueryContext, maps: Maps, settlementId: string, 
   if (!entity) throw notPostable('Không tìm thấy pháp nhân của kỳ đối soát', { reason: 'ENTITY' });
   // The settlement's posting created the platform's party and its link, so a settlement whose posting stands has one; without it the stored books are not as the posting left them.
   const link = await ctx.trx
-    .selectFrom('crove_finance.marketplace_party as m')
+    .selectFrom('ludy_finance.marketplace_party as m')
     .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'm.org_id').onRef('p.id', '=', 'm.party_id'))
     .select(['p.id', 'p.name', 'p.tax_code'])
     .where('m.org_id', '=', ctx.orgId)

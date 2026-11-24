@@ -60,17 +60,17 @@ suite('the follow-up draft of a next step on PostgreSQL (#3101)', () => {
       await exec<PipelineStage[]>(owner, 'crm.pipeline.setup', {});
       return exec<Deal>(user, 'crm.deal.create', { partyId, title: 'Cơ hội nội bộ XYZZY', amount: '15000000', expectedClose: null, ...over });
     };
-    const age = (dealId: string, days: number) => rows('UPDATE crove_crm.deal SET updated_at = now() - make_interval(days => $3) WHERE org_id = $1 AND id = $2', [orgId, dealId, days]);
+    const age = (dealId: string, days: number) => rows('UPDATE ludy_crm.deal SET updated_at = now() - make_interval(days => $3) WHERE org_id = $1 AND id = $2', [orgId, dealId, days]);
     const raise = () => worker.execute<{ raised: number; closed: number }>('crm.next_step.raise', {}, { actor: SYSTEM, orgId });
-    const stepOf = async (dealId: string) => (await rows<{ id: string; reason: string }>("SELECT id, reason FROM crove_crm.deal_next_step WHERE org_id = $1 AND deal_id = $2 AND status = 'open'", [orgId, dealId]))[0] as { id: string; reason: string };
+    const stepOf = async (dealId: string) => (await rows<{ id: string; reason: string }>("SELECT id, reason FROM ludy_crm.deal_next_step WHERE org_id = $1 AND deal_id = $2 AND status = 'open'", [orgId, dealId]))[0] as { id: string; reason: string };
     // A quote as a person makes it (two lines, so the total has a VAT part), then sent as the database owner makes a send: `sentDaysAgo` days ago, valid until `validIn` days from today.
     const sentQuote = async (dealId: string, sentDaysAgo: number, validIn: number, number = `BG-2026-${Math.floor(Math.random() * 9000) + 1000}`) => {
       const draft = await exec<{ id: string }>(member, 'crm.quote.save', { dealId, lines: [{ kind: 'item', description: 'Bánh Tết', unit: 'hộp', quantity: '3', unitPrice: '1234567', vatRate: '8%' }, { kind: 'item', description: 'Túi quà', unit: 'cái', quantity: '2', unitPrice: '55000', vatRate: '10%' }] });
       await rows(
-        "UPDATE crove_crm.quote SET status = 'sent', number = $3, sent_at = now() - make_interval(days => $4), sent_via = 'link', valid_until = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + $5::int WHERE org_id = $1 AND id = $2",
+        "UPDATE ludy_crm.quote SET status = 'sent', number = $3, sent_at = now() - make_interval(days => $4), sent_via = 'link', valid_until = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date + $5::int WHERE org_id = $1 AND id = $2",
         [orgId, draft.id, number, sentDaysAgo, validIn],
       );
-      const total = (await rows<{ total: string }>('SELECT total::text AS total FROM crove_crm.quote WHERE org_id = $1 AND id = $2', [orgId, draft.id]))[0]?.total as string;
+      const total = (await rows<{ total: string }>('SELECT total::text AS total FROM ludy_crm.quote WHERE org_id = $1 AND id = $2', [orgId, draft.id]))[0]?.total as string;
       return { id: draft.id, number, total };
     };
     const source = (user: string, nextStepId: string) => query<FollowupSource>(user, 'crm.followup.source', { nextStepId });
@@ -89,7 +89,7 @@ suite('the follow-up draft of a next step on PostgreSQL (#3101)', () => {
           hint,
         ),
       );
-    const links = () => rows<{ token_sha256: string }>('SELECT token_sha256 FROM crove_crm.quote_link WHERE org_id = $1', [orgId]);
+    const links = () => rows<{ token_sha256: string }>('SELECT token_sha256 FROM ludy_crm.quote_link WHERE org_id = $1', [orgId]);
     const sentCount = async () => ({
       mail: (await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.mail_message WHERE org_id = $1', [orgId]))[0]?.n,
       messages: (await rows<{ n: string }>('SELECT count(*)::text AS n FROM ludy_kernel.conversation_message WHERE org_id = $1', [orgId]))[0]?.n,
@@ -240,13 +240,13 @@ suite('the follow-up draft of a next step on PostgreSQL (#3101)', () => {
     await o.sentQuote(deal.id, 6, 20);
     await o.raise();
     const step = await o.stepOf(deal.id);
-    const before = { sent: await o.sentCount(), step: await rows('SELECT status, snoozed_until, resolved_at FROM crove_crm.deal_next_step WHERE org_id = $1 AND id = $2', [o.orgId, step.id]), deal: await rows('SELECT updated_at, stage_id FROM crove_crm.deal WHERE org_id = $1 AND id = $2', [o.orgId, deal.id]), quote: await rows('SELECT status, version, sent_at FROM crove_crm.quote WHERE org_id = $1', [o.orgId]) };
+    const before = { sent: await o.sentCount(), step: await rows('SELECT status, snoozed_until, resolved_at FROM ludy_crm.deal_next_step WHERE org_id = $1 AND id = $2', [o.orgId, step.id]), deal: await rows('SELECT updated_at, stage_id FROM ludy_crm.deal WHERE org_id = $1 AND id = $2', [o.orgId, deal.id]), quote: await rows('SELECT status, version, sent_at FROM ludy_crm.quote WHERE org_id = $1', [o.orgId]) };
     const crmFollowup: CrmFollowupGenerator = async () => ({ output: GOOD_WORDS, usage: { inputTokens: 1, outputTokens: 1 } });
     await o.draft(o.member, step.id, { crmFollowup });
     expect(await o.sentCount()).toEqual(before.sent);
-    expect(await rows('SELECT status, snoozed_until, resolved_at FROM crove_crm.deal_next_step WHERE org_id = $1 AND id = $2', [o.orgId, step.id])).toEqual(before.step);
-    expect(await rows('SELECT updated_at, stage_id FROM crove_crm.deal WHERE org_id = $1 AND id = $2', [o.orgId, deal.id])).toEqual(before.deal);
-    expect(await rows('SELECT status, version, sent_at FROM crove_crm.quote WHERE org_id = $1', [o.orgId])).toEqual(before.quote);
+    expect(await rows('SELECT status, snoozed_until, resolved_at FROM ludy_crm.deal_next_step WHERE org_id = $1 AND id = $2', [o.orgId, step.id])).toEqual(before.step);
+    expect(await rows('SELECT updated_at, stage_id FROM ludy_crm.deal WHERE org_id = $1 AND id = $2', [o.orgId, deal.id])).toEqual(before.deal);
+    expect(await rows('SELECT status, version, sent_at FROM ludy_crm.quote WHERE org_id = $1', [o.orgId])).toEqual(before.quote);
     // The one write is the link, by the member's own command, audited without a price or a word of the draft.
     const audit = await rows<{ actor_id: string; detail: Record<string, unknown> }>("SELECT actor_id, detail FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'crm.quote.create_link'", [o.orgId]);
     expect(audit).toHaveLength(1);
@@ -265,7 +265,7 @@ suite('the follow-up draft of a next step on PostgreSQL (#3101)', () => {
     expect(got.text).toContain('Báo giá còn hiệu lực 2 ngày nữa.');
 
     // The quote is declined: nobody waits for it, and the step has nothing to remind about until the daily run closes it.
-    await rows("UPDATE crove_crm.quote SET status = 'declined', decided_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, quote.id]);
+    await rows("UPDATE ludy_crm.quote SET status = 'declined', decided_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, quote.id]);
     await expect(o.source(o.member, step.id)).rejects.toMatchObject({ code: 'QUOTE_NOT_WAITING' });
     await o.raise();
     await expect(o.source(o.member, step.id)).rejects.toMatchObject({ code: 'NEXT_STEP_NOT_OPEN' });
@@ -288,12 +288,12 @@ suite('the follow-up draft of a next step on PostgreSQL (#3101)', () => {
     expect(revision.id).not.toBe(old.id);
 
     // The old quote expires (its last day was yesterday): it is no longer reminded about, and the revision still is not the quote of an unanswered step's days.
-    await rows("UPDATE crove_crm.quote SET valid_until = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1 WHERE org_id = $1 AND id = $2", [o.orgId, old.id]);
+    await rows("UPDATE ludy_crm.quote SET valid_until = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1 WHERE org_id = $1 AND id = $2", [o.orgId, old.id]);
     const after = await o.source(o.member, step.id);
     expect(after.quote?.id).toBe(revision.id);
     expect(after.days).toBe(1);
     // With every sent quote expired there is nothing to remind about, and no link is made.
-    await rows("UPDATE crove_crm.quote SET valid_until = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1 WHERE org_id = $1 AND id = $2", [o.orgId, revision.id]);
+    await rows("UPDATE ludy_crm.quote SET valid_until = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date - 1 WHERE org_id = $1 AND id = $2", [o.orgId, revision.id]);
     await expect(o.source(o.member, step.id)).rejects.toMatchObject({ code: 'QUOTE_NOT_WAITING' });
     expect(await o.links()).toHaveLength(0);
   });
@@ -308,7 +308,7 @@ suite('the follow-up draft of a next step on PostgreSQL (#3101)', () => {
     expect(step.reason).toBe('quote_unanswered');
     expect((await o.source(o.member, step.id)).quote?.label).toBe('BG-2026-0500');
     // The deal moves to customer B (the quote keeps A as its customer); its step is a quote step whose quote is not B's.
-    await rows('UPDATE crove_crm.deal SET party_id = $3 WHERE org_id = $1 AND id = $2', [o.orgId, deal.id, b]);
+    await rows('UPDATE ludy_crm.deal SET party_id = $3 WHERE org_id = $1 AND id = $2', [o.orgId, deal.id, b]);
     const linksBefore = (await o.links()).length;
     await expect(o.source(o.member, step.id)).rejects.toMatchObject({ code: 'QUOTE_NOT_WAITING' });
     expect(await o.links()).toHaveLength(linksBefore);
@@ -320,7 +320,7 @@ suite('the follow-up draft of a next step on PostgreSQL (#3101)', () => {
     const quietStep = await o.stepOf(quiet.id);
     expect(quietStep.reason).toBe('no_activity');
     expect((await o.source(o.member, quietStep.id)).quote?.label).toBe('BG-2026-0501');
-    await rows('UPDATE crove_crm.deal SET party_id = $3 WHERE org_id = $1 AND id = $2', [o.orgId, quiet.id, b]);
+    await rows('UPDATE ludy_crm.deal SET party_id = $3 WHERE org_id = $1 AND id = $2', [o.orgId, quiet.id, b]);
     const facts = await o.source(o.member, quietStep.id);
     expect(facts).toMatchObject({ contactName: 'Công ty B', contactEmail: 'b@khach.test', quote: null });
     const got = await o.draft(o.member, quietStep.id, null);

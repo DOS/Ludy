@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Settings in tabs (ST-1, #3589): the strip the shell draws, the address of each tab, where an old link to the single page lands, and that every link in the app that names a card of
-// Settings lands on the tab that holds it.
+// Settings sub-pages (ST-1, #3589; moved to the left sidebar in #4499): the secondary sidebar menu, the address of each sub-page, where an old link to the single page lands,
+// and that every link in the app that names a card of Settings lands on the sub-page that holds it.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { MODULE_SCREENS } from '@ludy/kernel-contract';
@@ -8,7 +8,7 @@ import { createMemoryHistory, createRouter } from '@tanstack/react-router';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
-import { ALL_NAV, TAB_GROUPS, currentMenuItem, tabGroupOfPath } from '../src/lib/apps.ts';
+import { ALL_NAV, SETTINGS_ITEMS, TAB_GROUPS, currentMenuItem, isSettingsPath, tabGroupOfPath } from '../src/lib/apps.ts';
 import { installedItems } from '../src/lib/modules.ts';
 import { CARD_TAB, SETTINGS_CARD, SETTINGS_TABS, SETTINGS_TAB_PATH, SETTINGS_TAB_TO, legacySettingsTab } from '../src/routes/settings/tabs.ts';
 
@@ -31,51 +31,60 @@ beforeAll(async () => {
   ({ router } = await import('../src/router.tsx'));
 }, 30_000);
 
-const group = TAB_GROUPS.find((g) => g.menu === 'settings');
-
-describe('the tab strip of Settings', () => {
-  it('has the eleven tabs, the first on the address Settings always had', () => {
-    expect(group?.tabs.map((tab) => tab.path)).toEqual(SETTINGS_TABS.map((tab) => SETTINGS_TAB_PATH[tab]));
-    expect(group?.tabs[0]?.path).toBe('settings');
-    expect(group?.tabs.map((tab) => tab.label)).toEqual(['org', 'settingsMembers', 'settingsApps', 'settingsBookings', 'settingsSales', 'settingsQuotes', 'settingsAccounting', 'settingsConnections', 'settingsNotifications', 'settingsSecurity', 'settingsData']);
-  });
-
-  it('names every tab in both languages, with the words of the issue', () => {
-    expect(group?.tabs.map((tab) => viMessages.nav[tab.label])).toEqual(['Tổ chức', 'Thành viên và quyền', 'Ứng dụng', 'Lịch hẹn', 'Bán hàng', 'Báo giá', 'Kế toán và thuế', 'Kết nối', 'Thông báo của tôi', 'Bảo mật tài khoản', 'Dữ liệu và xóa tổ chức']);
-    expect(group?.tabs.map((tab) => en.nav[tab.label])).toEqual(['Organization', 'Members and roles', 'Apps', 'Bookings', 'Sales', 'Quotes', 'Accounting and tax', 'Connections', 'My notifications', 'Account security', 'Data and deleting the organization']);
-  });
-
-  it('gives each tab its own address, and Settings stays the one menu item lit on all of them', () => {
+describe('the sidebar menu of Settings (#4499)', () => {
+  it('removes settings from TAB_GROUPS so ScreenTabs renders no horizontal strip above Settings', () => {
+    expect(TAB_GROUPS.find((g) => g.menu === 'settings')).toBeUndefined();
     for (const tab of SETTINGS_TABS) {
       const path = SETTINGS_TAB_PATH[tab];
-      expect(tabGroupOfPath(`/o/acme/${path}`)?.menu, path).toBe('settings');
-      expect(currentMenuItem(`/o/acme/${path}`), path).toBe('/o/$slug/settings');
+      expect(tabGroupOfPath(`/o/acme/${path}`), path).toBeNull();
+    }
+  });
+
+  it('has the eleven sub-pages in order, the first on the address Settings always had', () => {
+    expect(SETTINGS_ITEMS.map((item) => item.to.slice('/o/$slug/'.length))).toEqual(SETTINGS_TABS.map((tab) => SETTINGS_TAB_PATH[tab]));
+    expect(SETTINGS_ITEMS[0]?.to).toBe('/o/$slug/settings');
+    expect(SETTINGS_ITEMS.map((item) => item.label)).toEqual(['org', 'settingsMembers', 'settingsApps', 'settingsBookings', 'settingsSales', 'settingsQuotes', 'settingsAccounting', 'settingsConnections', 'settingsNotifications', 'settingsSecurity', 'settingsData']);
+  });
+
+  it('names every sub-page in both languages, with the words of the issue', () => {
+    expect(SETTINGS_ITEMS.map((item) => viMessages.nav[item.label])).toEqual(['Tổ chức', 'Thành viên và quyền', 'Ứng dụng', 'Lịch hẹn', 'Bán hàng', 'Báo giá', 'Kế toán và thuế', 'Kết nối', 'Thông báo của tôi', 'Bảo mật tài khoản', 'Dữ liệu và xóa tổ chức']);
+    expect(SETTINGS_ITEMS.map((item) => en.nav[item.label])).toEqual(['Organization', 'Members and roles', 'Apps', 'Bookings', 'Sales', 'Quotes', 'Accounting and tax', 'Connections', 'My notifications', 'Account security', 'Data and deleting the organization']);
+  });
+
+  it('gives each sub-page its own address, marks Settings on the rail, and highlights only that sub-page in the menu', () => {
+    for (const tab of SETTINGS_TABS) {
+      const path = SETTINGS_TAB_PATH[tab];
+      expect(isSettingsPath(`/o/acme/${path}`), path).toBe(true);
+      expect(currentMenuItem(`/o/acme/${path}`), path).toBe(`/o/$slug/${path}`);
       expect(SETTINGS_TAB_TO[tab]).toBe(`/o/$slug/${path}`);
       expect(MODULE_SCREENS.kernel.routes.map((route) => route.path), path).toContain(path);
     }
   });
 
-  it('shows the accounting tab only where finance runs, the sales and quotes tabs where crm runs, and the connections tab where finance runs', () => {
-    const tabsFor = (modules: string[]) => installedItems(modules, ALL_NAV).filter((item) => group?.tabs.some((tab) => `/o/$slug/${tab.path}` === item.to)).map((item) => item.to.replace('/o/$slug/', ''));
-    expect(tabsFor(['kernel'])).toEqual(['settings', 'settings/members', 'settings/apps', 'settings/bookings', 'settings/notifications', 'settings/security', 'settings/data']);
-    expect(tabsFor(['kernel', 'crm'])).toContain('settings/sales');
-    expect(tabsFor(['kernel', 'crm'])).toContain('settings/quotes');
-    expect(tabsFor(['kernel', 'finance'])).not.toContain('settings/sales');
-    expect(tabsFor(['kernel', 'finance'])).toContain('settings/accounting');
-    expect(tabsFor(['kernel', 'finance'])).toContain('settings/connections');
-    expect(tabsFor(['kernel', 'meetings'])).not.toContain('settings/connections');
-    expect(tabsFor(['kernel', 'meetings'])).not.toContain('settings/accounting');
+  it('shows the accounting sub-page only where finance runs, sales and quotes where crm runs, and connections where finance runs', () => {
+    const itemsFor = (modules: string[]) => installedItems(modules, SETTINGS_ITEMS).map((item) => item.to.replace('/o/$slug/', ''));
+    expect(itemsFor(['kernel'])).toEqual(['settings', 'settings/members', 'settings/apps', 'settings/bookings', 'settings/notifications', 'settings/security', 'settings/data']);
+    expect(itemsFor(['kernel', 'crm'])).toContain('settings/sales');
+    expect(itemsFor(['kernel', 'crm'])).toContain('settings/quotes');
+    expect(itemsFor(['kernel', 'finance'])).not.toContain('settings/sales');
+    expect(itemsFor(['kernel', 'finance'])).toContain('settings/accounting');
+    expect(itemsFor(['kernel', 'finance'])).toContain('settings/connections');
+    expect(itemsFor(['kernel', 'meetings'])).not.toContain('settings/connections');
+    expect(itemsFor(['kernel', 'meetings'])).not.toContain('settings/accounting');
+    // ALL_NAV keeps all installed Settings routes discoverable in Ctrl K.
+    const paletteFor = (modules: string[]) => installedItems(modules, ALL_NAV).filter((item) => item.to.startsWith('/o/$slug/settings')).map((item) => item.to.replace('/o/$slug/', ''));
+    expect(paletteFor(['kernel'])).toEqual(['settings', 'settings/members', 'settings/apps', 'settings/bookings', 'settings/notifications', 'settings/security', 'settings/data']);
   });
 
-  it('draws the strip so a phone scrolls it sideways instead of stacking seven tabs', () => {
+  it('still draws ScreenTabs for app tab groups so a phone scrolls them sideways', () => {
     const strip = readFileSync(new URL('../src/components/screen-tabs.tsx', import.meta.url), 'utf8');
     expect(strip).toMatch(/<ul [^>]*className="[^"]*overflow-x-auto/);
     expect(strip).toMatch(/whitespace-nowrap/);
   });
 });
 
-describe('a card of Settings sits in one tab', () => {
-  it('maps every linkable card to a tab of the strip', () => {
+describe('a card of Settings sits in one sub-page', () => {
+  it('maps every linkable card to a Settings sub-page', () => {
     for (const [id, tab] of Object.entries(CARD_TAB)) expect(SETTINGS_TABS, id).toContain(tab);
     expect(Object.keys(CARD_TAB).toSorted()).toEqual(Object.values(SETTINGS_CARD).toSorted());
   });

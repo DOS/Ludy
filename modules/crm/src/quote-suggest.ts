@@ -36,7 +36,7 @@ export const quoteSuggestSource = defineQuery({
   handler: async (ctx, input): Promise<QuoteSuggestSource> => {
     const deal = await sql<{ title: string; amount: string; party_id: string; party_name: string }>`
       SELECT d.title, d.amount::text AS amount, d.party_id, p.name AS party_name
-      FROM crove_crm.deal d
+      FROM ludy_crm.deal d
       JOIN ludy_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
       WHERE d.org_id = ${ctx.orgId}::uuid AND d.id = ${input.dealId}::uuid`.execute(ctx.trx);
     const row = deal.rows[0];
@@ -56,8 +56,8 @@ export const quoteSuggestSource = defineQuery({
     const earlier = await sql<{ description: string; unit: string | null; unit_price: string; vat_rate: string }>`
       SELECT h.description, h.unit, h.unit_price, h.vat_rate FROM (
         SELECT DISTINCT ON (pg_catalog.lower(l.description)) l.description, l.unit, l.unit_price::text AS unit_price, l.vat_rate, q.created_at
-        FROM crove_crm.quote_line l
-        JOIN crove_crm.quote q ON q.org_id = l.org_id AND q.id = l.quote_id
+        FROM ludy_crm.quote_line l
+        JOIN ludy_crm.quote q ON q.org_id = l.org_id AND q.id = l.quote_id
         WHERE q.org_id = ${ctx.orgId}::uuid AND q.party_id = ${row.party_id}::uuid AND l.kind = 'item'
         ORDER BY pg_catalog.lower(l.description), q.created_at DESC, l.line_no
       ) h

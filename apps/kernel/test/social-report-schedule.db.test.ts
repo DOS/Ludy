@@ -68,8 +68,8 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
   async function published(o: { orgId: string; owner: string }, conn: string, at: string, metrics: Record<string, number>) {
     const { postId } = await exec<{ postId: string }>(o, o.owner, 'social.post.create', { body: 'Bài', channels: [{ connectionId: conn }] });
     await admin(async (c) => {
-      const { rows } = await c.query<{ id: string }>("UPDATE crove_social.post_variant SET status = 'published', published_at = $2 WHERE post_id = $1 RETURNING id", [postId, at]);
-      await c.query("INSERT INTO crove_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, 'k', $3)", [o.orgId, rows[0]?.id, JSON.stringify(metrics)]);
+      const { rows } = await c.query<{ id: string }>("UPDATE ludy_social.post_variant SET status = 'published', published_at = $2 WHERE post_id = $1 RETURNING id", [postId, at]);
+      await c.query("INSERT INTO ludy_social.metric_snapshot (org_id, variant_id, capture_key, metrics) VALUES ($1, $2, 'k', $3)", [o.orgId, rows[0]?.id, JSON.stringify(metrics)]);
     });
     return postId;
   }
@@ -151,8 +151,8 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
   it('moves a schedule whose run fails down the due scan, so it never starves the others (#736)', async () => {
     const o = await org();
     const { scheduleId } = await exec<{ scheduleId: string }>(o, o.owner, 'social.report_schedule.save', { ...weekly, recipients: ['a@example.vn'] });
-    await admin((c) => c.query("UPDATE crove_social.report_schedule SET next_run_at = now() - interval '1 hour' WHERE id = $1", [scheduleId]));
-    const due = () => admin(async (c) => (await c.query<{ schedule_id: string }>('SELECT schedule_id FROM crove_social.report_schedules_due(1000)')).rows.map((r) => r.schedule_id));
+    await admin((c) => c.query("UPDATE ludy_social.report_schedule SET next_run_at = now() - interval '1 hour' WHERE id = $1", [scheduleId]));
+    const due = () => admin(async (c) => (await c.query<{ schedule_id: string }>('SELECT schedule_id FROM ludy_social.report_schedules_due(1000)')).rows.map((r) => r.schedule_id));
     expect(await due()).toContain(scheduleId);
     // Every run of this schedule fails; the sweep records nothing and defers it.
     const failing = {
@@ -160,7 +160,7 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
     } as unknown as typeof worker;
     expect(await sweepReportSchedules({ runtime: failing, workerDb })).toBe(0);
     expect(await due()).not.toContain(scheduleId);
-    const next = await admin(async (c) => (await c.query<{ at: Date }>('SELECT next_run_at AS at FROM crove_social.report_schedule WHERE id = $1', [scheduleId])).rows[0]?.at);
+    const next = await admin(async (c) => (await c.query<{ at: Date }>('SELECT next_run_at AS at FROM ludy_social.report_schedule WHERE id = $1', [scheduleId])).rows[0]?.at);
     expect((next?.getTime() ?? 0) - Date.now()).toBeGreaterThan(25 * 60_000);
     // A schedule not due is left alone.
     expect(await worker.execute('social.report_schedule.defer', { scheduleId }, { actor: { type: 'system', component: 'test' }, orgId: o.orgId })).toEqual({ deferred: false });
@@ -180,7 +180,7 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
       );
     }
     const { scheduleId } = await exec<{ scheduleId: string }>(o, o.owner, 'social.report_schedule.save', { ...weekly, recipients: ['re.port_user@gmail.com', 'cap-other@example.vn'] });
-    await admin((c) => c.query("UPDATE crove_social.report_schedule SET next_run_at = now() - interval '1 hour' WHERE id = $1", [scheduleId]));
+    await admin((c) => c.query("UPDATE ludy_social.report_schedule SET next_run_at = now() - interval '1 hour' WHERE id = $1", [scheduleId]));
     expect(await sweepReportSchedules({ runtime: worker, workerDb })).toBe(1);
     const mails = await admin(async (c) => (await c.query<{ to_address: string; status: string; error_code: string | null; payload: { orgName?: string } }>("SELECT to_address, status, error_code, payload FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'social.report_schedule.run' ORDER BY to_address", [o.orgId])).rows);
     expect(mails.map((m) => [m.to_address, m.status, m.error_code])).toEqual([
@@ -203,7 +203,7 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
     await send('edge@example.vn', 'suppressed', '1 hour');
     await send('edge@example.vn', 'queued', '25 hours');
     const edge = await exec<{ scheduleId: string }>(third, third.owner, 'social.report_schedule.save', { ...weekly, recipients: ['edge@example.vn'] });
-    await admin((c) => c.query("UPDATE crove_social.report_schedule SET next_run_at = now() - interval '1 hour' WHERE id = $1", [edge.scheduleId]));
+    await admin((c) => c.query("UPDATE ludy_social.report_schedule SET next_run_at = now() - interval '1 hour' WHERE id = $1", [edge.scheduleId]));
     expect(await sweepReportSchedules({ runtime: worker, workerDb })).toBe(1);
     const fifth = await admin(async (c) => (await c.query<{ status: string }>("SELECT status FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'social.report_schedule.run'", [third.orgId])).rows);
     expect(fifth.map((m) => m.status)).toEqual(['queued']);
@@ -214,7 +214,7 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
     const c = new pg.Client({ connectionString: app.toString() });
     await c.connect();
     try {
-      await expect(c.query("SELECT crove_social.report_mail_recipient_gate('x@example.vn', 5)")).rejects.toMatchObject({ code: '42501' });
+      await expect(c.query("SELECT ludy_social.report_mail_recipient_gate('x@example.vn', 5)")).rejects.toMatchObject({ code: '42501' });
     } finally {
       await c.end();
     }
@@ -230,7 +230,7 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
     const { scheduleId } = await exec<{ scheduleId: string }>(o, o.owner, 'social.report_schedule.save', { ...weekly, recipients: ['a@example.vn', 'b@example.vn', 'chan@example.vn'] });
     // Not due yet: nothing runs.
     expect(await sweepReportSchedules({ runtime: worker, workerDb })).toBe(0);
-    await admin((c) => c.query("UPDATE crove_social.report_schedule SET next_run_at = '2026-10-19T01:00:00Z' WHERE id = $1", [scheduleId]));
+    await admin((c) => c.query("UPDATE ludy_social.report_schedule SET next_run_at = '2026-10-19T01:00:00Z' WHERE id = $1", [scheduleId]));
     expect(await sweepReportSchedules({ runtime: worker, workerDb })).toBe(1);
     // Run once: a second pass finds it not due.
     expect(await sweepReportSchedules({ runtime: worker, workerDb })).toBe(0);
@@ -265,14 +265,14 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
     const stored = await admin(async (c) => (await c.query<{ row: string }>("SELECT row_to_json(m)::text AS row FROM ludy_kernel.mail_message m WHERE source = 'social.report_schedule.run'")).rows.map((r) => r.row).join(' '));
     expect(stored).not.toContain(tokens[0]);
     // The links a schedule makes are not the org's manual links.
-    const linkOf = (token: string | undefined) => admin(async (c) => (await c.query<{ revoked_at: Date | null }>('SELECT revoked_at FROM crove_social.report_link WHERE token_sha256 = encode(sha256(convert_to($1, \'UTF8\')), \'hex\')', [token])).rows[0]);
+    const linkOf = (token: string | undefined) => admin(async (c) => (await c.query<{ revoked_at: Date | null }>('SELECT revoked_at FROM ludy_social.report_link WHERE token_sha256 = encode(sha256(convert_to($1, \'UTF8\')), \'hex\')', [token])).rows[0]);
     expect(await linkOf(tokens[0])).toMatchObject({ revoked_at: null });
     expect(await rt.query<ReportLinkView[]>('social.report_link.list', {}, { actor: asUser(o.owner), orgId: o.orgId })).toEqual([]);
     const after = await list(o);
     expect(after[0]?.runs[0]?.mails.map((m) => m.status)).toEqual(['sent', 'sent', 'suppressed']);
     // A paused schedule does not run.
     await exec(o, o.owner, 'social.report_schedule.save', { ...weekly, scheduleId, recipients: ['a@example.vn'], paused: true });
-    await admin((c) => c.query("UPDATE crove_social.report_schedule SET next_run_at = now() - interval '1 hour' WHERE id = $1", [scheduleId]));
+    await admin((c) => c.query("UPDATE ludy_social.report_schedule SET next_run_at = now() - interval '1 hour' WHERE id = $1", [scheduleId]));
     expect(await sweepReportSchedules({ runtime: worker, workerDb })).toBe(0);
     // Removing the schedule revokes the links it mailed: the report no longer opens.
     await exec(o, o.owner, 'social.report_schedule.remove', { scheduleId });
@@ -309,7 +309,7 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
     await exec(o, o.owner, 'social.report_schedule.save', { ...weekly, scheduleId, recipients, paused: true });
     expect((await list(o))[0]).toMatchObject({ paused: true, note: 'Chào anh chị <b>', labelId: sale, sections: ['note', 'top', 'channels'], topCount: 3 });
     await exec(o, o.owner, 'social.report_schedule.save', { ...weekly, scheduleId, recipients, paused: false });
-    await admin((c) => c.query("UPDATE crove_social.report_schedule SET next_run_at = '2026-10-19T01:00:00Z' WHERE id = $1", [scheduleId]));
+    await admin((c) => c.query("UPDATE ludy_social.report_schedule SET next_run_at = '2026-10-19T01:00:00Z' WHERE id = $1", [scheduleId]));
     expect(await sweepReportSchedules({ runtime: worker, workerDb })).toBe(1);
     // The mail's data: the label's post alone, no totals (not chosen), the note; no goals under a label.
     const payload = await admin(async (c) => (await c.query<{ payload: Record<string, unknown> }>("SELECT payload FROM ludy_kernel.mail_message WHERE org_id = $1 AND source = 'social.report_schedule.run'", [o.orgId])).rows[0]?.payload);
@@ -345,7 +345,7 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
     const { scheduleId } = await exec<{ scheduleId: string }>(o, o.owner, 'social.report_schedule.save', { ...weekly, recipients });
     // A schedule without the options is as before: every section, every post, the audience.
     expect((await list(o))[0]).toMatchObject({ note: null, labelId: null, includeAudience: true, sections: null, topCount: null });
-    const update = (set: string, value: unknown) => admin((c) => c.query(`UPDATE crove_social.report_schedule SET ${set} = $2 WHERE id = $1`, [scheduleId, value]));
+    const update = (set: string, value: unknown) => admin((c) => c.query(`UPDATE ludy_social.report_schedule SET ${set} = $2 WHERE id = $1`, [scheduleId, value]));
     for (const [set, value] of [
       ['sections', ['top', 'top']],
       ['sections', ['secret']],
@@ -362,7 +362,7 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
     const privileges = await admin(async (c) =>
       (
         await c.query<{ col: string; ok: boolean }>(
-          `SELECT col, pg_catalog.has_column_privilege('ludy_tenant', 'crove_social.report_schedule', col, 'UPDATE') AND pg_catalog.has_column_privilege('ludy_tenant', 'crove_social.report_schedule', col, 'INSERT') AS ok
+          `SELECT col, pg_catalog.has_column_privilege('ludy_tenant', 'ludy_social.report_schedule', col, 'UPDATE') AND pg_catalog.has_column_privilege('ludy_tenant', 'ludy_social.report_schedule', col, 'INSERT') AS ok
              FROM unnest(ARRAY['sections', 'top_count', 'note', 'label_id', 'include_audience']) col ORDER BY 1`,
         )
       ).rows,
@@ -390,7 +390,7 @@ suite('scheduled client report mail on PostgreSQL (#704)', () => {
   it('keeps the due scan to the worker', async () => {
     const grants = await admin(
       async (c) =>
-        (await c.query<{ grantee: string }>("SELECT grantee FROM information_schema.role_routine_grants WHERE routine_schema = 'crove_social' AND routine_name = 'report_schedules_due' AND grantee <> 'postgres' ORDER BY 1")).rows.map(
+        (await c.query<{ grantee: string }>("SELECT grantee FROM information_schema.role_routine_grants WHERE routine_schema = 'ludy_social' AND routine_name = 'report_schedules_due' AND grantee <> 'postgres' ORDER BY 1")).rows.map(
           (r) => r.grantee,
         ),
     );

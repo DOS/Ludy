@@ -1,39 +1,34 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
-import { useRef, useState, type DragEvent } from 'react';
+import { useMemo, useRef, useState, type DragEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { JOURNAL_VOUCHER_KIND, type FileStatus } from '@ludy/kernel-contract';
-import { Badge } from '@ludy/ui/components/badge';
+import { JOURNAL_VOUCHER_KIND } from '@ludy/kernel-contract';
 import { Button } from '@ludy/ui/components/button';
 import { Card } from '@ludy/ui/components/card';
 import { Checkbox } from '@ludy/ui/components/checkbox';
 import { Label } from '@ludy/ui/components/label';
-import { TableCell, TableRow } from '@ludy/ui/components/table';
+import { NavIcon } from '@ludy/ui/components/nav-icon';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@ludy/ui/components/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { cn } from '@ludy/ui/lib/utils';
 import { UploadEntityPicker, useChosenEntity, useLegalEntity } from '../components/entity-switcher.tsx';
 import { AiMeter } from '../components/ai-meter.tsx';
+import { InboxActionStrip, InboxFileChip } from '../components/inbox-action-strip.tsx';
 import { IntakePanel, useIntake } from '../components/intake.tsx';
-import { LookupOriginalCard } from '../components/lookup-original-card.tsx';
 import { ProposalBadges } from '../components/proposal-badges.tsx';
+import { ProposalDetail } from '../components/proposal-detail.tsx';
 import { ProposalGroups } from '../components/proposal-groups.tsx';
-import { StagedMarketplace } from '../components/staged-marketplace.tsx';
-import { StagedMarketplaceColumns } from '../components/staged-marketplace-columns.tsx';
-import { StagedMarketplaceIncome } from '../components/staged-marketplace-income.tsx';
-import { StagedStatements } from '../components/staged-statements.tsx';
 import { StepUpPrompt, TwoFactorOffer } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
 import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { listedEntity } from '../lib/legal-entity-choice.ts';
 import { cleanGroups } from '../lib/proposal-groups.ts';
-import { SM_UP, useMediaQuery } from '../lib/media.ts';
+import { INBOX_SPLIT_UP, SM_UP, useMediaQuery } from '../lib/media.ts';
 import { browserCodec, needsShrink, preparePhotos } from '../lib/photo.ts';
 import { useReviewShortcuts } from '../lib/review-shortcuts.ts';
 import { getConfig } from '../lib/auth.ts';
 import { useFormat } from '../i18n/provider.tsx';
 import { REVERSAL_KIND } from '../lib/reversal.ts';
-import { providerName } from '../lib/social.ts';
-import { FILE_STATE_VARIANT, fileChipVariant, fileProposal, type FileState } from '../lib/status.ts';
 import { toast } from '../lib/toast.ts';
 import { VOUCHER_KIND } from '../lib/vouchers.ts';
 import {
@@ -77,224 +72,9 @@ interface BulkRun {
 // One proposal as the Inbox lists it.
 type InboxItem = Awaited<ReturnType<typeof client.inbox.list>>[number];
 
-// A file's chip, as the intake list shows the same state (lib/status.ts, #2000).
-function isFileStatus(status: string): status is FileState {
-  return Object.hasOwn(FILE_STATE_VARIANT, status);
-}
-
-// Bank statement lines with no voucher yet, per bank account (#326, stage 2b): each links to its account and the month
-// of its oldest open line on the bank screen, where its voucher is entered.
-function OpenBankLines({ slug }: { slug: string }) {
-  const t = useTranslations('inbox');
-  const f = useFormat();
-  // The lines of the entity chosen in the shell (#1280), the books the bank screen opens on.
-  const entity = useChosenEntity();
-  const open = useQuery({ ...orpc.bank.openLines.queryOptions({ input: { legalEntityId: entity.legalEntityId } }), enabled: entity.ready });
-  const accounts = (open.data?.accounts ?? []).filter((a) => a.open > 0);
-  if (accounts.length === 0) return null;
-  return (
-    <Card className="mt-6 block p-4">
-      <p className="text-sm font-medium text-foreground">{t('bankLines.title')}</p>
-      <ul className="mt-2 space-y-1 text-sm">
-        {accounts.map((a) => (
-          <li key={a.bankAccount}>
-            <Link to="/o/$slug/bank" params={{ slug }} search={{ account: a.bankAccount, month: a.oldest.slice(0, 7) }} className="text-link underline">
-              {t('bankLines.account', { account: a.bankAccount, count: a.open, ambiguous: a.ambiguous, date: f.date(a.oldest) })}
-            </Link>
-          </li>
-        ))}
-      </ul>
-    </Card>
-  );
-}
-
-// The kind of work a failed job did, by the queue it ran on (apps/kernel/src/jobs-schema.ts), for the line that names it.
-type FailedWork = 'extract' | 'portalList' | 'yearArchive' | 'mail' | 'socialPublish' | 'social' | 'notify' | 'booking' | 'agent' | 'other';
-function failedWork(queue: string): FailedWork {
-  if (queue === 'finance-file-extract') return 'extract';
-  if (queue === 'finance-portal-list') return 'portalList';
-  if (queue === 'finance-year-archive') return 'yearArchive';
-  if (queue.startsWith('kernel-mail-')) return 'mail';
-  if (queue.startsWith('social-publish-')) return 'socialPublish';
-  if (queue === 'kernel-notify' || queue === 'social-notify' || queue === 'social-push') return 'notify';
-  if (queue.startsWith('social-')) return 'social';
-  if (queue.startsWith('crm-booking')) return 'booking';
-  if (queue.startsWith('kernel-agent-')) return 'agent';
-  return 'other';
-}
-
-// The one line for what waits in an app the company switched off (ADR-0053, slice e): hidden from the list, kept with its own expiry, and not approvable
-// until the app is on again. Shown only when there is something.
-function HiddenByApps() {
-  const t = useTranslations('inbox');
-  const live = useStreamLive();
-  const hidden = useQuery({ ...orpc.inbox.hidden.queryOptions({ input: {} }), refetchInterval: pollEvery(live, 60_000, SAFETY_POLL_MS) });
-  const count = hidden.data?.count ?? 0;
-  if (count === 0) return null;
-  return (
-    <p data-hidden-apps className="text-sm text-muted-foreground">
-      {t('hiddenApps', { count: String(count) })}
-    </p>
-  );
-}
-
-// Background work of the org that failed after its last retry (#1720), for owners and admins (the list is empty for
-// others): each stays until someone dismisses it. It names the kind of work, when and the job's number, never what
-// the job carried; the operator finds the rest by that number.
-function FailedJobs() {
-  const t = useTranslations('inbox.failedJobs');
-  const f = useFormat();
-  const live = useStreamLive();
-  const raised = useQuery({ ...orpc.inbox.raised.queryOptions({ input: {} }), refetchInterval: pollEvery(live, 60_000, SAFETY_POLL_MS) });
-  const dismiss = useMutation(
-    orpc.inbox.dismiss.mutationOptions({
-      onSuccess: () => void queryClient.invalidateQueries({ queryKey: orpc.inbox.raised.key() }),
-      onError: (error) => toast(errorMessage(error), 'error'),
-    }),
-  );
-  const data = raised.data;
-  if (!data || data.total === 0) return null;
-  return (
-    <Card className="mt-6 block p-4">
-      <p className="text-sm font-medium text-foreground">{t('title', { count: data.total })}</p>
-      <p className="mt-1 text-xs text-muted-foreground">{t('hint')}</p>
-      <ul className="mt-2 divide-y text-sm">
-        {data.items.map((item) => (
-          <li key={item.id} className="flex items-start justify-between gap-3 py-2">
-            <div className="min-w-0">
-              <p className="text-foreground">
-                {item.failures > 1
-                  ? t('itemRepeated', { work: t(`work.${failedWork(item.queue)}`, { queue: item.queue }), failures: item.failures, count: item.retries + 1 })
-                  : t('item', { work: t(`work.${failedWork(item.queue)}`, { queue: item.queue }), count: item.retries + 1 })}
-              </p>
-              <p className="text-xs text-subtle-foreground">{t('meta', { when: f.dateTime(item.lastAt), job: item.jobId.slice(0, 8) })}</p>
-            </div>
-            <Button variant="outline" size="sm" disabled={dismiss.isPending} onClick={() => dismiss.mutate({ id: item.id })}>
-              {t('dismiss')}
-            </Button>
-          </li>
-        ))}
-      </ul>
-      {data.total > data.items.length && <p className="mt-2 text-xs text-muted-foreground">{t('more', { count: data.total - data.items.length })}</p>}
-    </Card>
-  );
-}
-
-// Mails with no invoice attached whose text held the seller's lookup link or code (#2286): each is a card to open the
-// provider's page, copy the code and upload the XML it gives. For members of the org (the list is empty for others); an
-// item stays until someone dismisses it or it is pruned. The card shows the code, which opens the invoice for anyone who
-// has it, so nothing here is logged or sent anywhere but to the provider's page the person opens.
-function OriginalsNeeded() {
-  const t = useTranslations('inbox.originalNeeded');
-  const live = useStreamLive();
-  const list = useQuery({ ...orpc.inbox.originals.queryOptions({ input: {} }), refetchInterval: pollEvery(live, 60_000, SAFETY_POLL_MS) });
-  const dismiss = useMutation(
-    orpc.inbox.dismissOriginal.mutationOptions({
-      onSuccess: () => void queryClient.invalidateQueries({ queryKey: orpc.inbox.originals.key() }),
-      onError: (error) => toast(errorMessage(error), 'error'),
-    }),
-  );
-  const data = list.data;
-  if (!data || data.total === 0) return null;
-  return (
-    <section className="mt-6" data-testid="originals-needed">
-      <h2 className="text-sm font-medium text-foreground">{t('title', { count: data.total })}</h2>
-      <p className="mt-1 mb-3 text-xs text-muted-foreground">{t('hint')}</p>
-      {data.items.map((item) => (
-        <LookupOriginalCard
-          key={item.id}
-          hints={[{ provider: item.provider, url: item.url, code: item.code }]}
-          sellerTaxCode={null}
-          onDismiss={() => dismiss.mutate({ id: item.id })}
-          dismissing={dismiss.isPending}
-        />
-      ))}
-      {data.total > data.items.length && <p className="text-xs text-muted-foreground">{t('more', { count: data.total - data.items.length })}</p>}
-    </section>
-  );
-}
-
-// The name a proposal goes by in the list, its checkbox and the bulk report: the customer of a sale (#313; its seller is
-// the org itself), the seller of a purchase, else its title.
-// Social work that needs a person (#771): channels to reconnect and posts that did not go out, each opening where it
-// is fixed. Posts waiting for the viewer's review are not listed here: they open from Social's own review tab (#2234).
-function SocialAttention({ slug }: { slug: string }) {
-  const t = useTranslations('inbox.socialAttention');
-  const live = useStreamLive();
-  const attention = useQuery({ ...orpc.social.attentionInbox.queryOptions({ input: {} }), refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
-  const data = attention.data;
-  if (!data || data.total === 0) return null;
-  const status = (s: string) => (s === 'failed' || s === 'needs_attention' || s === 'paused' ? t(`post.${s}`) : s);
-  return (
-    <Card className="mt-6 block p-4">
-      <p className="text-sm font-medium text-foreground">{t('title', { count: data.total })}</p>
-      <ul className="mt-2 divide-y text-sm">
-        {data.channels.map((c) => (
-          <li key={c.connectionId} className="py-2">
-            <Link to="/o/$slug/social/channels" params={{ slug }} className="block text-foreground hover:underline">
-              {t(`channel.${c.status}`, { channel: `${providerName(c.provider)} · ${c.displayName}` })}
-            </Link>
-          </li>
-        ))}
-        {data.posts.map((p) => (
-          <li key={p.postId} className="py-2">
-            <Link to="/o/$slug/social/$id" params={{ slug, id: p.postId }} className="block text-foreground hover:underline">
-              {p.excerpt || t('noText')}
-            </Link>
-            <p className="text-xs text-warning">{p.channels.map((c) => `${providerName(c.provider)} · ${c.displayName}: ${status(c.status)}`).join(', ')}</p>
-          </li>
-        ))}
-      </ul>
-      {/* The total counts every post that needs a person; past the first 50, the Social home lists them all. */}
-      {data.total > data.channels.length + data.posts.length && (
-        <Link to="/o/$slug/social" params={{ slug }} className="mt-2 inline-block text-sm text-link underline">
-          {t('more', { count: data.total - data.channels.length - data.posts.length })}
-        </Link>
-      )}
-    </Card>
-  );
-}
-
-// Mails forwarded to the org's inbound address (#779): a member may start an AI draft of a Social post from one, in the
-// composer, where they pick the channels. The mail's text is read as untrusted data and the draft waits for review.
-// Only for those who write posts; a mail with neither subject nor text is left out.
-function SocialMails({ slug }: { slug: string }) {
-  const t = useTranslations('inbox.socialMails');
-  const f = useFormat();
-  const mails = useQuery(orpc.inbound.recent.queryOptions());
-  const items = (mails.data ?? []).filter((m) => m.hasText || m.subject?.trim()).slice(0, 5);
-  if (items.length === 0) return null;
-  return (
-    <Card className="mt-6 block p-4">
-      <p className="text-sm font-medium text-foreground">{t('title')}</p>
-      <p className="text-xs text-subtle-foreground">{t('hint')}</p>
-      <ul className="mt-2 divide-y text-sm">
-        {items.map((m) => (
-          <li key={m.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
-            <div className="min-w-0">
-              <p className="truncate text-foreground">{m.subject?.trim() || t('noSubject')}</p>
-              <p className="truncate text-xs text-subtle-foreground">{[m.from, f.dateTime(m.receivedAt)].filter(Boolean).join(' · ')}</p>
-            </div>
-            <Link to="/o/$slug/social/new" params={{ slug }} search={{ mail: m.id }} className="shrink-0 text-sm text-link underline">
-              {t('draft')}
-            </Link>
-          </li>
-        ))}
-      </ul>
-    </Card>
-  );
-}
-
 export function InboxPage() {
   const { slug } = useParams({ strict: false }) as { slug: string };
   const t = useTranslations('inbox');
-  const proposalWords = useTranslations('inboxDetail.status');
-  // A file's chip words: a proposed file says its proposal's status (#2009), any other its own.
-  const fileWords = (file: FileStatus) => {
-    const proposal = fileProposal(file.status, file.proposalStatus, file.voided);
-    if (proposal === 'voided') return t('fileStatus.voided');
-    return proposal ? proposalWords(proposal) : isFileStatus(file.status) ? t(`fileStatus.${file.status}`) : file.status;
-  };
   const f = useFormat();
   // The tab lives in the address (#1513), left out for the pending proposals.
   const search: InboxSearch = useSearch({ strict: false });
@@ -324,7 +104,10 @@ export function InboxPage() {
   const unclassifiedCount = countUnclassified(items.data ?? []);
   // The filter is Finance's: with Finance off its buttons are gone, so it must not go on hiding the proposals of the other apps.
   const unclassifiedFilter = tab === 'pending' && unclassifiedOnly && installedModules().includes('finance');
-  const listed = unclassifiedFilter ? (items.data ?? []).filter(hasUnclassifiedLines) : (items.data ?? []);
+  const listed = useMemo(
+    () => (unclassifiedFilter ? (items.data ?? []).filter(hasUnclassifiedLines) : (items.data ?? [])),
+    [unclassifiedFilter, items.data],
+  );
 
   // Many documents or ZIP archives at once, each file uploaded and followed on its own (#314).
   const intake = useIntake();
@@ -333,7 +116,7 @@ export function InboxPage() {
 
   // Opens the one file input as the file picker, or as the phone's rear camera for a receipt (#2384): `capture` is set for
   // the photo and removed for the picker, so the same input, and the same upload below, serve both. A photo is one file
-  // at a time; a desktop browser ignores `capture` and opens its picker either way.
+  // at a time; a desktop browser ignores `capture` and opens the picker either way.
   function openPicker(camera: boolean) {
     const input = inputRef.current;
     if (!input) return;
@@ -370,7 +153,8 @@ export function InboxPage() {
   }
 
   const attention = filesNeedingAttention(files.data ?? []);
-  const processing = attention.filter((f) => f.status === 'processing').length;
+  const processingFiles = attention.filter((f) => f.status === 'processing');
+  const failedFiles = attention.filter((f) => f.status !== 'processing');
 
   // Bulk approval (issue #315): owners and admins pick pending purchases and approve them under one step-up. The
   // kernel decides each item as if approved alone and reports the ones it refused.
@@ -441,19 +225,39 @@ export function InboxPage() {
   const bulkNotSent = bulk ? bulk.total - bulk.progress.results.length : 0;
 
   const wide = useMediaQuery(SM_UP);
+  const split = useMediaQuery(INBOX_SPLIT_UP);
+  const [selectedPreviewId, setSelectedPreviewId] = useState<string | null>(null);
+  const activePreviewId = useMemo(() => {
+    if (!split || listed.length === 0) return null;
+    if (selectedPreviewId && listed.some((item) => item.id === selectedPreviewId)) {
+      return selectedPreviewId;
+    }
+    return listed[0]?.id ?? null;
+  }, [split, listed, selectedPreviewId]);
+
   // Whose books each proposal goes to (#1543), when the caller sees several entities.
   const books = useLegalEntity(slug);
   const showEntity = books.entities.length > 1;
   const entityOf = (item: InboxItem) =>
     listedEntity(books.entities, item.legalEntityId, item.direction !== null || item.kind === VOUCHER_KIND || item.kind === JOURNAL_VOUCHER_KIND)?.name ?? '';
   // J and K (or N and P) move the focus through the list's proposals; Enter opens the focused one as any link does
-  // (DESIGN.md §5.2, #1405). The keys mean the same on a proposal's own screen (useReviewShortcuts there).
+  // (DESIGN.md §5.2, #1405). On xl screens, stepping also updates the inline split preview selection (#4520).
   const moveFocus = (step: 1 | -1) => {
     const links = [...document.querySelectorAll<HTMLAnchorElement>('[data-proposal-link]')];
-    const at = steppedIndex(links.indexOf(document.activeElement as HTMLAnchorElement), links.length, step);
+    const focusedIndex = links.indexOf(document.activeElement as HTMLAnchorElement);
+    const currentIndex =
+      focusedIndex >= 0
+        ? focusedIndex
+        : split && selectedPreviewId
+          ? links.findIndex((link) => link.dataset.proposalId === selectedPreviewId)
+          : -1;
+    const at = steppedIndex(currentIndex, links.length, step);
     if (at === null) return;
-    links[at]?.focus();
-    links[at]?.scrollIntoView({ block: 'nearest' });
+    const link = links[at];
+    link?.focus();
+    link?.scrollIntoView({ block: 'nearest' });
+    const nextId = link?.dataset.proposalId;
+    if (split && nextId) setSelectedPreviewId(nextId);
   };
   useReviewShortcuts({ next: () => moveFocus(1), previous: () => moveFocus(-1) });
   // The bulk checkbox of one proposal, for the table and the phone's blocks alike (#1270); its badges are ProposalBadges.
@@ -499,6 +303,15 @@ export function InboxPage() {
     onDrop,
   };
 
+  // Show the large 2-card welcome only when the org truly has no files or pending proposals yet; keep it a single
+  // compact bar otherwise (including while loading) so the review queue stays above the fold (#4520).
+  const showWelcome =
+    !files.isPending &&
+    !items.isPending &&
+    (files.data?.length ?? 0) === 0 &&
+    (items.data?.length ?? 0) === 0 &&
+    tab === 'pending';
+
   return (
     <>
       <PageHeader
@@ -533,31 +346,7 @@ export function InboxPage() {
         }}
       />
 
-      {/* The full welcome until the first file arrives; then one row (#1268), so the proposals sit near the top. */}
-      {(files.data?.length ?? 0) > 0 ? (
-        <div
-          {...dropTarget}
-          className={cn(
-            'flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-dashed px-4 py-3 transition-colors',
-            dragging ? 'border-ring bg-primary/10' : 'bg-card',
-          )}
-        >
-          <div className="min-w-0">
-            {/* A phone has nothing to drag from: it keeps the formats and the header's upload button. */}
-            <p className="hidden text-sm text-foreground sm:block">{t('dropHereCompact')}</p>
-            <p className="text-xs text-subtle-foreground">{config.aiEnabled ? t('formatsAll') : t('formatsXml')}</p>
-          </div>
-          {org.data?.inboundAddress && (
-            <div className="flex min-w-0 flex-wrap items-center gap-2 sm:ml-auto">
-              <span className="text-xs text-subtle-foreground">{t('forwardTo')}</span>
-              <span className="min-w-0 font-mono text-xs break-all text-foreground">{org.data.inboundAddress}</span>
-              <Button variant="outline" size="sm" onClick={() => copyAddress(org.data?.inboundAddress ?? '')}>
-                {t('copyAddress')}
-              </Button>
-            </div>
-          )}
-        </div>
-      ) : (
+      {showWelcome ? (
         <div className="grid gap-4 lg:grid-cols-3">
           <div
             {...dropTarget}
@@ -588,73 +377,60 @@ export function InboxPage() {
             )}
           </Card>
         </div>
-      )}
-
-      {tab === 'pending' && <HiddenByApps />}
-      <IntakePanel intake={intake} />
-      {installedModules().includes('finance') && <StagedMarketplace canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
-      {installedModules().includes('finance') && <StagedMarketplaceColumns canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} canSave={org.data?.role === 'owner' || org.data?.role === 'admin'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
-      {installedModules().includes('finance') && <StagedMarketplaceIncome canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
-      {installedModules().includes('finance') && <StagedStatements canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
-      {(org.data?.role === 'owner' || org.data?.role === 'admin') && <FailedJobs />}
-      {installedModules().includes('finance') && (org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member') && <OriginalsNeeded />}
-      {installedModules().includes('finance') && <OpenBankLines slug={slug} />}
-      {installedModules().includes('social') && <SocialAttention slug={slug} />}
-      {installedModules().includes('social') && (org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member') && <SocialMails slug={slug} />}
-
-      {/* Only a file being read or one that failed (#3598): a file read into a proposal is that proposal's row below. */}
-      {attention.length > 0 && (
-        <div className="mt-6">
-          <p className="mb-2 text-sm font-medium text-muted-foreground">
-            {t('recentFiles')}{' '}
-            {processing > 0 && <span className="ml-1 text-link normal-case">· {t('readingCount', { count: processing })}</span>}
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {attention.slice(0, 8).map((file) => (
-              <span
-                key={file.id}
-                data-testid="recent-file"
-                className="inline-flex max-w-full items-center gap-2 rounded-lg border bg-card px-2.5 py-1.5 text-xs"
-                title={file.error ?? undefined}
-              >
-                <span className="max-w-[16rem] truncate text-muted-foreground">{file.filename}</span>
-                {/* A proposed file shows its proposal's status (#2009): waiting, posted or rejected. */}
-                <Badge variant={isFileStatus(file.status) ? fileChipVariant(file.status, file.proposalStatus, file.voided) : 'secondary'}>
-                  {fileWords(file)}
-                </Badge>
-                {/* A bank statement a member imported or skipped (#2142) says who did, from the audit row of the decision. */}
-                {file.statement?.decidedBy && (
-                  <span className="text-subtle-foreground" data-testid="statement-decided-by">
-                    {t('staged.decidedBy', {
-                      state: file.statement.state,
-                      name: file.statement.decidedBy.name ?? t('staged.formerMember'),
-                      when: f.dateTime(file.statement.decidedBy.at),
-                    })}
-                  </span>
-                )}
-                {/* A file not read, or a posting voided by a reversal (#2032), may be read again from here. */}
-                {(file.status === 'failed' || file.voided) && file.canReextract && (
-                  <button
-                    type="button"
-                    disabled={reextract.isPending}
-                    className="text-link hover:underline disabled:opacity-50"
-                    onClick={() => reextract.mutate({ fileId: file.id, idempotencyKey: crypto.randomUUID() })}
-                  >
-                    {t('reread')}
-                  </button>
-                )}
-              </span>
-            ))}
+      ) : (
+        <div
+          {...dropTarget}
+          className={cn(
+            'flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-dashed px-4 py-2.5 transition-colors',
+            dragging ? 'border-ring bg-primary/10' : 'bg-card',
+          )}
+        >
+          <div className="min-w-0">
+            {/* A phone has nothing to drag from: it keeps the formats and the header's upload button. */}
+            <p className="hidden text-sm text-foreground sm:block">{t('dropHereCompact')}</p>
+            <p className="text-xs text-subtle-foreground">{config.aiEnabled ? t('formatsAll') : t('formatsXml')}</p>
           </div>
-          {reextract.error && <p className="mt-2 text-xs text-destructive">{errorMessage(reextract.error)}</p>}
-          {attention.find((file) => file.status === 'failed')?.error && (
-            <p className="mt-2 text-xs text-destructive">{attention.find((file) => file.status === 'failed')?.error}</p>
+          {org.data?.inboundAddress && (
+            <div className="flex min-w-0 flex-wrap items-center gap-2 sm:ml-auto">
+              <span className="text-xs text-subtle-foreground">{t('forwardTo')}</span>
+              <span className="min-w-0 font-mono text-xs break-all text-foreground">{org.data.inboundAddress}</span>
+              <Button variant="outline" size="sm" onClick={() => copyAddress(org.data?.inboundAddress ?? '')}>
+                {t('copyAddress')}
+              </Button>
+            </div>
           )}
         </div>
       )}
 
+      <IntakePanel intake={intake} />
+
+      {/* Transient live feedback for files currently being read in background; clears once settled into proposals. */}
+      {processingFiles.length > 0 && (
+        <div className="mt-4">
+          <p className="mb-2 text-sm font-medium text-muted-foreground">
+            {t('recentFiles')}{' '}
+            <span className="ml-1 text-link normal-case">· {t('readingCount', { count: processingFiles.length })}</span>
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {processingFiles.slice(0, 8).map((file) => (
+              <InboxFileChip key={file.id} file={file} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      <InboxActionStrip
+        slug={slug}
+        tab={tab}
+        role={org.data?.role}
+        failedFiles={failedFiles}
+        onReextract={(fileId) => reextract.mutate({ fileId, idempotencyKey: crypto.randomUUID() })}
+        reextractPending={reextract.isPending}
+        reextractError={reextract.error}
+      />
+
       <Tabs
-        className="mt-8 gap-4"
+        className="mt-4 gap-4"
         value={tab}
         onValueChange={(value) => {
           setTab(value as InboxTab);
@@ -672,131 +448,226 @@ export function InboxPage() {
           </TabsList>
         </div>
 
-      <TabsContent value={tab}>
-        {bulk && isStepUpRequired(bulkError) && (
-          <div className="mb-4">
-            <StepUpPrompt action={t('bulk.stepUp', { count: bulkNotSent })} onVerified={() => void sendBulk(bulk)} onCancel={stopBulk} />
-          </div>
-        )}
-        {bulk && bulkError !== null && !isStepUpRequired(bulkError) && (
-          <div className="mb-4 space-y-2">
-            <ErrorText>{errorMessage(bulkError)}</ErrorText>
-            <div className="flex gap-2">
-              <Button size="lg" onClick={() => void sendBulk(bulk)}>
-                {t('bulk.retry')}
-              </Button>
-              <Button variant="ghost" size="lg" onClick={stopBulk}>
+        <TabsContent value={tab}>
+          {bulk && isStepUpRequired(bulkError) && (
+            <div className="mb-4">
+              <StepUpPrompt action={t('bulk.stepUp', { count: bulkNotSent })} onVerified={() => void sendBulk(bulk)} onCancel={stopBulk} />
+            </div>
+          )}
+          {bulk && bulkError !== null && !isStepUpRequired(bulkError) && (
+            <div className="mb-4 space-y-2">
+              <ErrorText>{errorMessage(bulkError)}</ErrorText>
+              <div className="flex gap-2">
+                <Button size="lg" onClick={() => void sendBulk(bulk)}>
+                  {t('bulk.retry')}
+                </Button>
+                <Button variant="ghost" size="lg" onClick={stopBulk}>
+                  {t('bulk.dismiss')}
+                </Button>
+              </div>
+            </div>
+          )}
+          {bulk && bulkFinished && (
+            <Card className="mb-4 block space-y-2 p-4" role="status">
+              {bulkApproved > 0 && <p className="text-sm text-foreground">{t('bulk.approved', { count: bulkApproved })}</p>}
+              {bulkRefused.length > 0 && (
+                <>
+                  <p className="text-sm text-foreground">{t('bulk.refused', { count: bulkRefused.length })}</p>
+                  <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                    {bulkRefused.map((r) => (
+                      <li key={r.id}>
+                        <Link to="/o/$slug/inbox/$id" params={{ slug, id: r.id }} className="text-link hover:underline">
+                          {bulk.names[r.id] ?? r.id}
+                        </Link>
+                        {': '}
+                        {errorMessage({ code: r.code, data: r.rule ? { rule: r.rule } : undefined })}
+                        {/* A purchase dated in a locked month (#478) is posted in an open month one by one, never in bulk. */}
+                        {r.code === 'PERIOD_LOCKED' && ` ${t('bulk.periodLockedHint')}`}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {bulkNotSent > 0 && <p className="text-sm text-warning">{t('bulk.notSent', { count: bulkNotSent })}</p>}
+              <Button variant="ghost" size="lg" onClick={() => setBulk(null)}>
                 {t('bulk.dismiss')}
               </Button>
-            </div>
-          </div>
-        )}
-        {bulk && bulkFinished && (
-          <Card className="mb-4 block space-y-2 p-4" role="status">
-            {bulkApproved > 0 && <p className="text-sm text-foreground">{t('bulk.approved', { count: bulkApproved })}</p>}
-            {bulkRefused.length > 0 && (
-              <>
-                <p className="text-sm text-foreground">{t('bulk.refused', { count: bulkRefused.length })}</p>
-                <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-                  {bulkRefused.map((r) => (
-                    <li key={r.id}>
-                      <Link to="/o/$slug/inbox/$id" params={{ slug, id: r.id }} className="text-link hover:underline">
-                        {bulk.names[r.id] ?? r.id}
-                      </Link>
-                      {': '}
-                      {errorMessage({ code: r.code, data: r.rule ? { rule: r.rule } : undefined })}
-                      {/* A purchase dated in a locked month (#478) is posted in an open month one by one, never in bulk. */}
-                      {r.code === 'PERIOD_LOCKED' && ` ${t('bulk.periodLockedHint')}`}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
-            {bulkNotSent > 0 && <p className="text-sm text-warning">{t('bulk.notSent', { count: bulkNotSent })}</p>}
-            <Button variant="ghost" size="lg" onClick={() => setBulk(null)}>
-              {t('bulk.dismiss')}
-            </Button>
-          </Card>
-        )}
-        {groups.length > 0 && !bulk && <ProposalGroups groups={groups} rules={groupRules.data ?? []} slug={slug} sending={sending} onApprove={startBulk} />}
-        {bulkEnabled && selectable.length > 0 && (
-          <div className="mb-3 flex flex-wrap items-center gap-3">
-            <Label className="font-normal text-muted-foreground">
-              <Checkbox
-                checked={chosen.length === selectable.length}
-                indeterminate={chosen.length > 0 && chosen.length < selectable.length}
-                disabled={sending}
-                onCheckedChange={(checked) => setSelected(checked ? new Set(selectable.map((item) => item.id)) : new Set())}
-              />
-              {t('bulk.selectAll', { count: selectable.length })}
-            </Label>
-            {chosen.length > 0 && <span className="text-sm text-subtle-foreground">{t('bulk.selected', { count: chosen.length })}</span>}
-            {/* The button keeps its label and width while it works, so the batch it is on is said beside it. */}
-            {sending && bulk && (
-              <span role="status" className="text-sm text-muted-foreground">
-                {t('bulk.sending', { done: Math.min(bulk.progress.next + 1, bulk.batches.length), total: bulk.batches.length })}
-              </span>
-            )}
-            <div className="ml-auto flex gap-2">
-              {chosen.length > 0 && !sending && (
-                <Button variant="ghost" size="lg" onClick={() => setSelected(new Set())}>
-                  {t('bulk.clear')}
-                </Button>
-              )}
-              <Button loading={sending} size="lg" disabled={chosen.length === 0 || sending || !confirmUnverified} onClick={() => startBulk()}>
-                {t('bulk.approve', { count: chosen.length })}
-              </Button>
-            </div>
-            {unverifiedChosen > 0 && (
-              <Label className="w-full font-normal text-warning">
-                <Checkbox checked={confirmUnverified} disabled={sending} onCheckedChange={(checked) => setConfirmedUnverified(checked === true ? new Set(unverifiedItems.map(confirmKey)) : new Set())} />
-                {t('bulk.confirmUnverified', { count: unverifiedChosen })}
+            </Card>
+          )}
+          {groups.length > 0 && !bulk && <ProposalGroups groups={groups} rules={groupRules.data ?? []} slug={slug} sending={sending} onApprove={startBulk} />}
+          {bulkEnabled && selectable.length > 0 && (
+            <div className="mb-3 flex flex-wrap items-center gap-3">
+              <Label className="font-normal text-muted-foreground">
+                <Checkbox
+                  checked={chosen.length === selectable.length}
+                  indeterminate={chosen.length > 0 && chosen.length < selectable.length}
+                  disabled={sending}
+                  onCheckedChange={(checked) => setSelected(checked ? new Set(selectable.map((item) => item.id)) : new Set())}
+                />
+                {t('bulk.selectAll', { count: selectable.length })}
               </Label>
-            )}
-            <p className="w-full text-xs text-subtle-foreground">{t('bulk.hint')}</p>
-          </div>
-        )}
-        {excludedCount > 0 && <p className="mb-3 text-xs text-subtle-foreground">{t('bulk.excludedSummary', { count: excludedCount })}</p>}
-        {allUnverified && (
-          <p role="status" className="mb-3 text-sm text-warning">
-            {t('signatureAll', { count: listed.length })}
-          </p>
-        )}
-        {tab === 'pending' && installedModules().includes('finance') && (
-          <div className="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label={t('filter.label')}>
-            <Button variant={unclassifiedOnly ? 'outline' : 'secondary'} size="sm" aria-pressed={!unclassifiedOnly} onClick={() => setUnclassifiedOnly(false)}>
-              {t('filter.all', { count: items.data?.length ?? 0 })}
-            </Button>
-            <Button
-              variant={unclassifiedOnly ? 'secondary' : 'outline'}
-              size="sm"
-              aria-pressed={unclassifiedOnly}
-              data-testid="filter-unclassified"
-              onClick={() => setUnclassifiedOnly(true)}
-            >
-              {t('filter.unclassified', { count: unclassifiedCount })}
-            </Button>
-            {unclassifiedOnly && <span className="text-xs text-subtle-foreground">{t('filter.unclassifiedHint')}</span>}
-          </div>
-        )}
-        {items.isLoading ? (
-          <TableSkeleton columns={5} />
-        ) : listed.length === 0 ? (
-          <Empty
-            title={unclassifiedFilter ? t('filter.unclassifiedEmpty') : tab === 'pending' ? t('emptyPending') : t('emptyOther')}
-            hint={tab === 'pending' && !unclassifiedFilter ? t('emptyPendingHint') : undefined}
-            action={
-              tab === 'pending' && installedModules().includes('finance') ? (
-                <Link to="/o/$slug/guide" params={{ slug }} className="text-sm text-link hover:underline">
-                  {t('guideLink')}
-                </Link>
-              ) : undefined
-            }
-          />
-        ) : (
-          // The table from sm up; a phone reads each proposal as one block (#1270), the table needing more width
-          // than it has. One layout is rendered, so each proposal is on the page once.
-          wide ? (
+              {chosen.length > 0 && <span className="text-sm text-subtle-foreground">{t('bulk.selected', { count: chosen.length })}</span>}
+              {/* The button keeps its label and width while it works, so the batch it is on is said beside it. */}
+              {sending && bulk && (
+                <span role="status" className="text-sm text-muted-foreground">
+                  {t('bulk.sending', { done: Math.min(bulk.progress.next + 1, bulk.batches.length), total: bulk.batches.length })}
+                </span>
+              )}
+              <div className="ml-auto flex gap-2">
+                {chosen.length > 0 && !sending && (
+                  <Button variant="ghost" size="lg" onClick={() => setSelected(new Set())}>
+                    {t('bulk.clear')}
+                  </Button>
+                )}
+                <Button loading={sending} size="lg" disabled={chosen.length === 0 || sending || !confirmUnverified} onClick={() => startBulk()}>
+                  {t('bulk.approve', { count: chosen.length })}
+                </Button>
+              </div>
+              {unverifiedChosen > 0 && (
+                <Label className="w-full font-normal text-warning">
+                  <Checkbox checked={confirmUnverified} disabled={sending} onCheckedChange={(checked) => setConfirmedUnverified(checked === true ? new Set(unverifiedItems.map(confirmKey)) : new Set())} />
+                  {t('bulk.confirmUnverified', { count: unverifiedChosen })}
+                </Label>
+              )}
+              <p className="w-full text-xs text-subtle-foreground">{t('bulk.hint')}</p>
+            </div>
+          )}
+          {excludedCount > 0 && <p className="mb-3 text-xs text-subtle-foreground">{t('bulk.excludedSummary', { count: excludedCount })}</p>}
+          {allUnverified && (
+            <p role="status" className="mb-3 text-sm text-warning">
+              {t('signatureAll', { count: listed.length })}
+            </p>
+          )}
+          {tab === 'pending' && installedModules().includes('finance') && (
+            <div className="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label={t('filter.label')}>
+              <Button variant={unclassifiedOnly ? 'outline' : 'secondary'} size="sm" aria-pressed={!unclassifiedOnly} onClick={() => setUnclassifiedOnly(false)}>
+                {t('filter.all', { count: items.data?.length ?? 0 })}
+              </Button>
+              <Button
+                variant={unclassifiedOnly ? 'secondary' : 'outline'}
+                size="sm"
+                aria-pressed={unclassifiedOnly}
+                data-testid="filter-unclassified"
+                onClick={() => setUnclassifiedOnly(true)}
+              >
+                {t('filter.unclassified', { count: unclassifiedCount })}
+              </Button>
+              {unclassifiedOnly && <span className="text-xs text-subtle-foreground">{t('filter.unclassifiedHint')}</span>}
+            </div>
+          )}
+          {items.isLoading ? (
+            <TableSkeleton columns={split ? 2 : 5} />
+          ) : listed.length === 0 ? (
+            <Empty
+              title={unclassifiedFilter ? t('filter.unclassifiedEmpty') : tab === 'pending' ? t('emptyPending') : t('emptyOther')}
+              hint={tab === 'pending' && !unclassifiedFilter ? t('emptyPendingHint') : undefined}
+              action={
+                tab === 'pending' && installedModules().includes('finance') ? (
+                  <Link to="/o/$slug/guide" params={{ slug }} className="text-sm text-link hover:underline">
+                    {t('guideLink')}
+                  </Link>
+                ) : undefined
+              }
+            />
+          ) : split ? (
+            <div className="grid grid-cols-[minmax(19rem,0.75fr)_minmax(0,1.25fr)] items-start gap-6" data-testid="inbox-split-layout">
+              <section
+                aria-label={t('queueRegion')}
+                data-testid="inbox-split-queue"
+                className="sticky top-6 max-h-[calc(100dvh-3rem)] overflow-y-auto"
+              >
+                <div className="overflow-hidden rounded-xl border bg-card">
+                  <Table className="w-full [&_td]:whitespace-normal [&_th]:whitespace-normal">
+                    <TableHeader className="bg-muted [&_th]:text-subtle-foreground">
+                      <TableRow className="hover:bg-transparent">
+                        {bulkEnabled && <TableHead className="w-9" />}
+                        <TableHead>{t('columns.document')}</TableHead>
+                        <TableHead className="text-right">{t('columns.total')}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {listed.map((item) => {
+                        const isSelected = item.id === activePreviewId;
+                        return (
+                          <TableRow
+                            key={item.id}
+                            data-selected={isSelected ? 'true' : 'false'}
+                            className={cn(isSelected && 'bg-primary/5 shadow-[inset_2px_0_0_var(--primary)]')}
+                            onClick={(event) => {
+                              if ((event.target as HTMLElement).closest('a, button, input, select, textarea, label, [role="checkbox"]')) {
+                                return;
+                              }
+                              setSelectedPreviewId(item.id);
+                            }}
+                          >
+                            {bulkEnabled && <TableCell className="w-9 py-2 align-top">{selectBox(item)}</TableCell>}
+                            <TableCell className="py-2 align-top">
+                              <Link
+                                data-proposal-link
+                                data-proposal-id={item.id}
+                                to="/o/$slug/inbox/$id"
+                                params={{ slug, id: item.id }}
+                                className="font-medium text-foreground hover:text-link focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              >
+                                {proposalName(item)}
+                              </Link>
+                              <p className="mt-0.5 text-xs text-subtle-foreground">{item.title}</p>
+                              <p className="mt-0.5 text-xs text-muted-foreground">
+                                {f.date(item.issueDate)}
+                                {showEntity && entityOf(item) ? ` · ${entityOf(item)}` : ''}
+                              </p>
+                              {excludedReason(item) && <p className="mt-0.5 text-xs text-subtle-foreground">{excludedReason(item)}</p>}
+                              {item.status === 'expired' && item.expiredAfterDays !== null && (
+                                <p className="mt-0.5 text-xs text-warning">{t('expiredReason', { days: item.expiredAfterDays })}</p>
+                              )}
+                              <div className="mt-1.5">
+                                <ProposalBadges item={item} hideSignature={allUnverified} />
+                              </div>
+                            </TableCell>
+                            <TableCell className="py-2 text-right align-top">
+                              <p className="font-medium text-foreground tabular-nums whitespace-nowrap">{f.money(item.total)}</p>
+                              <div className="mt-1.5 flex justify-end">
+                                <Button
+                                  type="button"
+                                  variant={isSelected ? 'secondary' : 'ghost'}
+                                  size="xs"
+                                  data-testid="inbox-preview-select"
+                                  aria-pressed={isSelected}
+                                  aria-label={t('preview.selectItem', { name: proposalName(item) })}
+                                  onClick={() => setSelectedPreviewId(item.id)}
+                                >
+                                  <NavIcon name="expand" className="size-3.5 -rotate-90" />
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </section>
+              <section aria-label={t('preview.region')} data-testid="inbox-split-preview" className="min-w-0">
+                {activePreviewId ? (
+                  <ProposalDetail
+                    key={activePreviewId}
+                    slug={slug}
+                    id={activePreviewId}
+                    mode="embedded"
+                    onDone={(completedId, nextId) =>
+                      setSelectedPreviewId((current) => (current === null || current === completedId ? nextId : current))
+                    }
+                    onResubmitted={(proposalId) => {
+                      setSelectedPreviewId(proposalId);
+                      setTab('pending');
+                    }}
+                  />
+                ) : (
+                  <Empty title={t('preview.emptyTitle')} hint={t('preview.emptyBody')} />
+                )}
+              </section>
+            </div>
+          ) : wide ? (
             <DataTable
               numeric={[bulkEnabled ? 3 : 2]}
               head={[
@@ -811,13 +682,15 @@ export function InboxPage() {
             >
               {listed.map((item) => (
                 <TableRow key={item.id}>
-                  {bulkEnabled && (
-                    <TableCell className="w-10 px-4 py-3">
-                      {selectBox(item)}
-                    </TableCell>
-                  )}
+                  {bulkEnabled && <TableCell className="w-10 px-4 py-3">{selectBox(item)}</TableCell>}
                   <TableCell className="px-4 py-3">
-                    <Link data-proposal-link to="/o/$slug/inbox/$id" params={{ slug, id: item.id }} className="font-medium text-foreground hover:text-link">
+                    <Link
+                      data-proposal-link
+                      data-proposal-id={item.id}
+                      to="/o/$slug/inbox/$id"
+                      params={{ slug, id: item.id }}
+                      className="font-medium text-foreground hover:text-link"
+                    >
                       {proposalName(item)}
                     </Link>
                     <p className="text-xs text-subtle-foreground">{item.title}</p>
@@ -843,7 +716,13 @@ export function InboxPage() {
                   {bulkEnabled && <div className="pt-0.5">{selectBox(item)}</div>}
                   <div className="min-w-0 flex-1 space-y-1">
                     <div className="flex items-start justify-between gap-3">
-                      <Link data-proposal-link to="/o/$slug/inbox/$id" params={{ slug, id: item.id }} className="min-w-0 font-medium text-foreground hover:text-link">
+                      <Link
+                        data-proposal-link
+                        data-proposal-id={item.id}
+                        to="/o/$slug/inbox/$id"
+                        params={{ slug, id: item.id }}
+                        className="min-w-0 font-medium text-foreground hover:text-link"
+                      >
                         {proposalName(item)}
                       </Link>
                       <span className="shrink-0 text-right text-foreground tabular-nums">{f.money(item.total)}</span>
@@ -860,10 +739,9 @@ export function InboxPage() {
                 </li>
               ))}
             </ul>
-          )
-        )}
-        {listed.length > 0 && <p className="mt-3 text-xs text-subtle-foreground">{t('listShortcuts')}</p>}
-      </TabsContent>
+          )}
+          {listed.length > 0 && <p className="mt-3 text-xs text-subtle-foreground">{t('listShortcuts')}</p>}
+        </TabsContent>
       </Tabs>
     </>
   );

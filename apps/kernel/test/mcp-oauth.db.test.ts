@@ -608,9 +608,9 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     // A deal won 8 days ago, its customer never invoiced (a stage row and a deal row, as the CRM commands write them).
     const party = (await admin((client) => client.query(`INSERT INTO ludy_kernel.party (org_id, kind, name) VALUES ($1, 'organization', 'Khach Signals E2E') RETURNING id`, [orgId]))).rows[0].id as string;
     const owner = (await admin((client) => client.query(`SELECT user_id FROM ludy_kernel.agent_grant WHERE client_id = $1`, [c.clientId]))).rows[0].user_id as string;
-    const stage = (await admin((client) => client.query(`INSERT INTO crove_crm.pipeline_stage (org_id, name, kind, position) VALUES ($1, 'Thắng', 'won', 1) RETURNING id`, [orgId]))).rows[0].id as string;
+    const stage = (await admin((client) => client.query(`INSERT INTO ludy_crm.pipeline_stage (org_id, name, kind, position) VALUES ($1, 'Thắng', 'won', 1) RETURNING id`, [orgId]))).rows[0].id as string;
     const deal = (await admin((client) => client.query(
-      `INSERT INTO crove_crm.deal (org_id, party_id, title, amount, stage_id, sort_key, created_by, updated_by, closed_at) VALUES ($1, $2, 'Hop dong bi mat', 4200000, $3, 'a', $4, $4, now() - interval '8 days') RETURNING id`,
+      `INSERT INTO ludy_crm.deal (org_id, party_id, title, amount, stage_id, sort_key, created_by, updated_by, closed_at) VALUES ($1, $2, 'Hop dong bi mat', 4200000, $3, 'a', $4, $4, now() - interval '8 days') RETURNING id`,
       [orgId, party, stage, owner],
     ))).rows[0].id as string;
     const used = async () => Number((await admin((client) => client.query(`SELECT rows_used FROM ludy_kernel.agent_grant WHERE client_id = $1`, [c.clientId]))).rows[0].rows_used ?? 0);
@@ -993,7 +993,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     const result = made.body?.result?.structuredContent as { postId: string; status: string; variants: Array<Record<string, string>> };
     expect(result).toMatchObject({ status: 'draft', revision: 1 });
     expect(Object.keys(result.variants[0] as object).sort()).toEqual(['connectionId', 'variantId']);
-    const post = await admin((client) => client.query(`SELECT origin, actor_origin, tainted, status FROM crove_social.post WHERE id = $1`, [result.postId]));
+    const post = await admin((client) => client.query(`SELECT origin, actor_origin, tainted, status FROM ludy_social.post WHERE id = $1`, [result.postId]));
     expect(post.rows[0]).toEqual({ origin: 'ai', actor_origin: 'mcp', tainted: true, status: 'draft' });
     // The call is audited by tool as the grant's, and the read tools still work for the same grant.
     const audit = await admin((client) => client.query(`SELECT detail FROM ludy_kernel.audit_event WHERE command = 'kernel.mcp.call' AND detail ->> 'tool' = 'ludy_social_draft_create' ORDER BY id DESC LIMIT 1`));
@@ -1119,7 +1119,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     const connectionId = randomUUID();
     await admin((client) => client.query(`INSERT INTO ludy_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) SELECT $1, $2, 'sandbox', 'acct-mcp-budget', 'Kênh hạn mức', user_id FROM ludy_kernel.tenant_member WHERE org_id = $1 AND role = 'owner' LIMIT 1`, [orgId, connectionId]));
     const call = () => mcpModern(access, 'tools/call', { name: 'ludy_social_draft_create', arguments: { body: 'Bản nháp', channels: [{ connectionId }] } }, 'ludy_social_draft_create');
-    const before = Number((await admin((client) => client.query(`SELECT count(*) AS n FROM crove_social.post WHERE org_id = $1`, [orgId]))).rows[0].n);
+    const before = Number((await admin((client) => client.query(`SELECT count(*) AS n FROM ludy_social.post WHERE org_id = $1`, [orgId]))).rows[0].n);
     const answers: string[] = [];
     for (let i = 0; i < 8; i += 1) answers.push((await call()).body?.error?.message ?? 'ok');
     // A person's own budget is six a minute for a member of an org (the draft of the first test of this group is one of them, unless a minute has passed); the rest wait.
@@ -1127,7 +1127,7 @@ suite('the MCP endpoint and its authorization server (#2975)', () => {
     expect(made).toBeGreaterThanOrEqual(5);
     expect(made).toBeLessThanOrEqual(6);
     expect(answers.filter((a) => /^Too many drafts just now; try again in \d+ seconds$/.test(a)).length).toBe(8 - made);
-    const after = Number((await admin((client) => client.query(`SELECT count(*) AS n FROM crove_social.post WHERE org_id = $1`, [orgId]))).rows[0].n);
+    const after = Number((await admin((client) => client.query(`SELECT count(*) AS n FROM ludy_social.post WHERE org_id = $1`, [orgId]))).rows[0].n);
     expect(after - before).toBe(made);
   });
 });

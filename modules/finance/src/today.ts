@@ -183,7 +183,7 @@ async function flaggedProposals(ctx: QueryContext, userId: string, to: Link): Pr
 async function einvoiceItems(ctx: QueryContext, to: Link): Promise<TodayItem[]> {
   const { rows } = await sql<{ entity: string; n: string }>`
     SELECT d.legal_entity_id::text AS entity, pg_catalog.count(*)::text AS n
-    FROM crove_finance.einvoice_draft d
+    FROM ludy_finance.einvoice_draft d
     WHERE d.org_id = ${ctx.orgId}
       AND (d.state = 'failed'
            OR (d.state = 'draft' AND d.error_code IS NOT NULL)
@@ -297,7 +297,7 @@ async function deadlines(ctx: QueryContext, today: string, to: Link, entities: r
   // The earliest lock counts: the period is open while any entity's books are, and an entity that never locked leaves
   // it open (as the closing reminder reads it).
   const locks = await ctx.trx
-    .selectFrom('crove_finance.period_lock')
+    .selectFrom('ludy_finance.period_lock')
     .select(sql<string | null>`pg_catalog.to_char(locked_through, 'YYYY-MM-DD')`.as('through'))
     .where('org_id', '=', ctx.orgId)
     .execute();

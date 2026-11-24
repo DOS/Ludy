@@ -24,7 +24,7 @@ export type HrLeaveWorkweek = (typeof HR_LEAVE_WORKWEEKS)[number];
 
 export const zHrLeaveYear = z.string().regex(/^\d{4}$/, 'YYYY');
 
-// Non-negative decimal string supporting 0..366 with up to 2 decimal places (matches crove_hr.payroll_leave_entry.days numeric(6, 2)).
+// Non-negative decimal string supporting 0..366 with up to 2 decimal places (matches ludy_hr.payroll_leave_entry.days numeric(6, 2)).
 // `unpaid_leave` entries sync into `zHrPayrollInputs.unpaidLeaveDays` (`zHrDays`, at most 1 decimal place), so write-time validation
 // enforces at most 1 significant decimal place on `unpaid_leave` rather than accepting 2 decimals and failing on sync.
 export const zHrLeaveDays = z

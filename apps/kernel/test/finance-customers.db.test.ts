@@ -296,20 +296,20 @@ suite('customers (#670)', () => {
     await admin(async (c) => {
       await c.query('BEGIN');
       const { rows } = await c.query(
-        `INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-30', 'Số dư khách hàng', 'test', gen_random_uuid()) RETURNING id`,
+        `INSERT INTO ludy_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, '2026-09-30', 'Số dư khách hàng', 'test', gen_random_uuid()) RETURNING id`,
         [org.orgId],
       );
       const entry = rows[0].id;
       let lineNo = 1;
       for (const { id } of ids) {
-        await c.query(`INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, $3, '131', 1000, 0, $4)`, [
+        await c.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, $3, '131', 1000, 0, $4)`, [
           org.orgId,
           entry,
           lineNo++,
           id,
         ]);
       }
-      await c.query(`INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, '3388', 0, $4)`, [
+      await c.query(`INSERT INTO ludy_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit) VALUES ($1, $2, $3, '3388', 0, $4)`, [
         org.orgId,
         entry,
         lineNo,

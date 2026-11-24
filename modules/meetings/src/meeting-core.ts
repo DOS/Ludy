@@ -36,7 +36,7 @@ export async function createMeetingRow(ctx: CommandContext, m: NewMeeting): Prom
   const dates = retentionDates(m.retentionFrom, await readRetentionSettings(ctx.trx, ctx.orgId));
 
   await ctx.trx
-    .insertInto('crove_meetings.meeting')
+    .insertInto('ludy_meetings.meeting')
     .values({
       org_id: ctx.orgId,
       id: meetingId,
@@ -76,7 +76,7 @@ export async function createMeetingRow(ctx: CommandContext, m: NewMeeting): Prom
       }
       for (const readerId of uniqueReaderIds) {
         await ctx.trx
-          .insertInto('crove_meetings.meeting_reader')
+          .insertInto('ludy_meetings.meeting_reader')
           .values({
             org_id: ctx.orgId,
             id: randomUUID(),

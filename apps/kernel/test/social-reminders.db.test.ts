@@ -123,12 +123,12 @@ suite('social review reminders on PostgreSQL (#703)', () => {
   const backdate = (postId: string, hours: number) =>
     admin(async (c) => {
       await c.query("SET session_replication_role = 'replica'");
-      await c.query("UPDATE crove_social.post_variant SET review_since = now() - make_interval(hours => $2::int) WHERE post_id = $1", [postId, hours]);
+      await c.query("UPDATE ludy_social.post_variant SET review_since = now() - make_interval(hours => $2::int) WHERE post_id = $1", [postId, hours]);
     });
   const sweep = () => sweepReminders({ runtime: worker, workerDb: createDb(workerPool) });
   const reminders = async (o: Org, user: string) => (await list(o, user)).items.filter((i) => i.kind === 'review_reminder').map((i) => i.detail.stage);
   const clock = (postId: string) =>
-    admin(async (c) => (await c.query<{ since: boolean; waiting: boolean; due: boolean }>('SELECT review_since IS NOT NULL AS since, reminded_waiting_at IS NOT NULL AS waiting, reminded_due_at IS NOT NULL AS due FROM crove_social.post_variant WHERE post_id = $1', [postId])).rows);
+    admin(async (c) => (await c.query<{ since: boolean; waiting: boolean; due: boolean }>('SELECT review_since IS NOT NULL AS since, reminded_waiting_at IS NOT NULL AS waiting, reminded_due_at IS NOT NULL AS due FROM ludy_social.post_variant WHERE post_id = $1', [postId])).rows);
 
   it('reminds the reviewers once when a review has waited a day, and starts again with a new round', async () => {
     const o = await org();
@@ -210,8 +210,8 @@ suite('social review reminders on PostgreSQL (#703)', () => {
     const { postId } = await exec<{ postId: string }>(o, o.member, 'social.post.create', { body: 'Bài thử', channels: [{ connectionId: conn }] });
     await exec(o, o.member, 'social.post.submit', { postId });
     // A write that leaves the status alone keeps the clock as the database set it.
-    await admin((c) => c.query("UPDATE crove_social.post_variant SET review_since = now() - interval '5 days', updated_at = now() WHERE post_id = $1", [postId]));
-    const { rows } = await admin((c) => c.query<{ fresh: boolean }>("SELECT review_since > now() - interval '1 hour' AS fresh FROM crove_social.post_variant WHERE post_id = $1", [postId]));
+    await admin((c) => c.query("UPDATE ludy_social.post_variant SET review_since = now() - interval '5 days', updated_at = now() WHERE post_id = $1", [postId]));
+    const { rows } = await admin((c) => c.query<{ fresh: boolean }>("SELECT review_since > now() - interval '1 hour' AS fresh FROM ludy_social.post_variant WHERE post_id = $1", [postId]));
     expect(rows).toEqual([{ fresh: true }]);
     await expect(worker.execute('social.review.remind', { postId }, { actor: system, orgId: o.orgId })).resolves.toEqual({ stage: null });
     await expect(exec(o, o.owner, 'social.review.remind', { postId })).rejects.toThrow();

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Where each platform's money stands in the books, for the Sàn screen (#2516 slice D, plan docs/plan/stock-and-marketplaces.md section 8.4, "The payout"). Read only, from the ledger: the
-// lines on the platform's balance account (131) and on the platform's payable account (331, where the fees the platform kept wait for their invoice) that name the platform's party (crove_finance.marketplace_party), per legal entity. Facts only:
+// lines on the platform's balance account (131) and on the platform's payable account (331, where the fees the platform kept wait for their invoice) that name the platform's party (ludy_finance.marketplace_party), per legal entity. Facts only:
 // no model call, nothing written, no order or buyer data. A reversal entry takes back what the entry it reverses posted, so it counts against the same figure, never as a payout.
 // Notes for the posting and payout slices of #2516: `paidOut` is what payouts CLEARED on 131 (the whole credit, which also covers the fees and the tax the platform kept), not the money received on
 // 112; every credit to 131 that is not a reversal counts as a payout, so an entry that credits 131 for another reason (a refund above the sales) would be counted as one and must be handled here
@@ -23,7 +23,7 @@ const FEES_AWAITING = MARKETPLACE_POSTING_MAPS.tt133?.feePayable.code ?? '331';
 // The balance rows of the platforms an entity (or every entity the caller may see) sells on; shared by the screen's read and by the facts the coworker's line is written from (slice E).
 export async function loadMarketplaceBalance(ctx: QueryContext, legalEntityId: string | undefined): Promise<MarketplaceBalance> {
   let links = ctx.trx
-    .selectFrom('crove_finance.marketplace_party as mp')
+    .selectFrom('ludy_finance.marketplace_party as mp')
     .innerJoin('ludy_kernel.party as p', (join) => join.onRef('p.org_id', '=', 'mp.org_id').onRef('p.id', '=', 'mp.party_id'))
     .select(['mp.legal_entity_id', 'mp.platform', 'mp.party_id', 'p.name'])
     .where('mp.org_id', '=', ctx.orgId);
@@ -32,8 +32,8 @@ export async function loadMarketplaceBalance(ctx: QueryContext, legalEntityId: s
   if (linked.length === 0) return { rows: [] };
   // One read of the platforms' lines: per entity, party, account and whether the entry is a reversal, the sums of debit and credit. The row policies keep it to the entities the caller may see.
   const sums = await ctx.trx
-    .selectFrom('crove_finance.journal_line as l')
-    .innerJoin('crove_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
+    .selectFrom('ludy_finance.journal_line as l')
+    .innerJoin('ludy_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
     .select(['l.legal_entity_id', 'l.party_id'])
     .select(sql<string>`CASE WHEN l.account_code LIKE ${`${RECEIVABLE}%`} THEN 'receivable' ELSE 'fees' END`.as('account'))
     .select(sql<boolean>`j.reverses_entry_id IS NOT NULL`.as('reversal'))
@@ -45,8 +45,8 @@ export async function loadMarketplaceBalance(ctx: QueryContext, legalEntityId: s
     .execute();
   // The platforms' lines on 331 with their dates, for the age of the fees nobody has invoiced yet (a reversal counts like any line: it takes back what it reverses, on its own date).
   const feeLines = await ctx.trx
-    .selectFrom('crove_finance.journal_line as l')
-    .innerJoin('crove_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
+    .selectFrom('ludy_finance.journal_line as l')
+    .innerJoin('ludy_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
     .select(['l.legal_entity_id', 'l.party_id', 'j.entry_date as date', 'l.debit', 'l.credit'])
     .where('l.org_id', '=', ctx.orgId)
     .where('l.party_id', 'in', linked.map((l) => l.party_id))

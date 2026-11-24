@@ -85,16 +85,16 @@ async function loadLedgerData(ctx: QueryContext, periodText: string, legalEntity
   const period = ledgerPeriod(periodText);
   // The org's whole chart (#319): the TT133 accounts and the org's sub-accounts, inactive ones included (posted lines
   // may name them). A sub-account's parent is its parent_code, so it rolls up into its parent like a TT133 account.
-  const tt133 = ctx.trx.selectFrom('crove_finance.account').select(['code', 'name', 'parent_code']);
-  const own = ctx.trx.selectFrom('crove_finance.org_account').select(['code', 'name', 'parent_code', 'root_code', 'active']).where('org_id', '=', ctx.orgId);
+  const tt133 = ctx.trx.selectFrom('ludy_finance.account').select(['code', 'name', 'parent_code']);
+  const own = ctx.trx.selectFrom('ludy_finance.org_account').select(['code', 'name', 'parent_code', 'root_code', 'active']).where('org_id', '=', ctx.orgId);
 
   // A line of a party marked as a duplicate (#887) counts under the party kept.
   const kept = sql<string | null>`COALESCE(dp.duplicate_of, l.party_id)`;
 
   // The opening balance: the debits and credits of every entry dated before the period, per account and party.
   const opening = ctx.trx
-    .selectFrom('crove_finance.journal_line as l')
-    .innerJoin('crove_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
+    .selectFrom('ludy_finance.journal_line as l')
+    .innerJoin('ludy_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
     .leftJoin('ludy_kernel.party as dp', (join) => join.onRef('dp.org_id', '=', 'l.org_id').onRef('dp.id', '=', 'l.party_id'))
     .select('l.account_code')
     .select(kept.as('party_id'))
@@ -107,9 +107,9 @@ async function loadLedgerData(ctx: QueryContext, periodText: string, legalEntity
   // The period's lines in posting order; the purchase invoice an entry records gives its reference. The aggregate
   // below orders them again, which is what guarantees the order; sorting here first keeps that second sort cheap.
   const lines = ctx.trx
-    .selectFrom('crove_finance.journal_entry as j')
-    .innerJoin('crove_finance.journal_line as l', (join) => join.onRef('l.org_id', '=', 'j.org_id').onRef('l.entry_id', '=', 'j.id'))
-    .leftJoin('crove_finance.purchase_document as d', (join) =>
+    .selectFrom('ludy_finance.journal_entry as j')
+    .innerJoin('ludy_finance.journal_line as l', (join) => join.onRef('l.org_id', '=', 'j.org_id').onRef('l.entry_id', '=', 'j.id'))
+    .leftJoin('ludy_finance.purchase_document as d', (join) =>
       join.onRef('d.org_id', '=', 'j.org_id').onRef('d.id', '=', 'j.source_id').on('j.source_type', '=', 'finance.purchase_document'),
     )
     .leftJoin('ludy_kernel.party as dp', (join) => join.onRef('dp.org_id', '=', 'l.org_id').onRef('dp.id', '=', 'l.party_id'))
@@ -198,13 +198,13 @@ async function loadLedgerData(ctx: QueryContext, periodText: string, legalEntity
 // ONE statement, as in loadLedgerData (#365).
 export async function yearTrialBalance(ctx: QueryContext, year: number, legalEntityId: string): Promise<TrialBalance> {
   const period = ledgerPeriod(String(year));
-  const tt133 = ctx.trx.selectFrom('crove_finance.account').select(['code', 'name', 'parent_code']);
-  const own = ctx.trx.selectFrom('crove_finance.org_account').select(['code', 'name', 'parent_code', 'root_code', 'active']).where('org_id', '=', ctx.orgId);
+  const tt133 = ctx.trx.selectFrom('ludy_finance.account').select(['code', 'name', 'parent_code']);
+  const own = ctx.trx.selectFrom('ludy_finance.org_account').select(['code', 'name', 'parent_code', 'root_code', 'active']).where('org_id', '=', ctx.orgId);
   const kept = sql<string | null>`COALESCE(dp.duplicate_of, l.party_id)`;
   const sums = (from: string | null, to: string) => {
     let q = ctx.trx
-      .selectFrom('crove_finance.journal_line as l')
-      .innerJoin('crove_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
+      .selectFrom('ludy_finance.journal_line as l')
+      .innerJoin('ludy_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
       .leftJoin('ludy_kernel.party as dp', (join) => join.onRef('dp.org_id', '=', 'l.org_id').onRef('dp.id', '=', 'l.party_id'))
       .select('l.account_code')
       .select(kept.as('party_id'))

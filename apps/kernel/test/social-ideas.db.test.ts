@@ -162,7 +162,7 @@ suite('social ideas board on PostgreSQL (#701)', () => {
     const doc = await socialFile(b.orgId, b.owner, 'application/xml');
     await expect(exec(b, b.member, 'social.idea.create', { title: 'x', fileIds: [doc] })).rejects.toMatchObject({ code: 'MEDIA_NOT_FOUND' });
     // ludy_tenant holds no DELETE on ideas.
-    const { rows } = await admin((c) => c.query<{ ok: boolean }>("SELECT has_table_privilege('ludy_tenant', 'crove_social.idea', 'DELETE') AS ok"));
+    const { rows } = await admin((c) => c.query<{ ok: boolean }>("SELECT has_table_privilege('ludy_tenant', 'ludy_social.idea', 'DELETE') AS ok"));
     expect(rows).toEqual([{ ok: false }]);
   });
 });

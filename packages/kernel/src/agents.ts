@@ -1013,7 +1013,7 @@ export const roadmapOtpCleanup = defineCommand({
       throw new DomainError('FORBIDDEN', 403, 'Chỉ tác vụ hệ thống mới dọn mã OTP bảng lộ trình');
     }
     const { rows } = await sql<{ deleted: number }>`
-      SELECT crove_projects.cleanup_roadmap_otp_org(${input.cutoff}::timestamptz) AS deleted`.execute(ctx.trx);
+      SELECT ludy_projects.cleanup_roadmap_otp_org(${input.cutoff}::timestamptz) AS deleted`.execute(ctx.trx);
     const deleted = Number(rows[0]?.deleted ?? 0);
     ctx.audit({ deleted });
     return { deleted };

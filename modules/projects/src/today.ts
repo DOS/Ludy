@@ -260,8 +260,8 @@ export const projectsToday = defineQuery({
     const isDueTodayExpr = sql<boolean>`(${isMineExpr}) AND t.due IS NOT NULL AND t.due >= ${now} AND t.due < ${vnTomorrowStart}`;
 
     const base = ctx.trx
-      .selectFrom('crove_projects.project_task as pt')
-      .innerJoin('crove_projects.project as p', (join) =>
+      .selectFrom('ludy_projects.project_task as pt')
+      .innerJoin('ludy_projects.project as p', (join) =>
         join.onRef('p.org_id', '=', 'pt.org_id').onRef('p.id', '=', 'pt.project_id'),
       )
       // Enforce unique task_pkey (org_id, id) lookup per project_task row under RLS security barriers
@@ -294,7 +294,7 @@ export const projectsToday = defineQuery({
       .leftJoin(
         sql<{ blocked_count: number }>`LATERAL (
           SELECT pg_catalog.count(*)::int AS blocked_count
-            FROM crove_projects.task_dependency d
+            FROM ludy_projects.task_dependency d
             JOIN ludy_kernel.task bt
               ON bt.org_id = d.org_id AND bt.id = d.blocked_task_id
            WHERE d.org_id = pt.org_id

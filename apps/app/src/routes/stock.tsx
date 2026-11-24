@@ -26,7 +26,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { apiFetch, client, errorMessage, getCurrentOrg, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { exportQuery } from '../lib/legal-entity-choice.ts';
 
-const NUM = 'px-4 py-3 text-right tabular-nums';
+const NUM = 'text-right tabular-nums';
 
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.stock.key() });
 
@@ -148,10 +148,10 @@ function MovesPanel({ item, canWrite, onClose }: { item: StockItem; canWrite: bo
         <DataTable head={[t('moveDate'), t('moveQuantity'), t('moveSource'), '']} numeric={[1]}>
           {moves.data.map((m) => (
             <TableRow key={m.id} data-testid="stock-move">
-              <TableCell className="px-4 py-3">{f.date(m.date)}</TableCell>
+              <TableCell className="tabular-nums">{f.date(m.date)}</TableCell>
               <TableCell className={NUM}>{m.quantity}</TableCell>
-              <TableCell className="px-4 py-3">{t(`sources.${m.source}`)}</TableCell>
-              <TableCell className="px-4 py-3 text-right">
+              <TableCell>{t(`sources.${m.source}`)}</TableCell>
+              <TableCell className="text-right">
                 {canWrite && !m.reversed && m.returnable !== '0' && (
                   returning?.id === m.id ? (
                     <span className="mr-2 inline-flex items-center gap-2">
@@ -282,8 +282,8 @@ function CardPanel({ item, month, legalEntityId, onClose }: { item: { id: string
             <DataTable head={[t('moveDate'), t('moveSource'), t('moveQuantity'), t('cardValue'), t('balance')]} numeric={[2, 3, 4]}>
               {card.data.moves.map((m) => (
                 <TableRow key={m.id}>
-                  <TableCell className="px-4 py-3">{f.date(m.date)}</TableCell>
-                  <TableCell className="px-4 py-3">{t(`sources.${m.source}`)}</TableCell>
+                  <TableCell className="tabular-nums">{f.date(m.date)}</TableCell>
+                  <TableCell>{t(`sources.${m.source}`)}</TableCell>
                   <TableCell className={NUM}>{m.quantity}</TableCell>
                   <TableCell className={NUM}>{m.value === null ? '' : f.money(m.value, 'VND')}</TableCell>
                   <TableCell className={NUM}>{m.balance}</TableCell>
@@ -460,8 +460,8 @@ function ReportSection({ legalEntityId, ready, canWrite }: { legalEntityId: stri
         >
           {report.data.map((r) => (
             <TableRow key={r.itemId} data-testid="stock-report-row">
-              <TableCell className="px-4 py-3">{r.code}</TableCell>
-              <TableCell className="px-4 py-3">
+              <TableCell>{r.code}</TableCell>
+              <TableCell>
                 {r.name}
                 {/* The month's average is worked from the opening stock: a negative one (goods sold before they were bought in) makes the provisional cost unreliable until the purchase is entered. */}
                 {r.openingQuantity.startsWith('-') && (
@@ -479,7 +479,7 @@ function ReportSection({ legalEntityId, ready, canWrite }: { legalEntityId: stri
               <TableCell className={NUM}>{r.closingQuantity}</TableCell>
               <TableCell className={NUM}>{f.money(r.closingValue, 'VND')}</TableCell>
               <TableCell className={NUM}>{r.unitCost === null ? '' : f.decimal(r.unitCost, 6)}</TableCell>
-              <TableCell className="px-4 py-3 text-right">
+              <TableCell className="text-right">
                 <Button variant="ghost" size="sm" onClick={() => setCardOf({ id: r.itemId, name: r.name, unit: r.unit })} data-testid="stock-report-card">
                   {t('card')}
                 </Button>
@@ -506,15 +506,15 @@ function UnassignedRow({ line, items, canWrite, suggestion, asked }: { line: Sto
   const id = `unassigned-${line.documentId}-${line.lineNo}`;
   return (
     <TableRow data-testid="stock-unassigned-line">
-      <TableCell className="px-4 py-3">
+      <TableCell>
         <div>{line.invoiceSeries}/{line.invoiceNumber}</div>
         <div className="text-xs text-subtle-foreground">{f.date(line.invoiceDate)} · {t(`directions.${line.direction}`)}</div>
       </TableCell>
-      <TableCell className="px-4 py-3">{line.description}</TableCell>
+      <TableCell>{line.description}</TableCell>
       <TableCell className={NUM}>
         {line.quantity} {line.unit ?? ''}
       </TableCell>
-      <TableCell className="px-4 py-3">
+      <TableCell>
         {/* The coworker's suggestion only fills in the item below: the line is assigned, and the name taught, by the person's own click on Gán. */}
         {canWrite && <SuggestionChip suggestion={suggestion && choices.some((i) => i.id === suggestion.itemId) ? suggestion : undefined} asked={asked} items={choices} onUse={() => setItemId(suggestion?.itemId ?? '')} />}
         {canWrite ? (
@@ -648,8 +648,8 @@ export function StockPage() {
         <DataTable head={[t('code'), t('name'), t('unit'), t('onHand'), '']} numeric={[3]}>
           {list.map((i) => (
             <TableRow key={i.id} data-testid="stock-item">
-              <TableCell className="px-4 py-3">{i.code}</TableCell>
-              <TableCell className="px-4 py-3">
+              <TableCell>{i.code}</TableCell>
+              <TableCell>
                 {i.name}
                 {!i.active && (
                   <Badge className="ml-2" variant="secondary">
@@ -657,7 +657,7 @@ export function StockPage() {
                   </Badge>
                 )}
               </TableCell>
-              <TableCell className="px-4 py-3">{i.unit}</TableCell>
+              <TableCell>{i.unit}</TableCell>
               <TableCell className={NUM}>
                 {i.onHand}
                 {i.onHand.startsWith('-') && (
@@ -666,7 +666,7 @@ export function StockPage() {
                   </Badge>
                 )}
               </TableCell>
-              <TableCell className="px-4 py-3 text-right">
+              <TableCell className="text-right">
                 <span className="flex justify-end gap-1">
                   <Button variant="ghost" size="sm" onClick={() => setViewing(i)} data-testid="stock-item-moves">
                     {t('moves')}

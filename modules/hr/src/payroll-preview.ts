@@ -514,7 +514,7 @@ async function loadEmploymentMap(
   const uniqueIds = [...new Set(employmentIds)];
   if (uniqueIds.length === 0) return result;
   const rows = await ctx.trx
-    .selectFrom('crove_hr.payroll_employment')
+    .selectFrom('ludy_hr.payroll_employment')
     .select(['id', 'base_wage', 'pay_basis', 'hourly_rate', 'piece_rate'])
     .where('org_id', '=', ctx.orgId)
     .where('id', 'in', uniqueIds)
@@ -542,7 +542,7 @@ async function loadStoredPeriodSnapshot(
   },
 ): Promise<PreviewPeriodSnapshot> {
   const rows = (await ctx.trx
-    .selectFrom('crove_hr.payroll_line')
+    .selectFrom('ludy_hr.payroll_line')
     .select([...LINE_COLUMNS, 'breakdown'])
     .where('org_id', '=', ctx.orgId)
     .where('run_id', '=', run.id)
@@ -594,8 +594,8 @@ async function buildProjectedSnapshot(
     people.length === 0
       ? []
       : await ctx.trx
-          .selectFrom('crove_hr.payroll_line as l')
-          .innerJoin('crove_hr.payroll_run as r', (join) => join.onRef('r.org_id', '=', 'l.org_id').onRef('r.id', '=', 'l.run_id'))
+          .selectFrom('ludy_hr.payroll_line as l')
+          .innerJoin('ludy_hr.payroll_run as r', (join) => join.onRef('r.org_id', '=', 'l.org_id').onRef('r.id', '=', 'l.run_id'))
           .select(['l.employee_id', 'l.employment_id', 'l.inputs'])
           .where('l.org_id', '=', ctx.orgId)
           .where('r.legal_entity_id', '=', legalEntityId)
@@ -609,7 +609,7 @@ async function buildProjectedSnapshot(
     employeeIds.length === 0
       ? []
       : await ctx.trx
-          .selectFrom('crove_hr.payroll_leave_entry')
+          .selectFrom('ludy_hr.payroll_leave_entry')
           .select(['employee_id', 'days'])
           .where('org_id', '=', ctx.orgId)
           .where('employee_id', 'in', employeeIds)
@@ -729,7 +729,7 @@ export const payrollPreviewDiff = defineQuery({
 
     if (input.runId !== undefined) {
       const targetRun = await ctx.trx
-        .selectFrom('crove_hr.payroll_run')
+        .selectFrom('ludy_hr.payroll_run')
         .select(['id', 'legal_entity_id', 'month', 'status', 'working_days', 'approved_at'])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.runId)
@@ -751,7 +751,7 @@ export const payrollPreviewDiff = defineQuery({
     }
 
     const priorRun = await ctx.trx
-      .selectFrom('crove_hr.payroll_run')
+      .selectFrom('ludy_hr.payroll_run')
       .select(['id', 'legal_entity_id', 'month', 'status', 'working_days', 'approved_at'])
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', legalEntityId)
@@ -774,7 +774,7 @@ export const payrollPreviewDiff = defineQuery({
       employeeIds.length === 0
         ? []
         : await ctx.trx
-            .selectFrom('crove_hr.payroll_employee')
+            .selectFrom('ludy_hr.payroll_employee')
             .select(['id', 'display_name', 'erased_at'])
             .where('org_id', '=', ctx.orgId)
             .where('id', 'in', employeeIds)

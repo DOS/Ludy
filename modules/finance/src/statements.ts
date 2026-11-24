@@ -108,8 +108,8 @@ export function asEntries(rows: BalanceRow[], date: string, legalEntityId: strin
 // party and reversal. `withoutClosing` leaves out every entry that has a line on the year-end closing account.
 export function balances(ctx: QueryContext, legalEntityId: string, from: string | null, to: string, withoutClosing: boolean) {
   let query = ctx.trx
-    .selectFrom('crove_finance.journal_line as l')
-    .innerJoin('crove_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
+    .selectFrom('ludy_finance.journal_line as l')
+    .innerJoin('ludy_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))
     .select(['l.account_code', 'l.party_id'])
     .select((eb) => [
       eb('j.reverses_entry_id', 'is not', null).as('reversal'),
@@ -124,7 +124,7 @@ export function balances(ctx: QueryContext, legalEntityId: string, from: string 
     query = query.where(({ not, exists, selectFrom }) =>
       not(
         exists(
-          selectFrom('crove_finance.journal_line as c')
+          selectFrom('ludy_finance.journal_line as c')
             .select(sql<number>`1`.as('one'))
             .whereRef('c.org_id', '=', 'j.org_id')
             .whereRef('c.entry_id', '=', 'j.id')

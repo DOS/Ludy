@@ -99,7 +99,7 @@ suite('TikTok late post ids (#1475)', () => {
     const settings = inbox ? { tiktokMode: 'inbox' } : { privacyLevel: kind.privacy };
     const v = await admin(async (c) => {
       const { rows } = await c.query<{ id: string; revision: number; attempt: number }>(
-        `UPDATE crove_social.post_variant SET status = 'published', settings = $2, published_at = now() - make_interval(secs => $3), external_post_id = $4, error_code = $5
+        `UPDATE ludy_social.post_variant SET status = 'published', settings = $2, published_at = now() - make_interval(secs => $3), external_post_id = $4, error_code = $5
          WHERE post_id = $1 RETURNING id, revision, attempt`,
         [postId, JSON.stringify(settings), hoursAgo * 3600, inbox ? null : publishId, inbox ? 'SENT_TO_APP' : null],
       );
@@ -113,9 +113,9 @@ suite('TikTok late post ids (#1475)', () => {
   }
 
   const row = (id: string) =>
-    admin(async (c) => (await c.query<Row>('SELECT status, external_post_id, external_url, error_code, next_check_at FROM crove_social.post_variant WHERE id = $1', [id])).rows[0] as Row);
-  const due = async (o: Org) => (await workerPool.query<{ variant_id: string }>('SELECT variant_id FROM crove_social.late_id_due(500) WHERE org_id = $1', [o.orgId])).rows.map((r) => r.variant_id);
-  const checkNow = (id: string) => admin((c) => c.query("UPDATE crove_social.post_variant SET next_check_at = now() - interval '1 second' WHERE id = $1", [id]));
+    admin(async (c) => (await c.query<Row>('SELECT status, external_post_id, external_url, error_code, next_check_at FROM ludy_social.post_variant WHERE id = $1', [id])).rows[0] as Row);
+  const due = async (o: Org) => (await workerPool.query<{ variant_id: string }>('SELECT variant_id FROM ludy_social.late_id_due(500) WHERE org_id = $1', [o.orgId])).rows.map((r) => r.variant_id);
+  const checkNow = (id: string) => admin((c) => c.query("UPDATE ludy_social.post_variant SET next_check_at = now() - interval '1 second' WHERE id = $1", [id]));
   const ledger = (o: Org) => admin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM ludy_kernel.external_call WHERE org_id = $1', [o.orgId])).rows[0]?.n));
   const sweep = (t: ReturnType<typeof tiktok>) => sweepLateIds({ runtime: worker, broker: vault, workerDb, publishers: { tiktok: t.publisher } });
   const timeline = (o: Org, postId: string) => api.query<{ items: Array<{ kind: string; code: string | null; url: string | null }> }>('social.post.activity', { postId }, { actor: asUser(o.owner), orgId: o.orgId });
@@ -192,7 +192,7 @@ suite('TikTok late post ids (#1475)', () => {
     t.answer(QUERY, { body: { data: { videos: [{ id: '7300000000000000001', view_count: 1200, like_count: 80, comment_count: 6, share_count: 3 }] }, error: ok } });
     await sweepMetrics({ runtime: worker, broker: vault, workerDb, publishers: { tiktok: t.publisher } });
     expect(t.calls.at(-1)).toMatchObject({ route: QUERY, body: { filters: { video_ids: ['7300000000000000001'] } } });
-    const snapshot = await admin(async (c) => (await c.query<{ metrics: Record<string, number> }>('SELECT metrics FROM crove_social.metric_snapshot WHERE variant_id = $1', [id])).rows);
+    const snapshot = await admin(async (c) => (await c.query<{ metrics: Record<string, number> }>('SELECT metrics FROM ludy_social.metric_snapshot WHERE variant_id = $1', [id])).rows);
     expect(snapshot.map((s) => s.metrics)).toEqual([{ views: 1200, reactions: 80, comments: 6, shares: 3 }]);
   });
 
@@ -287,13 +287,13 @@ suite('TikTok late post ids (#1475)', () => {
   });
 
   it('keeps the scan to the worker, and lists nothing of an inactive org or channel', async () => {
-    await expect(appPool.query('SELECT * FROM crove_social.late_id_due(10)')).rejects.toMatchObject({ code: '42501' });
+    await expect(appPool.query('SELECT * FROM ludy_social.late_id_due(10)')).rejects.toMatchObject({ code: '42501' });
     await expect(
       admin(async (c) => {
         await c.query('BEGIN');
         try {
           await c.query('SET LOCAL ROLE ludy_tenant');
-          return await c.query('SELECT * FROM crove_social.late_id_due(10)');
+          return await c.query('SELECT * FROM ludy_social.late_id_due(10)');
         } finally {
           await c.query('ROLLBACK');
         }

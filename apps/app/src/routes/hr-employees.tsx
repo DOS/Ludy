@@ -62,9 +62,7 @@ import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../li
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.hr.key() });
 // A sensitive read leaves an audit row each time: the screen reads once and again only after its own change.
 const ONCE = { staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
-const NUM = 'px-4 py-3 text-right tabular-nums';
-const PHONE_SELECT_TARGET = 'max-md:min-h-11 [&_select]:max-md:min-h-11';
-const PHONE_INPUT_TARGET = 'max-md:min-h-11';
+const NUM = 'text-right tabular-nums';
 
 export interface TermsState {
   effectiveFrom: string;
@@ -601,7 +599,6 @@ function DepartmentManagerSelect({
       <div className="flex flex-wrap items-center gap-2">
         <NativeSelect
           id="hr-dept-edit-manager"
-          className={PHONE_SELECT_TARGET}
           value={department.managerUserId ?? ''}
           disabled={setManager.isPending}
           onChange={(e) => setManager.mutate(e.target.value || null)}
@@ -904,6 +901,7 @@ export function DepartmentsSection({
       ) : (
         <div className="mt-3">
           <DataTable
+            stacked
             head={[
               t('departments.name'),
               t('departments.defaultPayFunction'),
@@ -915,7 +913,7 @@ export function DepartmentsSection({
           >
             {departments.map((d) => (
               <TableRow key={d.id} data-testid="hr-department-row">
-                <TableCell className="px-4 py-3">
+                <TableCell data-label={t('departments.name')}>
                   <span className="font-medium text-foreground">{d.name}</span>
                   {entityList.length > 1 && entityNameById.has(d.legalEntityId) && (
                     <Badge className="ml-2" variant="outline">
@@ -938,14 +936,14 @@ export function DepartmentsSection({
                     </Badge>
                   )}
                 </TableCell>
-                <TableCell className="px-4 py-3">{t(`payFunctions.${d.payFunction}`)}</TableCell>
-                <TableCell className={NUM} data-testid="hr-department-headcount">
+                <TableCell data-label={t('departments.defaultPayFunction')}>{t(`payFunctions.${d.payFunction}`)}</TableCell>
+                <TableCell data-label={t('departments.activeEmployees')} className={NUM} data-testid="hr-department-headcount">
                   {d.activeEmployees}
                 </TableCell>
-                <TableCell className={NUM} data-testid="hr-department-wage-total">
+                <TableCell data-label={t('departments.activeBaseWageTotal')} className={NUM} data-testid="hr-department-wage-total">
                   {f.money(d.activeBaseWageTotal, 'VND')}
                 </TableCell>
-                <TableCell className="px-4 py-3 text-right">
+                <TableCell className="text-right">
                   {d.archivedAt === null && (
                     <div className="flex justify-end gap-1">
                       <Button
@@ -1904,7 +1902,6 @@ export function Detail({
               {active && linkableMembers.length > 0 ? (
                 <div className="mt-1 space-y-1">
                   <NativeSelect
-                    className={PHONE_SELECT_TARGET}
                     aria-label={t('linkedMember')}
                     value={e.linkedUserId ?? ''}
                     disabled={linkMember.isPending}
@@ -2026,6 +2023,7 @@ export function Detail({
         <HrContractNd337Notice signEnabled={signEnabled} />
       ) : null}
       <DataTable
+        stacked
         head={
           e.erased
             ? [t('effectiveFrom'), t('contractType'), t('contractTermCol'), t('probationCol'), t('region'), t('baseWage')]
@@ -2039,12 +2037,12 @@ export function Detail({
           const employerEntity = entities?.find((ent) => ent.id === e.legalEntityId);
           return (
             <TableRow key={row.id} data-testid="hr-terms-row">
-              <TableCell className="px-4 py-3">{f.date(row.effectiveFrom)}</TableCell>
-              <TableCell className="px-4 py-3">{t(`contracts.${row.contractType}`)}</TableCell>
-              <TableCell className="px-4 py-3">{formatContractTermSummary(t, f, row)}</TableCell>
-              <TableCell className="px-4 py-3">{formatProbationSummary(t, f, row)}</TableCell>
-              <TableCell className="px-4 py-3">{t('regionOption', { region: row.region })}</TableCell>
-              <TableCell className={NUM}>
+              <TableCell data-label={t('effectiveFrom')} className="tabular-nums">{f.date(row.effectiveFrom)}</TableCell>
+              <TableCell data-label={t('contractType')}>{t(`contracts.${row.contractType}`)}</TableCell>
+              <TableCell data-label={t('contractTermCol')}>{formatContractTermSummary(t, f, row)}</TableCell>
+              <TableCell data-label={t('probationCol')}>{formatProbationSummary(t, f, row)}</TableCell>
+              <TableCell data-label={t('region')}>{t('regionOption', { region: row.region })}</TableCell>
+              <TableCell data-label={t('baseWage')} className={NUM}>
                 {formatPaySummary(t, f, row)}
                 {row.payBasis !== 'monthly' && (
                   <Badge className="ml-2" variant="secondary">
@@ -2058,7 +2056,7 @@ export function Detail({
                 )}
               </TableCell>
               {!e.erased && signEnabled && (
-                <TableCell className="px-4 py-3" data-testid="hr-terms-sign-cell">
+                <TableCell data-label={t('sign.column')} data-testid="hr-terms-sign-cell">
                   <div className="flex flex-wrap items-center gap-2">
                     <HrContractSignHandoff
                       source={{
@@ -2087,7 +2085,7 @@ export function Detail({
                 </TableCell>
               )}
               {!e.erased && (
-                <TableCell className="px-4 py-3 text-right">
+                <TableCell className="text-right">
                   <Button
                     type="button"
                     variant="outline"
@@ -2126,12 +2124,12 @@ export function Detail({
       {e.dependents.length === 0 ? (
         <p className="mt-1 text-sm text-subtle-foreground">{t('dependentsEmpty')}</p>
       ) : (
-        <DataTable head={[t('name'), t('relation'), t('registeredOn'), '']}>
+        <DataTable stacked head={[t('name'), t('relation'), t('registeredOn'), '']}>
           {e.dependents.map((d) => (
             <TableRow key={d.id} data-testid="hr-dependent-row">
-              <TableCell className="px-4 py-3">{d.displayName}</TableCell>
-              <TableCell className="px-4 py-3">{t(`relations.${d.relation}`)}</TableCell>
-              <TableCell className="px-4 py-3">
+              <TableCell data-label={t('name')}>{d.displayName}</TableCell>
+              <TableCell data-label={t('relation')}>{t(`relations.${d.relation}`)}</TableCell>
+              <TableCell data-label={t('registeredOn')} className="tabular-nums">
                 {f.date(d.registeredOn)}
                 {d.endedOn && (
                   <Badge className="ml-2" variant="secondary">
@@ -2139,7 +2137,7 @@ export function Detail({
                   </Badge>
                 )}
               </TableCell>
-              <TableCell className="px-4 py-3 text-right">
+              <TableCell className="text-right">
                 {active && d.endedOn === null && (
                   <Button variant="ghost" size="sm" loading={endDependent.isPending && endDependent.variables === d.id} onClick={() => endDependent.mutate(d.id)}>
                     {t('endDependent')}
@@ -2292,7 +2290,6 @@ function LeaveApprovalQueue() {
           <p className="text-xs text-subtle-foreground">{t('leaveQueue.subtitle')}</p>
         </div>
         <NativeSelect
-          className={PHONE_SELECT_TARGET}
           aria-label={t('leaveQueue.filterLabel')}
           value={statusFilter}
           onChange={(ev) => setStatusFilter((ev.target.value || '') as HrLeaveRequestStatus | '')}
@@ -2348,7 +2345,7 @@ function LeaveApprovalQueue() {
                 {pending && (
                   <div className="flex flex-wrap items-center gap-2">
                     <Input
-                      className={`min-w-48 flex-1 ${PHONE_INPUT_TARGET}`}
+                      className="min-w-48 flex-1"
                       aria-label={t('leaveQueue.notePlaceholder')}
                       placeholder={t('leaveQueue.notePlaceholder')}
                       value={notes[r.id] ?? ''}
@@ -2500,12 +2497,12 @@ export function HrEmployeesPage() {
       ) : rows.length === 0 ? (
         <Empty title={t('empty')} hint={t('emptyHint')} />
       ) : (
-        <DataTable head={[t('name'), t('departmentAndTitle'), t('contractType'), t('region'), t('baseWage'), '']} numeric={[4]}>
+        <DataTable stacked head={[t('name'), t('departmentAndTitle'), t('contractType'), t('region'), t('baseWage'), '']} numeric={[4]}>
           {rows.map((r) => {
             const deptLabel = [r.departmentName, r.jobTitle].filter(Boolean).join(' - ');
             return (
               <TableRow key={r.id} data-testid="hr-employee-row">
-                <TableCell className="px-4 py-3">
+                <TableCell data-label={t('name')}>
                   {r.displayName}
                   {r.status === 'ended' && (
                     <Badge className="ml-2" variant="secondary">
@@ -2514,13 +2511,13 @@ export function HrEmployeesPage() {
                   )}
                   <ContractAlertBadges alerts={r.contractAlerts} />
                 </TableCell>
-                <TableCell className="px-4 py-3" data-testid="hr-employee-dept-cell">
+                <TableCell data-label={t('departmentAndTitle')} data-testid="hr-employee-dept-cell">
                   {deptLabel || '-'}
                 </TableCell>
-                <TableCell className="px-4 py-3">{r.current ? t(`contracts.${r.current.contractType}`) : '-'}</TableCell>
-                <TableCell className="px-4 py-3">{r.current ? t('regionOption', { region: r.current.region }) : '-'}</TableCell>
-                <TableCell className={NUM}>{r.current ? formatPaySummary(t, f, r.current) : '-'}</TableCell>
-                <TableCell className="px-4 py-3 text-right">
+                <TableCell data-label={t('contractType')}>{r.current ? t(`contracts.${r.current.contractType}`) : '-'}</TableCell>
+                <TableCell data-label={t('region')}>{r.current ? t('regionOption', { region: r.current.region }) : '-'}</TableCell>
+                <TableCell data-label={t('baseWage')} className={NUM}>{r.current ? formatPaySummary(t, f, r.current) : '-'}</TableCell>
+                <TableCell className="text-right">
                   <Button variant="ghost" size="sm" onClick={() => setOpen(r.id)} data-testid="hr-employee-open">
                     {t('open')}
                   </Button>

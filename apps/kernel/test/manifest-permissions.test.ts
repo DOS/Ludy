@@ -97,7 +97,7 @@ describe('module manifests declare their permissions (#1630)', () => {
 
 describe('permissionProblems() on planted mismatches', () => {
   const finance = (permissions: ModuleManifest['permissions']): Manifests => ({
-    finance: { manifest: defineModule({ id: 'finance', dependsOn: ['kernel'], tables: { crove_finance: { t: columns(['id']) } }, permissions, routes: [], nav: [], entities: [] }), file: 'finance.ts' },
+    finance: { manifest: defineModule({ id: 'finance', dependsOn: ['kernel'], tables: { ludy_finance: { t: columns(['id']) } }, permissions, routes: [], nav: [], entities: [] }), file: 'finance.ts' },
     kernel: { manifest: defineModule({ id: 'kernel', dependsOn: [], tables: {}, permissions: [], routes: [], nav: [], entities: [] }), file: 'kernel.ts' },
   });
   const unlock = { key: 'finance.period.unlock', risk: 'R3', defaultRoles: ['finance.chief_accountant'] } as const;
@@ -115,13 +115,13 @@ describe('permissionProblems() on planted mismatches', () => {
     expect(permissionProblems(finance([]), { uses: [{ permission: 'finance.period.unlock', by: 'the approval policy (X)' }] })).toEqual([
       'the approval policy (X) names finance.period.unlock, which no manifest declares: declare it in finance.ts',
     ]);
-    expect(permissionProblems(finance([unlock]), { uses: [use, ...sqlPermissionUses('function crove_finance.f', "IF NOT ludy_kernel.ctx_has_permission('finance.bank.export') THEN").uses] })).toEqual([
-      'function crove_finance.f names finance.bank.export, which no manifest declares: declare it in finance.ts',
+    expect(permissionProblems(finance([unlock]), { uses: [use, ...sqlPermissionUses('function ludy_finance.f', "IF NOT ludy_kernel.ctx_has_permission('finance.bank.export') THEN").uses] })).toEqual([
+      'function ludy_finance.f names finance.bank.export, which no manifest declares: declare it in finance.ts',
     ]);
     // A planted permission IN ('<undeclared>') in a function body (#1641).
     expect(
-      permissionProblems(finance([unlock]), { uses: [use, ...sqlPermissionUses('function crove_finance.g', "WHERE p.permission IN ('finance.period.unlock', 'finance.ledger.erase')").uses] }),
-    ).toEqual(['function crove_finance.g names finance.ledger.erase, which no manifest declares: declare it in finance.ts']);
+      permissionProblems(finance([unlock]), { uses: [use, ...sqlPermissionUses('function ludy_finance.g', "WHERE p.permission IN ('finance.period.unlock', 'finance.ledger.erase')").uses] }),
+    ).toEqual(['function ludy_finance.g names finance.ledger.erase, which no manifest declares: declare it in finance.ts']);
   });
 
   it('fails on a seeded row of an undeclared permission, or default roles that differ from the rows', () => {
@@ -188,8 +188,8 @@ describe('permissionProblems() on planted mismatches', () => {
       'function ludy_kernel.f names a permission through ctx_has_permission(...) p_key, which this check cannot attribute to a key: write the key as a literal',
     ]);
     expect(problems('function ludy_kernel.f', 'DECLARE v text; BEGIN SELECT k INTO v FROM t; v := lower(v); PERFORM 1 WHERE p.permission = v; END')).toHaveLength(1);
-    expect(problems('policy crove_finance.t.p', "p.permission LIKE 'finance.%'")).toEqual([
-      'policy crove_finance.t.p matches a permission column by pattern (permission LIKE), which this check cannot attribute to a key: compare with literals',
+    expect(problems('policy ludy_finance.t.p', "p.permission LIKE 'finance.%'")).toEqual([
+      'policy ludy_finance.t.p matches a permission column by pattern (permission LIKE), which this check cannot attribute to a key: compare with literals',
     ]);
     expect(problems('function ludy_kernel.f', 'p.permission IN (SELECT k FROM t)')).toHaveLength(1);
     // A literal beside something else does not make the rest attributable.

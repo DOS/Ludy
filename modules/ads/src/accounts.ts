@@ -73,7 +73,7 @@ export const adsAccountLink = defineCommand({
     // transaction (a connection reconnected with a new token is the same row, and one that stays open would keep the token), and
     // says so in the answer instead of throwing, which would roll the closing back; the caller tells the person why.
     if (connection.scopes.some((scope) => (ADS_SPEND_SCOPES as readonly string[]).includes(scope))) {
-      const setting = await ctx.trx.selectFrom('crove_ads.ad_org_setting').select('write_enabled').where('org_id', '=', ctx.orgId).orderBy('id').limit(1).forShare().executeTakeFirst();
+      const setting = await ctx.trx.selectFrom('ludy_ads.ad_org_setting').select('write_enabled').where('org_id', '=', ctx.orgId).orderBy('id').limit(1).forShare().executeTakeFirst();
       if (!setting?.write_enabled) {
         await ctx.run('kernel.channel.disconnect', { connectionId: connection.id, reason: 'spend_scopes' });
         ctx.audit({ connectionId: connection.id, provider: connection.provider, refused: 'spend_scopes' });
@@ -84,7 +84,7 @@ export const adsAccountLink = defineCommand({
     // exist yet would lock nothing).
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.ads:${ctx.orgId}:${connection.provider}:${connection.external_account_id}`}, 0))`.execute(ctx.trx);
     const existing = await ctx.trx
-      .selectFrom('crove_ads.ad_account')
+      .selectFrom('ludy_ads.ad_account')
       .select(['id', 'channel_connection_id'])
       .where('org_id', '=', ctx.orgId)
       .where('provider', '=', connection.provider)
@@ -98,7 +98,7 @@ export const adsAccountLink = defineCommand({
       // person who granted it this time is the one a deletion request would name.
       if (existing.channel_connection_id !== connection.id || input.grantedByHash !== undefined) {
         await ctx.trx
-          .updateTable('crove_ads.ad_account')
+          .updateTable('ludy_ads.ad_account')
           .set({ channel_connection_id: connection.id, ...(input.grantedByHash !== undefined ? { granted_by_hash: input.grantedByHash } : {}), updated_at: ctx.now })
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', existing.id)
@@ -109,7 +109,7 @@ export const adsAccountLink = defineCommand({
       const legalEntityId = await resolveEntity(ctx, input.legalEntityId);
       const today = ctx.now.toISOString().slice(0, 10);
       const inserted = await ctx.trx
-        .insertInto('crove_ads.ad_account')
+        .insertInto('ludy_ads.ad_account')
         .values({
           org_id: ctx.orgId,
           legal_entity_id: legalEntityId,
@@ -143,7 +143,7 @@ export const adsAccountConfigure = defineCommand({
   target: (input) => ({ type: 'ads.ad_account', id: input.adAccountId }),
   handler: async (ctx, input): Promise<{ adAccountId: string }> => {
     const row = await ctx.trx
-      .selectFrom('crove_ads.ad_account')
+      .selectFrom('ludy_ads.ad_account')
       .select(['id', 'legal_entity_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.adAccountId)
@@ -154,7 +154,7 @@ export const adsAccountConfigure = defineCommand({
     if (input.legalEntityId !== undefined && input.legalEntityId !== row.legal_entity_id) set.legal_entity_id = await resolveEntity(ctx, input.legalEntityId);
     if (input.expenseAccountCode !== undefined) set.expense_account_code = input.expenseAccountCode;
     if (input.resultKind !== undefined) set.result_kind = input.resultKind;
-    await ctx.trx.updateTable('crove_ads.ad_account').set(set).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
+    await ctx.trx.updateTable('ludy_ads.ad_account').set(set).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
     ctx.audit({ adAccountId: row.id, entityChanged: set.legal_entity_id !== undefined, expenseAccountCode: input.expenseAccountCode, resultKind: input.resultKind });
     return { adAccountId: row.id };
   },
@@ -170,7 +170,7 @@ export const adsSyncRequest = defineCommand({
   target: (input) => ({ type: 'ads.ad_account', id: input.adAccountId }),
   handler: async (ctx, input): Promise<{ adAccountId: string }> => {
     const row = await ctx.trx
-      .selectFrom('crove_ads.ad_account as a')
+      .selectFrom('ludy_ads.ad_account as a')
       .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
       .select(['a.id', 'a.channel_connection_id', 'a.last_requested_at', 'a.next_run_at', 'c.status'])
       .where('a.org_id', '=', ctx.orgId)
@@ -186,14 +186,14 @@ export const adsSyncRequest = defineCommand({
     if (row.last_requested_at && ctx.now.getTime() - new Date(row.last_requested_at).getTime() < ADS_REQUEST_MIN_SECONDS * 1000) {
       throw new DomainError('ADS_SYNC_TOO_SOON', 429, 'Vừa mới làm mới tài khoản này, hãy thử lại sau ít phút');
     }
-    await ctx.trx.updateTable('crove_ads.ad_account').set({ last_requested_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
+    await ctx.trx.updateTable('ludy_ads.ad_account').set({ last_requested_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
     ctx.audit({ adAccountId: row.id });
     await ctx.emit('ads.sync.requested', { connection_id: row.channel_connection_id, ad_account_id: row.id });
     return { adAccountId: row.id };
   },
 });
 
-// What the definer crove_ads.account_history_delete refuses, in the words of the screens.
+// What the definer ludy_ads.account_history_delete refuses, in the words of the screens.
 function historyError(error: unknown): never {
   const message = (error as { message?: unknown } | null)?.message;
   switch (message) {
@@ -210,7 +210,7 @@ function historyError(error: unknown): never {
 
 async function deleteHistory(ctx: CommandContext, adAccountId: string, removeAccount: boolean, today: string): Promise<{ days: number; runs: number; removed: boolean }> {
   const { rows } = await sql<{ days: string; runs: string; removed: boolean }>`
-    SELECT days, runs, removed FROM crove_ads.account_history_delete(${adAccountId}::uuid, ${removeAccount}, ${historyStart(today)}::date)`
+    SELECT days, runs, removed FROM ludy_ads.account_history_delete(${adAccountId}::uuid, ${removeAccount}, ${historyStart(today)}::date)`
     .execute(ctx.trx)
     .catch(historyError);
   const row = rows[0];
@@ -232,7 +232,7 @@ export const adsAccountDeleteHistory = defineCommand({
   target: (input) => ({ type: 'ads.ad_account', id: input.adAccountId }),
   handler: async (ctx, input): Promise<{ adAccountId: string; days: number; runs: number; removed: boolean }> => {
     const row = await ctx.trx
-      .selectFrom('crove_ads.ad_account as a')
+      .selectFrom('ludy_ads.ad_account as a')
       .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
       .select(['a.id', 'c.status'])
       .where('a.org_id', '=', ctx.orgId)
@@ -267,7 +267,7 @@ export const adsAccountErase = defineCommand({
     // the read grantor's: a write connection granted by the same person is theirs and has nothing to revoke (they removed the app), but one granted by
     // another person (or with no grantor recorded) is closed under its own reason and its revoke at the platform is held.
     const account = await ctx.trx
-      .selectFrom('crove_ads.ad_account')
+      .selectFrom('ludy_ads.ad_account')
       .select(['granted_by_hash', 'write_granted_by_hash'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.adAccountId)
@@ -298,7 +298,7 @@ export const adsAccountList = defineQuery({
   access: ALL,
   handler: async (ctx): Promise<Array<Omit<AdAccountView, 'resultKinds'>>> => {
     const rows = await ctx.trx
-      .selectFrom('crove_ads.ad_account as a')
+      .selectFrom('ludy_ads.ad_account as a')
       .innerJoin('ludy_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
       // The write connection, when the account has one (W0b): "can run ads" is a live one, anything else is read only.
       .leftJoin('ludy_kernel.channel_connection as w', (j) => j.onRef('w.org_id', '=', 'a.org_id').onRef('w.id', '=', 'a.write_connection_id'))
@@ -351,7 +351,7 @@ export const adsSyncRuns = defineQuery({
   access: ALL,
   handler: async (ctx, input): Promise<AdsSyncRunView[]> => {
     const rows = await ctx.trx
-      .selectFrom('crove_ads.ad_sync_run')
+      .selectFrom('ludy_ads.ad_sync_run')
       .select(['id', 'status', 'window_from', 'window_to', 'rows_written', 'error_kind', 'error_code', 'retry_at', 'started_at'])
       .where('org_id', '=', ctx.orgId)
       .where('ad_account_id', '=', input.adAccountId)

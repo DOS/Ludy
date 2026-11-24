@@ -29,7 +29,7 @@ export const HELD_TOO_LONG_MS = 60 * 60_000;
 
 export const zHoldReason = z.string().trim().min(1).max(HOLD_REASON_MAX);
 
-const lockKey = (orgId: string) => `crove_social.publish_hold:${orgId}`;
+const lockKey = (orgId: string) => `ludy_social.publish_hold:${orgId}`;
 
 function requireUser(ctx: CommandContext): string {
   if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
@@ -45,7 +45,7 @@ interface HoldRow {
 
 async function liveHold(trx: Trx, orgId: string): Promise<HoldRow | undefined> {
   return trx
-    .selectFrom('crove_social.publish_hold')
+    .selectFrom('ludy_social.publish_hold')
     .select(['id', 'reason', 'held_by', 'held_at'])
     .where('org_id', '=', orgId)
     .where('released_at', 'is', null)
@@ -80,7 +80,7 @@ export const publishingHold = defineCommand({
     const live = await liveHold(ctx.trx, ctx.orgId);
     if (live) return { holdId: live.id, heldAt: live.held_at.toISOString(), created: false };
     const row = await ctx.trx
-      .insertInto('crove_social.publish_hold')
+      .insertInto('ludy_social.publish_hold')
       // held_at and released_at from the database clock (its default, now()), so the row's order check never compares
       // the clocks of two app instances.
       .values({ org_id: ctx.orgId, reason: input.reason, held_by: userId })
@@ -98,11 +98,11 @@ export const publishingHold = defineCommand({
 const staleSql = (orgId: string, now: Date, postId: string | null) => {
   const cutoff = new Date(now.getTime() - HELD_TOO_LONG_MS);
   return sql<{ id: string; post_id: string }>`
-    SELECT v.id, v.post_id FROM crove_social.post_variant v
+    SELECT v.id, v.post_id FROM ludy_social.post_variant v
     WHERE v.org_id = ${orgId}::uuid AND v.status = 'scheduled' AND (${postId}::uuid IS NULL OR v.post_id = ${postId}::uuid)
       AND coalesce(v.error_retry_at, v.scheduled_at, v.queue_slot_at) < ${cutoff}
       AND NOT (v.error_retry_at IS NULL AND v.scheduled_at IS NULL AND EXISTS (
-        SELECT 1 FROM crove_social.queue q
+        SELECT 1 FROM ludy_social.queue q
         WHERE q.org_id = v.org_id AND q.channel_connection_id = v.channel_connection_id AND q.paused))
     ORDER BY v.post_id, v.id`;
 };
@@ -142,7 +142,7 @@ export const publishingRelease = defineCommand({
     const live = await liveHold(ctx.trx, ctx.orgId);
     if (!live) return { released: false, heldTooLong: 0 };
     await ctx.trx
-      .updateTable('crove_social.publish_hold')
+      .updateTable('ludy_social.publish_hold')
       .set({ released_by: userId, released_at: sql<Date>`pg_catalog.now()` })
       .where('org_id', '=', ctx.orgId)
       .where('released_at', 'is', null)
@@ -200,7 +200,7 @@ export const publishFailLate = defineCommand({
       // One post (on one channel or several): the ordinary notice of each failed channel, as before, opening the post.
       for (const f of failed) await ctx.emit('social.variant.failed', { post_id: f.postId, variant_id: f.variantId });
     } else {
-      const authors = await ctx.trx.selectFrom('crove_social.post').select('author_user_id').distinct().where('org_id', '=', ctx.orgId).where('id', 'in', posts).execute();
+      const authors = await ctx.trx.selectFrom('ludy_social.post').select('author_user_id').distinct().where('org_id', '=', ctx.orgId).where('id', 'in', posts).execute();
       await ctx.emit('social.publishing.late_failed', {
         count: posts.length,
         authors: authors.map((a) => a.author_user_id).filter((u): u is string => u !== null).slice(0, LATE_FAILED_AUTHORS_MAX),
