@@ -7,13 +7,15 @@
 //   /oauth/*                                     the provider: authorize, token, register, revoke, jwks (public by protocol)
 //   GET  /oauth/interaction/:uid/details         what the consent page shows (the signed-in user's own request)
 //   POST /oauth/interaction/:uid/consent         the person's answer: approve for one org (a grant) or deny
+//   POST /oauth/pairing/redeem                   the fallback for a client without OAuth (#4591): a single-use pairing code an owner or admin made in Settings, traded for an opaque bearer token of a grant
+//                                                (answered inside the provider's /oauth/* entry, mountOauthProvider, so it is one public route of the edge with the rest of the authorization server)
 //
 // A request to /mcp is refused before anything else unless its Origin is allowed, then unless its bearer token verifies (signature, issuer,
 // audience, expiry), then unless the grant behind it is in good standing in the database, then unless the grant is inside its rate and concurrency
 // budget. Only then does a query run, and the runtime checks the grant once more in that query's own transaction. The answer is released only after its
 // audit row is written; a failure to write it fails the call.
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
 import { RESPONSE_ALREADY_SENT } from '@hono/node-server/utils/response';
 import { sql } from 'kysely';
 import type { Context, Hono } from 'hono';
@@ -37,11 +39,40 @@ import { createAccountEmailAccess } from './auth-access.ts';
 import type { Config } from './config.ts';
 import { logEvent, runWithLogContext } from './log.ts';
 import { handleMcp, RPC_INTERNAL, type McpHeaders, type ToolDescriptor } from './mcp-protocol.ts';
-import { ACCESS_TOKEN_SECONDS, MCP_DRAFT_SCOPE, MCP_OFFERED_SCOPES, MCP_SCOPE, type OauthServer } from './oauth-server.ts';
+import { ACCESS_TOKEN_SECONDS, MCP_DRAFT_SCOPE, MCP_OFFERED_SCOPES, MCP_SCOPE, type AccessTokenClaims, type OauthServer } from './oauth-server.ts';
 import { RateLimiter } from './rate-limit.ts';
 
 const MAX_MCP_BODY_BYTES = 64 * 1024;
 const MAX_CONSENT_BODY_BYTES = 2 * 1024;
+const MAX_PAIRING_BODY_BYTES = 1024;
+const PAIRING_REDEEM_PATH = '/oauth/pairing/redeem';
+
+// --- the pairing code (#4591; ADR-0051 decision 2: the fallback for clients without OAuth) ---
+// A code is 12 symbols of an alphabet with no look-alikes (0 O 1 I L U), about 59 bits, shown as XXXX-XXXX-XXXX. It lives 10 minutes and is traded once. The API makes it and only its SHA-256 reaches the
+// database; the token a redeem gives is 32 random bytes with a fixed prefix, again stored only as its SHA-256 (ludy_kernel.mcp_pairing_redeem).
+export const PAIRING_TOKEN_PREFIX = 'lpt_';
+const PAIRING_ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ23456789';
+const PAIRING_LENGTH = 12;
+// A token lives as long as its grant: 30 days (ludy_kernel.mcp_pairing_redeem); the client pairs again after that.
+const sha256 = (text: string): Buffer => createHash('sha256').update(text, 'utf8').digest();
+
+// A code and its hash, as the Settings action shows the first and stores the second. randomInt draws uniformly from the alphabet (no modulo bias).
+export function makePairingCode(): { code: string; hashHex: string } {
+  let raw = '';
+  for (let i = 0; i < PAIRING_LENGTH; i++) raw += PAIRING_ALPHABET[randomInt(PAIRING_ALPHABET.length)];
+  return { code: `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8)}`, hashHex: sha256(raw).toString('hex') };
+}
+
+// What a person typed, as the 12 symbols it stands for, or null when it cannot be a code (upper case, spaces and dashes ignored).
+export function normalizePairingCode(input: string): string | null {
+  const raw = input.toUpperCase().replace(/[\s-]/g, '');
+  return raw.length === PAIRING_LENGTH && [...raw].every((ch) => PAIRING_ALPHABET.includes(ch)) ? raw : null;
+}
+export const pairingCodeHash = (raw: string): Buffer => sha256(raw);
+
+const makePairingToken = (): string => `${PAIRING_TOKEN_PREFIX}${randomBytes(32).toString('base64url')}`;
+const zPairingRedeem = z.object({ code: z.string().max(64) });
+const zPairingTokenPayload = z.object({ grantId: z.uuid(), orgId: z.uuid(), userId: z.uuid(), clientId: z.string().min(1).max(512), scopes: z.array(z.string()) });
 
 export interface McpDeps {
   config: Config;
@@ -103,7 +134,7 @@ const CORS_ALLOWED_REQUEST_HEADERS = 'authorization, content-type';
 // The route pattern an access line names: never the path itself (an interaction id, a code in a resumed URL).
 function routePatternOf(path: string): string {
   if (path.startsWith('/oauth/authorize/')) return '/oauth/authorize/:uid';
-  return ['/oauth/authorize', '/oauth/token', '/oauth/register', '/oauth/revoke', '/oauth/jwks', '/.well-known/oauth-authorization-server', '/.well-known/openid-configuration'].includes(path) ? path : '/oauth/*';
+  return ['/oauth/authorize', '/oauth/token', '/oauth/register', '/oauth/revoke', '/oauth/jwks', '/oauth/pairing/redeem', '/.well-known/oauth-authorization-server', '/.well-known/openid-configuration'].includes(path) ? path : '/oauth/*';
 }
 
 // The authorization server's own routes: authorize, token, register, revoke, jwks and the two metadata documents, answered by the provider on the Node
@@ -113,12 +144,15 @@ function routePatternOf(path: string): string {
 // (/oauth/interaction/...) are not the provider's: they go on to the routes of mountMcp, and the page itself to the SPA.
 export function mountOauthProvider(
   app: Hono<any>,
-  deps: Pick<McpDeps, 'oauth' | 'clientKey' | 'now'> & { registerPerMinute: number; registerGlobalPerMinute: number; allowedOrigins: readonly string[] },
+  deps: Pick<McpDeps, 'oauth' | 'runtime' | 'clientKey' | 'now'> & { registerPerMinute: number; registerGlobalPerMinute: number; allowedOrigins: readonly string[] },
 ): void {
   const callback = deps.oauth.provider.callback();
   const addressLimiter = new RateLimiter({ perMinute: 300, ...(deps.now ? { now: deps.now } : {}) });
   const registerLimiter = new RateLimiter({ perMinute: deps.registerPerMinute, ...(deps.now ? { now: deps.now } : {}) });
   const registerGlobalLimiter = new RateLimiter({ perMinute: deps.registerGlobalPerMinute, ...(deps.now ? { now: deps.now } : {}) });
+  // The pairing redeem (#4591): 10 attempts a minute per address, on top of the 300 a minute every /oauth/* route has. No budget is shared between addresses: a shared ceiling would let a caller with a few
+  // addresses block pairing for every org. The code is about 59 bits and lives 10 minutes, so 10 guesses a minute per address is nothing against 2^59.
+  const pairingAddressLimiter = new RateLimiter({ perMinute: 10, ...(deps.now ? { now: deps.now } : {}) });
 
   // The headers of every answer of these routes, ours and the provider's, set before either writes.
   const decorate = (c: Context, requestId: string) => {
@@ -195,8 +229,73 @@ export function mountOauthProvider(
       const all = registerGlobalLimiter.take('all');
       if (!all.allowed) return refuse(c, requestId, 429, { error: 'too_many_requests', error_description: 'Too many requests, try again later' }, all.retryAfterSeconds);
     }
+    if (path === PAIRING_REDEEM_PATH && c.req.method === 'POST') return redeemPairing(c, requestId);
     return delegate(c);
   });
+
+  // One generic refusal for a wrong, malformed, used, expired or void code (a code whose person lost their role since, an org that is stopped, a kill switch on): nothing tells them apart, and a refused
+  // code leaves no grant behind. The answer is JSON and never cached; the body is read up to 1 KB.
+  async function redeemPairing(c: Context, requestId: string) {
+    const started = Date.now();
+    const finish = (status: 200 | 400 | 413 | 429 | 500, body: Record<string, unknown>, retryAfterSeconds?: number) => {
+      decorate(c, requestId);
+      if (retryAfterSeconds !== undefined) c.header('retry-after', String(retryAfterSeconds));
+      logRequest('POST', PAIRING_REDEEM_PATH, status, started);
+      return c.json(body, status);
+    };
+    const mine = pairingAddressLimiter.take(deps.clientKey(c));
+    if (!mine.allowed) return finish(429, { error: 'too_many_requests', error_description: 'Too many requests, try again later' }, mine.retryAfterSeconds);
+    const text = await readLimited(c.req.raw, MAX_PAIRING_BODY_BYTES);
+    if (text === null) return finish(413, { error: 'invalid_request', error_description: 'Request body too large' });
+    const refusal = () => finish(400, { error: 'invalid_grant', error_description: 'The pairing code is not valid' });
+    let parsedBody: unknown = null;
+    try {
+      parsedBody = JSON.parse(text);
+    } catch {
+      parsedBody = null;
+    }
+    const parsed = zPairingRedeem.safeParse(parsedBody);
+    const raw = parsed.success ? normalizePairingCode(parsed.data.code) : null;
+    if (raw === null) return refusal();
+    const token = makePairingToken();
+    try {
+      const { rows } = await deps.runtime.orgless((db) =>
+        sql<{ grant_id: string; org_id: string; expires_at: Date }>`SELECT grant_id, org_id, expires_at FROM ludy_kernel.mcp_pairing_redeem(${pairingCodeHash(raw)}::bytea, ${sha256(token)}::bytea)`.execute(db),
+      );
+      const row = rows[0];
+      if (!row) {
+        logEvent('info', 'mcp pairing refused', {});
+        return refusal();
+      }
+      logEvent('info', 'mcp pairing redeemed', { grantId: row.grant_id });
+      const expiresIn = Math.max(1, Math.floor((new Date(row.expires_at).getTime() - (deps.now ? deps.now() : Date.now())) / 1000));
+      return finish(200, { access_token: token, token_type: 'Bearer', expires_in: expiresIn, scope: MCP_SCOPE });
+    } catch (error) {
+      logEvent('error', 'mcp pairing failed', { error: toDomainError(error).code });
+      return finish(500, { error: 'server_error', error_description: 'The pairing code could not be redeemed, try again later' });
+    }
+  }
+}
+
+// The body of a request up to `max` bytes, or null when it is longer (it is not read past the limit, with or without a Content-Length).
+async function readLimited(request: Request, max: number): Promise<string | null> {
+  const declared = Number(request.headers.get('content-length') ?? '0');
+  if (Number.isFinite(declared) && declared > max) return null;
+  const reader = request.body?.getReader();
+  if (!reader) return '';
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 export function mountMcp(app: Hono<any>, deps: McpDeps): void {
@@ -344,6 +443,16 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
     }
   });
 
+  // The claims of a pairing token, read from its record (the key is the token's SHA-256), or null: unknown, expired and malformed alike. The grant itself is checked by the caller, as for an OAuth token.
+  async function verifyPairingToken(token: string): Promise<AccessTokenClaims | null> {
+    if (token.length > 64 || !/^lpt_[A-Za-z0-9_-]{43}$/.test(token)) return null;
+    const { rows } = await runtime.orgless((db) => sql<{ payload: unknown }>`SELECT payload FROM ludy_kernel.oauth_record_find('PairingToken'::text, ${sha256(token)}::bytea)`.execute(db));
+    const parsed = zPairingTokenPayload.safeParse(rows[0]?.payload);
+    if (!parsed.success || !parsed.data.scopes.includes(MCP_SCOPE)) return null;
+    const { grantId, orgId, userId, clientId, scopes } = parsed.data;
+    return { grantId, orgId, userId, clientId, scopes: scopes.filter((s) => (MCP_OFFERED_SCOPES as readonly string[]).includes(s)) };
+  }
+
   async function signedIn(c: Context): Promise<AuthUser> {
     const user = await deps.authenticate(c.req.header('authorization'));
     // An extension token never consents for anything.
@@ -375,7 +484,13 @@ export function mountMcp(app: Hono<any>, deps: McpDeps): void {
     if (!address.allowed) return tooMany(c, address.retryAfterSeconds);
     const token = bearerOf(c);
     if (token === null) return challenge(c, null);
-    const claims = await oauth.verifyAccessToken(token);
+    // An opaque pairing token (#4591) or an access token of the authorization server: either way the same claims, then the same grant checks below.
+    let claims: AccessTokenClaims | null;
+    try {
+      claims = token.startsWith(PAIRING_TOKEN_PREFIX) ? await verifyPairingToken(token) : await oauth.verifyAccessToken(token);
+    } catch (error) {
+      return problem(c, error);
+    }
     if (!claims) return challenge(c, 'invalid_token');
     // With AUTH_ALLOWED_EMAILS set: the email of the person who gave the grant against the list, before mcp_grant_verify, which stamps last_used_at (a refusal writes
     // nothing, not even a call audit row). A grant no row has gives no email and falls through to the 401 below, as before.

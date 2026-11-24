@@ -26,6 +26,36 @@ Step by step for Claude and ChatGPT, with what is verified and what is not: [Con
 
 Give the app the address `PUBLIC_URL/mcp`. It discovers the rest (protected resource metadata, then the authorization server metadata), registers itself (dynamic client registration or a client ID metadata document), and sends you to `PUBLIC_URL/oauth/interaction/<id>`. Sign in as usual, choose the org (only orgs where you are owner or admin are offered), read the list, allow. The name an app shows is the one it gave itself; the page shows the address the browser returns to, which is the fact to check.
 
+## Connect an app that cannot do OAuth (pairing code)
+
+Source: [ADR-0051](../adr/0051-vys-brain-is-a-dos-claw-agent-ludy-is-the-gate.md) decision 2 (the pairing code "only as the fallback"), issue #4591. For a client that has no connect screen of its own (a per-agent capability token, a home-made agent, a script). Everything below is on only when `OAUTH_SERVER=on`, like the rest of this page.
+
+**For the person.** An owner or admin opens "Ứng dụng AI đã kết nối" (Connected AI apps), chooses "Tạo mã" (Make a code), names the connection and copies the code, shown once as `XXXX-XXXX-XXXX` (12 symbols, no 0 O 1 I L U). A person with a second factor must have used it in the last 5 minutes, as for a consent. The code works **once**, for **10 minutes**; at most 5 are live per org. Ludy keeps only its SHA-256, so a lost code is made again, never looked up. A pending code ends for good if its person loses the owner or admin role, is removed or is disabled (giving the role back does not revive it).
+
+**For the client.** Trade the code at the redeem route, which sits next to the OAuth token endpoint:
+
+```text
+POST PUBLIC_URL/oauth/pairing/redeem
+content-type: application/json
+
+{"code": "ABCD-EFGH-JKMN"}
+```
+
+Case, dashes and spaces in the code do not matter. Answers (JSON, `cache-control: no-store`):
+
+| Status | Body | When |
+| --- | --- | --- |
+| 200 | `{"access_token": "lpt_...", "token_type": "Bearer", "expires_in": <seconds>, "scope": "ludy.read"}` | the code was good; `expires_in` is the time left of the grant (30 days) |
+| 400 | `{"error": "invalid_grant", "error_description": "The pairing code is not valid"}` | **every** other case alike: wrong, malformed, already used, expired, or void because the person who made it is no longer an owner or admin, the org is stopped or a kill switch is on. Nothing tells them apart, and a refused code leaves no grant behind |
+| 413 | `{"error": "invalid_request", ...}` | a body over 1 KB |
+| 429 | `{"error": "too_many_requests", ...}` and `retry-after` | more than 10 attempts a minute from one address (counted in memory per API instance; no budget is shared between addresses, so one caller cannot block pairing for the others) |
+
+Then call `PUBLIC_URL/mcp` as for any client, with `authorization: Bearer lpt_...` on every request (Streamable HTTP, `POST`). The token is opaque, 32 random bytes with the `lpt_` prefix, stored only as its SHA-256, and has no refresh: it lives as long as its grant (**30 days**, shorter than the OAuth grant's 90 because it is a static bearer), then the client pairs again. A token on `/api` is refused 401, as an OAuth token is. #4592 (the MCP conformance tool) uses this route and error shape.
+
+**What the grant is.** A row of `agent_grant` exactly like the one the consent screen makes: company kind, the consenting user is the person who made the code, the read scope `ludy.read` only (a write scope needs the OAuth consent screen), `client_id` `pairing:<id>`, the name the person typed, the host `pairing-code`. It is badged "Mã ghép nối" in Settings and cut off the same way: Disconnect, losing the owner or admin role, removing or disabling the member, a kill switch (the org's or the deployment's AI switch), or the end of the 30 days closes it at the very next request, because `/mcp` runs the same `mcp_grant_verify` and the runtime the same `mcp_grant_check` for both. The coworker (Vy, company mode) reached through it sees exactly what an OAuth-connected one sees: same tools, same projections, same row budget and audit ("via <name> (MCP)", `kernel.mcp.call`). The redeem itself writes a system audit row `kernel.mcp.pairing_redeem` and the command a row `kernel.mcp.pairing.issue`; neither holds the code or the token (the command's audit row keeps only a keyed hash of its input, which contains the code's hash).
+
+**Where it lives.** No new table: the code is an `oauth_record` of model `PairingCode` (10 minutes, consumed by one `UPDATE` so two racing redeems give one grant) and the token one of model `PairingToken`, both definer-only and keyed by SHA-256 (migration `20270323000000`: `mcp_pairing_issue`, `mcp_pairing_redeem`; the API login alone may call them). The code and the token are made by the API (`apps/kernel/src/mcp-endpoint.ts`, `rpc.ts`), never by the database, so the command and the audit log see only the code's hash. Pinned in `apps/kernel/test/invariant/mcp-pairing.db.test.ts` (hash only, single use under a race, expiry, void code, revoke, privileges) and end to end in `apps/kernel/test/mcp-pairing.db.test.ts`.
+
 ## What it can and cannot do
 
 - **What the two data tools return, and never return** (owner decision 2026-11-11; the privacy review of each is the comment on its query, and `apps/kernel/test/mcp-data.db.test.ts` pins it). An AI app connected to the org sees the customer data the person who allowed it sees, as the HubSpot and Twenty MCP servers show theirs. `ludy_parties_list`: id, company or person, name, the company a person works at, **email, phone, address and tax code**, the day recorded, and `sourceTrust` (who put the row in: `external` means a visitor, a public booking form or an import typed it, so a client should trust it less). `ludy_invoices_list`: series and number, date, sale or purchase, the party's name and **tax code**, subtotal, VAT, total, currency, **the description of each line** (the first 20, with the line count) and whether the invoice was voided and **why**. Never: salaries or payroll, bank account records (a number someone typed into a line description or a void reason is free text and does come through), member-private notes, todos and results, anything a `sensitive` query covers, an invoice line's amounts or accounts, the file an invoice came from. Every text value is cut to one plain line (no line break, no separator, no bidi control, no invisible tag character). Both return the newest 50 at most and say when there are more (`total`, `truncated`); there is no search and no paging yet. **The consent page tells the person plainly that the app will see customer and invoice details, contact information included, and that this leaves Ludy and is kept by that app's provider under its own terms: connect only an app you would give the same information to.** A name or a line description is text a person, a customer, a supplier's invoice or a visitor wrote: it is data for the app, and the tool says so, but a language model can still be fooled by text, so treat an `external` row and any invoice text as untrusted.

@@ -6,6 +6,7 @@
 //   tokens of the one it replaces. It is not a procedure of the contract (the route is the only caller) and no MCP grant reaches it.
 // - kernel.mcp.grant.list and kernel.mcp.grant.revoke: an owner or admin sees the org's grants and cuts one off; the consenting user may cut
 //   off their own.
+// - kernel.mcp.pairing.issue: the pairing code (#4591), the fallback for an AI app without OAuth; the redeem is an HTTP route next to the token endpoint, not a command.
 // The audit row of one MCP call or refusal is not a command: the endpoint writes it through ludy_kernel.mcp_call_audit (the API login has no
 // system context), as the system, naming the grant, the client and the tool, so it never reads as the person's own click.
 // - kernel.mcp.about: `ludy_about`: the org's name, the grant and its scope. It holds no business data.
@@ -108,6 +109,46 @@ export const mcpGrantRevoke = defineCommand({
     if (rows[0]?.revoked !== true) throw new DomainError('MCP_GRANT_NOT_FOUND', 404, 'Không tìm thấy quyền kết nối này, hoặc đã được thu hồi');
     ctx.audit({ grantId: input.grantId });
     return { grantId: input.grantId, revoked: true as const };
+  },
+});
+
+// The pairing code (#4591; ADR-0051 decision 2, the fallback for an AI app without OAuth). The API makes the code and passes only its SHA-256 (`codeHash`, hex): the code never reaches the database, an audit
+// row or the idempotency record. The command stores it for 10 minutes; the redeem route (apps/kernel/src/mcp-endpoint.ts) trades it once for a grant of the consent's kind. An owner or admin only, with a
+// fresh second factor if they have one, as for a consent.
+export const zMcpPairingIssueCommand = z.strictObject({ label: z.string().trim().min(1).max(120), codeHash: z.string().regex(/^[0-9a-f]{64}$/) });
+
+function pairingError(error: unknown): never {
+  const message = (error as { message?: unknown } | null)?.message;
+  switch (message) {
+    case 'MCP_FORBIDDEN':
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới tạo được mã ghép nối MCP');
+    case 'MCP_INVALID':
+      throw new DomainError('INVALID', 422, 'Yêu cầu tạo mã ghép nối MCP không hợp lệ');
+    case 'MCP_TOO_MANY':
+      throw new DomainError('MCP_PAIRING_TOO_MANY', 409, 'Đã có 5 mã ghép nối còn hiệu lực, hãy đợi mã cũ hết hạn (10 phút) rồi tạo lại');
+    default:
+      throw error;
+  }
+}
+
+export const mcpPairingIssue = defineCommand({
+  name: 'kernel.mcp.pairing.issue',
+  input: zMcpPairingIssueCommand,
+  risk: 'R2',
+  sideEffect: 'internal',
+  access: GRANTORS,
+  handler: async (ctx, input) => {
+    requireUser(ctx);
+    const actor = ctx.actor;
+    if (actor.type === 'user' && actor.aal === 'aal2' && !hasFreshMfa(actor)) {
+      throw new DomainError('STEP_UP_REQUIRED', 403, 'Cần xác thực hai lớp (MFA) trong 5 phút gần nhất để tạo mã ghép nối MCP');
+    }
+    const { rows } = await sql<{ expires_at: Date }>`SELECT ludy_kernel.mcp_pairing_issue(decode(${input.codeHash}, 'hex'), ${input.label}) AS expires_at`.execute(ctx.trx).catch(pairingError);
+    const expiresAt = rows[0]?.expires_at;
+    if (!expiresAt) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+    // The label and the end of the code: never the code or its hash.
+    ctx.audit({ label: input.label, expiresAt: new Date(expiresAt).toISOString() });
+    return { expiresAt: new Date(expiresAt).toISOString() };
   },
 });
 
@@ -438,5 +479,5 @@ export const mcpEngageReadsNotify = defineCommand({
   },
 });
 
-export const mcpCommands = [mcpGrantApprove, mcpGrantRevoke, mcpMemberGrantsSet, mcpPropose, mcpProposalNotify, mcpEngageReadsNotify, ...mcpWakeCommands];
+export const mcpCommands = [mcpGrantApprove, mcpGrantRevoke, mcpPairingIssue, mcpMemberGrantsSet, mcpPropose, mcpProposalNotify, mcpEngageReadsNotify, ...mcpWakeCommands];
 export const mcpQueries = [mcpGrantList, mcpMemberGrantsGet, mcpAbout, mcpParties, mcpSignals, ...mcpSeatQueries, ...mcpConversationQueries, ...mcpWakeQueries];

@@ -11,6 +11,7 @@ import { assertSignCaProviderAllowed } from '@ludy/mod-sign';
 import { SANDBOX_CA_SECRET, createSandboxCaAdapter } from '@ludy/sign';
 import type { SignApiKeyListResult, SignApiKeyRecord, SignCaConnectionRecord, SignCaSettingsResult, SignWebhookDeleteResult, SignWebhookDeliveriesResult, SignWebhookListResult, SignWebhookPingResult, SignWebhookRecord } from '@ludy/kernel-contract';
 import type { McpWakeView, MeetingHookView, QuoteLinkCreated } from '@ludy/kernel-contract';
+import { makePairingCode } from './mcp-endpoint.ts';
 import { assertWakeHostPublic, makeWakeSecret, type WakeResolve } from './mcp-wake-setup.ts';
 import { adLaunchCapable } from './ads-launch-capable.ts';
 import { markableDetail, markableListed } from './conversation-sender-mark.ts';
@@ -3270,6 +3271,16 @@ export function createRpcHandler(
       grant: {
         list: os.mcp.grant.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.mcp.grant.list', {}, { actor, orgId }))),
         revoke: os.mcp.grant.revoke.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.mcp.grant.revoke', input, { actor, orgId }))),
+      },
+      // The pairing code (#4591): made here so that only its hash reaches the command, the database and the audit log; it goes back once, to the person who asked.
+      pairing: {
+        issue: os.mcp.pairing.issue.handler(({ context, input }) =>
+          inOrg(context, async (orgId, actor) => {
+            const made = makePairingCode();
+            const done = await runtime.execute<{ expiresAt: string }>('kernel.mcp.pairing.issue', { label: input.label, codeHash: made.hashHex }, { actor, orgId });
+            return { code: made.code, expiresAt: done.expiresAt };
+          }),
+        ),
       },
       // The wake-up webhook of a grant (ADR-0051 decision 4, #3024): the secret is made and sealed here, and only the person who asked sees it, once.
       wake: {

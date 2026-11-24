@@ -36,6 +36,8 @@ export const KERNEL_ERROR_CODES = [
   'MCP_WAKE_SCOPE',
   'MCP_WAKE_NOT_FOUND',
   'MCP_WAKE_TOO_SOON',
+  // A pairing code waits to be used, five at most per organization (#4591).
+  'MCP_PAIRING_TOO_MANY',
   // A member's minutes webhook (Meetings A6, #3164).
   'MEETING_HOOKS_OFF',
   'MEETING_HOOK_NOT_FOUND',
