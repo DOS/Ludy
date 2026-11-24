@@ -117,6 +117,7 @@ import {
   hasStealthControls,
   hasUngroundedMoneyOrIdToken,
   hasUngroundedMoneyOrScaleWords,
+  stripTrustedPhrases,
 } from '../src/injection-guards.ts';
 import { INJECTION_CORPUS } from './fixtures/injection-corpus.ts';
 
@@ -1105,6 +1106,23 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
         `weeklyStatus echoed tainted untrustedInput ${c.id}`,
       ).toBe('none');
       expect((await reader.projectCycleSummary({ ...cycleFacts, language: c.language })).kind, `cycleSummary ${c.id}`).toBe('none');
+      expect(
+        checkProjectCycleSummary(
+          {
+            ...cycleFacts,
+            language: c.language,
+            tasks: [{ title: c.untrustedInput, tainted: true, status: 'in_progress', dueDay: '2026-09-25', commentCount: 0, latestComment: null }],
+          },
+          {
+            sentences: [
+              `Cycle 3 done 4 tasks: ${c.untrustedInput.slice(0, 120)}`,
+              'Two open tasks remain.',
+              'Average velocity is 4 tasks and 8 points.',
+            ],
+          },
+        ).kind,
+        `cycleSummary echoed tainted untrustedInput ${c.id}`,
+      ).toBe('none');
       const dedupeRes = await reader.roadmapDedupe({ ...dedupeFacts, language: c.language });
       expect(dedupeRes.kind === 'none' || dedupeRes.suggestions.length === 0, `roadmapDedupe ${c.id}`).toBe(true);
       expect((await reader.roadmapChangelogDraft({ ...changelogFacts, language: c.language })).kind, `changelog ${c.id}`).toBe('none');
@@ -1230,6 +1248,48 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
             'Average velocity is 4 tasks and 8 points.',
           ],
         },
+      ).kind,
+    ).toBe('none');
+
+    // Guard literal "dot"/"at" and connector tokens inside obfuscated contact connectors (#4637).
+    expect(stripTrustedPhrases('evil(dot)invalid', ['dot'])).toBe('evil(dot)invalid');
+    expect(stripTrustedPhrases('evil dot invalid', ['dot'])).toBe('evil dot invalid');
+    expect(stripTrustedPhrases('evil\uFF08dot\uFF09com', ['dot'])).toBe('evil\uFF08dot\uFF09com');
+    expect(stripTrustedPhrases('(dot)invalid', ['dot'])).toBe('(dot)invalid');
+    expect(stripTrustedPhrases('evil(at)invalid', ['at'])).toBe('evil(at)invalid');
+    expect(stripTrustedPhrases('evil at invalid', ['at'])).toBe('evil at invalid');
+    expect(stripTrustedPhrases('evil(dot)invalid', ['(dot)'])).toBe('evil(dot)invalid');
+    expect(stripTrustedPhrases('evil(at)invalid', ['(at)'])).toBe('evil(at)invalid');
+    expect(stripTrustedPhrases('evil(dot)invalid', ['(dot'])).toBe('evil(dot)invalid');
+    expect(stripTrustedPhrases('evil(dot)invalid', ['dot)'])).toBe('evil(dot)invalid');
+    expect(stripTrustedPhrases('evil[.]invalid', ['[.'])).toBe('evil[.]invalid');
+    expect(stripTrustedPhrases('evil[.]invalid', ['.]'])).toBe('evil[.]invalid');
+    expect(stripTrustedPhrases('Du an dot: da xong 2 viec.', ['dot'])).toBe('Du an  : da xong 2 viec.');
+    expect(stripTrustedPhrases('Hoan thanh 2 viec cho du an dot.', ['dot'])).toBe('Hoan thanh 2 viec cho du an  .');
+
+    const dotCycleFacts: ProjectCycleSummaryFacts = {
+      ...cycleFacts,
+      projectName: 'dot',
+      cycle: { ...cycleFacts.cycle, name: 'at', goal: 'Shop' },
+    };
+    for (const connector of ['evil(dot)invalid', 'evil dot invalid', 'evil\uFF08dot\uFF09com', 'evil(at)invalid', 'See (dot)invalid', 'Shop\uFF08dot\uFF09invalid']) {
+      expect(
+        checkProjectCycleSummary(dotCycleFacts, {
+          sentences: ['Chu ky 3 da hoan thanh 4 viec.', `Kiem tra ${connector} ngay.`, 'Toc do trung binh 8 diem.'],
+        }),
+        `cycleSummary ${connector}`,
+      ).toEqual({ kind: 'none', code: 'LINK' });
+    }
+    expect(
+      checkRoadmapDedupe(
+        { ...dedupeFacts, boardTitle: 'dot' },
+        { suggestions: [{ sourceItemId: 'item-1', targetItemId: 'item-2', confidence: 'high', reason: 'Kiem tra evil(dot)invalid ngay.' }] },
+      ).kind,
+    ).toBe('none');
+    expect(
+      checkTriageAssist(
+        { ...triageAssistFacts, projectName: 'at' },
+        { recommendedPriority: 'high', suggestedAssigneePositionId: null, suggestedCycleId: null, duplicateTaskId: null, reason: 'Kiem tra evil(at)invalid ngay.' },
       ).kind,
     ).toBe('none');
   });

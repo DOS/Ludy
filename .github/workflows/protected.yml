@@ -1,7 +1,7 @@
 # Decision 7 review flow for protected paths (plan §10, gate G6; External-tenant gate T15).
-# Both jobs run on every PR and pass quickly when no protected path changed, so they can be required checks
-# without blocking docs-only PRs. Protected paths are decided by tools/ci/protected-paths.mjs taken from the
-# base branch. See AGENTS.md, "Protected paths".
+# The detect, invariant aggregator and security-review jobs run on every PR and pass quickly when no protected path
+# changed, so `Invariant suite (from base)` stays a required check without blocking docs-only PRs. Protected paths are
+# decided by tools/ci/protected-paths.mjs taken from the base branch. See AGENTS.md, "Protected paths".
 name: protected
 
 on:
@@ -15,22 +15,13 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  invariant:
-    name: Invariant suite (from base)
+  detect:
+    name: Detect protected paths (from base)
     runs-on: ubuntu-latest
-    # 30 minutes (#3995): the base suite passed in 19:59 and was cancelled at its 20-minute limit on unrelated PRs.
-    timeout-minutes: 30
-    services:
-      postgres:
-        image: postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
-        env:
-          POSTGRES_PASSWORD: ci-postgres
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 3s --health-retries 30
+    timeout-minutes: 5
+    outputs:
+      protected: ${{ steps.detect.outputs.protected }}
     env:
-      LUDY_TEST_ADMIN_URL: postgres://postgres:ci-postgres@localhost:5432/postgres
-      CROVE_TEST_ADMIN_URL: postgres://postgres:ci-postgres@localhost:5432/postgres
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
@@ -78,9 +69,42 @@ jobs:
             exit 1
           fi
 
+  invariant-shard:
+    name: Invariant suite (from base, shard ${{ matrix.shard }} of 4)
+    needs: [detect]
+    if: needs.detect.outputs.protected == 'true'
+    runs-on: ubuntu-latest
+    # 30 minutes (#3995); sharded across 4 parallel PostgreSQL runners (#4660) so each shard finishes well below the limit.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    services:
+      postgres:
+        image: postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+        env:
+          POSTGRES_PASSWORD: ci-postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      LUDY_TEST_ADMIN_URL: postgres://postgres:ci-postgres@localhost:5432/postgres
+      CROVE_TEST_ADMIN_URL: postgres://postgres:ci-postgres@localhost:5432/postgres
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
       - name: Take the invariant suite from the base branch
         id: take
-        if: steps.detect.outputs.protected == 'true'
         run: |
           set -euo pipefail
           # NUL-separated lists throughout, so unusual file names cannot slip past rm or checkout.
@@ -142,11 +166,9 @@ jobs:
           if [ -n "$changed" ]; then echo "::warning::This PR changes the invariant suite; CI ran the base copy instead."; fi
 
       - name: Install pnpm
-        if: steps.detect.outputs.protected == 'true'
         run: npm install -g pnpm@10.34.7 --no-fund --no-audit
 
       - name: Install dependencies
-        if: steps.detect.outputs.protected == 'true'
         run: pnpm install --frozen-lockfile --filter "@ludy/kernel-server..." --filter "ludy-monorepo"
 
       # PR code still runs after the swap (#1647): the root lifecycle scripts of pnpm install, and the code under
@@ -155,7 +177,7 @@ jobs:
       # types, link counts and sha256 the take step handed over before any PR code ran (#1786), and no node_modules
       # sits under a test directory (#1644). A tripwire, not a boundary: PR code runs as the same user, with sudo.
       - name: The base suite is still on disk after the install
-        if: steps.detect.outputs.protected == 'true' && steps.take.outcome == 'success'
+        if: steps.take.outcome == 'success'
         env:
           SUITE: ${{ steps.take.outputs.suite }}
           MANIFEST: ${{ steps.take.outputs.manifest }}
@@ -211,7 +233,6 @@ jobs:
       # purpose would add ERROR and STATEMENT lines there, thousands in all, and push the test report out of the
       # log tail that the API returns (#498). FATAL and PANIC are still logged.
       - name: Keep the database log short
-        if: steps.detect.outputs.protected == 'true'
         env:
           PG_CONTAINER: ${{ job.services.postgres.id }}
         run: |
@@ -222,11 +243,11 @@ jobs:
             -c "SELECT pg_reload_conf()"
 
       - name: Run the invariant suite against this PR's code (PostgreSQL 17)
-        if: steps.detect.outputs.protected == 'true'
-        run: pnpm exec vitest run --config vitest.invariant.config.ts --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/invariant.json"
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: pnpm exec vitest run --config vitest.invariant.config.ts --shard="${SHARD}/4" --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/invariant.json"
 
       - name: Fail if any invariant test was skipped
-        if: steps.detect.outputs.protected == 'true'
         run: |
           # shellcheck disable=SC2016 # the single quotes hold JavaScript, not shell
           node -e '
@@ -239,7 +260,7 @@ jobs:
       # The same check as "The base suite is still on disk after the install", after the run and even when it
       # failed, so it decides the job: the code under test ran in between (#1647).
       - name: The base suite is still on disk after the run
-        if: ${{ !cancelled() && steps.detect.outputs.protected == 'true' && steps.take.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.take.outcome == 'success' }}
         env:
           SUITE: ${{ steps.take.outputs.suite }}
           MANIFEST: ${{ steps.take.outputs.manifest }}
@@ -295,7 +316,7 @@ jobs:
       # step's log (#498). The script comes from the base branch, like the detection script, so a PR cannot change
       # what its own report says. It never decides the job.
       - name: Report the failed tests
-        if: always() && steps.detect.outputs.protected == 'true'
+        if: always()
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -306,6 +327,32 @@ jobs:
             cp tools/ci/invariant-summary.mjs "$RUNNER_TEMP/invariant-summary.mjs"
           fi
           node "$RUNNER_TEMP/invariant-summary.mjs" "$RUNNER_TEMP/invariant.json"
+
+  # The required check: fail-closed over path detection and all 4 parallel invariant shards (#4660).
+  invariant:
+    name: Invariant suite (from base)
+    needs: [detect, invariant-shard]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Protected-path check and all invariant shards passed
+        env:
+          DETECT: ${{ needs.detect.result }}
+          PROTECTED: ${{ needs.detect.outputs.protected }}
+          SHARDS: ${{ needs.invariant-shard.result }}
+        run: |
+          set -euo pipefail
+          echo "detect: $DETECT, protected: ${PROTECTED:-<unset>}, invariant-shard: $SHARDS"
+          test "$DETECT" = "success"
+          if [ "$PROTECTED" = "false" ]; then
+            test "$SHARDS" = "skipped" || test "$SHARDS" = "success"
+          elif [ "$PROTECTED" = "true" ]; then
+            test "$SHARDS" = "success"
+          else
+            echo "::error::Unexpected protected-path output from detect (expected 'true' or 'false')."
+            exit 1
+          fi
 
   security-review:
     name: Security review (agent)

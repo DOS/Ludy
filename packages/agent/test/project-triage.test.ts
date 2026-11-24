@@ -244,4 +244,57 @@ describe('project triage Vy assistant (#4493)', () => {
       ).toEqual({ kind: 'none', code: 'AI_OUTPUT_UNSAFE' });
     }
   });
+
+  it('uses shared NFKC/literal dot/at phrase stripping, invisible filler guards, and fail-closed taint (#4637)', () => {
+    const facts: ProjectTriageAssistFacts = {
+      ...BASE_FACTS,
+      projectName: 'Shop',
+      item: {
+        ...BASE_FACTS.item,
+        title: 'Yêu\u3164 cầu\u200B mới',
+        description: 'Kiểm\u2800 tra\u202E màn hình',
+        tainted: undefined as unknown as boolean,
+      },
+      candidates: {
+        ...BASE_FACTS.candidates,
+        seats: [{ positionId: SEAT_1, label: 'dot' }],
+        cycles: [{ cycleId: CYCLE_1, label: 'at', status: 'active' }],
+      },
+    };
+
+    expect(triageAssistPrompt(facts)).not.toMatch(/[\u200B\u202E\u3164\u2800]/u);
+
+    for (const badReason of [
+      'Xem evilShop.invalid ngay.',
+      'Xem Shop\uFF08dot\uFF09invalid ngay.',
+      'Xem Shop [.] com ngay.',
+      'Xem evil(dot)invalid ngay.',
+      'Xem evil dot invalid ngay.',
+      'Xem evil\uFF08dot\uFF09com ngay.',
+      'Xem evil(at)invalid ngay.',
+      'Gợi ý\u3164 ưu tiên cao.',
+      '\u000B',
+    ]) {
+      expect(
+        checkTriageAssist(facts, {
+          recommendedPriority: 'high',
+          suggestedAssigneePositionId: SEAT_1,
+          suggestedCycleId: CYCLE_1,
+          duplicateTaskId: null,
+          reason: badReason,
+        }),
+        badReason,
+      ).toEqual({ kind: 'none', code: 'AI_OUTPUT_UNSAFE' });
+    }
+
+    expect(
+      checkTriageAssist(facts, {
+        recommendedPriority: 'medium',
+        suggestedAssigneePositionId: SEAT_1,
+        suggestedCycleId: CYCLE_1,
+        duplicateTaskId: null,
+        reason: 'Phù hợp với Shop và dự án dot: ưu tiên trung bình.',
+      }).kind,
+    ).toBe('ok');
+  });
 });

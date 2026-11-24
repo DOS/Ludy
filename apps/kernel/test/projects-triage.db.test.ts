@@ -33,6 +33,7 @@ import { createHttpApp } from '../src/http.ts';
 import { orgPurgeCommand, runOrgPurge } from '../src/org-purge.ts';
 import { prepareProjectTriageAssist, projectTriageAi } from '../src/project-triage-ai.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
+import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -615,6 +616,239 @@ suite('Projects Triage Inbox Slice 2 (#4493)', () => {
     expect(reopened.item.status).toBe('pending');
     expect(reopened.item.declineReason).toBeNull();
     expect(reopened.item.snoozedUntil).toBeNull();
+  });
+
+  it('enforces roadmap_item -> project lock ordering and archived/concurrent project guards on accept (#4631)', async () => {
+    const waitForLock = async () => {
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        const locked = await admin(async (c) => {
+          const { rows } = await c.query<{ cnt: number }>(
+            `SELECT count(*)::int AS cnt
+               FROM pg_catalog.pg_stat_activity
+              WHERE datname = pg_catalog.current_database()
+                AND wait_event_type = 'Lock'
+                AND pid <> pg_catalog.pg_backend_pid()`,
+          );
+          return (rows[0]?.cnt ?? 0) > 0;
+        });
+        if (locked) return true;
+        await new Promise((r) => setTimeout(r, 15));
+      }
+      return false;
+    };
+
+    // 1. Archived project rejects projects.triage.accept on a roadmap-sourced item without creating a task or setting linked_task_id.
+    const archProj = await runtime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Dự án lưu trữ kiểm thử accept', memberUserIds: [ownerUserId, memberUserId] },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const archRmItem = await runtime.execute<{ item: { id: string } }>(
+      'projects.roadmap.item.create',
+      { boardId: publicRoadmapBoardId, publicTitle: 'Ý tưởng dự án sắp lưu trữ' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const archTriage = await runtime.execute<{ item: ProjectTriageItem }>(
+      'projects.triage.create',
+      { projectId: archProj.projectId, sourceType: 'roadmap.item', sourceId: archRmItem.item.id, title: 'Triage trước khi lưu trữ' },
+      { actor: asMember(), orgId, idempotencyKey: randomUUID() },
+    );
+    await runtime.execute('projects.project.archive', { projectId: archProj.projectId }, { actor: asOwner(), orgId, idempotencyKey: randomUUID() });
+    await expect(
+      runtime.execute('projects.triage.accept', { itemId: archTriage.item.id }, { actor: asMember(), orgId, idempotencyKey: randomUUID() }),
+    ).rejects.toMatchObject({ code: 'PROJECT_ARCHIVED', status: 409 });
+    await admin(async (c) => {
+      const rm = (await c.query<{ linked_task_id: string | null }>(`SELECT linked_task_id FROM ludy_projects.roadmap_item WHERE org_id = $1 AND id = $2`, [orgId, archRmItem.item.id])).rows[0]!;
+      expect(rm.linked_task_id).toBeNull();
+      const tasks = (
+        await c.query<{ n: string }>(`SELECT count(*)::text AS n FROM ludy_kernel.task WHERE org_id = $1 AND source_ref = $2::jsonb`, [
+          orgId,
+          JSON.stringify({ type: 'projects.roadmap_item', id: archRmItem.item.id }),
+        ])
+      ).rows[0]!;
+      expect(Number(tasks.n)).toBe(0);
+    });
+
+    // 2. Lock-order proof: while Tx A holds roadmap_item FOR UPDATE, projects.triage.accept waits on roadmap_item BEFORE acquiring project FOR SHARE.
+    const lockProj = await runtime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Dự án kiểm tra thứ tự khóa', memberUserIds: [ownerUserId, memberUserId] },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const lockRmItem = await runtime.execute<{ item: { id: string } }>(
+      'projects.roadmap.item.create',
+      { boardId: publicRoadmapBoardId, publicTitle: 'Ý tưởng kiểm tra thứ tự khóa' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const lockTriage = await runtime.execute<{ item: ProjectTriageItem }>(
+      'projects.triage.create',
+      { projectId: lockProj.projectId, sourceType: 'roadmap.item', sourceId: lockRmItem.item.id, title: 'Triage kiểm tra thứ tự khóa' },
+      { actor: asMember(), orgId, idempotencyKey: randomUUID() },
+    );
+
+    const cLockA = await appPool!.connect();
+    const cLockProbe = await appPool!.connect();
+    let acceptLockOutcome: Promise<{ ok: true; value: ProjectTriageAcceptResult } | { ok: false; err: unknown }> | undefined;
+    try {
+      await cLockA.query('BEGIN');
+      await enterUser(cLockA, ownerUserId, orgId);
+      await cLockA.query('SET LOCAL ROLE ludy_tenant');
+      await cLockA.query(`UPDATE ludy_projects.roadmap_item SET public_title = public_title WHERE org_id = $1 AND id = $2`, [
+        orgId,
+        lockRmItem.item.id,
+      ]);
+
+      acceptLockOutcome = runtime
+        .execute<ProjectTriageAcceptResult>(
+          'projects.triage.accept',
+          { itemId: lockTriage.item.id, assigneePositionId: memberPosId },
+          { actor: asMember(), orgId, idempotencyKey: randomUUID() },
+        )
+        .then(
+          (value) => ({ ok: true as const, value }),
+          (err: unknown) => ({ ok: false as const, err }),
+        );
+      expect(await waitForLock()).toBe(true);
+
+      // Because projectTriageAccept locks roadmap_item ahead of project FOR SHARE, project row is still unlocked here.
+      await cLockProbe.query('BEGIN');
+      await enterUser(cLockProbe, ownerUserId, orgId);
+      await cLockProbe.query('SET LOCAL ROLE ludy_tenant');
+      const probe = await cLockProbe.query<{ id: string }>(
+        `SELECT id FROM ludy_projects.project WHERE org_id = $1 AND id = $2 FOR UPDATE NOWAIT`,
+        [orgId, lockProj.projectId],
+      );
+      expect(probe.rows.map((r) => r.id)).toEqual([lockProj.projectId]);
+      await cLockProbe.query('ROLLBACK');
+
+      await cLockA.query('COMMIT');
+    } catch (err) {
+      await cLockA.query('ROLLBACK').catch(() => {});
+      await cLockProbe.query('ROLLBACK').catch(() => {});
+      await acceptLockOutcome;
+      throw err;
+    } finally {
+      cLockA.release();
+      cLockProbe.release();
+    }
+    const lockResult = await acceptLockOutcome!;
+    if (!lockResult.ok) throw lockResult.err;
+    const lockAccepted = lockResult.value;
+    expect(lockAccepted.item.status).toBe('accepted');
+    await admin(async (c) => {
+      const rm = (await c.query<{ linked_task_id: string | null }>(`SELECT linked_task_id FROM ludy_projects.roadmap_item WHERE org_id = $1 AND id = $2`, [orgId, lockRmItem.item.id])).rows[0]!;
+      expect(rm.linked_task_id).toBe(lockAccepted.taskId);
+    });
+
+    // 3. Concurrent archive during projects.triage.accept blocks on project FOR SHARE, then rejects 409 PROJECT_ARCHIVED with full rollback.
+    const raceArchProj = await runtime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Dự án đua lưu trữ', memberUserIds: [ownerUserId, memberUserId] },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const raceArchRmItem = await runtime.execute<{ item: { id: string } }>(
+      'projects.roadmap.item.create',
+      { boardId: publicRoadmapBoardId, publicTitle: 'Ý tưởng đua lưu trữ' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const raceArchTriage = await runtime.execute<{ item: ProjectTriageItem }>(
+      'projects.triage.create',
+      { projectId: raceArchProj.projectId, sourceType: 'roadmap.item', sourceId: raceArchRmItem.item.id, title: 'Triage đua lưu trữ' },
+      { actor: asMember(), orgId, idempotencyKey: randomUUID() },
+    );
+    const cArch = await appPool!.connect();
+    let archOutcome: Promise<{ ok: true; value: ProjectTriageAcceptResult } | { ok: false; err: unknown }> | undefined;
+    try {
+      await cArch.query('BEGIN');
+      await enterUser(cArch, ownerUserId, orgId);
+      await cArch.query('SET LOCAL ROLE ludy_tenant');
+      await cArch.query(`UPDATE ludy_projects.project SET status = 'archived' WHERE org_id = $1 AND id = $2`, [
+        orgId,
+        raceArchProj.projectId,
+      ]);
+
+      archOutcome = runtime
+        .execute<ProjectTriageAcceptResult>(
+          'projects.triage.accept',
+          { itemId: raceArchTriage.item.id },
+          { actor: asMember(), orgId, idempotencyKey: randomUUID() },
+        )
+        .then(
+          (value) => ({ ok: true as const, value }),
+          (err: unknown) => ({ ok: false as const, err }),
+        );
+      expect(await waitForLock()).toBe(true);
+      await cArch.query('COMMIT');
+    } catch (err) {
+      await cArch.query('ROLLBACK').catch(() => {});
+      await archOutcome;
+      throw err;
+    } finally {
+      cArch.release();
+    }
+    expect(await archOutcome).toMatchObject({ ok: false, err: { code: 'PROJECT_ARCHIVED', status: 409 } });
+    await admin(async (c) => {
+      const pti = (await c.query<{ status: string; accepted_task_id: string | null }>(`SELECT status, accepted_task_id FROM ludy_projects.project_triage_item WHERE org_id = $1 AND id = $2`, [orgId, raceArchTriage.item.id])).rows[0]!;
+      expect(pti).toEqual({ status: 'pending', accepted_task_id: null });
+      const rm = (await c.query<{ linked_task_id: string | null }>(`SELECT linked_task_id FROM ludy_projects.roadmap_item WHERE org_id = $1 AND id = $2`, [orgId, raceArchRmItem.item.id])).rows[0]!;
+      expect(rm.linked_task_id).toBeNull();
+    });
+
+    // 4. Concurrent org -> private flip during projects.triage.accept sees visibility = 'private' after FOR SHARE and skips setting roadmap_item.linked_task_id.
+    const racePrivProj = await runtime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Dự án đua chuyển riêng tư', memberUserIds: [ownerUserId, memberUserId] },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const racePrivRmItem = await runtime.execute<{ item: { id: string } }>(
+      'projects.roadmap.item.create',
+      { boardId: publicRoadmapBoardId, publicTitle: 'Ý tưởng đua riêng tư' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const racePrivTriage = await runtime.execute<{ item: ProjectTriageItem }>(
+      'projects.triage.create',
+      { projectId: racePrivProj.projectId, sourceType: 'roadmap.item', sourceId: racePrivRmItem.item.id, title: 'Triage đua riêng tư' },
+      { actor: asMember(), orgId, idempotencyKey: randomUUID() },
+    );
+    const cPriv = await appPool!.connect();
+    let privOutcome: Promise<{ ok: true; value: ProjectTriageAcceptResult } | { ok: false; err: unknown }> | undefined;
+    try {
+      await cPriv.query('BEGIN');
+      await enterUser(cPriv, ownerUserId, orgId);
+      await cPriv.query('SET LOCAL ROLE ludy_tenant');
+      await cPriv.query(`UPDATE ludy_projects.project SET visibility = 'private' WHERE org_id = $1 AND id = $2`, [
+        orgId,
+        racePrivProj.projectId,
+      ]);
+
+      privOutcome = runtime
+        .execute<ProjectTriageAcceptResult>(
+          'projects.triage.accept',
+          { itemId: racePrivTriage.item.id },
+          { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+        )
+        .then(
+          (value) => ({ ok: true as const, value }),
+          (err: unknown) => ({ ok: false as const, err }),
+        );
+      expect(await waitForLock()).toBe(true);
+      await cPriv.query('COMMIT');
+    } catch (err) {
+      await cPriv.query('ROLLBACK').catch(() => {});
+      await privOutcome;
+      throw err;
+    } finally {
+      cPriv.release();
+    }
+    const privResult = await privOutcome!;
+    if (!privResult.ok) throw privResult.err;
+    const privRaceAccepted = privResult.value;
+    expect(privRaceAccepted.item.status).toBe('accepted');
+    await admin(async (c) => {
+      const rm = (await c.query<{ linked_task_id: string | null }>(`SELECT linked_task_id FROM ludy_projects.roadmap_item WHERE org_id = $1 AND id = $2`, [orgId, racePrivRmItem.item.id])).rows[0]!;
+      expect(rm.linked_task_id).toBeNull();
+    });
   });
 
   it('supports MCP triage_summary workflow, private-project exclusion, and decline_reason omission standalone', async () => {

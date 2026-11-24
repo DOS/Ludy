@@ -3,38 +3,38 @@
 // and bounded task titles and task comments only (never notes). Every sentence is checked after the model returns: any
 // number outside its structured input (summaryNumbersOutside, #1237), invisible format characters, disallowed links or an
 // out-of-range sentence count refuses the entire summary so deterministic counts stand alone. Nothing is stored or sent.
-import { draftLinksOutside } from './conversation.ts';
+import { escapePromptFences, plainLine } from './injection-guards.ts';
 import {
-  hasAddress,
-  hasAutonomousActionDirective,
-  hasInvisibleFormat,
-  hasObfuscatedContactOrLink,
-  hasProjectWrittenCountWords,
-  hasPromptMarkupLeak,
-  hasUngroundedMoneyOrScaleWords,
-  plainLine,
-  stripTrustedPhrases,
-} from './injection-guards.ts';
-import { summaryNumbersOutside, type SummaryFigure, type SummaryRequest } from './summary.ts';
-import { sentencesOf } from './today.ts';
+  PROJECT_WEEKLY_STATUS_SENTENCES_MAX,
+  PROJECT_WEEKLY_STATUS_SENTENCES_MIN,
+  PROJECT_WEEKLY_STATUS_SENTENCE_MAX,
+  PROJECT_WEEKLY_STATUS_TITLE_CHARS,
+  checkProjectSummaryOutput,
+  collectProjectTaskAllowances,
+  datePartsForAllowed,
+  formatProjectTaskLine,
+  type ProjectWeeklyStatusModelOutput,
+  type ProjectWeeklyStatusResult,
+  type ProjectWeeklyStatusTaskFact,
+} from './project-summary-shared.ts';
+import type { SummaryFigure, SummaryRequest } from './summary.ts';
 
-export const PROJECT_WEEKLY_STATUS_SENTENCES_MIN = 3;
-export const PROJECT_WEEKLY_STATUS_SENTENCES_MAX = 5;
-export const PROJECT_WEEKLY_STATUS_SENTENCE_MAX = 400;
+export {
+  PROJECT_WEEKLY_STATUS_COMMENT_CHARS,
+  PROJECT_WEEKLY_STATUS_SENTENCES_MAX,
+  PROJECT_WEEKLY_STATUS_SENTENCES_MIN,
+  PROJECT_WEEKLY_STATUS_SENTENCE_MAX,
+  PROJECT_WEEKLY_STATUS_TITLE_CHARS,
+  hasMarkdownNoise,
+  type ProjectWeeklyStatusFailureCode,
+  type ProjectWeeklyStatusModelOutput,
+  type ProjectWeeklyStatusResult,
+  type ProjectWeeklyStatusTaskFact,
+} from './project-summary-shared.ts';
+
 export const PROJECT_WEEKLY_STATUS_BUCKET_TASKS_MAX = 10;
-export const PROJECT_WEEKLY_STATUS_TITLE_CHARS = 160;
-export const PROJECT_WEEKLY_STATUS_COMMENT_CHARS = 160;
 export const PROJECT_WEEKLY_STATUS_COLUMN_CHARS = 80;
 export const PROJECT_WEEKLY_STATUS_DAYS = 7;
-
-export interface ProjectWeeklyStatusTaskFact {
-  title: string;
-  tainted: boolean;
-  status: string;
-  dueDay: string | null;
-  commentCount: number;
-  latestComment: string | null;
-}
 
 export interface ProjectWeeklyStatusBottleneckFact {
   title: string;
@@ -87,57 +87,9 @@ export interface ProjectWeeklyStatusFacts {
   timeThisWeek?: ProjectWeeklyStatusTimeFact;
 }
 
-export interface ProjectWeeklyStatusModelOutput {
-  sentences: readonly string[];
-}
-
-export type ProjectWeeklyStatusFailureCode = 'EMPTY' | 'SENTENCES' | 'TOO_LONG' | 'AI_OUTPUT_UNSAFE' | 'LINK' | 'FORMAT';
-
-export type ProjectWeeklyStatusResult =
-  | { kind: 'summary'; sentences: string[] }
-  | { kind: 'none'; code: ProjectWeeklyStatusFailureCode; badNumbers?: readonly string[] };
-
 const LANGUAGE = { vi: 'Vietnamese', en: 'English' } as const;
 const oneLine = plainLine;
-const fenced = (value: string) => value.replace(/<{3,}|>{3,}/g, (run) => run.split('').join(' '));
-const NEGATIVE_SIGN_RE = /\u2212|(?<![\p{L}\p{N}])[-\u2013]\d/u;
-const isAsciiSpace = (ch: string | undefined): boolean => ch === ' ' || ch === '\t';
-
-/** Linear O(n) check for Markdown blocks or list/heading prefixes without any backtracking regex. */
-export function hasMarkdownNoise(item: string): boolean {
-  if (item.includes('```')) return true;
-  for (const line of item.split('\n')) {
-    const trimmed = line.trimStart();
-    if (trimmed.length === 0) continue;
-    if (trimmed.startsWith('|')) return true;
-    const first = trimmed[0];
-    if (first === '-' || first === '*' || first === '•') {
-      if (isAsciiSpace(trimmed[1])) return true;
-    }
-    if (first === '#') {
-      let hashes = 1;
-      while (hashes < 6 && trimmed[hashes] === '#') hashes += 1;
-      if (isAsciiSpace(trimmed[hashes])) return true;
-    }
-    if (first !== undefined && first >= '0' && first <= '9') {
-      let digits = 1;
-      while (digits < 4 && trimmed[digits] !== undefined && trimmed[digits]! >= '0' && trimmed[digits]! <= '9') {
-        digits += 1;
-      }
-      const sep = trimmed[digits];
-      if ((sep === '.' || sep === ')') && isAsciiSpace(trimmed[digits + 1])) return true;
-    }
-  }
-  return false;
-}
-
-function datePartsForAllowed(date: string | null): string[] {
-  if (!date) return [];
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
-  if (!m) return [date];
-  const [, year, month, day] = m as unknown as [string, string, string, string];
-  return [date, `${Number(day)}/${Number(month)}/${year}`, `${Number(day)}/${Number(month)}`];
-}
+const fenced = escapePromptFences;
 
 function visiblePromptTasks(bucket: readonly ProjectWeeklyStatusTaskFact[]): readonly ProjectWeeklyStatusTaskFact[] {
   return bucket.slice(0, PROJECT_WEEKLY_STATUS_BUCKET_TASKS_MAX);
@@ -146,19 +98,7 @@ function visiblePromptTasks(bucket: readonly ProjectWeeklyStatusTaskFact[]): rea
 function formatBucket(label: string, bucket: readonly ProjectWeeklyStatusTaskFact[]): string {
   const items = visiblePromptTasks(bucket);
   if (items.length === 0) return `${label}: none`;
-  const lines = items.map((task) => {
-    const meta = [
-      `status ${oneLine(task.status, 32)}`,
-      task.dueDay ? `due ${task.dueDay}` : null,
-      task.commentCount > 0 ? `${task.commentCount} comments` : null,
-    ]
-      .filter(Boolean)
-      .join(', ');
-    const snippet = task.latestComment ? oneLine(task.latestComment, PROJECT_WEEKLY_STATUS_COMMENT_CHARS) : '';
-    const comment = snippet ? `; latest comment: "${fenced(snippet)}"` : '';
-    const trustPrefix = task.tainted === false ? '' : '[coworker-written untrusted title] ';
-    return `- ${trustPrefix}"${fenced(oneLine(task.title, PROJECT_WEEKLY_STATUS_TITLE_CHARS))}" (${meta}${comment})`;
-  });
+  const lines = items.map((task) => formatProjectTaskLine(task));
   return `${label}:\n<<<\n${lines.join('\n')}\n>>>`;
 }
 
@@ -353,25 +293,7 @@ function buildAllowedSummaryInput(facts: ProjectWeeklyStatusFacts): {
     ...visiblePromptTasks(facts.tasks.waiting),
     ...visiblePromptTasks(facts.tasks.dueNextWeek),
   ];
-
-  for (const task of allShown) {
-    // Only human-authored untainted titles may ground numbers, links, or phrases in the output check (#4424).
-    if (task.tainted === false) {
-      const title = oneLine(task.title, PROJECT_WEEKLY_STATUS_TITLE_CHARS);
-      if (title) {
-        channels.push(title);
-        trustedTexts.push(title);
-      }
-    }
-    if (task.commentCount > 0) figures.push({ label: 'Task comment count', value: task.commentCount });
-    if (task.dueDay) {
-      for (const part of datePartsForAllowed(task.dueDay)) channels.push(part);
-    }
-    if (task.latestComment) {
-      const snippet = oneLine(task.latestComment, PROJECT_WEEKLY_STATUS_COMMENT_CHARS);
-      if (snippet) channels.push(snippet);
-    }
-  }
+  collectProjectTaskAllowances(allShown, figures, channels, trustedTexts);
 
   for (const bottleneck of visiblePromptBottlenecks(facts.bottlenecks)) {
     if (bottleneck.tainted === false) {
@@ -409,51 +331,5 @@ export function checkProjectWeeklyStatus(
   facts: ProjectWeeklyStatusFacts,
   output: ProjectWeeklyStatusModelOutput | null | undefined,
 ): ProjectWeeklyStatusResult {
-  const rawList = output?.sentences ?? [];
-  if (rawList.length === 0) return { kind: 'none', code: 'EMPTY' };
-
-  const maxRawLength = PROJECT_WEEKLY_STATUS_SENTENCES_MAX * PROJECT_WEEKLY_STATUS_SENTENCE_MAX;
-  for (const item of rawList) {
-    if (item.length > maxRawLength) return { kind: 'none', code: 'TOO_LONG' };
-    if (hasInvisibleFormat(item) || hasPromptMarkupLeak(item)) {
-      return { kind: 'none', code: 'FORMAT' };
-    }
-    if (hasMarkdownNoise(item)) return { kind: 'none', code: 'FORMAT' };
-  }
-
-  const sentences = rawList.flatMap((item) => sentencesOf(item));
-  if (sentences.length === 0) return { kind: 'none', code: 'EMPTY' };
-  if (sentences.length < PROJECT_WEEKLY_STATUS_SENTENCES_MIN || sentences.length > PROJECT_WEEKLY_STATUS_SENTENCES_MAX) {
-    return { kind: 'none', code: 'SENTENCES' };
-  }
-
-  for (const s of sentences) {
-    if (hasInvisibleFormat(s) || hasPromptMarkupLeak(s)) {
-      return { kind: 'none', code: 'FORMAT' };
-    }
-    if (hasMarkdownNoise(s)) return { kind: 'none', code: 'FORMAT' };
-    if (s.length > PROJECT_WEEKLY_STATUS_SENTENCE_MAX) return { kind: 'none', code: 'TOO_LONG' };
-  }
-
-  const joined = sentences.join(' ');
-  const { summaryInput, trustedTexts } = buildAllowedSummaryInput(facts);
-  if (draftLinksOutside(joined, trustedTexts).length > 0) {
-    return { kind: 'none', code: 'LINK' };
-  }
-  const untrustedRemainder = stripTrustedPhrases(joined, trustedTexts);
-  if (hasAddress(untrustedRemainder) || hasObfuscatedContactOrLink(untrustedRemainder) || hasAutonomousActionDirective(joined)) {
-    return { kind: 'none', code: 'LINK' };
-  }
-
-  const outside = summaryNumbersOutside(joined, summaryInput);
-  if (
-    outside.length > 0 ||
-    NEGATIVE_SIGN_RE.test(untrustedRemainder.normalize('NFKC')) ||
-    hasUngroundedMoneyOrScaleWords(untrustedRemainder) ||
-    hasProjectWrittenCountWords(untrustedRemainder)
-  ) {
-    return { kind: 'none', code: 'AI_OUTPUT_UNSAFE', badNumbers: outside };
-  }
-
-  return { kind: 'summary', sentences };
+  return checkProjectSummaryOutput(output, () => buildAllowedSummaryInput(facts));
 }

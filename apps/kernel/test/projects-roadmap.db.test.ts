@@ -1233,6 +1233,69 @@ suite('Projects Public Roadmap Slice 1 (#4399)', () => {
       expect(rows[0]!.project_id).toBe(raceProj4Org.projectId);
     });
 
+    // Defense-in-depth (#4631): roadmap_item_privacy_guard() fails closed when v_project_id IS NULL or v_visibility IS DISTINCT FROM 'org'.
+    const failClosedItem = await runtime.execute<{ item: { id: string } }>(
+      'projects.roadmap.item.create',
+      { boardId: standaloneBoard.board.id, publicTitle: 'Fail closed guard check' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const unlinkedKernelTask = await runtime.execute<{ taskId: string }>(
+      'kernel.task.create',
+      { title: 'Task without project_task row', assigneePositionId: null },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      try {
+        await c.query(`ALTER TABLE ludy_projects.roadmap_item DROP CONSTRAINT roadmap_item_task_fk`);
+        await expect(
+          c.query(`UPDATE ludy_projects.roadmap_item SET linked_task_id = $3 WHERE org_id = $1 AND id = $2`, [
+            orgId,
+            failClosedItem.item.id,
+            unlinkedKernelTask.taskId,
+          ]),
+        ).rejects.toMatchObject({
+          code: '23514',
+          message: expect.stringContaining('ROADMAP_PRIVATE_PROJECT_FORBIDDEN'),
+        });
+      } finally {
+        await c.query('ROLLBACK').catch(() => {});
+      }
+    });
+
+    const restrictedProj = await runtime.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Du an thu visibility khac org' },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    const restrictedTask = await runtime.execute<{ taskId: string }>(
+      'projects.task.create',
+      { projectId: restrictedProj.projectId, title: 'Task trong project visibility khac org', assigneePositionId: null },
+      { actor: asOwner(), orgId, idempotencyKey: randomUUID() },
+    );
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      try {
+        await c.query(`ALTER TABLE ludy_projects.project DROP CONSTRAINT project_visibility_check`);
+        await c.query(`UPDATE ludy_projects.project SET visibility = 'restricted' WHERE org_id = $1 AND id = $2`, [
+          orgId,
+          restrictedProj.projectId,
+        ]);
+        await expect(
+          c.query(`UPDATE ludy_projects.roadmap_item SET linked_task_id = $3 WHERE org_id = $1 AND id = $2`, [
+            orgId,
+            failClosedItem.item.id,
+            restrictedTask.taskId,
+          ]),
+        ).rejects.toMatchObject({
+          code: '23514',
+          message: expect.stringContaining('ROADMAP_PRIVATE_PROJECT_FORBIDDEN'),
+        });
+      } finally {
+        await c.query('ROLLBACK').catch(() => {});
+      }
+    });
+
     // PDPL lookup + erase handles roadmap_otp & roadmap_subscriber machinery cleanly.
     const pdplEmail = 'pdpl-voter@example.test';
     const pdplMails: OutboundMail[] = [];

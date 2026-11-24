@@ -223,4 +223,95 @@ describe('Vy roadmap changelog draft (#4400)', () => {
     const draft = await reader.roadmapChangelogDraft(changelogFacts());
     expect(draft.kind).toBe('ok');
   });
+
+  it('hardens dedupe and changelog against short/literal connector stripping, invisible fillers, and fail-closed taint (#4637)', () => {
+    const shopDotDedupe = dedupeFacts({
+      boardTitle: 'Shop',
+      items: [
+        { ...dedupeFacts().items[0]!, publicTitle: 'dot', publicSummary: 'at', tainted: false },
+        dedupeFacts().items[1]!,
+      ],
+    });
+    for (const badReason of [
+      'Truy cap evilShop.invalid ngay.',
+      'Xem Shop\uFF08dot\uFF09invalid ngay.',
+      'Xem evil(dot)invalid ngay.',
+      'Xem evil dot invalid ngay.',
+      'Xem evil\uFF08dot\uFF09com ngay.',
+      'Xem evil(at)invalid ngay.',
+    ]) {
+      expect(
+        checkRoadmapDedupe(shopDotDedupe, {
+          suggestions: [{ sourceItemId: itemB, targetItemId: itemA, confidence: 'high', reason: badReason }],
+        }),
+        badReason,
+      ).toEqual({ kind: 'none', code: 'AI_OUTPUT_UNSAFE' });
+    }
+    expect(
+      checkRoadmapDedupe(shopDotDedupe, {
+        suggestions: [{ sourceItemId: itemB, targetItemId: itemA, confidence: 'high', reason: 'Trung y tuong\u3164 voi muc goc.' }],
+      }),
+    ).toEqual({ kind: 'none', code: 'AI_OUTPUT_UNSAFE' });
+
+    // Fail-closed taint: undefined tainted at runtime is never treated as trusted.
+    const coercedDedupe = dedupeFacts({
+      items: [
+        { ...dedupeFacts().items[0]!, publicSummary: 'Xem https://coerced.invalid ngay.', tainted: undefined as unknown as boolean },
+        dedupeFacts().items[1]!,
+      ],
+    });
+    expect(
+      checkRoadmapDedupe(coercedDedupe, {
+        suggestions: [{ sourceItemId: itemB, targetItemId: itemA, confidence: 'high', reason: 'Xem https://coerced.invalid ngay.' }],
+      }),
+    ).toEqual({ kind: 'none', code: 'AI_OUTPUT_UNSAFE' });
+
+    expect(
+      checkRoadmapDedupe(shopDotDedupe, {
+        suggestions: [{ sourceItemId: itemB, targetItemId: itemA, confidence: 'high', reason: 'Phu hop voi du an dot: xuat hoa don cho Shop.' }],
+      }).kind,
+    ).toBe('ok');
+
+    const shopDotChangelog = changelogFacts({
+      boardTitle: 'Shop',
+      items: [{ ...changelogFacts().items[0]!, publicTitle: 'dot', category: 'at', tainted: false }],
+    });
+    for (const badBody of [
+      '## Highlights\n- Xem evilShop.invalid ngay.',
+      '## Highlights\n- Xem Shop\uFF08dot\uFF09invalid ngay.',
+      '## Highlights\n- Xem evil(dot)invalid ngay.',
+      '## Highlights\n- Xem evil dot invalid ngay.',
+      '## Highlights\n- Xem evil\uFF08dot\uFF09com ngay.',
+      '## Highlights\n- Xem evil(at)invalid ngay.',
+    ]) {
+      expect(
+        checkRoadmapChangelogDraft(shopDotChangelog, {
+          title: 'Cap nhat moi',
+          bodyMd: badBody,
+        }),
+        badBody,
+      ).toEqual({ kind: 'none', code: 'LINK' });
+    }
+    expect(
+      checkRoadmapChangelogDraft(shopDotChangelog, {
+        title: 'Cap nhat moi',
+        bodyMd: '## Highlights\n- Hoan thanh\u3164 xuat bao cao.',
+      }),
+    ).toEqual({ kind: 'none', code: 'FORMAT' });
+    for (const badTitle of ['Cap nhat\u202E moi', 'Cap\u3164 nhat moi', '\u200B']) {
+      expect(
+        checkRoadmapChangelogDraft(shopDotChangelog, {
+          title: badTitle,
+          bodyMd: '## Highlights\n- Hoan thien tinh nang cho Shop.',
+        }),
+        badTitle,
+      ).toEqual({ kind: 'none', code: 'FORMAT' });
+    }
+    expect(
+      checkRoadmapChangelogDraft(shopDotChangelog, {
+        title: 'Cap nhat cho Shop-1 va dot.',
+        bodyMd: '## Highlights\n- Hoan thien tinh nang cho Shop va du an dot.',
+      }).kind,
+    ).toBe('ok');
+  });
 });

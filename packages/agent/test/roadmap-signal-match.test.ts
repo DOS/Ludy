@@ -469,4 +469,59 @@ describe('projects.roadmap_signal_match (#4492)', () => {
       ).kind,
     ).toBe('ok');
   });
+
+  it('guards literal dot/at, NFKC obfuscated connectors, and invisible fillers across prompt and output (#4637)', () => {
+    const dotFacts: RoadmapSignalMatchFacts = {
+      ...FACTS,
+      boardTitle: 'Shop',
+      sourceTitle: 'Yeu\u3164 cau\u200B moi',
+      sourceExcerpt: 'Mo\u200B ta\u2800 chi tiet\nDong hai',
+      items: [
+        { ...FACTS.items[0]!, title: 'dot', summary: 'at', tainted: false },
+      ],
+    };
+
+    const prompt = roadmapSignalMatchPrompt(dotFacts);
+    expect(prompt).not.toMatch(/[\u200B\u3164\u2800]/u);
+
+    for (const badLink of [
+      'Xem Shop\uFF08dot\uFF09invalid ngay',
+      'Xem Shop [.] com ngay',
+      'Xem evil(dot)invalid ngay',
+      'Xem evil dot invalid ngay',
+      'Xem evil\uFF08dot\uFF09com ngay',
+      'Xem evil(at)invalid ngay',
+    ]) {
+      expect(
+        checkRoadmapSignalMatch(
+          {
+            matches: [{ roadmapItemId: FACTS.items[0]!.id, confidence: 'high', reason: badLink }],
+            newIdeaDraft: null,
+          },
+          dotFacts,
+        ),
+        badLink,
+      ).toEqual({ kind: 'none', code: 'LINK' });
+    }
+
+    expect(
+      checkRoadmapSignalMatch(
+        {
+          matches: [{ roadmapItemId: FACTS.items[0]!.id, confidence: 'high', reason: 'Phu hop\u3164 yeu cau' }],
+          newIdeaDraft: null,
+        },
+        dotFacts,
+      ),
+    ).toEqual({ kind: 'none', code: 'FORMAT' });
+
+    expect(
+      checkRoadmapSignalMatch(
+        {
+          matches: [{ roadmapItemId: FACTS.items[0]!.id, confidence: 'high', reason: 'Phu hop voi Shop va du an dot: xuat hoa don.' }],
+          newIdeaDraft: null,
+        },
+        dotFacts,
+      ).kind,
+    ).toBe('ok');
+  });
 });
