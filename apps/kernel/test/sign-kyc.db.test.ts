@@ -1386,8 +1386,8 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
           ]),
         ).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('SIGN_RECOVERY_WORKER_ONLY') });
       } finally {
-        await c.query('RESET SESSION AUTHORIZATION');
         await c.query('ROLLBACK');
+        await c.query('RESET SESSION AUTHORIZATION');
       }
     });
 
@@ -1421,15 +1421,25 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
       );
     }
 
-    await admin((c) => c.query(`UPDATE ludy_kernel.tenant SET status = 'suspended' WHERE org_id = $1`, [org.orgId]));
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE ludy_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [org.orgId]);
+      await c.query('COMMIT');
+    });
     try {
-      const suspendedCandidates = await workerPool.query<{ field_id: string }>(
+      const offboardingCandidates = await workerPool.query<{ field_id: string }>(
         `SELECT field_id FROM ludy_sign.kyc_work_recovery_candidates($1::timestamptz, 10, $2::uuid)`,
         [new Date(), org.orgId],
       );
-      expect(suspendedCandidates.rows).toEqual([]);
+      expect(offboardingCandidates.rows).toEqual([]);
     } finally {
-      await admin((c) => c.query(`UPDATE ludy_kernel.tenant SET status = 'active' WHERE org_id = $1`, [org.orgId]));
+      await admin(async (c) => {
+        await c.query('BEGIN');
+        await c.query('SET LOCAL session_replication_role = replica');
+        await c.query(`UPDATE ludy_kernel.tenant SET status = 'active' WHERE org_id = $1`, [org.orgId]);
+        await c.query('COMMIT');
+      });
     }
 
     const activeCandidates = await workerPool.query<{ field_id: string }>(
