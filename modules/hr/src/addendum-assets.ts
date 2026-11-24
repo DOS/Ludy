@@ -56,9 +56,6 @@ import { STAFF_ROLES, resolveSelfEmployee, selfNotLinked } from './leave-request
 import { hrManifest } from './manifest.ts';
 import { isoDate as iso } from './payroll-dates.ts';
 
-const ADDENDUM = hrManifest.tables.ludy_hr.contract_addendum;
-const ASSET = hrManifest.tables.ludy_hr.employee_asset_handover;
-
 const isoTimestamp = (v: Date | string | null): string | null =>
   v === null ? null : v instanceof Date ? v.toISOString() : String(v);
 
@@ -1014,5 +1011,3 @@ export const hrAddendumAssetsQueries = [
   assetList,
   selfAssetList,
 ];
-
-export { ADDENDUM, ASSET };
