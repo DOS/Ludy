@@ -107,6 +107,7 @@ BEGIN
     JOIN ludy_kernel.tenant t ON t.org_id = m.org_id AND t.status = 'active'
     JOIN ludy_kernel.user_account u ON u.id = m.user_id AND u.disabled_at IS NULL
     WHERE m.org_id = v_org AND m.user_id = v_user AND m.role IN ('owner', 'admin') AND m.created_at <= v_made
+    FOR SHARE OF m, t, u
   ) OR ludy_kernel.global_kill_switch_on('ai') OR EXISTS (
     SELECT 1 FROM ludy_kernel.kill_switch k WHERE k.org_id = v_org AND k.scope = 'org' AND k.released_at IS NULL
   ) THEN

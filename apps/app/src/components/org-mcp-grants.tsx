@@ -112,7 +112,8 @@ function PairingCode() {
             <Button type="submit" size="sm" loading={issue.isPending} disabled={label.trim() === ''}>
               {t('create')}
             </Button>
-            <Button type="button" size="sm" variant="outline" onClick={done}>
+            {/* Not while the code is being made: a reset drops the answer, and the stored code would count against the five live ones unseen. */}
+            <Button type="button" size="sm" variant="outline" disabled={issue.isPending} onClick={done}>
               {t('cancel')}
             </Button>
           </div>
