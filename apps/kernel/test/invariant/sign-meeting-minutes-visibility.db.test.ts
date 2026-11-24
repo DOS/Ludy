@@ -195,6 +195,13 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
 
     orgId = (await createOrg(runtime, asUser(ownerId), 'Cong ty TNHH Cuoc Hop A')).orgId;
     otherOrgId = (await createOrg(runtime, asUser(otherOwnerId), 'Cong ty TNHH Cuoc Hop B')).orgId;
+    // #4703: once the org setting "Ký biên bản họp" exists it is off by default and the server refuses to create a minutes envelope while it is off. These cases create them, so the org turns it
+    // on; before the setting's column exists the update finds no column (42703) and is skipped.
+    for (const id of [orgId, otherOrgId]) {
+      await adminPool.query('UPDATE ludy_kernel.tenant SET meeting_minutes_esign = true WHERE org_id = $1::uuid', [id]).catch((error: { code?: string }) => {
+        if (error.code !== '42703') throw error;
+      });
+    }
 
     await adminPool.query(
       `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES

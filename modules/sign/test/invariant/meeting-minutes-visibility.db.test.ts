@@ -112,6 +112,11 @@ suite('eSign meeting_minutes module-boundary security invariants (#3811)', () =>
     viewerId = await upsertIdentity(appDb, { issuer: 'mtg-mod', subject: 'viewer', email: 'viewer@mtg-mod.test', name: 'Viewer' });
 
     orgId = (await createOrg(runtime, asUser(ownerId), 'Cong ty Bien Ban')).orgId;
+    // #4703: once the org setting "Ký biên bản họp" exists it is off by default and the server refuses to create a minutes envelope while it is off. These cases create them, so the org turns it
+    // on; before the setting's column exists the update finds no column (42703) and is skipped.
+    await adminPool.query('UPDATE crove_kernel.tenant SET meeting_minutes_esign = true WHERE org_id = $1::uuid', [orgId]).catch((error: { code?: string }) => {
+      if (error.code !== '42703') throw error;
+    });
 
     await adminPool.query(
       `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES
