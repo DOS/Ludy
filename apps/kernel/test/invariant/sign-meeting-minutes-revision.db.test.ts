@@ -132,6 +132,11 @@ suite('eSign meeting minutes are bound to the minutes by the server (#4532)', ()
     recorderId = await upsertIdentity(appDb, { issuer: 'mtg-rev', subject: 'recorder', email: 'recorder@mtg-rev.test', name: 'Recorder' });
     attendeeId = await upsertIdentity(appDb, { issuer: 'mtg-rev', subject: 'attendee', email: 'attendee@mtg-rev.test', name: 'Attendee' });
     orgId = (await createOrg(runtime, asUser(ownerId), 'Cong ty TNHH Bien Ban')).orgId;
+    // #4703: once the org setting "Ký biên bản họp" exists it is off by default and the server refuses to create a minutes envelope while it is off. These cases create them, so the org turns it
+    // on; before the setting's column exists the update finds no column (42703) and is skipped.
+    await adminPool.query('UPDATE crove_kernel.tenant SET meeting_minutes_esign = true WHERE org_id = $1::uuid', [orgId]).catch((error: { code?: string }) => {
+      if (error.code !== '42703') throw error;
+    });
     await adminPool.query(
       `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1::uuid, $2::uuid, 'member'), ($1::uuid, $3::uuid, 'member')`,
       [orgId, recorderId, attendeeId],
