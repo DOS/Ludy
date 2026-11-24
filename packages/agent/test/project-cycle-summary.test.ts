@@ -31,6 +31,7 @@ const baseFacts = (over: Partial<ProjectCycleSummaryFacts> = {}): ProjectCycleSu
   tasks: [
     {
       title: 'Khớp sao kê ACB',
+      tainted: false,
       status: 'in_progress',
       dueDay: '2027-02-10',
       commentCount: 1,
@@ -38,6 +39,7 @@ const baseFacts = (over: Partial<ProjectCycleSummaryFacts> = {}): ProjectCycleSu
     },
     {
       title: 'Gửi báo cáo thuế',
+      tainted: false,
       status: 'done',
       dueDay: '2027-02-08',
       commentCount: 0,

@@ -978,8 +978,8 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       window: { from: '2026-09-21', to: '2026-09-27', nextFrom: '2026-09-28', nextTo: '2026-10-04' },
       counts: { totalVisible: 5, doneThisWeek: 2, overdue: 1, waiting: 1, dueNextWeek: 1 },
       tasks: {
-        doneThisWeek: [{ title: 'Tao trang chu', status: 'done', dueDay: '2026-09-25', commentCount: 0, latestComment: null }],
-        overdue: [{ title: 'Ket noi thanh toan', status: 'todo', dueDay: '2026-09-24', commentCount: 0, latestComment: null }],
+        doneThisWeek: [{ title: 'Tao trang chu', tainted: false, status: 'done', dueDay: '2026-09-25', commentCount: 0, latestComment: null }],
+        overdue: [{ title: 'Ket noi thanh toan', tainted: false, status: 'todo', dueDay: '2026-09-24', commentCount: 0, latestComment: null }],
         waiting: [],
         dueNextWeek: [],
       },
@@ -992,7 +992,7 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       averageVelocityTasks: 4,
       averageVelocityPoints: 8,
       velocityCyclesCount: 2,
-      tasks: [{ title: 'Tao trang chu', status: 'done', dueDay: '2026-09-25', commentCount: 0, latestComment: null }],
+      tasks: [{ title: 'Tao trang chu', tainted: false, status: 'done', dueDay: '2026-09-25', commentCount: 0, latestComment: null }],
     };
     const dedupeFacts: RoadmapDedupeFacts = {
       language: 'vi',
@@ -1068,6 +1068,41 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
         }),
       });
       expect((await reader.projectWeeklyStatus({ ...weeklyFacts, language: c.language })).kind, `weeklyStatus ${c.id}`).toBe('none');
+      expect(
+        (
+          await reader.projectWeeklyStatus({
+            ...weeklyFacts,
+            language: c.language,
+            tasks: {
+              ...weeklyFacts.tasks,
+              overdue: [{ title: c.untrustedInput, tainted: true, status: 'todo', dueDay: '2026-09-24', commentCount: 0, latestComment: null }],
+            },
+            bottlenecks: [{ title: c.untrustedInput, tainted: true, status: 'todo', dueDay: '2026-09-24', blockedCount: 2 }],
+          })
+        ).kind,
+        `weeklyStatus tainted title ${c.id}`,
+      ).toBe('none');
+      expect(
+        checkProjectWeeklyStatus(
+          {
+            ...weeklyFacts,
+            language: c.language,
+            tasks: {
+              ...weeklyFacts.tasks,
+              overdue: [{ title: c.untrustedInput, tainted: true, status: 'todo', dueDay: '2026-09-24', commentCount: 0, latestComment: null }],
+            },
+            bottlenecks: [{ title: c.untrustedInput, tainted: true, status: 'todo', dueDay: '2026-09-24', blockedCount: 2 }],
+          },
+          {
+            sentences: [
+              `Done 2 tasks: ${c.untrustedInput.slice(0, 120)}`,
+              'One overdue task remains open.',
+              'One task is due next week.',
+            ],
+          },
+        ).kind,
+        `weeklyStatus echoed tainted untrustedInput ${c.id}`,
+      ).toBe('none');
       expect((await reader.projectCycleSummary({ ...cycleFacts, language: c.language })).kind, `cycleSummary ${c.id}`).toBe('none');
       const dedupeRes = await reader.roadmapDedupe({ ...dedupeFacts, language: c.language });
       expect(dedupeRes.kind === 'none' || dedupeRes.suggestions.length === 0, `roadmapDedupe ${c.id}`).toBe(true);
@@ -2238,8 +2273,8 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       window: { from: '2026-09-21', to: '2026-09-27', nextFrom: '2026-09-28', nextTo: '2026-10-04' },
       counts: { totalVisible: 5, doneThisWeek: 2, overdue: 1, waiting: 1, dueNextWeek: 1 },
       tasks: {
-        doneThisWeek: [{ title: 'Enable VND ledger', status: 'done', dueDay: '2026-09-25', commentCount: 0, latestComment: null }],
-        overdue: [{ title: 'Review invoice sync', status: 'todo', dueDay: '2026-09-24', commentCount: 0, latestComment: null }],
+        doneThisWeek: [{ title: 'Enable VND ledger', tainted: false, status: 'done', dueDay: '2026-09-25', commentCount: 0, latestComment: null }],
+        overdue: [{ title: 'Review invoice sync', tainted: false, status: 'todo', dueDay: '2026-09-24', commentCount: 0, latestComment: null }],
         waiting: [],
         dueNextWeek: [],
       },
@@ -2274,7 +2309,7 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
       averageVelocityTasks: 4,
       averageVelocityPoints: 8,
       velocityCyclesCount: 2,
-      tasks: [{ title: 'Ship VND export', status: 'done', dueDay: '2026-09-25', commentCount: 0, latestComment: null }],
+      tasks: [{ title: 'Ship VND export', tainted: false, status: 'done', dueDay: '2026-09-25', commentCount: 0, latestComment: null }],
     };
     expect(
       checkProjectCycleSummary(cycleEnFacts, {
