@@ -2217,7 +2217,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     if (job.data.type === MINUTES_PUBLISHED_EVENT) {
       if (!deps.runtime.installed('meetings') || !wakeBroker || wakeBroker.id === 'none') return;
       const done = await wakeMinutesPublished({ runtime: deps.runtime, send: sendWake }, { orgId: job.data.orgId, eventId: job.data.eventId });
-      if (done.stored > 0 || done.dropped) console.log(`[mcp-wake-minutes] ${job.data.eventId.slice(0, 8)} stored ${done.stored}, handed over ${done.handedOver}${done.dropped ? ', dropped (older than 24 hours)' : ''}`);
+      if (done.stored > 0 || done.dropped) console.log(`[mcp-wake-minutes] ${job.data.eventId.slice(0, 8)} stored ${done.stored}, handed over ${done.handedOver}${done.dropped ? ', dropped (older than 24 hours, or its meeting is no longer open to the org)' : ''}`);
       return;
     }
     if (job.data.type === ROADMAP_ANNOUNCEMENT_NOTIFY_EVENT) {

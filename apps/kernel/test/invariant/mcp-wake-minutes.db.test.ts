@@ -277,14 +277,17 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
   it('drops the event, stores and sends nothing, when the meeting was narrowed to attendees only, deleted or past its text period after the publish, and still sends while it stands (#4536)', async () => {
     const latestAudit = async () =>
       (await sqlAdmin<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.mcp.wake.minutes_targets' ORDER BY occurred_at DESC LIMIT 1`, [orgA])).rows[0]?.detail;
-    const vnToday = () => new Date(Date.now() + 7 * HOUR).toISOString().slice(0, 10);
+    // One instant for the whole case (#4582): the job's clock and the days written below come from it, so a run that straddles midnight in Vietnam (17:00:00Z) cannot read a day written before it as a day after.
+    const fixedNow = new Date();
+    const atFixed = { now: () => fixedNow };
+    const vnToday = () => new Date(fixedNow.getTime() + 7 * HOUR).toISOString().slice(0, 10);
     const dayShift = (days: number) => new Date(Date.parse(`${vnToday()}T00:00:00Z`) + days * 24 * HOUR).toISOString().slice(0, 10);
     const dropOf = async (key: string, change: (meetingId: string) => Promise<void>, cause: string) => {
       await reset();
       const meetingId = await seedMeeting(key, 'org', true);
       const [event] = await events(meetingId);
       await change(meetingId);
-      const result = await wake((event as { id: string }).id);
+      const result = await wake((event as { id: string }).id, atFixed);
       expect(result, key).toMatchObject({ dropped: true, stored: 0, handedOver: 0, off: false });
       expect(await deliveries(), key).toEqual([]);
       expect(sent, key).toEqual([]);
@@ -295,7 +298,7 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
     const narrowed = await dropOf('narrowed', (m) => sqlAdmin(`UPDATE crove_meetings.meeting SET visibility = 'attendees' WHERE org_id = $1 AND id = $2`, [orgA, m]).then(() => undefined), 'meeting_closed');
     // The same event is sent once the meeting is org-visible again (the wake follows the meeting as it stands when the job runs, not as it stood at publish).
     await sqlAdmin(`UPDATE crove_meetings.meeting SET visibility = 'org' WHERE org_id = $1 AND id = $2`, [orgA, narrowed.meetingId]);
-    expect(await wake(narrowed.event.id)).toMatchObject({ dropped: false, stored: 2, handedOver: 2 });
+    expect(await wake(narrowed.event.id, atFixed)).toMatchObject({ dropped: false, stored: 2, handedOver: 2 });
     // Deleted after the publish (the outbox event stays).
     await dropOf('removed', (m) => sqlAdmin(`DELETE FROM crove_meetings.meeting WHERE org_id = $1 AND id = $2`, [orgA, m]).then(() => undefined), 'meeting_closed');
     // Past its text period: the day the text is shredded counts as ended, as for every read of the meeting; the day after still stands.
@@ -305,8 +308,14 @@ suite('the wake-up for published minutes of an org-visible meeting (#3803, invar
     const standing = await seedMeeting('textStands', 'org', true);
     await sqlAdmin(`UPDATE crove_meetings.meeting SET text_retention_date = $3::date WHERE org_id = $1 AND id = $2`, [orgA, standing, dayShift(1)]);
     const [standingEvent] = await events(standing);
-    expect(await wake((standingEvent as { id: string }).id)).toMatchObject({ dropped: false, stored: 2, handedOver: 2 });
+    expect(await wake((standingEvent as { id: string }).id, atFixed)).toMatchObject({ dropped: false, stored: 2, handedOver: 2 });
     expect(JSON.stringify(await latestAudit())).not.toContain('BÍ MẬT');
+    // No text date at all means the text is kept until the recorder deletes it (retention migration 20261125110000): the event is sent.
+    await reset();
+    const kept = await seedMeeting('textKept', 'org', true);
+    await sqlAdmin(`UPDATE crove_meetings.meeting SET text_retention_date = NULL WHERE org_id = $1 AND id = $2`, [orgA, kept]);
+    const [keptEvent] = await events(kept);
+    expect(await wake((keptEvent as { id: string }).id, atFixed)).toMatchObject({ dropped: false, stored: 2, handedOver: 2 });
     await reset();
   });
 
