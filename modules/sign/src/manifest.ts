@@ -110,7 +110,6 @@ export const SIGN_FIELD_TABLE = columns(
     'options_json',
     'value_text',
     'value_checked',
-    'attachment_file_id',
     'attachment_filename',
     'attachment_content_type',
     'attachment_size_bytes',
@@ -119,7 +118,7 @@ export const SIGN_FIELD_TABLE = columns(
     'created_at',
     'updated_at',
   ],
-  { signature_png_base64: 'pii' },
+  { signature_png_base64: 'pii', attachment_file_id: 'sensitive' },
 );
 
 export const SIGN_MEMBER_SIGNATURE_TABLE = columns(
@@ -270,6 +269,7 @@ export const signManifest = defineModule({
           'envelope_id',
           'effective_date',
           'expiry_date',
+          'next_pending_due_date',
           'renewal_notice_days',
           'auto_renew',
           'contract_value',

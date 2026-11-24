@@ -64,6 +64,7 @@ interface RawSqlActionResult {
 }
 
 export interface SignApiV1FileSource {
+  orgId: string;
   envelopeId: string;
   certificateCode: string | null;
   storageKey: string;
@@ -103,6 +104,10 @@ function throwActionError(row: RawSqlActionResult): never {
   switch (row.code) {
     case 'SIGN_TEMPLATE_ARCHIVED':
       throw new DomainError('SIGN_TEMPLATE_ARCHIVED', status, message);
+    case 'SIGN_TEMPLATE_NOT_ACTIVE':
+      throw new DomainError('SIGN_TEMPLATE_NOT_ACTIVE', status, message);
+    case 'SIGN_TEXT_DEFAULT_TOO_LONG':
+      throw new DomainError('SIGN_TEXT_DEFAULT_TOO_LONG', status, message);
     case 'SIGN_INSPECT_FAILED':
       throw new DomainError('SIGN_INSPECT_FAILED', status, message);
     case 'SIGN_DOCUMENT_NOT_INSPECTED':
@@ -150,11 +155,6 @@ async function authenticateApiKey(
   const keySha256 = parseSignApiKeyBearer(authHeader);
   if (!keySha256) return { status: 'unauthorized' };
 
-  const decision = limitKey?.(keySha256);
-  if (decision && !decision.allowed) {
-    return { status: 'rate_limited', retryAfterSeconds: decision.retryAfterSeconds };
-  }
-
   const row = await runtime.orgless(async (db) => {
     const { rows } = await sql<{ auth: RawAuthResult | null }>`
       SELECT ludy_sign.api_key_authenticate(${keySha256}) AS auth
@@ -175,6 +175,13 @@ async function authenticateApiKey(
     : [];
   if (!scopes.includes(requiredScope)) {
     return { status: 'forbidden', requiredScope };
+  }
+
+  // Consume per-key budget only after authenticating and authorizing a real API key so unknown-key spray
+  // cannot fill or starve RateLimiter's maxKeys bucket map.
+  const decision = limitKey?.(keySha256);
+  if (decision && !decision.allowed) {
+    return { status: 'rate_limited', retryAfterSeconds: decision.retryAfterSeconds };
   }
 
   return { status: 'ok', keySha256, orgId: row.orgId, orgSlug: row.orgSlug };
@@ -284,6 +291,7 @@ export async function resolveSignApiV1FileSource(
   return {
     status: 'ok',
     data: {
+      orgId: auth.orgId,
       envelopeId: res.envelopeId,
       certificateCode: res.certificateCode ?? null,
       storageKey: res.storageKey,

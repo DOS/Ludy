@@ -1166,6 +1166,20 @@ function kycOutcome(
   };
 }
 
+function normalizeKycAttachmentPages(
+  pages: readonly SignAiPageInput[] | null | undefined,
+): SignAiExtractedPage[] {
+  if (!Array.isArray(pages)) return [];
+  const out: SignAiExtractedPage[] = [];
+  for (const page of pages) {
+    if (!page || typeof page !== 'object') continue;
+    if (!Number.isInteger(page.page) || page.page < 1) continue;
+    if (typeof page.text !== 'string' || page.text.trim().length === 0) continue;
+    out.push({ page: page.page, text: page.text });
+  }
+  return out;
+}
+
 export async function proposeEnvelopeKycCheck(
   params: ProposeEnvelopeKycCheckParams,
 ): Promise<SignKycAnalyzeResult> {
@@ -1200,17 +1214,39 @@ export async function proposeEnvelopeKycCheck(
     return kycOutcome('not_ready', await safeExisting());
   }
 
-  const fallbackStoredPages: SignAiPageInput[] =
+  const fallbackStoredPages = normalizeKycAttachmentPages(
     source.storedTextPreview && source.storedTextPreview.trim().length > 0
       ? [{ page: 1, text: source.storedTextPreview }]
-      : [];
+      : [],
+  );
 
+  const explicitPages = params.attachmentPages !== undefined ? normalizeKycAttachmentPages(params.attachmentPages) : null;
   if (
     source.contentType !== 'application/pdf' &&
-    (!params.attachmentPages || params.attachmentPages.every((p) => p.text.trim().length === 0)) &&
+    (!explicitPages || explicitPages.length === 0) &&
     !params.inspectAttachmentPages &&
     fallbackStoredPages.length === 0
   ) {
+    return kycOutcome('no_text', await safeExisting());
+  }
+
+  let preResolvedPages: SignAiExtractedPage[];
+  if (explicitPages !== null) {
+    preResolvedPages = explicitPages;
+  } else {
+    let inspectedPages: SignAiExtractedPage[] = [];
+    if (params.inspectAttachmentPages) {
+      try {
+        inspectedPages = normalizeKycAttachmentPages(await params.inspectAttachmentPages(source));
+      } catch (error: unknown) {
+        console.warn('[sign-ai] inspectAttachmentPages fallback triggered', error instanceof Error ? error.name : typeof error);
+        inspectedPages = [];
+      }
+    }
+    preResolvedPages = inspectedPages.length > 0 ? inspectedPages : fallbackStoredPages;
+  }
+
+  if (preResolvedPages.length === 0) {
     return kycOutcome('no_text', await safeExisting());
   }
 
@@ -1250,21 +1286,14 @@ export async function proposeEnvelopeKycCheck(
   };
 
   try {
-    const rawPages =
-      params.attachmentPages ??
-      (params.inspectAttachmentPages
-        ? await params.inspectAttachmentPages(source)
-        : fallbackStoredPages);
     const maxPage = Math.max(
       source.storedPageCount ?? 0,
-      ...rawPages.map((p) => (Number.isInteger(p.page) && p.page >= 1 ? p.page : 0)),
+      ...preResolvedPages.map((p) => p.page),
       1,
     );
-    const extractedPages: SignAiExtractedPage[] = rawPages
-      .filter((p) => Number.isInteger(p.page) && p.page >= 1 && p.page <= maxPage)
-      .map((p) => ({ page: p.page, text: p.text }));
+    const extractedPages: SignAiExtractedPage[] = preResolvedPages.filter((p) => p.page <= maxPage);
 
-    if (extractedPages.every((p) => p.text.trim().length === 0)) {
+    if (extractedPages.length === 0) {
       return kycOutcome('no_text', await safeExisting());
     }
 
