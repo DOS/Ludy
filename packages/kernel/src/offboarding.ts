@@ -286,6 +286,8 @@ export const EXPORT_TABLES = {
   'projects.project': { from: 'ludy_projects.project', omit: [] },
   'projects.project_column': { from: 'ludy_projects.project_column', omit: [] },
   'projects.project_cycle': { from: 'ludy_projects.project_cycle', omit: [] },
+  'projects.project_cycle_snapshot': { from: 'ludy_projects.project_cycle_snapshot', omit: [] },
+  'projects.project_cycle_task_history': { from: 'ludy_projects.project_cycle_task_history', omit: [] },
   'projects.project_member': { from: 'ludy_projects.project_member', omit: [] },
   'projects.project_task': { from: 'ludy_projects.project_task', omit: [] },
   'projects.roadmap_board': { from: 'ludy_projects.roadmap_board', omit: [] },
