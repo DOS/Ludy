@@ -19,9 +19,19 @@ import {
   applyMeetingMinutesVisibilityFilter,
   assertCanAccessMeetingMinutesEnvelopeRow,
   assertCanCreateMeetingMinutesEnvelope,
+  assertMeetingMinutesCurrent,
   canAccessMeetingMinutesEnvelopeRow,
+  isMinutesEnvelopeStale,
 } from '../src/meeting-visibility.ts';
-import { envelopeBySource, envelopeEvents, envelopeGet, envelopeList, envelopeVerify } from '../src/queries.ts';
+import {
+  envelopeBySource,
+  envelopeEvents,
+  envelopeGet,
+  envelopeList,
+  envelopeVerify,
+  selectLatestEnvelopesBySource,
+  type SourceEnvelopeCandidate,
+} from '../src/queries.ts';
 import { templateCreate, templateInstantiate } from '../src/templates.ts';
 
 const ORG_ID = '01900000-0000-7000-8000-000000000010';
@@ -106,12 +116,16 @@ describe('meeting-visibility helpers and @ludy/mod-sign meeting minutes guards (
   it('enforces check_meeting_minutes_source states (0 -> 404, 1 -> 409, 2 -> ok) and can_access_meeting_minutes_envelope', async () => {
     let sourceState = 0;
     let accessAllowed = false;
+    let recorderAllowed = true;
     const { trx } = createFakeTrx((compiled) => {
       if (compiled.sql.includes('check_meeting_minutes_source')) {
         return { rows: [{ state: sourceState }] };
       }
       if (compiled.sql.includes('can_access_meeting_minutes_envelope')) {
         return { rows: [{ allowed: accessAllowed }] };
+      }
+      if (compiled.sql.includes('can_create_meeting_minutes_envelope')) {
+        return { rows: [{ allowed: recorderAllowed }] };
       }
       return { rows: [] };
     });
@@ -128,6 +142,14 @@ describe('meeting-visibility helpers and @ludy/mod-sign meeting minutes guards (
 
     sourceState = 2;
     await expect(assertCanCreateMeetingMinutesEnvelope(ownerCtx, 'meeting_minutes', MEETING_ID)).resolves.toBeUndefined();
+
+    // Only the recorder creates it (#4532): a reader of shared minutes who is not the recorder, an owner and an admin included, is refused with 403.
+    recorderAllowed = false;
+    await expect(assertCanCreateMeetingMinutesEnvelope(ownerCtx, 'meeting_minutes', MEETING_ID)).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
+    await expect(
+      assertCanCreateMeetingMinutesEnvelope(makeUserCommandCtx(trx, ATTENDEE_ID, 'member'), 'meeting_minutes', MEETING_ID),
+    ).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
+    recorderAllowed = true;
 
     const draftMtgRow = {
       source_kind: 'meeting_minutes' as const,
@@ -296,5 +318,75 @@ describe('meeting-visibility helpers and @ludy/mod-sign meeting minutes guards (
         copyRolesAndFields: true,
       }),
     ).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
+  });
+});
+
+// The minutes revision (#4532): the database stores a sha256 of the published minutes when it creates the envelope; the server compares it, the client's title hash is not read.
+const REV_A = 'a'.repeat(64);
+const REV_B = 'b'.repeat(64);
+
+describe('a meeting-minutes envelope is tied to the minutes it was made for (#4532)', () => {
+  it('is stale when it predates the revision or the minutes changed, and not when there is nothing to compare', () => {
+    expect(isMinutesEnvelopeStale(REV_A, REV_A)).toBe(false);
+    expect(isMinutesEnvelopeStale(REV_A, REV_B)).toBe(true);
+    expect(isMinutesEnvelopeStale('legacy', REV_A)).toBe(true);
+    expect(isMinutesEnvelopeStale(null, REV_A)).toBe(true);
+    // The caller cannot read the minutes now (or none are shared): no current revision, so not reported stale.
+    expect(isMinutesEnvelopeStale(REV_A, null)).toBe(false);
+    expect(isMinutesEnvelopeStale('legacy', null)).toBe(false);
+  });
+
+  it('refuses to send an envelope for older, legacy or unshared minutes, and lets the current one and any other source through', async () => {
+    let revision: string | null = REV_A;
+    const { trx } = createFakeTrx((compiled) => {
+      if (compiled.sql.includes('meeting_minutes_revision')) return { rows: [{ revision }] };
+      return { rows: [] };
+    });
+    const row = (source_revision: string | null) => ({ source_kind: 'meeting_minutes', source_id: MEETING_ID, source_revision });
+    await expect(assertMeetingMinutesCurrent({ trx }, row(REV_A))).resolves.toBeUndefined();
+    await expect(assertMeetingMinutesCurrent({ trx }, row(REV_B))).rejects.toMatchObject({ code: 'SIGN_MINUTES_CHANGED', status: 409 });
+    await expect(assertMeetingMinutesCurrent({ trx }, row('legacy'))).rejects.toMatchObject({ code: 'SIGN_MINUTES_CHANGED', status: 409 });
+    revision = null;
+    await expect(assertMeetingMinutesCurrent({ trx }, row(REV_A))).rejects.toMatchObject({ code: 'SIGN_MINUTES_CHANGED', status: 409 });
+    await expect(assertMeetingMinutesCurrent({ trx }, { source_kind: 'meeting_minutes', source_id: null, source_revision: REV_A })).rejects.toMatchObject({ code: 'SIGN_MINUTES_CHANGED' });
+    await expect(assertMeetingMinutesCurrent({ trx }, { source_kind: 'crm_quote', source_id: MEETING_ID, source_revision: null })).resolves.toBeUndefined();
+  });
+
+  const candidate = (id: string, status: SourceEnvelopeCandidate['status'], source_revision: string, createdAt: string): SourceEnvelopeCandidate => ({
+    id,
+    title: id,
+    status,
+    source_id: MEETING_ID,
+    seal_status: null,
+    certificate_code: null,
+    completed_at: null,
+    source_revision,
+    created_at: createdAt,
+    updated_at: createdAt,
+  });
+  const minutes = (current: string | null) => ({ currentRevisions: new Map([[MEETING_ID, current]]) });
+
+  it('does not let a newer draft push a signed envelope of the current minutes off the meeting screen', () => {
+    const signed = candidate('signed', 'completed', REV_A, '2026-11-19T08:00:00.000Z');
+    const inFlight = candidate('in-flight', 'in_progress', REV_A, '2026-11-19T09:00:00.000Z');
+    const newerDraft = candidate('draft', 'draft', REV_A, '2026-11-19T10:00:00.000Z');
+    const voided = candidate('voided', 'voided', REV_A, '2026-11-19T11:00:00.000Z');
+    const pick = (rows: SourceEnvelopeCandidate[]) => selectLatestEnvelopesBySource(rows, [MEETING_ID], minutes(REV_A)).map((r) => r.id);
+    expect(pick([signed, newerDraft, voided])).toEqual(['signed']);
+    expect(pick([newerDraft, inFlight, voided])).toEqual(['in-flight']);
+    expect(pick([newerDraft, voided])).toEqual(['draft']);
+    expect(pick([voided])).toEqual(['voided']);
+    // Without the ranking (every other source kind) the newest non-voided wins as before.
+    expect(selectLatestEnvelopesBySource([signed, newerDraft, voided], [MEETING_ID]).map((r) => r.id)).toEqual(['draft']);
+  });
+
+  it('shows an envelope for the current minutes before a replaced one for older minutes', () => {
+    const oldSigned = candidate('old-signed', 'completed', REV_A, '2026-11-19T08:00:00.000Z');
+    const freshDraft = candidate('fresh-draft', 'draft', REV_B, '2026-11-20T08:00:00.000Z');
+    expect(selectLatestEnvelopesBySource([oldSigned, freshDraft], [MEETING_ID], minutes(REV_B)).map((r) => r.id)).toEqual(['fresh-draft']);
+    // Nothing newer: the old signed one is still shown (as stale).
+    expect(selectLatestEnvelopesBySource([oldSigned], [MEETING_ID], minutes(REV_B)).map((r) => r.id)).toEqual(['old-signed']);
+    // A caller who cannot read the minutes has no current revision: nothing is stale, signed first.
+    expect(selectLatestEnvelopesBySource([oldSigned, freshDraft], [MEETING_ID], minutes(null)).map((r) => r.id)).toEqual(['old-signed']);
   });
 });

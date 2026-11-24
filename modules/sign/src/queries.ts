@@ -33,6 +33,8 @@ import {
 import {
   applyMeetingMinutesVisibilityFilter,
   assertCanAccessMeetingMinutesEnvelopeRow,
+  currentMeetingMinutesRevision,
+  isMinutesEnvelopeStale,
 } from './meeting-visibility.ts';
 import type { SignFieldForSeal, SignSignerForSeal } from './sealing.ts';
 import { SIGN_PRE_EXPIRY_REMIND_MAIL_SOURCE } from './sign-mail.ts';
@@ -190,14 +192,34 @@ export interface SourceEnvelopeCandidate {
   seal_status: SignSealStatus | null;
   certificate_code: string | null;
   completed_at: Date | string | null;
+  // Only a meeting-minutes envelope has one (#4532).
+  source_revision?: string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
 
-function envelopePriorityCompare(a: SourceEnvelopeCandidate, b: SourceEnvelopeCandidate): number {
+// For a meeting-minutes envelope (#4532): the revision of the published minutes now, per meeting (null where the caller cannot read them).
+export interface MinutesRanking {
+  currentRevisions: ReadonlyMap<string, string | null>;
+}
+
+// Lower is shown first. An envelope for the current minutes comes before one for older minutes; among those, a signed (completed) one before one in flight before a draft, so a
+// newer draft never pushes a signed envelope of the current minutes off the meeting screen. An envelope for older minutes that a newer one replaced does not hide it (otherwise the
+// recorder, shown a stale signed envelope, would start another draft every time the meeting screen offered it).
+function minutesRank(row: SourceEnvelopeCandidate, ranking: MinutesRanking): number {
+  const stale = isMinutesEnvelopeStale(row.source_revision, row.source_id ? (ranking.currentRevisions.get(row.source_id) ?? null) : null);
+  const settled = row.status === 'completed' ? 0 : row.status === 'sent' || row.status === 'in_progress' ? 1 : 2;
+  return (stale ? 3 : 0) + settled;
+}
+
+function envelopePriorityCompare(a: SourceEnvelopeCandidate, b: SourceEnvelopeCandidate, minutes?: MinutesRanking): number {
   const aVoided = a.status === 'voided' ? 1 : 0;
   const bVoided = b.status === 'voided' ? 1 : 0;
   if (aVoided !== bVoided) return aVoided - bVoided;
+  if (minutes) {
+    const rankDiff = minutesRank(a, minutes) - minutesRank(b, minutes);
+    if (rankDiff !== 0) return rankDiff;
+  }
   const createdDiff = new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
   if (createdDiff !== 0) return createdDiff;
   const updatedDiff = new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
@@ -205,16 +227,17 @@ function envelopePriorityCompare(a: SourceEnvelopeCandidate, b: SourceEnvelopeCa
   return b.id < a.id ? -1 : b.id > a.id ? 1 : 0;
 }
 
-// Selects the latest non-voided envelope (or latest overall if only voided exist) per requested sourceId.
+// Selects the latest non-voided envelope (or latest overall if only voided exist) per requested sourceId. For meeting minutes, `minutes` ranks them first as described at minutesRank.
 export function selectLatestEnvelopesBySource<T extends SourceEnvelopeCandidate>(
   rows: readonly T[],
   orderedSourceIds: readonly string[],
+  minutes?: MinutesRanking,
 ): T[] {
   const bestBySource = new Map<string, T>();
   for (const row of rows) {
     if (!row.source_id) continue;
     const current = bestBySource.get(row.source_id);
-    if (!current || envelopePriorityCompare(row, current) < 0) {
+    if (!current || envelopePriorityCompare(row, current, minutes) < 0) {
       bestBySource.set(row.source_id, row);
     }
   }
@@ -257,6 +280,7 @@ export const envelopeBySource = defineQuery({
         'created_by',
         'created_at',
         'updated_at',
+        'source_revision',
       ])
       .where('org_id', '=', ctx.orgId)
       .where('source_kind', '=', input.sourceKind)
@@ -278,7 +302,14 @@ export const envelopeBySource = defineQuery({
       }),
     );
 
-    const selected = selectLatestEnvelopesBySource(rows, uniqueSourceIds);
+    // Meeting minutes: the database's revision of the published minutes now, per meeting, to tell which envelopes were made for older minutes (#4532).
+    const currentRevisions = new Map<string, string | null>();
+    if (input.sourceKind === 'meeting_minutes') {
+      for (const sourceId of new Set(rows.map((r) => r.source_id).filter((id): id is string => id !== null))) {
+        currentRevisions.set(sourceId, await currentMeetingMinutesRevision(ctx, sourceId));
+      }
+    }
+    const selected = selectLatestEnvelopesBySource(rows, uniqueSourceIds, input.sourceKind === 'meeting_minutes' ? { currentRevisions } : undefined);
     if (selected.length === 0) {
       return { items: [] };
     }
@@ -324,6 +355,10 @@ export const envelopeBySource = defineQuery({
           signedCount: counts?.signed ?? 0,
           createdAt: new Date(r.created_at).toISOString(),
           updatedAt: new Date(r.updated_at).toISOString(),
+          // Made for other minutes than the published ones: decided here from the revision the database stored, never from the title.
+          ...(input.sourceKind === 'meeting_minutes'
+            ? { stale: isMinutesEnvelopeStale(r.source_revision, currentRevisions.get(r.source_id as string) ?? null) }
+            : {}),
         };
       }),
     };

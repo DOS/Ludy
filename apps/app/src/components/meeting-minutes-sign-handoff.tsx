@@ -101,6 +101,8 @@ export function hasSharedMeetingMinutes(
   return results.published !== null || results.items.some((item) => item.stage === 'published');
 }
 
+// A client-side key only: a change of the published minutes starts a fresh handoff attempt (a new upload and a new idempotency key). It is not what marks an envelope stale: the server
+// stores a sha256 of the published minutes when it creates the envelope and compares it itself (`stale` of sign.envelope.by_source, #4532).
 export function computeSharedMinutesRevision(
   results: Pick<MeetingResults, 'published' | 'items'> | null | undefined,
 ): string {
@@ -121,29 +123,23 @@ export function computeSharedMinutesRevision(
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-export function parseEnvelopeRevision(title: string | null | undefined): string | null {
-  if (!title) return null;
-  return /\[#([0-9a-f]{8})\]\s*$/i.exec(title)?.[1]?.toLowerCase() ?? null;
-}
-
+// The server decides (#4532): it stored the revision of the published minutes when it created the envelope and says `stale` when the minutes are not the same now.
 export function isMeetingMinutesEnvelopeStale(
   results: Pick<MeetingResults, 'published' | 'items'> | null | undefined,
-  envelope: Pick<SignEnvelopeBySourceItem, 'title'> | null | undefined,
+  envelope: Pick<SignEnvelopeBySourceItem, 'stale'> | null | undefined,
 ): boolean {
   if (!envelope || !hasSharedMeetingMinutes(results)) return false;
-  const envRev = parseEnvelopeRevision(envelope.title);
-  if (!envRev) return false;
-  return envRev !== computeSharedMinutesRevision(results);
+  return envelope.stale === true;
 }
 
 export function canStartMeetingMinutesSignHandoff(
   results: Pick<MeetingResults, 'published' | 'items'> | null | undefined,
-  envelope: (Pick<SignEnvelopeBySourceItem, 'envelopeId' | 'status'> & { title?: string }) | null | undefined,
+  envelope: Pick<SignEnvelopeBySourceItem, 'envelopeId' | 'status' | 'stale'> | null | undefined,
   unfinishedEnvelopeId: string | null = null,
 ): boolean {
   if (!hasSharedMeetingMinutes(results)) return false;
   if (!envelope) return true;
-  if (isMeetingMinutesEnvelopeStale(results, { title: envelope.title ?? '' })) return true;
+  if (isMeetingMinutesEnvelopeStale(results, envelope)) return true;
   if (unfinishedEnvelopeId !== null && envelope.envelopeId === unfinishedEnvelopeId && envelope.status === 'draft') {
     return true;
   }
@@ -373,13 +369,7 @@ export async function performMeetingMinutesSignHandoff({
     attempt.sourceFileId = uploaded.fileId;
   }
 
-  const rev = computeSharedMinutesRevision(source.results);
-  const revSuffix = ` [#${rev}]`;
-  const trimmedTitle = envelopeTitle.trim();
-  const stampedTitle = parseEnvelopeRevision(trimmedTitle)
-    ? trimmedTitle.slice(0, 300)
-    : `${trimmedTitle.slice(0, Math.max(1, 300 - revSuffix.length))}${revSuffix}`;
-  attempt.envelopeTitle ??= stampedTitle;
+  attempt.envelopeTitle ??= envelopeTitle.trim().slice(0, 300);
 
   let attemptedCreateOrSigner = false;
   try {
@@ -552,8 +542,12 @@ function MeetingMinutesSignHandoffView({
   const stale = isMeetingMinutesEnvelopeStale(source.results, envelope);
   const unfinishedEnvelopeId =
     externalUnfinishedId ?? resolveUnfinishedEnvelopeId(unfinished, attemptKey, envelope);
+  // Only the recorder starts a signature on the minutes (the server refuses anyone else, #4532).
   const showSendButton =
-    canEdit && !envelopeLoading && canStartMeetingMinutesSignHandoff(source.results, envelope, unfinishedEnvelopeId);
+    canEdit &&
+    source.meeting.isRecorder !== false &&
+    !envelopeLoading &&
+    canStartMeetingMinutesSignHandoff(source.results, envelope, unfinishedEnvelopeId);
   const showSealedDownload = !stale && canDownloadSealedMeetingMinutes(envelope);
   const statusText = envelope ? t(`sign.status.${envelope.status}`) : null;
   const activeError = handoff.error ?? downloadSealed.error;

@@ -17234,6 +17234,7 @@ export const vi = {
       SIGN_ATTACHMENT_REQUIRED: 'Vui lòng tải lên đầy đủ các tệp đính kèm bắt buộc trước khi hoàn tất',
       SIGN_INVALID_FIELD_OPTION: 'Lựa chọn không hợp lệ hoặc danh sách lựa chọn chưa đúng định dạng',
       SIGN_MINUTES_NOT_SHARED: 'Biên bản cuộc họp cần được chia sẻ trước khi tạo hồ sơ ký kết',
+      SIGN_MINUTES_CHANGED: 'Biên bản cuộc họp đã thay đổi từ khi tạo hồ sơ ký này. Hãy tạo lại hồ sơ ký từ biên bản mới nhất.',
       SIGN_PRIVATE_PROJECT_ACCEPTANCE_FORBIDDEN: 'Dự án riêng tư không lập biên bản nghiệm thu chia sẻ qua eSign',
       SIGN_SOURCE_NOT_FOUND: 'Không tìm thấy bản ghi nguồn tương ứng hoặc bạn không có quyền truy cập',
       SIGN_OBLIGATION_DATE_ORDER: 'Ngày hết hạn phải trùng hoặc sau ngày hiệu lực',
