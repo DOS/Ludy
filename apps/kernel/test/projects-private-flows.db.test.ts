@@ -387,6 +387,57 @@ suite('projects v2 private project workflows on PostgreSQL (#2604)', () => {
         ]),
       ),
     ).rejects.toMatchObject({ code: '23514' });
+
+    // Companion acceptance guards (#4689): non-'org' visibility fails closed across
+    // project_no_private_with_acceptance, check_project_acceptance_source, and project_acceptance_org_only.
+    await withAdmin(async (c) => {
+      await c.query('BEGIN');
+      try {
+        await c.query(`ALTER TABLE ludy_projects.project DROP CONSTRAINT project_visibility_check`);
+        await c.query('SAVEPOINT sp_proj_acc_upd');
+        await expect(
+          c.query(`UPDATE ludy_projects.project SET visibility = 'restricted' WHERE org_id = $1 AND id = $2`, [
+            o.orgId,
+            projectId,
+          ]),
+        ).rejects.toMatchObject({
+          code: '23514',
+          message: expect.stringContaining('PROJECT_PRIVATE_ACCEPTANCE_EXISTS'),
+        });
+        await c.query('ROLLBACK TO SAVEPOINT sp_proj_acc_upd');
+
+        const restrProj = await c.query<{ id: string }>(
+          `INSERT INTO ludy_projects.project (org_id, name, visibility, owner_user_id, created_by)
+           VALUES ($1, 'Restricted Acceptance Guard', 'restricted', $2, $2) RETURNING id`,
+          [o.orgId, o.owner.userId],
+        );
+        const restrProjId = restrProj.rows[0]!.id;
+
+        await c.query('SAVEPOINT sp_env_insert');
+        await expect(
+          c.query(
+            `INSERT INTO ludy_sign.envelope (org_id, title, status, routing_mode, source_kind, source_id, source_file_id, source_storage_key, source_generation, source_sha256, inspect_status, created_by)
+             VALUES ($1, 'Restricted Acceptance', 'draft', 'parallel', 'project_acceptance', $2, $3, $4, $5, $6, 'pending', $7)`,
+            [o.orgId, restrProjId, fileId, fileKey(o.orgId, sha), contentGeneration(sha), sha, o.owner.userId],
+          ),
+        ).rejects.toMatchObject({
+          code: '23514',
+          message: expect.stringContaining('SIGN_PRIVATE_PROJECT_ACCEPTANCE_FORBIDDEN'),
+        });
+        await c.query('ROLLBACK TO SAVEPOINT sp_env_insert');
+
+        await enterUser(c, o.owner.userId, o.orgId);
+        await c.query('SET LOCAL ROLE ludy_tenant');
+        const checkRes = await c.query<{ state: number; org_only: boolean }>(
+          `SELECT ludy_sign.check_project_acceptance_source($1::uuid, $2::uuid) AS state,
+                  ludy_projects.project_acceptance_org_only($1::uuid, $2::uuid) AS org_only`,
+          [o.orgId, restrProjId],
+        );
+        expect(checkRes.rows[0]).toEqual({ state: 1, org_only: false });
+      } finally {
+        await c.query('ROLLBACK').catch(() => {});
+      }
+    });
   });
 
   it('serializes concurrent READ COMMITTED org -> private transitions against project_acceptance envelope creation (#2604)', async () => {

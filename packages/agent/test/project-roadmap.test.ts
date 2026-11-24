@@ -314,4 +314,51 @@ describe('Vy roadmap changelog draft (#4400)', () => {
       }).kind,
     ).toBe('ok');
   });
+
+  it('omits tainted shipped items from summaryInput.channels while allowing untainted item numbers (#4689)', () => {
+    const facts = changelogFacts({
+      boardTitle: 'Lo trinh 2027',
+      items: [
+        {
+          id: itemA,
+          publicTitle: 'Ho tro batch 42 hoa don',
+          publicSummary: 'Giam thao tac toi da 18 buoc.',
+          category: 'Nhanh 7',
+          tainted: false,
+        },
+        {
+          id: itemB,
+          publicTitle: 'Tang toc 500% phien ban 99',
+          publicSummary: 'Tiet kiem 88 phut moi ngay.',
+          category: 'Nhom 77',
+          tainted: true,
+        },
+        {
+          id: itemPending,
+          publicTitle: 'Goi 66 khach hang',
+          publicSummary: 'Giam 55% loi.',
+          category: 'Muc 44',
+          tainted: undefined as unknown as boolean,
+        },
+      ],
+    });
+
+    // Untainted item numbers from title, category, and summary are grounded via channels.
+    expect(
+      checkRoadmapChangelogDraft(facts, {
+        title: 'Cap nhat nhom 7: Ho tro batch 42 hoa don',
+        bodyMd: '## Diem moi\n- Ho tro batch 42 hoa don giup giam 18 buoc thao tac cho doi ngu.',
+      }).kind,
+    ).toBe('ok');
+
+    // Tainted item numbers in title, category, or summary must NOT enter summaryInput.channels.
+    for (const echoed of [
+      { title: 'Cap nhat phien ban 99', bodyMd: '## Diem moi\n- Cai thien toc do cho nhom.' },
+      { title: 'Cap nhat moi', bodyMd: '## Diem moi\n- Tang toc xu ly len 500%.' },
+      { title: 'Cap nhat moi', bodyMd: '## Diem moi\n- Nhom 77 giup tiet kiem 88 phut moi ngay.' },
+      { title: 'Cap nhat goi 66', bodyMd: '## Diem moi\n- Muc 44 giam 55% loi khi nhap lieu.' },
+    ]) {
+      expect(checkRoadmapChangelogDraft(facts, echoed)).toEqual({ kind: 'none', code: 'AI_OUTPUT_UNSAFE' });
+    }
+  });
 });
