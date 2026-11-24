@@ -4,7 +4,7 @@ import { useTranslations } from 'use-intl';
 import { Button } from '@ludy/ui/components/button';
 import { ScreenTitle } from './components/ui.tsx';
 import { errorMessage, getCurrentOrg, isUnauthenticated, orpc, queryClient, setCurrentOrg } from './lib/api.ts';
-import { auth, getConfig, needsSecondFactor, needsSecondFactorNow } from './lib/auth.ts';
+import { auth, getConfig, needsSecondFactor, needsSecondFactorNow, passwordResetBlocked } from './lib/auth.ts';
 import { landingFor } from './lib/clients.ts';
 import { effectiveModules, outsideInstalled, screenInstalled } from './lib/modules.ts';
 import { installedModules, setOrgModules } from './lib/org-modules.ts';
@@ -410,7 +410,11 @@ const mfaRoute = createRoute({
 const resetPasswordRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/reset-password',
-  beforeLoad: requireSession,
+  beforeLoad: async () => {
+    // The password is the identity provider's when it is the only way in (AUTH_SIGN_IN=oauth, #4704).
+    if (passwordResetBlocked()) throw redirect({ to: '/' });
+    await requireSession();
+  },
   component: ResetPasswordPage,
 });
 

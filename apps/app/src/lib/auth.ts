@@ -178,6 +178,13 @@ export function auth(): Client {
   return client;
 }
 
+// With the identity provider's OAuth App as the only way in (AUTH_SIGN_IN=oauth, #4704) the password is the provider's: this
+// app has no sign-up, reset or password change, so /reset-password (reached from a recovery link, or typed by a signed-in
+// person) goes back to the app instead of calling updateUser.
+export function passwordResetBlocked(): boolean {
+  return getConfig().signIn === 'oauth';
+}
+
 export async function accessToken(): Promise<string | null> {
   if (isCeremonyIsolated()) return null;
   const { data } = await auth().getSession();
@@ -386,7 +393,7 @@ export async function settleCallback(): Promise<void> {
   // The one-time code and any error leave the address bar and history; a leaked code could still be exchanged.
   for (const key of ['code', 'error', 'error_code', 'error_description']) url.searchParams.delete(key);
   if (/(^#|&)(error|error_code|error_description)=/.test(url.hash)) url.hash = '';
-  const target = recovery ? '/reset-password' : `${url.pathname}${url.search}${url.hash}`;
+  const target = recovery && !passwordResetBlocked() ? '/reset-password' : `${url.pathname}${url.search}${url.hash}`;
   if (target !== `${window.location.pathname}${window.location.search}${window.location.hash}`) window.history.replaceState(null, '', target);
   if (hosted) {
     const failure = await redeemHosted(hosted);
