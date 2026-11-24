@@ -232,7 +232,7 @@ export const caRequestsByEnvelope = defineQuery({
     assertUser(ctx);
     const env = await ctx.trx
       .selectFrom('ludy_sign.envelope')
-      .select(['id', 'source_kind', 'source_id', 'created_by'])
+      .select(['id', 'status', 'source_kind', 'source_id', 'created_by', 'retained_org_visible', 'retained_reader_ids'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
       .executeTakeFirst();
@@ -456,6 +456,8 @@ export const caRequestInitiate = defineCommand({
         'source_kind',
         'source_id',
         'created_by',
+        'retained_org_visible',
+        'retained_reader_ids',
         'seal_status',
         'sealed_file_id',
         'sealed_sha256',

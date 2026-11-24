@@ -43,7 +43,7 @@ import { AVAILABLE_MODULES, loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { orgPurgeCommand, runOrgPurge } from '../src/org-purge.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
-import { runSignHookSweep, type SignHookJob } from '../src/sign-hook.ts';
+import { runSignHookDelivery, runSignHookSweep, type SignHookJob } from '../src/sign-hook.ts';
 import { runSignPdfInspectJob, runSignPdfSealJob, sweepSignExpire } from '../src/sign-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -137,14 +137,22 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
     }
   }
 
-  async function tokenFor(who: Account) {
-    return new SignJWT({
+  async function tokenFor(
+    who: Account,
+    opts?: { aal?: 'aal1' | 'aal2'; mfaAt?: number | null },
+  ) {
+    const aal = opts?.aal ?? 'aal1';
+    const payload: Record<string, unknown> = {
       role: 'authenticated',
       email: who.email,
       session_id: who.session,
-      aal: 'aal1',
+      aal,
       is_anonymous: false,
-    })
+    };
+    if (aal === 'aal2' && opts?.mfaAt !== null) {
+      payload.amr = [{ method: 'totp', timestamp: opts?.mfaAt ?? Math.floor(Date.now() / 1000) }];
+    }
+    return new SignJWT(payload)
       .setProtectedHeader({ alg: 'HS256' })
       .setSubject(who.subject)
       .setIssuer(ISSUER)
@@ -159,11 +167,12 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
     who: Account,
     input: unknown,
     slug: string | null = org.slug,
+    opts?: { aal?: 'aal1' | 'aal2'; mfaAt?: number | null },
   ): Promise<{ status: number; body: T }> {
     const response = await app.request(`/api/rpc/${path}`, {
       method: 'POST',
       headers: {
-        authorization: `Bearer ${await tokenFor(who)}`,
+        authorization: `Bearer ${await tokenFor(who, opts)}`,
         'content-type': 'application/json',
         ...(slug ? { 'x-ludy-org': slug } : {}),
       },
@@ -397,15 +406,26 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
     expect(tableGrants.rows).toEqual([]);
 
     const workerOnlyFns = await adminSql<{ fn: string }>(
-      `SELECT f AS fn
-       FROM unnest(ARRAY[
-         'ludy_sign.webhook_open(integer)',
-         'ludy_sign.webhook_delivery_get(uuid, uuid)',
-         'ludy_sign.webhook_target(uuid)',
-         'ludy_sign.webhook_touch(uuid)',
-         'ludy_sign.webhook_record(uuid, text, integer)'
-       ]) f
-       WHERE has_function_privilege('ludy_app', f, 'EXECUTE')`,
+      `SELECT p.oid::regprocedure::text AS fn
+       FROM pg_catalog.pg_proc p
+       JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'ludy_sign'
+         AND p.proname LIKE 'webhook\\_%'
+         AND p.proname NOT IN (
+           'webhook_list',
+           'webhook_deliveries_list',
+           'webhook_create',
+           'webhook_update',
+           'webhook_rotate_secret',
+           'webhook_delete',
+           'webhook_ping',
+           'webhook_enqueue_event'
+         )
+         AND (
+           has_function_privilege('public', p.oid, 'EXECUTE')
+           OR has_function_privilege('ludy_tenant', p.oid, 'EXECUTE')
+           OR has_function_privilege('ludy_app', p.oid, 'EXECUTE')
+         )`,
     );
     expect(workerOnlyFns.rows).toEqual([]);
 
@@ -559,6 +579,148 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
     expect(settledPing.rows[0]?.status).toBe('sent');
     expect(settledPing.rows[0]?.last_code).toBe(204);
     expect(settledPing.rows[0]?.payload_json?.eventType).toBe('ping');
+  });
+
+  it('enforces aal2 fresh MFA step-up on create/update/rotate, builds org-wide index, and enforces worker retry parity (#4510)', async () => {
+    const nowS = Math.floor(Date.now() / 1000);
+    const listBefore = await rpc<SignWebhookListResult>('sign/webhook/list', owner, {});
+    expect(listBefore.status).toBe(200);
+    const existingWebhookId = listBefore.body.items[0]!.id;
+
+    // 1. aal2 callers without fresh MFA (<= 5 min) are blocked with 403 STEP_UP_REQUIRED on create, update, and rotate_secret.
+    for (const staleOpts of [
+      { aal: 'aal2' as const, mfaAt: null },
+      { aal: 'aal2' as const, mfaAt: nowS - 600 },
+    ]) {
+      const staleCreate = await rpc<{ code?: string }>(
+        'sign/webhook/create',
+        owner,
+        { url: 'https://hooks.example.test/mfa-stepup', events: ['sign.envelope.sent'] },
+        org.slug,
+        staleOpts,
+      );
+      expect(staleCreate.status).toBe(403);
+      expect(staleCreate.body).toMatchObject({ code: 'STEP_UP_REQUIRED' });
+
+      const staleUpdate = await rpc<{ code?: string }>(
+        'sign/webhook/update',
+        owner,
+        {
+          webhookId: existingWebhookId,
+          url: 'https://hooks.example.test/ludy-sign',
+          events: [...SIGN_WEBHOOK_EVENT_TYPES],
+          enabled: true,
+          idempotencyKey: randomUUID(),
+        },
+        org.slug,
+        staleOpts,
+      );
+      expect(staleUpdate.status).toBe(403);
+      expect(staleUpdate.body).toMatchObject({ code: 'STEP_UP_REQUIRED' });
+
+      const staleRotate = await rpc<{ code?: string }>(
+        'sign/webhook/rotate_secret',
+        owner,
+        { webhookId: existingWebhookId },
+        org.slug,
+        staleOpts,
+      );
+      expect(staleRotate.status).toBe(403);
+      expect(staleRotate.body).toMatchObject({ code: 'STEP_UP_REQUIRED' });
+    }
+
+    // Fresh aal2 MFA passes create, update, and rotate_secret.
+    const freshCreate = await rpc<SignWebhookWithSecretResult>(
+      'sign/webhook/create',
+      owner,
+      { url: 'https://hooks.example.test/mfa-stepup', events: ['sign.envelope.sent'] },
+      org.slug,
+      { aal: 'aal2', mfaAt: nowS },
+    );
+    expect(freshCreate.status).toBe(200);
+    const stepUpWebhookId = freshCreate.body.webhook.id;
+
+    const freshUpdate = await rpc<SignWebhookWithSecretResult>(
+      'sign/webhook/update',
+      adminUser,
+      {
+        webhookId: stepUpWebhookId,
+        url: 'https://hooks.example.test/mfa-stepup-updated',
+        events: ['sign.envelope.sent', 'sign.envelope.completed'],
+        enabled: true,
+        idempotencyKey: randomUUID(),
+      },
+      org.slug,
+      { aal: 'aal2', mfaAt: nowS },
+    );
+    expect(freshUpdate.status).toBe(200);
+
+    const freshRotate = await rpc<SignWebhookWithSecretResult>(
+      'sign/webhook/rotate_secret',
+      adminUser,
+      { webhookId: stepUpWebhookId },
+      org.slug,
+      { aal: 'aal2', mfaAt: nowS },
+    );
+    expect(freshRotate.status).toBe(200);
+
+    // 2. Org-wide delivery index (org_id, created_at DESC, id DESC) exists on ludy_sign.webhook_delivery.
+    const idxCheck = await adminSql<{ indexdef: string }>(
+      `SELECT indexdef FROM pg_indexes WHERE schemaname = 'ludy_sign' AND tablename = 'webhook_delivery' AND indexname = 'webhook_delivery_org_recent_idx'`,
+    );
+    expect(idxCheck.rows[0]?.indexdef).toContain('org_id, created_at DESC, id DESC');
+
+    // 3. Confidential source kinds have payload_json scrubbed at webhook_delivery_get and drop cleanly on retries.
+    const hrFileId = await uploadSignPdf(owner, `hr-conf-${randomUUID().slice(0, 8)}`);
+    const hrEnvId = randomUUID();
+    await adminSql(
+      `INSERT INTO ludy_sign.envelope (
+         org_id, id, title, status, routing_mode, source_kind, source_id,
+         source_file_id, source_storage_key, source_generation, source_sha256,
+         inspect_status, page_count, page_dimensions_json, created_by
+       )
+       SELECT $1::uuid, $2::uuid, 'Confidential HR', 'draft', 'sequential', 'hr_contract', $3::uuid,
+              f.id, f.storage_key, f.generation, f.sha256,
+              'passed', 1, '[{"pageNumber":1,"widthPt":595,"heightPt":842}]'::jsonb, $4::uuid
+       FROM ludy_kernel.file f WHERE f.org_id = $1::uuid AND f.id = $5::uuid`,
+      [org.orgId, hrEnvId, randomUUID(), owner.userId, hrFileId],
+    );
+    const syntheticId = randomUUID();
+    await adminSql(
+      `INSERT INTO ludy_sign.webhook_delivery (org_id, id, webhook_id, envelope_id, event_type, status, attempts, payload_json)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'sign.envelope.sent', 'queued', 1,
+               jsonb_build_object('eventId', $2::text, 'eventType', 'sign.envelope.sent', 'occurredAt', '2026-11-22T09:00:00.000Z', 'orgId', $1::text, 'envelopeId', $4::text, 'status', 'sent'))`,
+      [org.orgId, syntheticId, stepUpWebhookId, hrEnvId],
+    );
+    const scrubbedRead = await workerRuntime.query<{ payload: unknown; envelopeSourceKind: string | null } | null>(
+      'sign.hook.delivery',
+      { id: syntheticId },
+      { actor: { type: 'system', component: 'sign.hook' }, orgId: org.orgId },
+    );
+    expect(scrubbedRead?.envelopeSourceKind).toBe('hr_contract');
+    expect(scrubbedRead?.payload).toBeNull();
+
+    const retryDropped = await runSignHookDelivery(
+      { runtime: workerRuntime, broker },
+      { orgId: org.orgId, id: syntheticId },
+      { retryCount: 1, retryLimit: 5 },
+    );
+    expect(retryDropped).toBe('dropped');
+
+    // Clean up temporary confidential envelope + webhook created by this test so remaining tests stay isolated.
+    await adminSql(`DELETE FROM ludy_sign.webhook_delivery WHERE org_id = $1::uuid AND id = $2::uuid`, [
+      org.orgId,
+      syntheticId,
+    ]);
+    await adminSql(`DELETE FROM ludy_sign.envelope WHERE org_id = $1::uuid AND id = $2::uuid`, [
+      org.orgId,
+      hrEnvId,
+    ]);
+    const delStepUp = await rpc('sign/webhook/delete', owner, {
+      webhookId: stepUpWebhookId,
+      idempotencyKey: randomUUID(),
+    });
+    expect(delStepUp.status).toBe(200);
   });
 
   it('enqueues safe metadata for all 5 lifecycle events (including public direct start) and rejects PII/document keys via SQL CHECK', async () => {

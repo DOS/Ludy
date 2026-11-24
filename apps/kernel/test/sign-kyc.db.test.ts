@@ -26,7 +26,7 @@ import { createHttpApp } from '../src/http.ts';
 import { orgPurgeCommand, runOrgPurge } from '../src/org-purge.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { proposeEnvelopeKycCheck, signAi } from '../src/sign-ai.ts';
-import { runSignPdfInspectJob, runSignPdfSealJob } from '../src/sign-worker.ts';
+import { runSignPdfInspectJob, runSignPdfSealJob, sweepSignPendingKycWork } from '../src/sign-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -233,7 +233,7 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
       headers: {
         authorization: `Bearer ${await tokenFor(who, options)}`,
         'content-type': 'application/json',
-        ...(slug ? { 'x-crove-org': slug } : {}),
+        ...(slug ? { 'x-ludy-org': slug } : {}),
       },
       body: JSON.stringify(input === undefined ? {} : { json: input }),
     });
@@ -248,7 +248,7 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
     form.append('purpose', 'sign_document');
     const res = await appAiOff.request('/api/files', {
       method: 'POST',
-      headers: { authorization: `Bearer ${await tokenFor(who)}`, 'x-crove-org': slug },
+      headers: { authorization: `Bearer ${await tokenFor(who)}`, 'x-ludy-org': slug },
       body: form,
     });
     expect(res.status).toBe(200);
@@ -457,7 +457,7 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
     const createdPurge = await rpc('org/create', owner, { name: 'Purge KYC Org', idempotencyKey: randomUUID() }, null);
     expect(createdPurge.status).toBe(200);
     purgeOrg = { slug: String(createdPurge.body.slug), orgId: String(createdPurge.body.orgId) };
-  });
+  }, 120_000);
 
   afterAll(async () => {
     await pool?.end();
@@ -1145,6 +1145,10 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
       column: 'ludy_sign.kyc_check.findings_json',
       rows: 2,
     });
+    expect(erased.erased).toContainEqual({
+      column: 'ludy_sign.kyc_check.file_id',
+      rows: 2,
+    });
 
     const remainingKycRows = await admin((c) =>
       c.query<{ count: string }>(
@@ -1186,6 +1190,289 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
         { actor: asMfa(owner), orgId: org.orgId },
       );
     }
+
+    // Verify #4510 KYC follow-ups: partial checked_by index, x-ludy-org vs conflicting header check,
+    // incomplete inspectAttachmentPages fallback, stale pending KYC sweep/timeout, and unsealed attachment erasure counts.
+    const checkedByIdx = await admin((c) =>
+      c.query<{ indexdef: string }>(
+        `SELECT indexdef FROM pg_indexes WHERE schemaname = 'ludy_sign' AND tablename = 'kyc_check' AND indexname = 'kyc_check_checked_by_idx'`,
+      ),
+    );
+    expect(checkedByIdx.rows[0]?.indexdef).toContain('checked_by IS NOT NULL');
+
+    const conflictHeaderRes = await appAiOff.request('/api/rpc/sign/kyc/list', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${await tokenFor(owner)}`,
+        'content-type': 'application/json',
+        'x-ludy-org': org.slug,
+        'x-crove-org': 'other-org',
+      },
+      body: JSON.stringify({ json: { envelopeId: completedSetup.envelopeId } }),
+    });
+    expect(conflictHeaderRes.status).toBe(400);
+    await expect(conflictHeaderRes.json()).resolves.toMatchObject({ code: 'ORG_HEADER_CONFLICT' });
+
+    // Stale pending KYC sweep recovery vs hard timeout + incomplete inspectAttachmentPages fallback.
+    const sweepSetup = await createEnvelopeWithAttachmentSlots(owner, {
+      title: 'KYC Sweep & Fallback Contract',
+      slots: [{ label: 'CCCD Stale' }, { label: 'CCCD Timeout' }],
+    });
+    const staleFieldId = sweepSetup.attachmentFieldIds[0]!;
+    const timeoutFieldId = sweepSetup.attachmentFieldIds[1]!;
+    const unsealedMarkerDigits = '079091887766';
+    const samplePdfBytes = buildValidSinglePagePdf([
+      'CONG TY TNHH THUONG MAI MINH ANH',
+      `CCCD dai dien: ${unsealedMarkerDigits}`,
+    ]);
+    await uploadPublicSignerAttachment({
+      token: sweepSetup.token,
+      fieldId: staleFieldId,
+      filename: 'stale-kyc.pdf',
+      bytes: samplePdfBytes,
+    });
+    await uploadPublicSignerAttachment({
+      token: sweepSetup.token,
+      fieldId: timeoutFieldId,
+      filename: 'timeout-kyc.pdf',
+      bytes: samplePdfBytes,
+    });
+
+    // Incomplete inspectAttachmentPages throwing or returning invalid/blank metadata degrades cleanly:
+    // - falls back to storedTextPreview when available;
+    // - returns 'no_text' without failing when no stored preview or valid page text exists.
+    const readerForFallback = new SignAiReader(
+      { baseURL: 'http://model.invalid/v1', apiKey: null, model: 'test', maxRetries: 0 },
+      {
+        kycCheck: async () =>
+          metered('sign.kyc_check', async () => ({
+            output: {
+              suggestedStatus: 'matched',
+              summaryNote: 'Fallback succeeded from stored text preview.',
+              findings: [
+                {
+                  category: 'entity_name',
+                  assessment: 'match',
+                  extractedValue: 'CONG TY TNHH THUONG MAI MINH ANH',
+                  expectedValue: 'CONG TY TNHH THUONG MAI MINH ANH',
+                  pageNumber: 1,
+                  quoteExcerpt: 'CONG TY TNHH THUONG MAI MINH ANH',
+                  explanation: 'Matched legal entity name from stored text preview.',
+                },
+              ],
+            },
+            usage: { inputTokens: 80, outputTokens: 30 },
+          })),
+      },
+    );
+    const fallbackAi = signAi(readerForFallback, new DraftBudget({ perOrgPerMinute: 20, perUserPerMinute: 20 }));
+    const noTextIncomplete = await proposeEnvelopeKycCheck({
+      ai: fallbackAi,
+      runtime,
+      orgId: org.orgId,
+      actor: asUser(member),
+      envelopeId: sweepSetup.envelopeId,
+      fieldId: staleFieldId,
+      inspectAttachmentPages: async () => [{ page: 0, text: '   ' }],
+      meter: { admit: async () => {}, record: async () => {} },
+    });
+    expect(noTextIncomplete.ai).toBe('no_text');
+
+    // Run deterministic inspection on staleFieldId to populate storedTextPreview, then test throwing inspectAttachmentPages fallback + unsealed PDPL erase.
+    await runtime.execute(
+      'sign.kyc.run_deterministic',
+      { envelopeId: sweepSetup.envelopeId, fieldId: staleFieldId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    await runSignPdfInspectJob(
+      { workerDb, runtime: workerRuntime, store, extract: realExtract },
+      { orgId: org.orgId, targetKind: 'kyc_attachment', envelopeId: sweepSetup.envelopeId, fieldId: staleFieldId },
+    );
+    const recoveredFromPreview = await proposeEnvelopeKycCheck({
+      ai: fallbackAi,
+      runtime,
+      orgId: org.orgId,
+      actor: asUser(member),
+      envelopeId: sweepSetup.envelopeId,
+      fieldId: staleFieldId,
+      inspectAttachmentPages: async () => {
+        throw new Error('Transient inspect reader unavailable');
+      },
+      meter: { admit: async () => {}, record: async () => {} },
+    });
+    expect(recoveredFromPreview.ai).toBe('used');
+
+    // Backdate staleFieldId & timeoutFieldId pending KYC checks via fresh pending slot + sweepSignPendingKycWork.
+    await uploadPublicSignerAttachment({
+      token: sweepSetup.token,
+      fieldId: staleFieldId,
+      filename: 'stale-requeue.pdf',
+      bytes: samplePdfBytes,
+    });
+    await runtime.execute(
+      'sign.kyc.run_deterministic',
+      { envelopeId: sweepSetup.envelopeId, fieldId: staleFieldId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    await runtime.execute(
+      'sign.kyc.run_deterministic',
+      { envelopeId: sweepSetup.envelopeId, fieldId: timeoutFieldId },
+      { actor: asUser(member), orgId: org.orgId },
+    );
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(
+        `UPDATE ludy_sign.kyc_check SET status = 'pending', updated_at = now() - interval '5 minutes' WHERE org_id = $1 AND field_id = $2`,
+        [org.orgId, staleFieldId],
+      );
+      await c.query(
+        `UPDATE ludy_sign.kyc_check SET status = 'pending', updated_at = now() - interval '45 minutes' WHERE org_id = $1 AND field_id = $2`,
+        [org.orgId, timeoutFieldId],
+      );
+      await c.query('COMMIT');
+    });
+
+    const requeued: Array<{ orgId: string; envelopeId: string; fieldId: string }> = [];
+    const kycSwept = await sweepSignPendingKycWork({
+      workerDb,
+      runtime: workerRuntime,
+      orgId: org.orgId,
+      olderThan: new Date(Date.now() - 60_000),
+      timeoutBefore: new Date(Date.now() - 30 * 60_000),
+      enqueueKycInspect: async (oId, envId, fId) => {
+        requeued.push({ orgId: oId, envelopeId: envId, fieldId: fId });
+      },
+    });
+    expect(kycSwept).toEqual({ requeued: 1, timedOut: 1 });
+    expect(requeued).toEqual([{ orgId: org.orgId, envelopeId: sweepSetup.envelopeId, fieldId: staleFieldId }]);
+
+    const afterTimeoutRow = await admin((c) =>
+      c.query<{ status: string; findings_json: { inspectState?: string } }>(
+        `SELECT status, findings_json FROM ludy_sign.kyc_check WHERE org_id = $1 AND field_id = $2`,
+        [org.orgId, timeoutFieldId],
+      ),
+    );
+    expect(afterTimeoutRow.rows[0]?.status).toBe('needs_review');
+    expect(afterTimeoutRow.rows[0]?.findings_json?.inspectState).toBe('failed');
+
+    // Verify kyc_check_pending_recovery_idx, worker-only role check, cursor/cutoff validation,
+    // and exclusion of disabled-sign and non-active tenants (#4510, B1).
+    const recoveryIdx = await admin((c) =>
+      c.query<{ indexdef: string }>(
+        `SELECT indexdef FROM pg_indexes WHERE schemaname = 'ludy_sign' AND tablename = 'kyc_check' AND indexname = 'kyc_check_pending_recovery_idx'`,
+      ),
+    );
+    expect(recoveryIdx.rows[0]?.indexdef).toContain("status = 'pending'::text");
+
+    await expect(
+      pool.query(`SELECT * FROM ludy_sign.kyc_work_recovery_candidates($1::timestamptz, 10, $2::uuid)`, [
+        new Date(),
+        org.orgId,
+      ]),
+    ).rejects.toMatchObject({ code: '42501' });
+
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query(
+        `GRANT EXECUTE ON FUNCTION ludy_sign.kyc_work_recovery_candidates(timestamptz, integer, uuid, timestamptz, uuid, uuid) TO ludy_app`,
+      );
+      await c.query(`SET SESSION AUTHORIZATION 'ludy_app'`);
+      try {
+        await expect(
+          c.query(`SELECT * FROM ludy_sign.kyc_work_recovery_candidates($1::timestamptz, 10, $2::uuid)`, [
+            new Date(),
+            org.orgId,
+          ]),
+        ).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('SIGN_RECOVERY_WORKER_ONLY') });
+      } finally {
+        await c.query('ROLLBACK');
+        await c.query('RESET SESSION AUTHORIZATION');
+      }
+    });
+
+    await expect(
+      workerPool.query(
+        `SELECT * FROM ludy_sign.kyc_work_recovery_candidates($1::timestamptz, 10, $2::uuid, $1::timestamptz, NULL, NULL)`,
+        [new Date(), org.orgId],
+      ),
+    ).rejects.toMatchObject({ code: '22023', message: expect.stringContaining('SIGN_RECOVERY_INVALID_CURSOR') });
+
+    await expect(
+      workerPool.query(`SELECT * FROM ludy_sign.kyc_work_recovery_candidates(NULL, 10, $1::uuid)`, [org.orgId]),
+    ).rejects.toMatchObject({ code: '22023', message: expect.stringContaining('SIGN_CUTOFF_REQUIRED') });
+
+    await runtime.execute(
+      'kernel.org.set_app',
+      { module: 'sign', enabled: false },
+      { actor: asMfa(owner), orgId: org.orgId },
+    );
+    try {
+      const disabledCandidates = await workerPool.query<{ field_id: string }>(
+        `SELECT field_id FROM ludy_sign.kyc_work_recovery_candidates($1::timestamptz, 10, $2::uuid)`,
+        [new Date(), org.orgId],
+      );
+      expect(disabledCandidates.rows).toEqual([]);
+    } finally {
+      await runtime.execute(
+        'kernel.org.set_app',
+        { module: 'sign', enabled: true },
+        { actor: asMfa(owner), orgId: org.orgId },
+      );
+    }
+
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE ludy_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [org.orgId]);
+      await c.query('COMMIT');
+    });
+    try {
+      const offboardingCandidates = await workerPool.query<{ field_id: string }>(
+        `SELECT field_id FROM ludy_sign.kyc_work_recovery_candidates($1::timestamptz, 10, $2::uuid)`,
+        [new Date(), org.orgId],
+      );
+      expect(offboardingCandidates.rows).toEqual([]);
+    } finally {
+      await admin(async (c) => {
+        await c.query('BEGIN');
+        await c.query('SET LOCAL session_replication_role = replica');
+        await c.query(`UPDATE ludy_kernel.tenant SET status = 'active' WHERE org_id = $1`, [org.orgId]);
+        await c.query('COMMIT');
+      });
+    }
+
+    const activeCandidates = await workerPool.query<{ field_id: string }>(
+      `SELECT field_id FROM ludy_sign.kyc_work_recovery_candidates($1::timestamptz, 10, $2::uuid)`,
+      [new Date(), org.orgId],
+    );
+    expect(activeCandidates.rows.map((r) => r.field_id)).toEqual([staleFieldId]);
+
+    // Inspect requeued staleFieldId, void sweepSetup (unsealed), then verify PDPL erase reports + unlinks attachment_file_id.
+    await runSignPdfInspectJob(
+      { workerDb, runtime: workerRuntime, store, extract: realExtract },
+      { orgId: org.orgId, targetKind: 'kyc_attachment', envelopeId: sweepSetup.envelopeId, fieldId: staleFieldId },
+    );
+    await runtime.execute(
+      'sign.envelope.void',
+      { envelopeId: sweepSetup.envelopeId, reason: 'Cleanup KYC sweep test' },
+      { actor: asUser(owner), orgId: org.orgId },
+    );
+    const unsealedEraseRes = await runtime.execute<PersonalDataErasure>(
+      'kernel.personal_data.erase',
+      { value: unsealedMarkerDigits },
+      { actor: asMfa(owner), orgId: org.orgId },
+    );
+    expect(unsealedEraseRes.erased).toContainEqual({ column: 'ludy_sign.kyc_check.findings_json', rows: 1 });
+    expect(unsealedEraseRes.erased).toContainEqual({ column: 'ludy_sign.kyc_check.file_id', rows: 1 });
+    expect(unsealedEraseRes.erased).toContainEqual({ column: 'ludy_sign.field.attachment_file_id', rows: 1 });
+    const detachedField = await admin((c) =>
+      c.query<{ attachment_file_id: string | null }>(
+        `SELECT attachment_file_id FROM ludy_sign.field WHERE org_id = $1 AND id = $2`,
+        [org.orgId, staleFieldId],
+      ),
+    );
+    expect(detachedField.rows[0]?.attachment_file_id).toBeNull();
 
     // ludy_kernel.org_purge deletes ludy_sign.kyc_check cleanly with zero FK violations.
     const purgeSetup = await createEnvelopeWithAttachmentSlots(owner, {
@@ -1245,5 +1532,5 @@ suite('eSign Slice 5e signer KYC attachment verification check (#4443)', () => {
       ]),
     );
     expect(Number(leftKyc.rows[0]?.count ?? '0')).toBe(0);
-  });
+  }, 30_000);
 });

@@ -597,4 +597,73 @@ suite('projects.weeklyStatus on PostgreSQL 17 (#2597)', () => {
     const gateOpen = await rpc('projects/weeklyStatus', owner, { projectId }, { app: 'off' });
     expect(gateOpen.status).toBe(200);
   });
+
+  it('propagates tainted on tasks and bottlenecks, strips invisible chars from prompt, and refuses numbers/links echoed from tainted titles (#4424)', async () => {
+    const created = await rt.execute<{ projectId: string }>(
+      'projects.project.create',
+      { name: 'Dự án Taint 4424' },
+      { actor: asUser(owner.userId), orgId: org.orgId, idempotencyKey: randomUUID() },
+    );
+    const taintProjectId = created.projectId;
+    const rawTaintedBlocker = 'Việc\u202E AI 999\u200B https://evil.invalid/pay';
+
+    await withAdmin(async (c) => {
+      const entityId = (
+        await c.query<{ id: string }>('SELECT id FROM ludy_kernel.legal_entity WHERE org_id = $1 AND is_default', [org.orgId])
+      ).rows[0]!.id;
+      const blockerRes = await c.query<{ id: string }>(
+        `INSERT INTO ludy_kernel.task (org_id, title, status, tainted, source, created_by_type, legal_entity_id, due)
+         VALUES ($1, $2, 'in_progress', true, 'human', 'user', $3, pg_catalog.now() - interval '1 day')
+         RETURNING id`,
+        [org.orgId, rawTaintedBlocker, entityId],
+      );
+      const blockedRes = await c.query<{ id: string }>(
+        `INSERT INTO ludy_kernel.task (org_id, title, status, tainted, source, created_by_type, legal_entity_id)
+         VALUES ($1, 'Việc bị chặn sạch', 'todo', false, 'human', 'user', $2)
+         RETURNING id`,
+        [org.orgId, entityId],
+      );
+      const blockerId = blockerRes.rows[0]!.id;
+      const blockedId = blockedRes.rows[0]!.id;
+      await c.query(
+        `INSERT INTO ludy_projects.project_task (org_id, project_id, task_id, added_by)
+         VALUES ($1, $2, $3, $5), ($1, $2, $4, $5)`,
+        [org.orgId, taintProjectId, blockerId, blockedId, owner.userId],
+      );
+      await c.query(
+        `INSERT INTO ludy_projects.task_dependency (org_id, project_id, blocker_task_id, blocked_task_id)
+         VALUES ($1, $2, $3, $4)`,
+        [org.orgId, taintProjectId, blockerId, blockedId],
+      );
+    });
+
+    // 1. Model echoing injected number 999 or link from tainted task/bottleneck title is refused cleanly.
+    const refusedPrompts = stubModel([
+      'Tuần này có 2 việc hiển thị trong dự án.',
+      'Có 1 việc quá hạn là Việc AI 999 tại https://evil.invalid/pay.',
+      'Hiện có 1 điểm nghẽn đang chặn 1 việc mở.',
+    ]);
+    const refusedRes = await rpc('projects/weeklyStatus', owner, { projectId: taintProjectId, language: 'vi' });
+    expect(refusedRes.status).toBe(200);
+    expect(refusedRes.body.ai).toBe('refused');
+    expect(refusedRes.body.sentences).toEqual([]);
+    expect(refusedRes.body.tasks.overdue[0]).toMatchObject({ title: rawTaintedBlocker, tainted: true });
+    expect(refusedRes.body.bottlenecks[0]).toMatchObject({ title: rawTaintedBlocker, tainted: true, blockedCount: 1 });
+    expect(refusedPrompts).toHaveLength(1);
+    const bodyText = refusedPrompts[0]!;
+    expect(bodyText).toContain('[coworker-written untrusted title]');
+    expect(bodyText).toContain('Việc AI 999 https://evil.invalid/pay');
+    expect(bodyText).not.toMatch(/\\u202e|\\u200b|[\u202E\u200B]/iu);
+
+    // 2. Clean summary citing deterministic counts only succeeds.
+    stubModel([
+      'Tuần này dự án có 2 việc hiển thị và chưa hoàn thành việc nào.',
+      'Hiện có 1 việc quá hạn cần ưu tiên kiểm tra.',
+      'Có 1 điểm nghẽn đang chặn 1 việc mở.',
+    ]);
+    const okRes = await rpc('projects/weeklyStatus', owner, { projectId: taintProjectId, language: 'vi' });
+    expect(okRes.status).toBe(200);
+    expect(okRes.body.ai).toBe('used');
+    expect(okRes.body.sentences).toHaveLength(3);
+  });
 });

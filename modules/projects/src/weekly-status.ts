@@ -11,6 +11,7 @@ import {
   PROJECT_WEEKLY_STATUS_MAIL_TEMPLATE,
   PROJECT_WEEKLY_STATUS_NOTE_TAG,
   VIETNAM_TIME_ZONE,
+  plainLine,
   zId,
   zProjectWeeklyStatusMailPayload,
   zProjectWeeklyStatusSendMailInput,
@@ -190,9 +191,8 @@ async function queryWeeklyCounts(
 }
 
 function oneLineComment(body: string, max = 160): string | null {
-  const cleaned = body.replace(/\s+/g, ' ').trim();
-  if (cleaned === '') return null;
-  return Array.from(cleaned).slice(0, max).join('');
+  const cleaned = plainLine(body.replace(/\s+/g, ' '), max);
+  return cleaned === '' ? null : cleaned;
 }
 
 function mapBucket(
@@ -405,6 +405,7 @@ export const projectWeeklyStatusSource = defineQuery({
     const { rows: bottleneckRows } = await sql<{
       id: string;
       title: string;
+      tainted: boolean;
       status: string;
       due: Date | string | null;
       blocked_count: number;
@@ -412,6 +413,7 @@ export const projectWeeklyStatusSource = defineQuery({
       SELECT
         bt.id,
         bt.title,
+        bt.tainted,
         bt.status,
         bt.due,
         pg_catalog.count(*)::int AS blocked_count
@@ -424,13 +426,14 @@ export const projectWeeklyStatusSource = defineQuery({
         AND d.project_id = ${project.id}::uuid
         AND bt.status NOT IN ('done', 'cancelled')
         AND dt.status NOT IN ('done', 'cancelled')
-      GROUP BY bt.id, bt.title, bt.status, bt.due
+      GROUP BY bt.id, bt.title, bt.tainted, bt.status, bt.due
       ORDER BY blocked_count DESC, bt.due ASC NULLS LAST, bt.id ASC
       LIMIT 5`.execute(ctx.trx);
 
     const bottlenecks: ProjectWeeklyStatusBottleneck[] = bottleneckRows.map((row) => ({
       id: row.id,
       title: row.title,
+      tainted: row.tainted,
       status: row.status as TaskStatus,
       due: row.due === null ? null : row.due instanceof Date ? row.due.toISOString() : row.due,
       blockedCount: Number(row.blocked_count),

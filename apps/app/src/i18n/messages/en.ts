@@ -17081,6 +17081,7 @@ export const en = {
       SIGN_PLAYBOOK_TEXT_TOO_LARGE: 'The extracted contract text exceeds the playbook review size limit.',
       SIGN_AI_DISABLED: 'AI features for electronic signing are currently paused for this organization.',
       SIGN_FIELD_NOT_FOUND: 'The requested attachment or signing field was not found on this envelope.',
+      SIGN_API_KEY_DUPLICATE_NAME: 'An active eSign API key with this name already exists in the workspace.',
       SIGN_API_KEY_LIMIT_REACHED: 'Workspace has reached the maximum of 50 active eSign API keys.',
       SIGN_API_KEY_NOT_FOUND: 'eSign API key not found.',
     },

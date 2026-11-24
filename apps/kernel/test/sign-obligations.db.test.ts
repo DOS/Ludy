@@ -422,6 +422,25 @@ suite('eSign Slice 4e post-signature obligations, renewals, and Vy Home alerts (
       currency: 'VND',
     });
 
+    // Direct writes touching next_pending_due_date without obligations_json must recompute authoritatively (#4510).
+    await admin((c) =>
+      c.query(
+        `UPDATE ludy_sign.envelope_obligation
+         SET next_pending_due_date = '2099-12-31'::date
+         WHERE org_id = $1 AND envelope_id = $2`,
+        [org.orgId, completedEnvId],
+      ),
+    );
+    const tamperedCheck = await admin((c) =>
+      c.query<{ next_pending_due_date: string | null }>(
+        `SELECT next_pending_due_date::text AS next_pending_due_date
+         FROM ludy_sign.envelope_obligation
+         WHERE org_id = $1 AND envelope_id = $2`,
+        [org.orgId, completedEnvId],
+      ),
+    );
+    expect(tamperedCheck.rows[0]?.next_pending_due_date).toBe(overdueDate);
+
     // Viewer can read confirmed obligation (canEdit: false) and renewals_list, but cannot mutate.
     const viewerGet = await rpc('sign/obligation/get', viewer, { envelopeId: completedEnvId });
     expect(viewerGet.status).toBe(200);

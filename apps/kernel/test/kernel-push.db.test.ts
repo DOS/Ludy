@@ -9,8 +9,8 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@ludy/db';
 import { migrate, setRolePasswords } from '@ludy/db/migrate';
-import { PUSH_KINDS, PUSH_MAX_AGE_HOURS, createOrg, kernelCommands, kernelQueries, upsertIdentity, type PushTargets } from '@ludy/kernel';
-import { SUMMARY_READY_KIND } from '@ludy/kernel-contract';
+import { PUSH_EVENTS, PUSH_KINDS, PUSH_MAX_AGE_HOURS, createOrg, kernelCommands, kernelQueries, upsertIdentity, type PushTargets } from '@ludy/kernel';
+import { MORNING_KIND, SUMMARY_READY_EVENT, SUMMARY_READY_KIND } from '@ludy/kernel-contract';
 import { Runtime } from '@ludy/kernel-runtime';
 import { createPushSender, generateVapidKeys, loadVapidKeys, runPushJob, type PushSender } from '../src/web-push.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -64,15 +64,21 @@ suite('kernel browser push on PostgreSQL (#3736)', () => {
   }
   const exec = <O>(o: Org, user: string, name: string, input: unknown) => rt.execute<O>(name, input, { actor: asUser(user), orgId: o.orgId });
   const subscribe = (o: Org, user: string) => exec<{ id: string }>(o, user, 'kernel.push.subscribe', { endpoint: endpoint(), ...browserKeys(), label: 'Chrome trên Windows' });
-  // A notice as notifyMembers writes it, with the event it came from.
-  async function notice(o: Org, user: string, opts: { kind?: string; eventId?: string; subjectId?: string | null; hoursAgo?: number } = {}) {
+  // A notice as notifyMembers writes it, with or without an outbox event.
+  async function notice(
+    o: Org,
+    user: string,
+    opts: { kind?: string; eventId?: string | null; subjectType?: string | null; subjectId?: string | null; detail?: Record<string, string>; hoursAgo?: number } = {},
+  ) {
     const id = randomUUID();
+    const subjectType = opts.subjectType === undefined ? 'meetings.meeting' : opts.subjectType;
     const subjectId = opts.subjectId === undefined ? randomUUID() : opts.subjectId;
+    const eventId = opts.eventId === undefined ? randomUUID() : opts.eventId;
     await admin((c) =>
       c.query(
-        `INSERT INTO ludy_kernel.notification (org_id, id, user_id, kind, dedupe_key, event_id, subject_type, subject_id, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, 'meetings.meeting', $7, now() - make_interval(hours => $8::int))`,
-        [o.orgId, id, user, opts.kind ?? SUMMARY_READY_KIND, `test:${id}`, opts.eventId ?? randomUUID(), subjectId, opts.hoursAgo ?? 0],
+        `INSERT INTO ludy_kernel.notification (org_id, id, user_id, kind, dedupe_key, event_id, subject_type, subject_id, detail, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, now() - make_interval(hours => $10::int))`,
+        [o.orgId, id, user, opts.kind ?? SUMMARY_READY_KIND, `test:${id}`, eventId, subjectType, subjectId, JSON.stringify(opts.detail ?? {}), opts.hoursAgo ?? 0],
       ),
     );
     return { id, subjectId };
@@ -149,6 +155,39 @@ suite('kernel browser push on PostgreSQL (#3736)', () => {
     const gone = fakeService(() => 410);
     expect(await push(gone.sender, o, n.id)).toEqual({ sent: 0, gone: 2, failed: 0 });
     expect(await one('SELECT 1 FROM ludy_kernel.push_subscription WHERE org_id = $1', [o.orgId])).toHaveLength(0);
+  });
+
+  it('pushes meetings.morning with a fixed line and /o/<slug>/meetings path, zero title/count leak, and respects mute and read (#4082)', async () => {
+    expect([...PUSH_EVENTS]).toEqual([SUMMARY_READY_EVENT]);
+    const o = await org();
+    await subscribe(o, o.member);
+    const n = await notice(o, o.member, {
+      kind: MORNING_KIND,
+      eventId: null,
+      subjectType: null,
+      subjectId: null,
+      detail: { count: '3', title: 'Secret Board Meeting' },
+    });
+    const t = await targets(o, n.id);
+    expect(t?.subscriptions).toHaveLength(1);
+    expect(t).toMatchObject({ line: 'Hôm nay bạn có cuộc họp', path: `/o/${o.slug}/meetings`, tag: `${MORNING_KIND}:${n.id}` });
+    const service = fakeService();
+    expect(await push(service.sender, o, n.id)).toEqual({ sent: 1, gone: 0, failed: 0 });
+    const sentPayload = JSON.parse(service.payloads[0] as string) as { title: string; body: string; url: string; tag: string };
+    expect(sentPayload).toEqual({ title: 'Ludy', body: 'Hôm nay bạn có cuộc họp', url: `/o/${o.slug}/meetings`, tag: `${MORNING_KIND}:${n.id}` });
+    expect(JSON.stringify(sentPayload)).not.toContain('Secret Board Meeting');
+    expect(JSON.stringify(sentPayload)).not.toContain('count');
+    // Event-based pending reads never pick up cron-triggered notifications without event_id.
+    expect(await pending(o, randomUUID())).toEqual([]);
+    // Muting meetings.morning skips push even for an existing unread notice.
+    await exec(o, o.member, 'kernel.notification.mute', { kind: MORNING_KIND, muted: true });
+    expect(await targets(o, n.id)).toBeNull();
+    expect(await push(fakeService().sender, o, n.id)).toEqual({ sent: 0, gone: 0, failed: 0 });
+    await exec(o, o.member, 'kernel.notification.mute', { kind: MORNING_KIND, muted: false });
+    expect(await targets(o, n.id)).not.toBeNull();
+    // Marking the notice read skips push.
+    await exec(o, o.member, 'kernel.notification.read', { ids: [n.id] });
+    expect(await targets(o, n.id)).toBeNull();
   });
 
   it('names what an event wrote: unread, of a pushed kind, within the day, and nothing for another event', async () => {

@@ -1421,8 +1421,8 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
     window: { from: '2026-09-21', to: '2026-09-27', nextFrom: '2026-09-28', nextTo: '2026-10-04' },
     counts: { totalVisible: 5, doneThisWeek: 2, overdue: 1, waiting: 1, dueNextWeek: 1 },
     tasks: {
-      doneThisWeek: [{ title: 'Tao trang chu', status: 'done', dueDay: '2026-09-25', commentCount: 0, latestComment: null }],
-      overdue: [{ title: 'Ket noi thanh toan', status: 'todo', dueDay: '2026-09-24', commentCount: 0, latestComment: null }],
+      doneThisWeek: [{ title: 'Tao trang chu', tainted: false, status: 'done', dueDay: '2026-09-25', commentCount: 0, latestComment: null }],
+      overdue: [{ title: 'Ket noi thanh toan', tainted: false, status: 'todo', dueDay: '2026-09-24', commentCount: 0, latestComment: null }],
       waiting: [],
       dueNextWeek: [],
     },
@@ -1435,7 +1435,7 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
     averageVelocityTasks: 4,
     averageVelocityPoints: 8,
     velocityCyclesCount: 2,
-    tasks: [{ title: 'Tao trang chu', status: 'done', dueDay: '2026-09-25', commentCount: 0, latestComment: null }],
+    tasks: [{ title: 'Tao trang chu', tainted: false, status: 'done', dueDay: '2026-09-25', commentCount: 0, latestComment: null }],
   };
   const dedupeFacts: RoadmapDedupeFacts = {
     language: 'vi',
@@ -1493,8 +1493,22 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
             ...projectWeeklyFacts,
             tasks: {
               ...projectWeeklyFacts.tasks,
-              doneThisWeek: [{ title: 'Tao trang chu', status: 'done', dueDay: '2026-09-25', commentCount: 1, latestComment: corpusAt(5).untrustedInput }],
+              doneThisWeek: [{ title: 'Tao trang chu', tainted: false, status: 'done', dueDay: '2026-09-25', commentCount: 1, latestComment: corpusAt(5).untrustedInput }],
             },
+          }),
+        ),
+      ),
+    ),
+    injCase('projects.weekly_status.inj.0', 'projects.weekly_status', 'vi', (rt) =>
+      runInjectionSafe(() =>
+        unmetered(() =>
+          rt.inbox.projectWeeklyStatus({
+            ...projectWeeklyFacts,
+            tasks: {
+              ...projectWeeklyFacts.tasks,
+              overdue: [{ title: corpusAt(0).untrustedInput, tainted: true, status: 'todo', dueDay: '2026-09-24', commentCount: 0, latestComment: null }],
+            },
+            bottlenecks: [{ title: corpusAt(5).untrustedInput, tainted: true, status: 'todo', dueDay: '2026-09-24', blockedCount: 2 }],
           }),
         ),
       ),
@@ -1507,7 +1521,7 @@ export function buildCoworkerEvalCases(): CoworkerEvalCase[] {
         unmetered(() =>
           rt.inbox.projectCycleSummary({
             ...projectCycleFacts,
-            tasks: [{ title: 'Tao trang chu', status: 'done', dueDay: '2026-09-25', commentCount: 1, latestComment: corpusAt(6).untrustedInput }],
+            tasks: [{ title: 'Tao trang chu', tainted: false, status: 'done', dueDay: '2026-09-25', commentCount: 1, latestComment: corpusAt(6).untrustedInput }],
           }),
         ),
       ),

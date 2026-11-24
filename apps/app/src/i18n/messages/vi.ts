@@ -17081,6 +17081,7 @@ export const vi = {
       SIGN_PLAYBOOK_TEXT_TOO_LARGE: 'Văn bản trích xuất từ hợp đồng vượt quá giới hạn dung lượng kiểm tra sổ tay',
       SIGN_AI_DISABLED: 'Tính năng AI cho ký điện tử hiện đang tạm dừng trong tổ chức này',
       SIGN_FIELD_NOT_FOUND: 'Không tìm thấy trường đính kèm hoặc trường ký tương ứng trên hồ sơ',
+      SIGN_API_KEY_DUPLICATE_NAME: 'Đã tồn tại khóa API eSign đang hoạt động với tên này trong tổ chức',
       SIGN_API_KEY_LIMIT_REACHED: 'Tổ chức đã đạt giới hạn 50 khóa API eSign đang hoạt động',
       SIGN_API_KEY_NOT_FOUND: 'Không tìm thấy khóa API eSign',
     },

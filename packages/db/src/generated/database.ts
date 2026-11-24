@@ -4260,6 +4260,7 @@ export interface SignEnvelopeObligationTable {
   created_by: string | null;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  next_pending_due_date: string | null;
 }
 
 /** ludy_sign.envelope */
@@ -4311,6 +4312,8 @@ export interface SignEnvelopeTable {
   share_summary_with_signers: Generated<boolean>;
   shared_summary_json: ColumnType<unknown, string | null | undefined, string | null>;
   allow_delegation: Generated<boolean>;
+  retained_org_visible: boolean | null;
+  retained_reader_ids: string[] | null;
 }
 
 /** ludy_sign.field */

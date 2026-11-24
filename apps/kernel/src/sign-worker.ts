@@ -558,6 +558,7 @@ export async function sweepSignCleanup(deps: SignSweepDeps): Promise<{
 }
 
 const MAX_RECOVERY_PAGES = 100;
+export const DEFAULT_KYC_PENDING_TIMEOUT_MS = 30 * 60_000;
 
 interface RecoveryCursor {
   updatedAt: string;
@@ -575,6 +576,12 @@ interface CaRecoveryCursor {
   dueAt: string;
   orgId: string;
   requestId: string;
+}
+
+interface KycRecoveryCursor {
+  updatedAt: string;
+  orgId: string;
+  id: string;
 }
 
 const PADES_PLACEHOLDER_BYTES = 32_768;
@@ -1136,6 +1143,112 @@ export interface SignPendingWorkDeps {
   log?: Pick<Console, 'error'>;
 }
 
+function createAppEnabledCache(appOn?: (orgId: string) => Promise<boolean>) {
+  const cache = new Map<string, boolean>();
+  return async (orgId: string): Promise<boolean> => {
+    if (!appOn) return true;
+    const cached = cache.get(orgId);
+    if (cached !== undefined) return cached;
+    const enabled = await appOn(orgId);
+    cache.set(orgId, enabled);
+    return enabled;
+  };
+}
+
+async function fetchKycRecoveryPage(
+  workerDb: Db,
+  olderThan: Date,
+  batchSize: number,
+  orgId: string | null,
+  after: KycRecoveryCursor | null,
+) {
+  const { rows } = await sql<{
+    org_id: string;
+    id: string;
+    envelope_id: string;
+    field_id: string;
+    file_id: string;
+    file_sha256: string;
+    updated_at_cursor: string;
+  }>`
+    SELECT org_id, id, envelope_id, field_id, file_id, file_sha256, updated_at::text AS updated_at_cursor
+    FROM ludy_sign.kyc_work_recovery_candidates(
+      ${olderThan}::timestamptz,
+      ${batchSize},
+      ${orgId}::uuid,
+      ${after?.updatedAt ?? null}::timestamptz,
+      ${after?.orgId ?? null}::uuid,
+      ${after?.id ?? null}::uuid
+    )
+  `.execute(workerDb);
+  return rows;
+}
+
+export interface SignKycPendingWorkDeps {
+  workerDb: Db;
+  runtime: Pick<Runtime, 'execute'> & Partial<Pick<Runtime, 'appOn'>>;
+  appOn?: (orgId: string) => Promise<boolean>;
+  enqueueKycInspect: (orgId: string, envelopeId: string, fieldId: string) => Promise<void>;
+  orgId?: string;
+  olderThan?: Date;
+  timeoutBefore?: Date;
+  batchSize?: number;
+  maxPages?: number;
+  log?: Pick<Console, 'error'>;
+}
+
+export async function sweepSignPendingKycWork(
+  deps: SignKycPendingWorkDeps,
+): Promise<{ requeued: number; timedOut: number }> {
+  const log = deps.log ?? console;
+  const nowMs = Date.now();
+  const olderThan = deps.olderThan ?? new Date(nowMs - 60_000);
+  const timeoutBefore = deps.timeoutBefore ?? new Date(nowMs - DEFAULT_KYC_PENDING_TIMEOUT_MS);
+  const batchSize = Math.min(Math.max(Math.trunc(deps.batchSize ?? SWEEP_ORG_BATCH), 1), 500);
+  const maxPages = Math.max(Math.trunc(deps.maxPages ?? MAX_RECOVERY_PAGES), 1);
+  const resolvedAppOn =
+    deps.appOn ??
+    (deps.runtime.appOn ? (orgId: string) => deps.runtime.appOn!(orgId, 'sign', { fresh: true }) : undefined);
+  const isEnabled = createAppEnabledCache(resolvedAppOn);
+  let requeued = 0;
+  let timedOut = 0;
+  let after: KycRecoveryCursor | null = null;
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const rows = await fetchKycRecoveryPage(deps.workerDb, olderThan, batchSize, deps.orgId ?? null, after);
+    for (const row of rows) {
+      try {
+        if (!(await isEnabled(row.org_id))) continue;
+        const updatedMs = new Date(row.updated_at_cursor).getTime();
+        if (Number.isFinite(updatedMs) && updatedMs <= timeoutBefore.getTime()) {
+          await deps.runtime.execute(
+            'sign.kyc.inspect_complete',
+            {
+              envelopeId: row.envelope_id,
+              fieldId: row.field_id,
+              fileId: row.file_id,
+              fileSha256: row.file_sha256,
+              outcome: 'failed',
+              error: 'KYC attachment inspection timed out after repeated worker sweeps',
+            },
+            { actor: SIGN_ACTOR, orgId: row.org_id },
+          );
+          timedOut += 1;
+        } else {
+          await deps.enqueueKycInspect(row.org_id, row.envelope_id, row.field_id);
+          requeued += 1;
+        }
+      } catch (error) {
+        log.error(`[sign-kyc-pending-work] org ${row.org_id.slice(0, 8)} failed`, sweepErrorLabel(error));
+      }
+    }
+    const last = rows.at(-1);
+    if (!last || rows.length < batchSize) break;
+    after = { updatedAt: last.updated_at_cursor, orgId: last.org_id, id: last.id };
+  }
+  return { requeued, timedOut };
+}
+
 export async function sweepSignPendingWork(
   deps: SignPendingWorkDeps,
 ): Promise<{ inspect: number; seal: number; caReconcile: number }> {
@@ -1143,15 +1256,7 @@ export async function sweepSignPendingWork(
   const olderThan = deps.olderThan ?? new Date(Date.now() - 60_000);
   const batchSize = Math.min(Math.max(Math.trunc(deps.batchSize ?? SWEEP_ORG_BATCH), 1), 500);
   const maxPages = Math.max(Math.trunc(deps.maxPages ?? MAX_RECOVERY_PAGES), 1);
-  const enabledCache = new Map<string, boolean>();
-  const isEnabled = async (orgId: string) => {
-    if (!deps.appOn) return true;
-    const cached = enabledCache.get(orgId);
-    if (cached !== undefined) return cached;
-    const enabled = await deps.appOn(orgId);
-    enabledCache.set(orgId, enabled);
-    return enabled;
-  };
+  const isEnabled = createAppEnabledCache(deps.appOn);
   let inspect = 0;
   let seal = 0;
   let caReconcile = 0;

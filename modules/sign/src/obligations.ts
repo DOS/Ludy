@@ -648,7 +648,7 @@ export const obligationPropose = defineCommand({
     }
     const env = await ctx.trx
       .selectFrom('ludy_sign.envelope')
-      .select(['id', 'status', 'source_kind', 'source_id', 'created_by', 'page_count'])
+      .select(['id', 'status', 'source_kind', 'source_id', 'created_by', 'retained_org_visible', 'retained_reader_ids', 'page_count'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
       .executeTakeFirst();
@@ -734,7 +734,7 @@ export const obligationUpsert = defineCommand({
     const userId = assertUser(ctx);
     const env = await ctx.trx
       .selectFrom('ludy_sign.envelope')
-      .select(['id', 'status', 'source_kind', 'source_id', 'created_by', 'page_count'])
+      .select(['id', 'status', 'source_kind', 'source_id', 'created_by', 'retained_org_visible', 'retained_reader_ids', 'page_count'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
       .executeTakeFirst();
@@ -898,7 +898,7 @@ export const obligationDismissProposal = defineCommand({
     assertUser(ctx);
     const env = await ctx.trx
       .selectFrom('ludy_sign.envelope')
-      .select(['id', 'source_kind', 'source_id', 'created_by'])
+      .select(['id', 'status', 'source_kind', 'source_id', 'created_by', 'retained_org_visible', 'retained_reader_ids'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
       .executeTakeFirst();
@@ -957,7 +957,7 @@ export const obligationCompleteItem = defineCommand({
     assertUser(ctx);
     const env = await ctx.trx
       .selectFrom('ludy_sign.envelope')
-      .select(['id', 'source_kind', 'source_id', 'created_by'])
+      .select(['id', 'status', 'source_kind', 'source_id', 'created_by', 'retained_org_visible', 'retained_reader_ids'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
       .executeTakeFirst();
@@ -1028,7 +1028,7 @@ export const obligationGet = defineQuery({
     assertUser(ctx);
     const env = await ctx.trx
       .selectFrom('ludy_sign.envelope')
-      .select(['id', 'source_kind', 'source_id', 'created_by'])
+      .select(['id', 'status', 'source_kind', 'source_id', 'created_by', 'retained_org_visible', 'retained_reader_ids'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
       .executeTakeFirst();
@@ -1065,6 +1065,8 @@ export const obligationSource = defineQuery({
         'source_kind',
         'source_id',
         'created_by',
+        'retained_org_visible',
+        'retained_reader_ids',
         'inspect_status',
         'source_sha256',
         'source_file_id',
@@ -1217,7 +1219,7 @@ export const obligationRenewalsList = defineQuery({
     q = q.where((eb) =>
       eb.or([
         eb('e.source_kind', '!=', 'meeting_minutes'),
-        sql<boolean>`ludy_sign.can_access_meeting_minutes_envelope(${eb.ref('e.org_id')}, ${eb.ref('e.source_id')}, ${eb.ref('e.created_by')})`,
+        sql<boolean>`ludy_sign.can_access_meeting_minutes_envelope_row(${eb.ref('e.org_id')}, ${eb.ref('e.source_id')}, ${eb.ref('e.created_by')}, ${eb.ref('e.status')}, ${eb.ref('e.retained_org_visible')}, ${eb.ref('e.retained_reader_ids')})`,
       ]),
     );
 
@@ -1535,7 +1537,7 @@ export const signObligationsToday = defineQuery({
     q = q.where((eb) =>
       eb.or([
         eb('e.source_kind', '!=', 'meeting_minutes'),
-        sql<boolean>`ludy_sign.can_access_meeting_minutes_envelope(${eb.ref('e.org_id')}, ${eb.ref('e.source_id')}, ${eb.ref('e.created_by')})`,
+        sql<boolean>`ludy_sign.can_access_meeting_minutes_envelope_row(${eb.ref('e.org_id')}, ${eb.ref('e.source_id')}, ${eb.ref('e.created_by')}, ${eb.ref('e.status')}, ${eb.ref('e.retained_org_visible')}, ${eb.ref('e.retained_reader_ids')})`,
       ]),
     );
 

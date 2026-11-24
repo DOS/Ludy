@@ -520,5 +520,78 @@ describe('EnvelopePlaybookCard (/o/$slug/sign/envelopes/$id, #4442)', () => {
       );
       overrideSpy.mockRestore();
     });
+
+    it('rebases sibling unsaved drafts onto updated checkRevision on save success and guards null errors safely (#4510)', async () => {
+      const revNext = { ...sampleCheck.check!, revision: 'rev-server-next' };
+      const overrideSpy = vi.spyOn(signApi, 'overridePlaybookFinding').mockResolvedValue(revNext);
+
+      let capturedTree: ReactNode = null;
+      function Probe(props: Parameters<typeof EnvelopePlaybookCard>[0]) {
+        hookDriver.inTargetComponent = true;
+        hookDriver.stateCursor = 0;
+        hookDriver.mutationCursor = 0;
+        try {
+          const rendered = EnvelopePlaybookCard(props);
+          capturedTree = rendered;
+          return rendered;
+        } finally {
+          hookDriver.inTargetComponent = false;
+        }
+      }
+
+      const renderProbe = () =>
+        renderInLocale(
+          'vi',
+          <Probe
+            envelopeId={ENV_ID}
+            sourceFileId={FILE_ID}
+            inspectStatus="passed"
+            pdfBytes={null}
+            onJumpToPage={vi.fn()}
+          />,
+          cache.current,
+        );
+
+      cache.current.setQueryData(['sign', 'playbook-check', ENV_ID], sampleCheck);
+      renderProbe();
+
+      // Open drafts on BOTH RULE_1_ID and RULE_2_ID while revision is rev-1.
+      (requireByTestId(capturedTree, `playbook-override-note-${RULE_1_ID}`).props.onChange as (e: {
+        target: { value: string };
+      }) => void)({ target: { value: 'Draft rule 1' } });
+      renderProbe();
+      (requireByTestId(capturedTree, `playbook-override-note-${RULE_2_ID}`).props.onChange as (e: {
+        target: { value: string };
+      }) => void)({ target: { value: 'Sibling unsaved draft rule 2' } });
+      renderProbe();
+
+      // Save RULE_1_ID first -> returns rev-server-next and rebases RULE_2_ID's checkRevision!
+      (requireByTestId(capturedTree, `playbook-override-save-${RULE_1_ID}`).props.onClick as () => void)();
+      const overrideSlot = hookDriver.mutations[1]!;
+      await overrideSlot.inFlight;
+      renderProbe();
+
+      // Saving sibling RULE_2_ID now sends rev-server-next instead of stale rev-1!
+      (requireByTestId(capturedTree, `playbook-override-save-${RULE_2_ID}`).props.onClick as () => void)();
+      await overrideSlot.inFlight;
+      expect(overrideSpy).toHaveBeenNthCalledWith(2, {
+        envelopeId: ENV_ID,
+        ruleId: RULE_2_ID,
+        checkRevision: 'rev-server-next',
+        verdict: 'pass',
+        manualNote: 'Sibling unsaved draft rule 2',
+      });
+
+      // Null mutation errors must not throw TypeError inside onError handler.
+      renderProbe();
+      overrideSpy.mockRejectedValueOnce(null);
+      (requireByTestId(capturedTree, `playbook-override-note-${RULE_2_ID}`).props.onChange as (e: {
+        target: { value: string };
+      }) => void)({ target: { value: 'Retry after null error' } });
+      renderProbe();
+      (requireByTestId(capturedTree, `playbook-override-save-${RULE_2_ID}`).props.onClick as () => void)();
+      await expect(overrideSlot.inFlight).resolves.toBeUndefined();
+      overrideSpy.mockRestore();
+    });
   });
 });

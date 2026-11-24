@@ -162,19 +162,23 @@ export function EnvelopePlaybookCard({
         verdict: input.verdict,
         manualNote: input.manualNote,
       }),
-    onSuccess: async (_res, variables) => {
+    onSuccess: async (updatedCheck, variables) => {
       setOverrideDrafts((prev) => {
-        if (!(variables.ruleId in prev)) return prev;
-        const next = { ...prev };
-        delete next[variables.ruleId];
-        return next;
+        const next: typeof prev = {};
+        let changed = variables.ruleId in prev;
+        for (const [ruleId, draft] of Object.entries(prev)) {
+          if (ruleId === variables.ruleId) continue;
+          if (draft.checkRevision !== updatedCheck.revision) changed = true;
+          next[ruleId] = { ...draft, checkRevision: updatedCheck.revision };
+        }
+        return changed ? next : prev;
       });
       toast(t('overrideSavedToast'));
       await queryClient.invalidateQueries({ queryKey: ['sign', 'playbook-check', envelopeId] });
     },
     onError: async (err) => {
       toast(errorMessage(err), 'error');
-      const rawCode = (err as { code?: unknown }).code;
+      const rawCode = (err as { code?: unknown } | null | undefined)?.code;
       if (typeof rawCode === 'string' && isKernelErrorCode(rawCode) && rawCode === 'SIGN_PLAYBOOK_STALE_CHECK') {
         setOverrideDrafts({});
         await queryClient.invalidateQueries({ queryKey: ['sign', 'playbook-check', envelopeId] });

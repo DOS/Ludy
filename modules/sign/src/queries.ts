@@ -558,7 +558,7 @@ export const envelopeEvents = defineQuery({
     assertUser(ctx);
     const env = await ctx.trx
       .selectFrom('ludy_sign.envelope')
-      .select(['id', 'source_kind', 'source_id', 'created_by'])
+      .select(['id', 'status', 'source_kind', 'source_id', 'created_by', 'retained_org_visible', 'retained_reader_ids'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.envelopeId)
       .executeTakeFirst();
@@ -609,6 +609,8 @@ export const envelopeVerify = defineQuery({
         'source_kind',
         'source_id',
         'created_by',
+        'retained_org_visible',
+        'retained_reader_ids',
         'seal_status',
         'source_file_id',
         'source_storage_key',
