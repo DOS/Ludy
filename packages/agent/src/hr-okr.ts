@@ -5,7 +5,7 @@
 // and scrubbed optional Ludy Cong tac task titles inside [UNTRUSTED_OKR_DATA]...[/UNTRUSTED_OKR_DATA].
 // Enforces AI Law 134/2025/QH15 human oversight: produces factual progress summaries only and blocks any
 // subjective score/ranking/bonus/termination recommendation; provides a 100% deterministic fallback when AI is off.
-import { generateText, Output } from 'ai';
+import { generateText, NoObjectGeneratedError, Output } from 'ai';
 import { z } from 'zod';
 import { classifyAiError } from './errors.ts';
 import { chatModel, type AiConfig, type AiUsage } from './index.ts';
@@ -273,7 +273,18 @@ export async function summarizeOkrCheckin(
   const prompt = buildOkrPrompt(input, deptLabel, unitLabel, objTitle, krTitle, projectName, priorNote, sanitizedTasks);
   if (forbidden.length > 0) {
     const skeletonPrompt = buildOkrPrompt(
-      { ...input, departmentName: null, unit: null, linkedProjectName: null, lastCheckinNote: null, linkedTaskTitles: [] },
+      {
+        ...input,
+        quarter: '',
+        targetValue: '',
+        currentValue: '',
+        progressPct: '',
+        departmentName: null,
+        unit: null,
+        linkedProjectName: null,
+        lastCheckinNote: null,
+        linkedTaskTitles: [],
+      },
       '',
       '',
       '',
@@ -295,7 +306,6 @@ export async function summarizeOkrCheckin(
       prompt,
     });
   } catch (error: unknown) {
-    if (error instanceof PayrollPromptLeakError) throw error;
     if (error instanceof AiBudgetExhaustedError) {
       return { draft: null, ai: { ok: false, reason: 'budget' } };
     }
@@ -310,7 +320,10 @@ export async function summarizeOkrCheckin(
     ) {
       return { draft: null, ai: { ok: false, reason: 'rate_limited' } };
     }
-    return { draft: null, ai: { ok: false, reason: 'unavailable' } };
+    if (info.kind !== 'unknown' || NoObjectGeneratedError.isInstance(error)) {
+      return { draft: null, ai: { ok: false, reason: 'unavailable' } };
+    }
+    throw error;
   }
   if (generated.usage) options.onUsage?.(generated.usage);
 

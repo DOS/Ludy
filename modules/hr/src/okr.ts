@@ -1135,7 +1135,7 @@ async function applyProjectSyncAndCheckin(
   ctx: CommandContext,
   caller: CallerOkrContext,
   keyResultId: string,
-  options: { syncFromProjects: boolean; explicitCurrentValue?: string; note?: string | null },
+  options: { syncFromProjects: boolean; explicitCurrentValue?: string; lastCheckinNote?: string | null },
 ): Promise<HrOkrKeyResultMutationResult> {
   const existing = await ctx.trx
     .selectFrom('ludy_hr.okr_key_result')
@@ -1193,7 +1193,7 @@ async function applyProjectSyncAndCheckin(
   }
 
   const nextProgress = computeKrProgressPct(existing.metric_type, nextCurrent, nextTarget);
-  const nextNote = options.note === undefined ? existing.last_checkin_note : options.note;
+  const nextNote = options.lastCheckinNote === undefined ? existing.last_checkin_note : options.lastCheckinNote;
 
   // Non-manager self check-in must never modify target_value (enforced by okr_key_result_write_guard trigger).
   await ctx.trx
@@ -1218,7 +1218,9 @@ async function applyProjectSyncAndCheckin(
     syncFromProjects: options.syncFromProjects,
     projectsAvailable,
     projectAccessible,
-    noteUpdated: options.note !== undefined ? auditValue(KEY_RESULT, 'last_checkin_note', options.note ?? '') : undefined,
+    ...(options.lastCheckinNote !== undefined
+      ? { noteUpdated: auditValue(KEY_RESULT, 'last_checkin_note', options.lastCheckinNote ?? '') }
+      : {}),
   });
 
   return {
@@ -1247,7 +1249,7 @@ export const hrOkrKeyResultCheckin = defineCommand({
     return applyProjectSyncAndCheckin(ctx, caller, input.keyResultId, {
       syncFromProjects: input.syncFromProjects,
       ...(input.currentValue !== undefined ? { explicitCurrentValue: input.currentValue } : {}),
-      ...(input.note !== undefined ? { note: input.note } : {}),
+      ...(input.note !== undefined ? { lastCheckinNote: input.note } : {}),
     });
   },
 });

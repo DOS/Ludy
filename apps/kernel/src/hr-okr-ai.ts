@@ -87,8 +87,9 @@ export async function draftOkrCheckinSummary(
     };
   };
 
-  const ask = ai.reader?.hrOkrCheckinDraft;
-  if (!ask || source.aiStopped) {
+  const reader = ai.reader;
+  const ask = reader?.hrOkrCheckinDraft;
+  if (!reader || !ask || source.aiStopped) {
     return finish('off', null);
   }
   if (source.aiBudgetSpent) {
@@ -132,7 +133,8 @@ export async function draftOkrCheckinSummary(
 
   try {
     const out = await withAiScope({ orgId, meter: guardedMeter }, () =>
-      ask(
+      ask.call(
+        reader,
         {
           language: lang,
           quarter: facts.quarter,
