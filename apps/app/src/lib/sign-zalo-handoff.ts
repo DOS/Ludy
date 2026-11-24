@@ -6,7 +6,6 @@ import { CONVERSATION_PROVIDER_RULES, hasNamePlaceholder } from '@ludy/kernel-co
 export const SIGN_ZALO_PROVIDER = 'zalo_oa';
 export const SIGN_ZALO_DRAFT_MAX: number = CONVERSATION_PROVIDER_RULES.zalo_oa?.replyMax ?? 2000;
 export const SIGN_ZALO_THREADS_MAX = 15;
-export const SIGN_ZALO_CONFIDENTIAL_SOURCE_KINDS = ['hr_contract', 'meeting_minutes'] as const;
 
 export function isConfidentialSignSourceKind(sourceKind: string): boolean {
   return sourceKind === 'hr_contract' || sourceKind === 'meeting_minutes';
