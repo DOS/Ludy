@@ -198,8 +198,9 @@ function userOf(claims: Record<string, unknown>): Record<string, unknown> {
 
 // A `fetch` for auth-js that sends a refresh to the OAuth token endpoint and answers in the shape of Supabase Auth's own: for a
 // session of an OAuth client Supabase Auth refuses `POST {authUrl}/token?grant_type=refresh_token` and wants the client id at
-// the token endpoint. Every other request goes through unchanged. A refused refresh is passed on with its status, so auth-js
-// ends the session as it does for any refresh token that no longer works; a network failure is thrown, so auth-js retries.
+// the token endpoint. Every other request goes through unchanged. A refresh whose refresh token the endpoint
+// rejects (400 `invalid_grant`) is passed on, so auth-js ends the session; any other refusal is answered 503 and a network
+// failure is thrown, so auth-js retries and keeps the session.
 export function oauthRefreshFetch(base: typeof fetch, options: { authUrl: string; config: OauthSignInConfig }): typeof fetch {
   const refreshPath = `${new URL(options.authUrl).pathname.replace(/\/+$/, '')}/token`;
   const origin = new URL(options.authUrl).origin;
@@ -223,7 +224,14 @@ export function oauthRefreshFetch(base: typeof fetch, options: { authUrl: string
       body: formBody({ grant_type: 'refresh_token', refresh_token: refreshToken, client_id: options.config.clientId }),
       ...TOKEN_REQUEST,
     });
-    if (!answer.ok) return answer;
+    if (!answer.ok) {
+      // Only a refusal that rejects the refresh token itself ends the session (auth-js removes it on any status it does not
+      // retry). A rate limit, a server error, or a client refusal such as `invalid_client` says nothing about the refresh token:
+      // answered 503, which auth-js retries and, failing that, keeps the stored session through.
+      const error = await answer.clone().json().then((body: unknown) => (body as { error?: unknown } | null)?.error, () => undefined);
+      if (answer.status === 400 && error === 'invalid_grant') return answer;
+      return new Response('{"error":"temporarily_unavailable","error_description":"the token endpoint did not accept the refresh; try again"}', { status: 503, headers: { 'content-type': 'application/json' } });
+    }
     const tokens = await readTokens(answer, options.config.clientId);
     const claims = tokens ? jwtClaims(tokens.accessToken) : null;
     if (!tokens || !claims) return new Response('{"error":"server_error","error_description":"unexpected token response"}', { status: 502, headers: { 'content-type': 'application/json' } });

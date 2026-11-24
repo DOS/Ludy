@@ -257,13 +257,21 @@ describe('refreshing a session of the OAuth App', () => {
     expect(passed).toHaveLength(6);
   });
 
-  it("passes a refused refresh on with the provider's status, so auth-js ends the session; a used refresh token is refused", async () => {
+  it('passes a rejected refresh token on as 400 invalid_grant, so auth-js ends the session; a used refresh token is rejected', async () => {
     const { refreshToken, fetchFn } = await session();
     expect((await fetchFn(`${AUTH_URL}/token?grant_type=refresh_token`, refreshRequest(refreshToken))).status).toBe(200);
     const second = await fetchFn(`${AUTH_URL}/token?grant_type=refresh_token`, refreshRequest(refreshToken));
     expect(second.status).toBe(400);
     expect(await second.json()).toMatchObject({ error: 'invalid_grant' });
     expect((await fetchFn(`${AUTH_URL}/token?grant_type=refresh_token`, { method: 'POST', body: '{}' })).status).toBe(400);
+  });
+
+  it('keeps the session through a refusal that does not reject the refresh token: 429, invalid_client, a server error, an unreadable answer are 503 for auth-js to retry', async () => {
+    for (const [status, body] of [[429, '{"error":"rate_limited"}'], [400, '{"error":"invalid_client"}'], [401, '{"error":"invalid_client"}'], [500, '{}'], [400, '<html>'], [403, '']] as const) {
+      const refresh = oauthRefreshFetch((async () => new Response(body, { status })) as typeof fetch, { authUrl: AUTH_URL, config: CONFIG });
+      const answer = await refresh(`${AUTH_URL}/token?grant_type=refresh_token`, refreshRequest('r1'));
+      expect(answer.status, `${status} ${body}`).toBe(503);
+    }
   });
 
   it("refuses a refreshed token that is not the app's client's, and lets a network failure throw so auth-js retries", async () => {

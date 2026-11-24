@@ -227,7 +227,7 @@ export function verifySecondFactor(params: { factorId: string; code: string }, c
   // and the kernel refuses such a token: the session is refreshed at the OAuth token endpoint at once, which gives a token
   // with the client id again (and the second factor). A refresh that fails leaves the verified session as it is.
   const result: typeof verified = verified.then(async (answer) => {
-    if (!answer.error && !isCeremonyIsolated() && getConfig().oauthSignIn) await auth().refreshSession().catch(() => undefined);
+    if (!answer.error && !isCeremonyIsolated() && config?.oauthSignIn) await auth().refreshSession().catch(() => undefined);
     return answer;
   });
   verifying = result.then(
