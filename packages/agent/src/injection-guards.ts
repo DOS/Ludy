@@ -69,6 +69,8 @@ const STARTS_WITH_BRACKETED_CONNECTOR_RE = /^[({[<]\s*(?:dot|at|\.)\s*[)}\]>]/iu
 const ENDS_WITH_BRACKETED_CONNECTOR_RE = /[({[<]\s*(?:dot|at|\.)\s*[)}\]>]$/iu;
 const STARTS_WITH_CONNECTOR_WORD_RE = /^(?:dot|at)\s/iu;
 const ENDS_WITH_CONNECTOR_WORD_RE = /\s(?:dot|at)$/iu;
+const STARTS_WITH_HALF_CONNECTOR_RE = /^(?:dot|at|\.)\s*[)}\]>]/iu;
+const ENDS_WITH_HALF_CONNECTOR_RE = /[({[<]\s*(?:dot|at|\.)$/iu;
 const PRECEDING_WORD_OPT_SPACE_RE = /[\p{L}\p{M}\p{N}_.-]\s*$/u;
 const FOLLOWING_WORD_OPT_SPACE_RE = /^\s*[\p{L}\p{M}\p{N}_.-]/u;
 
@@ -100,6 +102,12 @@ function isGuardedConnectorMatch(match: string, before: string, after: string): 
     return true;
   }
   if (ENDS_WITH_BRACKETED_CONNECTOR_RE.test(matchNfkc) && FOLLOWING_WORD_OPT_SPACE_RE.test(afterNfkc)) {
+    return true;
+  }
+  if (STARTS_WITH_HALF_CONNECTOR_RE.test(matchNfkc) && PRECEDING_WRAPPER_OPEN_RE.test(beforeNfkc)) {
+    return true;
+  }
+  if (ENDS_WITH_HALF_CONNECTOR_RE.test(matchNfkc) && FOLLOWING_WRAPPER_CLOSE_RE.test(afterNfkc)) {
     return true;
   }
   if (STARTS_WITH_CONNECTOR_WORD_RE.test(matchNfkc) && PRECEDING_WORD_SPACE_RE.test(beforeNfkc)) {

@@ -93,7 +93,7 @@ export function roadmapDedupePrompt(facts: RoadmapDedupeFacts): string {
   const rows = facts.items.slice(0, 60).map((item) => {
     const summary = item.publicSummary ? ` | summary: "${fenced(oneLine(item.publicSummary, SUMMARY_PROMPT_CHARS))}"` : '';
     const category = item.category ? ` | category: "${fenced(oneLine(item.category, 60))}"` : '';
-    const trust = item.tainted ? 'external_untrusted' : 'internal';
+    const trust = item.tainted === false ? 'internal' : 'external_untrusted';
     return `- id=${item.id} | moderationStatus=${item.moderationStatus} | stage=${item.stage} | votes=${item.voteCount} | trust=${trust} | title="${fenced(oneLine(item.publicTitle, TITLE_PROMPT_CHARS))}"${category}${summary}`;
   });
   return [
@@ -206,7 +206,7 @@ export function roadmapChangelogDraftPrompt(facts: RoadmapChangelogDraftFacts): 
   const itemLines = facts.items.slice(0, 20).map((item) => {
     const cat = item.category ? ` | category: "${fenced(oneLine(item.category, 60))}"` : '';
     const sum = item.publicSummary ? ` | summary: "${fenced(oneLine(item.publicSummary, SUMMARY_PROMPT_CHARS))}"` : '';
-    const trust = item.tainted ? 'external_untrusted' : 'internal';
+    const trust = item.tainted === false ? 'internal' : 'external_untrusted';
     return `- [${trust}] title: "${fenced(oneLine(item.publicTitle, TITLE_PROMPT_CHARS))}"${cat}${sum}`;
   });
   return [
@@ -265,17 +265,25 @@ export function checkRoadmapChangelogDraft(
   output: RoadmapChangelogDraftModelOutput | null | undefined,
 ): RoadmapChangelogDraftCheckResult {
   if (!output) return { kind: 'none', code: 'EMPTY' };
-  const title = oneLine(output.title ?? '', ROADMAP_CHANGELOG_TITLE_MAX + 1);
+  const rawTitle = output.title ?? '';
   const bodyMd = (output.bodyMd ?? '').replace(/\r\n/g, '\n').trim();
+  if (
+    hasInvisibleFormat(rawTitle) ||
+    hasInvisibleFormat(bodyMd) ||
+    hasMarkdownNoise(rawTitle) ||
+    hasPromptMarkupLeak(rawTitle) ||
+    hasPromptMarkupLeak(bodyMd) ||
+    /<[a-z!/]/i.test(rawTitle) ||
+    /<[a-z!/]/i.test(bodyMd)
+  ) {
+    return { kind: 'none', code: 'FORMAT' };
+  }
+  const title = oneLine(rawTitle, ROADMAP_CHANGELOG_TITLE_MAX + 1);
   if (!title || !bodyMd) return { kind: 'none', code: 'EMPTY' };
   if (title.length > ROADMAP_CHANGELOG_TITLE_MAX || bodyMd.length > ROADMAP_CHANGELOG_BODY_MAX) {
     return { kind: 'none', code: 'TOO_LONG' };
   }
-  if (hasInvisibleFormat(title) || hasInvisibleFormat(bodyMd) || hasMarkdownNoise(title) || hasPromptMarkupLeak(title) || hasPromptMarkupLeak(bodyMd)) {
-    return { kind: 'none', code: 'FORMAT' };
-  }
-  // Refuse HTML tags or dangerous scripts in Markdown draft.
-  if (/<[a-z!/]/i.test(title) || /<[a-z!/]/i.test(bodyMd)) {
+  if (hasMarkdownNoise(title)) {
     return { kind: 'none', code: 'FORMAT' };
   }
 
@@ -410,7 +418,7 @@ export function roadmapSignalMatchPrompt(facts: RoadmapSignalMatchFacts): string
   const safeLine = (s: string, max: number) => fenced(oneLine(s, max));
   const lines = facts.items.slice(0, ROADMAP_SIGNAL_MATCH_ITEMS_MAX).map((item) => {
     const sum = item.summary ? ` | summary: "${safeLine(item.summary, 220)}"` : '';
-    const trust = item.tainted ? 'external_untrusted' : 'internal';
+    const trust = item.tainted === false ? 'internal' : 'external_untrusted';
     return `- id=${item.id} | stage=${item.stage} | trust=${trust} | title="${safeLine(item.title, 160)}"${sum}`;
   });
   const account = facts.accountLabel ? `Account:\n<<<\n${safeLine(facts.accountLabel, 160)}\n>>>` : 'Account: (none)';

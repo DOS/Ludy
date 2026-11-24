@@ -123,7 +123,7 @@ export function triageAssistInstructions(language: 'vi' | 'en'): string {
 
 /** Structured prompt containing bounded triage item text and candidate allowlists. */
 export function triageAssistPrompt(facts: ProjectTriageAssistFacts): string {
-  const trust = facts.item.tainted ? 'external_untrusted' : 'internal';
+  const trust = facts.item.tainted === false ? 'internal' : 'external_untrusted';
   const desc = facts.item.description
     ? `\nItem description:\n<<<\n${fenced(oneLine(facts.item.description, DESCRIPTION_PROMPT_CHARS))}\n>>>`
     : '\nItem description: none';

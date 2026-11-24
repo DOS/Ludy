@@ -1260,6 +1260,10 @@ describe('shared prompt-injection corpus over all coworker validators', () => {
     expect(stripTrustedPhrases('evil at invalid', ['at'])).toBe('evil at invalid');
     expect(stripTrustedPhrases('evil(dot)invalid', ['(dot)'])).toBe('evil(dot)invalid');
     expect(stripTrustedPhrases('evil(at)invalid', ['(at)'])).toBe('evil(at)invalid');
+    expect(stripTrustedPhrases('evil(dot)invalid', ['(dot'])).toBe('evil(dot)invalid');
+    expect(stripTrustedPhrases('evil(dot)invalid', ['dot)'])).toBe('evil(dot)invalid');
+    expect(stripTrustedPhrases('evil[.]invalid', ['[.'])).toBe('evil[.]invalid');
+    expect(stripTrustedPhrases('evil[.]invalid', ['.]'])).toBe('evil[.]invalid');
     expect(stripTrustedPhrases('Du an dot: da xong 2 viec.', ['dot'])).toBe('Du an  : da xong 2 viec.');
     expect(stripTrustedPhrases('Hoan thanh 2 viec cho du an dot.', ['dot'])).toBe('Hoan thanh 2 viec cho du an  .');
 

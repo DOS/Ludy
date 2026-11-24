@@ -298,6 +298,15 @@ describe('Vy roadmap changelog draft (#4400)', () => {
         bodyMd: '## Highlights\n- Hoan thanh\u3164 xuat bao cao.',
       }),
     ).toEqual({ kind: 'none', code: 'FORMAT' });
+    for (const badTitle of ['Cap nhat\u202E moi', 'Cap\u3164 nhat moi', '\u200B']) {
+      expect(
+        checkRoadmapChangelogDraft(shopDotChangelog, {
+          title: badTitle,
+          bodyMd: '## Highlights\n- Hoan thien tinh nang cho Shop.',
+        }),
+        badTitle,
+      ).toEqual({ kind: 'none', code: 'FORMAT' });
+    }
     expect(
       checkRoadmapChangelogDraft(shopDotChangelog, {
         title: 'Cap nhat cho Shop-1 va dot.',
