@@ -3330,13 +3330,11 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   enqueueKycInspect: (orgId, envelopeId, fieldId) =>
                     enqueueSignKycAttachmentInspect(boss, orgId, envelopeId, fieldId),
                 });
-                const pendingDocx = await deps.runtime
-                  .query<Array<Omit<SignDocxConvertJob, 'orgId' | 'targetKind'>>>(
-                    'sign.docx_convert.pending',
-                    {},
-                    { actor: { type: 'system', component: 'sign.docx_convert' }, orgId: row.org_id },
-                  )
-                  .catch(() => []);
+                const pendingDocx = await deps.runtime.query<Array<Omit<SignDocxConvertJob, 'orgId' | 'targetKind'>>>(
+                  'sign.docx_convert.pending',
+                  {},
+                  { actor: { type: 'system', component: 'sign.docx_convert' }, orgId: row.org_id },
+                );
                 for (const item of pendingDocx) {
                   await enqueueSignDocxConvert(boss, row.org_id, item);
                 }

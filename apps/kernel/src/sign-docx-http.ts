@@ -46,6 +46,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 
 const ERROR_MESSAGES: Readonly<Record<string, { status: 413 | 422; message: string }>> = {
   TOO_LARGE: { status: 413, message: 'Tệp Word (.docx) hoặc PDF tạo ra vượt quá giới hạn kích thước cho phép' },
+  SIGN_DOCX_TOO_LARGE: { status: 413, message: 'Tệp PDF sau khi chuyển đổi vượt quá giới hạn 25 MB' },
   SIGN_DOCX_TRACK_CHANGES: {
     status: 422,
     message: 'Tệp Word còn nội dung Theo dõi thay đổi (Track Changes) chưa được chấp nhận; vui lòng xử lý toàn bộ thay đổi trước khi tải lên',

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PDFDocument } from 'pdf-lib';
 import { EXTRACT_LIMITS } from '@ludy/extract-contract';
+import { DocxError } from '../src/docx-text.ts';
+import { MAX_DOCX_PARAGRAPH_CHARS, convertDocxToPdf } from '../src/docx-to-pdf.ts';
 import { parse } from '../src/parse.ts';
 import { createExtractApp } from '../src/server.ts';
 import { buildZip } from './zip-fixture.ts';
@@ -186,5 +188,142 @@ describe('docx_to_pdf conversion (#4721)', () => {
       'word/document.xml': `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${manyBreaks}</w:body></w:document>`,
     });
     expect(await parse('docx_to_pdf', tooManyPages)).toMatchObject({ ok: false, code: 'invalid' });
+  });
+
+  it('resolves XML namespaces by URI, rejects aliased revisions/vanish, formatting revisions, unclosed XML, and docDefaults vanish', async () => {
+    const aliasedValid = buildDocx({
+      'word/document.xml': [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<x:document xmlns:x="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+        '<x:body><x:p><x:r><x:rPr><x:b/><x:vanish x:val="0"/></x:rPr><x:t>Hợp đồng chuẩn hóa</x:t></x:r></x:p></x:body>',
+        '</x:document>',
+      ].join(''),
+    });
+    const aliasedRes = await parse('docx_to_pdf', aliasedValid);
+    expect(aliasedRes).toMatchObject({ ok: true, kind: 'docx_to_pdf', pageCount: 1 });
+    if (!aliasedRes.ok || aliasedRes.kind !== 'docx_to_pdf') throw new Error('expected ok');
+    const inspected = await parse('pdf_inspect', Buffer.from(aliasedRes.pdfBase64, 'base64'));
+    expect(inspected).toMatchObject({ ok: true, kind: 'pdf_inspect' });
+    if (inspected.ok && inspected.kind === 'pdf_inspect') {
+      expect(inspected.pages[0]?.text).toContain('Hợp đồng chuẩn hóa');
+    }
+
+    const strictDefaultNsValid = buildDocx({
+      'word/document.xml':
+        '<?xml version="1.0" encoding="UTF-8"?><document xmlns="http://purl.oclc.org/ooxml/wordprocessingml/main"><body><p><r><t>Strict OOXML</t></r></p></body></document>',
+    });
+    expect(await parse('docx_to_pdf', strictDefaultNsValid)).toMatchObject({ ok: true, kind: 'docx_to_pdf', pageCount: 1 });
+
+    for (const badAliasDoc of [
+      '<x:document xmlns:x="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><x:body><x:p><x:ins x:id="1"><x:r><x:t>Chèn</x:t></x:r></x:ins></x:p></x:body></x:document>',
+      '<x:document xmlns:x="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><x:body><x:p><x:del x:id="1"><x:r><x:delText>Xóa</x:delText></x:r></x:del></x:p></x:body></x:document>',
+      '<x:document xmlns:x="http://purl.oclc.org/ooxml/wordprocessingml/main"><x:body><x:p><x:r><x:rPr><x:vanish/></x:rPr><x:t>Ẩn</x:t></x:r></x:p></x:body></x:document>',
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pPrChange w:id="1"><w:pPr/></w:pPrChange></w:pPr><w:r><w:t>Đổi định dạng</w:t></w:r></w:p></w:body></w:document>',
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Chưa đóng</w:t></w:r></w:p></w:body>',
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p></w:r></w:body></w:document>',
+    ]) {
+      expect(await parse('docx_to_pdf', buildDocx({ 'word/document.xml': badAliasDoc }))).toMatchObject({ ok: false, code: 'invalid' });
+    }
+
+    const docDefaultsHidden = buildDocx({
+      'word/styles.xml':
+        '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:vanish/></w:rPr></w:rPrDefault></w:docDefaults></w:styles>',
+      'word/document.xml':
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Ẩn mặc định</w:t></w:r></w:p></w:body></w:document>',
+    });
+    expect(await parse('docx_to_pdf', docDefaultsHidden)).toMatchObject({ ok: false, code: 'invalid' });
+
+    const docDefaultsVisible = buildDocx({
+      'word/styles.xml':
+        '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:docDefaults><w:rPrDefault><w:rPr><w:vanish w:val="0"/><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults></w:styles>',
+      'word/document.xml':
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Hiển thị bình thường</w:t></w:r></w:p></w:body></w:document>',
+    });
+    expect(await parse('docx_to_pdf', docDefaultsVisible)).toMatchObject({ ok: true, kind: 'docx_to_pdf', pageCount: 1 });
+  });
+
+  it('clamps oversized indents, handles footnotes/endnotes warnings & security, bounds paragraph text, handles narrow/tall tables, and emits output_too_large reason', async () => {
+    const bigIndent = buildDocx({
+      'word/document.xml':
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:ind w:left="20000" w:right="4000"/></w:pPr><w:r><w:t>Văn bản lùi lề rất lớn</w:t></w:r></w:p></w:body></w:document>',
+    });
+    const bigIndentRes = await parse('docx_to_pdf', bigIndent);
+    expect(bigIndentRes).toMatchObject({ ok: true, kind: 'docx_to_pdf', warnings: ['complex_columns_simplified'] });
+
+    const separatorOnlyFootnotes = buildDocx({
+      'word/footnotes.xml':
+        '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:t>---</w:t></w:r></w:p></w:footnote></w:footnotes>',
+      'word/document.xml':
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Không có chú thích</w:t></w:r></w:p></w:body></w:document>',
+    });
+    const sepRes = await parse('docx_to_pdf', separatorOnlyFootnotes);
+    expect(sepRes).toMatchObject({ ok: true, kind: 'docx_to_pdf', warnings: [] });
+
+    const withFootnoteRef = buildDocx({
+      'word/footnotes.xml':
+        '<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:footnote w:id="1"><w:p><w:r><w:t>Chú thích 1</w:t></w:r></w:p></w:footnote></w:footnotes>',
+      'word/document.xml':
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Điều khoản chính</w:t><w:footnoteReference w:id="1"/></w:r></w:p></w:body></w:document>',
+    });
+    expect(await parse('docx_to_pdf', withFootnoteRef)).toMatchObject({ ok: true, kind: 'docx_to_pdf', warnings: ['footnotes_skipped'] });
+
+    const dirtyEndnotes = buildDocx({
+      'word/endnotes.xml':
+        '<w:endnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:endnote w:id="1"><w:p><w:ins w:id="1"><w:r><w:t>Ẩn</w:t></w:r></w:ins></w:p></w:endnote></w:endnotes>',
+      'word/document.xml':
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Nội dung</w:t></w:r></w:p></w:body></w:document>',
+    });
+    expect(await parse('docx_to_pdf', dirtyEndnotes)).toMatchObject({ ok: false, code: 'invalid' });
+
+    const longPara = buildDocx({
+      'word/document.xml': `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>${'a'.repeat(MAX_DOCX_PARAGRAPH_CHARS + 1)}</w:t></w:r></w:p></w:body></w:document>`,
+    });
+    const longParaRes = await parse('docx_to_pdf', longPara);
+    expect(longParaRes).toMatchObject({ ok: false, code: 'invalid' });
+
+    const narrowCols = buildDocx({
+      'word/document.xml': [
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>',
+        '<w:tbl>',
+        '<w:tblGrid><w:gridCol w:w="220"/><w:gridCol w:w="9000"/></w:tblGrid>',
+        '<w:tr><w:tc><w:p><w:r><w:t>ABCDEFGHIJKLMNOP</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Cột rộng</w:t></w:r></w:p></w:tc></w:tr>',
+        '</w:tbl></w:body></w:document>',
+      ].join(''),
+    });
+    expect(await parse('docx_to_pdf', narrowCols)).toMatchObject({ ok: true, kind: 'docx_to_pdf', warnings: [] });
+
+    const tallRowLines = Array.from({ length: 80 }, (_, idx) => `<w:p><w:r><w:t>Dòng bảng rất cao số ${idx + 1}</w:t></w:r></w:p>`).join('');
+    const tallRow = buildDocx({
+      'word/document.xml': [
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>',
+        '<w:tbl><w:tblGrid><w:gridCol w:w="4500"/><w:gridCol w:w="4500"/></w:tblGrid>',
+        `<w:tr><w:tc>${tallRowLines}</w:tc><w:tc><w:p><w:r><w:t>Cột 2</w:t></w:r></w:p></w:tc></w:tr>`,
+        '</w:tbl></w:body></w:document>',
+      ].join(''),
+    });
+    expect(await parse('docx_to_pdf', tallRow)).toMatchObject({
+      ok: true,
+      kind: 'docx_to_pdf',
+      warnings: ['complex_columns_simplified'],
+    });
+
+    const tinyDoc = buildDocx({
+      'word/document.xml':
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>OK</w:t></w:r></w:p></w:body></w:document>',
+    });
+    const saveSpy = vi.spyOn(PDFDocument.prototype, 'save').mockResolvedValue(new Uint8Array(EXTRACT_LIMITS.maxFileBytes + 1));
+    try {
+      let caught: unknown;
+      try {
+        await convertDocxToPdf(tinyDoc);
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(DocxError);
+      expect((caught as DocxError).reason).toBe('output_too_large');
+      expect(await parse('docx_to_pdf', tinyDoc)).toMatchObject({ ok: false, code: 'too_large' });
+    } finally {
+      saveSpy.mockRestore();
+    }
   });
 });

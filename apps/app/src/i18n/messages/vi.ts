@@ -20097,6 +20097,7 @@ export const vi = {
       complex_columns_simplified: 'Bố cục nhiều cột hoặc bảng gộp ô đã được đơn giản hóa về một luồng.',
       images_skipped: 'Hình ảnh trong tệp Word đã được bỏ qua khi tạo bản PDF thuần văn bản.',
       headers_footers_simplified: 'Đầu trang và chân trang đã được đơn giản hóa.',
+      footnotes_skipped: 'Một số chú thích cuối trang hoặc cuối tài liệu (footnote/endnote) đã được bỏ qua khi chuyển sang PDF.',
     },
     createSubmit: 'Tạo hồ sơ nháp',
     createdToast: 'Đã tạo hồ sơ ký mới.',

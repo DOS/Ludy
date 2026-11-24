@@ -30,7 +30,7 @@ import {
 } from './acceptance.ts';
 import { signApiKeyCommands } from './api-keys.ts';
 import { signDirectPublicCommands } from './direct-public.ts';
-import { signDocxConvertCommands } from './docx-convert.ts';
+import { signDocxConvertCommands, verifySourceDocxProvenance } from './docx-convert.ts';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
 import { signInPersonCommands } from './in-person.ts';
@@ -252,6 +252,10 @@ export const envelopeCreate = defineCommand({
           'Confidential HR contract or meeting minutes source files cannot be reused on non-confidential envelopes',
         );
       }
+    }
+
+    if (input.sourceDocxSha256) {
+      await verifySourceDocxProvenance(ctx, input.sourceDocxSha256, file.sha256);
     }
 
     const row = await insertEnvelopeGuardingProjectAcceptance(input.sourceKind, () =>

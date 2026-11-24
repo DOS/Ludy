@@ -35,6 +35,7 @@ import {
   SIGN_UPLOAD_ACCEPT,
   convertSignDocx,
   downloadSignPdfBytes,
+  isSignDocxFile,
   signApi,
   uploadSignPdf,
   type SignDocxConvertCompletedResult,
@@ -696,6 +697,7 @@ export function CreateTemplateForm({
   file,
   error,
   pending,
+  inspecting,
   docxStatus,
   docxResult,
   onChangeTitle,
@@ -714,6 +716,7 @@ export function CreateTemplateForm({
   file: File | null;
   error: string | null;
   pending: boolean;
+  inspecting?: boolean | undefined;
   docxStatus?: DocxConversionStatus | undefined;
   docxResult?: SignDocxConvertCompletedResult | null | undefined;
   onChangeTitle: (value: string) => void;
@@ -796,7 +799,7 @@ export function CreateTemplateForm({
         <Button
           type="submit"
           loading={pending}
-          disabled={!title.trim() || !file || docxStatus === 'converting' || docxStatus === 'error'}
+          disabled={!title.trim() || !file || Boolean(inspecting) || docxStatus === 'converting' || docxStatus === 'error'}
           data-testid="sign-tpl-create-submit-btn"
         >
           {t('submitCreate')}
@@ -973,6 +976,7 @@ export function SignTemplatesPage() {
   const [createSubject, setCreateSubject] = useState('');
   const [createMessage, setCreateMessage] = useState('');
   const [createFile, setCreateFile] = useState<File | null>(null);
+  const [createInspecting, setCreateInspecting] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [createDocxStatus, setCreateDocxStatus] = useState<DocxConversionStatus>('idle');
   const [createDocxResult, setCreateDocxResult] = useState<SignDocxConvertCompletedResult | null>(null);
@@ -1042,10 +1046,18 @@ export function SignTemplatesPage() {
   useEffect(() => {
     if (previousSlugRef.current === slug) return;
     previousSlugRef.current = slug;
+    createPickTokenRef.current += 1;
     pendingCreatedIdRef.current = null;
     draftTracker.clearLoaded();
     setSelectedId(null);
     setFreshDirectUrl(null);
+    setCreateOpen(false);
+    setCreateInspecting(false);
+    setCreateFile(null);
+    setCreateError(null);
+    setCreateDocxStatus('idle');
+    setCreateDocxResult(null);
+    setCreatedDocxNotice(null);
     setInstOpen(false);
     setInstCompleted(null);
     setInstError(null);
@@ -1152,15 +1164,18 @@ export function SignTemplatesPage() {
 
   const handleCreateFileChange = async (file: File | null) => {
     const token = ++createPickTokenRef.current;
+    setCreateFile(null);
     setCreateError(null);
     setCreateDocxStatus('idle');
     setCreateDocxResult(null);
     if (!file) {
-      setCreateFile(null);
+      setCreateInspecting(false);
       return;
     }
+    setCreateInspecting(true);
     const checked = await inspectSelectedSignUploadFile(file);
-    if (createPickTokenRef.current !== token) return;
+    if (!mountedRef.current || createPickTokenRef.current !== token) return;
+    setCreateInspecting(false);
     if (!checked.ok) {
       setCreateError(tSign(checked.errorKey));
       setCreateFile(null);
@@ -1177,6 +1192,7 @@ export function SignTemplatesPage() {
         setCreateDocxStatus('ready');
       } catch (err) {
         if (!mountedRef.current || createPickTokenRef.current !== token) return;
+        setCreateFile(null);
         setCreateDocxStatus('error');
         setCreateError(errorMessage(err));
       }
@@ -1186,9 +1202,9 @@ export function SignTemplatesPage() {
   const createMutation = useMutation({
     mutationFn: async (vars: {
       capturedSlug: string | undefined;
+      file: File | null;
       converted: SignDocxConvertCompletedResult | null;
     }) => {
-      if (!createFile) throw new Error(t('pdfFileLabel'));
       if (vars.converted) {
         return {
           created: await signApi.createTemplate({
@@ -1203,7 +1219,10 @@ export function SignTemplatesPage() {
           warnings: vars.converted.warnings,
         };
       }
-      const uploaded = await uploadSignPdf(createFile, vars.capturedSlug ?? undefined);
+      if (!vars.file || isSignDocxFile(vars.file)) {
+        throw new Error(t('pdfFileLabel'));
+      }
+      const uploaded = await uploadSignPdf(vars.file, vars.capturedSlug ?? undefined);
       return {
         created: await signApi.createTemplate({
           title: createTitle.trim(),
@@ -1598,9 +1617,17 @@ export function SignTemplatesPage() {
 
   const onSubmitCreate = (e: FormEvent) => {
     e.preventDefault();
-    if (createMutation.isPending || createDocxStatus === 'converting' || createDocxStatus === 'error') return;
+    if (createMutation.isPending || createInspecting || createDocxStatus === 'converting' || createDocxStatus === 'error') {
+      return;
+    }
+    if (!createFile || (isSignDocxFile(createFile) && !createDocxResult)) {
+      setCreateFile(null);
+      setCreateDocxStatus('error');
+      setCreateError(tSign('pdfRequired'));
+      return;
+    }
     setCreateError(null);
-    createMutation.mutate({ capturedSlug: slug, converted: createDocxResult });
+    createMutation.mutate({ capturedSlug: slug, file: createFile, converted: createDocxResult });
   };
 
   const onSubmitInstantiate = (e: FormEvent) => {
@@ -2333,7 +2360,20 @@ export function SignTemplatesPage() {
         </div>
       ) : null}
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      <Dialog
+        open={createOpen}
+        onOpenChange={(next) => {
+          setCreateOpen(next);
+          if (!next) {
+            createPickTokenRef.current += 1;
+            setCreateInspecting(false);
+            setCreateFile(null);
+            setCreateError(null);
+            setCreateDocxStatus('idle');
+            setCreateDocxResult(null);
+          }
+        }}
+      >
         <DialogContent className="max-w-lg" closeLabel={common('close')}>
           <DialogHeader>
             <DialogTitle>{t('createTitle')}</DialogTitle>
@@ -2348,6 +2388,7 @@ export function SignTemplatesPage() {
             file={createFile}
             error={createError}
             pending={createMutation.isPending}
+            inspecting={createInspecting}
             docxStatus={createDocxStatus}
             docxResult={createDocxResult}
             onChangeTitle={setCreateTitle}

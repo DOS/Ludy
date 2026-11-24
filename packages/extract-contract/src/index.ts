@@ -974,6 +974,7 @@ export const DOCX_TO_PDF_WARNINGS = [
   'complex_columns_simplified',
   'images_skipped',
   'headers_footers_simplified',
+  'footnotes_skipped',
 ] as const;
 export const zDocxToPdfWarning = z.enum(DOCX_TO_PDF_WARNINGS);
 export type DocxToPdfWarning = z.infer<typeof zDocxToPdfWarning>;

@@ -1217,6 +1217,7 @@ export const SIGN_DOCX_TO_PDF_WARNINGS = [
   'complex_columns_simplified',
   'images_skipped',
   'headers_footers_simplified',
+  'footnotes_skipped',
 ] as const;
 export type SignDocxToPdfWarning = (typeof SIGN_DOCX_TO_PDF_WARNINGS)[number];
 

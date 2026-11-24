@@ -62,6 +62,7 @@ function makeTestFile(bytes: Uint8Array, name: string, type = ''): File {
 
 describe('eSign .docx client upload and UI components (#4721)', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -191,12 +192,13 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
 
     const dismissibleAlert = renderToStaticMarkup(
       <IntlProvider locale="vi" timeZone="Asia/Ho_Chi_Minh" messages={catalog('vi')}>
-        <DocxWarningsAlert warnings={['images_skipped']} onDismiss={() => {}} />
+        <DocxWarningsAlert warnings={['images_skipped', 'footnotes_skipped']} onDismiss={() => {}} />
       </IntlProvider>,
     );
     expect(dismissibleAlert).toContain('aria-label="Đóng"');
     expect(dismissibleAlert).toContain('min-h-11 min-w-11');
     expect(dismissibleAlert).toContain('aria-hidden="true"');
+    expect(dismissibleAlert).toContain('footnote/endnote');
 
     const envHtml = renderToStaticMarkup(
       <QueryClientProvider client={queryClient}>
@@ -218,6 +220,7 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
           file={null}
           error="Tệp .docx được bảo vệ bằng mật khẩu hoặc là định dạng Word cũ (.doc)"
           pending={false}
+          inspecting={true}
           docxStatus="error"
           docxResult={null}
           onChangeTitle={() => {}}
@@ -232,5 +235,41 @@ describe('eSign .docx client upload and UI components (#4721)', () => {
     );
     expect(tplErrorHtml).toContain('role="alert"');
     expect(tplErrorHtml).toContain('Tệp .docx được bảo vệ bằng mật khẩu hoặc là định dạng Word cũ (.doc)');
+    expect(tplErrorHtml).toContain('disabled=""');
+  });
+
+  it('bounds poll fetches with a deadline AbortSignal and maps AbortError to timeout', async () => {
+    vi.useFakeTimers();
+    let seenPollSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith('/api/sign/convert-docx')) {
+        return new Response(JSON.stringify({ status: 'pending', jobId: 'job-abort-1' }), {
+          status: 202,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      seenPollSignal = init?.signal ?? undefined;
+      return new Promise<Response>((_, reject) => {
+        if (init?.signal?.aborted) {
+          reject(new DOMException('The operation was aborted', 'AbortError'));
+          return;
+        }
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted', 'AbortError'));
+        });
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const file = makeTestFile(new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2]), 'slow.docx', SIGN_DOCX_MIME);
+    const caught = convertSignDocx(file, 'acme').then(
+      () => null,
+      (error: unknown) => error,
+    );
+    await vi.advanceTimersByTimeAsync(46_000);
+    expect(await caught).toMatchObject({ name: 'ClientError', message: 'sign.docxTimedOut' });
+    expect(seenPollSignal).toBeDefined();
+    expect(seenPollSignal?.aborted).toBe(true);
   });
 });

@@ -250,9 +250,11 @@ export async function parse(kind: ExtractKind, bytes: Uint8Array): Promise<Extra
     result = await parseKind(kind, bytes);
   } catch (error) {
     // The e-invoice parser, eSign PDF handlers and ZIP reader explain what is wrong; other parser errors are not passed on.
+    if (error instanceof DocxError) {
+      return failure(error.reason === 'too_large' || error.reason === 'output_too_large' ? 'too_large' : 'invalid', error.message);
+    }
     if (
       error instanceof EInvoiceParseError ||
-      error instanceof DocxError ||
       error instanceof ArchiveError ||
       error instanceof PortalListError ||
       error instanceof DsnError ||

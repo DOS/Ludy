@@ -20098,6 +20098,7 @@ export const en = {
       complex_columns_simplified: 'Multi-column layouts or merged table cells were simplified into sequential flow.',
       images_skipped: 'Embedded images were omitted to preserve clean text-first signature inspection.',
       headers_footers_simplified: 'Document headers and footers were simplified.',
+      footnotes_skipped: 'Footnotes or endnotes were omitted during PDF conversion.',
     },
     createSubmit: 'Create draft',
     createdToast: 'Created new signing envelope.',

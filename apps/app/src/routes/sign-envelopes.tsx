@@ -32,6 +32,7 @@ import {
   canManageEnvelopeLinks,
   convertSignDocx,
   downloadSignFile,
+  isSignDocxFile,
   signApi,
   uploadSignPdf,
   type SignAiAnalysis,
@@ -121,10 +122,17 @@ export function CreateEnvelopeDialog({
   const t = useTranslations('sign');
   const [title, setTitle] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [inspectingFile, setInspectingFile] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [docxStatus, setDocxStatus] = useState<DocxConversionStatus>('idle');
   const [docxResult, setDocxResult] = useState<SignDocxConvertCompletedResult | null>(null);
   const pickTokenRef = useRef(0);
+
+  useEffect(() => {
+    return () => {
+      pickTokenRef.current += 1;
+    };
+  }, []);
 
   const createMutation = useMutation({
     mutationFn: async (input: { title: string; file: File; converted: SignDocxConvertCompletedResult | null }) => {
@@ -138,6 +146,9 @@ export function CreateEnvelopeDialog({
           }),
           warnings: input.converted.warnings,
         };
+      }
+      if (isSignDocxFile(input.file)) {
+        throw new Error(t('pdfRequired'));
       }
       const uploaded = await uploadSignPdf(input.file);
       return {
@@ -160,16 +171,19 @@ export function CreateEnvelopeDialog({
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const token = ++pickTokenRef.current;
+    setSelectedFile(null);
     setFormError(null);
     setDocxStatus('idle');
     setDocxResult(null);
     const file = event.target.files?.[0] ?? null;
     if (!file) {
-      setSelectedFile(null);
+      setInspectingFile(false);
       return;
     }
+    setInspectingFile(true);
     const checked = await inspectSelectedSignUploadFile(file);
     if (pickTokenRef.current !== token) return;
+    setInspectingFile(false);
     if (!checked.ok) {
       setFormError(t(checked.errorKey));
       setSelectedFile(null);
@@ -186,6 +200,7 @@ export function CreateEnvelopeDialog({
         setDocxStatus('ready');
       } catch (error) {
         if (pickTokenRef.current !== token) return;
+        setSelectedFile(null);
         setDocxStatus('error');
         setFormError(errorMessage(error));
       }
@@ -194,13 +209,15 @@ export function CreateEnvelopeDialog({
 
   const handleCreateSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (createMutation.isPending || docxStatus === 'converting') return;
+    if (inspectingFile || createMutation.isPending || docxStatus === 'converting') return;
     setFormError(null);
     if (!selectedFile) {
       setFormError(t('pdfRequired'));
       return;
     }
-    if (docxStatus === 'error') {
+    if (docxStatus === 'error' || (isSignDocxFile(selectedFile) && !docxResult)) {
+      setSelectedFile(null);
+      setDocxStatus('error');
       setFormError(t('pdfRequired'));
       return;
     }
@@ -214,7 +231,7 @@ export function CreateEnvelopeDialog({
       title={t('createTitle')}
       description={t('createHint')}
       busy={createMutation.isPending}
-      submitDisabled={docxStatus === 'converting' || docxStatus === 'error'}
+      submitDisabled={inspectingFile || docxStatus === 'converting' || docxStatus === 'error'}
       dirty={title.trim() !== '' || selectedFile !== null}
       submitLabel={t('createSubmit')}
       submitTestId="sign-create-submit-btn"
@@ -1245,6 +1262,7 @@ export function SignEnvelopesPage() {
 
       {createOpen ? (
         <CreateEnvelopeDialog
+          key={slug}
           onClose={() => setCreateOpen(false)}
           onCreated={async (envelopeId) => {
             setCreateOpen(false);

@@ -26,7 +26,9 @@ import {
   Runtime,
   SUBJECT_WRAP_INFO,
   SubjectVault,
+  fileKey,
   parseVaultKey,
+  putFile,
   sha256Hex,
 } from '@ludy/kernel-runtime';
 import { signCommands, signQueries } from '@ludy/mod-sign';
@@ -489,5 +491,180 @@ suite('eSign Slice 6b: native .docx upload -> tagged A4 PDF via crove-extract (#
       },
     );
     expect(appOffRes).toEqual({ status: 'skipped_app_off' });
+  }, 60_000);
+
+  it('verifies sourceDocxSha256 provenance, keeps plain PDFs working, maps storage-key/25MB failures safely, and serializes complete', async () => {
+    const o = await setupOrg();
+    const http = makeHttp(o, { signDocxWaitMs: 0 });
+    const docxBytes = buildDocx('<w:p><w:r><w:t>Hợp đồng kiểm tra nguồn gốc</w:t></w:r></w:p>');
+    const inputSha256 = sha256Hex(docxBytes);
+
+    const queued = await http.postDocx(o.member, docxBytes, 'provenance.docx');
+    if (queued.body.status !== 'pending') throw new Error('expected pending');
+    await drainQueuedDocxJobs(o.orgId);
+
+    const completed = await http.pollDocx(o.member, queued.body.jobId);
+    expect(completed.status).toBe(200);
+    if (completed.body.status !== 'completed') throw new Error('expected completed');
+    const convertedFileId = completed.body.fileId;
+
+    // Concurrent duplicate sign.docx_convert.complete calls serialize cleanly under advisory lock.
+    await Promise.all([
+      workerRt.execute(
+        'sign.docx_convert.complete',
+        { jobId: queued.body.jobId, ok: false, pdfSha256: null, errorCode: 'SIGN_DOCX_CONVERT_FAILED' },
+        { actor: { type: 'system', component: 'sign.docx_convert' }, orgId: o.orgId },
+      ),
+      workerRt.execute(
+        'sign.docx_convert.complete',
+        { jobId: queued.body.jobId, ok: false, pdfSha256: null, errorCode: 'SIGN_DOCX_CONVERT_FAILED' },
+        { actor: { type: 'system', component: 'sign.docx_convert' }, orgId: o.orgId },
+      ),
+    ]);
+    const completeCount = await withAdmin((c) =>
+      c.query<{ count: string }>(
+        `SELECT pg_catalog.count(*)::text AS count FROM ludy_kernel.audit_event WHERE org_id = $1 AND command = 'sign.docx_convert.complete' AND detail ->> 'jobId' = $2`,
+        [o.orgId, queued.body.jobId],
+      ),
+    );
+    expect(completeCount.rows[0]?.count).toBe('1');
+
+    // Ingest a separate genuine PDF as o.member.
+    const plainPdfBytes = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n', 'utf8');
+    const plainPdfSha = sha256Hex(plainPdfBytes);
+    const plainPdfKey = fileKey(o.orgId, plainPdfSha);
+    const plainPdfGen = await putFile(store, plainPdfKey, plainPdfBytes, 'application/pdf', plainPdfSha);
+    const { fileId: plainPdfId } = await rt.execute<{ fileId: string }>(
+      'kernel.file.ingest',
+      {
+        filename: 'plain.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: plainPdfBytes.byteLength,
+        sha256: plainPdfSha,
+        storageKey: plainPdfKey,
+        generation: plainPdfGen,
+        source: 'sign_document',
+      },
+      { actor: asUser(o.member), orgId: o.orgId },
+    );
+
+    // Normal PDF creation without sourceDocxSha256 succeeds seamlessly.
+    const plainEnv = await rt.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      { title: 'Plain PDF envelope', sourceFileId: plainPdfId },
+      { actor: asUser(o.member), orgId: o.orgId },
+    );
+    expect(plainEnv.envelopeId).toBeTruthy();
+    const plainTpl = await rt.execute<{ templateId: string }>(
+      'sign.template.create',
+      { title: 'Plain PDF template', sourceFileId: plainPdfId },
+      { actor: asUser(o.member), orgId: o.orgId },
+    );
+    expect(plainTpl.templateId).toBeTruthy();
+
+    // Forged or mismatched sourceDocxSha256 is refused with 422 SIGN_INVALID_SOURCE_FILE.
+    await expect(
+      rt.execute(
+        'sign.envelope.create',
+        { title: 'Forged hash', sourceFileId: convertedFileId, sourceDocxSha256: 'f'.repeat(64) },
+        { actor: asUser(o.member), orgId: o.orgId },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_INVALID_SOURCE_FILE', status: 422 });
+
+    await expect(
+      rt.execute(
+        'sign.template.create',
+        { title: 'Forged template hash', sourceFileId: convertedFileId, sourceDocxSha256: 'f'.repeat(64) },
+        { actor: asUser(o.member), orgId: o.orgId },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_INVALID_SOURCE_FILE', status: 422 });
+
+    await expect(
+      rt.execute(
+        'sign.envelope.create',
+        { title: 'Mismatched PDF hash', sourceFileId: plainPdfId, sourceDocxSha256: inputSha256 },
+        { actor: asUser(o.member), orgId: o.orgId },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_INVALID_SOURCE_FILE', status: 422 });
+
+    await expect(
+      rt.execute(
+        'sign.template.create',
+        { title: 'Mismatched template PDF hash', sourceFileId: plainPdfId, sourceDocxSha256: inputSha256 },
+        { actor: asUser(o.member), orgId: o.orgId },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_INVALID_SOURCE_FILE', status: 422 });
+
+    // Cross-user provenance: once convertedFileId is visible via an org template, o.admin can create a normal envelope
+    // from it without sourceDocxSha256, but cannot claim o.member's sourceDocxSha256.
+    await rt.execute<{ templateId: string }>(
+      'sign.template.create',
+      { title: 'Member docx template', sourceFileId: convertedFileId, sourceDocxSha256: inputSha256 },
+      { actor: asUser(o.member), orgId: o.orgId },
+    );
+    await expect(
+      rt.execute(
+        'sign.envelope.create',
+        { title: 'Stolen docx provenance', sourceFileId: convertedFileId, sourceDocxSha256: inputSha256 },
+        { actor: asUser(o.admin), orgId: o.orgId },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_INVALID_SOURCE_FILE', status: 422 });
+    await expect(
+      rt.execute(
+        'sign.envelope.create',
+        { title: 'Plain reuse of template PDF', sourceFileId: convertedFileId },
+        { actor: asUser(o.admin), orgId: o.orgId },
+      ),
+    ).resolves.toMatchObject({ envelopeId: expect.any(String) });
+
+    // Invalid storageKey inside worker is masked as SIGN_DOCX_CONVERT_FAILED (never leaked on poll).
+    const badKeyJobId = randomUUID();
+    await rt.execute(
+      'sign.docx_convert.request',
+      { jobId: badKeyJobId, sha256: inputSha256, sizeBytes: docxBytes.byteLength },
+      { actor: asUser(o.member), orgId: o.orgId },
+    );
+    const badKeyRes = await runSignDocxConvertJob(
+      { runtime: workerRt, store, extract: realExtractClient },
+      {
+        orgId: o.orgId,
+        targetKind: 'docx_convert',
+        jobId: badKeyJobId,
+        storageKey: `tmp/${o.orgId}/wrong-key`,
+        sha256: inputSha256,
+        sizeBytes: docxBytes.byteLength,
+      },
+    );
+    expect(badKeyRes).toEqual({ status: 'failed', errorCode: 'SIGN_DOCX_CONVERT_FAILED' });
+    const badKeyPoll = await http.pollDocx(o.member, badKeyJobId);
+    expect(badKeyPoll.status).toBe(422);
+    expect(badKeyPoll.body).toMatchObject({ code: 'SIGN_DOCX_CONVERT_FAILED' });
+
+    // >25 MB converted PDF refusal from extract classifies as 413 SIGN_DOCX_TOO_LARGE on poll.
+    const bigPdfDocxBytes = buildDocx('<w:p><w:r><w:t>Tệp lớn giả lập 25 MB</w:t></w:r></w:p>');
+    const bigPdfReq = await http.postDocx(o.member, bigPdfDocxBytes, 'oversize-pdf.docx');
+    if (bigPdfReq.body.status !== 'pending') throw new Error('expected pending');
+    const bigPdfPayload = await withAdmin((c) =>
+      c.query<{ payload: { jobId: string; storageKey: string; sha256: string; sizeBytes: number } }>(
+        `SELECT payload FROM ludy_kernel.outbox_event WHERE org_id = $1 AND type = 'sign.docx_convert_queued' AND payload ->> 'jobId' = $2`,
+        [o.orgId, bigPdfReq.body.jobId],
+      ),
+    );
+    const fake25MbExtract: typeof realExtractClient = {
+      ...realExtractClient,
+      extract: async () => ({
+        ok: false,
+        code: 'too_large',
+        message: 'Tệp PDF sau khi chuyển đổi vượt quá giới hạn 25 MB',
+      }),
+    };
+    const bigPdfRun = await runSignDocxConvertJob(
+      { runtime: workerRt, store, extract: fake25MbExtract },
+      { orgId: o.orgId, targetKind: 'docx_convert', ...bigPdfPayload.rows[0]!.payload },
+    );
+    expect(bigPdfRun).toEqual({ status: 'failed', errorCode: 'SIGN_DOCX_TOO_LARGE' });
+    const bigPdfPoll = await http.pollDocx(o.member, bigPdfReq.body.jobId);
+    expect(bigPdfPoll.status).toBe(413);
+    expect(bigPdfPoll.body).toMatchObject({ code: 'SIGN_DOCX_TOO_LARGE' });
   }, 60_000);
 });

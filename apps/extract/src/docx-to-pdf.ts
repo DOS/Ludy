@@ -22,6 +22,8 @@ const DOCX_CONVERT_ZIP_LIMITS: ZipLimits = {
 const MAX_XML_DEPTH = 128;
 const MAX_XML_ELEMENTS = 1_000_000;
 const MAX_STYLE_INHERITANCE_DEPTH = 16;
+export const MAX_DOCX_PARAGRAPH_CHARS = 100_000;
+export const MAX_DOCX_TOTAL_CHARS = 500_000;
 
 const A4_WIDTH = PageSizes.A4[0];
 const A4_HEIGHT = PageSizes.A4[1];
@@ -30,6 +32,8 @@ const MARGIN_TOP = 56;
 const MARGIN_BOTTOM = 56;
 const CONTENT_WIDTH = A4_WIDTH - MARGIN_X * 2;
 const USABLE_PAGE_HEIGHT = A4_HEIGHT - MARGIN_TOP - MARGIN_BOTTOM;
+const MIN_PRINTABLE_TEXT_WIDTH_PT = 72;
+const MAX_PARAGRAPH_INDENT_SUM_PT = Math.max(0, CONTENT_WIDTH - MIN_PRINTABLE_TEXT_WIDTH_PT);
 
 const DEFAULT_FONT_SIZE_PT = 11;
 const MIN_FONT_SIZE_PT = 8;
@@ -49,7 +53,32 @@ const TRACK_CHANGE_TAGS = new Set([
   'w:delText',
   'w:moveFromRangeStart',
   'w:moveToRangeStart',
+  'w:rPrChange',
+  'w:pPrChange',
+  'w:tblPrChange',
+  'w:trPrChange',
+  'w:tcPrChange',
+  'w:sectPrChange',
+  'w:tblGridChange',
+  'w:numberingChange',
 ]);
+
+const XML_NAMESPACE_TO_PREFIX: Readonly<Record<string, string>> = {
+  'http://schemas.openxmlformats.org/wordprocessingml/2006/main': 'w',
+  'http://purl.oclc.org/ooxml/wordprocessingml/main': 'w',
+  'http://schemas.openxmlformats.org/markup-compatibility/2006': 'mc',
+  'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing': 'wp',
+  'http://purl.oclc.org/ooxml/drawingml/wordprocessingDrawing': 'wp',
+  'http://schemas.openxmlformats.org/drawingml/2006/main': 'a',
+  'http://purl.oclc.org/ooxml/drawingml/main': 'a',
+  'http://schemas.openxmlformats.org/drawingml/2006/picture': 'pic',
+  'http://purl.oclc.org/ooxml/drawingml/picture': 'pic',
+  'urn:schemas-microsoft-com:vml': 'v',
+  'urn:schemas-microsoft-com:office:office': 'o',
+  'http://schemas.microsoft.com/office/word/2010/wordprocessingShape': 'wps',
+  'http://schemas.openxmlformats.org/officeDocument/2006/relationships': 'r',
+  'http://purl.oclc.org/ooxml/officeDocument/relationships': 'r',
+};
 
 const FLOATING_SHAPE_TAGS = new Set([
   'wp:anchor',
@@ -97,6 +126,7 @@ interface StyleProps {
   spaceBeforePt: number | undefined;
   spaceAfterPt: number | undefined;
   indentLeftPt: number | undefined;
+  indentRightPt: number | undefined;
   numId: string | undefined;
   ilvl: number | undefined;
   vanish: boolean | undefined;
@@ -111,6 +141,7 @@ interface ResolvedStyle {
   spaceBeforePt: number;
   spaceAfterPt: number;
   indentLeftPt: number;
+  indentRightPt: number;
   numId: string | undefined;
   ilvl: number;
   vanish: boolean;
@@ -152,6 +183,7 @@ interface DocParagraph {
   spaceBeforePt: number;
   spaceAfterPt: number;
   indentLeftPt: number;
+  indentRightPt: number;
   headingLevel: number | undefined;
   pageBreakBefore: boolean;
 }
@@ -206,6 +238,7 @@ interface ParagraphLayout {
   spaceBeforePt: number;
   spaceAfterPt: number;
   indentLeftPt: number;
+  indentRightPt: number;
   align: ParagraphAlign;
   isHeading: boolean;
 }
@@ -318,9 +351,105 @@ function findTagEnd(xml: string, start: number): number {
   return -1;
 }
 
+interface NamespaceScope {
+  defaultNs: string | undefined;
+  prefixes: ReadonlyMap<string, string>;
+}
+
+interface XmlStackFrame {
+  rawName: string;
+  elem: XmlElement;
+  scope: NamespaceScope;
+}
+
+function isValidTagName(name: string): boolean {
+  if (!name) return false;
+  for (let i = 0; i < name.length; i++) {
+    if (!isTagNameChar(name.charCodeAt(i))) return false;
+  }
+  return true;
+}
+
+function extendNamespaceScope(parent: NamespaceScope, rawAttrs: Record<string, string>): NamespaceScope {
+  let defaultNs = parent.defaultNs;
+  let nextPrefixes: Map<string, string> | null = null;
+  for (const [key, val] of Object.entries(rawAttrs)) {
+    if (key === 'xmlns') {
+      defaultNs = val || undefined;
+    } else if (key.startsWith('xmlns:') && key.length > 6) {
+      if (!nextPrefixes) nextPrefixes = new Map(parent.prefixes);
+      if (val) {
+        nextPrefixes.set(key.slice(6), val);
+      } else {
+        nextPrefixes.delete(key.slice(6));
+      }
+    }
+  }
+  if (defaultNs === parent.defaultNs && nextPrefixes === null) return parent;
+  return {
+    defaultNs,
+    prefixes: nextPrefixes ?? parent.prefixes,
+  };
+}
+
+function resolveXmlElementName(rawName: string, scope: NamespaceScope, partName: string): { name: string; usesDefaultWml: boolean } {
+  const colonIdx = rawName.indexOf(':');
+  if (colonIdx === -1) {
+    const uri = scope.defaultNs;
+    if (!uri) return { name: rawName, usesDefaultWml: false };
+    const canonical = XML_NAMESPACE_TO_PREFIX[uri];
+    if (!canonical) return { name: rawName, usesDefaultWml: false };
+    return { name: `${canonical}:${rawName}`, usesDefaultWml: canonical === 'w' };
+  }
+  const prefix = rawName.slice(0, colonIdx);
+  const local = rawName.slice(colonIdx + 1);
+  if (!prefix || !local) {
+    throw new DocxError(`Cấu trúc XML trong ${partName} bị hỏng`);
+  }
+  const uri = scope.prefixes.get(prefix);
+  if (uri === undefined) {
+    return { name: rawName, usesDefaultWml: false };
+  }
+  const canonical = XML_NAMESPACE_TO_PREFIX[uri];
+  return {
+    name: canonical ? `${canonical}:${local}` : `{${uri}}:${local}`,
+    usesDefaultWml: false,
+  };
+}
+
+function resolveXmlAttributes(
+  rawAttrs: Record<string, string>,
+  scope: NamespaceScope,
+  usesDefaultWml: boolean,
+): Record<string, string> {
+  const resolved: Record<string, string> = {};
+  for (const [rawKey, val] of Object.entries(rawAttrs)) {
+    if (rawKey === 'xmlns' || rawKey.startsWith('xmlns:')) continue;
+    const colonIdx = rawKey.indexOf(':');
+    if (colonIdx === -1) {
+      resolved[rawKey] = val;
+      if (usesDefaultWml && !Object.hasOwn(resolved, `w:${rawKey}`)) {
+        resolved[`w:${rawKey}`] = val;
+      }
+      continue;
+    }
+    const prefix = rawKey.slice(0, colonIdx);
+    const local = rawKey.slice(colonIdx + 1);
+    const uri = scope.prefixes.get(prefix);
+    if (uri === undefined) {
+      resolved[rawKey] = val;
+      continue;
+    }
+    const canonical = XML_NAMESPACE_TO_PREFIX[uri];
+    resolved[canonical ? `${canonical}:${local}` : `{${uri}}:${local}`] = val;
+  }
+  return resolved;
+}
+
 function parseXmlDocument(xml: string, partName: string): XmlElement {
   const root: XmlElement = { name: '__root__', attrs: {}, children: [] };
-  const stack: XmlElement[] = [root];
+  const initialScope: NamespaceScope = { defaultNs: undefined, prefixes: new Map<string, string>() };
+  const stack: XmlStackFrame[] = [{ rawName: '__root__', elem: root, scope: initialScope }];
   let elementCount = 0;
   let pos = 0;
   const len = xml.length;
@@ -330,13 +459,13 @@ function parseXmlDocument(xml: string, partName: string): XmlElement {
     if (lt === -1) {
       const tail = xml.slice(pos);
       if (tail.length > 0 && stack.length > 1) {
-        stack[stack.length - 1]!.children.push(decodeXmlEntities(tail));
+        stack[stack.length - 1]!.elem.children.push(decodeXmlEntities(tail));
       }
       break;
     }
 
     if (lt > pos && stack.length > 1) {
-      stack[stack.length - 1]!.children.push(decodeXmlEntities(xml.slice(pos, lt)));
+      stack[stack.length - 1]!.elem.children.push(decodeXmlEntities(xml.slice(pos, lt)));
     }
 
     if (xml.startsWith('<!--', lt)) {
@@ -355,7 +484,7 @@ function parseXmlDocument(xml: string, partName: string): XmlElement {
       const end = xml.indexOf(']]>', lt + 9);
       if (end === -1) throw new DocxError(`Cấu trúc XML trong ${partName} bị hỏng`);
       if (stack.length > 1) {
-        stack[stack.length - 1]!.children.push(xml.slice(lt + 9, end));
+        stack[stack.length - 1]!.elem.children.push(xml.slice(lt + 9, end));
       }
       pos = end + 3;
       continue;
@@ -369,12 +498,11 @@ function parseXmlDocument(xml: string, partName: string): XmlElement {
 
     if (xml[lt + 1] === '/') {
       const closeName = xml.slice(lt + 2, gt).trim();
-      for (let k = stack.length - 1; k >= 1; k--) {
-        if (stack[k]!.name === closeName) {
-          stack.length = k;
-          break;
-        }
+      const top = stack[stack.length - 1];
+      if (!closeName || !isValidTagName(closeName) || stack.length <= 1 || !top || top.rawName !== closeName) {
+        throw new DocxError(`Cấu trúc XML trong ${partName} bị hỏng`);
       }
+      stack.pop();
       pos = gt + 1;
       continue;
     }
@@ -383,8 +511,8 @@ function parseXmlDocument(xml: string, partName: string): XmlElement {
     while (nameStart < gt && isWhitespaceChar(xml.charCodeAt(nameStart))) nameStart++;
     let nameEnd = nameStart;
     while (nameEnd < gt && isTagNameChar(xml.charCodeAt(nameEnd))) nameEnd++;
-    const name = xml.slice(nameStart, nameEnd);
-    if (!name) throw new DocxError(`Cấu trúc XML trong ${partName} bị hỏng`);
+    const rawName = xml.slice(nameStart, nameEnd);
+    if (!rawName) throw new DocxError(`Cấu trúc XML trong ${partName} bị hỏng`);
 
     let selfClosing = false;
     let attrEnd = gt;
@@ -393,26 +521,38 @@ function parseXmlDocument(xml: string, partName: string): XmlElement {
       selfClosing = true;
       attrEnd--;
     }
+    if (attrEnd > nameEnd && !isWhitespaceChar(xml.charCodeAt(nameEnd))) {
+      throw new DocxError(`Cấu trúc XML trong ${partName} bị hỏng`);
+    }
 
     elementCount++;
     if (elementCount > MAX_XML_ELEMENTS) {
       throw new DocxError('Tệp Word quá phức tạp để chuyển đổi sang PDF');
     }
 
+    const parentFrame = stack[stack.length - 1]!;
+    const rawAttrs = attrEnd > nameEnd ? parseAttributes(xml.slice(nameEnd, attrEnd)) : {};
+    const scope = extendNamespaceScope(parentFrame.scope, rawAttrs);
+    const { name, usesDefaultWml } = resolveXmlElementName(rawName, scope, partName);
+
     const elem: XmlElement = {
       name,
-      attrs: attrEnd > nameEnd ? parseAttributes(xml.slice(nameEnd, attrEnd)) : {},
+      attrs: resolveXmlAttributes(rawAttrs, scope, usesDefaultWml),
       children: [],
     };
-    stack[stack.length - 1]!.children.push(elem);
+    parentFrame.elem.children.push(elem);
 
     if (!selfClosing) {
       if (stack.length >= MAX_XML_DEPTH) {
         throw new DocxError('Cấu trúc tệp Word lồng nhau quá sâu');
       }
-      stack.push(elem);
+      stack.push({ rawName, elem, scope });
     }
     pos = gt + 1;
+  }
+
+  if (stack.length !== 1 || childElements(root).length === 0) {
+    throw new DocxError(`Cấu trúc XML trong ${partName} bị hỏng hoặc chưa đóng thẻ`);
   }
 
   return root;
@@ -514,6 +654,7 @@ function parseParagraphPropsMeta(pPr: XmlElement | undefined): {
   spaceBeforePt?: number | undefined;
   spaceAfterPt?: number | undefined;
   indentLeftPt?: number | undefined;
+  indentRightPt?: number | undefined;
   numId?: string | undefined;
   ilvl?: number | undefined;
   pStyle?: string | undefined;
@@ -528,6 +669,7 @@ function parseParagraphPropsMeta(pPr: XmlElement | undefined): {
   const spaceAfterPt = twipsToPt(parseIntAttr(spacing?.attrs['w:after']));
   const ind = findChild(pPr, 'w:ind');
   const indentLeftPt = twipsToPt(parseIntAttr(ind?.attrs['w:left'] ?? ind?.attrs['w:start']));
+  const indentRightPt = twipsToPt(parseIntAttr(ind?.attrs['w:right'] ?? ind?.attrs['w:end']));
   const numPr = findChild(pPr, 'w:numPr');
   const numId = findChild(numPr ?? pPr, 'w:numId')?.attrs['w:val'];
   const ilvl = numPr ? parseIntAttr(findChild(numPr, 'w:ilvl')?.attrs['w:val']) : undefined;
@@ -539,6 +681,7 @@ function parseParagraphPropsMeta(pPr: XmlElement | undefined): {
     spaceBeforePt,
     spaceAfterPt,
     indentLeftPt,
+    indentRightPt,
     numId: numPr ? numId : undefined,
     ilvl,
     pStyle,
@@ -587,8 +730,12 @@ function parseStylesXml(root: XmlElement | null): ParsedStyles {
 
   const docDefaults = findChild(stylesElem, 'w:docDefaults');
   if (docDefaults) {
-    const rPrDef = findChild(findChild(docDefaults, 'w:rPrDefault') ?? docDefaults, 'w:rPr');
+    const rPrDefault = findChild(docDefaults, 'w:rPrDefault');
+    const rPrDef = findChild(rPrDefault ?? docDefaults, 'w:rPr');
     const rMeta = parseRunPropsMeta(rPrDef);
+    if (rMeta.vanish === true) {
+      throw new DocxError('Tệp Word có chứa văn bản ẩn (hidden text); vui lòng hiện hoặc xóa nội dung ẩn trước khi tải lên');
+    }
     if (rMeta.fontSizePt !== undefined) defaultFontSizePt = rMeta.fontSizePt;
     const pPrDef = findChild(findChild(docDefaults, 'w:pPrDefault') ?? docDefaults, 'w:pPr');
     const pMeta = parseParagraphPropsMeta(pPrDef);
@@ -614,6 +761,7 @@ function parseStylesXml(root: XmlElement | null): ParsedStyles {
       spaceBeforePt: pMeta.spaceBeforePt,
       spaceAfterPt: pMeta.spaceAfterPt,
       indentLeftPt: pMeta.indentLeftPt,
+      indentRightPt: pMeta.indentRightPt,
       numId: pMeta.numId,
       ilvl: pMeta.ilvl,
       vanish: rMeta.vanish,
@@ -653,6 +801,7 @@ function resolveStyle(styles: ParsedStyles, styleId: string | undefined): Resolv
   let spaceBeforePt: number | undefined;
   let spaceAfterPt: number | undefined;
   let indentLeftPt: number | undefined;
+  let indentRightPt: number | undefined;
   let numId: string | undefined;
   let ilvl: number | undefined;
   let vanish: boolean | undefined;
@@ -667,6 +816,7 @@ function resolveStyle(styles: ParsedStyles, styleId: string | undefined): Resolv
     if (s.spaceBeforePt !== undefined) spaceBeforePt = s.spaceBeforePt;
     if (s.spaceAfterPt !== undefined) spaceAfterPt = s.spaceAfterPt;
     if (s.indentLeftPt !== undefined) indentLeftPt = s.indentLeftPt;
+    if (s.indentRightPt !== undefined) indentRightPt = s.indentRightPt;
     if (s.numId !== undefined) numId = s.numId;
     if (s.ilvl !== undefined) ilvl = s.ilvl;
     if (s.vanish !== undefined) vanish = s.vanish;
@@ -704,7 +854,8 @@ function resolveStyle(styles: ParsedStyles, styleId: string | undefined): Resolv
     align: align ?? 'left',
     spaceBeforePt: Math.min(36, resolvedBefore),
     spaceAfterPt: Math.min(36, resolvedAfter),
-    indentLeftPt: Math.min(180, indentLeftPt ?? 0),
+    indentLeftPt: Math.max(0, indentLeftPt ?? 0),
+    indentRightPt: Math.max(0, indentRightPt ?? 0),
     numId,
     ilvl: Math.min(8, Math.max(0, ilvl ?? 0)),
     vanish: vanish ?? false,
@@ -852,6 +1003,9 @@ function scanNonBodyWarnings(node: XmlElement, warnings: Set<DocxToPdfWarning>):
     if (FLOATING_SHAPE_TAGS.has(cur.name)) warnings.add('floating_shapes_skipped');
     if (IMAGE_TAGS.has(cur.name)) warnings.add('images_skipped');
     if (OLE_TAGS.has(cur.name)) warnings.add('ole_objects_skipped');
+    if (cur.name === 'w:footnoteReference' || cur.name === 'w:endnoteReference') {
+      warnings.add('footnotes_skipped');
+    }
     if (cur.name === 'w:cols') {
       const cols = parseIntAttr(cur.attrs['w:num']);
       if (cols !== undefined && cols > 1) warnings.add('complex_columns_simplified');
@@ -886,6 +1040,7 @@ interface ExtractContext {
   warnings: Set<DocxToPdfWarning>;
   hasHeaderOrFooterParts: boolean;
   hasNonEmptyHeaderFooterPart: boolean;
+  totalTextChars: number;
 }
 
 function extractParagraphBlocks(pNode: XmlElement, ctx: ExtractContext): DocBlock[] {
@@ -902,7 +1057,13 @@ function extractParagraphBlocks(pNode: XmlElement, ctx: ExtractContext): DocBloc
   const defaultBold = pMarkRunMeta.bold ?? resolved.bold;
   const spaceBeforePt = pMeta.spaceBeforePt ?? resolved.spaceBeforePt;
   const spaceAfterPt = pMeta.spaceAfterPt ?? resolved.spaceAfterPt;
-  let indentLeftPt = pMeta.indentLeftPt ?? resolved.indentLeftPt;
+  const rawIndentLeftPt = Math.max(0, pMeta.indentLeftPt ?? resolved.indentLeftPt);
+  const rawIndentRightPt = Math.max(0, pMeta.indentRightPt ?? resolved.indentRightPt);
+  let indentLeftPt = Math.min(rawIndentLeftPt, MAX_PARAGRAPH_INDENT_SUM_PT);
+  const indentRightPt = Math.min(rawIndentRightPt, Math.max(0, MAX_PARAGRAPH_INDENT_SUM_PT - indentLeftPt));
+  if (indentLeftPt !== rawIndentLeftPt || indentRightPt !== rawIndentRightPt) {
+    ctx.warnings.add('complex_columns_simplified');
+  }
   const headingLevel = pMeta.outlineLvl !== undefined ? pMeta.outlineLvl + 1 : resolved.headingLevel;
 
   const numId = pMeta.numId ?? resolved.numId;
@@ -911,13 +1072,25 @@ function extractParagraphBlocks(pNode: XmlElement, ctx: ExtractContext): DocBloc
   if (numId !== undefined && numId !== '0') {
     listPrefix = nextListPrefix(ctx.numbering, ctx.counters, numId, ilvl);
     if (pMeta.indentLeftPt === undefined && indentLeftPt === 0) {
-      indentLeftPt = (ilvl + 1) * 16;
+      indentLeftPt = Math.min((ilvl + 1) * 16, Math.max(0, MAX_PARAGRAPH_INDENT_SUM_PT - indentRightPt));
     }
   }
 
   const segments: Array<{ kind: 'runs'; runs: RawRun[] } | { kind: 'page_break' }> = [];
   let currentRuns: RawRun[] = [];
+  let paragraphTextChars = 0;
+  const trackTextBudget = (addedLength: number) => {
+    paragraphTextChars += addedLength;
+    if (paragraphTextChars > MAX_DOCX_PARAGRAPH_CHARS) {
+      throw new DocxError('Đoạn văn bản trong tệp Word vượt quá giới hạn độ dài cho phép (100.000 ký tự)');
+    }
+    ctx.totalTextChars += addedLength;
+    if (ctx.totalTextChars > MAX_DOCX_TOTAL_CHARS) {
+      throw new DocxError('Tổng độ dài văn bản trong tệp Word vượt quá giới hạn cho phép (500.000 ký tự)');
+    }
+  };
   if (listPrefix.length > 0) {
+    trackTextBudget(listPrefix.length);
     currentRuns.push({ text: listPrefix, bold: defaultBold, fontSizePt: defaultFontSizePt });
   }
 
@@ -928,6 +1101,7 @@ function extractParagraphBlocks(pNode: XmlElement, ctx: ExtractContext): DocBloc
 
   const appendRunText = (text: string, bold: boolean, fontSizePt: number) => {
     if (!text) return;
+    trackTextBudget(text.length);
     const prev = currentRuns[currentRuns.length - 1];
     if (prev && prev.bold === bold && prev.fontSizePt === fontSizePt) {
       prev.text += text;
@@ -963,6 +1137,8 @@ function extractParagraphBlocks(pNode: XmlElement, ctx: ExtractContext): DocBloc
         scanNonBodyWarnings(ch, ctx.warnings);
       } else if (ch.name === 'w:object') {
         ctx.warnings.add('ole_objects_skipped');
+      } else if (ch.name === 'w:footnoteReference' || ch.name === 'w:endnoteReference') {
+        ctx.warnings.add('footnotes_skipped');
       } else if (ch.name === 'mc:AlternateContent') {
         const choice = findChild(ch, 'mc:Choice') ?? findChild(ch, 'mc:Fallback');
         if (choice) {
@@ -1016,6 +1192,7 @@ function extractParagraphBlocks(pNode: XmlElement, ctx: ExtractContext): DocBloc
       spaceBeforePt: isFirstParagraphSegment ? spaceBeforePt : 0,
       spaceAfterPt,
       indentLeftPt,
+      indentRightPt,
       headingLevel,
       pageBreakBefore: isFirstParagraphSegment && pMeta.pageBreakBefore === true,
     };
@@ -1211,6 +1388,15 @@ function findTagIntervals(text: string): Array<[number, number]> {
 function buildLineTokens(paragraph: DocParagraph): RenderToken[][] {
   if (paragraph.runs.length === 0) return [[]];
 
+  let totalChars = 0;
+  for (const run of paragraph.runs) {
+    totalChars += run.text.length;
+  }
+  if (totalChars > MAX_DOCX_PARAGRAPH_CHARS) {
+    throw new DocxError('Đoạn văn bản trong tệp Word vượt quá giới hạn độ dài cho phép (100.000 ký tự)');
+  }
+  if (totalChars === 0) return [[]];
+
   let fullText = '';
   const charStyles: Array<{ weight: FontWeight; sizePt: number }> = [];
   for (const run of paragraph.runs) {
@@ -1221,7 +1407,6 @@ function buildLineTokens(paragraph: DocParagraph): RenderToken[][] {
       charStyles.push({ weight, sizePt });
     }
   }
-  if (fullText.length === 0) return [[]];
 
   // Unify styling inside each {{...}} tag so run splits inside placeholders never split a tag in PDF.
   const tagIntervals = findTagIntervals(fullText);
@@ -1338,7 +1523,8 @@ async function wrapParagraphLayout(
   paragraph: DocParagraph,
   maxWidthPt: number,
 ): Promise<ParagraphLayout> {
-  const safeMax = Math.max(24, maxWidthPt - paragraph.indentLeftPt);
+  const minFloor = Math.min(Math.max(1, maxWidthPt), 24);
+  const safeMax = Math.max(minFloor, maxWidthPt - paragraph.indentLeftPt - paragraph.indentRightPt);
   const rawLines = buildLineTokens(paragraph);
   const wrappedLines: WrappedLine[] = [];
 
@@ -1423,6 +1609,7 @@ async function wrapParagraphLayout(
     spaceBeforePt: paragraph.spaceBeforePt,
     spaceAfterPt: paragraph.spaceAfterPt,
     indentLeftPt: paragraph.indentLeftPt,
+    indentRightPt: paragraph.indentRightPt,
     align: paragraph.align,
     isHeading: paragraph.headingLevel !== undefined,
   };
@@ -1431,13 +1618,15 @@ async function wrapParagraphLayout(
 class PdfPaginator {
   readonly pdfDoc: PDFDocument;
   readonly fonts: PdfFontContext;
+  private readonly warnings: Set<DocxToPdfWarning>;
   private page: PDFPage | null = null;
   private cursorY = A4_HEIGHT - MARGIN_TOP;
   private pendingBreak = false;
 
-  constructor(pdfDoc: PDFDocument, fonts: PdfFontContext) {
+  constructor(pdfDoc: PDFDocument, fonts: PdfFontContext, warnings: Set<DocxToPdfWarning>) {
     this.pdfDoc = pdfDoc;
     this.fonts = fonts;
+    this.warnings = warnings;
   }
 
   private allocatePage(): PDFPage {
@@ -1495,7 +1684,7 @@ class PdfPaginator {
     }
 
     const baseX = MARGIN_X + layout.indentLeftPt;
-    const usableW = Math.max(24, CONTENT_WIDTH - layout.indentLeftPt);
+    const usableW = Math.max(24, CONTENT_WIDTH - layout.indentLeftPt - layout.indentRightPt);
 
     for (const line of layout.lines) {
       const lineHeight = line.fontSizePt * LINE_HEIGHT_RATIO;
@@ -1547,12 +1736,23 @@ class PdfPaginator {
 
       for (let cIdx = 0; cIdx < row.length; cIdx++) {
         const cell = row[cIdx]!;
-        const innerW = Math.max(18, colWidths[cIdx]! - TABLE_CELL_PAD_X * 2);
+        const innerW = Math.max(1, colWidths[cIdx]! - TABLE_CELL_PAD_X * 2);
         const layouts: ParagraphLayout[] = [];
         let cellH = 0;
         for (let pIdx = 0; pIdx < cell.paragraphs.length; pIdx++) {
           const para = cell.paragraphs[pIdx]!;
-          const wrapped = await wrapParagraphLayout(this.fonts, { ...para, spaceBeforePt: 0, spaceAfterPt: pIdx === cell.paragraphs.length - 1 ? 0 : 4 }, innerW);
+          const cellIndentLeft = Math.min(para.indentLeftPt, Math.max(0, innerW - Math.min(innerW, 18)));
+          const wrapped = await wrapParagraphLayout(
+            this.fonts,
+            {
+              ...para,
+              indentLeftPt: cellIndentLeft,
+              indentRightPt: 0,
+              spaceBeforePt: 0,
+              spaceAfterPt: pIdx === cell.paragraphs.length - 1 ? 0 : 4,
+            },
+            innerW,
+          );
           layouts.push(wrapped);
           for (const line of wrapped.lines) cellH += line.fontSizePt * LINE_HEIGHT_RATIO;
           cellH += wrapped.spaceAfterPt;
@@ -1569,6 +1769,7 @@ class PdfPaginator {
 
       // If a single tall row exceeds page height, fall back to sequential cell rendering across pages.
       if (rowHeight > USABLE_PAGE_HEIGHT) {
+        this.warnings.add('complex_columns_simplified');
         for (let cIdx = 0; cIdx < cellLayouts.length; cIdx++) {
           for (const layout of cellLayouts[cIdx]!) {
             await this.drawParagraph(layout);
@@ -1585,12 +1786,12 @@ class PdfPaginator {
         const cell = row[cIdx]!;
         const cellX = colOffsets[cIdx]!;
         const cellW = colWidths[cIdx]!;
-        const innerW = Math.max(18, cellW - TABLE_CELL_PAD_X * 2);
+        const innerW = Math.max(1, cellW - TABLE_CELL_PAD_X * 2);
         let cellCursorY = rowTopY - TABLE_CELL_PAD_Y;
 
         for (const layout of cellLayouts[cIdx]!) {
-          const baseX = cellX + TABLE_CELL_PAD_X + Math.min(layout.indentLeftPt, Math.max(0, innerW - 18));
-          const cellAlignW = Math.max(18, cellX + cellW - TABLE_CELL_PAD_X - baseX);
+          const baseX = cellX + TABLE_CELL_PAD_X + Math.min(layout.indentLeftPt, Math.max(0, innerW - Math.min(innerW, 18)));
+          const cellAlignW = Math.max(1, cellX + cellW - TABLE_CELL_PAD_X - baseX);
           for (const line of layout.lines) {
             const lineHeight = line.fontSizePt * LINE_HEIGHT_RATIO;
             const baselineY = cellCursorY - line.fontSizePt;
@@ -1654,7 +1855,13 @@ function isWantedDocxEntry(
     warnings.add('ole_objects_skipped');
     return false;
   }
-  if (name === 'word/document.xml' || name === 'word/styles.xml' || name === 'word/numbering.xml') {
+  if (
+    lower === 'word/document.xml' ||
+    lower === 'word/styles.xml' ||
+    lower === 'word/numbering.xml' ||
+    lower === 'word/footnotes.xml' ||
+    lower === 'word/endnotes.xml'
+  ) {
     return true;
   }
   return (lower.startsWith('word/header') || lower.startsWith('word/footer')) && lower.endsWith('.xml');
@@ -1711,7 +1918,10 @@ export async function convertDocxToPdf(bytes: Uint8Array): Promise<DocxToPdfResu
   let hasNonEmptyHeaderFooterPart = false;
   for (const [partName, partBytes] of parts.entries()) {
     const lower = partName.toLowerCase();
-    if ((lower.startsWith('word/header') || lower.startsWith('word/footer')) && lower.endsWith('.xml')) {
+    if (lower === 'word/footnotes.xml' || lower === 'word/endnotes.xml') {
+      const noteRoot = parseXmlDocument(decodeStrictUtf8(partBytes, partName), partName);
+      enforceNoTrackChangesOrHiddenText(noteRoot);
+    } else if ((lower.startsWith('word/header') || lower.startsWith('word/footer')) && lower.endsWith('.xml')) {
       hasHeaderOrFooterParts = true;
       const hfRoot = parseXmlDocument(decodeStrictUtf8(partBytes, partName), partName);
       enforceNoTrackChangesOrHiddenText(hfRoot);
@@ -1735,6 +1945,7 @@ export async function convertDocxToPdf(bytes: Uint8Array): Promise<DocxToPdfResu
     warnings,
     hasHeaderOrFooterParts,
     hasNonEmptyHeaderFooterPart,
+    totalTextChars: 0,
   };
 
   const blocks: DocBlock[] = [];
@@ -1762,7 +1973,7 @@ export async function convertDocxToPdf(bytes: Uint8Array): Promise<DocxToPdfResu
   await fonts.preloadWeight('regular');
   await fonts.preloadWeight('bold');
 
-  const paginator = new PdfPaginator(pdfDoc, fonts);
+  const paginator = new PdfPaginator(pdfDoc, fonts, warnings);
 
   for (const block of blocks) {
     if (block.kind === 'page_break') {
@@ -1784,7 +1995,7 @@ export async function convertDocxToPdf(bytes: Uint8Array): Promise<DocxToPdfResu
 
   const pdfBytes = await pdfDoc.save({ useObjectStreams: true, updateFieldAppearances: false });
   if (pdfBytes.byteLength > EXTRACT_LIMITS.maxFileBytes) {
-    throw new DocxError('Tệp PDF sau khi chuyển đổi vượt quá giới hạn 25 MB');
+    throw new DocxError('Tệp PDF sau khi chuyển đổi vượt quá giới hạn 25 MB', 'output_too_large');
   }
   const pdfBase64 = Buffer.from(pdfBytes.buffer, pdfBytes.byteOffset, pdfBytes.byteLength).toString('base64');
 

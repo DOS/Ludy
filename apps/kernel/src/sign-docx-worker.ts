@@ -46,8 +46,9 @@ function hasPdfMagic(bytes: Uint8Array): boolean {
 }
 
 function classifyExtractFailureCode(code: string, message: string): string {
-  if (code === 'too_large') return 'TOO_LARGE';
   const lower = message.toLowerCase();
+  if (lower.includes('25 mb') || lower.includes('pdf sau khi chuyển đổi')) return 'SIGN_DOCX_TOO_LARGE';
+  if (code === 'too_large') return 'TOO_LARGE';
   if (lower.includes('track changes') || lower.includes('theo dõi thay đổi')) return 'SIGN_DOCX_TRACK_CHANGES';
   if (lower.includes('hidden text') || lower.includes('văn bản ẩn')) return 'SIGN_DOCX_HIDDEN_TEXT';
   if (lower.includes('mật khẩu') || lower.includes('mã hóa')) return 'SIGN_DOCX_ENCRYPTED';
@@ -94,7 +95,7 @@ export async function runSignDocxConvertJob(
   try {
     const expectedKey = signDocxBlobKey(job.orgId, job.sha256);
     if (job.storageKey !== expectedKey) {
-      throw new DomainError('SIGN_DOCX_INVALID_STORAGE_KEY', 400, 'Khóa lưu trữ tệp Word không hợp lệ');
+      throw new DomainError('INVALID_STORAGE_KEY', 400, 'Khóa lưu trữ tệp Word không hợp lệ');
     }
     if (!Number.isSafeInteger(job.sizeBytes) || job.sizeBytes <= 0 || job.sizeBytes > SIGN_DOCX_MAX_BYTES) {
       throw new DomainError('TOO_LARGE', 413, 'Tệp Word (.docx) vượt quá giới hạn 10 MB');
@@ -115,7 +116,8 @@ export async function runSignDocxConvertJob(
         throw new ExtractServiceError('unavailable', `crove-extract ${extracted.code}`);
       }
       const mappedCode = classifyExtractFailureCode(extracted.code, extracted.message || '');
-      throw new DomainError(mappedCode, mappedCode === 'TOO_LARGE' ? 413 : 422, 'Không thể chuyển đổi tệp Word (.docx) sang PDF');
+      const status = mappedCode === 'TOO_LARGE' || mappedCode === 'SIGN_DOCX_TOO_LARGE' ? 413 : 422;
+      throw new DomainError(mappedCode, status, 'Không thể chuyển đổi tệp Word (.docx) sang PDF');
     }
 
     const pdfBytes = Buffer.from(extracted.pdfBase64, 'base64');
@@ -152,7 +154,9 @@ export async function runSignDocxConvertJob(
         : error instanceof BlobTooLargeError
           ? 'TOO_LARGE'
           : error instanceof DomainError
-            ? error.code
+            ? error.code === 'INVALID_STORAGE_KEY'
+              ? 'SIGN_DOCX_CONVERT_FAILED'
+              : error.code
             : 'SIGN_DOCX_CONVERT_FAILED';
 
     await recordFailureBestEffort(deps.runtime, job.orgId, job.jobId, errorCode);

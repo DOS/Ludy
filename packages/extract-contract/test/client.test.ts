@@ -468,6 +468,7 @@ describe('crove-extract client concurrency (#2119)', () => {
       'complex_columns_simplified',
       'images_skipped',
       'headers_footers_simplified',
+      'footnotes_skipped',
     ]);
 
     const pdfBase64 = Buffer.from('%PDF-1.7\n').toString('base64');
@@ -484,7 +485,7 @@ describe('crove-extract client concurrency (#2119)', () => {
     expect(zDocxToPdfResult.safeParse({ ...valid, pageCount: 0 }).success).toBe(false);
     expect(zDocxToPdfResult.safeParse({ ...valid, pageCount: 201 }).success).toBe(false);
     expect(zDocxToPdfResult.safeParse({ ...valid, pdfBase64: '' }).success).toBe(false);
-    expect(zDocxToPdfResult.safeParse({ ...valid, warnings: Array(6).fill('images_skipped') }).success).toBe(false);
+    expect(zDocxToPdfResult.safeParse({ ...valid, warnings: Array(7).fill('images_skipped') }).success).toBe(false);
     expect(zDocxToPdfResult.safeParse({ ...valid, extra: 1 }).success).toBe(false);
 
     const client = createExtractClient({

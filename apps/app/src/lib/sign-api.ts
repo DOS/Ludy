@@ -485,16 +485,25 @@ export async function convertSignDocx(file: File, orgSlug?: string | null): Prom
     const remaining = deadline - Date.now();
     if (remaining <= 0) break;
     await new Promise((resolve) => setTimeout(resolve, Math.min(SIGN_DOCX_POLL_INTERVAL_MS, remaining)));
+    const remainingForFetch = deadline - Date.now();
+    if (remainingForFetch <= 0) break;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), remainingForFetch);
     try {
-      const pollRes = await apiFetch(pollPath, orgOpt);
+      const pollRes = await apiFetch(pollPath, { ...orgOpt, signal: controller.signal });
       lastTransientError = null;
       payload = (await pollRes.json()) as SignDocxConvertHttpResponse;
       if (payload.status === 'completed') return payload;
     } catch (error) {
+      if (controller.signal.aborted && error instanceof Error && error.name === 'AbortError') {
+        break;
+      }
       if (!isRetryableDocxPollError(error)) {
         throw error;
       }
       lastTransientError = error;
+    } finally {
+      clearTimeout(timer);
     }
   }
 

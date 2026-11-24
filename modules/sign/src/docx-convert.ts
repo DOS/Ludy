@@ -12,7 +12,7 @@ import {
   type DocxToPdfWarning,
 } from '@ludy/extract-contract';
 import { SIGN_SHA256_HEX_PATTERN, zId } from '@ludy/kernel-contract';
-import { DomainError, defineCommand, defineQuery, tmpKey } from '@ludy/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, tmpKey, type CommandContext } from '@ludy/kernel-runtime';
 import { SIGN_WRITERS, assertSystemCommand, assertSystemQuery, assertUserQuery, userIdOf } from './shared.ts';
 
 export const SIGN_DOCX_MAX_BYTES = EXTRACT_LIMITS.maxSignDocxBytes;
@@ -128,6 +128,10 @@ export const signDocxConvertComplete = defineCommand({
   writes: [],
   handler: async (ctx, input): Promise<{ ok: true }> => {
     assertSystemCommand(ctx);
+
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`sign.docx_convert:${ctx.orgId}:${input.jobId}`}, 0))`.execute(
+      ctx.trx,
+    );
 
     // Terminal state per jobId is write-once so retries/dead-letter/apps_changed sweeps never overwrite an earlier completion.
     const existing = await sql<{ id: string }>`
@@ -311,6 +315,41 @@ export const signDocxConvertPending = defineQuery({
     return out;
   },
 });
+
+export async function verifySourceDocxProvenance(
+  ctx: CommandContext,
+  sourceDocxSha256: string,
+  pdfSha256: string,
+): Promise<void> {
+  const actorUserId = userIdOf(ctx);
+  const { rows } = await sql<{ ok: boolean }>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM ludy_kernel.audit_event c
+      JOIN ludy_kernel.audit_event r
+        ON r.org_id = c.org_id
+       AND r.command = 'sign.docx_convert.request'
+       AND r.outcome = 'ok'
+       AND r.detail ->> 'jobId' = c.detail ->> 'jobId'
+      WHERE c.org_id = ${ctx.orgId}::uuid
+        AND c.command = 'sign.docx_convert.complete'
+        AND c.outcome = 'ok'
+        AND c.occurred_at >= pg_catalog.now() - interval '24 hours'
+        AND r.occurred_at >= pg_catalog.now() - interval '24 hours'
+        AND c.detail ->> 'ok' = 'true'
+        AND c.detail ->> 'pdfSha256' = ${pdfSha256}
+        AND lower(r.detail ->> 'requestedBy') = lower(${actorUserId})
+        AND r.detail ->> 'inputSha256' = ${sourceDocxSha256}
+    ) AS ok
+  `.execute(ctx.trx);
+  if (!rows[0]?.ok) {
+    throw new DomainError(
+      'SIGN_INVALID_SOURCE_FILE',
+      422,
+      'Source DOCX hash does not match a verified conversion for this file',
+    );
+  }
+}
 
 export const signDocxConvertCommands = [signDocxConvertRequest, signDocxConvertComplete];
 export const signDocxConvertQueries = [signDocxConvertStatus, signDocxConvertPending];

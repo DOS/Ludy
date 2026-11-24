@@ -26,6 +26,7 @@ import {
   assertCanUseProjectAcceptanceSource,
   insertEnvelopeGuardingProjectAcceptance,
 } from './acceptance.ts';
+import { verifySourceDocxProvenance } from './docx-convert.ts';
 import { appendSigningEvent } from './events.ts';
 import { assertCanAccessEnvelopeRow, assertCanCreateEnvelopeForSource } from './hr-visibility.ts';
 import {
@@ -645,6 +646,10 @@ export const templateCreate = defineCommand({
         detectedTagsJson: reused ? reused.detectedTagsJson : null,
         sourceEnvelopeId: null,
       };
+    }
+
+    if (input.sourceDocxSha256) {
+      await verifySourceDocxProvenance(ctx, input.sourceDocxSha256, sourceMeta.sourceSha256);
     }
 
     const desiredStatus = input.status ?? 'draft';
