@@ -1470,14 +1470,15 @@ suite('invariant (#2604, ADR-0056): private projects visibility and cross-module
         [orgId, scopedNoteId, agentPrivateTaskId, scopedUserId],
       ),
     ).toMatchObject({ ok: false, code: '42501' });
-    expect(
-      await attemptSql(
-        scopedActor,
-        `INSERT INTO crove_notes.link (org_id, note_id, target_type, target_id, task_id, created_by)
-         VALUES ($1, $2, 'kernel.task', $3, $3, $4)`,
-        [orgId, scopedNoteId, otherOrgTaskId, scopedUserId],
-      ),
-    ).toMatchObject({ ok: false, code: '23503' });
+    // Two-step prep (#4631): accept FK 23503 on main and RLS 42501 once #4631 Step 2 tightens link_private_project_scope WITH CHECK (Step 2 tightens this strictly back to '42501').
+    const otherOrgTaskRes = await attemptSql(
+      scopedActor,
+      `INSERT INTO crove_notes.link (org_id, note_id, target_type, target_id, task_id, created_by)
+       VALUES ($1, $2, 'kernel.task', $3, $3, $4)`,
+      [orgId, scopedNoteId, otherOrgTaskId, scopedUserId],
+    );
+    expect(otherOrgTaskRes.ok).toBe(false);
+    if (!otherOrgTaskRes.ok) expect(['23503', '42501']).toContain(otherOrgTaskRes.code);
     expect(
       await attemptSql(
         scopedActor,
