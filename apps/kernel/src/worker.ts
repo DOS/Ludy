@@ -3275,6 +3275,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   appOn: (orgId) => deps.runtime.appOn(orgId, 'sign', { fresh: true }),
                   orgId: row.org_id,
                   olderThan: new Date(),
+                  // Re-enabling sign after downtime should re-queue paused checks once instead of immediately timing them out.
+                  timeoutBefore: new Date(0),
                   enqueueKycInspect: (orgId, envelopeId, fieldId) =>
                     enqueueSignKycAttachmentInspect(boss, orgId, envelopeId, fieldId),
                 });

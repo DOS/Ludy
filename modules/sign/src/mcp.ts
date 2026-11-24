@@ -412,7 +412,7 @@ export const mcpSignRenewals = defineQuery({
         sql`LEAST((o.expiry_date - COALESCE(o.renewal_notice_days, 0)), o.next_pending_due_date) ASC NULLS LAST`,
       )
       .orderBy('o.updated_at', 'desc')
-      .orderBy('e.id', 'asc')
+      .orderBy('o.id', 'desc')
       .limit(200)
       .execute();
 

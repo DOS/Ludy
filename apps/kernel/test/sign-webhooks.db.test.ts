@@ -640,6 +640,21 @@ suite('eSign Slice 5b outbound HMAC webhooks on PostgreSQL 17 (#4440)', () => {
     expect(freshCreate.status).toBe(200);
     const stepUpWebhookId = freshCreate.body.webhook.id;
 
+    const freshUpdate = await rpc<SignWebhookWithSecretResult>(
+      'sign/webhook/update',
+      adminUser,
+      {
+        webhookId: stepUpWebhookId,
+        url: 'https://hooks.example.test/mfa-stepup-updated',
+        events: ['sign.envelope.sent', 'sign.envelope.completed'],
+        enabled: true,
+        idempotencyKey: randomUUID(),
+      },
+      org.slug,
+      { aal: 'aal2', mfaAt: nowS },
+    );
+    expect(freshUpdate.status).toBe(200);
+
     const freshRotate = await rpc<SignWebhookWithSecretResult>(
       'sign/webhook/rotate_secret',
       adminUser,

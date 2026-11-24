@@ -2018,6 +2018,7 @@ export const playbookRuleDelete = defineCommand({
   writes: [PLAYBOOK_RULE_WRITE],
   handler: async (ctx, input): Promise<SignPlaybookRuleDeleteResult> => {
     const userId = assertPlaybookAdmin(ctx);
+    await acquirePlaybookRuleOrgLock(ctx.trx, ctx.orgId);
     await ensurePlaybookRulesMaterialized(ctx, userId);
 
     const deleted = await ctx.trx

@@ -434,6 +434,23 @@ BEGIN
   -- On unsealed envelopes (draft, voided, expired, or declined with sealed_file_id IS NULL), also unlink
   -- the erased check's attachment reference on field so can_read_sign_file immediately blocks further reads.
   IF pg_catalog.cardinality(v_field_ids) > 0 THEN
+    -- Lock matching unsealed parent envelopes in canonical id order before updating field rows.
+    PERFORM 1
+      FROM ludy_sign.envelope e
+     WHERE e.org_id = v_org
+       AND e.id IN (
+         SELECT f.envelope_id
+           FROM ludy_sign.field f
+          WHERE f.org_id = v_org
+            AND f.id = ANY (v_field_ids)
+            AND f.field_type = 'attachment'
+            AND f.attachment_file_id = ANY (v_file_ids)
+       )
+       AND e.status IN ('draft', 'voided', 'expired', 'declined')
+       AND e.sealed_file_id IS NULL
+     ORDER BY e.id ASC
+     FOR SHARE;
+
     PERFORM pg_catalog.set_config('ludy.sign_kyc_erase', v_org::text, true);
 
     WITH unlinked AS (
@@ -1392,6 +1409,23 @@ REVOKE ALL ON FUNCTION
   ludy_sign.obligation_next_pending_due_date(jsonb),
   ludy_sign.envelope_obligation_sync_next_pending_due_date()
 FROM PUBLIC, ludy_tenant, ludy_app, ludy_worker, ludy_definer_tenant;
+
+DO $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    SELECT rolname
+    FROM pg_catalog.pg_roles
+    WHERE (rolname LIKE 'ludy\_%' OR rolname LIKE 'crove\_%')
+      AND rolname <> current_user
+  LOOP
+    EXECUTE pg_catalog.format(
+      'REVOKE ALL ON FUNCTION ludy_sign.obligation_next_pending_due_date(jsonb), ludy_sign.envelope_obligation_sync_next_pending_due_date() FROM %I',
+      r.rolname
+    );
+  END LOOP;
+END $$;
 
 DROP TRIGGER IF EXISTS envelope_obligation_sync_next_pending_due_date ON ludy_sign.envelope_obligation;
 CREATE TRIGGER envelope_obligation_sync_next_pending_due_date
