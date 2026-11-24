@@ -144,8 +144,9 @@ test.describe('eSign Slices 2-5 E2E', () => {
       (res) =>
         res.url().includes('/api/rpc/sign/template/direct_link_set') && res.request().method() === 'POST',
     );
-    await directToggle.check();
+    await directToggle.click();
     expect((await enableDirectResp).status()).toBe(200);
+    await expect(directToggle).toHaveAttribute('aria-checked', 'true');
 
     const directUrlInput = page.locator('#sign-tpl-direct-url');
     await expect(directUrlInput).toBeVisible();
@@ -160,8 +161,9 @@ test.describe('eSign Slices 2-5 E2E', () => {
       (res) =>
         res.url().includes('/api/rpc/sign/template/direct_link_set') && res.request().method() === 'POST',
     );
-    await publicHubToggle.check();
+    await publicHubToggle.click();
     expect((await enableHubResp).status()).toBe(200);
+    await expect(publicHubToggle).toHaveAttribute('aria-checked', 'true');
 
     const publicHubUrlInput = page.getByTestId('sign-tpl-public-hub-url-input');
     await expect(publicHubUrlInput).toBeVisible();
@@ -239,15 +241,11 @@ test.describe('eSign Slices 2-5 E2E', () => {
     await envelopeRowLink.click();
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/sign/envelopes/[^/]+$`));
 
-    await expect(async () => {
-      const card = page.getByTestId('sign-evidence-card');
-      if (!(await card.isVisible()) || !(await card.innerText()).includes('Đã niêm phong SHA-256')) {
-        await page.reload();
-      }
-      await expect(page.getByTestId('sign-evidence-card')).toContainText('Đã niêm phong SHA-256');
-    }).toPass({ timeout: 60_000, intervals: [2000, 3000] });
+    await expect(page.getByText('Đã niêm phong SHA-256')).toBeVisible({ timeout: 60_000 });
 
     const evidenceCard = page.getByTestId('sign-evidence-card');
+    await expect(evidenceCard).toBeVisible();
+    await expect(evidenceCard).toContainText('SHA-256 bản niêm phong', { timeout: 20_000 });
     await expect(evidenceCard).toContainText('Chuỗi băm toàn vẹn');
     await expect(evidenceCard).toContainText(/(?:CS|SIG)-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}/);
   });
@@ -514,13 +512,11 @@ test.describe('eSign Slices 2-5 E2E', () => {
     });
 
     // Wait for background SHA-256 sealing before hitting /api/v1/sign/envelopes/:id/sealed.
-    await expect(async () => {
-      const card = page.getByTestId('sign-evidence-card');
-      if (!(await card.isVisible()) || !(await card.innerText()).includes('Đã niêm phong SHA-256')) {
-        await page.reload();
-      }
-      await expect(page.getByTestId('sign-evidence-card')).toContainText('Đã niêm phong SHA-256');
-    }).toPass({ timeout: 60_000, intervals: [2000, 3000] });
+    await expect(page.getByText('Đã niêm phong SHA-256')).toBeVisible({ timeout: 60_000 });
+    const evidenceCard = page.getByTestId('sign-evidence-card');
+    await expect(evidenceCard).toBeVisible();
+    await expect(evidenceCard).toContainText('SHA-256 bản niêm phong', { timeout: 20_000 });
+    await expect(evidenceCard).toContainText('Chuỗi băm toàn vẹn');
 
     // 6. External REST API /api/v1/sign/* verification using an unauthenticated APIRequestContext (no cookies).
     const baseURL = new URL(page.url()).origin;
