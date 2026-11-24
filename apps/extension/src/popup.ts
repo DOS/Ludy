@@ -4,10 +4,10 @@
 // the one tab it touches is the active one the member clicked the icon on, and only to ask for its audio.
 import { ENGLISH, T } from './strings.ts';
 import { DEFAULT_ADDRESS, isDefaultAddress, originPattern, parseAddress, stalePattern } from './ludy-address.ts';
-import { activeAccount, loadState, saveState, withAccount, withAddress, withFeature, withoutAccount, type State } from './state.ts';
+import { activeAccount, createCaptureDraftStore, loadState, saveState, withAccount, withAddress, withFeature, withoutAccount, type State } from './state.ts';
 import { permissionsToRemove, visibleFeatures, FEATURES, type Me } from './features.ts';
 import { AGENDA_SCOPE, agendaLine, type AgendaNext } from './agenda.ts';
-import { connectUrl, deviceName, newPkce, parseConnectResult } from './auth.ts';
+import { connectUrl, deviceName, newPkce, parseConnectResult, resolveSignInScopes } from './auth.ts';
 import { createClient, LudyError } from './api.ts';
 import { CONSENT_METHODS, consentBlocker } from './consent.ts';
 import { LOST_KEY, readLost, RECORDING_KEY, tabAddress, type LostState, type RecordingState, type StartReply, type StopReply } from './messages.ts';
@@ -47,17 +47,9 @@ let serverModules: { address: string; promise: Promise<readonly string[] | null>
 const notesExcludedOrgs = new Set<string>();
 // Set when the org refused the method as not written (A2, #3160): the unwritten choice is then not offered for the rest of this popup.
 let strictOrg = false;
-let captureDraft: {
-  kind: 'note' | 'todo';
-  title: string;
-  body: string;
-  tags: string;
-  details: string;
-  dueOn: string;
-  sourceUrl: string | null;
-} = { kind: 'note', title: '', body: '', tags: '', details: '', dueOn: '', sourceUrl: null };
-let notesStatus = '';
-let notesBusy = false;
+const CONFIG_DISCOVERY_TIMEOUT_MS = 3_000;
+const captureDrafts = createCaptureDraftStore();
+let activeTabJustGranted = false;
 const concurrency = createPopupConcurrency();
 
 function clearTicker(): void {
@@ -107,6 +99,8 @@ async function render(): Promise<void> {
   await concurrency.runRender(clearTicker, async (pass) => {
     const state = await loadState(area);
     if (!pass.isCurrent()) return null;
+    const { changed } = captureDrafts.syncState(state);
+    if (changed && notice !== T.signingIn) notice = '';
     const view = h('div');
     view.append(h('h1', {}, T.title));
     const account = activeAccount(state);
@@ -144,7 +138,12 @@ function addressForm(state: State): Node[] {
               // The state is read again here, not taken from when this popup was drawn: another popup may have moved the address in
               // between, and the permission to give back is the one of the address that is stored now, not the one this popup showed.
               const current = await loadState(area);
-              await saveState(area, withAddress(current, typed.origin));
+              const next = withAddress(current, typed.origin);
+              if (next.address !== current.address) {
+                captureDrafts.clearAll();
+                serverModules = null;
+              }
+              await saveState(area, next);
               // The address moved: the browser permission for the previous self-hosted one is given back.
               const stale = stalePattern(current.address, typed.origin);
               if (stale) await chrome.permissions.remove({ origins: [stale] }).catch(() => false);
@@ -170,10 +169,10 @@ async function signIn(state: State, withAgenda = false): Promise<void> {
   notice = T.signingIn;
   await render();
   try {
-    const config = await createClient(state.address, null).config().catch(() => null);
-    const available = config?.modules;
-    const featureScopes = available ? FEATURES.map((f) => f.scope).filter((s) => available.includes(s)) : FEATURES.map((f) => f.scope);
-    const scopesToAsk = featureScopes.length > 0 ? featureScopes : FEATURES.map((f) => f.scope);
+    const config = await createClient(state.address, null)
+      .config({ signal: AbortSignal.timeout(CONFIG_DISCOVERY_TIMEOUT_MS) })
+      .catch(() => null);
+    const scopesToAsk = resolveSignInScopes(config?.modules);
     const askAgenda = withAgenda && scopesToAsk.includes('meetings');
     const pkce = await newPkce();
     const redirect = chrome.identity.getRedirectURL('connect');
@@ -188,7 +187,9 @@ async function signIn(state: State, withAgenda = false): Promise<void> {
       const done = await createClient(state.address, null).exchangeCode(result.code, pkce.verifier);
       if (scopesToAsk.includes(NOTES_SCOPE) && !done.scopes.includes(NOTES_SCOPE)) notesExcludedOrgs.add(done.orgId);
       else notesExcludedOrgs.delete(done.orgId);
-      await saveState(area, withAccount(await loadState(area), { orgId: done.orgId, orgSlug: result.org, token: done.token, expiresAt: done.expiresAt }));
+      const next = withAccount(await loadState(area), { orgId: done.orgId, orgSlug: result.org, token: done.token, expiresAt: done.expiresAt });
+      captureDrafts.syncState(next);
+      await saveState(area, next);
       notice = '';
     }
   } catch {
@@ -203,7 +204,10 @@ async function signedInView(state: State, onMount: Array<() => void>): Promise<N
   const out: Node[] = [];
   const orgs = Object.values(state.accounts);
   const picker = h('select', { id: 'org', 'aria-label': T.org, onchange: () => void (async () => {
-    const next = { ...(await loadState(area)), activeOrg: picker.value };
+    const current = await loadState(area);
+    const next = { ...current, activeOrg: picker.value };
+    if (next.activeOrg !== current.activeOrg) notice = '';
+    captureDrafts.syncState(next);
     await saveState(area, next);
     await render();
   })() }, ...orgs.map((a) => h('option', { value: a.orgId, selected: a.orgId === account.orgId }, a.orgSlug)));
@@ -212,7 +216,15 @@ async function signedInView(state: State, onMount: Array<() => void>): Promise<N
     picker,
     h('div', { class: 'row' },
       h('button', { onclick: () => void signIn(state) }, T.addOrg),
-      h('button', { onclick: () => void (async () => { await saveState(area, withoutAccount(await loadState(area), account.orgId)); await render(); })() }, T.signOut),
+      h('button', { onclick: () => void (async () => {
+        const current = await loadState(area);
+        captureDrafts.clearScope(current.address, account.orgId);
+        notice = '';
+        const next = withoutAccount(current, account.orgId);
+        captureDrafts.syncState(next);
+        await saveState(area, next);
+        await render();
+      })() }, T.signOut),
     ),
     h('p', { class: 'note' }, `${state.address} · ${T.signOutNote}`),
   );
@@ -221,7 +233,12 @@ async function signedInView(state: State, onMount: Array<() => void>): Promise<N
     me = await createClient(state.address, account.token).me();
   } catch (error) {
     // A token the server no longer accepts is dropped here, so the member signs in again.
-    if (error instanceof LudyError && error.status === 401) await saveState(area, withoutAccount(await loadState(area), account.orgId));
+    if (error instanceof LudyError && error.status === 401) {
+      captureDrafts.clearScope(state.address, account.orgId);
+      const next = withoutAccount(await loadState(area), account.orgId);
+      captureDrafts.syncState(next);
+      await saveState(area, next);
+    }
     notice = T.loadFailed;
     return out;
   }
@@ -229,7 +246,16 @@ async function signedInView(state: State, onMount: Array<() => void>): Promise<N
   let showNotesAsk = false;
   if (!me.scopes.includes(NOTES_SCOPE) && !notesExcludedOrgs.has(account.orgId)) {
     if (serverModules?.address !== state.address) {
-      serverModules = { address: state.address, promise: createClient(state.address, null).config().then((c) => c.modules ?? null).catch(() => null) };
+      serverModules = {
+        address: state.address,
+        promise: createClient(state.address, null)
+          .config({ signal: AbortSignal.timeout(CONFIG_DISCOVERY_TIMEOUT_MS) })
+          .then((c) => c.modules ?? null)
+          .catch(() => {
+            if (serverModules?.address === state.address) serverModules = null;
+            return null;
+          }),
+      };
     }
     const installed = await serverModules.promise;
     showNotesAsk = Boolean(installed?.includes(NOTES_SCOPE));
@@ -244,28 +270,32 @@ async function signedInView(state: State, onMount: Array<() => void>): Promise<N
   }
   for (const feature of features) {
     if (feature.id === 'meetings') out.push(...(await meetingsView(state, me, account.token, onMount)));
-    else if (feature.id === 'notes') out.push(...(await notesView(state, account.token)));
+    else if (feature.id === 'notes') out.push(...(await notesView(state, account.orgId, account.token)));
   }
   out.push(...(await pendingView(state, account.orgId, account.token)));
   return out;
 }
 
-async function notesView(state: State, token: string): Promise<Node[]> {
+async function notesView(state: State, orgId: string, token: string): Promise<Node[]> {
   const clipperGranted = await chrome.permissions.contains({ permissions: [...WEB_CLIPPER_PERMISSIONS] }).catch(() => false);
   const clipperOn = clipperGranted && state.enabled.clipper === true;
+  const scopeState = captureDrafts.get(state.address, orgId);
+  const captureDraft = scopeState.draft;
+  const notesStatus = scopeState.status;
+  const notesBusy = scopeState.busy;
   const isNote = captureDraft.kind === 'note';
 
   const modeNoteBtn = h('button', {
     id: 'mode-note',
     class: isNote ? 'active-tab' : undefined,
     disabled: notesBusy,
-    onclick: () => void ((captureDraft.kind = 'note'), (notesStatus = ''), (notice = ''), render()),
+    onclick: () => void ((captureDraft.kind = 'note'), (scopeState.status = ''), (notice = ''), render()),
   }, T.captureModeNote);
   const modeTodoBtn = h('button', {
     id: 'mode-todo',
     class: !isNote ? 'active-tab' : undefined,
     disabled: notesBusy,
-    onclick: () => void ((captureDraft.kind = 'todo'), (notesStatus = ''), (notice = ''), render()),
+    onclick: () => void ((captureDraft.kind = 'todo'), (scopeState.status = ''), (notice = ''), render()),
   }, T.captureModeTodo);
 
   const titleInput = h('input', {
@@ -341,7 +371,7 @@ async function notesView(state: State, token: string): Promise<Node[]> {
     checked: clipperOn,
     disabled: notesBusy,
   });
-  clipperToggle.addEventListener('change', () => void toggleWebClipper(clipperToggle.checked));
+  clipperToggle.addEventListener('change', () => void toggleWebClipper(clipperToggle.checked, state.address, orgId));
 
   const clipperControls: Node[] = [
     h('div', { class: 'clipper-box', id: 'clipper-box' },
@@ -354,12 +384,12 @@ async function notesView(state: State, token: string): Promise<Node[]> {
                 class: 'primary',
                 id: 'clip-now',
                 disabled: notesBusy,
-                onclick: () => void clipCurrentPage(state, token, 'save'),
+                onclick: () => void clipCurrentPage(state, orgId, token, 'save'),
               }, T.clipNowButton),
               h('button', {
                 id: 'clip-fill',
                 disabled: notesBusy,
-                onclick: () => void clipCurrentPage(state, token, 'fill'),
+                onclick: () => void clipCurrentPage(state, orgId, token, 'fill'),
               }, T.clipFillButton)),
           ]
         : [])),
@@ -379,61 +409,73 @@ async function notesView(state: State, token: string): Promise<Node[]> {
           class: 'primary',
           id: 'capture-save',
           disabled: notesBusy,
-          onclick: () => void saveQuickCapture(state, token),
+          onclick: () => void saveQuickCapture(state, orgId, token),
         }, isNote ? T.captureSaveNote : T.captureSaveTodo)),
       ...clipperControls,
       notesStatus ? h('p', { class: 'note', id: 'notes-status', role: 'status' }, notesStatus) : null),
   ];
 }
 
-async function toggleWebClipper(enable: boolean): Promise<void> {
+async function toggleWebClipper(enable: boolean, address: string, orgId: string): Promise<void> {
   notice = '';
-  notesStatus = '';
+  const scopeState = captureDrafts.get(address, orgId);
+  scopeState.status = '';
   if (enable) {
+    const hadActiveTab = await chrome.permissions.contains({ permissions: ['activeTab'] }).catch(() => false);
     // Only asks Chrome for activeTab + scripting on this explicit toggle click.
     const granted = await chrome.permissions.request({ permissions: [...WEB_CLIPPER_PERMISSIONS] }).catch(() => false);
+    activeTabJustGranted = granted && !hadActiveTab;
     const latest = await loadState(area);
     await saveState(area, withFeature(latest, 'clipper', granted));
     if (!granted) notice = T.clipperPermissionDenied;
   } else {
+    activeTabJustGranted = false;
     const latest = await loadState(area);
     const remove = permissionsToRemove('clipper', latest.enabled);
     if (remove.length > 0) await chrome.permissions.remove({ permissions: remove }).catch(() => false);
-    captureDraft.sourceUrl = null;
+    scopeState.draft.sourceUrl = null;
     await saveState(area, withFeature(latest, 'clipper', false));
   }
   await render();
 }
 
-async function clipCurrentPage(state: State, token: string, action: 'save' | 'fill'): Promise<void> {
-  if (notesBusy) return;
-  notesBusy = true;
-  notice = '';
-  notesStatus = T.clipping;
-  await render();
+async function clipCurrentPage(state: State, orgId: string, token: string, action: 'save' | 'fill'): Promise<void> {
+  const started = captureDrafts.beginOp(state.address, orgId);
+  if (!started) return;
+  const { scope, op } = started;
+  if (op.isActive()) notice = '';
+  scope.status = T.clipping;
   try {
+    await render();
     const captured = await captureActiveTab({
       permissions: chrome.permissions,
       tabs: chrome.tabs,
       scripting: chrome.scripting,
       clicked: true,
+      activeTabJustGranted,
     });
+    if (!op.isLive()) return;
     if (!captured.ok) {
-      notesStatus = '';
-      notice =
-        captured.reason === 'permission'
-          ? T.clipperPermissionDenied
-          : captured.reason === 'unsupportedUrl'
-            ? T.clipUnsupportedUrl
-            : T.clipFailed;
+      scope.status = '';
+      if (op.isActive()) {
+        notice =
+          captured.reason === 'permission'
+            ? T.clipperPermissionDenied
+            : captured.reason === 'reopenNeeded'
+              ? T.clipReopenRequired
+              : captured.reason === 'unsupportedUrl'
+                ? T.clipUnsupportedUrl
+                : T.clipFailed;
+      }
       return;
     }
+    activeTabJustGranted = false;
     if (action === 'fill') {
-      captureDraft.kind = 'note';
-      captureDraft.title = captured.clip.title;
-      captureDraft.body = captured.clip.body;
-      captureDraft.sourceUrl = captured.clip.sourceUrl;
-      notesStatus = T.clipFilled;
+      scope.draft.kind = 'note';
+      scope.draft.title = captured.clip.title;
+      scope.draft.body = captured.clip.body;
+      scope.draft.sourceUrl = captured.clip.sourceUrl;
+      scope.status = T.clipFilled;
       return;
     }
     const client = createClient(state.address, token);
@@ -442,31 +484,36 @@ async function clipCurrentPage(state: State, token: string, action: 'save' | 'fi
       body: captured.clip.body,
       sourceUrl: captured.clip.sourceUrl,
     });
-    notesStatus = T.captureSavedNote;
+    if (!op.isLive()) return;
+    scope.status = T.captureSavedNote;
   } catch (error) {
-    notesStatus = '';
-    notice = error instanceof LudyError ? error.message : T.captureSaveFailed;
+    if (!op.isLive()) return;
+    scope.status = '';
+    if (op.isActive()) notice = error instanceof LudyError ? error.message : T.captureSaveFailed;
   } finally {
-    notesBusy = false;
+    op.end();
     await render();
   }
 }
 
-async function saveQuickCapture(state: State, token: string): Promise<void> {
-  if (notesBusy) return;
-  notice = '';
-  notesStatus = '';
-  const sent = { ...captureDraft };
+async function saveQuickCapture(state: State, orgId: string, token: string): Promise<void> {
+  const scopeState = captureDrafts.get(state.address, orgId);
+  if (scopeState.busy) return;
+  const sent = { ...scopeState.draft };
   const title = sent.title.trim();
   if (!title) {
+    scopeState.status = '';
     notice = T.captureTitleRequired;
     await render();
     return;
   }
-  notesBusy = true;
-  notesStatus = T.captureSaving;
-  await render();
+  const started = captureDrafts.beginOp(state.address, orgId);
+  if (!started) return;
+  const { scope, op } = started;
+  if (op.isActive()) notice = '';
+  scope.status = T.captureSaving;
   try {
+    await render();
     const client = createClient(state.address, token);
     if (sent.kind === 'note') {
       await client.clipNote({
@@ -475,11 +522,12 @@ async function saveQuickCapture(state: State, token: string): Promise<void> {
         tags: parseTagsInput(sent.tags),
         sourceUrl: sent.sourceUrl,
       });
-      if (captureDraft.title === sent.title) captureDraft.title = '';
-      if (captureDraft.body === sent.body) captureDraft.body = '';
-      if (captureDraft.tags === sent.tags) captureDraft.tags = '';
-      if (captureDraft.sourceUrl === sent.sourceUrl) captureDraft.sourceUrl = null;
-      notesStatus = T.captureSavedNote;
+      if (!op.isLive()) return;
+      if (scope.draft.title === sent.title) scope.draft.title = '';
+      if (scope.draft.body === sent.body) scope.draft.body = '';
+      if (scope.draft.tags === sent.tags) scope.draft.tags = '';
+      if (scope.draft.sourceUrl === sent.sourceUrl) scope.draft.sourceUrl = null;
+      scope.status = T.captureSavedNote;
     } else {
       await client.quickCaptureTodo({
         title,
@@ -487,17 +535,19 @@ async function saveQuickCapture(state: State, token: string): Promise<void> {
         dueOn: sent.dueOn || null,
         sourceUrl: sent.sourceUrl,
       });
-      if (captureDraft.title === sent.title) captureDraft.title = '';
-      if (captureDraft.details === sent.details) captureDraft.details = '';
-      if (captureDraft.dueOn === sent.dueOn) captureDraft.dueOn = '';
-      if (captureDraft.sourceUrl === sent.sourceUrl) captureDraft.sourceUrl = null;
-      notesStatus = T.captureSavedTodo;
+      if (!op.isLive()) return;
+      if (scope.draft.title === sent.title) scope.draft.title = '';
+      if (scope.draft.details === sent.details) scope.draft.details = '';
+      if (scope.draft.dueOn === sent.dueOn) scope.draft.dueOn = '';
+      if (scope.draft.sourceUrl === sent.sourceUrl) scope.draft.sourceUrl = null;
+      scope.status = T.captureSavedTodo;
     }
   } catch (error) {
-    notesStatus = '';
-    notice = error instanceof LudyError ? error.message : T.captureSaveFailed;
+    if (!op.isLive()) return;
+    scope.status = '';
+    if (op.isActive()) notice = error instanceof LudyError ? error.message : T.captureSaveFailed;
   } finally {
-    notesBusy = false;
+    op.end();
     await render();
   }
 }
@@ -715,7 +765,7 @@ async function pendingView(state: State, orgId: string, token: string): Promise<
       h('div', { class: 'row' },
         h('span', {}, `${meta.title} (${formatClock(meta.elapsedMs)})`),
         h('button', { onclick: () => void (async () => {
-          const { uploads } = await client.config().catch(() => ({ uploads: 'direct' as const }));
+          const { uploads } = await client.config({ signal: AbortSignal.timeout(CONFIG_DISCOVERY_TIMEOUT_MS) }).catch(() => ({ uploads: 'direct' as const }));
           const done = await uploadSaved({ store }, client, uploads, meta);
           notice = done.ok ? T.uploaded : T.uploadFailed;
           await render();

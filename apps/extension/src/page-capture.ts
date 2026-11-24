@@ -445,10 +445,11 @@ export function htmlToMarkdown(html: string, baseUrl: string | null = null): str
 export function snapshotDomPage(): DomClipSnapshot {
   const MAX_HTML = 300_000;
   const MAX_TEXT = 120_000;
+  const HIDDEN_SELECTOR = '[hidden], [aria-hidden="true"], [style*="display:none"], [style*="display: none"]';
   const NOISE_SELECTOR =
-    'script, style, noscript, template, iframe, object, embed, svg, canvas, nav, aside, footer, header, form, input, textarea, select, button, [role="navigation"], [role="banner"], [role="contentinfo"], [hidden], [aria-hidden="true"], [style*="display:none"], [style*="display: none"]';
+    `script, style, noscript, template, iframe, object, embed, svg, canvas, nav, aside, footer, header, form, input, textarea, select, button, [role="navigation"], [role="banner"], [role="contentinfo"], ${HIDDEN_SELECTOR}`;
   const SELECTION_NOISE =
-    'script, style, noscript, template, iframe, object, embed, svg, canvas, input, textarea, select, [hidden], [aria-hidden="true"], [style*="display:none"], [style*="display: none"]';
+    `script, style, noscript, template, iframe, object, embed, svg, canvas, input, textarea, select, ${HIDDEN_SELECTOR}`;
 
   const sanitizeClone = (node: Node, selector: string): { html: string; text: string } => {
     const box = document.createElement('div');
@@ -484,6 +485,7 @@ export function snapshotDomPage(): DomClipSnapshot {
   let best: Element | null = null;
   let bestLen = 0;
   for (const el of document.querySelectorAll('article, [role="main"], main')) {
+    if (el.closest(HIDDEN_SELECTOR)) continue;
     const len = (el.textContent ?? '').trim().length;
     if (len >= 120 && len > bestLen) {
       best = el;
@@ -522,13 +524,15 @@ export function snapshotToClip(snapshot: DomClipSnapshot): ClippedPagePayload | 
 
 export type ActiveTabCaptureResult =
   | { ok: true; clip: ClippedPagePayload }
-  | { ok: false; reason: 'notClicked' | 'permission' | 'unsupportedUrl' | 'failed' };
+  | { ok: false; reason: 'notClicked' | 'permission' | 'reopenNeeded' | 'unsupportedUrl' | 'failed' };
 
 export interface ActiveTabCaptureApis {
   permissions: Pick<typeof chrome.permissions, 'contains'>;
   tabs: Pick<typeof chrome.tabs, 'query'>;
   scripting: Pick<typeof chrome.scripting, 'executeScript'>;
   clicked: boolean;
+  // True when `activeTab` was just granted inside the currently open popup before a toolbar click activated it.
+  activeTabJustGranted?: boolean;
 }
 
 /**
@@ -552,6 +556,6 @@ export async function captureActiveTab(apis: ActiveTabCaptureApis): Promise<Acti
     const clip = snapshotToClip(snapshot);
     return clip ? { ok: true, clip } : { ok: false, reason: 'unsupportedUrl' };
   } catch {
-    return { ok: false, reason: 'failed' };
+    return { ok: false, reason: apis.activeTabJustGranted ? 'reopenNeeded' : 'failed' };
   }
 }

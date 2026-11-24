@@ -206,3 +206,181 @@ describe('per-user request limit on /api', () => {
     expect(target.calls()).toBe(0);
   });
 });
+
+describe('per-extension-token write limit and fail-closed appOn edge (#3742)', () => {
+  const orgId = '11111111-1111-4111-8111-111111111111';
+  const meetingId = '22222222-2222-4222-8222-222222222222';
+  const extUser = (tokenId: string, scopes: readonly ('meetings' | 'agenda' | 'notes')[]): AuthUser => ({
+    userId: 'user-1',
+    email: 'u@example.com',
+    name: null,
+    aal: 'aal1',
+    sessionId: '',
+    mfaAt: null,
+    extension: { tokenId, orgId, userId: 'user-1', scopes: [...scopes], expiresAt: '2027-01-01T00:00:00.000Z' },
+  });
+  const browserUser: AuthUser = {
+    userId: 'user-1',
+    email: 'u@example.com',
+    name: null,
+    aal: 'aal1',
+    sessionId: 'sess-1',
+    mfaAt: null,
+  };
+
+  function makeApp(opts: {
+    rateLimiter?: RateLimiter | null;
+    extensionWriteLimit?: RateLimiter | null;
+    appOnImpl?: (org: string, mod: string) => Promise<boolean>;
+  }) {
+    const usersByHeader: Record<string, AuthUser> = {
+      'Bearer tokA': extUser('tok-a', ['meetings', 'agenda', 'notes']),
+      'Bearer tokB': extUser('tok-b', ['meetings', 'agenda', 'notes']),
+      'Bearer browser': browserUser,
+    };
+    const executeCalls: string[] = [];
+    const built = createHttpApp({
+      config: loadConfig({ ...base, PUBLIC_URL: 'http://localhost:8080', EXTENSION_IDS: 'a'.repeat(32) }),
+      runtime: {
+        installed: () => true,
+        modules: () => ['kernel', 'meetings', 'notes'],
+        appOn: opts.appOnImpl ?? (async () => true),
+        execute: async (cmd: string) => {
+          executeCalls.push(cmd);
+          return { expiresInSeconds: 300 };
+        },
+        query: async () => ({ enabled: false, events: [], keepVideo: false, liveNotes: false, isRecorder: true }),
+        forUser: async (_actor: unknown, fn: unknown) => {
+          if (typeof fn === 'function') return [{ orgId, slug: 'org-1', name: 'Org 1', role: 'owner' }];
+          return [];
+        },
+      } as unknown as Runtime,
+      store: {} as BlobStore,
+      authenticate: async (header) => {
+        const u = usersByHeader[header ?? ''];
+        if (!u) throw new DomainError('UNAUTHENTICATED', 401, 'unauth');
+        return u;
+      },
+      pool: {} as pg.Pool,
+      aiEnabled: false,
+      ...(opts.rateLimiter !== undefined ? { rateLimiter: opts.rateLimiter } : {}),
+      ...(opts.extensionWriteLimit !== undefined ? { extensionWriteLimit: opts.extensionWriteLimit } : {}),
+    });
+    return { built, executeCalls };
+  }
+
+  it('caps extension bearer write routes per token with 429 and Retry-After while leaving reads and other tokens open', async () => {
+    for (const rateLimiter of [undefined, null] as Array<undefined | null>) {
+      const { built } = makeApp({
+        ...(rateLimiter !== undefined ? { rateLimiter } : {}),
+        extensionWriteLimit: new RateLimiter({ perMinute: 2 }),
+      });
+      const post = (path: string, bearer = 'tokA') =>
+        built.request(path, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' },
+          body: '{}',
+        });
+
+      // Read routes do not consume the write budget.
+      expect((await built.request('/api/extension/me', { headers: { authorization: 'Bearer tokA' } })).status).toBe(200);
+      expect((await post('/api/rpc/meetings/extensionStatus')).status).not.toBe(429);
+      expect((await post('/api/rpc/meetings/agenda/next')).status).not.toBe(429);
+
+      // Two writes spend tokA's write budget (400/404 from stubbed RPC/store proves middleware passed them through).
+      expect((await post('/api/rpc/notes/clip')).status).not.toBe(429);
+      expect((await post('/api/rpc/notes/todos/quickCapture')).status).not.toBe(429);
+
+      // Subsequent writes on all notes and meetings extension write routes are refused 429 with Retry-After.
+      for (const writePath of [
+        '/api/rpc/notes/clip',
+        '/api/rpc/notes/todos/quickCapture',
+        '/api/rpc/meetings/create',
+        '/api/rpc/meetings/recordingStopped',
+        '/api/rpc/meetings/captureHeartbeat',
+        '/api/files/uploads',
+        `/api/meetings/${meetingId}/media`,
+        `/api/meetings/${meetingId}/live-chunk`,
+      ]) {
+        const limited = await post(writePath);
+        expect(limited.status, writePath).toBe(429);
+        expect(Number(limited.headers.get('retry-after'))).toBeGreaterThanOrEqual(1);
+        expect(await limited.json()).toMatchObject({ code: 'RATE_LIMITED', retryAfterSeconds: expect.any(Number) });
+      }
+
+      // Read routes remain open for tokA even after its write cap is exhausted.
+      expect((await built.request('/api/extension/me', { headers: { authorization: 'Bearer tokA' } })).status).toBe(200);
+      expect((await post('/api/rpc/meetings/extensionStatus')).status).not.toBe(429);
+
+      // Another token of the same user keeps its own write budget.
+      expect((await post('/api/rpc/notes/clip', 'tokB')).status).not.toBe(429);
+    }
+  });
+
+  it('allows extension writes without limit when extensionWriteLimit is explicitly null', async () => {
+    const { built } = makeApp({ rateLimiter: null, extensionWriteLimit: null });
+    for (let i = 0; i < 5; i += 1) {
+      const res = await built.request('/api/rpc/notes/clip', {
+        method: 'POST',
+        headers: { authorization: 'Bearer tokA', 'content-type': 'application/json' },
+        body: '{}',
+      });
+      expect(res.status).not.toBe(429);
+    }
+  });
+
+  it('fails closed on transient runtime.appOn errors across /api/extension/authorize, /api/extension/me, and /api/files/uploads', async () => {
+    const { built, executeCalls } = makeApp({
+      rateLimiter: null,
+      appOnImpl: async () => {
+        throw new Error('transient db outage');
+      },
+    });
+
+    const authNotes = await built.request('/api/extension/authorize', {
+      method: 'POST',
+      headers: { authorization: 'Bearer browser', 'content-type': 'application/json', 'x-ludy-org': 'org-1' },
+      body: JSON.stringify({
+        extensionId: 'a'.repeat(32),
+        codeChallenge: 'A'.repeat(43),
+        codeChallengeMethod: 'S256',
+        scopes: ['notes'],
+        deviceName: 'Chrome',
+      }),
+    });
+    expect(authNotes.status).toBe(503);
+    expect(await authNotes.json()).toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+
+    const authMeetings = await built.request('/api/extension/authorize', {
+      method: 'POST',
+      headers: { authorization: 'Bearer browser', 'content-type': 'application/json', 'x-ludy-org': 'org-1' },
+      body: JSON.stringify({
+        extensionId: 'a'.repeat(32),
+        codeChallenge: 'A'.repeat(43),
+        codeChallengeMethod: 'S256',
+        scopes: ['meetings'],
+        deviceName: 'Chrome',
+      }),
+    });
+    expect(authMeetings.status).toBe(503);
+    expect(executeCalls).toEqual([]);
+
+    const meRes = await built.request('/api/extension/me', {
+      headers: { authorization: 'Bearer tokA' },
+    });
+    expect(meRes.status).toBe(503);
+    expect(await meRes.json()).toMatchObject({ code: 'SERVICE_UNAVAILABLE' });
+
+    const uploadRes = await built.request('/api/files', {
+      method: 'POST',
+      headers: { authorization: 'Bearer browser', 'x-ludy-org': 'org-1' },
+      body: (() => {
+        const f = new FormData();
+        f.set('purpose', 'meeting_audio');
+        return f;
+      })(),
+    });
+    expect(uploadRes.status).toBe(503);
+    expect(executeCalls).toEqual([]);
+  });
+});
