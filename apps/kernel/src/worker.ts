@@ -72,6 +72,7 @@ import {
   runSignPdfSealJob,
   sweepSignCleanup,
   sweepSignExpire,
+  sweepSignPendingKycWork,
   sweepSignPendingWork,
   sweepSignPreExpiryReminders,
   type SignCaReconcileJob,
@@ -1575,6 +1576,18 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         if (recovered.inspect > 0 || recovered.seal > 0 || recovered.caReconcile > 0) {
           console.log(
             `[sign-work-recovery] re-queued inspect=${recovered.inspect} seal=${recovered.seal} ca=${recovered.caReconcile}`,
+          );
+        }
+        const kycRecovered = await sweepSignPendingKycWork({
+          workerDb: deps.workerDb,
+          runtime: deps.runtime,
+          appOn: (orgId) => deps.runtime.appOn(orgId, 'sign', { fresh: true }),
+          enqueueKycInspect: (orgId, envelopeId, fieldId) =>
+            enqueueSignKycAttachmentInspect(boss, orgId, envelopeId, fieldId),
+        });
+        if (kycRecovered.requeued > 0 || kycRecovered.timedOut > 0) {
+          console.log(
+            `[sign-kyc-recovery] requeued=${kycRecovered.requeued} timedOut=${kycRecovered.timedOut}`,
           );
         }
       } catch (error) {
@@ -3255,6 +3268,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   enqueueSeal: (orgId, envelopeId) => enqueueSignSeal(boss, orgId, envelopeId),
                   enqueueTemplateInspect: (orgId, templateId) => enqueueSignTemplateInspect(boss, orgId, templateId),
                   enqueueCaReconcile: (orgId, requestId) => enqueueSignCaReconcile(boss, orgId, requestId),
+                });
+                await sweepSignPendingKycWork({
+                  workerDb: deps.workerDb,
+                  runtime: deps.runtime,
+                  appOn: (orgId) => deps.runtime.appOn(orgId, 'sign', { fresh: true }),
+                  orgId: row.org_id,
+                  olderThan: new Date(),
+                  enqueueKycInspect: (orgId, envelopeId, fieldId) =>
+                    enqueueSignKycAttachmentInspect(boss, orgId, envelopeId, fieldId),
                 });
               }
               // An app switched on (ADR-0053, C3b): the events parked while it was off go back on the outbox now, not when the held sweep comes round. A failure here is the sweep's to

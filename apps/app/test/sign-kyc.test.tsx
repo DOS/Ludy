@@ -24,7 +24,9 @@ vi.mock('../src/lib/api.ts', async () => {
   };
 });
 
-const { EnvelopeKycCard } = await import('../src/components/sign/envelope-kyc-card.tsx');
+const { EnvelopeKycCard, SIGN_KYC_POLL_INTERVAL_MS, kycRefetchIntervalMs } = await import(
+  '../src/components/sign/envelope-kyc-card.tsx'
+);
 
 function renderVi(node: ReactNode, client = new QueryClient()): string {
   return renderToStaticMarkup(
@@ -208,5 +210,34 @@ describe('EnvelopeKycCard i18n, accessibility, and tainted Vy proposal UI (#4443
     expect(htmlVi).not.toContain(`sign-kyc-confirm-matched-${FIELD_ID}`);
     expect(htmlVi).toContain(`sign-kyc-toggle-preview-${FIELD_ID}`);
     expect(htmlVi).toContain(`sign-kyc-download-${FIELD_ID}`);
+  });
+
+  it('polls while any signer KYC check remains pending and stops once settled (#4510)', () => {
+    const settled = makeKycData(true);
+    expect(kycRefetchIntervalMs(undefined)).toBe(false);
+    expect(kycRefetchIntervalMs(settled)).toBe(false);
+
+    const pendingData: SignKycListResultContract = {
+      ...settled,
+      items: [
+        {
+          ...settled.items[0]!,
+          check: {
+            ...settled.items[0]!.check!,
+            status: 'pending',
+            mode: 'deterministic',
+          },
+        },
+      ],
+    };
+    expect(kycRefetchIntervalMs(pendingData)).toBe(SIGN_KYC_POLL_INTERVAL_MS);
+
+    const qc = new QueryClient();
+    qc.setQueryData(['sign', 'kyc', ENV_ID], pendingData);
+    const htmlPending = renderEn(
+      <EnvelopeKycCard envelopeId={ENV_ID} hasUploadedAttachments={true} onDownloadAttachment={() => {}} />,
+      qc,
+    );
+    expect(htmlPending).toContain('sign-kyc-card');
   });
 });

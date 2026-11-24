@@ -5513,8 +5513,9 @@ export function createRpcHandler(
         list: os.sign.kyc.list.handler(signQuery('sign.kyc.list')),
         run_deterministic: os.sign.kyc.run_deterministic.handler(signCommand('sign.kyc.run_deterministic')),
         analyze: os.sign.kyc.analyze.handler(({ context, input }) =>
-          inSign(context, (orgId, actor) =>
-            proposeEnvelopeKycCheck({
+          inSign(context, (orgId, actor) => {
+            const nonEmptyPages = input.attachmentPages?.filter((p) => p.text.trim().length > 0);
+            return proposeEnvelopeKycCheck({
               ai: signCoworker,
               runtime,
               orgId,
@@ -5524,11 +5525,15 @@ export function createRpcHandler(
               ...(input.expectedEntityName !== undefined ? { expectedEntityName: input.expectedEntityName } : {}),
               ...(input.expectedTaxCode !== undefined ? { expectedTaxCode: input.expectedTaxCode } : {}),
               ...(input.expectedSignerName !== undefined ? { expectedSignerName: input.expectedSignerName } : {}),
-              ...(input.attachmentPages ? { attachmentPages: input.attachmentPages } : {}),
+              ...(nonEmptyPages && nonEmptyPages.length > 0 ? { attachmentPages: nonEmptyPages } : {}),
+              inspectAttachmentPages: async (source) =>
+                source.storedTextPreview && source.storedTextPreview.trim().length > 0
+                  ? [{ page: 1, text: source.storedTextPreview }]
+                  : [],
               meter: aiMeter ? aiMeter(actor) : 'runtime',
               ...(aiPrice ? { meterOptions: { price: aiPrice } } : {}),
-            }),
-          ),
+            });
+          }),
         ),
         confirm: os.sign.kyc.confirm.handler(signCommand('sign.kyc.confirm')),
       },

@@ -39,6 +39,7 @@ import { createAuthenticator } from '../../src/auth.ts';
 import { loadConfig } from '../../src/config.ts';
 import { createHttpApp } from '../../src/http.ts';
 import { orgPurgeCommand, runOrgPurge } from '../../src/org-purge.ts';
+import { ConcurrencyLimiter } from '../../src/concurrency.ts';
 import { RateLimiter } from '../../src/rate-limit.ts';
 import { createSessionStatusSource } from '../../src/sessions.ts';
 import { runSignPdfSealJob } from '../../src/sign-worker.ts';
@@ -159,6 +160,8 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
   let app!: ReturnType<typeof createHttpApp>;
   let appUnentitled!: ReturnType<typeof createHttpApp>;
   let appTightRate!: ReturnType<typeof createHttpApp>;
+  let tightKeyReadLimit!: RateLimiter;
+  let tightPdfReads!: ConcurrencyLimiter;
   const store = new MemoryStore();
 
   const owner: Account = { subject: randomUUID(), email: 'owner@sign-v1.test', session: randomUUID(), userId: '' };
@@ -370,6 +373,8 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
       billing: { entitlements: async () => [] },
     });
 
+    tightKeyReadLimit = new RateLimiter({ perMinute: 1 });
+    tightPdfReads = new ConcurrencyLimiter({ total: 1, perKey: 1 });
     appTightRate = createHttpApp({
       config,
       runtime,
@@ -380,8 +385,9 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
       billing: { entitlements: async () => ['full'] },
       signApiV1Limits: {
         ip: new RateLimiter({ perMinute: 100 }),
-        keyRead: new RateLimiter({ perMinute: 1 }),
+        keyRead: tightKeyReadLimit,
         keyDraft: new RateLimiter({ perMinute: 1 }),
+        pdfReads: tightPdfReads,
       },
     });
 
@@ -733,7 +739,7 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
     expect(JSON.stringify(listed.body)).not.toContain(fullScopeSecret);
     expect(JSON.stringify(listed.body)).not.toContain(sha256Hex(fullScopeSecret));
 
-    // ADR-0047 section 10: aal2 callers must hold fresh MFA (<= 5 min) to create an API key,
+    // ADR-0028 section 5: aal2 callers must hold fresh MFA (<= 5 min) to create an API key,
     // while revocation stays immediate even on stale aal2.
     const nowS = Math.floor(Date.now() / 1000);
     const staleMissingAmr = await rpc<{ code?: string }>(
@@ -779,6 +785,30 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
     );
     expect(staleRevoke.status).toBe(200);
     expect(staleRevoke.body.revokedAt).not.toBeNull();
+
+    // Duplicate active API key labels reject with 409 SIGN_API_KEY_DUPLICATE_NAME (case-insensitive),
+    // while reusing the name of a revoked key succeeds cleanly (#4510).
+    const dupActive = await rpc<{ code?: string }>(
+      'sign/api_keys/create',
+      owner,
+      { name: 'erp full key', scopes: ['sign:read'] },
+    );
+    expect(dupActive.status).toBe(409);
+    expect(dupActive.body).toMatchObject({ code: 'SIGN_API_KEY_DUPLICATE_NAME' });
+
+    const reuseRevokedName = await rpc<{ apiKey: { id: string } }>(
+      'sign/api_keys/create',
+      owner,
+      { name: 'Fresh MFA Key', scopes: ['sign:read'] },
+      orgA.slug,
+      { aal: 'aal2', mfaAt: nowS },
+    );
+    expect(reuseRevokedName.status).toBe(200);
+    expect(
+      (
+        await rpc('sign/api_keys/revoke', owner, { apiKeyId: reuseRevokedName.body.apiKey.id })
+      ).status,
+    ).toBe(200);
   });
 
   it('enforces query-token rejection, no-store headers, Bearer SHA-256 auth, and sign:read vs sign:draft scope separation', async () => {
@@ -1120,14 +1150,132 @@ suite('eSign Slice 5c `/api/v1/sign/*` and scoped API key invariants (#4441)', (
     );
     expect(nulRes.status).toBe(422);
     await expect(nulRes.json()).resolves.toMatchObject({ code: 'VALIDATION' });
+
+    // Non-active (draft) templates reject with 409 SIGN_TEMPLATE_NOT_ACTIVE, while active templates carrying
+    // detectedTags + pageDimensions preserve inspection metadata onto created draft envelopes (#4510).
+    const draftTplDoc = await ingestPdf(orgA.orgId, adminUser, 'draft-only-template');
+    const draftOnlyTpl = await runtime.execute<{ templateId: string }>(
+      'sign.template.create',
+      { title: 'Mau ban nhap chua kich hoat', sourceFileId: draftTplDoc.fileId, routingMode: 'parallel' },
+      { actor: asUser(adminUser), orgId: orgA.orgId },
+    );
+    await workerRuntime.execute(
+      'sign.template.inspect_complete',
+      {
+        templateId: draftOnlyTpl.templateId,
+        outcome: 'passed',
+        pageCount: 1,
+        pageDimensions: [{ page: 1, widthPt: 595, heightPt: 842, rotation: 0 }],
+        detectedTags: [
+          {
+            pageNumber: 1,
+            fieldType: 'signature',
+            roleOrder: 1,
+            roleKey: 'r1',
+            required: true,
+            label: null,
+            xNorm: 0.1,
+            yNorm: 0.7,
+            wNorm: 0.25,
+            hNorm: 0.1,
+          },
+        ],
+      },
+      { actor: asSystem, orgId: orgA.orgId },
+    );
+    const draftTplReject = await apiPost(
+      '/api/v1/sign/envelopes/from-template',
+      { templateId: draftOnlyTpl.templateId, recipients: [] },
+      `Bearer ${draftOnlySecret}`,
+    );
+    expect(draftTplReject.status).toBe(409);
+    await expect(draftTplReject.json()).resolves.toMatchObject({ code: 'SIGN_TEMPLATE_NOT_ACTIVE' });
+
+    await runtime.execute(
+      'sign.template.roles_set',
+      {
+        templateId: draftOnlyTpl.templateId,
+        roles: [
+          {
+            roleKey: 'r1',
+            signerRole: 'signer',
+            roleLabel: 'Ben ky',
+            routingOrder: 1,
+            deliveryMode: 'email',
+            requireEmailOtp: false,
+          },
+        ],
+      },
+      { actor: asUser(adminUser), orgId: orgA.orgId },
+    );
+    await runtime.execute(
+      'sign.template.update',
+      { templateId: draftOnlyTpl.templateId, status: 'active' },
+      { actor: asUser(adminUser), orgId: orgA.orgId },
+    );
+    const inspectedDraftRes = await apiPost(
+      '/api/v1/sign/envelopes/from-template',
+      {
+        templateId: draftOnlyTpl.templateId,
+        recipients: [{ roleKey: 'r1', name: 'Inspected Client', email: 'inspected@example.com' }],
+      },
+      `Bearer ${draftOnlySecret}`,
+    );
+    expect(inspectedDraftRes.status).toBe(201);
+    const inspectedDraftBody = (await inspectedDraftRes.json()) as { id: string };
+    const envMeta = await admin((c) =>
+      c.query<{
+        inspect_status: string;
+        inspect_error: string | null;
+        page_count: number | null;
+        page_dimensions_json: unknown[];
+        detected_tags_json: unknown[];
+      }>(
+        `SELECT inspect_status, inspect_error, page_count, page_dimensions_json, detected_tags_json
+         FROM ludy_sign.envelope WHERE org_id = $1::uuid AND id = $2::uuid`,
+        [orgA.orgId, inspectedDraftBody.id],
+      ),
+    );
+    expect(envMeta.rows[0]?.inspect_status).toBe('passed');
+    expect(envMeta.rows[0]?.inspect_error).toBeNull();
+    expect(envMeta.rows[0]?.page_count).toBe(1);
+    expect(envMeta.rows[0]?.page_dimensions_json).toHaveLength(1);
+    expect(envMeta.rows[0]?.detected_tags_json).toMatchObject([{ roleKey: 'r1', pageNumber: 1 }]);
   });
 
-  it('enforces per-key rate limits (429 + Retry-After), immediate key expiry and revocation (401), and clean org_purge', async () => {
+  it('enforces per-key rate limits (429 + Retry-After), unknown-key spray isolation, pdfReads isolation, immediate expiry/revocation (401), and org_purge', async () => {
+    // Unknown-key Bearer spray returns 401 WITHOUT populating or exhausting per-key RateLimiter buckets.
+    for (let i = 0; i < 5; i += 1) {
+      const unknownRes = await apiGet(
+        '/api/v1/sign/envelopes',
+        `Bearer ludy_sk_${String(i).padStart(43, 'X')}`,
+        appTightRate,
+      );
+      expect(unknownRes.status).toBe(401);
+    }
+    expect(tightKeyReadLimit.size).toBe(0);
+
     const first = await apiGet('/api/v1/sign/envelopes', `Bearer ${fullScopeSecret}`, appTightRate);
     expect(first.status).toBe(200);
+    expect(tightKeyReadLimit.size).toBe(1);
     const second = await apiGet('/api/v1/sign/envelopes', `Bearer ${fullScopeSecret}`, appTightRate);
     expect(second.status).toBe(429);
     expect(Number(second.headers.get('retry-after'))).toBeGreaterThanOrEqual(1);
+    await expect(second.json()).resolves.toMatchObject({
+      code: 'RATE_LIMITED',
+      message: 'Too many requests, please retry later',
+    });
+
+    // Saturated signApiV1Limits.pdfReads answers 503 SIGN_PDF_BUSY on /sealed and /certificate cleanly.
+    const releaseSlot = tightPdfReads.tryAcquire(orgA.orgId);
+    expect(releaseSlot).not.toBeNull();
+    try {
+      const busySealed = await apiGet(`/api/v1/sign/envelopes/${ids.completedEnv}/sealed`, `Bearer ${readOnlySecret}`, appTightRate);
+      expect(busySealed.status).toBe(503);
+      await expect(busySealed.json()).resolves.toMatchObject({ code: 'SIGN_PDF_BUSY' });
+    } finally {
+      releaseSlot?.();
+    }
 
     // Revoking fullScopeKeyId via RPC cuts access immediately.
     const revRes = await rpc('sign/api_keys/revoke', owner, { apiKeyId: fullScopeKeyId });

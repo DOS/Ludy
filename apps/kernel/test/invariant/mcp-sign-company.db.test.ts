@@ -875,6 +875,29 @@ suite('eSign MCP company grant database and projection invariants (#4441)', () =
     );
     expect(unconfirmedDetail.obligation).toBeNull();
 
+    // Redact email-shaped substrings from signer.roleLabel without modifying ordinary labels (#4510).
+    await runtime.execute(
+      'sign.signer.add',
+      {
+        envelopeId: ids.proposedEnv,
+        signerRole: 'signer',
+        roleLabel: 'Ben B <signer-leak@mcp-company.test>',
+        routingOrder: 1,
+        name: 'Signer Proposed Canary',
+        email: 'signer-leak@mcp-company.test',
+        deliveryMode: 'link',
+        requireEmailOtp: false,
+      },
+      { actor: asUser('admin'), orgId: orgA },
+    );
+    const redactedDetail = await runtime.query<McpSignEnvelopeDetail>(
+      'sign.mcp.envelope_get',
+      { envelopeId: ids.proposedEnv },
+      ctx,
+    );
+    expect(redactedDetail.signers[0]?.roleLabel).toBe('Ben B <[redacted]>');
+    expect(JSON.stringify(redactedDetail)).not.toContain('signer-leak@mcp-company.test');
+
     const renewals = await runtime.query<McpSignRenewalsResult>(
       'sign.mcp.renewals',
       { withinDays: 90, limit: 25 },
@@ -1010,7 +1033,11 @@ suite('eSign MCP company grant database and projection invariants (#4441)', () =
            SELECT
              b.org_id,
              ludy_kernel.uuid_v7(),
-             CASE WHEN g.n = 0 THEN 'Dated Renewal Priority Contract' ELSE 'Undated Obligation ' || g.n END,
+             CASE
+               WHEN g.n = 0 THEN 'Dated Renewal Priority Contract'
+               WHEN g.n = 1 THEN 'Undated Obligation Urgent Due Date'
+               ELSE 'Undated Obligation ' || g.n
+             END,
              'completed',
              b.source_file_id,
              b.source_storage_key,
@@ -1018,7 +1045,7 @@ suite('eSign MCP company grant database and projection invariants (#4441)', () =
              b.source_sha256,
              $3::uuid
            FROM base b
-           CROSS JOIN generate_series(0, 201) AS g(n)
+           CROSS JOIN generate_series(0, 202) AS g(n)
            RETURNING id, title
          ),
          ob_rows AS (
@@ -1032,20 +1059,35 @@ suite('eSign MCP company grant database and projection invariants (#4441)', () =
              current_date,
              CASE WHEN e.title = 'Dated Renewal Priority Contract' THEN current_date + 20 ELSE NULL END,
              CASE WHEN e.title = 'Dated Renewal Priority Contract' THEN 5 ELSE NULL END,
-             '[{"id":"ob-1","title":"Pending check","dueDate":null,"status":"pending","completedAt":null}]'::jsonb,
+             CASE
+               WHEN e.title = 'Undated Obligation Urgent Due Date'
+                 THEN jsonb_build_array(jsonb_build_object(
+                   'id', 'ob-urgent',
+                   'title', 'Urgent undated contract check',
+                   'dueDate', to_char(current_date + 2, 'YYYY-MM-DD'),
+                   'status', 'pending',
+                   'completedAt', NULL
+                 ))
+               ELSE '[{"id":"ob-1","title":"Pending check","dueDate":null,"status":"pending","completedAt":null}]'::jsonb
+             END,
              'confirmed',
              $3::uuid,
              now(),
              $3::uuid,
-             CASE WHEN e.title = 'Dated Renewal Priority Contract' THEN now() - interval '1 day' ELSE now() END
+             CASE
+               WHEN e.title IN ('Dated Renewal Priority Contract', 'Undated Obligation Urgent Due Date')
+                 THEN now() - interval '1 day'
+               ELSE now()
+             END
            FROM env_rows e
-           RETURNING envelope_id, (expiry_date IS NOT NULL) AS dated
+           RETURNING envelope_id, (expiry_date IS NOT NULL) AS dated, (next_pending_due_date IS NOT NULL) AS has_due
          )
-         SELECT envelope_id AS id, dated FROM ob_rows`,
+         SELECT envelope_id AS id, dated, has_due FROM ob_rows`,
         [orgB, ids.orgBEnv!, users.foreign!],
       );
       for (const r of seedRes.rows) createdEnvIds.push(r.id);
       const datedId = seedRes.rows.find((r) => r.dated)!.id;
+      const urgentDueId = seedRes.rows.find((r) => (r as unknown as { has_due: boolean }).has_due)!.id;
 
       const renewals = await runtime.query<McpSignRenewalsResult>(
         'sign.mcp.renewals',
@@ -1053,7 +1095,10 @@ suite('eSign MCP company grant database and projection invariants (#4441)', () =
         asGrantB,
       );
       expect(renewals.items.some((item) => item.envelopeId === datedId)).toBe(true);
-      expect(renewals.items[0]!.envelopeId).toBe(datedId);
+      expect(renewals.items.some((item) => item.envelopeId === urgentDueId)).toBe(true);
+      expect(renewals.total).toBeGreaterThan(200);
+      expect(renewals.truncated).toBe(true);
+      expect([datedId, urgentDueId]).toContain(renewals.items[0]!.envelopeId);
     } finally {
       if (createdEnvIds.length > 0) {
         await sqlAdmin(

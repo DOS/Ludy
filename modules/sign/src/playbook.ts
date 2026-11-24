@@ -3,6 +3,7 @@
 // Every state change runs through Runtime.execute() with zero noIdempotency commands.
 // AI findings are tainted proposals verified against extracted PDF pages; core checklist review works identically with AI off.
 import { createHash, randomUUID } from 'node:crypto';
+import { sql } from 'kysely';
 import { z } from 'zod';
 import {
   SIGN_PLAYBOOK_MODES,
@@ -1888,6 +1889,14 @@ export const playbookSource = defineQuery({
   },
 });
 
+async function acquirePlaybookRuleOrgLock(trx: CommandContext['trx'], orgId: string): Promise<void> {
+  await sql`
+    SELECT pg_catalog.pg_advisory_xact_lock(
+      pg_catalog.hashtextextended(${`sign.playbook.rule:${orgId}`}, 0)
+    )
+  `.execute(trx);
+}
+
 export const playbookRuleUpsert = defineCommand({
   name: 'sign.playbook.rule_upsert',
   input: zSignPlaybookRuleUpsertInput.omit({ idempotencyKey: true }),
@@ -1897,6 +1906,7 @@ export const playbookRuleUpsert = defineCommand({
   writes: [PLAYBOOK_RULE_WRITE],
   handler: async (ctx, input): Promise<SignPlaybookRuleRecord> => {
     const userId = assertPlaybookAdmin(ctx);
+    await acquirePlaybookRuleOrgLock(ctx.trx, ctx.orgId);
     await ensurePlaybookRulesMaterialized(ctx, userId);
 
     const title = cleanSingleLine(input.title, 200);
@@ -2038,6 +2048,7 @@ export const playbookSeedDefaults = defineCommand({
   writes: [PLAYBOOK_RULE_WRITE],
   handler: async (ctx): Promise<SignPlaybookRulesListResult> => {
     const userId = assertPlaybookAdmin(ctx);
+    await acquirePlaybookRuleOrgLock(ctx.trx, ctx.orgId);
     const existingRows = await ctx.trx
       .selectFrom('ludy_sign.playbook_rule')
       .select('id')

@@ -770,6 +770,16 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'erase',
     reason: 'Sender-side KYC attachment verification findings (extracted tax IDs, CCCD numbers, or signer/entity names under Vietnam PDPL Law 91/2025/QH15): an erasure deletes any kyc_check row whose findings quote the value while leaving sealed agreement files intact, and a member may run the check again',
   },
+  'ludy_sign.kyc_check.file_id': {
+    kind: 'other',
+    handling: 'keep_record',
+    reason: 'Supporting attachment file reference on deleted kyc_check rows: deleted kyc_check attachment links are counted in erasure reports while executed/sealed envelope attachments stay preserved',
+  },
+  'ludy_sign.field.attachment_file_id': {
+    kind: 'other',
+    handling: 'erase',
+    reason: 'Uploaded signer KYC attachment link on an unsealed e-signature field: cleared on unsealed envelopes when its KYC findings are erased so reads block immediately, while completed/sealed envelope evidence remains intact',
+  },
   'ludy_sign.member_signature.signature_typed_text': {
     kind: 'other',
     handling: 'erase',
@@ -1755,12 +1765,18 @@ export const personalDataErase = defineCommand({
       SELECT ludy_finance.personal_data_erase_marketplace_hook_notice(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
     add('ludy_finance.marketplace_hook_notice.body', Number(marketplaceNotices[0]?.rows ?? 0));
 
-    // Sender-side KYC attachment checks (#4443, PDPL Law 91/2025/QH15): delete any kyc_check row in the org whose
-    // findings_json quotes the value (including 8/9-digit legacy CMND numbers and rows on attendees-only meeting_minutes
-    // envelopes via the owner-only definer); sealed agreement files stay untouched and checks can always be re-run.
-    const { rows: kycRows } = await sql<{ rows: number }>`
-      SELECT ludy_sign.personal_data_erase_kyc_check(${probe.kind}, ${probeValue(probe)}) AS rows`.execute(ctx.trx);
-    add('ludy_sign.kyc_check.findings_json', Number(kycRows[0]?.rows ?? 0));
+    // Sender-side KYC attachment checks (#4443, PDPL Law 91/2025/QH15; summary counts #4510): delete any
+    // kyc_check row in the org whose findings_json quotes the value (including 8/9-digit legacy CMND numbers
+    // and rows on attendees-only meeting_minutes envelopes via the owner-only definer), detach matching unsealed
+    // attachment links, and report both KYC row and attachment counts; sealed agreement files stay untouched.
+    const { rows: kycRows } = await sql<{
+      summary: { rows?: number; attachments?: number; unsealedAttachments?: number };
+    }>`
+      SELECT ludy_sign.personal_data_erase_kyc_check_summary(${probe.kind}, ${probeValue(probe)}) AS summary`.execute(ctx.trx);
+    const kycSummary = kycRows[0]?.summary;
+    add('ludy_sign.kyc_check.findings_json', Number(kycSummary?.rows ?? 0));
+    add('ludy_sign.kyc_check.file_id', Number(kycSummary?.attachments ?? 0));
+    add('ludy_sign.field.attachment_file_id', Number(kycSummary?.unsealedAttachments ?? 0));
 
     // Notes (#1678, ADR-0037 section 5). A shared note stays and has every mention of the value edited out, the one
     // case where someone other than its author edits a note: ERASED_TEXT_MARK in its title and body where the value

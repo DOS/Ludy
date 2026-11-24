@@ -2,10 +2,10 @@
 
 Tracking: issue #4441 (Slice 5c of epic #4438). Related: [The MCP endpoint](mcp-endpoint.md), [ADR-0051](../adr/0051-vys-brain-is-a-dos-claw-agent-ludy-is-the-gate.md), [ADR-0053](../adr/0053-per-org-app-enablement.md).
 
-Slice 5c exposes two read-first integration surfaces for Ludy eSign (`crove_sign`) while preserving the human-in-the-loop rule (an AI coworker or external caller can inspect status and prepare a draft, never auto-send an envelope or mint signing links):
+Slice 5c exposes two read-first integration surfaces for Ludy eSign (`ludy_sign`) while preserving the human-in-the-loop rule (an AI coworker or external caller can inspect status and prepare a draft, never auto-send an envelope or mint signing links):
 
 1. **Four read-only MCP tools (`ludy.read`, company grants only)** on `PUBLIC_URL/mcp` so connected AI coworkers (Claude, ChatGPT, OpenClaw, DOS Claw) can answer questions about contract status, renewals, and reusable templates.
-2. **Scoped org API keys (`crove_sign.api_key`) and six `/api/v1/sign/*` REST endpoints** so external ERP, accounting, or back-office systems can poll envelope status, download sealed PDFs and audit certificates, list templates, and instantiate draft envelopes from templates for human review.
+2. **Scoped org API keys (`ludy_sign.api_key`) and six `/api/v1/sign/*` REST endpoints** so external ERP, accounting, or back-office systems can poll envelope status, download sealed PDFs and audit certificates, list templates, and instantiate draft envelopes from templates for human review.
 
 ## Four read-only MCP tools (`ludy.read`, company grants only)
 
@@ -20,17 +20,17 @@ All four tools require an active **company** OAuth grant (`mcp_company`) of an o
 
 ### Privacy and confidentiality boundaries
 
-- **Strict exclusion of confidential envelopes:** Envelopes with `source_kind` in `('hr_contract', 'meeting_minutes')` are excluded in both Postgres RLS (`crove_sign` sealed company policies) and query projections. Asking `ludy_sign_envelope_get` for an `hr_contract`, `meeting_minutes`, or foreign-org envelope returns the same `404 SIGN_ENVELOPE_NOT_FOUND` as an unknown ID.
+- **Strict exclusion of confidential envelopes:** Envelopes with `source_kind` in `('hr_contract', 'meeting_minutes')` are excluded in both Postgres RLS (`ludy_sign` sealed company policies) and query projections. Asking `ludy_sign_envelope_get` for an `hr_contract`, `meeting_minutes`, or foreign-org envelope returns the same `404 SIGN_ENVELOPE_NOT_FOUND` as an unknown ID.
 - **Zero secrets or counterparty PII:** Signing tokens, email OTP challenges, signer names, emails, phones, counterparty names, unconfirmed AI obligation proposals, object-storage keys, direct-link tokens, CA credentials, saved signatures, and org stamps never leave Ludy through MCP.
 - **Tainted text hygiene:** Every free-text string (`title`, `roleLabel`, and obligation item `title`) is collapsed to a single plain line with control and bidirectional characters stripped, and tool descriptions mark returned text as untrusted data.
 - **Stop switches and app gate:** Disconnecting the grant, engaging the global or org Stop AI switch (`KILL_SWITCH_ON`), or switching off the eSign app (`MODULE_OFF`) cuts access immediately.
 
-## Scoped org API keys (`crove_sign.api_key`)
+## Scoped org API keys (`ludy_sign.api_key`)
 
-Org `owner` and `admin` members manage eSign API keys in `/o/<slug>/sign/settings` (up to 50 active keys per org):
+Org `owner` and `admin` members manage eSign API keys in `/o/<slug>/sign/settings` (up to 50 active keys per org; active key names are case-insensitively unique, and duplicate active names return `409 SIGN_API_KEY_DUPLICATE_NAME`):
 
-- **Key format and hashing:** Keys are generated at the HTTP RPC edge (`apps/kernel/src/rpc.ts`) as `ludy_sk_<32 CSPRNG bytes base64url>` before `Runtime.execute()`. Only `key_prefix` (for display) and `key_sha256` (64-char lowercase hex SHA-256) enter the command payload, audit trail, idempotency store, and `crove_sign.api_key`. The cleartext secret is returned once in the creation response and cannot be recovered afterward.
-- **`MACHINERY` isolation:** `crove_sign.api_key` has `ENABLE ROW LEVEL SECURITY`, zero grants to `PUBLIC`, `ludy_tenant`, `ludy_app`, `ludy_worker`, or `ludy_definer_tenant`, and `ludy_kernel.agent_write_guard_install('crove_sign.api_key')`. Only narrow `SECURITY DEFINER` procedures in `crove_sign` touch the table.
+- **Key format and hashing:** Keys are generated at the HTTP RPC edge (`apps/kernel/src/rpc.ts`) as `ludy_sk_<32 CSPRNG bytes base64url>` before `Runtime.execute()`. Only `key_prefix` (for display) and `key_sha256` (64-char lowercase hex SHA-256) enter the command payload, audit trail, idempotency store, and `ludy_sign.api_key`. The cleartext secret is returned once in the creation response and cannot be recovered afterward.
+- **`MACHINERY` isolation:** `ludy_sign.api_key` has `ENABLE ROW LEVEL SECURITY`, zero grants to `PUBLIC`, `ludy_tenant`, `ludy_app`, `ludy_worker`, or `ludy_definer_tenant`, and `ludy_kernel.agent_write_guard_install('ludy_sign.api_key')`. Only narrow `SECURITY DEFINER` procedures in `ludy_sign` touch the table.
 - **Scopes:**
   - `sign:read`: read envelopes, download completed sealed PDFs and audit certificates, and list active templates.
   - `sign:draft`: instantiate a `draft` envelope from an active, inspected template for human review in Ludy.
@@ -53,6 +53,7 @@ curl -sS "$PUBLIC_URL/api/v1/sign/envelopes?status=completed&limit=25" \
 
 - Query parameters: optional `status` (`draft`, `sent`, `in_progress`, `completed`, `declined`, `voided`, `expired`), optional `limit` (`1..100`, default `50`).
 - Excludes `hr_contract` and `meeting_minutes` envelopes.
+- Status codes: `200`, `400 SIGN_QUERY_TOKEN_FORBIDDEN`, `401 UNAUTHENTICATED`, `403 FORBIDDEN`, `404 NOT_FOUND`, `422 VALIDATION`, `429 RATE_LIMITED`.
 
 ### 2. Get envelope detail
 
@@ -65,6 +66,7 @@ curl -sS "$PUBLIC_URL/api/v1/sign/envelopes/$ENVELOPE_ID" \
 
 - Returns envelope metadata, SHA-256 digests (`sourceSha256`, `sealedSha256`, `certificateSha256`), and signer progress (`id`, `roleKey`, `routingOrder`, `signerRole`, `roleLabel`, `name`, `deliveryMode`, `requireEmailOtp`, `status`, `viewedAt`, `signedAt`, `declinedAt`).
 - Never returns signing tokens, OTP hashes, signer emails/phones, or storage keys. Confidential (`hr_contract`, `meeting_minutes`) and foreign-org IDs return `404 NOT_FOUND`.
+- Status codes: `200`, `400 SIGN_QUERY_TOKEN_FORBIDDEN`, `401 UNAUTHENTICATED`, `403 FORBIDDEN`, `404 NOT_FOUND`, `429 RATE_LIMITED`.
 
 ### 3. Download sealed PDF
 
@@ -78,6 +80,7 @@ curl -sS "$PUBLIC_URL/api/v1/sign/envelopes/$ENVELOPE_ID/sealed" \
 
 - Requires `status = 'completed'` and `seal_status = 'sealed'` (otherwise returns `409 SIGN_ENVELOPE_NOT_SEALED`).
 - Streams verified bytes (`store.readVerified` against `sealed_sha256` and `sealed_generation`) as `application/pdf` with `X-Content-SHA256`.
+- Status codes: `200`, `400 SIGN_QUERY_TOKEN_FORBIDDEN`, `401 UNAUTHENTICATED`, `403 FORBIDDEN`, `404 NOT_FOUND`, `409 SIGN_ENVELOPE_NOT_SEALED`, `429 RATE_LIMITED`, `503 SIGN_PDF_BUSY`.
 
 ### 4. Download audit certificate
 
@@ -91,6 +94,7 @@ curl -sS "$PUBLIC_URL/api/v1/sign/envelopes/$ENVELOPE_ID/certificate" \
 
 - Requires `status = 'completed'` and `seal_status = 'sealed'` (otherwise returns `409 SIGN_ENVELOPE_NOT_SEALED`).
 - Streams the verified audit certificate JSON (`store.readVerified` against `certificate_sha256` and `certificate_generation`) as `application/json; charset=utf-8` with `X-Content-SHA256`.
+- Status codes: `200`, `400 SIGN_QUERY_TOKEN_FORBIDDEN`, `401 UNAUTHENTICATED`, `403 FORBIDDEN`, `404 NOT_FOUND`, `409 SIGN_ENVELOPE_NOT_SEALED`, `429 RATE_LIMITED`, `503 SIGN_PDF_BUSY`.
 
 ### 5. List active templates
 
@@ -102,6 +106,7 @@ curl -sS "$PUBLIC_URL/api/v1/sign/templates?limit=50" \
 ```
 
 - Returns active templates with `roles` (`roleKey`, `signerRole`, `roleLabel`, `routingOrder`, `deliveryMode`, `requireEmailOtp`) and `textFieldLabels` (distinct non-empty labels of `text` template fields that `POST /api/v1/sign/envelopes/from-template` can prefill via `textDefaults`). Never returns direct-link tokens.
+- Status codes: `200`, `400 SIGN_QUERY_TOKEN_FORBIDDEN`, `401 UNAUTHENTICATED`, `403 FORBIDDEN`, `404 NOT_FOUND`, `422 VALIDATION`, `429 RATE_LIMITED`.
 
 ### 6. Create a draft envelope from a template
 
@@ -136,15 +141,18 @@ curl -sS -X POST "$PUBLIC_URL/api/v1/sign/envelopes/from-template" \
   }
   ```
 - **Human-in-the-loop:** No signing token is minted and no email is queued. An authorized workspace member opens `reviewUrl`, checks recipients and prefilled fields, and sends the envelope in Ludy.
+- Status codes: `201`, `400 SIGN_QUERY_TOKEN_FORBIDDEN`, `401 UNAUTHENTICATED`, `403 FORBIDDEN`, `404 NOT_FOUND`, `409 SIGN_TEMPLATE_ARCHIVED` / `SIGN_TEMPLATE_NOT_ACTIVE` / `SIGN_INSPECT_FAILED` / `SIGN_DOCUMENT_NOT_INSPECTED`, `413 Payload Too Large`, `422 VALIDATION` / `SIGN_UNKNOWN_ROLE_KEY` / `SIGN_DUPLICATE_ROLE_KEY` / `SIGN_RECIPIENT_REQUIRED` / `SIGN_EMAIL_REQUIRED` / `SIGN_INVALID_EXPIRY` / `SIGN_TEXT_DEFAULT_TOO_LONG`, `429 RATE_LIMITED`.
 
 ## Rate limits and error codes
 
-- **Per-IP and per-key rate limits:** Requests default to 120/min per IP, 60/min per key on read routes (`GET`), and 20/min per key on `POST /api/v1/sign/envelopes/from-template` (with a 32 KB JSON body cap and bounded concurrent download slots on `/sealed` and `/certificate`). Exceeding any bucket returns `429 RATE_LIMITED` with `Retry-After`.
+- **Per-IP and per-key rate limits:** Requests default to 120/min per IP, 60/min per key on read routes (`GET`), and 20/min per key on `POST /api/v1/sign/envelopes/from-template` (with a 32 KB JSON body cap and an isolated download concurrency bucket on `/sealed` and `/certificate`). Exceeding any rate limit returns `429 RATE_LIMITED` with `Retry-After`; saturating download concurrency slots returns `503 SIGN_PDF_BUSY` with `Retry-After`.
 - **Status codes:**
-  - `400 SIGN_QUERY_TOKEN_FORBIDDEN` / `BAD_REQUEST`: token in URL query string or malformed JSON/UUID.
+  - `400 SIGN_QUERY_TOKEN_FORBIDDEN`: token sent in a URL query string.
   - `401 UNAUTHENTICATED`: missing, malformed, unknown, expired, or revoked Bearer key (`WWW-Authenticate: Bearer`).
   - `403 FORBIDDEN`: valid key missing the required scope (`sign:read` or `sign:draft`).
-  - `404 NOT_FOUND`: org eSign app off, unentitled billing, unknown envelope or template ID, foreign-org ID, or confidential envelope (`hr_contract` / `meeting_minutes`).
-  - `409 SIGN_ENVELOPE_NOT_SEALED` / `SIGN_TEMPLATE_ARCHIVED` / `SIGN_INSPECT_FAILED` / `SIGN_DOCUMENT_NOT_INSPECTED`: lifecycle precondition not met.
-  - `422 VALIDATION` / `SIGN_UNKNOWN_ROLE_KEY` / `SIGN_DUPLICATE_ROLE_KEY` / `SIGN_RECIPIENT_REQUIRED` / `SIGN_EMAIL_REQUIRED` / `SIGN_INVALID_EXPIRY`: invalid query parameter, payload schema, expiry, or recipient role mapping.
-  - `429 RATE_LIMITED`: rate limit or download concurrency limit reached.
+  - `404 NOT_FOUND`: org eSign app off, unentitled billing, invalid envelope UUID, unknown envelope or template ID, foreign-org ID, or confidential envelope (`hr_contract` / `meeting_minutes`).
+  - `409 SIGN_ENVELOPE_NOT_SEALED` / `SIGN_TEMPLATE_ARCHIVED` / `SIGN_TEMPLATE_NOT_ACTIVE` / `SIGN_INSPECT_FAILED` / `SIGN_DOCUMENT_NOT_INSPECTED`: lifecycle precondition not met.
+  - `413 Payload Too Large`: request body on `POST /api/v1/sign/envelopes/from-template` exceeds 32 KB (`text/plain` response).
+  - `422 VALIDATION` / `SIGN_UNKNOWN_ROLE_KEY` / `SIGN_DUPLICATE_ROLE_KEY` / `SIGN_RECIPIENT_REQUIRED` / `SIGN_EMAIL_REQUIRED` / `SIGN_INVALID_EXPIRY` / `SIGN_TEXT_DEFAULT_TOO_LONG`: invalid query parameter, malformed JSON or payload schema, expiry, text default length, or recipient role mapping.
+  - `429 RATE_LIMITED`: per-IP or per-key rate limit exceeded.
+  - `503 SIGN_PDF_BUSY`: download concurrency slots full on `/sealed` or `/certificate`.

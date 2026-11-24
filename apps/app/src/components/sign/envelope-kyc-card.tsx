@@ -556,6 +556,14 @@ function KycSlotRow({ envelopeId, slot, canWrite, onDownloadAttachment }: KycSlo
   );
 }
 
+export const SIGN_KYC_POLL_INTERVAL_MS = 2_500;
+
+export function kycRefetchIntervalMs(
+  data: { items: ReadonlyArray<{ check: { status: string } | null }> } | undefined,
+): number | false {
+  return data?.items.some((item) => item.check?.status === 'pending') ? SIGN_KYC_POLL_INTERVAL_MS : false;
+}
+
 export function EnvelopeKycCard({
   envelopeId,
   hasUploadedAttachments,
@@ -567,6 +575,7 @@ export function EnvelopeKycCard({
     queryKey: ['sign', 'kyc', envelopeId],
     queryFn: () => signApi.listKycChecks(envelopeId),
     enabled: Boolean(envelopeId) && hasUploadedAttachments,
+    refetchInterval: (query) => kycRefetchIntervalMs(query.state.data),
   });
 
   if (!hasUploadedAttachments) return null;

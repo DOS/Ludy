@@ -164,8 +164,9 @@ function cleanLine(value: string, max: number): string {
 
 export function normalizeFoldedVi(value: string): string {
   return stripFormatControl(value)
+    .normalize('NFKC')
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]+/g, '')
+    .replace(/\p{M}+/gu, '')
     .replace(/[đĐ]/g, 'd')
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s-]+/gu, ' ')

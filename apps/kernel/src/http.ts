@@ -485,11 +485,12 @@ export interface HttpDeps {
     templateActions: RateLimiter;
     emailOtpRequest: RateLimiter;
   }>;
-  // Per-client and per-key-hash rate limiters for external /api/v1/sign/* API routes (#4441).
+  // Per-client, per-key-hash, and download concurrency limiters for external /api/v1/sign/* API routes (#4441).
   signApiV1Limits?: Partial<{
     ip: RateLimiter;
     keyRead: RateLimiter;
     keyDraft: RateLimiter;
+    pdfReads: ConcurrencyLimiter;
   }>;
   // Per-client and per-email rate limiters for Projects Public Roadmap public routes (#4399).
   roadmapLimits?: Partial<{
@@ -2116,6 +2117,7 @@ export function createHttpApp(deps: HttpDeps) {
     const signApiV1IpLimit = deps.signApiV1Limits?.ip ?? new RateLimiter({ perMinute: SIGN_API_V1_IP_PER_MINUTE });
     const signApiV1KeyReadLimit = deps.signApiV1Limits?.keyRead ?? new RateLimiter({ perMinute: SIGN_API_V1_KEY_READ_PER_MINUTE });
     const signApiV1KeyDraftLimit = deps.signApiV1Limits?.keyDraft ?? new RateLimiter({ perMinute: SIGN_API_V1_KEY_DRAFT_PER_MINUTE });
+    const signApiV1PdfReads = deps.signApiV1Limits?.pdfReads ?? new ConcurrencyLimiter({ total: SIGN_PDF_READS_MAX, perKey: SIGN_PDF_READS_MAX });
 
     const signApiV1Guard: MiddlewareHandler = async (c, next) => {
       setSignSecurityHeaders(c);
@@ -2146,7 +2148,11 @@ export function createHttpApp(deps: HttpDeps) {
       if (res.status === 'forbidden') {
         return c.json({ code: 'FORBIDDEN', message: `API key requires scope ${res.requiredScope}` }, 403);
       }
-      return signRateLimited(c, res.retryAfterSeconds);
+      c.header('retry-after', String(res.retryAfterSeconds));
+      return c.json(
+        { code: 'RATE_LIMITED', message: 'Too many requests, please retry later', retryAfterSeconds: res.retryAfterSeconds },
+        429,
+      );
     };
 
     app.get('/api/v1/sign/envelopes', signApiV1Guard, async (c) => {
@@ -2192,7 +2198,7 @@ export function createHttpApp(deps: HttpDeps) {
           (hash) => signApiV1KeyReadLimit.take(hash),
         );
         if (lookup.status !== 'ok') return replySignApiV1NonOk(c, lookup);
-        const release = signPdfReads.tryAcquire('sign-api-v1');
+        const release = signApiV1PdfReads.tryAcquire(lookup.data.orgId);
         if (!release) {
           c.header('retry-after', '2');
           return c.json({ code: 'SIGN_PDF_BUSY', message: 'Server is busy, please retry shortly' }, 503);
@@ -2229,7 +2235,7 @@ export function createHttpApp(deps: HttpDeps) {
           (hash) => signApiV1KeyReadLimit.take(hash),
         );
         if (lookup.status !== 'ok') return replySignApiV1NonOk(c, lookup);
-        const release = signPdfReads.tryAcquire('sign-api-v1');
+        const release = signApiV1PdfReads.tryAcquire(lookup.data.orgId);
         if (!release) {
           c.header('retry-after', '2');
           return c.json({ code: 'SIGN_PDF_BUSY', message: 'Server is busy, please retry shortly' }, 503);

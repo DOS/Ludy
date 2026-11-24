@@ -35,7 +35,7 @@ function assertHumanManager(ctx: CommandContext | QueryContext): string {
   return ctx.actor.userId;
 }
 
-// Creating a long-lived scoped org API key needs a fresh second factor when the caller holds MFA (ADR-0047 section 10).
+// Creating a long-lived scoped org API key needs a fresh second factor when the caller holds MFA (ADR-0028 section 5).
 function assertApiKeyStepUp(ctx: CommandContext, what: string): void {
   if (ctx.actor.type === 'user' && ctx.actor.aal === 'aal2' && !hasFreshMfa(ctx.actor)) {
     throw new DomainError(
@@ -84,6 +84,18 @@ function normalizeApiKeyRecord(raw: RawApiKeyJson): SignApiKeyRecord {
 
 function mapApiKeySqlError(error: unknown): never {
   const message = error instanceof Error ? error.message : String(error);
+  const sqlCode = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
+  if (
+    message.includes('SIGN_API_KEY_DUPLICATE_NAME') ||
+    message.includes('api_key_org_active_name_uidx') ||
+    sqlCode === '23505'
+  ) {
+    throw new DomainError(
+      'SIGN_API_KEY_DUPLICATE_NAME',
+      409,
+      'An active eSign API key with that name already exists',
+    );
+  }
   if (message.includes('SIGN_API_KEY_NOT_FOUND')) {
     throw new DomainError('SIGN_API_KEY_NOT_FOUND', 404, 'API key not found');
   }
