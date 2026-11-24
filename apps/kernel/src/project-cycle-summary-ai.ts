@@ -3,18 +3,19 @@
 // performs one metered call outside the DB transaction when allowed, and returns full deterministic cycle metrics on any AI off/refusal state.
 import {
   AiBudgetExhaustedError,
+  PROJECT_CYCLE_GOAL_PROMPT_CHARS,
+  PROJECT_WEEKLY_STATUS_TITLE_CHARS,
   type InboxReader,
   type ProjectCycleSummaryFacts,
-  type ProjectWeeklyStatusTaskFact,
 } from '@ludy/agent';
 import {
-  vietnamToday,
+  plainLine,
   type ProjectCycleSummary,
   type ProjectWeeklyStatusState,
-  type ProjectWeeklyStatusTask,
 } from '@ludy/kernel-contract';
 import type { ProjectCycleSummarySource } from '@ludy/mod-projects';
 import type { DraftBudget } from './ai-draft-limit.ts';
+import { toProjectTaskFacts } from './project-weekly-status-ai.ts';
 
 export interface ProjectCycleSummaryAi {
   reader: Pick<InboxReader, 'projectCycleSummary'> | null;
@@ -26,17 +27,6 @@ export function projectCycleSummaryAi(
   budget: DraftBudget,
 ): ProjectCycleSummaryAi {
   return { reader, budget };
-}
-
-function toTaskFacts(tasks: readonly ProjectWeeklyStatusTask[]): ProjectWeeklyStatusTaskFact[] {
-  return tasks.map((task) => ({
-    title: task.title,
-    tainted: task.tainted !== false,
-    status: task.status,
-    dueDay: task.due ? vietnamToday(new Date(task.due)) : null,
-    commentCount: task.commentCount,
-    latestComment: task.latestComment,
-  }));
 }
 
 async function generateSummary(
@@ -58,12 +48,12 @@ async function generateSummary(
 
   const facts: ProjectCycleSummaryFacts = {
     language,
-    projectName: source.project.name,
+    projectName: plainLine(source.project.name, PROJECT_WEEKLY_STATUS_TITLE_CHARS),
     projectStatus: source.project.status,
     cycle: {
       number: source.cycle.number,
-      name: source.cycle.name,
-      goal: source.cycle.goal,
+      name: plainLine(source.cycle.name, PROJECT_WEEKLY_STATUS_TITLE_CHARS),
+      goal: source.cycle.goal ? plainLine(source.cycle.goal, PROJECT_CYCLE_GOAL_PROMPT_CHARS) || null : null,
       status: source.cycle.status,
       startsOn: source.cycle.startsOn,
       endsOn: source.cycle.endsOn,
@@ -76,7 +66,7 @@ async function generateSummary(
     averageVelocityTasks: source.metrics.averageVelocityTasks,
     averageVelocityPoints: source.metrics.averageVelocityPoints,
     velocityCyclesCount: source.metrics.velocity.length,
-    tasks: toTaskFacts(source.tasks),
+    tasks: toProjectTaskFacts(source.tasks),
   };
 
   try {

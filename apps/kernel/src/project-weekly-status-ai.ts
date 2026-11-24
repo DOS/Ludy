@@ -34,7 +34,7 @@ export function projectWeeklyStatusAi(
   return { reader, budget };
 }
 
-function toTaskFacts(tasks: readonly ProjectWeeklyStatusTask[]): ProjectWeeklyStatusTaskFact[] {
+export function toProjectTaskFacts(tasks: readonly ProjectWeeklyStatusTask[]): ProjectWeeklyStatusTaskFact[] {
   return tasks.map((task) => ({
     title: plainLine(task.title, PROJECT_WEEKLY_STATUS_TITLE_CHARS),
     tainted: task.tainted !== false,
@@ -84,10 +84,10 @@ async function generateSummary(
       : {}),
     ...(source.timeThisWeek ? { timeThisWeek: source.timeThisWeek } : {}),
     tasks: {
-      doneThisWeek: toTaskFacts(source.tasks.doneThisWeek),
-      overdue: toTaskFacts(source.tasks.overdue),
-      waiting: toTaskFacts(source.tasks.waiting),
-      dueNextWeek: toTaskFacts(source.tasks.dueNextWeek),
+      doneThisWeek: toProjectTaskFacts(source.tasks.doneThisWeek),
+      overdue: toProjectTaskFacts(source.tasks.overdue),
+      waiting: toProjectTaskFacts(source.tasks.waiting),
+      dueNextWeek: toProjectTaskFacts(source.tasks.dueNextWeek),
     },
     ...(bottlenecks.length > 0
       ? {

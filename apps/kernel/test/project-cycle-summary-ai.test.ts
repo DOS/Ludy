@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // API orchestrator tests for prepareProjectCycleSummary guard states and deterministic fallback (#4361).
 import { describe, expect, it } from 'vitest';
-import { AiBudgetExhaustedError } from '@ludy/agent';
+import { AiBudgetExhaustedError, InboxReader, type ProjectCycleSummaryFacts } from '@ludy/agent';
 import type { ProjectCycleSummarySource } from '@ludy/mod-projects';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { prepareProjectCycleSummary, projectCycleSummaryAi } from '../src/project-cycle-summary-ai.ts';
@@ -110,5 +110,96 @@ describe('prepareProjectCycleSummary (#4361)', () => {
     );
     expect(used.ai).toBe('used');
     expect(used.sentences).toEqual(['A.', 'B.', 'C.']);
+  });
+
+  it('strips invisible/bidi/tag chars from project, cycle, goal, and tasks and enforces fail-closed taint (#4637)', async () => {
+    const tag = (s: string) => [...s].map((c) => String.fromCodePoint(0xe0000 + c.charCodeAt(0))).join('');
+    let capturedFacts: ProjectCycleSummaryFacts | null = null;
+    const rawTitle = `Hợp\u202E đồng\u3164 88\u200B xem\u034F https://evil.invalid/pay ${tag('override')}`;
+    const rawGoal = `Mục\u200B tiêu\u2800 quý ${tag('goal')}`;
+    const base = baseSource();
+    const source = baseSource({
+      project: { id: base.project.id, name: 'Kế\u200B hoạch\u202E Q1', status: 'active' },
+      cycle: {
+        ...base.cycle!,
+        name: `Sprint\u3164 1${tag('c')}`,
+        goal: rawGoal,
+      },
+      tasks: [
+        {
+          id: '00000000-0000-4000-8000-000000000020',
+          title: rawTitle,
+          tainted: true,
+          status: 'in_progress',
+          due: null,
+          commentCount: 1,
+          latestComment: 'Khách\u200B đã\u202E nhắn.',
+        },
+        {
+          id: '00000000-0000-4000-8000-000000000021',
+          title: 'Việc thiếu cờ taint',
+          tainted: undefined as unknown as boolean,
+          status: 'done',
+          due: null,
+          commentCount: 0,
+          latestComment: null,
+        },
+      ],
+    });
+
+    const captureAi = projectCycleSummaryAi(
+      {
+        projectCycleSummary: async (facts) => {
+          capturedFacts = facts;
+          return { kind: 'summary', sentences: ['A.', 'B.', 'C.'] };
+        },
+      },
+      new DraftBudget(),
+    );
+
+    const ok = await prepareProjectCycleSummary(captureAi, 'o', 'u', source, 'vi');
+    expect(ok.ai).toBe('used');
+    expect(ok.cycle?.goal).toBe(rawGoal);
+    expect(capturedFacts).not.toBeNull();
+    expect(capturedFacts!.projectName).toBe('Kế hoạch Q1');
+    expect(capturedFacts!.cycle.name).toBe('Sprint 1');
+    expect(capturedFacts!.cycle.goal).toBe('Mục tiêu quý');
+    expect(capturedFacts!.tasks[0]).toMatchObject({
+      title: 'Hợp đồng 88 xem https://evil.invalid/pay',
+      tainted: true,
+      latestComment: 'Khách đã nhắn.',
+    });
+    expect(capturedFacts!.tasks[1]?.tainted).toBe(true);
+
+    // End-to-end through InboxReader: echoing injected number/link from tainted title is refused.
+    const cfg = { baseURL: 'http://127.0.0.1:1/v1', apiKey: null, model: 'test', maxRetries: 0 };
+    let seenPrompt = '';
+    const poisonedReader = new InboxReader(cfg, {
+      projectCycleSummary: async ({ prompt }) => {
+        seenPrompt = prompt;
+        return {
+          output: {
+            sentences: [
+              'Chu kỳ 1 Sprint 1 đã xong 2 trên 4 việc với 5 trên 10 điểm.',
+              'Còn hợp đồng 88 xem https://evil.invalid/pay.',
+              'Còn 2 việc đang mở.',
+            ],
+          },
+          usage: { inputTokens: 20, outputTokens: 10 },
+        };
+      },
+    });
+    const refused = await prepareProjectCycleSummary(
+      projectCycleSummaryAi(poisonedReader, new DraftBudget()),
+      'o',
+      'u',
+      source,
+      'vi',
+    );
+    expect(refused.ai).toBe('refused');
+    expect(refused.sentences).toEqual([]);
+    expect(refused.metrics).toEqual(source.metrics);
+    expect(seenPrompt).toContain('[coworker-written untrusted title]');
+    expect(seenPrompt).not.toMatch(/[\u200B\u202E\u3164\u2800\u{E0000}-\u{E007F}]|\u034F/u);
   });
 });

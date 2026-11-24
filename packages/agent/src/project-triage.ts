@@ -5,13 +5,16 @@
 import { z } from 'zod';
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
 import {
+  escapePromptFences,
   hasAddress,
   hasAutonomousActionDirective,
+  hasInvisibleFormat,
   hasObfuscatedContactOrLink,
   hasPromptMarkupLeak,
-  hasStealthControls,
   hasUngroundedMoneyOrIdToken,
   hasUngroundedMoneyOrScaleWords,
+  plainLine,
+  stripTrustedPhrases,
 } from './injection-guards.ts';
 import { hasMarkdownNoise } from './project-weekly-status.ts';
 
@@ -24,34 +27,10 @@ export const PROJECT_TRIAGE_ASSIST_TASKS_MAX = 40;
 const TITLE_PROMPT_CHARS = 240;
 const DESCRIPTION_PROMPT_CHARS = 1200;
 const LANGUAGE = { vi: 'Vietnamese', en: 'English' } as const;
-const INVISIBLE_FORMAT = /\p{Cf}/u;
 const HTML_TAG = /<[a-z!/]/i;
 
-const oneLine = (value: string, max: number) => Array.from(value.replace(/\s+/g, ' ').trim()).slice(0, max).join('');
-const fenced = (value: string) => value.replace(/<{3,}|>{3,}/g, (run) => run.split('').join(' '));
-
-function hasDisallowedControl(raw: string): boolean {
-  if (INVISIBLE_FORMAT.test(raw)) return true;
-  for (const ch of raw) {
-    const code = ch.codePointAt(0) ?? 0;
-    if (code !== 0x09 && code !== 0x0a && code !== 0x0d && (code < 0x20 || code === 0x7f)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function stripTrustedPhrases(text: string, trustedTexts: readonly string[]): string {
-  const ordered = [...trustedTexts].filter(Boolean).sort((a, b) => b.length - a.length);
-  let out = text;
-  for (const t of ordered) {
-    const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const prefix = /^[\p{L}\p{N}]/u.test(t) ? '(?<![\\p{L}\\p{N}])' : '';
-    const suffix = /[\p{L}\p{N}]$/u.test(t) ? '(?![\\p{L}\\p{N}])' : '';
-    out = out.replace(new RegExp(`${prefix}${escaped}${suffix}`, 'gu'), ' ');
-  }
-  return out;
-}
+const oneLine = plainLine;
+const fenced = escapePromptFences;
 
 const TRAILING_URL_PUNCT = new Set(['.', ',', ';', ':', '!', '?', ')', "'", '"', ']']);
 
@@ -144,7 +123,7 @@ export function triageAssistInstructions(language: 'vi' | 'en'): string {
 
 /** Structured prompt containing bounded triage item text and candidate allowlists. */
 export function triageAssistPrompt(facts: ProjectTriageAssistFacts): string {
-  const trust = facts.item.tainted ? 'external_untrusted' : 'internal';
+  const trust = facts.item.tainted === false ? 'internal' : 'external_untrusted';
   const desc = facts.item.description
     ? `\nItem description:\n<<<\n${fenced(oneLine(facts.item.description, DESCRIPTION_PROMPT_CHARS))}\n>>>`
     : '\nItem description: none';
@@ -207,28 +186,31 @@ export function checkTriageAssist(
   }
 
   const trustedTexts = [
-    facts.projectName,
-    ...(facts.item.tainted ? [] : [facts.item.title, facts.item.description ?? '']),
+    oneLine(facts.projectName, 120),
+    ...(facts.item.tainted === false
+      ? [oneLine(facts.item.title, TITLE_PROMPT_CHARS), facts.item.description ? oneLine(facts.item.description, DESCRIPTION_PROMPT_CHARS) : '']
+      : []),
     ...facts.candidates.tasks
       .slice(0, PROJECT_TRIAGE_ASSIST_TASKS_MAX)
-      .filter((t) => !t.tainted)
-      .map((t) => t.title),
-    ...facts.candidates.seats.map((s) => s.label),
-    ...facts.candidates.cycles.map((c) => c.label),
-  ].filter((text) => text.trim().length > 0);
+      .filter((t) => t.tainted === false)
+      .map((t) => oneLine(t.title, TITLE_PROMPT_CHARS)),
+    ...facts.candidates.seats.map((s) => oneLine(s.label, 120)),
+    ...facts.candidates.cycles.map((c) => oneLine(c.label, 100)),
+  ].filter((text) => text.length > 0);
   const trustedWithUrls = [...trustedTexts, ...collectTrustedUrlTokens(trustedTexts)];
 
   let cleanReason: string | null = null;
   if (output.reason !== null && output.reason !== undefined) {
     const rawReason = output.reason;
+    if (hasInvisibleFormat(rawReason)) {
+      return { kind: 'none', code: 'AI_OUTPUT_UNSAFE' };
+    }
     const trimmed = rawReason.replace(/\s+/g, ' ').trim();
     if (trimmed.length > 0) {
       const bounded = Array.from(trimmed).slice(0, PROJECT_TRIAGE_REASON_MAX).join('').trim();
       const untrustedTrimmed = stripTrustedPhrases(trimmed, trustedWithUrls);
       const untrustedBounded = stripTrustedPhrases(bounded, trustedWithUrls);
       if (
-        hasDisallowedControl(rawReason) ||
-        hasStealthControls(rawReason) ||
         hasPromptMarkupLeak(rawReason) ||
         HTML_TAG.test(rawReason) ||
         HTML_TAG.test(trimmed) ||
@@ -240,8 +222,8 @@ export function checkTriageAssist(
         draftLinksOutside(bounded, trustedTexts).length > 0 ||
         hasAddress(untrustedTrimmed) ||
         hasAddress(untrustedBounded) ||
-        hasObfuscatedContactOrLink(trimmed, trustedTexts) ||
-        hasObfuscatedContactOrLink(bounded, trustedTexts) ||
+        hasObfuscatedContactOrLink(untrustedTrimmed, trustedTexts) ||
+        hasObfuscatedContactOrLink(untrustedBounded, trustedTexts) ||
         draftFiguresOutside(trimmed, trustedTexts).length > 0 ||
         draftFiguresOutside(bounded, trustedTexts).length > 0 ||
         hasUngroundedMoneyOrScaleWords(untrustedTrimmed) ||

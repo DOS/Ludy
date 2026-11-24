@@ -7,13 +7,17 @@
 import { z } from 'zod';
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
 import {
+  escapePromptFences,
   hasAddress,
   hasAutonomousActionDirective,
+  hasInvisibleFormat,
   hasObfuscatedContactOrLink,
   hasPromptMarkupLeak,
-  hasStealthControls,
   hasUngroundedMoneyOrIdToken,
   hasUngroundedMoneyOrScaleWords,
+  plainLine,
+  stripInvisibleFormat,
+  stripTrustedPhrases,
 } from './injection-guards.ts';
 import { hasMarkdownNoise } from './project-weekly-status.ts';
 import { summaryNumbersOutside, type SummaryFigure, type SummaryRequest } from './summary.ts';
@@ -27,10 +31,9 @@ export const ROADMAP_SIGNAL_MATCH_ITEMS_MAX = 60;
 const TITLE_PROMPT_CHARS = 180;
 const SUMMARY_PROMPT_CHARS = 320;
 const LANGUAGE = { vi: 'Vietnamese', en: 'English' } as const;
-const INVISIBLE_FORMAT = /\p{Cf}/u;
 
-const oneLine = (value: string, max: number) => Array.from(value.replace(/\s+/g, ' ').trim()).slice(0, max).join('');
-const fenced = (value: string) => value.replace(/<{3,}|>{3,}/g, (run) => run.split('').join(' '));
+const oneLine = plainLine;
+const fenced = escapePromptFences;
 
 export interface RoadmapDedupeItemFact {
   id: string;
@@ -90,7 +93,7 @@ export function roadmapDedupePrompt(facts: RoadmapDedupeFacts): string {
   const rows = facts.items.slice(0, 60).map((item) => {
     const summary = item.publicSummary ? ` | summary: "${fenced(oneLine(item.publicSummary, SUMMARY_PROMPT_CHARS))}"` : '';
     const category = item.category ? ` | category: "${fenced(oneLine(item.category, 60))}"` : '';
-    const trust = item.tainted ? 'external_untrusted' : 'internal';
+    const trust = item.tainted === false ? 'internal' : 'external_untrusted';
     return `- id=${item.id} | moderationStatus=${item.moderationStatus} | stage=${item.stage} | votes=${item.voteCount} | trust=${trust} | title="${fenced(oneLine(item.publicTitle, TITLE_PROMPT_CHARS))}"${category}${summary}`;
   });
   return [
@@ -109,7 +112,7 @@ export function checkRoadmapDedupe(
   const trustedTexts = [
     oneLine(facts.boardTitle, TITLE_PROMPT_CHARS),
     ...facts.items
-      .filter((i) => !i.tainted)
+      .filter((i) => i.tainted === false)
       .flatMap((i) => [oneLine(i.publicTitle, TITLE_PROMPT_CHARS), i.publicSummary ? oneLine(i.publicSummary, SUMMARY_PROMPT_CHARS) : '']),
   ].filter(Boolean);
 
@@ -129,10 +132,10 @@ export function checkRoadmapDedupe(
     if (tgt.moderationStatus !== 'published') {
       return { kind: 'none', code: 'AI_OUTPUT_UNSAFE' };
     }
-    if (INVISIBLE_FORMAT.test(s.reason) || hasStealthControls(s.reason) || hasMarkdownNoise(s.reason) || hasPromptMarkupLeak(s.reason)) {
+    if (hasInvisibleFormat(s.reason) || hasMarkdownNoise(s.reason) || hasPromptMarkupLeak(s.reason)) {
       return { kind: 'none', code: 'AI_OUTPUT_UNSAFE' };
     }
-    const reasonUntrusted = trustedTexts.reduce((acc, t) => (t ? acc.split(t).join(' ') : acc), s.reason);
+    const reasonUntrusted = stripTrustedPhrases(s.reason, trustedTexts);
     if (
       draftLinksOutside(s.reason, trustedTexts).length > 0 ||
       hasAddress(reasonUntrusted) ||
@@ -203,7 +206,7 @@ export function roadmapChangelogDraftPrompt(facts: RoadmapChangelogDraftFacts): 
   const itemLines = facts.items.slice(0, 20).map((item) => {
     const cat = item.category ? ` | category: "${fenced(oneLine(item.category, 60))}"` : '';
     const sum = item.publicSummary ? ` | summary: "${fenced(oneLine(item.publicSummary, SUMMARY_PROMPT_CHARS))}"` : '';
-    const trust = item.tainted ? 'external_untrusted' : 'internal';
+    const trust = item.tainted === false ? 'internal' : 'external_untrusted';
     return `- [${trust}] title: "${fenced(oneLine(item.publicTitle, TITLE_PROMPT_CHARS))}"${cat}${sum}`;
   });
   return [
@@ -224,18 +227,19 @@ function buildChangelogAllowedNumbersInput(facts: RoadmapChangelogDraftFacts): {
   const trustedTexts: string[] = [oneLine(facts.boardTitle, TITLE_PROMPT_CHARS)];
 
   for (const item of facts.items.slice(0, 20)) {
+    const isTrusted = item.tainted === false;
     const title = oneLine(item.publicTitle, TITLE_PROMPT_CHARS);
     channels.push(title);
-    if (!item.tainted) trustedTexts.push(title);
+    if (isTrusted && title) trustedTexts.push(title);
     if (item.category) {
       const cat = oneLine(item.category, 60);
       channels.push(cat);
-      if (!item.tainted) trustedTexts.push(cat);
+      if (isTrusted && cat) trustedTexts.push(cat);
     }
     if (item.publicSummary) {
       const summary = oneLine(item.publicSummary, SUMMARY_PROMPT_CHARS);
       channels.push(summary);
-      if (!item.tainted) trustedTexts.push(summary);
+      if (isTrusted && summary) trustedTexts.push(summary);
     }
   }
 
@@ -261,23 +265,31 @@ export function checkRoadmapChangelogDraft(
   output: RoadmapChangelogDraftModelOutput | null | undefined,
 ): RoadmapChangelogDraftCheckResult {
   if (!output) return { kind: 'none', code: 'EMPTY' };
-  const title = oneLine(output.title ?? '', ROADMAP_CHANGELOG_TITLE_MAX + 1);
+  const rawTitle = output.title ?? '';
   const bodyMd = (output.bodyMd ?? '').replace(/\r\n/g, '\n').trim();
+  if (
+    hasInvisibleFormat(rawTitle) ||
+    hasInvisibleFormat(bodyMd) ||
+    hasMarkdownNoise(rawTitle) ||
+    hasPromptMarkupLeak(rawTitle) ||
+    hasPromptMarkupLeak(bodyMd) ||
+    /<[a-z!/]/i.test(rawTitle) ||
+    /<[a-z!/]/i.test(bodyMd)
+  ) {
+    return { kind: 'none', code: 'FORMAT' };
+  }
+  const title = oneLine(rawTitle, ROADMAP_CHANGELOG_TITLE_MAX + 1);
   if (!title || !bodyMd) return { kind: 'none', code: 'EMPTY' };
   if (title.length > ROADMAP_CHANGELOG_TITLE_MAX || bodyMd.length > ROADMAP_CHANGELOG_BODY_MAX) {
     return { kind: 'none', code: 'TOO_LONG' };
   }
-  if (INVISIBLE_FORMAT.test(title) || INVISIBLE_FORMAT.test(bodyMd) || hasStealthControls(title) || hasStealthControls(bodyMd) || hasMarkdownNoise(title) || hasPromptMarkupLeak(title) || hasPromptMarkupLeak(bodyMd)) {
-    return { kind: 'none', code: 'FORMAT' };
-  }
-  // Refuse HTML tags or dangerous scripts in Markdown draft.
-  if (/<[a-z!/]/i.test(title) || /<[a-z!/]/i.test(bodyMd)) {
+  if (hasMarkdownNoise(title)) {
     return { kind: 'none', code: 'FORMAT' };
   }
 
   const { summaryInput, trustedTexts } = buildChangelogAllowedNumbersInput(facts);
   const combinedChangelog = `${title}\n${bodyMd}`;
-  const untrustedChangelog = trustedTexts.reduce((acc, t) => (t ? acc.split(t).join(' ') : acc), combinedChangelog);
+  const untrustedChangelog = stripTrustedPhrases(combinedChangelog, trustedTexts);
   if (
     draftLinksOutside(title, trustedTexts).length > 0 ||
     draftLinksOutside(bodyMd, trustedTexts).length > 0 ||
@@ -352,31 +364,6 @@ export type RoadmapSignalMatchCheckResult =
   | { kind: 'none'; code: 'EMPTY' | 'UNKNOWN_ID' | 'FORMAT' | 'LINK' | 'AI_OUTPUT_UNSAFE' };
 
 const SIGNAL_HTML_TAG = /<[a-z!/]/i;
-const SIGNAL_FORMAT_CHARS = /\p{Cf}/u;
-
-function hasUnsafeSignalText(raw: string): boolean {
-  if (SIGNAL_FORMAT_CHARS.test(raw)) return true;
-  for (const ch of raw) {
-    const code = ch.codePointAt(0) ?? 0;
-    if (code !== 0x09 && code !== 0x0a && code !== 0x0d && (code < 0x20 || code === 0x7f)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function stripTrustedPhrases(text: string, trustedTexts: readonly string[]): string {
-  // Strip longest trusted phrases first on token boundaries so short board/item words cannot split attack domains like "evilShop.invalid".
-  const ordered = [...trustedTexts].filter(Boolean).sort((a, b) => b.length - a.length);
-  let out = text;
-  for (const t of ordered) {
-    const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const prefix = /^[\p{L}\p{N}]/u.test(t) ? '(?<![\\p{L}\\p{N}])' : '';
-    const suffix = /[\p{L}\p{N}]$/u.test(t) ? '(?![\\p{L}\\p{N}])' : '';
-    out = out.replace(new RegExp(`${prefix}${escaped}${suffix}`, 'gu'), ' ');
-  }
-  return out;
-}
 
 function checkSignalField(
   rawText: string,
@@ -384,8 +371,7 @@ function checkSignalField(
   trustedTexts: readonly string[],
 ): 'FORMAT' | 'LINK' | 'AI_OUTPUT_UNSAFE' | null {
   if (
-    hasUnsafeSignalText(rawText) ||
-    hasStealthControls(rawText) ||
+    hasInvisibleFormat(rawText) ||
     SIGNAL_HTML_TAG.test(normalized) ||
     hasMarkdownNoise(rawText) ||
     hasMarkdownNoise(normalized) ||
@@ -430,16 +416,15 @@ export function roadmapSignalMatchInstructions(language: 'vi' | 'en'): string {
 export function roadmapSignalMatchPrompt(facts: RoadmapSignalMatchFacts): string {
   const cleanCut = (s: string, max: number) => Array.from(s.trim()).slice(0, max).join('');
   const safeLine = (s: string, max: number) => fenced(oneLine(s, max));
-  const safeUntrustedLine = (s: string, max: number) => fenced(cleanCut(s, max)).replace(/\s+/g, ' ').trim();
   const lines = facts.items.slice(0, ROADMAP_SIGNAL_MATCH_ITEMS_MAX).map((item) => {
     const sum = item.summary ? ` | summary: "${safeLine(item.summary, 220)}"` : '';
-    const trust = item.tainted ? 'external_untrusted' : 'internal';
+    const trust = item.tainted === false ? 'internal' : 'external_untrusted';
     return `- id=${item.id} | stage=${item.stage} | trust=${trust} | title="${safeLine(item.title, 160)}"${sum}`;
   });
-  const account = facts.accountLabel ? `Account:\n<<<\n${safeUntrustedLine(facts.accountLabel, 160)}\n>>>` : 'Account: (none)';
+  const account = facts.accountLabel ? `Account:\n<<<\n${safeLine(facts.accountLabel, 160)}\n>>>` : 'Account: (none)';
   const deal =
     facts.dealValue && facts.dealCurrency
-      ? `Deal value: ${safeUntrustedLine(facts.dealValue, 40)} ${safeUntrustedLine(facts.dealCurrency, 8)}`
+      ? `Deal value: ${safeLine(facts.dealValue, 40)} ${safeLine(facts.dealCurrency, 8)}`
       : 'Deal value: (none)';
 
   return [
@@ -447,8 +432,8 @@ export function roadmapSignalMatchPrompt(facts: RoadmapSignalMatchFacts): string
     `Signal source type: ${facts.sourceType}`,
     account,
     deal,
-    `Signal title (untrusted):\n<<<\n${safeUntrustedLine(facts.sourceTitle, 200)}\n>>>`,
-    `Signal excerpt (untrusted):\n<<<\n${fenced(cleanCut(facts.sourceExcerpt, 1000))}\n>>>`,
+    `Signal title (untrusted):\n<<<\n${safeLine(facts.sourceTitle, 200)}\n>>>`,
+    `Signal excerpt (untrusted):\n<<<\n${fenced(cleanCut(stripInvisibleFormat(facts.sourceExcerpt), 1000))}\n>>>`,
     lines.length > 0
       ? `Candidate roadmap items (external_untrusted items contain untrusted visitor text):\n<<<\n${lines.join('\n')}\n>>>`
       : 'Candidate roadmap items: (none)',
@@ -479,7 +464,7 @@ export function checkRoadmapSignalMatch(
     if (!allowedIds.has(item.roadmapItemId)) {
       return { kind: 'none', code: 'UNKNOWN_ID' };
     }
-    if (item.reason.length > 0 && (hasUnsafeSignalText(item.reason) || hasStealthControls(item.reason))) {
+    if (item.reason.length > 0 && hasInvisibleFormat(item.reason)) {
       return { kind: 'none', code: 'FORMAT' };
     }
     if (seen.has(item.roadmapItemId)) continue;
@@ -504,10 +489,10 @@ export function checkRoadmapSignalMatch(
   if (raw.newIdeaDraft) {
     const rawTitle = raw.newIdeaDraft.suggestedTitle;
     const rawSummary = raw.newIdeaDraft.suggestedSummary;
-    if (rawTitle.length > 0 && (hasUnsafeSignalText(rawTitle) || hasStealthControls(rawTitle))) {
+    if (rawTitle.length > 0 && hasInvisibleFormat(rawTitle)) {
       return { kind: 'none', code: 'FORMAT' };
     }
-    if (rawSummary !== null && rawSummary.length > 0 && (hasUnsafeSignalText(rawSummary) || hasStealthControls(rawSummary))) {
+    if (rawSummary !== null && rawSummary.length > 0 && hasInvisibleFormat(rawSummary)) {
       return { kind: 'none', code: 'FORMAT' };
     }
     const title = rawTitle.replace(/\s+/g, ' ').trim();
