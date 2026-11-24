@@ -1722,40 +1722,17 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
       ),
     ).rejects.toMatchObject({ code: 'SIGN_SOURCE_NOT_FOUND', status: 404 });
 
-    // A whole-org admin who is not the recorder creates the envelope (the rule of #3811), OR is refused with SIGN_FORBIDDEN (403), the later rule of #4532 (only the recorder starts a signature on the
-    // minutes). Both outcomes are accepted here so the two-step change can land (this test first, then the code); a refusal must be that one error and nothing else, and on it the envelope the rest of
-    // the test reads is inserted directly by this test's own admin connection, as the older rule would have made it. Whole-org outsiderMemberId + ownerId CAN read it!
-    let orgEnvId: string;
-    try {
-      orgEnvId = (
-        await runtime.execute<{ envelopeId: string }>(
-          'sign.envelope.create',
-          {
-            title: 'Bien ban hop toan cong ty thang 11',
-            sourceKind: 'meeting_minutes',
-            sourceId: orgMeetingId,
-            sourceFileId: adminOrgPdf,
-          },
-          { actor: asUser(adminId), orgId },
-        )
-      ).envelopeId;
-    } catch (error) {
-      if ((error as { code?: unknown }).code !== 'SIGN_FORBIDDEN' || (error as { status?: unknown }).status !== 403) throw error;
-      orgEnvId = randomUUID();
-      const insertedOrgEnv = await adminPool!.query(
-        `INSERT INTO crove_sign.envelope (
-           org_id, id, title, status, routing_mode, source_kind, source_id,
-           source_file_id, source_storage_key, source_generation, source_sha256,
-           inspect_status, created_by
-         )
-         SELECT $1::uuid, $2::uuid, 'Bien ban hop toan cong ty thang 11', 'draft', 'parallel', 'meeting_minutes', $3::uuid,
-                f.id, f.storage_key, f.generation, f.sha256, 'pending', $4::uuid
-         FROM crove_kernel.file f WHERE f.org_id = $1::uuid AND f.id = $5::uuid`,
-        [orgId, orgEnvId, orgMeetingId, adminId, adminOrgPdf],
-      );
-      expect(insertedOrgEnv.rowCount).toBe(1);
-    }
-    const orgEnv = { envelopeId: orgEnvId };
+    // Whole-org admin CAN create and whole-org outsiderMemberId + ownerId CAN read!
+    const orgEnv = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      {
+        title: 'Bien ban hop toan cong ty thang 11',
+        sourceKind: 'meeting_minutes',
+        sourceId: orgMeetingId,
+        sourceFileId: adminOrgPdf,
+      },
+      { actor: asUser(adminId), orgId },
+    );
 
     for (const wholeOrgReader of [ownerId, adminId, recorderId, outsiderMemberId]) {
       const got = await runtime.query<{ envelope: { id: string } }>(
