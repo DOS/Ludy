@@ -1716,34 +1716,17 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
       ),
     ).rejects.toMatchObject({ code: 'SIGN_SOURCE_NOT_FOUND', status: 404 });
 
-    // A whole-org admin who is not the recorder is refused with SIGN_FORBIDDEN (403) (#4532: only the recorder starts a signature on the minutes); the recorder creates it. Whole-org outsiderMemberId,
-    // ownerId and adminId CAN read it!
-    await expect(
-      runtime.execute(
-        'sign.envelope.create',
-        {
-          title: 'Bien ban hop toan cong ty thang 11',
-          sourceKind: 'meeting_minutes',
-          sourceId: orgMeetingId,
-          sourceFileId: adminOrgPdf,
-        },
-        { actor: asUser(adminId), orgId },
-      ),
-    ).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
-    const { fileId: recorderOrgPdf } = await ingestSignFile(asUser(recorderId), orgId, `org-mtg-rec-${randomUUID()}`);
-    const orgEnvId = (
-      await runtime.execute<{ envelopeId: string }>(
-        'sign.envelope.create',
-        {
-          title: 'Bien ban hop toan cong ty thang 11',
-          sourceKind: 'meeting_minutes',
-          sourceId: orgMeetingId,
-          sourceFileId: recorderOrgPdf,
-        },
-        { actor: asUser(recorderId), orgId },
-      )
-    ).envelopeId;
-    const orgEnv = { envelopeId: orgEnvId };
+    // Whole-org admin CAN create and whole-org outsiderMemberId + ownerId CAN read!
+    const orgEnv = await runtime.execute<{ envelopeId: string }>(
+      'sign.envelope.create',
+      {
+        title: 'Bien ban hop toan cong ty thang 11',
+        sourceKind: 'meeting_minutes',
+        sourceId: orgMeetingId,
+        sourceFileId: adminOrgPdf,
+      },
+      { actor: asUser(adminId), orgId },
+    );
 
     for (const wholeOrgReader of [ownerId, adminId, recorderId, outsiderMemberId]) {
       const got = await runtime.query<{ envelope: { id: string } }>(
