@@ -21,6 +21,7 @@
     "test:db": "node tools/local-guard.mjs test:db vitest run --project db --",
     "test:e2e": "node tools/local-guard.mjs test:e2e pnpm --filter @ludy/e2e test --",
     "ai:conformance": "vitest run --project ai conformance",
+    "mcp:conformance": "node tools/mcp-conformance/cli.mjs",
     "ai:eval": "vitest run --project ai extraction-eval --silent=false",
     "ai:eval:documents": "vitest run --project ai document-eval --silent=false",
     "ai:eval:transcribe": "vitest run --project ai transcribe-eval --silent=false",
