@@ -103,6 +103,8 @@ state_dir() { printf '%s/.deploy' "$DEPLOY_DIR"; }
 LOCK_HELD=0
 READY_URL=''
 CREATED_LUDY_VOLUMES=()
+LUDY_VOLUMES_COMMITTED=0
+STAGE_DIR=''
 ROLLBACK_ARMED=0
 ROLLBACK_BACKUP_DIR=''
 ROLLBACK_OLD_PROJECT='crove'
@@ -124,9 +126,25 @@ cleanup() {
   for f in "${TEMP_FILES[@]+"${TEMP_FILES[@]}"}"; do
     if [ -n "$f" ] && [ -f "$f" ]; then rm -f "$f"; fi
   done
+  if [ -n "${STAGE_DIR:-}" ] && [ -d "$STAGE_DIR" ]; then rm -rf "$STAGE_DIR"; fi
   if [ "$LOCK_HELD" = 1 ]; then rm -rf "$(state_dir)/lock"; fi
 }
 trap cleanup EXIT
+
+stage_overlays() {
+  local stamp="$1"
+  STAGE_DIR="$(state_dir)/cutover-stage-$stamp"
+  (
+    umask 077
+    rm -rf "$STAGE_DIR"
+    mkdir -p "$STAGE_DIR"
+    if [ -f "$OVERLAY_DIR/deploy.sh" ]; then cp "$OVERLAY_DIR/deploy.sh" "$STAGE_DIR/deploy.sh"; fi
+    if [ -d "$OVERLAY_DIR/caddy" ]; then cp -R "$OVERLAY_DIR/caddy" "$STAGE_DIR/caddy"; fi
+    if [ -d "$OVERLAY_DIR/backup" ]; then cp -R "$OVERLAY_DIR/backup" "$STAGE_DIR/backup"; fi
+    if [ -d "$OVERLAY_DIR/wal" ]; then cp -R "$OVERLAY_DIR/wal" "$STAGE_DIR/wal"; fi
+  )
+  chmod 700 "$STAGE_DIR"
+}
 
 acquire_lock() {
   (umask 077 && mkdir -p "$(state_dir)") && chmod 700 "$(state_dir)"
@@ -516,7 +534,7 @@ wait_db_ready() {
 }
 
 bring_up_stack() {
-  local proj="$1" services svc has_auth=0 has_grants=0 has_worker=0 has_api=0 has_crove=0 has_prober=0 has_caddy=0
+  local proj="$1" start_caddy="${2:-1}" services svc has_auth=0 has_grants=0 has_worker=0 has_api=0 has_crove=0 has_prober=0 has_caddy=0
   local infra=()
   services="$(dc_proj "$proj" config --services)" || return 1
   while IFS= read -r svc; do
@@ -527,7 +545,10 @@ bring_up_stack() {
       api) has_api=1 ;;
       crove) has_crove=1 ;;
       prober) has_prober=1 ;;
-      caddy) has_caddy=1; infra+=("$svc") ;;
+      caddy)
+        has_caddy=1
+        if ((start_caddy)); then infra+=("$svc"); fi
+        ;;
       db | migrate | usage | '') ;;
       *) infra+=("$svc") ;;
     esac
@@ -556,7 +577,7 @@ bring_up_stack() {
     log "starting ${rest[*]} on project $proj"
     dc_proj "$proj" up -d --no-build --no-deps --wait --wait-timeout "$WAIT_TIMEOUT" "${rest[@]}" || return 1
   fi
-  if ((has_caddy)); then
+  if ((has_caddy && start_caddy)); then
     log 'restarting caddy so reloaded Caddyfile applies with admin off'
     dc_proj "$proj" restart caddy || return 1
   fi
@@ -589,13 +610,14 @@ do_inspect() {
   proj="$(detect_active_project)"
   export_release_images
 
-  log "DEPLOY_DIR=$DEPLOY_DIR ENV_FILE=$ENV_FILE active_project=$proj"
-  log "COMPOSE_FILE=$(env_or_default COMPOSE_FILE '(unset)')"
+  # Public workflow log hygiene (L2): avoid echoing raw DEPLOY_DIR, ENV_FILE, BACKUP_DIR, or domain hostnames.
+  log "active_project=$proj env_file_present=yes"
+  log "COMPOSE_FILE=$([ -n "$(env_last_value COMPOSE_FILE)" ] && echo '(set)' || echo '(unset)')"
   log "COMPOSE_PROJECT_NAME=$(env_or_default COMPOSE_PROJECT_NAME '(unset)')"
-  log "LUDY_DOMAIN=$(env_or_default LUDY_DOMAIN '(unset)') CROVE_DOMAIN=$(env_or_default CROVE_DOMAIN '(unset)')"
+  log "LUDY_DOMAIN=$([ -n "$(env_last_value LUDY_DOMAIN)" ] && echo '(set)' || echo '(unset)') CROVE_DOMAIN=$([ -n "$(env_last_value CROVE_DOMAIN)" ] && echo '(set)' || echo '(unset)')"
   log "LUDY_MODULES=$(env_or_default LUDY_MODULES '(unset)') CROVE_MODULES=$(env_or_default CROVE_MODULES '(unset)')"
   log "WAL_STANZA=$(env_or_default WAL_STANZA '(default: crove)') BACKUP_S3_PREFIX=$(env_or_default BACKUP_S3_PREFIX '(default: crove)') WAL_DB_IMAGE=$(env_or_default WAL_DB_IMAGE '(default: crove-db:local)')"
-  log "BACKUP_DIR=$(env_or_default BACKUP_DIR '(unset)')"
+  log "BACKUP_DIR=$([ -n "$(env_last_value BACKUP_DIR)" ] && echo '(set)' || echo '(unset)')"
   if [ -f "$(state_dir)/current" ]; then log "release_current=$(cat "$(state_dir)/current")"; fi
   if [ -f "$(state_dir)/previous" ]; then log "release_previous=$(cat "$(state_dir)/previous")"; fi
 
@@ -720,7 +742,11 @@ check_host_compose_safe() {
 rollback_cutover_stack() {
   [ "${ROLLBACK_ARMED:-0}" = 1 ] || return 0
   ROLLBACK_ARMED=0
-  err "cutover-stack failed; rolling back to project $ROLLBACK_OLD_PROJECT"
+  if [ "${LUDY_VOLUMES_COMMITTED:-0}" = 1 ]; then
+    err "cutover-stack failed AFTER project ludy started; preserving ludy_* volumes and pre-cutover backups without deleting data or restarting $ROLLBACK_OLD_PROJECT"
+    return 0
+  fi
+  err "cutover-stack failed before project ludy started; rolling back to project $ROLLBACK_OLD_PROJECT"
   dc_proj ludy down --remove-orphans >/dev/null 2>&1 || true
   if ((${#CREATED_LUDY_VOLUMES[@]} > 0)); then
     docker volume rm "${CREATED_LUDY_VOLUMES[@]}" >/dev/null 2>&1 || true
@@ -743,6 +769,9 @@ do_cutover_stack() {
   [ -w "$ENV_FILE" ] && [ -w "$DEPLOY_DIR" ] || die "$EXIT_USAGE" "$ENV_FILE and $DEPLOY_DIR must be writable"
   [ -f "$OVERLAY_DIR/deploy.sh" ] || die "$EXIT_USAGE" "missing $OVERLAY_DIR/deploy.sh"
   [ -f "$OVERLAY_DIR/caddy/Caddyfile" ] && [ -f "$OVERLAY_DIR/caddy/compose.host.yml" ] || die "$EXIT_USAGE" "missing caddy overlays in $OVERLAY_DIR/caddy"
+  if [ -f "$DEPLOY_DIR/compose.wal.yml" ]; then
+    [ -f "$OVERLAY_DIR/backup/compose.wal.yml" ] || die "$EXIT_USAGE" "missing $OVERLAY_DIR/backup/compose.wal.yml"
+  fi
   if [ -f "$DEPLOY_DIR/compose.host.yml" ]; then
     check_host_compose_safe "$DEPLOY_DIR/compose.host.yml" || exit "$EXIT_FAILED"
   fi
@@ -802,8 +831,9 @@ do_cutover_stack() {
     done
   )
   ROLLBACK_BACKUP_DIR="$backup_dir"
+  stage_overlays "$stamp"
 
-  log "taking logical PostgreSQL backup before stopping stack -> $backup_dir/db.dump"
+  log 'taking logical PostgreSQL backup before stopping stack'
   (
     umask 077
     dc_proj "$proj" exec -T db pg_dump -U postgres -d postgres --format=custom --exclude-table-data=ludy_kernel.context_key >"$backup_dir/db.dump"
@@ -817,6 +847,7 @@ do_cutover_stack() {
   rewrite_env_file "$ENV_FILE" "$env_tmp"
 
   # Arm EXIT-based rollback before stopping services or copying volumes.
+  LUDY_VOLUMES_COMMITTED=0
   ROLLBACK_ARMED=1
 
   log "stopping running $proj services cleanly for offline volume copy"
@@ -862,27 +893,31 @@ do_cutover_stack() {
 
   if [ -f "$DEPLOY_DIR/compose.host.yml" ]; then
     check_host_compose_safe "$DEPLOY_DIR/compose.host.yml" || return 1
-    log 'updating Caddyfile and compose.host.yml from uploaded overlays'
-    copy_into_deploy_dir "$OVERLAY_DIR/caddy/Caddyfile" "$DEPLOY_DIR/Caddyfile"
-    copy_into_deploy_dir "$OVERLAY_DIR/caddy/compose.host.yml" "$DEPLOY_DIR/compose.host.yml"
+    log 'updating Caddyfile and compose.host.yml from staged overlays'
+    copy_into_deploy_dir "$STAGE_DIR/caddy/Caddyfile" "$DEPLOY_DIR/Caddyfile"
+    copy_into_deploy_dir "$STAGE_DIR/caddy/compose.host.yml" "$DEPLOY_DIR/compose.host.yml"
   fi
   if [ -f "$DEPLOY_DIR/compose.wal.yml" ]; then
-    [ -f "$OVERLAY_DIR/backup/compose.wal.yml" ] || die "$EXIT_FAILED" "missing $OVERLAY_DIR/backup/compose.wal.yml"
-    log 'updating compose.wal.yml from uploaded overlay'
-    copy_into_deploy_dir "$OVERLAY_DIR/backup/compose.wal.yml" "$DEPLOY_DIR/compose.wal.yml"
+    [ -f "$STAGE_DIR/backup/compose.wal.yml" ] || die "$EXIT_FAILED" 'missing staged backup/compose.wal.yml'
+    log 'updating compose.wal.yml from staged overlay'
+    copy_into_deploy_dir "$STAGE_DIR/backup/compose.wal.yml" "$DEPLOY_DIR/compose.wal.yml"
   fi
 
-  log "rewriting $ENV_FILE with LUDY_* and COMPOSE_PROJECT_NAME=ludy"
+  log 'rewriting env file with LUDY_* and COMPOSE_PROJECT_NAME=ludy'
   write_env_in_place "$env_tmp"
   rm -f "$env_tmp"
 
   dc_proj ludy config --quiet
-  bring_up_stack ludy
+
+  # Point of no return (B1): once project ludy starts containers against ludy_* volumes, rollback must NEVER
+  # delete CREATED_LUDY_VOLUMES or restart stale crove volumes. Keep caddy offline until checks pass.
+  LUDY_VOLUMES_COMMITTED=1
+  bring_up_stack ludy 0
 
   wait_local_ready ludy
-  log "running loopback smoke check on $READY_URL"
+  log 'running loopback smoke check on local API'
   LUDY_DEPLOY_DIR="$DEPLOY_DIR" LUDY_ENV_FILE="$ENV_FILE" \
-    bash "$OVERLAY_DIR/deploy.sh" smoke "$READY_URL" ${RELEASE_BUILD:+"$RELEASE_BUILD"}
+    bash "$STAGE_DIR/deploy.sh" smoke "$READY_URL" ${RELEASE_BUILD:+"$RELEASE_BUILD"}
 
   check_expected_schemas ludy
   local legacy_sessions
@@ -891,6 +926,12 @@ do_cutover_stack() {
   if [ "$legacy_sessions" != 0 ]; then
     err "found $legacy_sessions active crove_* sessions after cutover"
     return 1
+  fi
+
+  if dc_proj ludy config --services | grep -qx caddy; then
+    log 'starting caddy on project ludy after checks passed'
+    dc_proj ludy up -d --no-build --no-deps --wait --wait-timeout "$WAIT_TIMEOUT" caddy
+    dc_proj ludy restart caddy
   fi
 
   ROLLBACK_ARMED=0
@@ -911,7 +952,7 @@ rollback_switch_wal() {
   wait_db_ready "$WAL_ROLLBACK_PROJECT" || true
   env -u WAL_STANZA -u BACKUP_S3_PREFIX -u WAL_DB_IMAGE -u COMPOSE_PROJECT_NAME \
     LUDY_DIR="$DEPLOY_DIR" CROVE_DIR="$DEPLOY_DIR" \
-    bash "$OVERLAY_DIR/backup/wal.sh" setup || true
+    bash "$STAGE_DIR/backup/wal.sh" setup || true
 }
 
 do_switch_wal() {
@@ -928,7 +969,7 @@ do_switch_wal() {
   trap '' HUP PIPE
   export_release_images
 
-  local proj stamp backup_env backup_compose env_tmp info_out
+  local proj stamp backup_env backup_compose env_tmp info_out backup_count
   proj="$(detect_active_project)"
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
   backup_env="$(state_dir)/env.pre-switch-wal-$stamp"
@@ -939,6 +980,7 @@ do_switch_wal() {
     chmod 0600 "$backup_env"
     cp "$DEPLOY_DIR/compose.wal.yml" "$backup_compose"
   )
+  stage_overlays "$stamp"
 
   WAL_ROLLBACK_ENV="$backup_env"
   WAL_ROLLBACK_COMPOSE="$backup_compose"
@@ -946,8 +988,8 @@ do_switch_wal() {
   WAL_ROLLBACK_ARMED=1
 
   log 'syncing latest compose.wal.yml and building ludy-db:local'
-  copy_into_deploy_dir "$OVERLAY_DIR/backup/compose.wal.yml" "$DEPLOY_DIR/compose.wal.yml"
-  docker build -t ludy-db:local "$OVERLAY_DIR/wal"
+  copy_into_deploy_dir "$STAGE_DIR/backup/compose.wal.yml" "$DEPLOY_DIR/compose.wal.yml"
+  docker build -t ludy-db:local "$STAGE_DIR/wal"
 
   env_tmp="$(umask 077 && mktemp "$(state_dir)/.env.wal-tmp-XXXXXX")"
   TEMP_FILES+=("$env_tmp")
@@ -962,16 +1004,22 @@ do_switch_wal() {
 
   log 'running wal.sh setup, check, and info for stanza ludy'
   env -u WAL_STANZA -u BACKUP_S3_PREFIX -u WAL_DB_IMAGE -u COMPOSE_PROJECT_NAME \
-    LUDY_DIR="$DEPLOY_DIR" CROVE_DIR="$DEPLOY_DIR" bash "$OVERLAY_DIR/backup/wal.sh" setup
+    LUDY_DIR="$DEPLOY_DIR" CROVE_DIR="$DEPLOY_DIR" bash "$STAGE_DIR/backup/wal.sh" setup
   env -u WAL_STANZA -u BACKUP_S3_PREFIX -u WAL_DB_IMAGE -u COMPOSE_PROJECT_NAME \
-    LUDY_DIR="$DEPLOY_DIR" CROVE_DIR="$DEPLOY_DIR" bash "$OVERLAY_DIR/backup/wal.sh" check
+    LUDY_DIR="$DEPLOY_DIR" CROVE_DIR="$DEPLOY_DIR" bash "$STAGE_DIR/backup/wal.sh" check
   info_out="$(env -u WAL_STANZA -u BACKUP_S3_PREFIX -u WAL_DB_IMAGE -u COMPOSE_PROJECT_NAME \
-    LUDY_DIR="$DEPLOY_DIR" CROVE_DIR="$DEPLOY_DIR" bash "$OVERLAY_DIR/backup/wal.sh" info)"
-  printf '%s\n' "$info_out"
+    LUDY_DIR="$DEPLOY_DIR" CROVE_DIR="$DEPLOY_DIR" bash "$STAGE_DIR/backup/wal.sh" info)"
+  # Log only redacted summary to keep S3 bucket/endpoint details out of public CI logs (L2).
   printf '%s\n' "$info_out" | grep -q 'stanza: ludy' || {
     err 'wal.sh info did not report stanza: ludy'
     return 1
   }
+  printf '%s\n' "$info_out" | grep -q 'status: ok' || {
+    err 'wal.sh info did not report status: ok'
+    return 1
+  }
+  backup_count="$(printf '%s\n' "$info_out" | grep -cE '(full|diff|incr) backup:' || true)"
+  log "wal.sh info verified (stanza=ludy status=ok backups=$backup_count)"
 
   WAL_ROLLBACK_ARMED=0
   log 'switch-wal SUCCEEDED: stanza ludy is active and checked'
@@ -1002,10 +1050,45 @@ do_prune_old_volumes() {
     die "$EXIT_FAILED" "refusing to prune: container(s) still reference crove_* volume(s): $mounted"
   fi
 
-  local old_vols=() v
+  local old_vols=() v need_copy_probe=0
   while IFS= read -r v; do
-    [ -n "$v" ] && old_vols+=("$v")
+    [ -n "$v" ] || continue
+    old_vols+=("$v")
+    case "$v" in
+      crove_media-scratch) ;;
+      *) need_copy_probe=1 ;;
+    esac
   done < <(docker volume ls --format '{{.Name}}' | grep -E '^crove_' | sort || true)
+
+  # L1: Verify every non-ephemeral crove_<suffix> has a populated ludy_<suffix> replacement BEFORE pruning.
+  if ((need_copy_probe)); then
+    docker pull --quiet "$VOLUME_COPY_IMAGE" >/dev/null
+    for v in "${old_vols[@]}"; do
+      case "$v" in
+        crove_media-scratch) continue ;;
+      esac
+      local suffix="${v#crove_}" dst="ludy_${v#crove_}" existing
+      docker volume inspect "$dst" >/dev/null 2>&1 || die "$EXIT_FAILED" "refusing to prune $v: matching replacement volume $dst does not exist"
+      existing="$(docker run --rm --network none -v "${dst}:/dst:ro" --entrypoint sh "$VOLUME_COPY_IMAGE" -c 'find /dst -mindepth 1 -maxdepth 1 -print -quit')"
+      [ -n "$existing" ] || die "$EXIT_FAILED" "refusing to prune $v: matching replacement volume $dst ($suffix) is empty"
+    done
+  fi
+
+  # L1: When WAL archiving is active, refuse to prune without a verified healthy backup under stanza ludy.
+  if [ -f "$DEPLOY_DIR/compose.wal.yml" ] || env_compose_file_lists compose.wal.yml; then
+    [ "$ENV_FILE" = "$DEPLOY_DIR/.env" ] || die "$EXIT_USAGE" "prune-old-volumes with WAL requires --env-file to be $DEPLOY_DIR/.env (wal.sh reads LUDY_DIR/.env)"
+    [ -n "$OVERLAY_DIR" ] && [ -f "$OVERLAY_DIR/backup/wal.sh" ] || die "$EXIT_USAGE" 'prune-old-volumes requires --overlay-dir with backup/wal.sh when compose.wal.yml is active'
+    local stanza wal_info wal_backups
+    stanza="$(env_last_value WAL_STANZA)"
+    [ "$stanza" = ludy ] || die "$EXIT_FAILED" "refusing to prune: WAL_STANZA must be ludy before removing crove_* volumes (currently ${stanza:-crove})"
+    wal_info="$(env -u WAL_STANZA -u BACKUP_S3_PREFIX -u WAL_DB_IMAGE -u COMPOSE_PROJECT_NAME \
+      LUDY_DIR="$DEPLOY_DIR" CROVE_DIR="$DEPLOY_DIR" bash "$OVERLAY_DIR/backup/wal.sh" info)" || die "$EXIT_FAILED" 'wal.sh info failed on stanza ludy'
+    printf '%s\n' "$wal_info" | grep -q 'stanza: ludy' || die "$EXIT_FAILED" 'refusing to prune: wal.sh info did not report stanza: ludy'
+    printf '%s\n' "$wal_info" | grep -q 'status: ok' || die "$EXIT_FAILED" 'refusing to prune: stanza ludy status is not ok'
+    wal_backups="$(printf '%s\n' "$wal_info" | grep -cE '(full|diff|incr) backup:' || true)"
+    ((wal_backups > 0)) || die "$EXIT_FAILED" 'refusing to prune: no verified backup exists on stanza ludy yet'
+    log "WAL backup gate passed (stanza=ludy status=ok backups=$wal_backups)"
+  fi
 
   if ((${#old_vols[@]} > 0)); then
     log "removing old Docker volumes: ${old_vols[*]}"
@@ -1022,6 +1105,15 @@ do_prune_old_volumes() {
       docker image rm crove-db:local || true
     fi
   fi
+
+  # L2: Remove temporary unencrypted logical dumps once old volumes are safely pruned.
+  local dump dumps_removed=0
+  for dump in "$(state_dir)"/cutover-backup-*/db.dump; do
+    [ -f "$dump" ] || continue
+    rm -f "$dump"
+    dumps_removed=$((dumps_removed + 1))
+  done
+  log "removed $dumps_removed temporary cutover db.dump file(s)"
 
   log 'prune-old-volumes SUCCEEDED'
 }

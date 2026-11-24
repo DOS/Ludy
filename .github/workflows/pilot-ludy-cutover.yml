@@ -34,7 +34,7 @@ jobs:
   cutover:
     name: Pilot Ludy cutover
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     environment: pilot
     env:
       INPUT_ACTION: ${{ inputs.action }}
@@ -159,11 +159,7 @@ jobs:
         run: |
           set -euo pipefail
           case "$INPUT_ACTION" in
-            prune-old-volumes)
-              ssh -F "$SSH_CONFIG" ludy-target \
-                "bash '$REMOTE/cutover-ludy.sh' '$INPUT_ACTION' --dir '$DIR' --env-file '$ENV_FILE'"
-              ;;
-            inspect | cutover-stack | switch-wal)
+            inspect | cutover-stack | switch-wal | prune-old-volumes)
               ssh -F "$SSH_CONFIG" ludy-target \
                 "bash '$REMOTE/cutover-ludy.sh' '$INPUT_ACTION' --dir '$DIR' --env-file '$ENV_FILE' --overlay-dir '$REMOTE'"
               ;;
@@ -196,8 +192,11 @@ jobs:
         env:
           SSH_CONFIG: ${{ steps.config.outputs.ssh_config }}
           REMOTE: ${{ steps.config.outputs.remote }}
+          DIR: ${{ steps.config.outputs.dir }}
         run: |
-          if [ -n "$SSH_CONFIG" ] && [ -f "$SSH_CONFIG" ] && [ -n "$REMOTE" ]; then
-            ssh -F "$SSH_CONFIG" ludy-target "rm -rf '$REMOTE'" < /dev/null || true
+          if [ -n "$SSH_CONFIG" ] && [ -f "$SSH_CONFIG" ] && [ -n "$REMOTE" ] && [ -n "$DIR" ]; then
+            ssh -F "$SSH_CONFIG" ludy-target \
+              "pid=\$(cat '$DIR/.deploy/lock/pid' 2>/dev/null || true); if [ -d '$DIR/.deploy/lock' ] && { [ -z \"\$pid\" ] || kill -0 \"\$pid\" 2>/dev/null; }; then echo 'lock active: preserving remote staging'; else rm -rf '$REMOTE'; fi" \
+              < /dev/null || true
           fi
           rm -rf "$RUNNER_TEMP/cutover-ssh"

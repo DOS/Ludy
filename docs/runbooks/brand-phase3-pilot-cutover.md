@@ -166,13 +166,15 @@ Run this stage **before** removing `CROVE_DOMAIN` from `.env` in Stage 3. Live p
 
 ### Part A: Automated stack cutover via `pilot-ludy-cutover.yml` (`crove_*` -> `ludy_*`)
 
-Owner decision (2026-11-24): eliminate all legacy `crove` names on the pilot host, migrating Docker named volumes to `ludy_*` and setting `COMPOSE_PROJECT_NAME=ludy` via the audited one-shot workflow [`.github/workflows/pilot-ludy-cutover.yml`](../../.github/workflows/pilot-ludy-cutover.yml) (running [`tools/deploy/cutover-ludy.sh`](../../tools/deploy/cutover-ludy.sh) over the existing `DEPLOY_SSH_KEY`).
+Owner decision ([`2026-11-24`](https://github.com/DOS/Ludy/issues/3972#issuecomment-7120326837)): eliminate all legacy `crove` names on the pilot host, migrating Docker named volumes to `ludy_*` and setting `COMPOSE_PROJECT_NAME=ludy` via the audited one-shot workflow [`.github/workflows/pilot-ludy-cutover.yml`](../../.github/workflows/pilot-ludy-cutover.yml) (running [`tools/deploy/cutover-ludy.sh`](../../tools/deploy/cutover-ludy.sh) over the existing `DEPLOY_SSH_KEY`).
 
 1. **[OWNER / OPERATOR]** Run `Pilot Ludy cutover` (`workflow_dispatch` from `main`, `action: inspect`, blank confirmation) and review the output:
-   - Confirms which legacy `CROVE_*` key names exist in `.env` (no secrets printed), current `COMPOSE_PROJECT_NAME`, active `crove_*` volumes, and that all 12 `ludy_*` schemas plus migration `20270316140000` are present with 0 `crove_*` schemas.
+   - Confirms which legacy `CROVE_*` key names exist in `.env` (no secrets or raw paths printed), current `COMPOSE_PROJECT_NAME`, active `crove_*` volumes, and that all 12 `ludy_*` schemas plus migration `20270316140000` are present with 0 `crove_*` schemas.
 2. **[OWNER]** In GitHub repository `Settings -> Environments -> pilot` (environment level only):
    - Set `DEPLOY_LUDY_MODULES` matching the active module list and delete `DEPLOY_CROVE_MODULES`.
+   - Ensure `pilot` configures required reviewers so production cutover/deploy runs enforce approval in GitHub Actions as well as procedurally.
 3. **[OWNER / OPERATOR]** With JOY's approval for the brief offline volume-copy window (~5 minutes depending on volume size), run `Pilot Ludy cutover` with `action: cutover-stack` and `confirm: cutover-pilot-to-ludy`. The script (`cutover-ludy.sh cutover-stack`) executes these steps atomically under `.deploy/lock`:
+   - Stages overlays locally under `<DEPLOY_DIR>/.deploy/` so runner cleanup cannot race the HUP-immune host cutover.
    - Verifies all target `ludy_*` volumes are absent or empty (fails closed before touching anything if populated).
    - Saves mode-600 backups of `.env`, `Caddyfile`, `compose.host.yml`, `compose.wal.yml` (if present), and a verified logical `pg_dump` (excluding `ludy_kernel.context_key`) into `<DEPLOY_DIR>/.deploy/cutover-backup-<stamp>/`.
    - Stops all `crove` containers cleanly (non-`db` first, then `stop -t 60 db` so PostgreSQL checkpoints).
@@ -204,10 +206,10 @@ Owner decision (2026-11-24): eliminate all legacy `crove` names on the pilot hos
    | `CROVE_SMOKE_POLL_SECONDS` | `LUDY_SMOKE_POLL_SECONDS` | Only if set |
 
    - Do **not** switch `AUTH_ISSUER` away from `crove-auth` manually in `.env` unless `user_account.issuer` rows already match or a migration backfill has run; remote Supabase Auth (`DEPLOY_IDP_ENVIRONMENT=pilot`) already uses its HTTPS issuer URL.
-   - Starts `ludy` stack (`db`, `migrate`, `auth`, `auth-grants`, infra, restarts `caddy`, `worker`, `api`, `prober`), runs loopback `deploy.sh smoke`, verifies 12 `ludy_*` schemas and 0 `crove_*` active PG sessions, and runs public smoke test via `DEPLOY_PUBLIC_URL`.
+   - Starts internal `ludy` services (`db`, `migrate`, `auth`, `auth-grants`, `worker`, `api`, `prober`) while keeping `caddy` offline until loopback `deploy.sh smoke`, 12 `ludy_*` schemas, and 0 `crove_*` active PG sessions all pass; only then starts `caddy` and exits before running the public smoke test via `DEPLOY_PUBLIC_URL`.
 4. **[CHECK]** Confirm the workflow succeeds, `/readyz` and `/version` answer on `https://<your domain>`, and run `action: inspect` once more to verify `active_project=ludy`, `legacy CROVE_* keys in env: none`, and `Active crove_* sessions: none`.
-5. **Prune legacy volumes (only after Stage 3 + Stage 6 + owner UI verification pass):** Run `Pilot Ludy cutover` with `action: prune-old-volumes` and `confirm: prune-crove-volumes` to remove old `crove_*` Docker volumes and unused `crove-db:local` image after confirming zero containers mount them.
-6. **Rollback:** `cutover-ludy.sh cutover-stack` automatically tears down `ludy` on failure, deletes newly created partial `ludy_*` volumes, restores `.env` and overlay backups from `<DEPLOY_DIR>/.deploy/cutover-backup-<stamp>/`, and brings the original `crove` stack back up on untouched `crove_*` volumes. Manual emergency restore after success follows the same reverse steps while `crove_*` volumes remain unpruned.
+5. **Prune legacy volumes (only after Stage 3 + Stage 6 + owner UI verification pass):** Run `Pilot Ludy cutover` with `action: prune-old-volumes` and `confirm: prune-crove-volumes` to verify 1:1 populated `ludy_*` replacement volumes and a healthy `stanza: ludy` backup (`wal.sh info`), remove old `crove_*` Docker volumes + unused `crove-db:local` image after confirming zero containers mount them, and delete temporary unencrypted `cutover-backup-*/db.dump` files from the host.
+6. **Rollback:** If `cutover-ludy.sh cutover-stack` fails **before** starting `ludy` containers, it automatically removes partial `ludy_*` volumes, restores `.env` and overlay backups from `<DEPLOY_DIR>/.deploy/cutover-backup-<stamp>/`, and brings the original `crove` stack back up on untouched `crove_*` volumes. Once `ludy` starts accepting internal/worker activity (`LUDY_VOLUMES_COMMITTED=1`), rollback fails closed and **preserves** `ludy_*` volumes (never deleting live post-cutover writes or reverting to stale pre-cutover volumes); operators inspect `<DEPLOY_DIR>/.deploy/` and `crove_*` volumes manually before retry.
 
 ### Part B: Root OS rename (`/opt/crove` -> `/opt/ludy`, timers, `sshd_config.d`, and `SMOKE_ORG`)
 
