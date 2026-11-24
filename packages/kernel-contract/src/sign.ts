@@ -813,6 +813,7 @@ export const zSignEnvelopeCreateInput = z.strictObject({
   sourceKind: zSignSourceKind.default('standalone'),
   sourceId: zId.nullable().optional(),
   sourceFileId: zId,
+  sourceDocxSha256: z.string().regex(SIGN_SHA256_HEX_PATTERN).optional(),
   autoRemindBeforeExpiry: z.boolean().optional(),
   expiresAt: z.iso.datetime({ offset: true }).nullable().optional(),
   idempotencyKey: zId.optional(),
@@ -1189,6 +1190,7 @@ export const zSignTemplateCreateInput = z
     expiresInHours: z.number().int().min(1).max(8760).nullable().optional(),
     sourceFileId: zId.optional(),
     sourceEnvelopeId: zId.optional(),
+    sourceDocxSha256: z.string().regex(SIGN_SHA256_HEX_PATTERN).optional(),
     copyRolesAndFields: z.boolean().default(true),
     status: z.enum(['draft', 'active']).optional(),
     idempotencyKey: zId.optional(),
@@ -1208,6 +1210,31 @@ export const zSignTemplateCreateResult = z.strictObject({
   inspectStatus: zSignInspectStatus,
   version: z.number().int(),
 });
+
+export const SIGN_DOCX_TO_PDF_WARNINGS = [
+  'floating_shapes_skipped',
+  'ole_objects_skipped',
+  'complex_columns_simplified',
+  'images_skipped',
+  'headers_footers_simplified',
+] as const;
+export type SignDocxToPdfWarning = (typeof SIGN_DOCX_TO_PDF_WARNINGS)[number];
+
+export interface SignDocxConvertCompletedResult {
+  status: 'completed';
+  fileId: string;
+  filename: string;
+  pageCount: number;
+  sourceDocxSha256: string;
+  warnings: SignDocxToPdfWarning[];
+}
+
+export interface SignDocxConvertPendingResult {
+  status: 'pending';
+  jobId: string;
+}
+
+export type SignDocxConvertHttpResponse = SignDocxConvertCompletedResult | SignDocxConvertPendingResult;
 
 export const zSignTemplateUpdateInput = z.strictObject({
   templateId: zId,

@@ -304,6 +304,7 @@ import { shortLinkTarget, SHORT_LINK_HITS_PER_MINUTE } from './short-link.ts';
 import { ORG_SLUG, attachmentDisposition } from './attachment.ts';
 import { withAiScope, type AiMeter } from '@ludy/agent';
 import { handleHrCvExtractPoll, handleHrCvExtractUpload } from './hr-cv-http.ts';
+import { handleSignDocxConvertPoll, handleSignDocxConvertUpload } from './sign-docx-http.ts';
 import type { ModelPort } from './member-vy-ports.ts';
 import type { SignAi } from './sign-ai.ts';
 import { createRpcHandler, resolveMembership, resolveOrg, type BookingReader, type RpcChannels, type SocialDrafter } from './rpc.ts';
@@ -562,6 +563,8 @@ export interface HttpDeps {
   stream?: StreamDeps;
   // Optional wait timeout in ms for worker-side CV PDF/DOCX extraction before returning 202 pending (#4446).
   hrCvWaitMs?: number;
+  // Optional wait timeout in ms for worker-side eSign .docx -> PDF conversion before returning 202 pending (#4721).
+  signDocxWaitMs?: number;
 }
 
 export interface StreamDeps {
@@ -3693,6 +3696,61 @@ export function createHttpApp(deps: HttpDeps) {
         runInAiScope: (fn) => (deps.aiMeter ? withAiScope({ orgId, meter: deps.aiMeter(actor) }, fn) : fn()),
       });
       return c.json(res, res.status === 'ready' ? 200 : 202);
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  // Sandboxed eSign .docx -> tagged A4 PDF relay (#4721, gate T12):
+  // never parses .docx bytes in the API process; relays via outbox + worker crove-extract and ingests PDF strictly as actorOf(user).
+  app.post('/api/sign/convert-docx', uploadSlot, async (c) => {
+    c.header('cache-control', 'private, no-store');
+    try {
+      const who = uploaders.get(c);
+      if (!who) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      const { user, orgId } = who;
+      if (user.extension) {
+        throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
+      }
+      assertNoteUploadOrigin(c);
+      if (!runtime.installed('sign') || !(await requireAppOn(orgId, 'sign'))) {
+        throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ký số chưa được bật');
+      }
+      const res = await handleSignDocxConvertUpload({
+        runtime,
+        store,
+        user,
+        orgId,
+        req: c.req.raw,
+        ...(deps.signDocxWaitMs !== undefined ? { waitMs: deps.signDocxWaitMs } : {}),
+        onRateLimited: (seconds) => c.header('retry-after', String(seconds)),
+      });
+      return c.json(res, res.status === 'completed' ? 200 : 202);
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  app.get('/api/sign/convert-docx/:jobId', async (c) => {
+    c.header('cache-control', 'private, no-store');
+    try {
+      const user = c.get('user');
+      if (user.extension) {
+        throw new DomainError('FORBIDDEN', 403, 'Mã của tiện ích Ludy không được dùng cho việc này', { rule: 'extension_scope' });
+      }
+      const orgId = await resolveOrg(runtime, user, readOrgHeader(c));
+      if (!runtime.installed('sign') || !(await requireAppOn(orgId, 'sign'))) {
+        throw new DomainError('NOT_FOUND', 404, 'Mô-đun Ký số chưa được bật');
+      }
+      const res = await handleSignDocxConvertPoll({
+        runtime,
+        store,
+        user,
+        orgId,
+        jobId: c.req.param('jobId'),
+        ...(c.req.query('filename') ? { filename: c.req.query('filename') } : {}),
+      });
+      return c.json(res, res.status === 'completed' ? 200 : 202);
     } catch (error) {
       return problem(c, error);
     }

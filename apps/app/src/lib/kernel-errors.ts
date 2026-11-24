@@ -1642,6 +1642,13 @@ export const KERNEL_ERROR_CODES = [
   'SIGN_API_KEY_DUPLICATE_NAME',
   'SIGN_API_KEY_LIMIT_REACHED',
   'SIGN_API_KEY_NOT_FOUND',
+  // eSign Slice 6b native .docx conversion (#4721).
+  'INVALID_JOB_ID',
+  'SIGN_DOCX_CONVERT_FAILED',
+  'SIGN_DOCX_INVALID_OUTPUT',
+  'SIGN_DOCX_JOB_NOT_FOUND',
+  'SIGN_DOCX_OLE2_UNSUPPORTED',
+  'SIGN_DOCX_SIZE_MISMATCH',
 ] as const;
 
 export type KernelErrorCode = (typeof KERNEL_ERROR_CODES)[number];

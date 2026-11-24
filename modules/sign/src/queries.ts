@@ -21,6 +21,7 @@ import { DomainError, defineQuery, type QueryContext } from '@ludy/kernel-runtim
 import { isSignAiStoppedOnTrx } from './ai.ts';
 import { signApiKeyQueries } from './api-keys.ts';
 import { renderStarterContractPdf } from './contract-drafter.ts';
+import { signDocxConvertQueries } from './docx-convert.ts';
 import { signMcpQueries } from './mcp.ts';
 import type { SigningEventChainRow } from './events.ts';
 import { parseEventPayload, verifyEventChain } from './events.ts';
@@ -1052,4 +1053,5 @@ export const signQueries = [
   ...signPlaybookQueries,
   ...signApiKeyQueries,
   ...signMcpQueries,
+  ...signDocxConvertQueries,
 ];

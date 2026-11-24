@@ -6,7 +6,6 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { MAX_UPLOAD_BYTES } from '@ludy/kernel-contract';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button } from '@ludy/ui/components/button';
@@ -20,6 +19,12 @@ import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { Textarea } from '@ludy/ui/components/textarea';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { ContractDrafterDialog } from '../components/sign/contract-drafter-dialog.tsx';
+import {
+  DocxConversionNotice,
+  DocxWarningsAlert,
+  inspectSelectedSignUploadFile,
+  type DocxConversionStatus,
+} from '../components/sign/docx-conversion-notice.tsx';
 import { FieldOptionsAndAttachmentEditor } from '../components/sign/field-options-editor.tsx';
 import { FieldOverlayLayer } from '../components/sign/field-placer.tsx';
 import { PdfCanvasViewer } from '../components/sign/pdf-canvas-viewer.tsx';
@@ -27,9 +32,13 @@ import { SenderSharedSummaryEditor } from '../components/sign/shared-summary-car
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
 import {
+  SIGN_UPLOAD_ACCEPT,
+  convertSignDocx,
   downloadSignPdfBytes,
   signApi,
   uploadSignPdf,
+  type SignDocxConvertCompletedResult,
+  type SignDocxToPdfWarning,
   type SignSharedSummary,
   type SignSignerRecord,
   type SignTemplateDetail,
@@ -60,7 +69,6 @@ import {
   type SignSignerRole,
 } from '../lib/sign-fields.ts';
 import { buildDirectSigningUrl, buildPublicHubUrl, buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
-import { looksLikePdfBytes } from '../lib/sign-pdf.ts';
 import { toast } from '../lib/toast.ts';
 
 type TemplateFilterTab = 'all' | 'active' | 'draft' | 'archived';
@@ -688,6 +696,8 @@ export function CreateTemplateForm({
   file,
   error,
   pending,
+  docxStatus,
+  docxResult,
   onChangeTitle,
   onChangeDescription,
   onChangeRoutingMode,
@@ -704,6 +714,8 @@ export function CreateTemplateForm({
   file: File | null;
   error: string | null;
   pending: boolean;
+  docxStatus?: DocxConversionStatus | undefined;
+  docxResult?: SignDocxConvertCompletedResult | null | undefined;
   onChangeTitle: (value: string) => void;
   onChangeDescription: (value: string) => void;
   onChangeRoutingMode: (value: SignRoutingMode) => void;
@@ -771,19 +783,20 @@ export function CreateTemplateForm({
         <input
           id="sign-tpl-create-file"
           type="file"
-          accept="application/pdf,.pdf"
+          accept={SIGN_UPLOAD_ACCEPT}
           required
-          className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border file:border-border file:bg-card file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-foreground"
+          className="block min-h-11 w-full text-sm text-muted-foreground file:mr-3 file:min-h-9 file:rounded-md file:border file:border-border file:bg-card file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-foreground"
           onChange={(e) => onChangeFile(e.target.files?.[0] ?? null)}
         />
         {file ? <p className="text-xs text-muted-foreground">{t('selectedFile', { name: file.name })}</p> : null}
+        <DocxConversionNotice status={docxStatus ?? 'idle'} result={docxResult ?? null} />
       </div>
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {error ? <ErrorText>{error}</ErrorText> : null}
       <DialogFooter>
         <Button
           type="submit"
           loading={pending}
-          disabled={!title.trim() || !file}
+          disabled={!title.trim() || !file || docxStatus === 'converting' || docxStatus === 'error'}
           data-testid="sign-tpl-create-submit-btn"
         >
           {t('submitCreate')}
@@ -961,6 +974,13 @@ export function SignTemplatesPage() {
   const [createMessage, setCreateMessage] = useState('');
   const [createFile, setCreateFile] = useState<File | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [createDocxStatus, setCreateDocxStatus] = useState<DocxConversionStatus>('idle');
+  const [createDocxResult, setCreateDocxResult] = useState<SignDocxConvertCompletedResult | null>(null);
+  const [createdDocxNotice, setCreatedDocxNotice] = useState<{
+    templateId: string;
+    warnings: readonly SignDocxToPdfWarning[];
+  } | null>(null);
+  const createPickTokenRef = useRef(0);
 
   // Selected template editable state
   const [metaTitle, setMetaTitle] = useState('');
@@ -1130,23 +1150,73 @@ export function SignTemplatesPage() {
     if (id) await queryClient.invalidateQueries({ queryKey: ['sign', 'templates', 'detail', id] });
   };
 
+  const handleCreateFileChange = async (file: File | null) => {
+    const token = ++createPickTokenRef.current;
+    setCreateError(null);
+    setCreateDocxStatus('idle');
+    setCreateDocxResult(null);
+    if (!file) {
+      setCreateFile(null);
+      return;
+    }
+    const checked = await inspectSelectedSignUploadFile(file);
+    if (createPickTokenRef.current !== token) return;
+    if (!checked.ok) {
+      setCreateError(tSign(checked.errorKey));
+      setCreateFile(null);
+      return;
+    }
+    setCreateFile(file);
+    setCreateTitle((prev) => (prev.trim() ? prev : checked.fallbackTitle));
+    if (checked.kind === 'docx') {
+      setCreateDocxStatus('converting');
+      try {
+        const converted = await convertSignDocx(file, slug ?? undefined);
+        if (!mountedRef.current || createPickTokenRef.current !== token) return;
+        setCreateDocxResult(converted);
+        setCreateDocxStatus('ready');
+      } catch (err) {
+        if (!mountedRef.current || createPickTokenRef.current !== token) return;
+        setCreateDocxStatus('error');
+        setCreateError(errorMessage(err));
+      }
+    }
+  };
+
   const createMutation = useMutation({
-    mutationFn: async (vars: { capturedSlug: string | undefined }) => {
+    mutationFn: async (vars: {
+      capturedSlug: string | undefined;
+      converted: SignDocxConvertCompletedResult | null;
+    }) => {
       if (!createFile) throw new Error(t('pdfFileLabel'));
-      if (createFile.size > MAX_UPLOAD_BYTES) throw new Error(tSign('pdfTooLarge'));
-      const header = new Uint8Array(await createFile.slice(0, 16).arrayBuffer());
-      if (!looksLikePdfBytes(header)) throw new Error(tSign('pdfInvalidType'));
+      if (vars.converted) {
+        return {
+          created: await signApi.createTemplate({
+            title: createTitle.trim(),
+            description: createDesc.trim() || null,
+            routingMode: createRouting,
+            subject: createSubject.trim() || null,
+            message: createMessage.trim() || null,
+            sourceFileId: vars.converted.fileId,
+            sourceDocxSha256: vars.converted.sourceDocxSha256,
+          }),
+          warnings: vars.converted.warnings,
+        };
+      }
       const uploaded = await uploadSignPdf(createFile, vars.capturedSlug ?? undefined);
-      return signApi.createTemplate({
-        title: createTitle.trim(),
-        description: createDesc.trim() || null,
-        routingMode: createRouting,
-        subject: createSubject.trim() || null,
-        message: createMessage.trim() || null,
-        sourceFileId: uploaded.fileId,
-      });
+      return {
+        created: await signApi.createTemplate({
+          title: createTitle.trim(),
+          description: createDesc.trim() || null,
+          routingMode: createRouting,
+          subject: createSubject.trim() || null,
+          message: createMessage.trim() || null,
+          sourceFileId: uploaded.fileId,
+        }),
+        warnings: [] as SignDocxToPdfWarning[],
+      };
     },
-    onSuccess: async (res, vars) => {
+    onSuccess: async ({ created: res, warnings }, vars) => {
       if (!isSameActiveOrgContext(vars.capturedSlug)) return;
       setCreateOpen(false);
       setCreateTitle('');
@@ -1155,6 +1225,9 @@ export function SignTemplatesPage() {
       setCreateMessage('');
       setCreateFile(null);
       setCreateError(null);
+      setCreateDocxStatus('idle');
+      setCreateDocxResult(null);
+      setCreatedDocxNotice(warnings.length > 0 ? { templateId: res.templateId, warnings } : null);
       pendingCreatedIdRef.current = res.templateId;
       const nextFilters = nextFiltersAfterTemplateCreate(tab);
       if (nextFilters.tab !== tab) {
@@ -1164,7 +1237,7 @@ export function SignTemplatesPage() {
       setSelectedId(res.templateId);
       await invalidateTemplates(res.templateId);
       if (!isSameActiveOrgContext(vars.capturedSlug)) return;
-      toast(t('savedToast'));
+      toast(warnings.length > 0 ? tSign('docxWarningBanner') : t('savedToast'));
     },
     onError: (err, vars) => {
       if (!isSameActiveOrgContext(vars.capturedSlug)) return;
@@ -1525,9 +1598,9 @@ export function SignTemplatesPage() {
 
   const onSubmitCreate = (e: FormEvent) => {
     e.preventDefault();
-    if (createMutation.isPending) return;
+    if (createMutation.isPending || createDocxStatus === 'converting' || createDocxStatus === 'error') return;
     setCreateError(null);
-    createMutation.mutate({ capturedSlug: slug });
+    createMutation.mutate({ capturedSlug: slug, converted: createDocxResult });
   };
 
   const onSubmitInstantiate = (e: FormEvent) => {
@@ -1744,6 +1817,12 @@ export function SignTemplatesPage() {
                       </div>
                     </div>
 
+                    {createdDocxNotice?.templateId === detail.template.id ? (
+                      <DocxWarningsAlert
+                        warnings={createdDocxNotice.warnings}
+                        onDismiss={() => setCreatedDocxNotice(null)}
+                      />
+                    ) : null}
                     {detail.template.inspectStatus === 'pending' ? (
                       <Alert>
                         <AlertDescription>{t('inspectPending')}</AlertDescription>
@@ -2269,12 +2348,14 @@ export function SignTemplatesPage() {
             file={createFile}
             error={createError}
             pending={createMutation.isPending}
+            docxStatus={createDocxStatus}
+            docxResult={createDocxResult}
             onChangeTitle={setCreateTitle}
             onChangeDescription={setCreateDesc}
             onChangeRoutingMode={setCreateRouting}
             onChangeSubject={setCreateSubject}
             onChangeMessage={setCreateMessage}
-            onChangeFile={setCreateFile}
+            onChangeFile={(file) => void handleCreateFileChange(file)}
             onSubmit={onSubmitCreate}
           />
         </DialogContent>

@@ -807,7 +807,12 @@ export const templateCreate = defineCommand({
     if (tpl.inspect_status === 'pending') {
       await ctx.emit('sign.template.inspect_queued', { templateId: tpl.id });
     }
-    ctx.audit({ templateId: tpl.id, inspectStatus: tpl.inspect_status, status: tpl.status });
+    ctx.audit({
+      templateId: tpl.id,
+      inspectStatus: tpl.inspect_status,
+      status: tpl.status,
+      ...(input.sourceDocxSha256 ? { sourceDocxSha256: input.sourceDocxSha256 } : {}),
+    });
     return {
       templateId: tpl.id,
       status: tpl.status,

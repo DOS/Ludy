@@ -7,6 +7,9 @@ import {
   type SignContractDraftVariables,
   type SignDiffCompareInput,
   type SignDiffCompareResult,
+  type SignDocxConvertCompletedResult,
+  type SignDocxConvertHttpResponse,
+  type SignDocxToPdfWarning,
   type SignDrafterProposeInput,
   type SignDrafterProposeResult,
   type SignDrafterRenderPdfResult,
@@ -31,9 +34,20 @@ import {
   type SignWebhookListResult,
   type SignWebhookRecord,
 } from '@ludy/kernel-contract';
-import { client, clientForOrg, fetchFile, getCurrentOrg, orglessClient, uploadFiles } from './api.ts';
+import { apiFetch, client, clientForOrg, fetchFile, getCurrentOrg, orglessClient, uploadFiles } from './api.ts';
 import { apiUrl } from './api-base.ts';
 import { accessToken } from './auth.ts';
+import {
+  ClientError,
+  isMfaRequired,
+  isModuleOff,
+  isOrgAccessRevoked,
+  isServerRefusal,
+  isStepUpRequired,
+  isUnauthenticated,
+  retryWhileBusy,
+} from './errors.ts';
+import { isNetworkFailure } from './network-error.ts';
 import type {
   SignDeliveryMode,
   SignDetectedTag,
@@ -51,6 +65,8 @@ export type {
   SignContractDraftVariables,
   SignDiffCompareInput,
   SignDiffCompareResult,
+  SignDocxConvertCompletedResult,
+  SignDocxToPdfWarning,
   SignDrafterProposeInput,
   SignDrafterProposeResult,
   SignDrafterRenderPdfResult,
@@ -61,6 +77,42 @@ export type {
   SignWebhookListResult,
   SignWebhookRecord,
 };
+
+export const SIGN_DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+export const SIGN_UPLOAD_ACCEPT = `application/pdf,.pdf,${SIGN_DOCX_MIME},.docx`;
+export const SIGN_DOCX_MAX_BYTES = 10 * 1024 * 1024;
+const SIGN_DOCX_POLL_INTERVAL_MS = 500;
+const SIGN_DOCX_POLL_TIMEOUT_MS = 45_000;
+
+export function isSignDocxFile(file: Pick<File, 'name' | 'type'>): boolean {
+  const name = file.name.trim().toLowerCase();
+  const type = file.type.trim().toLowerCase();
+  return name.endsWith('.docx') || type === SIGN_DOCX_MIME;
+}
+
+export function looksLikeZipBytes(bytes: Uint8Array): boolean {
+  return bytes.byteLength >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04;
+}
+
+export function looksLikeOle2Bytes(bytes: Uint8Array): boolean {
+  return bytes.byteLength >= 4 && bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0;
+}
+
+function isRetryableDocxPollError(error: unknown): boolean {
+  if (
+    isUnauthenticated(error) ||
+    isMfaRequired(error) ||
+    isOrgAccessRevoked(error) ||
+    isStepUpRequired(error) ||
+    isModuleOff(error) ||
+    isServerRefusal(error)
+  ) {
+    return false;
+  }
+  const code = (error as { code?: unknown } | null)?.code;
+  const status = (error as { status?: unknown } | null)?.status;
+  return code === 'UPLOAD_BUSY' || (typeof status === 'number' && status >= 500) || isNetworkFailure(error);
+}
 
 export interface SignEnvelopeSummary {
   id: string;
@@ -394,6 +446,64 @@ export async function uploadSignPdf(file: File, orgSlug?: string | null): Promis
   return { fileId: uploaded.fileId };
 }
 
+export async function convertSignDocx(file: File, orgSlug?: string | null): Promise<SignDocxConvertCompletedResult> {
+  if (file.size === 0) {
+    throw new ClientError('sign.docxEmpty', (t) => t('sign.docxEmpty'));
+  }
+  if (file.size > SIGN_DOCX_MAX_BYTES) {
+    throw new ClientError('sign.docxTooLarge', (t) => t('sign.docxTooLarge'));
+  }
+  const head = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+  if (looksLikeOle2Bytes(head)) {
+    throw new ClientError('sign.docxOle2Unsupported', (t) => t('sign.docxOle2Unsupported'));
+  }
+  if (!looksLikeZipBytes(head)) {
+    throw new ClientError('sign.docxInvalidType', (t) => t('sign.docxInvalidType'));
+  }
+
+  const form = new FormData();
+  form.append('file', file, file.name || 'hop-dong.docx');
+
+  const orgOpt = { orgSlug: orgSlug === undefined ? getCurrentOrg() : orgSlug };
+  const initialRes = await retryWhileBusy(() =>
+    apiFetch('/api/sign/convert-docx', {
+      method: 'POST',
+      body: form,
+      ...orgOpt,
+    }),
+  );
+  let payload = (await initialRes.json()) as SignDocxConvertHttpResponse;
+  if (payload.status === 'completed') return payload;
+
+  const baseName = (file.name.split(/[\\/]/).pop() ?? '').replace(/\.(docx|pdf)$/i, '').trim() || 'hop-dong';
+  const pdfHintName = `${baseName}.pdf`;
+  const pollPath = `/api/sign/convert-docx/${encodeURIComponent(payload.jobId)}?filename=${encodeURIComponent(pdfHintName)}`;
+  const deadline = Date.now() + SIGN_DOCX_POLL_TIMEOUT_MS;
+  let lastTransientError: unknown = null;
+
+  for (let attempt = 0; attempt < 90; attempt += 1) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await new Promise((resolve) => setTimeout(resolve, Math.min(SIGN_DOCX_POLL_INTERVAL_MS, remaining)));
+    try {
+      const pollRes = await apiFetch(pollPath, orgOpt);
+      lastTransientError = null;
+      payload = (await pollRes.json()) as SignDocxConvertHttpResponse;
+      if (payload.status === 'completed') return payload;
+    } catch (error) {
+      if (!isRetryableDocxPollError(error)) {
+        throw error;
+      }
+      lastTransientError = error;
+    }
+  }
+
+  if (lastTransientError !== null) {
+    throw lastTransientError;
+  }
+  throw new ClientError('sign.docxTimedOut', (t) => t('sign.docxTimedOut'));
+}
+
 export async function downloadSignFile(fileId: string): Promise<Blob> {
   return fetchFile(fileId);
 }
@@ -416,6 +526,7 @@ export const signApi = {
     routingMode: SignRoutingMode;
     allowDelegation?: boolean;
     sourceFileId: string;
+    sourceDocxSha256?: string;
     expiresAt?: string | null;
     autoRemindBeforeExpiry?: boolean;
   }) => client.sign.envelope.create({ ...input, sourceKind: 'standalone', idempotencyKey: crypto.randomUUID() }),
@@ -519,6 +630,7 @@ export const signApi = {
     expiresInHours?: number | null;
     sourceFileId?: string;
     sourceEnvelopeId?: string;
+    sourceDocxSha256?: string;
     copyRolesAndFields?: boolean;
     status?: 'draft' | 'active';
   }) => client.sign.template.create({ ...input, idempotencyKey: crypto.randomUUID() }),

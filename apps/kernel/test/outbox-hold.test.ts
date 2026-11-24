@@ -58,6 +58,8 @@ describe('which events wait', () => {
     expect(heldAppOf('hr.recruiting.cv_extract_queued')).toBe('hr');
     expect(heldAppOf('notes.attachment.extract_queued')).toBe('notes');
     expect(heldAppOf('sign.kyc.inspect_queued')).toBe('sign');
+    expect(SELF_RECOVERING_EVENTS.has('sign.docx_convert_queued')).toBe(true);
+    expect(heldAppOf('sign.docx_convert_queued')).toBeNull();
     expect(heldAppOf('notes.todo.handed_over')).toBeNull();
     expect(heldAppOf('kernel.file.ingested')).toBe('finance');
     expect(heldAppOf('kernel.file.reextract_requested')).toBe('finance');

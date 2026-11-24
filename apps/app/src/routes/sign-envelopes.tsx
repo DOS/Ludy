@@ -4,7 +4,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { COWORKER_ROSTER, MAX_UPLOAD_BYTES } from '@ludy/kernel-contract';
+import { COWORKER_ROSTER } from '@ludy/kernel-contract';
 import { Alert, AlertDescription } from '@ludy/ui/components/alert';
 import { Badge } from '@ludy/ui/components/badge';
 import { Button, buttonVariants } from '@ludy/ui/components/button';
@@ -16,6 +16,11 @@ import { Tabs, TabsList, TabsTrigger } from '@ludy/ui/components/tabs';
 import { cn } from '@ludy/ui/lib/utils';
 import { ContractDrafterDialog } from '../components/sign/contract-drafter-dialog.tsx';
 import { ContractVaultBar } from '../components/sign/contract-vault-bar.tsx';
+import {
+  DocxConversionNotice,
+  inspectSelectedSignUploadFile,
+  type DocxConversionStatus,
+} from '../components/sign/docx-conversion-notice.tsx';
 import { VersionDiffDialog } from '../components/sign/version-diff-dialog.tsx';
 import { FormDialog } from '../components/form-dialog.tsx';
 import { CoworkerAttribution, ProposalSurface } from '../components/proposal-surface.tsx';
@@ -23,17 +28,19 @@ import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { useListPeekNav } from '../lib/list-peek-nav.ts';
 import {
+  SIGN_UPLOAD_ACCEPT,
   canManageEnvelopeLinks,
+  convertSignDocx,
   downloadSignFile,
   signApi,
   uploadSignPdf,
   type SignAiAnalysis,
+  type SignDocxConvertCompletedResult,
   type SignEnvelopeSummary,
   type SignObligationRenewalListItem,
 } from '../lib/sign-api.ts';
 import type { SignEnvelopeStatus } from '../lib/sign-fields.ts';
 import { buildInPersonSigningUrl, buildSigningUrl, copyTextToClipboard } from '../lib/sign-hash.ts';
-import { looksLikePdfBytes } from '../lib/sign-pdf.ts';
 import { toast } from '../lib/toast.ts';
 import { DataTable, Empty, ErrorText, PageHeader, PeekSheet, TableSkeleton } from '../components/ui.tsx';
 
@@ -115,18 +122,35 @@ export function CreateEnvelopeDialog({
   const [title, setTitle] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [docxStatus, setDocxStatus] = useState<DocxConversionStatus>('idle');
+  const [docxResult, setDocxResult] = useState<SignDocxConvertCompletedResult | null>(null);
+  const pickTokenRef = useRef(0);
 
   const createMutation = useMutation({
-    mutationFn: async (input: { title: string; file: File }) => {
+    mutationFn: async (input: { title: string; file: File; converted: SignDocxConvertCompletedResult | null }) => {
+      if (input.converted) {
+        return {
+          created: await signApi.createEnvelope({
+            title: input.title,
+            routingMode: 'parallel',
+            sourceFileId: input.converted.fileId,
+            sourceDocxSha256: input.converted.sourceDocxSha256,
+          }),
+          warnings: input.converted.warnings,
+        };
+      }
       const uploaded = await uploadSignPdf(input.file);
-      return signApi.createEnvelope({
-        title: input.title,
-        routingMode: 'parallel',
-        sourceFileId: uploaded.fileId,
-      });
+      return {
+        created: await signApi.createEnvelope({
+          title: input.title,
+          routingMode: 'parallel',
+          sourceFileId: uploaded.fileId,
+        }),
+        warnings: [],
+      };
     },
-    onSuccess: async (created) => {
-      toast(t('createdToast'));
+    onSuccess: async ({ created, warnings }) => {
+      toast(warnings.length > 0 ? t('docxWarningBanner') : t('createdToast'));
       await onCreated(created.envelopeId);
     },
     onError: (error) => {
@@ -135,43 +159,53 @@ export function CreateEnvelopeDialog({
   });
 
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const token = ++pickTokenRef.current;
     setFormError(null);
+    setDocxStatus('idle');
+    setDocxResult(null);
     const file = event.target.files?.[0] ?? null;
     if (!file) {
       setSelectedFile(null);
       return;
     }
-    if (file.type && file.type !== 'application/pdf') {
-      setFormError(t('pdfInvalidType'));
-      setSelectedFile(null);
-      return;
-    }
-    if (file.size > MAX_UPLOAD_BYTES) {
-      setFormError(t('pdfTooLarge'));
-      setSelectedFile(null);
-      return;
-    }
-    const head = new Uint8Array(await file.slice(0, 8).arrayBuffer());
-    if (!looksLikePdfBytes(head)) {
-      setFormError(t('pdfInvalidType'));
+    const checked = await inspectSelectedSignUploadFile(file);
+    if (pickTokenRef.current !== token) return;
+    if (!checked.ok) {
+      setFormError(t(checked.errorKey));
       setSelectedFile(null);
       return;
     }
     setSelectedFile(file);
-    const fallbackTitle = file.name.replace(/\.pdf$/i, '');
-    setTitle((prev) => (prev.trim() ? prev : fallbackTitle));
+    setTitle((prev) => (prev.trim() ? prev : checked.fallbackTitle));
+    if (checked.kind === 'docx') {
+      setDocxStatus('converting');
+      try {
+        const converted = await convertSignDocx(file);
+        if (pickTokenRef.current !== token) return;
+        setDocxResult(converted);
+        setDocxStatus('ready');
+      } catch (error) {
+        if (pickTokenRef.current !== token) return;
+        setDocxStatus('error');
+        setFormError(errorMessage(error));
+      }
+    }
   };
 
   const handleCreateSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (createMutation.isPending) return;
+    if (createMutation.isPending || docxStatus === 'converting') return;
     setFormError(null);
     if (!selectedFile) {
       setFormError(t('pdfRequired'));
       return;
     }
-    const cleanTitle = title.trim() || selectedFile.name.replace(/\.pdf$/i, '') || selectedFile.name;
-    createMutation.mutate({ title: cleanTitle, file: selectedFile });
+    if (docxStatus === 'error') {
+      setFormError(t('pdfRequired'));
+      return;
+    }
+    const cleanTitle = title.trim() || selectedFile.name.replace(/\.(pdf|docx)$/i, '') || selectedFile.name;
+    createMutation.mutate({ title: cleanTitle, file: selectedFile, converted: docxResult });
   };
 
   return (
@@ -180,6 +214,7 @@ export function CreateEnvelopeDialog({
       title={t('createTitle')}
       description={t('createHint')}
       busy={createMutation.isPending}
+      submitDisabled={docxStatus === 'converting' || docxStatus === 'error'}
       dirty={title.trim() !== '' || selectedFile !== null}
       submitLabel={t('createSubmit')}
       submitTestId="sign-create-submit-btn"
@@ -192,11 +227,12 @@ export function CreateEnvelopeDialog({
         <Input
           id="sign-new-pdf"
           type="file"
-          accept="application/pdf,.pdf"
+          accept={SIGN_UPLOAD_ACCEPT}
           autoFocus
           onChange={(e) => void handleFileChange(e)}
           data-testid="sign-upload-pdf-input"
         />
+        <DocxConversionNotice status={docxStatus} result={docxResult} />
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="sign-new-title">{t('titleLabel')}</Label>

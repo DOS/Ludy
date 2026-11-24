@@ -14,9 +14,10 @@ import { z } from 'zod';
 // marketplace_orders: a Shopee, TikTok Shop or Lazada order report as .xlsx or CSV (#2515); only an allow-list of columns comes back (order, line, dates, status, SKU, product, quantity,
 // amounts): the buyer's columns are never read, so they never leave the sandbox.
 // docx_text: text from a .docx Word document attached to a note (#3561).
+// docx_to_pdf: pure-JS conversion of a native .docx contract into a tagged A4 PDF for eSign (#4721).
 // marketplace_columns: the same kind of file when no platform profile fits its headers (#4035, #3850 slice 1b). The request is a JSON envelope (the file as base64, and with it the platform the person
 // picked and the column mapping to check); the answer is the masked sheet (header texts and the SHAPES of a few values, never a value, buyer columns blanked) or the result of checking the mapping on the real file.
-export const EXTRACT_KINDS = ['einvoice_xml', 'pdf_text', 'docx_text', 'pdf_inspect', 'pdf_seal', 'pdf_embed_cms', 'mime', 'zip', 'portal_invoice_list', 'dsn', 'html_meta', 'feed', 'bank_statement', 'marketplace_orders', 'marketplace_income', 'marketplace_columns'] as const;
+export const EXTRACT_KINDS = ['einvoice_xml', 'pdf_text', 'docx_text', 'docx_to_pdf', 'pdf_inspect', 'pdf_seal', 'pdf_embed_cms', 'mime', 'zip', 'portal_invoice_list', 'dsn', 'html_meta', 'feed', 'bank_statement', 'marketplace_orders', 'marketplace_income', 'marketplace_columns'] as const;
 export type ExtractKind = (typeof EXTRACT_KINDS)[number];
 export const zExtractKind = z.enum(EXTRACT_KINDS);
 
@@ -107,6 +108,8 @@ export const EXTRACT_LIMITS = {
   maxPdfCmsOcspBytes: 64 * 1024,
   maxPdfCmsOcspResponses: 16,
   maxPdfEmbedCmsRequestBytes: 40 * MiB,
+  // Native .docx upload to tagged A4 PDF for eSign (#4721).
+  maxSignDocxBytes: 10 * MiB,
 } as const;
 
 // Why the sandbox did not return an entry of an archive. The whole archive is refused instead (as invalid) when an
@@ -116,6 +119,7 @@ export const ARCHIVE_REJECTIONS = ['encrypted', 'unsupported_method', 'nested_ar
 export type ArchiveRejection = (typeof ARCHIVE_REJECTIONS)[number];
 
 export function maxRequestBytes(kind: ExtractKind): number {
+  if (kind === 'docx_to_pdf') return EXTRACT_LIMITS.maxSignDocxBytes;
   if (kind === 'mime' || kind === 'dsn') return EXTRACT_LIMITS.maxEmailBytes;
   if (kind === 'pdf_seal') return EXTRACT_LIMITS.maxPdfSealRequestBytes;
   if (kind === 'pdf_embed_cms') return EXTRACT_LIMITS.maxPdfEmbedCmsRequestBytes;
@@ -964,6 +968,25 @@ export function decodeMarketplaceColumnsInput(bytes: Uint8Array): MarketplaceCol
   return decodeJsonContractInput('marketplace_columns', zMarketplaceColumnsInput, bytes, (msg) => new MarketplaceColumnsInputError(msg));
 }
 
+export const DOCX_TO_PDF_WARNINGS = [
+  'floating_shapes_skipped',
+  'ole_objects_skipped',
+  'complex_columns_simplified',
+  'images_skipped',
+  'headers_footers_simplified',
+] as const;
+export const zDocxToPdfWarning = z.enum(DOCX_TO_PDF_WARNINGS);
+export type DocxToPdfWarning = z.infer<typeof zDocxToPdfWarning>;
+
+export const zDocxToPdfResult = z.strictObject({
+  ok: z.literal(true),
+  kind: z.literal('docx_to_pdf'),
+  pdfBase64: z.base64().min(1).max(34 * MiB),
+  pageCount: z.number().int().min(1).max(EXTRACT_LIMITS.maxPdfSignPages),
+  warnings: z.array(zDocxToPdfWarning).max(DOCX_TO_PDF_WARNINGS.length),
+});
+export type DocxToPdfResult = z.infer<typeof zDocxToPdfResult>;
+
 export const zExtractSuccess = z.discriminatedUnion('kind', [
   z.strictObject({ ok: z.literal(true), kind: z.literal('einvoice_xml'), invoice: zExtractedInvoice }),
   z.strictObject({
@@ -977,6 +1000,7 @@ export const zExtractSuccess = z.discriminatedUnion('kind', [
     kind: z.literal('docx_text'),
     text: z.string().max(EXTRACT_LIMITS.maxTextChars),
   }),
+  zDocxToPdfResult,
   zPdfInspectResult,
   zPdfSealResult,
   zPdfEmbedCmsResult,

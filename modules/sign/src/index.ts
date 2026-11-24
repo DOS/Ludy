@@ -232,6 +232,23 @@ export {
   type SignKycSource,
 } from './kyc.ts';
 export {
+  SIGN_DOCX_MAX_BYTES,
+  pdfFilenameFromDocx,
+  signDocxBlobKey,
+  signDocxConvertCommands,
+  signDocxConvertComplete,
+  signDocxConvertPending,
+  signDocxConvertQueries,
+  signDocxConvertRequest,
+  signDocxConvertStatus,
+  zSignDocxConvertCompleteInput,
+  zSignDocxConvertPendingInput,
+  zSignDocxConvertRequestInput,
+  zSignDocxConvertStatusInput,
+  type SignDocxConvertPendingJob,
+  type SignDocxConvertStatus,
+} from './docx-convert.ts';
+export {
   signApiKeyCommands,
   signApiKeyCreate,
   signApiKeyList,

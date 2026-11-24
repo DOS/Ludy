@@ -395,13 +395,15 @@ describe('per-extension-token write limit and fail-closed appOn edge (#3742)', (
     const jobId = '55555555-5555-4555-8555-555555555555';
     const browserHeaders = { authorization: 'Bearer browser', 'x-ludy-org': 'org-1' };
 
-    const routes: Array<{ method: 'GET' | 'POST'; path: string; mod: 'notes' | 'hr'; offCode: string }> = [
+    const routes: Array<{ method: 'GET' | 'POST'; path: string; mod: 'notes' | 'hr' | 'sign'; offCode: string }> = [
       { method: 'POST', path: `/api/notes/${noteId}/attachments`, mod: 'notes', offCode: 'NOT_FOUND' },
       { method: 'GET', path: `/api/notes/attachments/${attId}`, mod: 'notes', offCode: 'NOTE_ATTACHMENT_NOT_FOUND' },
       { method: 'POST', path: '/api/notes/import/enex', mod: 'notes', offCode: 'NOT_FOUND' },
       { method: 'POST', path: '/api/notes/import/todoist', mod: 'notes', offCode: 'NOT_FOUND' },
       { method: 'POST', path: '/api/hr/recruiting/cv-extract', mod: 'hr', offCode: 'NOT_FOUND' },
       { method: 'GET', path: `/api/hr/recruiting/cv-extract/${jobId}`, mod: 'hr', offCode: 'NOT_FOUND' },
+      { method: 'POST', path: '/api/sign/convert-docx', mod: 'sign', offCode: 'NOT_FOUND' },
+      { method: 'GET', path: `/api/sign/convert-docx/${jobId}`, mod: 'sign', offCode: 'NOT_FOUND' },
     ];
 
     const sendRoute = (target: ReturnType<typeof createHttpApp>, r: (typeof routes)[number]) =>

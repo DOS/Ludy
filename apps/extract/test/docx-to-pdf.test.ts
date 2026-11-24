@@ -1,0 +1,190 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+import { describe, expect, it } from 'vitest';
+import { PDFDocument } from 'pdf-lib';
+import { EXTRACT_LIMITS } from '@ludy/extract-contract';
+import { parse } from '../src/parse.ts';
+import { createExtractApp } from '../src/server.ts';
+import { buildZip } from './zip-fixture.ts';
+
+function buildDocx(parts: Record<string, string>) {
+  return buildZip([
+    {
+      name: '[Content_Types].xml',
+      data: '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>',
+    },
+    ...Object.entries(parts).map(([name, data]) => ({ name, data })),
+  ]);
+}
+
+describe('docx_to_pdf conversion (#4721)', () => {
+  it('converts Vietnamese headings, lists, tables, page breaks and split placeholder tags into a tagged A4 PDF', async () => {
+    const docx = buildDocx({
+      'word/styles.xml': [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+        '<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style>',
+        '<w:style w:type="paragraph" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:sz w:val="22"/></w:rPr></w:style>',
+        '</w:styles>',
+      ].join(''),
+      'word/numbering.xml': [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+        '<w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl></w:abstractNum>',
+        '<w:abstractNum w:abstractNumId="2"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/><w:lvlText w:val="•"/></w:lvl></w:abstractNum>',
+        '<w:num w:numId="1"><w:abstractNumId w:val="1"/></w:num>',
+        '<w:num w:numId="2"><w:abstractNumId w:val="2"/></w:num>',
+        '</w:numbering>',
+      ].join(''),
+      'word/document.xml': [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">',
+        '<w:body>',
+        '<w:p><w:pPr><w:pStyle w:val="Heading1"/><w:jc w:val="center"/></w:pPr><w:r><w:t>HỢP ĐỒNG CUNG CẤP DỊCH VỤ</w:t></w:r></w:p>',
+        '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>Điều khoản thanh toán bằng đồng Việt Nam.</w:t></w:r></w:p>',
+        '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>Cam kết bảo mật thông tin giữa hai bên.</w:t></w:r></w:p>',
+        '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="2"/></w:numPr></w:pPr><w:r><w:t>Hỗ trợ kỹ thuật trực tuyến.</w:t></w:r></w:p>',
+        '<w:tbl>',
+        '  <w:tblPr><w:tblBorders><w:top w:val="single"/><w:insideH w:val="single"/><w:insideV w:val="single"/></w:tblBorders></w:tblPr>',
+        '  <w:tblGrid><w:gridCol w:w="4500"/><w:gridCol w:w="4500"/></w:tblGrid>',
+        '  <w:tr>',
+        '    <w:tc><w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Bên A</w:t></w:r></w:p></w:tc>',
+        '    <w:tc><w:p><w:r><w:t>Công ty TNHH Thương Mại Ánh Dương</w:t></w:r></w:p></w:tc>',
+        '  </w:tr>',
+        '</w:tbl>',
+        '<w:p><w:r><w:br w:type="page"/></w:r></w:p>',
+        '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>Đại diện ký tên: </w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>{{sig</w:t></w:r><w:r><w:t>nature, r1}}</w:t></w:r></w:p>',
+        '<w:p><w:r><w:t>Ngày ký: {{date, r1}} | Ghi chú: {{text, r1}} | Chọn: {{dropdown, r1, Đồng ý|Từ chối}}</w:t></w:r></w:p>',
+        '</w:body></w:document>',
+      ].join(''),
+    });
+
+    const converted = await parse('docx_to_pdf', docx);
+    expect(converted.ok).toBe(true);
+    if (!converted.ok || converted.kind !== 'docx_to_pdf') {
+      throw new Error(`unexpected result: ${JSON.stringify(converted)}`);
+    }
+    expect(converted.pageCount).toBe(2);
+    expect(converted.warnings).toEqual([]);
+
+    const pdfBytes = Buffer.from(converted.pdfBase64, 'base64');
+    const pdfDoc = await PDFDocument.load(pdfBytes);
+    expect(pdfDoc.getPageCount()).toBe(2);
+    const pageSize = pdfDoc.getPage(0).getSize();
+    expect(pageSize.width).toBeCloseTo(595.28, 1);
+    expect(pageSize.height).toBeCloseTo(841.89, 1);
+
+    const inspected = await parse('pdf_inspect', pdfBytes);
+    expect(inspected.ok).toBe(true);
+    if (!inspected.ok || inspected.kind !== 'pdf_inspect') {
+      throw new Error(`unexpected inspect result: ${JSON.stringify(inspected)}`);
+    }
+    expect(inspected.pageCount).toBe(2);
+    const fullText = inspected.pages.map((p) => p.text).join('\n');
+    expect(fullText).toContain('HỢP ĐỒNG CUNG CẤP DỊCH VỤ');
+    expect(fullText).toContain('1. Điều khoản thanh toán bằng đồng Việt Nam.');
+    expect(fullText).toContain('2. Cam kết bảo mật thông tin giữa hai bên.');
+    expect(fullText).toContain('Công ty TNHH Thương Mại Ánh Dương');
+
+    expect(inspected.detectedTags.map((t) => [t.fieldType, t.roleKey, t.pageNumber])).toEqual([
+      ['signature', 'r1', 2],
+      ['date', 'r1', 2],
+      ['text', 'r1', 2],
+      ['dropdown', 'r1', 2],
+    ]);
+    const dropdownTag = inspected.detectedTags.find((t) => t.fieldType === 'dropdown');
+    expect(dropdownTag?.options).toEqual(['Đồng ý', 'Từ chối']);
+  });
+
+  it('emits typed warnings for skipped images, floating shapes, OLE objects, multi-columns and headers/footers', async () => {
+    const docx = buildDocx({
+      'word/header1.xml':
+        '<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>Mẫu nội bộ</w:t></w:r></w:p></w:hdr>',
+      'word/media/logo.png': 'fake-png',
+      'word/embeddings/sheet.xlsx': 'fake-ole',
+      'word/document.xml': [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">',
+        '<w:body>',
+        '<w:p><w:r><w:drawing><wp:anchor><a:blip/></wp:anchor></w:drawing><w:object/><w:t>Nội dung hợp đồng</w:t></w:r></w:p>',
+        '<w:sectPr><w:cols w:num="2"/></w:sectPr>',
+        '</w:body></w:document>',
+      ].join(''),
+    });
+
+    const converted = await parse('docx_to_pdf', docx);
+    expect(converted.ok).toBe(true);
+    if (!converted.ok || converted.kind !== 'docx_to_pdf') throw new Error('expected ok');
+    expect(new Set(converted.warnings)).toEqual(
+      new Set([
+        'images_skipped',
+        'ole_objects_skipped',
+        'headers_footers_simplified',
+        'floating_shapes_skipped',
+        'complex_columns_simplified',
+      ]),
+    );
+  });
+
+  it('refuses XXE, OLE2, encrypted entries, Track Changes, hidden text, empty and >200-page inputs fail-closed', async () => {
+    const emptyRes = await parse('docx_to_pdf', new Uint8Array(0));
+    expect(emptyRes).toMatchObject({ ok: false, code: 'invalid' });
+
+    const tooBigRes = await parse('docx_to_pdf', new Uint8Array(EXTRACT_LIMITS.maxSignDocxBytes + 1));
+    expect(tooBigRes).toMatchObject({ ok: false, code: 'invalid' });
+
+    const app = createExtractApp();
+    const httpTooBig = await app.request('/extract?kind=docx_to_pdf', {
+      method: 'POST',
+      body: new Uint8Array(EXTRACT_LIMITS.maxSignDocxBytes + 1),
+      headers: { 'content-type': 'application/octet-stream' },
+    });
+    expect(httpTooBig.status).toBe(413);
+    expect(await httpTooBig.json()).toMatchObject({ ok: false, code: 'too_large' });
+
+    const ole2Res = await parse('docx_to_pdf', new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]));
+    expect(ole2Res).toMatchObject({ ok: false, code: 'invalid' });
+
+    const encryptedPkg = buildDocx({
+      EncryptionInfo: 'secret-header',
+      EncryptedPackage: 'ciphertext',
+      'word/document.xml': '<w:document><w:body><w:p/></w:body></w:document>',
+    });
+    expect(await parse('docx_to_pdf', encryptedPkg)).toMatchObject({ ok: false, code: 'invalid' });
+
+    const xxe = buildDocx({
+      'word/document.xml':
+        '<?xml version="1.0"?><!DOCTYPE doc [<!ENTITY secret "leak">]><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>&secret;</w:t></w:r></w:p></w:body></w:document>',
+    });
+    expect(await parse('docx_to_pdf', xxe)).toMatchObject({ ok: false, code: 'invalid' });
+
+    for (const tcTag of [
+      '<w:ins w:id="1"><w:r><w:t>Điều khoản chèn</w:t></w:r></w:ins>',
+      '<w:del w:id="2"><w:r><w:delText>Điều khoản xóa</w:delText></w:r></w:del>',
+      '<w:moveFrom w:id="3"><w:r><w:t>Chuyển đi</w:t></w:r></w:moveFrom>',
+      '<w:moveTo w:id="4"><w:r><w:t>Chuyển đến</w:t></w:r></w:moveTo>',
+    ]) {
+      const tracked = buildDocx({
+        'word/document.xml': `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p>${tcTag}</w:p></w:body></w:document>`,
+      });
+      expect(await parse('docx_to_pdf', tracked)).toMatchObject({ ok: false, code: 'invalid' });
+    }
+
+    const hiddenRun = buildDocx({
+      'word/document.xml':
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:rPr><w:vanish/></w:rPr><w:t>Điều khoản bí mật</w:t></w:r></w:p></w:body></w:document>',
+    });
+    expect(await parse('docx_to_pdf', hiddenRun)).toMatchObject({ ok: false, code: 'invalid' });
+
+    const falseVanishAllowed = buildDocx({
+      'word/document.xml':
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:rPr><w:vanish w:val="0"/></w:rPr><w:t>Hợp đồng bình thường</w:t></w:r></w:p></w:body></w:document>',
+    });
+    expect(await parse('docx_to_pdf', falseVanishAllowed)).toMatchObject({ ok: true, kind: 'docx_to_pdf', pageCount: 1 });
+
+    const manyBreaks = Array.from({ length: 201 }, (_, i) => `<w:p><w:r><w:t>Trang ${i + 1}</w:t><w:br w:type="page"/></w:r></w:p>`).join('');
+    const tooManyPages = buildDocx({
+      'word/document.xml': `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${manyBreaks}</w:body></w:document>`,
+    });
+    expect(await parse('docx_to_pdf', tooManyPages)).toMatchObject({ ok: false, code: 'invalid' });
+  });
+});

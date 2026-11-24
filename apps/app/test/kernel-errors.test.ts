@@ -108,6 +108,8 @@ const NOT_SHOWN: Record<string, string> = {
   // eSign worker (#3323, #3554): system-only seal and CA worker commands/queries.
   SIGN_INVALID_SEALED_FILE: 'sign worker',
   SIGN_INVALID_CERTIFICATE_FILE: 'sign worker',
+  // eSign .docx worker (#4721): invalid internal tmp storage key rejected inside the worker.
+  SIGN_DOCX_INVALID_STORAGE_KEY: 'sign worker',
   SIGN_CA_CONNECTION_DISABLED: 'sign worker',
   SIGN_CA_CONNECTION_OWNER_LEFT: 'sign worker',
   SIGN_CA_INVALID_PADES_FILE: 'sign worker',

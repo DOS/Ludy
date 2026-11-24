@@ -63,6 +63,12 @@ import { MEETING_CHAT_SWEEP_CRON, MEETING_CHAT_SWEEP_EXPIRE_SECONDS, runMeetingC
 import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNoteAttachmentExtract, queueNotesMemberPurge, requestDueNoteAttachmentExtracts, runNoteAttachmentExtract, runNotesMemberPurge, sweepNoteAttachmentBlobs, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesAttachmentExtractJob, type NotesMemberPurgeJob } from './notes-worker.ts';
 import { HR_CV_RETRY_LIMIT, runHrCvExtractJob, type HrCvExtractJob } from './hr-cv-worker.ts';
 import {
+  SIGN_DOCX_RETRY_LIMIT,
+  isSignDocxConvertJob,
+  runSignDocxConvertJob,
+  type SignDocxConvertJob,
+} from './sign-docx-worker.ts';
+import {
   SIGN_CLEANUP_CRON,
   SIGN_EXPIRE_SWEEP_CRON,
   SIGN_JOB_RETRY_LIMIT,
@@ -478,6 +484,23 @@ async function enqueueSignKycAttachmentInspect(
     {
       singletonKey: jobKey(orgId, QUEUES.signPdfInspect, `kyc-${fieldId}`),
       retryLimit: SIGN_JOB_RETRY_LIMIT,
+      retryDelay: 20,
+      retryBackoff: true,
+    },
+  );
+}
+
+async function enqueueSignDocxConvert(
+  boss: JobSender,
+  orgId: string,
+  item: Omit<SignDocxConvertJob, 'orgId' | 'targetKind'>,
+): Promise<void> {
+  await boss.send(
+    QUEUES.signPdfInspect,
+    { orgId, targetKind: 'docx_convert', ...item } satisfies SignDocxConvertJob,
+    {
+      singletonKey: jobKey(orgId, QUEUES.signPdfInspect, `docx-${item.jobId}`),
+      retryLimit: SIGN_DOCX_RETRY_LIMIT,
       retryDelay: 20,
       retryBackoff: true,
     },
@@ -1480,11 +1503,22 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // stale secret cleanup sweeps run across all active orgs regardless of whether the org turned Sign off.
   if (sign) {
     const signConcurrency = extractWorkers(deps.extract);
-    await boss.work<SignPdfInspectJob>(
+    await boss.work<SignPdfInspectJob | SignDocxConvertJob>(
       QUEUES.signPdfInspect,
-      { batchSize: 1, localConcurrency: signConcurrency, pollingIntervalSeconds: EXTRACT_POLL_SECONDS },
+      { batchSize: 1, localConcurrency: signConcurrency, pollingIntervalSeconds: EXTRACT_POLL_SECONDS, includeMetadata: true },
       async ([job]) => {
         if (!job) return;
+        if (isSignDocxConvertJob(job.data)) {
+          const done = await runSignDocxConvertJob(
+            { runtime: deps.runtime, store: deps.store, extract: deps.extract },
+            job.data,
+            job.retryCount ?? 0,
+          );
+          if (done.status !== 'skipped_app_off') {
+            console.log(`[sign-docx] ${job.data.jobId.slice(0, 8)}: ${done.status}`);
+          }
+          return;
+        }
         const done = await runSignPdfInspectJob(
           { workerDb: deps.workerDb, runtime: deps.runtime, store: deps.store, extract: deps.extract },
           job.data,
@@ -3266,6 +3300,14 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               if (sign && row.type === 'sign.ca.sign_queued') {
                 await enqueueSignCaReconcile(boss, row.org_id, String(row.payload.requestId));
               }
+              if (sign && row.type === 'sign.docx_convert_queued') {
+                await enqueueSignDocxConvert(boss, row.org_id, {
+                  jobId: String(row.payload.jobId),
+                  storageKey: String(row.payload.storageKey),
+                  sha256: String(row.payload.sha256),
+                  sizeBytes: Number(row.payload.sizeBytes),
+                });
+              }
               if (sign && row.type === 'kernel.org.apps_changed' && row.payload.module === 'sign' && row.payload.enabled === true) {
                 await sweepSignPendingWork({
                   workerDb: deps.workerDb,
@@ -3288,6 +3330,16 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   enqueueKycInspect: (orgId, envelopeId, fieldId) =>
                     enqueueSignKycAttachmentInspect(boss, orgId, envelopeId, fieldId),
                 });
+                const pendingDocx = await deps.runtime
+                  .query<Array<Omit<SignDocxConvertJob, 'orgId' | 'targetKind'>>>(
+                    'sign.docx_convert.pending',
+                    {},
+                    { actor: { type: 'system', component: 'sign.docx_convert' }, orgId: row.org_id },
+                  )
+                  .catch(() => []);
+                for (const item of pendingDocx) {
+                  await enqueueSignDocxConvert(boss, row.org_id, item);
+                }
               }
               // An app switched on (ADR-0053, C3b): the events parked while it was off go back on the outbox now, not when the held sweep comes round. A failure here is the sweep's to
               // retry, so it never fails the relay step.
