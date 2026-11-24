@@ -195,6 +195,13 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
 
     orgId = (await createOrg(runtime, asUser(ownerId), 'Cong ty TNHH Cuoc Hop A')).orgId;
     otherOrgId = (await createOrg(runtime, asUser(otherOwnerId), 'Cong ty TNHH Cuoc Hop B')).orgId;
+    // #4703: once the org setting "Ký biên bản họp" exists it is off by default and the server refuses to create a minutes envelope while it is off. These cases create them, so the org turns it
+    // on; before the setting's column exists the update finds no column (42703) and is skipped.
+    for (const id of [orgId, otherOrgId]) {
+      await adminPool.query('UPDATE ludy_kernel.tenant SET meeting_minutes_esign = true WHERE org_id = $1::uuid', [id]).catch((error: { code?: string }) => {
+        if (error.code !== '42703') throw error;
+      });
+    }
 
     await adminPool.query(
       `INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES
@@ -492,41 +499,35 @@ suite('eSign shared meeting minutes reader-scoped confidentiality invariants (#3
       { actor: asUser(recorderId), orgId },
     );
 
-    // An attendee who is not the recorder instantiates the template for the minutes: allowed by the rule of #3811 (any reader of shared minutes creates), OR refused with SIGN_FORBIDDEN (403), the
-    // later rule of #4532 (only the recorder starts a signature on the minutes). Both outcomes are accepted here so the two-step change can land (this test first, then the code); a refusal must be
-    // that one error and nothing else. The rest of the test needs an unsigned envelope whose creator is the attendee (it loses access with the reader scope), so on a refusal that envelope is inserted
-    // directly, as the older rule would have made it.
-    let attTplEnvId: string;
-    try {
-      attTplEnvId = (
-        await runtime.execute<{ envelopeId: string }>(
-          'sign.template.instantiate',
-          {
-            templateId: tpl.templateId,
-            title: 'Bien ban xac nhan cua Attendee',
-            sourceKind: 'meeting_minutes',
-            sourceId: attendeesMeetingId,
-            recipients: [{ roleKey: 'attendee', name: 'Attendee', email: 'attendee@mtg-inv.test', deliveryMode: 'email' }],
-          },
-          { actor: asUser(attendeeId), orgId },
-        )
-      ).envelopeId;
-    } catch (error) {
-      if ((error as { code?: unknown }).code !== 'SIGN_FORBIDDEN' || (error as { status?: unknown }).status !== 403) throw error;
-      attTplEnvId = randomUUID();
-      const inserted = await adminPool!.query(
-        `INSERT INTO crove_sign.envelope (
-           org_id, id, title, status, routing_mode, source_kind, source_id,
-           source_file_id, source_storage_key, source_generation, source_sha256,
-           inspect_status, created_by
-         )
-         SELECT $1::uuid, $2::uuid, 'Bien ban xac nhan cua Attendee', 'draft', 'parallel', 'meeting_minutes', $3::uuid,
-                f.id, f.storage_key, f.generation, f.sha256, 'pending', $4::uuid
-         FROM crove_kernel.file f WHERE f.org_id = $1::uuid AND f.id = $5::uuid`,
-        [orgId, attTplEnvId, attendeesMeetingId, attendeeId, tplPdf],
-      );
-      expect(inserted.rowCount).toBe(1);
-    }
+    // An attendee who is not the recorder is a reader of the shared minutes and still cannot start a signature on them (#4532): sign.template.instantiate is refused with SIGN_FORBIDDEN (403), the
+    // rule sign.envelope.create follows too (the recorder's own create above succeeds). The rest of the test needs an unsigned envelope whose creator is the attendee (it loses access with the
+    // reader scope), such as an earlier version of the rule allowed, so that envelope is inserted directly.
+    await expect(
+      runtime.execute(
+        'sign.template.instantiate',
+        {
+          templateId: tpl.templateId,
+          title: 'Bien ban xac nhan cua Attendee',
+          sourceKind: 'meeting_minutes',
+          sourceId: attendeesMeetingId,
+          recipients: [{ roleKey: 'attendee', name: 'Attendee', email: 'attendee@mtg-inv.test', deliveryMode: 'email' }],
+        },
+        { actor: asUser(attendeeId), orgId },
+      ),
+    ).rejects.toMatchObject({ code: 'SIGN_FORBIDDEN', status: 403 });
+    const attTplEnvId = randomUUID();
+    const inserted = await adminPool!.query(
+      `INSERT INTO crove_sign.envelope (
+         org_id, id, title, status, routing_mode, source_kind, source_id,
+         source_file_id, source_storage_key, source_generation, source_sha256,
+         inspect_status, created_by
+       )
+       SELECT $1::uuid, $2::uuid, 'Bien ban xac nhan cua Attendee', 'draft', 'parallel', 'meeting_minutes', $3::uuid,
+              f.id, f.storage_key, f.generation, f.sha256, 'pending', $4::uuid
+       FROM crove_kernel.file f WHERE f.org_id = $1::uuid AND f.id = $5::uuid`,
+      [orgId, attTplEnvId, attendeesMeetingId, attendeeId, tplPdf],
+    );
+    expect(inserted.rowCount).toBe(1);
     const attTplEnv = { envelopeId: attTplEnvId };
 
     const addedSigner = await runtime.execute<{ signerId: string }>(

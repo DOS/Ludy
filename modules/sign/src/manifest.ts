@@ -19,6 +19,7 @@ export const SIGN_ENVELOPE_TABLE = columns([
   'source_storage_key',
   'source_generation',
   'source_sha256',
+  'source_revision',
   'inspect_status',
   'inspect_error',
   'page_count',

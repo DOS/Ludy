@@ -626,6 +626,8 @@ export const zSignEnvelopeBySourceItem = z.strictObject({
   signedCount: z.number().int().min(0),
   createdAt: z.string(),
   updatedAt: z.string(),
+  // A meeting-minutes envelope made for other minutes than the ones published now (the server compares the revision it stored at creation with the current one, #4532); absent means no.
+  stale: z.boolean().optional(),
 });
 export type SignEnvelopeBySourceItem = z.infer<typeof zSignEnvelopeBySourceItem>;
 

@@ -10,7 +10,7 @@ import type { MeetingSummaryTemplate } from '@ludy/kernel-contract';
 import { Button } from '@ludy/ui/components/button';
 import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
-import { MeetingMinutesSignHandoff } from '../components/meeting-minutes-sign-handoff.tsx';
+import { canCreateMeetingMinutesEnvelope, MeetingMinutesSignHandoff } from '../components/meeting-minutes-sign-handoff.tsx';
 import { memberLabel } from '../components/meeting-results.tsx';
 import { ErrorText, ListSkeleton } from '../components/ui.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
@@ -209,7 +209,7 @@ export function MeetingMinutesPage() {
                 place,
                 orgMembers: members,
               }}
-              canEdit={org.data.role !== 'viewer'}
+              canEdit={canCreateMeetingMinutesEnvelope(org.data.role, meeting.data.isRecorder)}
             />
           )}
         </div>

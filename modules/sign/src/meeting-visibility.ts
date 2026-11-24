@@ -68,6 +68,45 @@ export async function assertCanCreateMeetingMinutesEnvelope(
       'Meeting minutes must be shared before creating a signing envelope',
     );
   }
+  // A reader may read the minutes but not start a signature on someone else's minutes: only the recorder, an owner or an admin creates the envelope (#4532, owner decision on #4530). The same
+  // function is the RLS insert path.
+  const { rows: creator } = await sql<{ allowed: boolean }>`
+    SELECT ludy_sign.can_create_meeting_minutes_envelope(${ctx.orgId}::uuid, ${sourceId}::uuid) AS allowed
+  `.execute(ctx.trx);
+  if (!creator[0]?.allowed) {
+    throw new DomainError('SIGN_FORBIDDEN', 403, 'Only the meeting recorder, an owner or an admin can create a meeting-minutes signing envelope');
+  }
+}
+
+// The revision (a sha256 the database computes from the published minutes) of the minutes as they are now, for a reader of a meeting with shared minutes; null for anyone else (#4532).
+export async function currentMeetingMinutesRevision(ctx: Pick<QueryContext, 'trx'>, meetingId: string): Promise<string | null> {
+  const { rows } = await sql<{ revision: string | null }>`
+    SELECT ludy_sign.meeting_minutes_revision(${meetingId}::uuid) AS revision
+  `.execute(ctx.trx);
+  return rows[0]?.revision ?? null;
+}
+
+// Whether a meeting-minutes envelope was made for other minutes than the ones now published: its stored revision is 'legacy' (made before the server kept one), or differs from the
+// current one. With no current revision (the caller cannot read the minutes, or none are shared now) there is nothing to compare, so it is not reported stale; sending refuses that case on its own.
+export function isMinutesEnvelopeStale(stored: string | null | undefined, current: string | null): boolean {
+  if (current === null) return false;
+  return stored === 'legacy' || stored !== current;
+}
+
+// A meeting-minutes envelope is sent only for the minutes it was made for (#4532): refuse when they changed, when it predates the revision, or when no minutes are shared now.
+export async function assertMeetingMinutesCurrent(
+  ctx: Pick<QueryContext, 'trx'>,
+  row: { source_kind: string; source_id: string | null; source_revision: string | null },
+): Promise<void> {
+  if (row.source_kind !== 'meeting_minutes') return;
+  const current = row.source_id ? await currentMeetingMinutesRevision(ctx, row.source_id) : null;
+  if (current === null || isMinutesEnvelopeStale(row.source_revision, current)) {
+    throw new DomainError(
+      'SIGN_MINUTES_CHANGED',
+      409,
+      'The meeting minutes changed after this envelope was created; create the envelope again from the current minutes',
+    );
+  }
 }
 
 export async function canAccessMeetingMinutesEnvelopeRow(
