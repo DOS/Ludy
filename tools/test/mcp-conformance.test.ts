@@ -53,6 +53,7 @@ describe('mcp conformance names the check a broken server fails', () => {
     ['PKCE is not required', ['no-pkce'], ['oauth.pkce-required']],
     ['any resource is accepted', ['any-resource'], ['oauth.resource-indicator']],
     ['the access token is for another audience', ['wrong-audience'], ['oauth.flow']],
+    ['the redirect has no iss although the metadata advertises it (RFC 9207)', ['missing-iss'], ['oauth.flow']],
     ['a tool has no hints', ['readonly-missing'], ['tools.hints-present']],
     ['a read tool is also destructive', ['read-destructive'], ['tools.hints-present']],
     ['a proposal tool says it is read only', ['proposal-readonly'], ['tools.hints-match-tier']],

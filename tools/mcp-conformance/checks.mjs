@@ -313,6 +313,8 @@ export async function runConformance(options) {
     if (resumeUrl.origin !== new URL(base).origin) throw fail(`the consent answered redirectTo ${resumeUrl.origin}, another origin than the instance; the tool does not follow it`);
     const resumed = await followResume(resumeUrl.toString(), jar);
     if (resumed.state !== stateValue) throw fail('the redirect to the client lost the state parameter');
+    // RFC 9207: a server that advertises authorization_response_iss_parameter_supported must put iss on every authorization response.
+    if (resumed.iss === null && state.as.authorization_response_iss_parameter_supported === true) throw fail('the metadata advertises authorization_response_iss_parameter_supported but the redirect carries no iss (RFC 9207)');
     if (resumed.iss !== null && resumed.iss.replace(/\/+$/, '') !== state.issuer) throw fail(`the redirect carries iss=${resumed.iss}, it must be the issuer ${state.issuer} (RFC 9207)`);
     const exchange = await request(state.as.token_endpoint, {
       method: 'POST',

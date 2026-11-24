@@ -4,7 +4,7 @@
 // a key made at start. Plain Node, no dependencies.
 //
 // Flaws: 'no-resource-metadata', 'wrong-resource', 'no-challenge-pointer', 'no-pkce', 'any-resource', 'wrong-audience', 'readonly-missing',
-// 'read-destructive', 'proposal-readonly', 'proposal-executes', 'no-proposal-tool', 'foreign-issuer', 'foreign-endpoint', 'foreign-redirect'.
+// 'read-destructive', 'proposal-readonly', 'proposal-executes', 'no-proposal-tool', 'foreign-issuer', 'foreign-endpoint', 'foreign-redirect', 'missing-iss'.
 import { createHash, generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import { createServer } from 'node:http';
 
@@ -20,6 +20,8 @@ export async function startFakeServer(options = {}) {
   /** @type {Map<string, { challenge: string | null, resource: string | null, redirectUri: string, clientId: string, scope: string }>} */
   const codes = new Map();
   const tokens = new Set();
+  /** @type {Map<string, string[]>} registered redirect addresses per client (an authorization request with any other is refused, never redirected to) */
+  const clients = new Map();
   /** @type {string[]} */
   const executed = [];
   let base = '';
@@ -77,15 +79,22 @@ export async function startFakeServer(options = {}) {
           response_types_supported: ['code'],
           grant_types_supported: ['authorization_code', 'refresh_token'],
           code_challenge_methods_supported: ['S256'],
+          authorization_response_iss_parameter_supported: true,
           token_endpoint_auth_methods_supported: ['none'],
           scopes_supported: ['ludy.read', 'ludy.engage.write'],
         });
       }
       if (path === '/oauth/jwks') return json(res, 200, { keys: [jwk] });
-      if (path === '/oauth/register' && req.method === 'POST') return json(res, 201, { client_id: `client-${randomUUID()}` });
+      if (path === '/oauth/register' && req.method === 'POST') {
+        const clientId = `client-${randomUUID()}`;
+        const registered = JSON.parse(body || '{}').redirect_uris;
+        clients.set(clientId, Array.isArray(registered) ? registered.filter((u) => typeof u === 'string') : []);
+        return json(res, 201, { client_id: clientId });
+      }
 
       if (path === '/oauth/authorize') {
         const q = url.searchParams;
+        if (!clients.get(q.get('client_id') ?? '')?.includes(q.get('redirect_uri') ?? '')) return json(res, 400, { error: 'invalid_redirect_uri' });
         const fail = (/** @type {string} */ error) => redirect(res, `${q.get('redirect_uri')}?error=${error}&state=${q.get('state') ?? ''}`);
         if (!q.get('code_challenge') && !flaws.has('no-pkce')) return fail('invalid_request');
         if (q.get('resource') !== resource && !flaws.has('any-resource')) return fail('invalid_target');
@@ -108,7 +117,7 @@ export async function startFakeServer(options = {}) {
         if (!found) return json(res, 404, { error: 'interaction_gone' });
         const code = randomUUID();
         codes.set(code, { challenge: found.challenge, resource: found.resource, redirectUri: found.redirectUri, clientId: found.clientId, scope: found.scope });
-        return redirect(res, `${found.redirectUri}?code=${code}&state=${found.state}&iss=${encodeURIComponent(base)}`);
+        return redirect(res, `${found.redirectUri}?code=${code}&state=${found.state}${flaws.has('missing-iss') ? '' : `&iss=${encodeURIComponent(base)}`}`);
       }
       if (path === '/oauth/token' && req.method === 'POST') {
         const form = new URLSearchParams(body);
