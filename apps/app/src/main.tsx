@@ -11,12 +11,8 @@ import { I18nProvider } from './i18n/provider.tsx';
 import { startLocaleSync } from './i18n/runtime.ts';
 import { startThemeSync } from './lib/theme-runtime.ts';
 import { queryClient } from './lib/api.ts';
-import { forgetShare } from './lib/social-share.ts';
-import { clearRecentItems } from './lib/palette-recents.ts';
-import { forgetPushDevice } from './lib/push.ts';
-import { stopAndSave } from './lib/recording-controller.ts';
-import { auth, captureHostedCallback, discardHostedLogin, loadConfig, settleCallback } from './lib/auth.ts';
-import { isInPersonCeremonyIsolated } from './lib/sign-hash.ts';
+import { captureHostedCallback, discardHostedLogin, loadConfig } from './lib/auth.ts';
+import { bootWorkspaceAuthSession } from './lib/ceremony-boot.ts';
 import './styles.css';
 
 // The hosted login's one-time code leaves the address bar before anything can fail or read it (lib/auth.ts).
@@ -46,21 +42,14 @@ async function start() {
     );
     return;
   }
-  await settleCallback();
-  const { router } = await import('./router.tsx');
-  auth().onAuthStateChange((event: string) => {
-    if (event === 'SIGNED_OUT' && !isInPersonCeremonyIsolated()) {
-      // Signed out here, in another tab or by expiry: a share waiting in this tab is not the next person's.
-      forgetShare();
-      clearRecentItems();
-      // Nor are this browser's push notices (#1238); the session is gone, so only the browser's subscription ends.
-      void forgetPushDevice();
-      // The session is gone: a recording still running here ends and keeps its copy on the device (the upload cannot go out), so the microphone stops (#3197).
-      void stopAndSave({ quiet: true });
-      queryClient.clear();
-      void router.navigate({ to: '/login' });
-    }
+  let routerModule: typeof import('./router.tsx') | null = null;
+  await bootWorkspaceAuthSession({
+    prepareNavigation: async () => {
+      routerModule = await import('./router.tsx');
+      return () => void routerModule!.router.navigate({ to: '/login' });
+    },
   });
+  const { router } = routerModule ?? (await import('./router.tsx'));
   root.render(
     <StrictMode>
       <IconDefaults>

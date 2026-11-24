@@ -430,4 +430,99 @@ describe('In-person ceremony per-tab workspace auth isolation (#4278, #4394)', (
     url.search = '';
     expect(signHash.isInPersonCeremonyIsolated()).toBe(true);
   });
+
+  it('skips settleCallback and auth() on /-/sign boot without ?in_person=1 and attaches SIGNED_OUT listener idempotently elsewhere', async () => {
+    setupBrowser('https://app.ludy.vn/-/sign#ceremonyTokenWithoutQueryFlag', {
+      'ludy-auth': SAMPLE_SESSION,
+    });
+    const ceremonyBoot = await import('../src/lib/ceremony-boot.ts');
+
+    // Run before loadConfig(): calling auth() or settleCallback() would throw "config not loaded".
+    expect(await ceremonyBoot.bootWorkspaceAuthSession()).toBe(false);
+
+    const authMod = await import('../src/lib/auth.ts');
+    await authMod.loadConfig();
+
+    const settleSpy = vi.fn(async () => {});
+    const attachSpy = vi.fn();
+    expect(
+      await ceremonyBoot.bootWorkspaceAuthSession({
+        runSettleCallback: settleSpy,
+        attachListener: attachSpy,
+      }),
+    ).toBe(false);
+    expect(settleSpy).not.toHaveBeenCalled();
+    expect(attachSpy).not.toHaveBeenCalled();
+
+    // Non-ceremony boot settles callback and attaches SIGNED_OUT listener once (idempotently).
+    vi.resetModules();
+    setupBrowser('https://app.ludy.vn/o/acme/overview', {
+      'ludy-auth': SAMPLE_SESSION,
+    });
+    const workspaceBoot = await import('../src/lib/ceremony-boot.ts');
+    const workspaceAuth = await import('../src/lib/auth.ts');
+    await workspaceAuth.loadConfig();
+
+    let registeredHandler: ((event: string) => void) | null = null;
+    const subscribeSpy = vi.fn((cb: (event: string) => void) => {
+      registeredHandler = cb;
+    });
+    const cleanupSpy = vi.fn();
+    const navSpy = vi.fn();
+    const workspaceSettleSpy = vi.fn(async () => {});
+
+    expect(
+      await workspaceBoot.bootWorkspaceAuthSession({
+        runSettleCallback: workspaceSettleSpy,
+        attachListener: () =>
+          workspaceBoot.ensureSignedOutListener({
+            subscribeAuthState: subscribeSpy,
+            onSignedOutCleanup: cleanupSpy,
+            navigateToLogin: navSpy,
+          }),
+      }),
+    ).toBe(true);
+    expect(workspaceSettleSpy).toHaveBeenCalledTimes(1);
+    expect(subscribeSpy).toHaveBeenCalledTimes(1);
+
+    // Calling ensureSignedOutListener again is a no-op and does not double-subscribe.
+    expect(
+      workspaceBoot.ensureSignedOutListener({
+        subscribeAuthState: subscribeSpy,
+        onSignedOutCleanup: cleanupSpy,
+        navigateToLogin: navSpy,
+      }),
+    ).toBe(false);
+    expect(subscribeSpy).toHaveBeenCalledTimes(1);
+
+    // SIGNED_OUT triggers cleanup + login redirect on normal workspace tabs, but is ignored once isolated.
+    expect(registeredHandler).not.toBeNull();
+    registeredHandler!('SIGNED_OUT');
+    expect(cleanupSpy).toHaveBeenCalledTimes(1);
+    expect(navSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects session guard and skips auth listener if isolation flips true while accessToken() is pending', async () => {
+    setupBrowser('https://app.ludy.vn/o/acme/overview', {
+      'ludy-auth': SAMPLE_SESSION,
+    });
+    const ceremonyBoot = await import('../src/lib/ceremony-boot.ts');
+    const signHash = await import('../src/lib/sign-hash.ts');
+    const onAuthenticated = vi.fn();
+
+    await expect(
+      ceremonyBoot.enforceSessionGuard({
+        getAccessToken: async () => {
+          // Simulate tab transitioning into in-person isolation mid-check.
+          signHash.markInPersonCeremonyIsolated();
+          return 'workspace-host-secret-jwt';
+        },
+        onAuthenticated,
+        onRedirectToLogin: () => {
+          throw new Error('REDIRECT_LOGIN');
+        },
+      }),
+    ).rejects.toThrow('REDIRECT_LOGIN');
+    expect(onAuthenticated).not.toHaveBeenCalled();
+  });
 });

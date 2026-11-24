@@ -844,10 +844,28 @@ describe('os.sign RPC handlers (#3325)', () => {
     const validMotionMp4 = makeMotionPhotoMp4();
     const androidMotionPhoto = concatBytes(validJpeg, validMotionMp4);
     const samsungMotionPhoto = concatBytes(validJpeg, new TextEncoder().encode('MotionPhoto_Data'), validMotionMp4);
+    const paddedMotionPhoto = concatBytes(validJpeg, new Uint8Array(16), validMotionMp4);
+    const paddedSamsungMotionPhoto = concatBytes(
+      validJpeg,
+      new Uint8Array(16),
+      new TextEncoder().encode('MotionPhoto_Data'),
+      validMotionMp4,
+    );
     const zeroPaddedJpeg = concatBytes(validJpeg, new Uint8Array(16));
     expect(verifySignAttachmentBytes(androidMotionPhoto)).toBe('image/jpeg');
     expect(verifySignAttachmentBytes(samsungMotionPhoto)).toBe('image/jpeg');
+    expect(verifySignAttachmentBytes(paddedMotionPhoto)).toBe('image/jpeg');
+    expect(verifySignAttachmentBytes(paddedSamsungMotionPhoto)).toBe('image/jpeg');
     expect(verifySignAttachmentBytes(zeroPaddedJpeg)).toBe('image/jpeg');
+
+    // Reject > 64 zero bytes before Motion Photo MP4 and trailing garbage after padded Motion Photo MP4 (#4394).
+    expect(verifySignAttachmentBytes(concatBytes(validJpeg, new Uint8Array(65), validMotionMp4))).toBeNull();
+    expect(verifySignAttachmentBytes(concatBytes(validJpeg, new Uint8Array(65)))).toBeNull();
+    expect(
+      verifySignAttachmentBytes(
+        concatBytes(validJpeg, new Uint8Array(16), validMotionMp4, new TextEncoder().encode('<script/>')),
+      ),
+    ).toBeNull();
 
     // Reject polyglot/corrupt trailers after EOI and EXIF-thumbnail EOI masquerading as frame EOI.
     expect(
@@ -889,6 +907,115 @@ describe('os.sign RPC handlers (#3325)', () => {
       0xff, 0xd9,
     ]);
     expect(verifySignAttachmentBytes(progressiveJpeg)).toBe('image/jpeg');
+
+    // Android Ultra HDR JPEGs (MPF APP2 and/or XMP GContainer APP1 GainMap) + optional Motion Photo trailer (#4394).
+    const makeMpfApp2Segment = (
+      primarySizePlaceholder: number,
+      gainMapRelOffset: number,
+      gainMapSize: number,
+      littleEndian = true,
+    ): Uint8Array => {
+      // Body: "MPF\0" (4) + TIFF header (8) + IFD count(2) + 2 entries(24) + nextIfd(4) + 2 MP entries(32) = 74 bytes.
+      const body = new Uint8Array(74);
+      const view = new DataView(body.buffer);
+      body.set([0x4d, 0x50, 0x46, 0x00], 0);
+      body.set(littleEndian ? [0x49, 0x49, 0x2a, 0x00] : [0x4d, 0x4d, 0x00, 0x2a], 4);
+      view.setUint32(8, 8, littleEndian); // firstIfdOffset relative to tiffStart (byte 4)
+      const ifdBase = 12;
+      view.setUint16(ifdBase, 2, littleEndian);
+      // Tag 0xB001: NumberOfImages = 2 (LONG=4, count=1)
+      view.setUint16(ifdBase + 2, 0xb001, littleEndian);
+      view.setUint16(ifdBase + 4, 4, littleEndian);
+      view.setUint32(ifdBase + 6, 1, littleEndian);
+      view.setUint32(ifdBase + 10, 2, littleEndian);
+      // Tag 0xB002: MPEntry (UNDEFINED=7, count=32, offset=38 from tiffStart -> byte 42)
+      view.setUint16(ifdBase + 14, 0xb002, littleEndian);
+      view.setUint16(ifdBase + 16, 7, littleEndian);
+      view.setUint32(ifdBase + 18, 32, littleEndian);
+      view.setUint32(ifdBase + 22, 38, littleEndian);
+      view.setUint32(ifdBase + 26, 0, littleEndian);
+      // MP Entry 0 (primary: dataOffset = 0)
+      const mpBase = 42;
+      view.setUint32(mpBase + 4, primarySizePlaceholder, littleEndian);
+      view.setUint32(mpBase + 8, 0, littleEndian);
+      // MP Entry 1 (gainMap: size and offset relative to tiffStart)
+      view.setUint32(mpBase + 20, gainMapSize, littleEndian);
+      view.setUint32(mpBase + 24, gainMapRelOffset, littleEndian);
+
+      const seg = new Uint8Array(4 + body.byteLength);
+      seg[0] = 0xff;
+      seg[1] = 0xe2;
+      const segLen = 2 + body.byteLength;
+      seg[2] = (segLen >>> 8) & 0xff;
+      seg[3] = segLen & 0xff;
+      seg.set(body, 4);
+      return seg;
+    };
+
+    const makeXmpApp1Segment = (xml: string): Uint8Array => {
+      const hdr = new TextEncoder().encode('http://ns.adobe.com/xap/1.0/\0');
+      const body = concatBytes(hdr, new TextEncoder().encode(xml));
+      const seg = new Uint8Array(4 + body.byteLength);
+      seg[0] = 0xff;
+      seg[1] = 0xe1;
+      const segLen = 2 + body.byteLength;
+      seg[2] = (segLen >>> 8) & 0xff;
+      seg[3] = segLen & 0xff;
+      seg.set(body, 4);
+      return seg;
+    };
+
+    const primaryTailAfterSoi = validJpeg.subarray(2);
+    const buildMpfUltraHdr = (opts?: { littleEndian?: boolean; declaredGainMapLen?: number; gapBytes?: Uint8Array }) => {
+      const le = opts?.littleEndian ?? true;
+      const gap = opts?.gapBytes ?? new Uint8Array(0);
+      const dummyMpf = makeMpfApp2Segment(0, 0, 0, le);
+      // Primary structure: SOI(2) + APP2(dummyMpf) + primaryTailAfterSoi; tiffStart is at file offset 2 + 4 + 4 = 10.
+      const primaryLen = 2 + dummyMpf.byteLength + primaryTailAfterSoi.byteLength;
+      const gainMapRelOffset = primaryLen + gap.byteLength - 10;
+      const gainMapSize = opts?.declaredGainMapLen ?? validJpeg.byteLength;
+      const mpfSeg = makeMpfApp2Segment(primaryLen, gainMapRelOffset, gainMapSize, le);
+      return concatBytes(new Uint8Array([0xff, 0xd8]), mpfSeg, primaryTailAfterSoi, gap, validJpeg);
+    };
+
+    const xmpXml = `<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:Container="http://ns.google.com/photos/1.0/container/" xmlns:Item="http://ns.google.com/photos/1.0/container/item/"><Container:Directory><rdf:Seq><rdf:li rdf:parseType="Resource"><Container:Item Item:Semantic="Primary" Item:Mime="image/jpeg"/></rdf:li><rdf:li rdf:parseType="Resource"><Container:Item Item:Semantic="GainMap" Item:Mime="image/jpeg" Item:Length="${validJpeg.byteLength}"/></rdf:li></rdf:Seq></Container:Directory></rdf:Description></rdf:RDF></x:xmpmeta>`;
+    const xmpSeg = makeXmpApp1Segment(xmpXml);
+    const xmpUltraHdrJpeg = concatBytes(new Uint8Array([0xff, 0xd8]), xmpSeg, primaryTailAfterSoi, validJpeg);
+
+    const mpfUltraHdrLe = buildMpfUltraHdr({ littleEndian: true });
+    const mpfUltraHdrBe = buildMpfUltraHdr({ littleEndian: false });
+    expect(verifySignAttachmentBytes(mpfUltraHdrLe)).toBe('image/jpeg');
+    expect(verifySignAttachmentBytes(mpfUltraHdrBe)).toBe('image/jpeg');
+    expect(verifySignAttachmentBytes(xmpUltraHdrJpeg)).toBe('image/jpeg');
+    // Combined Ultra HDR + Motion Photo MP4 trailer.
+    expect(verifySignAttachmentBytes(concatBytes(xmpUltraHdrJpeg, new Uint8Array(8), validMotionMp4))).toBe(
+      'image/jpeg',
+    );
+    expect(verifySignAttachmentBytes(concatBytes(mpfUltraHdrLe, validMotionMp4))).toBe('image/jpeg');
+
+    // Reject undeclared appended second JPEG (no MPF or XMP GainMap declaration).
+    expect(verifySignAttachmentBytes(concatBytes(validJpeg, validJpeg))).toBeNull();
+    // Reject mismatched MPF length (shorter/longer than GainMap JPEG) and trailing garbage after GainMap.
+    expect(
+      verifySignAttachmentBytes(buildMpfUltraHdr({ declaredGainMapLen: validJpeg.byteLength - 4 })),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(buildMpfUltraHdr({ declaredGainMapLen: validJpeg.byteLength + 10 })),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(concatBytes(mpfUltraHdrLe, new TextEncoder().encode('<script>alert(1)</script>'))),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(concatBytes(xmpUltraHdrJpeg, new TextEncoder().encode('garbage'))),
+    ).toBeNull();
+    expect(
+      verifySignAttachmentBytes(buildMpfUltraHdr({ gapBytes: new Uint8Array([0xde, 0xad, 0xbe, 0xef]) })),
+    ).toBeNull();
+    // Reject malformed XMP GainMap declaring a non-JPEG Mime type.
+    const badXmpSeg = makeXmpApp1Segment(xmpXml.replace('Item:Semantic="GainMap" Item:Mime="image/jpeg"', 'Item:Semantic="GainMap" Item:Mime="image/png"'));
+    expect(
+      verifySignAttachmentBytes(concatBytes(new Uint8Array([0xff, 0xd8]), badXmpSeg, primaryTailAfterSoi, validJpeg)),
+    ).toBeNull();
   });
 
   it('wires os.sign.vault.search and os.sign.vault.ask with AI-off parity and metered AI-on citations (#4439)', async () => {

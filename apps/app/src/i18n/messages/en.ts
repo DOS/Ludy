@@ -19931,7 +19931,7 @@ export const en = {
     inPersonDialog: {
       title: 'In-person counter signing',
       description: 'Issue a single-use short-lived (30-minute) face-to-face signing session on this device for {signer} and record host provenance in the audit chain.',
-      securityNotice: 'The isolated ceremony tab opens with no back-history or shared workspace session storage. For full browser isolation on a shared counter device, copy the link into an incognito or private window or sign out of your workspace first.',
+      securityNotice: 'The isolated ceremony tab opens with no back-history or shared workspace session storage. For full browser isolation on a shared counter device, copy the link into an incognito or private window.',
       urlLabel: 'Single-use in-person ceremony link',
       expiresAtHint: 'Expires at {time}',
       mintButton: 'Start in-person session (30 min)',

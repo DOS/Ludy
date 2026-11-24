@@ -686,8 +686,34 @@ export async function runSignVerify(
 
 const JPEG_MAX_MARKERS = 10_000;
 const JPEG_MAX_ZERO_PADDING = 64;
+const JPEG_MAX_MPF_IMAGES = 4;
+const JPEG_MAX_IFD_ENTRIES = 64;
+const JPEG_MAX_XMP_ITEMS = 16;
 const MP4_MAX_TOP_BOXES = 256;
 const MOTION_PHOTO_DATA_PREFIX = new TextEncoder().encode('MotionPhoto_Data');
+const MPF_APP2_PREFIX = new Uint8Array([0x4d, 0x50, 0x46, 0x00]); // "MPF\0"
+const XMP_APP1_PREFIX = new TextEncoder().encode('http://ns.adobe.com/xap/1.0/\0');
+
+interface DeclaredJpegRange {
+  start: number;
+  end: number;
+}
+
+interface XmpGainMapDecl {
+  length: number;
+  padding: number;
+}
+
+interface XmpGContainerInfo {
+  primaryPadding: number;
+  gainMaps: XmpGainMapDecl[];
+}
+
+interface PrimaryJpegInspection {
+  eoiEnd: number;
+  mpfSecondaryRanges: DeclaredJpegRange[] | null;
+  xmpGContainer: XmpGContainerInfo | null;
+}
 
 function isAsciiFourcc(bytes: Uint8Array, at: number): boolean {
   for (let i = 0; i < 4; i += 1) {
@@ -697,12 +723,29 @@ function isAsciiFourcc(bytes: Uint8Array, at: number): boolean {
   return true;
 }
 
+function readU16Order(bytes: Uint8Array, at: number, little: boolean): number {
+  return little
+    ? ((bytes[at] ?? 0) | ((bytes[at + 1] ?? 0) << 8)) >>> 0
+    : (((bytes[at] ?? 0) << 8) | (bytes[at + 1] ?? 0)) >>> 0;
+}
+
 function readU32Be(bytes: Uint8Array, at: number): number {
   return (
     (((bytes[at] ?? 0) << 24) >>> 0) +
     ((bytes[at + 1] ?? 0) << 16) +
     ((bytes[at + 2] ?? 0) << 8) +
     (bytes[at + 3] ?? 0)
+  );
+}
+
+function readU32Order(bytes: Uint8Array, at: number, little: boolean): number {
+  if (!little) return readU32Be(bytes, at);
+  return (
+    ((bytes[at] ?? 0) |
+      ((bytes[at + 1] ?? 0) << 8) |
+      ((bytes[at + 2] ?? 0) << 16) |
+      ((bytes[at + 3] ?? 0) << 24)) >>>
+    0
   );
 }
 
@@ -718,11 +761,196 @@ function bytesEqualPrefix(bytes: Uint8Array, prefix: Uint8Array): boolean {
   return true;
 }
 
-function findJpegEndOfImageOffset(bytes: Uint8Array): number | null {
+function parseMpfApp2Segment(
+  bytes: Uint8Array,
+  segStart: number,
+  segEnd: number,
+): { status: 'none' } | { status: 'invalid' } | { status: 'ok'; secondaryRanges: DeclaredJpegRange[] } {
+  if (segEnd - segStart < MPF_APP2_PREFIX.byteLength) return { status: 'none' };
+  if (!bytesEqualPrefix(bytes.subarray(segStart, segEnd), MPF_APP2_PREFIX)) return { status: 'none' };
+
+  const tiffStart = segStart + MPF_APP2_PREFIX.byteLength;
+  if (tiffStart + 8 > segEnd) return { status: 'invalid' };
+
+  let little: boolean;
+  if (
+    bytes[tiffStart] === 0x49 &&
+    bytes[tiffStart + 1] === 0x49 &&
+    bytes[tiffStart + 2] === 0x2a &&
+    bytes[tiffStart + 3] === 0x00
+  ) {
+    little = true;
+  } else if (
+    bytes[tiffStart] === 0x4d &&
+    bytes[tiffStart + 1] === 0x4d &&
+    bytes[tiffStart + 2] === 0x00 &&
+    bytes[tiffStart + 3] === 0x2a
+  ) {
+    little = false;
+  } else {
+    return { status: 'invalid' };
+  }
+
+  const firstIfdOffset = readU32Order(bytes, tiffStart + 4, little);
+  const ifdAt = tiffStart + firstIfdOffset;
+  if (firstIfdOffset < 8 || !Number.isSafeInteger(ifdAt) || ifdAt + 2 > segEnd) {
+    return { status: 'invalid' };
+  }
+
+  const entryCount = readU16Order(bytes, ifdAt, little);
+  if (entryCount < 2 || entryCount > JPEG_MAX_IFD_ENTRIES || ifdAt + 2 + entryCount * 12 > segEnd) {
+    return { status: 'invalid' };
+  }
+
+  let imageCount: number | null = null;
+  let mpEntryByteCount: number | null = null;
+  let mpEntryRelOffset: number | null = null;
+
+  for (let i = 0; i < entryCount; i += 1) {
+    const entryAt = ifdAt + 2 + i * 12;
+    const tag = readU16Order(bytes, entryAt, little);
+    const type = readU16Order(bytes, entryAt + 2, little);
+    const count = readU32Order(bytes, entryAt + 4, little);
+
+    if (tag === 0xb001) {
+      if (type !== 4 || count !== 1) return { status: 'invalid' };
+      const val = readU32Order(bytes, entryAt + 8, little);
+      if (val < 1 || val > JPEG_MAX_MPF_IMAGES) return { status: 'invalid' };
+      imageCount = val;
+    } else if (tag === 0xb002) {
+      if (type !== 7 || count < 16 || count > JPEG_MAX_MPF_IMAGES * 16) return { status: 'invalid' };
+      mpEntryByteCount = count;
+      mpEntryRelOffset = readU32Order(bytes, entryAt + 8, little);
+    }
+  }
+
+  if (
+    imageCount === null ||
+    mpEntryByteCount === null ||
+    mpEntryRelOffset === null ||
+    mpEntryByteCount !== imageCount * 16 ||
+    mpEntryRelOffset < 8
+  ) {
+    return { status: 'invalid' };
+  }
+
+  const mpStart = tiffStart + mpEntryRelOffset;
+  if (!Number.isSafeInteger(mpStart) || mpStart + mpEntryByteCount > segEnd) {
+    return { status: 'invalid' };
+  }
+
+  const secondaryRanges: DeclaredJpegRange[] = [];
+  for (let i = 0; i < imageCount; i += 1) {
+    const recAt = mpStart + i * 16;
+    const size = readU32Order(bytes, recAt + 4, little);
+    const dataOffset = readU32Order(bytes, recAt + 8, little);
+    if (dataOffset === 0) {
+      if (i !== 0) return { status: 'invalid' };
+      continue;
+    }
+    const start = tiffStart + dataOffset;
+    const end = start + size;
+    if (size < 20 || !Number.isSafeInteger(start) || !Number.isSafeInteger(end)) {
+      return { status: 'invalid' };
+    }
+    secondaryRanges.push({ start, end });
+  }
+
+  return { status: 'ok', secondaryRanges };
+}
+
+function readXmpItemField(attrs: string, body: string, field: string): string | null {
+  const attrRegex = new RegExp(`(?:^|\\s)(?:Item|GContainer):${field}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`);
+  const attrMatch = attrRegex.exec(attrs);
+  if (attrMatch) return (attrMatch[1] ?? attrMatch[2] ?? '').trim();
+
+  if (!body) return null;
+  const elemRegex = new RegExp(`<(?:Item|GContainer):${field}>([^<]*)<\\/(?:Item|GContainer):${field}>`);
+  const elemMatch = elemRegex.exec(body);
+  return elemMatch ? (elemMatch[1] ?? '').trim() : null;
+}
+
+function parseStrictNonNegativeInt(raw: string, max: number): number | null {
+  if (!/^\d{1,9}$/.test(raw)) return null;
+  const num = Number(raw);
+  return Number.isSafeInteger(num) && num >= 0 && num <= max ? num : null;
+}
+
+function parseXmpApp1Segment(
+  bytes: Uint8Array,
+  segStart: number,
+  segEnd: number,
+): { status: 'none' } | { status: 'invalid' } | { status: 'ok'; info: XmpGContainerInfo } {
+  if (segEnd - segStart < XMP_APP1_PREFIX.byteLength) return { status: 'none' };
+  if (!bytesEqualPrefix(bytes.subarray(segStart, segEnd), XMP_APP1_PREFIX)) return { status: 'none' };
+
+  const xml = new TextDecoder('utf-8', { fatal: false }).decode(
+    bytes.subarray(segStart + XMP_APP1_PREFIX.byteLength, segEnd),
+  );
+  if (!xml.includes('Container:Item') && !xml.includes('GContainer:Item')) {
+    return { status: 'none' };
+  }
+
+  let primaryPadding = 0;
+  const gainMaps: XmpGainMapDecl[] = [];
+  const itemTagRegex = /<(Container|GContainer):Item\b([^>]*)>/g;
+  let itemCount = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = itemTagRegex.exec(xml)) !== null) {
+    itemCount += 1;
+    if (itemCount > JPEG_MAX_XMP_ITEMS) return { status: 'invalid' };
+    const prefix = match[1]!;
+    const rawAttrs = match[2] ?? '';
+    const isSelfClosing = rawAttrs.endsWith('/');
+    const attrs = isSelfClosing ? rawAttrs.slice(0, -1) : rawAttrs;
+    let body = '';
+    if (!isSelfClosing) {
+      const closeTag = `</${prefix}:Item>`;
+      const closeIdx = xml.indexOf(closeTag, itemTagRegex.lastIndex);
+      if (closeIdx < 0) return { status: 'invalid' };
+      body = xml.slice(itemTagRegex.lastIndex, closeIdx);
+      itemTagRegex.lastIndex = closeIdx + closeTag.length;
+    }
+
+    const semantic = readXmpItemField(attrs, body, 'Semantic');
+    const mime = readXmpItemField(attrs, body, 'Mime');
+    const lengthRaw = readXmpItemField(attrs, body, 'Length');
+    const paddingRaw = readXmpItemField(attrs, body, 'Padding');
+
+    if (semantic === 'Primary') {
+      if (mime !== null && mime !== 'image/jpeg') return { status: 'invalid' };
+      if (paddingRaw !== null) {
+        const pad = parseStrictNonNegativeInt(paddingRaw, JPEG_MAX_ZERO_PADDING);
+        if (pad === null) return { status: 'invalid' };
+        primaryPadding = pad;
+      }
+    } else if (semantic === 'GainMap') {
+      if (mime !== 'image/jpeg' || lengthRaw === null) return { status: 'invalid' };
+      const length = parseStrictNonNegativeInt(lengthRaw, SIGN_ATTACHMENT_MAX_BYTES);
+      if (length === null || length < 20) return { status: 'invalid' };
+      let padding = 0;
+      if (paddingRaw !== null) {
+        const pad = parseStrictNonNegativeInt(paddingRaw, JPEG_MAX_ZERO_PADDING);
+        if (pad === null) return { status: 'invalid' };
+        padding = pad;
+      }
+      if (gainMaps.length >= JPEG_MAX_MPF_IMAGES - 1) return { status: 'invalid' };
+      gainMaps.push({ length, padding });
+    }
+  }
+
+  if (gainMaps.length === 0) return { status: 'none' };
+  return { status: 'ok', info: { primaryPadding, gainMaps } };
+}
+
+function inspectJpegStream(bytes: Uint8Array, collectMetadata: boolean): PrimaryJpegInspection | null {
   if (bytes.byteLength < 20 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
   let at = 2;
   let hasSof = false;
   let hasSos = false;
+  let mpfSecondaryRanges: DeclaredJpegRange[] | null = null;
+  let xmpGContainer: XmpGContainerInfo | null = null;
 
   for (let seen = 0; seen < JPEG_MAX_MARKERS && at < bytes.byteLength; seen += 1) {
     if (bytes[at] !== 0xff) return null;
@@ -733,7 +961,8 @@ function findJpegEndOfImageOffset(bytes: Uint8Array): number | null {
 
     if (marker === 0x00 || marker === 0xd8) return null;
     if (marker === 0xd9) {
-      return hasSof && hasSos ? at : null;
+      if (!hasSof || !hasSos) return null;
+      return { eoiEnd: at, mpfSecondaryRanges, xmpGContainer };
     }
     if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
       continue;
@@ -742,7 +971,27 @@ function findJpegEndOfImageOffset(bytes: Uint8Array): number | null {
     if (at + 2 > bytes.byteLength) return null;
     const segLen = ((bytes[at]! << 8) | bytes[at + 1]!) >>> 0;
     if (segLen < 2 || at + segLen > bytes.byteLength) return null;
-    at += segLen;
+    const segStart = at + 2;
+    const segEnd = at + segLen;
+    at = segEnd;
+
+    if (collectMetadata) {
+      if (marker === 0xe2) {
+        const mpf = parseMpfApp2Segment(bytes, segStart, segEnd);
+        if (mpf.status === 'invalid') return null;
+        if (mpf.status === 'ok') {
+          if (mpfSecondaryRanges !== null) return null;
+          mpfSecondaryRanges = mpf.secondaryRanges;
+        }
+      } else if (marker === 0xe1) {
+        const xmp = parseXmpApp1Segment(bytes, segStart, segEnd);
+        if (xmp.status === 'invalid') return null;
+        if (xmp.status === 'ok') {
+          if (xmpGContainer !== null) return null;
+          xmpGContainer = xmp.info;
+        }
+      }
+    }
 
     const isSof = marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
     if (isSof) {
@@ -778,10 +1027,10 @@ function findJpegEndOfImageOffset(bytes: Uint8Array): number | null {
   return null;
 }
 
-function isValidMotionPhotoMp4Trailer(trailer: Uint8Array): boolean {
-  const mp4Bytes = bytesEqualPrefix(trailer, MOTION_PHOTO_DATA_PREFIX)
-    ? trailer.subarray(MOTION_PHOTO_DATA_PREFIX.byteLength)
-    : trailer;
+function isValidMotionPhotoMp4Trailer(mp4Payload: Uint8Array): boolean {
+  const mp4Bytes = bytesEqualPrefix(mp4Payload, MOTION_PHOTO_DATA_PREFIX)
+    ? mp4Payload.subarray(MOTION_PHOTO_DATA_PREFIX.byteLength)
+    : mp4Payload;
   if (sniffVideo(mp4Bytes) !== 'video/mp4') return false;
 
   let at = 0;
@@ -813,8 +1062,85 @@ function isValidMotionPhotoMp4Trailer(trailer: Uint8Array): boolean {
 
 function isAllowedJpegTrailer(trailer: Uint8Array): boolean {
   if (trailer.byteLength === 0) return true;
-  if (trailer.byteLength <= JPEG_MAX_ZERO_PADDING && trailer.every((b) => b === 0)) return true;
-  return isValidMotionPhotoMp4Trailer(trailer);
+  // Allow up to 64 leading 0x00 padding bytes alone or preceding MotionPhoto_Data / an MP4 ftyp box.
+  for (let pad = 0; pad <= JPEG_MAX_ZERO_PADDING && pad <= trailer.byteLength; pad += 1) {
+    if (pad === trailer.byteLength) return true;
+    const rest = trailer.subarray(pad);
+    if (bytesEqualPrefix(rest, MOTION_PHOTO_DATA_PREFIX)) {
+      return isValidMotionPhotoMp4Trailer(rest);
+    }
+    if (rest.byteLength >= 8 && String.fromCharCode(rest[4]!, rest[5]!, rest[6]!, rest[7]!) === 'ftyp') {
+      return isValidMotionPhotoMp4Trailer(rest);
+    }
+    if (trailer[pad] !== 0x00) {
+      return false;
+    }
+  }
+  return false;
+}
+
+function resolveAndVerifyDeclaredSecondaryJpegs(
+  bytes: Uint8Array,
+  inspection: PrimaryJpegInspection,
+): number | null {
+  const mpfRanges = inspection.mpfSecondaryRanges;
+  const xmpInfo = inspection.xmpGContainer;
+  let ranges: DeclaredJpegRange[] = [];
+
+  if (mpfRanges && mpfRanges.length > 0) {
+    ranges = mpfRanges;
+    if (xmpInfo && xmpInfo.gainMaps.length > 0) {
+      if (mpfRanges.length !== xmpInfo.gainMaps.length) return null;
+      for (let i = 0; i < mpfRanges.length; i += 1) {
+        if (mpfRanges[i]!.end - mpfRanges[i]!.start !== xmpInfo.gainMaps[i]!.length) return null;
+      }
+    }
+  } else if (xmpInfo && xmpInfo.gainMaps.length > 0) {
+    let cursor = inspection.eoiEnd;
+    for (let i = 0; i < xmpInfo.gainMaps.length; i += 1) {
+      const gm = xmpInfo.gainMaps[i]!;
+      let gap = i === 0 ? xmpInfo.primaryPadding : xmpInfo.gainMaps[i - 1]!.padding;
+      if (
+        i === 0 &&
+        gap === 0 &&
+        gm.padding > 0 &&
+        cursor + gm.padding + 2 <= bytes.byteLength &&
+        bytes[cursor] === 0x00 &&
+        bytes[cursor + gm.padding] === 0xff &&
+        bytes[cursor + gm.padding + 1] === 0xd8
+      ) {
+        gap = gm.padding;
+      }
+      const start = cursor + gap;
+      const end = start + gm.length;
+      if (end > bytes.byteLength) return null;
+      ranges.push({ start, end });
+      cursor = end;
+    }
+  }
+
+  let cursor = inspection.eoiEnd;
+  for (const range of ranges) {
+    const gap = range.start - cursor;
+    if (gap < 0 || gap > JPEG_MAX_ZERO_PADDING || range.end > bytes.byteLength) return null;
+    for (let z = cursor; z < range.start; z += 1) {
+      if (bytes[z] !== 0x00) return null;
+    }
+    const sec = bytes.subarray(range.start, range.end);
+    const secInspection = inspectJpegStream(sec, false);
+    if (!secInspection || secInspection.eoiEnd !== sec.byteLength) return null;
+    const secSize = imageSize(sec, 'image/jpeg');
+    if (
+      !secSize ||
+      secSize.width > SIGN_ATTACHMENT_MAX_IMAGE_DIMENSION ||
+      secSize.height > SIGN_ATTACHMENT_MAX_IMAGE_DIMENSION
+    ) {
+      return null;
+    }
+    cursor = range.end;
+  }
+
+  return cursor;
 }
 
 export function verifySignAttachmentBytes(bytes: Uint8Array): SignAttachmentContentType | null {
@@ -844,9 +1170,11 @@ export function verifySignAttachmentBytes(bytes: Uint8Array): SignAttachmentCont
     if (!size || size.width > SIGN_ATTACHMENT_MAX_IMAGE_DIMENSION || size.height > SIGN_ATTACHMENT_MAX_IMAGE_DIMENSION) {
       return null;
     }
-    const eoiEnd = findJpegEndOfImageOffset(bytes);
-    if (eoiEnd === null) return null;
-    if (!isAllowedJpegTrailer(bytes.subarray(eoiEnd))) return null;
+    const inspection = inspectJpegStream(bytes, true);
+    if (!inspection) return null;
+    const trailerStart = resolveAndVerifyDeclaredSecondaryJpegs(bytes, inspection);
+    if (trailerStart === null) return null;
+    if (!isAllowedJpegTrailer(bytes.subarray(trailerStart))) return null;
     return 'image/jpeg';
   }
   return null;
