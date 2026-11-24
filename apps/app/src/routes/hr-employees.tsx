@@ -4,7 +4,7 @@
 // only: the server, the database's policies and the menu all say so. Every read of this data is a sensitive query that leaves an audit row first, so the screen asks once and
 // never refetches by itself (no refetch on focus, no polling).
 import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import {
   HR_CONTRACT_FORMS,
@@ -46,8 +46,10 @@ import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { TableCell, TableRow } from '@ludy/ui/components/table';
+import { cn } from '@ludy/ui/lib/utils';
 import { bankByCode, checkLaborContractTerms, deriveFixedTermEndDateIso, type LaborContractFinding } from '@ludy/l10n-vn';
 import { BankSelect } from '../components/bank-select.tsx';
+import { HrApprovalPeekSheet } from '../components/hr-approval-peek.tsx';
 import { HrContractNd337Notice, HrContractSignHandoff } from '../components/hr-contract-sign-handoff.tsx';
 import { LeaveBalancePanel } from '../components/hr-leave-panel.tsx';
 import { HrProbationPanel } from '../components/hr-probation-panel.tsx';
@@ -61,6 +63,7 @@ import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, FieldError, PageHeader, TableSkeleton, fieldControl, focusFirstInvalid, useFieldErrors } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
+import { useListPeekNav } from '../lib/list-peek-nav.ts';
 
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.hr.key() });
 // A sensitive read leaves an audit row each time: the screen reads once and again only after its own change.
@@ -2342,12 +2345,13 @@ export function Detail({
   );
 }
 
-function LeaveApprovalQueue() {
+export function LeaveApprovalQueue() {
   const t = useTranslations('hrEmployees');
   const tm = useTranslations('hrMy');
   const f = useFormat();
   const [statusFilter, setStatusFilter] = useState<HrLeaveRequestStatus | ''>('');
   const [notes, setNotes] = useState<Record<string, string>>({});
+  const listRef = useRef<HTMLDivElement>(null);
 
   const q = useQuery({
     ...orpc.hr.leaveRequests.list.queryOptions({
@@ -2376,6 +2380,19 @@ function LeaveApprovalQueue() {
   });
 
   const rows: readonly HrLeaveRequestView[] = q.data ?? [];
+  const peek = useListPeekNav({
+    items: rows,
+    getId: (row) => row.id,
+    containerRef: listRef,
+    resetKey: statusFilter,
+  });
+  const activeRow = peek.activeItem;
+
+  useEffect(() => {
+    approveL1.reset?.();
+    approveFinal.reset?.();
+    reject.reset?.();
+  }, [activeRow?.id]);
 
   return (
     <Card className="mt-6 block space-y-3 p-4" data-testid="hr-leave-queue">
@@ -2410,12 +2427,23 @@ function LeaveApprovalQueue() {
           {t('leaveQueue.empty')}
         </p>
       ) : (
-        <div className="space-y-2">
+        <div ref={listRef} className="space-y-2">
           {rows.map((r) => {
             const note = notes[r.id]?.trim() || undefined;
             const pending = r.status === 'pending_l1' || r.status === 'pending_final';
+            const selected = peek.selectedId === r.id;
             return (
-              <div key={r.id} className="space-y-2 rounded-md border p-3 text-sm" data-testid="hr-leave-queue-row">
+              <div
+                key={r.id}
+                data-peek-row={r.id}
+                data-selected={selected ? 'true' : undefined}
+                onClick={(event) => peek.onRowClick(r.id, event)}
+                className={cn(
+                  'cursor-pointer space-y-2 rounded-md border p-3 text-sm transition-colors',
+                  selected ? 'border-primary/50 bg-primary/5' : 'hover:bg-muted/40',
+                )}
+                data-testid="hr-leave-queue-row"
+              >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium text-foreground">{r.employeeName}</span>
@@ -2424,6 +2452,17 @@ function LeaveApprovalQueue() {
                     <Badge variant="outline">{tm(`leave.kinds.${r.kind}`)}</Badge>
                     <Badge variant="secondary">{tm(`leave.statuses.${r.status}`)}</Badge>
                   </div>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="ghost"
+                    data-peek-trigger={r.id}
+                    data-testid="hr-leave-queue-peek-btn"
+                    aria-label={t('peek.inspectOf', { name: r.employeeName })}
+                    onClick={() => peek.openPeek(r.id)}
+                  >
+                    {t('peek.inspect')}
+                  </Button>
                 </div>
                 {r.reason && <p className="text-xs text-subtle-foreground">{r.reason}</p>}
                 {(r.l1ApproverName || r.finalActedByName || r.decisionNote) && (
@@ -2453,6 +2492,7 @@ function LeaveApprovalQueue() {
                         size="sm"
                         variant="outline"
                         loading={approveL1.isPending && approveL1.variables?.requestId === r.id}
+                        disabled={approveL1.isPending || approveFinal.isPending || reject.isPending}
                         onClick={() => approveL1.mutate({ requestId: r.id, ...(note ? { note } : {}) })}
                         data-testid="hr-leave-queue-approve-l1"
                       >
@@ -2463,6 +2503,7 @@ function LeaveApprovalQueue() {
                       type="button"
                       size="sm"
                       loading={approveFinal.isPending && approveFinal.variables?.requestId === r.id}
+                      disabled={approveL1.isPending || approveFinal.isPending || reject.isPending}
                       onClick={() => approveFinal.mutate({ requestId: r.id, ...(note ? { note } : {}) })}
                       data-testid="hr-leave-queue-approve-final"
                     >
@@ -2473,6 +2514,7 @@ function LeaveApprovalQueue() {
                       size="sm"
                       variant="outline"
                       loading={reject.isPending && reject.variables?.requestId === r.id}
+                      disabled={approveL1.isPending || approveFinal.isPending || reject.isPending}
                       onClick={() => reject.mutate({ requestId: r.id, ...(note ? { note } : {}) })}
                       data-testid="hr-leave-queue-reject"
                     >
@@ -2485,6 +2527,96 @@ function LeaveApprovalQueue() {
           })}
         </div>
       )}
+      {activeRow ? (() => {
+        const pending = activeRow.status === 'pending_l1' || activeRow.status === 'pending_final';
+        const note = notes[activeRow.id]?.trim() || undefined;
+        const trail = [
+          activeRow.l1ApproverName ? t('leaveQueue.l1Trail', { name: activeRow.l1ApproverName }) : null,
+          activeRow.finalActedByName ? t('leaveQueue.finalTrail', { name: activeRow.finalActedByName }) : null,
+        ]
+          .filter(Boolean)
+          .join(' - ');
+        return (
+          <HrApprovalPeekSheet
+            peek={peek}
+            testId="hr-leave-peek-sheet"
+            title={activeRow.employeeName}
+            description={tm('leave.dates', { start: f.date(activeRow.startOn), end: f.date(activeRow.endOn), days: activeRow.days })}
+            badges={
+              <>
+                <Badge variant="outline">{tm(`leave.kinds.${activeRow.kind}`)}</Badge>
+                <Badge variant="secondary">{tm(`leave.statuses.${activeRow.status}`)}</Badge>
+              </>
+            }
+            fields={[
+              { label: t('peek.employee'), value: activeRow.employeeName },
+              ...(activeRow.departmentName ? [{ label: t('peek.department'), value: activeRow.departmentName }] : []),
+              { label: t('peek.status'), value: tm(`leave.statuses.${activeRow.status}`) },
+              {
+                label: tm('leave.kind'),
+                value: `${tm(`leave.kinds.${activeRow.kind}`)} · ${tm('leave.dates', {
+                  start: f.date(activeRow.startOn),
+                  end: f.date(activeRow.endOn),
+                  days: activeRow.days,
+                })}`,
+              },
+              ...(activeRow.reason ? [{ label: t('peek.reason'), value: activeRow.reason, span2: true }] : []),
+              ...(trail ? [{ label: t('peek.details'), value: trail, span2: true }] : []),
+              ...(activeRow.decisionNote ? [{ label: t('peek.decisionNote'), value: activeRow.decisionNote, span2: true }] : []),
+            ]}
+            noteSection={
+              pending
+                ? {
+                    id: `hr-leave-peek-note-${activeRow.id}`,
+                    value: notes[activeRow.id] ?? '',
+                    placeholder: t('leaveQueue.notePlaceholder'),
+                    onChange: (next) => setNotes((cur) => ({ ...cur, [activeRow.id]: next })),
+                    testId: 'hr-leave-peek-note',
+                  }
+                : null
+            }
+            errorMessage={
+              approveL1.error || approveFinal.error || reject.error
+                ? errorMessage(approveL1.error ?? approveFinal.error ?? reject.error)
+                : null
+            }
+            actions={
+              pending
+                ? [
+                    ...(activeRow.status === 'pending_l1'
+                      ? [
+                          {
+                            label: t('leaveQueue.approveL1'),
+                            variant: 'outline' as const,
+                            disabled: approveL1.isPending || approveFinal.isPending || reject.isPending,
+                            loading: approveL1.isPending && approveL1.variables?.requestId === activeRow.id,
+                            onClick: () => approveL1.mutate({ requestId: activeRow.id, ...(note ? { note } : {}) }),
+                            testId: 'hr-leave-peek-approve-l1',
+                          },
+                        ]
+                      : []),
+                    {
+                      label: t('leaveQueue.reject'),
+                      variant: 'outline',
+                      disabled: approveL1.isPending || approveFinal.isPending || reject.isPending,
+                      loading: reject.isPending && reject.variables?.requestId === activeRow.id,
+                      onClick: () => reject.mutate({ requestId: activeRow.id, ...(note ? { note } : {}) }),
+                      testId: 'hr-leave-peek-reject',
+                    },
+                    {
+                      label: t('leaveQueue.approveFinal'),
+                      variant: 'default',
+                      disabled: approveL1.isPending || approveFinal.isPending || reject.isPending,
+                      loading: approveFinal.isPending && approveFinal.variables?.requestId === activeRow.id,
+                      onClick: () => approveFinal.mutate({ requestId: activeRow.id, ...(note ? { note } : {}) }),
+                      testId: 'hr-leave-peek-approve-final',
+                    },
+                  ]
+                : []
+            }
+          />
+        );
+      })() : null}
     </Card>
   );
 }

@@ -558,9 +558,18 @@ describe('SignerPanel and Envelope list filters (#3325)', () => {
     expect(filterEnvelopesByTab(items, 'completed').map((i) => i.id)).toEqual(['c']);
     expect(filterEnvelopesByTab(items, 'closed').map((i) => i.id)).toEqual(['v']);
 
-    const listHtml = renderVi(<SignEnvelopesPage />);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(['me', 'get'], {
+      userId: 'u-owner',
+      orgs: [{ orgId: 'o1', slug: routerState.slug, name: 'Acme', role: 'owner' }],
+    });
+    const listHtml = renderVi(<SignEnvelopesPage />, qc);
     expect(listHtml).toContain('Ký kết tài liệu');
     expect(listHtml).toContain('Tạo hồ sơ ký');
+
+    const pendingAuthListHtml = renderVi(<SignEnvelopesPage />);
+    expect(pendingAuthListHtml).toContain('Ký kết tài liệu');
+    expect(pendingAuthListHtml).not.toContain('Tạo hồ sơ ký');
   });
 
   it('pushes server status filters before limit=100 for status tabs', async () => {

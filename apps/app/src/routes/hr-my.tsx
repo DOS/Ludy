@@ -2,7 +2,7 @@
 // Employee self-service portal & L1 department leave approvals (issue #4300).
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useParams } from '@tanstack/react-router';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import {
   HR_LEAVE_REQUEST_KINDS,
@@ -23,6 +23,8 @@ import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
 import { TableCell, TableRow } from '@ludy/ui/components/table';
+import { cn } from '@ludy/ui/lib/utils';
+import { HrApprovalPeekSheet } from '../components/hr-approval-peek.tsx';
 import { normalizeLeaveDaysInput } from '../components/hr-leave-panel.tsx';
 import { HrSelfOnboardingCard, HrSelfOvertimeCard, type HrOvertimeCardPrefill } from '../components/hr-onboarding-ot-card.tsx';
 import { HrSelfAdvanceTripCards } from '../components/hr-stage6b-cards.tsx';
@@ -33,6 +35,7 @@ import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../compo
 import { HrAttendanceCheckinCard } from '../components/hr-attendance-checkin-card.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
+import { useListPeekNav } from '../lib/list-peek-nav.ts';
 import { PHONE_TARGET } from '../lib/touch-target.ts';
 
 const ONCE = { staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
@@ -192,7 +195,9 @@ export function SelfPayslipDetail({
 
 export function HrSelfServicePage() {
   const t = useTranslations('hrMy');
+  const th = useTranslations('hrEmployees');
   const f = useFormat();
+  const teamListRef = useRef<HTMLUListElement>(null);
   const today = vietnamToday();
   const [year, setYear] = useState(today.slice(0, 4));
   const [startOn, setStartOn] = useState(today);
@@ -313,6 +318,19 @@ export function HrSelfServicePage() {
         (r) => r.employeeId !== profile?.employeeId && r.departmentId !== null && managedDeptIds.has(r.departmentId),
       )
     : [];
+  const teamPeek = useListPeekNav({
+    items: teamRequests,
+    getId: (r) => r.id,
+    containerRef: teamListRef,
+    enabled: managesTeam && teamRequests.length > 0,
+    resetKey: slug,
+  });
+  const activeTeamRequest = teamPeek.activeItem;
+
+  useEffect(() => {
+    approveL1Mut.reset?.();
+    rejectMut.reset?.();
+  }, [activeTeamRequest?.id, slug]);
   const payslips: readonly HrSelfPayslipSummary[] = payslipsQ.data ?? [];
 
   return (
@@ -570,12 +588,23 @@ export function HrSelfServicePage() {
           {teamRequests.length === 0 ? (
             <p className="text-sm text-subtle-foreground">{t('teamQueue.empty')}</p>
           ) : (
-            <ul className="divide-y rounded-md border">
+            <ul ref={teamListRef} className="divide-y rounded-md border">
               {teamRequests.map((r) => {
                 const note = teamNotes[r.id]?.trim() || undefined;
                 const pendingL1 = r.status === 'pending_l1';
+                const selected = teamPeek.selectedId === r.id;
                 return (
-                  <li key={r.id} className="space-y-2 px-3 py-3 text-sm" data-testid="hr-my-team-row">
+                  <li
+                    key={r.id}
+                    data-peek-row={r.id}
+                    data-selected={selected ? 'true' : undefined}
+                    onClick={(event) => teamPeek.onRowClick(r.id, event)}
+                    className={cn(
+                      'cursor-pointer space-y-2 px-3 py-3 text-sm transition-colors',
+                      selected ? 'border-l-2 border-l-primary bg-primary/5' : 'hover:bg-muted/40',
+                    )}
+                    data-testid="hr-my-team-row"
+                  >
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium text-foreground">{r.employeeName}</span>
@@ -584,6 +613,17 @@ export function HrSelfServicePage() {
                         <Badge variant="outline">{t(`leave.kinds.${r.kind}`)}</Badge>
                         <Badge variant={statusVariant(r.status)}>{t(`leave.statuses.${r.status}`)}</Badge>
                       </div>
+                      <Button
+                        type="button"
+                        size="xs"
+                        variant="ghost"
+                        data-peek-trigger={r.id}
+                        data-testid="hr-my-team-peek-btn"
+                        aria-label={th('peek.inspectOf', { name: r.employeeName })}
+                        onClick={() => teamPeek.openPeek(r.id)}
+                      >
+                        {th('peek.inspect')}
+                      </Button>
                     </div>
                     {r.reason && <p className="text-xs text-subtle-foreground">{r.reason}</p>}
                     {pendingL1 && (
@@ -601,6 +641,7 @@ export function HrSelfServicePage() {
                           size="sm"
                           className={PHONE_TARGET}
                           loading={approveL1Mut.isPending && approveL1Mut.variables?.requestId === r.id}
+                          disabled={approveL1Mut.isPending || rejectMut.isPending}
                           onClick={() => approveL1Mut.mutate({ requestId: r.id, ...(note ? { note } : {}) })}
                           data-testid="hr-my-l1-approve"
                         >
@@ -612,6 +653,7 @@ export function HrSelfServicePage() {
                           variant="outline"
                           className={PHONE_TARGET}
                           loading={rejectMut.isPending && rejectMut.variables?.requestId === r.id}
+                          disabled={approveL1Mut.isPending || rejectMut.isPending}
                           onClick={() => rejectMut.mutate({ requestId: r.id, ...(note ? { note } : {}) })}
                           data-testid="hr-my-l1-reject"
                         >
@@ -624,6 +666,80 @@ export function HrSelfServicePage() {
               })}
             </ul>
           )}
+          {activeTeamRequest ? (() => {
+            const pendingL1 = activeTeamRequest.status === 'pending_l1';
+            const note = teamNotes[activeTeamRequest.id]?.trim() || undefined;
+            return (
+              <HrApprovalPeekSheet
+                peek={teamPeek}
+                testId="hr-my-team-peek-sheet"
+                title={activeTeamRequest.employeeName}
+                description={t('leave.dates', {
+                  start: f.date(activeTeamRequest.startOn),
+                  end: f.date(activeTeamRequest.endOn),
+                  days: activeTeamRequest.days,
+                })}
+                badges={
+                  <>
+                    <Badge variant="outline">{t(`leave.kinds.${activeTeamRequest.kind}`)}</Badge>
+                    <Badge variant={statusVariant(activeTeamRequest.status)}>{t(`leave.statuses.${activeTeamRequest.status}`)}</Badge>
+                  </>
+                }
+                fields={[
+                  { label: th('peek.employee'), value: activeTeamRequest.employeeName },
+                  ...(activeTeamRequest.departmentName
+                    ? [{ label: th('peek.department'), value: activeTeamRequest.departmentName }]
+                    : []),
+                  { label: th('peek.status'), value: t(`leave.statuses.${activeTeamRequest.status}`) },
+                  {
+                    label: t('leave.kind'),
+                    value: `${t(`leave.kinds.${activeTeamRequest.kind}`)} · ${t('leave.dates', {
+                      start: f.date(activeTeamRequest.startOn),
+                      end: f.date(activeTeamRequest.endOn),
+                      days: activeTeamRequest.days,
+                    })}`,
+                  },
+                  ...(activeTeamRequest.reason ? [{ label: th('peek.reason'), value: activeTeamRequest.reason, span2: true }] : []),
+                ]}
+                noteSection={
+                  pendingL1
+                    ? {
+                        id: `hr-my-team-peek-note-${activeTeamRequest.id}`,
+                        value: teamNotes[activeTeamRequest.id] ?? '',
+                        placeholder: t('teamQueue.notePlaceholder'),
+                        onChange: (next) => setTeamNotes((cur) => ({ ...cur, [activeTeamRequest.id]: next })),
+                        testId: 'hr-my-team-peek-note',
+                      }
+                    : null
+                }
+                errorMessage={
+                  approveL1Mut.error || rejectMut.error ? errorMessage(approveL1Mut.error ?? rejectMut.error) : null
+                }
+                actions={
+                  pendingL1
+                    ? [
+                        {
+                          label: t('teamQueue.reject'),
+                          variant: 'outline',
+                          disabled: approveL1Mut.isPending || rejectMut.isPending,
+                          loading: rejectMut.isPending && rejectMut.variables?.requestId === activeTeamRequest.id,
+                          onClick: () => rejectMut.mutate({ requestId: activeTeamRequest.id, ...(note ? { note } : {}) }),
+                          testId: 'hr-my-l1-peek-reject',
+                        },
+                        {
+                          label: t('teamQueue.approveL1'),
+                          variant: 'default',
+                          disabled: approveL1Mut.isPending || rejectMut.isPending,
+                          loading: approveL1Mut.isPending && approveL1Mut.variables?.requestId === activeTeamRequest.id,
+                          onClick: () => approveL1Mut.mutate({ requestId: activeTeamRequest.id, ...(note ? { note } : {}) }),
+                          testId: 'hr-my-l1-peek-approve',
+                        },
+                      ]
+                    : []
+                }
+              />
+            );
+          })() : null}
         </Card>
       )}
 

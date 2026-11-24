@@ -88,11 +88,21 @@ interface CycleTaskTotals {
   donePoints: number;
 }
 
+export interface BurndownMembershipInterval {
+  joinedAt: Date | string;
+  leftAt: Date | string | null;
+  leftReason?: string | null;
+  storyPoints?: number | null;
+}
+
 export interface BurndownTaskSample {
   status: string;
   storyPoints: number | null;
   createdAt: Date | string;
   updatedAt: Date | string;
+  doneAt?: Date | string | null;
+  intervals?: readonly BurndownMembershipInterval[];
+  inCommittedScope?: boolean;
 }
 
 export interface ProjectCycleSummarySource {
@@ -205,28 +215,59 @@ async function cycleTaskTotalsMap(
 ): Promise<Map<string, CycleTaskTotals>> {
   const map = new Map<string, CycleTaskTotals>();
   if (cycleIds.length === 0) return map;
-  // Join ludy_kernel.task so counts obey caller le_scope RLS automatically.
-  const { rows } = await sql<{
-    cycle_id: string;
-    open_n: string;
-    done_n: string;
-    cancelled_n: string;
-    total_pts: string;
-    done_pts: string;
-  }>`
-    SELECT pt.cycle_id,
-           pg_catalog.count(*) FILTER (WHERE t.status IN ('todo', 'in_progress', 'waiting', 'in_review'))::text AS open_n,
-           pg_catalog.count(*) FILTER (WHERE t.status = 'done')::text AS done_n,
-           pg_catalog.count(*) FILTER (WHERE t.status = 'cancelled')::text AS cancelled_n,
-           COALESCE(pg_catalog.sum(COALESCE(pt.story_points, 0)) FILTER (WHERE t.status <> 'cancelled'), 0)::text AS total_pts,
-           COALESCE(pg_catalog.sum(COALESCE(pt.story_points, 0)) FILTER (WHERE t.status = 'done'), 0)::text AS done_pts
-      FROM ludy_projects.project_task pt
-      JOIN ludy_kernel.task t ON t.org_id = pt.org_id AND t.id = pt.task_id
-     WHERE pt.org_id = ${orgId}::uuid
-       AND pt.project_id = ${projectId}::uuid
-       AND pt.cycle_id = ANY(${[...cycleIds]}::uuid[])
-     GROUP BY pt.cycle_id`.execute(trx);
-  for (const r of rows) {
+  const ids = [...cycleIds];
+  // Join ludy_kernel.task so both completed snapshots and live tasks obey caller le_scope RLS.
+  const [{ rows: snapshotRows }, { rows: liveRows }] = await Promise.all([
+    sql<{
+      cycle_id: string;
+      open_n: string;
+      done_n: string;
+      cancelled_n: string;
+      total_pts: string;
+      done_pts: string;
+    }>`
+      SELECT s.cycle_id,
+             pg_catalog.count(*) FILTER (WHERE s.task_status IN ('todo', 'in_progress', 'waiting', 'in_review'))::text AS open_n,
+             pg_catalog.count(*) FILTER (WHERE s.task_status = 'done')::text AS done_n,
+             pg_catalog.count(*) FILTER (WHERE s.task_status = 'cancelled')::text AS cancelled_n,
+             COALESCE(pg_catalog.sum(COALESCE(s.story_points, 0)) FILTER (WHERE s.task_status <> 'cancelled'), 0)::text AS total_pts,
+             COALESCE(pg_catalog.sum(COALESCE(s.story_points, 0)) FILTER (WHERE s.task_status = 'done'), 0)::text AS done_pts
+        FROM ludy_projects.project_cycle_snapshot s
+        JOIN ludy_projects.project_cycle pc
+          ON pc.org_id = s.org_id AND pc.project_id = s.project_id AND pc.id = s.cycle_id
+        JOIN ludy_kernel.task t
+          ON t.org_id = s.org_id AND t.id = s.task_id
+       WHERE s.org_id = ${orgId}::uuid
+         AND s.project_id = ${projectId}::uuid
+         AND s.cycle_id = ANY(${ids}::uuid[])
+         AND pc.status = 'completed'
+       GROUP BY s.cycle_id`.execute(trx),
+    sql<{
+      cycle_id: string;
+      open_n: string;
+      done_n: string;
+      cancelled_n: string;
+      total_pts: string;
+      done_pts: string;
+    }>`
+      SELECT pt.cycle_id,
+             pg_catalog.count(*) FILTER (WHERE t.status IN ('todo', 'in_progress', 'waiting', 'in_review'))::text AS open_n,
+             pg_catalog.count(*) FILTER (WHERE t.status = 'done')::text AS done_n,
+             pg_catalog.count(*) FILTER (WHERE t.status = 'cancelled')::text AS cancelled_n,
+             COALESCE(pg_catalog.sum(COALESCE(pt.story_points, 0)) FILTER (WHERE t.status <> 'cancelled'), 0)::text AS total_pts,
+             COALESCE(pg_catalog.sum(COALESCE(pt.story_points, 0)) FILTER (WHERE t.status = 'done'), 0)::text AS done_pts
+        FROM ludy_projects.project_task pt
+        JOIN ludy_projects.project_cycle pc
+          ON pc.org_id = pt.org_id AND pc.project_id = pt.project_id AND pc.id = pt.cycle_id
+        JOIN ludy_kernel.task t
+          ON t.org_id = pt.org_id AND t.id = pt.task_id
+       WHERE pt.org_id = ${orgId}::uuid
+         AND pt.project_id = ${projectId}::uuid
+         AND pt.cycle_id = ANY(${ids}::uuid[])
+         AND pc.status <> 'completed'
+       GROUP BY pt.cycle_id`.execute(trx),
+  ]);
+  for (const r of [...snapshotRows, ...liveRows]) {
     map.set(r.cycle_id, {
       openTasks: Number(r.open_n),
       doneTasks: Number(r.done_n),
@@ -266,7 +307,8 @@ export async function loadActiveCycleView(trx: Trx, orgId: string, projectId: st
 
 /**
  * Deterministic daily burndown series across `[startsOn..endsOn]` computed strictly from task
- * `created_at`, `updated_at`, `status`, and `storyPoints` (zero AI involvement).
+ * `created_at`, `done_at` (never bumped by unrelated edits), cycle membership intervals,
+ * `status`, and `storyPoints` (zero AI involvement).
  */
 export function computeCycleBurndown(
   tasks: readonly BurndownTaskSample[],
@@ -276,10 +318,6 @@ export function computeCycleBurndown(
   completedAt: Date | string | null,
   now: Date | string,
 ): ProjectCycleBurndownPoint[] {
-  const scoped = tasks.filter((t) => t.status !== 'cancelled');
-  const totalTasks = scoped.length;
-  const totalPoints = scoped.reduce((sum, t) => sum + (t.storyPoints ?? 0), 0);
-
   const rawDays = daysBetweenLocalDates(endsOn, startsOn) + 1;
   const dayCount = Math.min(Math.max(rawDays, 1), PROJECT_CYCLE_MAX_DAYS);
   const todayVn = vietnamToday(new Date(now));
@@ -292,21 +330,66 @@ export function computeCycleBurndown(
     observedUntil = todayVn >= startsOn ? clampLocalDate(todayVn, startsOn, endsOn) : null;
   }
 
-  const normalized = scoped.map((t) => {
-    const rawCreated = vietnamToday(new Date(t.createdAt));
-    // Tasks created before cycle start belong to Day 1 committed scope; tasks created after endsOn
-    // keep their actual date so future-created work never fabricates points on earlier days.
-    const effectiveCreated = rawCreated < startsOn ? startsOn : rawCreated;
-    const rawDone = t.status === 'done' ? vietnamToday(new Date(t.updatedAt)) : null;
+  const completedMs = completedAt ? new Date(completedAt).getTime() : null;
+
+  const normalized = tasks.map((t) => {
+    const rawDoneTs = t.status === 'done' ? (t.doneAt ?? t.updatedAt) : null;
+    const rawDone = rawDoneTs !== null ? vietnamToday(new Date(rawDoneTs)) : null;
     // If a cycle closed over a retroactive past window, reflect tasks finished when the cycle closed.
     const effectiveDone =
       rawDone === null ? null : status === 'completed' && rawDone > endsOn ? endsOn : rawDone;
+
+    const rawCreated = vietnamToday(new Date(t.createdAt));
+    const fallbackJoined = rawCreated < startsOn ? startsOn : rawCreated;
+    const intervals =
+      t.intervals && t.intervals.length > 0
+        ? t.intervals.map((iv) => {
+            const rawJoined = vietnamToday(new Date(iv.joinedAt));
+            const effectiveJoined = rawJoined < startsOn ? startsOn : rawJoined;
+            // Carryover at completion or removals strictly after cycle completion stay remaining through closedOn.
+            const leftAfterClose =
+              status === 'completed' &&
+              completedMs !== null &&
+              iv.leftAt !== null &&
+              new Date(iv.leftAt).getTime() >= completedMs;
+            const effectiveLeft =
+              iv.leftAt !== null && iv.leftReason !== 'carryover' && !leftAfterClose
+                ? vietnamToday(new Date(iv.leftAt))
+                : null;
+            return {
+              effectiveJoined,
+              effectiveLeft,
+              points: iv.storyPoints ?? t.storyPoints ?? 0,
+            };
+          })
+        : [
+            {
+              effectiveJoined: fallbackJoined,
+              effectiveLeft: null as string | null,
+              points: t.storyPoints ?? 0,
+            },
+          ];
+
+    const updatedMs = new Date(t.updatedAt).getTime();
+    const cancelledInCycle =
+      t.status === 'cancelled' &&
+      (t.inCommittedScope !== false ||
+        !t.intervals ||
+        t.intervals.length === 0 ||
+        t.intervals.some((iv) => iv.leftAt === null || updatedMs <= new Date(iv.leftAt).getTime()));
+
     return {
+      cancelledInCycle,
+      inCommittedScope: t.inCommittedScope !== false,
       points: t.storyPoints ?? 0,
-      effectiveCreated,
       effectiveDone,
+      intervals,
     };
   });
+
+  const committed = normalized.filter((item) => !item.cancelledInCycle && item.inCommittedScope);
+  const totalTasks = committed.length;
+  const totalPoints = committed.reduce((sum, item) => sum + item.points, 0);
 
   const points: ProjectCycleBurndownPoint[] = [];
   for (let i = 0; i < dayCount; i += 1) {
@@ -328,10 +411,19 @@ export function computeCycleBurndown(
     let remainingTasks = 0;
     let remainingPoints = 0;
     for (const item of normalized) {
-      if (item.effectiveCreated > date) continue;
+      if (item.cancelledInCycle) continue;
       if (item.effectiveDone !== null && item.effectiveDone <= date) continue;
+      let activePoints: number | null = null;
+      for (let idx = item.intervals.length - 1; idx >= 0; idx -= 1) {
+        const iv = item.intervals[idx];
+        if (iv && iv.effectiveJoined <= date && (iv.effectiveLeft === null || date < iv.effectiveLeft)) {
+          activePoints = iv.points;
+          break;
+        }
+      }
+      if (activePoints === null) continue;
       remainingTasks += 1;
-      remainingPoints += item.points;
+      remainingPoints += activePoints;
     }
     points.push({
       date,
@@ -381,16 +473,28 @@ async function computeMetricsForProject(
 
   let hiddenByEntityCount = 0;
   if (selectedRaw) {
-    const { rows: hiddenRows } = await sql<{ count: string }>`
-      SELECT pg_catalog.count(*)::text AS count
-        FROM ludy_projects.project_task pt
-       WHERE pt.org_id = ${orgId}::uuid
-         AND pt.project_id = ${projectId}::uuid
-         AND pt.cycle_id = ${selectedRaw.id}::uuid
-         AND NOT EXISTS (
-           SELECT 1 FROM ludy_kernel.task t
-            WHERE t.org_id = pt.org_id AND t.id = pt.task_id
-         )`.execute(trx);
+    const { rows: hiddenRows } =
+      selectedRaw.status === 'completed'
+        ? await sql<{ count: string }>`
+            SELECT pg_catalog.count(*)::text AS count
+              FROM ludy_projects.project_cycle_snapshot s
+             WHERE s.org_id = ${orgId}::uuid
+               AND s.project_id = ${projectId}::uuid
+               AND s.cycle_id = ${selectedRaw.id}::uuid
+               AND NOT EXISTS (
+                 SELECT 1 FROM ludy_kernel.task t
+                  WHERE t.org_id = s.org_id AND t.id = s.task_id
+               )`.execute(trx)
+        : await sql<{ count: string }>`
+            SELECT pg_catalog.count(*)::text AS count
+              FROM ludy_projects.project_task pt
+             WHERE pt.org_id = ${orgId}::uuid
+               AND pt.project_id = ${projectId}::uuid
+               AND pt.cycle_id = ${selectedRaw.id}::uuid
+               AND NOT EXISTS (
+                 SELECT 1 FROM ludy_kernel.task t
+                  WHERE t.org_id = pt.org_id AND t.id = pt.task_id
+               )`.execute(trx);
     hiddenByEntityCount = Number(hiddenRows[0]?.count ?? 0);
   }
 
@@ -426,21 +530,121 @@ async function computeMetricsForProject(
 
   let burndown: ProjectCycleBurndownPoint[] = [];
   if (selectedCycle) {
-    const taskRows = await trx
-      .selectFrom('ludy_projects.project_task as pt')
-      .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
-      .select(['t.status', 'pt.story_points', 't.created_at', 't.updated_at'])
-      .where('pt.org_id', '=', orgId)
-      .where('pt.project_id', '=', projectId)
-      .where('pt.cycle_id', '=', selectedCycle.id)
+    const historyRows = await trx
+      .selectFrom('ludy_projects.project_cycle_task_history as h')
+      .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'h.org_id').onRef('t.id', '=', 'h.task_id'))
+      .select([
+        'h.task_id',
+        'h.story_points',
+        'h.joined_at',
+        'h.left_at',
+        'h.left_reason',
+        't.status',
+        't.created_at',
+        't.updated_at',
+        't.done_at',
+      ])
+      .where('h.org_id', '=', orgId)
+      .where('h.project_id', '=', projectId)
+      .where('h.cycle_id', '=', selectedCycle.id)
+      .orderBy('h.joined_at', 'asc')
+      .orderBy('h.id', 'asc')
       .execute();
+
+    const historyByTask = new Map<string, typeof historyRows>();
+    for (const h of historyRows) {
+      const list = historyByTask.get(h.task_id);
+      if (list) list.push(h);
+      else historyByTask.set(h.task_id, [h]);
+    }
+
+    const toIntervals = (rows: typeof historyRows | undefined): BurndownMembershipInterval[] | undefined =>
+      rows?.map((h) => ({
+        joinedAt: h.joined_at,
+        leftAt: h.left_at,
+        leftReason: h.left_reason,
+        storyPoints: h.story_points,
+      }));
+
+    const samples: BurndownTaskSample[] = [];
+    const seenTaskIds = new Set<string>();
+
+    if (selectedCycle.status === 'completed') {
+      const snapshotRows = await trx
+        .selectFrom('ludy_projects.project_cycle_snapshot as s')
+        .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 's.org_id').onRef('t.id', '=', 's.task_id'))
+        .select([
+          's.task_id',
+          's.task_status',
+          's.story_points',
+          's.task_created_at',
+          's.task_done_at',
+          's.captured_at',
+        ])
+        .where('s.org_id', '=', orgId)
+        .where('s.project_id', '=', projectId)
+        .where('s.cycle_id', '=', selectedCycle.id)
+        .execute();
+
+      for (const snap of snapshotRows) {
+        seenTaskIds.add(snap.task_id);
+        const rawIntervals = toIntervals(historyByTask.get(snap.task_id));
+        const intervals = rawIntervals?.map((iv, idx) =>
+          idx === rawIntervals.length - 1 && iv.leftAt === null ? { ...iv, storyPoints: snap.story_points } : iv,
+        );
+        samples.push({
+          status: snap.task_status,
+          storyPoints: snap.story_points,
+          createdAt: snap.task_created_at,
+          updatedAt: snap.captured_at,
+          doneAt: snap.task_done_at,
+          inCommittedScope: true,
+          ...(intervals ? { intervals } : {}),
+        });
+      }
+    } else {
+      const taskRows = await trx
+        .selectFrom('ludy_projects.project_task as pt')
+        .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
+        .select(['pt.task_id', 't.status', 'pt.story_points', 't.created_at', 't.updated_at', 't.done_at'])
+        .where('pt.org_id', '=', orgId)
+        .where('pt.project_id', '=', projectId)
+        .where('pt.cycle_id', '=', selectedCycle.id)
+        .execute();
+
+      for (const t of taskRows) {
+        seenTaskIds.add(t.task_id);
+        const intervals = toIntervals(historyByTask.get(t.task_id));
+        samples.push({
+          status: t.status,
+          storyPoints: t.story_points,
+          createdAt: t.created_at,
+          updatedAt: t.updated_at,
+          doneAt: t.done_at,
+          inCommittedScope: true,
+          ...(intervals ? { intervals } : {}),
+        });
+      }
+    }
+
+    for (const [taskId, rows] of historyByTask) {
+      if (seenTaskIds.has(taskId)) continue;
+      const latest = rows[rows.length - 1];
+      if (!latest) continue;
+      const intervals = toIntervals(rows);
+      samples.push({
+        status: latest.status,
+        storyPoints: latest.story_points,
+        createdAt: latest.created_at,
+        updatedAt: latest.updated_at,
+        doneAt: latest.done_at,
+        inCommittedScope: false,
+        ...(intervals ? { intervals } : {}),
+      });
+    }
+
     burndown = computeCycleBurndown(
-      taskRows.map((t) => ({
-        status: t.status,
-        storyPoints: t.story_points,
-        createdAt: t.created_at,
-        updatedAt: t.updated_at,
-      })),
+      samples,
       selectedCycle.startsOn,
       selectedCycle.endsOn,
       selectedCycle.status,
@@ -684,6 +888,14 @@ export const projectCycleDelete = defineCommand({
   writes: [
     tableWrite(TABLES, 'ludy_projects', 'project_cycle', ['org_id', 'project_id', 'id']),
     tableWrite(TABLES, 'ludy_projects', 'project_task', ['cycle_id']),
+    tableWrite(TABLES, 'ludy_projects', 'project_cycle_task_history', [
+      'org_id',
+      'project_id',
+      'cycle_id',
+      'left_at',
+      'left_reason',
+    ]),
+    tableWrite(TABLES, 'ludy_projects', 'project_cycle_snapshot', ['org_id', 'project_id', 'cycle_id']),
   ],
   target: projectTarget,
   handler: async (ctx, input): Promise<ProjectCycleDeleteResult> => {
@@ -772,7 +984,29 @@ export const projectCycleComplete = defineCommand({
   access: WRITERS,
   writes: [
     tableWrite(TABLES, 'ludy_projects', 'project_cycle', ['status', 'completed_at', 'updated_at']),
+    tableWrite(TABLES, 'ludy_projects', 'project_cycle_snapshot', [
+      'org_id',
+      'project_id',
+      'cycle_id',
+      'task_id',
+      'task_status',
+      'story_points',
+      'task_created_at',
+      'task_done_at',
+      'carried_over',
+      'captured_at',
+    ]),
     tableWrite(TABLES, 'ludy_projects', 'project_task', ['cycle_id']),
+    tableWrite(TABLES, 'ludy_projects', 'project_cycle_task_history', [
+      'org_id',
+      'project_id',
+      'cycle_id',
+      'task_id',
+      'story_points',
+      'joined_at',
+      'left_at',
+      'left_reason',
+    ]),
   ],
   target: projectTarget,
   handler: async (ctx, input): Promise<ProjectCycleCompleteResult> => {
@@ -797,24 +1031,8 @@ export const projectCycleComplete = defineCommand({
       throw cycleOpenTasksExist();
     }
 
-    let carriedOverCount = 0;
-    if (input.carryover.mode !== 'none' && openCount > 0) {
-      const { rows: movedRows } = await sql<{ task_id: string }>`
-        UPDATE ludy_projects.project_task pt
-           SET cycle_id = ${targetCycleId}::uuid
-         WHERE pt.org_id = ${ctx.orgId}::uuid
-           AND pt.project_id = ${project.id}::uuid
-           AND pt.cycle_id = ${cycle.id}::uuid
-           AND EXISTS (
-             SELECT 1 FROM ludy_kernel.task t
-              WHERE t.org_id = pt.org_id
-                AND t.id = pt.task_id
-                AND t.status NOT IN ('done', 'cancelled')
-           )
-        RETURNING pt.task_id`.execute(ctx.trx);
-      carriedOverCount = movedRows.length;
-    }
-
+    // Mark cycle completed first so project_task trigger sees pc.status = 'completed' and tags carryover,
+    // then snapshot all cycle tasks before moving carried-over open tasks out.
     const completed = await ctx.trx
       .updateTable('ludy_projects.project_cycle')
       .set({
@@ -827,6 +1045,57 @@ export const projectCycleComplete = defineCommand({
       .where('id', '=', cycle.id)
       .returningAll()
       .executeTakeFirstOrThrow();
+
+    await sql`
+      INSERT INTO ludy_projects.project_cycle_snapshot (
+        org_id,
+        project_id,
+        cycle_id,
+        task_id,
+        task_status,
+        story_points,
+        task_created_at,
+        task_done_at,
+        carried_over,
+        captured_at
+      )
+      SELECT
+        pt.org_id,
+        pt.project_id,
+        ${completed.id}::uuid,
+        pt.task_id,
+        t.status,
+        pt.story_points,
+        t.created_at,
+        t.done_at,
+        (t.status NOT IN ('done', 'cancelled') AND ${input.carryover.mode !== 'none'}),
+        ${ctx.now}::timestamptz
+      FROM ludy_projects.project_task pt
+      JOIN ludy_kernel.task t
+        ON t.org_id = pt.org_id
+       AND t.id = pt.task_id
+      WHERE pt.org_id = ${ctx.orgId}::uuid
+        AND pt.project_id = ${project.id}::uuid
+        AND pt.cycle_id = ${completed.id}::uuid
+      ON CONFLICT (org_id, cycle_id, task_id) DO NOTHING`.execute(ctx.trx);
+
+    let carriedOverCount = 0;
+    if (input.carryover.mode !== 'none' && openCount > 0) {
+      const { rows: movedRows } = await sql<{ task_id: string }>`
+        UPDATE ludy_projects.project_task pt
+           SET cycle_id = ${targetCycleId}::uuid
+         WHERE pt.org_id = ${ctx.orgId}::uuid
+           AND pt.project_id = ${project.id}::uuid
+           AND pt.cycle_id = ${completed.id}::uuid
+           AND EXISTS (
+             SELECT 1 FROM ludy_kernel.task t
+              WHERE t.org_id = pt.org_id
+                AND t.id = pt.task_id
+                AND t.status NOT IN ('done', 'cancelled')
+           )
+        RETURNING pt.task_id`.execute(ctx.trx);
+      carriedOverCount = movedRows.length;
+    }
 
     ctx.audit({
       projectId: project.id,
@@ -890,7 +1159,19 @@ export const projectTaskSetCycle = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'ludy_projects', 'project_task', ['cycle_id'])],
+  writes: [
+    tableWrite(TABLES, 'ludy_projects', 'project_task', ['cycle_id']),
+    tableWrite(TABLES, 'ludy_projects', 'project_cycle_task_history', [
+      'org_id',
+      'project_id',
+      'cycle_id',
+      'task_id',
+      'story_points',
+      'joined_at',
+      'left_at',
+      'left_reason',
+    ]),
+  ],
   target: projectTarget,
   handler: async (ctx, input): Promise<ProjectTaskSetCycleResult> => {
     userOf(ctx.actor);
@@ -928,7 +1209,10 @@ export const projectTaskSetPoints = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: WRITERS,
-  writes: [tableWrite(TABLES, 'ludy_projects', 'project_task', ['story_points'])],
+  writes: [
+    tableWrite(TABLES, 'ludy_projects', 'project_task', ['story_points']),
+    tableWrite(TABLES, 'ludy_projects', 'project_cycle_task_history', ['story_points']),
+  ],
   target: projectTarget,
   handler: async (ctx, input): Promise<ProjectTaskSetPointsResult> => {
     userOf(ctx.actor);
@@ -1077,21 +1361,38 @@ export const projectCycleSummarySource = defineQuery({
     let tasks: ProjectWeeklyStatusTask[] = [];
     let truncated = false;
     if (selected !== null) {
-      const taskRows = await ctx.trx
-        .selectFrom('ludy_projects.project_task as pt')
-        .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
-        .select(['t.id', 't.title', 't.tainted', 't.status', 't.due'])
-        .where('pt.org_id', '=', ctx.orgId)
-        .where('pt.project_id', '=', project.id)
-        .where('pt.cycle_id', '=', selected.id)
-        .where('t.status', '<>', 'cancelled')
-        .where('t.tainted', '=', false)
-        .orderBy(sql`CASE t.status WHEN 'done' THEN 1 ELSE 0 END`, 'asc')
-        .orderBy(sql`t.due ASC NULLS LAST`)
-        .orderBy('t.updated_at', 'desc')
-        .orderBy('t.id', 'asc')
-        .limit(PROJECT_WEEKLY_STATUS_BUCKET_LIMIT + 1)
-        .execute();
+      const taskRows =
+        selected.status === 'completed'
+          ? await ctx.trx
+              .selectFrom('ludy_projects.project_cycle_snapshot as s')
+              .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 's.org_id').onRef('t.id', '=', 's.task_id'))
+              .select(['t.id', 't.title', 't.tainted', sql<string>`s.task_status`.as('status'), 't.due'])
+              .where('s.org_id', '=', ctx.orgId)
+              .where('s.project_id', '=', project.id)
+              .where('s.cycle_id', '=', selected.id)
+              .where('s.task_status', '<>', 'cancelled')
+              .where('t.tainted', '=', false)
+              .orderBy(sql`CASE s.task_status WHEN 'done' THEN 1 ELSE 0 END`, 'asc')
+              .orderBy(sql`t.due ASC NULLS LAST`)
+              .orderBy('t.updated_at', 'desc')
+              .orderBy('t.id', 'asc')
+              .limit(PROJECT_WEEKLY_STATUS_BUCKET_LIMIT + 1)
+              .execute()
+          : await ctx.trx
+              .selectFrom('ludy_projects.project_task as pt')
+              .innerJoin('ludy_kernel.task as t', (join) => join.onRef('t.org_id', '=', 'pt.org_id').onRef('t.id', '=', 'pt.task_id'))
+              .select(['t.id', 't.title', 't.tainted', 't.status', 't.due'])
+              .where('pt.org_id', '=', ctx.orgId)
+              .where('pt.project_id', '=', project.id)
+              .where('pt.cycle_id', '=', selected.id)
+              .where('t.status', '<>', 'cancelled')
+              .where('t.tainted', '=', false)
+              .orderBy(sql`CASE t.status WHEN 'done' THEN 1 ELSE 0 END`, 'asc')
+              .orderBy(sql`t.due ASC NULLS LAST`)
+              .orderBy('t.updated_at', 'desc')
+              .orderBy('t.id', 'asc')
+              .limit(PROJECT_WEEKLY_STATUS_BUCKET_LIMIT + 1)
+              .execute();
 
       truncated = taskRows.length > PROJECT_WEEKLY_STATUS_BUCKET_LIMIT;
       const sample = truncated ? taskRows.slice(0, PROJECT_WEEKLY_STATUS_BUCKET_LIMIT) : taskRows;

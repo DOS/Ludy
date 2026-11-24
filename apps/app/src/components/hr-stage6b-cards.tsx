@@ -2,7 +2,7 @@
 // HR Stage 6B UI components (#4527): self-service salary advances & business trips (/hr/my),
 // manager approval queues (/hr/employees), and retro/offset adjustment panel (/hr/payroll).
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type MouseEvent, type ReactNode } from 'react';
 import { useTranslations } from 'use-intl';
 import {
   HR_PAYROLL_ADJUSTMENT_KINDS,
@@ -20,9 +20,12 @@ import { Card } from '@ludy/ui/components/card';
 import { Input } from '@ludy/ui/components/input';
 import { Label } from '@ludy/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@ludy/ui/components/native-select';
+import { cn } from '@ludy/ui/lib/utils';
+import { HrApprovalPeekSheet } from './hr-approval-peek.tsx';
 import { ErrorText } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { useListPeekNav } from '../lib/list-peek-nav.ts';
 import { PHONE_TARGET } from '../lib/touch-target.ts';
 
 const ONCE = { staleTime: Infinity, refetchOnWindowFocus: false, refetchOnReconnect: false } as const;
@@ -59,18 +62,51 @@ function ApprovalQueueRow(props: {
   canApproveFinal: boolean;
   lockedNotice?: string | undefined;
   busy: boolean;
+  l1Loading?: boolean;
+  finalLoading?: boolean;
+  rejectLoading?: boolean;
   l1Label: string;
   finalLabel: string;
   rejectLabel: string;
   onApproveL1: () => void;
   onApproveFinal: () => void;
   onReject: () => void;
+  selected?: boolean;
+  inspectLabel?: string;
+  inspectAriaLabel?: string;
+  onInspect?: () => void;
+  onRowClick?: (event: MouseEvent<HTMLElement>) => void;
 }) {
   return (
-    <div className="space-y-2 rounded-md border border-border p-3 text-sm" data-testid={props.testId}>
+    <div
+      data-peek-row={props.id}
+      data-selected={props.selected ? 'true' : undefined}
+      onClick={props.onRowClick}
+      className={cn(
+        'space-y-2 rounded-md border p-3 text-sm transition-colors',
+        props.onRowClick ? 'cursor-pointer' : undefined,
+        props.selected ? 'border-primary/50 bg-primary/5' : 'border-border hover:bg-muted/40',
+      )}
+      data-testid={props.testId}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="font-medium">{props.title}</div>
-        <Badge variant={STATUS_BADGE[props.status]}>{props.statusLabel}</Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant={STATUS_BADGE[props.status]}>{props.statusLabel}</Badge>
+          {props.onInspect && props.inspectLabel ? (
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              data-peek-trigger={props.id}
+              data-testid={`${props.testId}-peek-btn`}
+              aria-label={props.inspectAriaLabel ?? props.inspectLabel}
+              onClick={props.onInspect}
+            >
+              {props.inspectLabel}
+            </Button>
+          ) : null}
+        </div>
       </div>
       <p className="text-xs text-muted-foreground">{props.subtitle}</p>
       {props.lockedNotice && (
@@ -92,6 +128,7 @@ function ApprovalQueueRow(props: {
             type="button"
             size="sm"
             variant="outline"
+            loading={props.l1Loading ?? false}
             disabled={props.busy}
             className={PHONE_TARGET}
             onClick={props.onApproveL1}
@@ -104,6 +141,7 @@ function ApprovalQueueRow(props: {
           <Button
             type="button"
             size="sm"
+            loading={props.finalLoading ?? false}
             disabled={props.busy}
             className={PHONE_TARGET}
             onClick={props.onApproveFinal}
@@ -116,6 +154,7 @@ function ApprovalQueueRow(props: {
           type="button"
           size="sm"
           variant="ghost"
+          loading={props.rejectLoading ?? false}
           disabled={props.busy}
           className={PHONE_TARGET}
           onClick={props.onReject}
@@ -130,9 +169,12 @@ function ApprovalQueueRow(props: {
 
 export function HrSelfAdvanceTripCards({ linked }: { linked: boolean }) {
   const t = useTranslations('hrMy.stage6b');
+  const th = useTranslations('hrEmployees');
   const f = useFormat();
   const today = vietnamToday();
   const currentMonth = today.slice(0, 7);
+  const advL1Ref = useRef<HTMLDivElement>(null);
+  const tripL1Ref = useRef<HTMLDivElement>(null);
 
   // Salary advance state
   const [advMonth, setAdvMonth] = useState(currentMonth);
@@ -232,6 +274,30 @@ export function HrSelfAdvanceTripCards({ linked }: { linked: boolean }) {
   const advL1Queue = advList.data?.l1Queue ?? [];
   const trips = tripList.data?.items ?? [];
   const tripL1Queue = tripList.data?.l1Queue ?? [];
+
+  const advL1Peek = useListPeekNav({
+    items: advL1Queue,
+    getId: (item) => item.id,
+    containerRef: advL1Ref,
+    enabled: advL1Queue.length > 0,
+  });
+  const activeSelfAdvance = advL1Peek.activeItem;
+
+  const tripL1Peek = useListPeekNav({
+    items: tripL1Queue,
+    getId: (item) => item.id,
+    containerRef: tripL1Ref,
+    enabled: tripL1Queue.length > 0,
+  });
+  const activeSelfTrip = tripL1Peek.activeItem;
+
+  useEffect(() => {
+    advL1Decide.reset?.();
+  }, [activeSelfAdvance?.id]);
+
+  useEffect(() => {
+    tripL1Decide.reset?.();
+  }, [activeSelfTrip?.id]);
 
   return (
     <div className="space-y-6">
@@ -344,7 +410,7 @@ export function HrSelfAdvanceTripCards({ linked }: { linked: boolean }) {
         </div>
 
         {advL1Queue.length > 0 && (
-          <div className="mt-6 space-y-2 border-t pt-4">
+          <div ref={advL1Ref} className="mt-6 space-y-2 border-t pt-4">
             <h3 className="text-sm font-medium">{t('advanceTeamTitle')}</h3>
             {advL1Queue.map((item) => (
               <ApprovalQueueRow
@@ -365,9 +431,16 @@ export function HrSelfAdvanceTripCards({ linked }: { linked: boolean }) {
                 canApproveL1={item.canApproveL1}
                 canApproveFinal={false}
                 busy={advL1Decide.isPending}
+                l1Loading={advL1Decide.isPending && advL1Decide.variables?.requestId === item.id && advL1Decide.variables.approve}
+                rejectLoading={advL1Decide.isPending && advL1Decide.variables?.requestId === item.id && !advL1Decide.variables.approve}
                 l1Label={t('approveL1')}
                 finalLabel={t('approveFinal')}
                 rejectLabel={t('reject')}
+                selected={advL1Peek.selectedId === item.id}
+                inspectLabel={th('peek.inspect')}
+                inspectAriaLabel={th('peek.inspectOf', { name: item.employeeName })}
+                onInspect={() => advL1Peek.openPeek(item.id)}
+                onRowClick={(event) => advL1Peek.onRowClick(item.id, event)}
                 onApproveL1={() =>
                   advL1Decide.mutate({ requestId: item.id, approve: true, ...optionalNote(advNotes, item.id) })
                 }
@@ -378,6 +451,71 @@ export function HrSelfAdvanceTripCards({ linked }: { linked: boolean }) {
               />
             ))}
             {advL1Decide.error && <ErrorText>{errorMessage(advL1Decide.error)}</ErrorText>}
+            {activeSelfAdvance ? (
+              <HrApprovalPeekSheet
+                peek={advL1Peek}
+                testId="hr-self-advance-peek-sheet"
+                title={activeSelfAdvance.employeeName}
+                description={`${activeSelfAdvance.month} · ${f.money(activeSelfAdvance.amount, 'VND')}`}
+                badges={<Badge variant={STATUS_BADGE[activeSelfAdvance.status]}>{t(`statuses.${activeSelfAdvance.status}`)}</Badge>}
+                fields={[
+                  { label: th('peek.employee'), value: activeSelfAdvance.employeeName },
+                  ...(activeSelfAdvance.departmentName
+                    ? [{ label: th('peek.department'), value: activeSelfAdvance.departmentName }]
+                    : []),
+                  { label: th('peek.status'), value: t(`statuses.${activeSelfAdvance.status}`) },
+                  { label: t('advanceAmountLabel'), value: f.money(activeSelfAdvance.amount, 'VND'), mono: true },
+                  { label: t('advanceMonthLabel'), value: activeSelfAdvance.month, mono: true },
+                  ...(activeSelfAdvance.reason ? [{ label: th('peek.reason'), value: activeSelfAdvance.reason, span2: true }] : []),
+                ]}
+                noteSection={{
+                  id: `hr-self-advance-peek-note-${activeSelfAdvance.id}`,
+                  value: advNotes[activeSelfAdvance.id] ?? '',
+                  placeholder: t('notePlaceholder'),
+                  onChange: (val) => setAdvNotes((prev) => ({ ...prev, [activeSelfAdvance.id]: val })),
+                  testId: 'hr-self-advance-peek-note',
+                }}
+                errorMessage={advL1Decide.error ? errorMessage(advL1Decide.error) : null}
+                actions={[
+                  {
+                    label: t('reject'),
+                    variant: 'outline',
+                    disabled: advL1Decide.isPending,
+                    loading:
+                      advL1Decide.isPending &&
+                      advL1Decide.variables?.requestId === activeSelfAdvance.id &&
+                      !advL1Decide.variables.approve,
+                    onClick: () =>
+                      advL1Decide.mutate({
+                        requestId: activeSelfAdvance.id,
+                        approve: false,
+                        ...optionalNote(advNotes, activeSelfAdvance.id),
+                      }),
+                    testId: 'hr-self-advance-peek-reject',
+                  },
+                  ...(activeSelfAdvance.canApproveL1
+                    ? [
+                        {
+                          label: t('approveL1'),
+                          variant: 'default' as const,
+                          disabled: advL1Decide.isPending,
+                          loading:
+                            advL1Decide.isPending &&
+                            advL1Decide.variables?.requestId === activeSelfAdvance.id &&
+                            advL1Decide.variables.approve,
+                          onClick: () =>
+                            advL1Decide.mutate({
+                              requestId: activeSelfAdvance.id,
+                              approve: true,
+                              ...optionalNote(advNotes, activeSelfAdvance.id),
+                            }),
+                          testId: 'hr-self-advance-peek-approve-l1',
+                        },
+                      ]
+                    : []),
+                ]}
+              />
+            ) : null}
           </div>
         )}
       </Card>
@@ -516,7 +654,7 @@ export function HrSelfAdvanceTripCards({ linked }: { linked: boolean }) {
         </div>
 
         {tripL1Queue.length > 0 && (
-          <div className="mt-6 space-y-2 border-t pt-4">
+          <div ref={tripL1Ref} className="mt-6 space-y-2 border-t pt-4">
             <h3 className="text-sm font-medium">{t('tripTeamTitle')}</h3>
             {tripL1Queue.map((item) => (
               <ApprovalQueueRow
@@ -537,9 +675,16 @@ export function HrSelfAdvanceTripCards({ linked }: { linked: boolean }) {
                 canApproveL1={item.canApproveL1}
                 canApproveFinal={false}
                 busy={tripL1Decide.isPending}
+                l1Loading={tripL1Decide.isPending && tripL1Decide.variables?.requestId === item.id && tripL1Decide.variables.approve}
+                rejectLoading={tripL1Decide.isPending && tripL1Decide.variables?.requestId === item.id && !tripL1Decide.variables.approve}
                 l1Label={t('approveL1')}
                 finalLabel={t('approveFinal')}
                 rejectLabel={t('reject')}
+                selected={tripL1Peek.selectedId === item.id}
+                inspectLabel={th('peek.inspect')}
+                inspectAriaLabel={th('peek.inspectOf', { name: item.employeeName })}
+                onInspect={() => tripL1Peek.openPeek(item.id)}
+                onRowClick={(event) => tripL1Peek.onRowClick(item.id, event)}
                 onApproveL1={() =>
                   tripL1Decide.mutate({ requestId: item.id, approve: true, ...optionalNote(tripNotes, item.id) })
                 }
@@ -550,6 +695,70 @@ export function HrSelfAdvanceTripCards({ linked }: { linked: boolean }) {
               />
             ))}
             {tripL1Decide.error && <ErrorText>{errorMessage(tripL1Decide.error)}</ErrorText>}
+            {activeSelfTrip ? (
+              <HrApprovalPeekSheet
+                peek={tripL1Peek}
+                testId="hr-self-trip-peek-sheet"
+                title={activeSelfTrip.employeeName}
+                description={`${activeSelfTrip.destination ?? '-'} · ${activeSelfTrip.startOn} - ${activeSelfTrip.endOn}`}
+                badges={<Badge variant={STATUS_BADGE[activeSelfTrip.status]}>{t(`statuses.${activeSelfTrip.status}`)}</Badge>}
+                fields={[
+                  { label: th('peek.employee'), value: activeSelfTrip.employeeName },
+                  { label: th('peek.status'), value: t(`statuses.${activeSelfTrip.status}`) },
+                  { label: t('tripDestinationLabel'), value: activeSelfTrip.destination ?? '-' },
+                  { label: t('tripAllowanceLabel'), value: f.money(activeSelfTrip.estimatedAllowance, 'VND'), mono: true },
+                  { label: t('tripStartLabel'), value: f.date(activeSelfTrip.startOn), mono: true },
+                  { label: t('tripEndLabel'), value: f.date(activeSelfTrip.endOn), mono: true },
+                  ...(activeSelfTrip.purpose ? [{ label: th('peek.reason'), value: activeSelfTrip.purpose, span2: true }] : []),
+                ]}
+                noteSection={{
+                  id: `hr-self-trip-peek-note-${activeSelfTrip.id}`,
+                  value: tripNotes[activeSelfTrip.id] ?? '',
+                  placeholder: t('notePlaceholder'),
+                  onChange: (val) => setTripNotes((prev) => ({ ...prev, [activeSelfTrip.id]: val })),
+                  testId: 'hr-self-trip-peek-note',
+                }}
+                errorMessage={tripL1Decide.error ? errorMessage(tripL1Decide.error) : null}
+                actions={[
+                  {
+                    label: t('reject'),
+                    variant: 'outline',
+                    disabled: tripL1Decide.isPending,
+                    loading:
+                      tripL1Decide.isPending &&
+                      tripL1Decide.variables?.requestId === activeSelfTrip.id &&
+                      !tripL1Decide.variables.approve,
+                    onClick: () =>
+                      tripL1Decide.mutate({
+                        requestId: activeSelfTrip.id,
+                        approve: false,
+                        ...optionalNote(tripNotes, activeSelfTrip.id),
+                      }),
+                    testId: 'hr-self-trip-peek-reject',
+                  },
+                  ...(activeSelfTrip.canApproveL1
+                    ? [
+                        {
+                          label: t('approveL1'),
+                          variant: 'default' as const,
+                          disabled: tripL1Decide.isPending,
+                          loading:
+                            tripL1Decide.isPending &&
+                            tripL1Decide.variables?.requestId === activeSelfTrip.id &&
+                            tripL1Decide.variables.approve,
+                          onClick: () =>
+                            tripL1Decide.mutate({
+                              requestId: activeSelfTrip.id,
+                              approve: true,
+                              ...optionalNote(tripNotes, activeSelfTrip.id),
+                            }),
+                          testId: 'hr-self-trip-peek-approve-l1',
+                        },
+                      ]
+                    : []),
+                ]}
+              />
+            ) : null}
           </div>
         )}
       </Card>
@@ -559,12 +768,15 @@ export function HrSelfAdvanceTripCards({ linked }: { linked: boolean }) {
 
 export function HrStage6bApprovalQueues(props: { entities?: readonly { id: string; name: string }[] } = {}) {
   const t = useTranslations('hrEmployees.stage6bQueues');
+  const th = useTranslations('hrEmployees');
   const tm = useTranslations('hrMy.stage6b');
   const f = useFormat();
   const [legalEntityId, setLegalEntityId] = useState('');
   const [advNotes, setAdvNotes] = useState<Record<string, string>>({});
   const [tripNotes, setTripNotes] = useState<Record<string, string>>({});
   const [advSyncNotice, setAdvSyncNotice] = useState<'synced' | 'awaiting' | null>(null);
+  const advQueueRef = useRef<HTMLDivElement>(null);
+  const tripQueueRef = useRef<HTMLDivElement>(null);
   const entities = props.entities ?? [];
   const entityInput = legalEntityId ? { legalEntityId } : {};
 
@@ -636,6 +848,31 @@ export function HrStage6bApprovalQueues(props: { entities?: readonly { id: strin
   const pendingTrips: HrTripRequestView[] = (tripList.data ?? []).filter(
     (r) => r.status === 'pending_l1' || r.status === 'pending_final',
   );
+  const advPeek = useListPeekNav({
+    items: pendingAdvances,
+    getId: (item) => item.id,
+    containerRef: advQueueRef,
+    enabled: pendingAdvances.length > 0,
+    resetKey: legalEntityId,
+  });
+  const activeAdvance = advPeek.activeItem;
+
+  const tripPeek = useListPeekNav({
+    items: pendingTrips,
+    getId: (item) => item.id,
+    containerRef: tripQueueRef,
+    enabled: pendingTrips.length > 0,
+    resetKey: legalEntityId,
+  });
+  const activeTrip = tripPeek.activeItem;
+
+  useEffect(() => {
+    advDecide.reset?.();
+  }, [activeAdvance?.id]);
+
+  useEffect(() => {
+    tripDecide.reset?.();
+  }, [activeTrip?.id]);
 
   return (
     <div className="mt-6 space-y-4">
@@ -677,7 +914,7 @@ export function HrStage6bApprovalQueues(props: { entities?: readonly { id: strin
           {pendingAdvances.length === 0 ? (
             <p className="text-sm text-muted-foreground">{t('advanceEmpty')}</p>
           ) : (
-            <div className="space-y-3">
+            <div ref={advQueueRef} className="space-y-3">
               {pendingAdvances.map((item) => {
                 const runLocked = lockedRunMonths.has(`${item.legalEntityId}:${item.month}`);
                 return (
@@ -700,9 +937,17 @@ export function HrStage6bApprovalQueues(props: { entities?: readonly { id: strin
                     canApproveFinal={item.canApproveFinal && !runLocked}
                     lockedNotice={runLocked ? t('runLockedNotice', { month: item.month }) : undefined}
                     busy={advDecide.isPending}
+                    l1Loading={advDecide.isPending && advDecide.variables?.requestId === item.id && advDecide.variables.action === 'l1'}
+                    finalLoading={advDecide.isPending && advDecide.variables?.requestId === item.id && advDecide.variables.action === 'final'}
+                    rejectLoading={advDecide.isPending && advDecide.variables?.requestId === item.id && advDecide.variables.action === 'reject'}
                     l1Label={t('approveL1')}
                     finalLabel={t('approveFinal')}
                     rejectLabel={t('reject')}
+                    selected={advPeek.selectedId === item.id}
+                    inspectLabel={th('peek.inspect')}
+                    inspectAriaLabel={th('peek.inspectOf', { name: item.employeeName })}
+                    onInspect={() => advPeek.openPeek(item.id)}
+                    onRowClick={(event) => advPeek.onRowClick(item.id, event)}
                     onApproveL1={() =>
                       advDecide.mutate({ requestId: item.id, action: 'l1', ...optionalNote(advNotes, item.id) })
                     }
@@ -718,6 +963,89 @@ export function HrStage6bApprovalQueues(props: { entities?: readonly { id: strin
             </div>
           )}
           {advDecide.error && <ErrorText>{errorMessage(advDecide.error)}</ErrorText>}
+          {activeAdvance ? (() => {
+            const runLocked = lockedRunMonths.has(`${activeAdvance.legalEntityId}:${activeAdvance.month}`);
+            return (
+              <HrApprovalPeekSheet
+                peek={advPeek}
+                testId="hr-advance-peek-sheet"
+                title={activeAdvance.employeeName}
+                description={`${activeAdvance.month} · ${f.money(activeAdvance.amount, 'VND')}`}
+                badges={<Badge variant={STATUS_BADGE[activeAdvance.status]}>{tm(`statuses.${activeAdvance.status}`)}</Badge>}
+                fields={[
+                  { label: th('peek.employee'), value: activeAdvance.employeeName },
+                  ...(activeAdvance.departmentName
+                    ? [{ label: th('peek.department'), value: activeAdvance.departmentName }]
+                    : []),
+                  { label: th('peek.status'), value: tm(`statuses.${activeAdvance.status}`) },
+                  { label: tm('advanceAmountLabel'), value: f.money(activeAdvance.amount, 'VND'), mono: true },
+                  { label: tm('advanceMonthLabel'), value: activeAdvance.month, mono: true },
+                  ...(activeAdvance.reason ? [{ label: th('peek.reason'), value: activeAdvance.reason, span2: true }] : []),
+                ]}
+                extraContent={
+                  runLocked ? (
+                    <p className="text-xs font-medium text-warning" data-testid="hr-advance-peek-locked">
+                      {t('runLockedNotice', { month: activeAdvance.month })}
+                    </p>
+                  ) : null
+                }
+                noteSection={{
+                  id: `hr-advance-peek-note-${activeAdvance.id}`,
+                  value: advNotes[activeAdvance.id] ?? '',
+                  placeholder: t('notePlaceholder'),
+                  onChange: (val) => setAdvNotes((prev) => ({ ...prev, [activeAdvance.id]: val })),
+                  testId: 'hr-advance-peek-note',
+                }}
+                errorMessage={advDecide.error ? errorMessage(advDecide.error) : null}
+                actions={[
+                  ...(activeAdvance.canApproveL1 && !runLocked
+                    ? [
+                        {
+                          label: t('approveL1'),
+                          variant: 'outline' as const,
+                          disabled: advDecide.isPending,
+                          loading:
+                            advDecide.isPending &&
+                            advDecide.variables?.requestId === activeAdvance.id &&
+                            advDecide.variables.action === 'l1',
+                          onClick: () =>
+                            advDecide.mutate({ requestId: activeAdvance.id, action: 'l1', ...optionalNote(advNotes, activeAdvance.id) }),
+                          testId: 'hr-advance-peek-l1',
+                        },
+                      ]
+                    : []),
+                  {
+                    label: t('reject'),
+                    variant: 'outline',
+                    disabled: advDecide.isPending,
+                    loading:
+                      advDecide.isPending &&
+                      advDecide.variables?.requestId === activeAdvance.id &&
+                      advDecide.variables.action === 'reject',
+                    onClick: () =>
+                      advDecide.mutate({ requestId: activeAdvance.id, action: 'reject', ...optionalNote(advNotes, activeAdvance.id) }),
+                    testId: 'hr-advance-peek-reject',
+                  },
+                  ...(activeAdvance.canApproveFinal && !runLocked
+                    ? [
+                        {
+                          label: t('approveFinal'),
+                          variant: 'default' as const,
+                          disabled: advDecide.isPending,
+                          loading:
+                            advDecide.isPending &&
+                            advDecide.variables?.requestId === activeAdvance.id &&
+                            advDecide.variables.action === 'final',
+                          onClick: () =>
+                            advDecide.mutate({ requestId: activeAdvance.id, action: 'final', ...optionalNote(advNotes, activeAdvance.id) }),
+                          testId: 'hr-advance-peek-final',
+                        },
+                      ]
+                    : []),
+                ]}
+              />
+            );
+          })() : null}
         </Card>
 
       <Card className="p-6" data-testid="hr-trip-queue">
@@ -729,7 +1057,7 @@ export function HrStage6bApprovalQueues(props: { entities?: readonly { id: strin
         {pendingTrips.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t('tripEmpty')}</p>
         ) : (
-          <div className="space-y-3">
+          <div ref={tripQueueRef} className="space-y-3">
             {pendingTrips.map((item) => (
               <ApprovalQueueRow
                 key={item.id}
@@ -753,9 +1081,17 @@ export function HrStage6bApprovalQueues(props: { entities?: readonly { id: strin
                 canApproveL1={item.canApproveL1}
                 canApproveFinal={item.canApproveFinal}
                 busy={tripDecide.isPending}
+                l1Loading={tripDecide.isPending && tripDecide.variables?.requestId === item.id && tripDecide.variables.action === 'l1'}
+                finalLoading={tripDecide.isPending && tripDecide.variables?.requestId === item.id && tripDecide.variables.action === 'final'}
+                rejectLoading={tripDecide.isPending && tripDecide.variables?.requestId === item.id && tripDecide.variables.action === 'reject'}
                 l1Label={t('approveL1')}
                 finalLabel={t('approveFinal')}
                 rejectLabel={t('reject')}
+                selected={tripPeek.selectedId === item.id}
+                inspectLabel={th('peek.inspect')}
+                inspectAriaLabel={th('peek.inspectOf', { name: item.employeeName })}
+                onInspect={() => tripPeek.openPeek(item.id)}
+                onRowClick={(event) => tripPeek.onRowClick(item.id, event)}
                 onApproveL1={() =>
                   tripDecide.mutate({ requestId: item.id, action: 'l1', ...optionalNote(tripNotes, item.id) })
                 }
@@ -770,6 +1106,78 @@ export function HrStage6bApprovalQueues(props: { entities?: readonly { id: strin
           </div>
         )}
         {tripDecide.error && <ErrorText>{errorMessage(tripDecide.error)}</ErrorText>}
+        {activeTrip ? (
+          <HrApprovalPeekSheet
+            peek={tripPeek}
+            testId="hr-trip-peek-sheet"
+            title={activeTrip.employeeName}
+            description={`${activeTrip.destination ?? '-'} · ${activeTrip.startOn} - ${activeTrip.endOn}`}
+            badges={<Badge variant={STATUS_BADGE[activeTrip.status]}>{tm(`statuses.${activeTrip.status}`)}</Badge>}
+            fields={[
+              { label: th('peek.employee'), value: activeTrip.employeeName },
+              { label: th('peek.status'), value: tm(`statuses.${activeTrip.status}`) },
+              { label: tm('tripDestinationLabel'), value: activeTrip.destination ?? '-' },
+              { label: tm('tripAllowanceLabel'), value: f.money(activeTrip.estimatedAllowance, 'VND'), mono: true },
+              { label: tm('tripStartLabel'), value: f.date(activeTrip.startOn), mono: true },
+              { label: tm('tripEndLabel'), value: f.date(activeTrip.endOn), mono: true },
+              ...(activeTrip.purpose ? [{ label: th('peek.reason'), value: activeTrip.purpose, span2: true }] : []),
+            ]}
+            noteSection={{
+              id: `hr-trip-peek-note-${activeTrip.id}`,
+              value: tripNotes[activeTrip.id] ?? '',
+              placeholder: t('notePlaceholder'),
+              onChange: (val) => setTripNotes((prev) => ({ ...prev, [activeTrip.id]: val })),
+              testId: 'hr-trip-peek-note',
+            }}
+            errorMessage={tripDecide.error ? errorMessage(tripDecide.error) : null}
+            actions={[
+              ...(activeTrip.canApproveL1
+                ? [
+                    {
+                      label: t('approveL1'),
+                      variant: 'outline' as const,
+                      disabled: tripDecide.isPending,
+                      loading:
+                        tripDecide.isPending &&
+                        tripDecide.variables?.requestId === activeTrip.id &&
+                        tripDecide.variables.action === 'l1',
+                      onClick: () =>
+                        tripDecide.mutate({ requestId: activeTrip.id, action: 'l1', ...optionalNote(tripNotes, activeTrip.id) }),
+                      testId: 'hr-trip-peek-l1',
+                    },
+                  ]
+                : []),
+              {
+                label: t('reject'),
+                variant: 'outline',
+                disabled: tripDecide.isPending,
+                loading:
+                  tripDecide.isPending &&
+                  tripDecide.variables?.requestId === activeTrip.id &&
+                  tripDecide.variables.action === 'reject',
+                onClick: () =>
+                  tripDecide.mutate({ requestId: activeTrip.id, action: 'reject', ...optionalNote(tripNotes, activeTrip.id) }),
+                testId: 'hr-trip-peek-reject',
+              },
+              ...(activeTrip.canApproveFinal
+                ? [
+                    {
+                      label: t('approveFinal'),
+                      variant: 'default' as const,
+                      disabled: tripDecide.isPending,
+                      loading:
+                        tripDecide.isPending &&
+                        tripDecide.variables?.requestId === activeTrip.id &&
+                        tripDecide.variables.action === 'final',
+                      onClick: () =>
+                        tripDecide.mutate({ requestId: activeTrip.id, action: 'final', ...optionalNote(tripNotes, activeTrip.id) }),
+                      testId: 'hr-trip-peek-final',
+                    },
+                  ]
+                : []),
+            ]}
+          />
+        ) : null}
       </Card>
       </div>
     </div>
@@ -784,7 +1192,9 @@ export function HrPayrollAdjustmentsPanel(props: {
   onChanged: () => Promise<unknown>;
 }) {
   const t = useTranslations('hrPayroll.stage6b');
+  const th = useTranslations('hrEmployees');
   const f = useFormat();
+  const adjListRef = useRef<HTMLDivElement>(null);
   const [employeeId, setEmployeeId] = useState(props.employees[0]?.id ?? '');
   const selectedEmployeeId = employeeId || props.employees[0]?.id || '';
   const [kind, setKind] = useState<HrPayrollAdjustmentKind>('retro_pay');
@@ -832,6 +1242,18 @@ export function HrPayrollAdjustmentsPanel(props: {
   });
 
   const items: HrAdjustmentItemView[] = list.data ?? [];
+  const adjPeek = useListPeekNav({
+    items,
+    getId: (item) => item.id,
+    containerRef: adjListRef,
+    enabled: items.length > 0,
+    resetKey: `${props.legalEntityId}:${props.month}`,
+  });
+  const activeAdj = adjPeek.activeItem;
+
+  useEffect(() => {
+    act.reset?.();
+  }, [activeAdj?.id]);
 
   return (
     <Card className="mb-4 p-4" data-testid="hr-adjustments-panel">
@@ -926,66 +1348,151 @@ export function HrPayrollAdjustmentsPanel(props: {
       {items.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t('empty')}</p>
       ) : (
-        <div className="space-y-2">
-          {items.map((item) => (
-            <div
-              key={item.id}
-              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border p-3 text-sm"
-              data-testid="hr-adj-item"
-            >
-              <div>
-                <div className="font-medium">
-                  {item.employeeName} | {t(`kinds.${item.kind}`)} |{' '}
-                  <span className="tabular-nums">{f.money(item.amount, 'VND')}</span>
+        <div ref={adjListRef} className="space-y-2">
+          {items.map((item) => {
+            const selected = adjPeek.selectedId === item.id;
+            return (
+              <div
+                key={item.id}
+                data-peek-row={item.id}
+                data-selected={selected ? 'true' : undefined}
+                onClick={(event) => adjPeek.onRowClick(item.id, event)}
+                className={cn(
+                  'flex cursor-pointer flex-wrap items-center justify-between gap-2 rounded-md border p-3 text-sm transition-colors',
+                  selected ? 'border-primary/50 bg-primary/5' : 'border-border hover:bg-muted/40',
+                )}
+                data-testid="hr-adj-item"
+              >
+                <div>
+                  <div className="font-medium">
+                    {item.employeeName} | {t(`kinds.${item.kind}`)} |{' '}
+                    <span className="tabular-nums">{f.money(item.amount, 'VND')}</span>
+                  </div>
+                  {item.reason && <p className="text-xs text-muted-foreground">{item.reason}</p>}
                 </div>
-                {item.reason && <p className="text-xs text-muted-foreground">{item.reason}</p>}
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant={STATUS_BADGE[item.status]}>{t(`statuses.${item.status}`)}</Badge>
-                {props.draft && item.canApprove && (
+                <div className="flex flex-wrap items-center gap-2">
                   <Button
                     type="button"
-                    size="sm"
-                    disabled={act.isPending}
-                    className={PHONE_TARGET}
-                    onClick={() => act.mutate({ itemId: item.id, action: 'approve' })}
-                    data-testid="hr-adj-approve"
-                  >
-                    {t('approveBtn')}
-                  </Button>
-                )}
-                {item.status === 'pending' && (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={act.isPending}
-                    className={PHONE_TARGET}
-                    onClick={() => act.mutate({ itemId: item.id, action: 'reject' })}
-                    data-testid="hr-adj-reject"
-                  >
-                    {t('rejectBtn')}
-                  </Button>
-                )}
-                {item.canCancel && (
-                  <Button
-                    type="button"
-                    size="sm"
+                    size="xs"
                     variant="ghost"
-                    disabled={act.isPending}
-                    className={PHONE_TARGET}
-                    onClick={() => act.mutate({ itemId: item.id, action: 'cancel' })}
-                    data-testid="hr-adj-cancel"
+                    data-peek-trigger={item.id}
+                    data-testid="hr-adj-peek-btn"
+                    aria-label={th('peek.inspectOf', { name: item.employeeName })}
+                    onClick={() => adjPeek.openPeek(item.id)}
                   >
-                    {t('cancelBtn')}
+                    {th('peek.inspect')}
                   </Button>
-                )}
+                  <Badge variant={STATUS_BADGE[item.status]}>{t(`statuses.${item.status}`)}</Badge>
+                  {props.draft && item.canApprove && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      loading={act.isPending && act.variables?.itemId === item.id && act.variables.action === 'approve'}
+                      disabled={act.isPending}
+                      className={PHONE_TARGET}
+                      onClick={() => act.mutate({ itemId: item.id, action: 'approve' })}
+                      data-testid="hr-adj-approve"
+                    >
+                      {t('approveBtn')}
+                    </Button>
+                  )}
+                  {item.status === 'pending' && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      loading={act.isPending && act.variables?.itemId === item.id && act.variables.action === 'reject'}
+                      disabled={act.isPending}
+                      className={PHONE_TARGET}
+                      onClick={() => act.mutate({ itemId: item.id, action: 'reject' })}
+                      data-testid="hr-adj-reject"
+                    >
+                      {t('rejectBtn')}
+                    </Button>
+                  )}
+                  {item.canCancel && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      loading={act.isPending && act.variables?.itemId === item.id && act.variables.action === 'cancel'}
+                      disabled={act.isPending}
+                      className={PHONE_TARGET}
+                      onClick={() => act.mutate({ itemId: item.id, action: 'cancel' })}
+                      data-testid="hr-adj-cancel"
+                    >
+                      {t('cancelBtn')}
+                    </Button>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
       {act.error && <ErrorText>{errorMessage(act.error)}</ErrorText>}
+      {activeAdj ? (
+        <HrApprovalPeekSheet
+          peek={adjPeek}
+          testId="hr-adj-peek-sheet"
+          title={activeAdj.employeeName}
+          description={`${t(`kinds.${activeAdj.kind}`)} · ${f.money(activeAdj.amount, 'VND')}`}
+          badges={<Badge variant={STATUS_BADGE[activeAdj.status]}>{t(`statuses.${activeAdj.status}`)}</Badge>}
+          fields={[
+            { label: th('peek.employee'), value: activeAdj.employeeName },
+            { label: th('peek.status'), value: t(`statuses.${activeAdj.status}`) },
+            { label: t('kindLabel'), value: t(`kinds.${activeAdj.kind}`) },
+            { label: t('amountLabel'), value: f.money(activeAdj.amount, 'VND'), mono: true },
+            ...(activeAdj.reason ? [{ label: th('peek.reason'), value: activeAdj.reason, span2: true }] : []),
+          ]}
+          extraContent={
+            !props.draft && activeAdj.status === 'pending' ? (
+              <p className="text-xs font-medium text-warning" data-testid="hr-adj-peek-nondraft">
+                {t('nonDraftNotice')}
+              </p>
+            ) : null
+          }
+          errorMessage={act.error ? errorMessage(act.error) : null}
+          actions={[
+            ...(activeAdj.canCancel
+              ? [
+                  {
+                    label: t('cancelBtn'),
+                    variant: 'ghost' as const,
+                    disabled: act.isPending,
+                    loading: act.isPending && act.variables?.itemId === activeAdj.id && act.variables.action === 'cancel',
+                    onClick: () => act.mutate({ itemId: activeAdj.id, action: 'cancel' }),
+                    testId: 'hr-adj-peek-cancel',
+                  },
+                ]
+              : []),
+            ...(activeAdj.status === 'pending'
+              ? [
+                  {
+                    label: t('rejectBtn'),
+                    variant: 'outline' as const,
+                    disabled: act.isPending,
+                    loading: act.isPending && act.variables?.itemId === activeAdj.id && act.variables.action === 'reject',
+                    onClick: () => act.mutate({ itemId: activeAdj.id, action: 'reject' }),
+                    testId: 'hr-adj-peek-reject',
+                  },
+                ]
+              : []),
+            ...(props.draft && activeAdj.canApprove
+              ? [
+                  {
+                    label: t('approveBtn'),
+                    variant: 'default' as const,
+                    disabled: act.isPending,
+                    loading: act.isPending && act.variables?.itemId === activeAdj.id && act.variables.action === 'approve',
+                    onClick: () => act.mutate({ itemId: activeAdj.id, action: 'approve' }),
+                    testId: 'hr-adj-peek-approve',
+                  },
+                ]
+              : []),
+          ]}
+        />
+      ) : null}
     </Card>
   );
 }

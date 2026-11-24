@@ -113,6 +113,8 @@ describe('a translation is never a source: the migrations (E1, #3184)', () => {
       'ludy_kernel_org_purge_hr_stage6c.sql',
       // #4529 (Stage 6D): the purge restatement that adds ludy_hr.okr_key_result and ludy_hr.okr_objective restates the whole list, the translation table included; its body is the previous one.
       'ludy_kernel_org_purge_hr_stage6d.sql',
+      // #4431 (Projects cycles history & snapshots): the purge restatement that adds ludy_projects.project_cycle_snapshot and ludy_projects.project_cycle_task_history restates the whole list, the translation table included; its body is the previous one.
+      'ludy_kernel_org_purge_projects_cycles_history.sql',
     ]);
   });
 });
